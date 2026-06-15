@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Otto × 飞书 · 怎么用、什么逻辑(图解版)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#06080f;--text:#eef2fb;--muted:#9fabc6;--faint:#5f6d8c;
+    --blue:#5b95ff;--blue-2:#3d7bff;--cyan:#3fe3d2;--warm:#ffc06a;--rose:#ff7e90;--green:#5fe3a1;
+    --glass:rgba(255,255,255,.04);--glass-2:rgba(255,255,255,.075);
+    --line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.17);
+    --display:'Space Grotesk',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+    --body:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+    --e:cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{font-family:var(--body);color:var(--text);background:var(--ink);-webkit-font-smoothing:antialiased}
+  .bg{position:fixed;inset:0;z-index:0;overflow:hidden;background:
+      radial-gradient(120% 90% at 14% 6%,#11193c 0%,transparent 52%),
+      radial-gradient(120% 110% at 88% 100%,#0b2230 0%,transparent 48%),var(--ink)}
+  .bg::before{content:"";position:absolute;inset:-2px;
+    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+    background-size:54px 54px;mask-image:radial-gradient(130% 120% at 50% 35%,#000 35%,transparent 92%)}
+  .glow{position:absolute;border-radius:50%;filter:blur(100px);will-change:transform}
+  .glow.a{width:48vw;height:48vw;left:-10vw;top:-14vw;background:radial-gradient(circle,#2f5dff,transparent 66%);opacity:.45;animation:d1 24s var(--e) infinite alternate}
+  .glow.b{width:42vw;height:42vw;right:-8vw;bottom:-12vw;background:radial-gradient(circle,#1bbfae,transparent 66%);opacity:.34;animation:d2 28s var(--e) infinite alternate}
+  @keyframes d1{to{transform:translate(7vw,6vh) scale(1.14)}}@keyframes d2{to{transform:translate(-6vw,-5vh) scale(1.1)}}
+
+  .deck{position:fixed;inset:0;z-index:1;display:flex;transition:transform .72s var(--e);will-change:transform}
+  .slide{position:relative;min-width:100vw;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:clamp(34px,5.4vw,96px)}
+  .inner{max-width:1200px;width:100%;margin:0 auto}
+  .idx{position:absolute;left:clamp(34px,5.4vw,96px);top:clamp(26px,4.5vh,52px);font-family:var(--display);font-size:13px;color:var(--faint);letter-spacing:.18em}
+
+  [data-r]{opacity:0;transform:translateY(22px);transition:opacity .7s var(--e),transform .7s var(--e)}
+  .slide.active [data-r]{opacity:1;transform:none}
+  .slide.active [data-r="1"]{transition-delay:.05s}.slide.active [data-r="2"]{transition-delay:.15s}
+  .slide.active [data-r="3"]{transition-delay:.26s}.slide.active [data-r="4"]{transition-delay:.37s}
+
+  .kick{display:inline-flex;align-items:center;gap:9px;font-family:var(--display);font-size:12.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--glass)}
+  .kick .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
+  h1{font-family:var(--display);font-weight:700;line-height:1.0;letter-spacing:-.02em;font-size:clamp(38px,6.4vw,90px)}
+  h2{font-family:var(--display);font-weight:700;line-height:1.08;letter-spacing:-.01em;font-size:clamp(26px,3.7vw,48px)}
+  .cap{font-size:clamp(15px,1.4vw,19px);color:var(--muted);line-height:1.5;max-width:70ch}
+  .cap b{color:#fff}
+  .grad{background:linear-gradient(105deg,var(--blue),var(--cyan) 92%);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .mt{margin-top:14px}.mt2{margin-top:24px}.mt3{margin-top:30px}
+  .row{display:flex;gap:13px;flex-wrap:wrap;align-items:center}
+  .pill{font-family:var(--display);font-size:13px;font-weight:500;color:var(--muted);padding:8px 16px;border:1px solid var(--line);border-radius:999px;background:var(--glass)}
+
+  /* svg diagram */
+  .dia{width:100%;height:auto;display:block;overflow:visible}
+  .nd{fill:rgba(255,255,255,.045);stroke:rgba(255,255,255,.14);stroke-width:1.5}
+  .nd.b{stroke:rgba(91,149,255,.6)}.nd.c{stroke:rgba(63,227,210,.6)}
+  .nd.r{stroke:rgba(255,126,144,.55);fill:rgba(255,126,144,.07)}.nd.g{stroke:rgba(95,227,161,.55);fill:rgba(95,227,161,.07)}
+  .tt{fill:#eef2fb;font-family:var(--display);font-weight:600}
+  .tsub{fill:#9fabc6;font-family:var(--body)}
+  .lk{stroke-width:2.5;fill:none}
+  .lbl{fill:var(--cyan);font-family:var(--display);font-weight:600}
+  svg text{dominant-baseline:middle}
+
+  /* chat mockup */
+  .chat{max-width:540px;width:100%;background:rgba(13,18,33,.7);border:1px solid var(--line-2);border-radius:22px;overflow:hidden;box-shadow:0 30px 70px -25px rgba(0,0,0,.8);backdrop-filter:blur(12px)}
+  .chat .bar{display:flex;align-items:center;gap:11px;padding:13px 17px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)}
+  .chat .av{width:33px;height:33px;border-radius:10px;background:linear-gradient(135deg,var(--blue-2),var(--cyan));display:grid;place-items:center;font-family:var(--display);font-weight:700;color:#06080f}
+  .chat .bar b{font-family:var(--display);font-size:15px}.chat .bar span{font-size:12px;color:var(--green);margin-left:auto}
+  .chat .body{padding:18px 17px;display:flex;flex-direction:column;gap:13px}
+  .bub{padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.5}
+  .bub.u{align-self:flex-end;max-width:84%;background:linear-gradient(135deg,var(--blue-2),#2f6bff);color:#fff;border-bottom-right-radius:5px}
+  .bub.o{align-self:flex-start;width:92%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-bottom-left-radius:5px}
+  .bub.o .step{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted);padding:3px 0}
+  .bub.o .mk{color:var(--green);font-weight:700}
+  .bub.o .doc{margin-top:9px;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--blue);background:rgba(91,149,255,.12);border:1px solid rgba(91,149,255,.3);padding:7px 12px;border-radius:9px}
+
+  /* roles mapped on flow */
+  .track{display:flex;align-items:stretch;gap:0}
+  .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:0}
+  .stagechip{width:100%;text-align:center;font-family:var(--display);font-weight:600;font-size:15px;padding:13px 8px;border:1px solid var(--line);border-radius:13px;background:var(--glass)}
+  .stagechip .e{font-size:20px;display:block;margin-bottom:4px}
+  .conn{height:34px;width:2px;background:linear-gradient(var(--cyan),transparent);margin:0 auto}
+  .rolecard{width:100%;background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:16px 14px;text-align:center;transition:.4s var(--e)}
+  .rolecard:hover{transform:translateY(-4px);border-color:var(--line-2)}
+  .rolecard .r{font-family:var(--display);font-weight:600;font-size:16px;color:var(--cyan)}
+  .rolecard p{font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:6px}
+  .harrow{flex:none;width:30px;display:grid;place-items:center;color:var(--faint);font-size:18px;align-self:flex-start;margin-top:18px}
+
+  /* isolation */
+  .iso{display:flex;align-items:center;gap:22px;justify-content:center;flex-wrap:wrap}
+  .iso .stack{display:flex;flex-direction:column;gap:12px}
+  .iso .src{background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:13px 18px;font-size:14px;text-align:center;min-width:140px}
+  .iso .ses{border:1px solid var(--line-2);border-radius:12px;padding:13px 18px;font-size:13px;text-align:center;min-width:210px;background:linear-gradient(135deg,rgba(91,149,255,.08),rgba(63,227,210,.05))}
+  .iso .fan{display:flex;flex-direction:column;gap:6px;color:var(--cyan);font-family:var(--display);font-size:22px;align-items:center}
+
+  /* readiness matrix */
+  .matrix{display:flex;flex-direction:column;gap:11px}
+  .mrow{display:grid;grid-template-columns:200px 1fr 110px;align-items:center;gap:16px}
+  .mrow .nm{font-size:14px;color:#dde4f4}
+  .mbar{height:14px;border-radius:7px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+  .mbar i{position:absolute;left:0;top:0;bottom:0;border-radius:7px;display:block}
+  .fill-ok{background:linear-gradient(90deg,#3f9f7a,var(--green))}
+  .fill-wip{background:linear-gradient(90deg,#b9863c,var(--warm))}
+  .fill-risk{background:linear-gradient(90deg,#b14b58,var(--rose))}
+  .mtag{font-family:var(--display);font-size:12.5px;font-weight:600;text-align:right}
+  .t-ok{color:var(--green)}.t-wip{color:var(--warm)}.t-risk{color:var(--rose)}
+  .legend{display:flex;gap:18px;font-size:13px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}.legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  /* chrome */
+  .progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--blue),var(--cyan));z-index:30;width:0;transition:width .7s var(--e);box-shadow:0 0 14px var(--blue)}
+  .dots{position:fixed;left:28px;top:50%;transform:translateY(-50%);z-index:30;display:flex;flex-direction:column;gap:11px}
+  .dots button{width:9px;height:9px;border-radius:50%;border:0;background:rgba(255,255,255,.2);cursor:pointer;padding:0;transition:.3s}
+  .dots button.on{background:var(--cyan);transform:scale(1.5);box-shadow:0 0 12px var(--cyan)}
+  .ctrl{position:fixed;right:30px;bottom:26px;z-index:30;display:flex;align-items:center;gap:12px}
+  .ctrl .count{font-family:var(--display);font-size:13px;color:var(--muted);letter-spacing:.1em}
+  .ctrl button{width:46px;height:46px;border-radius:50%;border:1px solid var(--line-2);background:var(--glass);color:var(--text);font-size:18px;cursor:pointer;display:grid;place-items:center;transition:.3s var(--e);backdrop-filter:blur(8px)}
+  .ctrl button:hover{background:var(--blue);border-color:var(--blue);transform:scale(1.08)}
+  .ctrl button:disabled{opacity:.3;cursor:default;transform:none;background:var(--glass)}
+  .brand{position:fixed;right:30px;top:22px;z-index:30;font-family:var(--display);font-weight:700;font-size:15px;color:var(--muted)}.brand b{color:#fff}
+  .hint{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:30;font-size:12px;color:var(--faint);letter-spacing:.08em}
+  @media(max-width:860px){.dots{display:none}.mrow{grid-template-columns:120px 1fr 80px}}
+</style>
+</head>
+<body>
+<div class="bg"><div class="glow a"></div><div class="glow b"></div></div>
+<div class="progress" id="prog"></div>
+<div class="brand"><b>Otto</b> × 飞书</div>
+<nav class="dots" id="dots"></nav>
+
+<div class="deck" id="deck">
+
+  <!-- 1 cover -->
+  <section class="slide">
+    <span class="idx">00 — 开场</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>一图一页 · 讲明白</span>
+      <h1 class="mt" data-r="2">这东西<span class="grad">怎么用</span>、<br>背后<span class="grad">什么逻辑</span></h1>
+      <p class="cap mt2" data-r="3">一句话:<b>Otto 是住在飞书里、跑在你电脑上、能替你干活还能写代码的 AI 同事。</b>下面用图,一页讲一个点。</p>
+      <div class="row mt3" data-r="4"><span class="pill">① 一个回路</span><span class="pill">② 数据在哪</span><span class="pill">③ 怎么用</span><span class="pill">④ 内部怎么走</span><span class="pill">⑤ 现在到哪了</span></div>
+    </div>
+  </section>
+
+  <!-- 2 the loop -->
+  <section class="slide">
+    <span class="idx">01 — 心智模型</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>先记这一个回路</span>
+      <h2 class="mt" data-r="2">整件事,<span class="grad">就一个闭环</span></h2>
+      <svg class="dia mt2" data-r="3" viewBox="0 0 1000 300" role="img" aria-label="飞书发消息→Otto在你电脑干活→结果回飞书的闭环">
+        <defs>
+          <linearGradient id="gl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5b95ff"/><stop offset="1" stop-color="#3fe3d2"/></linearGradient>
+          <marker id="ac" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#3fe3d2"/></marker>
+        </defs>
+        <rect class="nd b" x="30" y="105" width="250" height="90" rx="16"/>
+        <text class="tt" x="155" y="142" text-anchor="middle" font-size="21">你 · 飞书</text>
+        <text class="tsub" x="155" y="168" text-anchor="middle" font-size="13.5">发一句话</text>
+        <rect class="nd" x="375" y="105" width="250" height="90" rx="16" style="stroke:rgba(78,168,236,.6)"/>
+        <text class="tt" x="500" y="140" text-anchor="middle" font-size="21">Otto（你电脑上）</text>
+        <text class="tsub" x="500" y="166" text-anchor="middle" font-size="13.5">理解 → 决定 → 动手</text>
+        <rect class="nd c" x="720" y="105" width="250" height="90" rx="16"/>
+        <text class="tt" x="845" y="140" text-anchor="middle" font-size="21">结果回飞书</text>
+        <text class="tsub" x="845" y="166" text-anchor="middle" font-size="13.5">卡片 / 文件 / 答案</text>
+        <path class="lk" d="M280,150 L370,150" stroke="url(#gl)" marker-end="url(#ac)"/>
+        <text class="lbl" x="325" y="134" text-anchor="middle" font-size="13">① 发消息</text>
+        <path class="lk" d="M625,150 L715,150" stroke="url(#gl)" marker-end="url(#ac)"/>
+        <text class="lbl" x="670" y="134" text-anchor="middle" font-size="13">② 干活</text>
+        <path class="lk" d="M845,195 C845,272 155,272 155,195" stroke="url(#gl)" marker-end="url(#ac)" stroke-dasharray="6 5"/>
+        <text class="lbl" x="500" y="258" text-anchor="middle" font-size="13">③ 结果回到飞书 —— 接着就是下一句</text>
+      </svg>
+      <p class="cap mt2" data-r="4"><b>后面每一页,都是这个回路里某一段的放大。</b></p>
+    </div>
+  </section>
+
+  <!-- 3 where data lives -->
+  <section class="slide">
+    <span class="idx">02 — 它不是云网站</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>区别只有一个:数据在谁的机器上</span>
+      <h2 class="mt" data-r="2">普通云 SaaS <span style="color:var(--faint)">vs</span> Otto</h2>
+      <div class="mt2" data-r="3" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:30px;align-items:center">
+        <svg class="dia" viewBox="0 0 460 290" aria-label="普通SaaS:多用户的数据汇聚到云服务器">
+          <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#ff7e90"/></marker></defs>
+          <text x="20" y="22" class="lbl" style="fill:var(--rose)" font-size="14">✕ 普通云 SaaS</text>
+          <rect class="nd" x="20" y="50" width="120" height="48" rx="10"/><text class="tsub" x="80" y="74" text-anchor="middle" font-size="13">员工 A</text>
+          <rect class="nd" x="20" y="120" width="120" height="48" rx="10"/><text class="tsub" x="80" y="144" text-anchor="middle" font-size="13">员工 B</text>
+          <rect class="nd" x="20" y="190" width="120" height="48" rx="10"/><text class="tsub" x="80" y="214" text-anchor="middle" font-size="13">员工 C</text>
+          <path class="lk" d="M140,74 C210,74 220,135 280,140" stroke="#ff7e90" marker-end="url(#ar)" opacity=".8"/>
+          <path class="lk" d="M140,144 L280,144" stroke="#ff7e90" marker-end="url(#ar)" opacity=".8"/>
+          <path class="lk" d="M140,214 C210,214 220,150 280,150" stroke="#ff7e90" marker-end="url(#ar)" opacity=".8"/>
+          <rect class="nd r" x="285" y="95" width="155" height="100" rx="14"/>
+          <text class="tt" x="362" y="132" text-anchor="middle" font-size="17">☁ 云服务器</text>
+          <text x="362" y="160" text-anchor="middle" font-size="13" fill="#ff7e90" font-family="var(--body)">你的数据在这</text>
+        </svg>
+        <svg class="dia" viewBox="0 0 460 290" aria-label="Otto:数据留在你自己的电脑">
+          <defs><marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5fe3a1"/></marker>
+          <marker id="ag2" markerWidth="9" markerHeight="9" refX="2" refY="3" orient="auto"><path d="M8,0 L0,3 L8,6 Z" fill="#5fe3a1"/></marker></defs>
+          <text x="20" y="22" class="lbl" style="fill:var(--green)" font-size="14">✓ Otto</text>
+          <rect class="nd" x="20" y="105" width="150" height="80" rx="12"/>
+          <text class="tt" x="95" y="138" text-anchor="middle" font-size="17">你 · 飞书</text>
+          <text class="tsub" x="95" y="162" text-anchor="middle" font-size="12.5">只是入口</text>
+          <path class="lk" d="M178,145 L278,145" stroke="#5fe3a1" marker-end="url(#ag)" marker-start="url(#ag2)"/>
+          <rect class="nd g" x="285" y="85" width="160" height="120" rx="14"/>
+          <text class="tt" x="365" y="120" text-anchor="middle" font-size="17">🖥 你的电脑</text>
+          <text class="tsub" x="365" y="146" text-anchor="middle" font-size="12.5">Otto 程序</text>
+          <text x="365" y="172" text-anchor="middle" font-size="13" fill="#5fe3a1" font-family="var(--body)">数据留在你这</text>
+        </svg>
+      </div>
+      <p class="cap mt2" data-r="4">所以把它想成 <b>"一台你自己的电脑,挂了个飞书机器人账号"</b> —— 不是网站,不需要服务器,内网就能跑。</p>
+    </div>
+  </section>
+
+  <!-- 4 how to use (chat) -->
+  <section class="slide">
+    <span class="idx">03 — 怎么用</span>
+    <div class="inner" style="display:grid;grid-template-columns:1fr 1fr;gap:42px;align-items:center">
+      <div>
+        <span class="kick" data-r="1"><span class="dot"></span>用起来就一句话</span>
+        <h2 class="mt" data-r="2">@ 它,<br>说人话</h2>
+        <p class="cap mt2" data-r="3">不点菜单、不找入口。你怎么跟同事交代,就怎么跟它说。它一边干一边报进度,干完把结果发回聊天。</p>
+        <div class="row mt2" data-r="4"><span class="pill">私聊 / 群都行</span><span class="pill">支持语音 / 文件</span></div>
+      </div>
+      <div class="chat" data-r="3">
+        <div class="bar"><div class="av">O</div><b>Otto</b><span>● 在线</span></div>
+        <div class="body">
+          <div class="bub u">@Otto 把这周群里的消息理成周报,存到飞书文档发我</div>
+          <div class="bub o">
+            <div class="step"><span class="mk">✓</span> 读取本群最近 7 天消息…</div>
+            <div class="step"><span class="mk">✓</span> 归纳成 5 个主题…</div>
+            <div class="step"><span class="mk">✓</span> 新建飞书文档并排版…</div>
+            <div class="doc">📄 本周周报.docx · 点击打开</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 branch-merge: two capabilities, one mechanism -->
+  <section class="slide">
+    <span class="idx">04 — 它能干两类事</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>两条线,一套机制</span>
+      <h2 class="mt" data-r="2">办公 与 写代码,<span class="grad">同一双手</span></h2>
+      <svg class="dia mt2" data-r="3" viewBox="0 0 1000 380" aria-label="Otto大脑分叉为飞书办公与写代码,再汇合到同一套工具调用机制">
+        <defs>
+          <linearGradient id="gl2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5b95ff"/><stop offset="1" stop-color="#3fe3d2"/></linearGradient>
+          <marker id="ad" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#3fe3d2"/></marker>
+        </defs>
+        <rect class="nd b" x="390" y="12" width="220" height="68" rx="14"/>
+        <text class="tt" x="500" y="46" text-anchor="middle" font-size="19">🧠 Otto 大脑</text>
+        <path class="lk" d="M455,80 C455,130 250,120 250,165" stroke="url(#gl2)" marker-end="url(#ad)"/>
+        <path class="lk" d="M545,80 C545,130 750,120 750,165" stroke="url(#gl2)" marker-end="url(#ad)"/>
+        <rect class="nd" x="110" y="168" width="280" height="92" rx="14" style="stroke:rgba(91,149,255,.5)"/>
+        <text class="tt" x="250" y="200" text-anchor="middle" font-size="18">🗂 飞书办公</text>
+        <text class="tsub" x="250" y="228" text-anchor="middle" font-size="13">日历·文档·表格·消息·云盘</text>
+        <text class="tsub" x="250" y="246" text-anchor="middle" font-size="13">任务·邮件·知识库·OKR… 12 域</text>
+        <rect class="nd" x="610" y="168" width="280" height="92" rx="14" style="stroke:rgba(63,227,210,.5)"/>
+        <text class="tt" x="750" y="200" text-anchor="middle" font-size="18">🧑‍💻 写代码 / 工程</text>
+        <text class="tsub" x="750" y="228" text-anchor="middle" font-size="13">读写代码 · 跑命令</text>
+        <text class="tsub" x="750" y="246" text-anchor="middle" font-size="13">改项目 · 绑定代码库</text>
+        <path class="lk" d="M250,260 C250,305 500,300 500,318" stroke="url(#gl2)" marker-end="url(#ad)"/>
+        <path class="lk" d="M750,260 C750,305 500,300 500,318" stroke="url(#gl2)" marker-end="url(#ad)"/>
+        <rect class="nd c" x="270" y="320" width="460" height="56" rx="14"/>
+        <text class="tt" x="500" y="349" text-anchor="middle" font-size="18">⚙ 同一套「工具调用」机制</text>
+      </svg>
+      <p class="cap mt2" data-r="4">对它来说,<b>"调飞书 API" 和 "改你电脑上的代码" 是同一种动作</b> —— 这就是它能两手抓的原因。</p>
+    </div>
+  </section>
+
+  <!-- 6 data flow pipeline -->
+  <section class="slide">
+    <span class="idx">05 — 内部怎么走</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>你刚那句话,内部这么流动</span>
+      <h2 class="mt" data-r="2">一条消息的<span class="grad">旅程</span></h2>
+      <svg class="dia mt3" data-r="3" viewBox="0 0 1000 250" aria-label="飞书到网关到大脑到工具再回飞书的数据流">
+        <defs>
+          <linearGradient id="gl3" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5b95ff"/><stop offset="1" stop-color="#3fe3d2"/></linearGradient>
+          <marker id="af" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#3fe3d2"/></marker>
+        </defs>
+        <g font-family="var(--display)">
+          <rect class="nd b" x="10" y="60" width="200" height="96" rx="15"/>
+          <text x="110" y="92" text-anchor="middle" font-size="26">💬</text>
+          <text class="tt" x="110" y="122" text-anchor="middle" font-size="17">飞书</text>
+          <text class="tsub" x="110" y="143" text-anchor="middle" font-size="12">你 @Otto 发消息</text>
+          <text class="lbl" x="110" y="44" text-anchor="middle" font-size="12">你:理周报</text>
+
+          <rect class="nd" x="273" y="60" width="200" height="96" rx="15" style="stroke:rgba(78,168,236,.55)"/>
+          <text x="373" y="92" text-anchor="middle" font-size="26">📡</text>
+          <text class="tt" x="373" y="122" text-anchor="middle" font-size="17">网关</text>
+          <text class="tsub" x="373" y="143" text-anchor="middle" font-size="12">收消息·认人·去重</text>
+
+          <rect class="nd" x="536" y="60" width="200" height="96" rx="15" style="stroke:rgba(63,227,210,.5)"/>
+          <text x="636" y="92" text-anchor="middle" font-size="26">🧠</text>
+          <text class="tt" x="636" y="122" text-anchor="middle" font-size="17">大脑</text>
+          <text class="tsub" x="636" y="143" text-anchor="middle" font-size="12">该调哪些工具</text>
+
+          <rect class="nd c" x="799" y="60" width="200" height="96" rx="15"/>
+          <text x="899" y="92" text-anchor="middle" font-size="26">🛠</text>
+          <text class="tt" x="899" y="122" text-anchor="middle" font-size="17">工具</text>
+          <text class="tsub" x="899" y="143" text-anchor="middle" font-size="12">飞书API / 你电脑</text>
+          <text class="lbl" x="899" y="44" text-anchor="middle" font-size="12" style="fill:#5fe3a1">调 文档+消息</text>
+
+          <path class="lk" d="M210,108 L271,108" stroke="url(#gl3)" marker-end="url(#af)"/>
+          <path class="lk" d="M473,108 L534,108" stroke="url(#gl3)" marker-end="url(#af)"/>
+          <path class="lk" d="M736,108 L797,108" stroke="url(#gl3)" marker-end="url(#af)"/>
+          <path class="lk" d="M899,156 C899,212 110,212 110,156" stroke="#3fe3d2" stroke-dasharray="6 5" marker-end="url(#af)"/>
+          <text class="lbl" x="500" y="200" text-anchor="middle" font-size="13">↩ 结果以交互卡片，流式回到飞书</text>
+        </g>
+      </svg>
+      <p class="cap mt2" data-r="4">起点终点都在飞书;<b>中间三段(网关→大脑→工具)就是它替你干活的地方。</b></p>
+    </div>
+  </section>
+
+  <!-- 7 roles mapped on the flow -->
+  <section class="slide">
+    <span class="idx">06 — 四个角色</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>把它当一个"数字员工"</span>
+      <h2 class="mt" data-r="2">流程上的每一段,<span class="grad">谁在管</span></h2>
+      <div class="track mt3" data-r="3">
+        <div class="col">
+          <div class="stagechip"><span class="e">💬</span>飞书</div><div class="conn"></div>
+          <div class="rolecard"><div class="r">入口</div><p>你发消息的地方,也是结果回来的地方</p></div>
+        </div>
+        <div class="harrow">→</div>
+        <div class="col">
+          <div class="stagechip"><span class="e">📡</span>网关</div><div class="conn"></div>
+          <div class="rolecard"><div class="r">前台 + 门禁</div><p>连飞书、收发消息、认出是谁、按白名单放行(凭证加密)</p></div>
+        </div>
+        <div class="harrow">→</div>
+        <div class="col">
+          <div class="stagechip"><span class="e">🧠</span>大脑</div><div class="conn"></div>
+          <div class="rolecard"><div class="r">员工本人</div><p>会写代码的 AI:理解、决定、多轮推理</p></div>
+        </div>
+        <div class="harrow">→</div>
+        <div class="col">
+          <div class="stagechip"><span class="e">🛠</span>工具</div><div class="conn"></div>
+          <div class="rolecard"><div class="r">手脚</div><p>一手 lark-cli 操作飞书,一手操作你电脑的代码</p></div>
+        </div>
+      </div>
+      <p class="cap mt3" data-r="4">你之前看到的那堆文件名(gateway / agent / lark-cli / credentials),<b>就是这四个位置。</b></p>
+    </div>
+  </section>
+
+  <!-- 8 isolation -->
+  <section class="slide">
+    <span class="idx">07 — 多群会不会乱</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>一个常见疑问</span>
+      <h2 class="mt" data-r="2">很多群同时用,<span class="grad">怎么不串台</span></h2>
+      <div class="iso mt3" data-r="3">
+        <div class="stack">
+          <div class="src">群 A · 产品组</div>
+          <div class="src">群 B · 研发组</div>
+          <div class="src">私聊 · 你</div>
+        </div>
+        <div class="fan">→<br><span style="font-size:13px">各自<br>独立</span>→</div>
+        <div class="stack">
+          <div class="ses">会话 A:产品组的上下文</div>
+          <div class="ses">会话 B:研发组的上下文 + 绑定的代码库</div>
+          <div class="ses">会话 C:你的私人上下文</div>
+        </div>
+      </div>
+      <p class="cap mt3" data-r="4"><b>每个聊天 / 群 = 一条独立会话</b>,各记各的,互不干扰;还能把某个群锁定到某个项目。
+      <span style="color:var(--warm)"> ⚠️ 诚实说:极端高并发下的隔离还在加固(见下一页)。</span></p>
+    </div>
+  </section>
+
+  <!-- 9 readiness matrix -->
+  <section class="slide">
+    <span class="idx">08 — 现在到哪了</span>
+    <div class="inner">
+      <span class="kick" data-r="1"><span class="dot"></span>成熟度一张图看完</span>
+      <h2 class="mt" data-r="2">哪些真能用,哪些还在路上</h2>
+      <div class="matrix mt2" data-r="3">
+        <div class="mrow"><span class="nm">飞书消息 / 群聊 / 文件</span><div class="mbar"><i class="fill-ok" style="width:100%"></i></div><span class="mtag t-ok">能演示</span></div>
+        <div class="mrow"><span class="nm">写代码 / 工程核心</span><div class="mbar"><i class="fill-ok" style="width:92%"></i></div><span class="mtag t-ok">能演示</span></div>
+        <div class="mrow"><span class="nm">凭证加密 / 授权</span><div class="mbar"><i class="fill-ok" style="width:88%"></i></div><span class="mtag t-ok">能演示</span></div>
+        <div class="mrow"><span class="nm">基础办公能力</span><div class="mbar"><i class="fill-wip" style="width:62%"></i></div><span class="mtag t-wip">需配置</span></div>
+        <div class="mrow"><span class="nm">各业务域(日历/文档…)</span><div class="mbar"><i class="fill-wip" style="width:45%"></i></div><span class="mtag t-wip">逐域授权</span></div>
+        <div class="mrow"><span class="nm">首次引导 / 国际化</span><div class="mbar"><i class="fill-wip" style="width:40%"></i></div><span class="mtag t-wip">需完善</span></div>
+        <div class="mrow"><span class="nm">高并发多群隔离</span><div class="mbar"><i class="fill-risk" style="width:30%"></i></div><span class="mtag t-risk">要加固</span></div>
+        <div class="mrow"><span class="nm">安全面 / 测试覆盖</span><div class="mbar"><i class="fill-risk" style="width:26%"></i></div><span class="mtag t-risk">要加固</span></div>
+      </div>
+      <div class="legend mt2" data-r="4"><span><i class="fill-ok"></i>能演示</span><span><i class="fill-wip"></i>要配置/完善</span><span><i class="fill-risk"></i>要加固</span></div>
+      <p class="cap mt2" data-r="4"><b>方向和骨架对了,绿色今天就能演示;</b>黄红是成熟度问题,工程可解,不是路线错。</p>
+    </div>
+  </section>
+
+  <!-- 10 close -->
+  <section class="slide">
+    <span class="idx">09 — 收口</span>
+    <div class="inner" style="text-align:center">
+      <span class="kick" data-r="1" style="margin:0 auto"><span class="dot"></span>一句话记住</span>
+      <svg class="dia mt2" data-r="2" viewBox="0 0 1000 150" style="max-width:860px;margin-left:auto;margin-right:auto" aria-label="飞书入口→Otto跑腿→你电脑工厂">
+        <defs><marker id="ax" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#3fe3d2"/></marker></defs>
+        <rect class="nd b" x="40" y="40" width="250" height="70" rx="14"/><text class="tt" x="165" y="68" text-anchor="middle" font-size="19">💬 飞书</text><text class="tsub" x="165" y="91" text-anchor="middle" font-size="13">入口</text>
+        <rect class="nd" x="375" y="40" width="250" height="70" rx="14" style="stroke:rgba(63,227,210,.55)"/><text class="tt" x="500" y="68" text-anchor="middle" font-size="19">🤝 Otto</text><text class="tsub" x="500" y="91" text-anchor="middle" font-size="13">替你跑腿</text>
+        <rect class="nd c" x="710" y="40" width="250" height="70" rx="14"/><text class="tt" x="835" y="68" text-anchor="middle" font-size="19">🖥 你的电脑</text><text class="tsub" x="835" y="91" text-anchor="middle" font-size="13">工厂</text>
+        <path class="lk" d="M290,75 L373,75" stroke="#3fe3d2" marker-end="url(#ax)"/>
+        <path class="lk" d="M625,75 L708,75" stroke="#3fe3d2" marker-end="url(#ax)"/>
+      </svg>
+      <h2 class="mt2" data-r="3" style="font-size:clamp(24px,3.4vw,42px)">发消息 → 它干活 → 结果回飞书。<br><span class="grad">办公能干,代码也能写。</span></h2>
+      <p class="cap mt2" data-r="4" style="margin-left:auto;margin-right:auto">现在该一起定的:<b>先打磨哪条能力线、哪几个加固项优先。</b></p>
+    </div>
+  </section>
+
+</div>
+
+<div class="ctrl">
+  <button id="prev" aria-label="上一页">‹</button>
+  <span class="count" id="count">01 / 10</span>
+  <button id="next" aria-label="下一页">›</button>
+</div>
+<div class="hint" id="hint">← / → 翻页 · 点击右侧前进</div>
+
+<script>
+  const deck=document.getElementById('deck');
+  const slides=[...deck.children];
+  const dotsWrap=document.getElementById('dots');
+  const prog=document.getElementById('prog');
+  const count=document.getElementById('count');
+  const prevB=document.getElementById('prev'),nextB=document.getElementById('next');
+  const hint=document.getElementById('hint');
+  let i=0;const n=slides.length;
+  slides.forEach((_,k)=>{const b=document.createElement('button');b.onclick=()=>go(k);dotsWrap.appendChild(b);});
+  const dots=[...dotsWrap.children];
+  const pad=x=>String(x).padStart(2,'0');
+  function render(){
+    deck.style.transform=`translateX(-${i*100}vw)`;
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    dots.forEach((d,k)=>d.classList.toggle('on',k===i));
+    prog.style.width=((i+1)/n*100)+'%';
+    count.textContent=`${pad(i+1)} / ${pad(n)}`;
+    prevB.disabled=i===0;nextB.disabled=i===n-1;
+  }
+  function go(k){i=Math.max(0,Math.min(n-1,k));render();}
+  const next=()=>go(i+1),prev=()=>go(i-1);
+  nextB.onclick=next;prevB.onclick=prev;
+  addEventListener('keydown',e=>{
+    if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){e.preventDefault();next();}
+    if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();prev();}
+    if(e.key==='Home')go(0);if(e.key==='End')go(n-1);
+  });
+  addEventListener('click',e=>{if(e.target.closest('.ctrl,.dots,.pill,.chat,.rolecard,a,button,svg'))return;(e.clientX>innerWidth*0.5?next:prev)();});
+  let sx=0;addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
+  addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>50)(dx<0?next:prev)();},{passive:true});
+  setTimeout(()=>{hint.style.transition='opacity .8s';hint.style.opacity='0';},4500);
+  render();
+</script>
+</body>
+</html>

@@ -1,0 +1,396 @@
+/*
+ * Custom Model Wizard styles
+ * Themed via VSCode CSS variables so it looks native in light/dark/HC.
+ */
+
+.cmw-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.cmw-container {
+  background-color: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  width: min(92%, 720px);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.cmw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  gap: 12px;
+}
+
+.cmw-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.cmw-progress {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-close {
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  font-size: 16px;
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.cmw-close:hover:not(:disabled) {
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.cmw-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cmw-description {
+  padding: 8px 18px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-step-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.cmw-step-body-tall {
+  min-height: 360px;
+}
+
+.cmw-input {
+  width: 100%;
+  padding: 6px 10px;
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.cmw-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.cmw-input-inline {
+  flex: 1;
+  min-width: 0;
+}
+
+.cmw-example {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-error {
+  font-size: 12px;
+  color: var(--vscode-errorForeground, #f48771);
+  padding: 6px 10px;
+  background-color: rgba(244, 135, 113, 0.08);
+  border-left: 2px solid var(--vscode-errorForeground, #f48771);
+  border-radius: 2px;
+}
+
+.cmw-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cmw-btn-primary,
+.cmw-btn-secondary,
+.cmw-btn-link {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.cmw-btn-primary {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.cmw-btn-primary:hover:not(:disabled) {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.cmw-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cmw-btn-secondary {
+  background-color: transparent;
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-panel-border);
+}
+
+.cmw-btn-secondary:hover:not(:disabled) {
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.cmw-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cmw-btn-link {
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  border: none;
+  padding: 4px 8px;
+}
+
+.cmw-btn-link:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+.cmw-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cmw-provider-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.cmw-provider-item:hover {
+  border-color: var(--vscode-focusBorder);
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.cmw-provider-item.selected {
+  border-color: var(--vscode-focusBorder);
+  background-color: var(--vscode-list-activeSelectionBackground, rgba(0, 122, 204, 0.08));
+}
+
+.cmw-provider-item input[type='radio'] {
+  margin-top: 4px;
+  accent-color: var(--vscode-focusBorder);
+}
+
+.cmw-provider-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cmw-provider-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--vscode-foreground);
+}
+
+.cmw-provider-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+.cmw-link {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cmw-link:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+.cmw-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background-color: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.08));
+  border-radius: 6px;
+  border: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+}
+
+.cmw-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cmw-summary-label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+}
+
+.cmw-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--vscode-progressBar-background, rgba(127, 127, 127, 0.4));
+  border-top-color: var(--vscode-foreground);
+  animation: cmw-spin 0.8s linear infinite;
+}
+
+@keyframes cmw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cmw-er-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmw-er-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background-color: var(--vscode-input-background);
+  max-height: 320px;
+}
+
+.cmw-er-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.cmw-er-item:last-child {
+  border-bottom: none;
+}
+
+.cmw-er-item:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.cmw-er-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground, rgba(0, 122, 204, 0.08));
+}
+
+.cmw-er-item input[type='checkbox'] {
+  flex-shrink: 0;
+  accent-color: var(--vscode-focusBorder);
+}
+
+.cmw-er-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cmw-er-item-id {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  word-break: break-all;
+}
+
+.cmw-er-item-meta {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-er-counter {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cmw-er-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.cmw-er-group + .cmw-er-group {
+  margin-top: 6px;
+}
+
+.cmw-er-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.cmw-er-group-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  padding: 2px 0;
+}
+
+.cmw-muted {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}

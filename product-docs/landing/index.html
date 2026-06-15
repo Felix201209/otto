@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>同崽 Tongzai · 你的同事崽,住在飞书里</title>
+<meta name="description" content="人人有 agent·扫码即得·懂你岗位。用你本人的飞书身份干活,跑国产模型,成本极低。同崽,你私人的一个数字同事。" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Space+Grotesk:wght@400;500;600;700&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet" />
+<style>
+  /* ============================================================
+     同崽 Tongzai — 落地页
+     风格方向：温暖萌系科技感 (Warm Kawaii-Tech)
+     奶油纸感底 + 飞书蓝科技锚点 + 暖橙/蜜桃萌系体温
+     ============================================================ */
+
+  :root {
+    /* —— palette —— */
+    --cream:      #FBF7F0;   /* 奶油纸底 */
+    --cream-deep: #F2EADD;   /* 次级面 */
+    --ink:        #2A2722;   /* 墨字 */
+    --ink-soft:   #6B635A;   /* 次级字 */
+    --line:       #E6DCCB;   /* 分隔/描边 */
+
+    --blue:       #3370FF;   /* 飞书蓝 —— 科技锚点 */
+    --blue-deep:  #1F4FD0;
+    --blue-wash:  #E7EEFF;
+
+    --orange:     #FF8A4C;   /* 暖橙 —— 体温 */
+    --peach:      #FFD0B0;   /* 蜜桃 */
+    --peach-wash: #FFF1E6;
+    --sage:       #4FA86B;   /* 语义绿（对比区"对"） */
+    --sage-wash:  #E8F3EB;
+    --dust:       #B9A98F;   /* 语义灰（对比区"将就"） */
+
+    /* —— type —— */
+    --f-display: "ZCOOL KuaiLe", "Noto Sans SC", sans-serif;
+    --f-head:    "Noto Sans SC", "Space Grotesk", sans-serif;
+    --f-body:    "Noto Sans SC", system-ui, sans-serif;
+    --f-mono:    "Space Grotesk", ui-monospace, monospace;
+
+    --text-hero: clamp(2.7rem, 1.2rem + 7.2vw, 6.6rem);
+    --text-h2:   clamp(1.85rem, 1rem + 3.4vw, 3.4rem);
+    --text-lead: clamp(1.05rem, 0.92rem + 0.7vw, 1.5rem);
+
+    /* —— space / motion —— */
+    --space-sec: clamp(4.5rem, 3rem + 7vw, 9.5rem);
+    --maxw: 1180px;
+    --r-lg: 30px;
+    --r-md: 20px;
+    --r-sm: 13px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --dur: 520ms;
+
+    --shadow-soft: 0 18px 50px -22px rgba(80, 56, 26, 0.32);
+    --shadow-card: 0 12px 32px -16px rgba(80, 56, 26, 0.28);
+    --shadow-lift: 0 30px 70px -28px rgba(51, 112, 255, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    font-family: var(--f-body);
+    color: var(--ink);
+    background: var(--cream);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* 奶油纸纹理：极细噪点 + 暖晕，避免纯色塑料感 */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(120% 80% at 88% -8%, var(--peach-wash) 0%, transparent 46%),
+      radial-gradient(90% 70% at -6% 12%, var(--blue-wash) 0%, transparent 40%),
+      var(--cream);
+  }
+  body::after {
+    content: "";
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    opacity: 0.5;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  }
+
+  a { color: inherit; text-decoration: none; }
+  img, svg { display: block; max-width: 100%; }
+
+  .wrap { width: 100%; max-width: var(--maxw); margin-inline: auto; padding-inline: clamp(1.1rem, 4vw, 2.5rem); }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 0.5em;
+    font-family: var(--f-mono); font-size: 0.78rem; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--blue-deep);
+    background: var(--blue-wash);
+    padding: 0.42em 0.95em; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--blue) 22%, transparent);
+  }
+  .eyebrow.warm { color: var(--orange); background: var(--peach-wash); border-color: color-mix(in srgb, var(--orange) 28%, transparent); }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 2.4s var(--ease) infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.5);opacity:.55} }
+
+  /* ====================== NAV ====================== */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    background: color-mix(in srgb, var(--cream) 78%, transparent);
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+  }
+  .nav.scrolled { border-bottom-color: var(--line); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 70px; }
+  .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.18rem; }
+  .brand .logo-mark { width: 38px; height: 38px; }
+  .brand .zh { font-family: var(--f-display); letter-spacing: 0.02em; }
+  .brand .en { font-family: var(--f-mono); font-size: 0.72rem; color: var(--ink-soft); letter-spacing: 0.14em; align-self: flex-end; padding-bottom: 3px; }
+  .nav-links { display: flex; align-items: center; gap: clamp(1rem, 2.4vw, 2.2rem); font-size: 0.94rem; font-weight: 500; }
+  .nav-links a:not(.btn) { color: var(--ink-soft); transition: color 0.25s var(--ease); }
+  .nav-links a:not(.btn):hover { color: var(--ink); }
+  @media (max-width: 760px) { .nav-links a:not(.btn) { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.55em;
+    font-family: var(--f-head); font-weight: 700; font-size: 0.98rem;
+    padding: 0.78em 1.5em; border-radius: 999px;
+    border: 1.5px solid transparent; cursor: pointer;
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background 0.3s var(--ease), color 0.3s var(--ease);
+    will-change: transform;
+  }
+  .btn-primary { background: var(--blue); color: #fff; box-shadow: var(--shadow-lift); }
+  .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 38px 80px -26px rgba(51,112,255,.55); }
+  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { transform: translateY(-3px); border-color: var(--ink); background: var(--cream-deep); }
+  .btn-warm { background: var(--ink); color: var(--cream); box-shadow: 0 22px 50px -22px rgba(42,39,34,.6); }
+  .btn-warm:hover { transform: translateY(-3px); background: var(--orange); box-shadow: 0 32px 64px -22px rgba(255,138,76,.6); }
+
+  /* ====================== HERO ====================== */
+  .hero { position: relative; padding-top: clamp(2.5rem, 4vw, 4.5rem); padding-bottom: var(--space-sec); }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: clamp(2rem, 4vw, 4rem);
+    align-items: center;
+  }
+  @media (max-width: 940px) { .hero-grid { grid-template-columns: 1fr; gap: 2.5rem; } }
+
+  .hero h1 {
+    font-family: var(--f-display);
+    font-size: var(--text-hero);
+    line-height: 1.04; margin: 1.1rem 0 0; letter-spacing: 0.01em;
+    color: var(--ink);
+  }
+  .hero h1 .line { display: block; }
+  .hero h1 .accent { color: var(--blue); position: relative; }
+  /* 手绘下划线，强调"住在飞书里" */
+  .hero h1 .accent::after {
+    content: ""; position: absolute; left: -2%; right: -2%; bottom: -0.14em; height: 0.26em;
+    background: var(--peach); border-radius: 999px; z-index: -1;
+    transform: scaleX(0); transform-origin: left; animation: drawline 1s var(--ease) 0.7s forwards;
+  }
+  @keyframes drawline { to { transform: scaleX(1); } }
+  .hero h1 .nest { color: var(--orange); }
+
+  .hero-lead { font-size: var(--text-lead); color: var(--ink-soft); margin: 1.5rem 0 0; max-width: 30ch; line-height: 1.55; }
+  .hero-lead b { color: var(--ink); font-weight: 700; }
+
+  .hero-tags { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1.7rem; }
+  .hero-tags .tag {
+    font-size: 0.86rem; font-weight: 600; color: var(--ink);
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 0.45em 0.95em; display: inline-flex; align-items: center; gap: 0.45em;
+    box-shadow: var(--shadow-card);
+  }
+  .hero-tags .tag svg { width: 16px; height: 16px; }
+
+  .hero-cta { display: flex; flex-wrap: wrap; gap: 0.85rem; margin-top: 2.2rem; }
+  .hero-fine { margin-top: 1.1rem; font-size: 0.82rem; color: var(--dust); }
+
+  /* —— 吉祥物舞台 —— */
+  .mascot-stage { position: relative; display: grid; place-items: center; }
+  .mascot-halo {
+    position: absolute; width: min(86%, 380px); aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 50% 42%, var(--peach-wash), var(--blue-wash) 70%, transparent 72%);
+    filter: blur(2px);
+    animation: breathe 7s var(--ease) infinite;
+  }
+  @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+  .mascot-svg { position: relative; width: min(100%, 420px); animation: float 6s var(--ease) infinite; }
+  @keyframes float { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(-14px) rotate(1deg)} }
+  /* 漂浮的飞书能力小气泡 */
+  .orbit { position: absolute; font-size: 0.8rem; font-weight: 600; background: #fff; border: 1px solid var(--line);
+    border-radius: 999px; padding: 0.4em 0.85em; box-shadow: var(--shadow-card); display: inline-flex; gap: 0.4em; align-items: center; white-space: nowrap; }
+  .orbit svg { width: 15px; height: 15px; }
+  .orbit.o1 { top: 8%;  left: -4%;  animation: float 5.5s var(--ease) infinite; }
+  .orbit.o2 { top: 30%; right: -8%; animation: float 6.5s var(--ease) 0.4s infinite; }
+  .orbit.o3 { bottom: 14%; left: -8%; animation: float 6s var(--ease) 0.8s infinite; }
+  @media (max-width: 540px) { .orbit { display: none; } }
+
+  /* ====================== SECTION HEAD ====================== */
+  .sec { padding-block: var(--space-sec); position: relative; }
+  .sec-head { max-width: 46ch; margin-bottom: clamp(2.2rem, 4vw, 3.4rem); }
+  .sec-head.center { margin-inline: auto; text-align: center; max-width: 56ch; }
+  .sec-head h2 { font-family: var(--f-head); font-weight: 900; font-size: var(--text-h2); line-height: 1.12; margin: 0.9rem 0 0; letter-spacing: -0.01em; }
+  .sec-head p { font-size: var(--text-lead); color: var(--ink-soft); margin: 1rem 0 0; line-height: 1.5; }
+  .sec-head .hl { color: var(--blue); }
+  .sec-head .hl-warm { color: var(--orange); }
+
+  /* ====================== 痛点对比 ====================== */
+  .versus-wrap {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: clamp(0.8rem, 2vw, 1.6rem); align-items: stretch;
+  }
+  @media (max-width: 860px) { .versus-wrap { grid-template-columns: 1fr; } }
+
+  .vs-card {
+    border-radius: var(--r-lg); padding: clamp(1.6rem, 3vw, 2.4rem);
+    position: relative; overflow: hidden;
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .vs-card .vs-label { display: inline-flex; align-items: center; gap: 0.5em; font-family: var(--f-mono); font-size: 0.76rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; padding: 0.35em 0.85em; border-radius: 999px; }
+  .vs-card h3 { font-family: var(--f-head); font-weight: 900; font-size: clamp(1.4rem, 1rem + 1.6vw, 2rem); margin: 1.1rem 0 0.3rem; line-height: 1.18; }
+  .vs-card .vs-sub { color: var(--ink-soft); font-size: 0.98rem; margin-bottom: 1.3rem; }
+  .vs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+  .vs-list li { display: flex; gap: 0.7rem; align-items: flex-start; font-size: 0.97rem; line-height: 1.45; }
+  .vs-list li svg { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+
+  .vs-bad { background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-card); }
+  .vs-bad .vs-label { background: color-mix(in srgb, var(--dust) 18%, #fff); color: #8c7c63; }
+  .vs-bad h3 { color: var(--ink-soft); }
+  .vs-bad .vs-list li { color: var(--ink-soft); }
+
+  .vs-good {
+    color: var(--cream);
+    background:
+      radial-gradient(130% 100% at 100% 0%, var(--blue) 0%, var(--blue-deep) 55%, #16308f 100%);
+    box-shadow: var(--shadow-lift);
+    border: 1px solid var(--blue-deep);
+  }
+  .vs-good::before { content:""; position:absolute; inset:0; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E"); pointer-events:none; }
+  .vs-good .vs-label { background: rgba(255,255,255,.16); color: #fff; }
+  .vs-good h3 { color: #fff; }
+  .vs-good .vs-sub { color: rgba(255,255,255,.78); }
+  .vs-good .vs-list li { color: rgba(255,255,255,.94); }
+  .vs-good:hover, .vs-bad:hover { transform: translateY(-6px); }
+
+  .vs-mid { display: grid; place-items: center; }
+  .vs-mid .vs-orb {
+    width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--cream); border: 1.5px solid var(--line); box-shadow: var(--shadow-card);
+    font-family: var(--f-display); font-size: 1.1rem; color: var(--orange);
+  }
+  @media (max-width: 860px) { .vs-mid { padding: 0.4rem 0; } .vs-mid .vs-orb { transform: rotate(90deg); } }
+
+  /* ====================== 能力卡片 bento ====================== */
+  .cap-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: clamp(0.9rem, 1.6vw, 1.3rem);
+  }
+  .cap {
+    grid-column: span 2;
+    background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: clamp(1.4rem, 2.4vw, 2rem);
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-card);
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+    will-change: transform;
+  }
+  .cap:hover { transform: translateY(-7px); box-shadow: var(--shadow-soft); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); }
+  .cap .cap-ico { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; margin-bottom: 1.1rem; transition: transform var(--dur) var(--ease); }
+  .cap:hover .cap-ico { transform: rotate(-8deg) scale(1.08); }
+  .cap .cap-ico svg { width: 28px; height: 28px; }
+  .cap h3 { font-family: var(--f-head); font-weight: 700; font-size: 1.22rem; margin: 0 0 0.45rem; }
+  .cap p { color: var(--ink-soft); font-size: 0.96rem; margin: 0; line-height: 1.55; }
+  .cap .cap-note { display: inline-block; margin-top: 0.9rem; font-size: 0.8rem; font-weight: 600; color: var(--blue-deep); font-family: var(--f-mono); }
+
+  /* 第一张大卡占满整行宽一半，强调"扫码即得" */
+  .cap.feature { grid-column: span 3; background: linear-gradient(150deg, #fff 0%, var(--peach-wash) 100%); }
+  .cap.tall { grid-column: span 3; background: linear-gradient(150deg, var(--blue-wash) 0%, #fff 60%); }
+  @media (max-width: 900px) { .cap, .cap.feature, .cap.tall { grid-column: span 3; } .cap-grid { grid-template-columns: repeat(6,1fr);} }
+  @media (max-width: 600px) { .cap, .cap.feature, .cap.tall { grid-column: span 6; } }
+
+  .ico-blue { background: var(--blue-wash); color: var(--blue); }
+  .ico-orange { background: var(--peach-wash); color: var(--orange); }
+  .ico-sage { background: var(--sage-wash); color: var(--sage); }
+  .ico-ink { background: color-mix(in srgb, var(--ink) 8%, #fff); color: var(--ink); }
+
+  /* —— 扫码迷你示意（嵌在 feature 卡里） —— */
+  .qr-mini { position: absolute; right: clamp(1rem,2.4vw,1.8rem); top: clamp(1rem,2.4vw,1.8rem); width: 78px; height: 78px; border-radius: 14px; background:#fff; border:1px solid var(--line); padding:8px; box-shadow: var(--shadow-card); }
+  @media (max-width: 600px){ .qr-mini { display:none; } }
+
+  /* ====================== 场景对话 ====================== */
+  .scenes { display: grid; grid-template-columns: repeat(2, 1fr); gap: clamp(1rem, 2vw, 1.6rem); }
+  @media (max-width: 820px) { .scenes { grid-template-columns: 1fr; } }
+
+  .scene {
+    background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg);
+    overflow: hidden; box-shadow: var(--shadow-card);
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .scene:hover { transform: translateY(-6px); box-shadow: var(--shadow-soft); }
+  .scene-top { display: flex; align-items: center; gap: 0.6rem; padding: 0.9rem 1.2rem; border-bottom: 1px solid var(--line); background: var(--cream); }
+  .scene-top .dots { display: flex; gap: 5px; }
+  .scene-top .dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+  .scene-top .dots i:nth-child(1){ background:#FF6B5E; } .scene-top .dots i:nth-child(2){ background:#FFC24B; } .scene-top .dots i:nth-child(3){ background: var(--sage); }
+  .scene-top .scene-title { font-size: 0.86rem; font-weight: 600; color: var(--ink-soft); display:flex; align-items:center; gap:0.4em; }
+  .scene-top .scene-title svg{ width:16px;height:16px; }
+  .scene-body { padding: 1.3rem 1.2rem 1.5rem; display: grid; gap: 0.85rem; }
+
+  .bubble { max-width: 86%; padding: 0.72em 1em; font-size: 0.94rem; line-height: 1.45; border-radius: 16px; position: relative; }
+  .bubble.user { justify-self: end; background: var(--blue); color: #fff; border-bottom-right-radius: 5px; }
+  .bubble.bot { justify-self: start; background: var(--cream-deep); color: var(--ink); border-bottom-left-radius: 5px; }
+  .bubble .who { display:block; font-size:0.72rem; font-weight:700; letter-spacing:0.04em; margin-bottom:0.2em; opacity:0.7; }
+  .bubble.bot .who { color: var(--orange); opacity: 1; }
+
+  /* 机器人执行结果小卡片（飞书卡片风格） */
+  .larkcard { justify-self: start; max-width: 92%; background:#fff; border:1px solid var(--line); border-radius:14px; padding:0.85rem 1rem; box-shadow: var(--shadow-card); }
+  .larkcard .lc-head { display:flex; align-items:center; gap:0.5em; font-size:0.8rem; font-weight:700; color: var(--blue-deep); margin-bottom:0.55rem; }
+  .larkcard .lc-head svg{ width:16px;height:16px; }
+  .larkcard .lc-row { display:flex; align-items:center; gap:0.6em; font-size:0.9rem; padding:0.32em 0; }
+  .larkcard .lc-row .tick{ width:18px;height:18px;border-radius:50%;background:var(--sage-wash);display:grid;place-items:center;flex:none; }
+  .larkcard .lc-row .tick svg{ width:11px;height:11px; color:var(--sage); }
+  .larkcard .lc-meta { font-family: var(--f-mono); font-size:0.74rem; color: var(--dust); margin-top:0.5rem; }
+
+  /* ====================== CTA ====================== */
+  .cta {
+    position: relative; overflow: hidden;
+    border-radius: clamp(var(--r-md), 4vw, 40px);
+    background: radial-gradient(140% 120% at 12% 0%, var(--ink) 0%, #1a1814 60%, #12100d 100%);
+    color: var(--cream);
+    padding: clamp(2.6rem, 6vw, 5.5rem) clamp(1.4rem, 5vw, 4.5rem);
+    text-align: center;
+  }
+  .cta::before { content:""; position:absolute; width:420px;height:420px;border-radius:50%; right:-8%;top:-40%;
+    background: radial-gradient(circle, color-mix(in srgb,var(--blue) 60%, transparent), transparent 65%); filter: blur(8px); }
+  .cta::after { content:""; position:absolute; width:360px;height:360px;border-radius:50%; left:-10%;bottom:-45%;
+    background: radial-gradient(circle, color-mix(in srgb,var(--orange) 55%, transparent), transparent 65%); filter: blur(8px); }
+  .cta-inner { position: relative; z-index: 1; max-width: 40ch; margin-inline: auto; }
+  .cta h2 { font-family: var(--f-display); font-size: clamp(2rem, 1rem + 5vw, 4.4rem); line-height: 1.08; margin: 0.6rem 0 0; }
+  .cta h2 .b { color: #7CA0FF; } .cta h2 .o { color: var(--peach); }
+  .cta p { color: rgba(251,247,240,.7); font-size: var(--text-lead); margin: 1.2rem auto 0; max-width: 34ch; }
+  .cta-actions { display: flex; gap: 0.85rem; justify-content: center; flex-wrap: wrap; margin-top: 2.2rem; }
+  .cta .btn-on-dark { background: var(--cream); color: var(--ink); }
+  .cta .btn-on-dark:hover { transform: translateY(-3px); background: var(--peach); }
+  .cta .btn-line { border-color: rgba(251,247,240,.3); color: var(--cream); background: transparent; }
+  .cta .btn-line:hover { transform: translateY(-3px); border-color: var(--cream); }
+
+  /* ====================== FOOTER ====================== */
+  footer { padding: clamp(2.5rem,5vw,4rem) 0 3rem; border-top: 1px solid var(--line); margin-top: var(--space-sec); }
+  .foot-grid { display:flex; align-items:flex-start; justify-content:space-between; gap:2rem; flex-wrap:wrap; }
+  .foot-brand { max-width: 34ch; }
+  .foot-brand .brand { margin-bottom: 0.7rem; }
+  .foot-brand p { color: var(--ink-soft); font-size: 0.92rem; }
+  .foot-meta { font-family: var(--f-mono); font-size: 0.78rem; color: var(--dust); line-height: 1.7; }
+  .foot-meta .alt { color: var(--ink-soft); }
+  .foot-legal { margin-top: 2rem; font-size: 0.78rem; color: var(--dust); border-top: 1px dashed var(--line); padding-top: 1.4rem; }
+
+  /* ====================== reveal on scroll ====================== */
+  .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.8s var(--ease), transform 0.8s var(--ease); }
+  .reveal.in { opacity: 1; transform: none; }
+  .reveal.d1 { transition-delay: 0.08s; } .reveal.d2 { transition-delay: 0.16s; } .reveal.d3 { transition-delay: 0.24s; } .reveal.d4 { transition-delay: 0.32s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+    .reveal { opacity: 1; transform: none; }
+    .hero h1 .accent::after { transform: scaleX(1); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 复用 SVG：吉祥物（挂工牌的圆脸小崽） ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tongzai" viewBox="0 0 240 260">
+    <!-- 阴影 -->
+    <ellipse cx="120" cy="244" rx="64" ry="11" fill="#2A2722" opacity="0.1"/>
+    <!-- 身体 -->
+    <rect x="70" y="150" width="100" height="86" rx="40" fill="#3370FF"/>
+    <rect x="70" y="150" width="100" height="44" rx="22" fill="#1F4FD0" opacity="0.25"/>
+    <!-- 工牌挂绳 -->
+    <path d="M104 158 L116 196 M136 158 L124 196" stroke="#FF8A4C" stroke-width="5" stroke-linecap="round"/>
+    <!-- 工牌 -->
+    <g>
+      <rect x="100" y="190" width="40" height="34" rx="7" fill="#FBF7F0" stroke="#E6DCCB" stroke-width="2"/>
+      <circle cx="113" cy="203" r="6" fill="#FFD0B0"/>
+      <rect x="123" y="200" width="11" height="3.4" rx="1.7" fill="#B9A98F"/>
+      <rect x="106" y="213" width="28" height="3.4" rx="1.7" fill="#E6DCCB"/>
+    </g>
+    <!-- 小手 -->
+    <circle cx="68" cy="182" r="13" fill="#3370FF"/>
+    <circle cx="172" cy="182" r="13" fill="#3370FF"/>
+    <!-- 头 -->
+    <circle cx="120" cy="98" r="74" fill="#FFE7D3"/>
+    <circle cx="120" cy="98" r="74" fill="url(#cheekGrad)" opacity="0.0"/>
+    <!-- 头顶呆毛天线（科技触角） -->
+    <path d="M120 26 C120 12 124 6 120 2" stroke="#FF8A4C" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle cx="120" cy="2" r="6" fill="#FF8A4C"/>
+    <circle cx="120" cy="2" r="2.4" fill="#FBF7F0"/>
+    <!-- 耳朵 -->
+    <circle cx="58" cy="78" r="15" fill="#FFE7D3"/>
+    <circle cx="182" cy="78" r="15" fill="#FFE7D3"/>
+    <!-- 腮红 -->
+    <ellipse cx="80" cy="116" rx="13" ry="8" fill="#FFB088" opacity="0.55"/>
+    <ellipse cx="160" cy="116" rx="13" ry="8" fill="#FFB088" opacity="0.55"/>
+    <!-- 眼睛 -->
+    <circle cx="96" cy="98" r="11" fill="#2A2722"/>
+    <circle cx="144" cy="98" r="11" fill="#2A2722"/>
+    <circle cx="99.5" cy="94" r="3.6" fill="#fff"/>
+    <circle cx="147.5" cy="94" r="3.6" fill="#fff"/>
+    <!-- 嘴（微笑） -->
+    <path d="M108 122 Q120 134 132 122" stroke="#2A2722" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <defs>
+      <radialGradient id="cheekGrad"><stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#FFE7D3"/></radialGradient>
+    </defs>
+  </symbol>
+
+  <!-- logo 简化版（小尺寸用） -->
+  <symbol id="logo-mark" viewBox="0 0 240 260">
+    <circle cx="120" cy="120" r="110" fill="#3370FF"/>
+    <circle cx="120" cy="118" r="68" fill="#FFE7D3"/>
+    <path d="M120 50 C120 36 124 30 120 26" stroke="#FF8A4C" stroke-width="8" fill="none" stroke-linecap="round"/>
+    <circle cx="120" cy="26" r="9" fill="#FF8A4C"/>
+    <circle cx="98" cy="118" r="11" fill="#2A2722"/>
+    <circle cx="142" cy="118" r="11" fill="#2A2722"/>
+    <circle cx="101" cy="114" r="3.6" fill="#fff"/><circle cx="145" cy="114" r="3.6" fill="#fff"/>
+    <path d="M106 140 Q120 153 134 140" stroke="#2A2722" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <ellipse cx="84" cy="135" rx="11" ry="7" fill="#FFB088" opacity="0.6"/>
+    <ellipse cx="156" cy="135" rx="11" ry="7" fill="#FFB088" opacity="0.6"/>
+  </symbol>
+</svg>
+
+<!-- ====================== NAV ====================== -->
+<header class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="同崽 Tongzai 首页">
+      <svg class="logo-mark"><use href="#logo-mark"/></svg>
+      <span class="zh">同崽</span><span class="en">TONGZAI</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#versus">凭什么不一样</a>
+      <a href="#caps">它有什么本事</a>
+      <a href="#scenes">能替你干什么</a>
+      <a class="btn btn-primary" href="#cta">扫码养一只 →</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ====================== HERO ====================== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <span class="eyebrow reveal"><span class="dot"></span>飞书原生 · 数字同事</span>
+      <h1 class="reveal d1">
+        <span class="line">你的<span class="nest">同事崽</span>,</span>
+        <span class="line accent">住在飞书里</span>
+      </h1>
+      <p class="hero-lead reveal d2">
+        不是公司共用的那个机器人。是<b>你私人的一个数字同事</b>——
+        扫码 30 秒就到岗,记得你是谁、懂你的岗位,用你本人的飞书身份替你把活干了。
+      </p>
+
+      <div class="hero-tags reveal d3">
+        <span class="tag">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 4h6v6H4V4zM14 4h6v6h-6V4zM4 14h6v6H4v-6zM14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" stroke="#3370FF" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          人人有 agent
+        </span>
+        <span class="tag">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="4" stroke="#FF8A4C" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#FF8A4C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          扫码即得
+        </span>
+        <span class="tag">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#4FA86B" stroke-width="1.8"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" stroke="#4FA86B" stroke-width="1.8" stroke-linecap="round"/></svg>
+          懂你岗位
+        </span>
+      </div>
+
+      <div class="hero-cta reveal d4">
+        <a class="btn btn-primary" href="#cta">用飞书扫码，30 秒到岗</a>
+        <a class="btn btn-ghost" href="#scenes">先看它能干啥</a>
+      </div>
+      <p class="hero-fine reveal d4">跑 DeepSeek / GLM 国产模型 · 数据可不出域 · 单座成本压到一杯奶茶以下</p>
+    </div>
+
+    <div class="mascot-stage reveal d2" aria-label="同崽吉祥物">
+      <div class="mascot-halo" aria-hidden="true"></div>
+      <svg class="mascot-svg" role="img" aria-label="挂着工牌的圆脸小崽">
+        <use href="#tongzai"/>
+      </svg>
+      <span class="orbit o1">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="#3370FF" stroke-width="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="#3370FF" stroke-width="1.8" stroke-linecap="round"/></svg>
+        日历订好了
+      </span>
+      <span class="orbit o2">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="#FF8A4C" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h6M9 16h4" stroke="#FF8A4C" stroke-width="1.8" stroke-linecap="round"/></svg>
+        文档写完了
+      </span>
+      <span class="orbit o3">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="#4FA86B" stroke-width="1.8"/><path d="M3 8l9 6 9-6" stroke="#4FA86B" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        邮件分好类
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== 痛点对比 ====================== -->
+<section class="sec" id="versus">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="eyebrow warm"><span class="dot"></span>同一件事，两种活法</span>
+      <h2>公司养<span class="hl-warm">一个</span>共享机器人,<br>还是人人养<span class="hl">一只</span>自己的崽?</h2>
+      <p>企业 AI 走到今天,主流是"公司搭一个平台,全员共用一个机器人"。我们反着来。</p>
+    </div>
+
+    <div class="versus-wrap">
+      <article class="vs-card vs-bad reveal d1">
+        <span class="vs-label">老办法 · 共享机器人</span>
+        <h3>一家公司一个 Aily,<br>全员排队用</h3>
+        <p class="vs-sub">面向场景,不面向人。</p>
+        <ul class="vs-list">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#B9A98F" stroke-width="1.8"/><path d="M8 12h8" stroke="#B9A98F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            得 IT 或业务管理员先搭好,再下发——又是个项目
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#B9A98F" stroke-width="1.8"/><path d="M8 12h8" stroke="#B9A98F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            一个机器人服务全公司,不记得你是谁、负责什么
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#B9A98F" stroke-width="1.8"/><path d="M8 12h8" stroke="#B9A98F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            产物都挂在"机器人"名下,不是你创建的
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#B9A98F" stroke-width="1.8"/><path d="M8 12h8" stroke="#B9A98F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            锁死在自家生态,模型换不了、数据搬不走
+          </li>
+        </ul>
+      </article>
+
+      <div class="vs-mid reveal d2"><div class="vs-orb">vs</div></div>
+
+      <article class="vs-card vs-good reveal d3">
+        <span class="vs-label">同崽 · 私人数字同事</span>
+        <h3>一员工一只崽,<br>跟着你这个人走</h3>
+        <p class="vs-sub">面向人,记得你,替你动手。</p>
+        <ul class="vs-list">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            员工自己扫码 30 秒到岗,不等 IT、不排期
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            一人一只,记得你的岗位、汇报线、常打交道的人
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            用<b>你本人的飞书身份</b>干活——你看不到的它也看不到,更安全
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            跑国产模型,可私有部署,数据不出客户网
+          </li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== 能力卡片 ====================== -->
+<section class="sec" id="caps">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><span class="dot"></span>它有什么本事</span>
+      <h2>把"企业级 agent 落地",<br>压成一个<span class="hl">个人 onboarding 动作</span>。</h2>
+      <p>底层继承一套打磨成熟的飞书集成,18 个业务域全打通。你只管喊,它来跑。</p>
+    </div>
+
+    <div class="cap-grid">
+      <!-- feature 大卡 -->
+      <article class="cap feature reveal d1">
+        <div class="qr-mini" aria-hidden="true">
+          <svg viewBox="0 0 100 100"><rect width="100" height="100" rx="6" fill="#fff"/>
+            <g fill="#2A2722">
+              <rect x="8" y="8" width="22" height="22" rx="3" fill="none" stroke="#2A2722" stroke-width="5"/>
+              <rect x="70" y="8" width="22" height="22" rx="3" fill="none" stroke="#2A2722" stroke-width="5"/>
+              <rect x="8" y="70" width="22" height="22" rx="3" fill="none" stroke="#2A2722" stroke-width="5"/>
+              <rect x="15" y="15" width="8" height="8"/><rect x="77" y="15" width="8" height="8"/><rect x="15" y="77" width="8" height="8"/>
+              <rect x="40" y="10" width="6" height="6"/><rect x="52" y="10" width="6" height="6"/><rect x="40" y="22" width="6" height="6"/>
+              <rect x="64" y="40" width="6" height="6"/><rect x="40" y="40" width="6" height="6" fill="#3370FF"/><rect x="52" y="52" width="6" height="6" fill="#FF8A4C"/>
+              <rect x="40" y="64" width="6" height="6"/><rect x="52" y="76" width="6" height="6"/><rect x="64" y="64" width="6" height="6"/><rect x="76" y="52" width="6" height="6"/><rect x="76" y="76" width="6" height="6"/><rect x="64" y="88"  width="6" height="6"/>
+            </g></svg>
+        </div>
+        <div class="cap-ico ico-orange"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3>扫码即得</h3>
+        <p>员工打开飞书扫一下,专属 agent 当场到岗。把过去要 IT 立项、排期、下发的事,变成一个人 30 秒的入职动作。无需管理员,无需配置。</p>
+        <span class="cap-note">// 从 IT 项目 → 个人 onboarding</span>
+      </article>
+
+      <!-- tall 大卡 -->
+      <article class="cap tall reveal d2">
+        <div class="cap-ico ico-blue"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c0-3.6 3-6 7-6s7 2.4 7 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18.5" cy="6" r="1.4" fill="currentColor"/></svg></div>
+        <h3>懂你岗位</h3>
+        <p>到岗就读通讯录,推断你在哪个部门、是什么岗、汇报给谁。跨会话记住你的岗位画像与偏好——越用越像那个坐你隔壁、知道你每件破事的同事。</p>
+        <span class="cap-note">// 面向人,不面向场景</span>
+      </article>
+
+      <article class="cap reveal d1">
+        <div class="cap-ico ico-sage"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l8 4v5c0 4.5-3.2 7.6-8 9-4.8-1.4-8-4.5-8-9V7l8-4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3>本人身份更安全</h3>
+        <p>它用你本人的飞书 token 干活,而不是一个万能机器人账号。你权限内看不到的文档,它也碰不到——飞书原生权限,天然成了第二道闸门。</p>
+      </article>
+
+      <article class="cap reveal d2">
+        <div class="cap-ico ico-ink"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3>国产模型成本低</h3>
+        <p>跑 DeepSeek / GLM,命中缓存后单座位月成本能压到一杯奶茶以下。给客户固定价,不按 token 计费——"给小王配个 AI 同事 ¥39/月",省心。</p>
+      </article>
+
+      <article class="cap reveal d3">
+        <div class="cap-ico ico-blue"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M3 9h18M8 13h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+        <h3>飞书全域打通</h3>
+        <p>日历、文档、表格、云盘、IM、任务、OKR、邮件、Wiki、妙记……18 个业务域现成可用。你常用的飞书在哪,它的手就伸到哪。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== 场景 ====================== -->
+<section class="sec" id="scenes">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="eyebrow warm"><span class="dot"></span>它能替你干什么</span>
+      <h2>你在飞书里喊一声,<br>剩下的<span class="hl-warm">交给崽</span>。</h2>
+      <p>单聊或群里 @ 它,说人话就行。下面是几个一句话办成的真实场景。</p>
+    </div>
+
+    <div class="scenes">
+      <!-- 日历 -->
+      <article class="scene reveal d1">
+        <div class="scene-top">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <span class="scene-title">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="#3370FF" stroke-width="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="#3370FF" stroke-width="1.8" stroke-linecap="round"/></svg>
+            日历管家
+          </span>
+        </div>
+        <div class="scene-body">
+          <div class="bubble user">帮我找下周和张三都有空的 1 小时,订个会议室</div>
+          <div class="bubble bot"><span class="who">同崽</span>查了你俩的日程,周三 14:00–15:00 都空,会议室也订上了 👇</div>
+          <div class="larkcard">
+            <div class="lc-head"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="#3370FF" stroke-width="1.8"/><path d="M3 9h18" stroke="#3370FF" stroke-width="1.8"/></svg>已创建日程 · 周三产品评审</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>周三 14:00–15:00 · 已发邀请给 张三</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>会议室 3F-暖阳 · 已预订</div>
+            <div class="lc-meta">以你本人身份创建 · calendar +book</div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 文档 -->
+      <article class="scene reveal d2">
+        <div class="scene-top">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <span class="scene-title">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="#FF8A4C" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h6M9 16h4" stroke="#FF8A4C" stroke-width="1.8" stroke-linecap="round"/></svg>
+            文档代笔
+          </span>
+        </div>
+        <div class="scene-body">
+          <div class="bubble user">把刚才聊的会议纪要整理成飞书文档,发到项目群</div>
+          <div class="bubble bot"><span class="who">同崽</span>纪要写好了,分了"结论 / 待办 / 风险"三栏,已经发到「电商上线」群里啦。</div>
+          <div class="larkcard">
+            <div class="lc-head"><svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="#FF8A4C" stroke-width="1.8" stroke-linejoin="round"/></svg>新建文档 · 0610 上线评审纪要</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>3 栏结构 · 5 条待办已 @ 负责人</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>已分享至「电商上线」群</div>
+            <div class="lc-meta">docs +create · im +send</div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 邮件（含二次确认） -->
+      <article class="scene reveal d3">
+        <div class="scene-top">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <span class="scene-title">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="#4FA86B" stroke-width="1.8"/><path d="M3 8l9 6 9-6" stroke="#4FA86B" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            邮件分诊
+          </span>
+        </div>
+        <div class="scene-body">
+          <div class="bubble user">今早邮件有啥要紧的?帮我回一下供应商那封</div>
+          <div class="bubble bot"><span class="who">同崽</span>12 封新邮件,2 封要紧:供应商催款、法务待签。回信我拟好了草稿——<b>对外发送我先等你点确认</b>。</div>
+          <div class="larkcard">
+            <div class="lc-head"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="#FF8A4C" stroke-width="1.8"/></svg>待你确认 · 回复 供应商-王经理</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>草稿已拟 · 含付款节点说明</div>
+            <div style="display:flex;gap:0.55rem;margin-top:0.75rem">
+              <span style="flex:1;text-align:center;background:#3370FF;color:#fff;font-weight:700;font-size:0.84rem;padding:0.5em;border-radius:9px">确认发送</span>
+              <span style="flex:1;text-align:center;background:var(--cream-deep);color:var(--ink-soft);font-weight:700;font-size:0.84rem;padding:0.5em;border-radius:9px">我再改改</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 任务 -->
+      <article class="scene reveal d4">
+        <div class="scene-top">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <span class="scene-title">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="#3370FF" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="#3370FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            任务跟进
+          </span>
+        </div>
+        <div class="scene-body">
+          <div class="bubble user">我手上 Q3 的活儿哪些快到期了?</div>
+          <div class="bubble bot"><span class="who">同崽</span>翻了你的任务和 OKR,3 件本周到期。我把最急的那件挪到了你今天下午的空档,要的话我去群里催一下协作的人。</div>
+          <div class="larkcard">
+            <div class="lc-head"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="#3370FF" stroke-width="1.8"/></svg>本周到期 · 3 项</div>
+            <div class="lc-row"><span class="tick" style="background:#FFE3D3"><svg viewBox="0 0 24 24" fill="none" style="color:#FF8A4C"><path d="M12 7v6M12 16.5h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span>渠道复盘报告 · 今天截止 · 已排进下午</div>
+            <div class="lc-row"><span class="tick"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>另 2 项 周五前 · 已设提醒</div>
+            <div class="lc-meta">task +list · okr +progress</div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== CTA ====================== -->
+<section class="sec" id="cta">
+  <div class="wrap">
+    <div class="cta reveal">
+      <div class="cta-inner">
+        <span class="eyebrow" style="background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.2)"><span class="dot"></span>开始养你的那一只</span>
+        <h2>给每个人,<br>配<span class="o">一只</span>自己的<span class="b">崽</span>。</h2>
+        <p>打开飞书,扫码 30 秒到岗。先让一个部门用起来,别的同事看见了,自然会来要。</p>
+        <div class="cta-actions">
+          <a class="btn btn-on-dark" href="#top">用飞书扫码,先免费试 60 天</a>
+          <a class="btn btn-line" href="#scenes">约个 15 分钟 demo</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ====================== FOOTER ====================== -->
+<footer>
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <a class="brand" href="#top">
+        <svg class="logo-mark"><use href="#logo-mark"/></svg>
+        <span class="zh">同崽</span><span class="en">TONGZAI</span>
+      </a>
+      <p>你的同事崽,住在飞书里。人人有 agent · 扫码即得 · 懂你岗位 · 用你本人飞书身份干活。</p>
+    </div>
+    <div class="foot-meta">
+      工作名 <span class="alt">同崽 Tóngzǎi</span> · 亚军备选 <span class="alt">多崽</span><br>
+      "一人一个崽,人人有 agent"<br>
+      跑 DeepSeek / GLM · 可私有部署 · 数据可不出域
+    </div>
+  </div>
+  <div class="wrap foot-legal">
+    同崽是一款独立产品,与猎豹移动 / OrionStar 无任何关联。© 2026 同崽 Tongzai. 保留所有权利。
+  </div>
+</footer>
+
+<script>
+  // 1) 导航滚动态
+  const nav = document.getElementById('nav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 12);
+  onScroll();
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // 2) 滚动入场（IntersectionObserver，compositor-friendly：只动 transform/opacity）
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }
+  }, { threshold: 0.14, rootMargin: '0px 0px -8% 0px' });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+  // 3) 吉祥物随指针轻微视差（仅指针设备，尊重 reduced-motion）
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fine = window.matchMedia('(pointer: fine)').matches;
+  const mascot = document.querySelector('.mascot-svg');
+  if (mascot && fine && !reduce) {
+    const stage = mascot.closest('.mascot-stage');
+    let raf = 0;
+    stage.addEventListener('pointermove', (ev) => {
+      const r = stage.getBoundingClientRect();
+      const dx = (ev.clientX - (r.left + r.width / 2)) / r.width;
+      const dy = (ev.clientY - (r.top + r.height / 2)) / r.height;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        mascot.style.transform = `translate(${dx * 14}px, ${dy * 14}px) rotate(${dx * 4}deg)`;
+      });
+    });
+    stage.addEventListener('pointerleave', () => { mascot.style.transform = ''; });
+  }
+</script>
+
+</body>
+</html>

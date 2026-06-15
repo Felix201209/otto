@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tongzai-landing",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["product-docs/landing/_serve.cjs"],
+      "port": 4321
+    },
+    {
+      "name": "otto-pitch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8092"],
+      "port": 8092
+    }
+  ]
+}

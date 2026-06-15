@@ -1,0 +1,970 @@
+/* Tool Calls Styles - 紧凑左对齐布局 */
+
+.tool-call-list {
+  margin-top: 0px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 工具调用统计 */
+.tool-calls-summary {
+  margin-bottom: 4px; /* 减少下边距 */
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  padding: 4px 0;
+}
+
+.summary-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.summary-text {
+  font-weight: 500;
+  color: var(--vscode-editor-foreground);
+}
+
+.summary-stats {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.stat {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.stat.total {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.stat.needs-confirm {
+  background: var(--vscode-inputValidation-warningBackground);
+  color: var(--vscode-inputValidation-warningForeground);
+}
+
+.stat.running {
+  background: var(--vscode-progressBar-background);
+  color: var(--vscode-button-foreground);
+}
+
+.stat.completed {
+  background: var(--vscode-inputValidation-successBackground);
+  color: var(--vscode-inputValidation-successForeground);
+}
+
+.stat.error {
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-inputValidation-errorForeground);
+}
+
+/* 工具调用容器 */
+.tool-calls-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px; /* 减少工具调用之间的间距 */
+}
+
+/* 单个工具调用项 */
+.tool-call-item {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-call-item:hover {
+  border-color: var(--vscode-contrastBorder, var(--vscode-panel-border)); /* 使用对比边框或保持原样 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background-color: var(--vscode-list-hoverBackground); /* 增加背景色变化 */
+}
+
+/* Diff可点击项的样式 */
+.tool-call-item.diff-clickable:hover {
+  border-color: var(--vscode-contrastBorder, var(--vscode-panel-border));
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tool-call-item.diff-clickable:active {
+  border-color: var(--vscode-contrastBorder, var(--vscode-panel-border));
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+/* 主要工具信息行 - 单行紧凑布局 */
+.tool-main-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--vscode-editor-background);
+  min-height: 32px;
+  border-bottom: 1px solid transparent;
+  transition: all 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tool-main-line:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* 工具头部 */
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px; /* 减少padding */
+  background: var(--vscode-tab-inactiveBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.tool-info {
+  display: flex;
+  align-items: center;
+  gap: 6px; /* 减少间距 */
+  flex: 1;
+  min-width: 0; /* 允许flex子项收缩 */
+}
+
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tool-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 工具描述 - 单行显示和CSS截断 */
+.tool-description {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  flex: 1;
+  min-width: 0; /* 允许收缩 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 4px;
+}
+
+/* 状态图标样式 */
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.status-icon.pending {
+  color: var(--vscode-charts-blue);
+}
+
+.status-icon.executing {
+  color: var(--vscode-charts-orange);
+}
+
+.status-icon.success {
+  color: var(--vscode-charts-green);
+}
+
+.status-icon.error {
+  color: var(--vscode-charts-red);
+}
+
+.status-icon.confirming {
+  color: var(--vscode-charts-yellow);
+}
+
+.status-icon.cancelled {
+  color: var(--vscode-descriptionForeground);
+}
+
+.status-icon.background-running {
+  color: var(--vscode-charts-yellow);
+}
+
+/* 🎯 后台运行提示样式 - INFO 分割线风格 */
+.tool-background-running-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+  gap: 12px;
+}
+
+.tool-background-running-hint::before,
+.tool-background-running-hint::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-panel-border);
+  max-width: 100px;
+}
+
+.background-hint-text {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.status-icon.unknown {
+  color: var(--vscode-descriptionForeground);
+}
+
+.tool-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  margin-left: 12px;
+}
+
+.status-text {
+  font-weight: 500;
+}
+
+/* 工具控制部分 */
+.tool-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.expand-btn {
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  transition: all 0.15s ease;
+}
+
+.expand-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.expand-btn:active {
+  background: var(--vscode-toolbar-activeBackground);
+  transform: scale(0.96);
+}
+
+.expand-btn:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+/* 紧凑参数显示 */
+.tool-params-compact {
+  padding: 4px 8px; /* 减少padding */
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* 减少行间距 */
+}
+
+.param-compact {
+  display: flex;
+  gap: 4px; /* 减少间距 */
+  font-size: 12px;
+  line-height: 1.2; /* 减少行高 */
+}
+
+.param-key {
+  color: var(--vscode-symbolIcon-propertyForeground);
+  font-weight: 500;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.param-value {
+  color: var(--vscode-editor-foreground);
+  font-family: monospace;
+  word-break: break-all;
+  flex: 1;
+}
+
+/* 🎯 Modern Tool Confirmation Styles */
+.tool-confirmation-modern {
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.confirmation-preview {
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 🎯 确认面板中的 Diff 预览 */
+.confirmation-diff-preview {
+  max-height: 300px;
+  overflow-y: auto;
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  padding: 8px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.confirmation-diff-preview .diff-container {
+  font-size: 12px;
+}
+
+/* 确认预览元信息 */
+.confirmation-preview-item .preview-meta {
+  padding: 2px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.confirmation-preview pre {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', 'Courier New', monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-editor-foreground);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.confirmation-footer-modern {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+  position: relative;
+}
+
+/* Mode Selector Dropdown */
+.mode-selector {
+  position: relative;
+}
+
+.mode-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+
+.mode-dropdown-trigger:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.mode-dropdown-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  min-width: 200px;
+  padding: 4px 0;
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--vscode-dropdown-foreground);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.mode-option:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.mode-option.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.mode-option.warning {
+  color: var(--vscode-inputValidation-warningForeground);
+}
+
+.option-check {
+  opacity: 0;
+  width: 14px;
+}
+
+.mode-option.selected .option-check {
+  opacity: 1;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  outline: none;
+  height: 24px;
+  transition: all 0.1s;
+}
+
+.action-btn.cancel {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+}
+
+.action-btn.cancel:hover {
+  color: var(--vscode-foreground);
+}
+
+.action-btn.run {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-border);
+}
+
+.action-btn.run:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.action-btn:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* 展开的详情容器：只显示结果区域，紧凑布局 */
+.tool-expanded-params {
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-textBlockQuote-background);
+  padding: 6px 8px; /* 🎯 这里的 padding 决定了内部框的宽度感 */
+  display: block;
+}
+
+/* 参数/结果通用卡片容器，限制高度并滚动 */
+.params-json {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  padding: 8px 10px; /* 🎯 增加内边距，使其不那么拥挤 */
+  max-height: 250px; /* 🎯 稍微提高最大高度 */
+  overflow: auto;
+  width: 100%;       /* 🎯 强制撑开 */
+  box-sizing: border-box; /* 🎯 确保 padding 不撑大宽度 */
+}
+
+.params-json > div:first-child {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 4px;
+}
+
+.params-json pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4; /* 🎯 增加到 1.4，看起来更精致不拥挤 */
+  color: var(--vscode-editor-foreground);
+  white-space: pre;
+  word-break: normal;
+  font-family: var(--vscode-editor-font-family, 'Cascadia Code', 'Consolas', monospace);
+}
+
+/* 移除响应式布局，保持单列紧凑显示 */
+
+/* 内联确认区域 */
+.tool-confirm-inline {
+  background: var(--vscode-inputValidation-warningBackground);
+  border-top: 1px solid var(--vscode-inputValidation-warningBorder);
+  padding: 6px 8px; /* 减少padding */
+}
+
+.confirm-message {
+  font-size: 13px;
+  color: var(--vscode-inputValidation-warningForeground);
+  margin-bottom: 6px; /* 减少下边距 */
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px; /* 减少间距 */
+}
+
+.inline-icon {
+  flex-shrink: 0;
+}
+
+.risk-warning {
+  color: var(--vscode-inputValidation-errorForeground);
+  font-weight: bold;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.confirm-btn {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.confirm-btn.cancel {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border-color: var(--vscode-button-border);
+}
+
+.confirm-btn.cancel:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.confirm-btn.approve {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-border);
+}
+
+.confirm-btn.approve:hover {
+  background: var(--vscode-button-hoverBackground);
+  transform: translateY(-1px);
+}
+
+.affected-files {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  padding: 4px 8px;
+  background: var(--vscode-editor-background);
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border);
+}
+
+/* 执行结果 */
+.tool-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tool-result.success {
+  background: var(--vscode-inputValidation-successBackground);
+  color: var(--vscode-inputValidation-successForeground);
+}
+
+.tool-result.error {
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-inputValidation-errorForeground);
+}
+
+.result-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.result-text {
+  flex: 1;
+}
+
+.error-details {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: normal;
+  opacity: 0.9;
+  font-family: monospace;
+  background: var(--vscode-editor-background);
+  padding: 4px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border);
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+/* 动画 */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* 🎯 闪烁动画 - 用于执行中的圆点 */
+@keyframes flashing {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.status-icon.executing.flashing {
+  animation: flashing 1s ease-in-out infinite;
+}
+
+/* 响应式 */
+@media (max-width: 480px) {
+  .tool-main-line {
+    padding: 1px 10px;
+  }
+
+  .tool-info {
+    gap: 6px;
+  }
+
+  .tool-name {
+    font-size: 12px;
+  }
+
+  .tool-description {
+    font-size: 11px;
+  }
+
+  .expand-btn {
+    width: 20px;
+    height: 20px;
+  }
+
+  .param-key {
+    min-width: 60px;
+  }
+
+  .confirmation-actions {
+    flex-direction: column;
+  }
+
+  .confirm-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* 🎯 移动端优化：紧凑确认选项 */
+  .confirmation-options {
+    gap: 4px;
+  }
+
+  .confirm-option {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .option-icon {
+    font-size: 12px;
+  }
+
+  .option-label {
+    font-size: 11px;
+  }
+
+  .option-label small {
+    font-size: 9px;
+  }
+
+  .yolo-warning {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
+  .tool-confirmation {
+    padding: 10px;
+  }
+}
+
+
+
+/* 🎯 实时输出区域样式 */
+.tool-live-output {
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-terminal-background);
+  margin: 0;
+}
+
+.live-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--vscode-tab-inactiveBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+/* 🎯 转到后台按钮样式 */
+.move-to-background-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--vscode-button-foreground, #ffffff);
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.move-to-background-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.move-to-background-btn:active {
+  transform: scale(0.97);
+}
+
+.move-to-background-btn svg {
+  flex-shrink: 0;
+}
+
+.live-output-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-terminal-foreground);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.live-output-size {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.live-output-content {
+  max-height: 150px; /* 缩小到一半高度 */
+  overflow: auto; /* 支持横向和纵向滚动 */
+  padding: 8px 12px;
+  background: var(--vscode-terminal-background);
+}
+
+.live-output-text {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', 'Courier New', monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-terminal-foreground);
+  white-space: pre; /* 不换行，保持原始格式 */
+  word-break: normal; /* 不强制断词 */
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.live-output-placeholder {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  padding: 12px 0;
+  text-align: center;
+}
+
+/* 🎯 执行中状态的动画效果 */
+.tool-call-item[data-status="executing"] .live-output-label {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* 🎯 实时输出区域的滚动条样式 */
+.live-output-content::-webkit-scrollbar {
+  width: 6px;
+  height: 6px; /* 横向滚动条高度 */
+}
+
+.live-output-content::-webkit-scrollbar-track {
+  background: var(--vscode-scrollbarSlider-background);
+}
+
+.live-output-content::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-activeBackground);
+  border-radius: 3px;
+}
+
+.live-output-content::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* 横向滚动条样式 */
+.live-output-content::-webkit-scrollbar:horizontal {
+  height: 6px;
+}
+
+/* 🎯 紧凑结果显示样式 */
+.compact-result {
+  margin-top: 0 !important;
+}
+
+.compact-json-result {
+  margin: 0 !important;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--vscode-editor-foreground);
+  white-space: pre !important; /* 保留原有换行，但不自动换行 */
+  overflow-x: auto !important; /* 横向滚动 */
+  overflow-y: auto !important; /* 纵向滚动 */
+  word-break: normal !important; /* 不强制断词 */
+  word-wrap: normal !important; /* 不自动换行 */
+  padding: 0 !important;
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', 'Courier New', monospace);
+  max-width: 100%;
+  display: block;
+}
+
+/* 紧凑结果区域样式 */
+.params-json.compact-result {
+  max-height: 180px; /* 减小最大高度 */
+  padding: 6px 8px; /* 减小内边距 */
+  overflow-x: auto; /* 确保容器支持横向滚动 */
+  overflow-y: auto; /* 纵向滚动 */
+}
+
+.params-json.compact-result > div:first-child {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+/* JSON结果区域的滚动条样式 */
+.params-json::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.params-json::-webkit-scrollbar-track {
+  background: var(--vscode-scrollbarSlider-background);
+}
+
+.params-json::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-activeBackground);
+  border-radius: 3px;
+}
+
+.params-json::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* 🎯 Batch 子工具列表样式 */
+.batch-sub-tools {
+  display: flex;
+  flex-direction: column;
+  padding-left: 24px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  gap: 2px;
+}
+
+.batch-sub-tool-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.batch-connector {
+  color: var(--vscode-descriptionForeground);
+  font-family: monospace;
+  opacity: 0.6;
+}
+
+.batch-sub-tool-name {
+  color: var(--vscode-editor-foreground);
+  font-weight: 500;
+}
+
+.batch-sub-tool-summary {
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}

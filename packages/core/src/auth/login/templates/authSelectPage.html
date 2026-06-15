@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title data-i18n="auth.page.title">Choose Authentication Method</title>
+  <meta charset="utf-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      color: #1e293b;
+      line-height: 1.6;
+    }
+
+    .container {
+      background: #ffffff;
+      border-radius: 20px;
+      padding: 64px 48px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.05),
+        0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      border: 1px solid #f1f5f9;
+      text-align: center;
+    }
+
+    .title {
+      font-size: 36px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 16px;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+    }
+
+    .subtitle {
+      color: #64748b;
+      font-size: 18px;
+      font-weight: 400;
+      margin-bottom: 48px;
+      line-height: 1.5;
+    }
+
+    .auth-button {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 16px;
+      width: 100%;
+      padding: 20px 32px;
+      margin: 20px 0;
+      border: none;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      position: relative;
+      font-family: inherit;
+    }
+
+    .feishu-btn {
+      background: #ffffff;
+      color: #374151;
+      border: 2px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .feishu-btn:hover {
+      background: #f9fafb;
+      border-color: #0ea5e9;
+      color: #0ea5e9;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+    }
+
+    .feishu-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .deepvlab-btn {
+      background: #ffffff;
+      color: #374151;
+      border: 2px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .deepvlab-btn:hover {
+      background: #f9fafb;
+      border-color: #1e293b;
+      color: #1e293b;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(30, 41, 59, 0.15);
+    }
+
+    .deepvlab-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 4px rgba(30, 41, 59, 0.1);
+    }
+
+    .cheetah-btn {
+      background: #ffffff;
+      color: #374151;
+      border: 2px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .cheetah-btn:hover {
+      background: #f9fafb;
+      border-color: #ff6b35;
+      color: #ff6b35;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(255, 107, 53, 0.15);
+    }
+
+    .cheetah-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .vipcard-btn {
+      background: #ffffff;
+      color: #374151;
+      border: 2px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .vipcard-btn:hover {
+      background: #f9fafb;
+      border-color: #f59e0b;
+      color: #d97706;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15);
+    }
+
+    .vipcard-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .icon {
+      width: 22px;
+      height: 22px;
+      display: inline-block;
+    }
+
+    .description {
+      color: #94a3b8;
+      font-size: 15px;
+      line-height: 1.6;
+      margin-top: 40px;
+      padding: 24px;
+      background: #f8fafc;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* 消息提示样式 */
+    .message-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    .message-box {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 500px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      animation: messageSlideIn 0.3s ease-out;
+    }
+
+    @keyframes messageSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .message-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+    }
+
+    .message-icon.success {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+
+    .message-icon.error {
+      background: #fef2f2;
+      color: #dc2626;
+    }
+
+    .message-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #1f2937;
+    }
+
+    .message-content {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .message-button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .message-button:hover {
+      background: #2563eb;
+      transform: translateY(-1px);
+    }
+
+    .message-button:active {
+      transform: translateY(0);
+    }
+
+    /* 中国IP限制消息样式 */
+    .china-message {
+      background: #fef2f2;
+      border: 2px solid #fecaca;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 20px 0;
+      text-align: center;
+    }
+
+    .china-message-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 16px;
+      background: #dc2626;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 24px;
+    }
+
+    .china-message-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #dc2626;
+      margin-bottom: 12px;
+    }
+
+    .china-message-content {
+      color: #7f1d1d;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+
+    .auth-buttons-container {
+      /* 用于控制所有登录按钮的显示/隐藏 */
+    }
+
+    /* 加载中样式 */
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #e2e8f0;
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      color: #64748b;
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    /* 猎豹OA表单样式 */
+    .cheetah-form {
+      margin-top: 24px;
+      padding: 24px;
+      background: #f8fafc;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+    }
+
+    .cheetah-form h3 {
+      margin: 0 0 20px 0;
+      color: #1e293b;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      color: #374151;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      background: white;
+      box-sizing: border-box;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #ff6b35;
+      box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    /* VIP卡表单特殊样式 */
+    .vipcard-form .form-group input:focus {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+    }
+
+    .vipcard-form .btn-primary {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    }
+
+    .vipcard-form .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    }
+
+    .vipcard-hint {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 8px;
+      text-align: left;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .btn-primary, .btn-secondary {
+      flex: 1;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #e55a2b 0%, #de831a 100%);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:disabled {
+      background: linear-gradient(135deg, #d1d5db 0%, #9ca3af 100%);
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .btn-secondary {
+      background: #f1f5f9;
+      color: #64748b;
+      border: 1px solid #e2e8f0;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #e2e8f0;
+      color: #475569;
+    }
+
+    .btn-secondary:disabled {
+      background: #f8fafc;
+      color: #cbd5e1;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 20px 16px;
+      }
+
+      .container {
+        padding: 40px 32px;
+      }
+
+      .title {
+        font-size: 32px;
+      }
+
+      .subtitle {
+        font-size: 16px;
+        margin-bottom: 36px;
+      }
+
+      .auth-button {
+        padding: 18px 24px;
+        font-size: 16px;
+        gap: 12px;
+      }
+
+      .description {
+        margin-top: 32px;
+        padding: 20px;
+        font-size: 14px;
+      }
+    }
+
+    /* 加载动画 */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .container {
+      animation: fadeInUp 0.4s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="title" data-i18n="auth.page.title">Choose Authentication</h1>
+    <p class="subtitle" data-i18n="auth.page.description">Select your preferred login method to continue</p>
+
+    <!-- 加载中效果 -->
+    <div id="loading-container" class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text" data-i18n="auth.loading.text">Checking access permissions...</div>
+    </div>
+
+    <!-- 中国IP限制消息 -->
+    <div id="china-message" class="china-message hidden">
+      <div class="china-message-icon">⚠️</div>
+      <div class="china-message-title" data-i18n="auth.china.restriction.title">Access Restricted</div>
+      <div id="china-message-content" class="china-message-content">
+        <!-- 动态加载后台消息 -->
+      </div>
+    </div>
+
+    <!-- 登录按钮容器 -->
+    <div id="auth-buttons-container" class="auth-buttons-container hidden">
+      <!-- 飞书登录按钮区域（动态生成，支持多租户） -->
+      <div id="feishu-buttons-container"></div>
+
+    <button class="auth-button deepvlab-btn" onclick="startDeepvlabAuth()">
+      <img class="icon" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_52ad718e/deepv.ico" alt="DeepV" />
+      <span data-i18n="auth.deepvlab.button">DeepVlab Unified Login</span>
+    </button>
+
+    <button id="cheetah-btn" class="auth-button cheetah-btn hidden" onclick="startCheetahAuth()">
+      <img class="icon" src="https://www.cmcm.com/favicon.ico" alt="Cheetah" />
+      <span data-i18n="auth.cheetah.button">Cheetah OA Login</span>
+    </button>
+
+    <button id="vipcard-btn" class="auth-button vipcard-btn" onclick="startVipCardAuth()">
+      <span class="icon" style="font-size: 20px;">🎫</span>
+      <span data-i18n="auth.vipcard.button">VIP Card Login</span>
+    </button>
+
+    <!-- 猎豹OA登录表单 -->
+      <div id="cheetah-form" class="cheetah-form hidden">
+        <h3 data-i18n="auth.cheetah.form.title">Cheetah OA Login</h3>
+        <form id="cheetah-login-form" onsubmit="submitCheetahAuth(event)">
+          <div class="form-group">
+            <label for="cheetah-email" data-i18n="auth.cheetah.form.email">Email:</label>
+            <input type="email" id="cheetah-email" name="email" required placeholder="user@cmcm.com" />
+          </div>
+          <div class="form-group">
+            <label for="cheetah-password" data-i18n="auth.cheetah.form.password">Password:</label>
+            <input type="password" id="cheetah-password" name="password" required />
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" onclick="cancelCheetahAuth()" data-i18n="auth.cheetah.form.cancel">Cancel</button>
+            <button type="submit" class="btn-primary" data-i18n="auth.cheetah.form.submit">Login</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- VIP卡登录表单 -->
+      <div id="vipcard-form" class="cheetah-form vipcard-form hidden">
+        <h3 data-i18n="auth.vipcard.form.title">VIP Card Activation & Login</h3>
+        <form id="vipcard-login-form" onsubmit="submitVipCardAuth(event)">
+          <div class="form-group">
+            <label for="vipcard-code" data-i18n="auth.vipcard.form.code">Redemption Code:</label>
+            <input type="text" id="vipcard-code" name="code" required placeholder="VIP-XXXXXXXX" style="text-transform: uppercase;" />
+            <div class="vipcard-hint" data-i18n="auth.vipcard.form.hint">Enter the code from your VIP card</div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" onclick="cancelVipCardAuth()" data-i18n="auth.vipcard.form.cancel">Cancel</button>
+            <button type="submit" class="btn-primary" data-i18n="auth.vipcard.form.submit">Activate & Login</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="description" data-i18n="auth.page.instruction">
+      Choose your authentication method and we will guide you through the secure login process
+    </div>
+  </div>
+
+  <script>
+    // 国际化翻译对象
+    const translations = {
+      en: {
+        'auth.page.title': 'Choose Authentication',
+        'auth.page.description': 'Select your preferred login method to continue',
+        'auth.feishu.button': 'Feishu Login',
+        'auth.deepvlab.button': 'DeepVlab Unified Login',
+        'auth.cheetah.button': 'Cheetah OA Login',
+        'auth.cheetah.form.title': 'Cheetah OA Login',
+        'auth.cheetah.form.email': 'Email',
+        'auth.cheetah.form.password': 'Password',
+        'auth.cheetah.form.cancel': 'Cancel',
+        'auth.cheetah.form.submit': 'Login',
+        'auth.cheetah.form.submitting': 'Logging in...',
+        'auth.page.instruction': 'Choose your authentication method and we will guide you through the secure login process',
+        'auth.loading.text': 'Checking access permissions...',
+        'auth.china.restriction.title': 'Access Restricted',
+        'auth.feishu.start.error': 'Failed to start Feishu authentication, please try again',
+        'auth.deepvlab.start.error': 'Failed to start DeepVlab authentication, please try again',
+        'auth.cheetah.start.error': 'Failed to login with Cheetah OA, please check your credentials',
+        'auth.message.success.title': 'Login Successful!',
+        'auth.message.success.content': 'You have successfully logged in with Cheetah OA. You can now close this window and continue using Easy Code.',
+        'auth.message.success.button': 'Close',
+        'auth.message.error.login.title': 'Login Failed',
+        'auth.message.error.login.content': 'Cheetah OA authentication failed. Please check your credentials and try again.',
+        'auth.message.error.login.button': 'Try Again',
+        'auth.message.error.input.title': 'Input Required',
+        'auth.message.error.input.content': 'Please fill in both email and password fields.',
+        'auth.message.error.input.button': 'OK',
+        'auth.message.error.connection.title': 'Connection Error',
+        'auth.message.error.connection.content': 'Unable to connect to authentication server. Please check your network connection and try again.',
+        'auth.message.error.connection.button': 'Retry',
+        'auth.message.error.feishu.content': 'Unable to start Feishu authentication. Please check your network connection and try again.',
+        'auth.message.error.deepvlab.content': 'Unable to start DeepVlab authentication. Please check your network connection and try again.',
+        'auth.vipcard.button': 'VIP Card Login',
+        'auth.vipcard.form.title': 'VIP Card Activation & Login',
+        'auth.vipcard.form.code': 'Redemption Code',
+        'auth.vipcard.form.hint': 'Enter the code from your VIP card',
+        'auth.vipcard.form.cancel': 'Cancel',
+        'auth.vipcard.form.submit': 'Activate & Login',
+        'auth.vipcard.form.submitting': 'Processing...',
+        'auth.vipcard.success.title': 'Activation Successful!',
+        'auth.vipcard.success.content': 'Your VIP card has been activated and you are now logged in. You can close this window and continue using Easy Code.',
+        'auth.vipcard.error.empty': 'Please enter the redemption code.',
+        'auth.vipcard.error.invalid': 'Invalid or expired redemption code. Please check and try again.'
+      },
+      zh: {
+        'auth.page.title': '选择认证方式',
+        'auth.page.description': '选择您偏好的登录方式以继续',
+        'auth.feishu.button': '飞书登录',
+        'auth.deepvlab.button': 'DeepVlab统一登录',
+        'auth.cheetah.button': '猎豹OA登录',
+        'auth.cheetah.form.title': '猎豹OA登录',
+        'auth.cheetah.form.email': '邮箱',
+        'auth.cheetah.form.password': '密码',
+        'auth.cheetah.form.cancel': '取消',
+        'auth.cheetah.form.submit': '登录',
+        'auth.cheetah.form.submitting': '登录中...',
+        'auth.page.instruction': '选择您的认证方式，我们将引导您完成安全的登录流程',
+        'auth.loading.text': '正在检查访问权限...',
+        'auth.china.restriction.title': '访问受限',
+        'auth.feishu.start.error': '飞书认证启动失败，请重试',
+        'auth.deepvlab.start.error': 'DeepVlab认证启动失败，请重试',
+        'auth.cheetah.start.error': '猎豹OA登录失败，请检查您的凭据',
+        'auth.message.success.title': '登录成功！',
+        'auth.message.success.content': '您已成功使用猎豹OA登录。现在可以关闭此窗口并继续使用Easy Code。',
+        'auth.message.success.button': '关闭',
+        'auth.message.error.login.title': '登录失败',
+        'auth.message.error.login.content': '猎豹OA认证失败。请检查您的凭据并重试。',
+        'auth.message.error.login.button': '重试',
+        'auth.message.error.input.title': '需要输入',
+        'auth.message.error.input.content': '请填写邮箱和密码字段。',
+        'auth.message.error.input.button': '确定',
+        'auth.message.error.connection.title': '连接错误',
+        'auth.message.error.connection.content': '无法连接到认证服务器。请检查您的网络连接并重试。',
+        'auth.message.error.connection.button': '重试',
+        'auth.message.error.feishu.content': '无法启动飞书认证。请检查您的网络连接并重试。',
+        'auth.message.error.deepvlab.content': '无法启动DeepVlab认证。请检查您的网络连接并重试。',
+        'auth.vipcard.button': 'VIP卡登录',
+        'auth.vipcard.form.title': 'VIP卡激活与登录',
+        'auth.vipcard.form.code': '兑换码',
+        'auth.vipcard.form.hint': '请输入VIP卡上的兑换码',
+        'auth.vipcard.form.cancel': '取消',
+        'auth.vipcard.form.submit': '激活并登录',
+        'auth.vipcard.form.submitting': '处理中...',
+        'auth.vipcard.success.title': '激活成功！',
+        'auth.vipcard.success.content': '您的VIP卡已激活并完成登录。现在可以关闭此窗口并继续使用Easy Code。',
+        'auth.vipcard.error.empty': '请输入兑换码。',
+        'auth.vipcard.error.invalid': '兑换码无效或已过期，请检查后重试。'
+      }
+    };
+
+    // 获取浏览器语言
+    function getBrowserLanguage() {
+      const lang = navigator.language || navigator.userLanguage;
+      return lang.startsWith('zh') ? 'zh' : 'en';
+    }
+
+    // 翻译函数
+    function t(key) {
+      const locale = getBrowserLanguage();
+      return translations[locale][key] || translations.en[key] || key;
+    }
+
+    // 初始化页面文本
+    function initI18n() {
+      document.querySelectorAll('[data-i18n]').forEach(element => {
+        const key = element.getAttribute('data-i18n');
+        element.textContent = t(key);
+        // 同时更新title属性（如果是title标签）
+        if (element.tagName === 'TITLE') {
+          document.title = t(key);
+        }
+      });
+    }
+
+    // 消息提示函数
+    function showMessage(type, title, content, buttonText = 'OK', options = {}) {
+      const { closable = true } = options;
+
+      // 创建消息覆盖层
+      const overlay = document.createElement('div');
+      overlay.className = 'message-overlay';
+
+      // 创建消息框
+      const messageBox = document.createElement('div');
+      messageBox.className = 'message-box';
+
+      // 图标
+      const icon = document.createElement('div');
+      icon.className = `message-icon ${type}`;
+      icon.innerHTML = type === 'success' ? '✓' : '✕';
+
+      // 标题
+      const titleEl = document.createElement('div');
+      titleEl.className = 'message-title';
+      titleEl.textContent = title;
+
+      // 内容
+      const contentEl = document.createElement('div');
+      contentEl.className = 'message-content';
+      contentEl.textContent = content;
+
+      // 组装消息框
+      messageBox.appendChild(icon);
+      messageBox.appendChild(titleEl);
+      messageBox.appendChild(contentEl);
+
+      // 按钮（仅在允许关闭时显示）
+      if (closable) {
+        const button = document.createElement('button');
+        button.className = 'message-button';
+        button.textContent = buttonText;
+        button.onclick = () => {
+          document.body.removeChild(overlay);
+        };
+        messageBox.appendChild(button);
+      }
+
+      overlay.appendChild(messageBox);
+
+      // 添加到页面
+      document.body.appendChild(overlay);
+
+      // 点击覆盖层关闭（仅在允许关闭时）
+      if (closable) {
+        overlay.onclick = (e) => {
+          if (e.target === overlay) {
+            document.body.removeChild(overlay);
+          }
+        };
+      }
+    }
+
+    // 页面加载时初始化i18n和检查登录权限
+    document.addEventListener('DOMContentLoaded', function() {
+      initI18n();
+      checkFeishuAllowed(); // 这个函数会自动调用checkCheetahAllowed
+    });
+
+    function checkFeishuAllowed() {
+      console.log('🔍 开始检查飞书登录权限...');
+      console.log('📡 调用API: /api/backend/feishu-allowed');
+
+      // Call the backend server to check if Feishu login is allowed
+      fetch('/api/backend/feishu-allowed')
+        .then(response => {
+          console.log('🌐 接口响应状态:', response.status);
+          console.log('✅ 进入第一个then块');
+          return response.json();
+        })
+        .then(data => {
+          console.log('✅ 进入第二个then块 - 开始处理数据');
+          console.log('📋 后台接口返回完整数据:', JSON.stringify(data, null, 2));
+
+          // 隐藏加载中效果
+          console.log('🔄 开始隐藏loading效果...');
+          const loadingContainer = document.getElementById('loading-container');
+          console.log('🔍 loading容器元素:', loadingContainer);
+          if (loadingContainer) {
+            console.log('⏳ loading容器存在，添加hidden类');
+            loadingContainer.classList.add('hidden');
+            // 双重保险：直接设置display样式
+            loadingContainer.style.display = 'none';
+            console.log('✅ loading hidden类已添加，display设置为none');
+            console.log('🎨 loading容器当前className:', loadingContainer.className);
+            console.log('🎨 loading容器当前style.display:', loadingContainer.style.display);
+          } else {
+            console.error('❌ 未找到loading容器元素!');
+          }
+
+          // 检查是否是中国IP且不允许登录
+          if (data.isChina && !data.feishuLoginAllowed && data.messages && data.messages.length > 0) {
+            console.log('🇨🇳 检测到中国IP且不允许登录，显示限制消息');
+
+            // 显示中国IP限制消息
+            const chinaMessage = document.getElementById('china-message');
+            const chinaMessageContent = document.getElementById('china-message-content');
+
+            if (chinaMessage && chinaMessageContent) {
+              // 填充消息内容
+              chinaMessageContent.innerHTML = data.messages.map(msg => `<p>${msg}</p>`).join('');
+
+              // 显示消息框
+              chinaMessage.classList.remove('hidden');
+              console.log('✅ 已显示中国IP限制消息');
+            }
+
+            // 登录按钮保持隐藏状态（默认就是隐藏的）
+          } else {
+            console.log('✅ 非中国IP，显示登录选项');
+
+            // 显示登录按钮容器
+            const authButtonsContainer = document.getElementById('auth-buttons-container');
+            if (authButtonsContainer) {
+              authButtonsContainer.classList.remove('hidden');
+              console.log('✅ 已显示登录按钮容器');
+            }
+
+            // DeepVlab登录始终可用（没有hidden类，会自动显示）
+            console.log('✅ DeepVlab登录始终可用');
+
+            // 根据权限显示飞书登录按钮（动态获取租户列表）
+            if (data.feishuLoginAllowed) {
+              loadFeishuTenants();
+            } else {
+              console.log('🚫 飞书登录被禁用，保持飞书按钮隐藏');
+            }
+
+            // 检查猎豹OA登录权限（使用相同的数据）
+            checkCheetahAllowed(data);
+          }
+        })
+        .catch(error => {
+          console.error('❌ 检查飞书登录权限失败:', error);
+          console.log('🔄 进入catch块 - API调用失败');
+
+          // 隐藏加载中效果
+          console.log('🔄 catch块中开始隐藏loading效果...');
+          const loadingContainer = document.getElementById('loading-container');
+          console.log('🔍 catch块中loading容器元素:', loadingContainer);
+          if (loadingContainer) {
+            console.log('⏳ catch块中loading容器存在，添加hidden类');
+            loadingContainer.classList.add('hidden');
+            // 双重保险：直接设置display样式
+            loadingContainer.style.display = 'none';
+            console.log('✅ catch块中loading hidden类已添加，display设置为none');
+          } else {
+            console.error('❌ catch块中未找到loading容器元素!');
+          }
+
+          // 出错时显示登录按钮容器（保守处理）
+          const authButtonsContainer = document.getElementById('auth-buttons-container');
+          if (authButtonsContainer) {
+            authButtonsContainer.classList.remove('hidden');
+          }
+
+          console.log('🔄 失败时显示所有登录选项');
+        });
+    }
+
+    function checkCheetahAllowed(data) {
+      console.log('🔍 开始检查猎豹OA登录权限...');
+
+      // 使用与飞书相同的权限检查逻辑
+      if (data && !data.isChina && data.feishuLoginAllowed) {
+        console.log('✅ 猎豹OA登录已允许，显示登录按钮');
+        // 显示猎豹OA登录按钮
+        const cheetahBtn = document.getElementById('cheetah-btn');
+        if (cheetahBtn) {
+          cheetahBtn.classList.remove('hidden');
+          console.log('✅ 猎豹OA登录按钮已显示');
+        } else {
+          console.warn('⚠️ 未找到猎豹OA登录按钮元素');
+        }
+      } else {
+        console.log('🚫 猎豹OA登录被禁用，保持按钮隐藏');
+      }
+    }
+
+    function loadFeishuTenants() {
+      fetch('/api/backend/feishu-tenants')
+        .then(function(resp) { return resp.json(); })
+        .then(function(tenants) {
+          renderFeishuButtons(tenants);
+        })
+        .catch(function() {
+          console.log('⚠️ 无法获取租户列表，显示默认飞书按钮');
+          renderFeishuButtons([{ appId: '', label: t('auth.feishu.button'), tenantKey: 'main' }]);
+        });
+    }
+
+    function renderFeishuButtons(tenants) {
+      var container = document.getElementById('feishu-buttons-container');
+      if (!container) return;
+      container.innerHTML = '';
+      if (!tenants || tenants.length === 0) {
+        tenants = [{ appId: '', label: t('auth.feishu.button'), tenantKey: 'main' }];
+      }
+      tenants.forEach(function(tenant) {
+        var btn = document.createElement('button');
+        btn.className = 'auth-button feishu-btn';
+        btn.innerHTML = '<img class="icon" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_c768e6a4/feishu.ico" alt="Feishu" />' +
+          '<span>' + (tenant.label || t('auth.feishu.button')) + '</span>';
+        btn.onclick = function() { startFeishuAuth(tenant.appId); };
+        container.appendChild(btn);
+      });
+      console.log('✅ 飞书登录按钮已生成，共 ' + tenants.length + ' 个租户');
+    }
+
+    function startFeishuAuth(appId) {
+      console.log('启动飞书认证...', appId ? 'appId=' + appId : '默认');
+      var body = appId ? JSON.stringify({ appId: appId }) : '{}';
+      fetch('/start-feishu-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.authUrl) {
+            window.location.replace(data.authUrl);
+          }
+        })
+        .catch(error => {
+          console.error('飞书认证启动失败:', error);
+          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.feishu.content'), t('auth.message.error.connection.button'));
+        });
+    }
+
+    function startDeepvlabAuth() {
+      console.log('启动DeepVlab认证...');
+      // 这里会调用DeepVlab认证逻辑
+      fetch('/start-deepvlab-auth', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          if (data.authUrl) {
+            // 修复方案：直接替换当前页面到认证URL，避免产生额外的空白页面
+            // 这样认证完成后只需要关闭一个页面，不会留下空白的中间页
+            window.location.replace(data.authUrl);
+          }
+        })
+        .catch(error => {
+          console.error('DeepVlab认证启动失败:', error);
+          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.deepvlab.content'), t('auth.message.error.connection.button'));
+        });
+    }
+
+    function startCheetahAuth() {
+      console.log('显示猎豹OA登录表单...');
+      // 隐藏所有认证按钮
+      const buttons = document.querySelectorAll('.auth-button');
+      buttons.forEach(btn => btn.style.display = 'none');
+
+      // 显示猎豹OA表单
+      const form = document.getElementById('cheetah-form');
+      if (form) {
+        form.classList.remove('hidden');
+      }
+    }
+
+    function cancelCheetahAuth() {
+      console.log('取消猎豹OA登录...');
+      // 隐藏表单
+      const form = document.getElementById('cheetah-form');
+      if (form) {
+        form.classList.add('hidden');
+      }
+
+      // 显示所有认证按钮
+      const buttons = document.querySelectorAll('.auth-button');
+      buttons.forEach(btn => btn.style.display = 'flex');
+    }
+
+    function submitCheetahAuth(event) {
+      event.preventDefault();
+      console.log('提交猎豹OA登录...');
+
+      const email = document.getElementById('cheetah-email').value;
+      const password = document.getElementById('cheetah-password').value;
+
+      if (!email || !password) {
+        showMessage('error', t('auth.message.error.input.title'), t('auth.message.error.input.content'), t('auth.message.error.input.button'));
+        return;
+      }
+
+      // 禁用提交按钮
+      const submitBtn = event.target.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = t('auth.cheetah.form.submitting');
+      }
+
+      fetch('/start-cheetah-auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // 登录成功，显示成功消息（不允许关闭）
+            showMessage('success', t('auth.message.success.title'), t('auth.message.success.content'), t('auth.message.success.button'), { closable: false });
+            // 隐藏表单，显示按钮
+            cancelCheetahAuth();
+          } else {
+            showMessage('error', t('auth.message.error.login.title'), data.message || t('auth.message.error.login.content'), t('auth.message.error.login.button'));
+          }
+        })
+        .catch(error => {
+          console.error('猎豹OA登录失败:', error);
+          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.connection.content'), t('auth.message.error.connection.button'));
+        })
+        .finally(() => {
+          // 恢复提交按钮
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = t('auth.cheetah.form.submit');
+          }
+        });
+    }
+
+    function startVipCardAuth() {
+      console.log('显示VIP卡登录表单...');
+      // 隐藏所有认证按钮
+      const buttons = document.querySelectorAll('.auth-button');
+      buttons.forEach(btn => btn.style.display = 'none');
+
+      // 显示VIP卡表单
+      const form = document.getElementById('vipcard-form');
+      if (form) {
+        form.classList.remove('hidden');
+        // 聚焦到输入框
+        const codeInput = document.getElementById('vipcard-code');
+        if (codeInput) {
+          codeInput.focus();
+        }
+      }
+    }
+
+    function cancelVipCardAuth() {
+      console.log('取消VIP卡登录...');
+      // 隐藏表单
+      const form = document.getElementById('vipcard-form');
+      if (form) {
+        form.classList.add('hidden');
+      }
+
+      // 清空输入
+      const codeInput = document.getElementById('vipcard-code');
+      if (codeInput) {
+        codeInput.value = '';
+      }
+
+      // 显示所有认证按钮
+      const buttons = document.querySelectorAll('.auth-button');
+      buttons.forEach(btn => btn.style.display = 'flex');
+    }
+
+    function submitVipCardAuth(event) {
+      event.preventDefault();
+      console.log('提交VIP卡登录...');
+
+      const codeInput = document.getElementById('vipcard-code');
+      const code = codeInput ? codeInput.value.trim().toUpperCase() : '';
+
+      if (!code) {
+        showMessage('error', t('auth.message.error.input.title'), t('auth.vipcard.error.empty'), t('auth.message.error.input.button'));
+        return;
+      }
+
+      // 禁用提交按钮
+      const submitBtn = event.target.querySelector('button[type="submit"]');
+      const cancelBtn = event.target.querySelector('button[type="button"]');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = t('auth.vipcard.form.submitting');
+      }
+      if (cancelBtn) {
+        cancelBtn.disabled = true;
+      }
+
+      fetch('/start-vipcard-auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // 登录成功，显示成功消息（不允许关闭）
+            showMessage('success', t('auth.vipcard.success.title'), t('auth.vipcard.success.content'), t('auth.message.success.button'), { closable: false });
+            // 隐藏表单，显示按钮
+            cancelVipCardAuth();
+          } else {
+            showMessage('error', t('auth.message.error.login.title'), data.message || t('auth.vipcard.error.invalid'), t('auth.message.error.login.button'));
+          }
+        })
+        .catch(error => {
+          console.error('VIP卡登录失败:', error);
+          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.connection.content'), t('auth.message.error.connection.button'));
+        })
+        .finally(() => {
+          // 恢复提交按钮
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = t('auth.vipcard.form.submit');
+          }
+          if (cancelBtn) {
+            cancelBtn.disabled = false;
+          }
+        });
+    }
+  </script>
+</body>
+</html>

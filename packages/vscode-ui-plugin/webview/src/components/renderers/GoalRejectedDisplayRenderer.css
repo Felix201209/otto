@@ -1,0 +1,47 @@
+/**
+ * GoalRejectedDisplayRenderer Styles
+ */
+
+.goal-rejected-card {
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-left: 3px solid var(--vscode-charts-red, #f48771);
+  border-radius: 6px;
+  background-color: var(--vscode-textBlockQuote-background, rgba(244, 135, 113, 0.06));
+  margin: 6px 0;
+  overflow: hidden;
+  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+.goal-rejected-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(60, 60, 60, 0.5));
+}
+
+.goal-rejected-header-icon {
+  color: var(--vscode-charts-red, #f48771);
+  flex-shrink: 0;
+}
+
+.goal-rejected-title {
+  color: var(--vscode-charts-red, #f48771);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.goal-rejected-body {
+  padding: 10px 12px;
+}
+
+.goal-rejected-feedback {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-foreground, #cccccc);
+}

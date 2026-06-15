@@ -1,0 +1,1863 @@
+/* Message Input Component Styles - 可调整大小的编辑器风格 */
+
+.message-input-container {
+  border-top: 1px solid var(--vscode-panel-border);
+  background-color: var(--vscode-editor-background);
+  padding: 4px 12px 12px 12px;
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  min-height: 140px;
+  /* 🎯 默认 auto，但允许通过 style 覆盖 */
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: height 0.2s ease-out;
+  box-sizing: border-box;
+}
+
+/* 🎯 当处于手动调整大小时，禁用过渡动画以保证流畅 */
+.message-input-container.resizing {
+  transition: none;
+}
+
+.input-wrapper {
+  position: relative;
+  /* 🎯 填满容器剩余空间 */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  margin-bottom: 0;
+  min-height: 0; /* 允许 flex 子元素收缩 */
+}
+
+/* 🎯 确保编辑器容器填满 wrapper */
+.lexical-editor-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* 🎯 确保富文本包装器填满容器 */
+.rich-text-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Lexical ContentEditable 样式 */
+.lexical-content-editable {
+  width: 100%;
+  /* 🎯 关键：在自动模式下由内容撑开，在固定高度模式下填满容器 */
+  flex: 1;
+  min-height: 72px;
+  height: auto;
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 6px;
+  padding: 10px 12px 36px 12px; /* 🎯 增加底部 padding (36px) 以留出按钮位置 */
+  font-family: var(--vscode-font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  word-wrap: break-word;
+  word-break: break-word;
+  cursor: text;
+  resize: none;
+}
+
+/* 🎯 确保 Lexical 内部元素正确内联显示 */
+.lexical-content-editable * {
+  line-height: inherit;
+}
+
+.lexical-content-editable .inline-file-ref-tag {
+  vertical-align: baseline !important;
+  display: inline-flex !important;
+}
+
+/* 🎯 强制所有装饰器节点内联显示 */
+.lexical-content-editable [data-lexical-decorator] {
+  display: inline !important;
+}
+
+/* 🎯 确保段落元素允许内联内容 */
+.lexical-content-editable p {
+  display: block;
+  margin: 0;
+  line-height: inherit;
+}
+
+.lexical-content-editable p * {
+  display: inline !important;
+  vertical-align: baseline !important;
+}
+
+/* 🎯 Lexical 根节点 */
+.lexical-root {
+  outline: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Lexical 焦点状态 - 更明显的焦点效果 */
+.lexical-content-editable:focus {
+  border-color: var(--vscode-focusBorder);
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2); /* 添加光晕效果 */
+}
+
+/* 🎯 Lexical 禁用状态 */
+.lexical-content-editable[contenteditable="false"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 🎯 Lexical 错误边界 */
+.lexical-error-boundary {
+  color: var(--vscode-errorForeground);
+  padding: 0px;
+  border: 1px solid var(--vscode-errorBorder);
+  border-radius: 4px;
+  background-color: var(--vscode-errorBackground);
+}
+
+/* Lexical placeholder - 调整位置以匹配新的padding */
+.lexical-placeholder {
+  color: var(--vscode-input-placeholderForeground);
+  font-family: var(--vscode-font-family);
+  font-size: 14px;
+  position: absolute;
+  top: 10px; /* 🎯 匹配新的padding */
+  left: 12px; /* 🎯 匹配新的padding */
+  right: 12px; /* 🎯 新增：给右侧也设定边界 */
+  pointer-events: none;
+  user-select: none;
+  line-height: 1.5;
+  /* 🎯 新增：强制单行，超出显示省略号 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.placeholder-hint {
+  font-size: 11px;
+  opacity: 0.7;
+  color: var(--vscode-descriptionForeground);
+  font-weight: normal;
+  display: block;
+  margin-top: 4px;
+}
+
+/* 🎯 内联文件引用标签样式 */
+.inline-file-ref-tag {
+  display: inline-flex !important;
+  align-items: center;
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  padding: 1px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 0 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  vertical-align: baseline !important;
+  line-height: 1 !important;
+  max-width: 150px;
+  height: auto;
+  min-height: auto;
+}
+
+.inline-file-ref-tag:hover {
+  background-color: var(--vscode-button-hoverBackground);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.file-ref-icon {
+  font-size: 12px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.file-ref-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 1px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.file-ref-remove-btn {
+  background: none;
+  border: none;
+  color: var(--vscode-badge-foreground);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.file-ref-remove-btn:hover {
+  background-color: var(--vscode-errorForeground, #f85149);
+  color: white;
+  transform: scale(1.1);
+}
+
+.file-ref-remove-btn:active {
+  transform: scale(0.95);
+}
+
+/* 🎯 文件引用节点容器 */
+.file-reference-node {
+  display: inline !important;
+  vertical-align: baseline !important;
+  line-height: inherit !important;
+  font-size: inherit !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+}
+
+/* 🎯 文件夹引用节点容器 */
+.folder-reference-node {
+  display: inline !important;
+  vertical-align: baseline !important;
+  line-height: inherit !important;
+  font-size: inherit !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+}
+
+/* 🎯 内联文件夹引用标签样式 */
+.inline-folder-ref-tag {
+  display: inline-flex !important;
+  align-items: center;
+  background-color: var(--vscode-textLink-foreground, #3794ff);
+  color: white;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 0 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  vertical-align: baseline !important;
+  line-height: 1 !important;
+  max-width: 150px;
+  height: auto;
+  min-height: auto;
+}
+
+.inline-folder-ref-tag:hover {
+  background-color: var(--vscode-textLink-activeForeground, #2c85d4);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.folder-ref-icon {
+  font-size: 12px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.folder-ref-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 1px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.folder-ref-remove-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.folder-ref-remove-btn:hover {
+  background-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.folder-ref-remove-btn:active {
+  transform: scale(0.95);
+}
+
+/* 🎯 代码引用标签样式（类似文件引用，但颜色不同） */
+.inline-code-ref-tag {
+  display: inline-flex !important;
+  align-items: center;
+  background-color: var(--vscode-textCodeBlock-background, #1e1e1e);
+  color: var(--vscode-textLink-foreground, #4fc3f7);
+  border: 1px solid var(--vscode-textLink-foreground, #4fc3f7);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 0 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  vertical-align: baseline !important;
+  line-height: 1 !important;
+  max-width: 200px;
+  height: auto;
+  min-height: auto;
+}
+
+.inline-code-ref-tag:hover {
+  background-color: var(--vscode-textLink-activeForeground, #3ba9d8);
+  box-shadow: 0 2px 6px rgba(79, 195, 247, 0.3);
+}
+
+.code-ref-icon {
+  font-size: 12px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.code-ref-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 1px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.code-ref-line {
+  opacity: 0.8;
+  font-size: 10px;
+}
+
+.code-ref-remove-btn {
+  background: none;
+  border: none;
+  color: currentColor;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.code-ref-remove-btn:hover {
+  background-color: var(--vscode-errorForeground, #f85149);
+  color: white;
+  transform: scale(1.1);
+}
+
+.code-ref-remove-btn:active {
+  transform: scale(0.95);
+}
+
+/* 🎯 代码引用节点容器 */
+.code-reference-node {
+  display: inline !important;
+  vertical-align: baseline !important;
+  line-height: inherit !important;
+  font-size: inherit !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+}
+
+/* 🎯 图片引用标签样式 */
+.inline-image-ref-tag {
+  display: inline-flex !important;
+  align-items: center;
+  background-color: var(--vscode-button-secondaryBackground, #0e639c);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 0 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  vertical-align: baseline !important;
+  line-height: 1 !important;
+  max-width: 200px;
+  height: auto;
+  min-height: 18px; /* 🎯 确保有足够高度容纳16px图片 */
+}
+
+.inline-image-ref-tag:hover {
+  background-color: var(--vscode-button-hoverBackground);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+/* 🎯 图片预览样式 */
+.image-ref-preview {
+  width: 12px !important;
+  height: 12px !important;
+  object-fit: cover;
+  border-radius: 2px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  /* 🎯 使用vertical-align与文字中心线对齐，而不是baseline */
+  vertical-align: middle;
+  /* 🎯 微调位置确保完美对齐 */
+  transform: translateY(2.5px);
+  transition: all 0.2s ease;
+}
+
+.image-ref-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 2px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* 🎯 .image-ref-info 样式已移除 - 不再显示文件大小和尺寸 */
+
+.image-ref-remove-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.image-ref-remove-btn:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+.image-ref-remove-btn:active {
+  transform: scale(0.95);
+}
+
+/* 🎯 文件自动完成菜单样式 - 超紧凑字体版 */
+.file-autocomplete-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 280px;
+  max-width: 450px;
+  max-height: 250px;
+  overflow-y: auto;
+  background-color: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 2px 0;
+  font-family: var(--vscode-font-family);
+  font-size: 10px; /* 🎯 进一步减小基础字体大小 */
+  /* 🎯 强制菜单向上弹出 */
+  bottom: 100%;
+  margin-bottom: 6px;
+}
+
+.file-menu-header {
+  padding: 4px 8px;
+  font-size: 8px; /* 🎯 超小标题字体 */
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+  margin-bottom: 1px;
+}
+
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px; /* 🎯 保持当前间距不变 */
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-left: 2px solid transparent; /* 🎯 保持边框不变 */
+  min-height: 28px; /* 🎯 保持最小高度不变 */
+}
+
+.file-menu-item:hover,
+.file-menu-item.selected {
+  background-color: var(--vscode-list-hoverBackground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.file-menu-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.file-icon {
+  font-size: 10px; /* 🎯 进一步减小图标大小 */
+  margin-right: 6px; /* 🎯 保持右边距不变 */
+  flex-shrink: 0;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px; /* 🎯 保持文件名和路径的间距不变 */
+}
+
+.file-name {
+  font-weight: 500;
+  font-size: 9px; /* 🎯 进一步减小文件名字体 */
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  line-height: 1.2; /* 🎯 保持行高不变 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-path {
+  font-size: 8px; /* 🎯 超小路径字体 */
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7; /* 🎯 保持透明度不变 */
+  line-height: 1.1; /* 🎯 保持行高不变 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-menu-item.selected .file-name {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.file-menu-item.selected .file-path {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.7;
+}
+
+/* =============================================================================
+   🎯 @ 符号菜单样式 - 精致版本（仿截图设计）
+   ============================================================================= */
+
+.at-autocomplete-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 300px;
+  max-width: 400px;
+  max-height: 320px;
+  overflow-y: auto;
+  background-color: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 4px 0;
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  /* 🎯 强制菜单向上弹出 */
+  bottom: 100%;
+  margin-bottom: 8px;
+}
+
+/* 🎯 菜单头部（用于子视图的返回导航） */
+.at-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+  margin-bottom: 4px;
+}
+
+.at-menu-back {
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.at-menu-back:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+/* 🎯 面包屑路径显示 */
+.at-menu-breadcrumb {
+  padding: 4px 12px 8px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+  margin-bottom: 4px;
+}
+
+/* 🎯 文件列表过滤输入框 */
+.at-menu-filter {
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+}
+
+.at-menu-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.at-menu-filter-input:focus {
+  border-color: var(--vscode-focusBorder);
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+/* 🎯 分组标题 */
+.at-menu-section-header {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 🎯 分隔线 */
+.at-menu-divider {
+  height: 1px;
+  background-color: var(--vscode-dropdown-border);
+  margin: 6px 0;
+}
+
+/* 🎯 菜单项 */
+.at-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  border-left: 3px solid transparent;
+  gap: 10px;
+}
+
+.at-menu-item:hover,
+.at-menu-item.selected {
+  background-color: var(--vscode-list-hoverBackground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.at-menu-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+/* 🎯 菜单项图标 */
+.at-menu-item-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+/* 🎯 菜单项内容 */
+.at-menu-item-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+/* 🎯 菜单项名称 */
+.at-menu-item-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--vscode-foreground);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-menu-item.selected .at-menu-item-name {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+/* 🎯 菜单项路径 */
+.at-menu-item-path {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-menu-item-path-text {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.at-menu-item.selected .at-menu-item-path {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.7;
+}
+
+/* 🎯 菜单项箭头（用于子菜单） */
+.at-menu-item-arrow {
+  font-size: 16px;
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.at-menu-item.selected .at-menu-item-arrow {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+/* 🎯 可点击箭头按钮（用于进入文件夹） */
+.at-menu-item-arrow-btn {
+  font-size: 12px;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  flex-shrink: 0;
+  margin-left: auto;
+  background-color: var(--vscode-textLink-foreground, #3794ff);
+  background-color: rgba(55, 148, 255, 0.15);
+  border: 1px solid var(--vscode-textLink-foreground, #3794ff);
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 按钮文字通过 React 组件传入，支持 i18n */
+
+.at-menu-item-arrow-btn:hover {
+  background-color: var(--vscode-textLink-foreground, #3794ff);
+  color: white;
+  transform: translateX(2px);
+}
+
+.at-menu-item.selected .at-menu-item-arrow-btn {
+  color: var(--vscode-textLink-foreground, #3794ff);
+  background-color: rgba(55, 148, 255, 0.2);
+  border-color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.at-menu-item.selected .at-menu-item-arrow-btn:hover {
+  background-color: var(--vscode-textLink-foreground, #3794ff);
+  color: white;
+}
+
+/* 🎯 文件夹展开按钮特殊样式 - 更醒目 */
+.at-menu-item-arrow-btn.folder-expand {
+  background-color: rgba(55, 148, 255, 0.2);
+  border-width: 1.5px;
+  font-weight: 600;
+}
+
+/* 文件夹浏览按钮文字通过 React 组件传入，支持 i18n */
+
+.at-menu-item-arrow-btn.folder-expand:hover {
+  background-color: var(--vscode-textLink-foreground, #3794ff);
+  color: white;
+  box-shadow: 0 2px 4px rgba(55, 148, 255, 0.3);
+}
+
+/* 🎯 分类项特殊样式 */
+.at-menu-item.category {
+  font-weight: 500;
+}
+
+.at-menu-item.category .at-menu-item-name {
+  font-size: 13px;
+}
+
+/* 🎯 终端项样式 */
+.at-menu-item.terminal .at-menu-item-icon {
+  color: var(--vscode-terminal-ansiGreen, #4ec9b0);
+}
+
+/* 🎯 加载状态 */
+.at-menu-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.at-menu-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--vscode-descriptionForeground);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: at-spin 0.8s linear infinite;
+}
+
+@keyframes at-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 🎯 空状态 */
+.at-menu-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* 🎯 滚动条样式 */
+.at-autocomplete-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.at-autocomplete-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.at-autocomplete-menu::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 4px;
+}
+
+.at-autocomplete-menu::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* =============================================================================
+   🎯 终端引用标签样式
+   ============================================================================= */
+
+.inline-terminal-ref-tag {
+  display: inline-flex !important;
+  align-items: center;
+  background-color: var(--vscode-terminal-background, #1e1e1e);
+  color: var(--vscode-terminal-ansiGreen, #4ec9b0);
+  border: 1px solid var(--vscode-terminal-ansiGreen, #4ec9b0);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 0 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  vertical-align: baseline !important;
+  line-height: 1 !important;
+  max-width: 180px;
+  height: auto;
+  min-height: auto;
+}
+
+.inline-terminal-ref-tag:hover {
+  background-color: var(--vscode-terminal-ansiGreen, #4ec9b0);
+  color: var(--vscode-editor-background);
+  box-shadow: 0 2px 6px rgba(78, 201, 176, 0.3);
+}
+
+.terminal-ref-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative; /* 🎯 允许微调位置 */
+  top: 1px; /* 🎯 向下微调 1px 以实现视觉居中 */
+}
+
+.terminal-ref-icon svg {
+  width: 14px; /* 🎯 明确指定大小 */
+  height: 14px;
+  display: block;
+}
+
+.terminal-ref-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 1px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.terminal-ref-remove-btn {
+  background: none;
+  border: none;
+  color: currentColor;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.terminal-ref-remove-btn:hover {
+  background-color: var(--vscode-errorForeground, #f85149);
+  color: white;
+  transform: scale(1.1);
+}
+
+.terminal-ref-remove-btn:active {
+  transform: scale(0.95);
+}
+
+/* 🎯 终端引用节点容器 */
+.terminal-reference-node {
+  display: inline !important;
+  vertical-align: baseline !important;
+  line-height: inherit !important;
+  font-size: inherit !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+}
+
+/* 🎯 文件自动完成菜单滚动条 */
+.file-autocomplete-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 3px;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.message-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.message-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 🎯 拖拽状态样式 - 增强版本 */
+.message-input-container.dragging,
+.message-input.dragging,
+.lexical-content-editable.dragging {
+  position: relative;
+}
+
+.message-input-container.dragging::before {
+  content: '📎 Drop files here to add references';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--vscode-editor-hoverHighlightBackground, rgba(14, 165, 233, 0.15));
+  border: 3px dashed var(--vscode-focusBorder, #0ea5e9);
+  border-radius: 8px;
+  z-index: 1000; /* 提高层级 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--vscode-focusBorder, #0ea5e9);
+  animation: dragPulse 1.2s ease-in-out infinite alternate;
+  backdrop-filter: blur(3px);
+  pointer-events: none; /* 确保不阻止拖拽事件 */
+}
+
+.message-input.dragging,
+.lexical-content-editable.dragging {
+  border: 2px dashed var(--vscode-focusBorder) !important;
+  background-color: var(--vscode-editor-hoverHighlightBackground, rgba(14, 165, 233, 0.05)) !important;
+}
+
+@keyframes dragPulse {
+  0% {
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 5px rgba(14, 165, 233, 0.3);
+  }
+  100% {
+    border-color: var(--vscode-button-background);
+    box-shadow: 0 0 15px rgba(14, 165, 233, 0.5);
+  }
+}
+
+/* 🎯 文件引用高亮样式 */
+.file-refs-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  white-space: pre-wrap;
+  pointer-events: none;
+  color: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+.file-ref {
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: 500;
+  display: inline-block;
+  margin: 0 2px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* 🎯 美化滚动条样式 - message-input */
+.message-input::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.message-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message-input::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 3px;
+}
+
+.message-input::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.message-input::-webkit-scrollbar-thumb:active {
+  background-color: var(--vscode-scrollbarSlider-activeBackground);
+}
+
+/* 🎯 美化滚动条样式 - lexical-content-editable */
+.lexical-content-editable::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.lexical-content-editable::-webkit-scrollbar-track {
+  background: var(--vscode-input-background);
+  border-radius: 4px;
+}
+
+.lexical-content-editable::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 4px;
+  border: 2px solid var(--vscode-input-background);
+}
+
+.lexical-content-editable::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.lexical-content-editable::-webkit-scrollbar-thumb:active {
+  background-color: var(--vscode-scrollbarSlider-activeBackground);
+}
+
+/* =============================================================================
+   🎯 输入操作按钮统一规范
+   - 基础尺寸: 32x32px
+   - 响应式 (max-width: 768px): 28x28px
+   - 适用于: .plan-mode-toggle, .file-upload-button, .send-button
+   ============================================================================= */
+
+.send-button {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 1px solid var(--vscode-button-border);
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.send-button:hover:not(:disabled) {
+  background-color: var(--vscode-button-hoverBackground);
+  /* 🎯 移除transform动画，保持按钮稳定 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.send-button:active:not(:disabled) {
+  /* 🎯 移除点击时的transform动画 */
+  transition: background-color 0.1s ease;
+}
+
+.send-button:disabled {
+  background-color: var(--vscode-button-secondaryBackground, #5a5d5e) !important; /* 🎯 灰色背景 */
+  color: var(--vscode-button-secondaryForeground, #cccccc) !important; /* 🎯 灰色文字 */
+  opacity: 0.8;
+  cursor: not-allowed;
+  /* 🎯 移除transform: none，保持一致性 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* 🎯 处理中的停止按钮样式 - 增强的视觉反馈 */
+.send-button.processing {
+  background: linear-gradient(135deg, #5c2629 0%, #3c1618 100%) !important;
+  color: #ff6b6b !important;
+  border: 2px solid #ff6b6b !important;
+  border-color: #ff6b6b !important;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(255, 107, 107, 0.3) !important;
+  /* 🎯 添加脉冲动画吸引用户注意 */
+  animation: stopButtonPulse 2s ease-in-out infinite;
+}
+
+.send-button.processing:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(255, 107, 107, 0.5) !important;
+  transform: scale(1.05);
+  animation: none;
+}
+
+.send-button.processing:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.3) !important;
+}
+
+/* 🎯 停止按钮脉冲动画 - 在处理中时吸引注意力 */
+@keyframes stopButtonPulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(255, 107, 107, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(255, 107, 107, 0.6);
+    transform: scale(1.02);
+  }
+}
+
+/* 移除编辑模式的特殊按钮样式，与底部保持一致 */
+
+.button-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid transparent;
+  border-top: 2px solid var(--vscode-button-foreground);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  transform-origin: center center; /* 确保从中心点旋转 */
+  display: inline-block; /* 确保变换正常工作 */
+  will-change: transform; /* 硬件加速 */
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 按钮容器 - 底部工具栏 */
+.input-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-left: auto; /* 🎯 新增：推向右侧 */
+  position: relative;
+  z-index: 50;
+}
+
+/* 🎯 输入工具栏 - 底部工具栏容器 */
+.input-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding: 8px 0 12px 0;
+  border-top: 1px solid var(--vscode-panel-border);
+  background: transparent;
+  min-width: 0;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+.input-footer {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px; /* 🎯 减小间距 */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: visible;
+  flex-wrap: nowrap; /* 🎯 强制不换行，防止按钮掉下去 */
+}
+
+/* 🎯 编辑器浮动操作栏 - 挪到输入框内部右下角固定位置 */
+.editor-floating-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end; /* 🎯 靠右对齐 */
+  gap: 8px;
+  padding: 0;
+  position: absolute;
+  bottom: 8px; /* 🎯 距离底部 8px */
+  right: 12px; /* 🎯 距离右侧 12px */
+  width: auto;
+  min-height: 28px;
+  box-sizing: border-box;
+  z-index: 20; /* 🎯 确保在占位符上方 */
+  pointer-events: none; /* 🎯 容器不拦截事件，防止遮挡输入框点击 */
+}
+
+/* 🎯 确保子元素（如按钮）可以点击 */
+.editor-floating-actions > * {
+  pointer-events: auto;
+}
+
+/* 🎯 自定义服务器提示已不再需要占据整行，改为小巧的展示 */
+.custom-proxy-info-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #cccccc);
+  opacity: 0.8;
+  max-width: 150px;
+}
+
+.custom-proxy-info-icon {
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground, #cccccc);
+  opacity: 0.8;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.custom-proxy-info-text {
+  color: var(--vscode-descriptionForeground, #cccccc);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 旧的custom-proxy-info-bar保留备用 */
+.custom-proxy-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background-color: transparent;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #cccccc);
+  user-select: text;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+/* 🎯 MessageInput 中的模型选择器特殊样式 - 渐进式压缩 */
+.message-input-model-selector {
+  min-width: 60px; /* 🎯 允许更小的最小宽度 */
+  max-width: 240px; /* 🎯 减小最大宽度，给其他元素留空间 */
+  flex: 0 1 auto; /* 🎯 不再自动增长，只占据必要空间 */
+}
+
+.message-input-model-selector .model-selector-trigger {
+  font-size: 12px;
+  padding: 6px 8px;
+  height: 32px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-input-model-selector .model-name {
+  font-size: 12px;
+}
+
+.message-input-model-selector .model-tier,
+.message-input-model-selector .model-credits {
+  font-size: 11px;
+}
+
+.message-input-model-selector .model-icon {
+  font-size: 12px;
+}
+
+/* 上下文剩余量指示器 - 平滑流体布局，随窗口连续压缩 */
+.context-indicator {
+  display: flex;
+  align-items: center;
+  padding: 2px 6px;
+  background-color: var(--vscode-badge-background);
+  border-radius: 3px;
+  border: 1px solid var(--vscode-widget-border);
+  min-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.context-percentage {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--vscode-badge-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 🎯 当窗口 < 450px 时，完全隐藏 Context 指示器（不要留下空框） */
+@media (max-width: 449px) {
+  .context-label {
+    display: none;
+  }
+
+  .context-indicator {
+    min-width: 35px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 250px) {
+  .context-indicator {
+    display: none;
+  }
+}
+
+/* 🎯 当模型选择框隐藏时（< 200px），隐藏 Context 指示器 */
+@media (max-width: 199px) {
+  .message-input-model-selector {
+    display: none !important;
+    visibility: hidden;
+    width: 0;
+    height: 0;
+  }
+
+  .context-indicator {
+    display: none;
+  }
+}
+
+
+
+/* 拖拽调整大小手柄 - 简洁淡淡的样式 */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 12px; /* 🎯 增加高度，更容易点击 */
+  background: transparent;
+  cursor: ns-resize;
+  z-index: 100; /* 🎯 确保在最上层 */
+  transition: background-color 0.2s ease;
+}
+
+.resize-handle:hover {
+  background: var(--vscode-editor-lineHighlightBackground); /* 🎯 悬停时有视觉反馈 */
+}
+
+/* 🎯 编辑模式下隐藏拖拽手柄 */
+.message-input-container.edit-mode .resize-handle {
+  display: none;
+}
+
+/* 🎯 编辑模式的内容编辑器特殊样式 */
+.message-input-container.edit-mode .lexical-content-editable {
+  border: 1px solid var(--vscode-focusBorder);
+  background-color: var(--vscode-editor-background);
+  box-shadow: 0 0 0 1px rgba(0, 120, 212, 0.1);
+}
+
+.message-input-container.edit-mode .lexical-content-editable:focus {
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.3);
+}
+
+.resize-handle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  /* 🎯 添加更明显的视觉提示 */
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 3px;
+  background: var(--vscode-panel-border);
+  border-radius: 2px;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.resize-handle:hover::before {
+  opacity: 1.0;
+}
+
+/* 拖拽时的状态 */
+.message-input-container.resizing {
+  user-select: none;
+  pointer-events: none;
+}
+
+.message-input-container.resizing .lexical-content-editable {
+  pointer-events: none;
+}
+
+/* 🎯 文件自动完成菜单样式 - 超紧凑字体版 */
+.file-autocomplete-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 280px;
+  max-width: 450px;
+  max-height: 250px;
+  overflow-y: auto;
+  background-color: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 2px 0;
+  font-family: var(--vscode-font-family);
+  font-size: 10px; /* 🎯 进一步减小基础字体大小 */
+  /* 🎯 强制菜单向上弹出 */
+  bottom: 100%;
+  margin-bottom: 6px;
+}
+
+.file-menu-header {
+  padding: 4px 8px;
+  font-size: 8px; /* 🎯 超小标题字体 */
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+  margin-bottom: 1px;
+}
+
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px; /* 🎯 保持当前间距不变 */
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-left: 2px solid transparent; /* 🎯 保持边框不变 */
+  min-height: 28px; /* 🎯 保持最小高度不变 */
+}
+
+.file-menu-item:hover,
+.file-menu-item.selected {
+  background-color: var(--vscode-list-hoverBackground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.file-menu-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.file-icon {
+  font-size: 10px; /* 🎯 进一步减小图标大小 */
+  margin-right: 6px; /* 🎯 保持右边距不变 */
+  flex-shrink: 0;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px; /* 🎯 保持文件名和路径的间距不变 */
+}
+
+.file-name {
+  font-weight: 500;
+  font-size: 9px; /* 🎯 进一步减小文件名字体 */
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  line-height: 1.2; /* 🎯 保持行高不变 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-path {
+  font-size: 8px; /* 🎯 超小路径字体 */
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7; /* 🎯 保持透明度不变 */
+  line-height: 1.1; /* 🎯 保持行高不变 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-menu-item.selected .file-name {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.file-menu-item.selected .file-path {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.7;
+}
+
+/* 🎯 文件自动完成菜单滚动条 */
+.file-autocomplete-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 3px;
+}
+
+.file-autocomplete-menu::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* 🎯 Token使用情况指示器 */
+.token-usage-indicator {
+  position: absolute;
+  bottom: 4px;
+  left: 12px;
+  padding: 2px 6px;
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  z-index: 10;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.token-usage-indicator:hover {
+  opacity: 1;
+}
+
+.token-usage-text {
+  display: block;
+  white-space: nowrap;
+}
+
+/* 🎯 图片上传按钮样式 */
+.file-upload-button,
+.image-upload-button {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-input-border);
+  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  padding: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+.file-upload-button:hover:not(:disabled),
+.image-upload-button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.file-upload-button:active:not(:disabled),
+.image-upload-button:active:not(:disabled) {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.file-upload-button:disabled,
+.image-upload-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 旋转动画（用于 Loader2） */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* =============================================================================
+   🎯 输入操作按钮响应式规范
+   - 窗口宽度 < 768px 时，三个按钮统一缩小为 28x28px
+   ============================================================================= */
+@media (max-width: 768px) {
+  .send-button,
+  .file-upload-button,
+  .image-upload-button {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .send-button .button-spinner {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* =============================================================================
+   🎯 斜杠命令自动完成菜单样式
+   ============================================================================= */
+
+.slash-command-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 300px;
+  max-width: 480px;
+  max-height: 280px;
+  overflow-y: auto;
+  background-color: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 4px 0;
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  /* 🎯 菜单向上弹出 */
+  bottom: 100%;
+  margin-bottom: 8px;
+}
+
+.slash-command-menu-header {
+  padding: 6px 10px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--vscode-dropdown-border);
+  margin-bottom: 2px;
+}
+
+.slash-command-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-left: 3px solid transparent;
+  min-height: 36px;
+}
+
+.slash-command-menu-item:hover,
+.slash-command-menu-item.selected {
+  background-color: var(--vscode-list-hoverBackground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.slash-command-menu-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.slash-command-icon {
+  font-size: 14px;
+  margin-right: 10px;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.slash-command-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.slash-command-name {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slash-command-description {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slash-command-menu-item.selected .slash-command-name {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.slash-command-menu-item.selected .slash-command-description {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.75;
+}
+
+/* 🎯 斜杠命令菜单滚动条 */
+.slash-command-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.slash-command-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.slash-command-menu::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+  border-radius: 3px;
+}
+
+.slash-command-menu::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}

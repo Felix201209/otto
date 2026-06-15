@@ -1,0 +1,399 @@
+/* ===========================================================================
+ * AskUserQuestion VSCode webview styles.
+ * All colors use VSCode theme tokens so light/dark themes work automatically.
+ * Prefix: `auq-` (AskUserQuestion)
+ * =========================================================================== */
+
+.auq-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 6px;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.auq-title {
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  margin-bottom: 4px;
+}
+
+.auq-error {
+  color: var(--vscode-errorForeground, #f48771);
+  padding: 8px;
+}
+
+/* ============ Navigation bar ============ */
+
+.auq-nav-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  margin-bottom: 8px;
+}
+
+.auq-nav-arrow {
+  color: var(--vscode-foreground);
+  opacity: 0.7;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.auq-nav-arrow-disabled {
+  opacity: 0.25;
+}
+
+.auq-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.auq-nav-tab:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.auq-nav-tab-current {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+  border-color: var(--vscode-focusBorder, transparent);
+}
+
+.auq-nav-tab-answered .auq-nav-check {
+  color: var(--vscode-charts-green, #4caf50);
+}
+
+.auq-nav-check {
+  font-size: 0.9em;
+}
+
+.auq-nav-submit-tab {
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+/* ============ Question text ============ */
+
+.auq-question-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auq-question-text {
+  font-size: 1.05em;
+  font-weight: 500;
+  margin: 2px 0 4px;
+  color: var(--vscode-foreground);
+}
+
+/* ============ Options list ============ */
+
+.auq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auq-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 60ms linear;
+}
+
+.auq-option:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.auq-option-selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.auq-option input[type='radio'],
+.auq-option input[type='checkbox'] {
+  flex-shrink: 0;
+  accent-color: var(--vscode-focusBorder, var(--vscode-button-background));
+  cursor: pointer;
+  margin: 0;
+}
+
+.auq-option-index {
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.5em;
+}
+
+.auq-option-label {
+  font-weight: 500;
+}
+
+.auq-option-description {
+  color: var(--vscode-descriptionForeground);
+  margin-left: 4px;
+  font-size: 0.92em;
+}
+
+.auq-option-other .auq-other-input {
+  flex-grow: 1;
+  margin-left: 6px;
+  padding: 2px 6px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  outline: none;
+  font: inherit;
+  min-width: 150px;
+}
+
+.auq-option-other .auq-other-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* ============ Multi-select submit row ============ */
+
+.auq-submit-row {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ============ Preview (side-by-side) layout ============ */
+
+.auq-preview-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 2fr;
+  gap: 12px;
+  margin: 4px 0;
+}
+
+.auq-preview-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auq-preview-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auq-preview-option:hover,
+.auq-preview-option-focused {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.auq-preview-option-selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+  border-color: var(--vscode-focusBorder, transparent);
+}
+
+.auq-preview-tick {
+  margin-left: auto;
+  color: var(--vscode-charts-green, #4caf50);
+}
+
+.auq-preview-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auq-preview-box {
+  background: var(--vscode-textBlockQuote-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: var(--vscode-editor-font-family, 'Consolas', monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.auq-preview-content {
+  margin: 0;
+  white-space: pre;
+  color: var(--vscode-foreground);
+}
+
+.auq-preview-truncation {
+  padding: 4px 10px 0;
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+}
+
+.auq-preview-notes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auq-preview-notes-label {
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+}
+
+.auq-preview-notes-input {
+  flex-grow: 1;
+  padding: 2px 6px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  outline: none;
+  font: inherit;
+}
+
+.auq-preview-notes-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* ============ Footer (Chat / Skip) ============ */
+
+.auq-footer {
+  display: flex;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  margin-top: 4px;
+}
+
+.auq-footer-btn {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auq-footer-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  border-color: var(--vscode-focusBorder);
+}
+
+/* ============ Help line ============ */
+
+.auq-help-line {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.88em;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* ============ Submit view ============ */
+
+.auq-submit-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auq-submit-title {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.auq-submit-warning {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  padding: 4px 8px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.1));
+  border-radius: 3px;
+}
+
+.auq-submit-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.auq-submit-answer-item {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 8px;
+}
+
+.auq-submit-question-text {
+  color: var(--vscode-foreground);
+}
+
+.auq-submit-answer-text {
+  margin-left: 16px;
+  color: var(--vscode-charts-green, #4caf50);
+}
+
+.auq-submit-prompt {
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+}
+
+.auq-submit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ============ Shared buttons ============ */
+
+.auq-btn {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auq-btn-primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.auq-btn-primary:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.auq-btn-secondary {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+}
+
+.auq-btn-secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
