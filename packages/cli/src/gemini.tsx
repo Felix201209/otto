@@ -270,10 +270,31 @@ export async function main() {
     process.exit(code);
   }
 
-  // `otto setup`：一条命令进入自定义模型配置向导(全流程自定义：provider/baseUrl/key/modelId)。
-  // 设标志 + 从 argv 移除 'setup'（否则会被 yargs 当成 prompt 进非交互模式），随后按正常
-  // 交互式启动，App 挂载后直接打开自定义模型向导——完全不碰 easycode 云端模型/登录。
+  // `otto setup`：配置自定义模型。
+  //  - 带 --key/--model/--provider 时走【非交互】：一条命令直接写好配置并设为默认，
+  //    完全绕开终端粘贴（向导里粘 API key 在某些终端/Windows/SSH 下不稳）。
+  //    例：otto setup --provider glm --key <KEY> --model glm-5.1
+  //  - 不带参数时打开交互式向导。
   if (process.argv[2] === 'setup') {
+    const setupArgs = process.argv.slice(3);
+    const getFlag = (n: string): string | undefined => {
+      const i = setupArgs.indexOf(n);
+      return i >= 0 ? setupArgs[i + 1] : undefined;
+    };
+    if (getFlag('--key') || getFlag('--model') || getFlag('--provider')) {
+      const { runNonInteractiveModelSetup } = await import('./modelSetupCli.js');
+      const r = runNonInteractiveModelSetup({
+        provider: getFlag('--provider'),
+        key: getFlag('--key'),
+        model: getFlag('--model'),
+        name: getFlag('--name'),
+        baseUrl: getFlag('--base-url'),
+      });
+      console.log(r.text);
+      process.exit(r.code);
+    }
+    // 设标志 + 从 argv 移除 'setup'（否则会被 yargs 当成 prompt 进非交互模式），
+    // 随后按正常交互式启动，App 挂载后直接打开自定义模型向导。
     process.env.OTTO_SETUP = '1';
     process.argv.splice(2, 1);
   }
