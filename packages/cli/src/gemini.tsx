@@ -260,6 +260,16 @@ function processWorkdirParameter(workdirPath: string | undefined): string | null
 }
 
 export async function main() {
+  // 飞书后台 daemon 管理（脱离终端常驻）：otto feishu daemon <start|stop|status>。
+  // 在任何重型 bootstrap / 目录迁移之前截获 —— 这是纯进程管理（spawn/kill/查询），
+  // 处理完即退出，不进入正常启动流程。
+  if (process.argv[2] === 'feishu' && process.argv[3] === 'daemon') {
+    const { runFeishuDaemonControl } = await import('./feishuDaemon.js');
+    const { text, code } = runFeishuDaemonControl(process.argv[4]);
+    console.log(text);
+    process.exit(code);
+  }
+
   // 品牌升级：执行历史配置文件夹平滑迁移 (.deepvcode -> .otto 等)
   try {
     migrateLegacyDirectories(process.cwd(), () => {

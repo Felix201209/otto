@@ -44,6 +44,19 @@ Otto 自己不绑定模型，需要你给它接一个：
 
 按提示扫码，Otto 就会作为你的数字同事住进飞书，能操作日历、文档、表格、任务等。
 
+## 让 Otto 常驻后台（关掉终端也活）
+
+不想每次开终端都重新启动飞书 bot？用 daemon 让它在后台常驻：
+
+```bash
+otto feishu daemon start    # 后台拉起飞书 bot，关掉终端也继续运行
+otto feishu daemon status   # 看在不在跑、跑了多久
+otto feishu daemon stop     # 停止
+```
+
+启动前先在 `otto` 里 `/feishu setup` 扫码配置好；之后 `daemon start` 即可常驻。
+pid 和日志写在 `~/.otto-user/`（`feishu-daemon.pid` / `feishu-daemon.log`）。
+
 ## 常用命令
 
 | 命令 | 作用 |
@@ -52,6 +65,7 @@ Otto 自己不绑定模型，需要你给它接一个：
 | `/help` | 看所有命令 |
 | `/model` | 切换模型 |
 | `/feishu setup` | 配置并启动飞书 bot |
+| `otto feishu daemon start` | 飞书 bot 后台常驻 |
 | `/tools` | 查看可用工具 |
 
 ## 装不上？
