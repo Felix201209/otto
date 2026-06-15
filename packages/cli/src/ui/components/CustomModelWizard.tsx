@@ -617,7 +617,9 @@ export function CustomModelWizard({ onComplete, onCancel }: CustomModelWizardPro
         )}
         <Box marginTop={1}>
           <Text color={Colors.Gray}>
-            Press Enter to continue, Esc to cancel
+            {isApiKeyStep
+              ? 'Enter 确认 · Esc 取消 · Ctrl+V 从剪贴板粘贴（⌘V 粘不进时用它）'
+              : 'Enter 确认 · Esc 取消 · Ctrl+V 从剪贴板粘贴'}
           </Text>
         </Box>
       </Box>

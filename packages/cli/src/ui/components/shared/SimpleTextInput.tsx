@@ -27,6 +27,7 @@ import { useKeypress, Key } from '../../hooks/useKeypress.js';
 import { Colors } from '../../colors.js';
 import { sanitizePasteContent } from '../../utils/displayUtils.js';
 import { cpSlice, cpLen } from '../../utils/textUtils.js';
+import { getClipboardText } from '../../utils/clipboardUtils.js';
 
 export interface SimpleTextInputProps {
   /** Current input value */
@@ -230,6 +231,28 @@ export function SimpleTextInput({
       return;
     }
 
+    // 🔑 Ctrl+V：直接从系统剪贴板读取并插入。
+    // 终端的 ⌘V 粘贴依赖 bracketed/rapid-paste 检测，在部分终端 / SSH / 慢链路下不稳，
+    // 表现为「粘贴进不去、只能手敲」。这里绕开终端粘贴机制，直接读 OS 剪贴板
+    // (macOS pbpaste / Windows powershell / Linux xclip)，保证一定能粘进去。
+    if (key.ctrl && key.name === 'v') {
+      void (async () => {
+        try {
+          const clip = await getClipboardText();
+          if (!clip) return;
+          const singleLine = clip.replace(/[\r\n]+/g, ' ').trim();
+          if (!singleLine) return;
+          const cv = valueRef.current;
+          const cc = cursorRef.current;
+          const nv = cpSlice(cv, 0, cc) + singleLine + cpSlice(cv, cc);
+          commitChange(nv, cc + cpLen(singleLine));
+        } catch {
+          /* 读不到剪贴板就算了，不影响手动输入 */
+        }
+      })();
+      return;
+    }
+
     // Ignore other control key combinations
     if (key.ctrl || key.meta) {
       return;
@@ -255,13 +278,47 @@ export function SimpleTextInput({
   // Render (Unicode-aware)
   // ============================================
   const valueLen = cpLen(value);
-  const displayValue = mask ? mask.repeat(valueLen) : value;
-  const showPlaceholder = valueLen === 0 && placeholder;
+  const showPlaceholder = valueLen === 0 && !!placeholder;
 
-  // Build display with cursor (Unicode-aware slicing)
-  const beforeCursor = cpSlice(displayValue, 0, cursorPosition);
-  const atCursor = cpSlice(displayValue, cursorPosition, cursorPosition + 1) || ' ';
-  const afterCursor = cpSlice(displayValue, cursorPosition + 1);
+  // 🔑 关键修复：固定可见宽度，绝不让输入值换行。
+  // 长 API key / URL 之前是单行不限宽 → 超出终端宽度就换行，每多打/粘一个字符
+  // 就多一行包裹行，表现为"每输入一个字符上面冒出一行新的"刷屏，粘贴长 key 时
+  // 尤其严重，看着像"粘不进去"。这里改为固定窗口 + 横向滚动（…表示被裁剪）。
+  const VISIBLE = 56;
+
+  // 掩码（API key）：不逐个星号铺开（同样会换行），改为定量圆点 + 字符计数，
+  // 粘贴后计数立刻跳动即可确认"已经粘进去了"。
+  if (mask) {
+    const dotCount = Math.min(valueLen, 24);
+    const dots = mask.repeat(dotCount);
+    return (
+      <Box>
+        <Text color={promptColor}>{prompt}</Text>
+        {showPlaceholder ? (
+          <Text color={Colors.Gray}>{placeholder}</Text>
+        ) : (
+          <>
+            <Text>{dots}</Text>
+            <Text inverse>{' '}</Text>
+            <Text color={Colors.Gray}>{`  (${valueLen} 字符)`}</Text>
+          </>
+        )}
+      </Box>
+    );
+  }
+
+  // 非掩码：围绕光标的可见窗口，超出部分横向滚动并用 … 标示，始终单行。
+  let start = 0;
+  if (valueLen > VISIBLE) {
+    start = Math.min(Math.max(cursorPosition - VISIBLE + 8, 0), valueLen - VISIBLE);
+  }
+  const windowVal = cpSlice(value, start, start + VISIBLE);
+  const relCursor = cursorPosition - start;
+  const beforeCursor = cpSlice(windowVal, 0, relCursor);
+  const atCursor = cpSlice(windowVal, relCursor, relCursor + 1) || ' ';
+  const afterCursor = cpSlice(windowVal, relCursor + 1);
+  const leftEllipsis = start > 0;
+  const rightEllipsis = start + VISIBLE < valueLen;
 
   return (
     <Box>
@@ -270,9 +327,11 @@ export function SimpleTextInput({
         <Text color={Colors.Gray}>{placeholder}</Text>
       ) : (
         <>
+          {leftEllipsis && <Text color={Colors.Gray}>…</Text>}
           <Text>{beforeCursor}</Text>
           <Text inverse>{atCursor}</Text>
           <Text>{afterCursor}</Text>
+          {rightEllipsis && <Text color={Colors.Gray}>…</Text>}
         </>
       )}
     </Box>
