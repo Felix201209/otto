@@ -2858,11 +2858,20 @@ async function handleStart(context?: CommandContext): Promise<string> {
         ? route.projectRoot
         : ((typeof activeConfig?.getProjectRoot === 'function' && activeConfig.getProjectRoot()) || process.cwd());
 
-      // 🔍 打印实时调试诊断信息到 TUI 大厅，以便看清到底解析到了哪个 chatId 和工作目录
-      tuiContext?.addItem({
-        type: 'info',
-        text: `🔍 [Router] 收到来自 Chat ID \`${msg.chatId}\` 的消息，解析工作目录为: \`${workspaceRoot}\` (绑定路由: ${route ? '有' : '无'})`
-      }, Date.now());
+      // Router 诊断。不完全去掉、但精简：普通模式只显示一行短目录（保留"消息路由到
+      // 哪个工作目录"的信息），不再每条都刷一长串绝对路径；debug 模式打完整。
+      if (activeConfig?.getDebugMode?.()) {
+        tuiContext?.addItem({
+          type: 'info',
+          text: `🔍 [Router] Chat \`${msg.chatId}\` → \`${workspaceRoot}\`${route ? '' : ' (未绑定)'}`,
+        }, Date.now());
+      } else {
+        const shortDir = workspaceRoot.split(/[\\/]/).filter(Boolean).slice(-2).join('/');
+        tuiContext?.addItem({
+          type: 'info',
+          text: `📂 ${shortDir}${route ? '' : ' (未绑定)'}`,
+        }, Date.now());
+      }
 
       const settings = globalCommandContext?.services?.settings;
 
