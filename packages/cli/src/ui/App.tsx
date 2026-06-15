@@ -1076,14 +1076,17 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
   // Listen for authentication required events (e.g., from model dialog when not logged in)
   useEffect(() => {
+    // Otto 是自带 key 的独立产品，没有 easycode/DeepVlab 云端模型与统一登录：
+    // 一旦需要鉴权（即还没配好模型），直接进入自定义模型设置流程，
+    // 而不是弹出 easycode 登录对话框，彻底不掺乎 easycode。
     const handleAuthRequired = () => {
-      openAuthDialog();
+      handleUseCustomModel();
     };
     appEvents.on(AppEvent.AuthenticationRequired, handleAuthRequired);
     return () => {
       appEvents.off(AppEvent.AuthenticationRequired, handleAuthRequired);
     };
-  }, [openAuthDialog]);
+  }, [handleUseCustomModel]);
 
   // 当用户选择"使用自定义模型"时，自动打开模型选择对话框
   useEffect(() => {
@@ -1091,6 +1094,13 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       openModelDialog();
     }
   }, [isCustomModelOnlyMode, openModelDialog]);
+
+  // `otto setup`：挂载后直接打开自定义模型配置向导（全流程自定义，零 easycode）。
+  useEffect(() => {
+    if (process.env.OTTO_SETUP === '1') {
+      openCustomModelWizard();
+    }
+  }, [openCustomModelWizard]);
 
   // BUG修复: 避免在初始化时显示认证错误，只在用户主动选择后验证
   // 修复策略: 移除自动验证逻辑，让用户在选择时才进行验证

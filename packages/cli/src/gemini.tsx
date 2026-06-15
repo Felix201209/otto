@@ -270,6 +270,14 @@ export async function main() {
     process.exit(code);
   }
 
+  // `otto setup`：一条命令进入自定义模型配置向导(全流程自定义：provider/baseUrl/key/modelId)。
+  // 设标志 + 从 argv 移除 'setup'（否则会被 yargs 当成 prompt 进非交互模式），随后按正常
+  // 交互式启动，App 挂载后直接打开自定义模型向导——完全不碰 easycode 云端模型/登录。
+  if (process.argv[2] === 'setup') {
+    process.env.OTTO_SETUP = '1';
+    process.argv.splice(2, 1);
+  }
+
   // 品牌升级：执行历史配置文件夹平滑迁移 (.deepvcode -> .otto 等)
   try {
     migrateLegacyDirectories(process.cwd(), () => {
