@@ -1,7 +1,7 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Otto team
+ * https://github.com/Felix201209/otto
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -332,8 +332,8 @@ export class AuthTemplates {
             <div id="feishu-buttons-container"></div>
 
             <button class="auth-button" onclick="startDeepvlabAuth()" data-i18n="auth.deepvlab.button">
-              <img style="width: 20px; height: 20px; margin-right: 8px; vertical-align: middle;" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_52ad718e/deepv.ico" alt="DeepV" />
-              DeepVlab Unified Login
+              <span style="font-size: 18px; margin-right: 8px; vertical-align: middle;">🔐</span>
+              Otto Login
             </button>
           </div>
         </div>
@@ -346,20 +346,20 @@ export class AuthTemplates {
               'auth.page.description': 'Select your preferred login method to continue',
               'auth.loading.text': 'Checking access permissions...',
               'auth.feishu.button': 'Feishu Login',
-              'auth.deepvlab.button': 'DeepVlab Unified Login',
+              'auth.deepvlab.button': 'Otto Login',
               'auth.china.restriction.title': 'Access Restricted',
               'auth.feishu.start.error': 'Failed to start Feishu authentication',
-              'auth.deepvlab.start.error': 'Failed to start DeepVlab authentication'
+              'auth.deepvlab.start.error': 'Failed to start Otto authentication'
             },
             zh: {
               'auth.page.title': '选择认证方式',
               'auth.page.description': '选择您偏好的登录方式以继续',
               'auth.loading.text': '正在检查访问权限...',
               'auth.feishu.button': '飞书登录',
-              'auth.deepvlab.button': 'DeepVlab统一登录',
+              'auth.deepvlab.button': 'Otto 登录',
               'auth.china.restriction.title': '访问受限',
               'auth.feishu.start.error': '飞书认证启动失败',
-              'auth.deepvlab.start.error': 'DeepVlab认证启动失败'
+              'auth.deepvlab.start.error': 'Otto 认证启动失败'
             }
           };
 
@@ -500,7 +500,7 @@ export class AuthTemplates {
             tenants.forEach(function(tenant) {
               var btn = document.createElement('button');
               btn.className = 'auth-button feishu-btn';
-              btn.innerHTML = '<img style="width:20px;height:20px;margin-right:8px;vertical-align:middle;" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_c768e6a4/feishu.ico" alt="Feishu" />' +
+              btn.innerHTML = '<span style="font-size:18px;margin-right:8px;vertical-align:middle;">💬</span>' +
                 '<span>' + (tenant.label || t('auth.feishu.button')) + '</span>';
               btn.onclick = function() { startFeishuAuth(tenant.appId); };
               container.appendChild(btn);
@@ -679,7 +679,7 @@ export class AuthTemplates {
       <!DOCTYPE html>
       <html>
       <head>
-        <title data-i18n="auth.deepvlab.success.title">DeepVlab Authentication Successful</title>
+        <title data-i18n="auth.deepvlab.success.title">Otto Authentication Successful</title>
         <meta charset="utf-8">
         <style>
           * {
@@ -787,8 +787,8 @@ export class AuthTemplates {
       <body>
         <div class="container">
           <div class="success">✓</div>
-          <h1 class="title" data-i18n="auth.deepvlab.success.title">DeepVlab Login Successful</h1>
-          <p class="message" data-i18n="auth.success.message">You have successfully logged in with DeepVlab. You can now close this page and return to Otto to continue your work.</p>
+          <h1 class="title" data-i18n="auth.deepvlab.success.title">Otto Login Successful</h1>
+          <p class="message" data-i18n="auth.success.message">You have successfully logged in. You can now close this page and return to Otto to continue your work.</p>
           <div class="instruction" data-i18n="auth.success.instruction">Close this page and return to your terminal or IDE to continue using Otto.</div>
         </div>
         ${this.getI18nScript()}
@@ -938,7 +938,7 @@ export class AuthTemplates {
         const translations = {
           en: {
             'auth.feishu.success.title': 'Feishu Login Successful',
-            'auth.deepvlab.success.title': 'DeepVlab Login Successful',
+            'auth.deepvlab.success.title': 'Otto Login Successful',
             'auth.success.message': 'You have successfully logged in. You can now close this page and return to Otto to continue your work.',
             'auth.success.instruction': 'Close this page and return to your terminal or IDE to continue using Otto.',
             'auth.error.title': 'Authentication Failed',
@@ -946,7 +946,7 @@ export class AuthTemplates {
           },
           zh: {
             'auth.feishu.success.title': '飞书登录成功',
-            'auth.deepvlab.success.title': 'DeepVlab登录成功',
+            'auth.deepvlab.success.title': 'Otto 登录成功',
             'auth.success.message': '您已成功登录。现在可以关闭此页面并返回 Otto 继续您的工作。',
             'auth.success.instruction': '关闭此页面并返回终端或IDE以继续使用 Otto。',
             'auth.error.title': '认证失败',

@@ -12,23 +12,23 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OrionStarAI/EasyCode.git"
+    "url": "git+https://github.com/Felix201209/otto.git"
   },
   "keywords": [
     "ai",
     "coding-assistant",
-    "easycode",
+    "otto",
+    "feishu",
     "cli",
-    "gemini",
     "code-generation",
     "ai-assistant",
     "developer-tools"
   ],
-  "author": "Easy Code Team",
+  "author": "Otto",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/OrionStarAI/EasyCode#readme",
+  "homepage": "https://github.com/Felix201209/otto#readme",
   "bugs": {
-    "url": "https://github.com/OrionStarAI/EasyCode/issues"
+    "url": "https://github.com/Felix201209/otto/issues"
   },
   "config": {
     "sandboxImageUri": "us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.1.13"

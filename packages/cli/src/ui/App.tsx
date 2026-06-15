@@ -162,6 +162,8 @@ import { ScrollingDebugConsole } from './components/ScrollingDebugConsole.js';
 import { PrivacyNotice } from './privacy/PrivacyNotice.js';
 import { AudioNotification } from '../utils/audioNotification.js';
 import { SessionOption } from './commands/types.js';
+import { isFeishuRunning } from './commands/feishuCommand.js';
+import { writeDaemonHealth } from '../feishuDaemon.js';
 
 
 const CTRL_EXIT_PROMPT_DURATION_MS = 1000;
@@ -2812,6 +2814,24 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     sendPromptImmediately,
   ]);
 
+  // daemon 自启包装：在 daemon 子进程（spawn 时带 OTTO_FEISHU_DAEMON=1）里，`/feishu start`
+  // 完成后回报真实健康（ready=飞书已连接 / failed=进程活着但没连上）给 daemon 管理层，
+  // 让 `otto feishu daemon status` 不再纯 PID 探活、谎报"运行中"。非 daemon 启动无副作用。
+  const daemonAwareFeishuStart = useCallback(async () => {
+    try {
+      await handleSlashCommand('/feishu start');
+    } catch {
+      /* 即使抛错也要走到下面回报失败 */
+    }
+    if (process.env.OTTO_FEISHU_DAEMON === '1') {
+      const ok = isFeishuRunning();
+      writeDaemonHealth(
+        ok ? 'ready' : 'failed',
+        ok ? '' : '飞书连接未建立，请检查凭证/权限/网络',
+      );
+    }
+  }, [handleSlashCommand]);
+
   // 🚀 --feishu 自启：启动就绪后自动执行 `/feishu start`，进入飞书常驻模式。
   //    用于 self_update 自更新重启后无人值守地恢复飞书机器人。
   //    用 handleSlashCommand（真正执行斜杠命令），不是 sendPromptImmediately（那会当成 AI prompt）。
@@ -2834,9 +2854,9 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       // 完成老进程的 WebSocket 关闭确认和消息投递结算，避免消息重推。
       const startupDelay = parseInt(process.env.EASYCODE_STARTUP_DELAY_MS || '0', 10);
       if (startupDelay > 0) {
-        setTimeout(() => void handleSlashCommand('/feishu start'), startupDelay);
+        setTimeout(() => void daemonAwareFeishuStart(), startupDelay);
       } else {
-        void handleSlashCommand('/feishu start');
+        void daemonAwareFeishuStart();
       }
     }
   }, [
@@ -2858,8 +2878,10 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   //    `/feishu start` 永远不触发。此轮询在重启场景下作为兜底，确保一定启动。
   useEffect(() => {
     if (!config.getFeishuAutoStart?.() || feishuAutoStartTriggered.current) return;
-    // 仅在重启场景（外挂设置了 EASYCODE_STARTUP_DELAY_MS）启用
-    if (!process.env.EASYCODE_STARTUP_DELAY_MS) return;
+    // 在重启场景（外挂 EASYCODE_STARTUP_DELAY_MS）与 daemon 场景（OTTO_FEISHU_DAEMON=1）启用：
+    // detached 无 TTY 时 Ink 降级渲染可能让主 effect 的依赖不更新、/feishu start 永不触发，
+    // 此轮询作为兜底确保后台 daemon 一定能自启。
+    if (!process.env.EASYCODE_STARTUP_DELAY_MS && process.env.OTTO_FEISHU_DAEMON !== '1') return;
 
     const startupDelay = parseInt(process.env.EASYCODE_STARTUP_DELAY_MS || '0', 10);
     const timer = setInterval(() => {
@@ -2870,7 +2892,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       if (geminiClient?.isInitialized?.()) {
         feishuAutoStartTriggered.current = true;
         clearInterval(timer);
-        void handleSlashCommand('/feishu start');
+        void daemonAwareFeishuStart();
       }
     }, 500);
 
@@ -2879,7 +2901,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       clearInterval(timer);
       if (!feishuAutoStartTriggered.current) {
         feishuAutoStartTriggered.current = true;
-        void handleSlashCommand('/feishu start');
+        void daemonAwareFeishuStart();
       }
     }, startupDelay + 30000);
 

@@ -65,9 +65,9 @@ export const KNOWLEDGE_TIPS_EN = [
   'Use ! alone to switch to shell mode',
   'Examples: !npm run build, !git status, !python script.py',
   // Custom Commands & Configuration
-  'Create custom slash commands in ~/.deepv/commands/',
+  'Create custom slash commands in ~/.otto-user/commands/',
   'Use {{args}} in custom commands to inject parameters',
-  'Configure MCP servers in .deepvcode/settings.json',
+  'Configure MCP servers in .otto/settings.json',
   'Set preferredEditor in settings.json for diff viewing',
   'Use OTTO.md for project-specific AI instructions',
   // Advanced Features
@@ -131,9 +131,9 @@ export const KNOWLEDGE_TIPS_ZH = [
   '单独输入 ! 可以切换到 shell 模式',
   '示例：!npm run build, !git status, !python script.py',
   // 自定义命令和配置
-  '可以在 ~/.deepv/commands/ 创建自定义斜杠命令',
+  '可以在 ~/.otto-user/commands/ 创建自定义斜杠命令',
   '在自定义命令中使用 {{args}} 注入参数',
-  '在 .deepvcode/settings.json 中配置 MCP 服务器',
+  '在 .otto/settings.json 中配置 MCP 服务器',
   '在 settings.json 中设置 preferredEditor 用于 diff 查看',
   '使用 OTTO.md 文件为项目编写 AI 特定指令',
   // 高级功能

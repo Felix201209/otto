@@ -525,27 +525,28 @@
       <div id="feishu-buttons-container"></div>
 
     <button class="auth-button deepvlab-btn" onclick="startDeepvlabAuth()">
-      <img class="icon" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_52ad718e/deepv.ico" alt="DeepV" />
-      <span data-i18n="auth.deepvlab.button">DeepVlab Unified Login</span>
+      <span class="icon" style="font-size: 20px;">🔐</span>
+      <span data-i18n="auth.deepvlab.button">Otto Login</span>
     </button>
 
-    <button id="cheetah-btn" class="auth-button cheetah-btn hidden" onclick="startCheetahAuth()">
-      <img class="icon" src="https://www.cmcm.com/favicon.ico" alt="Cheetah" />
-      <span data-i18n="auth.cheetah.button">Cheetah OA Login</span>
+    <!-- Upstream-only login options (Cheetah OA / VIP Card) are intentionally hidden for the Otto product. -->
+    <button id="cheetah-btn" class="auth-button cheetah-btn hidden" onclick="startCheetahAuth()" style="display: none !important;">
+      <span class="icon" style="font-size: 20px;">🔐</span>
+      <span data-i18n="auth.cheetah.button">Otto OA Login</span>
     </button>
 
-    <button id="vipcard-btn" class="auth-button vipcard-btn" onclick="startVipCardAuth()">
+    <button id="vipcard-btn" class="auth-button vipcard-btn hidden" onclick="startVipCardAuth()" style="display: none !important;">
       <span class="icon" style="font-size: 20px;">🎫</span>
-      <span data-i18n="auth.vipcard.button">VIP Card Login</span>
+      <span data-i18n="auth.vipcard.button">Otto Card Login</span>
     </button>
 
-    <!-- 猎豹OA登录表单 -->
+    <!-- Otto OA登录表单 -->
       <div id="cheetah-form" class="cheetah-form hidden">
-        <h3 data-i18n="auth.cheetah.form.title">Cheetah OA Login</h3>
+        <h3 data-i18n="auth.cheetah.form.title">Otto OA Login</h3>
         <form id="cheetah-login-form" onsubmit="submitCheetahAuth(event)">
           <div class="form-group">
             <label for="cheetah-email" data-i18n="auth.cheetah.form.email">Email:</label>
-            <input type="email" id="cheetah-email" name="email" required placeholder="user@cmcm.com" />
+            <input type="email" id="cheetah-email" name="email" required placeholder="you@example.com" />
           </div>
           <div class="form-group">
             <label for="cheetah-password" data-i18n="auth.cheetah.form.password">Password:</label>
@@ -558,14 +559,14 @@
         </form>
       </div>
 
-      <!-- VIP卡登录表单 -->
+      <!-- Otto 卡登录表单 -->
       <div id="vipcard-form" class="cheetah-form vipcard-form hidden">
-        <h3 data-i18n="auth.vipcard.form.title">VIP Card Activation & Login</h3>
+        <h3 data-i18n="auth.vipcard.form.title">Otto Card Activation & Login</h3>
         <form id="vipcard-login-form" onsubmit="submitVipCardAuth(event)">
           <div class="form-group">
             <label for="vipcard-code" data-i18n="auth.vipcard.form.code">Redemption Code:</label>
-            <input type="text" id="vipcard-code" name="code" required placeholder="VIP-XXXXXXXX" style="text-transform: uppercase;" />
-            <div class="vipcard-hint" data-i18n="auth.vipcard.form.hint">Enter the code from your VIP card</div>
+            <input type="text" id="vipcard-code" name="code" required placeholder="CODE-XXXXXXXX" style="text-transform: uppercase;" />
+            <div class="vipcard-hint" data-i18n="auth.vipcard.form.hint">Enter the code from your card</div>
           </div>
           <div class="form-actions">
             <button type="button" class="btn-secondary" onclick="cancelVipCardAuth()" data-i18n="auth.vipcard.form.cancel">Cancel</button>
@@ -587,9 +588,9 @@
         'auth.page.title': 'Choose Authentication',
         'auth.page.description': 'Select your preferred login method to continue',
         'auth.feishu.button': 'Feishu Login',
-        'auth.deepvlab.button': 'DeepVlab Unified Login',
-        'auth.cheetah.button': 'Cheetah OA Login',
-        'auth.cheetah.form.title': 'Cheetah OA Login',
+        'auth.deepvlab.button': 'Otto Login',
+        'auth.cheetah.button': 'Otto OA Login',
+        'auth.cheetah.form.title': 'Otto OA Login',
         'auth.cheetah.form.email': 'Email',
         'auth.cheetah.form.password': 'Password',
         'auth.cheetah.form.cancel': 'Cancel',
@@ -599,13 +600,13 @@
         'auth.loading.text': 'Checking access permissions...',
         'auth.china.restriction.title': 'Access Restricted',
         'auth.feishu.start.error': 'Failed to start Feishu authentication, please try again',
-        'auth.deepvlab.start.error': 'Failed to start DeepVlab authentication, please try again',
-        'auth.cheetah.start.error': 'Failed to login with Cheetah OA, please check your credentials',
+        'auth.deepvlab.start.error': 'Failed to start Otto authentication, please try again',
+        'auth.cheetah.start.error': 'Failed to login with Otto OA, please check your credentials',
         'auth.message.success.title': 'Login Successful!',
-        'auth.message.success.content': 'You have successfully logged in with Cheetah OA. You can now close this window and continue using Easy Code.',
+        'auth.message.success.content': 'You have successfully logged in. You can now close this window and continue using Otto.',
         'auth.message.success.button': 'Close',
         'auth.message.error.login.title': 'Login Failed',
-        'auth.message.error.login.content': 'Cheetah OA authentication failed. Please check your credentials and try again.',
+        'auth.message.error.login.content': 'Authentication failed. Please check your credentials and try again.',
         'auth.message.error.login.button': 'Try Again',
         'auth.message.error.input.title': 'Input Required',
         'auth.message.error.input.content': 'Please fill in both email and password fields.',
@@ -614,16 +615,16 @@
         'auth.message.error.connection.content': 'Unable to connect to authentication server. Please check your network connection and try again.',
         'auth.message.error.connection.button': 'Retry',
         'auth.message.error.feishu.content': 'Unable to start Feishu authentication. Please check your network connection and try again.',
-        'auth.message.error.deepvlab.content': 'Unable to start DeepVlab authentication. Please check your network connection and try again.',
-        'auth.vipcard.button': 'VIP Card Login',
-        'auth.vipcard.form.title': 'VIP Card Activation & Login',
+        'auth.message.error.deepvlab.content': 'Unable to start Otto authentication. Please check your network connection and try again.',
+        'auth.vipcard.button': 'Otto Card Login',
+        'auth.vipcard.form.title': 'Otto Card Activation & Login',
         'auth.vipcard.form.code': 'Redemption Code',
-        'auth.vipcard.form.hint': 'Enter the code from your VIP card',
+        'auth.vipcard.form.hint': 'Enter the code from your card',
         'auth.vipcard.form.cancel': 'Cancel',
         'auth.vipcard.form.submit': 'Activate & Login',
         'auth.vipcard.form.submitting': 'Processing...',
         'auth.vipcard.success.title': 'Activation Successful!',
-        'auth.vipcard.success.content': 'Your VIP card has been activated and you are now logged in. You can close this window and continue using Easy Code.',
+        'auth.vipcard.success.content': 'Your card has been activated and you are now logged in. You can close this window and continue using Otto.',
         'auth.vipcard.error.empty': 'Please enter the redemption code.',
         'auth.vipcard.error.invalid': 'Invalid or expired redemption code. Please check and try again.'
       },
@@ -631,9 +632,9 @@
         'auth.page.title': '选择认证方式',
         'auth.page.description': '选择您偏好的登录方式以继续',
         'auth.feishu.button': '飞书登录',
-        'auth.deepvlab.button': 'DeepVlab统一登录',
-        'auth.cheetah.button': '猎豹OA登录',
-        'auth.cheetah.form.title': '猎豹OA登录',
+        'auth.deepvlab.button': 'Otto 登录',
+        'auth.cheetah.button': 'Otto OA 登录',
+        'auth.cheetah.form.title': 'Otto OA 登录',
         'auth.cheetah.form.email': '邮箱',
         'auth.cheetah.form.password': '密码',
         'auth.cheetah.form.cancel': '取消',
@@ -643,13 +644,13 @@
         'auth.loading.text': '正在检查访问权限...',
         'auth.china.restriction.title': '访问受限',
         'auth.feishu.start.error': '飞书认证启动失败，请重试',
-        'auth.deepvlab.start.error': 'DeepVlab认证启动失败，请重试',
-        'auth.cheetah.start.error': '猎豹OA登录失败，请检查您的凭据',
+        'auth.deepvlab.start.error': 'Otto 认证启动失败，请重试',
+        'auth.cheetah.start.error': 'Otto OA 登录失败，请检查您的凭据',
         'auth.message.success.title': '登录成功！',
-        'auth.message.success.content': '您已成功使用猎豹OA登录。现在可以关闭此窗口并继续使用Easy Code。',
+        'auth.message.success.content': '您已成功登录。现在可以关闭此窗口并继续使用 Otto。',
         'auth.message.success.button': '关闭',
         'auth.message.error.login.title': '登录失败',
-        'auth.message.error.login.content': '猎豹OA认证失败。请检查您的凭据并重试。',
+        'auth.message.error.login.content': '认证失败。请检查您的凭据并重试。',
         'auth.message.error.login.button': '重试',
         'auth.message.error.input.title': '需要输入',
         'auth.message.error.input.content': '请填写邮箱和密码字段。',
@@ -658,16 +659,16 @@
         'auth.message.error.connection.content': '无法连接到认证服务器。请检查您的网络连接并重试。',
         'auth.message.error.connection.button': '重试',
         'auth.message.error.feishu.content': '无法启动飞书认证。请检查您的网络连接并重试。',
-        'auth.message.error.deepvlab.content': '无法启动DeepVlab认证。请检查您的网络连接并重试。',
-        'auth.vipcard.button': 'VIP卡登录',
-        'auth.vipcard.form.title': 'VIP卡激活与登录',
+        'auth.message.error.deepvlab.content': '无法启动 Otto 认证。请检查您的网络连接并重试。',
+        'auth.vipcard.button': 'Otto 卡登录',
+        'auth.vipcard.form.title': 'Otto 卡激活与登录',
         'auth.vipcard.form.code': '兑换码',
-        'auth.vipcard.form.hint': '请输入VIP卡上的兑换码',
+        'auth.vipcard.form.hint': '请输入卡上的兑换码',
         'auth.vipcard.form.cancel': '取消',
         'auth.vipcard.form.submit': '激活并登录',
         'auth.vipcard.form.submitting': '处理中...',
         'auth.vipcard.success.title': '激活成功！',
-        'auth.vipcard.success.content': '您的VIP卡已激活并完成登录。现在可以关闭此窗口并继续使用Easy Code。',
+        'auth.vipcard.success.content': '您的卡已激活并完成登录。现在可以关闭此窗口并继续使用 Otto。',
         'auth.vipcard.error.empty': '请输入兑换码。',
         'auth.vipcard.error.invalid': '兑换码无效或已过期，请检查后重试。'
       }
@@ -903,7 +904,7 @@
       tenants.forEach(function(tenant) {
         var btn = document.createElement('button');
         btn.className = 'auth-button feishu-btn';
-        btn.innerHTML = '<img class="icon" src="https://res.ainirobot.com/orics/down/v2_k005_20250904_c768e6a4/feishu.ico" alt="Feishu" />' +
+        btn.innerHTML = '<span class="icon" style="font-size:20px;">💬</span>' +
           '<span>' + (tenant.label || t('auth.feishu.button')) + '</span>';
         btn.onclick = function() { startFeishuAuth(tenant.appId); };
         container.appendChild(btn);

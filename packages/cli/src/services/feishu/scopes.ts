@@ -1,7 +1,7 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Otto team
+ * https://github.com/Felix201209/otto.git
  * SPDX-License-Identifier: Apache-2.0
  *
  * 飞书机器人「应用必需权限」清单（对齐 openclaw-lark 的 REQUIRED_APP_SCOPES）。
@@ -19,7 +19,7 @@
  * - `op_from=otto` 来源追踪标记
  *
  * 注意：`REQUIRED_APP_SCOPES` 只覆盖机器人发收消息 + 建群 + 卡片 + 文件资源（**精简过**，
- * 只保留对 dvcode 飞书 Bot 必需的 scope）。otto 对外宣传的日历/文档/表格/云盘/任务/知识库/
+ * 只保留对 otto 飞书 Bot 必需的 scope）。otto 对外宣传的日历/文档/表格/云盘/任务/知识库/
  * 妙记/OKR/幻灯片/邮件等业务域所需的 scope 另见下方 `REQUIRED_BUSINESS_SCOPES`。
  */
 

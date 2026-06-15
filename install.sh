@@ -30,9 +30,13 @@ npm install --ignore-scripts
 ok "依赖就绪"
 
 # ── 2. 构建自包含 bundle ───────────────────────────────────────
-# 等价于 build + esbuild + 拷贝平台资产（ripgrep 等，需联网下载当前平台二进制）
-step "构建 bundle（编译 + 打包 + 下载平台资产，约 1-2 分钟）"
-npm run bundle
+# 等价于 build + esbuild + 拷贝平台资产。
+# DOWNLOAD_ALL_PLATFORMS=true：用仓库里已 committed 的 ripgrep 二进制
+# (temp/ripgrep-binaries/，含全平台)，不依赖联网下载。这一点很关键——上一步
+# 的 --ignore-scripts 会跳过 @vscode/ripgrep 的 postinstall 下载，若这里走默认
+# 单平台路径会因找不到 rg 而构建失败。
+step "构建 bundle（编译 + 打包 + 内置全平台 ripgrep，约 1-2 分钟）"
+DOWNLOAD_ALL_PLATFORMS=true npm run bundle
 [ -f bundle/otto.js ] || die "构建未产出 bundle/otto.js，请把上面的报错发给 Felix。"
 ok "bundle/otto.js 已生成"
 

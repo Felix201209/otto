@@ -371,6 +371,15 @@ let activeGateway: FeishuGateway | null = null;
 let feishuLoopInterval: NodeJS.Timeout | null = null;
 
 /**
+ * 飞书 bot 是否真正在运行（网关已构建且 /feishu start 成功，连接已建立）。
+ * 供 daemon 子进程在自启完成后回报真实健康状态，避免「进程活着但 bot 没连上」
+ * 被 daemon status 谎报为运行中。
+ */
+export function isFeishuRunning(): boolean {
+  return activeGateway !== null;
+}
+
+/**
  * handleStart 的并发互斥守卫。activeGateway 只在 gateway.connect() 完成后才被赋值，
  * 单凭 `if (activeGateway)` 无法防止两次并发 start 都通过检查、各自打开一条 WS
  * 长连接（第一条被孤立，导致消息双发）。此标志在进入连接流程前置位、在 finally 中清除，
@@ -527,7 +536,7 @@ interface FeishuProjectRoute {
   lastSessionAt?: number;
 }
 
-// 路由文件路径（指向 ~/.deepv/feishu-projects.json）
+// 路由文件路径（指向 ~/.otto-user/feishu-projects.json）
 const ROUTE_CONFIG_FILE = path.join(os.homedir(), '.otto-user', 'feishu-projects.json');
 
 /**
@@ -3264,11 +3273,15 @@ async function handleStart(context?: CommandContext): Promise<string> {
     dlog(`[Feishu Debug] Raw messageText from Feishu: "${safeTruncateForLog(messageText)}"`);
 
     if (!geminiClient || !config) {
-      const errorDetail = initErrorMsg ? `\n\n📌 **底层初始化失败原因**: \`${initErrorMsg}\`` : '';
-      // 🔬 DEBUG: 打印更多状态信息便于排查
-      const debugInfo = `[hasConfig=${!!config}, hasClient=${!!geminiClient}, hasGlobalCtx=${!!globalCommandContext}, hasGlobalCfg=${!!globalCommandContext?.services?.config}]`;
-      const noLlmReply = `⚠️ **LLM 未初始化，无法回答。**${errorDetail}\n\n🔬 **调试信息**: \`${debugInfo}\`` +
-        '\n\n💡 **提示**: 请在 otto TUI 大厅里先发送一条消息（例如「hi」）让认证流程完整初始化，然后再回到飞书重试。';
+      // 🔬 调试细节（状态位 + 原始错误）只落服务端日志，绝不外发给飞书用户
+      derror(
+        `[Feishu] LLM 未就绪，无法处理消息 [hasConfig=${!!config}, hasClient=${!!geminiClient}, ` +
+          `hasGlobalCtx=${!!globalCommandContext}, hasGlobalCfg=${!!globalCommandContext?.services?.config}]` +
+          (initErrorMsg ? ` 底层初始化失败原因: ${sanitizeErrorForUser(initErrorMsg, 500)}` : ''),
+      );
+      // 面向用户：朴素业务话术，不暴露内部状态
+      const noLlmReply =
+        '⏳ 正在完成初始化，请稍候重试。';
       tuiContext?.addItem({ type: 'info', text: noLlmReply }, Date.now());
       return noLlmReply;
     }
@@ -4369,7 +4382,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
     } else if (toolName === 'read_file') {
       const startLine = args.offset !== undefined ? args.offset + 1 : 1;
       const limit = args.limit !== undefined ? args.limit : 'all';
-      branchLine = `\n └ ( read lines: ${startLine}-${limit === 'all' ? 'end' : startLine + Number(limit) - 1} )`;
+      branchLine = `\n └ ( 读取 ${startLine}-${limit === 'all' ? '末行' : startLine + Number(limit) - 1} )`;
     } else if (toolName === 'replace') {
       const oldStr = args.old_string || '';
       const newStr = args.new_string || '';
@@ -4410,13 +4423,13 @@ async function handleStart(context?: CommandContext): Promise<string> {
           }
         }
 
-        branchLine = `\n └ ( apply replacements completed )`;
+        branchLine = `\n └ ( 替换完成 )`;
         // ⚠️ diff 必须裁剪：一个大 replace 的完整 diff 会撑爆整张飞书卡片、
         //    被迫分页。施加行数 + 字符数双重上限。
         const clampedDiff = clampCodeBlock(diff.join('\n'));
         contentBox = `\n\`\`\`diff\n${clampedDiff.text}\n\`\`\``;
       } else {
-        branchLine = `\n └ ( apply replacements completed )`;
+        branchLine = `\n └ ( 替换完成 )`;
       }
     } else if (toolName === 'write_file') {
       const content = args.content || '';
@@ -4429,7 +4442,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
       // ⚠️ 不能只按行数裁剪：write_file 单行可能极长（压缩 JSON / 长字符串），
       //    15 行也能撑爆卡片。用行数 + 字符数双重上限。
       const clamped = clampCodeBlock(content);
-      branchLine = `\n └ ( file write completed, ${totalLines} lines total${clamped.truncated ? ', preview truncated' : ''} )`;
+      branchLine = `\n └ ( 写入完成，共 ${totalLines} 行${clamped.truncated ? '，预览已截断' : ''} )`;
       contentBox = `\n\`\`\`${lang}\n${clamped.text}\n\`\`\``;
     } else if (toolName === 'todo_write' || isTodoDisplay) {
       const todos = args?.todos || todoData?.items;
@@ -4445,10 +4458,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
         todoLines.push(`────────────────────────`);
         contentBox = `\n${todoLines.join('\n')}`;
       }
-      branchLine = `\n └ ( update todo list completed )`;
+      branchLine = `\n └ ( 待办已更新 )`;
     } else if (toolName === 'task' || isSubAgentDisplay) {
       contentBox = isLive ? buildSubAgentDisplayBox(subagentData, args, isLive) : '';
-      branchLine = isLive ? `\n └ ( sub-agent executing... )` : `\n └ ( sub-agent task completed )`;
+      branchLine = isLive ? `\n └ ( 子代理执行中... )` : `\n └ ( 子代理任务完成 )`;
     } else if (toolName === 'lark_cli') {
       const hasAuth = output && (output.includes('🔑') || output.includes('🔗'));
       branchLine = isLive
@@ -4782,37 +4795,38 @@ async function handleStart(context?: CommandContext): Promise<string> {
               const hasGroupMsgScope = probe.grantedScopes.includes(SENSITIVE_GROUP_MSG_SCOPE);
 
               const missingBiz = missingScopes(probe.grantedScopes, [...REQUIRED_BUSINESS_SCOPES]);
-              if (missing.length === 0 && hasGroupMsgScope) {
+              // 核心权限只看必需 scope 是否齐全；「免@响应」是可选敏感权限，缺失属正常，
+              // 单独作为 ℹ️ 提示，不应让正确配置的机器人看到刺眼的 ⚠️ 告警。
+              if (missing.length === 0) {
                 welcomeLines.push('', `✅ 核心权限（消息/群聊）已就绪。`);
               } else {
-                welcomeLines.push('', `⚠️ [以下应用权限尚未开通，部分功能可能受限：]`);
+                welcomeLines.push('', `⚠️ 以下应用权限尚未开通，部分功能可能受限：`);
 
-                if (missing.length > 0) {
-                  const scopeApplyUrl = buildScopeApplyUrl({
-                    appId: creds.appId,
-                    scopes: missing,
-                    brand: creds.domain,
-                    tokenType: 'tenant',
-                  });
-                  welcomeLines.push(`  📋 缺失 ${missing.length} 项基础权限，一键申请：`);
-                  welcomeLines.push(`     👉 ${scopeApplyUrl}`);
-                }
-
-                if (!hasGroupMsgScope) {
-                  const sensitiveUrl = buildScopeApplyUrl({
-                    appId: creds.appId,
-                    scopes: [SENSITIVE_GROUP_MSG_SCOPE],
-                    brand: creds.domain,
-                    tokenType: 'tenant',
-                  });
-                  welcomeLines.push(`  💬 缺失「免@响应」敏感权限（群内需@机器人才能触发）：`);
-                  welcomeLines.push(`     👉 ${sensitiveUrl}`);
-                }
+                const scopeApplyUrl = buildScopeApplyUrl({
+                  appId: creds.appId,
+                  scopes: missing,
+                  brand: creds.domain,
+                  tokenType: 'tenant',
+                });
+                welcomeLines.push(`  📋 缺失 ${missing.length} 项基础权限，一键申请：`);
+                welcomeLines.push(`     👉 ${scopeApplyUrl}`);
 
                 welcomeLines.push(`  📡 事件订阅页（勾选 im.message.receive_v1 等）：`);
                 welcomeLines.push(`     👉 ${buildEventSubUrl({ appId: creds.appId, brand: creds.domain })}`);
                 welcomeLines.push(`  🔄 权限生效需发布版本：`);
                 welcomeLines.push(`     👉 ${buildPermissionPageUrl({ appId: creds.appId, brand: creds.domain })}`);
+              }
+
+              // 「免@响应」可选敏感权限：未开通时给出可选 ℹ️ 提示（缺失对绝大多数机器人是正常的）。
+              if (!hasGroupMsgScope) {
+                const sensitiveUrl = buildScopeApplyUrl({
+                  appId: creds.appId,
+                  scopes: [SENSITIVE_GROUP_MSG_SCOPE],
+                  brand: creds.domain,
+                  tokenType: 'tenant',
+                });
+                welcomeLines.push('', `ℹ️ 可选「免@响应」敏感权限未开通（群内需@机器人才会触发，需单独人工审核）：`);
+                welcomeLines.push(`     👉 ${sensitiveUrl}`);
               }
 
               // 业务域权限：诚实告知高级能力尚未授权，避免"全部就绪"的假绿灯。

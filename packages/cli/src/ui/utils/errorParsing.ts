@@ -189,7 +189,7 @@ ${serverMessage || '当前网络（中国大陆）暂不支持访问 Otto 服务
 
 ⭐ 小贴士：若刚才还正常，现在异常了，请输入"继续"即可
 
-🔗 获取帮助：https://dvcode.deepvlab.ai/
+🔗 如需帮助，请联系您的管理员或企业对接人。
 ─────────────────────────────────────────────────────`;
   } else {
     return `─────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ If you believe this is an error, please check your network settings or report th
 
 ⭐ Tip: If it was working before, try typing "continue" to proceed.
 
-🔗 Get help: https://dvcode.deepvlab.ai/
+🔗 For help, please contact your administrator or account manager.
 ─────────────────────────────────────────────────────`;
   }
 }
@@ -252,7 +252,7 @@ function get403FriendlyMessage(): string {
 • 联系技术支持获取帮助
 • 或尝试使用其他认证方式 (/auth)
 
-🔗 获取帮助：https://dvcode.deepvlab.ai/
+🔗 如需帮助，请联系您的管理员或企业对接人。
 ─────────────────────────────────────────────────────`;
   } else {
     return `─────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ Possible causes:
 • Contact technical support for assistance
 • Try alternative authentication method (/auth)
 
-🔗 Get help: https://dvcode.deepvlab.ai/
+🔗 For help, please contact your administrator or account manager.
 ─────────────────────────────────────────────────────`;
   }
 }
@@ -366,23 +366,15 @@ function getQuotaLimitExceededFriendlyMessage(error: unknown): string {
     // 无配额配置的情况
     if (isChinese) {
       return `─────────────────────────────────────────────────────
-🚫 当前账户可用的 Credit（积分）不足以继续使用本服务 (402)
+🚫 当前账户可用的额度不足以继续使用本服务 (402)
 
-💡 请考虑订阅更多额度的套餐。
-
-🔗 详情请访问官网：https://dvcode.deepvlab.ai/
-
-🎁 如果希望获得免费体验机会，请联系我们的Boss：https://x.com/fusheng_0306
+💡 您的额度已用尽，请联系您的管理员或企业对接人升级套餐。
 ─────────────────────────────────────────────────────`;
     } else {
       return `─────────────────────────────────────────────────────
-🚫 Your account's available Credits are insufficient (402)
+🚫 Your account's available quota is insufficient (402)
 
-💡 Please consider subscribing to a higher quota plan.
-
-🔗 Details: https://dvcode.deepvlab.ai/
-
-🎁 For free trial opportunities, contact our Boss: https://x.com/fusheng_0306
+💡 Your quota has been used up. Please contact your administrator or account manager to upgrade your plan.
 ─────────────────────────────────────────────────────`;
     }
   } else {
@@ -394,11 +386,8 @@ function getQuotaLimitExceededFriendlyMessage(error: unknown): string {
 ${quotaDetails ? quotaDetails : '您账户的可用额度已用尽。'}
 
 💡 解决方案：
-• 升级您的套餐以获得更高的配额限制
+• 联系您的管理员或企业对接人升级套餐以获得更高的配额限制
 • 等待下一个计费周期（通常是每天重置）
-• 联系我们的团队寻求帮助
-
-🔗 升级套餐：https://dvcode.deepvlab.ai/
 ─────────────────────────────────────────────────────`;
     } else {
       return `─────────────────────────────────────────────────────
@@ -407,11 +396,8 @@ ${quotaDetails ? quotaDetails : '您账户的可用额度已用尽。'}
 ${quotaDetails ? quotaDetails : 'Your account has reached its usage quota.'}
 
 💡 Solutions:
-• Upgrade your plan for higher quota limits
+• Contact your administrator or account manager to upgrade your plan for higher quota limits
 • Wait until the next billing cycle (usually daily reset)
-• Contact our team for assistance
-
-🔗 Upgrade your plan: https://dvcode.deepvlab.ai/
 ─────────────────────────────────────────────────────`;
     }
   }
@@ -496,8 +482,8 @@ export function parseAndFormatApiError(
     // 如果没有生成友好消息，使用默认的i18n消息
     const isChinese = isChineseEnvironment();
     return isChinese
-      ? '🚫 服务不可用\n💡 请联系管理员检查账户配置\n🔗 升级套餐：https://dvcode.deepvlab.ai/'
-      : '🚫 Service unavailable\n💡 Please contact administrator to check account configuration\n🔗 Upgrade: https://dvcode.deepvlab.ai/';
+      ? '🚫 服务不可用\n💡 请联系您的管理员或企业对接人检查账户配置并升级套餐'
+      : '🚫 Service unavailable\n💡 Please contact your administrator or account manager to check account configuration and upgrade your plan';
   }
 
   if (isStructuredError(error)) {

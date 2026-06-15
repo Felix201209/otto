@@ -1,7 +1,7 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Otto team
+ * https://github.com/Felix201209/otto.git
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,7 @@
  *     设为 0o600。
  *   - **请理解此加密的真实威胁模型**：因密钥与密文同位，加密的主要价值
  *     是抵御"路径意外泄露 / cat 输出 / 备份扫描"等被动暴露场景，
- *     无法抵御能读取整个 ~/.deepv 目录的攻击者。要更高安全等级请走
+ *     无法抵御能读取整个 ~/.otto-user 目录的攻击者。要更高安全等级请走
  *     OS keychain（macOS Keychain / Windows DPAPI / libsecret），
  *     这个工程改动较大，目前未实现。
  *
@@ -55,11 +55,11 @@ const FEISHU_CREDENTIALS_FILE = 'feishu-credentials.json';
 const ENCRYPTION_KEY_FILE = 'feishu-key';
 
 /**
- * 飞书凭证统一存放在用户全局目录 `~/.deepv/`。
+ * 飞书凭证统一存放在用户全局目录 `~/.otto-user/`。
  *
  * 命名约定（重要，避免混淆）：
- *   - 全局：`<home>/.deepv/`        ← 这里
- *   - 项目：`<projectRoot>/.deepvcode/`
+ *   - 全局：`<home>/.otto-user/`        ← 这里
+ *   - 项目：`<projectRoot>/.otto/`
  * 飞书 Bot 凭证不区分项目，固定走全局，因此不接受 projectRoot 形参。
  */
 function credDir(): string {

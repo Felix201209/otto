@@ -2,19 +2,15 @@
 
 # 🚀 Otto
 
-### **AI 驱动的智能编程助手**
+### **你的飞书数字同事**
 
-*赋能开发者，加速创新*
-
-> ℹ️ **品牌升级提示**：本项目原名 **Otto**，现已统一更名为 **Otto**。
-> 包名、命令名、配置目录在过渡期内保留旧名（`easycode-ai` / `easycode` / `.easycode/` 等）以保证向后兼容；后续新文档与界面均使用新品牌名。
+*一个住在终端、也住在飞书里的 AI 同事*
 
 <br>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-43853D.svg?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![npm](https://img.shields.io/badge/npm-easycode--code-CB3837.svg?logo=npm)](https://www.npmjs.com/package/easycode-ai)
 [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC.svg?logo=visual-studio-code)](https://code.visualstudio.com/)
 
 <br>
@@ -23,9 +19,6 @@
 
 <br>
 
-<!-- 如果有演示 GIF，取消下面这行注释 -->
-<!-- <img src="docs/assets/demo.gif" alt="Otto Demo" width="800"> -->
-
 </div>
 
 ---
@@ -33,30 +26,33 @@
 ## 📖 目录
 
 - [项目简介](#-项目简介)
-- [为什么选择 Otto](#-为什么选择-easycode-ai)
+- [为什么选择 Otto](#-为什么选择-otto)
 - [核心特性](#-核心特性)
 - [快速安装](#-快速安装)
 - [快速开始](#-快速开始)
+- [接入飞书](#-接入飞书)
+- [配置模型](#-配置模型)
 - [CLI 命令参考](#-cli-命令参考)
 - [交互式斜杠命令](#-交互式斜杠命令)
 - [项目架构](#️-项目架构)
 - [VS Code 扩展](#-vs-code-扩展)
 - [内置工具系统](#️-内置工具系统)
 - [MCP 协议支持](#-mcp-协议支持)
+- [派发任务给本机 Claude Code / Codex](#-派发任务给本机-claude-code--codex)
 - [Hooks 钩子机制](#-hooks-钩子机制)
 - [配置文件](#️-配置文件)
 - [开发指南](#-开发指南)
 - [常见问题](#-常见问题)
 - [贡献指南](#-贡献指南)
 - [路线图](#️-路线图)
-- [许可证](#-许可证)
+- [许可证](#-许可证与法律信息)
 - [相关链接](#-相关链接)
 
 ---
 
 ## ✨ 项目简介
 
-**Otto** 是一款革命性的 AI 驱动智能编程助手，通过深度整合人工智能技术，全面提升软件开发的效率、质量和创新能力。
+**Otto** 是一款 AI 驱动的智能编程与协作助手，既是一个住在终端里的命令行 Agent，也能作为**飞书数字同事**入驻团队工作区，帮你操作日历、文档、表格、任务等。
 
 不同于传统的代码补全工具，Otto 是一个能够**理解整个项目上下文**、**自主编排工具完成复杂任务**的智能代理（Agent）。它将开发者从繁琐重复的工作中解放出来，让你专注于更高层次的创新和问题解决。
 
@@ -89,7 +85,7 @@
 | 交互方式 | 被动补全 | **主动代理** |
 | 任务复杂度 | 简单补全 | **复杂工作流** |
 | 工具调用 | 无 | **Shell/文件/Web** |
-| 会话管理 | 无 | **持久化会话** |
+| 协作方式 | 仅 IDE | **终端 + 飞书** |
 | 可扩展性 | 受限 | **MCP/Hooks/Skills** |
 
 </td>
@@ -99,8 +95,8 @@
 
 - **🧠 深度理解** - 通过 MCP 协议构建完整项目认知
 - **🛠️ 自主执行** - AI 可调用工具完成实际操作
+- **💬 飞书数字同事** - 在飞书里说一句话即可办事
 - **🔄 持续对话** - 会话保存/恢复，上下文不丢失
-- **🎨 多端支持** - CLI + VS Code 插件
 - **🔌 高度可扩展** - Hooks、Skills、MCP 服务器
 - **🔒 安全可控** - 敏感操作需用户确认
 
@@ -111,6 +107,13 @@
 ---
 
 ## 🎯 核心特性
+
+### 💬 飞书数字同事
+
+- **入驻飞书** - 作为机器人接入团队工作区，在飞书里直接对话办事
+- **办公协作** - 操作日历、文档、表格、任务，串联日常工作流
+- **实时流式卡片** - 任务执行进度通过 CardKit 卡片实时回传
+- **后台常驻** - 通过 daemon 让飞书 bot 在后台持续运行，关掉终端也不掉线
 
 ### 🧠 AI 驱动的代码生成与重构
 
@@ -143,7 +146,7 @@ AI 通过工具与外部环境交互，内置丰富工具集：
 📁 文件操作    → read_file, write_file, replace, delete_file, glob
 🔍 代码搜索    → grep (ripgrep), read_many_files
 💻 命令执行    → shell (bash/powershell)
-🌐 网络访问    → web_fetch, web_search (Google)
+🌐 网络访问    → web_fetch, web_search
 🧩 MCP 工具    → 调用任意 MCP 服务器提供的工具
 📊 代码分析    → task (启动分析子 Agent)
 📝 任务管理    → todo_write
@@ -174,47 +177,30 @@ AI 通过工具与外部环境交互，内置丰富工具集：
 
 ### 系统要求
 
-- **Node.js** 20.0.0 或更高版本
-- **操作系统** Windows / macOS / Linux
-- **终端** 支持 ANSI 颜色的终端模拟器
+- **Node.js** 20.0.0 或更高版本（推荐用 [nvm](https://github.com/nvm-sh/nvm) 安装）
+- **操作系统** macOS / Linux
+- **git**
 
-### 方式一：npm 全局安装（推荐）
+### 源码构建安装（一键脚本）
+
+Otto 通过源码构建分发，`install.sh` 会自动完成装依赖、构建并链接 `otto` 命令（约 3-5 分钟）：
 
 ```bash
-# 使用 npm
-npm install -g easycode-ai
+# 1. 克隆仓库（需要项目维护者给你 GitHub 访问权）
+git clone https://github.com/Felix201209/otto.git
+cd otto
 
-# 使用 yarn
-yarn global add easycode-ai
+# 2. 一键安装（装依赖 + 构建 + 链接 otto 命令）
+./install.sh
 
-# 使用 pnpm
-pnpm add -g easycode-ai
+# 3. 启动
+otto
 ```
 
 安装完成后，验证安装：
 
 ```bash
-easycode --version
-```
-
-### 方式二：从源码构建
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/OrionStarAI/OttoCode.git
-cd Otto
-
-# 2. 安装依赖
-npm install
-
-# 3. 构建项目
-npm run build
-
-# 4. 本地开发运行
-npm run dev
-
-# 5. (可选) 生产环境打包
-npm run pack:prod
+otto --version
 ```
 
 ---
@@ -226,19 +212,19 @@ npm run pack:prod
 在任意项目目录中运行：
 
 ```bash
-easycode
+otto
 ```
 
-首次启动会引导你完成身份认证。
+首次启动会生成 `~/.otto-user/` 配置目录，并引导你完成模型配置。
 
 ### 第二步：开始对话
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  🚀 Otto - AI 驱动的智能编程助手                    │
+│  🚀 Otto - 你的飞书数字同事                                  │
 │─────────────────────────────────────────────────────────────│
 │                                                             │
-│  👋 你好！我是 Otto，你的 AI 编程助手。                  │
+│  👋 你好！我是 Otto，你的 AI 编程与协作助手。                │
 │                                                             │
 │  💡 试试这些命令开始：                                        │
 │     • "分析这个项目的架构"                                    │
@@ -273,6 +259,100 @@ easycode
 启动服务器：npm run dev
 ```
 
+> 更详细的上手流程见 [QUICKSTART.md](./QUICKSTART.md)。
+
+---
+
+## 💬 接入飞书
+
+启动 `otto` 后，在交互界面中输入：
+
+```
+/feishu setup
+```
+
+按提示扫码，Otto 就会作为你的数字同事住进飞书，能操作日历、文档、表格、任务等。
+
+### 让 Otto 常驻后台（关掉终端也活）
+
+不想每次开终端都重新启动飞书 bot？用 daemon 让它在后台常驻：
+
+```bash
+otto feishu daemon start    # 后台拉起飞书 bot，关掉终端也继续运行
+otto feishu daemon status   # 看在不在跑、跑了多久
+otto feishu daemon stop     # 停止
+```
+
+启动前先在 `otto` 里 `/feishu setup` 扫码配置好；之后 `daemon start` 即可常驻。pid 和日志写在 `~/.otto-user/`（`feishu-daemon.pid` / `feishu-daemon.log`）。
+
+---
+
+## 🤖 配置模型
+
+Otto 自己不绑定模型，需要你给它接一个。主推 **Codex / gpt-5.5**（通过 OpenAI Responses API），也支持任意 OpenAI 兼容或 Anthropic Claude 格式的自定义模型。
+
+### 方式 A：用 Codex 登录（有 ChatGPT 订阅最省事）
+
+把 Codex OAuth 凭证放在 `~/.codex/auth.json`，Otto 启动时自动读取，无需额外配置。
+
+### 方式 B：用 API key
+
+编辑 `~/.otto-user/custom-models.json`，填上模型的 `baseUrl` 和 `apiKey`。首次运行 `otto` 会生成 `~/.otto-user/` 配置目录。
+
+```json
+{
+  "models": [
+    {
+      "displayName": "GPT-5.5 (Codex)",
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "${OPENAI_API_KEY}",
+      "modelId": "gpt-5.5",
+      "maxTokens": 256000,
+      "enabled": true
+    }
+  ]
+}
+```
+
+### 配置字段说明
+
+**必需字段：**
+
+| 字段 | 说明 | 示例 |
+|-----|------|-----|
+| `displayName` | 显示名称 | `GPT-5.5 (Codex)` |
+| `provider` | 提供商类型 | `openai` 或 `anthropic` |
+| `baseUrl` | API 基础 URL | `https://api.openai.com/v1` |
+| `apiKey` | API 密钥 | `${OPENAI_API_KEY}` |
+| `modelId` | 模型名称 | `gpt-5.5` |
+
+**可选字段：**
+
+| 字段 | 说明 | 默认值 |
+|-----|------|--------|
+| `maxTokens` | 最大上下文窗口 | 视提供商而定 |
+| `enabled` | 是否启用 | `true` |
+| `headers` | 额外 HTTP 请求头 | 无 |
+| `timeout` | 请求超时（毫秒） | `300000` |
+| `enableThinking` | 启用 Anthropic 扩展思考 | `false` |
+
+### 切换模型
+
+在 CLI 中输入 `/model` 打开模型选择对话框，或在启动时用 `-m` 指定：
+
+```bash
+otto -m gpt-5.5
+```
+
+> API key 推荐用环境变量存储（如 `export OPENAI_API_KEY="sk-..."`），在 `custom-models.json` 里以 `${OPENAI_API_KEY}` 引用，避免明文写入配置文件。
+
+### 相关文档
+
+- 📖 [自定义模型快速入门](./docs/custom-models-quickstart.md)
+- 📖 [自定义模型完整指南](./docs/custom-models-guide.md)
+- 📖 [自定义模型架构说明](./docs/custom-models-architecture.md)
+
 ---
 
 ## 📋 CLI 命令参考
@@ -280,7 +360,7 @@ easycode
 ### 全局选项
 
 ```bash
-easycode [options]
+otto [options]
 ```
 
 | 选项 | 简写 | 说明 |
@@ -303,31 +383,31 @@ easycode [options]
 
 ```bash
 # 基本启动
-easycode
+otto
 
-# 使用 Gemini 2.0 Flash 模型
-easycode -m gemini-2.0-flash
+# 指定模型启动
+otto -m gpt-5.5
 
 # 执行单次任务（非交互）
-easycode -p "为 src/utils.ts 添加单元测试"
+otto -p "为 src/utils.ts 添加单元测试"
 
 # 继续上次会话
-easycode -c
+otto -c
 
 # YOLO 模式（危险：自动执行所有操作）
-easycode -y
+otto -y
 
 # 调试模式
-easycode -d
+otto -d
 
 # 指定工作目录
-easycode --workdir /path/to/project
+otto --workdir /path/to/project
 
 # 列出所有会话
-easycode --list-sessions
+otto --list-sessions
 
 # 恢复特定会话
-easycode --session abc123
+otto --session abc123
 ```
 
 ---
@@ -353,6 +433,13 @@ easycode --session abc123
 | `/model [name]` | 切换 AI 模型，不带参数显示选择对话框 |
 | `/compress` | 压缩对话历史，减少 Token 消耗 |
 | `/stats` | 显示会话统计信息 |
+
+### 飞书数字同事
+
+| 命令 | 说明 |
+|:---|:---|
+| `/feishu setup` | 配置并启动飞书 bot（扫码登录） |
+| `/sessions` 或 `/会话` | 展示本机 Agent 会话 Dashboard 卡片 |
 
 ### 工具与扩展
 
@@ -415,7 +502,7 @@ Otto 提供增强的调试控制台功能，通过 `Ctrl+O` 快捷键实现三�
 
 | 命令 | 说明 |
 |:---|:---|
-| `/init` | 初始化项目配置文件 `EASYCODE.md` |
+| `/init` | 初始化项目配置文件 `OTTO.md` |
 | `/hooks` | 查看 Hooks 钩子机制帮助文档 |
 | `/ide` | IDE 集成管理（VS Code 模式下可用） |
 
@@ -428,7 +515,7 @@ Otto 采用现代化的 **Monorepo** 架构，确保代码一致性和高效协�
 ### 目录结构
 
 ```
-Otto/
+otto/
 │
 ├── 📁 packages/                     # 核心包目录
 │   │
@@ -439,7 +526,7 @@ Otto/
 │   │   │   │   ├── components/      # 可复用 UI 组件
 │   │   │   │   ├── dialogs/         # 对话框组件
 │   │   │   │   └── themes/          # 主题配置
-│   │   │   ├── services/            # 服务层
+│   │   │   ├── services/            # 服务层（含飞书网关）
 │   │   │   ├── auth/                # 客户端认证
 │   │   │   └── utils/               # 工具函数
 │   │   └── package.json
@@ -454,7 +541,7 @@ Otto/
 │   │   │   │   ├── glob.ts          # 文件搜索
 │   │   │   │   ├── grep.ts          # 内容搜索
 │   │   │   │   ├── web-fetch.ts     # 网页抓取
-│   │   │   │   ├── web-search.ts    # Google 搜索
+│   │   │   │   ├── web-search.ts    # 网络搜索
 │   │   │   │   ├── task.ts          # 子 Agent 任务
 │   │   │   │   └── ...
 │   │   │   ├── mcp/                 # MCP 引擎
@@ -480,7 +567,6 @@ Otto/
 ├── 📁 docs/                         # 文档目录
 │   ├── architecture.md              # 架构设计
 │   ├── hooks-user-guide.md          # Hooks 使用指南
-│   ├── mcp-improvements-summary.md  # MCP 集成说明
 │   └── ...
 │
 ├── 📁 scripts/                      # 构建和工具脚本
@@ -489,12 +575,12 @@ Otto/
 │   ├── clean.js                     # 清理脚本
 │   └── ...
 │
+├── 📄 install.sh                    # 一键安装脚本
 ├── 📄 package.json                  # 根配置 (Workspaces)
 ├── 📄 tsconfig.json                 # TypeScript 配置
 ├── 📄 eslint.config.js              # ESLint 配置
 ├── 📄 esbuild.config.js             # esbuild 打包配置
-├── 📄 Otto_Code_Whitepaper.md      # 产品白皮书
-├── 📄 EASYCODE.md                      # 项目 AI 开发规范
+├── 📄 OTTO.md                       # 项目 AI 开发规范（按需创建）
 └── 📄 LICENSE                       # Apache 2.0 许可证
 ```
 
@@ -509,15 +595,15 @@ Otto/
 | **测试** | Vitest | 现代化单元测试框架 |
 | **代码规范** | ESLint + Prettier | 统一代码风格 |
 | **包管理** | npm Workspaces | Monorepo 管理 |
-| **AI SDK** | @google/genai | Google Gemini API |
+| **AI 接入** | OpenAI Responses API | 主推 Codex / gpt-5.5，兼容自定义模型 |
 | **MCP** | @modelcontextprotocol/sdk | MCP 协议实现 |
 
 ### 交互流程
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   用户输入   │────▶│  CLI 包     │────▶│  Core 包    │
-│  (终端)     │     │  (UI/交互)   │     │  (业务逻辑)  │
+│  用户输入    │────▶│  CLI 包      │────▶│  Core 包     │
+│ (终端/飞书)  │     │ (UI/交互)    │     │ (业务逻辑)   │
 └─────────────┘     └─────────────┘     └──────┬──────┘
                                                │
                     ┌──────────────────────────┼──────────────────────────┐
@@ -525,7 +611,7 @@ Otto/
                     ▼                          ▼                          ▼
             ┌─────────────┐           ┌─────────────┐            ┌─────────────┐
             │  AI Model   │           │   Tools     │            │    MCP      │
-            │  (Gemini)   │           │ (Shell/File)│            │  Servers    │
+            │ (Codex/5.5) │           │ (Shell/File)│            │  Servers    │
             └─────────────┘           └─────────────┘            └─────────────┘
 ```
 
@@ -638,7 +724,7 @@ Otto 的 AI 通过工具系统与外部环境交互。所有工具都经过精�
 | 工具 | 说明 | 安全级别 |
 |:---|:---|:---:|
 | `web_fetch` | 抓取网页内容，支持本地和远程 URL | 🟢 只读 |
-| `web_search` | Google 搜索 | 🟢 只读 |
+| `web_search` | 网络搜索 | 🟢 只读 |
 
 ### 高级工具
 
@@ -671,7 +757,7 @@ MCP 允许 AI 模型：
 
 ### 配置 MCP 服务器
 
-在项目根目录创建 `.easycode/settings.json`：
+在项目根目录创建 `.otto/settings.json`：
 
 #### 方式一：标准模式（通过命令启动）
 
@@ -712,12 +798,6 @@ MCP 允许 AI 模型：
 ```json
 {
   "mcpServers": {
-    "Web-Search-by-Z.ai": {
-      "httpUrl": "https://open.bigmodel.cn/api/mcp-broker/proxy/web-search/mcp",
-      "headers": {
-        "Authorization": "Bearer **************************"
-      }
-    },
     "myHttpServer": {
       "httpUrl": "https://api.example.com/mcp/endpoint",
       "headers": {
@@ -763,209 +843,6 @@ MCP 允许 AI 模型：
 
 ---
 
-## 🤖 自定义模型支持
-
-Otto 支持配置 OpenAI 兼容格式和 Anthropic Claude API 格式的自定义模型，让你可以使用任何兼容的 AI 服务。
-
-### 为什么使用自定义模型？
-
-- 🔓 **自由选择** - 使用你最喜爱的 AI 服务商
-- 💰 **成本控制** - 直接向服务商付费，无需通过中间商
-- 🏠 **本地部署** - 支持本地模型（LM Studio, Ollama 等）
-- 🚀 **灵活配置** - 根据需求调整参数和端点
-
-### 快速配置
-
-#### 方式一：使用模型管理界面（推荐）
-
-在 CLI 中输入：
-
-```bash
-/model
-```
-
-然后选择 **"Model Management"**（模型管理）选项，按向导提示填写：
-1. 选择提供商类型（OpenAI Compatible / Anthropic Claude）
-2. 输入显示名称
-3. 输入 API 基础 URL
-4. 输入 API 密钥（推荐使用环境变量格式 `${OPENAI_API_KEY}`）
-5. 输入模型 ID
-6. 设置最大 Token 数（可选）
-7. 确认配置
-
-#### 方式二：手动编辑配置文件
-
-编辑 `~/.easycode-user/custom-models.json`：
-
-```json
-{
-  "models": [
-    {
-      "displayName": "GPT-4 Turbo",
-      "provider": "openai",
-      "baseUrl": "https://api.openai.com/v1",
-      "apiKey": "${OPENAI_API_KEY}",
-      "modelId": "gpt-4-turbo",
-      "maxTokens": 128000,
-      "enabled": true
-    },
-    {
-      "displayName": "Claude Sonnet",
-      "provider": "anthropic",
-      "baseUrl": "https://api.anthropic.com",
-      "apiKey": "${ANTHROPIC_API_KEY}",
-      "modelId": "claude-sonnet-4-5",
-      "maxTokens": 200000,
-      "enabled": true
-    }
-  ]
-}
-```
-
-### 支持的提供商
-
-#### OpenAI Compatible (`openai`)
-
-适用于任何遵循 OpenAI Chat Completions 格式的 API：
-
-- **OpenAI 官方 API**
-  ```json
-  {
-    "displayName": "GPT-4 Turbo",
-    "provider": "openai",
-    "baseUrl": "https://api.openai.com/v1",
-    "apiKey": "${OPENAI_API_KEY}",
-    "modelId": "gpt-4-turbo"
-  }
-  ```
-
-- **Azure OpenAI**
-  ```json
-  {
-    "displayName": "Azure GPT-4",
-    "provider": "openai",
-    "baseUrl": "https://your-resource.openai.azure.com/openai/deployments/your-deployment",
-    "apiKey": "${AZURE_OPENAI_KEY}",
-    "modelId": "gpt-4",
-    "headers": {
-      "api-version": "2024-02-01"
-    }
-  }
-  ```
-
-- **本地模型（LM Studio, Ollama）**
-  ```json
-  {
-    "displayName": "Local Llama",
-    "provider": "openai",
-    "baseUrl": "http://localhost:1234/v1",
-    "apiKey": "not-needed",
-    "modelId": "llama-3-70b"
-  }
-  ```
-
-- **第三方服务（Groq, Together AI 等）**
-  ```json
-  {
-    "displayName": "Groq Llama 3",
-    "provider": "openai",
-    "baseUrl": "https://api.groq.com/openai/v1",
-    "apiKey": "${GROQ_API_KEY}",
-    "modelId": "llama-3-70b-8192"
-  }
-  ```
-
-#### Anthropic Claude (`anthropic`)
-
-适用于 Claude API 端点，支持扩展思考功能：
-
-```json
-{
-  "displayName": "Claude Sonnet (Thinking)",
-  "provider": "anthropic",
-  "baseUrl": "https://api.anthropic.com",
-  "apiKey": "${ANTHROPIC_API_KEY}",
-  "modelId": "claude-sonnet-4-5",
-  "enableThinking": true
-}
-```
-
-### 配置字段说明
-
-**必需字段：**
-
-| 字段 | 说明 | 示例 |
-|-----|------|-----|
-| `displayName` | 显示名称 | `GPT-4 Turbo` |
-| `provider` | 提供商类型 | `openai` 或 `anthropic` |
-| `baseUrl` | API 基础 URL | `https://api.openai.com/v1` |
-| `apiKey` | API 密钥 | `${OPENAI_API_KEY}` |
-| `modelId` | 模型名称 | `gpt-4-turbo` |
-
-**可选字段：**
-
-| 字段 | 说明 | 默认值 |
-|-----|------|--------|
-| `maxTokens` | 最大上下文窗口 | 视提供商而定 |
-| `enabled` | 是否启用 | `true` |
-| `headers` | 额外 HTTP 请求头 | 无 |
-| `timeout` | 请求超时（毫秒） | `300000` |
-| `enableThinking` | 启用 Anthropic 扩展思考 | `false` |
-
-### 使用自定义模型
-
-#### 通过模型选择对话框
-
-```bash
-/model
-```
-
-自定义模型会显示 `[Custom]` 标签和青色，使用方向键选择。
-
-#### 直接切换
-
-```bash
-/model custom:openai:gpt-4-turbo@abc123
-```
-
-### 环境变量设置
-
-推荐使用环境变量存储 API 密钥：
-
-**Linux/macOS：**
-```bash
-export OPENAI_API_KEY="sk-your-key-here"
-export ANTHROPIC_API_KEY="sk-ant-your-key-here"
-```
-
-**Windows PowerShell：**
-```powershell
-$env:OPENAI_API_KEY="sk-your-key-here"
-$env:ANTHROPIC_API_KEY="sk-ant-your-key-here"
-```
-
-### 特性与限制
-
-✅ **支持的功能：**
-- 流式和非流式响应
-- 工具调用（Function Calling）
-- 多模态输入（文本、图片）
-- 与 Otto 所有功能集成
-
-⚠️ **注意：**
-- 自定义模型不消耗 Otto 积分
-- 需直接向 API 提供商付费
-- 某些高级功能可能因提供商限制而不可用
-- Token 计数由提供商决定
-
-### 相关文档
-
-- 📖 [自定义模型快速入门](./docs/custom-models-quickstart.md)
-- 📖 [自定义模型完整指南](./docs/custom-models-guide.md)
-- 📖 [自定义模型架构说明](./docs/custom-models-architecture.md)
-
----
-
 ## 🤝 派发任务给本机 Claude Code / Codex
 
 Otto 可以作为 **ACP 编排方**，把编码任务派发给你本机安装并登录的 **Claude Code** 或 **Codex** 执行——尤其适合飞书网关模式：你在飞书里说一句话，Otto 要么自己干，要么转交给本机的 cc / codex 干。
@@ -974,8 +851,8 @@ Otto 可以作为 **ACP 编排方**，把编码任务派发给你本机安装并
 
 - 本机已安装并登录 **Claude Code** 和/或 **Codex**（派发会复用其本地登录态，不需要额外配置密钥）。
 - Otto 通过官方 ACP 桥按需拉起（默认 `npx` 运行，不打入安装包）：
-  - Claude Code → `@agentclientprotocol/claude-agent-acp`，可用 `EASYCODE_CLAUDE_CODE_ACP_CMD` 覆盖启动命令。
-  - Codex → `@zed-industries/codex-acp`，可用 `EASYCODE_CODEX_ACP_CMD` 覆盖启动命令。
+  - Claude Code → `@agentclientprotocol/claude-agent-acp`，可用 `OTTO_CLAUDE_CODE_ACP_CMD` 覆盖启动命令。
+  - Codex → `@zed-industries/codex-acp`，可用 `OTTO_CODEX_ACP_CMD` 覆盖启动命令。
 
 ### 派发方式
 
@@ -994,7 +871,7 @@ Otto 可以作为 **ACP 编排方**，把编码任务派发给你本机安装并
 - **🚀 本机任务**：正在运行 / 最近的派发任务，带实时状态——状态徽章（🟢运行中 / ✅完成 / ❌失败）、当前工具、计划进度（`2/5`）、token 占用（`30%`）、已运行时长。卡片会在任务运行期间**自动刷新**。
 - **🗂️ 可续接的历史会话**：自动发现 Claude Code / Codex 各自本机已有的会话（标题、最近活动时间），并为每条给出续接指令。
 
-> 派发任务记录会持久化到 `~/.easycode-user/delegate-tasks/`，**网关重启后历史任务仍可在 `/sessions` 查看**（重启期间运行中的任务会被标记为失败）。
+> 派发任务记录会持久化到 `~/.otto-user/delegate-tasks/`，**网关重启后历史任务仍可在 `/sessions` 查看**（重启期间运行中的任务会被标记为失败）。
 
 ### 🔄 续接已有会话
 
@@ -1017,7 +894,7 @@ Hooks 允许你在关键工作流节点注入自定义逻辑。
 
 ### 配置 Hooks
 
-在 `.easycode/settings.json` 中添加：
+在 `.otto/settings.json` 中添加：
 
 ```json
 {
@@ -1061,9 +938,9 @@ Hooks 允许你在关键工作流节点注入自定义逻辑。
 
 ## ⚙️ 配置文件
 
-### 项目配置 `EASYCODE.md`
+### 项目配置 `OTTO.md`
 
-在项目根目录创建 `EASYCODE.md`，为 AI 提供项目特定的上下文和规范：
+在项目根目录创建 `OTTO.md`，为 AI 提供项目特定的上下文和规范：
 
 ```markdown
 # 项目概述
@@ -1089,11 +966,13 @@ Hooks 允许你在关键工作流节点注入自定义逻辑。
 
 使用 `/init` 命令可以自动生成初始配置。
 
-### 用户配置 `.easycode/settings.json`
+### 用户配置 `~/.otto-user/`
+
+首次运行 `otto` 会生成用户级配置目录 `~/.otto-user/`，包含偏好设置、自定义模型（`custom-models.json`）、派发任务记录等。项目级配置则放在项目根目录的 `.otto/settings.json`：
 
 ```json
 {
-  "preferredModel": "gemini-2.0-flash",
+  "preferredModel": "gpt-5.5",
   "theme": "dark",
   "trimSpaces": true,
   "mcpServers": {},
@@ -1112,11 +991,11 @@ Hooks 允许你在关键工作流节点注入自定义逻辑。
 node --version
 
 # 克隆仓库
-git clone https://github.com/OrionStarAI/OttoCode.git
-cd Otto
+git clone https://github.com/Felix201209/otto.git
+cd otto
 
-# 安装依赖
-npm install
+# 一键安装（装依赖 + 构建 + 链接 otto 命令）
+./install.sh
 ```
 
 ### 常用命令
@@ -1179,19 +1058,16 @@ FILE_DEBUG=1 npm run dev
 ### 安装问题
 
 <details>
-<summary><b>Q: npm install 失败，提示权限错误</b></summary>
+<summary><b>Q: ./install.sh 报错，或 otto 命令没链接上</b></summary>
 
 **A:** 尝试以下方法：
 
 ```bash
-# 方法 1: 使用 --unsafe-perm
-npm install -g easycode-ai --unsafe-perm
-
-# 方法 2: 修改 npm 全局目录权限
-mkdir ~/.npm-global
-npm config set prefix '~/.npm-global'
-export PATH=~/.npm-global/bin:$PATH
+# 重新手动链接 otto 命令
+sudo npm link --ignore-scripts
 ```
+
+如仍失败，把 `./install.sh` 的报错信息发给项目维护者。
 
 </details>
 
@@ -1216,10 +1092,10 @@ nvm use 20
 
 ```bash
 # 交互模式
-/model gemini-2.0-flash
+/model gpt-5.5
 
 # 启动时指定
-easycode -m gemini-2.0-flash
+otto -m gpt-5.5
 ```
 
 </details>
@@ -1231,7 +1107,7 @@ easycode -m gemini-2.0-flash
 
 ```bash
 # 继续最近会话
-easycode -c
+otto -c
 
 # 列出所有会话
 /session list
@@ -1249,7 +1125,7 @@ easycode -c
 
 ```bash
 # 启用
-easycode -y
+otto -y
 # 或
 /yolo on
 ```
@@ -1293,18 +1169,12 @@ easycode -y
 
 ### 报告问题
 
-发现 Bug 或有功能建议？请 [创建 Issue](https://github.com/OrionStarAI/OttoCode/issues)，包含：
+发现 Bug 或有功能建议？请 [创建 Issue](https://github.com/Felix201209/otto/issues)，包含：
 
 - 问题描述
 - 复现步骤
 - 期望行为
 - 环境信息（OS、Node 版本等）
-
----
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=OrionStarAI/OttoCode&type=date&legend=top-left)](https://www.star-history.com/#OrionStarAI/OttoCode&type=date&legend=top-left)
 
 ---
 
@@ -1314,7 +1184,7 @@ easycode -y
 
 - [ ] 优化 MCP 上下文理解能力
 - [ ] 扩展工具系统，支持更多场景
-- [ ] 增强 VS Code 插件体验
+- [ ] 增强飞书数字同事协作体验
 - [ ] 支持更多 AI 模型
 
 ### 中期目标 (v2.x)
@@ -1336,15 +1206,8 @@ easycode -y
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
 
-| 📄 Legal | |
-|:---|:---|
-| **License** | [Apache License 2.0](LICENSE) |
-| **Terms of Service** | [Terms & Privacy](https://easycode.bot/terms) |
-| **Privacy Policy** | [Privacy Policy](https://easycode.bot/privacy) |
-| **Security** | [Security Policy](SECURITY.md) |
-
 ```
-Copyright 2025 Otto Team
+Copyright 2025 Otto
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1361,11 +1224,10 @@ You may obtain a copy of the License at
 
 | 资源 | 链接 |
 |:---:|:---|
-| 🌐 **官方网站** | [https://easycode.bot](https://easycode.bot) |
-| 📦 **npm 包** | [https://www.npmjs.com/package/easycode-ai](https://www.npmjs.com/package/easycode-ai) |
-| 📖 **白皮书** | [Otto_Code_Whitepaper.md](./Otto_Code_Whitepaper.md) |
-| 🐛 **问题反馈** | [GitHub Issues](https://github.com/OrionStarAI/OttoCode/issues) |
-| 💬 **讨论区** | [GitHub Discussions](https://github.com/OrionStarAI/OttoCode/discussions) |
+| 📦 **代码仓库** | [github.com/Felix201209/otto](https://github.com/Felix201209/otto) |
+| 🚀 **快速上手** | [QUICKSTART.md](./QUICKSTART.md) |
+| 🐛 **问题反馈** | [GitHub Issues](https://github.com/Felix201209/otto/issues) |
+| 💬 **讨论区** | [GitHub Discussions](https://github.com/Felix201209/otto/discussions) |
 
 </div>
 
@@ -1382,11 +1244,5 @@ You may obtain a copy of the License at
 <br>
 
 🪄 **Happy Coding with Otto!** 💻✨
-
-<br>
-
----
-
-Made with ❤️ by [Otto Team](https://github.com/OrionStarAI)
 
 </div>

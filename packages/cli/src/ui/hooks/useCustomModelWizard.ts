@@ -75,7 +75,7 @@ export const useCustomModelWizard = (
             text:
               successMessage +
               detailLines +
-              '\n\n💡 Use /model to select your custom model.\n📁 Saved to: ~/.deepv/custom-models.json',
+              '\n\n💡 Use /model to select your custom model.\n📁 Saved to: ~/.otto-user/custom-models.json',
           } as HistoryItemInfo,
           Date.now(),
         );

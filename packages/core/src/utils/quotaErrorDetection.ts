@@ -347,7 +347,7 @@ function formatDeepVServerQuotaError(errorData: any): string {
     if (cycleInfo) result += `🕒 重置周期: ${cycleInfo}\n`;
 
     result += '\n💡 请切换模型使用，或等待周期结束后恢复。\n';
-    result += '🔗 了解更多: https://dvcode.deepvlab.ai/\n';
+    result += '🔗 如需帮助，请联系您的管理员或企业对接人。\n';
     result += '─────────────────────────────────────────────────────';
     return result;
   } else {
@@ -359,7 +359,7 @@ function formatDeepVServerQuotaError(errorData: any): string {
     if (cycleInfo) result += `🕒 Cycle: ${cycleInfo}\n`;
 
     result += '\n💡 Please switch to another model or wait for the cycle to reset.\n';
-    result += '🔗 More info: https://dvcode.deepvlab.ai/\n';
+    result += '🔗 For help, please contact your administrator or account manager.\n';
     result += '─────────────────────────────────────────────────────';
     return result;
   }
@@ -384,19 +384,19 @@ function formatDeepXQuotaError(quotaError: DeepXQuotaError): string {
   // 403无配额配置错误的特殊处理
   if (quotaError.error === 'No quota configuration') {
     return isChinese
-      ? '─────────────────────────────────────────────────────\n🚫 当前账户可用的 Credit（积分）不足以继续使用本服务\n💡 请考虑订阅更多额度的套餐。详情请访问官网：https://dvcode.deepvlab.ai/\n\n\x1b[33m🎁 如果希望获得免费体验机会，请联系我们的Boss：https://x.com/fusheng_0306\x1b[0m\n─────────────────────────────────────────────────────'
-      : '─────────────────────────────────────────────────────\n🚫 Your account\'s available Credits are insufficient to continue using this service\n💡 Please consider subscribing to a higher quota plan. Details: https://dvcode.deepvlab.ai/\n\n\x1b[33m🎁 For free trial opportunities, contact our Boss: https://x.com/fusheng_0306\x1b[0m\n─────────────────────────────────────────────────────';
+      ? '─────────────────────────────────────────────────────\n🚫 当前账户可用的额度不足以继续使用本服务\n💡 您的额度已用尽，请联系您的管理员或企业对接人升级套餐。\n─────────────────────────────────────────────────────'
+      : '─────────────────────────────────────────────────────\n🚫 Your account\'s available quota is insufficient to continue using this service\n💡 Your quota has been used up. Please contact your administrator or account manager to upgrade your plan.\n─────────────────────────────────────────────────────';
   }
 
   // 429配额超限错误处理
   if (quotaError.error === 'Quota limit exceeded') {
     return isChinese
-      ? '🚫 服务配额已达上限\n💡 请升级套餐：https://dvcode.deepvlab.ai/'
-      : '🚫 Service quota limit exceeded\n💡 Please upgrade your plan: https://dvcode.deepvlab.ai/';
+      ? '🚫 服务配额已达上限\n💡 请联系您的管理员或企业对接人升级套餐'
+      : '🚫 Service quota limit exceeded\n💡 Please contact your administrator or account manager to upgrade your plan';
   }
 
   // 默认错误处理
   return isChinese
-    ? '🚫 服务不可用\n💡 请联系管理员检查账户配置\n🔗 升级套餐：https://dvcode.deepvlab.ai/'
-    : '🚫 Service unavailable\n💡 Please contact administrator to check account configuration\n🔗 Upgrade: https://dvcode.deepvlab.ai/';
+    ? '🚫 服务不可用\n💡 请联系您的管理员或企业对接人检查账户配置并升级套餐'
+    : '🚫 Service unavailable\n💡 Please contact your administrator or account manager to check account configuration and upgrade your plan';
 }

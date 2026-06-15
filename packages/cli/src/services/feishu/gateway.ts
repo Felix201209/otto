@@ -1,7 +1,7 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Otto team
+ * https://github.com/Felix201209/otto
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -630,8 +630,8 @@ export class FeishuGateway {
    * 该卡片操作生效。注入后优先于内置的凭证授权判定。
    *
    * 注入为 null（默认）时，gateway 在非测试环境下会**自行**加载飞书凭证、
-   * 用 isSenderAuthorized(owner/allowlist) 做判定（与消息路径同源），从而保证
-   * 「群成员点按钮劫持等待 owner 的决策」被拦截，无需调用方额外接线。
+   * 用 isSenderAuthorized(owner/allowlist) 做判定（与消息路径同源、同为 fail-closed），
+   * 从而保证「群成员点按钮劫持等待 owner 的决策」被拦截，无需调用方额外接线。
    */
   cardActionAuthorizer: ((openId: string) => boolean) | null = null;
 
@@ -646,9 +646,10 @@ export class FeishuGateway {
    * 优先级：注入的 cardActionAuthorizer → 内置凭证授权（owner/allowlist）。
    * 设计要点：
    *   - 测试环境（VITEST / NODE_ENV=test）下不自加载凭证，保持既有用例行为不变；
-   *   - 凭证缺失 / 无 owner 配置（Bot 尚未绑定授权用户）时**放行**，与消息路径
-   *     语义一致（未配置授权时不在此处硬拦）；
-   *   - 仅当凭证存在且属于本 Bot（appId 匹配）且配置了 owner/allowlist 时才强制校验。
+   *   - 凭证存在且属于本 Bot（appId 匹配）但**未配置 owner/allowlist**（Bot 尚未
+   *     绑定授权用户）时**拒绝**，与消息路径 isSenderAuthorized 一致（fail-closed，
+   *     未配置授权即默认拒绝），避免群成员在 owner 绑定前的空窗期劫持卡片决策；
+   *   - 仅当凭证完全无法读取（读盘异常）时才放行，交由上层流程处理。
    */
   private async isCardActionAuthorized(openId: string): Promise<boolean> {
     if (this.cardActionAuthorizer) {
@@ -670,11 +671,14 @@ export class FeishuGateway {
       this.credAuthorizerPromise = (async () => {
         try {
           const creds = await loadCredentials();
-          // 仅当凭证属于本 Bot 且已配置 owner/allowlist 时才启用强制校验。
-          if (creds && creds.appId === this.appId && (creds.ownerOpenId || (creds.allowlist && creds.allowlist.length > 0))) {
+          // 凭证属于本 Bot 时一律走 isSenderAuthorized 判定：
+          // 已配置 owner/allowlist → 按名单校验；
+          // 未配置 owner/allowlist → isSenderAuthorized 默认拒绝（fail-closed，
+          //   与消息路径一致），不在此处放行，避免空窗期劫持。
+          if (creds && creds.appId === this.appId) {
             return (id: string) => isSenderAuthorized(creds, id);
           }
-          return null; // 未配置授权 → 放行
+          return null; // 无凭证 / 非本 Bot 凭证 → 交由上层处理（见下方 fallback）
         } catch (e: any) {
           // 凭证无法读取：不阻断（与消息路径一致由上层处理），但记录。
           dwarn(`[Feishu] card-action authorization: failed to load credentials, allowing: ${e?.message || e}`);
@@ -2275,8 +2279,10 @@ export class FeishuGateway {
       }
 
       if (match[1]) {
-        // 行内代码 `code`
-        elements.push({ tag: 'text', text: match[2], style: ['inlineCode'] });
+        // 行内代码 `code` —— 飞书 post 富文本不支持 inlineCode style(只认
+        // bold/italic/underline/lineThrough),非法 style 会致整条 post 发送失败。
+        // 反引号此处已剥除,直接以纯文本呈现。
+        elements.push({ tag: 'text', text: match[2] });
       } else if (match[3]) {
         // 链接 [text](url)
         elements.push({ tag: 'a', text: match[4], href: match[5] });
