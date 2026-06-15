@@ -30,7 +30,23 @@ Otto 自己不绑定模型，需要你给它接一个：
 把 Codex OAuth 凭证放在 `~/.codex/auth.json`，Otto 启动时自动读取，无需额外配置。
 
 **B. 用 API key（OpenAI / DeepSeek 等）**
-编辑 `~/.otto-user/custom-models.json`，填上模型的 `endpoint` 和 `apiKey`。首次运行 `otto` 会生成 `~/.otto-user/` 配置目录。
+自己创建 `~/.otto-user/custom-models.json`，按下面结构填写（支持 `//` 注释）：
+
+```json
+{
+  "models": [
+    {
+      "displayName": "我的模型",
+      "provider": "openai-responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-...",
+      "modelId": "gpt-5.5"
+    }
+  ]
+}
+```
+
+启动 `otto` 后用 `/model` 选中它。也可以直接在 `otto` 里跑 `/model` 走向导新增（向导会帮你写好这个文件）。
 
 > 想最快体验：让 Felix 直接给你一份能用的 key，丢进 B 里即可。
 
