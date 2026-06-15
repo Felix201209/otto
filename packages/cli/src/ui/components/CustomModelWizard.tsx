@@ -92,37 +92,88 @@ function formatTokenCount(tokens: number): string {
   return String(tokens);
 }
 
+// 供应商选项。带 baseUrl 的是"品牌预设":选中即自动补好接口地址与协议，
+// 直接跳到填 API Key（省去手输一长串 base URL）。不带 baseUrl 的走手动填写。
 const PROVIDER_OPTIONS: Array<{
-  value: ProviderOptionValue;
+  value: string;
   label: string;
   description: string;
+  /** 实际写入配置的协议；EasyRouter 自动探测，无需此项。 */
+  protocol?: CustomModelProvider;
+  /** 预设接口地址；有则自动补、跳过手输 base URL。 */
+  baseUrl?: string;
 }> = [
   {
     value: EASY_ROUTER_PROVIDER_VALUE,
-    label: 'EasyRouter (Recommended)',
+    label: 'EasyRouter（推荐，贴 key 自动出模型列表）',
     description:
-      'Otto\'s own router. Just paste your API key and pick which models to add — base URL and protocol are auto-detected. Website: https://ezr.sh/',
+      'Otto 自带路由：只贴 API key，自动探测 base URL/协议并列出可选模型。官网：https://ezr.sh/',
   },
   {
-    value: 'openai',
-    label: 'OpenAI Compatible',
-    description: 'OpenAI API, Azure OpenAI, LM Studio, Ollama, Groq, Together AI, etc.',
+    value: 'glm',
+    label: '智谱 GLM',
+    description: 'glm-4.6 / glm-4-plus 等，OpenAI 兼容（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+  },
+  {
+    value: 'deepseek',
+    label: 'DeepSeek 深度求索',
+    description: 'deepseek-chat / deepseek-reasoner（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://api.deepseek.com',
+  },
+  {
+    value: 'moonshot',
+    label: 'Moonshot Kimi',
+    description: 'Kimi 系列，OpenAI 兼容（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://api.moonshot.cn/v1',
+  },
+  {
+    value: 'siliconflow',
+    label: '硅基流动 SiliconFlow',
+    description: 'DeepSeek / Qwen 等 200+ 模型聚合（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+  },
+  {
+    value: 'openai-official',
+    label: 'OpenAI 官方',
+    description: 'gpt-4o / gpt-5 等（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+  },
+  {
+    value: 'openrouter',
+    label: 'OpenRouter（多家聚合）',
+    description: '一个 key 访问多家模型（已自动填好接口地址）',
+    protocol: 'openai',
+    baseUrl: 'https://openrouter.ai/api/v1',
+  },
+  {
+    value: 'openai-compat',
+    label: 'OpenAI 兼容（自定义接口地址）',
+    description: '任意 OpenAI 兼容服务：Azure / Ollama / LM Studio / vLLM 等，手动填 base URL',
+    protocol: 'openai',
   },
   {
     value: 'openai-responses',
-    label: 'OpenAI (Responses API)',
-    description: 'OpenAI Responses API (POST /responses), recommended for new projects',
+    label: 'OpenAI Responses API（自定义）',
+    description: 'POST /responses（Codex / gpt-5.x），手动填 base URL',
+    protocol: 'openai-responses',
   },
   {
     value: 'anthropic',
-    label: 'Anthropic Claude',
-    description: 'Claude API (claude.ai)',
+    label: 'Anthropic Claude（自定义）',
+    description: 'Claude API，手动填 base URL',
+    protocol: 'anthropic',
   },
   {
     value: 'gemini',
-    label: 'Google Gemini (GenAI)',
-    description:
-      'Native Google GenAI API (POST /v1beta/models/{id}:streamGenerateContent). Full support for thinkingConfig + thoughts.',
+    label: 'Google Gemini（自定义）',
+    description: '原生 GenAI API，手动填 base URL',
+    protocol: 'gemini',
   },
 ];
 
@@ -163,13 +214,24 @@ export function CustomModelWizard({ onComplete, onCancel }: CustomModelWizardPro
         prev < PROVIDER_OPTIONS.length - 1 ? prev + 1 : 0
       );
     } else if (key.name === 'return') {
-      const chosen = PROVIDER_OPTIONS[selectedProviderIndex].value;
-      if (chosen === EASY_ROUTER_PROVIDER_VALUE) {
+      const opt = PROVIDER_OPTIONS[selectedProviderIndex];
+      if (opt.value === EASY_ROUTER_PROVIDER_VALUE) {
         // Pre-fill baseUrl so confirmation/preview still has something useful.
         setConfig((prev) => ({ ...prev, baseUrl: EASY_ROUTER_BASE_URL }));
         setCurrentStep(EasyRouterStep.API_KEY);
+      } else if (opt.baseUrl) {
+        // 品牌预设：自动补好接口地址与协议，跳过手输 base URL 与命名，直接填 key。
+        // displayName 留空，到 MODEL_ID 步自动用模型名填充（避免同供应商多模型重名）。
+        setConfig(prev => ({
+          ...prev,
+          provider: opt.protocol!,
+          baseUrl: opt.baseUrl!,
+          displayName: '',
+        }));
+        setCurrentStep(ManualStep.API_KEY);
       } else {
-        setConfig(prev => ({ ...prev, provider: chosen as CustomModelProvider }));
+        // 自定义/手动：走原流程（先命名，再手输 base URL）。
+        setConfig(prev => ({ ...prev, provider: opt.protocol! }));
         setCurrentStep(ManualStep.DISPLAY_NAME);
       }
       setInputValue('');
@@ -258,7 +320,12 @@ export function CustomModelWizard({ onComplete, onCancel }: CustomModelWizardPro
           setValidationError('Model ID cannot be empty');
           return;
         }
-        setConfig(prev => ({ ...prev, modelId: trimmedValue }));
+        // 预设供应商跳过了命名步骤：displayName 为空时用模型名自动填充。
+        setConfig(prev => ({
+          ...prev,
+          modelId: trimmedValue,
+          displayName: prev.displayName && prev.displayName.trim() ? prev.displayName : trimmedValue,
+        }));
         setInputValue('');
         setValidationError(null);
         setCurrentStep(ManualStep.MAX_TOKENS);
@@ -479,27 +546,30 @@ export function CustomModelWizard({ onComplete, onCancel }: CustomModelWizardPro
     <Box flexDirection="column">
       {PROVIDER_OPTIONS.map((option, index) => {
         const isSelected = index === selectedProviderIndex;
+        // 紧凑列表：每项一行（标记 + 名称）；仅选中项展开一行描述，避免长列表撑屏。
         return (
-          <Box key={option.value} marginTop={index > 0 ? 1 : 0}>
-            <Box width={2}>
-              <Text color={isSelected ? Colors.AccentGreen : Colors.Gray}>
-                {isSelected ? '▶' : ' '}
-              </Text>
-            </Box>
-            <Box flexDirection="column" flexGrow={1}>
+          <Box key={option.value} flexDirection="column">
+            <Box>
+              <Box width={2}>
+                <Text color={isSelected ? Colors.AccentGreen : Colors.Gray}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               <Text color={isSelected ? Colors.AccentGreen : Colors.Foreground} bold={isSelected}>
                 {option.label}
               </Text>
-              <Text color={Colors.Gray}>
-                {option.description}
-              </Text>
             </Box>
+            {isSelected && (
+              <Box marginLeft={2}>
+                <Text color={Colors.Gray}>{option.description}</Text>
+              </Box>
+            )}
           </Box>
         );
       })}
-      <Box marginTop={2}>
+      <Box marginTop={1}>
         <Text color={Colors.Gray}>
-          Use ↑/↓ arrows or k/j to select, Enter to confirm, Esc to cancel
+          ↑/↓ 或 k/j 选择，Enter 确认，Esc 取消
         </Text>
       </Box>
     </Box>
