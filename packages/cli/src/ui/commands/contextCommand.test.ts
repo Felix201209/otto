@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +9,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { contextCommand } from './contextCommand.js';
 import { MessageType } from '../types.js';
 import type { CommandContext } from './types.js';
-import { uiTelemetryService, tokenLimit } from 'otto-core';
+import { uiTelemetryService } from 'otto-core';
+import type { Config } from 'otto-core';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 vi.mock('otto-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('otto-core')>();
@@ -25,16 +26,17 @@ describe('contextCommand', () => {
   let mockContext: CommandContext;
 
   beforeEach(() => {
-    mockContext = {
-      ui: {
-        addItem: vi.fn(),
-      },
+    const mockConfig = {
+      getCloudModelInfo: vi.fn().mockReturnValue({ displayName: 'Gemini 2.0 Flash' }),
+      getMemoryTokenCount: vi.fn().mockReturnValue(100),
+      getUserMemory: vi.fn().mockReturnValue({}),
+      getAgentStyle: vi.fn().mockReturnValue('default'),
+      getPreferredLanguage: vi.fn().mockReturnValue(undefined),
+    };
+
+    mockContext = createMockCommandContext({
       services: {
-        config: {
-          getCloudModelInfo: vi.fn().mockReturnValue({ displayName: 'Gemini 2.0 Flash' }),
-          getMemoryTokenCount: vi.fn().mockReturnValue(100),
-          getUserMemory: vi.fn().mockReturnValue({}),
-        },
+        config: mockConfig as unknown as Config,
         settings: {
           merged: {
             preferredModel: 'gemini-2.0-flash-exp',
@@ -46,7 +48,7 @@ describe('contextCommand', () => {
           lastPromptTokenCount: 8000,
         },
       },
-    } as any;
+    });
 
     vi.spyOn(uiTelemetryService, 'getLastPromptTokenCount').mockReturnValue(8000);
     vi.spyOn(uiTelemetryService, 'getMetrics').mockReturnValue({
@@ -57,7 +59,7 @@ describe('contextCommand', () => {
           },
         },
       },
-    } as any);
+    } as ReturnType<typeof uiTelemetryService.getMetrics>);
   });
 
   it('should be defined', () => {
@@ -76,8 +78,8 @@ describe('contextCommand', () => {
     // addItem should be called twice: once for model info, once for breakdown
     expect(mockContext.ui.addItem).toHaveBeenCalledTimes(2);
 
-    const breakdownCall = (mockContext.ui.addItem as any).mock.calls.find(
-      (call: any) => call[0].type === MessageType.CONTEXT_BREAKDOWN
+    const breakdownCall = vi.mocked(mockContext.ui.addItem).mock.calls.find(
+      (call) => call[0].type === MessageType.CONTEXT_BREAKDOWN
     );
     expect(breakdownCall).toBeDefined();
 
@@ -104,12 +106,12 @@ describe('contextCommand', () => {
           },
         },
       },
-    } as any);
+    } as ReturnType<typeof uiTelemetryService.getMetrics>);
 
     await contextCommand.action!(mockContext, '');
 
-    const breakdownCall = (mockContext.ui.addItem as any).mock.calls.find(
-      (call: any) => call[0].type === MessageType.CONTEXT_BREAKDOWN
+    const breakdownCall = vi.mocked(mockContext.ui.addItem).mock.calls.find(
+      (call) => call[0].type === MessageType.CONTEXT_BREAKDOWN
     );
     expect(breakdownCall).toBeDefined();
 

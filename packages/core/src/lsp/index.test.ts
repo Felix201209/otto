@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,7 +40,7 @@ describe('LSPManager robustness', () => {
   let pyFile: string;
 
   beforeEach(async () => {
-    tempRootDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deepv-lsp-'));
+    tempRootDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'otto-lsp-'));
     pyFile = path.join(tempRootDir, 'a.py');
     await fsp.writeFile(pyFile, 'x = 1\n', 'utf8');
   });
@@ -53,7 +53,7 @@ describe('LSPManager robustness', () => {
   });
 
   it('should not hang forever if a server never responds to a request (timeout)', async () => {
-    vi.stubEnv('DEEPV_LSP_REQUEST_TIMEOUT_MS', '50');
+    vi.stubEnv('OTTO_LSP_REQUEST_TIMEOUT_MS', '50');
 
     const manager = new LSPManager(tempRootDir);
 

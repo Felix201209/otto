@@ -90,12 +90,12 @@ function DetailedMessagesDisplayComponent({
 
 export const DetailedMessagesDisplay = React.memo(
   DetailedMessagesDisplayComponent,
-  (prevProps, nextProps) => {
+  (prevProps, nextProps) => 
     // Return true if props are equal (no re-render), false to re-render
-    return (
+     (
       prevProps.messages.length === nextProps.messages.length &&
       prevProps.width === nextProps.width &&
       prevProps.maxHeight === nextProps.maxHeight
-    );
-  }
+    )
+  
 );

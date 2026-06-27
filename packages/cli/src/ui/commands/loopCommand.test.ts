@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loopCommand } from './loopCommand.js';
 import { CommandContext } from './types.js';
-import { MessageType } from '../types.js';
 import { LoopContext } from 'otto-core';
 
 function makeMockClient(initialCtx: LoopContext | null = null) {
@@ -36,7 +35,7 @@ describe('loopCommand', () => {
     mockContext = {
       services: {
         config: {
-          getGeminiClient: () => mockClient,
+          getOttoClient: () => mockClient,
         },
       },
       ui: {

@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback } from 'react';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { type HistoryItem, type HistoryItemInfo, MessageType } from '../types.js';
-import { t, tp } from '../utils/i18n.js';
-import { Config, SessionManager } from 'otto-core';
-import { appEvents, AppEvent } from '../../utils/events.js';
+import { Config,SessionManager } from 'otto-core';
+import { useCallback,useState } from 'react';
+import { LoadedSettings,SettingScope } from '../../config/settings.js';
+import { AppEvent,appEvents } from '../../utils/events.js';
 import { getModelDisplayName } from '../commands/modelCommand.js';
 import { TokenUsageInfo } from '../components/TokenUsageDisplay.js';
+import { type HistoryItem,type HistoryItemInfo } from '../types.js';
+import { t,tp } from '../utils/i18n.js';
 
 interface UseModelCommandReturn {
   isModelDialogOpen: boolean;
@@ -34,7 +34,7 @@ export const useModelCommand = (
   }, []);
 
   const handleModelHighlight = useCallback(
-    (modelName: string | undefined) => {
+    (_modelName: string | undefined) => {
       // 可以在这里添加预览逻辑，比如显示模型信息
     },
     [],
@@ -68,7 +68,7 @@ export const useModelCommand = (
         loadedSettings.setValue(SettingScope.User, 'preferredModel', modelName);
 
         if (config) {
-          const geminiClient = config.getGeminiClient();
+          const geminiClient = config.getOttoClient();
 
           if (geminiClient) {
             // 🔄 确保Chat已初始化（带重试机制）- 修复启动时立即切换模型导致的错误
@@ -175,16 +175,17 @@ export const useModelCommand = (
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorText = tp('model.dialog.set.failed', { error: errorMessage });
         setModelError(errorText);
+        const historyItem: Omit<HistoryItem, 'id'> = {
+          type: 'error',
+          text: errorText,
+        };
         addItem(
-          {
-            type: 'error',
-            text: errorText,
-          } as any,
+          historyItem,
           Date.now(),
         );
       }
     },
-    [loadedSettings, config, setModelError, addItem],
+    [loadedSettings, config, setModelError, addItem, lastTokenUsage?.input_tokens],
   );
 
   return {

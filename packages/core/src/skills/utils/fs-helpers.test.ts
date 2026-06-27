@@ -1,11 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  *
  * Regression tests for the "symlinked skill folders are not discovered" bug.
  * On macOS users commonly `ln -s` a checkout of a skill repo into
- * ~/.deepv/skills/, expecting `/skill list` to pick it up. Before the fix,
+ * ~/.otto/skills/, expecting `/skill list` to pick it up. Before the fix,
  * `fs.readdir({withFileTypes:true}).isDirectory()` returned false for
  * symlinks and the skill was silently skipped.
  */
@@ -43,7 +43,7 @@ describe('fs-helpers (symlink follow)', () => {
   beforeEach(async () => {
     tmpRoot = path.join(
       os.tmpdir(),
-      `deepv-fs-helpers-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `otto-fs-helpers-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     );
     await fs.ensureDir(tmpRoot);
   });

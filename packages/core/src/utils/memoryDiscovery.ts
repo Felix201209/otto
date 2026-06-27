@@ -10,7 +10,7 @@ import * as path from 'path';
 import { homedir } from 'os';
 import { bfsFileSearch } from './bfsFileSearch.js';
 import {
-  GEMINI_CONFIG_DIR,
+  OTTO_CONFIG_DIR,
   getAllGeminiMdFilenames,
   DEFAULT_CONTEXT_FILENAMES,
 } from '../tools/memoryTool.js';
@@ -41,7 +41,7 @@ const logger = {
  */
 export const MAX_CONTEXT_FILE_SIZE = 256 * 1024; // 256KB
 
-interface GeminiFileContent {
+interface OttoFileContent {
   filePath: string;
   content: string | null;
 }
@@ -89,7 +89,7 @@ async function findProjectRoot(startDir: string): Promise<string | null> {
   }
 }
 
-async function getGeminiMdFilePathsInternal(
+async function getOttoMdFilePathsInternal(
   currentWorkingDirectory: string,
   userHomePath: string,
   debugMode: boolean,
@@ -110,7 +110,7 @@ async function getGeminiMdFilePathsInternal(
     const resolvedHome = path.resolve(userHomePath);
     const globalMemoryPath = path.join(
       resolvedHome,
-      GEMINI_CONFIG_DIR,
+      OTTO_CONFIG_DIR,
       geminiMdFilename,
     );
 
@@ -155,7 +155,7 @@ async function getGeminiMdFilePathsInternal(
 
       // Skip the global .gemini directory itself during upward scan from CWD,
       // as global is handled separately and explicitly first.
-      if (currentDir === path.join(resolvedHome, GEMINI_CONFIG_DIR)) {
+      if (currentDir === path.join(resolvedHome, OTTO_CONFIG_DIR)) {
         if (debugMode) {
           logger.debug(
             `Upward scan reached global config dir path, stopping upward search here: ${currentDir}`,
@@ -242,8 +242,8 @@ async function getGeminiMdFilePathsInternal(
 async function readGeminiMdFiles(
   filePaths: string[],
   debugMode: boolean,
-): Promise<GeminiFileContent[]> {
-  const results: GeminiFileContent[] = [];
+): Promise<OttoFileContent[]> {
+  const results: OttoFileContent[] = [];
   for (const filePath of filePaths) {
     try {
       let content = await fs.readFile(filePath, 'utf-8');
@@ -287,7 +287,7 @@ async function readGeminiMdFiles(
 }
 
 function concatenateInstructions(
-  instructionContents: GeminiFileContent[],
+  instructionContents: OttoFileContent[],
   // CWD is needed to resolve relative paths for display markers
   currentWorkingDirectoryForDisplay: string,
 ): string {
@@ -327,7 +327,7 @@ export async function loadServerHierarchicalMemory(
   // For the server, homedir() refers to the server process's home.
   // This is consistent with how MemoryTool already finds the global path.
   const userHomePath = homedir();
-  const filePaths = await getGeminiMdFilePathsInternal(
+  const filePaths = await getOttoMdFilePathsInternal(
     currentWorkingDirectory,
     userHomePath,
     debugMode,

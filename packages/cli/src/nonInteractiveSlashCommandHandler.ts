@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Config } from 'otto-core';
+import { Config, Logger } from 'otto-core';
 import { CommandService } from './services/CommandService.js';
-import { CommandContext, SlashCommand, CommandKind } from './ui/commands/types.js';
+import { CommandContext, SlashCommand } from './ui/commands/types.js';
 import { LoadedSettings } from './config/settings.js';
 import { McpPromptLoader } from './services/McpPromptLoader.js';
 import { BuiltinCommandLoader } from './services/BuiltinCommandLoader.js';
@@ -140,7 +140,7 @@ export async function handleNonInteractiveSlashCommand(
       config,
       settings,
       git: undefined, // Git service not needed in non-interactive mode
-      logger: console as any, // Use console as a basic logger
+      logger: new Logger(config.getSessionId?.() || 'non-interactive'),
     },
     ui: {
       addItem: () => 0, // No-op in non-interactive mode, returns dummy ID
@@ -249,12 +249,13 @@ export async function handleNonInteractiveSlashCommand(
           reason: `Command /${commandToExecute.name} (${result.type}) is not supported in non-interactive mode`,
         };
 
-      default:
+      default: {
         const unhandled: never = result;
         return {
           type: 'unsupported',
-          reason: `Unhandled command result type: ${(unhandled as any)?.type}`,
+          reason: `Unhandled command result type: ${String((unhandled as { type?: unknown })?.type)}`,
         };
+      }
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

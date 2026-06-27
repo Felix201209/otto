@@ -1,16 +1,15 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
+import React,{ useMemo } from 'react';
+import stripAnsi from 'strip-ansi';
 import { Colors } from '../colors.js';
 import { ConsoleMessageItem } from '../types.js';
-import stripAnsi from 'strip-ansi';
 
 interface ScrollingDebugConsoleProps {
   messages: ConsoleMessageItem[];
@@ -35,6 +34,7 @@ function sanitizeMessage(content: string): string {
   cleaned = cleaned.replace(/^\r/gm, '');
 
   // 移除破坏界面的控制字符
+  // eslint-disable-next-line no-control-regex -- 需要清理终端输出里的 NUL/BEL/退格控制字符，避免破坏界面渲染。
   cleaned = cleaned.replace(/[\x00\x07\x08\x7F]/g, '');
 
   // 清理多余的连续换行
@@ -100,7 +100,7 @@ function ScrollingDebugConsoleComponent({
   const reservedForErrors = errors.length > 0 ? 2 + recentErrorsDisplayCount : 0;
   const adjustedContentHeight = Math.max(contentHeight - reservedForErrors, 3);
 
-  const { displayItems, totalMessages } = useMemo(
+  const { displayItems, totalMessages: _totalMessages } = useMemo(
     () => processConsoleMessages(messages, adjustedContentHeight),
     [messages, adjustedContentHeight]
   );
@@ -225,11 +225,9 @@ function ScrollingDebugConsoleComponent({
 
 export const ScrollingDebugConsole = React.memo(
   ScrollingDebugConsoleComponent,
-  (prevProps, nextProps) => {
-    return (
+  (prevProps, nextProps) => (
       prevProps.messages.length === nextProps.messages.length &&
       prevProps.height === nextProps.height &&
       prevProps.width === nextProps.width
-    );
-  }
+    )
 );

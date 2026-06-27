@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   validateNonInteractiveAuth,
 } from './validateNonInterActiveAuth.js';
-import { AuthType } from 'otto-core';
+import { AuthType, Config } from 'otto-core';
 
 // Define NonInteractiveConfig type for testing
 interface NonInteractiveConfig {
@@ -22,9 +22,9 @@ describe('validateNonInterActiveAuth', () => {
 
   beforeEach(() => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = vi.spyOn(process, 'exit').mockImplementation((code: any) => {
+    processExitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
       throw new Error(`process.exit(${code}) called`);
-    }) as any;
+    });
     refreshAuthMock = vi.fn().mockResolvedValue('refreshed');
   });
 
@@ -36,7 +36,7 @@ describe('validateNonInterActiveAuth', () => {
     const nonInteractiveConfig: NonInteractiveConfig = {
       refreshAuth: refreshAuthMock,
     };
-    await validateNonInteractiveAuth(undefined, nonInteractiveConfig as any);
+    await validateNonInteractiveAuth(undefined, nonInteractiveConfig as Config);
     expect(refreshAuthMock).toHaveBeenCalledWith(AuthType.USE_PROXY_AUTH);
   });
 
@@ -44,7 +44,7 @@ describe('validateNonInterActiveAuth', () => {
     const nonInteractiveConfig: NonInteractiveConfig = {
       refreshAuth: refreshAuthMock,
     };
-    await validateNonInteractiveAuth(AuthType.USE_PROXY_AUTH, nonInteractiveConfig as any);
+    await validateNonInteractiveAuth(AuthType.USE_PROXY_AUTH, nonInteractiveConfig as Config);
     expect(refreshAuthMock).toHaveBeenCalledWith(AuthType.USE_PROXY_AUTH);
   });
 
@@ -55,8 +55,8 @@ describe('validateNonInterActiveAuth', () => {
     };
     try {
       await validateNonInteractiveAuth(
-        'invalid-type' as any,
-        nonInteractiveConfig as any,
+        'invalid-type' as AuthType,
+        nonInteractiveConfig as Config,
       );
       expect.fail('Should have exited');
     } catch (e) {

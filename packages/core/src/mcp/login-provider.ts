@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -110,7 +109,7 @@ export class MCPOAuthProvider {
       `http://localhost:${this.REDIRECT_PORT}${this.REDIRECT_PATH}`;
 
     const registrationRequest: OAuthClientRegistrationRequest = {
-      client_name: 'Gemini CLI MCP Client',
+      client_name: 'Otto MCP Client',
       redirect_uris: [redirectUri],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],

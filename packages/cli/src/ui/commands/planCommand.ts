@@ -1,12 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { CommandKind, SlashCommand, SlashCommandActionReturn, CommandContext } from './types.js';
+import { CommandKind, SlashCommand, SlashCommandActionReturn } from './types.js';
 import { t, tp } from '../utils/i18n.js';
 import { MESSAGE_ROLES } from 'otto-core';
 
@@ -45,13 +44,13 @@ export const planCommand: SlashCommand = {
           content: t('plan.mode.enabled.message')
         };
 
-      case 'off':
+      case 'off': {
         // 退出Plan模式
         config.setPlanModeActive(false);
 
         // 1. 静默添加退出记录到历史上下文
         // 这样AI在下一次对话时就能知道Plan模式已退出，而不需要立即触发请求
-        const client = config.getGeminiClient();
+        const client = config.getOttoClient();
         if (client) {
           await client.addHistory({
             role: MESSAGE_ROLES.USER,
@@ -65,8 +64,9 @@ export const planCommand: SlashCommand = {
           messageType: 'info',
           content: t('plan.mode.disabled.message')
         };
+      }
 
-      case 'status':
+      case 'status': {
         // 查看Plan模式状态
         const isActive = config.getPlanModeActive();
         return {
@@ -74,6 +74,7 @@ export const planCommand: SlashCommand = {
           messageType: 'info',
           content: tp('plan.mode.status.message', { status: isActive ? t('plan.mode.status.on') : t('plan.mode.status.off') })
         };
+      }
 
       default:
         return {

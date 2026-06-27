@@ -1,14 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useEffect, useCallback, useRef } from 'react';
-import { SessionManager, type Config } from 'otto-core';
-import { type HistoryItem, StreamingState } from '../types.js';
+import { SessionManager,type Config } from 'otto-core';
+import type { Content } from '@google/genai';
+import { useCallback,useEffect,useRef } from 'react';
+import { StreamingState,type HistoryItem } from '../types.js';
 
 interface UseSessionRestoreParams {
   config: Config;
@@ -69,11 +69,11 @@ export const useSessionRestore = ({ config, loadHistory }: UseSessionRestorePara
 /**
  * 启动AI客户端历史记录恢复监听器
  */
-function startClientHistoryRestore(config: Config, clientHistory: any[]) {
+function startClientHistoryRestore(config: Config, clientHistory: Content[]) {
   console.log('[SessionRestore] Starting AI client history restore monitor...');
 
   const checkAndRestore = () => {
-    const geminiClient = config.getGeminiClient();
+    const geminiClient = config.getOttoClient();
 
     // 检查客户端是否已初始化
     if (geminiClient && geminiClient.isInitialized?.()) {
@@ -116,7 +116,7 @@ export const useSessionAutoSave = (config: Config, history: HistoryItem[], strea
 
     try {
       const sessionManager = new SessionManager(projectRoot);
-      const clientHistory = await config.getGeminiClient()?.getHistory();
+      const clientHistory = await config.getOttoClient()?.getHistory();
 
       await sessionManager.saveSessionHistory(
         config.getSessionId(),

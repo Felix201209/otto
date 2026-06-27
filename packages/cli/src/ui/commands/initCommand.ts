@@ -31,10 +31,10 @@ export const initCommand: SlashCommand = {
       };
     }
     const targetDir = context.services.config.getTargetDir();
-    const deepvMdPath = path.join(targetDir, 'OTTO.md');
+    const ottoMdPath = path.join(targetDir, 'OTTO.md');
 
-    if (fs.existsSync(deepvMdPath)) {
-      const stats = fs.statSync(deepvMdPath);
+    if (fs.existsSync(ottoMdPath)) {
+      const stats = fs.statSync(ottoMdPath);
       const fileSizeKB = Math.round(stats.size / 1024 * 100) / 100;
 
       // If file size is 0, treat it as empty and proceed with init
@@ -59,22 +59,22 @@ export const initCommand: SlashCommand = {
       }
 
       // File exists and is not empty - show choice dialog
-      const fileContent = fs.readFileSync(deepvMdPath, 'utf8');
+      const fileContent = fs.readFileSync(ottoMdPath, 'utf8');
       const lineCount = fileContent.split('\n').length - (fileContent.endsWith('\n') ? 1 : 0);
 
       return {
         type: 'dialog',
         dialog: 'init-choice',
         metadata: {
-          filePath: deepvMdPath,
+          filePath: ottoMdPath,
           fileSize: fileSizeKB,
-          lineCount: lineCount,
+          lineCount,
         },
       };
     }
 
     // File doesn't exist - create it and proceed with init
-    fs.writeFileSync(deepvMdPath, '', 'utf8');
+    fs.writeFileSync(ottoMdPath, '', 'utf8');
 
     context.ui.addItem(
       {

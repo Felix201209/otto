@@ -25,11 +25,11 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('deepv-code.runDeepVCode', () => {
-      const deepvCmd = 'otto --ide-mode';
+    vscode.commands.registerCommand('otto-code.runOttoCode', () => {
+      const ottoCmd = 'otto --ide-mode';
       const terminal = vscode.window.createTerminal(`Otto`);
       terminal.show();
-      terminal.sendText(deepvCmd);
+      terminal.sendText(ottoCmd);
     }),
   );
 }

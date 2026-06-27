@@ -1,21 +1,20 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useState, useCallback, useEffect } from 'react';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
 import {
-  AuthType,
-  Config,
-  SceneManager,
-  SceneType,
-  getErrorMessage,
+AuthType,
+Config,
+getErrorMessage
 } from 'otto-core';
+import { useCallback,useEffect,useState } from 'react';
+import { LoadedSettings,SettingScope } from '../../config/settings.js';
 import { runExitCleanup } from '../../utils/cleanup.js';
+
+const shouldSuppressGoogleOauthBrowserLaunch = false;
 
 export const useLoginCommand = (
   settings: LoadedSettings,
@@ -81,7 +80,7 @@ export const useLoginCommand = (
         }
 
         // Browser launch suppression only applied to Google OAuth, not proxy auth
-        if (false) {
+        if (shouldSuppressGoogleOauthBrowserLaunch) {
           runExitCleanup();
           console.log(
             `
@@ -99,7 +98,7 @@ Logging in with Google... Please restart Otto CLI to continue.
       });
       setLoginError(null);
     },
-    [settings, setLoginError, config, setCurrentModel],
+    [settings, setLoginError],
   );
 
   const cancelAuthentication = useCallback(() => {

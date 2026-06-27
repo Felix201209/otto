@@ -27,7 +27,7 @@ import { buildConfigOptionsSnapshot, hasMeta } from './acpUtils.js';
  * path; we keep that here and simply accept `apiKey` / `baseUrl` overrides
  * in `authenticate`.
  */
-export class GeminiAgent {
+export class OttoAgent {
   private apiKey?: string;
   private baseUrl?: string;
   private customHeaders?: Record<string, string>;
@@ -65,14 +65,14 @@ export class GeminiAgent {
       authMethods: [
         {
           id: AuthType.USE_PROXY_AUTH,
-          name: 'DeepV proxy auth',
+          name: 'Otto proxy auth',
           description: 'Use Otto proxy authentication',
           _meta: {
             'api-key': {
-              provider: 'deepv',
+              provider: 'otto',
             },
             gateway: {
-              protocol: 'deepv',
+              protocol: 'otto',
               restartRequired: 'false',
             },
           },
@@ -230,7 +230,7 @@ export class GeminiAgent {
     try {
       const outcome = await session.applyConfigOption(configId, rawValue);
       if (outcome.error) {
-        // Switch was vetoed by the compression-aware `GeminiClient.switchModel`
+        // Switch was vetoed by the compression-aware `OttoClient.switchModel`
         // (e.g. compression failed or already in progress). Surface this as
         // an RPC error so ACP clients can show a meaningful message.
         throw new acp.RequestError(

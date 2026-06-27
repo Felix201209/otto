@@ -1,13 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { homedir } from 'os';
-import { CustomModelConfig, validateCustomModelConfig, generateCustomModelId } from 'otto-core';
+import { CustomModelConfig, validateCustomModelConfig } from 'otto-core';
 import stripJsonComments from 'strip-json-comments';
 
 const SETTINGS_DIRECTORY_NAME = '.otto-user';
@@ -89,7 +89,7 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
 
     // 准备数据
     const data = {
-      models: models,
+      models,
       _metadata: {
         version: '1.0',
         lastModified: new Date().toISOString(),

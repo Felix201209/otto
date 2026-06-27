@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,8 +50,8 @@ import { StreamingState } from '../types.js';
  *   and wastes cycles. Stopping the heartbeat eliminates that.
  *
  * Heartbeat (when active):
- *   The goal context lives inside GeminiClient as a plain in-memory field
- *   (GeminiClient.activeGoalContext) — not React state — so React has no
+ *   The goal context lives inside OttoClient as a plain in-memory field
+ *   (OttoClient.activeGoalContext) — not React state — so React has no
  *   way to know when its `startedAt` advances into a new "elapsed = N
  *   seconds" tick. We force a re-render once per second via a local
  *   `tick` state. Same pattern LoadingIndicator uses for its elapsed
@@ -104,7 +104,7 @@ export const GoalActiveIndicator: React.FC<GoalActiveIndicatorProps> = ({
   // This conditional read DOES NOT use any hook, so it's safe here.
   let ctx: { startedAt: number; hours: number } | null = null;
   try {
-    ctx = config?.getGeminiClient()?.getGoalContext() ?? null;
+    ctx = config?.getOttoClient()?.getGoalContext() ?? null;
   } catch {
     ctx = null;
   }

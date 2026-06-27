@@ -9,7 +9,7 @@ import { USER_SETTINGS_PATH } from './config/settings.js';
 import { validateAuthMethod } from './config/auth.js';
 
 function getAuthTypeFromEnv(): AuthType | undefined {
-  // 默认使用 Cheeth OA 认证
+  // 默认使用 Otto custom-model 认证
   return AuthType.USE_PROXY_AUTH;
 }
 

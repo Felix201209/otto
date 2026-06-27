@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +9,7 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
-import { restoreWindowTitle } from '../gemini.js';
+import { restoreWindowTitle } from '../otto.js';
 
 export enum NotificationSound {
   RESPONSE_COMPLETE = 'response-complete',
@@ -40,7 +39,7 @@ export class AudioNotification {
     this.initialized = true;
   }
 
-  static initializeFromSettings(userSettings?: any) {
+  static initializeFromSettings(userSettings?: { audioNotifications?: Partial<AudioSettings> }) {
     if (this.initialized) return;
 
     const audioSettings = userSettings?.audioNotifications;
@@ -71,6 +70,8 @@ export class AudioNotification {
         break;
       case NotificationSound.SELECTION_MADE:
         if (!this.settings.selectionMade) return;
+        break;
+      default:
         break;
     }
 
@@ -131,17 +132,19 @@ export class AudioNotification {
 
     try {
       switch (platform) {
-        case 'win32':
+        case 'win32': {
           // Windows: 使用不同频率的提示音区分不同类型
           const frequency = this.getSoundFrequency(sound);
           await this.executeCommand('powershell', ['-c', `[console]::beep(${frequency},200)`]);
           break;
-        case 'darwin':
+        }
+        case 'darwin': {
           // macOS: 使用不同的系统音效
           const macSound = this.getMacSystemSound(sound);
           await this.executeCommand('afplay', [macSound]);
           break;
-        case 'linux':
+        }
+        case 'linux': {
           // Linux: 尝试多种音频播放命令
           const linuxSound = this.getLinuxSystemSound(sound);
           try {
@@ -156,6 +159,7 @@ export class AudioNotification {
             }
           }
           break;
+        }
         default:
           console.debug(`[AudioNotification] Unsupported platform: ${platform}`);
       }
@@ -210,7 +214,7 @@ export class AudioNotification {
         timeout: 2000 // 2秒超时
       });
 
-      child.on('close', (code) => {
+      child.on('close', (_code) => {
         // PowerShell 播放音频时可能返回 null 或非零代码，但实际播放成功
         // 只要没有 error 事件，就认为成功
 

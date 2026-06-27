@@ -4,35 +4,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config } from 'otto-core';
 import { useStdin } from 'ink';
-import type React from 'react';
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-} from 'react';
 import readline from 'node:readline';
 import { PassThrough } from 'node:stream';
+import type { Config } from 'otto-core';
+import type React from 'react';
 import {
-  BACKSLASH_ENTER_DETECTION_WINDOW_MS,
-  CHAR_CODE_ESC,
-  KITTY_CTRL_C,
-  KITTY_KEYCODE_BACKSPACE,
-  KITTY_KEYCODE_ENTER,
-  KITTY_KEYCODE_NUMPAD_ENTER,
-  KITTY_KEYCODE_TAB,
-  MAX_KITTY_SEQUENCE_LENGTH,
-  KITTY_MODIFIER_BASE,
-  KITTY_MODIFIER_EVENT_TYPES_OFFSET,
-  MODIFIER_SHIFT_BIT,
-  MODIFIER_ALT_BIT,
-  MODIFIER_CTRL_BIT,
+createContext,
+useCallback,
+useContext,
+useEffect,
+useRef,
+} from 'react';
+import {
+BACKSLASH_ENTER_DETECTION_WINDOW_MS,
+CHAR_CODE_ESC,
+KITTY_CTRL_C,
+KITTY_KEYCODE_BACKSPACE,
+KITTY_KEYCODE_ENTER,
+KITTY_KEYCODE_NUMPAD_ENTER,
+KITTY_KEYCODE_TAB,
+KITTY_MODIFIER_BASE,
+KITTY_MODIFIER_EVENT_TYPES_OFFSET,
+MAX_KITTY_SEQUENCE_LENGTH,
+MODIFIER_ALT_BIT,
+MODIFIER_CTRL_BIT,
+MODIFIER_SHIFT_BIT,
 } from '../utils/platformConstants.js';
 
-import { FOCUS_IN, FOCUS_OUT } from '../hooks/useFocus.js';
+import { FOCUS_IN,FOCUS_OUT } from '../hooks/useFocus.js';
 
 const ESC = '\u001B';
 export const PASTE_MODE_PREFIX = `${ESC}[200~`;
@@ -97,6 +97,12 @@ export function KeypressProvider({
   // 快速粘贴检测相关状态（适用于所有平台）
   const rapidPasteKeysRef = useRef<Key[]>([]);
   const rapidPasteTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 用 ref 持有最新的 onBackgroundModeRequested，避免把它列入下方管理 stdin 订阅的
+  // 大 useEffect 依赖——否则父组件每次传新函数引用都会让按键监听 effect 反复
+  // teardown/setup（有丢按键风险）。handler 通过 ref 读取最新值即可。
+  const onBackgroundModeRequestedRef = useRef(onBackgroundModeRequested);
+  onBackgroundModeRequestedRef.current = onBackgroundModeRequested;
 
   const subscribe = useCallback(
     (handler: KeypressHandler) => {
@@ -562,22 +568,18 @@ export function KeypressProvider({
       }
 
       // NEW: Handle Ctrl+B for background task mode
+      // 注意：这里绝不能 console.log —— Ink 运行时往 stdout 写任何东西都会把活动帧
+      // 顶进滚动区，表现为「每次按键上面冒出一行」。调试信息走 debug 日志，不打 stdout。
       if (key.ctrl && key.name === 'b') {
-        console.log('[KeypressContext] 🎯 Ctrl+B detected!', { ctrl: key.ctrl, name: key.name });
-
-        // Try local callback first
-        if (onBackgroundModeRequested) {
-          console.log('[KeypressContext] Calling onBackgroundModeRequested(true)');
-          onBackgroundModeRequested(true);
+        // Try local callback first（通过 ref 读取最新值，见上方 ref 声明处说明）
+        if (onBackgroundModeRequestedRef.current) {
+          onBackgroundModeRequestedRef.current(true);
         }
 
         // Try global callback (from BackgroundModeBridge)
-        const globalCallback = (globalThis as any).__backgroundModeCallback;
+        const globalCallback = globalThis.__backgroundModeCallback;
         if (globalCallback) {
-          console.log('[KeypressContext] Calling global __backgroundModeCallback(true)');
           globalCallback(true);
-        } else {
-          console.log('[KeypressContext] ⚠️ No callback found!');
         }
 
         // Don't broadcast - consume the key

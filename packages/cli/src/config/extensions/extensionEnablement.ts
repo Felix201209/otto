@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { loadSettings, SettingScope } from '../settings.js';
-
 export class ExtensionEnablementManager {
   private enabledExtensionOverrides?: string[];
 

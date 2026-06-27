@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -74,8 +73,9 @@ export class PptGenerateTool extends BaseTool<PptGenerateToolParams, ToolResult>
     );
 
     // 使用统一的服务端地址配置
-    this.serverUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
-    this.webUrl = process.env.DEEPX_WEB_URL || 'https://dvcode.deepvlab.ai';
+    // BYO-key: 不再硬编码 otto 后端；未配置时为空字符串，execute 时会优雅跳过。
+    this.serverUrl = process.env.OTTO_SERVER_URL || '';
+    this.webUrl = process.env.OTTO_WEB_URL || '';
   }
 
   validateToolParams(_params: PptGenerateToolParams): string | null {
@@ -147,6 +147,15 @@ ${outlinePreview}
       return {
         llmContent: `❌ ${validationError}`,
         returnDisplay: `❌ ${validationError}`,
+      };
+    }
+
+    // BYO-key: 未配置服务端/Web 地址时，PPT 生成功能不可用，优雅返回而非访问空 URL。
+    if (!this.serverUrl || !this.webUrl) {
+      const msg = '❌ PPT 生成功能不可用：未配置服务端地址（请设置 OTTO_SERVER_URL 与 OTTO_WEB_URL）';
+      return {
+        llmContent: msg,
+        returnDisplay: msg,
       };
     }
 

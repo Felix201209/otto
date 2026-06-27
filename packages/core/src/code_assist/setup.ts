@@ -6,7 +6,7 @@
 
 import {
   ClientMetadata,
-  GeminiUserTier,
+  OttoUserTier,
   LoadCodeAssistResponse,
   OnboardUserRequest,
   UserTierId,
@@ -75,7 +75,7 @@ export async function setupUser(client: OAuth2Client): Promise<UserData> {
   };
 }
 
-function getOnboardTier(res: LoadCodeAssistResponse): GeminiUserTier {
+function getOnboardTier(res: LoadCodeAssistResponse): OttoUserTier {
   if (res.currentTier) {
     return res.currentTier;
   }

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +18,6 @@ import {
   getTemplateNames,
   isValidTemplate,
   getAllTemplates,
-  MCPTemplate
 } from './mcpTemplates.js';
 import { t, tp } from '../../ui/utils/i18n.js';
 
@@ -209,6 +207,8 @@ function parseArguments(args: string): { serverName?: string; options: AddComman
           i++;
         }
         break;
+      default:
+        break;
     }
   }
 
@@ -228,7 +228,7 @@ ${COLOR_CYAN}• ${t('mcp.wizard.custom')}${RESET_COLOR} - ${t('mcp.wizard.custo
 ${COLOR_CYAN}• ${t('mcp.wizard.view.templates')}${RESET_COLOR} - ${t('mcp.wizard.view.templates.desc')}
 
 ${COLOR_BLUE}${t('mcp.wizard.available.templates')}${RESET_COLOR}
-${getAllTemplates().map((template, index) =>
+${getAllTemplates().map((template, _index) =>
   `  ${COLOR_GREEN}${template.name}${RESET_COLOR} - ${template.description}`
 ).join('\n')}
 

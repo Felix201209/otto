@@ -1,24 +1,25 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import {
-  AuthType,
-  UserTierId,
-  DEFAULT_GEMINI_FLASH_MODEL,
-  DEFAULT_GEMINI_MODEL,
-  isProQuotaExceededError,
-  isGenericQuotaExceededError,
-  isDeepXQuotaError,
-  getDeepXQuotaErrorMessage,
-  isApiError,
-  isStructuredError,
-  isCustomModel,
-  formatHttpErrorFallback,
+AuthType,
+DEFAULT_GEMINI_FLASH_MODEL,
+DEFAULT_GEMINI_MODEL,
+extractErrorMessage,
+extractHttpStatusCode,
+formatHttpErrorFallback,
+getOttoQuotaErrorMessage,
+isApiError,
+isCustomModel,
+isOttoQuotaError,
+isGenericQuotaExceededError,
+isProQuotaExceededError,
+isStructuredError,
+UserTierId,
 } from 'otto-core';
 import { isChineseLocale } from './i18n.js';
 
@@ -32,30 +33,30 @@ const getRateLimitErrorMessageGoogleProQuotaFree = (
   currentModel: string = DEFAULT_GEMINI_MODEL,
   fallbackModel: string = DEFAULT_GEMINI_FLASH_MODEL,
 ) =>
-  `\nYou have reached your daily ${currentModel} quota limit. You will be switched to the ${fallbackModel} model for the rest of this session. To increase your limits, upgrade to a Gemini Code Assist Standard or Enterprise plan with higher limits at https://goo.gle/set-up-gemini-code-assist, or use /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+  `\nYou have reached the daily quota for ${currentModel}. The rest of this session will switch to ${fallbackModel}. To raise your limits, use /model to switch to your own custom model, or contact your administrator.`;
 
 const getRateLimitErrorMessageGoogleGenericQuotaFree = () =>
-  `\nYou have reached your daily quota limit. To increase your limits, upgrade to a Gemini Code Assist Standard or Enterprise plan with higher limits at https://goo.gle/set-up-gemini-code-assist, or use /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+  `\nYou have reached your daily quota limit. To raise your limits, use /model to switch to your own custom model, or contact your administrator.`;
 
 // Legacy/Standard Tier message functions
 const getRateLimitErrorMessageGooglePaid = (
   fallbackModel: string = DEFAULT_GEMINI_FLASH_MODEL,
 ) =>
-  `\nPossible quota limitations in place or slow response times detected. Switching to the ${fallbackModel} model for the rest of this session. We appreciate you for choosing Gemini Code Assist and the Otto CLI.`;
+  `\nPossible quota limitations in place or slow response times detected. Switching to the ${fallbackModel} model for the rest of this session.`;
 
 const getRateLimitErrorMessageGoogleProQuotaPaid = (
   currentModel: string = DEFAULT_GEMINI_MODEL,
   fallbackModel: string = DEFAULT_GEMINI_FLASH_MODEL,
 ) =>
-  `\nYou have reached your daily ${currentModel} quota limit. You will be switched to the ${fallbackModel} model for the rest of this session. We appreciate you for choosing Gemini Code Assist and the Otto CLI. To continue accessing the ${currentModel} model today, consider using /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+  `\nYou have reached the daily quota for ${currentModel}. The rest of this session will switch to ${fallbackModel}. To keep using ${currentModel} today, use /model to switch to your own custom model, or contact your administrator.`;
 
 const getRateLimitErrorMessageGoogleGenericQuotaPaid = (
   currentModel: string = DEFAULT_GEMINI_MODEL,
 ) =>
-  `\nYou have reached your daily quota limit. We appreciate you for choosing Gemini Code Assist and the Otto CLI. To continue accessing the ${currentModel} model today, consider using /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
-const RATE_LIMIT_ERROR_MESSAGE_USE_GEMINI =
+  `\nYou have reached your daily quota limit. To keep using ${currentModel} today, use /model to switch to your own custom model, or contact your administrator.`;
+const _RATE_LIMIT_ERROR_MESSAGE_USE_GEMINI =
   '\nPlease wait and try again later. To increase your limits, request a quota increase through AI Studio, or switch to another /auth method';
-const RATE_LIMIT_ERROR_MESSAGE_VERTEX =
+const _RATE_LIMIT_ERROR_MESSAGE_VERTEX =
   '\nPlease wait and try again later. To increase your limits, request a quota increase through Vertex, or switch to another /auth method';
 const getRateLimitErrorMessageDefault = (
   fallbackModel: string = DEFAULT_GEMINI_FLASH_MODEL,
@@ -104,34 +105,82 @@ function getRateLimitMessage(
 }
 
 // 检测是否为中文环境的辅助函数 - 使用与CLI主体一致的检测逻辑
-const isChineseEnvironment = (): boolean => {
+const isChineseEnvironment = (): boolean => 
   // 直接使用CLI主体的语言检测函数，保持一致性
-  return isChineseLocale();
-};
+   isChineseLocale()
+;
 
-// 网络连接失败错误检测函数
+// 网络连接失败/超时错误的关键标识（含底层超时错误码）
+const NETWORK_ERROR_MARKERS = [
+  'fetch failed',
+  'ECONNREFUSED',
+  'network error',
+  'Network request failed',
+  // 超时相关（packages/core/src/utils/fetch.ts 抛 "Request timed out"，
+  // OttoServerAdapter 重试逻辑识别 ETIMEDOUT / UND_ERR_*_TIMEOUT）
+  'timed out',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'AbortError',
+];
+
+const matchesNetworkMarker = (message: string): boolean =>
+  NETWORK_ERROR_MARKERS.some((marker) => message.includes(marker));
+
+// 判断某个错误消息是否属于“超时”类（用于挑选更贴切的友好文案）
+const isTimeoutMessage = (message: string): boolean =>
+  message.includes('timed out') ||
+  message.includes('ETIMEDOUT') ||
+  message.includes('UND_ERR_CONNECT_TIMEOUT') ||
+  message.includes('UND_ERR_HEADERS_TIMEOUT') ||
+  message.includes('AbortError');
+
+// 网络连接失败/超时错误检测函数
 function isNetworkConnectionError(error: unknown): boolean {
   // 检查字符串错误消息
   if (typeof error === 'string') {
-    return error.includes('fetch failed') ||
-           error.includes('ECONNREFUSED') ||
-           error.includes('network error') ||
-           error.includes('Network request failed');
+    return matchesNetworkMarker(error);
   }
 
   // 检查结构化错误
   if (isStructuredError(error)) {
-    return error.message.includes('fetch failed') ||
-           error.message.includes('ECONNREFUSED') ||
-           error.message.includes('network error');
+    return matchesNetworkMarker(error.message);
+  }
+
+  // 检查 Error 实例（超时通常以 Error 抛出）
+  if (error instanceof Error) {
+    return matchesNetworkMarker(error.message);
   }
 
   return false;
 }
 
-// 生成网络连接失败友好错误消息
-function getNetworkConnectionFriendlyMessage(): string {
+// 从错误中取出可读消息，用于判断是否为超时
+function getRawErrorMessage(error: unknown): string {
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (isStructuredError(error)) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return '';
+}
+
+// 生成网络连接失败/超时友好错误消息
+function getNetworkConnectionFriendlyMessage(error?: unknown): string {
   const isChinese = isChineseEnvironment();
+  const isTimeout = isTimeoutMessage(getRawErrorMessage(error));
+
+  if (isTimeout) {
+    if (isChinese) {
+      return `🌐 请求超时\n💡 建议：网络较慢或端点无响应，请稍后重试或更换质量较好的网络节点`;
+    }
+    return `🌐 Request Timed Out\n💡 Suggestion: The network is slow or the endpoint is not responding. Retry later or switch to a better network.`;
+  }
 
   if (isChinese) {
     return `🌐 网络连接失败\n💡 建议：检查您的代理设置或更换质量较好的网络节点`;
@@ -277,7 +326,7 @@ Possible causes:
 
 // 402 Payment Required 配额限制错误检测函数
 function isQuotaLimitExceededError(error: unknown): boolean {
-  // 检测 DeepX 服务端的 402 配额错误
+  // 检测 Otto 服务端的 402 配额错误
   // 包括 "Quota limit exceeded" 和 "No quota configuration"
 
   // 检查字符串错误消息
@@ -403,6 +452,60 @@ ${quotaDetails ? quotaDetails : 'Your account has reached its usage quota.'}
   }
 }
 
+// 🆕 自定义模型错误：轻量分类，给出可操作的中文/英文指引（不动控制流）
+function getCustomModelFriendlyMessage(error: unknown): string {
+  const isChinese = isChineseEnvironment();
+  // 抽出尽量干净的服务端消息（而非整段 JSON）展示给用户
+  const rawMessage = extractErrorMessage(error);
+  // 关键词探测用「原始全文」（extractErrorMessage 可能抽掉 "(401):" 这类前缀）
+  const haystack = getRawErrorMessage(error).toLowerCase();
+  // 用 core 的统一逻辑提取 HTTP 状态码（覆盖结构化/API/文本三种形态）
+  const statusCode = extractHttpStatusCode(error);
+
+  const has = (...needles: string[]): boolean =>
+    needles.some((n) => haystack.includes(n.toLowerCase()));
+
+  // 配置未找到（OttoServerAdapter 抛 "Custom model configuration not found for: <id>"）
+  if (has('configuration not found', 'config not found')) {
+    return isChinese
+      ? `未找到该自定义模型的配置\n💡 请用 /model 重新选择，或运行 otto setup 重新配置\n（原始信息：${rawMessage}）`
+      : `Custom model configuration not found\n💡 Use /model to reselect, or run otto setup to reconfigure.\n(Details: ${rawMessage})`;
+  }
+
+  // 鉴权失败：401 / 403 / invalid api key 等
+  if (
+    statusCode === 401 ||
+    statusCode === 403 ||
+    has('401', '403', 'unauthorized', 'forbidden', 'invalid api key', 'invalid_api_key', 'authentication')
+  ) {
+    return isChinese
+      ? `鉴权失败：API key 可能不正确或已过期\n💡 请用 /model 检查该自定义模型的 API key，或运行 otto setup 重新配置\n（原始信息：${rawMessage}）`
+      : `Authentication failed: the API key may be incorrect or expired\n💡 Use /model to check this custom model's API key, or run otto setup to reconfigure.\n(Details: ${rawMessage})`;
+  }
+
+  // 端点/模型名错误：404 / not found
+  if (statusCode === 404 || has('404', 'not found', 'no such model', 'model_not_found')) {
+    return isChinese
+      ? `端点或模型名可能配置错误\n💡 请用 /model 检查接口地址（base-url）与模型名是否正确，或运行 otto setup 重新配置\n（原始信息：${rawMessage}）`
+      : `The endpoint or model name may be misconfigured\n💡 Use /model to verify the base URL and model name, or run otto setup to reconfigure.\n(Details: ${rawMessage})`;
+  }
+
+  // 连接失败/超时：服务地址不可达、后端未启动、网络/代理问题
+  if (
+    isNetworkConnectionError(error) ||
+    has('econnrefused', 'fetch failed', 'timed out', 'etimedout', 'enotfound', 'eai_again')
+  ) {
+    return isChinese
+      ? `无法连接到自定义模型端点\n💡 请确认服务地址可达、后端已启动、网络/代理正常，可用 /model 核对接口地址（base-url）\n（原始信息：${rawMessage}）`
+      : `Cannot connect to the custom model endpoint\n💡 Make sure the endpoint is reachable, the backend is running, and your network/proxy works. Use /model to verify the base URL.\n(Details: ${rawMessage})`;
+  }
+
+  // 其余：保留可读消息（而非整段 JSON），并给出通用排查入口
+  return isChinese
+    ? `[自定义模型错误] ${rawMessage}\n💡 如反复出现，请用 /model 检查端点与 API key，或运行 otto setup 重新配置`
+    : `[Custom Model Error] ${rawMessage}\n💡 If this persists, use /model to check the endpoint and API key, or run otto setup to reconfigure.`;
+}
+
 export function parseAndFormatApiError(
   error: unknown,
   authType?: AuthType,
@@ -410,26 +513,15 @@ export function parseAndFormatApiError(
   currentModel?: string,
   fallbackModel?: string,
 ): string {
-  // 🆕 自定义模型：跳过所有特殊错误格式化，直接返回原始错误消息
-  // 这些友好提示（地区限制、配额限制、升级套餐等）都是针对官方 Gemini API 设计的
-  // 自定义模型使用用户自己的 API 端点，不受这些限制约束
+  // 🆕 自定义模型：跳过针对官方代理设计的配额/封禁等友好层（那些对自带 key
+  // 的自定义端点是误导），但仍要对最常见的失败给出可操作指引，而不是裸抛 JSON。
   if (currentModel && isCustomModel(currentModel)) {
-    // 对于自定义模型，只返回简单的错误信息
-    if (typeof error === 'string') {
-      return `[Custom Model Error] ${error}`;
-    }
-    if (error instanceof Error) {
-      return `[Custom Model Error] ${error.message}`;
-    }
-    if (isStructuredError(error)) {
-      return `[Custom Model Error] ${error.message}`;
-    }
-    return `[Custom Model Error] ${String(error)}`;
+    return getCustomModelFriendlyMessage(error);
   }
 
-  // 🆕 最高优先级检查网络连接失败错误 - 显示友好提示
+  // 🆕 最高优先级检查网络连接失败/超时错误 - 显示友好提示
   if (isNetworkConnectionError(error)) {
-    return getNetworkConnectionFriendlyMessage();
+    return getNetworkConnectionFriendlyMessage(error);
   }
 
   // 🆕 最高优先级检查地区屏蔽错误 - 显示友好提示
@@ -473,9 +565,9 @@ export function parseAndFormatApiError(
     return getQuotaLimitExceededFriendlyMessage(error);
   }
 
-  // 🆕 优先检查DeepX服务端的配额错误 - 显示友好提示
-  if (isDeepXQuotaError(error)) {
-    const friendlyMessage = getDeepXQuotaErrorMessage(error);
+  // 🆕 优先检查Otto服务端的配额错误 - 显示友好提示
+  if (isOttoQuotaError(error)) {
+    const friendlyMessage = getOttoQuotaErrorMessage(error);
     if (friendlyMessage) {
       return friendlyMessage;
     }
@@ -497,7 +589,7 @@ export function parseAndFormatApiError(
       return get403FriendlyMessage();
     }
 
-    // 检查 402 配额错误 - DeepX 服务端统一使用 402 表示配额问题
+    // 检查 402 配额错误 - Otto 服务端统一使用 402 表示配额问题
     if (error.status === 402) {
       return getQuotaLimitExceededFriendlyMessage(error);
     }
@@ -552,7 +644,7 @@ export function parseAndFormatApiError(
       return get403FriendlyMessage();
     }
 
-    // 检查字符串中的 402 配额错误 - DeepX 服务端配额错误
+    // 检查字符串中的 402 配额错误 - Otto 服务端配额错误
     if (error.includes('402') && isQuotaLimitExceededError(error)) {
       return getQuotaLimitExceededFriendlyMessage(error);
     }
@@ -585,7 +677,7 @@ export function parseAndFormatApiError(
           return get403FriendlyMessage();
         }
 
-        // 检查解析后的API错误是否为 402 - DeepX 服务端配额错误
+        // 检查解析后的API错误是否为 402 - Otto 服务端配额错误
         if (parsedError.error.code === 402) {
           return getQuotaLimitExceededFriendlyMessage(parsedError);
         }

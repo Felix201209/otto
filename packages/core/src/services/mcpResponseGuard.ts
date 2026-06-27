@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,8 +37,8 @@ export interface MCPResponseGuardConfig {
 
   /**
    * 临时文件目录
-   * 默认: 项目根目录下的 .deepvcode/mcp-tmp
-   * 如果未找到项目目录，则使用 HOME/.deepvcode/mcp-tmp
+   * 默认: 项目根目录下的 .otto/mcp-tmp
+   * 如果未找到项目目录，则使用 HOME/.otto/mcp-tmp
    * 最后降级到系统临时目录
    */
   tempDir?: string;
@@ -144,20 +143,20 @@ export class MCPResponseGuard {
 
   /**
    * 获取项目临时目录
-   * 存储在 .deepvcode/mcp-tmp 下，避免系统临时目录问题
+   * 存储在 .otto/mcp-tmp 下，避免系统临时目录问题
    */
   private getProjectTempDir(): string {
     // 尝试获取项目根目录，如果不可用则使用系统临时目录
     try {
-      // 从当前工作目录向上查找 .deepvcode 文件夹
+      // 从当前工作目录向上查找 .otto 文件夹
       let currentDir = process.cwd();
       let depth = 0;
       const maxDepth = 10; // 最多向上查找10层
 
       while (depth < maxDepth) {
-        const deepvcodePath = path.join(currentDir, '.otto');
-        if (fs.existsSync(deepvcodePath)) {
-          return path.join(deepvcodePath, 'mcp-tmp');
+        const ottocodePath = path.join(currentDir, '.otto');
+        if (fs.existsSync(ottocodePath)) {
+          return path.join(ottocodePath, 'mcp-tmp');
         }
         const parentDir = path.dirname(currentDir);
         if (parentDir === currentDir) break; // 已到达文件系统根目录
@@ -168,7 +167,7 @@ export class MCPResponseGuard {
       // 如果查找失败，继续使用备选方案
     }
 
-    // 备选：使用 HOME/.deepv/mcp-tmp
+    // 备选：使用 HOME/.otto/mcp-tmp
     const homeDir = process.env.HOME || process.env.USERPROFILE || process.env.HOMEPATH;
     if (homeDir) {
       return path.join(homeDir, '.otto-user', 'mcp-tmp');
@@ -176,9 +175,9 @@ export class MCPResponseGuard {
 
     // 最后的备选：使用系统临时目录
     if (process.platform === 'win32') {
-      return path.join(process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp', 'deepvcode-mcp');
+      return path.join(process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp', 'ottocode-mcp');
     } else {
-      return path.join(process.env.TMPDIR || '/tmp', 'deepvcode-mcp');
+      return path.join(process.env.TMPDIR || '/tmp', 'ottocode-mcp');
     }
   }
 

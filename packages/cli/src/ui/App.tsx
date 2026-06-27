@@ -4,172 +4,182 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import {
-  Box,
-  DOMElement,
-  measureElement,
-  Static,
-  Text,
-  useStdin,
-  useStdout,
-  useInput,
-  type Key as InkKeyType,
-} from 'ink';
-import { StreamingState, type HistoryItem, MessageType, ToolCallStatus, type IndividualToolCallDisplay } from './types.js';
 import type { PartListUnion } from '@google/genai';
-import { useTerminalSize } from './hooks/useTerminalSize.js';
-import { useGeminiStream } from './hooks/useGeminiStream.js';
-import { computeMidTurnDrain } from './state/midTurnDrain.js';
-import { runSideQuestion } from 'otto-core';
-import { SideQuestionPanel, type SideQuestionState } from './components/SideQuestionPanel.js';
-import { useAnimatedTitleIcon } from './hooks/useAnimatedTitleIcon.js';
-import { t, tp } from './utils/i18n.js';
-import { useLoadingIndicator } from './hooks/useLoadingIndicator.js';
-import { useTaskCompletionSummary } from './hooks/useTaskCompletionSummary.js';
-import { TaskCompletionSummary } from './components/TaskCompletionSummary.js';
-import { useThemeCommand } from './hooks/useThemeCommand.js';
-import { useModelCommand } from './hooks/useModelCommand.js';
-import { useCustomModelWizard } from './hooks/useCustomModelWizard.js';
-import { useDebateWizard } from './hooks/useDebateWizard.js';
-import { useGoalWizard } from './hooks/useGoalWizard.js';
-import { useAuthCommand } from './hooks/useAuthCommand.js';
-import { useLoginCommand } from './hooks/useLoginCommand.js';
-import { useEditorSettings } from './hooks/useEditorSettings.js';
-import { useInitChoice } from './hooks/useInitChoice.js';
-import { useSettingsMenu } from './hooks/useSettingsMenu.js';
-import { usePluginInstallCommand } from './hooks/usePluginInstallCommand.js';
-import { useSlashCommandProcessor } from './hooks/slashCommandProcessor.js';
-import { useAutoAcceptIndicator } from './hooks/useAutoAcceptIndicator.js';
-import { useGoalActive } from './hooks/useGoalActive.js';
-import { useConsoleMessages } from './hooks/useConsoleMessages.js';
-import { useBackgroundTaskNotifications, formatBackgroundTaskResult } from './hooks/useBackgroundTaskNotifications.js';
-import { formatClaudeCodeTaskResult, isAcpDelegateTask } from 'otto-core';
-import { BackgroundTaskPanel } from './components/BackgroundTaskPanel.js';
-import { BackgroundTaskHint } from './components/BackgroundTaskHint.js';
-import { Header } from './components/Header.js';
-import { WelcomeScreen } from './components/WelcomeScreen.js';
-import { LoadingIndicator } from './components/LoadingIndicator.js';
-import { AutoAcceptIndicator } from './components/AutoAcceptIndicator.js';
-import { GoalActiveIndicator } from './components/GoalActiveIndicator.js';
-import { WorkflowActiveIndicator } from './components/WorkflowActiveIndicator.js';
-import { WorkflowPanel } from './components/WorkflowPanel.js';
-import { ShellModeIndicator } from './components/ShellModeIndicator.js';
-import { HelpModeIndicator } from './components/HelpModeIndicator.js';
-import { PlanModeIndicator } from './components/PlanModeIndicator.js';
-import { InputPrompt } from './components/InputPrompt.js';
-import { Footer } from './components/Footer.js';
-import { truncateText, getDefaultMaxRows } from './utils/textTruncator.js';
-import { ThemeDialog } from './components/ThemeDialog.js';
-import { ModelDialog } from './components/ModelDialog.js';
-import { PluginInstallDialog } from './components/PluginInstallDialog.js';
-import { CustomModelWizard } from './components/CustomModelWizard.js';
-import { DebateWizard } from './components/DebateWizard.js';
-import { GoalWizard } from './components/GoalWizard.js';
-import { DebateIndicator } from './components/DebateIndicator.js';
-import { TodoPanel } from './components/TodoPanel.js';
-import { useTodos } from './hooks/useTodos.js';
-import { endDebate } from './utils/debateState.js';
-import { AuthDialog } from './components/AuthDialog.js';
-import { LoginDialog } from './components/LoginDialog.js';
-import { AuthInProgress } from './components/AuthInProgress.js';
-import { EditorSettingsDialog } from './components/EditorSettingsDialog.js';
-import { InitChoiceDialog } from './components/InitChoiceDialog.js';
-import { SessionSelectDialog } from './components/SessionSelectDialog.js';
-import { SettingsMenuDialog } from './components/SettingsMenuDialog.js';
-import { Colors } from './colors.js';
-import { Help } from './components/Help.js';
-import { loadHierarchicalGeminiMemory } from '../config/config.js';
-import { updateWindowTitleIcon } from '../gemini.js';
-import { LoadedSettings } from '../config/settings.js';
-import { Tips } from './components/Tips.js';
-import { ConsolePatcher } from './utils/ConsolePatcher.js';
-import { registerCleanup } from '../utils/cleanup.js';
-import { DetailedMessagesDisplay } from './components/DetailedMessagesDisplay.js';
-import { TokenUsageDisplay, type TokenUsageInfo } from './components/TokenUsageDisplay.js';
-import { tokenUsageEventManager, IDEConnectionStatus, type BackgroundTask, getBackgroundTaskManager, todoStore } from 'otto-core';
-import { HistoryItemDisplay } from './components/HistoryItemDisplay.js';
-import { ImagePollingSpinner } from './components/ImagePollingSpinner.js';
-import { StreamRecoverySpinner } from './components/StreamRecoverySpinner.js';
-import { appEvents, AppEvent } from '../utils/events.js';
+import ansiEscapes from 'ansi-escapes';
+import * as fs from 'fs';
 import {
-  getCreditsService,
-  UserCreditsInfo,
-} from '../services/creditsService.js';
-import { getIsQuitting } from '../utils/quitState.js';
-import { formatCreditsWithColor } from './utils/creditsFormatter.js';
-import { ContextSummaryDisplay } from './components/ContextSummaryDisplay.js';
-import { IDEContextDetailDisplay } from './components/IDEContextDetailDisplay.js';
-import { ReasoningDisplay } from './components/ReasoningDisplay.js';
-import { HealthyUseReminder } from './components/HealthyUseReminder.js';
-import { FeishuStatusDashboard, type FeishuProjectRoute, type FeishuMessageLogEntry } from './components/FeishuStatusDashboard.js';
-import { useHistoryCleanup } from './hooks/useHistoryCleanup.js';
-import { HistoryCleanupDialog } from './components/HistoryCleanupDialog.js';
-import { useHistory } from './hooks/useHistoryManager.js';
-import { useSessionRestore, useSessionAutoSave } from './hooks/useSessionRestore.js';
+Box,
+DOMElement,
+measureElement,
+Static,
+Text,
+useInput,
+useStdin,
+useStdout,
+type Key as InkKeyType,
+} from 'ink';
 import process from 'node:process';
 import {
-  getErrorMessage,
-  type Config,
-  getAllGeminiMdFilenames,
-  ApprovalMode,
-  isEditorAvailable,
-  EditorType,
-  FlashFallbackEvent,
-  logFlashFallback,
-  AuthType,
-  type OpenFiles,
-  ideContext,
-  addMCPStatusChangeListener,
-  removeMCPStatusChangeListener,
-  ProxyAuthManager,
-  HealthyUseReminderState,
+addMCPStatusChangeListener,
+ApprovalMode,
+AuthType,
+EditorType,
+FlashFallbackEvent,
+formatClaudeCodeTaskResult,
+getAllGeminiMdFilenames,
+getBackgroundTaskManager,
+getOttoQuotaErrorMessage,
+getErrorMessage,
+HealthyUseReminderState,
+IDEConnectionStatus,
+ideContext,
+isAcpDelegateTask,
+isCustomModel,
+isOttoQuotaError,
+isEditorAvailable,
+isGenericQuotaExceededError,
+isProQuotaExceededError,
+logFlashFallback,
+ProxyAuthManager,
+removeMCPStatusChangeListener,
+runSideQuestion,
+todoStore,
+tokenUsageEventManager,
+UserTierId,
+type BackgroundTask,
+type Config,
+type OpenFiles,
 } from 'otto-core';
-import { validateAuthMethod } from '../config/auth.js';
-import { useLogger } from './hooks/useLogger.js';
-import { StreamingContext } from './contexts/StreamingContext.js';
-import {
-  SessionStatsProvider,
-  useSessionStats,
-} from './contexts/SessionContext.js';
-import { useGitBranchName } from './hooks/useGitBranchName.js';
-import { useFocus } from './hooks/useFocus.js';
-import { useBracketedPaste } from './hooks/useBracketedPaste.js';
-import { useTextBuffer } from './components/shared/text-buffer.js';
-import { useVimMode, VimModeProvider } from './contexts/VimModeContext.js';
-import { KeypressProvider } from './contexts/KeypressContext.js';
-import { BackgroundModeProvider } from './contexts/BackgroundModeContext.js';
-import { BackgroundModeBridge } from './components/BackgroundModeBridge.js';
-import { useVim } from './hooks/vim.js';
-import { useSmallWindowOptimization } from './hooks/useSmallWindowOptimization.js';
-import { useFlickerDetector } from './hooks/useFlickerDetector.js';
-import * as fs from 'fs';
-import { UpdateNotification } from './components/UpdateNotification.js';
-import {
-  isProQuotaExceededError,
-  isGenericQuotaExceededError,
-  isDeepXQuotaError,
-  getDeepXQuotaErrorMessage,
-  UserTierId,
-  isCustomModel,
-} from 'otto-core';
-import { checkForUpdates } from './utils/updateCheck.js';
-import ansiEscapes from 'ansi-escapes';
-import { OverflowProvider } from './contexts/OverflowContext.js';
-import { ShowMoreLines } from './components/ShowMoreLines.js';
-import { PaginatedDebugConsole } from './components/PaginatedDebugConsole.js';
-import { ScrollingDebugConsole } from './components/ScrollingDebugConsole.js';
-import { PrivacyNotice } from './privacy/PrivacyNotice.js';
-import { AudioNotification } from '../utils/audioNotification.js';
-import { SessionOption } from './commands/types.js';
-import { isFeishuRunning } from './commands/feishuCommand.js';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { loadHierarchicalOttoMemory } from '../config/config.js';
+import type { PromptExtension } from '../config/prompt-extensions.js';
+import { LoadedSettings } from '../config/settings.js';
 import { writeDaemonHealth } from '../feishuDaemon.js';
+import { updateWindowTitleIcon } from '../otto.js';
+import {
+getCreditsService
+} from '../services/creditsService.js';
+import { AudioNotification } from '../utils/audioNotification.js';
+import { registerCleanup } from '../utils/cleanup.js';
+import { AppEvent,appEvents } from '../utils/events.js';
+import { getIsQuitting } from '../utils/quitState.js';
+import { Colors } from './colors.js';
+import { isFeishuRunning } from './commands/feishuCommand.js';
+import { SessionOption } from './commands/types.js';
+import { AuthDialog } from './components/AuthDialog.js';
+import { AuthInProgress } from './components/AuthInProgress.js';
+import { AutoAcceptIndicator } from './components/AutoAcceptIndicator.js';
+import { BackgroundModeBridge } from './components/BackgroundModeBridge.js';
+import { BackgroundTaskHint } from './components/BackgroundTaskHint.js';
+import { BackgroundTaskPanel } from './components/BackgroundTaskPanel.js';
+import { ContextSummaryDisplay } from './components/ContextSummaryDisplay.js';
+import { CustomModelWizard } from './components/CustomModelWizard.js';
+import { DebateIndicator } from './components/DebateIndicator.js';
+import { DebateWizard } from './components/DebateWizard.js';
+import { EditorSettingsDialog } from './components/EditorSettingsDialog.js';
+import { FeishuStatusDashboard,type FeishuMessageLogEntry,type FeishuProjectRoute } from './components/FeishuStatusDashboard.js';
+import { Footer } from './components/Footer.js';
+import { GoalActiveIndicator } from './components/GoalActiveIndicator.js';
+import { GoalWizard } from './components/GoalWizard.js';
+import { HealthyUseReminder } from './components/HealthyUseReminder.js';
+import { HelpModeIndicator } from './components/HelpModeIndicator.js';
+import { HistoryCleanupDialog } from './components/HistoryCleanupDialog.js';
+import { HistoryItemDisplay } from './components/HistoryItemDisplay.js';
+import { HomeScreen } from './components/HomeScreen.js';
+import { IDEContextDetailDisplay } from './components/IDEContextDetailDisplay.js';
+import { ImagePollingSpinner } from './components/ImagePollingSpinner.js';
+import { InitChoiceDialog } from './components/InitChoiceDialog.js';
+import { InputPrompt } from './components/InputPrompt.js';
+import { LoadingIndicator } from './components/LoadingIndicator.js';
+import { LoginDialog } from './components/LoginDialog.js';
+import { ModelDialog } from './components/ModelDialog.js';
+import { PlanModeIndicator } from './components/PlanModeIndicator.js';
+import { PluginInstallDialog } from './components/PluginInstallDialog.js';
+import { ReasoningDisplay } from './components/ReasoningDisplay.js';
+import { ScrollingDebugConsole } from './components/ScrollingDebugConsole.js';
+import { SessionSelectDialog } from './components/SessionSelectDialog.js';
+import { SettingsMenuDialog } from './components/SettingsMenuDialog.js';
+import { useTextBuffer } from './components/shared/text-buffer.js';
+import { ShellModeIndicator } from './components/ShellModeIndicator.js';
+import { ShowMoreLines } from './components/ShowMoreLines.js';
+import { SideQuestionPanel,type SideQuestionState } from './components/SideQuestionPanel.js';
+import { StreamRecoverySpinner } from './components/StreamRecoverySpinner.js';
+import { TaskCompletionSummary } from './components/TaskCompletionSummary.js';
+import { ThemeDialog } from './components/ThemeDialog.js';
+import { TodoPanel } from './components/TodoPanel.js';
+import { TokenUsageDisplay,type TokenUsageInfo } from './components/TokenUsageDisplay.js';
+import { UpdateNotification } from './components/UpdateNotification.js';
+import { WelcomeScreen } from './components/WelcomeScreen.js';
+import { WorkflowActiveIndicator } from './components/WorkflowActiveIndicator.js';
+import { WorkflowPanel } from './components/WorkflowPanel.js';
+import { BackgroundModeProvider } from './contexts/BackgroundModeContext.js';
+import { KeypressProvider } from './contexts/KeypressContext.js';
+import { OverflowProvider } from './contexts/OverflowContext.js';
+import {
+SessionStatsProvider,
+useSessionStats,
+} from './contexts/SessionContext.js';
+import { StreamingContext } from './contexts/StreamingContext.js';
+import { useVimMode,VimModeProvider } from './contexts/VimModeContext.js';
+import { useSlashCommandProcessor } from './hooks/slashCommandProcessor.js';
+import { useAnimatedTitleIcon } from './hooks/useAnimatedTitleIcon.js';
+import { useAuthCommand } from './hooks/useAuthCommand.js';
+import { useAutoAcceptIndicator } from './hooks/useAutoAcceptIndicator.js';
+import { formatBackgroundTaskResult,useBackgroundTaskNotifications } from './hooks/useBackgroundTaskNotifications.js';
+import { useBracketedPaste } from './hooks/useBracketedPaste.js';
+import { useConsoleMessages } from './hooks/useConsoleMessages.js';
+import { useCustomModelWizard } from './hooks/useCustomModelWizard.js';
+import { useDebateWizard } from './hooks/useDebateWizard.js';
+import { useEditorSettings } from './hooks/useEditorSettings.js';
+import { useFlickerDetector } from './hooks/useFlickerDetector.js';
+import { useFocus } from './hooks/useFocus.js';
+import { useOttoStream } from './hooks/useOttoStream.js';
+import { useGitBranchName } from './hooks/useGitBranchName.js';
+import { useGoalActive } from './hooks/useGoalActive.js';
+import { useGoalWizard } from './hooks/useGoalWizard.js';
+import { useHistoryCleanup } from './hooks/useHistoryCleanup.js';
+import { useHistory } from './hooks/useHistoryManager.js';
+import { useInitChoice } from './hooks/useInitChoice.js';
+import { useLoadingIndicator } from './hooks/useLoadingIndicator.js';
+import { useLogger } from './hooks/useLogger.js';
+import { useLoginCommand } from './hooks/useLoginCommand.js';
+import { useModelCommand } from './hooks/useModelCommand.js';
+import { usePluginInstallCommand } from './hooks/usePluginInstallCommand.js';
+import { useSessionAutoSave,useSessionRestore } from './hooks/useSessionRestore.js';
+import { useSettingsMenu } from './hooks/useSettingsMenu.js';
+import { useSmallWindowOptimization } from './hooks/useSmallWindowOptimization.js';
+import { useTaskCompletionSummary } from './hooks/useTaskCompletionSummary.js';
+import { useTerminalSize } from './hooks/useTerminalSize.js';
+import { useThemeCommand } from './hooks/useThemeCommand.js';
+import { useTodos } from './hooks/useTodos.js';
+import { useVim } from './hooks/vim.js';
+import { PrivacyNotice } from './privacy/PrivacyNotice.js';
+import { computeMidTurnDrain } from './state/midTurnDrain.js';
+import { MessageType,StreamingState,ToolCallStatus,type HistoryItem,type HistoryItemWithoutId,type IndividualToolCallDisplay } from './types.js';
+import { ConsolePatcher } from './utils/ConsolePatcher.js';
+import { formatCreditsWithColor } from './utils/creditsFormatter.js';
+import { endDebate } from './utils/debateState.js';
+import { t,tp } from './utils/i18n.js';
+import { getDefaultMaxRows,truncateText } from './utils/textTruncator.js';
+import { checkForUpdates } from './utils/updateCheck.js';
 
 
 const CTRL_EXIT_PROMPT_DURATION_MS = 1000;
+const SHOW_CONTEXT_SUMMARY_STATUS = false;
+const SHOW_TOKEN_USAGE_PANEL = false;
 
 // 🎯 后台任务输出截断配置（防止 token 爆炸）
 const MAX_BACKGROUND_TASK_OUTPUT_LINES = 100; // 超过此行数则截断
+
+interface TokenUsageUpdate {
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  input_token_count?: number;
+  input_tokens?: number;
+  output_token_count?: number;
+  output_tokens?: number;
+  credits_usage?: number;
+}
 
 /**
  * 截断后台任务输出，防止 token 消耗过大
@@ -200,8 +210,7 @@ function truncateBackgroundTaskOutput(output: string | undefined): string {
 /**
  * 检测是否是IDEA/IntelliJ环境
  */
-const detectIDEAEnvironment = (): boolean => {
-  return !!(
+const detectIDEAEnvironment = (): boolean => !!(
     process.env.TERMINAL_EMULATOR && (
       process.env.TERMINAL_EMULATOR.includes('JetBrains') ||
       process.env.TERMINAL_EMULATOR.includes('IntelliJ') ||
@@ -213,7 +222,6 @@ const detectIDEAEnvironment = (): boolean => {
     // 检测通过特定的Terminal设置
     (process.env.TERM_PROGRAM && process.env.TERM_PROGRAM.includes('jetbrains'))
   );
-};
 
 /**
  * Cross-platform visible-screen clear for automatic UI redraws.
@@ -254,7 +262,7 @@ interface AppProps {
   settings: LoadedSettings;
   startupWarnings?: string[];
   version: string;
-  promptExtensions?: any[]; // PromptExtension[] - imported from prompt-extensions
+  promptExtensions?: PromptExtension[];
   customProxyUrl?: string;
 }
 
@@ -279,7 +287,7 @@ export const AppWrapper = (props: AppProps) => {
   );
 };
 
-const App = ({ config, settings, startupWarnings = [], version, promptExtensions = [], customProxyUrl }: AppProps) => {
+const App = ({ config, settings, startupWarnings = [], version, promptExtensions: _promptExtensions = [], customProxyUrl }: AppProps) => {
   const isFocused = useFocus();
   useBracketedPaste();
 
@@ -300,7 +308,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   const [totalSessionCredits, setTotalSessionCredits] = useState<number>(0);
 
   // Callback to update token usage from API responses
-  const handleTokenUsageUpdate = useCallback((tokenUsage: any) => {
+  const handleTokenUsageUpdate = useCallback((tokenUsage: TokenUsageUpdate) => {
     if (tokenUsage) {
       const currentCredits = tokenUsage.credits_usage || 0;
 
@@ -323,7 +331,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
   // 监听token使用事件
   useEffect(() => {
-    const handleTokenUpdate = (tokenData: any) => {
+    const handleTokenUpdate = (tokenData: TokenUsageUpdate) => {
       handleTokenUsageUpdate(tokenData);
     };
 
@@ -339,7 +347,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   const nightly = version.includes('nightly');
 
   // 飞书服务器端口状态
-  const [feishuServerPort, setFeishuServerPort] = useState<number | undefined>(undefined);
+  const [_feishuServerPort, setFeishuServerPort] = useState<number | undefined>(undefined);
 
   // 飞书消息处理状态
   const [isFeishuProcessing, setIsFeishuProcessing] = useState(false);
@@ -505,7 +513,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   }, []);
 
   // MCP服务器状态变化时强制重新渲染
-  const [mcpStatusUpdateTrigger, setMcpStatusUpdateTrigger] = useState(0);
+  const [_mcpStatusUpdateTrigger, setMcpStatusUpdateTrigger] = useState(0);
 
   useEffect(() => {
     const handleMCPStatusChange = () => {
@@ -611,14 +619,14 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     return () => clearTimeout(timeoutId);
   }, [refreshStatic]);
 
-  const [geminiMdFileCount, setGeminiMdFileCount] = useState<number>(0);
+  const [geminiMdFileCount, setOttoMdFileCount] = useState<number>(0);
   const [debugMessage, setDebugMessage] = useState<string>('');
   const [showBackgroundTaskPanel, setShowBackgroundTaskPanelState] = useState<boolean>(false);
 
   // 🎯 后台任务通知队列 - AI 忙时先缓存，等 AI 空闲后再注入历史
   const [pendingBackgroundNotifications, setPendingBackgroundNotifications] = useState<string[]>([]);
 
-  // 🎯 包装 setter 来同步全局状态（用于 useGeminiStream 检查）
+  // 🎯 包装 setter 来同步全局状态（用于 useOttoStream 检查）
   const setShowBackgroundTaskPanel = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
     setShowBackgroundTaskPanelState(prev => {
       const newValue = typeof value === 'function' ? value(prev) : value;
@@ -711,7 +719,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     omittedPlaceholder?: string; // 省略提示的占位符
     omittedLines?: number; // 省略的行数
     showFullText?: boolean; // 是否显示全文
-    options: Record<string, any>;
+    options: Record<string, unknown>;
   } | null>(null);
   const [refineLoading, setRefineLoading] = useState<boolean>(false);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
@@ -755,7 +763,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
             );
           }
         }
-      } catch (error) {
+      } catch (_error) {
         // 静默处理错误，不影响 UI
       }
     };
@@ -764,7 +772,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     fetchCredits();
 
     // 同步处理内存文件路径（快速，不阻塞）
-    const memoryFilePaths = config.getGeminiMdFilePaths();
+    const memoryFilePaths = config.getOttoMdFilePaths();
     if (memoryFilePaths.length > 0) {
       const pathsText = `Memory files (${memoryFilePaths.length}):\n${memoryFilePaths.map(f => `  - ${f}`).join('\n')}`;
       addItem(
@@ -775,6 +783,9 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         Date.now(),
       );
     }
+    // 故意只在挂载时跑一次：这是启动初始化（预加载积分 + 一次性打印 memory 文件路径）。
+    // 把 addItem / config 加进依赖会让积分/路径在它们变化时被重复打印，破坏"启动只显示一次"的预期。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -939,8 +950,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   } = useCustomModelWizard(settings, addItem, config);
 
   // 🎭 辩论向导。useDebateWizard 在 wizard 完成时需要 submitQuery 提交开场白，
-  // 但 submitQuery 是 useGeminiStream 返回的、定义在下面。用 ref 中转解决前后依赖。
-  // 同时共享一个 AbortController ref 给 useGeminiStream 和 useDebateWizard，
+  // 但 submitQuery 是 useOttoStream 返回的、定义在下面。用 ref 中转解决前后依赖。
+  // 同时共享一个 AbortController ref 给 useOttoStream 和 useDebateWizard，
   // 让首启 switchModel 和自动推进的 switchModel 用同一个可中止句柄。
   type DebateSubmitQuery = (
     query: PartListUnion,
@@ -1070,15 +1081,15 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     isLoginDialogOpen,
     openLoginDialog,
     handleLoginSelect,
-    isAuthenticating: isLoginAuthenticating,
-    cancelAuthentication: cancelLoginAuthentication,
+    isAuthenticating: _isLoginAuthenticating,
+    cancelAuthentication: _cancelLoginAuthentication,
   } = useLoginCommand(settings, setLoginError, config, setCurrentModel, customProxyUrl);
 
   // Listen for authentication required events (e.g., from model dialog when not logged in)
   useEffect(() => {
-    // Otto 是自带 key 的独立产品，没有 easycode/DeepVlab 云端模型与统一登录：
+    // Otto 是自带 key 的独立产品，不依赖任何第三方云端模型或统一登录：
     // 一旦需要鉴权（即还没配好模型），直接进入自定义模型设置流程，
-    // 而不是弹出 easycode 登录对话框，彻底不掺乎 easycode。
+    // 而不是弹出第三方登录对话框。
     const handleAuthRequired = () => {
       handleUseCustomModel();
     };
@@ -1095,7 +1106,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     }
   }, [isCustomModelOnlyMode, openModelDialog]);
 
-  // `otto setup`：挂载后直接打开自定义模型配置向导（全流程自定义，零 easycode）。
+  // `otto setup`：挂载后直接打开自定义模型配置向导（全流程自定义，零第三方依赖）。
   useEffect(() => {
     if (process.env.OTTO_SETUP === '1') {
       openCustomModelWizard();
@@ -1121,7 +1132,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   useEffect(() => {
     // Only sync when not currently authenticating
     if (!isAuthenticating) {
-      setUserTier(config.getGeminiClient()?.getUserTier());
+      setUserTier(config.getOttoClient()?.getUserTier());
     }
   }, [config, isAuthenticating]);
 
@@ -1182,7 +1193,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       Date.now(),
     );
     try {
-      const { memoryContent, fileCount, filePaths } = await loadHierarchicalGeminiMemory(
+      const { memoryContent, fileCount, filePaths } = await loadHierarchicalOttoMemory(
         process.cwd(),
         config.getDebugMode(),
         config.getFileService(),
@@ -1192,8 +1203,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       );
 
       config.setUserMemory(memoryContent);
-      config.setGeminiMdFileCount(fileCount);
-      setGeminiMdFileCount(fileCount);
+      config.setOttoMdFileCount(fileCount);
+      setOttoMdFileCount(fileCount);
 
       let successMessage = memoryContent.length > 0 ? tp('memory.refresh_success_loaded', { characters: memoryContent.length, count: fileCount }) : t('memory.refresh_success_no_content');      if (fileCount > 0 && filePaths.length > 0) {
         successMessage += tp('memory.files_list', { files: filePaths.map(f => `  - ${f}`).join('\n') });
@@ -1235,6 +1246,9 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     if (initialModel !== currentModel) {
       setCurrentModel(initialModel);
     }
+    // 故意只在挂载时跑一次：仅用于同步初始模型。后续模型变化由 ModelChanged 事件驱动。
+    // 加入 config / currentModel 会让该 effect 在每次模型变化时重跑，违背"只初始化一次"的设计。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
   // Set up Flash fallback handler
@@ -1261,49 +1275,43 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         const isPaidTier =
           userTier === UserTierId.LEGACY || userTier === UserTierId.STANDARD;
 
-        // 🆕 优先检查DeepX服务端的配额错误
-        if (error && isDeepXQuotaError(error)) {
-          const deepxMessage = getDeepXQuotaErrorMessage(error);
-          message = deepxMessage || `🚫 服务不可用
+        // 🆕 优先检查Otto服务端的配额错误
+        if (error && isOttoQuotaError(error)) {
+          const ottoMessage = getOttoQuotaErrorMessage(error);
+          message = ottoMessage || `🚫 服务不可用
 💡 请联系管理员检查账户配置`;
         // Check if this is a Pro quota exceeded error
         } else if (error && isProQuotaExceededError(error)) {
           if (isPaidTier) {
             message = `⚡ You have reached your daily ${currentModel} quota limit.
 ⚡ Automatically switching from ${currentModel} to ${fallbackModel} for the remainder of this session.
-⚡ To continue accessing the ${currentModel} model today, consider using /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+⚡ To keep using ${currentModel}, check your provider's quota or billing, or type /model to switch to another configured model.`;
           } else {
             message = `⚡ You have reached your daily ${currentModel} quota limit.
 ⚡ Automatically switching from ${currentModel} to ${fallbackModel} for the remainder of this session.
-⚡ To increase your limits, upgrade to a Gemini Code Assist Standard or Enterprise plan with higher limits at https://goo.gle/set-up-gemini-code-assist
-⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
-⚡ You can switch authentication methods by typing /auth`;
+⚡ To increase your limits, check your model provider's plan or quota, or type /model to switch to another configured model.`;
           }
         } else if (error && isGenericQuotaExceededError(error)) {
           if (isPaidTier) {
             message = `⚡ You have reached your daily quota limit.
 ⚡ Automatically switching from ${currentModel} to ${fallbackModel} for the remainder of this session.
-⚡ To continue accessing the ${currentModel} model today, consider using /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+⚡ To keep using ${currentModel}, check your provider's quota or billing, or type /model to switch to another configured model.`;
           } else {
             message = `⚡ You have reached your daily quota limit.
 ⚡ Automatically switching from ${currentModel} to ${fallbackModel} for the remainder of this session.
-⚡ To increase your limits, upgrade to a Gemini Code Assist Standard or Enterprise plan with higher limits at https://goo.gle/set-up-gemini-code-assist
-⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
-⚡ You can switch authentication methods by typing /auth`;
+⚡ To increase your limits, check your model provider's plan or quota, or type /model to switch to another configured model.`;
           }
         } else {
           if (isPaidTier) {
             // Default fallback message for other cases (like consecutive 429s)
             message = `⚡ Automatically switching from ${currentModel} to ${fallbackModel} for faster responses for the remainder of this session.
 ⚡ Possible reasons for this are that you have received multiple consecutive capacity errors or you have reached your daily ${currentModel} quota limit
-⚡ To continue accessing the ${currentModel} model today, consider using /auth to switch to using a paid API key from AI Studio at https://aistudio.google.com/apikey`;
+⚡ To keep using ${currentModel}, check your provider's quota or billing, or type /model to switch to another configured model.`;
           } else {
             // Default fallback message for other cases (like consecutive 429s)
             message = `⚡ Automatically switching from ${currentModel} to ${fallbackModel} for faster responses for the remainder of this session.
 ⚡ Possible reasons for this are that you have received multiple consecutive capacity errors or you have reached your daily ${currentModel} quota limit
-⚡ To increase your limits, upgrade to a Gemini Code Assist Standard or Enterprise plan with higher limits at https://goo.gle/set-up-gemini-code-assist
-⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
-⚡ You can switch authentication methods by typing /auth`;
+⚡ To increase your limits, check your model provider's plan or quota, or type /model to switch to another configured model.`;
           }
         }
 
@@ -1349,34 +1357,27 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   //   加上 1 字符左 Padding 和 1 字符右 Padding，边线和内容将完美顶格在 column 1 和 column terminalWidth - 1 上，
   //   与右上角的 "YOLO mode" 提示符在视觉上达到完美的顶头对齐！
   // - 窄终端（< 80）：使用 95% 比例。
-  const mainAreaWidth = useMemo(() => {
-    return Math.max(
+  const mainAreaWidth = useMemo(() => Math.max(
       20,
       terminalWidth >= 80
         ? terminalWidth - 2
         : Math.floor(terminalWidth * 0.95)
-    );
-  }, [terminalWidth]);
+    ), [terminalWidth]);
 
-  const inputWidth = useMemo(() => {
-    return Math.max(
+  const inputWidth = useMemo(() => Math.max(
       20,
       terminalWidth >= 80
         ? terminalWidth - 4
         : mainAreaWidth - 3
-    );
-  }, [terminalWidth, mainAreaWidth]);
+    ), [terminalWidth, mainAreaWidth]);
 
-  const inputViewportHeight = useMemo(() => {
-    return Math.max(
+  const inputViewportHeight = useMemo(() => Math.max(
       1,
       Math.min(15, Math.floor(inputWidth / 10)),
-    );
-  }, [inputWidth]);
+    ), [inputWidth]);
 
-  const suggestionsWidth = useMemo(() => {
-    return Math.max(60, Math.floor(mainAreaWidth * 0.9));
-  }, [mainAreaWidth]);
+  // 永不超过主区可用宽度,避免窄终端下建议下拉溢出换行(min 兜底窄终端,外层 min 保证 ≤ mainAreaWidth)
+  const suggestionsWidth = useMemo(() => Math.min(mainAreaWidth, Math.max(20, Math.floor(mainAreaWidth * 0.9))), [mainAreaWidth]);
 
   // Utility callbacks
   const isValidPath = useCallback((filePath: string): boolean => {
@@ -1450,8 +1451,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     openWorkflowPanel, // ⚡ 传递 openWorkflowPanel
   );
 
-  // 🎯 Mid-turn injection: 在 useGeminiStream 调用前先准备好 drain callback。
-  // useGeminiStream 在 tool-call 间隙调用它，原子取走 queuedPrompts 里所有
+  // 🎯 Mid-turn injection: 在 useOttoStream 调用前先准备好 drain callback。
+  // useOttoStream 在 tool-call 间隙调用它，原子取走 queuedPrompts 里所有
   // 待注入项作为附加 user text 跟随下一次 continuation 一起送给模型。
   // paused / editMode / 空队列 时返回空数组（不消耗），留给 useEffect 在
   // Idle 时按既有 between-turn 方式处理。
@@ -1484,11 +1485,11 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     pendingHistoryItems: pendingGeminiHistoryItems,
     thought,
     reasoning, // 🆕 接收 reasoning 状态
-    hasContentStarted, // 🆕 接收内容开始标志
+    hasContentStarted: _hasContentStarted, // 🆕 接收内容开始标志
     isCreatingCheckpoint, // 🎯 接收checkpoint创建状态
     isExecutingTools, // 🎯 接收工具执行状态
-  } = useGeminiStream(
-    config.getGeminiClient(),
+  } = useOttoStream(
+    config.getOttoClient(),
     history,
     addItem,
     config,
@@ -1554,10 +1555,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         status: isAcpDelegate ? ToolCallStatus.Success : (task.exitCode === 0 ? ToolCallStatus.Success : ToolCallStatus.Error),
         confirmationDetails: undefined,
       };
-      addItem(
-        { type: 'tool_group', tools: [toolGroupItem] } as any,
-        Date.now(),
-      );
+      const historyItem: HistoryItemWithoutId = { type: 'tool_group', tools: [toolGroupItem] };
+      addItem(historyItem, Date.now());
 
       // 🎯 构建通知消息（包含完整的任务信息，供 AI 理解）
       const resultText = isAcpDelegate
@@ -1591,10 +1590,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         status: ToolCallStatus.Error,
         confirmationDetails: undefined,
       };
-      addItem(
-        { type: 'tool_group', tools: [toolGroupItem] } as any,
-        Date.now(),
-      );
+      const historyItem: HistoryItemWithoutId = { type: 'tool_group', tools: [toolGroupItem] };
+      addItem(historyItem, Date.now());
 
       // 🎯 构建通知消息（包含完整的任务信息，供 AI 理解）
       const notificationText = isAcpDelegate
@@ -1627,10 +1624,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         status: ToolCallStatus.Canceled,
         confirmationDetails: undefined,
       };
-      addItem(
-        { type: 'tool_group', tools: [toolGroupItem] } as any,
-        Date.now(),
-      );
+      const historyItem: HistoryItemWithoutId = { type: 'tool_group', tools: [toolGroupItem] };
+      addItem(historyItem, Date.now());
 
       // 🎯 构建通知消息（包含完整的任务信息，供 AI 理解）
       const notificationText = `[System] Background task killed by user (Task ID: ${task.id}). Command: ${task.command}. Output before kill:\n${task.output?.substring(0, 1000) || '(no output)'}`;
@@ -1655,7 +1650,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
       // 将所有待处理的通知注入到 AI 历史中
       try {
-        const geminiClient = config.getGeminiClient();
+        const geminiClient = config.getOttoClient();
         for (const notification of pendingBackgroundNotifications) {
           geminiClient.addHistory({
             role: 'user',
@@ -1728,13 +1723,13 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       });
       import('./utils/modalState.js').then(m => m.setSideQuestionPanelOpen(true));
 
-      const geminiClient = config?.getGeminiClient();
+      const geminiClient = config?.getOttoClient();
       if (!geminiClient) {
         setSideQuestion({
           question: trimmed,
           answer: '',
           status: 'failed',
-          error: 'GeminiClient not initialized yet.',
+          error: 'OttoClient not initialized yet.',
         });
         return;
       }
@@ -1864,7 +1859,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         Date.now(),
       );
     }
-  }, [addItem, tp]);
+  }, [addItem]);
 
   const handlePromptOrQueue = useCallback(
     (promptText: string, pauseQueueUntilResponse = false, silent = false) => {
@@ -1895,7 +1890,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
       sendPromptImmediately(sanitizedPrompt, pauseQueueUntilResponse, silent);
     },
-    [addItem, queuePrompt, queuedPrompts.length, sendPromptImmediately, streamingState, startSideQuestion],
+    [queuePrompt, sendPromptImmediately, streamingState, startSideQuestion],
   );
 
   // Session自动保存 - 监听streaming状态变化
@@ -2026,13 +2021,13 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
               // 截断原文（发送场景：更严格）
               const truncatedOriginal = truncateText(slashCommandResult.original, {
                 maxRows: maxRowsSent,
-                terminalWidth: terminalWidth,
+                terminalWidth,
               });
 
               // 截断润色结果（Refine 场景：更宽松）
               const truncatedRefined = truncateText(slashCommandResult.refined, {
                 maxRows: maxRowsRefined,
-                terminalWidth: terminalWidth,
+                terminalWidth,
               });
 
               setRefineResult({
@@ -2059,7 +2054,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         handlePromptOrQueue(trimmedValue);
       }
     },
-    [handlePromptOrQueue, logoShows, stdout, handleSlashCommand],
+    [handlePromptOrQueue, logoShows, stdout, handleSlashCommand, addItem, queuedPrompts.length, startSideQuestion, terminalHeight, terminalWidth],
   );
 
   const buffer = useTextBuffer({
@@ -2072,8 +2067,13 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   });
 
   const { handleInput: vimHandleInput } = useVim(buffer, handleFinalSubmit);
-  const pendingHistoryItems = [...pendingSlashCommandHistoryItems];
-  pendingHistoryItems.push(...pendingGeminiHistoryItems);
+  // 用 useMemo 稳住合并后的数组：否则每次渲染都新建一个数组，会让下游
+  // 依赖它的 useMemo（isToolConfirmationMenuOpen / isWorkflowActive）每帧重算。
+  const pendingHistoryItems = useMemo(() => {
+    const merged = [...pendingSlashCommandHistoryItems];
+    merged.push(...pendingGeminiHistoryItems);
+    return merged;
+  }, [pendingSlashCommandHistoryItems, pendingGeminiHistoryItems]);
 
   // 🔧 菜单焦点管理修复: 追踪工具确认菜单状态
   // 问题: 当工具批准菜单显示时, InputPrompt 仍然捕获键盘输入，导致无法通过 Enter 确认
@@ -2081,12 +2081,10 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   // 关键: 需要同时检查 history 和 pendingHistoryItems，因为正在等待审批的工具在 pendingHistoryItems 中
   const isToolConfirmationMenuOpen = useMemo(() => {
     // 递归检查工具及其子工具调用
-    const hasConfirmingTool = (tools: IndividualToolCallDisplay[]): boolean => {
-      return tools.some((tool) =>
+    const hasConfirmingTool = (tools: IndividualToolCallDisplay[]): boolean => tools.some((tool) =>
         tool.status === ToolCallStatus.Confirming ||
         (tool.subToolCalls && hasConfirmingTool(tool.subToolCalls))
       );
-    };
 
     // 检查 history 中的工具
     const inHistory = history.some((item) => {
@@ -2107,7 +2105,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     return inHistory || inPending;
   }, [history, pendingHistoryItems]);
 
-  const { elapsedTime, currentLoadingPhrase, estimatedInputTokens: loadingEstimatedTokens } =
+  const { elapsedTime, currentLoadingPhrase, estimatedInputTokens: _loadingEstimatedTokens } =
     useLoadingIndicator(streamingState, estimatedInputTokens);
 
   // 🎯 当前待办列表（响应式）：用于在输入框上方原地渲染固定的任务面板，
@@ -2122,7 +2120,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     }
   }, [elapsedTime, streamingState]);
 
-  // 🎯 /goal 模式心跳：每秒探测 GeminiClient.activeGoalContext，让底部状态栏
+  // 🎯 /goal 模式心跳：每秒探测 OttoClient.activeGoalContext，让底部状态栏
   // 在 goal 启动 / clear 后 1s 内切换显示。详见 useGoalActive 注释。
   const isGoalActive = useGoalActive(config);
 
@@ -2202,7 +2200,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   useEffect(() => {
     const loopInterval = setInterval(() => {
       try {
-        const client = config.getGeminiClient();
+        const client = config.getOttoClient();
         if (!client) return;
 
         const loopCtx = client.getLoopContext();
@@ -2303,7 +2301,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         }, CTRL_EXIT_PROMPT_DURATION_MS);
       }
     },
-    [handleSlashCommand],
+    [],
   );
 
   useInput((input: string, key: InkKeyType) => {
@@ -2449,13 +2447,13 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
               // 截断原文（发送场景：更严格）
               const truncatedOriginal = truncateText(slashCommandResult.original, {
                 maxRows: maxRowsSent,
-                terminalWidth: terminalWidth,
+                terminalWidth,
               });
 
               // 截断润色结果（Refine 场景：更宽松）
               const truncatedRefined = truncateText(slashCommandResult.refined, {
                 maxRows: maxRowsRefined,
-                terminalWidth: terminalWidth,
+                terminalWidth,
               });
 
               setRefineResult({
@@ -2495,7 +2493,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     // 处理取消键（主要用于非流响应状态下的取消操作）
     if (isCancelKey) {
       // 这里可以添加其他需要取消的操作，比如退出确认对话框等
-      // 流响应的取消由useGeminiStream处理
+      // 流响应的取消由useOttoStream处理
     }
 
     if (key.ctrl && input === 'o') {
@@ -2541,7 +2539,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
   useEffect(() => {
     if (config) {
-      setGeminiMdFileCount(config.getGeminiMdFileCount());
+      setOttoMdFileCount(config.getOttoMdFileCount());
     }
   }, [config]);
 
@@ -2654,11 +2652,14 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   const staticItems = useMemo(() => {
     const items = [
       <Box flexDirection="column" key="header">
-        {!settings.merged.hideBanner && logoShows && (
+        {/* 空会话时不在 Static 顶部画旧 banner —— 改由满屏 HomeScreen 接管首屏;
+            一旦开聊(history>0)再让 banner 回到滚动区顶部,保持原行为。 */}
+        {!settings.merged.hideBanner && logoShows && history.length > 0 && (
           <WelcomeScreen
             config={config}
             version={version}
             customProxyUrl={customProxyUrl}
+            terminalWidth={terminalWidth}
           />
         )}
       </Box>
@@ -2695,7 +2696,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     }
 
     return items;
-  }, [history, mainAreaWidth, staticAreaMaxItemHeight, staticKey, terminalWidth, settings.merged.hideBanner, settings.merged.hideTips, config, shouldShowSummary, completionElapsedTime, completionSummaryCounterRef]); // 🚀 保留关键依赖：terminalWidth 对响应式布局重要
+  }, [history, mainAreaWidth, staticAreaMaxItemHeight, staticKey, terminalWidth, settings.merged.hideBanner, config, shouldShowSummary, completionElapsedTime, completionSummaryCounterRef, customProxyUrl, logoShows, version]); // 🚀 保留关键依赖：terminalWidth 对响应式布局重要
 
   useEffect(() => {
     // skip refreshing Static during first mount
@@ -2781,8 +2782,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   }, [settings.merged.contextFileName]);
 
   const initialPrompt = useMemo(() => config.getQuestion(), [config]);
-  const geminiClient = config.getGeminiClient();
-  const queuedPromptPreview = useMemo(() => {
+  const geminiClient = config.getOttoClient();
+  const _queuedPromptPreview = useMemo(() => {
     if (queuedPrompts.length === 0) {
       return '';
     }
@@ -2862,7 +2863,10 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       feishuAutoStartTriggered.current = true;
       // 🔄 自更新重启后的启动延迟：新进程先 sleep，给飞书服务端充足时间
       // 完成老进程的 WebSocket 关闭确认和消息投递结算，避免消息重推。
-      const startupDelay = parseInt(process.env.EASYCODE_STARTUP_DELAY_MS || '0', 10);
+      const startupDelay = parseInt(
+        process.env.OTTO_STARTUP_DELAY_MS ?? process.env.OTTO_STARTUP_DELAY_MS ?? '0',
+        10,
+      );
       if (startupDelay > 0) {
         setTimeout(() => void daemonAwareFeishuStart(), startupDelay);
       } else {
@@ -2880,7 +2884,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
     isEditorDialogOpen,
     showPrivacyNotice,
     geminiClient,
-    handleSlashCommand,
+    daemonAwareFeishuStart,
   ]);
 
   // 🔄 --feishu 自启兜底（重启场景专用）：
@@ -2888,12 +2892,15 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   //    `/feishu start` 永远不触发。此轮询在重启场景下作为兜底，确保一定启动。
   useEffect(() => {
     if (!config.getFeishuAutoStart?.() || feishuAutoStartTriggered.current) return;
-    // 在重启场景（外挂 EASYCODE_STARTUP_DELAY_MS）与 daemon 场景（OTTO_FEISHU_DAEMON=1）启用：
+    // 在重启场景（外挂 OTTO_STARTUP_DELAY_MS，兼容旧名 OTTO_STARTUP_DELAY_MS）
+    // 与 daemon 场景（OTTO_FEISHU_DAEMON=1）启用：
     // detached 无 TTY 时 Ink 降级渲染可能让主 effect 的依赖不更新、/feishu start 永不触发，
     // 此轮询作为兜底确保后台 daemon 一定能自启。
-    if (!process.env.EASYCODE_STARTUP_DELAY_MS && process.env.OTTO_FEISHU_DAEMON !== '1') return;
+    const startupDelayEnv =
+      process.env.OTTO_STARTUP_DELAY_MS ?? process.env.OTTO_STARTUP_DELAY_MS;
+    if (!startupDelayEnv && process.env.OTTO_FEISHU_DAEMON !== '1') return;
 
-    const startupDelay = parseInt(process.env.EASYCODE_STARTUP_DELAY_MS || '0', 10);
+    const startupDelay = parseInt(startupDelayEnv || '0', 10);
     const timer = setInterval(() => {
       if (feishuAutoStartTriggered.current) {
         clearInterval(timer);
@@ -2919,7 +2926,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
       clearInterval(timer);
       clearTimeout(deadline);
     };
-  }, [config, geminiClient, handleSlashCommand]);
+  }, [config, geminiClient, daemonAwareFeishuStart]);
 
   // Store quitting render content but don't return early to avoid hooks order issues
   const quittingRender = quittingMessages ? (
@@ -2968,6 +2975,59 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
   if (quittingRender) {
     return quittingRender;
   }
+
+  // ── opencode 风格满屏 Home ──────────────────────────────────────────────
+  // 真实输入框抽成一个节点,在 Home(idle)和滚动视图(active)里复用;
+  // 同一时刻只挂载一处(isHomeIdle 互斥),开聊后自然切回滚动视图。
+  const inputPromptNode = shouldRenderInputPrompt ? (
+    <InputPrompt
+      buffer={buffer}
+      inputWidth={inputWidth}
+      suggestionsWidth={suggestionsWidth}
+      onSubmit={handleFinalSubmit}
+      userMessages={userMessages}
+      onClearScreen={handleClearScreen}
+      openModelDialog={openModelDialog}
+      config={config}
+      slashCommands={slashCommands}
+      commandContext={commandContext}
+      shellModeActive={shellModeActive}
+      setShellModeActive={setShellModeActive}
+      helpModeActive={helpModeActive}
+      setHelpModeActive={setHelpModeActive}
+      focus={isFocused}
+      vimHandleInput={vimHandleInput}
+      placeholder={placeholder}
+      isModalOpen={isModelDialogOpen || isCustomModelWizardOpen || isDebateWizardOpen || isGoalWizardOpen || isWorkflowPanelOpen || isAuthDialogOpen || isThemeDialogOpen || isEditorDialogOpen || isInitChoiceDialogOpen || isPluginInstallDialogOpen || isToolConfirmationMenuOpen || showBackgroundTaskPanel}
+      isExecutingTools={isExecutingTools}
+      isBusy={streamingState !== StreamingState.Idle || queuedPrompts.length > 0}
+      isInSpecialMode={!!refineResult || queueEditMode}
+    />
+  ) : null;
+
+  const homeWorkspace =
+    (config.getTargetDir() || '').split('/').filter(Boolean).pop() || 'workspace';
+
+  const isHomeIdle =
+    history.length === 0 &&
+    pendingHistoryItems.length === 0 &&
+    streamingState === StreamingState.Idle &&
+    shouldRenderInputPrompt &&
+    logoShows &&
+    !shellModeActive &&
+    queuedPrompts.length === 0 &&
+    !isThemeDialogOpen &&
+    !isModelDialogOpen &&
+    !isAuthDialogOpen &&
+    !isEditorDialogOpen &&
+    !isInitChoiceDialogOpen &&
+    !isPluginInstallDialogOpen &&
+    !isCustomModelWizardOpen &&
+    !isDebateWizardOpen &&
+    !isGoalWizardOpen &&
+    !isWorkflowPanelOpen &&
+    !isToolConfirmationMenuOpen &&
+    !showBackgroundTaskPanel;
 
   return (
     <StreamingContext.Provider value={streamingState}>
@@ -3020,7 +3080,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
 
         {/* 显示思考过程框：reasoning 存在就显示。
             正文开始 / 流式结束 / 用户取消 / 新一轮提问 时由
-            useGeminiStream 立即置 null 隐藏。 */}
+            useOttoStream 立即置 null 隐藏。 */}
 
         {reasoning ? (
           <ReasoningDisplay
@@ -3033,7 +3093,17 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
         <Box
           flexDirection="column"
           ref={mainControlsRef}
+          {...(isHomeIdle ? { height: terminalHeight } : {})}
         >
+          {isHomeIdle ? (
+            <HomeScreen
+              terminalWidth={terminalWidth}
+              workspace={homeWorkspace}
+              model={currentModel}
+              inputSlot={inputPromptNode}
+            />
+          ) : (
+            <>
           {startupWarnings.length > 0 ? (
             <Box
               borderStyle="round"
@@ -3307,7 +3377,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
                     width="100%"
                   >
                 <Box>
-                  {process.env.GEMINI_SYSTEM_MD ? (
+                  {(process.env.OTTO_SYSTEM_MD ?? process.env.GEMINI_SYSTEM_MD) ? (
                     <Text color={Colors.AccentRed}>|⌐■_■| </Text>
                   ) : null}
                   {ctrlCPressedOnce ? (
@@ -3320,14 +3390,14 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
                     </Text>
                   ) : (
                     /* 精简:隐藏"Using: N memory files / MCP servers"状态行(交互主要在飞书) */
-                    false && <ContextSummaryDisplay
+                    SHOW_CONTEXT_SUMMARY_STATUS ? <ContextSummaryDisplay
                       openFiles={openFiles}
                       geminiMdFileCount={geminiMdFileCount}
                       contextFileNames={contextFileNames}
                       mcpServers={config.getMcpServers()}
                       blockedMcpServers={config.getBlockedMcpServers()}
                       showToolDescriptions={showToolDescriptions}
-                    />
+                    /> : null
                   )}
                 </Box>
                 <Box>
@@ -3379,7 +3449,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
               ) : null}
 
               {/* 精简:隐藏 Token Usage 面板(交互主要在飞书,CLI 不展示 token 统计) */}
-              {false && lastTokenUsage && streamingState !== StreamingState.Responding ? (
+              {SHOW_TOKEN_USAGE_PANEL && lastTokenUsage && streamingState !== StreamingState.Responding ? (
                 <TokenUsageDisplay
                   tokenUsage={lastTokenUsage}
                   inputWidth={inputWidth}
@@ -3500,31 +3570,7 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
                    React 18 批处理或流式响应覆盖，任何时候都能看清当前状态。 */}
               <DebateIndicator />
 
-              {shouldRenderInputPrompt ? (
-                <InputPrompt
-                  buffer={buffer}
-                  inputWidth={inputWidth}
-                  suggestionsWidth={suggestionsWidth}
-                  onSubmit={handleFinalSubmit}
-                  userMessages={userMessages}
-                  onClearScreen={handleClearScreen}
-                  openModelDialog={openModelDialog}
-                  config={config}
-                  slashCommands={slashCommands}
-                  commandContext={commandContext}
-                  shellModeActive={shellModeActive}
-                  setShellModeActive={setShellModeActive}
-                  helpModeActive={helpModeActive}
-                  setHelpModeActive={setHelpModeActive}
-                  focus={isFocused}
-                  vimHandleInput={vimHandleInput}
-                  placeholder={placeholder}
-                  isModalOpen={isModelDialogOpen || isCustomModelWizardOpen || isDebateWizardOpen || isGoalWizardOpen || isWorkflowPanelOpen || isAuthDialogOpen || isThemeDialogOpen || isEditorDialogOpen || isInitChoiceDialogOpen || isPluginInstallDialogOpen || isToolConfirmationMenuOpen || showBackgroundTaskPanel}
-                  isExecutingTools={isExecutingTools}
-                  isBusy={streamingState !== StreamingState.Idle || queuedPrompts.length > 0}
-                  isInSpecialMode={!!refineResult || queueEditMode}
-                />
-              ) : null}
+              {inputPromptNode}
 
               {!shouldRenderInputPrompt && isFeishuProcessing ? (
                 <Box borderStyle="round" borderColor={Colors.AccentYellow} paddingX={1} marginBottom={1}>
@@ -3609,6 +3655,8 @@ const App = ({ config, settings, startupWarnings = [], version, promptExtensions
             terminalWidth={terminalWidth}
             isFeishuProcessing={isFeishuProcessing}
           />
+            </>
+          )}
         </Box>
       </Box>
     </StreamingContext.Provider>

@@ -7,7 +7,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach, Mock } from 'vitest';
 import {
   MemoryTool,
-  setGeminiMdFilename,
+  setOttoMdFilename,
   getCurrentGeminiMdFilename,
   getAllGeminiMdFilenames,
   DEFAULT_CONTEXT_FILENAME,
@@ -71,29 +71,29 @@ describe('MemoryTool', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    // Reset GEMINI_MD_FILENAME to its original value after each test
-    setGeminiMdFilename(DEFAULT_CONTEXT_FILENAME);
+    // Reset OTTO_MD_FILENAME to its original value after each test
+    setOttoMdFilename(DEFAULT_CONTEXT_FILENAME);
   });
 
-  describe('setGeminiMdFilename', () => {
+  describe('setOttoMdFilename', () => {
     it('should update currentGeminiMdFilename when a valid new name is provided', () => {
       const newName = 'CUSTOM_CONTEXT.md';
-      setGeminiMdFilename(newName);
+      setOttoMdFilename(newName);
       expect(getCurrentGeminiMdFilename()).toBe(newName);
     });
 
     it('should not update currentGeminiMdFilename if the new name is empty or whitespace', () => {
       const initialName = getCurrentGeminiMdFilename(); // Get current before trying to change
-      setGeminiMdFilename('  ');
+      setOttoMdFilename('  ');
       expect(getCurrentGeminiMdFilename()).toBe(initialName);
 
-      setGeminiMdFilename('');
+      setOttoMdFilename('');
       expect(getCurrentGeminiMdFilename()).toBe(initialName);
     });
 
     it('should handle an array of filenames', () => {
       const newNames = ['CUSTOM_CONTEXT.md', 'ANOTHER_CONTEXT.md'];
-      setGeminiMdFilename(newNames);
+      setOttoMdFilename(newNames);
       expect(getCurrentGeminiMdFilename()).toBe('CUSTOM_CONTEXT.md');
       expect(getAllGeminiMdFilenames()).toEqual(newNames);
     });

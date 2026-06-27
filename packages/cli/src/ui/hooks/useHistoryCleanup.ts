@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState, useCallback } from 'react';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { getHistoryDir, getDirectorySize, formatBytes } from '../../utils/historyUtils.js';
 import * as fs from 'node:fs';
-import { t, tp } from '../utils/i18n.js';
+import { useCallback,useEffect,useState } from 'react';
+import { LoadedSettings,SettingScope } from '../../config/settings.js';
+import { formatBytes,getDirectorySize,getHistoryDir } from '../../utils/historyUtils.js';
 
 interface HistoryCleanupState {
   /** Whether the cleanup check is in progress */

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GeminiClient } from 'otto-core';
+import { OttoClient } from 'otto-core';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { compressCommand } from './compressCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
@@ -21,11 +21,11 @@ describe('compressCommand', () => {
     context = createMockCommandContext({
       services: {
         config: {
-          getGeminiClient: () =>
+          getOttoClient: () =>
             ({
               tryCompressChat: mockTryCompressChat,
               isCompressionInProgress: mockIsCompressionInProgress,
-            }) as unknown as GeminiClient,
+            }) as unknown as OttoClient,
         },
       },
     });
@@ -134,7 +134,7 @@ describe('compressCommand', () => {
   // ─────────────────────────────────────────────────────────────────────
   // Regression: /goal mode + manual /compress
   //
-  // Background: when /goal is active, GeminiClient holds an in-memory
+  // Background: when /goal is active, OttoClient holds an in-memory
   // `activeGoalContext`. tryCompressChat re-injects the original goal prompt
   // after every compression so the contract (min-hours floor, T0, no-stop
   // discipline) survives. Manual /compress (and its altNames /compact,
@@ -150,7 +150,7 @@ describe('compressCommand', () => {
   // command, or routes /compress through a different code path), the goal
   // resilience feature silently regresses.
   describe('regression: /goal context preservation under manual compression', () => {
-    it('routes through the SAME GeminiClient instance that holds goal context', async () => {
+    it('routes through the SAME OttoClient instance that holds goal context', async () => {
       // Build a mock client that implements the goal-context surface
       // alongside the existing tryCompressChat surface.
       const mockSetGoalContext = vi.fn();
@@ -166,17 +166,17 @@ describe('compressCommand', () => {
         getGoalContext: mockGetGoalContext,
         tryCompressChat: localTryCompressChat,
         isCompressionInProgress: localIsCompressing,
-      } as unknown as GeminiClient;
+      } as unknown as OttoClient;
 
       const localContext = createMockCommandContext({
         services: {
           config: {
             // CRITICAL: returning the same object on every call models
-            // the real Config behavior — getGeminiClient() is a getter for
+            // the real Config behavior — getOttoClient() is a getter for
             // a single per-session client. Goal context written via
             // setGoalContext must be visible to subsequent tryCompressChat
             // calls on the same instance.
-            getGeminiClient: () => sharedClient,
+            getOttoClient: () => sharedClient,
           },
         },
       });

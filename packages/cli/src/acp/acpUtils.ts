@@ -28,7 +28,7 @@ import type { LoadedSettings } from '../config/settings.js';
  *
  *   - `used`  — total tokens currently in the chat's context window for the
  *               most recent turn. Pulled from the model's `usageMetadata`
- *               via {@link GeminiChat.getFinalUsageMetadata}.
+ *               via {@link OttoChat.getFinalUsageMetadata}.
  *   - `size`  — total context window of the *currently selected* model,
  *               resolved through {@link tokenLimit} (server-authoritative
  *               via `Config.getCloudModelInfo`).
@@ -282,7 +282,7 @@ export function toAcpToolKind(kind: Kind): acp.ToolKind {
     case Kind.Think:
     case Kind.Fetch:
     case Kind.Other:
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+       
       return kind as unknown as acp.ToolKind;
     case Kind.Agent:
       return 'think' as acp.ToolKind;
@@ -506,7 +506,7 @@ export async function refreshCloudModelsForAcp(config: Config): Promise<void> {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'DeepCode ACP',
+        'User-Agent': 'Otto ACP',
         ...headers,
       },
     });

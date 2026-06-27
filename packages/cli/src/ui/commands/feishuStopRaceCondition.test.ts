@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,6 +20,8 @@ import {
   __testing_activeProcessingCount,
   __testing_processingChatIds,
 } from './feishuCommand.js';
+
+type MessageQueue = NonNullable<ReturnType<typeof __testing_messageQueues.get>>;
 
 describe('/stop queue race condition bug', () => {
   const chatId = 'oc_test_chat_123';
@@ -57,7 +58,7 @@ describe('/stop queue race condition bug', () => {
     const isProcessing = __testing_isProcessingQueues.get(chatId) || false;
     expect(isProcessing).toBe(true);
 
-    const queue: any[] = [];
+    const queue: MessageQueue = [];
     __testing_messageQueues.set(chatId, queue);
     queue.push({ msg: { chatId, text: '消息 B' }, resolve: vi.fn(), reject: vi.fn() });
 
@@ -75,7 +76,7 @@ describe('/stop queue race condition bug', () => {
     abortController.abort();
     __testing_activeAbortControllers.delete(chatId);
 
-    const queue: any[] = [];
+    const queue: MessageQueue = [];
     __testing_messageQueues.set(chatId, queue);
     queue.push({ msg: { chatId, text: '消息 B' }, resolve: vi.fn(), reject: vi.fn() });
 
@@ -106,7 +107,7 @@ describe('/stop queue race condition bug', () => {
     const abortController = new AbortController();
     __testing_activeAbortControllers.set(chatId, abortController);
 
-    const queue: any[] = [];
+    const queue: MessageQueue = [];
     __testing_messageQueues.set(chatId, queue);
     const resolveFn = vi.fn();
     queue.push({ msg: { chatId, text: '排队消息' }, resolve: resolveFn, reject: vi.fn() });
@@ -134,7 +135,7 @@ describe('/stop queue race condition bug', () => {
   // === 副作用防护测试 ===
 
   it('SIDE EFFECT: splice(0) empties array so old while loop exits naturally', () => {
-    const queue: any[] = [];
+    const queue: MessageQueue = [];
     __testing_messageQueues.set(chatId, queue);
     queue.push({ msg: { chatId, text: '消息1' }, resolve: vi.fn(), reject: vi.fn() });
     queue.push({ msg: { chatId, text: '消息2' }, resolve: vi.fn(), reject: vi.fn() });

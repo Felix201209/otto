@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +11,8 @@ import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { PreToolExecutionHandler } from '../tools/tools.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
-import { GeminiClient } from './client.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoClient } from './client.js';
+import { OttoChat } from './ottoChat.js';
 import { ToolCallRequestInfo } from './turn.js';
 import { ToolExecutionEngine, ToolExecutionContext } from './toolExecutionEngine.js';
 import { SubAgentAdapter } from './subAgentAdapter.js';
@@ -81,7 +80,7 @@ export interface SubAgentResult {
 export class SubAgent {
   private context: SubAgentExecutionContext;
   private executionLog: string[] = [];
-  private subAgentChat?: GeminiChat; // 子Agent专用的chat实例
+  private subAgentChat?: OttoChat; // 子Agent专用的chat实例
 
   // 新架构组件
   private executionEngine: ToolExecutionEngine;
@@ -124,7 +123,7 @@ export class SubAgent {
   constructor(
     private readonly config: Config,
     private readonly toolRegistry: ToolRegistry,
-    private readonly geminiClient: GeminiClient,
+    private readonly geminiClient: OttoClient,
     private readonly updateOutput?: (output: string) => void,
     private readonly abortSignal?: AbortSignal,
     private readonly externalPreToolExecutionHandler?: PreToolExecutionHandler,
@@ -949,7 +948,7 @@ export class SubAgent {
         currentHistory,
         historyModel!,
         compressionModel!,
-        this.geminiClient, // 传递 GeminiClient 实例而不是 ContentGenerator
+        this.geminiClient, // 传递 OttoClient 实例而不是 ContentGenerator
         this.context.agentId,
         this.abortSignal!
       );

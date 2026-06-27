@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -132,7 +132,7 @@ export function useDebateWizard(args: {
   /**
    * Shared ref for the AbortController driving debate-related async work
    * (model switching for both the opening turn and subsequent turns). Letting
-   * useGeminiStream observe the same ref means ESC / pauseDebate can interrupt
+   * useOttoStream observe the same ref means ESC / pauseDebate can interrupt
    * a switchModel that's in flight — including the very first switch.
    */
   advanceAbortRef: MutableRefObject<AbortController | null>;
@@ -232,9 +232,9 @@ export function useDebateWizard(args: {
       //    switchModel 不会 throw——失败时返回 { success:false, error }。必须
       //    显式检查，否则会把开场白发给旧模型。
       const firstModel = result.models[0]!;
-      const client = config?.getGeminiClient();
+      const client = config?.getOttoClient();
 
-      // 复用 useGeminiStream 暴露的 ref：ESC 路径 abort 这个 controller 就能
+      // 复用 useOttoStream 暴露的 ref：ESC 路径 abort 这个 controller 就能
       // 打断首启 switchModel，同时 pauseDebate 后也会打断后续推进。
       const abortController = new AbortController();
       advanceAbortRef.current = abortController;
@@ -243,7 +243,7 @@ export function useDebateWizard(args: {
       // 模型，不会被 React 18 批处理/流式响应吞掉。切换失败时仍然打 ERROR。
 
       try {
-        if (!client) throw new Error('GeminiClient 未就绪');
+        if (!client) throw new Error('OttoClient 未就绪');
         const switchResult = await client.switchModel(
           firstModel,
           abortController.signal,
@@ -294,7 +294,7 @@ export function useDebateWizard(args: {
       // 6) switchModel 成功 → 发开场白触发模型 0 说话。
       //    注意：此刻 cursor 维持 (0,0)。遵循 "CURRENT speaker" 语义 —
       //    cursor 始终指向刚刚/正在说话的那个人。后续每次 Idle 事件由
-      //    useGeminiStream 的推进块决定下一位，switch 成功后再 advanceCursor。
+      //    useOttoStream 的推进块决定下一位，switch 成功后再 advanceCursor。
       //
       //    关键：submitQuery 内部会立刻 setIsResponding(true)，与上面的 addItem
       //    会被 React 18 batching 合并，导致"已切换到 xxx"行被流式响应覆盖看
@@ -309,7 +309,7 @@ export function useDebateWizard(args: {
   );
 
   // Resume a paused debate. Core logic mirrors the auto-advance block in
-  // useGeminiStream: compute next speaker -> switchModel -> advanceCursor ->
+  // useOttoStream: compute next speaker -> switchModel -> advanceCursor ->
   // submit followup. Kept here because this hook has stable access to
   // geminiClient and submitQuery.
   const handleResumeDebate = useCallback(async () => {
@@ -345,12 +345,12 @@ export function useDebateWizard(args: {
       return;
     }
 
-    const client = config?.getGeminiClient();
+    const client = config?.getOttoClient();
     if (!client) {
       addItem(
         {
           type: MessageType.ERROR,
-          text: '❌ GeminiClient 未就绪，无法恢复辩论。',
+          text: '❌ OttoClient 未就绪，无法恢复辩论。',
         },
         Date.now(),
       );
@@ -383,13 +383,13 @@ export function useDebateWizard(args: {
       );
 
       // 手动恢复到最后一轮结束时，尝试切换大上下文模型做总结
-      const client = config?.getGeminiClient();
+      const client = config?.getOttoClient();
       const abortController = new AbortController();
       advanceAbortRef.current = abortController;
 
       if (client) {
-        let summaryModel = DEBATE_SUMMARY_MODEL;
-        let switchResult = await client.switchModel(
+        const summaryModel = DEBATE_SUMMARY_MODEL;
+        const switchResult = await client.switchModel(
           summaryModel,
           abortController.signal,
         );
@@ -414,7 +414,7 @@ export function useDebateWizard(args: {
         // 总结请求发出后，异步执行模型还原
         if (finishedDebate.originalModel) {
           const originalModel = finishedDebate.originalModel;
-          const geminiClient = config?.getGeminiClient();
+          const geminiClient = config?.getOttoClient();
           if (geminiClient) {
             setTimeout(async () => {
               try {

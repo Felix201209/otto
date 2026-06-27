@@ -19,11 +19,11 @@ describe('PluginInstaller', () => {
 
   beforeEach(async () => {
     // 创建临时测试目录（使用随机数确保唯一性）
-    testRoot = path.join(os.tmpdir(), `deepv-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    testRoot = path.join(os.tmpdir(), `otto-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     testMarketplacePath = path.join(testRoot, 'test-marketplace');
 
     // Mock SkillsPaths
-    vi.spyOn(SkillsPaths, 'DEEPV_HOME', 'get').mockReturnValue(testRoot);
+    vi.spyOn(SkillsPaths, 'OTTO_HOME', 'get').mockReturnValue(testRoot);
     vi.spyOn(SkillsPaths, 'SKILLS_ROOT', 'get').mockReturnValue(path.join(testRoot, 'skills'));
     vi.spyOn(SkillsPaths, 'MARKETPLACE_ROOT', 'get').mockReturnValue(
       path.join(testRoot, 'marketplace'),

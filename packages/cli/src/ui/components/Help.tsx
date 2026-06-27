@@ -16,9 +16,7 @@ interface Help {
 
 export const Help: React.FC<Help> = ({ commands }) => {
   // Helper function to get newline shortcut key
-  const getNewlineShortcut = () => {
-    return process.platform === 'win32' ? 'Ctrl+Enter' : 'Ctrl+J';
-  };
+  const getNewlineShortcut = () => process.platform === 'win32' ? 'Ctrl+Enter' : 'Ctrl+J';
 
   // Helper function to get newline description
   const getNewlineDescription = () => {

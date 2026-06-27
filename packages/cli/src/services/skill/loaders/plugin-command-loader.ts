@@ -1,13 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
-import path from 'path';
 import { ICommandLoader } from '../../types.js';
 import { SlashCommand, CommandContext, CommandKind, SubmitPromptActionReturn } from '../../../ui/commands/types.js';
-import { SkillLoader, SkillType, SkillLoadLevel, SettingsManager } from 'otto-core';
+import { SkillLoader, SkillType, SkillLoadLevel, SettingsManager, type Skill } from 'otto-core';
 
 /**
  * 插件命令加载器
@@ -19,7 +17,7 @@ export class PluginCommandLoader implements ICommandLoader {
     private settingsManager: SettingsManager
   ) {}
 
-  async loadCommands(signal: AbortSignal): Promise<SlashCommand[]> {
+  async loadCommands(_signal: AbortSignal): Promise<SlashCommand[]> {
     const commands: SlashCommand[] = [];
 
     try {
@@ -59,7 +57,7 @@ export class PluginCommandLoader implements ICommandLoader {
     return commands;
   }
 
-  private createCommandFromSkill(skill: any): SlashCommand {
+  private createCommandFromSkill(skill: Skill): SlashCommand {
     // 根据 Claude Code 规范，插件命令应带上插件名前缀: pluginName:commandName
     // 从 pluginId (format: "marketplace:pluginName") 中提取插件名
     const pluginIdParts = skill.pluginId.split(':');
@@ -83,7 +81,7 @@ export class PluginCommandLoader implements ICommandLoader {
           // 例如: /path/to/plugin/commands/foo.md - commands/foo.md = /path/to/plugin
           const componentPath = skill.location.path;
           const relativePath = skill.location.relativePath;
-          pluginRoot = componentPath.substring(0, componentPath.length - relativePath.length).replace(/[\/\\]$/, '');
+          pluginRoot = componentPath.substring(0, componentPath.length - relativePath.length).replace(/[/\\]$/, '');
         }
         if (!pluginRoot) {
           pluginRoot = skill.path; // 最后的 fallback

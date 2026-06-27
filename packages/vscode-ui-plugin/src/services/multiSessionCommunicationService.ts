@@ -3,7 +3,7 @@
  * 支持多Session的通信服务
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';
@@ -804,7 +804,7 @@ export class MultiSessionCommunicationService {
   }
 
   // =============================================================================
-  // 🟢 自定义模型管理（与 CLI 共享 ~/.deepv/custom-models.json）
+  // 🟢 自定义模型管理（与 CLI 共享 ~/.otto/custom-models.json）
   //
   // 所有请求都带 requestId，extension 把响应原样回写到 webview。
   // 与 onGetAvailableModels 的协议一致，避免 webview 端混用监听器。

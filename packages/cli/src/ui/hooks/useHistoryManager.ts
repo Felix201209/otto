@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { HistoryItem, HistoryItemWithoutId } from '../types.js';
-import { appEvents, AppEvent } from '../../utils/events.js';
+import { useCallback,useEffect,useRef,useState } from 'react';
+import { AppEvent,appEvents } from '../../utils/events.js';
+import { HistoryItem,HistoryItemWithoutId } from '../types.js';
 
 // Type for the updater function passed to updateHistoryItem
 type HistoryItemUpdater = (
@@ -24,9 +24,7 @@ export interface UseHistoryManagerReturn {
   loadHistory: (newHistory: HistoryItem[]) => void;
 }
 
-export interface UseHistoryOptions {
-  // No additional options currently
-}
+export type UseHistoryOptions = Record<string, never>;
 
 /**
  * Custom hook to manage the chat history state.
@@ -34,7 +32,7 @@ export interface UseHistoryOptions {
  * Encapsulates the history array, message ID generation, adding items,
  * updating items, and clearing the history.
  */
-export function useHistory(options?: UseHistoryOptions): UseHistoryManagerReturn {
+export function useHistory(_options?: UseHistoryOptions): UseHistoryManagerReturn {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const messageIdCounterRef = useRef(0);
   const isFeishuModeRef = useRef(false);

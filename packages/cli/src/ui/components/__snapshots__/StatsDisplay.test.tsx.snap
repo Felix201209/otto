@@ -98,7 +98,7 @@ exports[`<StatsDisplay /> > Conditional Rendering Tests > hides User Agreement w
 exports[`<StatsDisplay /> > Title Rendering > renders the custom title when a title prop is provided 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                                  │
-│  Thanks for using Easy Code! Run easycode -c to continue.                                        │
+│  Thanks for using Otto! Run otto -c to continue.                                                 │
 │                                                                                                  │
 │  Performance                                                                                     │
 │  Wall Time:                  1s                                                                  │

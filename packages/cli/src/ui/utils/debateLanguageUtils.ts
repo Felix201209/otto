@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  *
  * Helper utilities for debate language detection and configuration.

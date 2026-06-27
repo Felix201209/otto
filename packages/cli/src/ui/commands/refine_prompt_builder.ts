@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 import fs from 'fs';
@@ -97,7 +96,7 @@ export function buildEngineeringRefinePrompt(text: string, options: RefinePrompt
         parts.push('- ' + term + ' -> ' + replacement);
       }
       parts.push('');
-    } catch (error) {
+    } catch {
       // Skip if glossary fails to load
     }
   }
@@ -256,4 +255,3 @@ export function buildEngineeringRefinePrompt(text: string, options: RefinePrompt
 
   return parts.join('\n');
 }
-

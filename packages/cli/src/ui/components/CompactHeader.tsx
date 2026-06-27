@@ -1,15 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { useSmallWindowOptimization, WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
+import { useSmallWindowOptimization,WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 
 interface CompactHeaderProps {
   version: string;
@@ -26,7 +25,7 @@ export const CompactHeader: React.FC<CompactHeaderProps> = ({
   version,
   currentModel,
   shellModeActive = false,
-  ideConnectionStatus,
+  ideConnectionStatus: _ideConnectionStatus,
 }) => {
   const smallWindowConfig = useSmallWindowOptimization();
 
@@ -40,7 +39,7 @@ export const CompactHeader: React.FC<CompactHeaderProps> = ({
     return (
       <Box marginBottom={1}>
         <Text color={Colors.AccentCyan}>
-          DeepV {version} | {currentModel}
+          Otto {version} | {currentModel}
           {shellModeActive ? <Text color={Colors.AccentYellow}> [SHELL]</Text> : null}
         </Text>
       </Box>
@@ -50,5 +49,3 @@ export const CompactHeader: React.FC<CompactHeaderProps> = ({
   // 正常窗口返回null，让原Header组件处理
   return null;
 };
-
-export default CompactHeader;

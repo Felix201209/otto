@@ -20,8 +20,7 @@ import {
   SlashCommand,
 } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
-import { Content } from 'otto-core';
-import { GeminiClient } from 'otto-core';
+import { Content , OttoClient } from 'otto-core';
 
 import * as fsPromises from 'fs/promises';
 import { chatCommand } from './chatCommand.js';
@@ -64,10 +63,10 @@ describe('chatCommand', () => {
       services: {
         config: {
           getProjectTempDir: () => '/tmp/gemini',
-          getGeminiClient: () =>
+          getOttoClient: () =>
             ({
               getChat: mockGetChat,
-            }) as unknown as GeminiClient,
+            }) as unknown as OttoClient,
         },
         logger: {
           saveCheckpoint: mockSaveCheckpoint,

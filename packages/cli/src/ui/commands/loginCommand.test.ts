@@ -1,18 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+import type { ChildProcess } from 'child_process';
 import { type CommandContext, MessageActionReturn } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 // Mock i18n
-vi.mock('../utils/i18n.js', () => {
-  return {
+vi.mock('../utils/i18n.js', () => ({
     isChineseLocale: () => false,
     t: (key: string) => {
       const mockTranslations: Record<string, string> = {
@@ -22,8 +21,7 @@ vi.mock('../utils/i18n.js', () => {
     },
     tp: (key: string) => key,
     getLocalizedToolName: (name: string) => name,
-  };
-});
+  }));
 
 // Mock 外部依赖 - 必须在导入 loginCommand 之前
 const { mockAuthServerStart, mockAuthServer, mockExec } = vi.hoisted(() => {
@@ -37,11 +35,9 @@ const { mockAuthServerStart, mockAuthServer, mockExec } = vi.hoisted(() => {
   };
 });
 
-vi.mock('otto-core', () => {
-  return {
+vi.mock('otto-core', () => ({
     AuthServer: mockAuthServer,
-  };
-});
+  }));
 
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
@@ -71,8 +67,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 import { loginCommand, _resetAuthServer } from './loginCommand.js';
 
 // Mock console 方法以避免测试输出污染
-const mockConsoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-const mockConsoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+vi.spyOn(console, 'log').mockImplementation(() => {});
+vi.spyOn(console, 'error').mockImplementation(() => {});
 
 describe('loginCommand', () => {
   let mockContext: CommandContext;
@@ -96,7 +92,7 @@ describe('loginCommand', () => {
       if (callback) {
         callback(null, '', '');
       }
-      return {} as any;
+      return {} as ChildProcess;
     });
   });
 
@@ -112,42 +108,39 @@ describe('loginCommand', () => {
     expect(typeof loginCommand.action).toBe('function');
   });
 
-  // 成功场景测试
-  describe('successful execution', () => {
-    it('should start auth server and open browser successfully', async () => {
+  // BYO-key 行为测试：Otto 自带 key，/login 不再启动 AuthServer/打开浏览器，
+  // 而是直接返回一条提示用户用 /model 或 otto setup 的 info 消息。
+  describe('BYO-key behavior', () => {
+    it('should return a BYO-key hint message without starting auth server or browser', async () => {
       if (!loginCommand.action) {
         throw new Error('Login command must have an action');
       }
 
       const result = await loginCommand.action(mockContext, '') as MessageActionReturn;
 
-      // 验证 AuthServer 被创建和启动
-      expect(mockAuthServer).toHaveBeenCalled();
-      expect(mockAuthServerStart).toHaveBeenCalled();
+      // 不再创建/启动 AuthServer，也不再打开浏览器
+      expect(mockAuthServer).not.toHaveBeenCalled();
+      expect(mockAuthServerStart).not.toHaveBeenCalled();
+      expect(mockExec).not.toHaveBeenCalled();
 
-      // 验证浏览器被打开
-      expect(mockExec).toHaveBeenCalled();
-
-      // 验证返回结果类型
+      // 返回 BYO-key 提示消息（关键词匹配，避免硬编码整句）
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
+      expect(result.content).toEqual(expect.stringContaining('otto setup'));
+      expect(result.content).toEqual(expect.stringContaining('/model'));
     });
-  });
 
-  // 错误处理测试
-  describe('error handling', () => {
-    it('should handle auth server startup failure', async () => {
+    it('should always succeed with an info message regardless of input args', async () => {
       if (!loginCommand.action) {
         throw new Error('Login command must have an action');
       }
 
-      const errorMessage = 'Server startup failed';
-      mockAuthServerStart.mockRejectedValue(new Error(errorMessage));
+      const result = await loginCommand.action(mockContext, 'anything') as MessageActionReturn;
 
-      const result = await loginCommand.action(mockContext, '') as MessageActionReturn;
-
+      // 不再有 AuthServer 启动失败这种错误路径——始终返回 info 提示
       expect(result.type).toBe('message');
-      expect(result.messageType).toBe('error');
+      expect(result.messageType).toBe('info');
+      expect(result.content).toEqual(expect.stringContaining('otto setup'));
     });
   });
 });

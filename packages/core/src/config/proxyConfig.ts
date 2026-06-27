@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +25,8 @@ export interface ProxyServerConfig {
 export function getProxyServers(): ProxyServerConfig[] {
   return [
     {
-      url: process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai',
+      // BYO-key: 未配置 OTTO_SERVER_URL 时为空字符串，调用方需自行跳过网络请求。
+      url: process.env.OTTO_SERVER_URL || '',
       name: 'Primary Development Server',
       region: 'default',
       status: 'active',

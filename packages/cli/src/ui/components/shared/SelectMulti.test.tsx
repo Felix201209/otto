@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { render } from 'ink-testing-library';
-import { describe, it, expect, vi } from 'vitest';
-import { SelectMulti, SelectMultiItem } from './SelectMulti.js';
+import { describe,expect,it,vi } from 'vitest';
+import { SelectMulti,SelectMultiItem } from './SelectMulti.js';
 
 // Mock the keypress hook. The component subscribes via `useKeypress`; under
 // `ink-testing-library` there's no real stdin, so we just verify render shape.

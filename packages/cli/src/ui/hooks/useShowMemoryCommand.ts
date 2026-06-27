@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Message, MessageType } from '../types.js';
 import { Config } from 'otto-core';
 import { LoadedSettings } from '../../config/settings.js';
-import { t } from '../utils/i18n.js';
+import { Message,MessageType } from '../types.js';
 
 export function createShowMemoryAction(
   config: Config | null,
@@ -31,7 +30,7 @@ export function createShowMemoryAction(
     }
 
     const currentMemory = config.getUserMemory();
-    const fileCount = config.getGeminiMdFileCount();
+    const fileCount = config.getOttoMdFileCount();
     const contextFileName = settings.merged.contextFileName;
     const contextFileNames = Array.isArray(contextFileName)
       ? contextFileName

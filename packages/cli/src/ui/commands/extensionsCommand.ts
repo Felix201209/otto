@@ -73,7 +73,7 @@ ${intro}
   \u001b[36motto extensions uninstall <name>\u001b[0m - ${uninstallLabel}
 
 ${exampleLabel}
-  \u001b[36mdvcode extensions install https://github.com/ChromeDevTools/chrome-devtools-ls-mcp\u001b[0m
+  \u001b[36motto extensions install https://github.com/ChromeDevTools/chrome-devtools-ls-mcp\u001b[0m
 
 ${learnmoreLabel} ${url}
 `;

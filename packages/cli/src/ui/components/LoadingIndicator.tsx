@@ -4,21 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Box,Text } from 'ink';
 import { ThoughtSummary } from 'otto-core';
-import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Text } from 'ink';
+import React from 'react';
 import { Colors } from '../colors.js';
-import { themeManager } from '../themes/theme-manager.js';
 import { useStreamingContext } from '../contexts/StreamingContext.js';
-import { StreamingState } from '../types.js';
-import { GeminiRespondingSpinner } from './GeminiRespondingSpinner.js';
-import { formatDuration } from '../utils/formatters.js';
-import { useRealTimeToken } from '../hooks/useRealTimeToken.js';
-import { getCancelKeyHint } from '../utils/i18n.js';
-import { isChineseLocale } from '../utils/i18n.js';
-import { useSmallWindowOptimization, shouldSkipAnimation } from '../hooks/useSmallWindowOptimization.js';
 import { useLEDMarquee } from '../hooks/useLEDMarquee.js';
+import { useRealTimeToken } from '../hooks/useRealTimeToken.js';
+import { shouldSkipAnimation,useSmallWindowOptimization } from '../hooks/useSmallWindowOptimization.js';
+import { themeManager } from '../themes/theme-manager.js';
+import { StreamingState } from '../types.js';
 import { createGradientColorSet } from '../utils/color-brightness.js';
+import { formatDuration } from '../utils/formatters.js';
+import { getInputCancelHint,isChineseLocale } from '../utils/i18n.js';
+import { OttoRespondingSpinner } from './OttoRespondingSpinner.js';
 import { TokenUsageInfo } from './TokenUsageDisplay.js';
 
 interface LoadingIndicatorProps {
@@ -31,14 +30,6 @@ interface LoadingIndicatorProps {
   lastTokenUsage?: TokenUsageInfo | null; // 🎯 新增：最新token使用情况
 }
 
-// 格式化token数字，大于1000时用k单位显示
-const formatTokenCount = (count: number): string => {
-  if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k`;
-  }
-  return count.toLocaleString();
-};
-
 // 精简格式化token数字，大于1000时用k单位显示，保留两位小数
 const formatTokenCompact = (count: number | undefined): string => {
   if (count === undefined || count === null) return '0';
@@ -46,60 +37,6 @@ const formatTokenCompact = (count: number | undefined): string => {
     return `${(count / 1000).toFixed(2)}k`;
   }
   return count.toString();
-};
-
-// 动画token增长组件
-const AnimatedTokenCount: React.FC<{
-  targetCount: number;
-  isRealTime: boolean;
-  streamingState: StreamingState;
-}> = ({ targetCount, isRealTime, streamingState }) => {
-  const [displayCount, setDisplayCount] = useState(0);
-  const smallWindowConfig = useSmallWindowOptimization();
-
-  // 快速增长到目标数字的动画效果
-  useEffect(() => {
-    if (targetCount === 0) return;
-
-    // 🎯 关键修复：在等待确认状态下停止token计数动画
-    if (streamingState === StreamingState.WaitingForConfirmation) {
-      setDisplayCount(targetCount); // 直接设置为目标值，不使用动画
-      return;
-    }
-
-    // 🎯 小窗口优化：跳过token计数动画
-    if (shouldSkipAnimation(smallWindowConfig, 'token')) {
-      setDisplayCount(targetCount); // 直接设置，不使用动画
-      return;
-    }
-
-    const startCount = displayCount;
-    const diff = targetCount - startCount;
-    const steps = Math.min(20, Math.max(5, Math.abs(diff) / 100)); // 动画步数
-    const stepSize = diff / steps;
-    const stepDuration = 50; // 每步50ms
-
-    let currentStep = 0;
-    const interval = setInterval(() => {
-      currentStep++;
-      if (currentStep >= steps) {
-        setDisplayCount(targetCount);
-        clearInterval(interval);
-      } else {
-        setDisplayCount(Math.round(startCount + stepSize * currentStep));
-      }
-    }, stepDuration);
-
-    return () => clearInterval(interval);
-  }, [targetCount, streamingState]);
-
-
-
-  return (
-    <Text>
-      {formatTokenCount(displayCount)}
-    </Text>
-  );
 };
 
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
@@ -116,36 +53,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
   const smallWindowConfig = useSmallWindowOptimization();
 
   // 🎯 修复：直接使用传入的工具执行状态，而不是基于文本猜测
-  const isCallingTools = isExecutingTools;
-
-
-
-  // Token闪烁组件 - 图标出现/消失闪烁
-  const TokenIndicator: React.FC<{ isToolCall: boolean }> = ({ isToolCall }) => {
-    const [isVisible, setIsVisible] = useState(true);
-
-    useEffect(() => {
-      // 🎯 强化保护：在等待确认状态下完全停止Token指示器闪烁
-      if (streamingState === StreamingState.WaitingForConfirmation) {
-        setIsVisible(true); // 保持显示状态，停止闪烁
-        return;
-      }
-
-      const interval = setInterval(() => {
-        setIsVisible(prev => !prev);
-      }, 800); // 稍微快一点的闪烁频率
-
-      return () => clearInterval(interval);
-    }, [streamingState]);
-
-
-
-    return (
-      <Text color={Colors.AccentOrange}>
-        {isVisible ? (isToolCall ? '⚒️' : '↑') : (isToolCall ? '  ' : ' ')}
-      </Text>
-    );
-  };
+  const _isCallingTools = isExecutingTools;
 
   // 🎯 重要：所有hooks必须在任何条件判断之前调用
   // 预计算主要文本用于LED效果
@@ -179,8 +87,8 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
     : thought?.subject || currentLoadingPhrase;
 
   // 获取token数量
-  const tokenCount = realTimeToken?.inputTokens || estimatedInputTokens;
-  const isRealTime = !!realTimeToken?.inputTokens;
+  const _tokenCount = realTimeToken?.inputTokens || estimatedInputTokens;
+  const _isRealTime = !!realTimeToken?.inputTokens;
 
   // 预计算是否应该显示LED效果（与shouldUseLED保持一致）
   const shouldShowLEDEffect = shouldUseLED;
@@ -190,12 +98,12 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
       {/* Main loading line */}
       <Box width="100%">
         <Box marginRight={1}>
-          {/* 🎯 关键修复：在等待确认时完全不渲染GeminiRespondingSpinner，
+          {/* 🎯 关键修复：在等待确认时完全不渲染OttoRespondingSpinner，
               使用静态Text组件代替，确保没有任何动画效果 */}
           {streamingState === StreamingState.WaitingForConfirmation ? (
             <Text key="static-indicator">⠏</Text>
           ) : (
-            <GeminiRespondingSpinner key="dynamic-spinner" />
+            <OttoRespondingSpinner key="dynamic-spinner" />
           )}
         </Box>
         <Box flexShrink={1}>
@@ -235,7 +143,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
               {streamingState === StreamingState.WaitingForConfirmation
                 ? ''
                 : (() => {
-                    const cancelText = `${getCancelKeyHint()} to cancel, ${elapsedTime < 60 ? `${elapsedTime}s` : formatDuration(elapsedTime * 1000)}`;
+                    const cancelText = `${getInputCancelHint()}, ${elapsedTime < 60 ? `${elapsedTime}s` : formatDuration(elapsedTime * 1000)}`;
                     if (lastTokenUsage && (lastTokenUsage.input_tokens > 0 || lastTokenUsage.output_tokens > 0)) {
                       const inputStr = formatTokenCompact(lastTokenUsage.input_tokens);
                       const outputStr = formatTokenCompact(lastTokenUsage.output_tokens);

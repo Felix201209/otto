@@ -1,18 +1,18 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback } from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
+import { Config,CustomModelConfig } from 'otto-core';
+import React,{ useCallback,useState } from 'react';
+import { addOrUpdateCustomModel,deleteCustomModel,loadCustomModels } from '../../config/customModelsStorage.js';
+import { LoadedSettings,SettingScope } from '../../config/settings.js';
 import { Colors } from '../colors.js';
-import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
+import { t,tp } from '../utils/i18n.js';
 import { CustomModelWizard } from './CustomModelWizard.js';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { Config, CustomModelConfig } from 'otto-core';
-import { addOrUpdateCustomModel, deleteCustomModel, loadCustomModels } from '../../config/customModelsStorage.js';
-import { t, tp } from '../utils/i18n.js';
+import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 
 interface ModelManagementMenuProps {
   /** Callback when management is complete (returns true if models were modified) */
@@ -32,7 +32,7 @@ type MenuState = 'main' | 'add' | 'delete' | 'confirm-delete';
 
 export function ModelManagementMenu({
   onComplete,
-  onCancel,
+  onCancel: _onCancel,
   settings,
   config,
 }: ModelManagementMenuProps): React.JSX.Element {
@@ -72,11 +72,13 @@ export function ModelManagementMenu({
         // 🔥 热重载：立即更新 Config 实例，让当前会话可以使用新配置的模型
         const updatedModels = loadCustomModels();
         config.setCustomModels(updatedModels);
-        console.log(
-          `[ModelManagement] Added/Updated ${list.length} model(s): ${list
-            .map((m) => m.displayName)
-            .join(', ')}`,
-        );
+        if (process.env.DEBUG) {
+          console.log(
+            `[ModelManagement] Added/Updated ${list.length} model(s): ${list
+              .map((m) => m.displayName)
+              .join(', ')}`,
+          );
+        }
       }
       setMenuState('main');
     },
@@ -92,28 +94,33 @@ export function ModelManagementMenu({
   const customModels = config.getCustomModels() || [];
 
   // 删除模型列表
-  const deleteMenuItems = [
+  const deleteMenuItems: Array<{
+    label: string;
+    value: string;
+    model: CustomModelConfig | null;
+  }> = [
     ...customModels.map((model) => ({
       label: `${model.displayName} (${model.provider})`,
       value: model.displayName,
       model,
     })),
-    { label: t('model.management.back'), value: '__back__', model: null as any },
+    { label: t('model.management.back'), value: '__back__', model: null },
   ];
 
   // 处理删除菜单选择
+  // 回调内现查最新模型列表，避免依赖每次渲染都新建的 customModels 数组导致 useCallback 失稳
   const handleDeleteMenuSelect = useCallback((value: string) => {
     if (value === '__back__') {
       setMenuState('main');
       return;
     }
 
-    const modelToDelete = customModels.find(m => m.displayName === value);
+    const modelToDelete = (config.getCustomModels() || []).find(m => m.displayName === value);
     if (modelToDelete) {
       setSelectedModelToDelete(modelToDelete);
       setMenuState('confirm-delete');
     }
-  }, [customModels]);
+  }, [config]);
 
   // 确认删除选项
   const confirmDeleteItems = [
@@ -135,7 +142,7 @@ export function ModelManagementMenu({
         // 🔥 热重载：立即更新 Config 实例
         const updatedModels = loadCustomModels();
         config.setCustomModels(updatedModels);
-        console.log(`[ModelManagement] Deleted model: ${deletedModelId}`);
+        if (process.env.DEBUG) { console.log(`[ModelManagement] Deleted model: ${deletedModelId}`); }
 
         // 检查是否删除的是当前模型
         const currentModel = settings.merged.preferredModel;
@@ -146,11 +153,11 @@ export function ModelManagementMenu({
             // 切换到下一个自定义模型
             const nextModel = `custom:${updatedModels[0].displayName}`;
             settings.setValue(SettingScope.User, 'preferredModel', nextModel);
-            console.log(`[ModelManagement] Switched to next custom model: ${nextModel}`);
+            if (process.env.DEBUG) { console.log(`[ModelManagement] Switched to next custom model: ${nextModel}`); }
           } else {
             // 没有其他自定义模型了，切换回 auto
             settings.setValue(SettingScope.User, 'preferredModel', 'auto');
-            console.log('[ModelManagement] Switched to auto model (last custom model deleted)');
+            if (process.env.DEBUG) { console.log('[ModelManagement] Switched to auto model (last custom model deleted)'); }
           }
         }
       }
@@ -186,7 +193,7 @@ export function ModelManagementMenu({
         </Text>
         <Box marginTop={1}>
           <Text>
-            {tp('model.management.delete.confirm.message' as any, { model: selectedModelToDelete.displayName })}
+            {tp('model.management.delete.confirm.message', { model: selectedModelToDelete.displayName })}
           </Text>
         </Box>
         <Box marginTop={1}>

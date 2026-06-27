@@ -17,7 +17,7 @@ import { ShellTool } from '../tools/shell.js';
 import { WriteFileTool } from '../tools/write-file.js';
 import process from 'node:process';
 import { isGitRepository } from '../utils/gitUtils.js';
-import { MemoryTool, GEMINI_CONFIG_DIR } from '../tools/memoryTool.js';
+import { MemoryTool, OTTO_CONFIG_DIR } from '../tools/memoryTool.js';
 import { TaskTool } from '../tools/task.js';
 import { WorkflowTool } from '../tools/workflow.js';
 import { TodoWriteTool } from '../tools/todo-write.js';
@@ -1055,11 +1055,13 @@ export function getCoreSystemPrompt(
   } else {
     promptRegistry = promptRegistryOrUserRules;
   }
-  // if GEMINI_SYSTEM_MD is set (and not 0|false), override system prompt from file
-  // default path is .deepv/system.md but can be modified via custom path in GEMINI_SYSTEM_MD
+  // if OTTO_SYSTEM_MD is set (and not 0|false), override system prompt from file
+  // default path is <config dir>/system.md but can be modified via custom path
+  // in OTTO_SYSTEM_MD. Legacy name GEMINI_SYSTEM_MD is kept as a fallback.
   let systemMdEnabled = false;
-  let systemMdPath = path.resolve(path.join(GEMINI_CONFIG_DIR, 'system.md'));
-  const systemMdVar = process.env.GEMINI_SYSTEM_MD;
+  let systemMdPath = path.resolve(path.join(OTTO_CONFIG_DIR, 'system.md'));
+  const systemMdVar =
+    process.env.OTTO_SYSTEM_MD ?? process.env.GEMINI_SYSTEM_MD;
   if (systemMdVar) {
     const systemMdVarLower = systemMdVar.toLowerCase();
     if (!['0', 'false'].includes(systemMdVarLower)) {
@@ -1112,8 +1114,10 @@ export function getCoreSystemPrompt(
 
   const dynamicPrompt = getDynamicSystemPrompt(userMemory);
 
-  // if GEMINI_WRITE_SYSTEM_MD is set (and not 0|false), write base system prompt to file
-  const writeSystemMdVar = process.env.GEMINI_WRITE_SYSTEM_MD;
+  // if OTTO_WRITE_SYSTEM_MD is set (and not 0|false), write base system prompt to
+  // file. Legacy name GEMINI_WRITE_SYSTEM_MD is kept as a fallback.
+  const writeSystemMdVar =
+    process.env.OTTO_WRITE_SYSTEM_MD ?? process.env.GEMINI_WRITE_SYSTEM_MD;
   if (writeSystemMdVar) {
     const writeSystemMdVarLower = writeSystemMdVar.toLowerCase();
     if (!['0', 'false'].includes(writeSystemMdVarLower)) {

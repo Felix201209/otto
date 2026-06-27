@@ -1,21 +1,20 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { Colors } from '../colors.js';
-import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
-import { t } from '../utils/i18n.js';
+import { Box,Text,useInput } from 'ink';
 import {
-  SettingsManager,
-  MarketplaceManager,
-  PluginInstaller,
-  clearSkillsContextCache,
+MarketplaceManager,
+PluginInstaller,
+SettingsManager,
+clearSkillsContextCache,
 } from 'otto-core';
+import React,{ useCallback,useEffect,useState } from 'react';
+import { Colors } from '../colors.js';
+import { t } from '../utils/i18n.js';
+import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 
 interface PluginOption {
   name: string;
@@ -36,7 +35,7 @@ interface PluginInstallDialogProps {
 export function PluginInstallDialog({
   onClose,
   terminalWidth,
-  availableTerminalHeight,
+  availableTerminalHeight: _availableTerminalHeight,
 }: PluginInstallDialogProps): React.JSX.Element {
   const [plugins, setPlugins] = useState<PluginOption[]>([]);
   const [filterText, setFilterText] = useState('');
@@ -195,7 +194,7 @@ export function PluginInstallDialog({
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={Colors.AccentCyan}
+        borderColor={Colors.Gray}
         paddingX={1}
         width={Math.min(terminalWidth - 4, 80)}
       >
@@ -236,7 +235,7 @@ export function PluginInstallDialog({
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={Colors.AccentCyan}
+        borderColor={Colors.Gray}
         paddingX={1}
         width={Math.min(terminalWidth - 4, 80)}
       >
@@ -280,13 +279,13 @@ export function PluginInstallDialog({
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={Colors.AccentCyan}
+      borderColor={Colors.Gray}
       paddingX={1}
       width={Math.min(terminalWidth - 4, 80)}
     >
       <Box justifyContent="center" marginBottom={1}>
         <Text bold color={Colors.AccentCyan}>
-          {t('skill.plugin.install.select.plugin')}
+          {t('skill.plugin.install.description')}
         </Text>
       </Box>
 

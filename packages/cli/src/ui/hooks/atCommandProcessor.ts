@@ -4,24 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { PartListUnion,PartUnion } from '@google/genai';
 import * as fs from 'fs/promises';
-import * as path from 'path';
-import { PartListUnion, PartUnion } from '@google/genai';
 import {
-  Config,
-  PROJECT_CONFIG_DIR_NAME,
-  getErrorMessage,
-  isNodeError,
-  ProjectSettingsManager,
-  unescapePath,
+Config,
+getErrorMessage,
+isClipboardPath,
+isNodeError,
+PROJECT_CONFIG_DIR_NAME,
+unescapePath
 } from 'otto-core';
+import * as path from 'path';
 import {
-  HistoryItem,
-  IndividualToolCallDisplay,
-  ToolCallStatus,
+HistoryItem,
+IndividualToolCallDisplay,
+ToolCallStatus,
 } from '../types.js';
 import { UseHistoryManagerReturn } from './useHistoryManager.js';
-import { isClipboardPath } from 'otto-core';
 
 interface HandleAtCommandParams {
   query: string;

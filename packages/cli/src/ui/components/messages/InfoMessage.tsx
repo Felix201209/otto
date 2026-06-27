@@ -12,8 +12,7 @@ interface InfoMessageProps {
   text: string;
 }
 
-export const InfoMessage: React.FC<InfoMessageProps> = ({ text }) => {
-  return (
+export const InfoMessage: React.FC<InfoMessageProps> = ({ text }) => (
     <Box flexDirection="row" marginTop={1} marginLeft={2}>
       <Box flexGrow={1}>
         <Text wrap="wrap" color={Colors.InfoColor}>
@@ -22,4 +21,3 @@ export const InfoMessage: React.FC<InfoMessageProps> = ({ text }) => {
       </Box>
     </Box>
   );
-};

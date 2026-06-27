@@ -4,27 +4,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
 import Gradient from 'ink-gradient';
-import { Colors } from '../colors.js';
-import { formatDuration } from '../utils/formatters.js';
-import { useSessionStats, ModelMetrics } from '../contexts/SessionContext.js';
-import {
-  getStatusColor,
-  TOOL_SUCCESS_RATE_HIGH,
-  TOOL_SUCCESS_RATE_MEDIUM,
-  USER_AGREEMENT_RATE_HIGH,
-  USER_AGREEMENT_RATE_MEDIUM,
-} from '../utils/displayUtils.js';
-import { computeSessionStats } from '../utils/computeStats.js';
-import { SubAgentStatsContainer } from './SubAgentStats.js';
 import { Config } from 'otto-core';
+import React from 'react';
+import { Colors } from '../colors.js';
 import { getModelDisplayName } from '../commands/modelCommand.js';
+import { ModelMetrics,useSessionStats } from '../contexts/SessionContext.js';
+import { computeSessionStats } from '../utils/computeStats.js';
+import {
+getStatusColor,
+TOOL_SUCCESS_RATE_HIGH,
+TOOL_SUCCESS_RATE_MEDIUM,
+USER_AGREEMENT_RATE_HIGH,
+USER_AGREEMENT_RATE_MEDIUM,
+} from '../utils/displayUtils.js';
 import { getShortModelName } from '../utils/footerUtils.js';
+import { formatDuration } from '../utils/formatters.js';
+import { SubAgentStatsContainer } from './SubAgentStats.js';
 
+import { useSmallWindowOptimization,WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 import { t } from '../utils/i18n.js';
-import { useSmallWindowOptimization, WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 
 // A more flexible and powerful StatRow component
 interface StatRowProps {
@@ -78,7 +78,7 @@ const ModelUsageTable: React.FC<{
   otherCredits?: number;
   config?: Config;
   sizeLevel: WindowSizeLevel;
-}> = ({ models, totalCachedTokens, cacheEfficiency, otherCredits, config, sizeLevel }) => {
+}> = ({ models, totalCachedTokens: _totalCachedTokens, cacheEfficiency: _cacheEfficiency, otherCredits, config, sizeLevel }) => {
   const modelWidth = 20;
   const requestsWidth = 8;
   const inputTokensWidth = 12;

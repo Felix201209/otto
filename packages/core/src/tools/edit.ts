@@ -282,7 +282,7 @@ Expectation for required parameters:
           params.file_path,
           currentContent,
           params,
-          this.config.getGeminiClient(),
+          this.config.getOttoClient(),
           abortSignal,
         );
         console.log(`[EditTool] ensureCorrectEdit completed, found ${correctedEdit.occurrences} occurrences`);

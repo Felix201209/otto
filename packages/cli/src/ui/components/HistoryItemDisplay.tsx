@@ -4,26 +4,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { memo } from 'react';
+import { Box } from 'ink';
+import { Config } from 'otto-core';
+import { memo } from 'react';
 import type { HistoryItem } from '../types.js';
+import { AboutBox } from './AboutBox.js';
+import { ContextBreakdownDisplay } from './ContextBreakdownDisplay.js';
+import { Help } from './Help.js';
+import { CompressionMessage } from './messages/CompressionMessage.js';
+import { ErrorMessage } from './messages/ErrorMessage.js';
+import { OttoMessage } from './messages/OttoMessage.js';
+import { OttoMessageContent } from './messages/OttoMessageContent.js';
+import { InfoMessage } from './messages/InfoMessage.js';
+import { ToolGroupMessage } from './messages/ToolGroupMessage.js';
 import { UserMessage } from './messages/UserMessage.js';
 import { UserShellMessage } from './messages/UserShellMessage.js';
-import { GeminiMessage } from './messages/GeminiMessage.js';
-import { InfoMessage } from './messages/InfoMessage.js';
-import { ErrorMessage } from './messages/ErrorMessage.js';
-import { ToolGroupMessage } from './messages/ToolGroupMessage.js';
-import { GeminiMessageContent } from './messages/GeminiMessageContent.js';
-import { CompressionMessage } from './messages/CompressionMessage.js';
-import { Help } from './Help.js';
-import { Box } from 'ink';
-import { AboutBox } from './AboutBox.js';
-import { StatsDisplay } from './StatsDisplay.js';
 import { ModelStatsDisplay } from './ModelStatsDisplay.js';
-import { ToolStatsDisplay } from './ToolStatsDisplay.js';
-import { TokenBreakdownDisplay } from './TokenBreakdownDisplay.js';
-import { ContextBreakdownDisplay } from './ContextBreakdownDisplay.js';
 import { SessionSummaryDisplay } from './SessionSummaryDisplay.js';
-import { Config } from 'otto-core';
+import { StatsDisplay } from './StatsDisplay.js';
+import { TokenBreakdownDisplay } from './TokenBreakdownDisplay.js';
+import { ToolStatsDisplay } from './ToolStatsDisplay.js';
 
 interface HistoryItemDisplayProps {
   item: HistoryItem;
@@ -62,7 +62,7 @@ export const HistoryItemDisplay = memo(({
     {item.type === 'user' ? <UserMessage text={item.text} terminalWidth={terminalWidth} /> : null}
     {item.type === 'user_shell' ? <UserShellMessage text={item.text} terminalWidth={terminalWidth} /> : null}
     {item.type === 'gemini' ? (
-      <GeminiMessage
+      <OttoMessage
         text={item.text}
         isPending={isPending}
         availableTerminalHeight={availableTerminalHeight}
@@ -70,7 +70,7 @@ export const HistoryItemDisplay = memo(({
       />
     ) : null}
     {item.type === 'gemini_content' ? (
-      <GeminiMessageContent
+      <OttoMessageContent
         text={item.text}
         isPending={isPending}
         availableTerminalHeight={availableTerminalHeight}
@@ -161,3 +161,5 @@ export const HistoryItemDisplay = memo(({
          prev.terminalWidth === next.terminalWidth &&
          prev.isFocused === next.isFocused;
 });
+
+HistoryItemDisplay.displayName = 'HistoryItemDisplay';

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,11 @@ import {
 } from '@google/genai';
 import { CustomModelConfig, resolveThinkingConfig, effortToAnthropicBudget, effortToOpenAIEffort, effortToAnthropicEffort, effortToGeminiLevel, effortToGeminiBudget, isAdaptiveThinkingClaude, applyAnthropicAdaptiveThinking, applyOpenAIChatThinking } from '../types/customModel.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { retryWithBackoff, getErrorStatus } from '../utils/retry.js';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve as resolvePath } from 'node:path';
 
 /**
  * 为对象添加 functionCalls getter，兼容不同的结构
@@ -45,10 +48,48 @@ function addFunctionCallsGetter(obj: any) {
   });
 }
 
+/** 展开开头的 ~ 到用户主目录（跨平台）。 */
+function expandHome(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) {
+    return resolvePath(homedir(), p.slice(2));
+  }
+  return p;
+}
+
 /**
- * 环境变量替换函数
+ * 解析配置值（apiKey / baseUrl）中的引用。支持三种语法 —— 其中 {file:} / {env:}
+ * 抄自 opencode：让 API key 不必经过终端 TUI 粘贴（部分终端 / Windows / SSH 下
+ * bracketed-paste 不稳，表现为「key 粘不进去」）。把 key 放进一个文件或环境变量
+ * （在普通编辑器 / shell 里粘贴永远可靠），再用引用指向它即可：
+ *
+ *   {file:~/.otto-user/secrets/glm}   读取该文件内容（去首尾空白）—— 推荐，最稳
+ *   {env:ZHIPU_API_KEY}               读取环境变量
+ *   ${VAR} / $VAR                     读取环境变量（旧语法，向后兼容）
+ *
+ * 解析失败（文件不存在 / 变量未设）时原样返回，由上层报「缺 key」而非崩溃。
  */
 function resolveEnvVar(value: string): string {
+  if (!value) return value;
+  const trimmed = value.trim();
+
+  // {file:PATH} —— 整个值是一处文件引用
+  const fileMatch = trimmed.match(/^\{file:([^}]+)\}$/);
+  if (fileMatch) {
+    try {
+      return readFileSync(expandHome(fileMatch[1].trim()), 'utf8').trim();
+    } catch {
+      return value;
+    }
+  }
+
+  // {env:VAR} —— 整个值是一处环境变量引用（opencode 语法）
+  const envRefMatch = trimmed.match(/^\{env:([^}]+)\}$/);
+  if (envRefMatch) {
+    return process.env[envRefMatch[1].trim()] || value;
+  }
+
+  // ${VAR} / $VAR 内联替换（旧语法，向后兼容）
   const envVarRegex = /\$\{([^}]+)\}|\$(\w+)/g;
   return value.replace(envVarRegex, (match, varName1, varName2) => {
     const varName = varName1 || varName2;
@@ -122,7 +163,7 @@ function extractSystemText(request: any): string {
  *     输出 budget 才能装下 thinking + 文字回复
  *   - EasyClaw 元数据填充时会用 max_output_length 覆盖（见 buildEasyRouterModelConfig），
  *     用户用 EasyRouter 加的模型都会拿到 vendor-precise 的值
- *   - 真正想自己改的高级用户可以编辑 ~/.deepv/custom-models.json
+ *   - 真正想自己改的高级用户可以编辑 ~/.otto/custom-models.json
  *
  * 为什么不再分 provider 给保守默认（8K/4K）：实操中 4K 经常导致工具调用响应被
  * 截断 + thinking 模型直接 budget 用完没空间出文字。32K 对绝大多数现代模型都安全，
@@ -2269,7 +2310,7 @@ function applyGeminiNativeThinking(
 //   occasional `additionalProperties` / `oneOf` / `const`, all of which are
 //   valid JSON-Schema-2020-12 but not in Gemini's accepted set.
 //
-//   The OttoServerAdapter path doesn't trip this because the DeepV proxy
+//   The OttoServerAdapter path doesn't trip this because the Otto proxy
 //   strips these on its way out. The custom-model direct path (talking to
 //   EasyRouter / Google directly) bypasses that proxy and therefore must
 //   sanitise client-side. The other vendor branches in this file
@@ -2670,7 +2711,7 @@ function buildGeminiNativeRequestBody(
    *   - `{ text: '...' }` (intermediate form some adapters used)
    * EasyRouter / Google's actual `/v1beta` endpoint only accepts the canonical
    * form — passing a string yields HTTP 500 "json: cannot unmarshal string
-   * into Go struct field .systemInstruction of type GeminiChatContent".
+   * into Go struct field .systemInstruction of type OttoChatContent".
    */
   const normaliseSystemInstruction = (raw: unknown): unknown => {
     if (raw == null) return undefined;
@@ -2840,13 +2881,13 @@ function* mapGeminiChunkToResponses(chunk: any): Generator<GenerateContentRespon
 
 /**
  * Drop the most recent Gemini native request body to
- * `~/.deepv/last-requests/{ts}_gemini-{kind}_{modelId}.json` so when EasyRouter
+ * `~/.otto/last-requests/{ts}_gemini-{kind}_{modelId}.json` so when EasyRouter
  * / Google returns a schema-validation HTTP 400 we can inspect the *exact*
  * contents we sent at byte level. Cheap (≤20KB usually), fire-and-forget,
  * never blocks the request.
  *
  * Mirrors OttoServerAdapter.dumpOutboundRequest():
- *   - Same dir: `~/.deepv/last-requests/`
+ *   - Same dir: `~/.otto/last-requests/`
  *   - Same ring buffer: keep the latest N entries
  *
  * Safety:
@@ -3102,12 +3143,12 @@ export async function* callCustomModelStream(
     `\x1b[35m[thinking-debug]\x1b[0m (custom-direct/stream) modelId=\x1b[36m${modelConfig.modelId}\x1b[0m  resolvedThinking=${JSON.stringify(resolveThinkingConfig(modelConfig))}`
   );
 
-  // 🛡️ 协议安全网：复用 GeminiChat.sanitizeRequestContents（即 fixRequestContents）
+  // 🛡️ 协议安全网：复用 OttoChat.sanitizeRequestContents（即 fixRequestContents）
   // 修复 functionCall ↔ functionResponse 配对错乱、孤立 functionResponse、
   // 末尾 model 消息（破坏 Bedrock prefill 限制）等问题。
   // 该方法在 Gemini 原生路径已经经过长期打磨，CustomModel 路径直连（GCP/AWS/...）也必须走同一卫士。
   const requestToUse = request && Array.isArray(request.contents)
-    ? { ...request, contents: GeminiChat.sanitizeRequestContents(request.contents) }
+    ? { ...request, contents: OttoChat.sanitizeRequestContents(request.contents) }
     : request;
 
   if (modelConfig.provider === 'openai') yield* callOpenAICompatibleModelStream(modelConfig, requestToUse, abortSignal);
@@ -3131,7 +3172,7 @@ export async function callCustomModel(
 
   // 🛡️ 协议安全网：与 stream 路径保持一致，统一调用 fixRequestContents 清洗。
   const requestToUse = request && Array.isArray(request.contents)
-    ? { ...request, contents: GeminiChat.sanitizeRequestContents(request.contents) }
+    ? { ...request, contents: OttoChat.sanitizeRequestContents(request.contents) }
     : request;
 
   if (modelConfig.provider === 'openai') return callOpenAICompatibleModel(modelConfig, requestToUse, abortSignal);

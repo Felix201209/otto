@@ -1,15 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { t } from '../utils/i18n.js';
 
 interface ContextBreakdownDisplayProps {
   systemPromptTokens: number;
@@ -42,7 +40,7 @@ export const ContextBreakdownDisplay: React.FC<ContextBreakdownDisplayProps> = (
   const systemToolsPercent = ((systemToolsTokens / maxTokens) * 100).toFixed(1);
   const memoryFilesPercent = ((memoryFilesTokens / maxTokens) * 100).toFixed(1);
   const messagesPercent = ((messagesTokens / maxTokens) * 100).toFixed(1);
-  const reservedPercent = ((reservedTokens / maxTokens) * 100).toFixed(1);
+  const _reservedPercent = ((reservedTokens / maxTokens) * 100).toFixed(1);
   const freeSpacePercent = ((freeSpaceTokens / maxTokens) * 100).toFixed(1);
 
   // 创建进度条（类似参考设计）

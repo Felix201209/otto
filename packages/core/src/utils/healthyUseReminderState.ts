@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +18,7 @@ interface ReminderState {
  * 健康使用提醒状态管理工具类
  *
  * 存储在项目临时目录下，支持多实例共享状态
- * 文件路径：~/.deepv/tmp/<project-hash>/healthy-use-reminder.json
+ * 文件路径：~/.otto/tmp/<project-hash>/healthy-use-reminder.json
  */
 export class HealthyUseReminderState {
   private projectRoot: string;

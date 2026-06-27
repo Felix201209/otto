@@ -1,13 +1,13 @@
 {
-  "name": "deepv-code-vscode-companion",
-  "displayName": "IDE Companion for DeepV Code CLI",
-  "description": "Integrate DeepV Code CLI seamlessly with your VS Code workspace.",
+  "name": "otto-vscode-companion",
+  "displayName": "IDE Companion for Otto CLI",
+  "description": "Integrate Otto CLI seamlessly with your VS Code workspace.",
   "version": "1.0.271",
-  "publisher": "DeepX",
+  "publisher": "otto",
   "icon": "assets/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OrionStarAI/DeepVCode.git",
+    "url": "https://github.com/OrionStarAI/Otto.git",
     "directory": "packages/vscode-ide-companion"
   },
   "engines": {
@@ -19,10 +19,8 @@
     "AI"
   ],
   "keywords": [
-    "deepv-code",
-    "deepv code",
-    "deepv",
-    "deepv lab",
+    "otto",
+    "otto cli",
     "cli",
     "ide integration",
     "ide companion",
@@ -35,7 +33,7 @@
     "commands": [
       {
         "command": "deepv-code.runDeepVCode",
-        "title": "DeepV Code: Run"
+        "title": "Otto: Run"
       }
     ]
   },

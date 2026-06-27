@@ -179,7 +179,7 @@ describe('legacy directory migration', () => {
     fs.mkdirSync(projectRoot, { recursive: true });
     // Redirect os.homedir() to the sandbox via env vars (works cross-platform
     // and avoids ESM module-namespace spy limitations). This isolates the
-    // user/global migration units from the developer's real ~/.deepv.
+    // user/global migration units from the developer's real ~/.otto.
     savedHome = process.env.HOME;
     savedUserProfile = process.env.USERPROFILE;
     process.env.HOME = fakeHome;
@@ -199,60 +199,66 @@ describe('legacy directory migration', () => {
   });
 
   // NOTE: The project/user/global units share the exact same predicate via
-  // getLegacyMigrationUnits. Tests drive the project-level unit
-  // (.deepvcode -> .otto) for clarity; os.homedir is redirected to the
-  // sandbox so user/global units never touch the real environment.
+  // getLegacyMigrationUnits. After the brand rename the project unit collapsed
+  // to .otto -> .otto (legacy === new), so it can no longer exercise a real
+  // migration. The only unit with a distinct legacy source is the user unit
+  // (~/.otto -> ~/.otto-user). os.homedir() is redirected to the sandbox via
+  // HOME/USERPROFILE, so these tests drive the user-level unit safely without
+  // touching the developer's real ~/.otto.
+  const legacyUserDir = () => path.join(fakeHome, '.otto');
+  const newUserDir = () => path.join(fakeHome, '.otto-user');
 
   describe('needsLegacyMigration', () => {
     it('returns false when no legacy directories exist', () => {
       expect(needsLegacyMigration(projectRoot)).toBe(false);
     });
 
-    it('returns true when legacy project dir (.deepvcode) has real data', () => {
-      fs.mkdirSync(path.join(projectRoot, '.deepvcode'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.deepvcode', 'settings.json'), '{}');
+    it('returns true when legacy user dir (.otto) has real data', () => {
+      fs.mkdirSync(legacyUserDir(), { recursive: true });
+      fs.writeFileSync(path.join(legacyUserDir(), 'settings.json'), '{}');
       expect(needsLegacyMigration(projectRoot)).toBe(true);
     });
 
     it('returns false when new dir already contains real files', () => {
-      fs.mkdirSync(path.join(projectRoot, '.deepvcode'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.deepvcode', 'a.json'), '{}');
+      fs.mkdirSync(legacyUserDir(), { recursive: true });
+      fs.writeFileSync(path.join(legacyUserDir(), 'a.json'), '{}');
       // New dir already has real content -> migration must NOT be needed.
-      fs.mkdirSync(path.join(projectRoot, '.otto'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.otto', 'settings.json'), '{}');
+      fs.mkdirSync(newUserDir(), { recursive: true });
+      fs.writeFileSync(path.join(newUserDir(), 'settings.json'), '{}');
       expect(needsLegacyMigration(projectRoot)).toBe(false);
     });
 
     it('returns true when new dir exists but only has empty placeholder subdirs', () => {
-      fs.mkdirSync(path.join(projectRoot, '.deepvcode'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.deepvcode', 'a.json'), '{}');
+      fs.mkdirSync(legacyUserDir(), { recursive: true });
+      fs.writeFileSync(path.join(legacyUserDir(), 'a.json'), '{}');
       // Other services may pre-create empty subfolders before migration runs.
-      fs.mkdirSync(path.join(projectRoot, '.otto', 'tmp'), { recursive: true });
-      fs.mkdirSync(path.join(projectRoot, '.otto', 'commands'), { recursive: true });
+      fs.mkdirSync(path.join(newUserDir(), 'tmp'), { recursive: true });
+      fs.mkdirSync(path.join(newUserDir(), 'commands'), { recursive: true });
       expect(needsLegacyMigration(projectRoot)).toBe(true);
     });
   });
 
   describe('needsLegacyMigration vs migrateLegacyDirectories consistency', () => {
     it('migration actually copies data whenever needsLegacyMigration is true', () => {
-      fs.mkdirSync(path.join(projectRoot, '.deepvcode'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.deepvcode', 'settings.json'), '{"a":1}');
-      fs.mkdirSync(path.join(projectRoot, '.deepvcode', 'commands'), { recursive: true });
-      fs.writeFileSync(path.join(projectRoot, '.deepvcode', 'commands', 'c.md'), 'cmd');
+      const legacyDir = legacyUserDir();
+      fs.mkdirSync(legacyDir, { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, 'settings.json'), '{"a":1}');
+      fs.mkdirSync(path.join(legacyDir, 'commands'), { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, 'commands', 'c.md'), 'cmd');
       // Pre-create empty placeholder to mimic the real-world race condition.
-      fs.mkdirSync(path.join(projectRoot, '.otto', 'tmp'), { recursive: true });
+      fs.mkdirSync(path.join(newUserDir(), 'tmp'), { recursive: true });
 
       expect(needsLegacyMigration(projectRoot)).toBe(true);
 
       const fired: string[] = [];
       migrateLegacyDirectories(projectRoot, (type) => fired.push(type));
 
-      const newDir = path.join(projectRoot, '.otto');
-      expect(fired).toContain('project');
+      const newDir = newUserDir();
+      expect(fired).toContain('user');
       expect(fs.existsSync(path.join(newDir, 'settings.json'))).toBe(true);
       expect(fs.existsSync(path.join(newDir, 'commands', 'c.md'))).toBe(true);
       // Legacy dir should be cleaned up after a successful migration.
-      expect(fs.existsSync(path.join(projectRoot, '.deepvcode'))).toBe(false);
+      expect(fs.existsSync(legacyDir)).toBe(false);
       // After a successful migration there should be nothing left to migrate.
       expect(needsLegacyMigration(projectRoot)).toBe(false);
     });

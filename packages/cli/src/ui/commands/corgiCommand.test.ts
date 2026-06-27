@@ -6,14 +6,15 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { corgiCommand } from './corgiCommand.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 describe('corgiCommand', () => {
   it('should call the toggleCorgiMode function on the UI context', async () => {
-    const mockContext = {
+    const mockContext = createMockCommandContext({
       ui: {
         toggleCorgiMode: vi.fn(),
       },
-    } as any;
+    });
     await corgiCommand.action!(mockContext, '');
     expect(mockContext.ui.toggleCorgiMode).toHaveBeenCalled();
   });

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,11 +24,10 @@ vi.mock('./logger.js', () => ({
 
 // Mock @larksuiteoapi/node-sdk
 const mockRegister = vi.fn();
-vi.mock('@larksuiteoapi/node-sdk', () => {
-  return {
+vi.mock('@larksuiteoapi/node-sdk', () => ({
     WSClient: class {
-      private options: any;
-      constructor(options: any) {
+      private options: unknown;
+      constructor(options: unknown) {
         this.options = options;
       }
       start = vi.fn().mockImplementation(async () => {
@@ -41,26 +40,25 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     EventDispatcher: class {
       register = mockRegister;
     },
-  };
-});
+  }));
 
 // Mock loadProcessedMessages and saveProcessedMessages to isolate tests from real disk.
 // processedMessages is a Map<id, firstSeenTimestamp> (at-most-once dedup store).
-vi.spyOn(FeishuGateway.prototype as any, 'loadProcessedMessages').mockImplementation(function(this: any) {
+vi.spyOn(FeishuGateway.prototype as unknown, 'loadProcessedMessages').mockImplementation(function(this: unknown) {
   this.processedMessages = new Map();
 });
-vi.spyOn(FeishuGateway.prototype as any, 'saveProcessedMessages').mockImplementation(() => {});
+vi.spyOn(FeishuGateway.prototype as unknown, 'saveProcessedMessages').mockImplementation(() => {});
 
 describe('FeishuGateway - Message Parsing', () => {
   let gateway: FeishuGateway;
-  let messageCallback: any;
+  let messageCallback: unknown;
 
   beforeEach(() => {
     vi.clearAllMocks();
     gateway = new FeishuGateway('mock-app-id', 'mock-app-secret');
     messageCallback = null;
 
-    mockRegister.mockImplementation((handlers: any) => {
+    mockRegister.mockImplementation((handlers: unknown) => {
       if (handlers['im.message.receive_v1']) {
         messageCallback = handlers['im.message.receive_v1'];
       }
@@ -88,7 +86,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -123,7 +121,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -161,7 +159,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -198,7 +196,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -251,7 +249,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -304,7 +302,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -327,7 +325,7 @@ describe('FeishuGateway - Message Parsing', () => {
   it('correctly parses merge_forward message and extracts nested sub-messages', async () => {
     await gateway.connect();
 
-    const mockFetchOk = (body: any) => ({
+    const mockFetchOk = (body: unknown) => ({
       ok: true,
       json: async () => body,
     });
@@ -404,7 +402,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -428,7 +426,7 @@ describe('FeishuGateway - Message Parsing', () => {
   it('correctly generates unique placeholders for multiple rich-text images across sub-messages within merge_forward', async () => {
     await gateway.connect();
 
-    const mockFetchOk = (body: any) => ({
+    const mockFetchOk = (body: unknown) => ({
       ok: true,
       json: async () => body,
     });
@@ -527,7 +525,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -552,7 +550,7 @@ describe('FeishuGateway - Message Parsing', () => {
   it('correctly reports error when fetching merge_forward sub-messages fails', async () => {
     await gateway.connect();
 
-    const mockFetchError = (body: any) => ({
+    const mockFetchError = (body: unknown) => ({
       ok: true,
       json: async () => body,
     });
@@ -592,7 +590,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -608,7 +606,7 @@ describe('FeishuGateway - Message Parsing', () => {
   it('recursively expands nested merge_forward sub-messages using upper_message_id tree', async () => {
     await gateway.connect();
 
-    const mockFetchOk = (body: any) => ({
+    const mockFetchOk = (body: unknown) => ({
       ok: true,
       json: async () => body,
     });
@@ -677,7 +675,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -710,7 +708,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_1',
       'interactive',
       cardContent,
@@ -755,7 +753,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_2',
       'interactive',
       cardContent,
@@ -785,7 +783,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_3',
       'interactive',
       cardContent,
@@ -799,7 +797,7 @@ describe('FeishuGateway - Message Parsing', () => {
   });
 
   it('falls back gracefully when interactive content is not valid JSON', () => {
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_bad',
       'interactive',
       'not-a-json',
@@ -829,7 +827,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_table',
       'interactive',
       cardContent,
@@ -870,7 +868,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_table2',
       'interactive',
       cardContent,
@@ -943,7 +941,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_table_markdown',
       'interactive',
       cardContent,
@@ -970,7 +968,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_table3',
       'interactive',
       cardContent,
@@ -1022,7 +1020,7 @@ describe('FeishuGateway - Message Parsing', () => {
       user_dsl: userDsl,
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_v2_table',
       'interactive',
       cardContent,
@@ -1059,7 +1057,7 @@ describe('FeishuGateway - Message Parsing', () => {
       user_dsl: userDsl,
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_v1_dsl',
       'interactive',
       cardContent,
@@ -1093,7 +1091,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_2d_fallback',
       'interactive',
       cardContent,
@@ -1121,7 +1119,7 @@ describe('FeishuGateway - Message Parsing', () => {
       ],
     });
 
-    const text = (gateway as any).parseSingleMessageContent(
+    const text = (gateway as unknown).parseSingleMessageContent(
       'om_card_font',
       'interactive',
       cardContent,
@@ -1144,7 +1142,7 @@ describe('FeishuGateway - Message Parsing', () => {
   it('expands an interactive card forwarded inside a merge_forward message', async () => {
     await gateway.connect();
 
-    const mockFetchOk = (body: any) => ({ ok: true, json: async () => body });
+    const mockFetchOk = (body: unknown) => ({ ok: true, json: async () => body });
 
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes('/tenant_access_token')) {
@@ -1198,7 +1196,7 @@ describe('FeishuGateway - Message Parsing', () => {
       },
     };
 
-    let receivedMsg: any = null;
+    let receivedMsg: unknown = null;
     gateway.onMessage = async (msg) => {
       receivedMsg = msg;
       return null;
@@ -1220,7 +1218,7 @@ describe('FeishuGateway - Message Parsing', () => {
 
 describe('FeishuGateway - Message Deduplication', () => {
   let gateway: FeishuGateway;
-  let messageCallback: any;
+  let messageCallback: unknown;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -1228,15 +1226,15 @@ describe('FeishuGateway - Message Deduplication', () => {
     messageCallback = null;
 
     // Clear high-risk dedup cache to prevent cross-test pollution from disk
-    (gateway as any).highRiskHashes.clear();
+    (gateway as unknown).highRiskHashes.clear();
 
-    mockRegister.mockImplementation((handlers: any) => {
+    mockRegister.mockImplementation((handlers: unknown) => {
       if (handlers['im.message.receive_v1']) {
         messageCallback = handlers['im.message.receive_v1'];
       }
     });
 
-    const mockFetchOk = (body: any) => ({
+    const mockFetchOk = (body: unknown) => ({
       ok: true,
       json: async () => body,
       arrayBuffer: async () => new ArrayBuffer(0),
@@ -1257,9 +1255,9 @@ describe('FeishuGateway - Message Deduplication', () => {
   it('deduplicates concurrent in-flight messages and handles success/failure lifecycle', async () => {
     let callCount = 0;
     let finishMessagePromise: (() => void) | null = null;
-    let shouldFail = false;
+    const shouldFail = false;
 
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return new Promise((resolve, reject) => {
         finishMessagePromise = () => {
@@ -1294,7 +1292,7 @@ describe('FeishuGateway - Message Deduplication', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(callCount).toBe(1);
-    expect((gateway as any).inFlightMessages.has('om_test_dedup_123')).toBe(true);
+    expect((gateway as unknown).inFlightMessages.has('om_test_dedup_123')).toBe(true);
 
     // 2. Send second message with same message_id (retry) while first is in-flight
     const secondCallResult = await messageCallback(mockEvent);
@@ -1307,8 +1305,8 @@ describe('FeishuGateway - Message Deduplication', () => {
     await firstCallPromise;
 
     // After success, it should be removed from in-flight and added to processedMessages
-    expect((gateway as any).inFlightMessages.has('om_test_dedup_123')).toBe(false);
-    expect((gateway as any).processedMessages.has('om_test_dedup_123')).toBe(true);
+    expect((gateway as unknown).inFlightMessages.has('om_test_dedup_123')).toBe(false);
+    expect((gateway as unknown).processedMessages.has('om_test_dedup_123')).toBe(true);
 
     // 4. Send third message with same message_id (should be skipped as duplicate)
     const thirdCallResult = await messageCallback(mockEvent);
@@ -1322,7 +1320,7 @@ describe('FeishuGateway - Message Deduplication', () => {
     let callCount = 0;
     let finishMessagePromise: (() => void) | null = null;
 
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return new Promise((resolve, reject) => {
         finishMessagePromise = () => {
@@ -1352,8 +1350,8 @@ describe('FeishuGateway - Message Deduplication', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(callCount).toBe(1);
-    expect((gateway as any).inFlightMessages.has('om_test_failure_123')).toBe(true);
-    expect((gateway as any).processedMessages.has('om_test_failure_123')).toBe(true);
+    expect((gateway as unknown).inFlightMessages.has('om_test_failure_123')).toBe(true);
+    expect((gateway as unknown).processedMessages.has('om_test_failure_123')).toBe(true);
 
     // 2. Let it fail.
     finishMessagePromise!();
@@ -1361,15 +1359,15 @@ describe('FeishuGateway - Message Deduplication', () => {
 
     // After failure: removed from in-flight, but STILL recorded as processed
     // (at-most-once) so a blind Feishu redelivery won't re-run it.
-    expect((gateway as any).inFlightMessages.has('om_test_failure_123')).toBe(false);
-    expect((gateway as any).processedMessages.has('om_test_failure_123')).toBe(true);
+    expect((gateway as unknown).inFlightMessages.has('om_test_failure_123')).toBe(false);
+    expect((gateway as unknown).processedMessages.has('om_test_failure_123')).toBe(true);
 
     // 3. A redelivery of the same message_id must be skipped (NOT reprocessed).
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'success';
     };
-    (gateway as any).recentContents.clear(); // 绕过 5s 内容去重，单独验证 messageId 去重
+    (gateway as unknown).recentContents.clear(); // 绕过 5s 内容去重，单独验证 messageId 去重
     const redeliverResult = await messageCallback(mockEvent);
     expect(redeliverResult).toEqual({ code: 0 });
     expect(callCount).toBe(1); // unchanged — the redelivery was deduped
@@ -1379,13 +1377,13 @@ describe('FeishuGateway - Message Deduplication', () => {
     // 受理即落盘 + 重启后仍生效：用真实的 record/save/load（绕过本文件顶部的 mock）
     // 验证一条 id 写盘后，新实例 load 时仍认得它。
     const store = new Map<string, number>();
-    const g = gateway as any;
+    const g = gateway as unknown;
     // 临时还原真实实现（顶部 mock 会把 save/load 变成 no-op）。
-    const realSave = function (this: any) {
+    const realSave = function (this: unknown) {
       store.clear();
       for (const [k, v] of this.processedMessages) store.set(k, v);
     };
-    const realLoad = function (this: any) {
+    const realLoad = function (this: unknown) {
       this.processedMessages = new Map(store);
     };
     const origSave = g.saveProcessedMessages;
@@ -1409,7 +1407,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('deduplicates high-risk messages (restart/update) via content hash within 3-hour window', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1444,19 +1442,19 @@ describe('FeishuGateway - Message Deduplication', () => {
         sender: { sender_id: { open_id: 'ou_001' } },
       },
     };
-    (gateway as any).recentContents.clear(); // bypass short-window content dedup
+    (gateway as unknown).recentContents.clear(); // bypass short-window content dedup
     const result = await messageCallback(redeliverEvent);
     expect(result).toEqual({ code: 0 });
     expect(callCount).toBe(1); // still 1, deduplicated
 
     // Verify that a warning message was sent back to the chat about the dropped duplicate
-    const allFetchCalls = (globalThis as any).fetch?.mock?.calls || [];
+    const allFetchCalls = (globalThis as unknown).fetch?.mock?.calls || [];
     const sentMessages = allFetchCalls
-      .filter((call: any[]) => {
+      .filter((call: unknown[]) => {
         const url = call[0];
         return typeof url === 'string' && url.includes('/im/v1/messages');
       })
-      .map((call: any[]) => {
+      .map((call: unknown[]) => {
         try {
           const body = JSON.parse(call[1]?.body || '{}');
           return JSON.parse(body?.content || '{}').text || '';
@@ -1468,7 +1466,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('allows different high-risk messages from the same chat', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1502,14 +1500,14 @@ describe('FeishuGateway - Message Deduplication', () => {
         sender: { sender_id: { open_id: 'ou_001' } },
       },
     };
-    (gateway as any).recentContents.clear();
+    (gateway as unknown).recentContents.clear();
     await messageCallback(event2);
     expect(callCount).toBe(2);
   });
 
   it('does not deduplicate normal (non-high-risk) messages', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1544,7 +1542,7 @@ describe('FeishuGateway - Message Deduplication', () => {
         sender: { sender_id: { open_id: 'ou_001' } },
       },
     };
-    (gateway as any).recentContents.clear(); // bypass short-window dedup
+    (gateway as unknown).recentContents.clear(); // bypass short-window dedup
     await messageCallback(normalEvent2);
     // high-risk dedup does NOT apply to normal messages, so this goes through
     expect(callCount).toBe(2);
@@ -1552,7 +1550,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('filters stale messages created before the WS connection was established', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1583,7 +1581,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('allows fresh messages created after the WS connection was established', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1613,7 +1611,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('allows messages without header.create_time (no timestamp = pass through)', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1638,7 +1636,7 @@ describe('FeishuGateway - Message Deduplication', () => {
 
   it('respects STALE_CLOCK_SKEW_MS tolerance for near-boundary messages', async () => {
     let callCount = 0;
-    gateway.onMessage = async (msg) => {
+    gateway.onMessage = async (_msg) => {
       callCount++;
       return 'ok';
     };
@@ -1677,7 +1675,7 @@ describe('CardKit 2.0 builders', () => {
     const card = buildCardKitStreamingCard('initial body', 'initial footer');
     expect(card.schema).toBe('2.0');
     expect(card.config.streaming_mode).toBe(true);
-    const elements = card.body.elements as Array<Record<string, any>>;
+    const elements = card.body.elements as Array<Record<string, unknown>>;
     const ids = elements.map((e) => e.element_id);
     expect(ids).toContain(CARDKIT_STREAMING_ELEMENT_ID);
     expect(ids).toContain(CARDKIT_FOOTER_ELEMENT_ID);
@@ -1693,7 +1691,7 @@ describe('CardKit 2.0 builders', () => {
 
   it('buildCardKitFinalCard does NOT include loading_icon (terminal state)', () => {
     const card = buildCardKitFinalCard('done', { status: '已完成' });
-    const elements = card.body.elements as Array<Record<string, any>>;
+    const elements = card.body.elements as Array<Record<string, unknown>>;
     const ids = elements.map((e) => e.element_id);
     // 终态卡片不应该带 loading 图标，飞书客户端会自动停止加载动画
     expect(ids).not.toContain(CARDKIT_LOADING_ELEMENT_ID);
@@ -1701,7 +1699,7 @@ describe('CardKit 2.0 builders', () => {
 
   it('buildCardKitStreamingCard uses placeholder content when given empty strings', () => {
     const card = buildCardKitStreamingCard();
-    const elements = card.body.elements as Array<Record<string, any>>;
+    const elements = card.body.elements as Array<Record<string, unknown>>;
     // 飞书 markdown 元素 content 不能完全为空，必须用占位字符
     for (const el of elements) {
       expect(typeof el.content).toBe('string');
@@ -1714,7 +1712,7 @@ describe('CardKit 2.0 builders', () => {
     expect(card.schema).toBe('2.0');
     expect(card.config.streaming_mode).toBe(false);
     expect(card.config.summary?.content).toBeTruthy();
-    const elements = card.body.elements as Array<Record<string, any>>;
+    const elements = card.body.elements as Array<Record<string, unknown>>;
     expect(elements.find((e) => e.element_id === CARDKIT_STREAMING_ELEMENT_ID)?.content).toContain('Done');
     expect(elements.find((e) => e.element_id === CARDKIT_FOOTER_ELEMENT_ID)?.content).toContain('已完成');
   });
@@ -1753,7 +1751,7 @@ describe('CardKit 2.0 builders', () => {
 describe('FeishuGateway.sendStreamingCardWithFooter (CardKit 2.0)', () => {
   let gateway: FeishuGateway;
   // 简化的 fetch mock 工厂
-  const mockFetchOk = (body: any) => ({
+  const mockFetchOk = (body: unknown) => ({
     ok: true,
     json: async () => body,
   } as unknown as Response);
@@ -1764,11 +1762,11 @@ describe('FeishuGateway.sendStreamingCardWithFooter (CardKit 2.0)', () => {
     vi.spyOn(gateway, 'getTenantToken').mockResolvedValue('mock-token');
     // 启用 CardKit 2.0 feature flag（默认禁用 → 短路到 legacy；
     // 这组测试是验证 v2 流程契约本身，需显式开启）
-    process.env['EASYCODE_FEISHU_CARDKIT_V2'] = '1';
+    process.env['OTTO_FEISHU_CARDKIT_V2'] = '1';
   });
 
   afterEach(() => {
-    delete process.env['EASYCODE_FEISHU_CARDKIT_V2'];
+    delete process.env['OTTO_FEISHU_CARDKIT_V2'];
   });
 
   it('happy path: create card → send IM message → push content → push footer → finalize', async () => {
@@ -1905,11 +1903,11 @@ describe('FeishuGateway.sendStreamingCardWithFooter - feature flag short-circuit
   beforeEach(() => {
     gateway = new FeishuGateway('mock-app-id', 'mock-app-secret');
     vi.spyOn(gateway, 'getTenantToken').mockResolvedValue('mock-token');
-    delete process.env['EASYCODE_FEISHU_CARDKIT_V2'];
+    delete process.env['OTTO_FEISHU_CARDKIT_V2'];
   });
 
   afterEach(() => {
-    delete process.env['EASYCODE_FEISHU_CARDKIT_V2'];
+    delete process.env['OTTO_FEISHU_CARDKIT_V2'];
     vi.unstubAllGlobals();
   });
 
@@ -1929,13 +1927,13 @@ describe('FeishuGateway.sendStreamingCardWithFooter - feature flag short-circuit
 
     // noop pushContent / pushFooter / finalize 都返回 false（不再触发任何 RPC）
     expect(await handle.pushContent('updated')).toBe(false);
-    expect(await handle.pushFooter({ status: 'done' } as any)).toBe(false);
+    expect(await handle.pushFooter({ status: 'done' } as unknown)).toBe(false);
     expect(await handle.finalize('end')).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('proceeds with cardkit.card.create when flag is explicitly enabled', async () => {
-    process.env['EASYCODE_FEISHU_CARDKIT_V2'] = '1';
+    process.env['OTTO_FEISHU_CARDKIT_V2'] = '1';
     const fetchMock = vi.fn();
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -2055,9 +2053,9 @@ describe('FeishuGateway - image download saves with real extension', () => {
 
 describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
   let gateway: FeishuGateway;
-  let cardActionHandler: any;
+  let cardActionHandler: unknown;
 
-  const mockFetchOk = (body: any) =>
+  const mockFetchOk = (body: unknown) =>
     ({ ok: true, json: async () => body }) as unknown as Response;
 
   beforeEach(() => {
@@ -2066,7 +2064,7 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
     vi.spyOn(gateway, 'getTenantToken').mockResolvedValue('mock-token');
 
     cardActionHandler = null;
-    mockRegister.mockImplementation((handlers: any) => {
+    mockRegister.mockImplementation((handlers: unknown) => {
       if (handlers['card.action.trigger']) {
         cardActionHandler = handlers['card.action.trigger'];
       }
@@ -2113,19 +2111,19 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
 
     const form = card.body.elements[0];
     expect(form.tag).toBe('form');
-    const tags = form.elements.map((e: any) => e.tag);
+    const tags = form.elements.map((e: unknown) => e.tag);
     expect(tags).toContain('select_static');
     expect(tags).toContain('input');
     expect(tags).toContain('button');
 
-    const select = form.elements.find((e: any) => e.tag === 'select_static');
+    const select = form.elements.find((e: unknown) => e.tag === 'select_static');
     expect(select.name).toBe('q0');
     // options = 2 候选 + 1 "其他"
     expect(select.options).toHaveLength(3);
     expect(select.options[0].value).toBe('opt_0');
     expect(select.options[2].value).toBe('__other__');
 
-    const submit = form.elements.find((e: any) => e.tag === 'button');
+    const submit = form.elements.find((e: unknown) => e.tag === 'button');
     expect(submit.form_action_type).toBe('submit');
     expect(submit.name).toBe('submit_btn');
 
@@ -2222,11 +2220,11 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
     // Verify card generation
-    const [url, init] = fetchMock.mock.calls[0];
+    const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse(init?.body as string);
     const card = JSON.parse(body.content);
     const form = card.body.elements[0];
-    const multiSelectStatic = form.elements.find((e: any) => e.tag === 'multi_select_static');
+    const multiSelectStatic = form.elements.find((e: unknown) => e.tag === 'multi_select_static');
 
     expect(multiSelectStatic).toBeDefined();
     expect(multiSelectStatic.options).toHaveLength(4); // 3 options + 1 "other"
@@ -2319,7 +2317,7 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
     expect(card.schema).toBe('2.0');
 
     // 🚫 schema 2.0 严禁出现 tag:'action' 容器——它是 1.0 写法，会让整卡校验失败
-    const allTags = card.body.elements.map((e: any) => e.tag);
+    const allTags = card.body.elements.map((e: unknown) => e.tag);
     expect(allTags).not.toContain('action');
 
     // ✅ 第二个元素应是直接位于 body.elements 的 callback 按钮（在 form 之外）
@@ -2360,7 +2358,7 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
       },
     });
 
-    const result = (await promise) as any;
+    const result = (await promise) as unknown;
     expect(result.ok).toBe(true);
     expect(result.otherIdeas).toBe(true);
     // 走 otherIdeas 分支时不应附带 answers
@@ -2370,9 +2368,9 @@ describe('FeishuGateway - askQuestionsViaForm (interactive form card)', () => {
 
 describe('FeishuGateway - waitForCardAction (button card with real callback)', () => {
   let gateway: FeishuGateway;
-  let cardActionHandler: any;
+  let cardActionHandler: unknown;
 
-  const mockFetchOk = (body: any) =>
+  const mockFetchOk = (body: unknown) =>
     ({ ok: true, json: async () => body }) as unknown as Response;
 
   beforeEach(() => {
@@ -2380,7 +2378,7 @@ describe('FeishuGateway - waitForCardAction (button card with real callback)', (
     gateway = new FeishuGateway('mock-app-id', 'mock-app-secret');
     vi.spyOn(gateway, 'getTenantToken').mockResolvedValue('mock-token');
     cardActionHandler = null;
-    mockRegister.mockImplementation((handlers: any) => {
+    mockRegister.mockImplementation((handlers: unknown) => {
       if (handlers['card.action.trigger']) {
         cardActionHandler = handlers['card.action.trigger'];
       }
@@ -2452,7 +2450,7 @@ describe('FeishuGateway - waitForCardAction (button card with real callback)', (
 describe('FeishuGateway - getChatName', () => {
   let gateway: FeishuGateway;
 
-  const mockFetchOk = (body: any) =>
+  const mockFetchOk = (body: unknown) =>
     ({ ok: true, json: async () => body }) as unknown as Response;
 
   beforeEach(() => {
@@ -2473,7 +2471,7 @@ describe('FeishuGateway - getChatName', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/open-apis/im/v1/chats/oc_abc123');
     expect(init?.method ?? 'GET').toBe('GET');
-    expect((init?.headers as any)?.Authorization).toBe('Bearer mock-token');
+    expect((init?.headers as unknown)?.Authorization).toBe('Bearer mock-token');
   });
 
   it('caches the resolved name and does not re-request on second call', async () => {
@@ -2549,7 +2547,7 @@ describe('FeishuGateway - getChatName', () => {
 describe('FeishuGateway - getChatMode', () => {
   let gateway: FeishuGateway;
 
-  const mockFetchOk = (body: any) =>
+  const mockFetchOk = (body: unknown) =>
     ({ ok: true, json: async () => body }) as unknown as Response;
 
   beforeEach(() => {
@@ -2642,7 +2640,7 @@ describe('FeishuGateway - getChatMode', () => {
 describe('FeishuGateway - askGoalFormViaCard (goal contract form card)', () => {
   let gateway: FeishuGateway;
 
-  const mockFetchOk = (body: any) =>
+  const mockFetchOk = (body: unknown) =>
     ({ ok: true, json: async () => body }) as unknown as Response;
 
   beforeEach(() => {
@@ -2669,11 +2667,11 @@ describe('FeishuGateway - askGoalFormViaCard (goal contract form card)', () => {
     const card = JSON.parse(JSON.parse(init?.body as string).content);
     expect(card.schema).toBe('2.0');
 
-    const form = card.body.elements.find((e: any) => e.tag === 'form');
+    const form = card.body.elements.find((e: unknown) => e.tag === 'form');
     expect(form).toBeTruthy();
 
     const selects = form.elements.filter(
-      (e: any) => e.tag === 'select_static' || e.tag === 'multi_select_static',
+      (e: unknown) => e.tag === 'select_static' || e.tag === 'multi_select_static',
     );
     expect(selects.length).toBeGreaterThan(0);
     for (const sel of selects) {
@@ -2694,24 +2692,24 @@ describe('FeishuGateway - askGoalFormViaCard (goal contract form card)', () => {
 
     const [, init] = fetchMock.mock.calls[0];
     const card = JSON.parse(JSON.parse(init?.body as string).content);
-    const form = card.body.elements.find((e: any) => e.tag === 'form');
+    const form = card.body.elements.find((e: unknown) => e.tag === 'form');
 
     const inputNames = form.elements
-      .filter((e: any) => e.tag === 'input')
-      .map((e: any) => e.name);
+      .filter((e: unknown) => e.tag === 'input')
+      .map((e: unknown) => e.name);
     expect(inputNames).toEqual(
       expect.arrayContaining(['task', 'criteria', 'forbidden', 'hours']),
     );
 
-    const select = form.elements.find((e: any) => e.tag === 'select_static');
+    const select = form.elements.find((e: unknown) => e.tag === 'select_static');
     expect(select.name).toBe('intensity');
-    expect(select.options.map((o: any) => o.value)).toEqual([
+    expect(select.options.map((o: unknown) => o.value)).toEqual([
       'steady',
       'standard',
       'intense',
     ]);
 
-    const submit = form.elements.find((e: any) => e.tag === 'button');
+    const submit = form.elements.find((e: unknown) => e.tag === 'button');
     expect(submit.form_action_type).toBe('submit');
     expect(submit.name).toBe('submit_btn');
 
@@ -2729,4 +2727,3 @@ describe('FeishuGateway - askGoalFormViaCard (goal contract form card)', () => {
     expect(result.timedOut).toBeFalsy();
   });
 });
-

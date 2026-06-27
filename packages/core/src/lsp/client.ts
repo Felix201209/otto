@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,8 +28,8 @@ export async function createLSPClient(input: {
   const rootUri = normalizeUri(pathToFileURL(input.root).href);
 
   const debug =
-    process.env.DEEPV_LSP_DEBUG === '1' ||
-    process.env.DEEPV_LSP_DEBUG === 'true';
+    process.env.OTTO_LSP_DEBUG === '1' ||
+    process.env.OTTO_LSP_DEBUG === 'true';
 
   if (debug) {
     console.log(`[LSP][${input.serverID}] Creating client for root: ${input.root}`);
@@ -64,7 +63,7 @@ export async function createLSPClient(input: {
   });
 
   // 打印 server stderr（协议数据通常在 stdout；日志通常在 stderr）
-  // 仅在开启 DEEPV_LSP_DEBUG 时输出，避免默认刷屏。
+  // 仅在开启 OTTO_LSP_DEBUG 时输出，避免默认刷屏。
   if (debug && input.server.process?.stderr) {
     input.server.process.stderr.on('data', (buf: Buffer) => {
       const msg = buf.toString('utf8').trimEnd();

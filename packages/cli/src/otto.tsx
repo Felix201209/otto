@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { render } from 'ink';
+import { render, type RenderOptions } from 'ink';
 import { AppWrapper } from './ui/App.js';
 import { loadCliConfig, parseArguments, CliArgs } from './config/config.js';
 import { readStdin } from './utils/readStdin.js';
@@ -19,13 +19,13 @@ import {
   LoadedSettings,
   loadSettings,
   SettingScope,
-} from './config/settings.js';
+ loadEnvironment } from './config/settings.js';
 import { themeManager } from './ui/themes/theme-manager.js';
 import { getStartupWarnings } from './utils/startupWarnings.js';
 import { getUserStartupWarnings } from './utils/userStartupWarnings.js';
 import { runNonInteractive } from './nonInteractiveCli.js';
 import { loadExtensions, Extension } from './config/extension.js';
-import { cleanupCheckpoints, registerCleanup, runExitCleanup } from './utils/cleanup.js';
+import { registerCleanup, runExitCleanup } from './utils/cleanup.js';
 import { getIsQuitting } from './utils/quitState.js';
 import { getCliVersion } from './utils/version.js';
 import { checkForUpdates, executeUpdateCommand } from './ui/utils/updateCheck.js';
@@ -41,16 +41,14 @@ import {
   AuthType,
   SessionManager,
   migrateLegacyDirectories,
-} from 'otto-core';
+ setSilentMode } from 'otto-core';
 import { validateAuthMethod } from './config/auth.js';
-import { loadEnvironment } from './config/settings.js';
 import { setMaxSizedBoxDebugging } from './ui/components/shared/MaxSizedBox.js';
 import { validateNonInteractiveAuth } from './validateNonInterActiveAuth.js';
 import { enableSilentMode, disableSilentMode, logIfNotSilent } from './utils/silentMode.js';
-import { setSilentMode } from 'otto-core';
 import { appEvents, AppEvent } from './utils/events.js';
 import { createConfirmationReadlineInterface } from './ui/utils/readlineOptimized.js';
-import { setupGitErrorMonitoring, canDisableCheckpointing } from './utils/gitErrorHandler.js';
+import { setupGitErrorMonitoring } from './utils/gitErrorHandler.js';
 import { AudioNotification } from './utils/audioNotification.js';
 import { performStartupResize } from './ui/utils/vscodeStartupResize.js';
 import { terminalSizeManager } from './ui/utils/terminalSizeManager.js';
@@ -120,7 +118,7 @@ function getNodeMemoryArgs(config: Config): string[] {
     );
   }
 
-  if (process.env.GEMINI_CLI_NO_RELAUNCH) {
+  if (process.env.OTTO_CLI_NO_RELAUNCH ?? process.env.GEMINI_CLI_NO_RELAUNCH) {
     return [];
   }
 
@@ -141,7 +139,13 @@ function getNodeMemoryArgs(config: Config): string[] {
 
 async function relaunchWithAdditionalArgs(additionalArgs: string[]) {
   const nodeArgs = [...additionalArgs, ...process.argv.slice(1)];
-  const newEnv = { ...process.env, GEMINI_CLI_NO_RELAUNCH: 'true' };
+  // Set both new and legacy names so the relaunched child (any version) detects
+  // the no-relaunch guard and avoids an infinite relaunch loop.
+  const newEnv = {
+    ...process.env,
+    OTTO_CLI_NO_RELAUNCH: 'true',
+    GEMINI_CLI_NO_RELAUNCH: 'true',
+  };
 
   const child = spawn(process.execPath, nodeArgs, {
     stdio: 'inherit',
@@ -174,21 +178,6 @@ ${reason.stack}`
       unhandledRejectionOccurred = true;
       appEvents.emit(AppEvent.OpenDebugConsole);
     }
-  });
-}
-
-// 询问用户是否进行强制更新
-async function askUserForAutoUpdate(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = createConfirmationReadlineInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    rl.question(`\n${t('update.prompt.auto')}`, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase().trim() === 'y' || answer.toLowerCase().trim() === 'yes');
-    });
   });
 }
 
@@ -281,14 +270,52 @@ export async function main() {
       const i = setupArgs.indexOf(n);
       return i >= 0 ? setupArgs[i + 1] : undefined;
     };
-    if (getFlag('--key') || getFlag('--model') || getFlag('--provider')) {
+    const hasFlag = (n: string): boolean => setupArgs.includes(n);
+    // `otto setup --help` / `-h`：打印用法后退出，不要误启交互式 TUI。
+    if (hasFlag('--help') || hasFlag('-h')) {
+      console.log(
+        [
+          'otto setup —— 配置自定义模型',
+          '',
+          '用法：',
+          '  otto setup',
+          '      打开交互式配置向导。',
+          '  otto setup --list',
+          '      列出常用供应商（来自 models.dev）。',
+          '  otto setup --models <id>',
+          '      列出某供应商的模型，例如 otto setup --models zhipuai。',
+          '  otto setup --provider <id> --model <模型> --key <你的KEY>',
+          '      非交互式一条命令写好配置并设为默认（绕开终端粘贴，Windows/SSH 更稳）。',
+          '',
+          '可选参数：',
+          '  --key-env <环境变量名>   API key 从环境变量读，配置只存 {env:...} 引用。',
+          '  --key-file <路径>        API key 从文件读，配置只存 {file:...} 引用。',
+          '  --base-url <接口地址>    覆盖供应商默认接口地址。',
+          '  --name <显示名>          自定义这个模型在列表里的显示名。',
+        ].join('\n'),
+      );
+      process.exit(0);
+    }
+    if (
+      hasFlag('--list') ||
+      getFlag('--models') ||
+      getFlag('--key') ||
+      getFlag('--key-env') ||
+      getFlag('--key-file') ||
+      getFlag('--model') ||
+      getFlag('--provider')
+    ) {
       const { runNonInteractiveModelSetup } = await import('./modelSetupCli.js');
-      const r = runNonInteractiveModelSetup({
+      const r = await runNonInteractiveModelSetup({
         provider: getFlag('--provider'),
         key: getFlag('--key'),
         model: getFlag('--model'),
         name: getFlag('--name'),
         baseUrl: getFlag('--base-url'),
+        keyEnv: getFlag('--key-env'),
+        keyFile: getFlag('--key-file'),
+        list: hasFlag('--list'),
+        listModels: getFlag('--models'),
       });
       console.log(r.text);
       process.exit(r.code);
@@ -299,23 +326,23 @@ export async function main() {
     process.argv.splice(2, 1);
   }
 
-  // 品牌升级：执行历史配置文件夹平滑迁移 (.deepvcode -> .otto 等)
+  // 品牌升级：执行历史配置文件夹平滑迁移 (.otto -> .otto 等)
   try {
     migrateLegacyDirectories(process.cwd(), () => {
       const isZh = process.env.LANG?.startsWith('zh') || false;
       if (isZh) {
         console.log('\n\x1b[36m🔄 正在为您平滑迁移历史 Otto 数据与配置，请稍候（请勿关闭终端）...\x1b[0m');
-        console.log('   • 项目级配置：.deepvcode ──> .otto');
-        console.log('   • 用户级配置：~/.deepv    ──> ~/.otto-user');
+        console.log('   • 项目级配置：.otto ──> .otto');
+        console.log('   • 用户级配置：~/.otto    ──> ~/.otto-user');
         console.log('\x1b[32m💡 提示：下次启动可以使用 otto 命令启动。\x1b[0m\n');
       } else {
         console.log('\n\x1b[36m🔄 Migrating legacy Otto data and configurations, please wait (do not close the terminal)...\x1b[0m');
-        console.log('   • Project-level: .deepvcode ──> .otto');
-        console.log('   • User-level:    ~/.deepv    ──> ~/.otto-user');
+        console.log('   • Project-level: .otto ──> .otto');
+        console.log('   • User-level:    ~/.otto    ──> ~/.otto-user');
         console.log('\x1b[32m💡 Tip: You can use the "otto" command to launch next time.\x1b[0m\n');
       }
     });
-  } catch (err) {
+  } catch {
     // 降级静默忽略
   }
 
@@ -363,7 +390,7 @@ export async function main() {
   // Need to parse arguments twice:
   // 1. First pass with minimal setup to get --workdir
   // This is needed to determine the workspace before loading extensions
-  let tempArgv = await parseArguments([]);
+  const tempArgv = await parseArguments([]);
   logTiming('parseArguments([]) - first pass');
 
   // Handle --workdir parameter before setting up workspace
@@ -384,7 +411,7 @@ export async function main() {
     // 传入 workspaceRoot 确保使用正确的项目根目录
     await initializeSkillsContext(workspaceRoot);
     logTiming('initializeSkillsContext()');
-  } catch (error) {
+  } catch {
     logTiming('initializeSkillsContext() (failed)');
     // Skills system is optional, silently continue if not available
     // console.warn('[Skills] Initialization failed:', error);
@@ -412,7 +439,12 @@ export async function main() {
   // Handle --login <api-key> flag: non-interactive login for Bots
   if (argv.login) {
     const apiKey = argv.login.trim();
-    const serverUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+    // BYO-key: 未配置 OTTO_SERVER_URL 时无可登录的后端，优雅提示而非访问空 URL。
+    const serverUrl = process.env.OTTO_SERVER_URL || '';
+    if (!serverUrl) {
+      console.error('API Key login is unavailable: no server configured. Set OTTO_SERVER_URL to enable it.');
+      process.exit(1);
+    }
     console.log('Logging in with API Key...');
     try {
       const response = await fetch(`${serverUrl}/auth/jwt/apikey-login`, {
@@ -420,7 +452,7 @@ export async function main() {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepCode-CLI/1.0.0'
+          'User-Agent': 'Otto-CLI/1.0.0'
         }
       });
 
@@ -430,7 +462,23 @@ export async function main() {
         process.exit(1);
       }
 
-      const data = await response.json() as any;
+      interface ApiKeyLoginResponse {
+        success?: boolean;
+        accessToken?: string;
+        refreshToken?: string;
+        expiresIn?: number;
+        message?: string;
+        error?: string;
+        user?: {
+          openId?: string;
+          userId?: string;
+          name?: string;
+          email?: string;
+          avatar?: string;
+        };
+      }
+
+      const data = (await response.json()) as ApiKeyLoginResponse;
       if (!data.success || !data.accessToken) {
         console.error(`Login failed: ${data.message || data.error || 'Unknown error'}`);
         process.exit(1);
@@ -447,9 +495,9 @@ export async function main() {
 
       if (data.user) {
         proxyAuthManager.setUserInfo({
-          openId: data.user.openId || data.user.userId,
-          userId: data.user.userId,
-          name: data.user.name,
+          openId: data.user.openId || data.user.userId || '',
+          userId: data.user.userId || data.user.openId || '',
+          name: data.user.name || data.user.email || data.user.openId || '',
           enName: data.user.name,
           email: data.user.email,
           avatar: data.user.avatar
@@ -473,9 +521,7 @@ export async function main() {
     if (updateMessage?.startsWith('FORCE_UPDATE:')) {
       // 正确解析：根据消息标记来分割，避免URL中的冒号干扰
       const prefix = 'FORCE_UPDATE:';
-      let firstColonIndex = updateMessage.indexOf(':', prefix.length);
-
-      const latestVersion = updateMessage.substring(prefix.length, firstColonIndex);
+      const firstColonIndex = updateMessage.indexOf(':', prefix.length);
 
       // 使用稳定的消息分隔符定位消息开始位置
       const messageMarker = '::MSG::';
@@ -503,9 +549,7 @@ export async function main() {
     } else if (updateMessage?.startsWith('UPDATE_AVAILABLE:')) {
       // 正确解析：根据消息标记来分割，避免URL中的冒号干扰
       const prefix = 'UPDATE_AVAILABLE:';
-      let firstColonIndex = updateMessage.indexOf(':', prefix.length);
-
-      const latestVersion = updateMessage.substring(prefix.length, firstColonIndex);
+      const firstColonIndex = updateMessage.indexOf(':', prefix.length);
 
       // 使用稳定的消息分隔符定位消息开始位置
       const messageMarker = '::MSG::';
@@ -542,9 +586,7 @@ export async function main() {
     if (updateMessage?.startsWith('FORCE_UPDATE:')) {
       // 正确解析：根据消息标记来分割，避免URL中的冒号干扰
       const prefix = 'FORCE_UPDATE:';
-      let firstColonIndex = updateMessage.indexOf(':', prefix.length);
-
-      const latestVersion = updateMessage.substring(prefix.length, firstColonIndex);
+      const firstColonIndex = updateMessage.indexOf(':', prefix.length);
 
       // 使用稳定的消息分隔符定位消息开始位置
       const messageMarker = '::MSG::';
@@ -578,7 +620,7 @@ export async function main() {
   // This must be before any ProxyAuthManager initialization to prevent logging
   const shouldEnableSilentMode =
     (argv.prompt && !argv.promptInteractive) ||
-    process.env.DEEPV_SILENT_MODE === 'true';
+    process.env.OTTO_SILENT_MODE === 'true';
 
   if (shouldEnableSilentMode) {
     enableSilentMode();
@@ -687,7 +729,7 @@ export async function main() {
     try {
       await runExitCleanup();
       process.exit(0);
-    } catch (error) {
+    } catch {
       // 忽略清理错误，避免影响退出
       process.exit(1);
     }
@@ -716,25 +758,25 @@ export async function main() {
     logIfNotSilent('log', `🔄 Loading session: ${argv.session}`);
     const sessionData = await sessionManager.loadSession(argv.session);
     if (sessionData) {
-      finalSessionId = sessionData.sessionId as any;
+      finalSessionId = sessionData.sessionId;
       logIfNotSilent('log', `📝 Loaded session: ${finalSessionId}`);
     } else {
       logIfNotSilent('warn', `⚠️  Session ${argv.session} not found, creating new session`);
       const newSession = await sessionManager.createNewSession();
-      finalSessionId = newSession.sessionId as any;
+      finalSessionId = newSession.sessionId;
       // logIfNotSilent('log', `📝 Created new session: ${finalSessionId}`);
     }
   } else if (argv.continue) {
     // 默认或用户明确要求继续上一个会话
     logIfNotSilent('log', `🔄 Continuing last session...`);
     const sessionData = await sessionManager.initializeSession(true);
-    finalSessionId = sessionData.sessionId as any;
+    finalSessionId = sessionData.sessionId;
     logIfNotSilent('log', `📝 Continuing last session: ${finalSessionId}`);
   } else {
     // 显式指定 --no-continue：创建新的独立sessionId，不尝试恢复任何之前的会话
     logIfNotSilent('log', ``);
     const newSession = await sessionManager.createNewSession();
-    finalSessionId = newSession.sessionId as any;
+    finalSessionId = newSession.sessionId;
     // logIfNotSilent('log', `📝 Created new session: ${finalSessionId}`);
   }
   logTiming('session management');
@@ -790,7 +832,7 @@ export async function main() {
 
   // Set a default auth type if one isn't set.
   if (!settings.merged.selectedAuthType) {
-    // Default to Cheeth OA authentication
+    // Default to Otto custom-model authentication
     settings.setValue(
       SettingScope.User,
       'selectedAuthType',
@@ -828,7 +870,7 @@ export async function main() {
       const modelName = config.getModel();
       logModelDiagnostics(modelName, true);
     }
-  } catch (error) {
+  } catch {
     // Fallback if model diagnostics fail - don't block startup
     if (process.env.DEBUG) {
       logIfNotSilent('warn', '⚠️  Model compatibility check failed, continuing...\n');
@@ -844,7 +886,7 @@ export async function main() {
         // Git is disabled, but we can continue - the error message was already displayed
         logIfNotSilent('log', 'ℹ️  Continuing with Git checkpointing disabled...\n');
       }
-    } catch (error) {
+    } catch {
       // This shouldn't happen with the new graceful error handling, but just in case
       logIfNotSilent('warn', '⚠️  Git service initialization had issues, continuing anyway...\n');
     }
@@ -894,7 +936,7 @@ export async function main() {
     }
   }
 
-  // OAuth pre-authentication removed - only Cheeth OA supported
+  // OAuth pre-authentication removed - only Otto custom-model auth supported
 
   if (config.getExperimentalAcp()) {
     return runAcpClient(config, settings, argv);
@@ -915,9 +957,14 @@ export async function main() {
 
   // Check for cloud mode
   if (argv.cloudMode) {
+    // BYO-key: cloud server 来自 --cloud-server 或 OTTO_SERVER_URL；都未配置则禁用 cloud mode。
+    const cloudServerUrl = argv.cloudServer || process.env.OTTO_SERVER_URL || '';
+    if (!cloudServerUrl) {
+      console.error('Cloud mode is unavailable: no cloud server configured. Pass --cloud-server <url> or set OTTO_SERVER_URL.');
+      return;
+    }
     const { startCloudMode } = await import('./remote/remoteServer.js');
     const { maskServerUrl } = await import('./utils/urlMask.js');
-    const cloudServerUrl = argv.cloudServer || 'https://api-code.deepvlab.ai';
 
     console.log(t('cloud.mode.starting'));
     console.log(tp('cloud.mode.connecting.to.server', { url: maskServerUrl(cloudServerUrl) }));
@@ -972,17 +1019,24 @@ export async function main() {
     // Clear screen before rendering Welcome UI
     console.clear();
 
-    const renderOptions: any = { exitOnCtrlC: false };
+    type DummyInputStream = InstanceType<typeof import('node:stream').Readable> & {
+      setRawMode: () => void;
+      ref: () => void;
+      unref: () => void;
+      isTTY: boolean;
+    };
+
+    const renderOptions: RenderOptions = { exitOnCtrlC: false };
     if (!process.stdin.isTTY) {
       // ✅ 避免在后台/无 TTY (detached) 启动时, Ink 尝试对 process.stdin 设置 raw mode 并报错崩溃。
       // 传入一个拥有空 setRawMode / ref / unref 方法的 Readable 作为输入流，使 Ink 降级为非交互渲染而不抛出不支持 raw mode 异常或 ref 缺失错误。
       const { Readable } = await import('node:stream');
-      const dummyStdin = new Readable({ read() {} });
-      (dummyStdin as any).setRawMode = () => {};
-      (dummyStdin as any).ref = () => {};
-      (dummyStdin as any).unref = () => {};
-      (dummyStdin as any).isTTY = true;
-      renderOptions.stdin = dummyStdin;
+      const dummyStdin = new Readable({ read() {} }) as DummyInputStream;
+      dummyStdin.setRawMode = () => {};
+      dummyStdin.ref = () => {};
+      dummyStdin.unref = () => {};
+      dummyStdin.isTTY = true;
+      renderOptions.stdin = dummyStdin as unknown as RenderOptions['stdin'];
     }
 
     const instance = render(
@@ -1010,11 +1064,11 @@ export async function main() {
     registerCleanup(async () => {
       // 🪝 触发 SessionEnd 钩子
       try {
-        const client = config.getGeminiClient();
+        const client = config.getOttoClient();
         if (client && client.endSession) {
           await client.endSession('user_exit');
         }
-      } catch (error) {
+      } catch {
         // 忽略错误，避免影响退出
       }
 

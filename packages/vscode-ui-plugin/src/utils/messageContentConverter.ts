@@ -40,7 +40,7 @@ export async function convertMessageContentToParts(
     console.log(`  [${index}] type: ${item.type}`, item.value);
   });
 
-  // 🎯 预处理：为所有图片引用确保有可访问的文件路径（统一落盘到 .deepvcode/clipboard/）
+  // 🎯 预处理：为所有图片引用确保有可访问的文件路径（统一落盘到 .otto/clipboard/）
   for (const item of content) {
     if (item.type === 'image_reference') {
       try {

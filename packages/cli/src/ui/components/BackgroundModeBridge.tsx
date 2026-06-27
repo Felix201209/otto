@@ -1,14 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useEffect } from 'react';
-import { useBackgroundModeContext } from '../contexts/BackgroundModeContext.js';
 import { getBackgroundModeSignal } from 'otto-core';
+import React,{ useEffect } from 'react';
+import { useBackgroundModeContext } from '../contexts/BackgroundModeContext.js';
+
+declare global {
+  var __backgroundModeCallback: ((requested: boolean) => void) | undefined;
+}
 
 /**
  * Bridge component that connects KeypressContext's Ctrl+B detection to BackgroundModeContext
@@ -18,11 +21,11 @@ export const BackgroundModeBridge: React.FC<{ children: React.ReactNode }> = ({ 
   const backgroundModeContext = useBackgroundModeContext();
 
   useEffect(() => {
-    console.log('[BackgroundModeBridge] Setting up onBackgroundModeRequested callback');
+    if (process.env.DEBUG) { console.log('[BackgroundModeBridge] Setting up onBackgroundModeRequested callback'); }
 
     // Create callback that will be called when Ctrl+B is detected
     const onCtrlB = (requested: boolean) => {
-      console.log('[BackgroundModeBridge] 🔥 onCtrlB called with:', requested);
+      if (process.env.DEBUG) { console.log('[BackgroundModeBridge] 🔥 onCtrlB called with:', requested); }
 
       // Update React state (for UI)
       backgroundModeContext.setBackgroundModeRequested(requested);
@@ -31,15 +34,15 @@ export const BackgroundModeBridge: React.FC<{ children: React.ReactNode }> = ({ 
       if (requested) {
         const signal = getBackgroundModeSignal();
         signal.requestBackgroundMode();
-        console.log('[BackgroundModeBridge] 📡 Sent signal to Core layer');
+        if (process.env.DEBUG) { console.log('[BackgroundModeBridge] 📡 Sent signal to Core layer'); }
       }
     };
 
     // Store in global for KeypressProvider to access
-    (globalThis as any).__backgroundModeCallback = onCtrlB;
+    globalThis.__backgroundModeCallback = onCtrlB;
 
     return () => {
-      delete (globalThis as any).__backgroundModeCallback;
+      delete globalThis.__backgroundModeCallback;
     };
   }, [backgroundModeContext]);
 

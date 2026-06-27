@@ -41,9 +41,7 @@ const rootDirectoryCheck: WarningCheck = {
 
 const customProxyServerCheck: WarningCheck = {
   id: 'custom-proxy-server',
-  check: async (_workspaceRoot: string, _settings: LoadedSettings) => {
-    return null;
-  },
+  check: async (_workspaceRoot: string, _settings: LoadedSettings) => null,
 };
 
 // Note: lowCreditsCheck moved to App component for non-blocking startup

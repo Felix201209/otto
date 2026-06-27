@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/EasyCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -813,7 +812,7 @@ function launchGuidance(rawMessage: string, command: string, label: string): str
       `on this machine, and that "${command}" is available on PATH. ` +
       `Otto drives ${label} via the @agentclientprotocol/claude-agent-acp bridge ` +
       `(run on demand with npx); override the command with the ` +
-      `EASYCODE_CLAUDE_CODE_ACP_CMD environment variable if needed.`
+      `OTTO_CLAUDE_CODE_ACP_CMD environment variable if needed.`
     );
   }
   return rawMessage;

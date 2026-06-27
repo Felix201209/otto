@@ -18,11 +18,11 @@ describe('MarketplaceManager', () => {
 
   beforeEach(async () => {
     // 创建临时测试目录
-    testRoot = path.join(os.tmpdir(), `deepv-test-mp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testRoot = path.join(os.tmpdir(), `otto-test-mp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     testMarketplacePath = path.join(testRoot, 'test-marketplace');
 
     // Mock SkillsPaths
-    vi.spyOn(SkillsPaths, 'DEEPV_HOME', 'get').mockReturnValue(testRoot);
+    vi.spyOn(SkillsPaths, 'OTTO_HOME', 'get').mockReturnValue(testRoot);
     vi.spyOn(SkillsPaths, 'SKILLS_ROOT', 'get').mockReturnValue(path.join(testRoot, 'skills'));
     vi.spyOn(SkillsPaths, 'MARKETPLACE_ROOT', 'get').mockReturnValue(
       path.join(testRoot, 'marketplace'),

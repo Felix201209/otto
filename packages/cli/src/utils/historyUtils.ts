@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,13 +8,13 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { GEMINI_DIR } from 'otto-core';
+import { OTTO_DIR } from 'otto-core';
 
 /**
  * Get the history directory path
  */
 export function getHistoryDir(): string {
-  return path.join(os.homedir(), GEMINI_DIR, 'history');
+  return path.join(os.homedir(), OTTO_DIR, 'history');
 }
 
 /**

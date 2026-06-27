@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, renderHook } from '@testing-library/react';
-import { describe, it, beforeEach, expect, vi } from 'vitest';
+import { act,renderHook } from '@testing-library/react';
+import { beforeEach,describe,expect,it,vi } from 'vitest';
 import { useInputHistory } from './useInputHistory.js';
 
 describe('useInputHistory', () => {
@@ -237,7 +237,7 @@ describe('useInputHistory', () => {
 
     it('should restore draft input when navigating down to initial state', () => {
       const originalQuery = 'my original input';
-      const { result, rerender } = renderHook(
+      const { result, rerender: _rerender } = renderHook(
         (props) => useInputHistory(props),
         {
           initialProps: {

@@ -17,7 +17,7 @@ export const copyCommand: SlashCommand = {
   description: t('command.copy.description'),
   kind: CommandKind.BUILT_IN,
   action: async (context, _args): Promise<SlashCommandActionReturn | void> => {
-    const chat = await context.services.config?.getGeminiClient()?.getChat();
+    const chat = await context.services.config?.getOttoClient()?.getChat();
     const history = chat?.getHistory();
 
     // Get the last message from the AI (model role)

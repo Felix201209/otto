@@ -9,34 +9,33 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { useGeminiStream, mergePartListUnions } from './useGeminiStream.js';
+import { Part,PartListUnion } from '@google/genai';
+import { act,renderHook,waitFor } from '@testing-library/react';
 import { useInput } from 'ink';
 import {
-  useReactToolScheduler,
-  TrackedToolCall,
-  TrackedCompletedToolCall,
-  TrackedExecutingToolCall,
-  TrackedCancelledToolCall,
-} from './useReactToolScheduler.js';
-import {
-  Config,
-  EditorType,
-  AuthType,
-  GeminiEventType as ServerGeminiEventType,
-  DEFAULT_GEMINI_FLASH_MODEL,
+AuthType,
+Config,
+DEFAULT_GEMINI_FLASH_MODEL,
+EditorType,
+OttoEventType as ServerOttoEventType,
 } from 'otto-core';
-import { Part, PartListUnion } from '@google/genai';
+import { beforeEach,describe,expect,it,Mock,vi } from 'vitest';
+import { LoadedSettings } from '../../config/settings.js';
+import {
+HistoryItem,
+MessageType,
+SlashCommandProcessorResult,
+StreamingState,
+} from '../types.js';
+import { mergePartListUnions,useOttoStream } from './useOttoStream.js';
 import { UseHistoryManagerReturn } from './useHistoryManager.js';
 import {
-  HistoryItem,
-  MessageType,
-  SlashCommandProcessorResult,
-  StreamingState,
-} from '../types.js';
-import { Dispatch, SetStateAction } from 'react';
-import { LoadedSettings } from '../../config/settings.js';
+TrackedCancelledToolCall,
+TrackedCompletedToolCall,
+TrackedExecutingToolCall,
+TrackedToolCall,
+useReactToolScheduler,
+} from './useReactToolScheduler.js';
 
 // --- MOCKS ---
 const mockSendMessageStream = vi
@@ -67,7 +66,7 @@ vi.mock('otto-core', async (importOriginal) => {
   return {
     ...actualCoreModule,
     GitService: vi.fn(),
-    GeminiClient: MockedGeminiClientClass,
+    OttoClient: MockedGeminiClientClass,
     UserPromptEvent: MockedUserPromptEvent,
   };
 });
@@ -264,14 +263,14 @@ describe('mergePartListUnions', () => {
   });
 });
 
-// --- Tests for useGeminiStream Hook ---
-describe('useGeminiStream', () => {
+// --- Tests for useOttoStream Hook ---
+describe('useOttoStream', () => {
   let mockAddItem: Mock;
     let mockConfig: Config;
   let mockOnDebugMessage: Mock;
   let mockHandleSlashCommand: Mock;
   let mockScheduleToolCalls: Mock;
-  let mockCancelAllToolCalls: Mock;
+  let _mockCancelAllToolCalls: Mock;
   let mockMarkToolsAsSubmitted: Mock;
   let mockHandleConfirmationResponse: Mock;
 
@@ -279,7 +278,7 @@ describe('useGeminiStream', () => {
     vi.clearAllMocks(); // Clear mocks before each test
 
     mockAddItem = vi.fn();
-        // Define the mock for getGeminiClient
+        // Define the mock for getOttoClient
     const mockGetGeminiClient = vi.fn().mockImplementation(() => {
       // MockedGeminiClientClass is defined in the module scope by the previous change.
       // It will use the mockStartChat and mockSendMessageStream that are managed within beforeEach.
@@ -319,7 +318,7 @@ describe('useGeminiStream', () => {
       ),
       getProjectRoot: vi.fn(() => '/test/dir'),
       getCheckpointingEnabled: vi.fn(() => false),
-      getGeminiClient: mockGetGeminiClient,
+      getOttoClient: mockGetGeminiClient,
       getUsageStatisticsEnabled: () => true,
       getDebugMode: () => false,
       getModel: () => 'gemini-pro',
@@ -341,7 +340,7 @@ describe('useGeminiStream', () => {
 
     // Mock return value for useReactToolScheduler
     mockScheduleToolCalls = vi.fn();
-    mockCancelAllToolCalls = vi.fn();
+    _mockCancelAllToolCalls = vi.fn();
     mockMarkToolsAsSubmitted = vi.fn();
     mockHandleConfirmationResponse = vi.fn();
 
@@ -353,11 +352,11 @@ describe('useGeminiStream', () => {
       mockHandleConfirmationResponse,
     ]);
 
-    // Reset mocks for GeminiClient instance methods (startChat and sendMessageStream)
-    // The GeminiClient constructor itself is mocked at the module level.
+    // Reset mocks for OttoClient instance methods (startChat and sendMessageStream)
+    // The OttoClient constructor itself is mocked at the module level.
     mockStartChat.mockClear().mockResolvedValue({
       sendMessageStream: mockSendMessageStream,
-    } as unknown as any); // GeminiChat -> any
+    } as unknown as any); // OttoChat -> any
     mockSendMessageStream
       .mockClear()
       .mockReturnValue((async function* () {})());
@@ -388,7 +387,7 @@ describe('useGeminiStream', () => {
       mockHandleConfirmationResponse,
     ]);
 
-    const client = geminiClient || mockConfig.getGeminiClient();
+    const client = geminiClient || mockConfig.getOttoClient();
 
     const { result, rerender } = renderHook(
       (props: {
@@ -408,7 +407,7 @@ describe('useGeminiStream', () => {
         if (props.toolCalls) {
           setToolCalls(props.toolCalls);
         }
-        return useGeminiStream(
+        return useOttoStream(
           props.client,
           props.history,
           props.addItem,
@@ -555,7 +554,7 @@ describe('useGeminiStream', () => {
     });
 
     renderHook(() =>
-      useGeminiStream(
+      useOttoStream(
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
@@ -628,7 +627,7 @@ describe('useGeminiStream', () => {
     });
 
     renderHook(() =>
-      useGeminiStream(
+      useOttoStream(
         client,
         [],
         mockAddItem,
@@ -732,7 +731,7 @@ describe('useGeminiStream', () => {
     });
 
     renderHook(() =>
-      useGeminiStream(
+      useOttoStream(
         client,
         [],
         mockAddItem,
@@ -836,7 +835,7 @@ describe('useGeminiStream', () => {
     });
 
     const { result, rerender } = renderHook(() =>
-      useGeminiStream(
+      useOttoStream(
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
@@ -1194,7 +1193,7 @@ describe('useGeminiStream', () => {
       });
 
       renderHook(() =>
-        useGeminiStream(
+        useOttoStream(
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
@@ -1246,7 +1245,7 @@ describe('useGeminiStream', () => {
       } as unknown as Config;
 
       const { result } = renderHook(() =>
-        useGeminiStream(
+        useOttoStream(
           new MockedGeminiClientClass(testConfig),
           [],
           mockAddItem,
@@ -1287,15 +1286,15 @@ describe('useGeminiStream', () => {
       mockSendMessageStream.mockReturnValue(
         (async function* () {
           yield {
-            type: ServerGeminiEventType.Content,
+            type: ServerOttoEventType.Content,
             value: 'This is a truncated response...',
           };
-          yield { type: ServerGeminiEventType.Finished, value: 'MAX_TOKENS' };
+          yield { type: ServerOttoEventType.Finished, value: 'MAX_TOKENS' };
         })(),
       );
 
       const { result } = renderHook(() =>
-        useGeminiStream(
+        useOttoStream(
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
@@ -1334,15 +1333,15 @@ describe('useGeminiStream', () => {
       mockSendMessageStream.mockReturnValue(
         (async function* () {
           yield {
-            type: ServerGeminiEventType.Content,
+            type: ServerOttoEventType.Content,
             value: 'Complete response',
           };
-          yield { type: ServerGeminiEventType.Finished, value: 'STOP' };
+          yield { type: ServerOttoEventType.Finished, value: 'STOP' };
         })(),
       );
 
       const { result } = renderHook(() =>
-        useGeminiStream(
+        useOttoStream(
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
@@ -1379,18 +1378,18 @@ describe('useGeminiStream', () => {
       mockSendMessageStream.mockReturnValue(
         (async function* () {
           yield {
-            type: ServerGeminiEventType.Content,
+            type: ServerOttoEventType.Content,
             value: 'Response with unspecified finish',
           };
           yield {
-            type: ServerGeminiEventType.Finished,
+            type: ServerOttoEventType.Finished,
             value: 'FINISH_REASON_UNSPECIFIED',
           };
         })(),
       );
 
       const { result } = renderHook(() =>
-        useGeminiStream(
+        useOttoStream(
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
@@ -1470,15 +1469,15 @@ describe('useGeminiStream', () => {
         mockSendMessageStream.mockReturnValue(
           (async function* () {
             yield {
-              type: ServerGeminiEventType.Content,
+              type: ServerOttoEventType.Content,
               value: `Response for ${reason}`,
             };
-            yield { type: ServerGeminiEventType.Finished, value: reason };
+            yield { type: ServerOttoEventType.Finished, value: reason };
           })(),
         );
 
         const { result } = renderHook(() =>
-          useGeminiStream(
+          useOttoStream(
             new MockedGeminiClientClass(mockConfig),
             [],
             mockAddItem,

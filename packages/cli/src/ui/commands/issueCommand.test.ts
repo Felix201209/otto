@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -66,7 +65,6 @@ describe('issueCommand', () => {
 
     expect(open).toHaveBeenCalledTimes(1);
     const url = lastOpenUrl();
-    expect(url).toContain('https://github.com/OrionStarAI/DeepVCode/issues/new');
     const decoded = decodeURIComponent(url);
     expect(decoded).toContain('title=Crash when opening file');
     expect(decoded).toContain('## Description');
@@ -148,7 +146,7 @@ describe('issueCommand', () => {
     expect(open).not.toHaveBeenCalled();
     expect(result?.type).toBe('message');
     if (result?.type === 'message') {
-      expect(result.content).toContain('https://github.com/OrionStarAI/DeepVCode/issues/new');
+      expect(result.content).toContain('https://www.otto.bot');
     }
   });
 

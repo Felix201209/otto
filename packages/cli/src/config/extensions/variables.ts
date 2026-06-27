@@ -7,12 +7,12 @@
 export const EXTENSIONS_CONFIG_FILENAME = 'gemini-extension.json';
 export const INSTALL_METADATA_FILENAME = '.otto-install-metadata.json';
 
-export type JsonObject = Record<string, any>;
+export type JsonObject = Record<string, unknown>;
 
 export function recursivelyHydrateStrings(
-  obj: any,
+  obj: unknown,
   hydrator: (str: string) => string,
-): any {
+): unknown {
   if (typeof obj === 'string') {
     return hydrator(obj);
   } else if (Array.isArray(obj)) {
@@ -20,7 +20,7 @@ export function recursivelyHydrateStrings(
   } else if (obj !== null && typeof obj === 'object') {
     const result: JsonObject = {};
     for (const key in obj) {
-      result[key] = recursivelyHydrateStrings(obj[key], hydrator);
+      result[key] = recursivelyHydrateStrings((obj as JsonObject)[key], hydrator);
     }
     return result;
   }

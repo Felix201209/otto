@@ -265,7 +265,7 @@ export const usePhraseCycler = (isActive: boolean, isWaiting: boolean) => {
         phraseIntervalRef.current = null;
       }
     };
-  }, [isActive, isWaiting]);
+  }, [isActive, isWaiting, smallWindowConfig]);
 
   return currentLoadingPhrase;
 };

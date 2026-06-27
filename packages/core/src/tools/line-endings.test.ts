@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +12,7 @@ import { Type } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 
 // --- MOCKS ---
 vi.mock('../core/client.js');
@@ -30,7 +29,7 @@ const mockConfigInternal = {
     getTargetDir: () => rootDir,
     getApprovalMode: vi.fn(() => ApprovalMode.DEFAULT),
     setApprovalMode: vi.fn(),
-    getGeminiClient: vi.fn(),
+    getOttoClient: vi.fn(),
     getApiKey: () => 'test-key',
     getModel: () => 'test-model',
     getProjectSettingsManager: vi.fn().mockReturnValue({
@@ -43,7 +42,7 @@ describe('Line Ending Preservation', () => {
     let writeFileTool: WriteFileTool;
     let editTool: EditTool;
     let tempDir: string;
-    let mockGeminiClientInstance: Mocked<GeminiClient>;
+    let mockGeminiClientInstance: Mocked<OttoClient>;
 
     beforeEach(() => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'line-ending-test-external-'));
@@ -51,8 +50,8 @@ describe('Line Ending Preservation', () => {
             fs.mkdirSync(rootDir, { recursive: true });
         }
 
-        mockGeminiClientInstance = new (vi.mocked(GeminiClient))(mockConfig) as Mocked<GeminiClient>;
-        mockConfigInternal.getGeminiClient.mockReturnValue(mockGeminiClientInstance);
+        mockGeminiClientInstance = new (vi.mocked(OttoClient))(mockConfig) as Mocked<OttoClient>;
+        mockConfigInternal.getOttoClient.mockReturnValue(mockGeminiClientInstance);
 
         writeFileTool = new WriteFileTool(mockConfig);
         editTool = new EditTool(mockConfig);

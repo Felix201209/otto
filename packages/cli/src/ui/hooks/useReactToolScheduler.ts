@@ -5,37 +5,37 @@
  */
 
 import {
-  Config,
-  ToolCallRequestInfo,
-  ExecutingToolCall,
-  ScheduledToolCall,
-  ValidatingToolCall,
-  WaitingToolCall,
-  CompletedToolCall,
-  CancelledToolCall,
-  CoreToolScheduler,
-  OutputUpdateHandler,
-  AllToolCallsCompleteHandler,
-  ToolCallsUpdateHandler,
-  PreToolExecutionHandler,
-  Tool,
-  ToolCall,
-  Status as CoreStatus,
-  EditorType,
-  parseToolOutputMessage,
-  isSubAgentUpdateMessage,
-  isTextOutputMessage,
-  getBackgroundTaskManager,
+AllToolCallsCompleteHandler,
+CancelledToolCall,
+CompletedToolCall,
+Config,
+Status as CoreStatus,
+CoreToolScheduler,
+EditorType,
+ExecutingToolCall,
+isSubAgentUpdateMessage,
+isTextOutputMessage,
+OutputUpdateHandler,
+parseToolOutputMessage,
+PreToolExecutionHandler,
+ScheduledToolCall,
+Tool,
+ToolCall,
+ToolCallRequestInfo,
+ToolCallsUpdateHandler,
+type ToolResultDisplay,
+ValidatingToolCall,
+WaitingToolCall
 } from 'otto-core';
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback,useMemo,useState } from 'react';
 import {
-  HistoryItemToolGroup,
-  IndividualToolCallDisplay,
-  ToolCallStatus,
-  HistoryItemWithoutId,
-  BatchSubToolInfo,
+BatchSubToolInfo,
+HistoryItemToolGroup,
+HistoryItemWithoutId,
+IndividualToolCallDisplay,
+ToolCallStatus,
 } from '../types.js';
-import { t, tp } from '../utils/i18n.js';
+import { t,tp } from '../utils/i18n.js';
 
 export type ScheduleFn = (
   request: ToolCallRequestInfo | ToolCallRequestInfo[],
@@ -81,6 +81,28 @@ export type TrackedToolCall =
   | TrackedCompletedToolCall
   | TrackedCancelledToolCall;
 
+type BatchToolCallEntry = string | Record<string, unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getStringProperty(
+  source: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = source[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function getRecordProperty(
+  source: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = source[key];
+  return isRecord(value) ? value : undefined;
+}
+
 export function useReactToolScheduler(
   onComplete: (tools: CompletedToolCall[]) => void,
   config: Config,
@@ -100,7 +122,10 @@ export function useReactToolScheduler(
       const message = parseToolOutputMessage(outputChunk);
 
       // 🎯 统一的数据更新逻辑 - 不再有分支重复
-      const updateUIWithData = (resultDisplay: any, liveOutput?: any) => {
+      const updateUIWithData = (
+        resultDisplay: ToolResultDisplay | undefined,
+        liveOutput?: string | object,
+      ) => {
         // 更新待添加到历史记录的项
         setPendingHistoryItem((prevItem) => {
           if (prevItem?.type === 'tool_group') {
@@ -126,7 +151,7 @@ export function useReactToolScheduler(
                 ...executingTc,
                 liveOutput: liveOutput ?? resultDisplay,
                 // 如果是结构化数据，添加类型标记
-                ...(typeof resultDisplay === 'object' && resultDisplay.type
+                ...(isRecord(resultDisplay) && typeof resultDisplay.type === 'string'
                   ? { liveOutputType: resultDisplay.type }
                   : {}),
               };
@@ -182,7 +207,7 @@ export function useReactToolScheduler(
         }),
       );
 
-      // 简化：无需同步到中央状态管理器，直接由 useGeminiStream 检测 awaiting_approval 状态
+      // 简化：无需同步到中央状态管理器，直接由 useOttoStream 检测 awaiting_approval 状态
     },
     [setToolCallsForDisplay, toolCallsForDisplay],
   );
@@ -354,12 +379,13 @@ function generateBatchSubToolSummary(tool: string, parameters: Record<string, un
   switch (tool) {
     case 'read_file':
       return extractPathSummary(parameters.absolute_path as string | undefined);
-    case 'read_many_files':
+    case 'read_many_files': {
       const paths = parameters.paths as string[] | undefined;
       if (paths && paths.length > 0) {
         return paths.length === 1 ? extractPathSummary(paths[0]) : `${paths.length} files`;
       }
       return '';
+    }
     case 'write_file':
       return extractPathSummary(parameters.file_path as string | undefined);
     case 'replace':
@@ -367,25 +393,28 @@ function generateBatchSubToolSummary(tool: string, parameters: Record<string, un
       return extractPathSummary(parameters.file_path as string | undefined);
     case 'delete_file':
       return extractPathSummary(parameters.file_path as string | undefined);
-    case 'run_shell_command':
+    case 'run_shell_command': {
       const cmd = parameters.command as string | undefined;
       if (cmd) {
         // 取命令的前30个字符
         return cmd.length > 30 ? cmd.substring(0, 27) + '...' : cmd;
       }
       return '';
-    case 'search_file_content':
+    }
+    case 'search_file_content': {
       const pattern = parameters.pattern as string | undefined;
       return pattern ? `"${pattern.substring(0, 20)}${pattern.length > 20 ? '...' : ''}"` : '';
+    }
     case 'glob':
       return (parameters.pattern as string) || '';
     case 'list_directory':
       return extractPathSummary(parameters.path as string | undefined);
-    case 'web_fetch':
+    case 'web_fetch': {
       const prompt = parameters.prompt as string | undefined;
       // 提取 URL
       const urlMatch = prompt?.match(/https?:\/\/[^\s]+/);
       return urlMatch ? urlMatch[0].substring(0, 40) : '';
+    }
     case 'google_web_search':
       return (parameters.query as string)?.substring(0, 30) || '';
     default:
@@ -470,18 +499,24 @@ function extractBaseDisplayProperties(trackedCall: TrackedToolCall): {
 
   // 🎯 特殊处理 batch 工具：提取子工具信息用于友好显示
   if (trackedCall.request.name === 'batch') {
-    const args = trackedCall.request.args as { tool_calls?: Array<{ tool: string; parameters: Record<string, unknown> }> };
-    if (args.tool_calls && Array.isArray(args.tool_calls)) {
-      batchSubTools = args.tool_calls.map(call => {
-        let callObj = call;
+    const args = trackedCall.request.args;
+    const toolCalls = isRecord(args) && Array.isArray(args.tool_calls)
+      ? args.tool_calls as BatchToolCallEntry[]
+      : undefined;
+    if (toolCalls) {
+      batchSubTools = toolCalls.map(call => {
+        let callObj: Record<string, unknown> = {};
         // Handle stringified JSON (LLM sometimes returns ["{...}", "{...}"])
         if (typeof call === 'string') {
             try {
-                callObj = JSON.parse(call);
-            } catch (e) {
+                const parsed: unknown = JSON.parse(call);
+                callObj = isRecord(parsed) ? parsed : { tool: 'unknown', parameters: {} };
+            } catch (_e) {
                 console.warn('[useReactToolScheduler] Failed to parse stringified tool call:', call);
                 callObj = { tool: 'unknown', parameters: {} };
             }
+        } else if (isRecord(call)) {
+            callObj = call;
         }
 
         if (!callObj || typeof callObj !== 'object') {
@@ -489,8 +524,17 @@ function extractBaseDisplayProperties(trackedCall: TrackedToolCall): {
         }
 
         // Robustly handle potential property aliases
-        const toolName = (callObj as any).tool || (callObj as any).name || (callObj as any).function || (callObj as any).tool_name || 'Unknown';
-        const parameters = (callObj as any).parameters || (callObj as any).args || (callObj as any).arguments || {};
+        const toolName =
+          getStringProperty(callObj, 'tool') ||
+          getStringProperty(callObj, 'name') ||
+          getStringProperty(callObj, 'function') ||
+          getStringProperty(callObj, 'tool_name') ||
+          'Unknown';
+        const parameters =
+          getRecordProperty(callObj, 'parameters') ||
+          getRecordProperty(callObj, 'args') ||
+          getRecordProperty(callObj, 'arguments') ||
+          {};
 
         return {
           tool: toolName,
@@ -517,22 +561,30 @@ function extractBaseDisplayProperties(trackedCall: TrackedToolCall): {
 /**
  * 🎯 抽取公共逻辑：处理executing状态的结果显示
  */
-function getExecutingResultDisplay(trackedCall: TrackedExecutingToolCall): any {
-  let resultDisplay = trackedCall.liveOutput ?? undefined;
+function getExecutingResultDisplay(
+  trackedCall: TrackedExecutingToolCall,
+): ToolResultDisplay | undefined {
+  let resultDisplay: ToolResultDisplay | undefined =
+    trackedCall.liveOutput === undefined
+      ? undefined
+      : trackedCall.liveOutput as ToolResultDisplay;
 
-  const liveOutputType = (trackedCall as any).liveOutputType;
+  const liveOutputType = (
+    trackedCall as TrackedExecutingToolCall & { liveOutputType?: string }
+  ).liveOutputType;
   if (trackedCall.liveOutput && liveOutputType) {
     // 🔧 检查类型：如果已经是对象，直接使用；如果是字符串，才解析
     if (typeof trackedCall.liveOutput === 'string') {
       try {
-        resultDisplay = JSON.parse(trackedCall.liveOutput);
+        const parsed: unknown = JSON.parse(trackedCall.liveOutput);
+        resultDisplay = parsed as ToolResultDisplay;
       } catch (error) {
         console.warn('解析执行中的结构化数据失败:', error);
         resultDisplay = trackedCall.liveOutput;
       }
     } else {
       // 已经是对象，直接使用
-      resultDisplay = trackedCall.liveOutput;
+      resultDisplay = trackedCall.liveOutput as ToolResultDisplay;
     }
   }
 
@@ -573,7 +625,7 @@ function mapSingleToolCallToDisplay(
       };
     }
 
-    case 'awaiting_approval':
+    case 'awaiting_approval': {
       const isHighestPriority = highestPriorityConfirmingTool?.request.callId === trackedCall.request.callId;
       return {
         ...baseDisplayProperties,
@@ -581,6 +633,7 @@ function mapSingleToolCallToDisplay(
         resultDisplay: undefined,
         confirmationDetails: isHighestPriority ? trackedCall.confirmationDetails : undefined,
       };
+    }
 
     case 'executing':
       return {
@@ -638,8 +691,7 @@ export function mapToDisplay(
   }
 
   // 🎯 递归处理子工具调用
-  const mapSubToolCallsToDisplay = (subToolCalls: TrackedToolCall[]): IndividualToolCallDisplay[] => {
-    return subToolCalls.map(subCall => {
+  const mapSubToolCallsToDisplay = (subToolCalls: TrackedToolCall[]): IndividualToolCallDisplay[] => subToolCalls.map(subCall => {
       const display = mapSingleToolCallToDisplay(subCall, highestPriorityConfirmingTool);
 
       // 递归处理嵌套的子工具调用
@@ -652,7 +704,6 @@ export function mapToDisplay(
 
       return display;
     });
-  };
 
   // 🎯 处理顶级工具调用
   const toolDisplays = toolCalls.map(toolCall => {

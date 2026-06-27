@@ -4,37 +4,37 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { Box, Text } from 'ink';
-import { Colors } from '../colors.js';
-import { isSideQuestionPanelOpen } from '../utils/modalState.js';
-import { SuggestionsDisplay } from './SuggestionsDisplay.js';
-import { useInputHistory } from '../hooks/useInputHistory.js';
-import { TextBuffer } from './shared/text-buffer.js';
-import { cpSlice, cpLen, hasRealLineBreaks, getRealLineCount } from '../utils/textUtils.js';
-import { sanitizePasteContent } from '../utils/displayUtils.js';
-import {
-  formatAttachmentReferencesForDisplay,
-  ensureQuotesAroundAttachments,
-  getAttachmentSegments,
-  formatAttachmentSegment
-} from '../utils/attachmentFormatter.js';
 import chalk from 'chalk';
-import stringWidth from 'string-width';
-import { useShellHistory } from '../hooks/useShellHistory.js';
-import { useCompletion } from '../hooks/useCompletion.js';
-import { useKeypress, Key } from '../hooks/useKeypress.js';
-import { CommandContext, SlashCommand } from '../commands/types.js';
-import { fuzzyMatch } from '../utils/fuzzyMatch.js';
+import { Box,Text } from 'ink';
 import { Config } from 'otto-core';
-import {
-  clipboardHasImage,
-  saveClipboardImage,
-  cleanupOldClipboardImages,
-  getClipboardText,
-} from '../utils/clipboardUtils.js';
 import * as path from 'path';
-import { t, tp } from '../utils/i18n.js';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import stringWidth from 'string-width';
+import { Colors } from '../colors.js';
+import { CommandContext,SlashCommand } from '../commands/types.js';
+import { useCompletion } from '../hooks/useCompletion.js';
+import { useInputHistory } from '../hooks/useInputHistory.js';
+import { Key,useKeypress } from '../hooks/useKeypress.js';
+import { useShellHistory } from '../hooks/useShellHistory.js';
+import {
+ensureQuotesAroundAttachments,
+formatAttachmentReferencesForDisplay,
+formatAttachmentSegment,
+getAttachmentSegments
+} from '../utils/attachmentFormatter.js';
+import {
+cleanupOldClipboardImages,
+clipboardHasImage,
+getClipboardText,
+saveClipboardImage,
+} from '../utils/clipboardUtils.js';
+import { sanitizePasteContent } from '../utils/displayUtils.js';
+import { fuzzyMatch } from '../utils/fuzzyMatch.js';
+import { isChineseLocale,t,tp } from '../utils/i18n.js';
+import { isSideQuestionPanelOpen } from '../utils/modalState.js';
+import { cpLen,cpSlice,getRealLineCount,hasRealLineBreaks } from '../utils/textUtils.js';
+import { TextBuffer } from './shared/text-buffer.js';
+import { SuggestionsDisplay } from './SuggestionsDisplay.js';
 
 export interface InputPromptProps {
   buffer: TextBuffer;
@@ -64,12 +64,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   buffer,
   onSubmit,
   userMessages,
-  onClearScreen,
+  // onClearScreen 目前组件内部未使用（仅保留在 props 接口中以维持对外契约）。
+  // 用 _ 前缀符合本文件既有的「故意未用 prop」约定（参见 _isExecutingTools）。
+  onClearScreen: _onClearScreen,
   openModelDialog,
   config,
   slashCommands,
   commandContext,
-  isExecutingTools = false,
+  isExecutingTools: _isExecutingTools = false,
   placeholder,
   focus = true,
   inputWidth,
@@ -84,7 +86,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   isInSpecialMode = false,
 }) => {
   const [justNavigatedHistory, setJustNavigatedHistory] = useState(false);
-  const [renderDebounceId, setRenderDebounceId] = useState(0);
+  const [_renderDebounceId, setRenderDebounceId] = useState(0);
   const [isClipboardImagePasting, setIsClipboardImagePasting] = useState(false);
 
   // 🎯 VS Code环境检测
@@ -125,7 +127,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   };
 
   // 生成带换行提示的placeholder
-  const getPlaceholderWithHint = () => {
+  const _getPlaceholderWithHint = () => {
     if (placeholder) {
       return placeholder;
     }
@@ -152,7 +154,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   // 性能优化：字符宽度计算缓存
   const charWidthCacheRef = useRef(new Map<string, number>());
-  const getCachedCharWidth = useCallback((char: string): number => {
+  const _getCachedCharWidth = useCallback((char: string): number => {
     const cache = charWidthCacheRef.current;
     if (cache.has(char)) {
       return cache.get(char)!;
@@ -278,7 +280,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       onSubmit(contentToSubmit);
       resetCompletionState();
     },
-    [onSubmit, buffer, resetCompletionState, shellModeActive, shellHistory, reconstructFullMessage, isModalOpen, pasteSegments],
+    [onSubmit, buffer, resetCompletionState, shellModeActive, shellHistory, reconstructFullMessage],
   );
 
   const customSetTextAndResetCompletionSignal = useCallback(
@@ -315,13 +317,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   ]);
 
   // 清理定时器
-  useEffect(() => {
-    return () => {
+  useEffect(() => () => {
       if (pasteTimeoutRef.current) {
         clearTimeout(pasteTimeoutRef.current);
       }
-    };
-  }, []);
+    }, []);
 
   // Handle clipboard image pasting with Ctrl+V
   const handleClipboardImage = useCallback(async () => {
@@ -329,7 +329,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       const hasImage = await clipboardHasImage();
       if (hasImage) {
         // 显示粘贴提示
-        let configDirPath = config.getProjectSettingsManager().getConfigDirPath();
+        const configDirPath = config.getProjectSettingsManager().getConfigDirPath();
         setIsClipboardImagePasting(true);
         const imagePath = await saveClipboardImage( configDirPath);
         if (imagePath) {
@@ -425,7 +425,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     pasteTimeoutRef.current = setTimeout(() => {
       processMultiSegmentPaste();
     }, 300); // 300ms等待时间
-  }, [lastPasteTimeRef, pendingPasteContentRef, pasteTimeoutRef, processMultiSegmentPaste]);
+  }, [lastPasteTimeRef, pendingPasteContentRef, pasteTimeoutRef, processMultiSegmentPaste, handleClipboardImage]);
 
   // 统一粘贴处理函数 - 智能检测剪贴板内容类型
   const handleUnifiedPaste = useCallback(async (): Promise<boolean> => {
@@ -438,7 +438,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           // 转发给现有的图像处理函数
           await handleClipboardImage();
           return true; // 表示已处理
-        } catch (imageError) {
+        } catch (_imageError) {
           return false;
         }
       }
@@ -478,7 +478,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   }, [buffer]);
 
   // 🚀 性能优化：对于长文本，动态调整视口高度
-  const getOptimalViewportHeight = useCallback(() => {
+  const _getOptimalViewportHeight = useCallback(() => {
     const textLength = buffer.text.length;
     const lineCount = buffer.allVisualLines.length;
 
@@ -966,9 +966,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       completion,
       shellModeActive,
       setShellModeActive,
-      onClearScreen,
       inputHistory,
-      handleSubmitAndClear,
       shellHistory,
       handleClipboardImage,
       handleTextPaste,
@@ -978,6 +976,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       createPasteSegment,
       cleanupInvalidSegments,
       isModalOpen,
+      helpModeActive,
+      setHelpModeActive,
+      openModelDialog,
+      slashCommands,
     ],
   );
 
@@ -1109,11 +1111,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         ) : (
           <Text>
             <Text color={Colors.AccentCyan}>⏎</Text>
-            <Text color={Colors.Gray} dimColor>{' 发送  '}</Text>
+            <Text color={Colors.Gray} dimColor>{isChineseLocale() ? ' 发送  ' : ' send  '}</Text>
             <Text color={Colors.AccentCyan}>/</Text>
-            <Text color={Colors.Gray} dimColor>{' 命令  '}</Text>
+            <Text color={Colors.Gray} dimColor>{isChineseLocale() ? ' 命令  ' : ' commands  '}</Text>
             <Text color={Colors.AccentCyan}>@</Text>
-            <Text color={Colors.Gray} dimColor>{` 文件  ·  ${getNewlineHint()}`}</Text>
+            <Text color={Colors.Gray} dimColor>{isChineseLocale() ? ` 文件  ·  ${getNewlineHint()}` : ` files  ·  ${getNewlineHint()}`}</Text>
           </Text>
         )}
       </Box>
@@ -1126,7 +1128,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           </Text>
           {pasteSegments.map((segment, index) => (
             <Text key={index} color={Colors.Gray} dimColor>
-              {'  └ '}片段 {index + 1}: {getRealLineCount(segment.originalContent)} 行内容
+              {isChineseLocale()
+                ? `  └ 片段 ${index + 1}: ${getRealLineCount(segment.originalContent)} 行内容`
+                : `  └ Segment ${index + 1}: ${getRealLineCount(segment.originalContent)} lines`}
             </Text>
           ))}
         </Box>

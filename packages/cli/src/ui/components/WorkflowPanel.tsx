@@ -1,18 +1,18 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useInput } from 'ink';
-import stringWidth from 'string-width';
+import { Box,Text,useInput } from 'ink';
 import {
-  WorkflowRegistry,
-  WorkflowRecord,
-  WorkflowPhaseRecord,
-  WorkflowAgentRecord,
+WorkflowAgentRecord,
+WorkflowPhaseRecord,
+WorkflowRecord,
+WorkflowRegistry,
 } from 'otto-core';
+import React,{ useCallback,useEffect,useState } from 'react';
+import stringWidth from 'string-width';
 import { Colors } from '../colors.js';
 import { setWorkflowPanelOpen } from '../utils/modalState.js';
 
@@ -55,7 +55,7 @@ function allAgentsForPhase(phase: WorkflowPhaseRecord): WorkflowAgentRecord[] {
 }
 
 /** Truncate string to visWidth columns (CJK-aware), pad with spaces if shorter */
-function visSlice(str: string, maxCols: number): string {
+function _visSlice(str: string, maxCols: number): string {
   maxCols = Math.max(0, maxCols);
   let cols = 0;
   let i = 0;

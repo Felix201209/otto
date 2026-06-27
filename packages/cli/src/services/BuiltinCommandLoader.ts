@@ -8,8 +8,8 @@ import { ICommandLoader } from './types.js';
 import { SlashCommand } from '../ui/commands/types.js';
 import { Config } from 'otto-core';
 import { aboutCommand } from '../ui/commands/aboutCommand.js';
-import { authCommand } from '../ui/commands/authCommand.js';
-import { loginCommand } from '../ui/commands/loginCommand.js';
+// import { authCommand } from '../ui/commands/authCommand.js'; // /auth 已移除：Otto 是自定义模型独立产品，不走任何第三方 OA 云登录
+// import { loginCommand } from '../ui/commands/loginCommand.js'; // 已禁用
 // import { chatCommand } from '../ui/commands/chatCommand.js'; // 已被 /session 替代
 import { clearCommand } from '../ui/commands/clearCommand.js';
 import { compressCommand } from '../ui/commands/compressCommand.js';
@@ -82,7 +82,7 @@ export class BuiltinCommandLoader implements ICommandLoader {
   async loadCommands(_signal: AbortSignal): Promise<SlashCommand[]> {
     const allDefinitions: Array<SlashCommand | null> = [
       aboutCommand,
-      authCommand,
+      // authCommand, // /auth 已移除：Otto 不提供任何第三方 OA 云登录，仅自定义模型
       // loginCommand,
       // chatCommand, // 已被 /session 替代
       clearCommand,

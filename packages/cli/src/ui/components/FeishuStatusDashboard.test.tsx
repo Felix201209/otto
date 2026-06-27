@@ -1,19 +1,18 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { render } from 'ink-testing-library';
-import { describe, it, expect } from 'vitest';
+import { describe,expect,it } from 'vitest';
 import { FeishuStatusDashboard } from './FeishuStatusDashboard.js';
 
 const baseProps = {
   routes: {} as Record<string, { projectRoot?: string }>,
   activeGroupChatIds: new Set<string>(),
   groupLogs: {},
-  botName: 'dvcode3',
+  botName: 'otto3',
   platform: 'feishu',
   isConnected: true,
   terminalWidth: 100,
@@ -118,9 +117,9 @@ describe('<FeishuStatusDashboard /> p2p (bot direct-message) rendering', () => {
       />,
     );
     const frame = lastFrame() ?? '';
-    // 应出现私聊文案 + Bot 名（baseProps.botName = 'dvcode3'）
+    // 应出现私聊文案 + Bot 名（baseProps.botName = 'otto3'）
     expect(frame).toMatch(/Direct message with bot|与机器人/i);
-    expect(frame).toContain('dvcode3');
+    expect(frame).toContain('otto3');
     // 不应再裸露 chatId 作为主显示
     expect(frame).not.toContain('oc_p2p');
   });

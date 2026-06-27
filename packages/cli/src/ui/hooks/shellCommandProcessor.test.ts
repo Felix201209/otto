@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +10,7 @@ import { vi } from 'vitest';
 import { spawn } from 'child_process';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import { useShellCommandProcessor } from './shellCommandProcessor';
-import { Config, GeminiClient } from 'otto-core';
+import { Config, OttoClient } from 'otto-core';
 import * as fs from 'fs';
 import EventEmitter from 'events';
 import { ToolCallStatus } from '../types';
@@ -41,7 +40,7 @@ describe('useShellCommandProcessor', () => {
   let onExecMock: vi.Mock;
   let onDebugMessageMock: vi.Mock;
   let configMock: Config;
-  let geminiClientMock: GeminiClient;
+  let geminiClientMock: OttoClient;
 
   beforeEach(() => {
     spawnEmitter = new EventEmitter();
@@ -66,7 +65,7 @@ describe('useShellCommandProcessor', () => {
 
     geminiClientMock = {
       addHistory: vi.fn(),
-    } as unknown as GeminiClient;
+    } as unknown as OttoClient;
   });
 
   afterEach(() => {

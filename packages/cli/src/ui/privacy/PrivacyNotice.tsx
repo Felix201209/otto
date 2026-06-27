@@ -5,9 +5,7 @@
  */
 
 import { Box } from 'ink';
-import { type Config, AuthType } from 'otto-core';
-import { GeminiPrivacyNotice } from './GeminiPrivacyNotice.js';
-import { CloudPaidPrivacyNotice } from './CloudPaidPrivacyNotice.js';
+import { type Config } from 'otto-core';
 import { CloudFreePrivacyNotice } from './CloudFreePrivacyNotice.js';
 
 interface PrivacyNoticeProps {
@@ -22,9 +20,9 @@ const PrivacyNoticeText = ({
   config: Config;
   onExit: () => void;
 }) => {
-  const authType = config.getContentGeneratorConfig()?.authType;
+  const _authType = config.getContentGeneratorConfig()?.authType;
 
-  // Only Cheeth OA authentication is supported now
+  // Only Otto custom-model authentication is supported now
   return <CloudFreePrivacyNotice config={config} onExit={onExit} />;
 };
 

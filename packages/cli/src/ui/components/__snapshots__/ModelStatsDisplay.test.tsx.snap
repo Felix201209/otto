@@ -3,7 +3,7 @@
 exports[`<ModelStatsDisplay /> > should display a single model correctly 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                                                              │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -26,7 +26,7 @@ exports[`<ModelStatsDisplay /> > should display a single model correctly 1`] = `
 exports[`<ModelStatsDisplay /> > should display conditional rows if at least one model has data 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                Model2                                        │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -49,7 +49,7 @@ exports[`<ModelStatsDisplay /> > should display conditional rows if at least one
 exports[`<ModelStatsDisplay /> > should display stats for multiple models correctly 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                Model2                                        │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -72,7 +72,7 @@ exports[`<ModelStatsDisplay /> > should display stats for multiple models correc
 exports[`<ModelStatsDisplay /> > should display stats for multiple models correctly 2`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                Model2                                        │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -95,7 +95,7 @@ exports[`<ModelStatsDisplay /> > should display stats for multiple models correc
 exports[`<ModelStatsDisplay /> > should handle large values without wrapping or overlapping 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                                                              │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -118,7 +118,7 @@ exports[`<ModelStatsDisplay /> > should handle large values without wrapping or 
 exports[`<ModelStatsDisplay /> > should not display conditional rows if no model has data for them 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│  Geek Model Statistics                                                                           │
+│  Model Statistics                                                                                │
 │                                                                                                  │
 │  Metric                      Model1                                                              │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────  │

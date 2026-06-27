@@ -16,7 +16,7 @@ export async function maybePromptForSettings(): Promise<string> {
 }
 
 export function promptForSetting(
-  setting: ExtensionSetting,
+  _setting: ExtensionSetting,
 ): Promise<string> {
   return Promise.resolve('');
 }

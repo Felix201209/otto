@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,7 @@ export const HistoryCleanupDialog: React.FC<HistoryCleanupDialogProps> = ({
 
       <Box>
         <Text dimColor>
-          {t('checkpoint.history.large.question')} (y/n)
+          {t('checkpoint.history.large.question')}
         </Text>
       </Box>
     </Box>

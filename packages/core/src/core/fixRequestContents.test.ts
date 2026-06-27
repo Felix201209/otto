@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Content } from '../types/extendedContent.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { Config } from '../config/config.js';
 import { ContentGenerator } from './contentGenerator.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
@@ -18,8 +17,8 @@ import { logger } from '../utils/enhancedLogger.js';
 vi.mock('../config/config.js');
 vi.mock('./contentGenerator.js');
 
-describe('GeminiChat.fixRequestContents', () => {
-  let geminiChat: GeminiChat;
+describe('OttoChat.fixRequestContents', () => {
+  let geminiChat: OttoChat;
   let mockConfig: Config;
   let mockContentGenerator: ContentGenerator;
   // 详细日志（如"补全/调整/孤立检测"）走 logger.debug；
@@ -41,7 +40,7 @@ describe('GeminiChat.fixRequestContents', () => {
     } as any;
 
     mockContentGenerator = {} as ContentGenerator;
-    geminiChat = new GeminiChat(mockConfig, mockContentGenerator);
+    geminiChat = new OttoChat(mockConfig, mockContentGenerator);
 
     // 业务在 e36df4fc 之后把详细日志切到了 logger.debug，老的 spyOn(console, 'log') 永远收不到。
     loggerDebugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});

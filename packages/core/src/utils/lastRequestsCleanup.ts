@@ -1,11 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
- * Periodic cleanup of `~/.deepv/last-requests/`.
+ * Periodic cleanup of `~/.otto/last-requests/`.
  *
  * The directory is a debugging ring-buffer where both OttoServerAdapter
  * (proxy-mode requests) and customModelAdapter (Gemini native requests) drop
@@ -68,7 +68,7 @@ export async function cleanupLastRequestsDir(
   try {
     entries = await fs.promises.readdir(dir);
   } catch (err) {
-    // ENOENT is expected the very first time anyone runs DeepV.
+    // ENOENT is expected the very first time anyone runs Otto.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       // Any other error is non-fatal — just don't sweep this run.
     }

@@ -11,6 +11,7 @@
 
 import fs from 'fs-extra';
 import path from 'path';
+import os from 'os';
 import matter from 'gray-matter';
 import {
   Skill,
@@ -48,7 +49,7 @@ interface SkillCacheItem {
  * 2. 解析 SKILL.md 文件（YAML frontmatter + Markdown body）
  * 3. 验证 Skill 结构（名称规则、必需字段）
  * 4. 元数据缓存机制
- * 5. 三层存储扫描（项目级 .deepvcode/skills/ + 用户级 ~/.deepv/skills/ + Marketplace）
+ * 5. 三层存储扫描（项目级 .otto/skills/ + 用户级 ~/.otto/skills/ + Marketplace）
  */
 export class SkillLoader {
   private cache: Map<string, SkillCacheItem> = new Map();
@@ -74,7 +75,9 @@ export class SkillLoader {
    */
   private initializeCustomSkillPaths() {
     // 用户全局技能路径
-    this.customSkillPaths.set(SkillSource.USER_GLOBAL, path.join(process.env.HOME || '', '.otto-user', 'skills'));
+    // 用 os.homedir() 而非 process.env.HOME：Windows 无 HOME(用 USERPROFILE)，
+    // 否则会退化成相对路径 .otto-user/skills，导致用户级技能失效/作用域错乱。
+    this.customSkillPaths.set(SkillSource.USER_GLOBAL, path.join(os.homedir(), '.otto-user', 'skills'));
 
     // 项目技能路径（使用工具函数，与命令处理保持一致）
     this.customSkillPaths.set(SkillSource.USER_PROJECT, getProjectSkillsDir(this.projectRoot));
@@ -147,7 +150,7 @@ export class SkillLoader {
   /**
    * 扫描技能目录
    *
-   * 注意：必须跟随 symlink —— 用户用 `ln -s` 把 skill 指到 `~/.deepv/skills/` 的
+   * 注意：必须跟随 symlink —— 用户用 `ln -s` 把 skill 指到 `~/.otto/skills/` 的
    * 场景很常见（尤其开发者在 monorepo 里软链接多套技能），若直接用
    * `entry.isDirectory()` 会把 symlink 全部漏掉。
    */

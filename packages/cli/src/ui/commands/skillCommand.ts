@@ -239,11 +239,11 @@ export const handlePluginInstallCompletion = async (context: CommandContext, par
             value: `${marketplaceId}:${p.name}`,
             description: p.description
           }));
-      } catch (e) {
+      } catch {
         return [];
       }
     }
-  } catch (error) {
+  } catch {
     return [];
   }
 };
@@ -524,7 +524,7 @@ export const skillCommand: SlashCommand = {
                   value: mp.id,
                   description: mp.description || mp.url
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -608,7 +608,7 @@ export const skillCommand: SlashCommand = {
                   value: mp.id,
                   description: mp.description || mp.url
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -723,7 +723,7 @@ export const skillCommand: SlashCommand = {
                   value: mp.id,
                   description: mp.description || mp.url
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -871,7 +871,7 @@ export const skillCommand: SlashCommand = {
                   value: p.id,
                   description: `${p.description} (${p.id})`
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -941,7 +941,7 @@ export const skillCommand: SlashCommand = {
                   value: p.id,
                   description: `${p.description} (${p.id})`
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -1006,7 +1006,7 @@ export const skillCommand: SlashCommand = {
                   value: p.id,
                   description: `${p.description} (${p.id})`
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -1070,7 +1070,7 @@ export const skillCommand: SlashCommand = {
                   value: p.id,
                   description: `${p.description} (${p.id})`
                 }));
-            } catch (error) {
+            } catch {
               return [];
             }
           },
@@ -1178,7 +1178,7 @@ export const skillCommand: SlashCommand = {
       description: 'List all available skills',
       kind: CommandKind.BUILT_IN,
 
-      action: async (context: CommandContext, args?: string) => {
+      action: async (context: CommandContext, _args?: string) => {
         try {
           const { loader } = await initSkillsSystem();
 
@@ -1197,7 +1197,7 @@ export const skillCommand: SlashCommand = {
           }
 
           // Define the display function inline to avoid circular reference
-          const displaySkillsWithCategories = (skillsToDisplay: any[]): string => {
+          const displaySkillsWithCategories = (skillsToDisplay: Skill[]): string => {
             // 从实际 skill 对象获取路径，如果没有则使用默认路径
             let userPath = SkillsPaths.SKILLS_ROOT.replace(os.homedir(), '~');
             // 项目路径：使用 PROJECT_DIR_PREFIX 常量
@@ -1218,9 +1218,9 @@ export const skillCommand: SlashCommand = {
             }
 
             const categories = {
-              user: { skills: [] as any[], path: userPath, title: 'User skills' },
-              project: { skills: [] as any[], path: projectPathDisplay, title: 'Project skills' },
-              marketplace: { skills: [] as any[], path: 'plugin', title: 'Plugin skills' }
+              user: { skills: [] as Skill[], path: userPath, title: 'User skills' },
+              project: { skills: [] as Skill[], path: projectPathDisplay, title: 'Project skills' },
+              marketplace: { skills: [] as Skill[], path: 'plugin', title: 'Plugin skills' }
             };
 
             // 分类
@@ -1236,17 +1236,17 @@ export const skillCommand: SlashCommand = {
 
             // 生成输出
             const lines: string[] = [];
-            let totalSkills = skillsToDisplay.length;
+            const totalSkills = skillsToDisplay.length;
 
             // 标题和统计
             lines.push(`Skills (${totalSkills}):\n`);
 
             // 分类显示
-            Object.entries(categories).forEach(([key, category]: [string, any]) => {
+            Object.entries(categories).forEach(([_key, category]) => {
               if (category.skills.length > 0) {
                 lines.push(`\n ${category.title} (${category.path})`);
 
-                category.skills.forEach((skill: any) => {
+                category.skills.forEach((skill) => {
                   const name = skill.name;
                   const prefix = skill.scripts && skill.scripts.length > 0 ? '⚡' : '•';
 
@@ -1301,7 +1301,7 @@ export const skillCommand: SlashCommand = {
               value: s.id,
               description: `${s.description} (${s.id})`
             }));
-        } catch (error) {
+        } catch {
           return [];
         }
       },

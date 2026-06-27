@@ -32,7 +32,7 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 vi.mock('../core/client.js', () => ({
-  GeminiClient: vi.fn().mockImplementation(function (
+  OttoClient: vi.fn().mockImplementation(function (
     this: any,
     _config: Config,
   ) {
@@ -61,7 +61,7 @@ import {
   unescapeStringForGeminiBug,
   resetEditCorrectorCaches_TEST_ONLY,
 } from './editCorrector.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import type { Config } from '../config/config.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
 
@@ -180,7 +180,7 @@ describe('editCorrector', () => {
    * 不做任何反转义或 LLM 修正。以下测试验证这一新行为。
    */
   describe('ensureCorrectEdit (correction disabled)', () => {
-    let mockGeminiClientInstance: Mocked<GeminiClient>;
+    let mockGeminiClientInstance: Mocked<OttoClient>;
     let mockToolRegistry: Mocked<ToolRegistry>;
     let mockConfigInstance: Config;
     const abortSignal = new AbortController().signal;
@@ -225,8 +225,8 @@ describe('editCorrector', () => {
         setUserMemory: vi.fn((mem: string) => {
           configParams.userMemory = mem;
         }),
-        getGeminiMdFileCount: vi.fn(() => configParams.geminiMdFileCount),
-        setGeminiMdFileCount: vi.fn((count: number) => {
+        getOttoMdFileCount: vi.fn(() => configParams.geminiMdFileCount),
+        setOttoMdFileCount: vi.fn((count: number) => {
           configParams.geminiMdFileCount = count;
         }),
         getAlwaysSkipModificationConfirmation: vi.fn(
@@ -255,9 +255,9 @@ describe('editCorrector', () => {
       mockStartChat = vi.fn();
       mockSendMessageStream = vi.fn();
 
-      mockGeminiClientInstance = new GeminiClient(
+      mockGeminiClientInstance = new OttoClient(
         mockConfigInstance,
-      ) as Mocked<GeminiClient>;
+      ) as Mocked<OttoClient>;
       mockGeminiClientInstance.getHistory = vi.fn().mockResolvedValue([]);
       resetEditCorrectorCaches_TEST_ONLY();
     });
@@ -366,7 +366,7 @@ describe('editCorrector', () => {
   });
 
   describe('ensureCorrectFileContent (correction disabled)', () => {
-    let mockGeminiClientInstance: Mocked<GeminiClient>;
+    let mockGeminiClientInstance: Mocked<OttoClient>;
     let mockToolRegistry: Mocked<ToolRegistry>;
     let mockConfigInstance: Config;
     const abortSignal = new AbortController().signal;
@@ -411,8 +411,8 @@ describe('editCorrector', () => {
         setUserMemory: vi.fn((mem: string) => {
           configParams.userMemory = mem;
         }),
-        getGeminiMdFileCount: vi.fn(() => configParams.geminiMdFileCount),
-        setGeminiMdFileCount: vi.fn((count: number) => {
+        getOttoMdFileCount: vi.fn(() => configParams.geminiMdFileCount),
+        setOttoMdFileCount: vi.fn((count: number) => {
           configParams.geminiMdFileCount = count;
         }),
         getAlwaysSkipModificationConfirmation: vi.fn(
@@ -441,9 +441,9 @@ describe('editCorrector', () => {
       mockStartChat = vi.fn();
       mockSendMessageStream = vi.fn();
 
-      mockGeminiClientInstance = new GeminiClient(
+      mockGeminiClientInstance = new OttoClient(
         mockConfigInstance,
-      ) as Mocked<GeminiClient>;
+      ) as Mocked<OttoClient>;
       resetEditCorrectorCaches_TEST_ONLY();
     });
 

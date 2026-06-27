@@ -1,7 +1,7 @@
 {
   "name": "otto",
   "version": "1.0.271",
-  "description": "Easy Code - AI-powered coding assistant with enhanced capabilities",
+  "description": "Otto - AI-powered coding assistant with enhanced capabilities",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/google-gemini/gemini-cli.git"

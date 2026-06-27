@@ -9,7 +9,7 @@ import { Box } from 'ink';
 import { MarkdownDisplay } from '../../utils/MarkdownDisplay.js';
 import { SafeMessageContainer } from '../shared/SafeMessageContainer.js';
 
-interface GeminiMessageContentProps {
+interface OttoMessageContentProps {
   text: string;
   isPending: boolean;
   availableTerminalHeight?: number;
@@ -18,11 +18,11 @@ interface GeminiMessageContentProps {
 
 /*
  * Gemini message content is a semi-hacked component. The intention is to represent a partial
- * of GeminiMessage and is only used when a response gets too long. In that instance messages
- * are split into multiple GeminiMessageContent's to enable the root <Static> component in
+ * of OttoMessage and is only used when a response gets too long. In that instance messages
+ * are split into multiple OttoMessageContent's to enable the root <Static> component in
  * App.tsx to be as performant as humanly possible.
  */
-export const GeminiMessageContent: React.FC<GeminiMessageContentProps> = ({
+export const OttoMessageContent: React.FC<OttoMessageContentProps> = ({
   text,
   isPending,
   availableTerminalHeight,

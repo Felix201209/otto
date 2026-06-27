@@ -13,8 +13,24 @@ import {
   copyToClipboard,
 } from './commandUtils.js';
 
-// Mock child_process
-vi.mock('child_process');
+// Mock child_process：spawn 用于 darwin/linux，exec 用于 win32/WSL（源码经 promisify(exec) 调用）。
+// 完整工厂 mock（含 default 导出）——这样 promisify(exec) 会绑定到下面的 exec spy，
+// 且该 spy 没有 util.promisify.custom 符号，promisify 会走标准 (cmd, callback) 协议。
+vi.mock('child_process', () => {
+  const spawn = vi.fn();
+  const exec = vi.fn(
+    (
+      _cmd: string,
+      callback?: (
+        err: Error | null,
+        result: { stdout: string; stderr: string },
+      ) => void,
+    ) => {
+      callback?.(null, { stdout: '', stderr: '' });
+    },
+  );
+  return { spawn, exec, default: { spawn, exec } };
+});
 
 // Store original platform
 const originalPlatform = process.platform;
@@ -178,51 +194,60 @@ describe('commandUtils', () => {
     });
 
     describe('on Windows (win32)', () => {
-      beforeEach(() => {
+      let mockExec: Mock;
+
+      beforeEach(async () => {
         mockPlatform('win32');
+        const { exec } = await import('child_process');
+        mockExec = exec as unknown as Mock;
+        // 外层 beforeEach 调用了 vi.clearAllMocks()，会清掉 exec 的实现，
+        // 这里重新设置：遵守 (cmd, callback) 协议以便 promisify(exec) 正常 resolve
+        mockExec.mockImplementation(
+          (
+            _cmd: string,
+            callback?: (
+              err: Error | null,
+              result: { stdout: string; stderr: string },
+            ) => void,
+          ) => {
+            callback?.(null, { stdout: '', stderr: '' });
+          },
+        );
       });
 
-      // Note: Windows clipboard tests run the actual PowerShell command
-      // These tests verify the actual functionality works on Windows
-      // In CI environments without GUI access, Set-Clipboard may fail
-      // So we test by checking if the function doesn't throw on success
+      // Windows 走 copyToClipboardWindows，内部使用 promisify(exec) 执行 PowerShell
+      // （而非 spawn），因此这里断言 exec 被调用且命令为 powershell.exe -EncodedCommand
 
       it('should use PowerShell for copying text on Windows', async () => {
-        // This test verifies that on Windows, the function uses PowerShell
-        // We can't easily mock promisified exec, so we test the actual behavior
-        // If running in a non-Windows environment, this will still work due to platform mock
-        // but the actual PowerShell command won't be available
-
         const testText = 'Hello, world!';
 
-        // On Windows with GUI access, this should work
-        // On CI without GUI, this may throw ExternalException
-        // Either way, it should use PowerShell (not clip.exe)
-        try {
-          await copyToClipboard(testText);
-          // If it succeeds, great!
-        } catch (error) {
-          // Expected in environments without clipboard access
-          // The error should be from PowerShell, not from clip.exe
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          // Verify it's trying to use PowerShell (command contains powershell.exe)
-          expect(errorMessage).toMatch(/powershell|PowerShell|Set-Clipboard|clipboard/i);
-        }
+        await copyToClipboard(testText);
+
+        expect(mockExec).toHaveBeenCalledTimes(1);
+        const calledCommand = mockExec.mock.calls[0][0] as string;
+        expect(calledCommand).toMatch(/powershell\.exe/i);
+        expect(calledCommand).toContain('-EncodedCommand');
+        // 不应回退到 clip.exe
+        expect(calledCommand).not.toContain('clip.exe');
       });
 
       it('should encode Chinese text as Base64 for PowerShell', async () => {
         const testText = '你好，世界！';
 
-        // This tests that Chinese text doesn't cause immediate errors
-        // The Base64 encoding should handle Unicode characters properly
-        try {
-          await copyToClipboard(testText);
-        } catch (error) {
-          // Expected in environments without clipboard access
-          // As long as it doesn't crash with encoding errors, the test passes
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          expect(errorMessage).toMatch(/powershell|PowerShell|Set-Clipboard|clipboard/i);
-        }
+        await copyToClipboard(testText);
+
+        expect(mockExec).toHaveBeenCalledTimes(1);
+        const calledCommand = mockExec.mock.calls[0][0] as string;
+        expect(calledCommand).toMatch(/powershell\.exe/i);
+        expect(calledCommand).toContain('-EncodedCommand');
+
+        // 验证编码后的脚本解码回来确实包含原始中文文本的 Base64（Unicode 正确处理）
+        const encodedMatch = calledCommand.match(/-EncodedCommand\s+(\S+)/);
+        expect(encodedMatch).not.toBeNull();
+        const decodedScript = Buffer.from(encodedMatch![1], 'base64').toString('utf16le');
+        const expectedTextBase64 = Buffer.from(testText, 'utf8').toString('base64');
+        expect(decodedScript).toContain(expectedTextBase64);
+        expect(decodedScript).toContain('Set-Clipboard');
       });
     });
 

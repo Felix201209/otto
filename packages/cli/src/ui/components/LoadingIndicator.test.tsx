@@ -13,9 +13,9 @@ import { StreamingState } from '../types.js';
 import { vi, describe, it, expect } from 'vitest';
 import { sanitizeOutput } from '../test-utils.js';
 
-// Mock GeminiRespondingSpinner
-vi.mock('./GeminiRespondingSpinner.js', () => ({
-  GeminiRespondingSpinner: ({
+// Mock OttoRespondingSpinner
+vi.mock('./OttoRespondingSpinner.js', () => ({
+  OttoRespondingSpinner: ({
     nonRespondingDisplay,
   }: {
     nonRespondingDisplay?: string;
@@ -64,7 +64,7 @@ describe('<LoadingIndicator />', () => {
     const output = sanitizeOutput(lastFrame());
     expect(output).toContain('MockRespondingSpinner');
     expect(output).toContain('Loading...');
-    expect(output).toContain('(esc to cancel, 5s)');
+    expect(output).toContain('(esc: cancel, 5s)');
   });
 
   it('should render spinner (static), phrase but no time/cancel when streamingState is WaitingForConfirmation', () => {
@@ -79,7 +79,7 @@ describe('<LoadingIndicator />', () => {
     const output = sanitizeOutput(lastFrame());
     expect(output).toContain('⠏'); // Static char for WaitingForConfirmation
     expect(output).toMatch(/等待用户确认\.\.\.|Waiting for user confirmation\.\.\./); // Support both Chinese and English
-    expect(output).not.toContain('(esc to cancel)');
+    expect(output).not.toContain('(esc: cancel)');
     expect(output).not.toContain(', 10s');
   });
 
@@ -104,7 +104,7 @@ describe('<LoadingIndicator />', () => {
       <LoadingIndicator {...props} />,
       StreamingState.Responding,
     );
-    expect(sanitizeOutput(lastFrame())).toContain('(esc to cancel, 1m)');
+    expect(sanitizeOutput(lastFrame())).toContain('(esc: cancel, 1m)');
   });
 
   it('should display the elapsedTime correctly in human-readable format', () => {
@@ -116,7 +116,7 @@ describe('<LoadingIndicator />', () => {
       <LoadingIndicator {...props} />,
       StreamingState.Responding,
     );
-    expect(sanitizeOutput(lastFrame())).toContain('(esc to cancel, 2m 5s)');
+    expect(sanitizeOutput(lastFrame())).toContain('(esc: cancel, 2m 5s)');
   });
 
   it('should render rightContent when provided', () => {
@@ -147,7 +147,7 @@ describe('<LoadingIndicator />', () => {
     let output = sanitizeOutput(lastFrame());
     expect(output).toContain('MockRespondingSpinner');
     expect(output).toContain('Now Responding');
-    expect(output).toContain('(esc to cancel, 2s)');
+    expect(output).toContain('(esc: cancel, 2s)');
 
     // Transition to WaitingForConfirmation
     rerender(
@@ -161,7 +161,7 @@ describe('<LoadingIndicator />', () => {
     output = sanitizeOutput(lastFrame());
     expect(output).toContain('⠏');
     expect(output).toMatch(/等待用户确认\.\.\.|Waiting for user confirmation\.\.\./); // Support both Chinese and English
-    expect(output).not.toContain('(esc to cancel)');
+    expect(output).not.toContain('(esc: cancel)');
     expect(output).not.toContain(', 15s');
 
     // Transition back to Idle
@@ -239,6 +239,6 @@ describe('<LoadingIndicator />', () => {
       StreamingState.Responding,
     );
     const output = sanitizeOutput(lastFrame());
-    expect(output).toContain('(esc to cancel, 5s | ↑ 12.22k ↓ 1.23k)');
+    expect(output).toContain('(esc: cancel, 5s | ↑ 12.22k ↓ 1.23k)');
   });
 });

@@ -1,24 +1,23 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
- * GeminiClient 的入口安全网端到端测试。
+ * OttoClient 的入口安全网端到端测试。
  *
  * 背景：
  *   /session select、useSessionRestore、ACP 会话水化、vscode-ui-plugin
  *   等多个真实路径都会通过 client.setHistory / client.resumeChat 注入历史。
- *   commit e5f01a81 的修复点正是把 GeminiChat.sanitizeRequestContents 装在了
+ *   commit e5f01a81 的修复点正是把 OttoChat.sanitizeRequestContents 装在了
  *   这两个入口上。如果未来有人重构这两个方法不小心去掉了清洗调用，
  *   这套测试必须立刻报警。
  *
  * 测试策略：
- *   GeminiClient 的真实 constructor 依赖 Config 的若干内部服务（ToolRegistry、
+ *   OttoClient 的真实 constructor 依赖 Config 的若干内部服务（ToolRegistry、
  *   PromptRegistry、HookSystem 等），完整 mock 成本极高。我们使用
- *   Object.create(GeminiClient.prototype) 跳过 constructor，注入一个
+ *   Object.create(OttoClient.prototype) 跳过 constructor，注入一个
  *   伪造的 chat 对象，仅验证两件事：
  *     1) setHistory(脏历史) → 伪 chat 收到的是清洗后的数据
  *     2) resumeChat(脏历史) → 内部 startChat 被调用时收到的是清洗后的数据
@@ -28,8 +27,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiClient } from './client.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoClient } from './client.js';
+import { OttoChat } from './ottoChat.js';
 import { Content } from '../types/extendedContent.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 
@@ -61,12 +60,12 @@ function makeDirtyHistory(): Content[] {
   ];
 }
 
-describe('GeminiClient.setHistory > 入口安全网', () => {
-  let client: GeminiClient;
+describe('OttoClient.setHistory > 入口安全网', () => {
+  let client: OttoClient;
   let mockChat: { setHistory: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    client = Object.create(GeminiClient.prototype) as GeminiClient;
+    client = Object.create(OttoClient.prototype) as OttoClient;
     mockChat = { setHistory: vi.fn() };
     // 注入伪 chat
     (client as any).chat = mockChat;
@@ -121,7 +120,7 @@ describe('GeminiClient.setHistory > 入口安全网', () => {
   });
 
   it('哨兵：直接验证 sanitizeRequestContents 在 setHistory 路径上被调用', () => {
-    const sanitizeSpy = vi.spyOn(GeminiChat, 'sanitizeRequestContents');
+    const sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents');
     const dirty = makeDirtyHistory();
     client.setHistory(dirty);
     expect(sanitizeSpy).toHaveBeenCalledTimes(1);
@@ -130,15 +129,15 @@ describe('GeminiClient.setHistory > 入口安全网', () => {
   });
 });
 
-describe('GeminiClient.resumeChat > 入口安全网', () => {
-  let client: GeminiClient;
+describe('OttoClient.resumeChat > 入口安全网', () => {
+  let client: OttoClient;
   let startChatSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    client = Object.create(GeminiClient.prototype) as GeminiClient;
+    client = Object.create(OttoClient.prototype) as OttoClient;
     // resumeChat 内部会调用 this.startChat(sanitized) 并把返回值赋给 this.chat；
     // 我们只关心 startChat 收到了什么参数，因此用 spy 替换 startChat。
-    startChatSpy = vi.fn().mockResolvedValue({ /* fake GeminiChat */ });
+    startChatSpy = vi.fn().mockResolvedValue({ /* fake OttoChat */ });
     (client as any).startChat = startChatSpy;
     // resumeChat 还会调用 resetCompressionFlag，提供 noop 即可
     (client as any).resetCompressionFlag = vi.fn();
@@ -181,7 +180,7 @@ describe('GeminiClient.resumeChat > 入口安全网', () => {
   });
 
   it('哨兵：sanitizeRequestContents 必须在 resumeChat 路径上被调用', async () => {
-    const sanitizeSpy = vi.spyOn(GeminiChat, 'sanitizeRequestContents');
+    const sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents');
     const dirty = makeDirtyHistory();
     await client.resumeChat(dirty);
     expect(sanitizeSpy).toHaveBeenCalledTimes(1);
@@ -190,12 +189,12 @@ describe('GeminiClient.resumeChat > 入口安全网', () => {
   });
 });
 
-describe('GeminiClient > 入口安全网防御性场景', () => {
-  let client: GeminiClient;
+describe('OttoClient > 入口安全网防御性场景', () => {
+  let client: OttoClient;
   let mockChat: { setHistory: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    client = Object.create(GeminiClient.prototype) as GeminiClient;
+    client = Object.create(OttoClient.prototype) as OttoClient;
     mockChat = { setHistory: vi.fn() };
     (client as any).chat = mockChat;
   });

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/EasyCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -326,10 +325,12 @@ export class DelegateToAgentTool extends BaseTool<
    * Default timeout for delegated tasks. Claude Code coding tasks can
    * legitimately run for many minutes (large refactors, running test suites,
    * etc.), so we default to 60 minutes. Override with the environment
-   * variable EASYCODE_CC_TIMEOUT_MINUTES.
+   * variable OTTO_CC_TIMEOUT_MINUTES (legacy: OTTO_CC_TIMEOUT_MINUTES).
    */
   static readonly DEFAULT_TIMEOUT_MS = (() => {
-    const env = process.env.EASYCODE_CC_TIMEOUT_MINUTES;
+    const env =
+      process.env.OTTO_CC_TIMEOUT_MINUTES ??
+      process.env.OTTO_CC_TIMEOUT_MINUTES;
     if (env) {
       const mins = parseInt(env, 10);
       if (mins > 0) return mins * 60 * 1000;

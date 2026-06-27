@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
  * Custom Models Storage Service (extension host)
  * --------------------------------------------------------------------------
  * Mirrors `packages/cli/src/config/customModelsStorage.ts` so the VSCode UI
- * plugin reads/writes the SAME `~/.deepv/custom-models.json` file as the
+ * plugin reads/writes the SAME `~/.otto/custom-models.json` file as the
  * CLI. A user who configures a model in the CLI sees it immediately in the
  * extension and vice-versa.
  *
@@ -32,7 +32,7 @@ import { Logger } from '../utils/logger';
 const SETTINGS_DIRECTORY_NAME = '.otto-user';
 const CUSTOM_MODELS_FILE = 'custom-models.json';
 
-/** Absolute path to `~/.deepv/custom-models.json` (shared with CLI). */
+/** Absolute path to `~/.otto/custom-models.json` (shared with CLI). */
 export function getCustomModelsFilePath(): string {
   return path.join(homedir(), SETTINGS_DIRECTORY_NAME, CUSTOM_MODELS_FILE);
 }

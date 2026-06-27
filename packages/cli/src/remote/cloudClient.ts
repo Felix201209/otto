@@ -4,8 +4,7 @@
  */
 
 import WebSocket from 'ws';
-import { Config } from 'otto-core';
-import { ProxyAuthManager } from 'otto-core';
+import { Config, type FeishuUserInfo, ProxyAuthManager } from 'otto-core';
 import { RemoteServer } from './remoteServer.js';
 import { t, tp } from '../ui/utils/i18n.js';
 import chalk from 'chalk';
@@ -13,12 +12,15 @@ import * as os from 'os';
 
 // ===== 消息类型定义 =====
 
+type CloudRoute = Record<string, unknown>;
+type LocalSessionInfo = ReturnType<RemoteServer['getAllSessionsInfo']>[number];
+
 interface CloudMessage {
   type: string;
-  payload?: any;
+  payload?: Record<string, unknown>;
   id?: string;
   timestamp: number;
-  _cloudRoute?: any;
+  _cloudRoute?: CloudRoute;
 }
 
 interface HeartbeatMessage extends CloudMessage {
@@ -34,15 +36,7 @@ interface HeartbeatMessage extends CloudMessage {
 interface SessionListMessage extends CloudMessage {
   type: 'CLI_SESSION_LIST';
   payload: {
-    sessions: Array<{
-      id: string;
-      createdAt: number;
-      lastActiveAt: number;
-      firstUserInput?: string;
-      lastUserInput?: string;
-      messageCount?: number;
-      isProcessing?: boolean;
-    }>;
+    sessions: LocalSessionInfo[];
   };
 }
 
@@ -215,7 +209,7 @@ export class CloudClient {
   /**
    * 获取用户信息
    */
-  private async getUserInfo(): Promise<any> {
+  private async getUserInfo(): Promise<FeishuUserInfo> {
     try {
       const proxyAuthManager = ProxyAuthManager.getInstance();
       const userInfo = proxyAuthManager.getUserInfo();
@@ -336,9 +330,11 @@ export class CloudClient {
     try {
       switch (message.type) {
         case 'CLI_REGISTER_SUCCESS':
-          console.log(tp('cloud.cli.register.success', { message: message.payload?.message }));
+          console.log(tp('cloud.cli.register.success', {
+            message: typeof message.payload?.message === 'string' ? message.payload.message : ''
+          }));
           console.log('');
-          console.log('✅🎉🚀 ' + chalk.green(tp('cloud.remote.access.ready', { url: 'https://dvcode.deepvlab.ai/remote' })));
+          console.log('✅🎉🚀 ' + chalk.green(tp('cloud.remote.access.ready', { url: 'https://www.otto.bot/remote' })));
           break;
 
         case 'CLI_HEARTBEAT_RESPONSE':
@@ -378,7 +374,7 @@ export class CloudClient {
   /**
    * 发送消息到云端
    */
-  sendToCloud(message: any): boolean {
+  sendToCloud(message: unknown): boolean {
     if (!this.isConnected()) {
       console.warn(t('cloud.send.unavailable'));
       return false;
@@ -432,7 +428,7 @@ export class CloudClient {
   /**
    * 手动触发Session列表同步
    */
-  public triggerSessionSync(): void {
+  triggerSessionSync(): void {
     if (this.isConnected()) {
       console.log(t('cloud.session.sync.triggered'));
       this.syncSessionList();
@@ -463,7 +459,7 @@ export class CloudClient {
   /**
    * 获取本地sessions
    */
-  private getLocalSessions(): Array<any> {
+  private getLocalSessions(): LocalSessionInfo[] {
     try {
       return this.localRemoteServer.getAllSessionsInfo();
     } catch (error) {

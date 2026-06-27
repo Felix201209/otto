@@ -1,11 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Config, Content, OttoClient } from 'otto-core';
 import {
   feishuCommand,
   buildBoundProjectsLines,
@@ -16,44 +16,38 @@ import {
 } from './feishuCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import * as credentials from '../../services/feishu/credentials.js';
+import type { CommandContext } from './types.js';
+import type { FeishuCredentials } from '../../services/feishu/credentials.js';
 
-vi.mock('../../services/feishu/credentials.js', () => {
-  return {
+vi.mock('../../services/feishu/credentials.js', () => ({
     loadCredentials: vi.fn(),
     saveCredentials: vi.fn(),
     clearCredentials: vi.fn(),
     isSenderAuthorized: vi.fn(() => true),
     CredentialsLoadError: class extends Error {},
-  };
-});
+  }));
 
-vi.mock('../../services/feishu/gateway.js', () => {
-  return {
-    FeishuGateway: vi.fn().mockImplementation(() => {
-      return {
+vi.mock('../../services/feishu/gateway.js', () => ({
+    FeishuGateway: vi.fn().mockImplementation(() => ({
         connect: vi.fn(),
         disconnect: vi.fn(),
         sendMessage: vi.fn(),
         sendMarkdown: vi.fn(),
         updateMessageMarkdown: vi.fn(),
         getChatName: vi.fn().mockResolvedValue(null),
-      };
-    }),
-  };
-});
+      })),
+  }));
 
 // probeCredentials 走真实网络，测试中 mock 掉避免不稳定 & 加速。
-vi.mock('../../services/feishu/registration.js', () => {
-  return {
+vi.mock('../../services/feishu/registration.js', () => ({
     initRegistration: vi.fn(),
     beginRegistration: vi.fn(),
     pollRegistration: vi.fn(),
     probeCredentials: vi.fn().mockResolvedValue(null),
-  };
-});
+  }));
 
 describe('feishuCommand', () => {
-  let context: any;
+  let context: CommandContext;
 
   beforeEach(() => {
     context = createMockCommandContext();
@@ -95,7 +89,7 @@ describe('feishuCommand', () => {
   });
 
   it('should include the bound-projects section when credentials exist', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
       domain: 'feishu',
@@ -113,9 +107,10 @@ describe('feishuCommand', () => {
   });
 
   it('should allow adding open_id to allowlist', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
+      domain: 'feishu',
       ownerOpenId: 'ou_owner',
       allowlist: [],
     };
@@ -133,9 +128,10 @@ describe('feishuCommand', () => {
   });
 
   it('should deny and remove open_id from allowlist', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
+      domain: 'feishu',
       ownerOpenId: 'ou_owner',
       allowlist: ['ou_test_user'],
     };
@@ -153,9 +149,10 @@ describe('feishuCommand', () => {
   });
 
   it('should handle stop correctly and reset state', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
+      domain: 'feishu',
       ownerOpenId: 'ou_owner',
       allowlist: [],
     };
@@ -171,9 +168,10 @@ describe('feishuCommand', () => {
   });
 
   it('should emit FeishuBotProcessingEnd when stopping feishu bot', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
+      domain: 'feishu',
       ownerOpenId: 'ou_owner',
       allowlist: [],
     };
@@ -193,7 +191,7 @@ describe('feishuCommand', () => {
   });
 
   it('should emit FeishuBotStarted with botName and platform payload', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_123',
       appSecret: 'sec_123',
       domain: 'feishu',
@@ -222,7 +220,7 @@ describe('feishuCommand', () => {
   });
 
   it('should emit FeishuBotStarted with lark platform when domain is lark', async () => {
-    const mockCreds: any = {
+    const mockCreds: FeishuCredentials = {
       appId: 'cli_456',
       appSecret: 'sec_456',
       domain: 'lark',
@@ -262,8 +260,8 @@ describe('shortenProjectPath', () => {
   });
 
   it('keeps only the last two segments for a Windows path', () => {
-    expect(shortenProjectPath('D:\\projects\\deepVcode\\DeepCode')).toBe(
-      '.../deepVcode/DeepCode',
+    expect(shortenProjectPath('D:\\projects\\ottocode\\DeepCode')).toBe(
+      '.../ottocode/DeepCode',
     );
   });
 
@@ -274,7 +272,7 @@ describe('shortenProjectPath', () => {
 
   it('returns empty string for empty input', () => {
     expect(shortenProjectPath('')).toBe('');
-    expect(shortenProjectPath(undefined as any)).toBe('');
+    expect(shortenProjectPath(undefined)).toBe('');
   });
 });
 
@@ -285,7 +283,7 @@ describe('shortenProjectPath', () => {
 describe('safeTruncateForLog', () => {
   it('returns empty string for empty input', () => {
     expect(safeTruncateForLog('')).toBe('');
-    expect(safeTruncateForLog(undefined as any)).toBe('');
+    expect(safeTruncateForLog(undefined)).toBe('');
   });
 
   it('keeps text unchanged when it is within the limit and has no newlines', () => {
@@ -546,7 +544,7 @@ describe('deriveUiHistoryFromClientHistory', () => {
       './feishuCommand.js'
     );
     expect(deriveUiHistoryFromClientHistory([])).toEqual([]);
-    expect(deriveUiHistoryFromClientHistory(null as any)).toEqual([]);
+    expect(deriveUiHistoryFromClientHistory(null)).toEqual([]);
     expect(
       deriveUiHistoryFromClientHistory([
         { role: 'user', parts: [{ functionCall: { name: 'x' } }] },
@@ -586,14 +584,14 @@ describe('feishu session persistence round-trip', () => {
         { role: 'model', parts: [{ text: '好的，记住了：6。' }] },
       ];
 
-      // 模拟最小化的 Config + GeminiClient 接口。
+      // 模拟最小化的 Config + OttoClient 接口。
       const fakeConfig = {
         getProjectRoot: () => tmpProj,
         getSessionId: () => sessionId,
-      } as any;
+      } as unknown as Config;
       const fakeClient = {
         getHistory: async () => clientHistory,
-      } as any;
+      } as unknown as OttoClient;
 
       await saveFeishuSessionHistory(fakeConfig, fakeClient);
 
@@ -626,17 +624,17 @@ describe('feishu session persistence round-trip', () => {
 
     try {
       const sessionId = `feishu-oc_test_${Date.now()}`;
-      let history: any[] = [
+      let history: Content[] = [
         { role: 'user', parts: [{ text: '记住数字 6' }] },
         { role: 'model', parts: [{ text: '好的，记住了：6。' }] },
       ];
       const fakeConfig = {
         getProjectRoot: () => tmpProj,
         getSessionId: () => sessionId,
-      } as any;
+      } as unknown as Config;
       const fakeClient = {
         getHistory: async () => history,
-      } as any;
+      } as unknown as OttoClient;
 
       await saveFeishuSessionHistory(fakeConfig, fakeClient);
 
@@ -650,7 +648,7 @@ describe('feishu session persistence round-trip', () => {
       const resumed = await resolveResumableSessionId(tmpProj);
       expect(resumed.sessionId).toBe(sessionId);
       expect(resumed.clientHistory).toHaveLength(4);
-      expect((resumed.clientHistory as any[])[2].parts[0].text).toContain(
+      expect(resumed.clientHistory?.[2]?.parts?.[0]?.text).toContain(
         '刚才说的数字',
       );
     } finally {
@@ -718,7 +716,7 @@ describe('normalizeAskUserQuestionArgs', () => {
         { question: 'Q1', options: [{ label: 'A' }] },
       ]),
     };
-    const out = normalizeAskUserQuestionArgs(input as any);
+    const out = normalizeAskUserQuestionArgs(input);
     expect(Array.isArray(out.questions)).toBe(true);
     expect(out.questions).toHaveLength(1);
     expect(out.questions[0].question).toBe('Q1');
@@ -728,7 +726,7 @@ describe('normalizeAskUserQuestionArgs', () => {
     const input = JSON.stringify({
       questions: [{ question: 'Whole-args string', options: [{ label: 'X' }] }],
     });
-    const out = normalizeAskUserQuestionArgs(input as any);
+    const out = normalizeAskUserQuestionArgs(input);
     expect(Array.isArray(out.questions)).toBe(true);
     expect(out.questions[0].question).toBe('Whole-args string');
   });
@@ -738,35 +736,35 @@ describe('normalizeAskUserQuestionArgs', () => {
     const input = JSON.stringify({
       questions: JSON.stringify([{ question: 'Nested', options: [] }]),
     });
-    const out = normalizeAskUserQuestionArgs(input as any);
+    const out = normalizeAskUserQuestionArgs(input);
     expect(Array.isArray(out.questions)).toBe(true);
     expect(out.questions[0].question).toBe('Nested');
   });
 
   it('returns empty questions for null / undefined', () => {
-    expect(normalizeAskUserQuestionArgs(null as any).questions).toEqual([]);
-    expect(normalizeAskUserQuestionArgs(undefined as any).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs(null).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs(undefined).questions).toEqual([]);
   });
 
   it('returns empty questions when questions is missing', () => {
-    expect(normalizeAskUserQuestionArgs({} as any).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs({}).questions).toEqual([]);
   });
 
   it('returns empty questions for non-array / non-parsable questions', () => {
-    expect(normalizeAskUserQuestionArgs({ questions: 42 } as any).questions).toEqual([]);
-    expect(normalizeAskUserQuestionArgs({ questions: 'not json at all {' } as any).questions).toEqual([]);
-    expect(normalizeAskUserQuestionArgs({ questions: { not: 'array' } } as any).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs({ questions: 42 }).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs({ questions: 'not json at all {' }).questions).toEqual([]);
+    expect(normalizeAskUserQuestionArgs({ questions: { not: 'array' } }).questions).toEqual([]);
   });
 
   it('never throws on garbage input (defensive)', () => {
-    expect(() => normalizeAskUserQuestionArgs('@@@not-json@@@' as any)).not.toThrow();
-    expect(normalizeAskUserQuestionArgs('@@@not-json@@@' as any).questions).toEqual([]);
+    expect(() => normalizeAskUserQuestionArgs('@@@not-json@@@')).not.toThrow();
+    expect(normalizeAskUserQuestionArgs('@@@not-json@@@').questions).toEqual([]);
   });
 
   it('wraps a single question object (not wrapped in questions) gracefully', () => {
     // 极端容错：模型直接把单个问题对象当 args 传
     const input = { question: 'Direct question', options: [{ label: 'A' }] };
-    const out = normalizeAskUserQuestionArgs(input as any);
+    const out = normalizeAskUserQuestionArgs(input);
     expect(Array.isArray(out.questions)).toBe(true);
     expect(out.questions[0].question).toBe('Direct question');
   });

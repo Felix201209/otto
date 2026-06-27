@@ -1,12 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { describe, it, expect } from 'vitest';
 import { render } from 'ink-testing-library';
+import { describe,expect,it } from 'vitest';
 import { SideQuestionPanel } from './SideQuestionPanel.js';
 
 describe('SideQuestionPanel', () => {

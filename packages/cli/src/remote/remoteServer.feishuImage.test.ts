@@ -3,7 +3,7 @@ import { MessageFactory } from './remoteProtocol.js';
 
 describe('remoteServer feishu image command conversion', () => {
   it('should build command with text and @absolutePath', () => {
-    const absolutePath = 'C:\\project\\.deepvcode\\clipboard\\image.png';
+    const absolutePath = 'C:\\project\\.otto\\clipboard\\image.png';
     const message = MessageFactory.createFeishuImageMessage({
       imageUrl: 'https://storage.googleapis.com/example/test.png',
       fileName: 'image.png',
@@ -17,7 +17,7 @@ describe('remoteServer feishu image command conversion', () => {
   });
 
   it('should build command with only @absolutePath when text is empty', () => {
-    const absolutePath = 'C:\\project\\.deepvcode\\clipboard\\image.png';
+    const absolutePath = 'C:\\project\\.otto\\clipboard\\image.png';
     const message = MessageFactory.createFeishuImageMessage({
       imageUrl: 'https://storage.googleapis.com/example/test.png',
       fileName: 'image.png',

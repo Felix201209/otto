@@ -5,12 +5,12 @@
  */
 
 export const INSTALL_WARNING_MESSAGE = `
-⚠️  Installing extensions grants them significant access to your DVCode environment.
+⚠️  Installing extensions grants them significant access to your Otto environment.
 ⚠️  Only install extensions from sources you trust.
 `;
 
 export async function requestConsentNonInteractive(
-  message: string,
+  _message: string,
 ): Promise<boolean> {
   // In non-interactive mode, always require explicit consent
   return false;

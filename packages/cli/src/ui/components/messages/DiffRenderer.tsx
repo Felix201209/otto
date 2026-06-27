@@ -42,7 +42,7 @@ function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
       continue;
     }
 
-    // Support DeepV patch custom format hunks, e.g. "@@ <context>" (no line numbers)
+    // Support Otto patch custom format hunks, e.g. "@@ <context>" (no line numbers)
     if (line.startsWith('@@')) {
       inHunk = true;
       hasLineNumbers = false;
@@ -65,7 +65,7 @@ function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
       )
         continue;
 
-      // DeepV patch format metadata lines (keep them so we don't render "No changes detected")
+      // Otto patch format metadata lines (keep them so we don't render "No changes detected")
       if (line.startsWith('*** ')) {
         result.push({ type: 'other', content: line });
       }
@@ -73,7 +73,7 @@ function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
       continue;
     }
 
-    // DeepV patch format section boundary (end current hunk)
+    // Otto patch format section boundary (end current hunk)
     if (line.startsWith('*** ')) {
       result.push({ type: 'other', content: line });
       continue;
@@ -115,7 +115,7 @@ function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
 /**
  * 🎯 提取多文件 unified diff 中的单个文件 diff 块
  * 支持三种格式：
- * 1) DeepV patch 格式: "*** Update File: path/to/file" / "*** Add File" / "*** Delete File"
+ * 1) Otto patch 格式: "*** Update File: path/to/file" / "*** Add File" / "*** Delete File"
  * 2) 标准 git diff: "diff --git a/path b/path" 标记
  * 3) 标准 unified diff: "--- a/path" + "+++ b/path" 配对作为文件分界（非 SVN 风格）
  *
@@ -131,7 +131,7 @@ function splitMultiFileDiff(diffContent: string): Array<{ filename: string; diff
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 检测 DeepV patch 格式文件头: "*** Update File: path/to/file"
+    // 检测 Otto patch 格式文件头: "*** Update File: path/to/file"
     if (line.startsWith('*** Update File:')) {
       if (currentFilename && currentBlock) {
         fileBlocks.push({ filename: currentFilename, diffBlock: currentBlock });
@@ -142,7 +142,7 @@ function splitMultiFileDiff(diffContent: string): Array<{ filename: string; diff
       continue;
     }
 
-    // 检测 DeepV patch 格式文件头: "*** Add File:" 或 "*** Delete File:"
+    // 检测 Otto patch 格式文件头: "*** Add File:" 或 "*** Delete File:"
     if (line.startsWith('*** Add File:') || line.startsWith('*** Delete File:')) {
       if (currentFilename && currentBlock) {
         fileBlocks.push({ filename: currentFilename, diffBlock: currentBlock });

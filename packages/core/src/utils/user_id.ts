@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +9,10 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { GEMINI_DIR } from './paths.js';
+import { OTTO_DIR } from './paths.js';
 
 const homeDir = os.homedir() ?? '';
-const geminiDir = path.join(homeDir, GEMINI_DIR);
+const geminiDir = path.join(homeDir, OTTO_DIR);
 const installationIdFile = path.join(geminiDir, 'installation_id');
 
 function ensureGeminiDirExists() {

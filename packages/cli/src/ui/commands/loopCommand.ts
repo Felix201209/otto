@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,7 @@ const rootAction = async (
     };
   }
 
-  const client = config.getGeminiClient();
+  const client = config.getOttoClient();
   const currentLoop = client?.getLoopContext();
 
   let expiresMs = 3 * 24 * 60 * 60 * 1000; // 3 days default max
@@ -128,7 +128,7 @@ const rootAction = async (
     return {
       type: 'message',
       messageType: 'error',
-      content: 'Gemini client is not initialized yet.',
+      content: 'Otto client is not initialized yet.',
     };
   }
 
@@ -172,7 +172,7 @@ const clearAction = async (
     };
   }
 
-  const client = config.getGeminiClient();
+  const client = config.getOttoClient();
   if (!client || !client.getLoopContext()) {
     return {
       type: 'message',

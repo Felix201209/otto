@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useMemo } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box,Text,useInput } from 'ink';
+import React,{ useCallback,useMemo } from 'react';
 import { Colors } from '../colors.js';
-import { RadioButtonSelect, RadioSelectItem } from './shared/RadioButtonSelect.js';
-import { t, tp } from '../utils/i18n.js';
+import { t,tp } from '../utils/i18n.js';
+import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 
 interface InitChoiceDialogProps {
   fileSize: number;

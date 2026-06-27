@@ -1,13 +1,13 @@
 {
-  "name": "deepv-code-vscode-ui-plugin",
-  "displayName": "EasyCode for VSCode",
+  "name": "otto-vscode-ui-plugin",
+  "displayName": "Otto for VSCode",
   "description": "AI-powered programming assistant with visual interface for VS Code",
   "version": "1.1.0",
-  "publisher": "DeepX",
+  "publisher": "otto",
   "icon": "assets/icon.png",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OrionStarAI/DeepVCode.git"
+    "url": "git+https://github.com/OrionStarAI/Otto.git"
   },
   "engines": {
     "vscode": "^1.99.0"
@@ -34,87 +34,87 @@
       {
         "command": "deepv.openAIAssistant",
         "title": "Open AI Assistant",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.explainCode",
         "title": "Explain Selected Code",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.optimizeCode",
         "title": "Optimize Code",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.generateTests",
         "title": "Generate Tests",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.addToCurrentChat",
         "title": "Add Symbol to Current Chat",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.openLogFile",
         "title": "Open Log File",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.showLogPath",
         "title": "Show Log Path",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.testInlineCompletion",
         "title": "Test DeepV Suggestions",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.toggleInlineCompletion",
         "title": "Toggle DeepV Suggestions",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.toggleInlineCompletionFromStatusBar",
         "title": "Toggle DeepV Suggestions",
-        "category": "Easy Code"
+        "category": "Otto"
       },
       {
         "command": "deepv.openRulesManagement",
         "title": "Manage Custom Rules",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(book)"
       },
       {
         "command": "deepv.openGoalWizard",
         "title": "Goal-Driven Mode",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(target)"
       },
       {
         "command": "deepv.revertToPrevious",
         "title": "Revert to Previous Version",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(history)"
       },
       {
         "command": "deepv.showVersionTimeline",
         "title": "Show Version Timeline",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(timeline-view-icon)"
       },
       {
         "command": "deepv.showMCPStatus",
         "title": "Show MCP Server Status",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(plug)"
       },
       {
         "command": "deepv.openMCPSettings",
         "title": "Open MCP Settings",
-        "category": "Easy Code",
+        "category": "Otto",
         "icon": "$(settings-gear)"
       }
     ],
@@ -122,7 +122,7 @@
       "activitybar": [
         {
           "id": "deepv-ai-sidebar",
-          "title": "Easy Code",
+          "title": "Otto",
           "icon": "./assets/icon.png"
         }
       ]
@@ -132,7 +132,7 @@
         {
           "type": "webview",
           "id": "deepv.aiAssistant",
-          "name": "Easy Code",
+          "name": "Otto",
           "when": "true"
         }
       ]
@@ -182,7 +182,7 @@
       ]
     },
     "configuration": {
-      "title": "Easy Code",
+      "title": "Otto",
       "properties": {
         "deepv.logLevel": {
           "type": "string",
@@ -230,7 +230,7 @@
           "type": "string",
           "default": "",
           "description": "Custom proxy server URL",
-          "markdownDescription": "Custom proxy server URL for enterprise deployments. Leave empty to use the default Easy Code server. Example: `http://localhost:3001`. To deploy your own server, see [DeepVCode-Server-mini](https://github.com/OrionStarAI/DeepVCode-Server-mini)"
+          "markdownDescription": "Custom proxy server URL for enterprise deployments. Leave empty to use the default Otto server. Example: `http://localhost:3001`. To deploy your own server, see [DeepVCode-Server-mini](https://github.com/OrionStarAI/DeepVCode-Server-mini)"
         },
         "deepv.healthyUse": {
           "type": "boolean",

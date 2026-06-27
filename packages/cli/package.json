@@ -1,7 +1,7 @@
 {
   "name": "otto-cli",
   "version": "1.1.5",
-  "description": "DeepV Code - AI-powered coding assistant with enhanced capabilities",
+  "description": "Otto - AI-powered coding assistant",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/google-gemini/gemini-cli.git"

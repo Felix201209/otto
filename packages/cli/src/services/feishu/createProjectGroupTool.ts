@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,6 +22,7 @@ import {
   buildScopeApplyUrl,
   buildEventSubUrl,
   buildPermissionPageUrl,
+  type LarkBrand,
 } from './scopes.js';
 import {
   agentDisplayLabel,
@@ -233,6 +234,7 @@ export class CreateProjectGroupTool extends BaseTool<
       if (privateChatId) {
         void (async () => {
           try {
+            const brand = gateway.getDomain() as LarkBrand;
             const probe = await probeCredentials(
               gateway.getAppId(),
               gateway.getAppSecret(),
@@ -246,16 +248,16 @@ export class CreateProjectGroupTool extends BaseTool<
               const applyUrl = buildScopeApplyUrl({
                 appId: gateway.getAppId(),
                 scopes: [SENSITIVE_GROUP_MSG_SCOPE],
-                brand: gateway.getDomain() as any,
+                brand,
                 tokenType: 'tenant',
               });
               const eventSubUrl = buildEventSubUrl({
                 appId: gateway.getAppId(),
-                brand: gateway.getDomain() as any,
+                brand,
               });
               const permissionPageUrl = buildPermissionPageUrl({
                 appId: gateway.getAppId(),
-                brand: gateway.getDomain() as any,
+                brand,
               });
 
               const warningMsg =
@@ -274,9 +276,9 @@ export class CreateProjectGroupTool extends BaseTool<
 
               await gateway.sendMessage(privateChatId, warningMsg);
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             dwarn(
-              `[CreateProjectGroupTool] Check scopes or send warning failed: ${err.message}`,
+              `[CreateProjectGroupTool] Check scopes or send warning failed: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
         })();
@@ -289,10 +291,11 @@ export class CreateProjectGroupTool extends BaseTool<
           `Invited user and sent setup ready notification into the group successfully.`,
         returnDisplay: `Successfully created project and group chat ${params.group_name}${agentSuffix}`,
       };
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
       return {
-        llmContent: `Error during project creation and binding: ${e.message}`,
-        returnDisplay: `Error: ${e.message}`,
+        llmContent: `Error during project creation and binding: ${message}`,
+        returnDisplay: `Error: ${message}`,
       };
     }
   }

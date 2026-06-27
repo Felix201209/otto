@@ -6,7 +6,7 @@
 
 import stripAnsi from 'strip-ansi';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { main, setupUnhandledRejectionHandler } from './gemini.js';
+import { main, setupUnhandledRejectionHandler } from './otto.js';
 import {
   LoadedSettings,
   SettingsFile,

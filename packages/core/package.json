@@ -1,7 +1,7 @@
 {
   "name": "otto-core",
   "version": "1.1.0",
-  "description": "DeepV Code Core - Core functionality for AI-powered coding assistant",
+  "description": "Otto Core - Core functionality for AI-powered coding assistant",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/google-gemini/gemini-cli.git"

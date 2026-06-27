@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -157,9 +156,9 @@ export class LSPManager {
     options?: { timeoutMs?: number; operationName?: string },
   ): Promise<T[]> {
     const debug =
-      process.env.DEEPV_LSP_DEBUG === '1' ||
-      process.env.DEEPV_LSP_DEBUG === 'true';
-    const timeoutMsFromEnv = Number(process.env.DEEPV_LSP_REQUEST_TIMEOUT_MS);
+      process.env.OTTO_LSP_DEBUG === '1' ||
+      process.env.OTTO_LSP_DEBUG === 'true';
+    const timeoutMsFromEnv = Number(process.env.OTTO_LSP_REQUEST_TIMEOUT_MS);
     const timeoutMs =
       options?.timeoutMs ??
       (Number.isFinite(timeoutMsFromEnv) && timeoutMsFromEnv > 0

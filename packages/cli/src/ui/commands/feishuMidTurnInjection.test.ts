@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,6 +20,9 @@ import {
   __testing_messageQueues,
 } from './feishuCommand.js';
 import type { FeishuMessage } from '../../services/feishu/gateway.js';
+
+type MidTurnNotify = NonNullable<Parameters<typeof drainChatQueueForMidTurnInjection>[1]>;
+type MidTurnNotifyItem = Parameters<MidTurnNotify>[0];
 
 function makeMsg(overrides: Partial<FeishuMessage> & { text: string }): FeishuMessage {
   return {
@@ -133,14 +136,14 @@ describe('drainChatQueueForMidTurnInjection', () => {
       }),
     );
 
-    const notify = vi.fn(async () => undefined);
+    const notify = vi.fn(async (_item: MidTurnNotifyItem) => undefined);
     const drained = drainChatQueueForMidTurnInjection(CHAT_ID, notify);
 
     expect(drained).toEqual(['a', 'b']);
     // notify fires fire-and-forget; let the microtask flush
     await new Promise((r) => setTimeout(r, 0));
     expect(notify).toHaveBeenCalledTimes(2);
-    const notifiedIds = notify.mock.calls.map((c) => (c[0] as any).msg.messageId);
+    const notifiedIds = notify.mock.calls.map(([item]) => item.msg.messageId);
     expect(notifiedIds.sort()).toEqual(['m1', 'm2']);
   });
 

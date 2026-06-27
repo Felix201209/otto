@@ -2,7 +2,7 @@
  * Singleton Registry - 防止重复初始化关键组件
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 interface SingletonInfo {

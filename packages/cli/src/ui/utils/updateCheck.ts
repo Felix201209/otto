@@ -4,21 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { getPackageJson } from '../../utils/package.js';
-import { t, tp, isChineseLocale } from './i18n.js';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { getPackageJson } from '../../utils/package.js';
+import { isChineseLocale,t,tp } from './i18n.js';
 
 // 服务器地址配置 - 动态获取以确保环境变量正确加载
 function getServerUrl(): string {
   // 开发环境下默认使用本地服务器
   if (process.env.DEV === 'true' || process.env.NODE_ENV === 'development') {
-    return process.env.DEEPX_SERVER_URL || 'http://localhost:6699';
+    return process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || 'http://localhost:6699';
   }
 
-  return process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+  return process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || '';
 }
 
 interface UpdateCheckResponse {
@@ -50,7 +50,7 @@ async function readUpdateCheckCache(): Promise<UpdateCheckCache | null> {
     const cacheFile = getCacheFilePath();
     const content = await fs.readFile(cacheFile, 'utf-8');
     return JSON.parse(content);
-  } catch (error) {
+  } catch (_error) {
     return null;
   }
 }
@@ -70,7 +70,7 @@ async function writeUpdateCheckCache(cache: UpdateCheckCache): Promise<void> {
 }
 
 // 格式化时间显示
-function formatNextCheckTime(timestamp: number): string {
+function _formatNextCheckTime(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
 
@@ -102,8 +102,6 @@ export async function checkForUpdates(
   try {
     // Skip update check when running from source (development mode) unless forced
     if (process.env.DEV === 'true' && !forceCheck) {
-      if (showProgress) {
-      }
       return null;
     }
 
@@ -140,8 +138,8 @@ export async function checkForUpdates(
         headers: {
           'User-Agent': `${packageJson.name}/${packageJson.version}`,
         },
-        // 设置超时
-        signal: AbortSignal.timeout(10000), // 10秒超时
+        // 设置超时：3s 上限，避免后端不可达(如海外/内网/被墙)时启动卡 10 秒
+        signal: AbortSignal.timeout(3000),
       }
     );
 
@@ -252,8 +250,8 @@ export async function executeUpdateCommand(updateCommand: string): Promise<boole
       : '\n⚠️ Update failed, possibly due to locked/busy global files (e.g., ENOTEMPTY/EPERM error).\nAttempting fallback strategy: "safely uninstall old version first, then reinstall"...'
     );
 
-    // 提取包名（例如从 "npm install -g deepv-code" 提取 "deepv-code"）
-    let packageName = 'deepv-code';
+    // 提取包名（例如从 "npm install -g otto-code" 提取 "otto-code"）
+    let packageName = 'otto-code';
     const match = updateCommand.match(/(?:npm\s+(?:install|i)\s+-g\s+|npm\s+-g\s+(?:install|i)\s+)([^\s@]+)/);
     if (match && match[1]) {
       packageName = match[1];
@@ -304,7 +302,7 @@ export async function executeUpdateCommand(updateCommand: string): Promise<boole
   }
 
   const isZH = isChineseLocale();
-  const cleanPackageName = updateCommand.includes('deepv-code') ? 'deepv-code' : 'deepv-code-cli';
+  const cleanPackageName = updateCommand.includes('otto-code') ? 'otto-code' : 'otto-code-cli';
 
   console.error(isZH
     ? `\n❌ 自动更新失败。您可以尝试手动执行以下命令进行安全更新：\n👉 npm uninstall -g ${cleanPackageName} && npm install -g ${cleanPackageName}\n`

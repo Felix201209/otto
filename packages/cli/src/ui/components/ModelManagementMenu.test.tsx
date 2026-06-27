@@ -1,26 +1,27 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import React from 'react';
 import { render } from 'ink-testing-library';
-import { ModelManagementMenu } from './ModelManagementMenu.js';
+import type { Config,CustomModelConfig } from 'otto-core';
+import { beforeEach,describe,expect,it,vi } from 'vitest';
 import type { LoadedSettings } from '../../config/settings.js';
-import type { Config, CustomModelConfig } from 'otto-core';
+import { ModelManagementMenu } from './ModelManagementMenu.js';
 
 // Mock the storage functions
 vi.mock('../../config/customModelsStorage.js', () => ({
-  deleteCustomModel: vi.fn((modelId: string) => true),
+  deleteCustomModel: vi.fn((_modelId: string) => true),
   loadCustomModels: vi.fn(() => []),
   addOrUpdateCustomModel: vi.fn(),
 }));
 
 // Mock CustomModelWizard
 vi.mock('./CustomModelWizard.js', () => ({
-  CustomModelWizard: ({ onComplete }: any) => <div>CustomModelWizard</div>,
+  CustomModelWizard: ({ onComplete: _onComplete }: {
+    onComplete: (model: CustomModelConfig | CustomModelConfig[]) => void;
+  }) => <div>CustomModelWizard</div>,
 }));
 
 describe('ModelManagementMenu', () => {
@@ -57,12 +58,12 @@ describe('ModelManagementMenu', () => {
         preferredModel: 'auto',
       },
       setValue: vi.fn(),
-    } as any;
+    } as Partial<LoadedSettings> as LoadedSettings;
 
     mockConfig = {
       getCustomModels: vi.fn(() => mockCustomModels),
       setCustomModels: vi.fn(),
-    } as any;
+    } as Partial<Config> as Config;
   });
 
   describe('Component Rendering', () => {

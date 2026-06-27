@@ -60,11 +60,11 @@ export class StartSessionEvent {
     const generatorConfig = config.getContentGeneratorConfig();
     const mcpServers = config.getMcpServers();
 
-    let useGemini = false;
+    let useOtto = false;
     let useVertex = false;
-    // Only Cheeth OA authentication supported now
+    // Only Otto custom-model authentication supported now
     if (generatorConfig && generatorConfig.authType) {
-      useGemini = false; // No longer supported
+      useOtto = false; // No longer supported
       useVertex = false; // No longer supported
     }
 
@@ -75,7 +75,7 @@ export class StartSessionEvent {
       typeof config.getSandbox() === 'string' || !!config.getSandbox();
     this.core_tools_enabled = (config.getCoreTools() ?? []).join(',');
     this.approval_mode = config.getApprovalMode();
-    this.api_key_enabled = useGemini || useVertex;
+    this.api_key_enabled = useOtto || useVertex;
     this.vertex_ai_enabled = useVertex;
     this.debug_enabled = config.getDebugMode();
     this.mcp_servers = mcpServers ? Object.keys(mcpServers).join(',') : '';

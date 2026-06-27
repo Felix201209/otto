@@ -9,19 +9,19 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Content } from '@google/genai';
-import { MESSAGE_ROLES, type GeminiChat, type Config } from 'otto-core';
+import { MESSAGE_ROLES, type OttoChat, type Config } from 'otto-core';
 import type * as acp from '@agentclientprotocol/sdk';
 import type { LoadedSettings } from '../config/settings.js';
 import { Session, truncateUiHistoryByUserMessageCount } from './acpSession.js';
 
 /**
- * Build a minimal GeminiChat stub that backs `getHistory(false)` /
+ * Build a minimal OttoChat stub that backs `getHistory(false)` /
  * `setHistory()` with a plain in-memory array. Lets us exercise the
  * truncation logic in isolation without spinning up the real proxy auth /
  * network stack.
  */
 function makeFakeChat(initial: Content[]): {
-  chat: GeminiChat;
+  chat: OttoChat;
   getStored: () => Content[];
 } {
   let stored: Content[] = [...initial];
@@ -36,7 +36,7 @@ function makeFakeChat(initial: Content[]): {
     addHistory: vi.fn((c: Content) => {
       stored.push(c);
     }),
-  } as unknown as GeminiChat;
+  } as unknown as OttoChat;
   return { chat, getStored: () => stored };
 }
 
@@ -186,7 +186,7 @@ describe('Session.rewindToBeforeUserMessage (persistence)', () => {
   let tmpRoot: string;
 
   beforeEach(async () => {
-    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dvcode-acp-rewind-'));
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-acp-rewind-'));
   });
 
   afterEach(async () => {

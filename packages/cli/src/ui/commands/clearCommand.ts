@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { uiTelemetryService } from 'otto-core';
 import { CommandKind, SlashCommand } from './types.js';
 import { t } from '../utils/i18n.js';
 

@@ -58,7 +58,7 @@ esbuild
     minify: buildEnv === 'production', // 生产环境启用混淆
     keepNames: false, // 生产环境不保留函数名
     target: 'esnext',
-    external: ['@vscode/ripgrep', 'sharp'],
+    external: ['@vscode/ripgrep'],
     alias: {
       'is-in-ci': path.resolve(
         __dirname,
@@ -67,7 +67,9 @@ esbuild
     },
     define: {
       'process.env.CLI_VERSION': JSON.stringify(pkg.version),
-      'process.env.DEEPX_SERVER_URL': JSON.stringify(process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai'),
+      // BYO-key: 不再把任何 deepvlab/easycode 后端地址编译期固化进 bundle。
+      // 仅透传用户显式配置的 OTTO_SERVER_URL；未配置时为空字符串，相关网络功能静默禁用。
+      'process.env.OTTO_SERVER_URL': JSON.stringify(process.env.OTTO_SERVER_URL || ''),
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),
       'process.env.DEV': JSON.stringify(process.env.DEV || 'false'),
     },

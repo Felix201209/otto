@@ -4,17 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef } from 'react';
-import { Text, Box } from 'ink';
-import { Colors } from '../colors.js';
+import { Box,Text } from 'ink';
 import {
-  type OpenFiles,
-  type MCPServerConfig,
-  getAllMCPServerStatuses,
-  MCPServerStatus,
-  getMCPDiscoveryState,
-  MCPDiscoveryState,
+type MCPServerConfig,
+type OpenFiles,
+getAllMCPServerStatuses,
+getMCPDiscoveryState,
+MCPDiscoveryState,
+MCPServerStatus,
 } from 'otto-core';
+import React,{ useEffect,useRef } from 'react';
+import { Colors } from '../colors.js';
 import { t } from '../utils/i18n.js';
 
 // 强制恢复终端标题（MCP 启动时 npx 会覆盖标题）
@@ -34,7 +34,7 @@ interface ContextSummaryDisplayProps {
 
 export const ContextSummaryDisplay: React.FC<ContextSummaryDisplayProps> = ({
   geminiMdFileCount,
-  contextFileNames,
+  contextFileNames: _contextFileNames,
   mcpServers,
   blockedMcpServers,
   showToolDescriptions,

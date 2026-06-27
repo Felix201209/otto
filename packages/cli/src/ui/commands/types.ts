@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Content } from 'otto-core';
+import { Content , Config, GitService, Logger } from 'otto-core';
 import { HistoryItemWithoutId } from '../types.js';
-import { Config, GitService, Logger } from 'otto-core';
 import { LoadedSettings } from '../../config/settings.js';
 import { UseHistoryManagerReturn } from '../hooks/useHistoryManager.js';
 import type { HistoryItem, ConsoleMessageItem } from '../types.js';
@@ -167,7 +166,7 @@ export interface RefineResultActionReturn {
     lang: string;
     keepFormat: boolean;
     keepCode: boolean;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 

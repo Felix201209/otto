@@ -10,11 +10,11 @@ import path from 'path';
 import os from 'os';
 
 // Get actual paths for test assertions (before mock)
-const mockDeepvHome = path.join(os.homedir(), '.otto-user');
+const mockOttoHome = path.join(os.homedir(), '.otto-user');
 const mockSkillsPaths = {
-  DEEPV_HOME: mockDeepvHome,
-  SKILLS_ROOT: path.join(mockDeepvHome, 'skills'),
-  MARKETPLACE_ROOT: path.join(mockDeepvHome, 'marketplace'),
+  OTTO_HOME: mockOttoHome,
+  SKILLS_ROOT: path.join(mockOttoHome, 'skills'),
+  MARKETPLACE_ROOT: path.join(mockOttoHome, 'marketplace'),
 };
 
 // Create mock class constructors that can be configured per test
@@ -26,13 +26,13 @@ vi.mock('../skills/index.js', async () => {
   const pathModule = await import('path');
   const osModule = await import('os');
 
-  const deepvHome = pathModule.join(osModule.homedir(), '.otto-user');
+  const ottoHome = pathModule.join(osModule.homedir(), '.otto-user');
 
   return {
     SkillsPaths: {
-      DEEPV_HOME: deepvHome,
-      SKILLS_ROOT: pathModule.join(deepvHome, 'skills'),
-      MARKETPLACE_ROOT: pathModule.join(deepvHome, 'marketplace'),
+      OTTO_HOME: ottoHome,
+      SKILLS_ROOT: pathModule.join(ottoHome, 'skills'),
+      MARKETPLACE_ROOT: pathModule.join(ottoHome, 'marketplace'),
     },
     SettingsManager: class MockSettingsManager {
       async initialize() { return; }
@@ -191,7 +191,7 @@ describe('UseSkillTool', () => {
     });
 
     it('should not show plugin root directory for non-marketplace skills', async () => {
-      const skillPath = '/mock/project/.deepvcode/skills/custom-skill';
+      const skillPath = '/mock/project/.otto/skills/custom-skill';
 
       const mockSkill = {
         id: 'project:custom-skill',

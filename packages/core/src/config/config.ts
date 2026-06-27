@@ -27,8 +27,8 @@ import { WebFetchTool } from '../tools/web-fetch.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
 import {
   MemoryTool,
-  setGeminiMdFilename,
-  GEMINI_CONFIG_DIR as GEMINI_DIR,
+  setOttoMdFilename,
+  OTTO_CONFIG_DIR as OTTO_DIR,
 } from '../tools/memoryTool.js';
 import { WebSearchTool } from '../tools/web-search.js';
 import { ImageReaderTool } from '../tools/image-reader.js';
@@ -56,7 +56,7 @@ import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
 import { ProjectSettingsManager } from './projectSettings.js';
 import { generateCustomModelId } from '../types/customModel.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { ResourceRegistry } from '../resources/resource-registry.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import {
@@ -286,7 +286,7 @@ export class Config {
   private readonly accessibility: AccessibilitySettings;
   private readonly telemetrySettings: TelemetrySettings;
   private readonly usageStatisticsEnabled: boolean;
-  private geminiClient!: GeminiClient;
+  private geminiClient!: OttoClient;
   private hookSystem!: HookSystem;
   private readonly fileFiltering: {
     respectGitIgnore: boolean;
@@ -413,7 +413,7 @@ export class Config {
     this.preferredLanguage = params.preferredLanguage;
 
     if (params.contextFileName) {
-      setGeminiMdFilename(params.contextFileName);
+      setOttoMdFilename(params.contextFileName);
     }
 
     if (this.telemetrySettings.enabled) {
@@ -465,7 +465,7 @@ export class Config {
       setSilentMode(true);
     }
 
-    // 🧹 异步清理 ~/.deepv/last-requests/ 内超过 3 天的旧 dump 文件。
+    // 🧹 异步清理 ~/.otto/last-requests/ 内超过 3 天的旧 dump 文件。
     // 进程内只跑一次，不阻塞 initialize；失败不影响启动。
     void (async () => {
       try {
@@ -474,7 +474,7 @@ export class Config {
         if (removed > 0) {
           // 用 console.log 而不是 logger，避免与 silentMode 互锁。
           // 信息量很小，启动期带一行无害。
-          console.log(`[deepv] last-requests cleanup: removed ${removed} stale dump file(s)`);
+          console.log(`[otto] last-requests cleanup: removed ${removed} stale dump file(s)`);
         }
       } catch {
         // 清理失败永远不能阻塞或抛错。
@@ -565,7 +565,7 @@ export class Config {
     //   this.modelSwitchedDuringSession = wasModelSwitched;
     // }
 
-    this.geminiClient = new GeminiClient(this);
+    this.geminiClient = new OttoClient(this);
     await this.geminiClient.initialize(this.contentGeneratorConfig);
   }
 
@@ -791,19 +791,19 @@ export class Config {
     this.userRules = rules;
   }
 
-  getGeminiMdFileCount(): number {
+  getOttoMdFileCount(): number {
     return this.geminiMdFileCount;
   }
 
-  setGeminiMdFileCount(count: number): void {
+  setOttoMdFileCount(count: number): void {
     this.geminiMdFileCount = count;
   }
 
-  getGeminiMdFilePaths(): string[] {
+  getOttoMdFilePaths(): string[] {
     return this.geminiMdFilePaths;
   }
 
-  setGeminiMdFilePaths(paths: string[]): void {
+  setOttoMdFilePaths(paths: string[]): void {
     this.geminiMdFilePaths = paths;
   }
 
@@ -944,7 +944,7 @@ export class Config {
     return this.telemetrySettings.outfile;
   }
 
-  getGeminiClient(): GeminiClient {
+  getOttoClient(): OttoClient {
     return this.geminiClient;
   }
 
@@ -952,8 +952,8 @@ export class Config {
     return this.hookSystem;
   }
 
-  getGeminiDir(): string {
-    return path.join(this.targetDir, GEMINI_DIR);
+  getOttoDir(): string {
+    return path.join(this.targetDir, OTTO_DIR);
   }
 
   getProjectTempDir(): string {

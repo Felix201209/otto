@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,9 +27,9 @@ export const TodoDisplayRenderer: React.FC<{ data: TodoDisplay } & { titleEmphas
     return Colors.Foreground;
   };
 
-  const getCheckboxForStatus = (status: 'pending' | 'in_progress' | 'completed') => {
-    return status === 'completed' ? '☒' : '□'; // 完成项使用方框+X
-  };
+  const getCheckboxForStatus = (status: 'pending' | 'in_progress' | 'completed') => 
+     status === 'completed' ? '☒' : '□' // 完成项使用方框+X
+  ;
 
   return (
     <Box flexDirection="column">

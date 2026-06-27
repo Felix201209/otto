@@ -61,7 +61,7 @@ const mockConfig = {
     getEventHandler: vi.fn(() => ({})),
   })),
   getPlanModeActive: vi.fn(() => false),
-  getGeminiClient: vi.fn(() => ({
+  getOttoClient: vi.fn(() => ({
     getHistory: vi.fn(() => []),
   })),
 };

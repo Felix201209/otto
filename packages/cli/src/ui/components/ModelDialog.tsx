@@ -4,16 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { Colors } from '../colors.js';
-import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
-import { ModelManagementMenu } from './ModelManagementMenu.js';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { useSmallWindowOptimization, WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
-import { getAvailableModels, getModelDisplayName, getModelInfo, getModelNameFromDisplayName, type ModelInfo } from '../commands/modelCommand.js';
+import { Box,Text,useInput } from 'ink';
 import { Config } from 'otto-core';
-import { t, tp } from '../utils/i18n.js';
+import React,{ useCallback,useEffect,useState } from 'react';
+import { LoadedSettings } from '../../config/settings.js';
+import { Colors } from '../colors.js';
+import { getAvailableModels,getModelDisplayName,getModelInfo,type ModelInfo } from '../commands/modelCommand.js';
+import { useSmallWindowOptimization,WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
+import { isChineseLocale,t,tp } from '../utils/i18n.js';
+import { ModelManagementMenu } from './ModelManagementMenu.js';
+import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 
 interface ModelDialogProps {
   /** Callback function when a model is selected */
@@ -49,8 +49,8 @@ export function ModelDialog({
   onHighlight,
   settings,
   config,
-  availableTerminalHeight,
-  terminalWidth,
+  availableTerminalHeight: _availableTerminalHeight,
+  terminalWidth: _terminalWidth,
   customModelOnlyMode = false,
 }: ModelDialogProps): React.JSX.Element {
   const smallWindowConfig = useSmallWindowOptimization();
@@ -72,14 +72,12 @@ export function ModelDialog({
     const loadModels = async () => {
       try {
         setLoading(true);
-        const { modelNames, modelInfos, source } = await getAvailableModels(settings, config);
+        const { modelNames, modelInfos: _modelInfos, source: _source } = await getAvailableModels(settings, config);
 
-        // 在自定义模型专用模式下，不显示登录错误
-        // 检查是否需要重新登录（401错误或未登录）
-        if (!customModelOnlyMode && (source === 'auth_required' || modelNames.length === 0)) {
-          setError(t('model.dialog.error.not.logged.in'));
-          return;
-        }
+        // BYO-key 产品：自带 key、已删除 /auth 登录流程。
+        // 不再把 empty/auth_required 当成"登录错误"——空列表只代表"还没配置任何模型"，
+        // 此时正常渲染列表，由下方 isFirstRunEmpty 接管显示"添加你的第一个模型"引导。
+        // （source 故意忽略：BYO-key 没有需要重新登录的概念。）
 
         // 在列表第一项添加"模型管理"特殊选项
         const managementItem = {
@@ -174,7 +172,7 @@ export function ModelDialog({
       if (modelsModified) {
         setLoading(true);
         try {
-          const { modelNames, modelInfos } = await getAvailableModels(settings, config);
+          const { modelNames, modelInfos: _modelInfos } = await getAvailableModels(settings, config);
 
           const managementItem = {
             label: `⮞ ${t('model.dialog.management.label')} ⮜`,
@@ -240,9 +238,9 @@ export function ModelDialog({
     if (key.escape) {
       onSelect(undefined);
     }
-    // When there's an auth error, pressing Enter should trigger auth dialog
+    // BYO-key：加载出错时回车直接关闭对话框（不再触发已废弃的登录流程）。
     if (error && key.return) {
-      onSelect('__trigger_auth__');
+      onSelect(undefined);
     }
   });
 
@@ -265,6 +263,22 @@ export function ModelDialog({
   const currentModel = settings.merged.preferredModel || 'auto';
   const initialModelIndex = modelItems.findIndex(item => item.value === currentModel);
   const safeInitialModelIndex = initialModelIndex >= 0 ? initialModelIndex : 0;
+
+  // 全新 BYO-key 用户(一个模型都没有,列表里只剩「模型管理...」)。
+  // 不论是否 customModelOnlyMode,只要列表为空就把标题/副标题/唯一项 label 换成
+  // 更直白的「添加第一个模型」引导,纯文案,不动逻辑/initialIndex。
+  const zh = isChineseLocale();
+  const isFirstRunEmpty =
+    modelItems.length === 1 &&
+    modelItems[0]?.value === '__management__';
+  // 渲染期对唯一项做 label 映射,不改 state、不改 initialIndex。
+  const displayModelItems = isFirstRunEmpty
+    ? modelItems.map((item) =>
+        item.value === '__management__'
+          ? { ...item, label: zh ? '+ 添加你的第一个模型' : '+ Add your first model' }
+          : item,
+      )
+    : modelItems;
 
   // Show model details for highlighted model (but not for management item)
   const highlightedModel = modelItems.find(item => item.value === highlightedModelName);
@@ -306,7 +320,11 @@ export function ModelDialog({
         <Box flexDirection="column" alignItems="center">
           <Text color={Colors.AccentRed}>{error}</Text>
           <Box marginTop={1}>
-            <Text bold color={Colors.AccentYellow}>{t('model.dialog.hint.login')}</Text>
+            <Text bold color={Colors.AccentYellow}>
+              {zh
+                ? '按 Enter 关闭。配置模型请运行 otto setup 或在「模型管理」里添加自定义模型。'
+                : 'Press Enter to close. To configure models, run otto setup or add a custom model via Model Management.'}
+            </Text>
           </Box>
         </Box>
       )}
@@ -320,14 +338,18 @@ export function ModelDialog({
             paddingRight={showDetails ? 2 : 0}
           >
             <Text bold wrap="truncate">
-              {'>'} {t('model.dialog.title')}
+              {'>'} {isFirstRunEmpty
+                ? (zh ? '还没有模型,先添加一个' : 'No models yet — add one first')
+                : t('model.dialog.title')}
             </Text>
             <Text color={Colors.Gray} wrap="truncate">
-              {tp('model.dialog.current', { model: getModelDisplayName(currentModel, config) })}
+              {isFirstRunEmpty
+                ? (zh ? '按 Enter 进入配置向导' : 'Press Enter to start the setup wizard')
+                : tp('model.dialog.current', { model: getModelDisplayName(currentModel, config) })}
             </Text>
             <Box marginTop={1}>
               <RadioButtonSelect
-                items={modelItems}
+                items={displayModelItems}
                 initialIndex={safeInitialModelIndex}
                 onSelect={handleModelSelect}
                 onHighlight={handleModelHighlight}

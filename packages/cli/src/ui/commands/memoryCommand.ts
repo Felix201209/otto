@@ -10,7 +10,7 @@ import {
   MemoryTool,
   getCoreSystemPrompt,
 } from 'otto-core';
-import { encodingForModel, getEncoding } from 'js-tiktoken';
+import { getEncoding } from 'js-tiktoken';
 import { MessageType } from '../types.js';
 import {
   CommandKind,
@@ -18,6 +18,24 @@ import {
   SlashCommandActionReturn,
 } from './types.js';
 import { t, tp } from '../utils/i18n.js';
+
+interface OttoClientWithMutableChat {
+  chat?: {
+    generationConfig?: {
+      systemInstruction?: string;
+    };
+  };
+}
+
+function updateSystemInstruction(
+  geminiClient: unknown,
+  systemInstruction: string,
+): void {
+  const chat = (geminiClient as OttoClientWithMutableChat | null)?.chat;
+  if (chat?.generationConfig) {
+    chat.generationConfig.systemInstruction = systemInstruction;
+  }
+}
 
 export const memoryCommand: SlashCommand = {
   name: 'memory',
@@ -29,7 +47,7 @@ export const memoryCommand: SlashCommand = {
       description: 'Show memory file paths',
       kind: CommandKind.BUILT_IN,
       action: async (context) => {
-        const filePaths = context.services.config?.getGeminiMdFilePaths() || [];
+        const filePaths = context.services.config?.getOttoMdFilePaths() || [];
 
         if (filePaths.length === 0) {
           context.ui.addItem(
@@ -58,7 +76,7 @@ export const memoryCommand: SlashCommand = {
       kind: CommandKind.BUILT_IN,
       action: async (context) => {
         const memoryContent = context.services.config?.getUserMemory() || '';
-        const fileCount = context.services.config?.getGeminiMdFileCount() || 0;
+        const fileCount = context.services.config?.getOttoMdFileCount() || 0;
 
         const messageContent =
           memoryContent.length > 0
@@ -129,22 +147,22 @@ export const memoryCommand: SlashCommand = {
                   context.services.settings.merged.memoryDiscoveryMaxDirs,
                 );
               config.setUserMemory(memoryContent);
-              config.setGeminiMdFileCount(fileCount);
-              config.setGeminiMdFilePaths(filePaths);
+              config.setOttoMdFileCount(fileCount);
+              config.setOttoMdFilePaths(filePaths);
 
               // 计算并更新 memory token
               try {
                 const enc = getEncoding('cl100k_base');
                 const memoryTokenCount = enc.encode(memoryContent).length;
                 config.setMemoryTokenCount(memoryTokenCount);
-              } catch (e) {
+              } catch {
                 config.setMemoryTokenCount(0);
               }
 
               // 🔥 关键修复：更新当前模型实例的系统指令
               try {
-                const geminiClient = await config.getGeminiClient();
-                if (geminiClient && (geminiClient as any).chat) {
+                const geminiClient = await config.getOttoClient();
+                if (geminiClient) {
                   const isVSCode = config.getVsCodePluginMode();
                   const agentStyle = config.getAgentStyle();
                   const updatedSystemInstruction = getCoreSystemPrompt(
@@ -155,7 +173,7 @@ export const memoryCommand: SlashCommand = {
       undefined,
       context.services.config?.getPreferredLanguage()
     );
-                  (geminiClient as any).chat.generationConfig.systemInstruction = updatedSystemInstruction;
+                  updateSystemInstruction(geminiClient, updatedSystemInstruction);
                 }
               } catch (updateError) {
                 console.warn('更新模型系统指令失败:', updateError);
@@ -231,22 +249,22 @@ export const memoryCommand: SlashCommand = {
                 context.services.settings.merged.memoryDiscoveryMaxDirs,
               );
             config.setUserMemory(memoryContent);
-            config.setGeminiMdFileCount(fileCount);
-            config.setGeminiMdFilePaths(filePaths);
+            config.setOttoMdFileCount(fileCount);
+            config.setOttoMdFilePaths(filePaths);
 
             // 计算并更新 memory token
             try {
               const enc = getEncoding('cl100k_base');
               const memoryTokenCount = enc.encode(memoryContent).length;
               config.setMemoryTokenCount(memoryTokenCount);
-            } catch (e) {
+            } catch {
               config.setMemoryTokenCount(0);
             }
 
             // 🔥 关键修复：更新当前模型实例的系统指令
             try {
-              const geminiClient = await config.getGeminiClient();
-              if (geminiClient && (geminiClient as any).chat) {
+              const geminiClient = await config.getOttoClient();
+              if (geminiClient) {
                 const isVSCode = config.getVsCodePluginMode();
                 const agentStyle = config.getAgentStyle();
                 const updatedSystemInstruction = getCoreSystemPrompt(
@@ -257,7 +275,7 @@ export const memoryCommand: SlashCommand = {
       undefined,
       context.services.config?.getPreferredLanguage()
     );
-                (geminiClient as any).chat.generationConfig.systemInstruction = updatedSystemInstruction;
+                updateSystemInstruction(geminiClient, updatedSystemInstruction);
               }
             } catch (updateError) {
               console.warn('更新模型系统指令失败:', updateError);

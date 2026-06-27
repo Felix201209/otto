@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +8,7 @@
  * customModelAdapter 末梢防线（callCustomModel / callCustomModelStream）的 sanitize 测试。
  *
  * 背景：
- *   commit e5f01a81 把 GeminiChat.sanitizeRequestContents 装在了 callCustomModel
+ *   commit e5f01a81 把 OttoChat.sanitizeRequestContents 装在了 callCustomModel
  *   和 callCustomModelStream 的入口。这是「最后一道防线」——即使 setHistory/resumeChat
  *   被绕过、即使有别的代码路径直接通过 `chat.setHistory(...)` 把脏数据塞进去，
  *   出网前还会被这层兜住。
@@ -18,17 +17,17 @@
  *
  * 测试策略：
  *   不需要真的发网络请求。只验证：
- *     1) 任意 provider 的 callCustomModel 都会调用 GeminiChat.sanitizeRequestContents
+ *     1) 任意 provider 的 callCustomModel 都会调用 OttoChat.sanitizeRequestContents
  *     2) 调用入参是 request.contents
  *     3) 下游 provider 函数收到的是「清洗后的版本」
  *
  *   这里的下游 provider 函数（callAnthropicModel 等）都会发 HTTP 请求，
- *   我们用 vi.spyOn(GeminiChat, 'sanitizeRequestContents') 做哨兵，
+ *   我们用 vi.spyOn(OttoChat, 'sanitizeRequestContents') 做哨兵，
  *   并通过 mock global.fetch 阻断真实网络。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { callCustomModel, callCustomModelStream } from './customModelAdapter.js';
 import { Content } from '../types/extendedContent.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
@@ -104,7 +103,7 @@ describe('customModelAdapter > callCustomModel sanitize 末梢防线', () => {
   let originalFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
-    sanitizeSpy = vi.spyOn(GeminiChat, 'sanitizeRequestContents');
+    sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents');
     originalFetch = globalThis.fetch;
     globalThis.fetch = stubFetchOk() as any;
   });
@@ -243,7 +242,7 @@ describe('customModelAdapter > callCustomModelStream sanitize 末梢防线', () 
   let originalFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
-    sanitizeSpy = vi.spyOn(GeminiChat, 'sanitizeRequestContents');
+    sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents');
     originalFetch = globalThis.fetch;
     globalThis.fetch = stubFetchOk() as any;
   });
@@ -306,7 +305,7 @@ describe('customModelAdapter > 末梢防线与上游入口的协同', () => {
   let originalFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
-    sanitizeSpy = vi.spyOn(GeminiChat, 'sanitizeRequestContents');
+    sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents');
     originalFetch = globalThis.fetch;
     globalThis.fetch = stubFetchOk() as any;
   });
@@ -320,7 +319,7 @@ describe('customModelAdapter > 末梢防线与上游入口的协同', () => {
   it('已经清洗过一次的 contents 再走末梢防线：行为幂等，不会破坏数据', async () => {
     const dirty = makeDirtyContents();
     // 模拟「已经被 setHistory 清洗过」的场景
-    const preCleaned = GeminiChat.sanitizeRequestContents(dirty);
+    const preCleaned = OttoChat.sanitizeRequestContents(dirty);
     sanitizeSpy.mockClear();
 
     const modelConfig: any = {

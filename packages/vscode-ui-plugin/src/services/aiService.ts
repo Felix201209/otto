@@ -17,11 +17,11 @@ import { Logger } from '../utils/logger';
 
 // 🎯 导入core包
 import {
-  GeminiClient,
+  OttoClient,
   Config,
   AuthType,
-  ServerGeminiStreamEvent,
-  GeminiEventType,
+  ServerOttoStreamEvent,
+  OttoEventType,
   ToolCallRequestInfo,
   CoreToolScheduler,
   ToolConfirmationOutcome,
@@ -78,7 +78,7 @@ interface IVersionControlManager {
 }
 
 export class AIService {
-  private geminiClient?: GeminiClient;
+  private ottoClient?: OttoClient;
   private config?: Config;
   private coreToolScheduler?: CoreToolScheduler;
   private loginService: LoginService;
@@ -164,7 +164,7 @@ export class AIService {
         this.logger.info(`📱 Using session model: ${modelToUse}`);
       } else {
         // 否则使用VS Code设置中的默认模型
-        const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+        const vscodeConfig = vscode.workspace.getConfiguration('otto');
         modelToUse = vscodeConfig.get<string>('preferredModel', 'auto');
 
         // 🎯 确保 'auto' 模式被正确传递，不进行任何额外的解析或回退
@@ -208,14 +208,14 @@ export class AIService {
       }
 
       // 🎯 从 VSCode 扩展设置中读取 customProxyServerUrl（优先级高于文件配置）
-      const vscodeExtConfig = vscode.workspace.getConfiguration('deepv');
+      const vscodeExtConfig = vscode.workspace.getConfiguration('otto');
       const vscodeCustomProxyUrl = vscodeExtConfig.get<string>('customProxyServerUrl', '');
       if (vscodeCustomProxyUrl && vscodeCustomProxyUrl.trim()) {
         customProxyServerUrl = vscodeCustomProxyUrl.trim();
         this.logger.info(`Using custom proxy server from VSCode extension settings: ${customProxyServerUrl}`);
       }
 
-      // 🟢 从 ~/.deepv/custom-models.json 加载用户配置的自定义模型
+      // 🟢 从 ~/.otto/custom-models.json 加载用户配置的自定义模型
       // 这与 CLI 完全等价；webview 端添加/删除走 IPC 后会调
       // config.setCustomModels() 做热重载，新会话则在这里读到最新值。
       let customModels: Array<import('otto-core').CustomModelConfig> | undefined;
@@ -223,7 +223,7 @@ export class AIService {
         const { CustomModelsStorageService } = await import('./customModelsStorageService.js');
         customModels = CustomModelsStorageService.getInstance(this.logger).loadCustomModels();
         if (customModels.length > 0) {
-          this.logger.info(`📦 Loaded ${customModels.length} custom model(s) from ~/.deepv/custom-models.json`);
+          this.logger.info(`📦 Loaded ${customModels.length} custom model(s) from ~/.otto/custom-models.json`);
         }
       } catch (cmErr) {
         this.logger.warn(
@@ -267,7 +267,7 @@ export class AIService {
       // 🎯 异步同步云端模型配置（不阻塞会话初始化）
       // 云模型列表的更新可以在后台进行，不影响会话的启动和使用
       this.syncCloudModelsInBackground();
-      this.geminiClient = this.config.getGeminiClient();
+      this.ottoClient = this.config.getOttoClient();
       await this.initializeCoreToolScheduler();
 
       // 🎯 初始化增强的 lint 功能
@@ -333,7 +333,7 @@ export class AIService {
           // 🎯 只在连接成功时更新工具列表
           if (status === 'connected') {
             // 更新 AI 工具列表
-            if (this.geminiClient) {
+            if (this.ottoClient) {
               this.updateAIToolsAsync().catch(err => {
                 this.logger.warn('⚠️ Failed to update AI tools after MCP connection', err);
               });
@@ -453,7 +453,7 @@ export class AIService {
       try {
         this.logger.debug('[Cloud Models] Starting background sync...');
 
-        const vsCodeConfig = vscode.workspace.getConfiguration('deepv');
+        const vsCodeConfig = vscode.workspace.getConfiguration('otto');
         const cloudModels = vsCodeConfig.get<any[]>('cloudModels', []);
 
         if (Array.isArray(cloudModels) && cloudModels.length > 0) {
@@ -475,8 +475,8 @@ export class AIService {
    */
   private async updateAIToolsAsync() {
     try {
-      if (!this.geminiClient || !this.config) {
-        this.logger.warn('Cannot update tools: geminiClient or config not initialized');
+      if (!this.ottoClient || !this.config) {
+        this.logger.warn('Cannot update tools: ottoClient or config not initialized');
         return;
       }
 
@@ -572,14 +572,14 @@ export class AIService {
    * 🎯 向 AI 客户端历史记录中添加系统消息，使其能够感知 UI 层的状态变化（如撤销）
    */
   async addSystemMessageToHistory(content: string): Promise<void> {
-    if (!this.geminiClient) {
-      this.logger.warn('Cannot add system message to history: GeminiClient not initialized');
+    if (!this.ottoClient) {
+      this.logger.warn('Cannot add system message to history: OttoClient not initialized');
       return;
     }
 
     try {
       // 🎯 模拟为用户消息，以便 AI 在下一轮对话中能够读取到
-      this.geminiClient.addHistory({
+      this.ottoClient.addHistory({
         role: 'user',
         parts: [{ text: `[SYSTEM NOTIFICATION] ${content}` }],
       });
@@ -1401,7 +1401,7 @@ export class AIService {
    * 🎯 提交工具结果给LLM - AI核心职责
    */
   private async submitToolResultsToLLM(tools: VSCodeToolCall[]) {
-    if (!this.geminiClient || tools.length === 0) return;
+    if (!this.ottoClient || tools.length === 0) return;
     if (!this.canAbortFlow || !this.isProcessing) return;
 
     try {
@@ -1459,7 +1459,7 @@ export class AIService {
       this.abortController = abortController;
 
       // 🎯 使用共享的prompt_id以保持循环检测状态不被reset清空
-      const stream = this.geminiClient.sendMessageStream(
+      const stream = this.ottoClient.sendMessageStream(
         toolResponseParts,
         abortController.signal,
         this.sharedPromptId
@@ -1536,14 +1536,14 @@ export class AIService {
    * 🎯 回滚AI历史到指定消息位置
    */
   private async rollbackHistoryToMessage(messageId: string): Promise<void> {
-    if (!this.geminiClient) {
+    if (!this.ottoClient) {
       throw new Error('Gemini client is not initialized');
     }
 
     console.log('🎯 开始回滚AI历史:', { messageId });
 
     // 🎯 1. 获取当前历史
-    const currentHistory = this.geminiClient.getChat().getHistory();
+    const currentHistory = this.ottoClient.getChat().getHistory();
     console.log('🎯 当前历史长度:', currentHistory.length);
 
     // 🎯 2. 查找目标消息位置
@@ -1578,7 +1578,7 @@ export class AIService {
     });
 
     // 🎯 4. 设置新的历史
-    this.geminiClient.getChat().setHistory(truncatedHistory);
+    this.ottoClient.getChat().setHistory(truncatedHistory);
 
     console.log('🎯 AI历史回滚完成:', {
       原始长度: currentHistory.length,
@@ -1646,7 +1646,7 @@ export class AIService {
       }
 
       // 🎯 使用共享的prompt_id以保持循环检测状态不被reset清空
-      const stream = this.geminiClient!.sendMessageStream(
+      const stream = this.ottoClient!.sendMessageStream(
         parts,
         abortController.signal,
         this.sharedPromptId
@@ -1686,7 +1686,7 @@ export class AIService {
    * 🎯 处理Gemini流式事件
    */
   private async processGeminiStreamEvents(
-    stream: AsyncIterable<ServerGeminiStreamEvent>,
+    stream: AsyncIterable<ServerOttoStreamEvent>,
     originalMessage: ChatMessage,
     context: ContextInfo | undefined,
     signal: AbortSignal,
@@ -1700,7 +1700,7 @@ export class AIService {
         if (signal.aborted) break;
 
         switch (event.type) {
-          case GeminiEventType.Content:
+          case OttoEventType.Content:
             if (this.communicationService && this.sessionId) {
               await this.communicationService.sendChatChunk(this.sessionId, {
                 content: event.value,
@@ -1710,7 +1710,7 @@ export class AIService {
             }
             break;
 
-          case GeminiEventType.Reasoning:
+          case OttoEventType.Reasoning:
             // 🎯 处理AI思考过程
             if (this.communicationService && this.sessionId) {
               await this.communicationService.sendChatReasoning(
@@ -1721,23 +1721,23 @@ export class AIService {
             }
             break;
 
-          case GeminiEventType.ToolCallRequest:
+          case OttoEventType.ToolCallRequest:
             toolCallRequests.push(event.value);
             break;
 
-          case GeminiEventType.TokenUsage:
+          case OttoEventType.TokenUsage:
             // 🎯 处理Token使用情况，更新Session信息
             await this.handleTokenUsage(event.value);
             break;
 
-          case GeminiEventType.LoopDetected:
+          case OttoEventType.LoopDetected:
             // 🎯 检测到循环 - 显示本地化的循环检测消息
             await this.handleLoopDetected((event as any).value);
             // 🎯 清空待执行的工具调用，防止已缓存的工具被执行
             toolCallRequests.length = 0;
             return;
 
-          case GeminiEventType.Error:
+          case OttoEventType.Error:
             // 🆕 检测流中断错误，抛出异常让外层 catch 处理自动恢复
             const errorMessage = event.value.error?.message || 'Unknown error';
             const isStreamInterrupt =
@@ -1776,7 +1776,7 @@ export class AIService {
             }
             return;
 
-          case GeminiEventType.Finished:
+          case OttoEventType.Finished:
             this.logger.info('Stream finished');
             break;
         }
@@ -1991,9 +1991,9 @@ export class AIService {
 
       // 🎯 添加反馈消息到AI历史，让AI理解为什么被停止（与Core层同步）
       const feedbackMessage = this.generateLoopFeedbackForAI(loopType);
-      if (this.geminiClient) {
+      if (this.ottoClient) {
         try {
-          this.geminiClient.addHistory({
+          this.ottoClient.addHistory({
             role: 'user',
             parts: [{ text: feedbackMessage }],
           });
@@ -2511,11 +2511,11 @@ export class AIService {
    * 🎯 获取所有可回滚的消息ID列表
    */
   getRollbackableMessageIds(): string[] {
-    if (!this.geminiClient) {
+    if (!this.ottoClient) {
       return [];
     }
 
-    const currentHistory = this.geminiClient.getChat().getHistory();
+    const currentHistory = this.ottoClient.getChat().getHistory();
     return currentHistory
       .filter(content => content.prompt_id)
       .map(content => content.prompt_id!)
@@ -2527,9 +2527,9 @@ export class AIService {
     this.sessionHistoryManager!.saveCompleteSessionHistory(this.sessionId);
   }
 
-  // 🎯 获取GeminiClient实例（供SessionManager统一保存时使用）
-  getGeminiClient(): GeminiClient | undefined {
-    return this.geminiClient;
+  // 🎯 获取OttoClient实例（供SessionManager统一保存时使用）
+  getOttoClient(): OttoClient | undefined {
+    return this.ottoClient;
   }
 
   // 🎯 获取Config实例（供SessionManager进行YOLO模式同步使用）
@@ -2556,7 +2556,7 @@ export class AIService {
       this.smartNotificationService = undefined;
     }
 
-    this.geminiClient = undefined;
+    this.ottoClient = undefined;
     this.config = undefined;
     this.coreToolScheduler = undefined;
     this.currentToolCalls.clear();
@@ -2606,8 +2606,8 @@ export class AIService {
    */
   async refreshToolsWithMcpFilter(): Promise<void> {
     try {
-      if (!this.geminiClient || !this.config) {
-        this.logger.warn('Cannot refresh tools: geminiClient or config not initialized');
+      if (!this.ottoClient || !this.config) {
+        this.logger.warn('Cannot refresh tools: ottoClient or config not initialized');
         return;
       }
 
@@ -2666,13 +2666,13 @@ export class AIService {
       // 构建工具声明并设置到 geminiChat
       const filteredDeclarations = filteredTools.map(tool => tool.schema);
       const tools = [{ functionDeclarations: filteredDeclarations }];
-      this.geminiClient.getChat().setTools(tools);
+      this.ottoClient.getChat().setTools(tools);
 
       this.logger.info(`Tools refreshed: ${filteredTools.length}/${allTools.length} tools available`);
 
       // 🎯 关键：更新 AI 引擎内部的工具状态，确保下一轮对话生效
-      if (this.geminiClient.isInitialized()) {
-        await this.geminiClient.setTools();
+      if (this.ottoClient.isInitialized()) {
+        await this.ottoClient.setTools();
       }
     } catch (error) {
       this.logger.error('Failed to refresh tools with MCP filter', error instanceof Error ? error : undefined);

@@ -15,11 +15,9 @@ import {
 } from 'vitest';
 import { ideCommand } from './ideCommand.js';
 import { type CommandContext } from './types.js';
-import { type Config } from 'otto-core';
+import { IDEConnectionStatus, type Config } from 'otto-core';
 import * as child_process from 'child_process';
 import { glob } from 'glob';
-
-import { IDEConnectionStatus } from 'otto-core/index.js';
 
 vi.mock('child_process');
 vi.mock('glob');
@@ -207,7 +205,7 @@ describe('ideCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'info',
-          text: 'VS Code companion extension installed successfully. Restart deepv-code in a fresh terminal window.',
+          text: 'VS Code companion extension installed successfully. Restart Otto in a fresh terminal window.',
         }),
         expect.any(Number),
       );
@@ -234,7 +232,7 @@ describe('ideCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'info',
-          text: 'VS Code companion extension installed successfully. Restart deepv-code in a fresh terminal window.',
+          text: 'VS Code companion extension installed successfully. Restart Otto in a fresh terminal window.',
         }),
         expect.any(Number),
       );

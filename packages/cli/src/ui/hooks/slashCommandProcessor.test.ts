@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -95,7 +94,7 @@ describe('useSlashCommandProcessor', () => {
     getProjectRoot: () => '/mock/cwd',
     getSessionId: () => 'test-session',
     getCheckpointingEnabled: () => false,
-    getGeminiClient: () => ({
+    getOttoClient: () => ({
       setHistory: vi.fn().mockResolvedValue(undefined),
     }),
     getHealthyUseEnabled: () => true,

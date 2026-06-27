@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
  * Slash Command Service for VSCode UI Plugin
  *
  * Loads custom slash commands from .toml files, sharing the same configuration
- * paths as the CLI (~/.deepv/commands and <project>/.deepvcode/commands).
+ * paths as the CLI (~/.otto/commands and <project>/.otto/commands).
  *
  * Also exposes a small set of **built-in** commands that mirror high-value
  * CLI counterparts (currently: /init, /compress).
@@ -201,12 +201,12 @@ export class SlashCommandService {
       dot: true,
     };
 
-    // Load user-level commands (~/.deepv/commands and ~/.gemini/commands)
+    // Load user-level commands (~/.otto/commands and ~/.gemini/commands)
     for (const userDir of getUserCommandsDirs()) {
       await this.loadCommandsFromDir(userDir, globOptions);
     }
 
-    // Load project-level commands (project/.deepvcode/commands and project/.gemini/commands)
+    // Load project-level commands (project/.otto/commands and project/.gemini/commands)
     // Project commands override user commands with the same name
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders) {

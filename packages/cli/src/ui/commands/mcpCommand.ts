@@ -9,7 +9,6 @@ import {
   SlashCommandActionReturn,
   CommandContext,
   CommandKind,
-  MessageActionReturn,
 } from './types.js';
 import { helpCommand } from './mcpHelpCommand.js';
 import { addCommand } from './mcpAddCommand.js';
@@ -25,7 +24,6 @@ import {
   unloadMcpServer,
 } from 'otto-core';
 import { t, tp } from '../utils/i18n.js';
-import open from 'open';
 
 const COLOR_GREEN = '\u001b[32m';
 const COLOR_YELLOW = '\u001b[33m';
@@ -461,7 +459,7 @@ const authCommand: SlashCommand = {
         await toolRegistry.discoverToolsForServer(serverName);
       }
       // Update the client with the new tools
-      const geminiClient = config.getGeminiClient();
+      const geminiClient = config.getOttoClient();
       if (geminiClient) {
         await geminiClient.setTools();
       }
@@ -548,7 +546,7 @@ const refreshCommand: SlashCommand = {
     await toolRegistry.discoverMcpTools();
 
     // Update the client with the new tools
-    const geminiClient = config.getGeminiClient();
+    const geminiClient = config.getOttoClient();
     if (geminiClient) {
       await geminiClient.setTools();
     }
@@ -603,7 +601,7 @@ const unloadCommand: SlashCommand = {
       );
 
       // Update the client with the new tools (so AI forgets the unloaded ones)
-      const geminiClient = config.getGeminiClient();
+      const geminiClient = config.getOttoClient();
       if (geminiClient) {
         await geminiClient.setTools();
       }
@@ -684,7 +682,7 @@ const loadCommand: SlashCommand = {
       await toolRegistry.discoverToolsForServer(serverName);
 
       // Update the client with the new tools
-      const geminiClient = config.getGeminiClient();
+      const geminiClient = config.getOttoClient();
       if (geminiClient) {
         await geminiClient.setTools();
       }

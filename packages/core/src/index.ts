@@ -22,14 +22,14 @@ export * from './types/customModel.js';
 // Export Core Logic
 export * from './core/client.js';
 export * from './core/contentGenerator.js';
-export * from './core/geminiChat.js';
+export * from './core/ottoChat.js';
 export * from './core/logger.js';
 export * from './core/prompts.js';
 export * from './core/tokenLimits.js';
 export * from './core/modelConfig.js';
 export * from './core/turn.js';
 export * from './core/invalidStreamError.js';
-export * from './core/geminiRequest.js';
+export * from './core/ottoRequest.js';
 export * from './core/coreToolScheduler.js';
 export * from './core/nonInteractiveToolExecutor.js';
 export * from './tools/task.js';
@@ -44,8 +44,8 @@ export * from './core/imageGenerator.js';
 export * from './core/workflowRegistry.js';
 
 export * from './code_assist/codeAssist.js';
-// clearCachedCredentialFile removed with OAuth2 - no longer needed for Cheeth OA
-// OAuth2 module removed - only Cheeth OA authentication supported
+// clearCachedCredentialFile removed with OAuth2 - no longer needed for Otto custom-model auth
+// OAuth2 module removed - only Otto custom-model authentication supported
 export * from './code_assist/server.js';
 export * from './code_assist/types.js';
 export * from './code_assist/inlineCompletion.js';
@@ -85,7 +85,7 @@ export * from './utils/environment/index.js';
 export * from './auth/authenticatedHttpClient.js';
 export * from './auth/authNavigator.js';
 export * from './auth/login/authServer.js';
-export * from './auth/login/deepvlabAuth.js';
+export * from './auth/login/ottoAuth.js';
 export * from './auth/login/templates/index.js';
 // Explicitly export AuthServer class
 export { AuthServer } from './auth/login/authServer.js';

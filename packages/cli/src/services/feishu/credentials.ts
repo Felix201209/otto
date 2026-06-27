@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Otto team
+ * Copyright 2026 Felix
  * https://github.com/Felix201209/otto.git
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -123,7 +123,7 @@ function decryptGcm(payload: string, key: Buffer): string {
 export class CredentialsLoadError extends Error {
   constructor(
     message: string,
-    public readonly cause?: unknown,
+    readonly cause?: unknown,
   ) {
     super(message);
     this.name = 'CredentialsLoadError';

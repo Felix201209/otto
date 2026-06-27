@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -121,7 +120,7 @@ class CreditsService {
           'accept': 'application/json, text/plain, */*',
           'authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepVCode-CLI'
+          'User-Agent': 'Otto-CLI'
         },
         signal: controller.signal
       });
@@ -133,7 +132,15 @@ class CreditsService {
         return null;
       }
 
-      const result = await response.json() as any;
+      const result = await response.json() as {
+        success?: boolean;
+        data?: {
+          totalCreditsLimits?: number;
+          creditsUsage?: {
+            totalCreditsUsed?: number;
+          };
+        };
+      };
 
       if (!result.success || !result.data) {
         console.warn('⚠️ Invalid credits API response');

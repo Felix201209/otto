@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
  *   /debate end          → force-end the current debate.
  *   /debate status       → show current debate state.
  *
- * Auto-advance is handled in useGeminiStream.ts: when a turn finishes while
+ * Auto-advance is handled in useOttoStream.ts: when a turn finishes while
  * a debate is running, the hook advances the cursor, switches models, and
  * submits the next mediator phrase automatically.
  */

@@ -1,81 +1,33 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import { CommandKind, MessageActionReturn, SlashCommand } from './types.js';
-import { AuthServer } from 'otto-core';
-import { exec } from 'child_process';
-import { t } from '../utils/i18n.js';
-
-// 全局认证服务器实例
-let authServerInstance: AuthServer | null = null;
+import { isChineseLocale, t } from '../utils/i18n.js';
 
 /**
- * 重置认证服务器实例（仅用于测试）
+ * 兼容性占位：旧版 /login 会启动 otto 浏览器登录服务器。
+ * Otto 是 BYO-key（自带 key）产品，已删除该登录流程。
+ * 保留此空实现仅为不破坏依赖该导出的调用方（如测试）。
  */
 export function _resetAuthServer(): void {
-  authServerInstance = null;
-}
-
-/**
- * 启动认证服务器
- */
-async function startAuthServer(): Promise<void> {
-  if (authServerInstance) {
-    console.log('🔄 登录服务器已在运行中');
-    return;
-  }
-
-  authServerInstance = new AuthServer();
-  await authServerInstance.start();
-}
-
-/**
- * 打开浏览器
- */
-function openBrowser(url: string): void {
-  const command = process.platform === 'darwin' ? 'open' :
-                  process.platform === 'win32' ? 'start' : 'xdg-open';
-
-  exec(`${command} ${url}`, (error) => {
-    if (error) {
-      console.error('❌ 打开浏览器失败:', error);
-    } else {
-      console.log('✅ 浏览器已打开:', url);
-    }
-  });
+  // no-op：已无认证服务器实例需要重置。
 }
 
 export const loginCommand: SlashCommand = {
   name: 'login',
   description: t('command.login.description'),
   kind: CommandKind.BUILT_IN,
-  action: async (_context, _args): Promise<MessageActionReturn> => {
-    try {
-      console.log('🚀 启动登录服务器...');
-
-      // 启动认证服务器
-      await startAuthServer();
-
-      // 打开浏览器到认证选择页面
-      openBrowser('http://localhost:7862');
-
-      return {
-        type: 'message',
-        messageType: 'info',
-        content: '✅ 登录服务器已启动！\n🌐 登录选择页面: http://localhost:7862\n🔗 请在浏览器中选择认证方式完成登录。',
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : '未知错误';
-      return {
-        type: 'message',
-        messageType: 'error',
-        content: `❌ 登录服务器启动失败: ${errorMsg}`,
-      };
-    }
-  },
+  // Otto 自带 key、无需登录。/login 不再启动已废弃的 otto 浏览器登录，
+  // 直接提示用户用 /model 或 otto setup 配置模型。
+  action: async (_context, _args): Promise<MessageActionReturn> => ({
+    type: 'message',
+    messageType: 'info',
+    content: isChineseLocale()
+      ? 'Otto 自带 key，无需登录。\n运行 `/model` 管理模型，或运行 `otto setup` 配置 API key 和模型。'
+      : 'Otto ships with built-in key handling — no login required.\nRun `/model` to manage models, or `otto setup` to configure your API key and model.',
+  }),
 };

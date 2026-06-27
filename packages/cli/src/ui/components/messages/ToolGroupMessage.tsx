@@ -4,16 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
-import { IndividualToolCallDisplay, ToolCallStatus } from '../../types.js';
-import { ToolMessage } from './ToolMessage.js';
-import { ToolConfirmationMessage } from './ToolConfirmationMessage.js';
+import { Box,Text } from 'ink';
 import { Config } from 'otto-core';
-import { SHELL_COMMAND_NAME } from '../../constants.js';
-import { tp, getLocalizedToolName } from '../../utils/i18n.js';
+import React,{ useCallback,useMemo } from 'react';
 import { Colors } from '../../colors.js';
+import { SHELL_COMMAND_NAME } from '../../constants.js';
+import { IndividualToolCallDisplay,ToolCallStatus } from '../../types.js';
+import { getLocalizedToolName,tp } from '../../utils/i18n.js';
+import { ToolConfirmationMessage } from './ToolConfirmationMessage.js';
 import { selectAggregatedToolGroup } from './toolGroupAggregate.js';
+import { ToolMessage } from './ToolMessage.js';
 
 interface ToolGroupMessageProps {
   groupId: number;
@@ -32,7 +32,7 @@ interface ToolGroupMessageProps {
  * “有边框时左右各占 1 列、上下各占 1 行”这一前提。改用全空格的自定义 BoxStyle
  * 后，布局尺寸和对齐一字不差，只是边框在视觉上隐形了。
  */
-const INVISIBLE_BORDER = {
+const _INVISIBLE_BORDER = {
   topLeft: ' ',
   top: ' ',
   topRight: ' ',
@@ -49,15 +49,15 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
   availableTerminalHeight,
   terminalWidth,
   config,
-  isFocused = true,
+  isFocused: _isFocused = true,
 }) => {
-  const hasPending = !toolCalls.every(
+  const _hasPending = !toolCalls.every(
     (t) => t.status === ToolCallStatus.Success,
   );
   const isShellCommand = toolCalls.some((t) => t.name === SHELL_COMMAND_NAME);
 
   // 🎯 检查是否有 Shell 命令正在执行或等待执行
-  const isShellExecuting = toolCalls.some(
+  const _isShellExecuting = toolCalls.some(
     (t) => t.name === SHELL_COMMAND_NAME &&
            (t.status === ToolCallStatus.Executing || t.status === ToolCallStatus.Pending)
   );
@@ -68,23 +68,27 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
   const innerWidth = terminalWidth;
 
   // 🎯 递归查找需要确认的工具（包括嵌套的subToolCalls）
-  const findConfirmingTool = (tools: typeof toolCalls): typeof toolCalls[0] | undefined => {
-    for (const tool of tools) {
-      if (tool.status === ToolCallStatus.Confirming) {
-        return tool;
+  // 用 useCallback 包稳（纯函数、无外部依赖），以便安全地进入下方 useMemo 依赖数组
+  const findConfirmingTool = useCallback(
+    (tools: typeof toolCalls): typeof toolCalls[0] | undefined => {
+      for (const tool of tools) {
+        if (tool.status === ToolCallStatus.Confirming) {
+          return tool;
+        }
+        // 递归查找子工具调用
+        if (tool.subToolCalls && tool.subToolCalls.length > 0) {
+          const foundInSub = findConfirmingTool(tool.subToolCalls);
+          if (foundInSub) return foundInSub;
+        }
       }
-      // 递归查找子工具调用
-      if (tool.subToolCalls && tool.subToolCalls.length > 0) {
-        const foundInSub = findConfirmingTool(tool.subToolCalls);
-        if (foundInSub) return foundInSub;
-      }
-    }
-    return undefined;
-  };
+      return undefined;
+    },
+    [],
+  );
 
   const toolAwaitingApproval = useMemo(
     () => findConfirmingTool(toolCalls),
-    [toolCalls],
+    [toolCalls, findConfirmingTool],
   );
 
   // 🎯 连续同批读文件聚合：当一个 tool_group 里全是已成功、无确认/无子工具的

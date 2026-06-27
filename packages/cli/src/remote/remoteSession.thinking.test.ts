@@ -1,14 +1,18 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import WebSocket from 'ws';
-import { GeminiEventType, type ServerGeminiStreamEvent, type Config } from 'otto-core';
+import { OttoEventType, type ServerOttoStreamEvent, type Config } from 'otto-core';
 import { RemoteSession } from './remoteSession.js';
-import { MessageType, type RemoteMessage } from './remoteProtocol.js';
+import {
+  MessageType,
+  type ReasoningChunkMessage,
+  type RemoteProtocolMessage,
+} from './remoteProtocol.js';
 
 /**
  * RemoteSession Thought / Reasoning 事件转发测试
@@ -22,13 +26,13 @@ import { MessageType, type RemoteMessage } from './remoteProtocol.js';
  */
 
 // 创建一个最小可用的 WebSocket mock：捕获所有 send 调用
-function createMockWebSocket(): { ws: WebSocket; sent: RemoteMessage[] } {
-  const sent: RemoteMessage[] = [];
+function createMockWebSocket(): { ws: WebSocket; sent: RemoteProtocolMessage[] } {
+  const sent: RemoteProtocolMessage[] = [];
   const ws = {
     readyState: WebSocket.OPEN,
     send: (data: string) => {
       try {
-        sent.push(JSON.parse(data) as RemoteMessage);
+        sent.push(JSON.parse(data) as RemoteProtocolMessage);
       } catch {
         // ignore non-JSON
       }
@@ -55,9 +59,13 @@ function invokePrivate<T = unknown>(target: unknown, method: string, ...args: un
   return (fn as (...a: unknown[]) => T).apply(target, args);
 }
 
+function isReasoningChunkMessage(message: RemoteProtocolMessage): message is ReasoningChunkMessage {
+  return message.type === MessageType.REASONING_CHUNK;
+}
+
 describe('RemoteSession thinking events', () => {
   let session: RemoteSession;
-  let sent: RemoteMessage[];
+  let sent: RemoteProtocolMessage[];
 
   beforeEach(() => {
     const mock = createMockWebSocket();
@@ -67,8 +75,8 @@ describe('RemoteSession thinking events', () => {
 
   describe('Thought event → THOUGHT message', () => {
     it('forwards subject + description with a generated thoughtId', async () => {
-      const event: ServerGeminiStreamEvent = {
-        type: GeminiEventType.Thought,
+      const event: ServerOttoStreamEvent = {
+        type: OttoEventType.Thought,
         value: {
           subject: 'Looking at code',
           description: 'Analysing the WebSocket flow',
@@ -87,12 +95,12 @@ describe('RemoteSession thinking events', () => {
     });
 
     it('reuses the same thoughtId across consecutive Thought events', async () => {
-      const e1: ServerGeminiStreamEvent = {
-        type: GeminiEventType.Thought,
+      const e1: ServerOttoStreamEvent = {
+        type: OttoEventType.Thought,
         value: { subject: 'A', description: 'a' },
       };
-      const e2: ServerGeminiStreamEvent = {
-        type: GeminiEventType.Thought,
+      const e2: ServerOttoStreamEvent = {
+        type: OttoEventType.Thought,
         value: { subject: 'B', description: 'b' },
       };
 
@@ -109,8 +117,8 @@ describe('RemoteSession thinking events', () => {
 
   describe('Reasoning event → REASONING_CHUNK message', () => {
     it('emits chunk with isComplete=false', async () => {
-      const event: ServerGeminiStreamEvent = {
-        type: GeminiEventType.Reasoning,
+      const event: ServerOttoStreamEvent = {
+        type: OttoEventType.Reasoning,
         value: { text: 'Step 1: parse input.' },
       };
 
@@ -124,8 +132,8 @@ describe('RemoteSession thinking events', () => {
     });
 
     it('skips empty reasoning text but does not break the flow', async () => {
-      const empty: ServerGeminiStreamEvent = {
-        type: GeminiEventType.Reasoning,
+      const empty: ServerOttoStreamEvent = {
+        type: OttoEventType.Reasoning,
         value: { text: '' },
       };
       await invokePrivate(session, 'handleOtherEvent', empty);
@@ -138,9 +146,9 @@ describe('RemoteSession thinking events', () => {
     it('preserves thoughtId across consecutive Reasoning chunks', async () => {
       for (let i = 0; i < 3; i++) {
         await invokePrivate(session, 'handleOtherEvent', {
-          type: GeminiEventType.Reasoning,
+          type: OttoEventType.Reasoning,
           value: { text: `chunk ${i}` },
-        } as ServerGeminiStreamEvent);
+        } as ServerOttoStreamEvent);
       }
 
       const chunks = sent.filter((m) => m.type === MessageType.REASONING_CHUNK);
@@ -157,13 +165,13 @@ describe('RemoteSession thinking events', () => {
 
     it('mixed Thought and Reasoning share the same thoughtId in one round', async () => {
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Thought,
+        type: OttoEventType.Thought,
         value: { subject: 'Plan', description: 'Plan it out' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'detail' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       const allIds = sent
         .filter(
@@ -180,18 +188,18 @@ describe('RemoteSession thinking events', () => {
     it('emits isComplete=true with empty text', async () => {
       // 先发出 reasoning，然后调用 finalizeThought
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'x' },
-      } as ServerGeminiStreamEvent);
-      const tidBefore = (
-        sent.find((m) => m.type === MessageType.REASONING_CHUNK) as RemoteMessage
-      ).payload.thoughtId;
+      } as ServerOttoStreamEvent);
+      const firstChunk = sent.find((m) => m.type === MessageType.REASONING_CHUNK);
+      expect(firstChunk).toBeDefined();
+      const tidBefore = firstChunk!.payload.thoughtId;
 
       invokePrivate(session, 'finalizeThought');
 
       const closing = sent.filter(
-        (m) =>
-          m.type === MessageType.REASONING_CHUNK && m.payload.isComplete === true,
+        (m): m is ReasoningChunkMessage =>
+          isReasoningChunkMessage(m) && m.payload.isComplete === true,
       );
       expect(closing).toHaveLength(1);
       expect(closing[0].payload.text).toBe('');
@@ -212,20 +220,20 @@ describe('RemoteSession thinking events', () => {
     it('starts a fresh thoughtId after finalize', async () => {
       // round 1
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'r1' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
       invokePrivate(session, 'finalizeThought');
 
       // round 2
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'r2' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       const chunks = sent.filter(
-        (m) =>
-          m.type === MessageType.REASONING_CHUNK && !m.payload.isComplete,
+        (m): m is ReasoningChunkMessage =>
+          isReasoningChunkMessage(m) && !m.payload.isComplete,
       );
       expect(chunks).toHaveLength(2);
       expect(chunks[0].payload.thoughtId).not.toBe(chunks[1].payload.thoughtId);
@@ -235,9 +243,9 @@ describe('RemoteSession thinking events', () => {
   describe('handleContentEvent finalizes the in-progress thought', () => {
     it('automatically closes thought when AI text starts arriving', async () => {
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'thinking' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       // 模拟内容事件到来
       await invokePrivate(session, 'handleContentEvent', 'Hello');
@@ -259,9 +267,9 @@ describe('RemoteSession thinking events', () => {
   describe('clearSessionData finalizes the in-progress thought', () => {
     it('emits isComplete=true on session clear', async () => {
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'partial' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       session.clearSessionData();
 
@@ -276,9 +284,9 @@ describe('RemoteSession thinking events', () => {
   describe('sendError finalizes the in-progress thought', () => {
     it('emits isComplete=true before ERROR + idle status', async () => {
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'partial' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       invokePrivate(session, 'sendError', 'something failed');
 
@@ -299,15 +307,15 @@ describe('RemoteSession thinking events', () => {
     it('emits closing chunk before idle status when loop detected', async () => {
       // 先有思考
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.Reasoning,
+        type: OttoEventType.Reasoning,
         value: { text: 'partial' },
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       // 再触发 LoopDetected
       await invokePrivate(session, 'handleOtherEvent', {
-        type: GeminiEventType.LoopDetected,
+        type: OttoEventType.LoopDetected,
         value: 'consecutive_identical_tool_calls',
-      } as ServerGeminiStreamEvent);
+      } as ServerOttoStreamEvent);
 
       const closingIdx = sent.findIndex(
         (m) =>

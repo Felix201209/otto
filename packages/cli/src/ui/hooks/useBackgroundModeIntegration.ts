@@ -1,27 +1,25 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useEffect, useCallback } from 'react';
+import {
+Config,
+ShellTool
+} from 'otto-core';
+import { useCallback,useEffect } from 'react';
 import { useBackgroundModeContext } from '../contexts/BackgroundModeContext.js';
 import { useKeypressContext } from '../contexts/KeypressContext.js';
-import {
-  getBackgroundTaskManager,
-  ShellTool,
-  Config,
-} from 'otto-core';
 
 /**
  * Hook to integrate Ctrl+B detection from KeypressContext into BackgroundModeContext
  * This creates a bridge between keyboard input and background task execution mode
  */
-export function useBackgroundModeIntegration(config: Config): void {
+export function useBackgroundModeIntegration(_config: Config): void {
   const { setBackgroundModeRequested } = useBackgroundModeContext();
-  const { onBackgroundModeRequested } = useKeypressContext();
+  const { onBackgroundModeRequested: _onBackgroundModeRequested } = useKeypressContext();
 
   // Set up the Ctrl+B callback in KeypressContext
   useEffect(() => {
@@ -31,11 +29,9 @@ export function useBackgroundModeIntegration(config: Config): void {
   }, []);
 
   // Create callback for when background mode is requested
-  useCallback(() => {
-    return (requested: boolean) => {
+  useCallback(() => (requested: boolean) => {
       setBackgroundModeRequested(requested);
-    };
-  }, [setBackgroundModeRequested]);
+    }, [setBackgroundModeRequested]);
 }
 
 /**
@@ -70,7 +66,7 @@ export async function getShellToolFromConfig(config: Config): Promise<ShellTool 
     const toolRegistry = await config.getToolRegistry();
     const shellTool = toolRegistry.getTool('run_shell_command');
     return shellTool as ShellTool | null;
-  } catch (e) {
+  } catch (_e) {
     return null;
   }
 }

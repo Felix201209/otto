@@ -1,15 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback } from 'react';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { type HistoryItem, type HistoryItemInfo } from '../types.js';
-import { CustomModelConfig, Config } from 'otto-core';
-import { t } from '../utils/i18n.js';
-import { addOrUpdateCustomModel, loadCustomModels } from '../../config/customModelsStorage.js';
+import { Config,CustomModelConfig } from 'otto-core';
+import { useCallback,useState } from 'react';
+import { addOrUpdateCustomModel,loadCustomModels } from '../../config/customModelsStorage.js';
+import { LoadedSettings } from '../../config/settings.js';
+import { type HistoryItem,type HistoryItemInfo } from '../types.js';
 
 interface UseCustomModelWizardReturn {
   isCustomModelWizardOpen: boolean;
@@ -62,8 +61,8 @@ export const useCustomModelWizard = (
         // 显示成功消息
         const successMessage =
           list.length === 1
-            ? `✅ Custom model "${list[0].displayName}" saved successfully!`
-            : `✅ ${list.length} custom models saved successfully!`;
+            ? `✅ 已保存自定义模型「${list[0].displayName}」`
+            : `✅ 已保存 ${list.length} 个自定义模型`;
         const detailLines =
           list.length === 1
             ? ''
@@ -75,17 +74,18 @@ export const useCustomModelWizard = (
             text:
               successMessage +
               detailLines +
-              '\n\n💡 Use /model to select your custom model.\n📁 Saved to: ~/.otto-user/custom-models.json',
+              '\n\n💡 下一步：用 /model 选中它即可启用（尚未自动设为默认）。\n📁 已保存到：~/.otto-user/custom-models.json',
           } as HistoryItemInfo,
           Date.now(),
         );
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const historyItem: Omit<HistoryItem, 'id'> = {
+          type: 'error',
+          text: `❌ 保存自定义模型失败：${errorMessage}`,
+        };
         addItem(
-          {
-            type: 'error',
-            text: `❌ Failed to save custom model: ${errorMessage}`,
-          } as any,
+          historyItem,
           Date.now(),
         );
       }
@@ -98,7 +98,7 @@ export const useCustomModelWizard = (
     addItem(
       {
         type: 'info',
-        text: 'ℹ️ Custom model configuration cancelled.',
+        text: 'ℹ️ 已取消自定义模型配置。',
       } as HistoryItemInfo,
       Date.now(),
     );

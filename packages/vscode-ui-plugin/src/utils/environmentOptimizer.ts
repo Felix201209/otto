@@ -4,7 +4,7 @@
  * 针对VSCode插件环境优化终端检测，避免不必要的进程树遍历
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';
@@ -217,9 +217,9 @@ class EnvironmentOptimizer {
 
     if (info.skipProcessDetection) {
       // 设置环境变量，让otto-core知道跳过进程检测
-      process.env.DEEPV_SKIP_PROCESS_DETECTION = 'true';
-      process.env.DEEPV_OPTIMIZED_SHELL = info.shell || 'Unknown';
-      process.env.DEEPV_OPTIMIZED_TERMINAL = info.terminal || 'Unknown';
+      process.env.OTTO_SKIP_PROCESS_DETECTION = 'true';
+      process.env.OTTO_OPTIMIZED_SHELL = info.shell || 'Unknown';
+      process.env.OTTO_OPTIMIZED_TERMINAL = info.terminal || 'Unknown';
 
       const msg = '[EnvOptimizer] Global optimization installed - process detection will be skipped';
       if (this.logger) {

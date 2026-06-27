@@ -14,7 +14,7 @@ import type {
 import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
 
 /**
- * Decoupled LLM request format - stable across Gemini CLI versions
+ * Decoupled LLM request format - stable across Otto versions
  */
 export interface LLMRequest {
   model: string;
@@ -37,7 +37,7 @@ export interface LLMRequest {
 }
 
 /**
- * Decoupled LLM response format - stable across Gemini CLI versions
+ * Decoupled LLM response format - stable across Otto versions
  */
 export interface LLMResponse {
   text?: string;
@@ -62,7 +62,7 @@ export interface LLMResponse {
 }
 
 /**
- * Decoupled tool configuration - stable across Gemini CLI versions
+ * Decoupled tool configuration - stable across Otto versions
  */
 export interface HookToolConfig {
   mode?: 'AUTO' | 'ANY' | 'NONE';

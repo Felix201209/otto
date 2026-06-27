@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,9 +15,9 @@ import stripJsonComments from 'strip-json-comments';
  * MCP Settings Service - 复用 CLI 的配置文件系统
  *
  * 配置文件位置（优先级从低到高）：
- * 1. 系统级: /etc/deepv-cli/settings.json 或 C:\ProgramData\deepv-cli\settings.json
- * 2. 用户级: ~/.deepv/settings.json
- * 3. 工作区级: <workspace>/.deepvcode/settings.json
+ * 1. 系统级: /etc/otto-cli/settings.json 或 C:\ProgramData\otto-cli\settings.json
+ * 2. 用户级: ~/.otto/settings.json
+ * 3. 工作区级: <workspace>/.otto/settings.json
  *
  * 与 CLI 完全兼容，用户可以在 CLI 中配置 MCP 服务器，插件自动读取。
  */
@@ -43,7 +42,7 @@ export class MCPSettingsService {
 
   /**
    * 获取工作区级配置文件路径
-   * 注意：工作区使用 .deepvcode 目录，与用户级 .deepv 区分
+   * 注意：工作区使用 .otto 目录，与用户级 .otto 区分
    */
   private static getWorkspaceSettingsPath(workspaceRoot: string): string {
     return path.join(workspaceRoot, this.WORKSPACE_SETTINGS_DIRECTORY_NAME, this.SETTINGS_FILE_NAME);
@@ -57,11 +56,11 @@ export class MCPSettingsService {
       return process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
     }
     if (platform() === 'darwin') {
-      return '/Library/Application Support/DeepVCli/settings.json';
+      return '/Library/Application Support/OttoCli/settings.json';
     } else if (platform() === 'win32') {
-      return 'C:\\ProgramData\\deepv-cli\\settings.json';
+      return 'C:\\ProgramData\\otto-cli\\settings.json';
     } else {
-      return '/etc/deepv-cli/settings.json';
+      return '/etc/otto-cli/settings.json';
     }
   }
 

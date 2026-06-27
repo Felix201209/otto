@@ -10,14 +10,14 @@ import { MarkdownDisplay } from '../../utils/MarkdownDisplay.js';
 import { Colors } from '../../colors.js';
 import { SafeMessageContainer } from '../shared/SafeMessageContainer.js';
 
-interface GeminiMessageProps {
+interface OttoMessageProps {
   text: string;
   isPending: boolean;
   availableTerminalHeight?: number;
   terminalWidth: number;
 }
 
-export const GeminiMessage: React.FC<GeminiMessageProps> = ({
+export const OttoMessage: React.FC<OttoMessageProps> = ({
   text,
   isPending,
   availableTerminalHeight,

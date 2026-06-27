@@ -1,12 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { Config } from '../config/config.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
-import { GeminiClient } from './client.js';
+import { OttoClient } from './client.js';
 import { SubAgent } from './subAgent.js';
 import { getBuiltInAgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
 import { WorkflowRegistry } from './workflowRegistry.js';
@@ -106,7 +106,7 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
   constructor(
     private readonly config: Config,
     private readonly toolRegistry: ToolRegistry,
-    private readonly geminiClient: GeminiClient,
+    private readonly geminiClient: OttoClient,
     private readonly abortSignal: AbortSignal,
     /** Optional callback for forwarding sub-agent output events upstream. */
     private readonly onUpdate?: (agentId: string, output: string) => void,

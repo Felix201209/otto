@@ -4,13 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ProxyAuthManager, Config, AuthType } from 'otto-core';
+import { ProxyAuthManager, AuthType, getFeishuConfigFromServer, AuthServer } from 'otto-core';
 import { createFeishuAuthHandler } from '../auth/feishuAuth.js';
-import { loadEnvironment, LoadedSettings, SettingScope } from './settings.js';
-import { getFeishuConfigFromServer, testServerConnection } from 'otto-core';
-import { AuthServer } from 'otto-core';
+import { loadEnvironment, LoadedSettings } from './settings.js';
 import { t, tp } from '../ui/utils/i18n.js';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 
 /**
  * 检测是否在VSCode终端环境中运行
@@ -71,7 +69,7 @@ export const validateAuthMethod = (authMethod: string): string | null => {
   // 修复日期: 2025-01-09
   if (authMethod === AuthType.USE_PROXY_AUTH) {
     // 代理服务器模式 - 后端根据多种 OAuth2 源自动处理认证
-    console.log('[Login Check] Proxy server authentication mode');
+    if (process.env.OTTO_CODE_DEBUG === "1") console.log('[Login Check] Proxy server authentication mode');
     return null;
   }
 
@@ -88,7 +86,45 @@ export const validateAuthMethod = (authMethod: string): string | null => {
 /**
  * 使用access token从飞书API获取用户信息
  */
-async function getUserInfoFromFeishu(accessToken: string): Promise<any> {
+interface FeishuUserInfo {
+  openId: string;
+  userId: string;
+  name: string;
+  enName?: string;
+  email?: string;
+  avatar?: string;
+}
+
+interface FeishuUserInfoResponse {
+  code?: number;
+  msg?: string;
+  message?: string;
+  data?: {
+    open_id?: string;
+    user_id?: string;
+    name?: string;
+    en_name?: string;
+    email?: string;
+    avatar_url?: string;
+  };
+}
+
+interface JwtLoginResponse {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  user?: {
+    open_id?: string;
+    user_id?: string;
+    id?: string;
+    name?: string;
+    en_name?: string;
+    email?: string;
+    avatar_url?: string;
+  };
+}
+
+async function getUserInfoFromFeishu(accessToken: string): Promise<FeishuUserInfo> {
   try {
     const response = await fetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
       method: 'GET',
@@ -102,7 +138,7 @@ async function getUserInfoFromFeishu(accessToken: string): Promise<any> {
       throw new Error(`飞书API错误: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as FeishuUserInfoResponse;
 
     if (data.code !== 0) {
       throw new Error(`飞书API错误: ${data.code} - ${data.msg || data.message}`);
@@ -114,9 +150,9 @@ async function getUserInfoFromFeishu(accessToken: string): Promise<any> {
 
     // 转换为标准格式
     return {
-      openId: data.data.open_id,
-      userId: data.data.user_id || data.data.open_id,
-      name: data.data.name,
+      openId: data.data.open_id || '',
+      userId: data.data.user_id || data.data.open_id || '',
+      name: data.data.name || '',
       enName: data.data.en_name,
       email: data.data.email,
       avatar: data.data.avatar_url,
@@ -129,7 +165,7 @@ async function getUserInfoFromFeishu(accessToken: string): Promise<any> {
 
 export async function handleFeishuAuth(
   nextStepUrl: string = 'http://localhost:9000',
-  settings?: LoadedSettings
+  _settings?: LoadedSettings
 ): Promise<boolean> {
   try {
     console.log('🚀 handleFeishuAuth: 开始飞书认证流程...');
@@ -166,7 +202,11 @@ export async function handleFeishuAuth(
             console.log('📱 正在交换JWT令牌...');
 
             // 调用服务端的飞书JWT交换接口（统一使用标准端点）
-            const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+            // BYO-key: 未配置 OTTO_SERVER_URL 时无后端可交换，抛错由上层 catch 处理，不 fetch 空 URL。
+            const proxyServerUrl = process.env.OTTO_SERVER_URL || '';
+            if (!proxyServerUrl) {
+              throw new Error('未配置 OTTO_SERVER_URL，飞书登录不可用');
+            }
             const jwtResponse = await fetch(`${proxyServerUrl}/auth/jwt/feishu-login`, {
               method: 'POST',
               headers: {
@@ -190,7 +230,7 @@ export async function handleFeishuAuth(
               throw new Error(`JWT交换失败: ${jwtResponse.status}`);
             }
 
-            const jwtData = await jwtResponse.json();
+            const jwtData = (await jwtResponse.json()) as JwtLoginResponse;
             console.log('✅ JWT交换成功:', {
               user: jwtData.user?.name,
               email: jwtData.user?.email,
@@ -212,10 +252,10 @@ export async function handleFeishuAuth(
 
             // 保存用户信息
             if (jwtData.user) {
-              const userInfo = {
-                openId: jwtData.user.open_id || jwtData.user.id,
-                userId: jwtData.user.user_id || jwtData.user.id,
-                name: jwtData.user.name,
+              const userInfo: FeishuUserInfo = {
+                openId: jwtData.user.open_id || jwtData.user.id || '',
+                userId: jwtData.user.user_id || jwtData.user.id || '',
+                name: jwtData.user.name || '',
                 enName: jwtData.user.en_name || jwtData.user.name,
                 email: jwtData.user.email,
                 avatar: jwtData.user.avatar_url
@@ -260,8 +300,8 @@ export async function handleFeishuAuth(
     } catch (configError) {
       console.error('❌ 获取服务端配置失败:', configError);
       console.error('请确认：');
-      console.error('  1. DeepX_Code_server 服务是否正在运行');
-      console.error('  2. 服务端地址配置是否正确 (DEEPX_SERVER_URL)');
+      console.error('  1. Otto_server 服务是否正在运行');
+      console.error('  2. 服务端地址配置是否正确 (OTTO_SERVER_URL)');
       console.error('  3. 服务端飞书配置是否正确');
       return false;
     }
@@ -275,21 +315,43 @@ export async function handleFeishuAuth(
  * 打开浏览器
  */
 function openBrowser(url: string): void {
-  const command = process.platform === 'darwin' ? 'open' :
-                  process.platform === 'win32' ? 'start' : 'xdg-open';
+  // 严格校验：只允许 http/https，杜绝 file:// 等本地协议及命令注入
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    console.error('❌ 打开浏览器失败: 无效的 URL:', url);
+    return;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    console.error('❌ 打开浏览器失败: 不支持的协议:', parsed.protocol);
+    return;
+  }
 
-  exec(`${command} ${url}`, (error) => {
-    if (error) {
+  // 使用 spawn + 参数数组（不经 shell），URL 作为独立参数传入，消除命令注入面
+  const isWin = process.platform === 'win32';
+  const command = process.platform === 'darwin' ? 'open' :
+                  isWin ? 'cmd' : 'xdg-open';
+  // Windows 上 `start` 是 cmd 内建命令，需通过 cmd /c start 调用；
+  // 第二个空参数是 start 的 title 占位符，避免带引号的 URL 被当作标题。
+  const args = isWin ? ['/c', 'start', '', url] : [url];
+
+  try {
+    const child = spawn(command, args, { stdio: 'ignore', detached: false });
+    child.on('error', (error) => {
       console.error('❌ 打开浏览器失败:', error);
-    } else {
+    });
+    child.on('spawn', () => {
       console.log('✅ 浏览器已打开:', url);
-    }
-  });
+    });
+  } catch (error) {
+    console.error('❌ 打开浏览器失败:', error);
+  }
 }
 
 /**
- * 处理DeepVlab统一认证流程
- * 功能实现: 使用DeepVlab统一认证系统进行认证
+ * 处理Otto统一认证流程
+ * 功能实现: 使用Otto统一认证系统进行认证
  *
  * @param nextStepUrl 认证成功后的下一步URL
  * @param settings 设置对象
@@ -297,30 +359,30 @@ function openBrowser(url: string): void {
  * @param onUrlReady 当认证URL准备好时的回调函数
  * @returns 包含认证结果和URL的对象
  */
-export async function handleDeepvlabAuth(
-  nextStepUrl: string = 'http://localhost:9000',
-  settings?: LoadedSettings,
+export async function handleOttoAuth(
+  _nextStepUrl: string = 'http://localhost:9000',
+  _settings?: LoadedSettings,
   clearExistingAuth: boolean = false,
   onUrlReady?: (url: string) => void
 ): Promise<{ success: boolean; authUrl?: string }> {
   try {
-    console.log('🚀 handleDeepvlabAuth: Starting DeepVlab unified authentication process...');
+    console.log('🚀 Starting Otto authentication...');
 
     // 如果是主动重新认证，清除现有的JWT token
     if (clearExistingAuth) {
-      console.log('🧹 handleDeepvlabAuth: Clearing existing authentication tokens for re-authentication...');
+      console.log('🧹 handleOttoAuth: Clearing existing authentication tokens for re-authentication...');
       const proxyAuthManager = ProxyAuthManager.getInstance();
       proxyAuthManager.clear();
-      console.log('✅ handleDeepvlabAuth: Existing authentication cleared');
+      console.log('✅ handleOttoAuth: Existing authentication cleared');
     }
 
     // 使用authServer进行统一认证
     const authServer = new AuthServer();
-    console.log('🌐 handleDeepvlabAuth: Starting authentication server...');
+    console.log('🌐 handleOttoAuth: Starting authentication server...');
 
     // 启动认证服务器
     await authServer.start();
-    console.log(t('auth.deepvlab.server.started'));
+    console.log(t('auth.otto.server.started'));
 
     // 打开浏览器到认证选择页面（使用实际端口）
     const selectPort = authServer.getActualSelectPort();
@@ -357,7 +419,7 @@ export async function handleDeepvlabAuth(
             return { success: true, authUrl };
           }
         }
-      } catch (error) {
+      } catch {
         // 忽略检查过程中的错误，继续等待
       }
 
@@ -376,10 +438,10 @@ export async function handleDeepvlabAuth(
 
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error(tp('auth.deepvlab.server.error', { error: errorMsg }));
+    console.error(tp('auth.otto.server.error', { error: errorMsg }));
     console.error('Please check the following configuration:');
     console.error('  1. Network connection is available');
-    console.error('  2. DeepVlab service is accessible');
+    console.error('  2. The authentication service is reachable');
     console.error('  3. Port 7862 and 7863 are available');
     return { success: false };
   }
@@ -408,7 +470,7 @@ function isValidJwtToken(token: string): boolean {
     }
 
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

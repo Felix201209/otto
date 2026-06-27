@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  *
  * Tests for SubAgent tool-completion timeout —
@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ─── Isolate the timeout constant ────────────────────────────────────────────
 // We test the timeout logic directly without instantiating a full SubAgent
-// (which requires Config, ToolRegistry, GeminiClient, etc.)
+// (which requires Config, ToolRegistry, OttoClient, etc.)
 // Instead we replicate the exact toolCompletionPromise pattern from subAgent.ts.
 
 const TOOL_COMPLETION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — must match subAgent.ts

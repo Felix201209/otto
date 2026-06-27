@@ -56,7 +56,7 @@ export interface ChatMessage {
    *
    * 当且仅当本条 chat_message 是由 GoalWizardDialog 提交的"goal 启动消息"时
    * 才会被设置。extension 侧在 onChatMessage 入口看到该字段后，会先在
-   * GeminiClient 上调用 setGoalContext({...})，再走正常的 processChatMessage
+   * OttoClient 上调用 setGoalContext({...})，再走正常的 processChatMessage
    * 流程——这样"注册 goal context"和"发出原始 goal prompt"在同一个事件内
    * 原子完成，不存在竞态。
    *
@@ -384,7 +384,7 @@ export type WebViewToExtensionMessage =
   // 🎯 后台任务管理
   | { type: 'background_task_request'; payload: { action: 'list' | 'kill'; taskId?: string } }
   | { type: 'background_task_move_to_background'; payload: { sessionId: string; toolCallId: string } }
-  // 🎯 自定义模型管理（与 CLI 端共享 ~/.deepv/custom-models.json）
+  // 🎯 自定义模型管理（与 CLI 端共享 ~/.otto/custom-models.json）
   // ----------------------------------------------------------------
   // EasyRouter / EasyClaw 元数据请求是从 webview 发起的（webview 直接拿到 API key
   // 并发起 fetch，避免 key 跨进程多跳）。如果 webview 沙箱因 CSP 拒绝外部 fetch,

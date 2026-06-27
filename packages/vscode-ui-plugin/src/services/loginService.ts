@@ -158,7 +158,7 @@ export class LoginService {
   async logout(): Promise<void> {
     try {
       // 清除 ProxyAuthManager 中的所有认证信息
-      // 这会删除 ~/.deepv/jwt-token.json 和 ~/.deepv/user-info.json
+      // 这会删除 ~/.otto/jwt-token.json 和 ~/.otto/user-info.json
       this.proxyAuthManager.clear();
 
       this.logger.info('✅ 已登出，认证数据已清除');
@@ -218,7 +218,7 @@ export class LoginService {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepVCode-VSCode'
+          'User-Agent': 'Otto-VSCode'
         },
         timeout: 5000 // 5秒超时
       } as any);
@@ -259,7 +259,7 @@ export class LoginService {
   private async getCustomProxyServerUrl(): Promise<string | undefined> {
     try {
       // 从 VSCode 扩展设置中读取
-      const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+      const vscodeConfig = vscode.workspace.getConfiguration('otto');
       const vscodeCustomProxyUrl = vscodeConfig.get<string>('customProxyServerUrl', '');
       if (vscodeCustomProxyUrl && vscodeCustomProxyUrl.trim()) {
         return vscodeCustomProxyUrl.trim();

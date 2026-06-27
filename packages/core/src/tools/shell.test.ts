@@ -8,7 +8,7 @@ import { expect, describe, it, vi, beforeEach } from 'vitest';
 import { ShellTool, isServerOrPersistentCommand } from './shell.js';
 import { Config } from '../config/config.js';
 import * as summarizer from '../utils/summarizer.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { ToolExecuteConfirmationDetails } from './tools.js';
 import os from 'os';
 
@@ -21,7 +21,7 @@ describe('ShellTool Bug Reproduction', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({
         [shellTool.name]: {},
@@ -52,7 +52,7 @@ describe('ShellTool Bug Reproduction', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({}),
     } as unknown as Config;
@@ -79,7 +79,7 @@ describe('ShellTool Bug Reproduction', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({
         [shellTool.name]: { tokenBudget: 1000 },
@@ -107,7 +107,7 @@ describe('ShellTool Bug Reproduction', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({
         [shellTool.name]: {},
@@ -135,7 +135,7 @@ describe('ShellTool Bug Reproduction', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({}),
     } as unknown as Config;
@@ -199,7 +199,7 @@ describe('ShellTool - Background Task Actions', () => {
       getCoreTools: () => undefined,
       getExcludeTools: () => undefined,
       getDebugMode: () => false,
-      getGeminiClient: () => ({}) as GeminiClient,
+      getOttoClient: () => ({}) as OttoClient,
       getTargetDir: () => '.',
       getSummarizeToolOutputConfig: () => ({}),
     } as unknown as Config;

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,9 +43,9 @@ describe('resolveExternalAgentSpec', () => {
     expect(spec.args).toEqual(['-y', '@zed-industries/codex-acp']);
   });
 
-  it('applies EASYCODE_CLAUDE_CODE_ACP_CMD override (command + args, split on whitespace)', () => {
+  it('applies OTTO_CLAUDE_CODE_ACP_CMD override (command + args, split on whitespace)', () => {
     const spec = resolveExternalAgentSpec('claude-code', {
-      EASYCODE_CLAUDE_CODE_ACP_CMD: 'node /abs/path/to/bridge.js --flag value',
+      OTTO_CLAUDE_CODE_ACP_CMD: 'node /abs/path/to/bridge.js --flag value',
     });
     expect(spec.command).toBe('node');
     expect(spec.args).toEqual(['/abs/path/to/bridge.js', '--flag', 'value']);
@@ -54,11 +54,11 @@ describe('resolveExternalAgentSpec', () => {
     expect(spec.label).toBe('Claude Code');
   });
 
-  it('applies EASYCODE_CODEX_ACP_CMD override independently from claude-code', () => {
+  it('applies OTTO_CODEX_ACP_CMD override independently from claude-code', () => {
     const spec = resolveExternalAgentSpec('codex', {
-      EASYCODE_CODEX_ACP_CMD: '/usr/local/bin/codex-acp',
+      OTTO_CODEX_ACP_CMD: '/usr/local/bin/codex-acp',
       // Set the wrong agent's override too — must not bleed across.
-      EASYCODE_CLAUDE_CODE_ACP_CMD: 'should-not-apply',
+      OTTO_CLAUDE_CODE_ACP_CMD: 'should-not-apply',
     });
     expect(spec.command).toBe('/usr/local/bin/codex-acp');
     expect(spec.args).toEqual([]);
@@ -67,10 +67,26 @@ describe('resolveExternalAgentSpec', () => {
 
   it('ignores a whitespace-only override and falls back to the default spec', () => {
     const spec = resolveExternalAgentSpec('codex', {
-      EASYCODE_CODEX_ACP_CMD: '   \t  ',
+      OTTO_CODEX_ACP_CMD: '   \t  ',
     });
     expect(spec.command).toBe('npx');
     expect(spec.args).toEqual(['-y', '@zed-industries/codex-acp']);
+  });
+
+  it('applies the OTTO_CLAUDE_CODE_ACP_CMD override (command + args)', () => {
+    const spec = resolveExternalAgentSpec('claude-code', {
+      OTTO_CLAUDE_CODE_ACP_CMD: 'node /abs/bridge.js --flag value',
+    });
+    expect(spec.command).toBe('node');
+    expect(spec.args).toEqual(['/abs/bridge.js', '--flag', 'value']);
+  });
+
+  it('applies the OTTO_CLAUDE_CODE_ACP_CMD override with a command and no args', () => {
+    const spec = resolveExternalAgentSpec('claude-code', {
+      OTTO_CLAUDE_CODE_ACP_CMD: 'node /new/bridge.js',
+    });
+    expect(spec.command).toBe('node');
+    expect(spec.args).toEqual(['/new/bridge.js']);
   });
 
   it('throws for an unknown agent type', () => {

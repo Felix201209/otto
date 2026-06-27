@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
  * - openai-responses: OpenAI Responses API 格式（使用 /responses 端点）
  * - anthropic: Anthropic Claude API 格式
  * - gemini: Google GenAI 原生格式（POST /v1beta/models/{id}:streamGenerateContent）
- *           与 DeepV 自带 Gemini 路径完全对齐，原生支持 thinkingConfig / thoughts
+ *           与 Otto 自带 Gemini 路径完全对齐，原生支持 thinkingConfig / thoughts
  */
 export type CustomModelProvider = 'openai' | 'openai-responses' | 'anthropic' | 'gemini';
 
@@ -369,7 +369,7 @@ export interface CustomModelConfig {
    *
    * 来源优先级（高到低）：
    * 1. EasyClaw `max_output_length` 元数据（EasyRouter 路径自动填）
-   * 2. 用户手动编辑 ~/.deepv/custom-models.json
+   * 2. 用户手动编辑 ~/.otto/custom-models.json
    * 3. 适配器内置的 32K 统一兜底（见 customModelAdapter.ts 的
    *    DEFAULT_MAX_OUTPUT_TOKENS）
    *
@@ -568,7 +568,7 @@ export const EASY_ROUTER_BASE_URL = 'https://llm-endpoint.net/v1';
  *
  * 当 EasyClaw `/api/v1/public-model-list` 没有该模型的元数据
  * （或返回的 max_context_length 为非正数）时，我们用这个值作为兜底，
- * 确保 ~/.deepv/custom-models.json 里每条 EasyRouter 条目都带有
+ * 确保 ~/.otto/custom-models.json 里每条 EasyRouter 条目都带有
  * 一个保守的 maxTokens，UI 与下游 token 预算计算可以直接使用。
  *
  * 200_000 ≈ 当前主流模型的常见 200K 上下文窗口
@@ -658,7 +658,7 @@ export function filterEasyRouterModels(
 export function classifyEasyRouterModel(modelId: string): CustomModelProvider {
   const id = (modelId ?? '').trim().toLowerCase();
   if (id.startsWith('gemini')) {
-    // Gemini 走原生 GenAI 协议，与 DeepV 自带同路，完整支持 thinkingConfig + thoughts
+    // Gemini 走原生 GenAI 协议，与 Otto 自带同路，完整支持 thinkingConfig + thoughts
     return 'gemini';
   }
   if (id.startsWith('gpt')) {
@@ -694,7 +694,7 @@ export function buildEasyRouterModelConfig(
     /**
      * 命中 EasyClaw `/api/v1/public-model-list` 时拿到的元数据。
      * 用于 maxTokens / maxOutputTokens 的自动填充——displayName 行为保持原样
-     * （=modelId），让 ~/.deepv/custom-models.json 中已经存在的同名条目
+     * （=modelId），让 ~/.otto/custom-models.json 中已经存在的同名条目
      * 可被原地覆盖。
      */
     metadata?: EasyClawModelMetadata;

@@ -1,15 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useState } from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
 import { BackgroundTask } from 'otto-core';
-import { t } from '../utils/i18n.js';
+import React from 'react';
 
 interface BackgroundTasksPanelProps {
   tasks: BackgroundTask[];
@@ -27,10 +25,10 @@ interface BackgroundTasksPanelProps {
 export const BackgroundTasksPanel: React.FC<BackgroundTasksPanelProps> = ({
   tasks,
   selectedIndex,
-  onSelectTask,
-  onKillTask,
-  onClearCompleted,
-  onClose,
+  onSelectTask: _onSelectTask,
+  onKillTask: _onKillTask,
+  onClearCompleted: _onClearCompleted,
+  onClose: _onClose,
 }) => {
   const runningTasks = tasks.filter((t) => t.status === 'running');
   const completedTasks = tasks.filter((t) => t.status !== 'running');

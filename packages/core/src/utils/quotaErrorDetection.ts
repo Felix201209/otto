@@ -102,8 +102,8 @@ export function isGenericQuotaExceededError(error: unknown): boolean {
   return false;
 }
 
-// 🆕 DeepX服务端配额错误检测和格式化
-export interface DeepXQuotaError {
+// 🆕 Otto服务端配额错误检测和格式化
+export interface OttoQuotaError {
   error: string;
   message: string;
   currentUsage?: {
@@ -120,8 +120,8 @@ export interface DeepXQuotaError {
   timestamp?: string;
 }
 
-export function isDeepXQuotaError(error: unknown): boolean {
-  // 检测HTTP响应数据中的DeepX配额错误
+export function isOttoQuotaError(error: unknown): boolean {
+  // 检测HTTP响应数据中的Otto配额错误
   if (error && typeof error === 'object' && 'response' in error) {
     const gaxiosError = error as {
       response?: {
@@ -141,7 +141,7 @@ export function isDeepXQuotaError(error: unknown): boolean {
       }
     }
 
-    // 🆕 检测500错误且message包含 quota exceeded (DeepV Server)
+    // 🆕 检测500错误且message包含 quota exceeded (Otto Server)
     if (gaxiosError.response?.status === 500 && gaxiosError.response.data) {
       const data = gaxiosError.response.data as any;
       if (data && typeof data.message === 'string' && data.message.includes('quota exceeded')) {
@@ -150,7 +150,7 @@ export function isDeepXQuotaError(error: unknown): boolean {
     }
   }
 
-  // 检测Error对象message中的DeepX配额错误
+  // 检测Error对象message中的Otto配额错误
   if (error instanceof Error && error.message) {
     // 检测402配额错误
     if (error.message.includes('API request failed (402):') &&
@@ -158,7 +158,7 @@ export function isDeepXQuotaError(error: unknown): boolean {
          error.message.includes('"error":"No quota configuration"'))) {
       return true;
     }
-    // 🆕 检测500配额错误 (DeepV Server)
+    // 🆕 检测500配额错误 (Otto Server)
     if (error.message.includes('API request failed (500):') && error.message.includes('quota exceeded')) {
       return true;
     }
@@ -172,7 +172,7 @@ export function isDeepXQuotaError(error: unknown): boolean {
   if (typeof error === 'object' && error !== null) {
     const obj = error as any;
 
-    // 检查对象有message属性且包含DeepX配额错误的情况
+    // 检查对象有message属性且包含Otto配额错误的情况
     if (obj.message && typeof obj.message === 'string') {
       if (obj.message.includes('API request failed (402):') &&
           (obj.message.includes('"error":"Quota limit exceeded"') ||
@@ -216,8 +216,8 @@ export function isDeepXQuotaError(error: unknown): boolean {
   return false;
 }
 
-export function getDeepXQuotaErrorMessage(error: unknown): string | null {
-  let quotaError: DeepXQuotaError | any = null;
+export function getOttoQuotaErrorMessage(error: unknown): string | null {
+  let quotaError: OttoQuotaError | any = null;
 
   // 从HTTP响应中提取配额错误信息
   if (error && typeof error === 'object' && 'response' in error) {
@@ -230,7 +230,7 @@ export function getDeepXQuotaErrorMessage(error: unknown): string | null {
 
     // 402 Payment Required - 配额相关错误统一状态码
     if (gaxiosError.response?.status === 402 && gaxiosError.response.data) {
-      quotaError = gaxiosError.response.data as DeepXQuotaError;
+      quotaError = gaxiosError.response.data as OttoQuotaError;
     } else if (gaxiosError.response?.status === 500 && gaxiosError.response.data) {
       // 🆕 处理 500 配额错误
       const data = gaxiosError.response.data as any;
@@ -241,7 +241,7 @@ export function getDeepXQuotaErrorMessage(error: unknown): string | null {
   } else if (typeof error === 'object' && error !== null) {
     const obj = error as any;
 
-    // 处理对象有message属性且包含DeepX配额错误的情况
+    // 处理对象有message属性且包含Otto配额错误的情况
     if (obj.message && typeof obj.message === 'string') {
       if ((obj.message.includes('API request failed (402):') ||
            obj.message.includes('API request failed (500):') ||
@@ -266,7 +266,7 @@ export function getDeepXQuotaErrorMessage(error: unknown): string | null {
     }
   }
 
-  // 从Error对象message中提取DeepX配额错误信息
+  // 从Error对象message中提取Otto配额错误信息
   if (!quotaError && error instanceof Error && error.message) {
     if ((error.message.includes('API request failed (402):') ||
          error.message.includes('API request failed (500):') ||
@@ -289,14 +289,14 @@ export function getDeepXQuotaErrorMessage(error: unknown): string | null {
 
   // 🆕 特殊处理 500 quota exceeded 错误
   if (quotaError.message && quotaError.message.includes('quota exceeded')) {
-    return formatDeepVServerQuotaError(quotaError);
+    return formatOttoServerQuotaError(quotaError);
   }
 
-  return formatDeepXQuotaError(quotaError);
+  return formatOttoQuotaError(quotaError);
 }
 
-// 格式化 DeepV Server 500 配额错误
-function formatDeepVServerQuotaError(errorData: any): string {
+// 格式化 Otto Server 500 配额错误
+function formatOttoServerQuotaError(errorData: any): string {
   // 简单检测系统语言环境
   const isChineseEnvironment = (): boolean => {
     try {
@@ -366,8 +366,8 @@ function formatDeepVServerQuotaError(errorData: any): string {
 }
 
 
-// 格式化DeepX配额错误消息，支持i18n
-function formatDeepXQuotaError(quotaError: DeepXQuotaError): string {
+// 格式化Otto配额错误消息，支持i18n
+function formatOttoQuotaError(quotaError: OttoQuotaError): string {
   // 简单检测系统语言环境
   const isChineseEnvironment = (): boolean => {
     try {

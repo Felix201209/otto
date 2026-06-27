@@ -37,6 +37,9 @@ export default tseslint.config(
       'packages/*/src/**/*.js',
       'packages/*/src/**/*.js.map',
       'packages/*/src/**/*.d.ts',
+      // Ignore compiled package entry artifacts (index.ts -> index.js at package root)
+      'packages/*/index.js',
+      'packages/*/index.js.map',
     ],
   },
   eslint.configs.recommended,

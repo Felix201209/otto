@@ -7,7 +7,7 @@ export const hooksCommand: SlashCommand = {
   kind: CommandKind.BUILT_IN,
   action: async (_context: CommandContext, _args: string): Promise<SlashCommandActionReturn> => {
     try {
-      await open('https://dvcode.deepvlab.ai/hooks-help');
+      await open('https://www.otto.bot/hooks-help');
       return {
         type: 'message',
         messageType: 'info',

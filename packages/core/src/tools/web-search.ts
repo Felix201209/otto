@@ -15,7 +15,7 @@ import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { SceneType } from '../core/sceneManager.js';
 import { t } from '../utils/simpleI18n.js';
 import { proxyAuthManager } from '../core/proxyAuth.js';
-import { isDeepXQuotaError } from '../utils/quotaErrorDetection.js';
+import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
 
 // 最大内容长度限制（10K字符），防止token爆炸
@@ -178,7 +178,7 @@ export class WebSearchTool extends BaseTool<
       resolvedModel = generateCustomModelId(geminiFlashModel);
     }
 
-    const geminiClient = this.config.getGeminiClient();
+    const geminiClient = this.config.getOttoClient();
 
     // 🚨 创建超时保护：web search最多30秒
     const controller = new AbortController();
@@ -315,7 +315,7 @@ export class WebSearchTool extends BaseTool<
       }
 
       // 检测积分不足错误（402 配额错误）
-      if (isDeepXQuotaError(error)) {
+      if (isOttoQuotaError(error)) {
         const quotaExceededMessage = isUsingCustomModel
           ? `This tool (${WebSearchTool.Name}) is currently unavailable because your Otto account has insufficient credits. ` +
             `Web search requires available credits in your account. ` +

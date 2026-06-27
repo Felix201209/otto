@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +16,8 @@ import {
   SlashCommand,
 } from './types.js';
 
-const ISSUE_URL = 'https://github.com/OrionStarAI/DeepVCode/issues/new';
+// 反馈/问题上报入口（无第三方仓库；指向 Otto 产品站点，可改为你自己的 issue tracker）
+const ISSUE_URL = 'https://www.otto.bot';
 
 const maskSensitiveInfo = (input: string): string => {
   const replacements: Array<[RegExp, string]> = [
@@ -29,9 +29,7 @@ const maskSensitiveInfo = (input: string): string => {
     [/\b[0-9a-f]{32,}\b/gi, '*'],
   ];
 
-  return replacements.reduce((text, [pattern, replacement]) => {
-    return text.replace(pattern, replacement);
-  }, input);
+  return replacements.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), input);
 };
 
 const buildErrorLogSection = (context: CommandContext): string => {
@@ -52,9 +50,7 @@ const buildIssueTitle = (description: string): string => {
   return firstLine.slice(0, 80) || t('command.issue.default_title');
 };
 
-const formatDescription = (description: string): string => {
-  return description.replace(/^\s+|\s+$/g, '');
-};
+const formatDescription = (description: string): string => description.replace(/^\s+|\s+$/g, '');
 
 const getRuntimeInfo = (): string => {
   const versions = process.versions as Record<string, string | undefined>;

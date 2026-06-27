@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
  *   longer "sees" the contract.
  *
  * Fix:
- *   GeminiClient holds an in-memory `activeGoalContext` set when /goal
+ *   OttoClient holds an in-memory `activeGoalContext` set when /goal
  *   is launched. After every compression cycle, if a goal is active,
  *   we re-inject the original prompt verbatim plus a meta header that:
  *     1. tells the model it just went through compression,
@@ -32,7 +32,7 @@
  */
 
 /**
- * Goal context retained in GeminiClient memory for the lifetime of a
+ * Goal context retained in OttoClient memory for the lifetime of a
  * /goal session.
  *
  * NOT persisted to disk — process exit clears it intentionally; a fresh
@@ -78,7 +78,7 @@ export interface GoalContext {
 }
 
 /**
- * Loop context retained in GeminiClient memory for the lifetime of a
+ * Loop context retained in OttoClient memory for the lifetime of a
  * /loop session.
  */
 export interface LoopContext {
@@ -201,7 +201,7 @@ ${ctx.originalPrompt}
  *     pre-emptively summarize prior work; it just stops pushing the
  *     goal-driven agenda and waits for the user's next instruction.
  *
- * Caller must pair this with `GeminiClient.clearGoalContext()` so that
+ * Caller must pair this with `OttoClient.clearGoalContext()` so that
  * subsequent compressions don't re-inject the original goal prompt.
  */
 export function buildGoalClearMessage(): string {

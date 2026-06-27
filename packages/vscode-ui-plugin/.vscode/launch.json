@@ -12,7 +12,7 @@
         "${workspaceFolder}/dist/**/*.js"
       ],
       "env": {
-        "DEEPX_SERVER_URL": "https://api-code.deepvlab.ai"
+        "DEEPX_SERVER_URL": ""
       }
     },
     {

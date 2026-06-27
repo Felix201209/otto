@@ -26,7 +26,7 @@ import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { SceneType } from './sceneManager.js';
 import { ContentGenerator, AuthType } from './contentGenerator.js';
 import { Config } from '../config/config.js';
-import { isDeepXQuotaError } from '../utils/quotaErrorDetection.js';
+import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 import {
   logApiRequest,
   logApiResponse,
@@ -89,7 +89,7 @@ function validateHistory(history: Content[]) {
 
 /**
  * 检查内容是否为 reasoning（思考过程）
- * reasoning 会保留在 history 中由 DeepV Server 决定如何转发给上游协议
+ * reasoning 会保留在 history 中由 Otto Server 决定如何转发给上游协议
  * （DeepSeek 思考模式：带 tool_call 时必须回传，不带时服务器会忽略）
  */
 function isReasoningContent(content: Content | undefined): boolean {
@@ -109,7 +109,7 @@ function isReasoningContent(content: Content | undefined): boolean {
  * The model may sometimes generate invalid or empty contents(e.g., due to safety
  * filters or recitation). Extracting valid turns from the history
  * ensures that subsequent requests could be accepted by the model.
- * reasoning 内容保留在 history 中，由 DeepV Server 决定如何转发给上游
+ * reasoning 内容保留在 history 中，由 Otto Server 决定如何转发给上游
  */
 function extractCuratedHistory(comprehensiveHistory: Content[]): Content[] {
   if (comprehensiveHistory === undefined || comprehensiveHistory.length === 0) {
@@ -153,7 +153,7 @@ function extractCuratedHistory(comprehensiveHistory: Content[]): Content[] {
  * @remarks
  * The session maintains all the turns between user and model.
  */
-export class GeminiChat {
+export class OttoChat {
   // A promise to represent the current state of the message being sent to the
   // model.
   private sendPromise: Promise<void> = Promise.resolve();
@@ -295,7 +295,7 @@ export class GeminiChat {
     error?: unknown,
   ): Promise<string | null> {
     // Only handle fallback for OAuth users
-    // Flash fallback only supported for Google OAuth, not available with Cheeth OA
+    // Flash fallback only supported for Google OAuth, not available with Otto custom-model auth
     return null;
   }
 
@@ -432,16 +432,16 @@ export class GeminiChat {
    * @returns 修正后的请求内容
    */
   private fixRequestContents(requestContents: Content[]): Content[] {
-    return GeminiChat.sanitizeRequestContents(requestContents);
+    return OttoChat.sanitizeRequestContents(requestContents);
   }
 
   /**
    * 静态版本的请求内容修复器，与实例方法 fixRequestContents 行为完全一致，
-   * 但可被无 GeminiChat 实例的调用方直接复用（如 CustomModelAdapter、setHistory 兜底）。
+   * 但可被无 OttoChat 实例的调用方直接复用（如 CustomModelAdapter、setHistory 兜底）。
    *
    * 之所以新增 static 入口而不是把 fixRequestContents 直接改成 static：
    *   - 保持外部所有现有调用点（this.fixRequestContents）零改动
-   *   - 让所有协议路径（Gemini 原生 / DeepVServer / CustomModel）共享同一份实现，避免逻辑漂移
+   *   - 让所有协议路径（Gemini 原生 / Otto Server / CustomModel）共享同一份实现，避免逻辑漂移
    *
    * 函数体保持不变；如需更新清洗规则，只在这里修改即可。
    */
@@ -985,8 +985,8 @@ export class GeminiChat {
       // If errors occur mid-stream, this setup won't resume the stream; it will restart it.
       const streamResponse = await retryWithBackoff(apiCall, {
         shouldRetry: (error: Error) => {
-          // 🚫 DeepX配额错误不应重试 - 需要立即显示友好提示
-          if (isDeepXQuotaError(error)) {
+          // 🚫 Otto配额错误不应重试 - 需要立即显示友好提示
+          if (isOttoQuotaError(error)) {
             return false;
           }
 
@@ -1150,7 +1150,7 @@ export class GeminiChat {
               continue;
             }
             // 🆕 reasoning content 也要进入 outputContent 以保留在 history 中
-            // 由 DeepV Server 在转发到上游时按各家协议（如 DeepSeek）规则自行处理
+            // 由 Otto Server 在转发到上游时按各家协议（如 DeepSeek）规则自行处理
             if (isReasoning) {
               this.appendReasoningToOutput(outputContent, content);
               yield chunk;
@@ -1212,7 +1212,7 @@ export class GeminiChat {
     automaticFunctionCallingHistory?: Content[],
   ) {
     // 过滤掉 thought 内容（thought 仅 UI 显示）
-    // reasoning 内容保留进入 history，由 DeepV Server 决定如何转发给上游
+    // reasoning 内容保留进入 history，由 Otto Server 决定如何转发给上游
     const nonThoughtModelOutput = modelOutput.filter(
       (content) => !this.isThoughtContent(content),
     );
@@ -1318,7 +1318,7 @@ export class GeminiChat {
     } catch (snapshotErr) {
       // Snapshot is an optimization, not load-bearing. Swallow.
       logger.warn(
-        `[GeminiChat] cacheSafeParams snapshot failed (non-fatal): ${snapshotErr}`,
+        `[OttoChat] cacheSafeParams snapshot failed (non-fatal): ${snapshotErr}`,
       );
     }
   }
@@ -1351,7 +1351,7 @@ export class GeminiChat {
 
   /**
    * 检查内容是否为模型的 reasoning（思考过程）
-   * reasoning 仍会保留在 history 中，由 DeepV Server 决定如何转发给上游
+   * reasoning 仍会保留在 history 中，由 Otto Server 决定如何转发给上游
    * 直接调用外部函数
    */
   private isReasoningContent(content: Content | undefined): boolean {

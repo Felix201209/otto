@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import * as readline from 'node:readline';
 import { execSync } from 'node:child_process';
+import * as readline from 'node:readline';
 
 /**
  * 启动时触发简单的resize模拟
@@ -16,7 +15,7 @@ function triggerStartupResize(): void {
   if (!process.stdout.isTTY) return;
   
   const originalColumns = process.stdout.columns || 80;
-  const originalRows = process.stdout.rows || 24;
+  const _originalRows = process.stdout.rows || 24;
   
   // 简单的resize模拟：暂时调整为略小的尺寸再恢复
   setTimeout(() => {
@@ -155,7 +154,7 @@ export function createOptimizedReadlineInterface(
 /**
  * 设置输入法特殊处理
  */
-function setupInputMethodHandling(rl: readline.Interface): void {
+function setupInputMethodHandling(_rl: readline.Interface): void {
   // 保存原始的终端宽度
   let originalColumns = process.stdout.columns;
   let inputMethodActive = false;
@@ -258,7 +257,7 @@ function detectChineseEnvironment(): boolean {
  */
 function detectSSHOrWSLEnvironment(): boolean {
   // 🔧 支持手动启用SSH/WSL兼容模式
-  if (process.env.DEEPV_SSH_MODE === '1' || process.env.DEEPV_SSH_MODE === 'true') {
+  if (process.env.OTTO_SSH_MODE === '1' || process.env.OTTO_SSH_MODE === 'true') {
     return true;
   }
   
@@ -279,7 +278,7 @@ function detectSSHOrWSLEnvironment(): boolean {
 /**
  * 检测是否是IDEA/IntelliJ环境
  */
-function detectIDEAEnvironment(): boolean {
+function _detectIDEAEnvironment(): boolean {
   return !!(
     process.env.TERMINAL_EMULATOR && (
       process.env.TERMINAL_EMULATOR.includes('JetBrains') ||
@@ -346,7 +345,7 @@ export function createConfirmationReadlineInterface(
   const rl = createOptimizedReadlineInterface(confirmationOptions);
   
   // 确认对话框立即执行轻量级校准
-  const isIDEEnvironment = !!(
+  const _isIDEEnvironment = !!(
     process.env.TERM_PROGRAM || 
     process.env.VSCODE_PID || 
     process.env.TERMINAL_EMULATOR

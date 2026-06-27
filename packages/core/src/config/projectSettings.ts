@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,7 +42,7 @@ export interface ProjectSettings {
 export const PROJECT_CONFIG_DIR_NAME = '.otto';
 /**
  * 项目级配置管理器
- * 负责读写项目根目录下的 ./deepvcode/settings.json 文件
+ * 负责读写项目根目录下的 ./ottocode/settings.json 文件
  */
 export class ProjectSettingsManager {
   private readonly configFileName = 'settings.json';

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -266,10 +265,10 @@ Do NOT call any tool. Reply with text only. If you call a tool, your work will b
    * 执行过程中的错误消息 / Execution error messages
    */
   static readonly EXECUTION_ERRORS = {
-    // GeminiClient 未初始化，请确保配置正确
-    GEMINI_CLIENT_NOT_INITIALIZED: 'GeminiClient not initialized, please ensure configuration is correct',
-    // GeminiClient 未正确初始化，请确保认证已完成。错误: ${error}
+    // OttoClient 未初始化，请确保配置正确
+    GEMINI_CLIENT_NOT_INITIALIZED: 'OttoClient not initialized, please ensure configuration is correct',
+    // OttoClient 未正确初始化，请确保认证已完成。错误: ${error}
     GEMINI_CLIENT_NOT_READY: (error: string) =>
-      `GeminiClient not properly initialized, please ensure authentication is complete. Error: ${error}`,
+      `OttoClient not properly initialized, please ensure authentication is complete. Error: ${error}`,
   } as const;
 }

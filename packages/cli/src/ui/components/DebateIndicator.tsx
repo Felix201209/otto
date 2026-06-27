@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -96,15 +96,17 @@ export const DebateIndicator: React.FC = () => {
       triggerBlink();
     }
     prevCursorRef.current = { modelIdx, round };
+    // 本 effect 仅应在 cursor 字段（modelIdx/round）真正变化时触发闪烁。
+    // 故意只依赖这两个标量：debate 对象每 200ms 就被 setDebate 换成新引用，
+    // 加进去会让 effect 频繁空跑；triggerBlink 是每次渲染新建的函数，加进去会每帧重跑。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debate?.cursor.modelIdx, debate?.cursor.round]);
 
   // 组件卸载时清理闪烁定时器
-  useEffect(() => {
-    return () => {
+  useEffect(() => () => {
       if (blinkIntervalRef.current) clearInterval(blinkIntervalRef.current);
       if (blinkEndRef.current) clearTimeout(blinkEndRef.current);
-    };
-  }, []);
+    }, []);
 
   if (!debate || debate.status === 'done') return null;
 

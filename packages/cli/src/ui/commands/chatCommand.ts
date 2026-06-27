@@ -12,7 +12,7 @@ import {
   CommandKind,
 } from './types.js';
 import path from 'path';
-import { HistoryItemWithoutId, MessageType, ToolCallStatus, IndividualToolCallDisplay } from '../types.js';
+import { HistoryItemWithoutId, ToolCallStatus, IndividualToolCallDisplay } from '../types.js';
 import { t } from '../utils/i18n.js';
 
 interface ChatDetail {
@@ -24,19 +24,19 @@ const getSavedChatTags = async (
   context: CommandContext,
   mtSortDesc: boolean,
 ): Promise<ChatDetail[]> => {
-  const deepvDir = context.services.config?.getProjectTempDir();
-  if (!deepvDir) {
+  const ottoDir = context.services.config?.getProjectTempDir();
+  if (!ottoDir) {
     return [];
   }
   try {
     const file_head = 'checkpoint-';
     const file_tail = '.json';
-    const files = await fsPromises.readdir(deepvDir);
+    const files = await fsPromises.readdir(ottoDir);
     const chatDetails: Array<{ name: string; mtime: Date }> = [];
 
     for (const file of files) {
       if (file.startsWith(file_head) && file.endsWith(file_tail)) {
-        const filePath = path.join(deepvDir, file);
+        const filePath = path.join(ottoDir, file);
         const stats = await fsPromises.stat(filePath);
         chatDetails.push({
           name: file.slice(file_head.length, -file_tail.length),
@@ -109,7 +109,7 @@ const saveCommand: SlashCommand = {
 
     const { logger, config } = context.services;
     await logger.initialize();
-    const chat = await config?.getGeminiClient()?.getChat();
+    const chat = await config?.getOttoClient()?.getChat();
     if (!chat) {
       return {
         type: 'message',
@@ -272,9 +272,9 @@ const deleteCommand: SlashCommand = {
     }
 
     const { config } = context.services;
-    const deepvDir = config?.getProjectTempDir();
+    const ottoDir = config?.getProjectTempDir();
 
-    if (!deepvDir) {
+    if (!ottoDir) {
       return {
         type: 'message',
         messageType: 'error',
@@ -301,7 +301,7 @@ const deleteCommand: SlashCommand = {
 
         for (const chat of chatDetails) {
           try {
-            const filePath = path.join(deepvDir, `checkpoint-${chat.name}.json`);
+            const filePath = path.join(ottoDir, `checkpoint-${chat.name}.json`);
             await fsPromises.unlink(filePath);
             deletedCount++;
           } catch (error) {
@@ -326,7 +326,7 @@ const deleteCommand: SlashCommand = {
       const tag = trimmedArgs;
 
       // 检查文件是否存在
-      const filePath = path.join(deepvDir, `checkpoint-${tag}.json`);
+      const filePath = path.join(ottoDir, `checkpoint-${tag}.json`);
 
       try {
         await fsPromises.access(filePath);

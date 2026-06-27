@@ -12,7 +12,7 @@ import { partToString } from '../utils/partUtils.js';
  * For now, it's an alias to PartListUnion as the primary content.
  * This can be expanded later to include other request parameters.
  */
-export type GeminiCodeRequest = PartListUnion;
+export type OttoCodeRequest = PartListUnion;
 
 export function partListUnionToString(value: PartListUnion): string {
   return partToString(value, { verbose: true });

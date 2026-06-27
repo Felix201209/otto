@@ -1,67 +1,39 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import WebSocket from 'ws';
-import { createServer, Server } from 'http';
 import * as path from 'path';
-import * as os from 'os';
-import * as net from 'net';
 import * as fs from 'fs/promises';
 
-import { Config, ToolRegistry, executeToolCall } from 'otto-core';
-import { GenerateContentResponse, FunctionCall, Part } from '@google/genai';
-import { Content } from 'otto-core';
+import { type Config, ProxyAuthManager } from 'otto-core';
 import {
-  RemoteMessage,
-  MessageType,
   MessageFactory,
-  MessageValidator,
-  CommandMessage,
-  SelectSessionMessage,
-  CreateSessionMessage,
-  RequestUIStateMessage,
-  AuthSubmitMessage,
-  ClearSessionMessage,
-  FeishuImageMessage,
-  GetModelsRequestMessage,
+  type CommandMessage,
+  type FeishuImageMessage,
 } from './remoteProtocol.js';
-import { parseAndFormatApiError } from '../ui/utils/errorParsing.js';
 import { t, tp } from '../ui/utils/i18n.js';
-import { ToolCallRequestInfo } from 'otto-core';
-import { SceneType, AuthType } from 'otto-core';
-import { ProxyAuthManager } from 'otto-core';
 import { RemoteSession } from './remoteSession.js';
 import { remoteLogger } from './remoteLogger.js';
 import { CloudClient } from './cloudClient.js';
 import { getAvailableModels } from '../ui/commands/modelCommand.js';
 import { detectImageExtension } from '../services/feishu/image-type.js';
 
-/**
- * 从指定端口开始查找可用端口
- */
-async function findAvailablePort(startPort: number = 4058): Promise<number> {
-  const isPortAvailable = (port: number): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const server = net.createServer();
-      server.listen(port, 'localhost', () => {
-        server.once('close', () => resolve(true));
-        server.close();
-      });
-      server.on('error', () => resolve(false));
-    });
-  };
+type CloudRoute = Record<string, unknown>;
 
-  for (let port = startPort; port < startPort + 100; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-  throw new Error(`无法在 ${startPort}-${startPort + 99} 范围内找到可用端口`);
+interface CloudIncomingMessage {
+  type: string;
+  payload?: unknown;
+  sessionId?: string;
+  webId?: string;
+  _cloudRoute?: CloudRoute;
+}
+
+interface CloudOutgoingMessage extends Record<string, unknown> {
+  _cloudRoute?: CloudRoute;
 }
 
 /**
@@ -74,7 +46,7 @@ interface SessionInfo {
   session: RemoteSession;
   firstUserInput?: string;  // 第一条用户输入
   lastUserInput?: string;   // 最后一条用户输入
-  cloudRouteRef?: { current: Record<string, any> };  // 云端路由引用，供 virtualWs 回包时使用
+  cloudRouteRef?: { current: CloudRoute };  // 云端路由引用，供 virtualWs 回包时使用
 }
 
 /**
@@ -114,14 +86,14 @@ export class RemoteServer {
   /**
    * 验证密码
    */
-  public verifyPassword(inputPassword: string): boolean {
+  verifyPassword(inputPassword: string): boolean {
     return inputPassword === this.password;
   }
 
   /**
    * 获取密码（用于URL生成）
    */
-  public getPassword(): string {
+  getPassword(): string {
     return this.password;
   }
 
@@ -299,7 +271,7 @@ export class RemoteServer {
     try {
       if (platform === 'darwin') {
         // macOS - 检查系统电源设置
-        const { execSync } = require('child_process');
+        const { execSync } = await import('child_process');
         const result = execSync('pmset -g assertions', { encoding: 'utf8' });
 
         // 检查是否有活跃的防止睡眠断言
@@ -332,7 +304,7 @@ export class RemoteServer {
         console.log(t('power.management.linux.solution.step1'));
         console.log(t('power.management.linux.solution.step2'));
       }
-    } catch (error) {
+    } catch {
       console.log(t('power.management.check.failed'));
     }
 
@@ -561,15 +533,15 @@ export class RemoteServer {
   /**
    * 处理来自CloudClient的消息（云端模式专用）
    */
-  public async handleCloudMessage(message: any): Promise<void> {
+  async handleCloudMessage(message: CloudIncomingMessage): Promise<void> {
     console.log(tp('cloud.mode.handle.message', { type: message.type }));
 
     // 构建回包路由信息：透传原始 _cloudRoute，并补充 targetWeb（如有 webId）
     // 这保证不论消息来自 Web 还是飞书，回包都携带正确的路由信息
-    const incomingRoute = (message as any)._cloudRoute;
-    const incomingWebId = (message as any).webId;
-    const buildReplyRoute = (): Record<string, any> => {
-      const route: Record<string, any> = { ...(incomingRoute || {}) };
+    const incomingRoute = message._cloudRoute;
+    const incomingWebId = message.webId;
+    const buildReplyRoute = (): CloudRoute => {
+      const route: CloudRoute = { ...(incomingRoute || {}) };
       if (incomingWebId) {
         route.targetWeb = incomingWebId;
       }
@@ -579,12 +551,10 @@ export class RemoteServer {
     try {
       switch (message.type) {
         case 'CREATE_SESSION':
-        case 'create_session':
+        case 'create_session': {
           console.log(t('cloud.mode.create.session'));
 
           // 在云端模式下，我们创建一个虚拟的WebSocket对象
-          // 从原始消息中提取webId用于路由
-          const originWebId = (message as any).webId;
 
           // 捕获当前消息的路由信息，供 virtualWs 回包时使用
           // 使用对象引用，以便后续 COMMAND 消息可以更新路由
@@ -594,7 +564,7 @@ export class RemoteServer {
             readyState: 1, // WebSocket.OPEN
             send: (data: string) => {
               if (this.cloudClient) {
-                const parsed = JSON.parse(data);
+                const parsed = JSON.parse(data) as CloudOutgoingMessage;
                 // 自动注入路由信息：让 session 的所有回包都能正确路由
                 if (!parsed._cloudRoute) {
                   parsed._cloudRoute = { ...sessionRouteRef.current };
@@ -656,12 +626,13 @@ export class RemoteServer {
             }
           }
           break;
+        }
 
-        case 'COMMAND':
+        case 'COMMAND': {
           console.log(t('cloud.mode.handle.command'));
 
           // 从消息中提取sessionId
-          const targetSessionId = (message as any).sessionId;
+          const targetSessionId = message.sessionId;
           if (!targetSessionId) {
             console.error(t('cloud.mode.command.no.session'));
             break;
@@ -683,7 +654,7 @@ export class RemoteServer {
 
           try {
             // 调用session的handleCommand方法
-            await sessionInfo.session.handleCommand(message as any);
+            await sessionInfo.session.handleCommand(message as CommandMessage);
             console.log(t('cloud.mode.command.success'));
           } catch (error) {
             console.error(tp('cloud.mode.command.failed', { error: error instanceof Error ? error.message : String(error) }));
@@ -692,6 +663,7 @@ export class RemoteServer {
             this.cloudClient.triggerSessionSync();
           }
           break;
+        }
 
         case 'FEISHU_IMAGE_MESSAGE':
         case 'feishu_image_message': {
@@ -760,8 +732,8 @@ export class RemoteServer {
 
             const response = MessageFactory.createGetModelsResponse(models);
             if (this.cloudClient) {
-              (response as any)._cloudRoute = buildReplyRoute();
-              this.cloudClient.sendToCloud(response);
+              const routedResponse = { ...response, _cloudRoute: buildReplyRoute() };
+              this.cloudClient.sendToCloud(routedResponse);
             }
           } catch (error) {
             console.error(`获取模型列表失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -778,7 +750,7 @@ export class RemoteServer {
             const currentModel = this.config.getModel();
 
             // 找到与此请求相关的 session（取最近活跃的）
-            let sessionId = (message as any).sessionId || '';
+            let sessionId = message.sessionId || '';
             let contextTokens = 0;
 
             if (!sessionId && this.sessions.size > 0) {
@@ -822,8 +794,8 @@ export class RemoteServer {
             });
 
             if (this.cloudClient) {
-              (response as any)._cloudRoute = buildReplyRoute();
-              this.cloudClient.sendToCloud(response);
+              const routedResponse = { ...response, _cloudRoute: buildReplyRoute() };
+              this.cloudClient.sendToCloud(routedResponse);
             }
           } catch (error) {
             console.error(`获取状态信息失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -832,11 +804,11 @@ export class RemoteServer {
         }
 
         case 'REQUEST_UI_STATE':
-        case 'request_ui_state':
+        case 'request_ui_state': {
           console.log(t('cloud.mode.handle.ui.state'));
 
           // 从消息中提取sessionId
-          const uiStateSessionId = (message as any).sessionId;
+          const uiStateSessionId = message.sessionId;
           if (!uiStateSessionId) {
             console.error(t('cloud.mode.ui.state.no.session'));
             break;
@@ -875,13 +847,14 @@ export class RemoteServer {
             console.error(tp('cloud.mode.ui.state.failed', { error: error instanceof Error ? error.message : String(error) }));
           }
           break;
+        }
 
         case 'INTERRUPT':
-        case 'interrupt':
+        case 'interrupt': {
           console.log(t('cloud.mode.handle.interrupt'));
 
           // 从消息中提取sessionId
-          const interruptSessionId = (message as any).sessionId;
+          const interruptSessionId = message.sessionId;
           if (!interruptSessionId) {
             console.error(t('cloud.mode.interrupt.no.session'));
             break;
@@ -904,13 +877,14 @@ export class RemoteServer {
             console.error(tp('cloud.mode.interrupt.failed', { error: error instanceof Error ? error.message : String(error) }));
           }
           break;
+        }
 
         case 'CLEAR_SESSION':
-        case 'clear_session':
+        case 'clear_session': {
           console.log(t('cloud.mode.handle.clear.session'));
 
           // 从消息中提取sessionId
-          const clearSessionId = (message as any).sessionId;
+          const clearSessionId = message.sessionId;
           if (!clearSessionId) {
             console.error(t('cloud.mode.clear.session.no.session'));
             break;
@@ -964,6 +938,7 @@ export class RemoteServer {
             }
           }
           break;
+        }
 
         default:
           console.log(tp('cloud.mode.unhandled.message', { type: message.type }));
@@ -976,7 +951,7 @@ export class RemoteServer {
   /**
    * 🆕 获取所有session信息 - 供CloudClient使用
    */
-  public getAllSessionsInfo(): Array<{
+  getAllSessionsInfo(): Array<{
     id: string;
     createdAt: number;
     lastActiveAt: number;
@@ -1011,14 +986,14 @@ export class RemoteServer {
   /**
    * 🆕 获取活跃session数量 - 供CloudClient使用
    */
-  public getActiveSessionCount(): number {
+  getActiveSessionCount(): number {
     return this.sessions.size;
   }
 
   /**
    * 🆕 检查是否为云端模式 - 供外部调用
    */
-  public isCloudMode(): boolean {
+  isCloudMode(): boolean {
     return this.cloudMode;
   }
 }
@@ -1047,7 +1022,7 @@ export async function startCloudMode(config: Config, cloudServerUrl: string): Pr
     await server.startCloudMode(cloudServerUrl);
 
     // 保持服务器运行
-    return new Promise((resolve) => {
+    return new Promise(() => {
       // 服务器将一直运行直到收到退出信号
     });
   } catch (error) {

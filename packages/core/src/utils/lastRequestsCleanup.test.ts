@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,7 @@ import {
  * NODE_ENV=production for the duration of the test, then restore.
  *
  * We also reroute HOME so the sweep can't touch the developer's real
- * `~/.deepv/last-requests/` directory.
+ * `~/.otto/last-requests/` directory.
  */
 describe('cleanupLastRequestsDir', () => {
   let prevHome: string | undefined;
@@ -31,7 +31,7 @@ describe('cleanupLastRequestsDir', () => {
   let tmpHome: string;
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'deepv-cleanup-test-'));
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-cleanup-test-'));
     prevHome = process.env.HOME;
     prevHomedrive = process.env.HOMEDRIVE;
     prevUserprofile = process.env.USERPROFILE;

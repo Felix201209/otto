@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback } from 'react';
 import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { useCallback,useState } from 'react';
 import { INIT_COMMAND_PROMPT } from '../commands/prompts/initPrompt.js';
+import { type HistoryItem,MessageType } from '../types.js';
 import { t } from '../utils/i18n.js';
-import { type HistoryItem, MessageType } from '../types.js';
 
 interface UseInitChoiceReturn {
   isInitChoiceDialogOpen: boolean;

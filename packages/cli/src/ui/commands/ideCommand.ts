@@ -138,7 +138,7 @@ export const ideCommand = (config: Config | null): SlashCommand | null => {
             context.ui.addItem(
               {
                 type: 'info',
-                text: 'VS Code companion extension installed successfully. Restart deepv-code in a fresh terminal window.',
+                text: 'VS Code companion extension installed successfully. Restart Otto in a fresh terminal window.',
               },
               Date.now(),
             );

@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useState, useEffect, useRef } from 'react';
-import { analyzeTextForHighlight, calculateHighlightableLength } from '../utils/emoji-utils.js';
+import { useEffect,useRef,useState } from 'react';
+import { analyzeTextForHighlight,calculateHighlightableLength } from '../utils/emoji-utils.js';
 
 interface HighlightedChar {
   char: string;
@@ -126,7 +125,7 @@ export const useLEDMarquee = (
 
     // 计算当前高亮区域内有多少个可高亮的字符
     let highlightableCount = 0;
-    let highlightedCount = 0;
+    const _highlightedCount = 0;
     
     // 创建一个更大的渐变窗口，包含暗色区域
     const gradientWindowSize = actualHighlightLength + 4; // 前后各加2个暗色位置

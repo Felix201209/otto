@@ -6,14 +6,33 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { configCommand } from './configCommand.js';
-import { CommandKind, CommandContext } from './types.js';
-import { Config } from 'otto-core';
-import { ApprovalMode } from 'otto-core';
+import { CommandKind, CommandContext, SlashCommandActionReturn } from './types.js';
+import { Config, ApprovalMode } from 'otto-core';
+import type { LoadedSettings } from '../../config/settings.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
+
+interface MockSettings {
+  merged: {
+    vimMode: boolean;
+  };
+  setValue: ReturnType<typeof vi.fn>;
+}
+
+function expectMessageContent(
+  result: SlashCommandActionReturn | void,
+  expected: string,
+): void {
+  expect(result).toBeDefined();
+  if (!result || result.type !== 'message') {
+    throw new Error('Expected message action result');
+  }
+  expect(result.content).toContain(expected);
+}
 
 describe('configCommand', () => {
   let mockConfig: Partial<Config>;
-  let mockSettings: any;
-  let mockContext: Partial<CommandContext>;
+  let mockSettings: MockSettings;
+  let mockContext: CommandContext;
 
   beforeEach(() => {
     mockConfig = {
@@ -24,7 +43,7 @@ describe('configCommand', () => {
       setAgentStyle: vi.fn(),
       getVsCodePluginMode: vi.fn().mockReturnValue(false),
       getUserMemory: vi.fn().mockReturnValue(null),
-      getGeminiClient: vi.fn(),
+      getOttoClient: vi.fn(),
     };
 
     mockSettings = {
@@ -34,23 +53,16 @@ describe('configCommand', () => {
       setValue: vi.fn(),
     };
 
-    mockContext = {
+    mockContext = createMockCommandContext({
       services: {
         config: mockConfig as Config,
-        settings: mockSettings,
-        git: undefined,
-        logger: console as any,
+        settings: mockSettings as unknown as LoadedSettings,
       },
       ui: {
         addItem: vi.fn(),
         toggleVimEnabled: vi.fn().mockResolvedValue(true),
-      } as any,
-      session: {
-        stats: {} as any,
-        cumulativeCredits: 0,
-        totalSessionCredits: 0,
       },
-    };
+    });
   });
 
   it('should have correct name and aliases', () => {
@@ -77,61 +89,51 @@ describe('configCommand', () => {
   });
 
   it('should open settings menu dialog when no args provided', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, '');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('dialog');
-    expect((result as any).dialog).toBe('settings-menu');
+    const result = await configCommand.action!(mockContext, '');
+    expect(result).toMatchObject({ type: 'dialog', dialog: 'settings-menu' });
   });
 
   it('should open theme dialog for theme subcommand', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'theme');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('dialog');
-    expect((result as any).dialog).toBe('theme');
+    const result = await configCommand.action!(mockContext, 'theme');
+    expect(result).toMatchObject({ type: 'dialog', dialog: 'theme' });
   });
 
   it('should open editor dialog for editor subcommand', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'editor');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('dialog');
-    expect((result as any).dialog).toBe('editor');
+    const result = await configCommand.action!(mockContext, 'editor');
+    expect(result).toMatchObject({ type: 'dialog', dialog: 'editor' });
   });
 
   it('should open model dialog for model subcommand without args', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'model');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('dialog');
-    expect((result as any).dialog).toBe('model');
+    const result = await configCommand.action!(mockContext, 'model');
+    expect(result).toMatchObject({ type: 'dialog', dialog: 'model' });
   });
 
   it('should toggle vim mode for vim subcommand', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'vim');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('message');
-    expect((result as any).content).toContain('✅');
+    const result = await configCommand.action!(mockContext, 'vim');
+    expectMessageContent(result, '✅');
     expect(mockContext.ui?.toggleVimEnabled).toHaveBeenCalled();
   });
 
   it('should display agent style status for agent-style subcommand', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'agent-style');
+    const result = await configCommand.action!(mockContext, 'agent-style');
     expect(result).toBeDefined();
     expect(result.type).toBe('message');
   });
 
   it('should handle unknown subcommand', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'unknown');
+    const result = await configCommand.action!(mockContext, 'unknown');
     expect(result).toBeDefined();
     expect(result.type).toBe('message');
     expect(result.messageType).toBe('error');
   });
 
   it('should provide completion suggestions', async () => {
-    const completions = await configCommand.completion!(mockContext as CommandContext, 'th');
+    const completions = await configCommand.completion!(mockContext, 'th');
     expect(completions).toContain('theme');
   });
 
   it('should provide all completion suggestions for empty partial', async () => {
-    const completions = await configCommand.completion!(mockContext as CommandContext, '');
+    const completions = await configCommand.completion!(mockContext, '');
     expect(completions).toContain('theme');
     expect(completions).toContain('vim');
     expect(completions).toContain('yolo');
@@ -139,35 +141,31 @@ describe('configCommand', () => {
   });
 
   it('should handle yolo enable', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'yolo on');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('message');
-    expect((result as any).content).toContain('enabled');
+    const result = await configCommand.action!(mockContext, 'yolo on');
+    expectMessageContent(result, 'enabled');
   });
 
   it('should handle yolo disable', async () => {
     mockConfig.getApprovalMode = vi.fn().mockReturnValue(ApprovalMode.YOLO);
-    const result = await configCommand.action!(mockContext as CommandContext, 'yolo off');
-    expect(result).toBeDefined();
-    expect(result.type).toBe('message');
-    expect((result as any).content).toContain('disabled');
+    const result = await configCommand.action!(mockContext, 'yolo off');
+    expectMessageContent(result, 'disabled');
   });
 
   it('should handle healthy-use enable', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'healthy-use on');
+    const result = await configCommand.action!(mockContext, 'healthy-use on');
     expect(result).toBeDefined();
     expect(result.type).toBe('message');
   });
 
   it('should handle healthy-use disable', async () => {
     mockConfig.getHealthyUseEnabled = vi.fn().mockReturnValue(true);
-    const result = await configCommand.action!(mockContext as CommandContext, 'healthy-use off');
+    const result = await configCommand.action!(mockContext, 'healthy-use off');
     expect(result).toBeDefined();
     expect(result.type).toBe('message');
   });
 
   it('should handle agent-style switch to cursor', async () => {
-    const result = await configCommand.action!(mockContext as CommandContext, 'agent-style cursor');
+    const result = await configCommand.action!(mockContext, 'agent-style cursor');
     expect(result).toBeDefined();
     expect(result.type).toBe('message');
     expect(mockConfig.setAgentStyle).toHaveBeenCalledWith('cursor');

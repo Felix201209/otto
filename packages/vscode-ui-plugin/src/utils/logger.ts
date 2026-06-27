@@ -23,16 +23,16 @@ export class Logger {
     private outputChannel: vscode.OutputChannel
   ) {
     // Get log level from configuration
-    const config = vscode.workspace.getConfiguration('deepv');
+    const config = vscode.workspace.getConfiguration('otto');
     const configLevel = config.get<string>('logLevel', 'info');
     this.logLevel = this.parseLogLevel(configLevel);
 
     // 🎯 设置日志文件路径
-    const logDir = path.join(os.homedir(), '.vscode', 'extensions', 'deepv-logs');
+    const logDir = path.join(os.homedir(), '.vscode', 'extensions', 'otto-logs');
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
-    this.logFilePath = path.join(logDir, 'deepv-debug.log');
+    this.logFilePath = path.join(logDir, 'otto-debug.log');
 
     // 🗑️ 启动时删除旧日志文件
     try {
@@ -40,7 +40,7 @@ export class Logger {
         fs.unlinkSync(this.logFilePath);
       }
       // 写入启动标记
-      this.writeToFile(`=== DeepV Extension Started at ${new Date().toISOString()} ===\n`);
+      this.writeToFile(`=== Otto Extension Started at ${new Date().toISOString()} ===\n`);
     } catch (error) {
       // 忽略文件删除错误
     }
@@ -106,9 +106,9 @@ export class Logger {
       const now = new Date();
       const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
       if (data) {
-        consoleFn(`[DeepV] - ${timeStr} - ${message}`, data);
+        consoleFn(`[Otto] - ${timeStr} - ${message}`, data);
       } else {
-        consoleFn(`[DeepV] - ${timeStr} - ${message}`);
+        consoleFn(`[Otto] - ${timeStr} - ${message}`);
       }
     }
   }
@@ -140,7 +140,7 @@ export class Logger {
 
   dispose() {
     // 写入结束标记
-    this.writeToFile(`=== DeepV Extension Disposed at ${new Date().toISOString()} ===\n`);
+    this.writeToFile(`=== Otto Extension Disposed at ${new Date().toISOString()} ===\n`);
     this.outputChannel.dispose();
   }
 }

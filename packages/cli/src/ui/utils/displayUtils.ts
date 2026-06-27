@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { cpLen, cpSlice, getRealLineCount } from './textUtils.js';
 import { Colors } from '../colors.js';
+import { cpLen,cpSlice,getRealLineCount } from './textUtils.js';
 
 
 // --- Thresholds ---
@@ -194,6 +194,7 @@ export function sanitizeText(text: string): string {
   if (!text) return text;
 
   // 移除ANSI转义序列（颜色代码、光标控制等）
+  // eslint-disable-next-line no-control-regex -- 需要匹配 ESC 控制字符来清理终端 ANSI 转义序列。
   let cleaned = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
   // 先规范化换行符
@@ -201,6 +202,7 @@ export function sanitizeText(text: string): string {
 
   // 移除有害的控制字符，但保留换行符(\n=\x0A)和制表符(\t=\x09)
   // 移除: \x00-\x08, \x0B, \x0C, \x0E-\x1F, \x7F
+  // eslint-disable-next-line no-control-regex -- 需要清理终端文本中的控制字符，同时保留换行和制表符。
   cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 
   // 移除其他可能有问题的字符，但不影响换行符

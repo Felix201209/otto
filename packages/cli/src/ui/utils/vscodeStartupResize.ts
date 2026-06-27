@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,11 +44,11 @@ function isIDEEnvironment(): boolean {
  * 
  * 这个过程会强制终端重新计算坐标系统，解决光标位置不准确的问题
  */
-function triggerStartupResize(): void {
+function _triggerStartupResize(): void {
   if (!process.stdout.isTTY) return;
   
   const originalColumns = process.stdout.columns || 80;
-  const originalRows = process.stdout.rows || 24;
+  const _originalRows = process.stdout.rows || 24;
   
   // 简单的resize模拟：暂时调整为略小的尺寸再恢复
   setTimeout(() => {
@@ -100,7 +99,7 @@ export function performStartupResize(options: {
   if (!process.stdout.isTTY) return;
   
   const originalColumns = process.stdout.columns || 80;
-  const originalRows = process.stdout.rows || 24;
+  const _originalRows = process.stdout.rows || 24;
   
   // 使用自定义延迟
   setTimeout(() => {

@@ -17,7 +17,7 @@ export const useLogger = () => {
     const newLogger = new Logger(getSessionId());
     /**
      * Start async initialization, no need to await. Using await slows down the
-     * time from launch to see the gemini-cli prompt and it's better to not save
+     * time from launch to see the Otto prompt and it's better to not save
      * messages than for the cli to hanging waiting for the logger to loading.
      */
     newLogger

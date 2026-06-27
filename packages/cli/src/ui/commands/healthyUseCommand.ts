@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +50,7 @@ export const healthyUseCommand: SlashCommand = {
 
       settings.setValue(SettingScope.User, 'healthyUse', true);
       // 同时更新当前运行中的config对象
-      (config as any).healthyUse = true;
+      Object.assign(config, { healthyUse: true });
 
       return {
         type: 'message',
@@ -71,7 +70,7 @@ export const healthyUseCommand: SlashCommand = {
 
       settings.setValue(SettingScope.User, 'healthyUse', false);
       // 同时更新当前运行中的config对象
-      (config as any).healthyUse = false;
+      Object.assign(config, { healthyUse: false });
 
       return {
         type: 'message',

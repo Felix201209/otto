@@ -15,8 +15,8 @@ import { getFolderStructure } from '../utils/getFolderStructure.js';
 import { detectTerminalEnvironment, formatTerminalInfo } from '../utils/terminalDetection.js';
 import {
   Turn,
-  ServerGeminiStreamEvent,
-  GeminiEventType,
+  ServerOttoStreamEvent,
+  OttoEventType,
   ChatCompressionInfo,
   ModelSwitchResult,
 } from './turn.js';
@@ -28,7 +28,7 @@ import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
 import { SceneType, SceneManager } from './sceneManager.js';
 import { checkNextSpeaker } from '../utils/nextSpeakerChecker.js';
 import { reportError } from '../utils/errorReporting.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { tokenLimit } from './tokenLimits.js';
 import {
@@ -70,8 +70,8 @@ function isThinkingSupported(_model: string) {
  */
 // 移除 findIndexAfterFraction，现在使用 CompressionService 中的版本
 
-export class GeminiClient {
-  private chat?: GeminiChat;
+export class OttoClient {
+  private chat?: OttoChat;
   private contentGenerator?: ContentGenerator;
   private embeddingModel: string;
   private generateContentConfig: GenerateContentConfig = {
@@ -145,7 +145,7 @@ export class GeminiClient {
         .getEventHandler()
         .fireSessionStartEvent(SessionStartSource.Startup);
     } catch (hookError) {
-      logger.warn(`[GeminiClient] SessionStart hook execution failed: ${hookError}`);
+      logger.warn(`[OttoClient] SessionStart hook execution failed: ${hookError}`);
     }
 
     this.contentGenerator = await createContentGenerator(
@@ -171,7 +171,7 @@ export class GeminiClient {
         .getEventHandler()
         .fireSessionEndEvent(endReason);
     } catch (hookError) {
-      logger.warn(`[GeminiClient] SessionEnd hook execution failed: ${hookError}`);
+      logger.warn(`[OttoClient] SessionEnd hook execution failed: ${hookError}`);
     }
   }
 
@@ -207,17 +207,17 @@ export class GeminiClient {
   setGoalContext(ctx: GoalContext): void {
     this.activeGoalContext = ctx;
     logger.info(
-      `[GeminiClient] Goal context activated. T0=${new Date(ctx.startedAt).toISOString()}, hours=${ctx.hours}, taskLen=${ctx.task.length}`,
+      `[OttoClient] Goal context activated. T0=${new Date(ctx.startedAt).toISOString()}, hours=${ctx.hours}, taskLen=${ctx.task.length}`,
     );
 
     // 🎯 动态注册 goal_achieved 工具（仅在 goal 模式激活时存在，保障 AI 无法在普通模式下滥用）
     this.config.getToolRegistry().then((toolRegistry) => {
       toolRegistry.registerTool(new GoalAchievedTool(this.config));
       this.setTools().catch((err) => {
-        logger.error('[GeminiClient] Failed to reload tools after registering goal_achieved:', err);
+        logger.error('[OttoClient] Failed to reload tools after registering goal_achieved:', err);
       });
     }).catch((err) => {
-      logger.error('[GeminiClient] Failed to get tool registry for goal_achieved:', err);
+      logger.error('[OttoClient] Failed to get tool registry for goal_achieved:', err);
     });
   }
 
@@ -227,7 +227,7 @@ export class GeminiClient {
    */
   clearGoalContext(): void {
     if (this.activeGoalContext) {
-      logger.info('[GeminiClient] Goal context cleared.');
+      logger.info('[OttoClient] Goal context cleared.');
     }
     this.activeGoalContext = null;
 
@@ -236,11 +236,11 @@ export class GeminiClient {
       const removed = toolRegistry.unregisterTool(GoalAchievedTool.Name);
       if (removed) {
         this.setTools().catch((err) => {
-          logger.error('[GeminiClient] Failed to reload tools after unregistering goal_achieved:', err);
+          logger.error('[OttoClient] Failed to reload tools after unregistering goal_achieved:', err);
         });
       }
     }).catch((err) => {
-      logger.error('[GeminiClient] Failed to get tool registry to unregister goal_achieved:', err);
+      logger.error('[OttoClient] Failed to get tool registry to unregister goal_achieved:', err);
     });
   }
 
@@ -258,7 +258,7 @@ export class GeminiClient {
   setLoopContext(ctx: LoopContext): void {
     this.activeLoopContext = ctx;
     logger.info(
-      `[GeminiClient] Loop context activated. IntervalMs=${ctx.intervalMs}, promptLen=${ctx.prompt.length}`,
+      `[OttoClient] Loop context activated. IntervalMs=${ctx.intervalMs}, promptLen=${ctx.prompt.length}`,
     );
   }
 
@@ -267,7 +267,7 @@ export class GeminiClient {
    */
   clearLoopContext(): void {
     if (this.activeLoopContext) {
-      logger.info('[GeminiClient] Loop context cleared.');
+      logger.info('[OttoClient] Loop context cleared.');
     }
     this.activeLoopContext = null;
   }
@@ -323,8 +323,8 @@ export class GeminiClient {
    * 任务交给一个能吞下 1M+ 输入的模型，否则压缩请求自身就会被上游拒。
    *
    * 决策分两条路：
-   *   1) DeepV 云端协议用户（非自定义模型）→ 'x-ai/grok-4.1-fast'。
-   *      DeepVServer 内部能解析这个 ID 并路由到云端 grok 实例。
+   *   1) Otto 云端协议用户（非自定义模型）→ 'x-ai/grok-4.1-fast'。
+   *      Otto Server 内部能解析这个 ID 并路由到云端 grok 实例。
    *   2) 自定义模型直连用户（isCustomModel === true）→ 在他们配置的
    *      customModels 列表里寻找一个 1M+ 上下文模型。优先级：
    *        a. modelId 含 "grok"（grok-4 / grok-4-fast 等）
@@ -332,7 +332,7 @@ export class GeminiClient {
    *      找不到合适候选时，**保留** SceneManager 给出的默认值
    *      'gemini-2.5-flash' —— 让下游 createTemporaryChat 的
    *      isUsingCustomModel 分支再做一次 fallback（自定义 gemini-flash → 主模型）。
-   *      关键：绝不能直接吐 'x-ai/grok-4.1-fast'，因为 DeepVServer 解析不到
+   *      关键：绝不能直接吐 'x-ai/grok-4.1-fast'，因为 Otto Server 解析不到
    *      自定义模型用户的私有 baseUrl/apiKey，必然 401/404 静默失败。
    *
    * @param defaultCompressionModel SceneManager 给出的默认压缩模型 ID
@@ -344,7 +344,7 @@ export class GeminiClient {
     const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
 
     if (!isUsingCustomModel) {
-      // 云端协议用户：维持原行为，让 DeepVServer 路由到云端 grok。
+      // 云端协议用户：维持原行为，让 Otto Server 路由到云端 grok。
       return 'x-ai/grok-4.1-fast';
     }
 
@@ -387,7 +387,7 @@ export class GeminiClient {
     const { hasAvailableProxyServer, getActiveProxyServerUrl } = await import('../config/proxyConfig.js');
 
     if (!hasAvailableProxyServer()) {
-      throw new Error('DeepX Code server required for all models but is not available');
+      throw new Error('Otto server required for all models but is not available');
     }
 
     const proxyServerUrl = getActiveProxyServerUrl();
@@ -399,21 +399,21 @@ export class GeminiClient {
   }
 
   /**
-   * 创建临时的 GeminiChat 实例用于单次内容生成
+   * 创建临时的 OttoChat 实例用于单次内容生成
    * 提供完整的API日志、Token统计、错误处理等功能
    *
    * @param scene 使用场景，用于选择合适的模型
    * @param model 可选的特定模型，会覆盖场景推荐的模型
    * @param agentContext 代理上下文，用于区分不同的调用来源
    * @param options 额外配置选项，例如是否禁用系统提示词
-   * @returns 临时 GeminiChat 实例
+   * @returns 临时 OttoChat 实例
    */
   async createTemporaryChat(
     scene: SceneType,
     model?: string,
     agentContext: AgentContext = { type: 'sub', agentId: SceneManager.getSceneDisplayName(scene) },
     options?: { disableSystemPrompt?: boolean; emptySystemPrompt?: boolean }
-  ): Promise<GeminiChat> {
+  ): Promise<OttoChat> {
     const sceneModel = SceneManager.getModelForScene(scene);
     let modelToUse = model || sceneModel || this.config.getModel();
 
@@ -488,7 +488,7 @@ export class GeminiClient {
       ? this.generateContentConfig
       : this.generateContentConfig;
 
-    return new GeminiChat(
+    return new OttoChat(
       this.config,
       contentGenerator,
       {
@@ -510,7 +510,7 @@ export class GeminiClient {
     this.getChat().addHistory(content);
   }
 
-  getChat(): GeminiChat {
+  getChat(): OttoChat {
     if (!this.chat) {
       throw new Error('Chat not initialized');
     }
@@ -521,9 +521,9 @@ export class GeminiClient {
    * 等待Chat初始化完成，支持重试
    * @param maxRetries 最大重试次数
    * @param initialDelay 初始延迟（毫秒）
-   * @returns 初始化完成的GeminiChat实例
+   * @returns 初始化完成的OttoChat实例
    */
-  async waitForChatInitialized(maxRetries: number = 10, initialDelay: number = 100): Promise<GeminiChat> {
+  async waitForChatInitialized(maxRetries: number = 10, initialDelay: number = 100): Promise<OttoChat> {
     let retries = 0;
     let delay = initialDelay;
 
@@ -561,7 +561,7 @@ export class GeminiClient {
     // 检查是否超过压缩阈值
     if (this.sessionTokenCount >= compressionTokenThreshold) {
       this.needsCompression = true;
-      logger.info(`[GeminiClient] Token threshold reached: ${this.sessionTokenCount} >= ${this.compressionThreshold}, scheduling compression for next conversation`);
+      logger.info(`[OttoClient] Token threshold reached: ${this.sessionTokenCount} >= ${this.compressionThreshold}, scheduling compression for next conversation`);
     }
   }
 
@@ -571,7 +571,7 @@ export class GeminiClient {
       const compressionTokenThreshold = this.compressionThreshold * tokenLimit(this.config.getModel(), this.config);
       if (this.sessionTokenCount >= compressionTokenThreshold) {
         this.needsCompression = true;
-        logger.info(`[GeminiClient] Token threshold reached: ${this.sessionTokenCount} >= ${this.compressionThreshold}, scheduling compression for next conversation`);
+        logger.info(`[OttoClient] Token threshold reached: ${this.sessionTokenCount} >= ${this.compressionThreshold}, scheduling compression for next conversation`);
       }
     }
   }
@@ -646,9 +646,9 @@ export class GeminiClient {
     // 🛡️ /session select / IDE companion 等路径会直接通过此入口注入历史，
     //    在历史本身已经损坏的情况下（中断、截断、压缩失误），下一次 sendMessage
     //    无论走 Gemini 原生还是 CustomModel 直连，都会因为孤立的 functionResponse 报 400。
-    //    所以这里统一用 GeminiChat.sanitizeRequestContents 在写入前做一次卫士级清洗。
+    //    所以这里统一用 OttoChat.sanitizeRequestContents 在写入前做一次卫士级清洗。
     const sanitized = Array.isArray(history)
-      ? GeminiChat.sanitizeRequestContents(history)
+      ? OttoChat.sanitizeRequestContents(history)
       : history;
     this.getChat().setHistory(sanitized);
   }
@@ -681,7 +681,7 @@ export class GeminiClient {
   }
 
   /**
-   * Replace the active {@link GeminiChat} with one hydrated from persisted
+   * Replace the active {@link OttoChat} with one hydrated from persisted
    * history. Used by the ACP `loadSession` flow and by session-resume
    * commands. The provided `history` is passed to {@link startChat} as
    * `extraHistory`, which means the initial environment/system context is
@@ -692,7 +692,7 @@ export class GeminiClient {
     // 🛡️ 与 setHistory 保持一致：通过 fixRequestContents 兜底清洗历史。
     //    ACP 路径（IDE companion）的会话水化也会走到这里。
     const sanitized = Array.isArray(history)
-      ? GeminiChat.sanitizeRequestContents(history)
+      ? OttoChat.sanitizeRequestContents(history)
       : history;
     this.chat = await this.startChat(sanitized);
   }
@@ -816,7 +816,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
     return initialParts;
   }
 
-  async startChat(extraHistory?: Content[], agentContext?: AgentContext): Promise<GeminiChat> {
+  async startChat(extraHistory?: Content[], agentContext?: AgentContext): Promise<OttoChat> {
     const envParts = await this.getEnvironment();
     const toolRegistry = await this.config.getToolRegistry();
     const toolDeclarations = toolRegistry.getFunctionDeclarations();
@@ -859,7 +859,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
 
       // 🐛 FIX: 同上，不再在这里写死 includeThoughts:false 覆盖下游。
       const generateContentConfigWithThinking = this.generateContentConfig;
-      return new GeminiChat(
+      return new OttoChat(
         this.config,
         this.getContentGenerator(),
         {
@@ -888,7 +888,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
     prompt_id: string,
     turns: number = this.MAX_TURNS,
     originalModel?: string,
-  ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
+  ): AsyncGenerator<ServerOttoStreamEvent, Turn> {
     // 🪝 触发 BeforeAgent 钩子
     try {
       const beforeAgentResult = await this.config.getHookSystem()
@@ -898,7 +898,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       // 检查钩子是否阻止执行
       if (beforeAgentResult?.finalOutput?.shouldStopExecution?.()) {
         yield {
-          type: GeminiEventType.Error,
+          type: OttoEventType.Error,
           value: {
             error: {
               message: `Agent execution blocked by BeforeAgent hook`
@@ -908,7 +908,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
         return new Turn(this.getChat(), prompt_id, this.config.getModel(), this.config);
       }
     } catch (hookError) {
-      logger.warn(`[GeminiClient] BeforeAgent hook execution failed: ${hookError}`);
+      logger.warn(`[OttoClient] BeforeAgent hook execution failed: ${hookError}`);
     }
 
     if (this.lastPromptId !== prompt_id) {
@@ -920,7 +920,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       this.config.getMaxSessionTurns() > 0 &&
       this.sessionTurnCount > this.config.getMaxSessionTurns()
     ) {
-      yield { type: GeminiEventType.MaxSessionTurns };
+      yield { type: OttoEventType.MaxSessionTurns };
       return new Turn(this.getChat(), prompt_id, this.config.getModel(), this.config);
     }
     // Ensure turns never exceeds MAX_TURNS to prevent infinite loops
@@ -966,7 +966,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
 
       if (compressed) {
         yield {
-          type: GeminiEventType.ChatCompressed,
+          type: OttoEventType.ChatCompressed,
           value: { success: true, info: compressed },
         };
         this.resetCompressionFlag(); // 压缩完成后重置标记
@@ -979,7 +979,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
         if (fallback.applied) {
           console.log(`[sendMessageStream] MicroCompact fallback succeeded: cleared ${fallback.clearedCount} old tool results`);
           yield {
-            type: GeminiEventType.ChatCompressed,
+            type: OttoEventType.ChatCompressed,
             value: {
               success: true,
               degraded: true,
@@ -990,7 +990,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
           this.resetCompressionFlag(); // 降级成功后也重置标记，让对话继续
         } else {
           yield {
-            type: GeminiEventType.ChatCompressed,
+            type: OttoEventType.ChatCompressed,
             value: {
               success: false,
               reason: compressionError ?? 'compression_returned_null',
@@ -1065,7 +1065,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
     const loopDetected = await this.loopDetector.turnStarted(signal);
     if (loopDetected) {
       const loopType = this.loopDetector.getDetectedLoopType();
-      yield { type: GeminiEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
+      yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
       // Add feedback to chat history so AI understands why it was stopped
       this.addLoopDetectionFeedbackToHistory(loopType);
       return turn;
@@ -1077,20 +1077,20 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       if (this.loopDetector.addAndCheck(event)) {
         const loopType = this.loopDetector.getDetectedLoopType();
         logger.info(`[STOP-DEBUG] sendMessageStream: LOOP DETECTED, type=${loopType}, turn will be stopped`);
-        yield { type: GeminiEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
+        yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
         // Add feedback to chat history so AI understands why it was stopped
         this.addLoopDetectionFeedbackToHistory(loopType);
         return turn;
       }
 
       // 记录 Finished 事件的 finishReason
-      if (event.type === GeminiEventType.Finished) {
+      if (event.type === OttoEventType.Finished) {
         lastFinishReason = event.value;
         logger.info(`[STOP-DEBUG] sendMessageStream: received Finished event, finishReason=${lastFinishReason}, errorDetails=${event.errorDetails || 'none'}`);
       }
 
       // 处理TokenUsage事件，累积token计数并判断是否需要下次压缩
-      if (event.type === GeminiEventType.TokenUsage) {
+      if (event.type === OttoEventType.TokenUsage) {
         const tokenInfo = event.value;
         this.updateTokenCountAndCheckCompression(
           tokenInfo.inputTokens,
@@ -1170,7 +1170,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
           false
         );
     } catch (hookError) {
-      logger.warn(`[GeminiClient] AfterAgent hook execution failed: ${hookError}`);
+      logger.warn(`[OttoClient] AfterAgent hook execution failed: ${hookError}`);
     }
 
     return turn;
@@ -1202,7 +1202,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
             force ? PreCompressTrigger.Manual : PreCompressTrigger.Auto
           );
       } catch (hookError) {
-        logger.warn(`[GeminiClient] PreCompress hook execution failed: ${hookError}`);
+        logger.warn(`[OttoClient] PreCompress hook execution failed: ${hookError}`);
       }
 
       const curatedHistory = this.getChat().getHistory(true);
@@ -1213,13 +1213,13 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       // Using 900,000 as a safe threshold to allow buffer for output and overhead.
       //
       // ⚠️ 必须分两条路：
-      //   1) DeepV 云端协议用户 → 'x-ai/grok-4.1-fast'（云端可解析）
+      //   1) Otto 云端协议用户 → 'x-ai/grok-4.1-fast'（云端可解析）
       //   2) 自定义模型直连用户 → 在他们配置的 customModels 里找 1M+ 上下文模型
       //      ('grok-4' / 'gemini-...-pro' / 'gemini-...-flash' 等)。如果找不到，
       //      就保留 SceneManager 默认值 'gemini-2.5-flash' —— 让下游
       //      createTemporaryChat 的 isUsingCustomModel 分支再兜底替换为
       //      用户自定义的 gemini-flash（仍然是直连他们自己的 endpoint）。
-      //   把云端模型 ID 直接塞给自定义模型用户，DeepVServer 解析不到他们的
+      //   把云端模型 ID 直接塞给自定义模型用户，Otto Server 解析不到他们的
       //   私有 baseUrl/apiKey，必然 401/404，导致压缩静默失败。
       if (this.sessionTokenCount > 900000) {
         compressionModel = this.resolveLargeContextCompressionModel(compressionModel);
@@ -1234,7 +1234,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
         curatedHistory,
         historyModel!,
         compressionModel!,
-        this, // 传递 GeminiClient 实例而不是 ContentGenerator
+        this, // 传递 OttoClient 实例而不是 ContentGenerator
         prompt_id,
         abortSignal,
         force
@@ -1242,7 +1242,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
 
       if (!compressionResult || !compressionResult.success) {
         if (compressionResult?.error) {
-          console.warn(`[GeminiClient] Compression failed: ${compressionResult.error}`);
+          console.warn(`[OttoClient] Compression failed: ${compressionResult.error}`);
         }
         return null;
       }
@@ -1386,7 +1386,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       let compressionModel = SceneManager.getModelForScene(SceneType.COMPRESSION);
 
       // 🚀 Dynamic Model Upgrade: 与 tryCompressChat 路径保持一致 —— 自定义
-      //   模型用户不能被强行改写为云端 'x-ai/grok-4.1-fast'，否则 DeepVServer
+      //   模型用户不能被强行改写为云端 'x-ai/grok-4.1-fast'，否则 Otto Server
       //   解析不到他们的私有 baseUrl / apiKey，压缩 100% 失败。
       //   resolveLargeContextCompressionModel 会按"是否自定义模型"分两条路决策。
       if (this.sessionTokenCount > 900000) {

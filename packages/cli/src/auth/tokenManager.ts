@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -191,7 +190,7 @@ export class TokenManager {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepCode CLI TokenManager'
+          'User-Agent': 'Otto CLI TokenManager'
         },
         body: JSON.stringify({
           refreshToken: this.refreshToken
@@ -237,7 +236,7 @@ export class TokenManager {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepCode CLI TokenManager'
+          'User-Agent': 'Otto CLI TokenManager'
         },
         body: JSON.stringify({
           feishuAccessToken,
@@ -366,7 +365,7 @@ export class TokenManager {
 
       this.accessToken = accessToken;
       this.refreshToken = refreshToken;
-      this.tokenExpiry = expiry ? parseInt(expiry) : null;
+      this.tokenExpiry = expiry ? parseInt(expiry, 10) : null;
 
       if (userInfo) {
         try {
@@ -482,14 +481,11 @@ export class TokenManager {
    * 加密数据
    */
   private encrypt(data: string): Buffer {
-    if (!this.encryptionKey) {
-      throw new Error('Encryption key not initialized');
-    }
+    const key32 = this.getCipherKey();
 
     const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipher('aes-256-cbc', this.encryptionKey);
-    cipher.update(data, 'utf8');
-    const encrypted = cipher.final();
+    const cipher = crypto.createCipheriv('aes-256-cbc', key32, iv);
+    const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
 
     return Buffer.concat([iv, encrypted]);
   }
@@ -498,16 +494,25 @@ export class TokenManager {
    * 解密数据
    */
   private decrypt(encryptedData: Buffer): string {
+    const key32 = this.getCipherKey();
+
+    const iv = encryptedData.subarray(0, 16);
+    const ciphertext = encryptedData.subarray(16);
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key32, iv);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return decrypted.toString('utf8');
+  }
+
+  /**
+   * 从加密密钥材料稳定派生 32 字节 AES-256 密钥
+   * （SHA-256 对同一份密钥材料每次派生结果一致，且无论原始密钥长度都得到 32 字节）
+   */
+  private getCipherKey(): Buffer {
     if (!this.encryptionKey) {
       throw new Error('Encryption key not initialized');
     }
-
-    const iv = encryptedData.slice(0, 16);
-    const encrypted = encryptedData.slice(16);
-
-    const decipher = crypto.createDecipher('aes-256-cbc', this.encryptionKey);
-    decipher.update(encrypted);
-    return decipher.final('utf8');
+    return crypto.createHash('sha256').update(this.encryptionKey).digest();
   }
 
   /**

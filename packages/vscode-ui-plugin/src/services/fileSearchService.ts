@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -36,8 +36,8 @@ export interface FileSearchOptions {
   includeDotfiles?: boolean;
   /** 是否遵守Git ignore */
   respectGitIgnore?: boolean;
-  /** 是否遵守DeepV ignore */
-  respectDeepVIgnore?: boolean;
+  /** 是否遵守Otto ignore */
+  respectOttoIgnore?: boolean;
 }
 
 export class FileSearchService {

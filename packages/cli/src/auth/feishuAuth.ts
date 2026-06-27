@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,7 +56,7 @@ export class FeishuAuthHandler {
    * 修复: 使用正确的飞书OAuth2授权URL和参数格式
    * 参考: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/authen-v1/authorize/get
    */
-  public buildAuthUrl(): string {
+  buildAuthUrl(): string {
     const params = new URLSearchParams({
       app_id: this.config.appId,  // 飞书使用app_id参数
       redirect_uri: this.config.redirectUri,
@@ -80,10 +79,10 @@ export class FeishuAuthHandler {
    * 1. 启动本地服务器接收回调
    * 2. 自动打开浏览器到飞书授权页面
    */
-  public async startAuthFlow(): Promise<FeishuAuthResult> {
+  async startAuthFlow(): Promise<FeishuAuthResult> {
     return new Promise((resolve) => {
       const url = new URL(this.config.redirectUri);
-      let port = parseInt(url.port) || 6699;
+      const port = parseInt(url.port, 10) || 6699;
 
       this.server = http.createServer(async (req, res) => {
         if (!req.url) {
@@ -125,7 +124,7 @@ export class FeishuAuthHandler {
           this.openBrowser(authUrl);
         });
 
-        this.server!.on('error', (err: any) => {
+        this.server!.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'EADDRINUSE') {
             console.log(`⚠️ 端口 ${currentPort} 被占用，尝试端口 ${currentPort + 1}`);
             if (currentPort < 6709) { // 最多尝试10个端口 (6699-6709)
@@ -174,7 +173,7 @@ export class FeishuAuthHandler {
       args = [url];
     }
 
-    execFile(file, args, (error: any) => {
+    execFile(file, args, (error: Error | null) => {
       if (error) {
         console.error(`❌ 无法自动打开浏览器: ${error.message}`);
         console.log(`📋 请手动复制以下URL到浏览器中打开:`);
@@ -194,7 +193,7 @@ export class FeishuAuthHandler {
     res: http.ServerResponse,
     resolve: (result: FeishuAuthResult) => void
   ): Promise<void> {
-    // 直接处理飞书认证回调，不再处理DeepVlab
+    // 直接处理飞书认证回调，不再处理Otto
     console.log('🔄 [FeishuAuth] 处理飞书认证回调（旧流程）');
     await this.handleCallback(reqUrl, res, resolve);
   }
@@ -269,7 +268,7 @@ export class FeishuAuthHandler {
       grant_type: 'authorization_code',
       client_id: this.config.appId,        // 使用标准OAuth2参数名
       client_secret: this.config.appSecret, // 使用标准OAuth2参数名
-      code: code,
+      code,
       redirect_uri: this.config.redirectUri,
     });
 
@@ -531,7 +530,8 @@ export function createFeishuAuthHandler(
     appId,
     appSecret,
     redirectUri: 'http://localhost:7863/callback',  // 使用与飞书应用配置匹配的回调地址
-    nextStepUrl: nextStepUrl || process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai',
+    // BYO-key: 仅展示用途的下一步地址；未配置时为空字符串。
+    nextStepUrl: nextStepUrl || process.env.OTTO_SERVER_URL || '',
   };
 
   return new FeishuAuthHandler(config);

@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useState } from 'react';
-import { Config } from 'otto-core';
-import { LoadedSettings } from '../../config/settings.js';
+import { useCallback,useState } from 'react';
 
 export interface UseSettingsMenuReturn {
   isSettingsMenuDialogOpen: boolean;

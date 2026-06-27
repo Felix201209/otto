@@ -6,10 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { privacyCommand } from './privacyCommand.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 describe('privacyCommand', () => {
   it('should return a dialog action to open the privacy dialog', async () => {
-    const result = await privacyCommand.action!({} as any, '');
+    const result = await privacyCommand.action!(createMockCommandContext(), '');
     expect(result).toEqual({
       type: 'dialog',
       dialog: 'privacy',

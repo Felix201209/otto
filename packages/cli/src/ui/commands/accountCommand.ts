@@ -1,12 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { CommandKind, SlashCommand, SlashCommandActionReturn, CommandContext, MessageActionReturn } from './types.js';
+import { CommandKind, SlashCommand, SlashCommandActionReturn, CommandContext } from './types.js';
 import { ProxyAuthManager } from 'otto-core';
 import open from 'open';
 import { t, tp } from '../utils/i18n.js';
@@ -22,7 +21,7 @@ interface TempCodeResponse {
 /**
  * 获取临时登录代码并打开用户信息页面
  */
-async function generateTempCodeAndOpenUserInfo(context?: CommandContext): Promise<void> {
+async function generateTempCodeAndOpenUserInfo(_context?: CommandContext): Promise<void> {
   try {
     // 使用ProxyAuthManager获取当前的JWT token
     let accessToken: string | null = null;
@@ -46,7 +45,7 @@ async function generateTempCodeAndOpenUserInfo(context?: CommandContext): Promis
     console.log('🔄 正在生成临时登录代码...');
 
     // 获取服务器端点
-    const serverEndpoint = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+    const serverEndpoint = process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || '';
 
     // 请求生成临时代码
     const response = await fetch(`${serverEndpoint}/auth/temp-code/generate`, {
@@ -54,7 +53,7 @@ async function generateTempCodeAndOpenUserInfo(context?: CommandContext): Promis
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,
-        'User-Agent': 'DeepCode CLI',
+        'User-Agent': 'Otto CLI',
       },
       body: JSON.stringify({
         expiresIn: 600, // 10分钟有效期
@@ -75,7 +74,7 @@ async function generateTempCodeAndOpenUserInfo(context?: CommandContext): Promis
     }
 
     // 构建登录URL
-    const loginUrl = `https://dvcode.deepvlab.ai/token-login?code=${result.code}&redirect=/userinfo&method=dvcode`;
+    const loginUrl = `https://www.otto.bot/token-login?code=${result.code}&redirect=/userinfo&method=otto`;
 
     console.log('✅ 临时登录代码生成成功');
     console.log(`⏰ 代码有效期: ${result.expiresIn}秒`);
@@ -93,7 +92,7 @@ async function generateTempCodeAndOpenUserInfo(context?: CommandContext): Promis
     // 增强错误日志，方便调试
     if (process.env.DEBUG || process.env.FILE_DEBUG) {
       console.error('🔍 详细错误信息:', error);
-      const endpoint = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+      const endpoint = process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || '';
       console.error('🌐 使用的服务器端点:', endpoint);
     }
 

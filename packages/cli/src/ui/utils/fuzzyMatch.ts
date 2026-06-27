@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -156,7 +155,7 @@ function fuzzyMatchCharacters(
   let queryIdx = 0;
 
   // 定义分隔符：这些字符在模糊匹配中通常被忽略
-  const isSeparator = (c: string) => /[\-\_\.\/\\\s]/.test(c);
+  const isSeparator = (c: string) => /[-_./\\\s]/.test(c);
 
   while (queryIdx < query.length) {
     const qChar = query[queryIdx].toLowerCase();

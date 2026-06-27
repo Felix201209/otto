@@ -137,14 +137,14 @@ function buildFakeAIService(opts: {
 
   const fakeConfig = {
     getModel: () => opts.runtimeModel,
-    getGeminiClient: () => fakeGeminiClient,
+    getOttoClient: () => fakeGeminiClient,
     setModel: setModelMock,
   };
 
   return {
     isServiceInitialized: opts.initialized,
     getConfig: () => (opts.initialized ? fakeConfig : undefined),
-    getGeminiClient: () => (opts.initialized ? fakeGeminiClient : undefined),
+    getOttoClient: () => (opts.initialized ? fakeGeminiClient : undefined),
     initialize: vi.fn(async () => {
       /* not used in initialized=true path */
     }),

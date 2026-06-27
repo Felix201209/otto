@@ -44,7 +44,7 @@ export class AuthManager {
     try {
       // 🎯 从 VSCode 扩展设置中读取 customProxyServerUrl
       let customProxyServerUrl: string | undefined;
-      const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+      const vscodeConfig = vscode.workspace.getConfiguration('otto');
       const vscodeCustomProxyUrl = vscodeConfig.get<string>('customProxyServerUrl', '');
       if (vscodeCustomProxyUrl && vscodeCustomProxyUrl.trim()) {
         customProxyServerUrl = vscodeCustomProxyUrl.trim();

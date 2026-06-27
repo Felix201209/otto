@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,7 @@ import {
 } from './scopes.js';
 
 describe('scopes/REQUIRED_APP_SCOPES', () => {
-  it('contains the canonical core scopes for a dvcode bot', () => {
+  it('contains the canonical core scopes for a otto bot', () => {
     // Smoke test: ensure the 4 most critical capabilities are listed.
     // If anyone removes one of these, the bot literally stops working.
     const list = [...REQUIRED_APP_SCOPES];
@@ -27,7 +27,7 @@ describe('scopes/REQUIRED_APP_SCOPES', () => {
   });
 
   it('does NOT contain the high-risk send_as_user scope', () => {
-    // Mirrors openclaw-lark's HIGH_RISK_SCOPES policy. dvcode never sends
+    // Mirrors openclaw-lark's HIGH_RISK_SCOPES policy. otto never sends
     // as a user, only as the bot, so this scope must NOT be requested.
     expect([...REQUIRED_APP_SCOPES]).not.toContain('im:message.send_as_user');
   });

@@ -12,7 +12,7 @@ import {
   Part,
   GenerateContentResponse,
 } from '@google/genai';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { Config } from '../config/config.js';
 import { setSimulate429 } from '../utils/testUtils.js';
 import { SceneType } from './sceneManager.js';
@@ -26,8 +26,8 @@ const mockModelsModule = {
   batchEmbedContents: vi.fn(),
 } as unknown as Models;
 
-describe('GeminiChat', () => {
-  let chat: GeminiChat;
+describe('OttoChat', () => {
+  let chat: OttoChat;
   let mockConfig: Config;
   const config: GenerateContentConfig = {};
 
@@ -52,7 +52,7 @@ describe('GeminiChat', () => {
     // Disable 429 simulation for tests
     setSimulate429(false);
     // Reset history for each test by creating a new instance
-    chat = new GeminiChat(mockConfig, mockModelsModule, config, []);
+    chat = new OttoChat(mockConfig, mockModelsModule, config, []);
   });
 
   afterEach(() => {
@@ -263,7 +263,7 @@ describe('GeminiChat', () => {
       chat.recordHistory(userInput, newModelOutput); // userInput here is for the *next* turn, but history is already primed
 
       // Reset and set up a more realistic scenario for merging with existing history
-      chat = new GeminiChat(mockConfig, mockModelsModule, config, []);
+      chat = new OttoChat(mockConfig, mockModelsModule, config, []);
       const firstUserInput: Content = {
         role: 'user',
         parts: [{ text: 'First user input' }],
@@ -306,7 +306,7 @@ describe('GeminiChat', () => {
         role: 'model',
         parts: [{ text: 'Initial model answer.' }],
       };
-      chat = new GeminiChat(mockConfig, mockModelsModule, config, [
+      chat = new OttoChat(mockConfig, mockModelsModule, config, [
         initialUser,
         initialModel,
       ]);
@@ -740,7 +740,7 @@ describe('filterToolsByMessage (workflow gate)', () => {
   const otherDecl = { name: 'shell', description: 'shell tool' };
   const toolsWithWorkflow = [{ functionDeclarations: [workflowDecl, otherDecl] }];
 
-  let chatWithTools: GeminiChat;
+  let chatWithTools: OttoChat;
   let mockConfig: Config;
 
   function makeStreamResponse() {
@@ -770,7 +770,7 @@ describe('filterToolsByMessage (workflow gate)', () => {
       setQuotaErrorOccurred: vi.fn(),
       flashFallbackHandler: undefined,
     } as unknown as Config;
-    chatWithTools = new GeminiChat(
+    chatWithTools = new OttoChat(
       mockConfig,
       mockModelsModule,
       { tools: toolsWithWorkflow } as GenerateContentConfig,
@@ -819,7 +819,7 @@ describe('filterToolsByMessage (workflow gate)', () => {
   });
 
   it('does not crash when tools is undefined', async () => {
-    const chatNoTools = new GeminiChat(mockConfig, mockModelsModule, {}, []);
+    const chatNoTools = new OttoChat(mockConfig, mockModelsModule, {}, []);
     vi.mocked(mockModelsModule.generateContentStream).mockResolvedValue(makeStreamResponse());
     await expect(
       chatNoTools.sendMessageStream({ message: 'hello' }, 'p4', SceneType.CHAT_CONVERSATION),

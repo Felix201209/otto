@@ -147,15 +147,15 @@ describe('FileCommandLoader', () => {
     }
   });
 
-  it('loads commands from both .deepvcode and .gemini project directories', async () => {
+  it('loads commands from both .otto and .gemini project directories', async () => {
     const projectRoot = process.cwd();
     // Use the actual path resolution logic to ensure we are testing correctly
-    const deepvcodeDir = path.join(projectRoot, '.otto', 'commands');
+    const ottocodeDir = path.join(projectRoot, '.otto', 'commands');
     const geminiDir = path.join(projectRoot, '.gemini', 'commands');
 
     mock({
-      [deepvcodeDir]: {
-        'deepv.toml': 'prompt = "DeepV prompt"',
+      [ottocodeDir]: {
+        'otto.toml': 'prompt = "Otto prompt"',
       },
       [geminiDir]: {
         'gemini.toml': 'prompt = "Gemini prompt"',
@@ -169,7 +169,7 @@ describe('FileCommandLoader', () => {
 
     expect(commands).toHaveLength(2);
     const names = commands.map((c) => c.name);
-    expect(names).toContain('deepv');
+    expect(names).toContain('otto');
     expect(names).toContain('gemini');
   });
 

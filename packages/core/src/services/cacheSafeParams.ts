@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@ import type { Content } from '@google/genai';
  * `contents` prefix and `systemInstruction` to hit Gemini's prompt cache,
  * saving tokens and latency on long conversation histories.
  *
- * Stored per `GeminiChat` instance (= per chat session). Updated atomically
+ * Stored per `OttoChat` instance (= per chat session). Updated atomically
  * after each successful turn (both sendMessage and sendMessageStream
  * paths). A fresh chat with no completed turns will have `null` and the
  * fork must fall back to building context from scratch (no cache hit).
@@ -38,7 +38,7 @@ export interface CacheSafeParams {
 
 /**
  * Per-chat store for the latest cache-safe parameter snapshot. Intentionally
- * small and dependency-free so it can be plugged onto a `GeminiChat`
+ * small and dependency-free so it can be plugged onto a `OttoChat`
  * instance with zero ceremony.
  */
 export class CacheSafeParamsStore {

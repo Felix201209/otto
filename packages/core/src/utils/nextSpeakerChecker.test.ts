@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, Mock, afterEach } from 'vitest';
 import { Config } from '../config/config.js';
 
-// Mock GeminiClient and Config constructor
+// Mock OttoClient and Config constructor
 vi.mock('../core/client.js');
 vi.mock('../config/config.js');
 

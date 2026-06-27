@@ -1,16 +1,15 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
+import { useSmallWindowOptimization,WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 import { t } from '../utils/i18n.js';
-import { useSmallWindowOptimization, WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 
 export interface TokenUsageInfo {
   cache_creation_input_tokens?: number;
@@ -46,7 +45,7 @@ export const TokenUsageDisplay: React.FC<TokenUsageDisplayProps> = ({
     input_tokens = 0,
     output_tokens = 0,
     credits_usage = 0,
-    model,
+    model: _model,
   } = tokenUsage;
 
   // 计算缓存命中率

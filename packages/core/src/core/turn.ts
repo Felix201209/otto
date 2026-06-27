@@ -23,7 +23,7 @@ import {
   UnauthorizedError,
   toFriendlyError,
 } from '../utils/errors.js';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { SceneType } from './sceneManager.js';
 import { validateAndFixFunctionCall } from '../utils/functionCallValidator.js';
 
@@ -42,7 +42,7 @@ export interface ServerTool {
   ): Promise<ToolCallConfirmationDetails | false>;
 }
 
-export enum GeminiEventType {
+export enum OttoEventType {
   Content = 'content',
   ToolCallRequest = 'tool_call_request',
   ToolCallResponse = 'tool_call_response',
@@ -63,7 +63,7 @@ export interface StructuredError {
   status?: number;
 }
 
-export interface GeminiErrorEventValue {
+export interface OttoErrorEventValue {
   error: StructuredError;
 }
 
@@ -98,43 +98,43 @@ export type ReasoningSummary = {
   text: string;
 };
 
-export type ServerGeminiContentEvent = {
-  type: GeminiEventType.Content;
+export type ServerOttoContentEvent = {
+  type: OttoEventType.Content;
   value: string;
 };
 
-export type ServerGeminiThoughtEvent = {
-  type: GeminiEventType.Thought;
+export type ServerOttoThoughtEvent = {
+  type: OttoEventType.Thought;
   value: ThoughtSummary;
 };
 
-export type ServerGeminiReasoningEvent = {
-  type: GeminiEventType.Reasoning;
+export type ServerOttoReasoningEvent = {
+  type: OttoEventType.Reasoning;
   value: ReasoningSummary;
 };
 
-export type ServerGeminiToolCallRequestEvent = {
-  type: GeminiEventType.ToolCallRequest;
+export type ServerOttoToolCallRequestEvent = {
+  type: OttoEventType.ToolCallRequest;
   value: ToolCallRequestInfo;
 };
 
-export type ServerGeminiToolCallResponseEvent = {
-  type: GeminiEventType.ToolCallResponse;
+export type ServerOttoToolCallResponseEvent = {
+  type: OttoEventType.ToolCallResponse;
   value: ToolCallResponseInfo;
 };
 
-export type ServerGeminiToolCallConfirmationEvent = {
-  type: GeminiEventType.ToolCallConfirmation;
+export type ServerOttoToolCallConfirmationEvent = {
+  type: OttoEventType.ToolCallConfirmation;
   value: ServerToolCallConfirmationDetails;
 };
 
-export type ServerGeminiUserCancelledEvent = {
-  type: GeminiEventType.UserCancelled;
+export type ServerOttoUserCancelledEvent = {
+  type: OttoEventType.UserCancelled;
 };
 
-export type ServerGeminiErrorEvent = {
-  type: GeminiEventType.Error;
-  value: GeminiErrorEventValue;
+export type ServerOttoErrorEvent = {
+  type: OttoEventType.Error;
+  value: OttoErrorEventValue;
 };
 
 export interface ChatCompressionInfo {
@@ -178,46 +178,46 @@ export interface TokenUsageInfo {
   model?: string; // 🎯 新增：记录真实使用的模型名称
 }
 
-export type ServerGeminiChatCompressedEvent = {
-  type: GeminiEventType.ChatCompressed;
+export type ServerOttoChatCompressedEvent = {
+  type: OttoEventType.ChatCompressed;
   value: ChatCompressionEventPayload | null;
 };
 
-export type ServerGeminiMaxSessionTurnsEvent = {
-  type: GeminiEventType.MaxSessionTurns;
+export type ServerOttoMaxSessionTurnsEvent = {
+  type: OttoEventType.MaxSessionTurns;
 };
 
-export type ServerGeminiFinishedEvent = {
-  type: GeminiEventType.Finished;
+export type ServerOttoFinishedEvent = {
+  type: OttoEventType.Finished;
   value: FinishReason;
   errorDetails?: string; // 可选的错误详情，用于提供更具体的错误信息
 };
 
-export type ServerGeminiLoopDetectedEvent = {
-  type: GeminiEventType.LoopDetected;
+export type ServerOttoLoopDetectedEvent = {
+  type: OttoEventType.LoopDetected;
   value?: string; // Optional loop type: 'consecutive_identical_tool_calls', 'chanting_identical_sentences', 'llm_detected_loop'
 };
 
-export type ServerGeminiTokenUsageEvent = {
-  type: GeminiEventType.TokenUsage;
+export type ServerOttoTokenUsageEvent = {
+  type: OttoEventType.TokenUsage;
   value: TokenUsageInfo;
 };
 
 // The original union type, now composed of the individual types
-export type ServerGeminiStreamEvent =
-  | ServerGeminiContentEvent
-  | ServerGeminiToolCallRequestEvent
-  | ServerGeminiToolCallResponseEvent
-  | ServerGeminiToolCallConfirmationEvent
-  | ServerGeminiUserCancelledEvent
-  | ServerGeminiErrorEvent
-  | ServerGeminiChatCompressedEvent
-  | ServerGeminiThoughtEvent
-  | ServerGeminiReasoningEvent
-  | ServerGeminiMaxSessionTurnsEvent
-  | ServerGeminiFinishedEvent
-  | ServerGeminiLoopDetectedEvent
-  | ServerGeminiTokenUsageEvent;
+export type ServerOttoStreamEvent =
+  | ServerOttoContentEvent
+  | ServerOttoToolCallRequestEvent
+  | ServerOttoToolCallResponseEvent
+  | ServerOttoToolCallConfirmationEvent
+  | ServerOttoUserCancelledEvent
+  | ServerOttoErrorEvent
+  | ServerOttoChatCompressedEvent
+  | ServerOttoThoughtEvent
+  | ServerOttoReasoningEvent
+  | ServerOttoMaxSessionTurnsEvent
+  | ServerOttoFinishedEvent
+  | ServerOttoLoopDetectedEvent
+  | ServerOttoTokenUsageEvent;
 
 // A turn manages the agentic loop turn within the server context.
 export class Turn {
@@ -226,7 +226,7 @@ export class Turn {
   private config: any; // Config reference for hook access
 
   constructor(
-    private readonly chat: GeminiChat,
+    private readonly chat: OttoChat,
     private readonly prompt_id: string,
     private readonly modelName?: string,
     configParam?: any,
@@ -247,7 +247,7 @@ export class Turn {
   async *run(
     req: PartListUnion,
     signal: AbortSignal,
-  ): AsyncGenerator<ServerGeminiStreamEvent> {
+  ): AsyncGenerator<ServerOttoStreamEvent> {
     try {
       // 🪝 触发 BeforeModel 钩子
       if (this.config) {
@@ -295,7 +295,7 @@ export class Turn {
 
       for await (const resp of responseStream) {
         if (signal?.aborted) {
-          yield { type: GeminiEventType.UserCancelled };
+          yield { type: OttoEventType.UserCancelled };
           // Do not add resp to debugResponses if aborted before processing
           return;
         }
@@ -317,7 +317,7 @@ export class Turn {
           };
 
           yield {
-            type: GeminiEventType.Thought,
+            type: OttoEventType.Thought,
             value: thought,
           };
           continue;
@@ -332,18 +332,18 @@ export class Turn {
           };
 
           yield {
-            type: GeminiEventType.Reasoning,
+            type: OttoEventType.Reasoning,
             value: reasoning,
           };
           // reasoning 仅用于 UI 显示，不再走 getResponseText 等正文处理路径。
-          // 注意：reasoning 会保留在 history 中，由 GeminiChat.processStreamResponse
-          // 收集进 outputContent，再交由 DeepV Server 决定如何转发上游。
+          // 注意：reasoning 会保留在 history 中，由 OttoChat.processStreamResponse
+          // 收集进 outputContent，再交由 Otto Server 决定如何转发上游。
           continue;
         }
 
         const text = getResponseText(resp);
         if (text) {
-          yield { type: GeminiEventType.Content, value: text };
+          yield { type: OttoEventType.Content, value: text };
         }
 
         // Handle function calls (requesting tool execution)
@@ -390,13 +390,13 @@ export class Turn {
           // 🔍 STOP-DEBUG: dump 原始响应。两种值得排查的场景：
           //   1. finishReason=STOP 且无工具调用 —— 模型是否返回了非标准工具调用？
           //   2. finishReason=FUNCTION_CALL 且无工具调用 —— ⚠ server 端 bug：
-          //      Claude 模型返回了 tool_use，但 DeepV proxy 在翻译成 Gemini
+          //      Claude 模型返回了 tool_use，但 Otto proxy 在翻译成 Gemini
           //      schema 时丢失了 functionCall part（candidates[0].content.parts
           //      变成了空数组 []），只剩 finishReason 这个壳。已知发生在
           //      claude-opus-4-7 上。需要后端修复；客户端这里只能尽量观察并报警。
           //
           // 注：FinishReason 这个 enum 来自 @google/genai，里面没有 'FUNCTION_CALL'
-          // 字面量（Gemini 原生用 'STOP'/'MAX_TOKENS' 等）。但 DeepV proxy 在
+          // 字面量（Gemini 原生用 'STOP'/'MAX_TOKENS' 等）。但 Otto proxy 在
           // 翻译 Claude 响应时会把 stop_reason='tool_use' 映射成 'FUNCTION_CALL'
           // 这个非标值，所以这里要按字符串比较，不能依赖 enum 类型。
           const isEmptyFunctionCallChunk =
@@ -425,7 +425,7 @@ export class Turn {
                 // （而且消耗了 candidatesToken），但 parts 数组是空的，工具调用
                 // payload 没被翻译/序列化出来。
                 //
-                // 已知触发场景：claude-opus-4-7 走 DeepV proxy 时，Claude 原生
+                // 已知触发场景：claude-opus-4-7 走 Otto proxy 时，Claude 原生
                 // tool_use block 应被翻译成 Gemini functionCall part，但 proxy
                 // 在 SSE 最后一个 chunk 里漏写了这个 part，只保留了 finishReason。
                 //
@@ -439,7 +439,7 @@ export class Turn {
                   `           intended tool call was lost in translation between the upstream model\n` +
                   `           response and the Gemini-shaped SSE stream.\n` +
                   `  Likely cause: Claude tool_use → Gemini functionCall translation drop in the\n` +
-                  `                DeepV proxy /v1/chat/stream handler. Especially seen on claude-opus-4-7.\n` +
+                  `                Otto proxy /v1/chat/stream handler. Especially seen on claude-opus-4-7.\n` +
                   `  Effect: the agent appears to "say one sentence and stop". No recovery is possible\n` +
                   `          client-side — the tool name and arguments are gone. This needs a server fix.\n` +
                   `  Context: model=${this.modelName}, candidatesTokenCount=${resp.usageMetadata?.candidatesTokenCount ?? 'unknown'}, role=${candidate?.content?.role ?? 'unknown'}`,
@@ -503,7 +503,7 @@ export class Turn {
           }
 
           yield {
-            type: GeminiEventType.Finished,
+            type: OttoEventType.Finished,
             value: finishReason as FinishReason,
             errorDetails,
           };
@@ -523,7 +523,7 @@ export class Turn {
           };
 
           yield {
-            type: GeminiEventType.TokenUsage,
+            type: OttoEventType.TokenUsage,
             value: tokenUsageInfo,
           };
         }
@@ -538,7 +538,7 @@ export class Turn {
       }
       if (signal.aborted) {
 
-        yield { type: GeminiEventType.UserCancelled };
+        yield { type: OttoEventType.UserCancelled };
         // Regular cancellation error, fail gracefully.
         return;
       }
@@ -561,14 +561,14 @@ export class Turn {
         message: getErrorMessage(error),
         status,
       };
-      yield { type: GeminiEventType.Error, value: { error: structuredError } };
+      yield { type: OttoEventType.Error, value: { error: structuredError } };
       return;
     }
   }
 
   private handlePendingFunctionCall(
     fnCall: FunctionCall,
-  ): ServerGeminiStreamEvent | null {
+  ): ServerOttoStreamEvent | null {
     // 对于小模型，尝试修复函数调用格式
     let processedFnCall = fnCall;
     if (this.modelName) {
@@ -595,6 +595,6 @@ export class Turn {
     this.pendingToolCalls.push(toolCallRequest);
 
     // Yield a request for the tool call, not the pending/confirming status
-    return { type: GeminiEventType.ToolCallRequest, value: toolCallRequest };
+    return { type: OttoEventType.ToolCallRequest, value: toolCallRequest };
   }
 }

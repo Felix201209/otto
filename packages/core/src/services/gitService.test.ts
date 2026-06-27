@@ -10,7 +10,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import type { ChildProcess } from 'node:child_process';
-import { getProjectHash, GEMINI_DIR } from '../utils/paths.js';
+import { getProjectHash, OTTO_DIR } from '../utils/paths.js';
 
 const hoistedMockExec = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({
@@ -146,7 +146,7 @@ describe('GitService', () => {
     let gitConfigPath: string;
 
     beforeEach(() => {
-      repoDir = path.join(homedir, GEMINI_DIR, 'history', hash);
+      repoDir = path.join(homedir, OTTO_DIR, 'history', hash);
       gitConfigPath = path.join(repoDir, '.gitconfig');
     });
 
@@ -162,7 +162,7 @@ describe('GitService', () => {
       await service.setupShadowGitRepository();
 
       const expectedConfigContent =
-        '[user]\n  name = DvCode CLI\n  email = dvcode-cli@google.com\n[commit]\n  gpgsign = false\n';
+        '[user]\n  name = Otto CLI\n  email = otto-cli@google.com\n[commit]\n  gpgsign = false\n';
       const actualConfigContent = await fs.readFile(gitConfigPath, 'utf-8');
       expect(actualConfigContent).toBe(expectedConfigContent);
     });

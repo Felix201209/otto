@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GeminiClient } from '../core/client.js';
-import { GeminiChat } from '../core/geminiChat.js';
+import { OttoClient } from '../core/client.js';
+import { OttoChat } from '../core/ottoChat.js';
 
 
 export interface NextSpeakerResponse {
@@ -14,8 +14,8 @@ export interface NextSpeakerResponse {
 }
 
 export async function checkNextSpeaker(
-  chat: GeminiChat,
-  geminiClient: GeminiClient,
+  chat: OttoChat,
+  geminiClient: OttoClient,
   abortSignal: AbortSignal,
 ): Promise<NextSpeakerResponse | null> {
   // 不在调用模型判断是否该谁说话，节省token

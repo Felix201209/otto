@@ -3,7 +3,7 @@
  * 多会话管理核心服务
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';
@@ -251,7 +251,7 @@ export class SessionManager extends EventEmitter {
    */
   private initializeUserRules(): void {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       this.userRulesContent = config.get<string>('userRules', '');
       if (this.userRulesContent) {
         this.logger.info(`✅ User rules loaded: ${this.userRulesContent.length} characters`);
@@ -301,9 +301,9 @@ export class SessionManager extends EventEmitter {
         config.setUserRules(this.userRulesContent);
 
         // 刷新 system prompt
-        const geminiClient = await config.getGeminiClient();
-        if (geminiClient) {
-          const chat = geminiClient.getChat();
+        const ottoClient = await config.getOttoClient();
+        if (ottoClient) {
+          const chat = ottoClient.getChat();
           if (chat) {
             const { getCoreSystemPrompt } = await import('otto-core');
             const updatedSystemPrompt = getCoreSystemPrompt(
@@ -363,7 +363,7 @@ export class SessionManager extends EventEmitter {
       const config = aiService.getConfig();
       if (config) {
         config.setUserMemory(this.userMemoryContent);
-        config.setGeminiMdFileCount(this.userMemoryFileCount);
+        config.setOttoMdFileCount(this.userMemoryFileCount);
         this.logger.debug(`📝 Updated memory for session ${sessionId}`);
       }
     } catch (error) {
@@ -558,7 +558,7 @@ export class SessionManager extends EventEmitter {
       const shouldActivate = request.activateImmediately !== false;
 
       // 🎯 获取默认模型配置
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       const preferredModel = config.get<string>('preferredModel', 'auto');
 
       const sessionState: SessionState = {
@@ -706,7 +706,7 @@ export class SessionManager extends EventEmitter {
           // 5. 恢复AI客户端历史记录
           const history = sessionState.context?.aiClientHistory;
           if (history && Array.isArray(history)) {
-            aiService.getGeminiClient()?.setHistory(history as any[]);
+            aiService.getOttoClient()?.setHistory(history as any[]);
           }
 
           this.logger.info(`✅ Loaded session from disk: ${sessionState.info.name} (${request.sessionId})`);
@@ -1112,9 +1112,9 @@ export class SessionManager extends EventEmitter {
       let aiClientHistory: unknown[] = [];
       if (aiService) {
         try {
-          const geminiClient = aiService.getGeminiClient();
-          if (geminiClient) {
-            aiClientHistory = await geminiClient.getHistory() || [];
+          const ottoClient = aiService.getOttoClient();
+          if (ottoClient) {
+            aiClientHistory = await ottoClient.getHistory() || [];
             this.logger.debug(`📚 Retrieved AI client history: ${aiClientHistory.length} items`);
           }
         } catch (error) {
@@ -1355,12 +1355,12 @@ export class SessionManager extends EventEmitter {
         currentRuntimeModel &&
         desiredModel !== currentRuntimeModel
       ) {
-        const geminiClient = config?.getGeminiClient();
-        if (geminiClient) {
+        const ottoClient = config?.getOttoClient();
+        if (ottoClient) {
           this.logger.warn(
             `🔧 Model drift detected for session ${sessionId}: runtime=${currentRuntimeModel}, desired=${desiredModel}. Reconciling via switchModel...`
           );
-          const result = await geminiClient.switchModel(desiredModel, new AbortController().signal);
+          const result = await ottoClient.switchModel(desiredModel, new AbortController().signal);
           if (!result.success) {
             // 校准失败：保留 modelConfig 不变（用户意图），抛出让本次操作失败、提示用户重试
             const errMsg = `Failed to switch to model ${desiredModel}: ${result.error || 'unknown error'}`;
@@ -1391,7 +1391,7 @@ export class SessionManager extends EventEmitter {
       // 🎯 恢复 AI 客户端历史记录（针对恢复的 session）
       const history = sessionState?.context?.aiClientHistory;
       if (history && Array.isArray(history) && history.length > 0) {
-        aiService.getGeminiClient()?.setHistory(history as any[]);
+        aiService.getOttoClient()?.setHistory(history as any[]);
         this.logger.info(`📋 Restored ${history.length} history entries for session: ${sessionId}`);
       }
 

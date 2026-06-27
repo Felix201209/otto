@@ -91,14 +91,14 @@
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
 
-    .deepvlab-btn {
+    .otto-btn {
       background: #ffffff;
       color: #374151;
       border: 2px solid #e5e7eb;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
 
-    .deepvlab-btn:hover {
+    .otto-btn:hover {
       background: #f9fafb;
       border-color: #1e293b;
       color: #1e293b;
@@ -106,29 +106,9 @@
       box-shadow: 0 4px 12px rgba(30, 41, 59, 0.15);
     }
 
-    .deepvlab-btn:active {
+    .otto-btn:active {
       transform: translateY(0);
       box-shadow: 0 2px 4px rgba(30, 41, 59, 0.1);
-    }
-
-    .cheetah-btn {
-      background: #ffffff;
-      color: #374151;
-      border: 2px solid #e5e7eb;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    }
-
-    .cheetah-btn:hover {
-      background: #f9fafb;
-      border-color: #ff6b35;
-      color: #ff6b35;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(255, 107, 53, 0.15);
-    }
-
-    .cheetah-btn:active {
-      transform: translateY(0);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
 
     .vipcard-btn {
@@ -334,8 +314,8 @@
       font-weight: 500;
     }
 
-    /* 猎豹OA表单样式 */
-    .cheetah-form {
+    /* 认证表单通用样式 */
+    .auth-form {
       margin-top: 24px;
       padding: 24px;
       background: #f8fafc;
@@ -343,7 +323,7 @@
       border: 1px solid #e2e8f0;
     }
 
-    .cheetah-form h3 {
+    .auth-form h3 {
       margin: 0 0 20px 0;
       color: #1e293b;
       font-size: 18px;
@@ -524,43 +504,19 @@
       <!-- 飞书登录按钮区域（动态生成，支持多租户） -->
       <div id="feishu-buttons-container"></div>
 
-    <button class="auth-button deepvlab-btn" onclick="startDeepvlabAuth()">
+    <button class="auth-button otto-btn" onclick="startOttoAuth()">
       <span class="icon" style="font-size: 20px;">🔐</span>
-      <span data-i18n="auth.deepvlab.button">Otto Login</span>
+      <span data-i18n="auth.otto.button">Otto Login</span>
     </button>
 
-    <!-- Upstream-only login options (Cheetah OA / VIP Card) are intentionally hidden for the Otto product. -->
-    <button id="cheetah-btn" class="auth-button cheetah-btn hidden" onclick="startCheetahAuth()" style="display: none !important;">
-      <span class="icon" style="font-size: 20px;">🔐</span>
-      <span data-i18n="auth.cheetah.button">Otto OA Login</span>
-    </button>
-
+    <!-- Upstream-only login option (VIP Card) is intentionally hidden for the Otto product. -->
     <button id="vipcard-btn" class="auth-button vipcard-btn hidden" onclick="startVipCardAuth()" style="display: none !important;">
       <span class="icon" style="font-size: 20px;">🎫</span>
       <span data-i18n="auth.vipcard.button">Otto Card Login</span>
     </button>
 
-    <!-- Otto OA登录表单 -->
-      <div id="cheetah-form" class="cheetah-form hidden">
-        <h3 data-i18n="auth.cheetah.form.title">Otto OA Login</h3>
-        <form id="cheetah-login-form" onsubmit="submitCheetahAuth(event)">
-          <div class="form-group">
-            <label for="cheetah-email" data-i18n="auth.cheetah.form.email">Email:</label>
-            <input type="email" id="cheetah-email" name="email" required placeholder="you@example.com" />
-          </div>
-          <div class="form-group">
-            <label for="cheetah-password" data-i18n="auth.cheetah.form.password">Password:</label>
-            <input type="password" id="cheetah-password" name="password" required />
-          </div>
-          <div class="form-actions">
-            <button type="button" class="btn-secondary" onclick="cancelCheetahAuth()" data-i18n="auth.cheetah.form.cancel">Cancel</button>
-            <button type="submit" class="btn-primary" data-i18n="auth.cheetah.form.submit">Login</button>
-          </div>
-        </form>
-      </div>
-
       <!-- Otto 卡登录表单 -->
-      <div id="vipcard-form" class="cheetah-form vipcard-form hidden">
+      <div id="vipcard-form" class="auth-form vipcard-form hidden">
         <h3 data-i18n="auth.vipcard.form.title">Otto Card Activation & Login</h3>
         <form id="vipcard-login-form" onsubmit="submitVipCardAuth(event)">
           <div class="form-group">
@@ -588,20 +544,12 @@
         'auth.page.title': 'Choose Authentication',
         'auth.page.description': 'Select your preferred login method to continue',
         'auth.feishu.button': 'Feishu Login',
-        'auth.deepvlab.button': 'Otto Login',
-        'auth.cheetah.button': 'Otto OA Login',
-        'auth.cheetah.form.title': 'Otto OA Login',
-        'auth.cheetah.form.email': 'Email',
-        'auth.cheetah.form.password': 'Password',
-        'auth.cheetah.form.cancel': 'Cancel',
-        'auth.cheetah.form.submit': 'Login',
-        'auth.cheetah.form.submitting': 'Logging in...',
+        'auth.otto.button': 'Otto Login',
         'auth.page.instruction': 'Choose your authentication method and we will guide you through the secure login process',
         'auth.loading.text': 'Checking access permissions...',
         'auth.china.restriction.title': 'Access Restricted',
         'auth.feishu.start.error': 'Failed to start Feishu authentication, please try again',
-        'auth.deepvlab.start.error': 'Failed to start Otto authentication, please try again',
-        'auth.cheetah.start.error': 'Failed to login with Otto OA, please check your credentials',
+        'auth.otto.start.error': 'Failed to start Otto authentication, please try again',
         'auth.message.success.title': 'Login Successful!',
         'auth.message.success.content': 'You have successfully logged in. You can now close this window and continue using Otto.',
         'auth.message.success.button': 'Close',
@@ -615,7 +563,7 @@
         'auth.message.error.connection.content': 'Unable to connect to authentication server. Please check your network connection and try again.',
         'auth.message.error.connection.button': 'Retry',
         'auth.message.error.feishu.content': 'Unable to start Feishu authentication. Please check your network connection and try again.',
-        'auth.message.error.deepvlab.content': 'Unable to start Otto authentication. Please check your network connection and try again.',
+        'auth.message.error.otto.content': 'Unable to start Otto authentication. Please check your network connection and try again.',
         'auth.vipcard.button': 'Otto Card Login',
         'auth.vipcard.form.title': 'Otto Card Activation & Login',
         'auth.vipcard.form.code': 'Redemption Code',
@@ -632,20 +580,12 @@
         'auth.page.title': '选择认证方式',
         'auth.page.description': '选择您偏好的登录方式以继续',
         'auth.feishu.button': '飞书登录',
-        'auth.deepvlab.button': 'Otto 登录',
-        'auth.cheetah.button': 'Otto OA 登录',
-        'auth.cheetah.form.title': 'Otto OA 登录',
-        'auth.cheetah.form.email': '邮箱',
-        'auth.cheetah.form.password': '密码',
-        'auth.cheetah.form.cancel': '取消',
-        'auth.cheetah.form.submit': '登录',
-        'auth.cheetah.form.submitting': '登录中...',
+        'auth.otto.button': 'Otto 登录',
         'auth.page.instruction': '选择您的认证方式，我们将引导您完成安全的登录流程',
         'auth.loading.text': '正在检查访问权限...',
         'auth.china.restriction.title': '访问受限',
         'auth.feishu.start.error': '飞书认证启动失败，请重试',
-        'auth.deepvlab.start.error': 'Otto 认证启动失败，请重试',
-        'auth.cheetah.start.error': 'Otto OA 登录失败，请检查您的凭据',
+        'auth.otto.start.error': 'Otto 认证启动失败，请重试',
         'auth.message.success.title': '登录成功！',
         'auth.message.success.content': '您已成功登录。现在可以关闭此窗口并继续使用 Otto。',
         'auth.message.success.button': '关闭',
@@ -659,7 +599,7 @@
         'auth.message.error.connection.content': '无法连接到认证服务器。请检查您的网络连接并重试。',
         'auth.message.error.connection.button': '重试',
         'auth.message.error.feishu.content': '无法启动飞书认证。请检查您的网络连接并重试。',
-        'auth.message.error.deepvlab.content': '无法启动 Otto 认证。请检查您的网络连接并重试。',
+        'auth.message.error.otto.content': '无法启动 Otto 认证。请检查您的网络连接并重试。',
         'auth.vipcard.button': 'Otto 卡登录',
         'auth.vipcard.form.title': 'Otto 卡激活与登录',
         'auth.vipcard.form.code': '兑换码',
@@ -759,7 +699,7 @@
     // 页面加载时初始化i18n和检查登录权限
     document.addEventListener('DOMContentLoaded', function() {
       initI18n();
-      checkFeishuAllowed(); // 这个函数会自动调用checkCheetahAllowed
+      checkFeishuAllowed();
     });
 
     function checkFeishuAllowed() {
@@ -821,8 +761,8 @@
               console.log('✅ 已显示登录按钮容器');
             }
 
-            // DeepVlab登录始终可用（没有hidden类，会自动显示）
-            console.log('✅ DeepVlab登录始终可用');
+            // Otto登录始终可用（没有hidden类，会自动显示）
+            console.log('✅ Otto登录始终可用');
 
             // 根据权限显示飞书登录按钮（动态获取租户列表）
             if (data.feishuLoginAllowed) {
@@ -830,9 +770,6 @@
             } else {
               console.log('🚫 飞书登录被禁用，保持飞书按钮隐藏');
             }
-
-            // 检查猎豹OA登录权限（使用相同的数据）
-            checkCheetahAllowed(data);
           }
         })
         .catch(error => {
@@ -861,25 +798,6 @@
 
           console.log('🔄 失败时显示所有登录选项');
         });
-    }
-
-    function checkCheetahAllowed(data) {
-      console.log('🔍 开始检查猎豹OA登录权限...');
-
-      // 使用与飞书相同的权限检查逻辑
-      if (data && !data.isChina && data.feishuLoginAllowed) {
-        console.log('✅ 猎豹OA登录已允许，显示登录按钮');
-        // 显示猎豹OA登录按钮
-        const cheetahBtn = document.getElementById('cheetah-btn');
-        if (cheetahBtn) {
-          cheetahBtn.classList.remove('hidden');
-          console.log('✅ 猎豹OA登录按钮已显示');
-        } else {
-          console.warn('⚠️ 未找到猎豹OA登录按钮元素');
-        }
-      } else {
-        console.log('🚫 猎豹OA登录被禁用，保持按钮隐藏');
-      }
     }
 
     function loadFeishuTenants() {
@@ -932,10 +850,10 @@
         });
     }
 
-    function startDeepvlabAuth() {
-      console.log('启动DeepVlab认证...');
-      // 这里会调用DeepVlab认证逻辑
-      fetch('/start-deepvlab-auth', { method: 'POST' })
+    function startOttoAuth() {
+      console.log('启动Otto认证...');
+      // 这里会调用Otto认证逻辑
+      fetch('/start-otto-auth', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
           if (data.authUrl) {
@@ -945,84 +863,8 @@
           }
         })
         .catch(error => {
-          console.error('DeepVlab认证启动失败:', error);
-          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.deepvlab.content'), t('auth.message.error.connection.button'));
-        });
-    }
-
-    function startCheetahAuth() {
-      console.log('显示猎豹OA登录表单...');
-      // 隐藏所有认证按钮
-      const buttons = document.querySelectorAll('.auth-button');
-      buttons.forEach(btn => btn.style.display = 'none');
-
-      // 显示猎豹OA表单
-      const form = document.getElementById('cheetah-form');
-      if (form) {
-        form.classList.remove('hidden');
-      }
-    }
-
-    function cancelCheetahAuth() {
-      console.log('取消猎豹OA登录...');
-      // 隐藏表单
-      const form = document.getElementById('cheetah-form');
-      if (form) {
-        form.classList.add('hidden');
-      }
-
-      // 显示所有认证按钮
-      const buttons = document.querySelectorAll('.auth-button');
-      buttons.forEach(btn => btn.style.display = 'flex');
-    }
-
-    function submitCheetahAuth(event) {
-      event.preventDefault();
-      console.log('提交猎豹OA登录...');
-
-      const email = document.getElementById('cheetah-email').value;
-      const password = document.getElementById('cheetah-password').value;
-
-      if (!email || !password) {
-        showMessage('error', t('auth.message.error.input.title'), t('auth.message.error.input.content'), t('auth.message.error.input.button'));
-        return;
-      }
-
-      // 禁用提交按钮
-      const submitBtn = event.target.querySelector('button[type="submit"]');
-      if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = t('auth.cheetah.form.submitting');
-      }
-
-      fetch('/start-cheetah-auth', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password })
-      })
-        .then(response => response.json())
-        .then(data => {
-          if (data.success) {
-            // 登录成功，显示成功消息（不允许关闭）
-            showMessage('success', t('auth.message.success.title'), t('auth.message.success.content'), t('auth.message.success.button'), { closable: false });
-            // 隐藏表单，显示按钮
-            cancelCheetahAuth();
-          } else {
-            showMessage('error', t('auth.message.error.login.title'), data.message || t('auth.message.error.login.content'), t('auth.message.error.login.button'));
-          }
-        })
-        .catch(error => {
-          console.error('猎豹OA登录失败:', error);
-          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.connection.content'), t('auth.message.error.connection.button'));
-        })
-        .finally(() => {
-          // 恢复提交按钮
-          if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = t('auth.cheetah.form.submit');
-          }
+          console.error('Otto认证启动失败:', error);
+          showMessage('error', t('auth.message.error.connection.title'), t('auth.message.error.otto.content'), t('auth.message.error.connection.button'));
         });
     }
 

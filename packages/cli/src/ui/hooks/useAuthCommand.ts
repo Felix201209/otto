@@ -1,21 +1,19 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useState, useCallback, useEffect } from 'react';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
 import {
-  AuthType,
-  Config,
-  SceneManager,
-  SceneType,
-  getErrorMessage,
+AuthType,
+Config
 } from 'otto-core';
+import { useCallback,useEffect,useState } from 'react';
+import { LoadedSettings,SettingScope } from '../../config/settings.js';
 import { runExitCleanup } from '../../utils/cleanup.js';
+
+const shouldSuppressGoogleOauthBrowserLaunch = false;
 
 export const useAuthCommand = (
   settings: LoadedSettings,
@@ -43,7 +41,7 @@ export const useAuthCommand = (
 
       // 🟢 已配置自定义模型（preferredModel 以 custom: 开头）：
       // 视为“自定义模型专用模式”，跳过登录对话框，直接进入可聊天状态。
-      // 自定义模型走本地配置，不依赖 DeepV 登录态。
+      // 自定义模型走本地配置，不依赖 Otto 登录态。
       const usingCustomModel = settings.merged.preferredModel?.startsWith('custom:');
 
       // 如果没有设置认证类型，直接标记检查完成
@@ -84,7 +82,7 @@ export const useAuthCommand = (
           try {
             await config.refreshAuth(authType);
             console.log('[AuthCommand] auth check passed');
-          } catch (error) {
+          } catch (_error) {
             if (customProxyUrl) {
               console.log('[AuthCommand] Custom proxy URL configured, skipping auto-login dialog on startup');
             } else if (usingCustomModel) {
@@ -107,7 +105,7 @@ export const useAuthCommand = (
     if (!startupAuthCheckCompleted) {
       void checkAuthOnStartup();
     }
-  }, [isAuthDialogOpen, settings.merged.selectedAuthType, startupAuthCheckCompleted, config, setAuthError, openAuthDialog, customProxyUrl]);
+  }, [isAuthDialogOpen, settings.merged.selectedAuthType, settings.merged.preferredModel, startupAuthCheckCompleted, config, setAuthError, openAuthDialog, customProxyUrl]);
 
   useEffect(() => {
     const authFlow = async () => {
@@ -142,11 +140,11 @@ export const useAuthCommand = (
               return;
             }
 
-            // 如果配置了自定义代理URL但没有JWT，设置一个占位符以允许GeminiClient初始化
+            // 如果配置了自定义代理URL但没有JWT，设置一个占位符以允许OttoClient初始化
             if (customProxyUrl) {
               console.log('[AuthCommand] Custom proxy URL configured without JWT - setting placeholder token for initialization');
               // 设置一个占位符JWT，允许client初始化，实际认证由代理处理
-              const placeholderJwt = {
+              const _placeholderJwt = {
                 accessToken: 'placeholder-token-for-custom-proxy',
                 refreshToken: 'placeholder-refresh',
                 expiresIn: 86400, // 24小时
@@ -175,12 +173,12 @@ export const useAuthCommand = (
     };
 
     void authFlow();
-  }, [isAuthDialogOpen, settings, config, setAuthError, openAuthDialog, startupAuthCheckCompleted]);
+  }, [isAuthDialogOpen, settings, config, setAuthError, openAuthDialog, startupAuthCheckCompleted, customProxyUrl]);
 
   const handleAuthSelect = useCallback(
     async (authType: AuthType | undefined, scope: SettingScope) => {
       if (authType) {
-        // clearCachedCredentialFile() - no longer needed for Cheeth OA auth
+        // clearCachedCredentialFile() - no longer needed for Otto custom-model auth
 
         settings.setValue(scope, 'selectedAuthType', authType);
 
@@ -191,7 +189,7 @@ export const useAuthCommand = (
         }
 
         // Browser launch suppression only applied to Google OAuth, not proxy auth
-        if (false) {
+        if (shouldSuppressGoogleOauthBrowserLaunch) {
           runExitCleanup();
           console.log(
             `
@@ -209,7 +207,7 @@ Logging in with Google... Please restart Otto CLI to continue.
       });
       setAuthError(null);
     },
-    [settings, setAuthError, config, setCurrentModel],
+    [settings, setAuthError],
   );
 
   const cancelAuthentication = useCallback(() => {
@@ -221,7 +219,7 @@ Logging in with Google... Please restart Otto CLI to continue.
   useEffect(() => {
     if (isPreparingEnvironment) {
       const checkClientReady = () => {
-        const client = config.getGeminiClient();
+        const client = config.getOttoClient();
         if (client?.isInitialized?.()) {
           setIsPreparingEnvironment(false);
         } else {
@@ -240,7 +238,7 @@ Logging in with Google... Please restart Otto CLI to continue.
 
   // 处理"使用自定义模型"选项
   const handleUseCustomModel = useCallback(() => {
-    console.log('[AuthCommand] User selected "Use Custom Model" option');
+    if (process.env.DEBUG) { console.log('[AuthCommand] User selected "Use Custom Model" option'); }
     // 关闭认证对话框
     setIsAuthDialogOpen(false);
     // 标记为自定义模型专用模式

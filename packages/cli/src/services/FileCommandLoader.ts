@@ -90,7 +90,7 @@ export class FileCommandLoader implements ICommandLoader {
           for (const cmd of userCommands) {
             commandMap.set(cmd.name, cmd);
           }
-        } catch (e) {
+        } catch {
           // Ignore errors for individual directories (e.g. if they don't exist)
         }
       }
@@ -111,7 +111,7 @@ export class FileCommandLoader implements ICommandLoader {
           for (const cmd of projectCommands) {
             commandMap.set(cmd.name, cmd);
           }
-        } catch (e) {
+        } catch {
           // Ignore errors for individual directories
         }
       }

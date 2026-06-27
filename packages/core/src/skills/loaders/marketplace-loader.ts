@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 import path from 'path';
@@ -23,7 +22,7 @@ import { PluginSource } from '../skill-types.js';
 
 /**
  * Marketplace 加载器
- * 负责从 ~/.deepv/marketplace 加载插件和组件
+ * 负责从 ~/.otto/marketplace 加载插件和组件
  */
 export class MarketplaceLoader implements IPluginLoader {
   private componentParser: ComponentParser;
@@ -321,7 +320,7 @@ export class MarketplaceLoader implements IPluginLoader {
           hooks: pluginDef.hooks ? true : false,
           scripts: false
         },
-        detectedFormat: 'deepv-code'
+        detectedFormat: 'otto-code'
       },
       installed: true,
       enabled: pluginEnabled,

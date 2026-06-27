@@ -4,28 +4,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { spawn } from 'child_process';
-import {
-  HistoryItemWithoutId,
-  IndividualToolCallDisplay,
-  ToolCallStatus,
-} from '../types.js';
-import { useCallback } from 'react';
-import {
-  Config,
-  GeminiClient,
-  MESSAGE_ROLES,
-} from 'otto-core';
 import { type PartListUnion } from '@google/genai';
+import { spawn } from 'child_process';
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import {
+Config,
+OttoClient,
+MESSAGE_ROLES,
+} from 'otto-core';
+import path from 'path';
+import { useCallback } from 'react';
+import stripAnsi from 'strip-ansi';
+import { SHELL_COMMAND_NAME } from '../constants.js';
+import {
+HistoryItemWithoutId,
+IndividualToolCallDisplay,
+ToolCallStatus,
+} from '../types.js';
 import { formatMemoryUsage } from '../utils/formatters.js';
 import { isBinary } from '../utils/textUtils.js';
 import { UseHistoryManagerReturn } from './useHistoryManager.js';
-import { SHELL_COMMAND_NAME } from '../constants.js';
-import crypto from 'crypto';
-import path from 'path';
-import os from 'os';
-import fs from 'fs';
-import stripAnsi from 'strip-ansi';
 
 // 🔧 提高节流间隔到2秒，减少高频输出（如ping）导致的UI重绘，缓解闪屏问题
 const OUTPUT_UPDATE_INTERVAL_MS = 2000;
@@ -46,8 +46,11 @@ function sanitizeShellOutput(text: string): string {
   let cleaned = stripAnsi(text);
 
   // 2. 移除其他可能破坏界面的ESC序列
+  // eslint-disable-next-line no-control-regex -- 需要匹配 ESC 控制字符来清理终端 CSI 序列。
   cleaned = cleaned.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');  // CSI序列
+  // eslint-disable-next-line no-control-regex -- 需要匹配 ESC 控制字符来清理终端转义序列。
   cleaned = cleaned.replace(/\x1b\([0-9;]*[a-zA-Z]/g, '');  // 其他ESC序列
+  // eslint-disable-next-line no-control-regex -- 需要匹配 ESC 控制字符来清理终端 OSC 序列。
   cleaned = cleaned.replace(/\x1b\][0-9;]*[a-zA-Z]/g, '');  // OSC序列
 
   // 3. 🔧 增强的\r处理 - 修复ping等命令导致的闪屏问题
@@ -59,6 +62,7 @@ function sanitizeShellOutput(text: string): string {
   cleaned = cleaned.replace(/^\r/gm, '');
 
   // 4. 移除可能破坏界面的控制字符
+  // eslint-disable-next-line no-control-regex -- 需要清理终端输出里的 NUL/BEL/退格控制字符，避免破坏界面渲染。
   cleaned = cleaned.replace(/[\x00\x07\x08\x7F]/g, '');
 
   // 5. 清理多余的连续换行（但保留有意义的空行）
@@ -120,6 +124,9 @@ function executeShellCommand(
       detached: !isWindows, // Use process groups on non-Windows for robust killing
       env: {
         ...process.env,
+        // New marker for tools that detect they run inside Otto's shell.
+        // Legacy GEMINI_CLI kept so existing user scripts keep working.
+        OTTO_CLI: '1',
         GEMINI_CLI: '1',
       },
       // On Windows, prevent automatic quote escaping to fix quote handling issues
@@ -224,7 +231,7 @@ function executeShellCommand(
 }
 
 function addShellCommandToGeminiHistory(
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   rawQuery: string,
   resultText: string,
 ) {
@@ -264,7 +271,7 @@ export const useShellCommandProcessor = (
   onExec: (command: Promise<void>) => void,
   onDebugMessage: (message: string) => void,
   config: Config,
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
 ) => {
   const handleShellCommand = useCallback(
     (rawQuery: PartListUnion, abortSignal: AbortSignal): boolean => {

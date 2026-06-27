@@ -4,8 +4,8 @@
 
 **AI-Powered Intelligent Software Engineering Assistant**
 
-> ℹ️ **Rebranding notice**: This project was previously known as **Otto** and has been renamed to **Otto**.
-> Package names, command names, and config directories (`easycode-ai` / `easycode` / `.easycode/` etc.) are kept in the transition period for backward compatibility; new docs and UI use the new brand name.
+> ℹ️ **Rebranding notice**: This project was previously known as **EasyCode** and has been renamed to **Otto**.
+> Package names and config directories (`easycode-ai` / `.easycode/` etc.) are kept in the transition period for backward compatibility; new docs and UI use the new brand name.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org/)
@@ -92,26 +92,26 @@ cross-env DEEPX_SERVER_URL=http://localhost:8000 npm run start
 After installation, start in any project directory:
 
 ```bash
-easycode
+otto
 ```
 
 ### Basic Usage Examples
 
 ```bash
 # Start interactive session
-easycode
+otto
 
 # Use specific model
-easycode -m gemini-2.0-flash
+otto -m gemini-2.0-flash
 
 # Execute single prompt (non-interactive mode)
-easycode -p "Explain the architecture of this project"
+otto -p "Explain the architecture of this project"
 
 # Continue last session
-easycode -c
+otto -c
 
 # Enable YOLO mode (auto-execute all operations)
-easycode -y
+otto -y
 ```
 
 ### Slash Commands
@@ -575,7 +575,7 @@ $env:ANTHROPIC_API_KEY="sk-ant-your-key-here"
 3. Use `npm run lint` to ensure code standards
 4. Run `npm run test` before submitting PR
 
-> 💡 **Tip**: We recommend using `easycode` for self-development. The project's `EASYCODE.md` provides development guidelines for the AI model.
+> 💡 **Tip**: We recommend using `otto` for self-development. The project's `EASYCODE.md` provides development guidelines for the AI model.
 
 ---
 
@@ -609,7 +609,7 @@ This project is open-sourced under the [Apache License 2.0](LICENSE).
 
 ## 🔗 Links
 
-- 🌐 **Official Website**: [https://easycode.bot](https://easycode.bot)
+- 🌐 **Official Website**: [https://www.otto.bot](https://www.otto.bot)
 - 📦 **npm Package**: [easycode-ai](https://www.npmjs.com/package/easycode-ai)
 - 🖥️ **Open Source Server**: [Otto-Server-mini](https://github.com/OrionStarAI/OttoCode-Server-mini)
 - 🐦 **Issue Tracker**: [GitHub Issues](https://github.com/OrionStarAI/OttoCode/issues)

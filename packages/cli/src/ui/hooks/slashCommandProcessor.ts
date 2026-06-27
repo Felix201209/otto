@@ -4,37 +4,54 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useMemo, useEffect, useState } from 'react';
 import { type PartListUnion } from '@google/genai';
 import process from 'node:process';
-import { UseHistoryManagerReturn } from './useHistoryManager.js';
-import { useStateAndRef } from './useStateAndRef.js';
-import { Config, GitService, Logger } from 'otto-core';
-import { useSessionStats } from '../contexts/SessionContext.js';
-import { t } from '../utils/i18n.js';
-import {
-  Message,
-  MessageType,
-  HistoryItemWithoutId,
-  HistoryItem,
-  SlashCommandProcessorResult,
-  ConsoleMessageItem,
-} from '../types.js';
-import { TokenUsageInfo } from '../components/TokenUsageDisplay.js';
+import { Config,GitService,isCustomModel,Logger,MarketplaceManager,SettingsManager,SkillLoader } from 'otto-core';
+import { useCallback,useEffect,useMemo,useState } from 'react';
 import { LoadedSettings } from '../../config/settings.js';
-import { runExitCleanup } from '../../utils/cleanup.js';
-import { setQuitting, getIsQuitting } from '../../utils/quitState.js';
-import { getCreditsService } from '../../services/creditsService.js';
-import { isCustomModel } from 'otto-core';
-import { type CommandContext, type SlashCommand } from '../commands/types.js';
-import { CommandService } from '../../services/CommandService.js';
 import { BuiltinCommandLoader } from '../../services/BuiltinCommandLoader.js';
+import { CommandService } from '../../services/CommandService.js';
+import { getCreditsService } from '../../services/creditsService.js';
 import { ExtensionCommandLoader } from '../../services/ExtensionCommandLoader.js';
 import { FileCommandLoader } from '../../services/FileCommandLoader.js';
 import { InlineCommandLoader } from '../../services/InlineCommandLoader.js';
 import { McpPromptLoader } from '../../services/McpPromptLoader.js';
 import { PluginCommandLoader } from '../../services/skill/loaders/plugin-command-loader.js';
-import { SettingsManager, MarketplaceManager, SkillLoader } from 'otto-core';
+import { runExitCleanup } from '../../utils/cleanup.js';
+import { getIsQuitting,setQuitting } from '../../utils/quitState.js';
+import { type CommandContext,type SlashCommand } from '../commands/types.js';
+import { TokenUsageInfo } from '../components/TokenUsageDisplay.js';
+import { useSessionStats } from '../contexts/SessionContext.js';
+import {
+ConsoleMessageItem,
+HistoryItem,
+HistoryItemWithoutId,
+Message,
+MessageType,
+SlashCommandProcessorResult,
+} from '../types.js';
+import { t } from '../utils/i18n.js';
+import { UseHistoryManagerReturn } from './useHistoryManager.js';
+import { useStateAndRef } from './useStateAndRef.js';
+
+interface InitChoiceMetadata {
+  filePath: string;
+  fileSize: number;
+  lineCount: number;
+}
+
+function isInitChoiceMetadata(value: unknown): value is InitChoiceMetadata {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'filePath' in value &&
+    'fileSize' in value &&
+    'lineCount' in value &&
+    typeof value.filePath === 'string' &&
+    typeof value.fileSize === 'number' &&
+    typeof value.lineCount === 'number'
+  );
+}
 
 /**
  * Hook to define and process slash commands (e.g., /help, /clear).
@@ -62,11 +79,7 @@ export const useSlashCommandProcessor = (
   consoleMessages: ConsoleMessageItem[], // 🆕 接收 consoleMessages
   lastTokenUsage?: TokenUsageInfo | null, // 🆕 接收 lastTokenUsage
   openSettingsMenuDialog?: () => void, // 🆕 接收 openSettingsMenuDialog
-  openInitChoiceDialog?: (metadata: {
-    filePath: string;
-    fileSize: number;
-    lineCount: number;
-  }) => void, // 🆕 接收 openInitChoiceDialog
+  openInitChoiceDialog?: (metadata: InitChoiceMetadata) => void, // 🆕 接收 openInitChoiceDialog
   openPluginInstallDialog?: () => void, // 🆕 接收 openPluginInstallDialog
   openDebateWizard?: () => void, // 🎭 接收 openDebateWizard
   resumeDebate?: () => void, // 🎭 接收 resumeDebate (由 /debate continue 触发)
@@ -199,6 +212,7 @@ export const useSlashCommandProcessor = (
       setPendingCompressionItem,
       toggleCorgiMode,
       toggleVimEnabled,
+      consoleMessages,
     ],
   );
 
@@ -387,8 +401,8 @@ export const useSlashCommandProcessor = (
                       }
                       return { type: 'handled' };
                     case 'init-choice':
-                      if (result.metadata && openInitChoiceDialog) {
-                        openInitChoiceDialog(result.metadata as any);
+                      if (isInitChoiceMetadata(result.metadata) && openInitChoiceDialog) {
+                        openInitChoiceDialog(result.metadata);
                       }
                       return { type: 'handled' };
                     case 'plugin-install':
@@ -425,7 +439,7 @@ export const useSlashCommandProcessor = (
                   }
                 case 'load_history': {
                   await config
-                    ?.getGeminiClient()
+                    ?.getOttoClient()
                     ?.setHistory(result.clientHistory);
                   fullCommandContext.ui.clear();
                   result.history.forEach((item, index) => {
@@ -449,7 +463,7 @@ export const useSlashCommandProcessor = (
 
                   // 设置客户端历史记录
                   await config
-                    ?.getGeminiClient()
+                    ?.getOttoClient()
                     ?.setHistory(result.clientHistory);
 
                   // 清除UI并加载新历史记录
@@ -543,7 +557,7 @@ export const useSlashCommandProcessor = (
                   return {
                     type: 'select_session',
                     sessions: result.sessions,
-                  } as any; // Temporary cast, need to update SlashCommandProcessorResult type
+                  };
                 case 'refine_result':
                   return {
                     type: 'refine_result',
@@ -609,6 +623,16 @@ export const useSlashCommandProcessor = (
     openEditorDialog,
     setQuittingMessages,
     isValidSlashCommand, // 🆕 添加新的验证函数依赖
+    openCustomModelWizard,
+    openDebateWizard,
+    openGoalWizard,
+    openInitChoiceDialog,
+    openPluginInstallDialog,
+    openSettingsMenuDialog,
+    openWorkflowPanel,
+    refreshStatic,
+    resumeDebate,
+    session,
   ],
   );
 

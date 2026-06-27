@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@ import type { Config } from 'otto-core';
  * useGoalActive — whether the current session has an active /goal context.
  *
  * Why a hook (vs. a plain getter):
- *   GeminiClient.activeGoalContext is plain in-memory state, not React
+ *   OttoClient.activeGoalContext is plain in-memory state, not React
  *   state. Setting / clearing it (via useGoalWizard or the /goal clear
  *   command) does NOT trigger App.tsx to re-render. We need the bottom
  *   status bar to flip between the GoalActiveIndicator and the
@@ -25,7 +25,7 @@ import type { Config } from 'otto-core';
  *   down before the other.
  *
  * Returns boolean only; if you need the goal context object itself,
- * read it directly from `config.getGeminiClient().getGoalContext()`
+ * read it directly from `config.getOttoClient().getGoalContext()`
  * inside the consuming component (also re-evaluated each render).
  */
 export function useGoalActive(config: Config | null): boolean {
@@ -47,7 +47,7 @@ export function useGoalActive(config: Config | null): boolean {
 function readGoalActive(config: Config | null): boolean {
   if (!config) return false;
   try {
-    return !!config.getGeminiClient()?.getGoalContext();
+    return !!config.getOttoClient()?.getGoalContext();
   } catch {
     return false;
   }

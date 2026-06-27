@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -129,7 +128,7 @@ const applyThinking = async (
 
     // 1. 运行时会话级覆盖 (内存中立即生效)
     config.setThinkingConfig(updated);
-    // 2. 持久化到用户全局 settings.json (~/.deepv/settings.json)
+    // 2. 持久化到用户全局 settings.json (~/.otto/settings.json)
     settings.setValue(SettingScope.User, 'thinking', updated);
 
     return {

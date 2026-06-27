@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +15,7 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { buildEngineeringRefinePrompt, type RefinePromptOptions } from './refine_prompt_builder.js';
-import { getAvailableModels } from './modelCommand.js';
+import type { Content } from '@google/genai';
 
 const execAsync = promisify(exec);
 
@@ -70,6 +69,10 @@ interface RefineResult {
   result: string;
   modelUsed?: string;
   fallbackReason?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 /**
@@ -194,6 +197,8 @@ function parseRefineArguments(args: string): { text?: string; options: RefineOpt
         case '--dry-run':
           options.dryRun = true;
           break;
+        default:
+          break;
       }
     }
   }
@@ -213,23 +218,25 @@ function parseRefineArguments(args: string): { text?: string; options: RefineOpt
  *
  * 润色功能只需要纯文本上下文，因此过滤掉所有工具相关消息
  */
-function filterHistoryForRefine(history: any[]): any[] {
+function filterHistoryForRefine(history: unknown): Content[] {
   if (!Array.isArray(history)) return [];
 
-  return history.filter(content => {
+  return history.filter((content): content is Content => {
     // 检查消息中是否包含工具调用或工具响应
-    if (!content.parts || !Array.isArray(content.parts)) return true;
+    if (!isRecord(content)) return false;
+    const candidate = content as Content;
+    if (!candidate.parts || !Array.isArray(candidate.parts)) return true;
 
-    const hasToolCall = content.parts.some((part: any) =>
-      part.functionCall !== undefined || part.functionResponse !== undefined
+    const hasToolCall = candidate.parts.some((part) =>
+      isRecord(part) && (part['functionCall'] !== undefined || part['functionResponse'] !== undefined)
     );
 
     // 如果消息包含工具调用/响应，过滤掉整条消息
     if (hasToolCall) return false;
 
     // 只保留有有效文本内容的消息
-    const hasTextContent = content.parts.some((part: any) =>
-      part.text !== undefined && part.text.trim() !== ''
+    const hasTextContent = candidate.parts.some((part) =>
+      isRecord(part) && typeof part['text'] === 'string' && part['text'].trim() !== ''
     );
 
     return hasTextContent;
@@ -250,7 +257,7 @@ async function refineText(
     throw new Error(t('error.config.not.loaded'));
   }
 
-  const geminiClient = config.getGeminiClient();
+  const geminiClient = config.getOttoClient();
   if (!geminiClient) {
     throw new Error(t('error.config.not.loaded'));
   }
@@ -298,7 +305,7 @@ async function refineText(
       responseText = response.text;
     } else if (response.candidates && response.candidates[0]?.content?.parts) {
       const parts = response.candidates[0].content.parts;
-      responseText = parts.map((p: any) => p.text || '').join('');
+      responseText = parts.map((p) => p.text || '').join('');
     }
 
     if (!responseText) {
@@ -451,10 +458,11 @@ async function generateDiff(original: string, refined: string): Promise<string> 
         encoding: 'utf-8',
       });
       return stdout;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // diff 命令在文件有差异时返回退出码 1，这是正常的
-      if (error.code === 1 && error.stdout) {
-        return error.stdout;
+      const diffError = error as { code?: number; stdout?: string };
+      if (diffError.code === 1 && diffError.stdout) {
+        return diffError.stdout;
       }
       // 如果是其他错误，抛出
       throw error;
@@ -467,7 +475,7 @@ async function generateDiff(original: string, refined: string): Promise<string> 
         // 忽略清理错误
       }
     }
-  } catch (error) {
+  } catch {
     // 如果 diff 命令不可用，返回简单的对比
     return `原文：\n${original}\n\n润色后：\n${refined}`;
   }
@@ -496,7 +504,7 @@ async function formatOutput(
       return result.result;
 
     case 'pretty':
-    default:
+    default: {
       let output = '';
       output += '\n' + t('command.refine.result.title') + '\n\n';
       output += t('command.refine.result.params') + '\n';
@@ -538,6 +546,7 @@ async function formatOutput(
       output += t('command.refine.result.next-step') + '\n';
 
       return output;
+    }
   }
 }
 
@@ -549,22 +558,10 @@ export const refineCommand: SlashCommand = {
   description: t('command.refine.description'),
   kind: CommandKind.BUILT_IN,
   action: async (context: CommandContext, args: string): Promise<SlashCommandActionReturn> => {
-    const startTime = Date.now();
-    let source: 'text' | 'stdin' | 'file' | 'last' = 'text';
-    let success = false;
     let errorCode: string | undefined;
 
     try {
       const { text, options } = parseRefineArguments(args);
-
-      // 记录数据来源
-      if (options.stdin) {
-        source = 'stdin';
-      } else if (options.file) {
-        source = 'file';
-      } else if (options.from === 'last') {
-        source = 'last';
-      }
 
       // 获取要润色的文本
       let inputText: string | undefined = text;
@@ -674,8 +671,6 @@ export const refineCommand: SlashCommand = {
         );
       }
 
-      success = true;
-
       // TODO: 添加更详细的遥测记录
       // 记录命令执行成功（暂时跳过日志，因为 Logger 不适合此用途）
 
@@ -759,4 +754,3 @@ export const refineCommand: SlashCommand = {
     return completions;
   },
 };
-

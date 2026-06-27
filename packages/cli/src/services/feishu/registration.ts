@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,6 +26,24 @@ const ACCOUNTS_URLS: Record<string, string> = {
 const REGISTRATION_PATH = '/oauth/v1/app/registration';
 const TP_TAG = 'otto';
 
+type RegistrationResponse = Record<string, unknown>;
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asOptionalObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
 export interface BeginResult {
   deviceCode: string;
   qrUrl: string;
@@ -45,7 +62,7 @@ export interface PollResult {
 async function postRegistration(
   baseUrl: string,
   body: Record<string, string>,
-): Promise<any> {
+): Promise<RegistrationResponse> {
   const url = `${baseUrl}${REGISTRATION_PATH}`;
   const formData = new URLSearchParams(body).toString();
 
@@ -60,7 +77,7 @@ async function postRegistration(
   // 即使 4xx 也尝试解析 JSON（poll 阶段 authorization_pending 走 400）
   const text = await response.text();
   try {
-    return JSON.parse(text);
+    return asObject(JSON.parse(text));
   } catch {
     throw new Error(`Registration endpoint returned non-JSON (HTTP ${response.status}): ${text.slice(0, 200)}`);
   }
@@ -72,7 +89,7 @@ async function postRegistration(
 export async function initRegistration(domain: string = 'feishu'): Promise<void> {
   const baseUrl = ACCOUNTS_URLS[domain] || ACCOUNTS_URLS.feishu;
   const res = await postRegistration(baseUrl, { action: 'init' });
-  const methods: string[] = res.supported_auth_methods || [];
+  const methods = asStringArray(res['supported_auth_methods']);
   if (!methods.includes('client_secret')) {
     throw new Error(
       `Feishu registration env does not support client_secret auth. Supported: ${methods.join(', ')}`,
@@ -94,12 +111,12 @@ export async function beginRegistration(
     request_user_info: 'open_id tenant_brand',
   });
 
-  const deviceCode = res.device_code;
+  const deviceCode = asString(res['device_code']);
   if (!deviceCode) {
     throw new Error('Feishu registration did not return device_code');
   }
 
-  let qrUrl = res.verification_uri_complete || '';
+  let qrUrl = asString(res['verification_uri_complete']) || '';
   if (qrUrl) {
     const sep = qrUrl.includes('?') ? '&' : '?';
     qrUrl = `${qrUrl}${sep}from=${TP_TAG}&tp=${TP_TAG}`;
@@ -108,15 +125,20 @@ export async function beginRegistration(
     const openBase = domain === 'lark'
       ? 'https://open.larksuite.com'
       : 'https://open.feishu.cn';
-    qrUrl = `${openBase}/page/launcher?user_code=${res.user_code}&from=${TP_TAG}&tp=${TP_TAG}`;
+    qrUrl = `${openBase}/page/launcher?user_code=${asString(res['user_code']) || ''}&from=${TP_TAG}&tp=${TP_TAG}`;
   }
 
   return {
     deviceCode,
     qrUrl,
-    userCode: res.user_code || '',
-    interval: res.interval || 5,
-    expireIn: res.expires_in || res.expire_in || 600,
+    userCode: asString(res['user_code']) || '',
+    interval: typeof res['interval'] === 'number' ? res['interval'] : 5,
+    expireIn:
+      typeof res['expires_in'] === 'number'
+        ? res['expires_in']
+        : typeof res['expire_in'] === 'number'
+          ? res['expire_in']
+          : 600,
   };
 }
 
@@ -137,7 +159,7 @@ export async function pollRegistration(
 
   while (Date.now() < deadline) {
     const baseUrl = ACCOUNTS_URLS[currentDomain] || ACCOUNTS_URLS.feishu;
-    let res: any;
+    let res: RegistrationResponse;
     try {
       res = await postRegistration(baseUrl, {
         action: 'poll',
@@ -155,25 +177,27 @@ export async function pollRegistration(
     }
 
     // 自动检测 domain（lark vs feishu）
-    const userInfo = res.user_info || {};
-    const tenantBrand: string | undefined = userInfo.tenant_brand;
+    const userInfo = asObject(res['user_info']);
+    const tenantBrand = asString(userInfo['tenant_brand']);
     if (tenantBrand === 'lark' && !domainSwitched) {
       currentDomain = 'lark';
       domainSwitched = true;
     }
 
     // 成功
-    if (res.client_id && res.client_secret) {
+    const clientId = asString(res['client_id']);
+    const clientSecret = asString(res['client_secret']);
+    if (clientId && clientSecret) {
       return {
-        appId: res.client_id,
-        appSecret: res.client_secret,
+        appId: clientId,
+        appSecret: clientSecret,
         domain: currentDomain,
-        openId: userInfo.open_id,
+        openId: asString(userInfo['open_id']),
       };
     }
 
     // 用户拒绝 / 过期
-    const error: string = res.error || '';
+    const error = asString(res['error']) || '';
     if (error === 'access_denied' || error === 'expired_token') {
       return null;
     }
@@ -216,18 +240,21 @@ export async function probeCredentials(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
     });
-    const tokenData: any = await tokenRes.json();
-    const accessToken: string | undefined = tokenData.tenant_access_token;
+    const tokenData = asObject(await tokenRes.json());
+    const accessToken = asString(tokenData['tenant_access_token']);
     if (!accessToken) return null;
 
     // 2. 查 bot 信息
     const botRes = await fetch(`${openBase}/open-apis/bot/v3/info`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const botData: any = await botRes.json();
-    if (botData.code !== 0) return null;
+    const botData = asObject(await botRes.json());
+    if (botData['code'] !== 0) return null;
 
-    const bot = botData.bot || botData.data?.bot || {};
+    const bot =
+      asOptionalObject(botData['bot']) ??
+      asOptionalObject(asObject(botData['data'])['bot']) ??
+      {};
 
     // 3. (best-effort) 查应用已开通的 scope 列表（需要 application:application:self_manage 权限，
     //    用户首次扫码建应用后通常没有，会 400/403——属正常情况，吞掉错误返回 undefined 即可）
@@ -237,11 +264,19 @@ export async function probeCredentials(
         `${openBase}/open-apis/application/v6/applications/me?lang=zh_cn`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
-      const scopesData: any = await scopesRes.json();
-      if (scopesData.code === 0) {
-        const app = scopesData.data?.app ?? scopesData.app ?? scopesData.data ?? {};
+      const scopesData = asObject(await scopesRes.json());
+      if (scopesData['code'] === 0) {
+        const data = asObject(scopesData['data']);
+        const app =
+          asOptionalObject(data['app']) ??
+          asOptionalObject(scopesData['app']) ??
+          data;
         const rawScopes: Array<{ scope?: string }> =
-          app.scopes ?? app.online_version?.scopes ?? [];
+          (Array.isArray(app['scopes'])
+            ? app['scopes']
+            : Array.isArray(asObject(app['online_version'])['scopes'])
+              ? asObject(app['online_version'])['scopes']
+              : []) as Array<{ scope?: string }>;
         grantedScopes = rawScopes
           .map((s) => s.scope)
           .filter((s): s is string => typeof s === 'string' && s.length > 0);
@@ -251,8 +286,8 @@ export async function probeCredentials(
     }
 
     return {
-      botName: bot.app_name || bot.bot_name,
-      botOpenId: bot.open_id,
+      botName: asString(bot['app_name']) || asString(bot['bot_name']),
+      botOpenId: asString(bot['open_id']),
       grantedScopes,
     };
   } catch {

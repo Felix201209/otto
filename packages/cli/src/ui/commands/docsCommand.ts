@@ -19,7 +19,7 @@ export const docsCommand: SlashCommand = {
   description: t('command.docs.description'),
   kind: CommandKind.BUILT_IN,
   action: async (context: CommandContext): Promise<void> => {
-    const docsUrl = 'https://goo.gle/gemini-cli-docs';
+    const docsUrl = 'https://www.otto.bot';
 
     if (process.env.SANDBOX && process.env.SANDBOX !== 'sandbox-exec') {
       context.ui.addItem(

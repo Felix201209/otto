@@ -14,8 +14,8 @@ export async function createCodeAssistContentGenerator(
   sessionId?: string,
 ): Promise<ContentGenerator> {
   // Code Assist Content Generator is no longer supported
-  // Only DeepV Server authentication is supported
+  // Only Otto Server authentication is supported
   throw new Error(
-    'Code Assist Content Generator has been deprecated. Use DeepV Server authentication instead.'
+    'Code Assist Content Generator has been deprecated. Use Otto Server authentication instead.'
   );
 }

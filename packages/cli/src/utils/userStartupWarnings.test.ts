@@ -55,9 +55,12 @@ describe('getUserStartupWarnings', () => {
   });
 
   describe('home directory check', () => {
-    it('should return a warning when running in home directory', async () => {
+    // 业务变更：homeDirectoryCheck 已被有意精简为永远返回 null（CLI 是次要交互面，
+    // 主战场在飞书，不再弹"在家目录运行"提示）。见 userStartupWarnings.ts 行内注释。
+    // 因此即便在家目录运行也不应返回 home 警告。
+    it('should NOT return a home directory warning even when running in home directory', async () => {
       const warnings = await getUserStartupWarnings(homeDir, emptySettings);
-      expect(warnings).toContainEqual(
+      expect(warnings).not.toContainEqual(
         expect.stringContaining('home directory'),
       );
     });
@@ -124,11 +127,13 @@ describe('getUserStartupWarnings', () => {
 
   describe('error handling', () => {
     it('should handle errors when checking directory', async () => {
+      // 业务变更：homeDirectoryCheck 现在永远返回 null（不再有 try/catch 抛错路径），
+      // 因此文件系统错误只由 rootDirectoryCheck 产生一条警告（此前 home + root 各一条共两条）。
       const nonExistentPath = path.join(testRootDir, 'non-existent');
       const warnings = await getUserStartupWarnings(nonExistentPath, emptySettings);
       const expectedWarning =
         'Could not verify the current directory due to a file system error.';
-      expect(warnings).toEqual([expectedWarning, expectedWarning]);
+      expect(warnings).toEqual([expectedWarning]);
     });
   });
 

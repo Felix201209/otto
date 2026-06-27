@@ -46,16 +46,16 @@ export interface LoadCodeAssistRequest {
  * http://google3/google/internal/cloud/code/v1internal/cloudcode.proto;l=224
  */
 export interface LoadCodeAssistResponse {
-  currentTier?: GeminiUserTier | null;
-  allowedTiers?: GeminiUserTier[] | null;
+  currentTier?: OttoUserTier | null;
+  allowedTiers?: OttoUserTier[] | null;
   ineligibleTiers?: IneligibleTier[] | null;
   cloudaicompanionProject?: string | null;
 }
 
 /**
- * GeminiUserTier reflects the structure received from the CodeAssist when calling LoadCodeAssist.
+ * OttoUserTier reflects the structure received from the CodeAssist when calling LoadCodeAssist.
  */
-export interface GeminiUserTier {
+export interface OttoUserTier {
   id: UserTierId;
   name: string;
   description: string;

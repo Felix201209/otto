@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Otto team
+ * Copyright 2026 Felix
  * https://github.com/Felix201209/otto.git
  * SPDX-License-Identifier: Apache-2.0
  *

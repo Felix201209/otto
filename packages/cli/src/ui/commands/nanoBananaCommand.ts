@@ -1,21 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'glob';
 import { CommandKind, SlashCommand, CommandContext } from './types.js';
-import { ImageGeneratorAdapter, UnauthorizedError, proxyAuthManager, escapePath } from 'otto-core';
+import { ImageGeneratorAdapter, UnauthorizedError, proxyAuthManager } from 'otto-core';
 import { MessageType } from '../types.js';
 import { appEvents, AppEvent } from '../../utils/events.js';
 import { t, tp } from '../utils/i18n.js';
-import { fuzzyMatch } from '../utils/fuzzyMatch.js';
-import { Suggestion } from '../components/SuggestionsDisplay.js';
 import open from 'open';
 
 const ALLOWED_RATIOS = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
@@ -27,11 +23,13 @@ const COLOR_GREEN = '\u001b[32m';
 const COLOR_YELLOW = '\u001b[33m';
 const COLOR_RED = '\u001b[31m';
 const COLOR_CYAN = '\u001b[36m';
-const COLOR_BLUE = '\u001b[34m';
-const COLOR_MAGENTA = '\u001b[35m';
-const COLOR_GREY = '\u001b[90m';
 const RESET_COLOR = '\u001b[0m';
 const BOLD = '\u001b[1m';
+
+interface ImageTaskStatusWithCredits {
+  credits_actual?: number;
+  credits_deducted?: number;
+}
 
 async function runImageGeneration(context: CommandContext, ratio: string, prompt: string, imagePaths: string[], imageSize?: string) {
   const { addItem } = context.ui;
@@ -163,8 +161,8 @@ async function runImageGeneration(context: CommandContext, ratio: string, prompt
         type: 'nanobanana_submitted',
         timestamp: new Date().toISOString(),
         task_id: task.task_id,
-        prompt: prompt,
-        ratio: ratio,
+        prompt,
+        ratio,
         size: imageSize || 'auto',
         reference_images: imagePaths.length > 0 ? imagePaths : null,
         reference_image_urls: fromImgUrl ? [fromImgUrl] : (imageUrls || null),
@@ -219,8 +217,8 @@ async function runImageGeneration(context: CommandContext, ratio: string, prompt
             if (status.status === 'completed') {
               clearInterval(pollInterval);
               const resultUrls = status.result_urls || [];
-              // @ts-ignore - credits_actual might not be in type definition
-              const actualCredits = status.credits_actual !== undefined ? status.credits_actual : (status.credits_deducted || 0);
+              const statusWithCredits = status as typeof status & ImageTaskStatusWithCredits;
+              const actualCredits = statusWithCredits.credits_actual !== undefined ? statusWithCredits.credits_actual : (statusWithCredits.credits_deducted || 0);
 
               // 输出完成事件
               console.error(JSON.stringify({
@@ -319,8 +317,8 @@ async function runImageGeneration(context: CommandContext, ratio: string, prompt
             const resultUrls = status.result_urls || [];
             const urlText = resultUrls.map((url, idx) => `${BOLD}Image ${idx + 1}:${RESET_COLOR} ${COLOR_CYAN}${url}${RESET_COLOR}`).join('\n');
 
-            // @ts-ignore - credits_actual might not be in type definition
-            const actualCredits = status.credits_actual !== undefined ? status.credits_actual : (status.credits_deducted || 0);
+            const statusWithCredits = status as typeof status & ImageTaskStatusWithCredits;
+            const actualCredits = statusWithCredits.credits_actual !== undefined ? statusWithCredits.credits_actual : (statusWithCredits.credits_deducted || 0);
 
             addItem({
               type: MessageType.INFO,
@@ -396,149 +394,6 @@ function getContentType(ext: string): string {
 function isImageFile(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return IMAGE_EXTENSIONS.includes(ext);
-}
-
-/**
- * 使用 glob 递归搜索图片文件，支持模糊匹配
- */
-async function findImageFilesWithGlob(
-  cwd: string,
-  searchPrefix: string,
-  maxResults = 50,
-): Promise<Suggestion[]> {
-  try {
-    // 构建 glob 模式：搜索所有图片文件
-    const imageGlobPattern = `**/*.{jpg,jpeg,png,webp,gif,bmp,tiff,tif}`;
-
-    const files = await glob(imageGlobPattern, {
-      cwd,
-      dot: searchPrefix.startsWith('.'),
-      nocase: true,
-      ignore: ['**/node_modules/**', '**/.git/**'],
-    });
-
-    const suggestions: Suggestion[] = [];
-
-    for (const file of files) {
-      const fileName = path.basename(file);
-      // 如果有搜索前缀，使用模糊匹配
-      if (searchPrefix) {
-        const matchResult = fuzzyMatch(fileName, searchPrefix);
-        // 同时匹配路径
-        const pathMatchResult = fuzzyMatch(file, searchPrefix);
-        const bestScore = Math.max(matchResult.score, pathMatchResult.score);
-        const matched = matchResult.matched || pathMatchResult.matched;
-
-        if (!matched) {
-          continue;
-        }
-
-        suggestions.push({
-          label: file,
-          value: '@' + escapePath(file),
-          matchScore: bestScore,
-        });
-      } else {
-        // 无搜索前缀时返回所有图片
-        suggestions.push({
-          label: file,
-          value: '@' + escapePath(file),
-          matchScore: 0,
-        });
-      }
-    }
-
-    // 按匹配分数和路径深度排序
-    suggestions.sort((a, b) => {
-      // 优先按匹配分数
-      const scoreA = a.matchScore ?? 0;
-      const scoreB = b.matchScore ?? 0;
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
-
-      // 同分数按路径深度（浅层优先）
-      const depthA = (a.label.match(/\//g) || []).length;
-      const depthB = (b.label.match(/\//g) || []).length;
-      if (depthA !== depthB) {
-        return depthA - depthB;
-      }
-
-      // 最后按文件名排序
-      return a.label.localeCompare(b.label);
-    });
-
-    return suggestions.slice(0, maxResults);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 获取指定目录下的图片文件和子目录
- */
-async function getImageCompletionsInDir(
-  basePath: string,
-  prefix: string,
-): Promise<Suggestion[]> {
-  try {
-    const absoluteDir = path.resolve(basePath);
-
-    if (!fs.existsSync(absoluteDir)) {
-      return [];
-    }
-
-    const entries = await fs.promises.readdir(absoluteDir, { withFileTypes: true });
-
-    const suggestions: Suggestion[] = [];
-
-    for (const entry of entries) {
-      const name = entry.name;
-
-      // 跳过隐藏文件（除非用户正在搜索隐藏文件）
-      if (name.startsWith('.') && !prefix.startsWith('.')) {
-        continue;
-      }
-
-      // 使用模糊匹配
-      if (prefix) {
-        const matchResult = fuzzyMatch(name, prefix);
-        if (!matchResult.matched) {
-          continue;
-        }
-      }
-
-      // 只包含目录和图片文件
-      if (entry.isDirectory()) {
-        const displayPath = basePath === '.' ? name + '/' : path.join(basePath, name) + '/';
-        suggestions.push({
-          label: displayPath,
-          value: '@' + escapePath(displayPath),
-          matchScore: prefix ? fuzzyMatch(name, prefix).score : 0,
-        });
-      } else if (isImageFile(name)) {
-        const displayPath = basePath === '.' ? name : path.join(basePath, name);
-        suggestions.push({
-          label: displayPath,
-          value: '@' + escapePath(displayPath),
-          matchScore: prefix ? fuzzyMatch(name, prefix).score : 0,
-        });
-      }
-    }
-
-    // 排序：目录优先，然后按名称
-    suggestions.sort((a, b) => {
-      const aIsDir = a.label.endsWith('/');
-      const bIsDir = b.label.endsWith('/');
-      if (aIsDir && !bIsDir) return -1;
-      if (!aIsDir && bIsDir) return 1;
-      return a.label.localeCompare(b.label);
-    });
-
-    return suggestions;
-  } catch {
-    return [];
-  }
 }
 
 export const nanoBananaCommand: SlashCommand = {
@@ -669,7 +524,7 @@ export const nanoBananaCommand: SlashCommand = {
       return;
     }
   },
-  completion: async (context, partialArg) => {
+  completion: async (_context, partialArg) => {
     const trimmed = partialArg.trim();
     const parts = trimmed.split(/\s+/).filter((p) => p.length > 0);
 

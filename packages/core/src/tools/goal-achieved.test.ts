@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,7 @@ vi.mock('../agents/runGoalEvaluation.js', () => ({
 }));
 
 /**
- * Lightweight mock GeminiClient surface — only the bits goal-achieved
+ * Lightweight mock OttoClient surface — only the bits goal-achieved
  * touches. Letting tests assert against `getGoalContext`/`clearGoalContext`
  * call counts is the most direct way to verify the side effect.
  */
@@ -55,7 +55,7 @@ describe('GoalAchievedTool', () => {
   beforeEach(() => {
     mockClient = makeMockClient(baseCtx);
     const mockConfig = {
-      getGeminiClient: () => mockClient,
+      getOttoClient: () => mockClient,
       getUsageStatisticsEnabled: () => false,
     } as unknown as Config;
     tool = new GoalAchievedTool(mockConfig);
@@ -97,7 +97,7 @@ describe('GoalAchievedTool', () => {
   // ─── execute: happy path (active goal) ──────────────────────────────
 
   describe('execute (active goal)', () => {
-    it('calls clearGoalContext on the GeminiClient', async () => {
+    it('calls clearGoalContext on the OttoClient', async () => {
       await tool.execute(
         { reason: 'criteria 1, 2, 3 all met (cited evidence)' },
         abortSignal,
@@ -188,7 +188,7 @@ describe('GoalAchievedTool', () => {
     beforeEach(() => {
       mockClient = makeMockClient(baseCtx);
       mockConfigWithCloudModels = {
-        getGeminiClient: () => mockClient,
+        getOttoClient: () => mockClient,
         getUsageStatisticsEnabled: () => false,
         getCloudModels: () => [{ name: 'deepseek-v4-flash', available: true }],
         getCustomModels: () => [],
@@ -250,7 +250,7 @@ describe('GoalAchievedTool', () => {
     beforeEach(() => {
       mockClient = makeMockClient(null); // no active context
       const mockConfig = {
-        getGeminiClient: () => mockClient,
+        getOttoClient: () => mockClient,
         getUsageStatisticsEnabled: () => false,
       } as unknown as Config;
       tool = new GoalAchievedTool(mockConfig);
@@ -286,12 +286,12 @@ describe('GoalAchievedTool', () => {
 
   // ─── execute: defensive — client unavailable ────────────────────────
 
-  describe('execute (defensive — getGeminiClient throws)', () => {
+  describe('execute (defensive — getOttoClient throws)', () => {
     beforeEach(() => {
       const mockConfig = {
-        // Simulate the client init race: getGeminiClient throws if called
+        // Simulate the client init race: getOttoClient throws if called
         // too early. Should not crash the tool loop.
-        getGeminiClient: () => {
+        getOttoClient: () => {
           throw new Error('client not yet initialized');
         },
         getUsageStatisticsEnabled: () => false,

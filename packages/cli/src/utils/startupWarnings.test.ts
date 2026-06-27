@@ -11,7 +11,7 @@ import { getErrorMessage } from 'otto-core';
 
 vi.mock('fs/promises');
 vi.mock('otto-core', async (importOriginal) => {
-  const actual = await importOriginal() as any;
+  const actual = (await importOriginal()) as typeof import('otto-core');
   return {
     ...actual,
     getErrorMessage: vi.fn(),

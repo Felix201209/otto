@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
  *   - aggregate tokens into the main session counter
  *
  * The fork talks directly to `ContentGenerator.generateContentStream`,
- * bypassing the `GeminiChat` / `Turn` / `ToolExecutionEngine` stack
+ * bypassing the `OttoChat` / `Turn` / `ToolExecutionEngine` stack
  * entirely. This keeps the fork dead-simple and guaranteed-side-effect-free.
  *
  * Prompt-cache prefix sharing: if `cacheSafeSnapshot` is provided, the

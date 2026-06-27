@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
-import { Text, Box } from 'ink';
-import { StatsDisplay } from './StatsDisplay.js';
-import { t } from '../utils/i18n.js';
+import { Box,Text } from 'ink';
 import { Config } from 'otto-core';
+import React,{ useEffect,useState } from 'react';
 import { getCreditsService } from '../../services/creditsService.js';
 import { formatCreditsWithColor } from '../utils/creditsFormatter.js';
+import { t } from '../utils/i18n.js';
+import { StatsDisplay } from './StatsDisplay.js';
 
 interface SessionSummaryDisplayProps {
   duration: string;
@@ -26,7 +26,7 @@ export const SessionSummaryDisplay: React.FC<SessionSummaryDisplayProps> = ({
   const [latestCreditsInfo, setLatestCreditsInfo] = useState<string | null>(null);
   const [showLatestCredits, setShowLatestCredits] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [creditsLoadComplete, setCreditsLoadComplete] = useState(false);
+  const [_creditsLoadComplete, setCreditsLoadComplete] = useState(false);
 
   useEffect(() => {
     // 🆕 立即开始加载积分，不要延迟 1 秒
@@ -50,7 +50,7 @@ export const SessionSummaryDisplay: React.FC<SessionSummaryDisplayProps> = ({
             setShowLatestCredits(true);
           }
         }
-      } catch (error) {
+      } catch (_error) {
         // 静默处理错误，不显示新数据
       } finally {
         setIsLoading(false);

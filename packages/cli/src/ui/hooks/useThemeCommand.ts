@@ -68,6 +68,10 @@ export const useThemeCommand = (
     } else {
       setThemeError(null);
     }
+    // 故意用空依赖数组：这是「初次启动」一次性主题检查，只应在挂载时跑一次。
+    // 若加入 loadedSettings.merged.theme / addItem / setThemeError 等依赖，主题或设置
+    // 变化时会重跑，导致重复弹出主题对话框——破坏 mount-once 语义。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openThemeDialog = useCallback(() => {

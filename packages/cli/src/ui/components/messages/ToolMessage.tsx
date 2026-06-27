@@ -4,23 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Box,Text } from 'ink';
+import type {
+  FileDiff,
+  GoalAchievedDisplay,
+  GoalRejectedDisplay,
+  McpThinkingDisplay,
+  SubAgentDisplay,
+  TodoDisplay,
+  VisualDisplay,
+} from 'otto-core';
 import React from 'react';
-import { Box, Text } from 'ink';
-import { IndividualToolCallDisplay, ToolCallStatus } from '../../types.js';
+import { Colors } from '../../colors.js';
+import { useSmallWindowOptimization,WindowSizeLevel } from '../../hooks/useSmallWindowOptimization.js';
+import { IndividualToolCallDisplay,ToolCallStatus } from '../../types.js';
+import { getLocalizedToolName,isChineseLocale,t } from '../../utils/i18n.js';
+import { truncateText } from '../../utils/textTruncator.js';
+import { OttoRespondingSpinner } from '../OttoRespondingSpinner.js';
+import { MaxSizedBox } from '../shared/MaxSizedBox.js';
 import { DiffRenderer } from './DiffRenderer.js';
-import { TodoSummaryLine } from './TodoDisplayRenderer.js';
-import { SubAgentDisplayRenderer } from './SubAgentDisplayRenderer.js';
-import { McpThinkingDisplayRenderer } from './McpThinkingDisplayRenderer.js';
 import { GoalAchievedDisplayRenderer } from './GoalAchievedDisplayRenderer.js';
 import { GoalRejectedDisplayRenderer } from './GoalRejectedDisplayRenderer.js';
-import { Colors } from '../../colors.js';
-import { MarkdownDisplay } from '../../utils/MarkdownDisplay.js';
-import { GeminiRespondingSpinner } from '../GeminiRespondingSpinner.js';
-import { MaxSizedBox } from '../shared/MaxSizedBox.js';
-import { getLocalizedToolName, isChineseLocale, t } from '../../utils/i18n.js';
-import { useSmallWindowOptimization, WindowSizeLevel } from '../../hooks/useSmallWindowOptimization.js';
-import stringWidth from 'string-width';
-import { truncateText } from '../../utils/textTruncator.js';
+import { McpThinkingDisplayRenderer } from './McpThinkingDisplayRenderer.js';
+import { SubAgentDisplayRenderer } from './SubAgentDisplayRenderer.js';
+import { TodoSummaryLine } from './TodoDisplayRenderer.js';
 import { shouldCollapseToolResult } from './toolResultCollapse.js';
 
 const STATIC_HEIGHT = 1;
@@ -33,6 +40,44 @@ const MIN_LINES_SHOWN = 2; // show at least this many lines
 // Large threshold to ensure we don't cause performance issues for very large
 // outputs that will get truncated further MaxSizedBox anyway.
 const MAXIMUM_RESULT_DISPLAY_CHARACTERS = 1000000;
+
+type SubAgentUpdateDisplay = Extract<VisualDisplay, { type: 'subagent_update' }>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isFileDiffDisplay(value: unknown): value is FileDiff {
+  return isRecord(value) && typeof value.fileDiff === 'string';
+}
+
+function isTodoDisplay(value: unknown): value is TodoDisplay {
+  return isRecord(value) && value.type === 'todo_display';
+}
+
+function isSubAgentDisplay(value: unknown): value is SubAgentDisplay {
+  return isRecord(value) && value.type === 'subagent_display';
+}
+
+function isSubAgentUpdateDisplay(value: unknown): value is SubAgentUpdateDisplay {
+  return isRecord(value) && value.type === 'subagent_update' && isSubAgentDisplay(value.data);
+}
+
+function isGoalAchievedDisplay(value: unknown): value is GoalAchievedDisplay {
+  return isRecord(value) && value.type === 'goal_achieved_display';
+}
+
+function isGoalRejectedDisplay(value: unknown): value is GoalRejectedDisplay {
+  return isRecord(value) && value.type === 'goal_rejected_display';
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
 
 /**
  * 分析diff内容，提取统计信息
@@ -156,7 +201,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   description,
   resultDisplay,
   status,
-  confirmationDetails,
+  confirmationDetails: _confirmationDetails,
   availableTerminalHeight,
   terminalWidth,
   emphasis = 'medium',
@@ -266,26 +311,26 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
 
   // Special handling for Sequential thinking - convert to mcp_thinking_display
   const normalizedToolName = name?.toLowerCase().replace(/[_-]/g, '');
-  let thinkingDisplayData: any = null;
+  let thinkingDisplayData: McpThinkingDisplay | null = null;
 
   if (normalizedToolName?.includes('sequentialthinking')) {
     // Try to parse thinking data from description
     try {
-      const parsedDescription = JSON.parse(description);
-      if (parsedDescription && parsedDescription.thought !== undefined) {
+      const parsedDescription: unknown = JSON.parse(description);
+      if (isRecord(parsedDescription) && parsedDescription.thought !== undefined) {
         thinkingDisplayData = {
-          type: 'mcp_thinking_display' as const,
-          thought: parsedDescription.thought || '',
-          thoughtNumber: parsedDescription.thoughtNumber,
-          totalThoughts: parsedDescription.totalThoughts,
-          nextThoughtNeeded: parsedDescription.nextThoughtNeeded,
-          isRevision: parsedDescription.isRevision,
-          revisesThought: parsedDescription.revisesThought,
-          branchFromThought: parsedDescription.branchFromThought,
-          branchId: parsedDescription.branchId,
-          needsMoreThoughts: parsedDescription.needsMoreThoughts,
-          branches: parsedDescription.branches,
-          thoughtHistoryLength: parsedDescription.thoughtHistoryLength,
+          type: 'mcp_thinking_display',
+          thought: String(parsedDescription.thought || ''),
+          thoughtNumber: optionalNumber(parsedDescription.thoughtNumber),
+          totalThoughts: optionalNumber(parsedDescription.totalThoughts),
+          nextThoughtNeeded: optionalBoolean(parsedDescription.nextThoughtNeeded),
+          isRevision: optionalBoolean(parsedDescription.isRevision),
+          revisesThought: optionalNumber(parsedDescription.revisesThought),
+          branchFromThought: optionalNumber(parsedDescription.branchFromThought),
+          branchId: typeof parsedDescription.branchId === 'string' ? parsedDescription.branchId : undefined,
+          needsMoreThoughts: optionalBoolean(parsedDescription.needsMoreThoughts),
+          branches: Array.isArray(parsedDescription.branches) ? parsedDescription.branches : undefined,
+          thoughtHistoryLength: optionalNumber(parsedDescription.thoughtHistoryLength),
         };
       }
     } catch {
@@ -300,6 +345,10 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         '...' + resultDisplay.slice(-MAXIMUM_RESULT_DISPLAY_CHARACTERS);
     }
   }
+  const structuredResult: VisualDisplay | FileDiff | null =
+    typeof resultDisplay === 'object' && resultDisplay !== null
+      ? resultDisplay as VisualDisplay | FileDiff
+      : null;
   return (
     <Box paddingLeft={0} paddingRight={1} paddingY={0} flexDirection="column" width={terminalWidth}>
       <Box minHeight={1} width="100%">
@@ -416,19 +465,19 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
                 );
               })()
             ) : null}
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).fileDiff ? (
+            {isFileDiffDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
                   {shouldSimplifyDiff ? (
                     renderSimplifiedDiffStats(
-                      analyzeDiffStats((resultDisplay as any).fileDiff),
-                      (resultDisplay as any).fileName || '未知文件'
+                      analyzeDiffStats(structuredResult.fileDiff),
+                      structuredResult.fileName || '未知文件'
                     )
                   ) : (
                     <DiffRenderer
-                      diffContent={(resultDisplay as any).fileDiff}
-                      filename={(resultDisplay as any).fileName}
+                      diffContent={structuredResult.fileDiff}
+                      filename={structuredResult.fileName}
                       availableTerminalHeight={availableHeight}
                       terminalWidth={childWidth - 2}
                     />
@@ -437,43 +486,43 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
               </Box>
             ) : null}
 
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).type === 'todo_display' ? (
+            {isTodoDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
-                  <TodoSummaryLine data={resultDisplay as any} />
+                  <TodoSummaryLine data={structuredResult} />
                 </Box>
               </Box>
             ) : null}
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).type === 'subagent_display' ? (
+            {isSubAgentDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
-                  <SubAgentDisplayRenderer data={resultDisplay as any} />
+                  <SubAgentDisplayRenderer data={structuredResult} />
                 </Box>
               </Box>
             ) : null}
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).type === 'subagent_update' ? (
+            {isSubAgentUpdateDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
-                  <SubAgentDisplayRenderer data={(resultDisplay as any).data} />
+                  <SubAgentDisplayRenderer data={structuredResult.data} />
                 </Box>
               </Box>
             ) : null}
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).type === 'goal_achieved_display' ? (
+            {isGoalAchievedDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
-                  <GoalAchievedDisplayRenderer data={resultDisplay as any} />
+                  <GoalAchievedDisplayRenderer data={structuredResult} />
                 </Box>
               </Box>
             ) : null}
-            {typeof resultDisplay !== 'string' && (resultDisplay as any).type === 'goal_rejected_display' ? (
+            {isGoalRejectedDisplay(structuredResult) ? (
               <Box flexDirection="row">
                 <Text color={Colors.Gray}>└ </Text>
                 <Box flexGrow={1}>
-                  <GoalRejectedDisplayRenderer data={resultDisplay as any} />
+                  <GoalRejectedDisplayRenderer data={structuredResult} />
                 </Box>
               </Box>
             ) : null}
@@ -498,7 +547,7 @@ const ToolStatusIndicator: React.FC<ToolStatusIndicatorProps> = ({
       <Text color={Colors.Gray} dimColor>•</Text>
     ) : null}
     {status === ToolCallStatus.Executing ? (
-      <GeminiRespondingSpinner
+      <OttoRespondingSpinner
         nonRespondingDisplay={'•'}
       />
     ) : null}

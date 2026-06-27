@@ -20,7 +20,7 @@ interface HeaderProps {
 }
 
 // 品牌 tagline —— 与 AsciiArt.longAsciiLogo 中沿用的口径保持一致
-const TAGLINE = '你的飞书数字同事';
+const TAGLINE = '终端 & 飞书 AI 同事';
 
 // 开屏上手提示：克制 2 条，紧扣最常用入口
 const HINTS: ReadonlyArray<{ key: string; label: string }> = [
@@ -80,12 +80,12 @@ export const Header: React.FC<HeaderProps> = ({
       {/* 品牌行：Logo + Otto + 版本 + tagline */}
       <Box flexDirection="row">
         <Box marginRight={1}>
-          <Text color={Colors.AccentBlue}>{trimmedLogo}</Text>
+          <Text color={Colors.AccentOrange}>{trimmedLogo}</Text>
         </Box>
         <Box flexDirection="column" justifyContent="center" flexGrow={1}>
           <Box>
-            <Text color={Colors.AccentBlue} bold>
-              Otto
+            <Text color={Colors.AccentOrange} bold>
+              OTTO
             </Text>
             <Text dimColor> v{version}</Text>
             {nightly && (

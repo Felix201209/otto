@@ -33,14 +33,12 @@ export const isSlashCommand = (query: string): boolean => query.startsWith('/');
 /**
  * Checks if the current environment is WSL (Windows Subsystem for Linux)
  */
-const isWSLEnvironment = (): boolean => {
-  return !!(
+const isWSLEnvironment = (): boolean => !!(
     process.env.WSL_DISTRO_NAME ||
     process.env.WSL_INTEROP ||
     process.env.WSLENV ||
     (process.platform === 'linux' && process.env.WSLENV)
   );
-};
 
 /**
  * Copies text to clipboard on Windows using PowerShell Set-Clipboard

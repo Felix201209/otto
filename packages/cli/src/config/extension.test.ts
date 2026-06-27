@@ -98,7 +98,7 @@ describe('loadExtensions', () => {
     const extDir = path.join(workspaceExtensionsDir, 'ext1');
 
     // Create multiple config files, AGENTS.md should have highest priority
-    fs.writeFileSync(path.join(extDir, 'OTTO.md'), 'deepv content');
+    fs.writeFileSync(path.join(extDir, 'OTTO.md'), 'otto content');
     fs.writeFileSync(path.join(extDir, 'GEMINI.md'), 'gemini content');
     fs.writeFileSync(path.join(extDir, 'AGENTS.md'), 'agents content');
     fs.writeFileSync(path.join(extDir, 'CLAUDE.md'), 'claude content');

@@ -4,24 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useState,
-  useMemo,
-  useEffect,
+import React,{
+createContext,
+useCallback,
+useContext,
+useEffect,
+useMemo,
+useState,
 } from 'react';
 
 import {
-  uiTelemetryService,
-  SessionMetrics,
-  ModelMetrics,
+ModelMetrics,
+SessionMetrics,
+uiTelemetryService,
 } from 'otto-core';
 
 // --- Interface Definitions ---
 
-export type { SessionMetrics, ModelMetrics };
+export type { ModelMetrics,SessionMetrics };
 
 export interface SubAgentStats {
   totalApiCalls: number;
@@ -109,8 +109,8 @@ function computeSubAgentStats(metrics: SessionMetrics): SubAgentStats {
     promptTokens += subAgents.tokens.prompt;
     candidatesTokens += subAgents.tokens.candidates;
     cachedTokens += subAgents.tokens.cached;
-    cacheWriteTokens += (subAgents.tokens as any).cacheWrite || 0;
-    cacheReadTokens += (subAgents.tokens as any).cacheRead || 0;
+    cacheWriteTokens += subAgents.tokens.cacheWrite || 0;
+    cacheReadTokens += subAgents.tokens.cacheRead || 0;
     thoughtsTokens += subAgents.tokens.thoughts;
     toolTokens += subAgents.tokens.tool;
   });
@@ -151,11 +151,11 @@ export function computeSessionStats(statsState: SessionStatsState): ExtendedSess
   const hasSubAgentActivity = subAgentStats.totalApiCalls > 0;
 
   // 计算详细缓存统计
-  const totalCacheWrites = Object.values(metrics.models).reduce((total, model) => 
-    total + ((model.tokens as any).cacheWrite || 0), 0
+  const totalCacheWrites = Object.values(metrics.models).reduce((total, model) =>
+    total + (model.tokens.cacheWrite || 0), 0
   );
-  const totalCacheReads = Object.values(metrics.models).reduce((total, model) => 
-    total + ((model.tokens as any).cacheRead || 0), 0
+  const totalCacheReads = Object.values(metrics.models).reduce((total, model) =>
+    total + (model.tokens.cacheRead || 0), 0
   );
   const cacheHitRate = totalCacheWrites + totalCacheReads > 0 
     ? (totalCacheReads / (totalCacheWrites + totalCacheReads)) * 100 

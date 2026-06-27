@@ -1,10 +1,9 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
-import { CommandContext, SlashCommand, MessageActionReturn, CommandKind } from './types.js';
+import { SlashCommand, MessageActionReturn, CommandKind } from './types.js';
 import { t, tp } from '../utils/i18n.js';
 import { exportDebugToMarkdown } from '../../utils/debugExport.js';
 

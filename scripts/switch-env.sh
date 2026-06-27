@@ -30,9 +30,9 @@ if [ $# -eq 0 ]; then
     echo "Usage: $0 [production|development|test]"
     echo ""
     echo "Available environments:"
-    echo "  production  - Production environment (https://api-code.deepvlab.ai)"
+    echo "  production  - Production environment (configure your own server URL)"
     echo "  development - Development environment (http://localhost:6699)"
-    echo "  test        - Test environment (https://test.deepvlab.ai)"
+    echo "  test        - Test environment (configure your own server URL)"
     exit 1
 fi
 
@@ -81,7 +81,7 @@ echo ""
 case "$ENV_TYPE" in
     production)
         echo "🚀 Production environment activated"
-        echo "   Server: https://api-code.deepvlab.ai"
+        echo "   Server: (configure your own server URL)"
         echo "   Please ensure thorough testing before deployment"
         ;;
     development)
@@ -91,7 +91,7 @@ case "$ENV_TYPE" in
         ;;
     test)
         echo "🧪 Test environment activated"
-        echo "   Server: https://test.deepvlab.ai"
+        echo "   Server: (configure your own server URL)"
         echo "   Suitable for integration testing and pre-release validation"
         ;;
 esac

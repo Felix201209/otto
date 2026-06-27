@@ -4,85 +4,108 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { type Content,type Part,type PartListUnion,FinishReason } from '@google/genai';
 import { useInput } from 'ink';
-import { t, tp, isChineseLocale } from '../utils/i18n.js';
-import { isBackgroundTaskPanelOpen, isSideQuestionPanelOpen, isWorkflowPanelOpen } from '../utils/modalState.js';
 import {
-  Config,
-  GeminiClient,
-  GeminiEventType as ServerGeminiEventType,
-  ServerGeminiStreamEvent as GeminiEvent,
-  ServerGeminiContentEvent as ContentEvent,
-  ServerGeminiErrorEvent as ErrorEvent,
-  ServerGeminiChatCompressedEvent,
-  ServerGeminiFinishedEvent,
-  getErrorMessage,
-  isNodeError,
-  MessageSenderType,
-  ToolCallRequestInfo,
-  Tool,
-  logUserPrompt,
-  GitService,
-  EditorType,
-  ThoughtSummary,
-  ReasoningSummary,
-  UnauthorizedError,
-  UserPromptEvent,
-  DEFAULT_GEMINI_FLASH_MODEL,
-  SessionManager,
-  type SessionData,
-  MESSAGE_ROLES,
-  isCustomModel,
+Config,
+ServerOttoContentEvent as ContentEvent,
+DEFAULT_GEMINI_FLASH_MODEL,
+EditorType,
+ServerOttoErrorEvent as ErrorEvent,
+OttoClient,
+ServerOttoStreamEvent as OttoEvent,
+getErrorMessage,
+GitService,
+isCustomModel,
+isNodeError,
+logUserPrompt,
+MESSAGE_ROLES,
+MessageSenderType,
+ReasoningSummary,
+SceneType,
+ServerOttoChatCompressedEvent,
+OttoEventType as ServerOttoEventType,
+ServerOttoFinishedEvent,
+ServerOttoLoopDetectedEvent,
+SessionManager,
+ThoughtSummary,
+type Tool,
+ToolCallRequestInfo,
+UnauthorizedError,
+UserPromptEvent
 } from 'otto-core';
-import { updateWindowTitleWithSummary } from '../../gemini.js';
-import { type Part, type PartListUnion, FinishReason } from '@google/genai';
+import path from 'path';
+import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { LoadedSettings } from '../../config/settings.js';
+import { updateWindowTitleWithSummary } from '../../otto.js';
+import { HelpSubagent } from '../../services/HelpSubagent.js';
+import { AudioNotification,NotificationSound } from '../../utils/audioNotification.js';
+import { AppEvent,appEvents } from '../../utils/events.js';
+import { refreshModelsInBackground } from '../commands/modelCommand.js';
+import { useSessionStats } from '../contexts/SessionContext.js';
 import {
-  StreamingState,
-  HistoryItem,
-  HistoryItemWithoutId,
-  HistoryItemToolGroup,
-  HistoryItemCompression,
-  MessageType,
-  SlashCommandProcessorResult,
-  ToolCallStatus,
+HistoryItem,
+HistoryItemCompression,
+HistoryItemToolGroup,
+HistoryItemWithoutId,
+MessageType,
+SlashCommandProcessorResult,
+StreamingState,
+ToolCallStatus,
 } from '../types.js';
 import { isAtCommand } from '../utils/commandUtils.js';
-import { parseAndFormatApiError } from '../utils/errorParsing.js';
-import { useShellCommandProcessor } from './shellCommandProcessor.js';
-import { handleAtCommand } from './atCommandProcessor.js';
-import { HelpSubagent } from '../../services/HelpSubagent.js';
-import { findLastSafeSplitPoint } from '../utils/markdownUtilities.js';
-import { detectPlanModeChange, isPlanModeExitMarker } from '../utils/planModeDetector.js';
-import { refreshModelsInBackground } from '../commands/modelCommand.js';
-import { LoadedSettings } from '../../config/settings.js';
-import { useStateAndRef } from './useStateAndRef.js';
-import { UseHistoryManagerReturn } from './useHistoryManager.js';
-import { useLogger } from './useLogger.js';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { AudioNotification, NotificationSound } from '../../utils/audioNotification.js';
-import {
-  getActiveDebate,
-  advanceCursor,
-  pauseDebate,
-  endDebate,
-  isLastTurn,
-} from '../utils/debateState.js';
-import { pickFollowup, buildSummaryPrompt, DEBATE_SUMMARY_MODEL, DEBATE_SUMMARY_FALLBACK_MODEL } from '../utils/debatePhrases.js';
 import { getDebateI18nTexts } from '../utils/debateI18n.js';
 import { detectUILanguage } from '../utils/debateLanguageUtils.js';
+import { buildSummaryPrompt,DEBATE_SUMMARY_FALLBACK_MODEL,DEBATE_SUMMARY_MODEL,pickFollowup } from '../utils/debatePhrases.js';
 import {
-  useReactToolScheduler,
-  mapToDisplay as mapTrackedToolCallsToDisplay,
-  TrackedToolCall,
-  TrackedCompletedToolCall,
-  TrackedCancelledToolCall,
+advanceCursor,
+endDebate,
+getActiveDebate,
+isLastTurn,
+pauseDebate,
+} from '../utils/debateState.js';
+import { parseAndFormatApiError } from '../utils/errorParsing.js';
+import { isChineseLocale,t,tp } from '../utils/i18n.js';
+import { findLastSafeSplitPoint } from '../utils/markdownUtilities.js';
+import { isBackgroundTaskPanelOpen,isSideQuestionPanelOpen,isWorkflowPanelOpen } from '../utils/modalState.js';
+import { detectPlanModeChange } from '../utils/planModeDetector.js';
+import { handleAtCommand } from './atCommandProcessor.js';
+import { useShellCommandProcessor } from './shellCommandProcessor.js';
+import { UseHistoryManagerReturn } from './useHistoryManager.js';
+import { useLogger } from './useLogger.js';
+import {
+mapToDisplay as mapTrackedToolCallsToDisplay,
+TrackedCancelledToolCall,
+TrackedCompletedToolCall,
+TrackedToolCall,
+useReactToolScheduler,
 } from './useReactToolScheduler.js';
-import { useSessionStats } from '../contexts/SessionContext.js';
-import { SceneType } from 'otto-core';
-import { appEvents, AppEvent } from '../../utils/events.js';
+import { useStateAndRef } from './useStateAndRef.js';
 // TaskStateManager 已移除，直接基于现有状态判断
+
+interface ToolLikeRequest {
+  name?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+}
+
+interface StreamInterruptError extends Error {
+  isStreamInterrupt?: boolean;
+  bytesReceived?: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getStringProperty(
+  source: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = source?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
 
 /**
  * 格式化工具调用信息为可读文本
@@ -185,14 +208,14 @@ function formatToolCallsForSummary(toolCalls: TrackedToolCall[]): string {
  * - 历史为空，单轮请求。
  * - 短超时 fail-open，失败返回 ''，调用方自行决定是否回退到原文。
  *
- * @param geminiClient GeminiClient 实例
+ * @param geminiClient OttoClient 实例
  * @param summarySource AI 文本回复或用户原文
  * @param _currentModel 已废弃；保留参数以兼容旧调用点
  * @param abortSignal 可选取消信号；用户开始新一轮 query 时取消上一个未完成的摘要请求，避免浪费配额与产生 race 条件
  * @returns 摘要文本，失败时返回空字符串
  */
 async function generateCheckpointSummary(
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   summarySource: string,
   _currentModel?: string,
   abortSignal?: AbortSignal
@@ -303,8 +326,8 @@ enum StreamProcessingStatus {
  * Manages the Gemini stream, including user input, command processing,
  * API interaction, and tool call lifecycle.
  */
-export const useGeminiStream = (
-  geminiClient: GeminiClient,
+export const useOttoStream = (
+  geminiClient: OttoClient,
   history: HistoryItem[],
   addItem: UseHistoryManagerReturn['addItem'],
   config: Config,
@@ -431,8 +454,7 @@ export const useGeminiStream = (
     /**
      * 🎯 递归检查工具调用中是否包含文件修改类工具
      */
-    const checkHasFileModifyingTools = (calls: any[]): boolean => {
-      return calls.some(req => {
+    const checkHasFileModifyingTools = (calls: ToolLikeRequest[]): boolean => calls.some(req => {
         // req 可能来自 ToolCallRequestInfo (有 name)
         // 也可能来自 batch 工具的参数 (有 tool)
         const toolName = req.name || req.tool || '';
@@ -444,18 +466,19 @@ export const useGeminiStream = (
         }
 
         // 2. 针对 run_shell_command 进行细化检查
-        if (toolName === 'run_shell_command' && args?.command) {
-          return isModifyingShellCommand(args.command);
+        const command = getStringProperty(args, 'command');
+        if (toolName === 'run_shell_command' && command) {
+          return isModifyingShellCommand(command);
         }
 
         // 3. 处理 batch 工具中的嵌套调用
-        if (toolName === 'batch' && args?.tool_calls && Array.isArray(args.tool_calls)) {
-          return checkHasFileModifyingTools(args.tool_calls);
+        const toolCalls = args?.tool_calls;
+        if (toolName === 'batch' && Array.isArray(toolCalls)) {
+          return checkHasFileModifyingTools(toolCalls.filter(isRecord));
         }
 
         return false;
       });
-    };
 
     const hasFileModifyingTools = checkHasFileModifyingTools(requests);
 
@@ -483,24 +506,24 @@ export const useGeminiStream = (
       const now = Date.now();
 
       // 创建 Git 快照 (编辑前快照)
-      const createCommitWithTimeout = async () => {
-        return new Promise<string>(async (resolve, reject) => {
+      const createCommitWithTimeout = async () => new Promise<string>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error('Git commit 操作超时 (15秒)'));
           }, 15000);
 
-          try {
-            const result = await gitService.createFileSnapshot(
-              `Pre-edit Checkpoint ${new Date(now).toLocaleString()} for session ${config.getSessionId()}`,
-            );
-            clearTimeout(timeout);
-            resolve(result as string);
-          } catch (error) {
-            clearTimeout(timeout);
-            reject(error);
-          }
+          void (async () => {
+            try {
+              const result = await gitService.createFileSnapshot(
+                `Pre-edit Checkpoint ${new Date(now).toLocaleString()} for session ${config.getSessionId()}`,
+              );
+              clearTimeout(timeout);
+              resolve(result as string);
+            } catch (error) {
+              clearTimeout(timeout);
+              reject(error);
+            }
+          })();
         });
-      };
 
       let commitHash = await createCommitWithTimeout();
 
@@ -605,7 +628,7 @@ export const useGeminiStream = (
    * 🎯 工具执行前的预处理 (用于 Git Checkpoint)
    * 这个回调会被传递给调度器，在每个工具（包括 batch 中的子工具）执行前触发
    */
-  const onPreToolExecution = useCallback(async (toolCall: { callId: string, tool: any, args: any }) => {
+  const onPreToolExecution = useCallback(async (toolCall: { callId: string, tool: Tool, args: Record<string, unknown> }) => {
     // 包装成数组，以便复用已有的 createInitialCheckpoint 逻辑
     // 注意：createInitialCheckpoint 内部现在支持递归检查，
     // 这意味着即使是嵌套的工具调用也能正确触发 checkpoint
@@ -617,9 +640,9 @@ export const useGeminiStream = (
       prompt_id: config.getSessionId()
     };
     await createInitialCheckpoint([request]);
-  }, [createInitialCheckpoint]);
+  }, [createInitialCheckpoint, config]);
 
-  const [toolCalls, originalScheduleToolCalls, markToolsAsSubmitted, handleConfirmationResponse] =
+  const [toolCalls, originalScheduleToolCalls, markToolsAsSubmitted, _handleConfirmationResponse] =
     useReactToolScheduler(
       async (completedToolCallsFromScheduler) => {
         // This onComplete is called when ALL scheduled tools for a given batch are done.
@@ -703,12 +726,12 @@ export const useGeminiStream = (
               console.log('🗑️ Shell command completion - Backup GC cleanup (1s later)');
             }
           }, 1000);
-        } catch (e) {
+        } catch (_e) {
           // GC not available, ignore
         }
       }
     }
-  }, []);
+  }, [clearEstimatedTokens]);
   const { handleShellCommand } = useShellCommandProcessor(
     addItem,
     setPendingHistoryItem,
@@ -731,13 +754,13 @@ export const useGeminiStream = (
     });
 
     if (hasAwaitingApprovalCalls) {
-      console.debug('[useGeminiStream] → WaitingForConfirmation (工具等待确认)');
+      console.debug('[useOttoStream] → WaitingForConfirmation (工具等待确认)');
       return StreamingState.WaitingForConfirmation;
     }
 
     // 检查是否正在响应或有活跃的工具调用
     if (isResponding) {
-      console.debug('[useGeminiStream] → Responding (正在响应)');
+      console.debug('[useOttoStream] → Responding (正在响应)');
       return StreamingState.Responding;
     }
 
@@ -762,7 +785,7 @@ export const useGeminiStream = (
     });
 
     if (hasActiveToolCalls) {
-      console.debug('[useGeminiStream] → Responding (活跃工具调用)');
+      console.debug('[useOttoStream] → Responding (活跃工具调用)');
       return StreamingState.Responding;
     }
 
@@ -798,7 +821,7 @@ export const useGeminiStream = (
       turnCancelledRef.current = true;
 
       // 🎯 只需要调用abort()，信号会自动传播到所有子任务
-      console.debug('[useGeminiStream] 用户取消操作 - 发送AbortSignal');
+      console.debug('[useOttoStream] 用户取消操作 - 发送AbortSignal');
       abortControllerRef.current?.abort();
 
       if (pendingHistoryItemRef.current) {
@@ -849,7 +872,7 @@ export const useGeminiStream = (
               console.log('🗑️ ESC cancellation - Backup GC cleanup (1s later)');
             }
           }, 1000);
-        } catch (e) {
+        } catch (_e) {
           // GC not available, ignore
         }
       }
@@ -1029,6 +1052,7 @@ export const useGeminiStream = (
       logger,
       shellModeActive,
       scheduleToolCalls,
+      helpModeActive,
     ],
   );
 
@@ -1099,7 +1123,7 @@ export const useGeminiStream = (
       }
       return newGeminiMessageBuffer;
     },
-    [addItem, pendingHistoryItemRef, setPendingHistoryItem, setHasContentStarted],
+    [addItem, pendingHistoryItemRef, setPendingHistoryItem, setHasContentStarted, hasContentStarted],
   );
 
   const handleUserCancelledEvent = useCallback(
@@ -1165,12 +1189,16 @@ export const useGeminiStream = (
               console.log('🗑️ User cancellation - Backup GC cleanup (1s later)');
             }
           }, 1000);
-        } catch (e) {
+        } catch (_e) {
           // GC not available, ignore
         }
       }
     },
-    [addItem, pendingHistoryItemRef, setPendingHistoryItem],
+    // debateAbortRef 故意省略：它是一个 ref（跨渲染身份稳定，本就无需作依赖），
+    // 且在组件内声明于本回调之后（约 L2174）。若把它写进依赖数组会在渲染期
+    // 提前求值触发 TDZ ReferenceError。clearEstimatedTokens 是稳定的 useCallback，可安全加入。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [addItem, pendingHistoryItemRef, setPendingHistoryItem, clearEstimatedTokens],
   );
 
   const handleErrorEvent = useCallback(
@@ -1187,7 +1215,7 @@ export const useGeminiStream = (
 
       const errorString = String(eventValue.error);
       const errorMessage = typeof eventValue.error === 'object' && eventValue.error !== null && 'message' in eventValue.error
-        ? String((eventValue.error as any).message)
+        ? String(eventValue.error.message)
         : errorString;
 
       // 🆕 流中断错误特殊处理 - 抛出特殊异常让外层处理自动重试
@@ -1198,8 +1226,8 @@ export const useGeminiStream = (
 
       if (isStreamInterruptError) {
         // 抛出带标记的异常，让外层 catch 处理自动重试
-        const streamInterruptError = new Error(errorMessage);
-        (streamInterruptError as any).isStreamInterrupt = true;
+        const streamInterruptError: StreamInterruptError = new Error(errorMessage);
+        streamInterruptError.isStreamInterrupt = true;
         throw streamInterruptError;
       }
 
@@ -1253,7 +1281,7 @@ export const useGeminiStream = (
   );
 
   const handleFinishedEvent = useCallback(
-    (event: ServerGeminiFinishedEvent, userMessageTimestamp: number) => {
+    (event: ServerOttoFinishedEvent, userMessageTimestamp: number) => {
       const finishReason = event.value;
 
       const finishReasonMessages: Record<FinishReason, string | undefined> = {
@@ -1307,7 +1335,7 @@ export const useGeminiStream = (
   );
 
   const handleChatCompressionEvent = useCallback(
-    (eventValue: ServerGeminiChatCompressedEvent['value']) => {
+    (eventValue: ServerOttoChatCompressedEvent['value']) => {
       // 兼容旧格式：value 可能是 null（异常情况）
       if (!eventValue) {
         addItem(
@@ -1389,7 +1417,7 @@ export const useGeminiStream = (
     let action = '';
 
     // Get localized messages based on loop type
-    const locale = isChineseLocale() ? 'zh' : 'en';
+    const _locale = isChineseLocale() ? 'zh' : 'en';
 
     switch (loopType) {
       case 'consecutive_identical_tool_calls':
@@ -1427,7 +1455,7 @@ export const useGeminiStream = (
 
   const processGeminiStreamEvents = useCallback(
     async (
-      stream: AsyncIterable<GeminiEvent>,
+      stream: AsyncIterable<OttoEvent>,
       userMessageTimestamp: number,
       signal: AbortSignal,
     ): Promise<StreamProcessingStatus> => {
@@ -1441,63 +1469,63 @@ export const useGeminiStream = (
         }
 
         switch (event.type) {
-          case ServerGeminiEventType.Thought:
+          case ServerOttoEventType.Thought:
             setThought(event.value);
             break;
-          case ServerGeminiEventType.Reasoning:
+          case ServerOttoEventType.Reasoning:
             // 🆕 累积 reasoning 内容
             reasoningBuffer += event.value.text;
             console.log(
-              `[REASONING-TRACE][useGeminiStream] +${event.value.text.length}B → bufferLen=${reasoningBuffer.length}`,
+              `[REASONING-TRACE][useOttoStream] +${event.value.text.length}B → bufferLen=${reasoningBuffer.length}`,
             );
             setReasoning({ text: reasoningBuffer });
             break;
-          case ServerGeminiEventType.Content:
+          case ServerOttoEventType.Content:
             geminiMessageBuffer = handleContentEvent(
               event.value,
               geminiMessageBuffer,
               userMessageTimestamp,
             );
             break;
-          case ServerGeminiEventType.ToolCallRequest:
+          case ServerOttoEventType.ToolCallRequest:
             toolCallRequests.push(event.value);
             break;
-          case ServerGeminiEventType.UserCancelled:
+          case ServerOttoEventType.UserCancelled:
             handleUserCancelledEvent(userMessageTimestamp);
             break;
-          case ServerGeminiEventType.Error:
+          case ServerOttoEventType.Error:
             try {
               handleErrorEvent(event.value, userMessageTimestamp);
-            } catch (error: any) {
-              if (error.message === 'REGION_BLOCKED_SESSION_TERMINATED') {
+            } catch (error: unknown) {
+              if (error instanceof Error && error.message === 'REGION_BLOCKED_SESSION_TERMINATED') {
                 return StreamProcessingStatus.UserCancelled; // 立即退出循环
               }
               throw error; // 重新抛出其他错误
             }
             break;
-          case ServerGeminiEventType.ChatCompressed:
+          case ServerOttoEventType.ChatCompressed:
             handleChatCompressionEvent(event.value);
             break;
-          case ServerGeminiEventType.ToolCallConfirmation:
-          case ServerGeminiEventType.ToolCallResponse:
+          case ServerOttoEventType.ToolCallConfirmation:
+          case ServerOttoEventType.ToolCallResponse:
             // do nothing
             break;
-          case ServerGeminiEventType.MaxSessionTurns:
+          case ServerOttoEventType.MaxSessionTurns:
             handleMaxSessionTurnsEvent();
             break;
-          case ServerGeminiEventType.Finished:
+          case ServerOttoEventType.Finished:
             handleFinishedEvent(
-              event as ServerGeminiFinishedEvent,
+              event as ServerOttoFinishedEvent,
               userMessageTimestamp,
             );
             break;
-          case ServerGeminiEventType.LoopDetected:
+          case ServerOttoEventType.LoopDetected:
             // handle later because we want to move pending history to history
             // before we add loop detected message to history
             loopDetectedRef.current = true;
-            loopTypeRef.current = (event as any).value;
+            loopTypeRef.current = (event as ServerOttoLoopDetectedEvent).value;
             break;
-          case ServerGeminiEventType.TokenUsage:
+          case ServerOttoEventType.TokenUsage:
             // Token usage events are handled at the client level for compression decisions
             // UI doesn't need to do anything specific with these events currently
             break;
@@ -1694,7 +1722,7 @@ User question: ${queryStr}`;
       );
 
       // 🎯 合并静默模式：来自调用者或来自命令返回
-      const effectiveSilent = options?.silent || resultSilent;
+      const _effectiveSilent = options?.silent || resultSilent;
 
       if (!shouldProceed || queryToSend === null) {
         // 🛡️ 重置同步标志位
@@ -1719,23 +1747,27 @@ User question: ${queryStr}`;
         // 异步获取真实的预估值
         (async () => {
           try {
-            // 等待 GeminiChat 初始化完成（带重试机制）
+            // 等待 OttoChat 初始化完成（带重试机制）
             const chat = await geminiClient.waitForChatInitialized();
 
             // 获取完整的对话历史（使用 curated 版本确保格式正确）
             const existingHistory = chat.getHistory(true);
 
             // 构建完整的请求内容：历史记录 + 当前用户输入
-            const contents: any[] = [...existingHistory];
+            const contents: Content[] = [...existingHistory];
 
             // 添加当前用户输入
             if (typeof queryToSend === 'string') {
               contents.push({ parts: [{ text: queryToSend }], role: MESSAGE_ROLES.USER });
             } else if (Array.isArray(queryToSend)) {
               // 处理PartListUnion[]类型
-              const textParts = queryToSend.filter(part =>
-                typeof part === 'object' && part !== null && 'text' in part
-              ) as any[];
+              const textParts = queryToSend.filter(
+                (part): part is Part & { text: string } =>
+                  typeof part === 'object' &&
+                  part !== null &&
+                  'text' in part &&
+                  typeof part.text === 'string',
+              );
               if (textParts.length > 0) {
                 contents.push({
                   parts: textParts.map(part => ({ text: part.text })),
@@ -1746,7 +1778,7 @@ User question: ${queryStr}`;
 
             if (contents.length > 0) {
               // 通过config获取ContentGenerator
-              const contentGenerator = config.getGeminiClient().getContentGenerator();
+              const contentGenerator = config.getOttoClient().getContentGenerator();
               if (contentGenerator && 'countTokens' in contentGenerator) {
                 // 获取系统指令和工具声明
                 const systemInstruction = chat.getSystemInstruction();
@@ -1785,7 +1817,7 @@ User question: ${queryStr}`;
         try {
           global.gc();
           console.log('🧹 Pre-request memory cleanup');
-        } catch (e) {
+        } catch (_e) {
           // GC not available, ignore
         }
       }
@@ -1827,13 +1859,13 @@ User question: ${queryStr}`;
         // 当服务器重启或网络异常导致流式传输中途断开时，自动恢复
         // 检测方式：1. isStreamInterrupt 属性标记  2. 错误消息包含特定文本
         const isStreamInterruptError = error instanceof Error && (
-          (error as any).isStreamInterrupt ||
+          (error as StreamInterruptError).isStreamInterrupt ||
           error.message.includes('Stream interrupted') ||
           error.message.includes('terminated mid-stream')
         );
 
         if (isStreamInterruptError) {
-          const bytesReceived = (error as any).bytesReceived || 0;
+          const bytesReceived = (error as StreamInterruptError).bytesReceived || 0;
           console.log(`⚠️  ${t('stream.interrupted')} (${bytesReceived} bytes received)`);
 
           // 保存已收到的部分内容到历史
@@ -1907,14 +1939,14 @@ User question: ${queryStr}`;
         if (error instanceof UnauthorizedError) {
           // 如果配置了自定义代理URL，跳过认证错误处理
           if (customProxyUrl) {
-            console.log('[useGeminiStream] Custom proxy URL configured, ignoring UnauthorizedError');
+            console.log('[useOttoStream] Custom proxy URL configured, ignoring UnauthorizedError');
           } else {
             onAuthError();
           }
         } else if (!isNodeError(error) || error.name !== 'AbortError') {
           // BUG修复: 用户取消请求时不显示错误堆栈
           // 修复策略: 检查错误消息是否包含用户取消相关内容，如果是则不显示错误
-          // 影响范围: packages/cli/src/ui/hooks/useGeminiStream.ts:684-701
+          // 影响范围: packages/cli/src/ui/hooks/useOttoStream.ts:684-701
           // 修复日期: 2025-08-09
           const errorMessage = getErrorMessage(error) || 'Unknown error';
           const isUserCancellation = errorMessage.includes('cancelled by user') ||
@@ -1957,7 +1989,7 @@ User question: ${queryStr}`;
                 console.log('🗑️ Backup GC cleanup (1s later)');
               }
             }, 1000);
-          } catch (e) {
+          } catch (_e) {
             // GC not available, ignore
           }
         }
@@ -1980,6 +2012,10 @@ User question: ${queryStr}`;
       startNewPrompt,
       getPromptCount,
       handleLoopDetectedEvent,
+      clearEstimatedTokens,
+      customProxyUrl,
+      setEstimatedInputTokens,
+      settings,
       // TaskStateManager 已移除
     ],
   );
@@ -2222,8 +2258,8 @@ User question: ${queryStr}`;
                 );
 
                 // 使用大上下文模型进行总结，如果失败则回退到 auto
-                let summaryModel = DEBATE_SUMMARY_MODEL;
-                let switchResult = await geminiClient.switchModel(
+                const summaryModel = DEBATE_SUMMARY_MODEL;
+                const switchResult = await geminiClient.switchModel(
                   summaryModel,
                   abortController.signal,
                 );
@@ -2359,6 +2395,7 @@ User question: ${queryStr}`;
     submitQuery,
     geminiClient,
     config,
+    debateAbortRef,
   ]);
 
   // 🎯 计算是否有工具正在执行（用于Token指示器显示）

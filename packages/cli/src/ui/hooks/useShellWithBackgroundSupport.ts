@@ -1,14 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useCallback, useRef, useState } from 'react';
-import { ShellTool, getBackgroundTaskManager } from 'otto-core';
-import { Key } from './useKeypress.js';
+import { useCallback,useRef,useState } from 'react';
 
 export interface UseShellWithBackgroundSupportReturn {
   isBackgroundMode: boolean;
@@ -31,9 +28,7 @@ export function useShellWithBackgroundSupport(): UseShellWithBackgroundSupportRe
     setBackgroundMode(true);
   }, []);
 
-  const shouldExecuteBackground = useCallback((): boolean => {
-    return backggroundRequestRef.current;
-  }, []);
+  const shouldExecuteBackground = useCallback((): boolean => backggroundRequestRef.current, []);
 
   const resetBackgroundMode = useCallback(() => {
     backggroundRequestRef.current = false;

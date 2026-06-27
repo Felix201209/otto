@@ -1,21 +1,12 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { proxyAuthManager } from '../core/proxyAuth.js';
 import { getActiveProxyServerUrl } from '../config/proxyConfig.js';
 import { getSessionId } from '../utils/session.js';
-import { getGitBranch, getGitCommitSha, getGitProjectPath, getGitRemotes } from '../utils/gitUtils.js';
-
-/**
- * 过滤 HTTP header 值中的非 Latin-1 字符（如中文分支名）。
- * HTTP/1.1 header 值只允许 Latin-1 字符集（\x00-\xFF）。
- */
-function toSafeHeaderValue(value: string): string {
-  return value.replace(/[^\x00-\xFF]/g, '');
-}
 
 /**
  * FIM 补全专用模型 - 固定使用 Codestral 2
@@ -293,7 +284,7 @@ export class InlineCompletionService {
           'Content-Type': 'application/json',
           ...userHeaders,
           // 协议 v1.4.2 新增 header
-          'X-DVCode-Scene': 'inline_complete',
+          'X-Otto-Scene': 'inline_complete',
           'X-Session-ID': getSessionId(),
           ...getInlineGitHeaders(this.workingDir),
         },
@@ -406,36 +397,9 @@ export class InlineCompletionService {
 }
 
 /**
- * inline_complete 链路专用 git header 采集。
- * 仅对内部员工（@cmcm.com / @orionstar.com / @aicfcf.com）发送，与主链路白名单一致。
- * 静默处理所有异常，git 信息缺失不影响补全功能。
+ * inline_complete 链路 git header 采集（已停用）。
+ * Otto 是独立产品，不附带任何 git 仓库遥测，恒返回空对象。
  */
-const INTERNAL_EMAIL_DOMAINS = ['@cmcm.com', '@orionstar.com', '@aicfcf.com'];
-
-function getInlineGitHeaders(cwd: string): Record<string, string> {
-  try {
-    const email = proxyAuthManager.getUserInfo()?.email?.toLowerCase() ?? '';
-    const isInternal = INTERNAL_EMAIL_DOMAINS.some((d) => email.endsWith(d));
-    if (!isInternal) return {};
-
-    const headers: Record<string, string> = {};
-
-    const remotes = getGitRemotes(cwd);
-    if (remotes) {
-      headers['X-Git-Remotes'] = JSON.stringify(remotes);
-    }
-
-    const branch = getGitBranch(cwd);
-    if (branch) headers['X-Git-Branch'] = toSafeHeaderValue(branch);
-
-    const commitSha = getGitCommitSha(cwd);
-    if (commitSha) headers['X-Git-Commit'] = commitSha; // sha 只含 [0-9a-f]，无需过滤
-
-    const projectPath = getGitProjectPath(cwd);
-    if (projectPath) headers['X-Git-Project-Path'] = toSafeHeaderValue(projectPath);
-
-    return headers;
-  } catch {
-    return {};
-  }
+function getInlineGitHeaders(_cwd: string): Record<string, string> {
+  return {};
 }

@@ -1,13 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { t, tp } from '../utils/i18n.js';
+import { t,tp } from '../utils/i18n.js';
 
 // ── 类型定义 ──────────────────────────────────────────────
 
@@ -76,6 +76,7 @@ function directionIcon(dir: 'in' | 'out' | 'tool'): string {
     case 'in': return '◀';
     case 'out': return '▶';
     case 'tool': return '🔧';
+    default: return '';
   }
 }
 

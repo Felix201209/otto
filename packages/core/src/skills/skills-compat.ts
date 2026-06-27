@@ -231,7 +231,7 @@ export class SkillsCompatAdapter {
 
     // Output user global skills
     if (userGlobalSkills.length > 0) {
-      lines.push(`### User Global Skills (~/.deepv/skills/)`);
+      lines.push(`### User Global Skills (~/.otto/skills/)`);
       lines.push(`*Custom skills installed globally for this user*`);
       lines.push('');
 
@@ -250,7 +250,7 @@ export class SkillsCompatAdapter {
 
     // Output project skills
     if (projectSkills.length > 0) {
-      lines.push(`### Project Skills (.deepvcode/skills/)`);
+      lines.push(`### Project Skills (.otto/skills/)`);
       lines.push(`*Custom skills specific to this project*`);
       lines.push('');
 
@@ -298,7 +298,7 @@ export class SkillsCompatAdapter {
     lines.push('');
     lines.push('✅ CORRECT approach:');
     lines.push('1. AI sees "pptx" skill is available');
-    lines.push('2. AI reads COMPLETE skill.md: read_file("~/.deepv/marketplace/skills/document-skills/pptx/skill.md")');
+    lines.push('2. AI reads COMPLETE skill.md: read_file("~/.otto/marketplace/skills/document-skills/pptx/skill.md")');
     lines.push('3. AI discovers the skill.md contains 300+ lines with detailed workflows');
     lines.push('4. AI reads sections marked "MANDATORY - READ ENTIRE FILE"');
     lines.push('5. AI follows the documented workflow (e.g., html2pptx method)');

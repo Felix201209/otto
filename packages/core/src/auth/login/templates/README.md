@@ -25,7 +25,7 @@ const selectPageHtml = AuthTemplates.getAuthSelectPage();
 
 // 获取成功页面
 const feishuSuccessHtml = AuthTemplates.getFeishuSuccessPage();
-const ottolabSuccessHtml = AuthTemplates.getDeepvlabSuccessPage();
+const ottolabSuccessHtml = AuthTemplates.getOttoSuccessPage();
 
 // 获取错误页面
 const errorHtml = AuthTemplates.getErrorPage('错误消息');

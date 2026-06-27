@@ -4,13 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CommandKind, CommandContext, MessageActionReturn, OpenDialogActionReturn, SlashCommand } from './types.js';
-import { SettingScope } from '../../config/settings.js';
+import { CommandKind, CommandContext, OpenDialogActionReturn, SlashCommand } from './types.js';
+import { SettingScope, type LoadedSettings } from '../../config/settings.js';
 import { proxyAuthManager, Config, generateCustomModelId, isOurAuthError } from 'otto-core';
 import { HistoryItemWithoutId } from '../types.js';
-import { t, tp } from '../utils/i18n.js';
+import { t, tp, isChineseLocale } from '../utils/i18n.js';
 import { appEvents, AppEvent } from '../../utils/events.js';
-import { Suggestion } from '../components/SuggestionsDisplay.js';
 import {
   ModelInfo,
   AUTO_MODE_CONFIG,
@@ -39,6 +38,7 @@ const FALLBACK_MODELS: string[] = [];
 
 // 防止并发刷新：使用 Promise 缓存确保同时只有一个刷新在进行
 let refreshPromise: Promise<void> | null = null;
+const modelLongContextShortKey = 'model.command.long.context.short' as Parameters<typeof tp>[0];
 
 
 
@@ -54,7 +54,7 @@ interface ApiResponse<T> {
 /**
  * 保存云端模型信息到本地设置并更新config
  */
-function saveCloudModelsToSettings(models: ModelInfo[], settings: any, config?: Config): void {
+function saveCloudModelsToSettings(models: ModelInfo[], settings: LoadedSettings, config?: Config): void {
   try {
     // 将云端模型信息保存到settings
     console.log(`[ModelCommand] Saving ${models.length} models to local settings cache...`);
@@ -197,60 +197,56 @@ export class AuthenticationRequiredError extends Error {
  * 从服务端获取模型列表
  */
 async function fetchModelsFromServer(): Promise<{ models: ModelInfo[]; modelNames: string[] }> {
-  try {
-    const userHeaders = await proxyAuthManager.getUserHeaders();
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}/web-api/models`;
+  const userHeaders = await proxyAuthManager.getUserHeaders();
+  const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}/web-api/models`;
 
-    console.log('[ModelCommand] Fetching models from cloud server...');
-    const response = await fetch(proxyUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'DeepCode CLI',
-        ...userHeaders,
-      },
-    });
+  console.log('[ModelCommand] Fetching models from cloud server...');
+  const response = await fetch(proxyUrl, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Otto CLI',
+      ...userHeaders,
+    },
+  });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      if (response.status === 401 && isOurAuthError(errorText)) {
-        // 抛出特定的认证错误，让调用方可以区分处理
-        throw new AuthenticationRequiredError();
-      }
-      throw new Error(`API request failed (${response.status}): ${errorText}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    if (response.status === 401 && isOurAuthError(errorText)) {
+      // 抛出特定的认证错误，让调用方可以区分处理
+      throw new AuthenticationRequiredError();
     }
-
-    const apiResponse: ApiResponse<ModelInfo[]> = await response.json();
-
-    if (!apiResponse.success) {
-      throw new Error(apiResponse.message || 'API request unsuccessful');
-    }
-
-    if (!apiResponse.data || !Array.isArray(apiResponse.data)) {
-      throw new Error('Server returned invalid data format - expected models array');
-    }
-
-    // 返回完整的模型信息和名称列表
-    const models = apiResponse.data;
-
-    // 按 displayName 字母顺序排序
-    models.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-    // 模型信息已通过参数返回，不需要单独的缓存更新函数
-
-    const modelNames = ['auto', ...models.map(model => model.displayName)];
-
-    console.log(`[ModelCommand] Cloud server returned ${models.length} models`);
-    return { models, modelNames };
-  } catch (error) {
-    throw error;
+    throw new Error(`API request failed (${response.status}): ${errorText}`);
   }
+
+  const apiResponse: ApiResponse<ModelInfo[]> = await response.json();
+
+  if (!apiResponse.success) {
+    throw new Error(apiResponse.message || 'API request unsuccessful');
+  }
+
+  if (!apiResponse.data || !Array.isArray(apiResponse.data)) {
+    throw new Error('Server returned invalid data format - expected models array');
+  }
+
+  // 返回完整的模型信息和名称列表
+  const models = apiResponse.data;
+
+  // 按 displayName 字母顺序排序
+  models.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  // 模型信息已通过参数返回，不需要单独的缓存更新函数
+
+  const modelNames = ['auto', ...models.map(model => model.displayName)];
+
+  console.log(`[ModelCommand] Cloud server returned ${models.length} models`);
+  return { models, modelNames };
 }
 
 /**
  * 从本地settings读取已缓存的模型信息
  */
-function getLocalCachedModels(settings: any): ModelInfo[] {
+function getLocalCachedModels(settings: LoadedSettings): ModelInfo[] {
   try {
     const cloudModels = settings.merged.cloudModels;
     if (Array.isArray(cloudModels) && cloudModels.length > 0) {
@@ -271,7 +267,7 @@ function getLocalCachedModels(settings: any): ModelInfo[] {
  * 🆕 当用户选中的偏好模型在云端列表中不再存在时，自动更新为最相似的模型
  * 🆕 当遇到 401 认证错误时，会抛出 AuthenticationRequiredError 让调用方处理
  */
-export async function refreshModelsInBackground(settings: any, config?: Config): Promise<void> {
+export async function refreshModelsInBackground(settings: LoadedSettings, config?: Config): Promise<void> {
   // 如果已经有刷新在进行，等待它完成
   if (refreshPromise) {
     await refreshPromise;
@@ -312,7 +308,7 @@ export async function refreshModelsInBackground(settings: any, config?: Config):
  * 如果没有足够相似的模型，自动设置为 'auto'
  */
 async function autoUpdateUserPreferredModel(
-  settings: any,
+  settings: LoadedSettings,
   newModels: ModelInfo[],
   config?: Config
 ): Promise<void> {
@@ -353,8 +349,8 @@ async function autoUpdateUserPreferredModel(
     if (config) {
       config.setModel(bestMatch);
 
-      // 同时更新当前GeminiChat实例的specifiedModel
-      const geminiClient = config.getGeminiClient();
+      // 同时更新当前OttoChat实例的specifiedModel
+      const geminiClient = config.getOttoClient();
       if (geminiClient) {
         const chat = geminiClient.getChat();
         chat.setSpecifiedModel(bestMatch);
@@ -376,7 +372,7 @@ async function autoUpdateUserPreferredModel(
 /**
  * 清空本地缓存的模型列表
  */
-function clearLocalCachedModels(settings: any, config?: Config): void {
+function clearLocalCachedModels(settings: LoadedSettings, config?: Config): void {
   try {
     console.log('[ModelCommand] Clearing local model cache due to authentication failure...');
     settings.setValue(SettingScope.User, 'cloudModels', []);
@@ -393,7 +389,7 @@ function clearLocalCachedModels(settings: any, config?: Config): void {
  * 获取自定义模型列表
  * 从独立的 custom-models.json 文件读取，避免与 settings.json 的并发冲突
  */
-function getCustomModels(settings?: any, config?: Config): ModelInfo[] {
+function getCustomModels(settings?: LoadedSettings, config?: Config): ModelInfo[] {
   const customModels: ModelInfo[] = [];
 
   // 优先从独立文件读取（推荐方式，避免并发问题）
@@ -441,7 +437,7 @@ function getCustomModels(settings?: any, config?: Config): ModelInfo[] {
   // 降级：从settings读取（兼容旧版本）
   if (settings) {
     const settingsCustomModels = settings.merged?.customModels || [];
-    settingsCustomModels.forEach((customModel: any) => {
+    settingsCustomModels.forEach((customModel) => {
       if (customModel.enabled !== false) {
         customModels.push({
           name: generateCustomModelId(customModel),
@@ -468,7 +464,7 @@ function getCustomModels(settings?: any, config?: Config): ModelInfo[] {
  * - source: 'fallback' 表示降级模式
  * - source: 'auth_required' 表示需要重新登录（401错误）
  */
-export async function getAvailableModels(settings?: any, config?: Config): Promise<{
+export async function getAvailableModels(settings?: LoadedSettings, config?: Config): Promise<{
   modelNames: string[];
   modelInfos: ModelInfo[];
   source: 'local' | 'fallback' | 'auth_required'
@@ -502,7 +498,7 @@ export async function getAvailableModels(settings?: any, config?: Config): Promi
 
   // 如果本地没有缓存，尝试从服务器获取并保存
   try {
-    const { models, modelNames } = await fetchModelsFromServer();
+    const { models } = await fetchModelsFromServer();
     const customModels = getCustomModels(settings, config);
 
     if (models.length > 0 && settings) {
@@ -575,9 +571,12 @@ export const modelCommand: SlashCommand = {
       try {
         const { modelNames, modelInfos, source } = await getAvailableModels(settings, config || undefined);
 
-        // 检查是否未登录（modelNames为空）
+        // BYO-key 产品：modelNames 为空只代表"还没配置任何模型"，不是"未登录"。
+        // 引导用户运行 otto setup 或用 /model 打开向导添加自定义模型，不提登录。
         if (modelNames.length === 0) {
-          const content = `${t('model.command.not.logged.in')}\n\n${t('model.command.please.login')}`;
+          const content = isChineseLocale()
+            ? '还没有配置任何模型。\n\n运行 `otto setup` 配置 API key 和模型，或运行 `/model` 打开模型管理添加自定义模型。'
+            : 'No models configured yet.\n\nRun `otto setup` to configure your API key and model, or run `/model` to open Model Management and add a custom model.';
           if (context.ui && context.ui.addItem) {
             const historyItem: HistoryItemWithoutId = {
               type: 'error',
@@ -610,7 +609,7 @@ export const modelCommand: SlashCommand = {
 
                 // 添加长上下文价格
                 if (modelInfo.highVolumeCredits && modelInfo.highVolumeThreshold) {
-                  modelLine += ` (${tp('model.command.long.context.short' as any, {
+                  modelLine += ` (${tp(modelLongContextShortKey, {
                     threshold: modelInfo.highVolumeThreshold.toLocaleString(),
                     credits: modelInfo.highVolumeCredits
                   })})`;
@@ -636,7 +635,7 @@ export const modelCommand: SlashCommand = {
         // 设置模型（包括auto选项）- 使用实际的模型名称
         settings.setValue(SettingScope.User, 'preferredModel', actualModelName);
         if (config) {
-          const geminiClient = config.getGeminiClient();
+          const geminiClient = config.getOttoClient();
 
           if (geminiClient) {
             // 显示正在切换的消息
@@ -722,7 +721,7 @@ export const modelCommand: SlashCommand = {
 
             // 添加长上下文价格显示
             if (modelInfo.highVolumeCredits && modelInfo.highVolumeThreshold) {
-              content += `\n💰 ${tp('model.command.long.context.short' as any, {
+              content += `\n💰 ${tp(modelLongContextShortKey, {
                 credits: modelInfo.highVolumeCredits,
                 threshold: modelInfo.highVolumeThreshold.toLocaleString()
               })}`;

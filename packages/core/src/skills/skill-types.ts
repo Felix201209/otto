@@ -270,7 +270,7 @@ export enum ScriptType {
 // ============================================================================
 
 /**
- * Skills 系统配置（存储在 ~/.deepv/skills/settings.json）
+ * Skills 系统配置（存储在 ~/.otto/skills/settings.json）
  */
 export interface SkillsSettings {
   /** 启用的 Plugins 记录 {pluginId: enabled} */
@@ -332,7 +332,7 @@ export interface PerformanceConfig {
 }
 
 /**
- * 已安装 Plugins 记录（存储在 ~/.deepv/skills/installed_plugins.json）
+ * 已安装 Plugins 记录（存储在 ~/.otto/skills/installed_plugins.json）
  */
 export interface InstalledPluginsRecord {
   /** 已安装的 Plugins {pluginId: pluginInfo} */

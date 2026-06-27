@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as fs from 'fs/promises';
-import path from 'path';
 import {
   type CommandContext,
   type SlashCommand,
@@ -13,7 +11,7 @@ import {
   CommandKind,
 } from './types.js';
 import type { Suggestion } from '../components/SuggestionsDisplay.js';
-import { Config, SessionManager } from 'otto-core';
+import { type Config, SessionManager } from 'otto-core';
 import { t, tp } from '../utils/i18n.js';
 
 async function restoreAction(
@@ -22,7 +20,7 @@ async function restoreAction(
 ): Promise<void | SlashCommandActionReturn> {
   const { services, ui } = context;
   const { config, git: gitService } = services;
-  const { addItem, loadHistory } = ui;
+  const { addItem } = ui;
 
   const projectRoot = config?.getProjectRoot();
   if (!projectRoot) {

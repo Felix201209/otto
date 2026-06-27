@@ -4,30 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import { glob } from 'glob';
 import {
-  isNodeError,
-  escapePath,
-  unescapePath,
-  getErrorMessage,
-  Config,
-  FileDiscoveryService,
-  DEFAULT_FILE_FILTERING_OPTIONS,
+Config,
+DEFAULT_FILE_FILTERING_OPTIONS,
+escapePath,
+FileDiscoveryService,
+getErrorMessage,
+isNodeError,
+unescapePath,
 } from 'otto-core';
-import {
-  MAX_SUGGESTIONS_TO_SHOW,
-  Suggestion,
-} from '../components/SuggestionsDisplay.js';
-import { CommandContext, SlashCommand } from '../commands/types.js';
+import * as path from 'path';
+import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { CommandContext,SlashCommand } from '../commands/types.js';
 import { TextBuffer } from '../components/shared/text-buffer.js';
+import {
+MAX_SUGGESTIONS_TO_SHOW,
+Suggestion,
+} from '../components/SuggestionsDisplay.js';
 import { isSlashCommand } from '../utils/commandUtils.js';
-import { toCodePoints } from '../utils/textUtils.js';
+import { fuzzyMatch } from '../utils/fuzzyMatch.js';
 import { t } from '../utils/i18n.js';
-import { getShellCompletions, isShellCompletionSupported } from '../utils/shellCompletionUtils.js';
-import { fuzzyMatch, sortByRelevance } from '../utils/fuzzyMatch.js';
+import { getShellCompletions,isShellCompletionSupported } from '../utils/shellCompletionUtils.js';
+import { toCodePoints } from '../utils/textUtils.js';
 
 export interface UseCompletionReturn {
   suggestions: Suggestion[];
@@ -199,7 +199,7 @@ export function useCompletion(
     }
 
     return false;
-  }, [buffer.text, buffer.cursor, buffer.lines, shellModeActive]);
+  }, [buffer.text, buffer.cursor, buffer.lines]);
 
   useEffect(() => {
     // 🚀 恢复机制：如果用户删除了字符（退格），自动重置抑制状态，重新显示补全
@@ -622,7 +622,7 @@ export function useCompletion(
         respectGitIgnore?: boolean;
         respectGeminiIgnore?: boolean;
       },
-      maxResults = 100,
+      _maxResults = 100,
     ): Promise<Suggestion[]> => {
       // 🎯 使用更宽泛的 glob 模式来获取所有可能的文件
       const globPattern = `**/*${searchPrefix}*`;
@@ -824,13 +824,15 @@ export function useCompletion(
       isMounted = false;
       clearTimeout(debounceTimeout);
     };
+    // 🚀 性能优化：故意只依赖少数高频触发条件，省略 resetCompletionState/slashCommands/
+    // commandContext/config/isBusy/isInSpecialMode/findBestMatch——它们引用变化频繁但语义上
+    // 不应重新发起补全请求。把它们加进来会让补全防抖副作用频繁重触发，破坏既有性能优化。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     buffer.text, // 主要触发条件
     isActive,    // 激活状态
     suppressUntilNextChange, // 抑制状态
     cwd,         // 工作目录（仅在@文件补全时需要）
-    // 🚀 性能优化：移除不必要的依赖项，减少重复触发
-    // resetCompletionState, slashCommands, commandContext, config 这些通常不会频繁变化
   ]);
 
   const handleAutocomplete = useCallback(

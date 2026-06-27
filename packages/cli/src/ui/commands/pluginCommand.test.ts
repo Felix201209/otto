@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { pluginCommand } from './pluginCommand.js';
-import { CommandKind } from './types.js';
+import { CommandKind, CommandContext } from './types.js';
 import { MessageType } from '../types.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 // Mock dependencies
 vi.mock('otto-core', () => ({
@@ -27,19 +28,19 @@ vi.mock('otto-core', () => ({
 // Mock i18n
 vi.mock('../utils/i18n.js', () => ({
   t: (key: string) => key,
-  tp: (key: string, args: any) => `${key}:${JSON.stringify(args)}`,
+  tp: (key: string, args: Record<string, unknown>) => `${key}:${JSON.stringify(args)}`,
 }));
 
 describe('pluginCommand', () => {
-  let mockContext: any;
+  let mockContext: CommandContext;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockContext = {
+    mockContext = createMockCommandContext({
       ui: {
         addItem: vi.fn(),
       },
-    };
+    });
   });
 
   it('should have the correct name and kind', () => {

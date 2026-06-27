@@ -1,17 +1,16 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import { render } from 'ink-testing-library';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AuthDialog } from './AuthDialog.js';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
 import { AuthType } from 'otto-core';
 import stripAnsi from 'strip-ansi';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
+import { LoadedSettings } from '../../config/settings.js';
+import { AuthDialog } from './AuthDialog.js';
 
 describe('AuthDialog', () => {
   const wait = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,7 +19,7 @@ describe('AuthDialog', () => {
 
   beforeEach(() => {
     originalEnv = { ...process.env };
-    process.env.DEEPV_DEFAULT_AUTH_TYPE = '';
+    process.env.OTTO_DEFAULT_AUTH_TYPE = '';
     vi.clearAllMocks();
   });
 
@@ -60,9 +59,9 @@ describe('AuthDialog', () => {
     );
   });
 
-  describe('DEEPV_DEFAULT_AUTH_TYPE environment variable', () => {
-    it('should select the auth type specified by DEEPV_DEFAULT_AUTH_TYPE', () => {
-      process.env.DEEPV_DEFAULT_AUTH_TYPE = AuthType.USE_PROXY_AUTH;
+  describe('OTTO_DEFAULT_AUTH_TYPE environment variable', () => {
+    it('should select the auth type specified by OTTO_DEFAULT_AUTH_TYPE', () => {
+      process.env.OTTO_DEFAULT_AUTH_TYPE = AuthType.USE_PROXY_AUTH;
 
       const settings: LoadedSettings = new LoadedSettings(
         {
@@ -88,11 +87,11 @@ describe('AuthDialog', () => {
         <AuthDialog onSelect={() => {}} settings={settings} />,
       );
 
-      // This is a bit brittle, but it's the best way to check which item is selected.
-      expect(stripAnsi(lastFrame())).toContain('• 1. Press Enter to sign in to Otto');
+      // Cloud login removed: only the custom-model option is offered.
+      expect(stripAnsi(lastFrame())).toContain('• 1. Use Custom Model (no login required)');
     });
 
-    it('should fall back to default if DEEPV_DEFAULT_AUTH_TYPE is not set', () => {
+    it('should fall back to default if OTTO_DEFAULT_AUTH_TYPE is not set', () => {
       const settings: LoadedSettings = new LoadedSettings(
         {
           settings: {
@@ -117,12 +116,12 @@ describe('AuthDialog', () => {
         <AuthDialog onSelect={() => {}} settings={settings} />,
       );
 
-      // Default is DeepVlab auth
-      expect(stripAnsi(lastFrame())).toContain('• 1. Press Enter to sign in to Otto');
+      // Default (and only) option is the custom model.
+      expect(stripAnsi(lastFrame())).toContain('• 1. Use Custom Model (no login required)');
     });
 
-    it('should show an error and fall back to default if DEEPV_DEFAULT_AUTH_TYPE is invalid', () => {
-      process.env.DEEPV_DEFAULT_AUTH_TYPE = 'invalid-auth-type';
+    it('should show an error and fall back to default if OTTO_DEFAULT_AUTH_TYPE is invalid', () => {
+      process.env.OTTO_DEFAULT_AUTH_TYPE = 'invalid-auth-type';
 
       const settings: LoadedSettings = new LoadedSettings(
         {
@@ -149,11 +148,11 @@ describe('AuthDialog', () => {
       );
 
       expect(stripAnsi(lastFrame())).toContain(
-        'Invalid value for DEEPV_DEFAULT_AUTH_TYPE: "invalid-auth-type"',
+        'Invalid value for OTTO_DEFAULT_AUTH_TYPE: "invalid-auth-type"',
       );
 
-      // Default is DeepVlab auth
-      expect(stripAnsi(lastFrame())).toContain('• 1. Press Enter to sign in to Otto');
+      // Default (and only) option is the custom model.
+      expect(stripAnsi(lastFrame())).toContain('• 1. Use Custom Model (no login required)');
     });
   });
 
@@ -261,7 +260,7 @@ describe('AuthDialog', () => {
       [],
     );
 
-    const { lastFrame, stdin, unmount } = render(
+    const { lastFrame: _lastFrame, stdin, unmount } = render(
       <AuthDialog onSelect={onSelect} settings={settings} />,
     );
     await wait();

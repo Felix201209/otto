@@ -59,7 +59,7 @@ describe('memoryCommand', () => {
         services: {
           config: {
             getUserMemory: mockGetUserMemory,
-            getGeminiMdFileCount: mockGetGeminiMdFileCount,
+            getOttoMdFileCount: mockGetGeminiMdFileCount,
           },
         },
       });
@@ -150,10 +150,10 @@ describe('memoryCommand', () => {
       mockSetGeminiMdFileCount = vi.fn();
       const mockConfig = {
         setUserMemory: mockSetUserMemory,
-        setGeminiMdFileCount: mockSetGeminiMdFileCount,
-        setGeminiMdFilePaths: vi.fn(),
+        setOttoMdFileCount: mockSetGeminiMdFileCount,
+        setOttoMdFilePaths: vi.fn(),
         setMemoryTokenCount: vi.fn(),
-        getGeminiClient: vi.fn().mockResolvedValue({
+        getOttoClient: vi.fn().mockResolvedValue({
           isInitialized: () => true,
           setTools: vi.fn(),
           updateSystemPromptWithMcpPrompts: vi.fn(),

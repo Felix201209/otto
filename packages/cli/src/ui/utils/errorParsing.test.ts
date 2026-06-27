@@ -1,20 +1,19 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+AuthType,
+DEFAULT_GEMINI_FLASH_MODEL,
+isProQuotaExceededError,
+UserTierId,
+} from 'otto-core';
+import { describe,expect,it,vi } from 'vitest';
 import { parseAndFormatApiError } from './errorParsing.js';
 import { isChineseLocale } from './i18n.js';
-import {
-  AuthType,
-  UserTierId,
-  DEFAULT_GEMINI_FLASH_MODEL,
-  isProQuotaExceededError,
-} from 'otto-core';
 
 // Define StructuredError type for testing
 interface StructuredError {
@@ -306,7 +305,7 @@ describe('parseAndFormatApiError', () => {
       expect(result).toContain('🚫 Access Forbidden (403)');
       expect(result).toContain('Possible causes:');
       expect(result).toContain('Suggested solutions:');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('contact your administrator or account manager');
     });
 
     it('should format a 403 forbidden error from structured error', () => {
@@ -405,8 +404,7 @@ describe('parseAndFormatApiError', () => {
 
       expect(result).toContain('⚡ Service Quota Limit Exceeded (402)');
       expect(result).toContain('Your account has reached its usage quota');
-      expect(result).toContain('Upgrade your plan');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('upgrade your plan for higher quota limits');
     });
 
     it('should format a 402 API error with friendly message in Chinese', () => {
@@ -420,8 +418,7 @@ describe('parseAndFormatApiError', () => {
 
       expect(result).toContain('⚡ 服务配额已达上限 (402)');
       expect(result).toContain('您账户的可用额度已用尽');
-      expect(result).toContain('升级您的套餐');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('升级套餐以获得更高的配额限制');
     });
 
     it('should format a 402 StructuredError with friendly message', () => {
@@ -433,8 +430,7 @@ describe('parseAndFormatApiError', () => {
       const result = parseAndFormatApiError(error);
 
       expect(result).toContain('⚡ Service Quota Limit Exceeded (402)');
-      expect(result).toContain('Upgrade your plan');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('upgrade your plan for higher quota limits');
     });
 
     it('should extract and display quota details when available in 402 error', () => {
@@ -454,7 +450,7 @@ describe('parseAndFormatApiError', () => {
       const result = parseAndFormatApiError(errorMessage);
 
       expect(result).toContain('⚡ Service Quota Limit Exceeded (402)');
-      expect(result).toContain('Upgrade your plan');
+      expect(result).toContain('upgrade your plan for higher quota limits');
     });
 
     it('should format a 402 No quota configuration error in English', () => {
@@ -465,8 +461,8 @@ describe('parseAndFormatApiError', () => {
 
       expect(result).toContain('🚫');
       expect(result).toContain('402');
-      expect(result).toContain('Credits');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('quota is insufficient');
+      expect(result).toContain('upgrade your plan');
     });
 
     it('should format a 402 No quota configuration error in Chinese', () => {
@@ -480,8 +476,8 @@ describe('parseAndFormatApiError', () => {
 
       expect(result).toContain('🚫');
       expect(result).toContain('402');
-      expect(result).toContain('Credit');
-      expect(result).toContain('https://dvcode.deepvlab.ai/');
+      expect(result).toContain('额度不足');
+      expect(result).toContain('升级套餐');
     });
   });
 

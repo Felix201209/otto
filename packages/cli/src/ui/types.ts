@@ -5,8 +5,8 @@
  */
 
 import {
-  ToolCallConfirmationDetails,
-  ToolResultDisplay,
+ToolCallConfirmationDetails,
+ToolResultDisplay,
 } from 'otto-core';
 import type { SlashCommand } from './commands/types.js';
 
@@ -18,7 +18,7 @@ export enum StreamingState {
 }
 
 // Copied from server/src/core/turn.ts for CLI usage
-export enum GeminiEventType {
+export enum OttoEventType {
   Content = 'content',
   ToolCallRequest = 'tool_call_request',
   // Add other event types if the UI hook needs to handle them
@@ -211,7 +211,7 @@ export enum MessageType {
   TOKEN_BREAKDOWN = 'token_breakdown',
   CONTEXT_BREAKDOWN = 'context_breakdown',
   QUIT = 'quit',
-  DEEPV = 'deepv',
+  OTTO = 'otto',
   COMPRESSION = 'compression',
 }
 
@@ -290,7 +290,7 @@ export interface RefineResult {
     lang: string;
     keepFormat: boolean;
     keepCode: boolean;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -317,7 +317,7 @@ export interface SelectSessionResult {
 }
 
 /**
- * Defines the result of the slash command processor for its consumer (useGeminiStream).
+ * Defines the result of the slash command processor for its consumer (useOttoStream).
  */
 export type SlashCommandProcessorResult =
   | {

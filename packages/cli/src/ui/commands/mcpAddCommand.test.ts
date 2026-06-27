@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,18 +8,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { addCommand } from './mcpAddCommand.js';
 import { CommandContext } from './types.js';
-import { Config } from 'otto-core';
-import { LoadedSettings, SettingScope } from '../../config/settings.js';
+import type { Config } from 'otto-core';
+import { LoadedSettings } from '../../config/settings.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 // Mock i18n
-vi.mock('../utils/i18n.js', () => {
-  return {
+vi.mock('../utils/i18n.js', () => ({
     isChineseLocale: () => false,
     t: (key: string) => key,
     tp: (key: string) => key,
     getLocalizedToolName: (name: string) => name,
-  };
-});
+  }));
 
 describe('mcpAddCommand', () => {
   let mockContext: CommandContext;
@@ -35,22 +33,18 @@ describe('mcpAddCommand', () => {
 
     mockSettings = {
       forScope: vi.fn().mockReturnValue({
-        path: '/test/.deepv/settings.json',
+        path: '/test/.otto/settings.json',
         settings: { mcpServers: {} }
       }),
       setValue: vi.fn(),
     };
 
-    mockContext = {
+    mockContext = createMockCommandContext({
       services: {
         config: mockConfig as Config,
         settings: mockSettings as LoadedSettings,
-        git: undefined,
-        logger: {} as any,
       },
-      ui: {} as any,
-      session: {} as any,
-    };
+    });
   });
 
   it('should show interactive wizard when no arguments provided', async () => {

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -385,7 +385,7 @@ export function DebateWizard({
   // ---------- Rendering ----------
 
   // Calculate steps order based on conditions
-  let stepsOrder: Step[] = [];
+  const stepsOrder: Step[] = [];
   if (presets.length > 0) {
     stepsOrder.push(Step.PICK_PRESET);
   }

@@ -25,28 +25,28 @@ import {
  * Skills 系统路径常量
  */
 export class SkillsPaths {
-  /** 用户主目录 ~/.deepv */
-  static readonly DEEPV_HOME = path.join(os.homedir(), '.otto-user');
+  /** 用户主目录 ~/.otto-user */
+  static readonly OTTO_HOME = path.join(os.homedir(), '.otto-user');
 
-  /** Skills 根目录 ~/.deepv/skills */
-  static readonly SKILLS_ROOT = path.join(SkillsPaths.DEEPV_HOME, 'skills');
+  /** Skills 根目录 ~/.otto-user/skills */
+  static readonly SKILLS_ROOT = path.join(SkillsPaths.OTTO_HOME, 'skills');
 
-  /** Marketplace 根目录 ~/.deepv/marketplace */
-  static readonly MARKETPLACE_ROOT = path.join(SkillsPaths.DEEPV_HOME, 'marketplace');
+  /** Marketplace 根目录 ~/.otto-user/marketplace */
+  static readonly MARKETPLACE_ROOT = path.join(SkillsPaths.OTTO_HOME, 'marketplace');
 
-  /** Plugin 缓存根目录 ~/.deepv/skills/cache */
+  /** Plugin 缓存根目录 ~/.otto-user/skills/cache */
   static readonly PLUGIN_CACHE_ROOT = path.join(SkillsPaths.SKILLS_ROOT, 'cache');
 
-  /** 配置文件 ~/.deepv/skills/settings.json */
+  /** 配置文件 ~/.otto-user/skills/settings.json */
   static readonly SETTINGS_FILE = path.join(SkillsPaths.SKILLS_ROOT, 'settings.json');
 
-  /** 已安装插件记录 ~/.deepv/skills/installed_plugins.json */
+  /** 已安装插件记录 ~/.otto-user/skills/installed_plugins.json */
   static readonly INSTALLED_PLUGINS_FILE = path.join(
     SkillsPaths.SKILLS_ROOT,
     'installed_plugins.json',
   );
 
-  /** 备份目录 ~/.deepv/skills/backups */
+  /** 备份目录 ~/.otto-user/skills/backups */
   static readonly BACKUP_DIR = path.join(SkillsPaths.SKILLS_ROOT, 'backups');
 
   /**
@@ -54,7 +54,7 @@ export class SkillsPaths {
    * @param marketplaceId Marketplace ID
    * @param pluginName 插件名称
    * @param version 版本号
-   * @returns 缓存路径 ~/.deepv/skills/cache/{marketplaceId}/{pluginName}/{version}
+   * @returns 缓存路径 ~/.otto-user/skills/cache/{marketplaceId}/{pluginName}/{version}
    */
   static getPluginCachePath(marketplaceId: string, pluginName: string, version: string): string {
     return path.join(this.PLUGIN_CACHE_ROOT, marketplaceId, pluginName, version);
@@ -110,7 +110,7 @@ export class SettingsManager {
    */
   private async ensureDirectories(): Promise<void> {
     const directories = [
-      SkillsPaths.DEEPV_HOME,
+      SkillsPaths.OTTO_HOME,
       SkillsPaths.SKILLS_ROOT,
       SkillsPaths.MARKETPLACE_ROOT,
       SkillsPaths.PLUGIN_CACHE_ROOT,

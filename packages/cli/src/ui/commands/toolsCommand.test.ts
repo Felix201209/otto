@@ -8,27 +8,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { toolsCommand } from './toolsCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import { MessageType } from '../types.js';
+import type { Config } from 'otto-core';
 
 // Mock i18n
-vi.mock('../utils/i18n.js', () => {
-  return {
+vi.mock('../utils/i18n.js', () => ({
     isChineseLocale: () => false,
     t: (key: string) => key,
     tp: (key: string) => key,
     getLocalizedToolName: (name: string) => name,
-  };
-});
+  }));
 
 describe('toolsCommand', () => {
   let context: ReturnType<typeof createMockCommandContext>;
 
   beforeEach(() => {
+    const mockConfig = {
+      getToolRegistry: vi.fn(),
+    };
     context = createMockCommandContext({
       services: {
-        config: {
-          getToolRegistry: vi.fn(),
-        } as any,
-      } as any,
+        config: mockConfig as unknown as Config,
+      },
     });
   });
 
@@ -69,7 +69,7 @@ describe('toolsCommand', () => {
       getAllTools: vi.fn().mockReturnValue(mockTools),
     });
     await toolsCommand.action!(context, 'nodesc');
-    const call = (context.ui.addItem as any).mock.calls[0][0];
+    const call = vi.mocked(context.ui.addItem).mock.calls[0][0];
     expect(call.type).toBe(MessageType.INFO);
     expect(call.text).toContain('tool1');
     expect(call.text).toContain('tool2');
@@ -84,7 +84,7 @@ describe('toolsCommand', () => {
       getAllTools: vi.fn().mockReturnValue(mockTools),
     });
     await toolsCommand.action!(context, '');
-    const call = (context.ui.addItem as any).mock.calls[0][0];
+    const call = vi.mocked(context.ui.addItem).mock.calls[0][0];
     expect(call.text).toContain('tool1');
     expect(call.text).toContain('desc1');
   });

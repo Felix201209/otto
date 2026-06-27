@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,14 +13,26 @@ import { describe, it, expect } from 'vitest';
  * 过滤历史记录，移除包含工具调用（functionCall）和工具响应（functionResponse）的消息
  * 这是 refineCommand.ts 中 filterHistoryForRefine 函数的副本，用于测试
  */
-function filterHistoryForRefine(history: any[]): any[] {
+interface RefinePart {
+  text?: string;
+  functionCall?: unknown;
+  functionResponse?: unknown;
+}
+
+interface RefineHistoryContent {
+  parts?: RefinePart[];
+}
+
+function filterHistoryForRefine(history: unknown): RefineHistoryContent[] {
   if (!Array.isArray(history)) return [];
 
-  return history.filter(content => {
+  return history.filter((content): content is RefineHistoryContent => {
     // 检查消息中是否包含工具调用或工具响应
-    if (!content.parts || !Array.isArray(content.parts)) return true;
+    if (!content || typeof content !== 'object') return false;
+    const candidate = content as RefineHistoryContent;
+    if (!candidate.parts || !Array.isArray(candidate.parts)) return true;
 
-    const hasToolCall = content.parts.some((part: any) =>
+    const hasToolCall = candidate.parts.some((part) =>
       part.functionCall !== undefined || part.functionResponse !== undefined
     );
 
@@ -29,7 +40,7 @@ function filterHistoryForRefine(history: any[]): any[] {
     if (hasToolCall) return false;
 
     // 只保留有有效文本内容的消息
-    const hasTextContent = content.parts.some((part: any) =>
+    const hasTextContent = candidate.parts.some((part) =>
       part.text !== undefined && part.text.trim() !== ''
     );
 
@@ -39,9 +50,9 @@ function filterHistoryForRefine(history: any[]): any[] {
 
 describe('filterHistoryForRefine', () => {
   it('should return empty array for non-array input', () => {
-    expect(filterHistoryForRefine(null as any)).toEqual([]);
-    expect(filterHistoryForRefine(undefined as any)).toEqual([]);
-    expect(filterHistoryForRefine('string' as any)).toEqual([]);
+    expect(filterHistoryForRefine(null)).toEqual([]);
+    expect(filterHistoryForRefine(undefined)).toEqual([]);
+    expect(filterHistoryForRefine('string')).toEqual([]);
   });
 
   it('should keep messages with only text content', () => {

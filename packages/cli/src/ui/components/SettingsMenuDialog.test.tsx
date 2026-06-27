@@ -35,7 +35,7 @@ describe('SettingsMenuDialog', () => {
     getAgentStyle: () => 'default',
     getApprovalMode: () => ApprovalMode.DEFAULT,
     getHealthyUseEnabled: () => true,
-    getGeminiClient: vi.fn(),
+    getOttoClient: vi.fn(),
     setApprovalModeWithProjectSync: vi.fn(),
     setAgentStyle: vi.fn(),
     getVsCodePluginMode: () => false,

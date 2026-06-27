@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 import Spinner from 'ink-spinner';
+import React from 'react';
 import { Colors } from '../colors.js';
 import { isChineseLocale } from '../utils/i18n.js';
 
@@ -26,7 +25,7 @@ export const ImagePollingSpinner: React.FC<ImagePollingSpinnerProps> = ({
   if (!isVisible) return null;
 
   const isChinese = isChineseLocale();
-  const remaining = Math.max(0, estimated - elapsed);
+  const _remaining = Math.max(0, estimated - elapsed);
   const progress = Math.min(100, Math.round((elapsed / estimated) * 100));
 
   const message = isChinese

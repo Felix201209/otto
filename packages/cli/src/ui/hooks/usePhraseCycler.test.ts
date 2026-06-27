@@ -1,18 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { act,renderHook } from '@testing-library/react';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import {
-  usePhraseCycler,
-  WITTY_LOADING_PHRASES_EN,
-  KNOWLEDGE_TIPS_EN,
-  PHRASE_CHANGE_INTERVAL_MS,
+KNOWLEDGE_TIPS_EN,
+PHRASE_CHANGE_INTERVAL_MS,
+usePhraseCycler,
+WITTY_LOADING_PHRASES_EN,
 } from './usePhraseCycler.js';
 
 const ALL_PHRASES = [...WITTY_LOADING_PHRASES_EN, ...KNOWLEDGE_TIPS_EN];
@@ -74,12 +73,12 @@ describe('usePhraseCycler', () => {
     }
 
     // Mock Math.random to make the test deterministic.
-    let callCount = 0;
-    vi.spyOn(Math, 'random').mockImplementation(() => {
+    const _callCount = 0;
+    vi.spyOn(Math, 'random').mockImplementation(() => 
       // 80% chance for loading phrase (forcing branch)
       // and then picking the first phrase
-      return 0.9;
-    });
+       0.9
+    );
 
     const { result, rerender } = renderHook(
       ({ isActive, isWaiting }) => usePhraseCycler(isActive, isWaiting),

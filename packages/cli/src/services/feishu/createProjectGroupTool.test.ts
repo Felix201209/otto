@@ -1,12 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { CreateProjectGroupTool } from './createProjectGroupTool.js';
 import type { FeishuGateway } from './gateway.js';
+import type { CreateProjectGroupParams } from './createProjectGroupTool.js';
 
 // Stub the legacy registration/scopes/logger modules so importing the tool
 // doesn't drag in any side-effecting auth or feishu network code.
@@ -38,6 +39,10 @@ function makeGateway(overrides: Partial<FeishuGateway> = {}): FeishuGateway {
   } as unknown as FeishuGateway;
 }
 
+type MockedGateway = FeishuGateway & {
+  sendMessage: ReturnType<typeof vi.fn>;
+};
+
 function makeFs() {
   return {
     existsSync: vi.fn(() => true), // skip mkdir entirely
@@ -65,13 +70,13 @@ const ABORT = new AbortController().signal;
 describe('CreateProjectGroupTool.validateToolParams', () => {
   it('rejects missing project_path', () => {
     const { tool } = makeTool();
-    expect(tool.validateToolParams({ project_path: '', group_name: 'g' } as any))
+    expect(tool.validateToolParams({ project_path: '', group_name: 'g' }))
       .toMatch(/project_path/);
   });
 
   it('rejects missing group_name', () => {
     const { tool } = makeTool();
-    expect(tool.validateToolParams({ project_path: '/x', group_name: '' } as any))
+    expect(tool.validateToolParams({ project_path: '/x', group_name: '' }))
       .toMatch(/group_name/);
   });
 
@@ -129,7 +134,7 @@ describe('CreateProjectGroupTool.execute — agent threading', () => {
 
     // Welcome message must mention the bound Codex agent so the user
     // understands routing has changed.
-    const welcome = (gateway.sendMessage as any).mock.calls[0][1] as string;
+    const welcome = (gateway as MockedGateway).sendMessage.mock.calls[0][1] as string;
     expect(welcome).toContain('本机 Codex');
     expect(welcome).not.toContain('本机 Claude Code');
   });
@@ -143,7 +148,7 @@ describe('CreateProjectGroupTool.execute — agent threading', () => {
     expect(res.llmContent).toContain('bound to claude-code');
     expect(onProjectCreated.mock.calls[0][2]).toBe('claude-code');
 
-    const welcome = (gateway.sendMessage as any).mock.calls[0][1] as string;
+    const welcome = (gateway as MockedGateway).sendMessage.mock.calls[0][1] as string;
     expect(welcome).toContain('本机 Claude Code');
     expect(welcome).not.toContain('本机 Codex');
   });
@@ -151,7 +156,7 @@ describe('CreateProjectGroupTool.execute — agent threading', () => {
   it('does not pre-bind an agent in the welcome message when agent is omitted', async () => {
     const { tool, gateway } = makeTool();
     await tool.execute({ project_path: '/proj', group_name: 'Plain' }, ABORT);
-    const welcome = (gateway.sendMessage as any).mock.calls[0][1] as string;
+    const welcome = (gateway as MockedGateway).sendMessage.mock.calls[0][1] as string;
     expect(welcome).not.toContain('默认派发方');
   });
 });
@@ -170,7 +175,7 @@ describe('CreateProjectGroupTool.execute — error paths', () => {
   it('returns an error result when gateway.createGroupChat resolves null', async () => {
     const gateway = makeGateway({
       createGroupChat: vi.fn(async () => null),
-    } as any);
+    });
     const { tool } = makeTool({ gateway });
     const res = await tool.execute(
       { project_path: '/x', group_name: 'g' },
@@ -182,7 +187,7 @@ describe('CreateProjectGroupTool.execute — error paths', () => {
   it('returns a validation error before any side effects when agent is invalid', async () => {
     const { tool, gateway, onProjectCreated } = makeTool();
     const res = await tool.execute(
-      { project_path: '/x', group_name: 'g', agent: 'bogus' as never },
+      { project_path: '/x', group_name: 'g', agent: 'bogus' } as CreateProjectGroupParams,
       ABORT,
     );
     expect(res.llmContent).toContain('Error');

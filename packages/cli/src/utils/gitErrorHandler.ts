@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,6 +51,8 @@ export function displayGitErrorMessage(errorInfo: GitErrorInfo): void {
       console.log(`💡 ${t('git.error.init.failed.solution')}`);
       console.log(`✅ ${t('git.error.init.failed.continuing')}`);
       break;
+    default:
+      break;
   }
   
   console.log('⚠️ '.repeat(20) + '\n');
@@ -63,7 +64,7 @@ export function displayGitErrorMessage(errorInfo: GitErrorInfo): void {
 export function setupGitErrorMonitoring(): void {
   const originalConsoleError = console.error;
   
-  console.error = (...args: any[]) => {
+  console.error = (...args: unknown[]) => {
     // Check for Git service error messages
     const message = args.join(' ');
     const gitErrorMatch = message.match(/\[GIT_SERVICE_ERROR\]\s*({.*})/);
@@ -73,7 +74,7 @@ export function setupGitErrorMonitoring(): void {
         const errorInfo: GitErrorInfo = JSON.parse(gitErrorMatch[1]);
         displayGitErrorMessage(errorInfo);
         return; // Don't show the original debug message to users
-      } catch (parseError) {
+      } catch {
         // If parsing fails, fall through to original console.error
       }
     }

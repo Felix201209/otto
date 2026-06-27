@@ -15,7 +15,7 @@ export const compressCommand: SlashCommand = {
   kind: CommandKind.BUILT_IN,
   action: async (context) => {
     const { ui } = context;
-    const geminiClient = context.services.config?.getGeminiClient();
+    const geminiClient = context.services.config?.getOttoClient();
 
     // 检查UI层面的pending状态
     if (ui.pendingItem) {
@@ -29,7 +29,7 @@ export const compressCommand: SlashCommand = {
       return;
     }
 
-    // 检查GeminiClient层面的压缩锁状态
+    // 检查OttoClient层面的压缩锁状态
     if (geminiClient?.isCompressionInProgress()) {
       ui.addItem(
         {

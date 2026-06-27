@@ -1,15 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
-import { Colors } from '../../colors.js';
+import { Box,Text } from 'ink';
+import React,{ useMemo } from 'react';
 import stripAnsi from 'strip-ansi';
+import { Colors } from '../../colors.js';
 
 export interface ScrollingTextDisplayProps {
   /** 要显示的文本内容 */
@@ -46,6 +45,7 @@ function sanitizeText(text: string): string {
   cleaned = cleaned.replace(/^\r/gm, '');
 
   // 移除可能破坏界面的控制字符
+  // eslint-disable-next-line no-control-regex -- 需要清理终端输出里的 NUL/BEL/退格控制字符，避免破坏界面渲染。
   cleaned = cleaned.replace(/[\x00\x07\x08\x7F]/g, '');
 
   // 清理多余的连续换行（保留有意义的空行）
@@ -100,11 +100,11 @@ function ScrollingTextDisplayComponent({
   content,
   height,
   width,
-  isScrolling = false,
+  isScrolling: _isScrolling = false,
   title,
   titleColor = Colors.Foreground,
 }: ScrollingTextDisplayProps) {
-  const { displayLines, totalLines, omittedCount } = useMemo(
+  const { displayLines, totalLines: _totalLines, omittedCount: _omittedCount } = useMemo(
     () => processTextLines(content, Math.max(height - 2, 1), 0.6),
     [content, height]
   );
@@ -158,14 +158,12 @@ function ScrollingTextDisplayComponent({
 
 export const ScrollingTextDisplay = React.memo(
   ScrollingTextDisplayComponent,
-  (prevProps, nextProps) => {
-    return (
+  (prevProps, nextProps) => (
       prevProps.content === nextProps.content &&
       prevProps.height === nextProps.height &&
       prevProps.width === nextProps.width &&
       prevProps.isScrolling === nextProps.isScrolling &&
       prevProps.title === nextProps.title &&
       prevProps.titleColor === nextProps.titleColor
-    );
-  }
+    )
 );

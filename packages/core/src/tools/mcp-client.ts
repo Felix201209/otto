@@ -33,7 +33,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { parse } from 'shell-quote';
 import { AuthProviderType, MCPServerConfig } from '../config/config.js';
-// Google auth provider removed - only Cheeth OA authentication supported
+// Google auth provider removed - only Otto custom-model auth supported
 import { DiscoveredMCPTool } from './mcp-tool.js';
 
 import { FunctionDeclaration, mcpToTool } from '@google/genai';
@@ -1429,8 +1429,8 @@ export async function createTransport(
   if (
     mcpServerConfig.authProviderType === AuthProviderType.GOOGLE_CREDENTIALS
   ) {
-    // Google credentials provider removed - only Cheeth OA supported
-    throw new Error('Google credentials authentication is no longer supported. Use Cheeth OA authentication.');
+    // Google credentials provider removed - only Otto custom-model auth supported
+    throw new Error('Google credentials authentication is not supported in Otto. Configure a custom model instead.');
   }
 
   // Check if we have OAuth configuration or stored tokens

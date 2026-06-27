@@ -9,13 +9,13 @@
  * - 使用 VSCode 的 globalState 持久化存储
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';
 
 // 存储 key
-const DISABLED_MCP_SERVERS_KEY = 'deepv.disabledMcpServers';
+const DISABLED_MCP_SERVERS_KEY = 'otto.disabledMcpServers';
 
 // 状态变化监听器类型
 type McpEnabledStateChangeListener = (serverName: string, enabled: boolean) => void;

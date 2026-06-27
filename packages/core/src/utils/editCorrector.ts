@@ -10,7 +10,7 @@ import {
   SchemaUnion,
   Type,
 } from '@google/genai';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { EditToolParams, EditTool } from '../tools/edit.js';
 import { WriteFileTool } from '../tools/write-file.js';
 import { ReadFileTool } from '../tools/read-file.js';
@@ -61,7 +61,7 @@ const fileContentCorrectionCache = new LruCache<string, string>(MAX_CACHE_SIZE);
 async function callEditCorrectionAPI(
   contents: Content[],
   schema: any,
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   requestId: string,
   abortSignal?: AbortSignal,
 ): Promise<any> {
@@ -109,14 +109,14 @@ async function callEditCorrectionAPI(
   }
 
   // 默认使用 OttoServerAdapter（Flash 模型）
-  const deepVAdapter = geminiClient.getContentGenerator() as any;
-  if (!deepVAdapter) {
+  const ottoAdapter = geminiClient.getContentGenerator() as any;
+  if (!ottoAdapter) {
     throw new Error('OttoServerAdapter not available');
   }
 
   console.log(`[Edit Correction] Calling unified interface: ${requestId}`);
 
-  const response = await deepVAdapter.generateContent({
+  const response = await ottoAdapter.generateContent({
     contents: contents,
     config: {
       systemInstruction: {
@@ -180,7 +180,7 @@ function getTimestampFromFunctionId(fcnId: string): number {
  */
 async function findLastEditTimestamp(
   filePath: string,
-  client: GeminiClient,
+  client: OttoClient,
 ): Promise<number> {
   const history = (await client.getHistory()) ?? [];
 
@@ -254,7 +254,7 @@ async function findLastEditTimestamp(
  *
  * @param currentContent The current content of the file.
  * @param originalParams The original EditToolParams
- * @param client The GeminiClient for LLM calls.
+ * @param client The OttoClient for LLM calls.
  * @returns A promise resolving to an object containing the original
  *          EditToolParams (as CorrectedEditParams) and the occurrences count.
  */
@@ -262,7 +262,7 @@ export async function ensureCorrectEdit(
   filePath: string,
   currentContent: string,
   originalParams: EditToolParams, // This is the EditToolParams from edit.ts, without \'corrected\'
-  client: GeminiClient,
+  client: OttoClient,
   abortSignal: AbortSignal,
 ): Promise<CorrectedEditResult> {
   // 🔧 全局禁用修正逻辑：直接使用模型传入的原始参数
@@ -293,7 +293,7 @@ export async function ensureCorrectEdit(
  */
 export async function ensureCorrectFileContent(
   content: string,
-  client: GeminiClient,
+  client: OttoClient,
   abortSignal: AbortSignal,
 ): Promise<string> {
   // 🔧 全局禁用修正逻辑：直接返回原始内容
@@ -315,7 +315,7 @@ const OLD_STRING_CORRECTION_SCHEMA: SchemaUnion = {
 };
 
 export async function correctOldStringMismatch(
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   fileContent: string,
   problematicSnippet: string,
   abortSignal: AbortSignal,
@@ -395,7 +395,7 @@ const NEW_STRING_CORRECTION_SCHEMA: SchemaUnion = {
  * Adjusts the new_string to align with a corrected old_string, maintaining the original intent.
  */
 export async function correctNewString(
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   originalOldString: string,
   correctedOldString: string,
   originalNewString: string,
@@ -478,7 +478,7 @@ const CORRECT_NEW_STRING_ESCAPING_SCHEMA: SchemaUnion = {
 };
 
 export async function correctNewStringEscaping(
-  geminiClient: GeminiClient,
+  geminiClient: OttoClient,
   oldString: string,
   potentiallyProblematicNewString: string,
   abortSignal: AbortSignal,
@@ -554,7 +554,7 @@ const CORRECT_STRING_ESCAPING_SCHEMA: SchemaUnion = {
 
 export async function correctStringEscaping(
   potentiallyProblematicString: string,
-  client: GeminiClient,
+  client: OttoClient,
   abortSignal: AbortSignal,
 ): Promise<string> {
   const prompt = `

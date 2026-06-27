@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +13,7 @@ import { SceneType } from '../core/sceneManager.js';
 import { getCompressionPrompt, formatCompactSummary } from '../core/prompts.js';
 import { tokenLimit } from '../core/tokenLimits.js';
 import { getErrorMessage } from '../utils/errors.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { retryWithBackoff } from '../utils/retry.js';
@@ -581,7 +580,7 @@ export class CompressionService {
     history: Content[],
     model: string,
     compressionModel: string,
-    geminiClient: GeminiClient, // 使用 GeminiClient 而不是 ContentGenerator
+    geminiClient: OttoClient, // 使用 OttoClient 而不是 ContentGenerator
     prompt_id: string,
     abortSignal: AbortSignal,
     originalTokenCount?: number,
@@ -713,7 +712,7 @@ export class CompressionService {
         });
       }
 
-      // 使用临时GeminiChat进行压缩，获得完整的API监控和错误处理
+      // 使用临时OttoChat进行压缩，获得完整的API监控和错误处理
       const compressionPrompt = 'First, reason in your <analysis> scratchpad. Then, generate the <summary> containing the <state_snapshot>.';
 
       console.log(`[CompressionService] Using temporary chat for compression with full API monitoring`);
@@ -1010,7 +1009,7 @@ IMPORTANT POST-COMPRESSION RULES:
     history: Content[],
     model: string,
     compressionModel: string,
-    geminiClient: any, // 使用 GeminiClient 而不是 ContentGenerator
+    geminiClient: any, // 使用 OttoClient 而不是 ContentGenerator
     prompt_id: string,
     abortSignal: AbortSignal,
     force: boolean = false
@@ -1096,7 +1095,7 @@ IMPORTANT POST-COMPRESSION RULES:
     currentModel: string,
     targetModel: string,
     compressionModel: string,
-    geminiClient: GeminiClient,
+    geminiClient: OttoClient,
     prompt_id: string,
     abortSignal: AbortSignal,
     knownTokenCount?: number

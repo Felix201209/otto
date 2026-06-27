@@ -1,12 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { InlineCommandLoader } from './InlineCommandLoader.js';
 import { CommandKind } from '../ui/commands/types.js';
 import { findInlineCommand, getEnabledInlineCommands } from './inlineCommands.js';
@@ -52,7 +51,7 @@ describe('InlineCommandLoader', () => {
           name: 'ask',
           args: 'what is the weather'
         }
-      } as any;
+      };
 
       const result = await askCommand.action(mockContext, 'what is the weather');
 

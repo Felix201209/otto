@@ -116,7 +116,7 @@ export interface PluginStructure {
     hooks: boolean;
     scripts: boolean;
   };
-  detectedFormat: 'claude-code' | 'deepv-code' | 'hybrid' | 'unknown';
+  detectedFormat: 'claude-code' | 'otto-code' | 'hybrid' | 'unknown';
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 

@@ -45,7 +45,7 @@ describe('checkForUpdates', () => {
     delete process.env.DEV;
     // Mock successful package.json
     getPackageJson.mockResolvedValue({
-      name: 'deepv-code-cli',
+      name: 'otto-code-cli',
       version: '1.0.0',
     });
   });
@@ -83,7 +83,7 @@ describe('checkForUpdates', () => {
         success: true,
         hasUpdate: true,
         latestVersion: '1.1.0',
-        updateCommand: 'npm install -g deepv-code-cli',
+        updateCommand: 'npm install -g otto-code-cli',
       }),
     });
 
@@ -101,7 +101,7 @@ describe('checkForUpdates', () => {
         success: true,
         hasUpdate: true,
         latestVersion: '1.1.0',
-        updateCommand: 'npm install -g deepv-code-cli',
+        updateCommand: 'npm install -g otto-code-cli',
       }),
     });
 
@@ -117,7 +117,7 @@ describe('checkForUpdates', () => {
         hasUpdate: true,
         forceUpdate: true,
         latestVersion: '1.1.0',
-        updateCommand: 'npm install -g deepv-code-cli',
+        updateCommand: 'npm install -g otto-code-cli',
       }),
     });
 

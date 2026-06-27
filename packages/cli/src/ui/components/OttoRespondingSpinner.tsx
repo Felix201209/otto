@@ -4,15 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
 import { Text } from 'ink';
-import { useStreamingContext } from '../contexts/StreamingContext.js';
-import { StreamingState } from '../types.js';
-import { useSmallWindowOptimization, shouldSkipAnimation } from '../hooks/useSmallWindowOptimization.js';
+import React,{ useEffect,useRef,useState } from 'react';
 import { Colors } from '../colors.js';
+import { useStreamingContext } from '../contexts/StreamingContext.js';
+import { shouldSkipAnimation,useSmallWindowOptimization } from '../hooks/useSmallWindowOptimization.js';
 import { themeManager } from '../themes/theme-manager.js';
+import { StreamingState } from '../types.js';
 
-interface GeminiRespondingSpinnerProps {
+interface OttoRespondingSpinnerProps {
   /**
    * Optional string to display when not in Responding state.
    * If not provided and not Responding, renders null.
@@ -24,13 +24,13 @@ interface GeminiRespondingSpinnerProps {
   isWaitingForConfirmation?: boolean;
 }
 
-export const GeminiRespondingSpinner: React.FC<
-  GeminiRespondingSpinnerProps
+export const OttoRespondingSpinner: React.FC<
+  OttoRespondingSpinnerProps
 > = ({ nonRespondingDisplay, isWaitingForConfirmation = false }) => {
   const streamingState = useStreamingContext();
   const smallWindowConfig = useSmallWindowOptimization();
   const [isFilled, setIsFilled] = useState(true); // true=实心•, false=空心◦
-  const [isVisible, setIsVisible] = useState(true); // true=显示, false=隐藏（用于问号闪烁）
+  const [_isVisible, setIsVisible] = useState(true); // true=显示, false=隐藏（用于问号闪烁）
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 动画效果：圆点填充切换 或 问号闪烁
@@ -56,10 +56,10 @@ export const GeminiRespondingSpinner: React.FC<
                          !shouldSkipAnimation(smallWindowConfig, 'spinner');
 
     if (shouldAnimate) {
-      // 每秒切换一次
+      // 圆点呼吸切换:450ms 一拍,有节奏感又不浮躁(工具型审美)
       intervalRef.current = setInterval(() => {
         setIsFilled(prev => !prev);
-      }, 1000);
+      }, 450);
     } else {
       // 非动画状态重置为实心
       setIsFilled(true);

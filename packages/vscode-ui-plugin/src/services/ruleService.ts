@@ -3,7 +3,7 @@
  * 自定义规则管理服务
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';
@@ -344,7 +344,7 @@ export class RuleService {
     if (rule.filePath) {
       filePath = path.join(this.workspaceRoot, rule.filePath);
     } else {
-      // 默认保存到 .deepvcode/rules/ 目录
+      // 默认保存到 .otto/rules/ 目录
       const rulesDir = path.join(this.workspaceRoot, RULE_FILE_LOCATIONS.RULES_DIR);
       await fs.mkdir(rulesDir, { recursive: true });
 

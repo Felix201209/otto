@@ -24,12 +24,12 @@ describe('SkillLoader', () => {
     // 创建临时测试目录
     testRoot = path.join(
       os.tmpdir(),
-      `deepv-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      `otto-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
     );
     testMarketplacePath = path.join(testRoot, 'test-marketplace');
 
     // Mock SkillsPaths
-    vi.spyOn(SkillsPaths, 'DEEPV_HOME', 'get').mockReturnValue(testRoot);
+    vi.spyOn(SkillsPaths, 'OTTO_HOME', 'get').mockReturnValue(testRoot);
     vi.spyOn(SkillsPaths, 'SKILLS_ROOT', 'get').mockReturnValue(
       path.join(testRoot, 'skills'),
     );
@@ -412,7 +412,7 @@ Content
   // Bug: `fs.readdir(root, { withFileTypes: true })` returns Dirent objects
   // whose `isDirectory()` method returns false for symlinks — even when
   // the link points at a real directory. The pre-fix scanner used that
-  // method to filter entries, so `ln -s <repo> ~/.deepv/skills/foo`
+  // method to filter entries, so `ln -s <repo> ~/.otto/skills/foo`
   // created a skill that silently failed to load.
   // ==========================================================================
   describe('symlink discovery', () => {
@@ -431,7 +431,7 @@ Content
 
       // 2. A skill that lives elsewhere and is surfaced via a symlink
       //    — this is what users get on macOS when they `ln -s` a checkout
-      //    into ~/.deepv/skills/.
+      //    into ~/.otto/skills/.
       const externalSkillDir = path.join(testRoot, 'external', 'external-skill');
       await fs.ensureDir(externalSkillDir);
       await fs.writeFile(

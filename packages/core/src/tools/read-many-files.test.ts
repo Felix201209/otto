@@ -133,15 +133,15 @@ describe('ReadManyFilesTool', () => {
       expect(result.llmContent).toContain('Error: Invalid parameters');
     });
 
-    describe('with .deepvignore', () => {
+    describe('with .ottoignore', () => {
       beforeEach(async () => {
         await fsp.writeFile(
-          path.join(tempRootDir, '.deepvignore'),
+          path.join(tempRootDir, '.ottoignore'),
           ['foo.bar', 'baz/'].join('\n'),
         );
       });
 
-      it('should return error if path is ignored by a .deepvignore pattern', async () => {
+      it('should return error if path is ignored by a .ottoignore pattern', async () => {
         await createTestFile('foo.bar', 'content');
         await createTestFile('bar.ts', 'content');
         await createTestFile('foo.quux', 'content');

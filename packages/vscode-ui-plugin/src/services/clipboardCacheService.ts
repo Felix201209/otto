@@ -3,7 +3,7 @@
  * 缓存复制的代码信息（文件路径、行号等）
  * 
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import { Logger } from '../utils/logger';

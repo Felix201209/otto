@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,7 +63,7 @@ import { getEncoding } from 'js-tiktoken';
 import {
   executeToolCall,
   ToolRegistry,
-  GeminiEventType,
+  OttoEventType,
   ToolCallRequestInfo,
   SessionManager,
   getProjectTempDir,
@@ -73,10 +72,7 @@ import {
   tokenLimit,
   uiTelemetryService,
   Config,
-  GeminiClient,
-  BaseTool,
-  ToolResult,
-  Icon,
+  OttoClient,
   AuthType,
   loadServerHierarchicalMemory,
   getFeishuSessionMemoryPath,
@@ -112,7 +108,123 @@ import { clampCodeBlock } from './feishuToolDisplay.js';
 import { appEvents, AppEvent } from '../../utils/events.js';
 import { dlog, dwarn, derror } from '../../services/feishu/logger.js';
 import { t, tp } from '../utils/i18n.js';
-import { Part, PartListUnion, Type } from '@google/genai';
+import { Part, PartListUnion, type Content } from '@google/genai';
+import type { LoadedSettings } from '../../config/settings.js';
+
+type UnknownRecord = Record<string, unknown>;
+
+interface TokenUsageLike {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  creditsUsage?: number;
+}
+
+interface TaskToolArgs {
+  description?: string;
+  max_turns?: number;
+  todos?: TodoItemLike[];
+}
+
+interface SubAgentToolCallLike {
+  status?: string;
+  toolName?: string;
+  description?: string;
+}
+
+interface SubAgentDisplayLike {
+  stats?: {
+    successfulToolCalls?: number;
+    totalToolCalls?: number;
+    commandsRun?: string[];
+    filesCreated?: string[];
+  };
+  description?: string;
+  status?: string;
+  currentTurn?: number;
+  maxTurns?: number;
+  toolCalls?: SubAgentToolCallLike[];
+  error?: string;
+  finalResult?: string;
+  summary?: string;
+}
+
+interface TelemetryLike {
+  logToolCall?: (config: Config, payload: Record<string, unknown>) => void;
+}
+
+interface ConfigWithTelemetry extends Config {
+  getTelemetry?: () => TelemetryLike | undefined;
+}
+
+interface TodoItemLike {
+  status?: string;
+  priority?: string;
+  content?: string;
+}
+
+interface TodoDisplayLike {
+  type?: string;
+  items?: TodoItemLike[];
+}
+
+interface AskQuestionOption {
+  label: string;
+  description?: string;
+}
+
+interface NormalizedAskQuestion {
+  question: string;
+  header?: string;
+  options: AskQuestionOption[];
+  multiSelect?: boolean;
+}
+
+interface QrCodeTerminalLike {
+  generate?: (text: string, options: { small: boolean }, callback: (qr: string) => void) => void;
+  default?: QrCodeTerminalLike;
+}
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null;
+}
+
+function unknownErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error.message === 'string') return error.message;
+  return String(error);
+}
+
+function unknownErrorStackOrMessage(error: unknown): string {
+  if (error instanceof Error) return error.stack || error.message;
+  if (isRecord(error)) {
+    if (typeof error.stack === 'string') return error.stack;
+    if (typeof error.message === 'string') return error.message;
+  }
+  return String(error);
+}
+
+function logFeishuToolCall(config: Config, payload: Record<string, unknown>): void {
+  (config as ConfigWithTelemetry).getTelemetry?.()?.logToolCall?.(config, payload);
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === 'AbortError' ||
+      error.message.includes('aborted') ||
+      error.message.includes('cancelled') ||
+      error.message.includes('canceled');
+  }
+  if (isRecord(error)) {
+    const name = typeof error.name === 'string' ? error.name : '';
+    const message = typeof error.message === 'string' ? error.message : '';
+    return name === 'AbortError' ||
+      message.includes('aborted') ||
+      message.includes('cancelled') ||
+      message.includes('canceled');
+  }
+  return false;
+}
 
 /**
  * 工具名 → 飞书展示用短名。模块级纯函数，便于单测。
@@ -162,7 +274,7 @@ export function shortenProjectPath(p?: string): string {
 /**
  * 安全截断日志中文本，防止超长系统提示词/契约泄露在 TUI 终端，同时保持日志可读性并避免多行打乱排版。
  */
-export function safeTruncateForLog(text: string, limit = 150): string {
+export function safeTruncateForLog(text?: string, limit = 150): string {
   if (!text) return '';
   const trimmed = text.trim();
   // 替换换行符为空格，避免多行输出破坏终端排版，并截断
@@ -184,7 +296,7 @@ export function sanitizeErrorForUser(err: unknown, limit = 200): string {
       ? err.message
       : typeof err === 'string'
         ? err
-        : String((err as any)?.message ?? err ?? '');
+        : unknownErrorMessage(err);
   // 仅取首行，丢弃多行栈痕迹
   let msg = (raw || '').split(/\r?\n/)[0].trim();
   // 抹去疑似绝对路径，避免泄露服务端目录结构
@@ -315,8 +427,8 @@ export function interceptFeishuLifecycleCommand(messageText: string): string | n
  * @param isLive 是否运行中（true 时不展示最终摘要，避免刷屏）
  */
 export function buildSubAgentDisplayBox(
-  subagentData: any,
-  args: any,
+  subagentData: SubAgentDisplayLike | null | undefined,
+  args: TaskToolArgs | null | undefined,
   isLive: boolean,
 ): string {
   if (!subagentData) {
@@ -338,7 +450,7 @@ export function buildSubAgentDisplayBox(
     : status === 'starting' ? '🔄 启动中'
     : '⏳ 运行中';
   // 运行中时，找出当前正在执行的子工具，给出"实时感"
-  const toolCalls: any[] = Array.isArray(subagentData.toolCalls) ? subagentData.toolCalls : [];
+  const toolCalls: SubAgentToolCallLike[] = Array.isArray(subagentData.toolCalls) ? subagentData.toolCalls : [];
   const executing = toolCalls.find(
     (tc) => tc.status === 'Executing' || tc.status === 'Pending' || tc.status === 'SubAgentRunning',
   );
@@ -350,7 +462,7 @@ export function buildSubAgentDisplayBox(
     `• 任务描述: ${desc}`,
     `• 执行轮数: ${subagentData.currentTurn || 0} / ${subagentData.maxTurns || (args && args.max_turns) || 10}`,
     `• 工具调用: 成功 ${stats.successfulToolCalls || 0} 次 / 共 ${stats.totalToolCalls || 0} 次`,
-    executing ? `• 当前工具: ⏳ ${feishuGetToolShortName(executing.toolName)}${executing.description ? ` (${executing.description})` : ''}` : '',
+    executing ? `• 当前工具: ⏳ ${executing.toolName ? feishuGetToolShortName(executing.toolName) : '未知工具'}${executing.description ? ` (${executing.description})` : ''}` : '',
     stats.commandsRun && stats.commandsRun.length > 0 ? `• 运行命令: \`${stats.commandsRun.join(', ')}\`` : '',
     stats.filesCreated && stats.filesCreated.length > 0 ? `• 创建文件: \`${stats.filesCreated.join(', ')}\`` : '',
   ];
@@ -502,7 +614,7 @@ const activeSenderOpenIds = new Map<string, string>();
 const activeAbortControllers = new Map<string, AbortController>();
 
 /** 各会话最后一笔成功交易的 Token 使用量 */
-const chatLastTokenUsage = new Map<string, any>();
+const chatLastTokenUsage = new Map<string, TokenUsageLike>();
 
 /** 全局命令上下文引用 */
 let globalCommandContext: CommandContext | null = null;
@@ -574,7 +686,7 @@ async function loadProjectRoutes(): Promise<Record<string, FeishuProjectRoute>> 
 /**
  * 飞书独立会话加载并过滤项目上下文/记忆 (OTTO.md, AGENTS.md 等)
  */
-async function loadFeishuSessionMemory(workspaceRoot: string, settings?: any): Promise<{ userMemory: string; memoryTokenCount: number; geminiMdFileCount: number }> {
+async function loadFeishuSessionMemory(workspaceRoot: string, settings?: LoadedSettings): Promise<{ userMemory: string; memoryTokenCount: number; geminiMdFileCount: number }> {
   try {
     const fileService = new FileDiscoveryService(workspaceRoot);
     const debugMode = false;
@@ -594,13 +706,13 @@ async function loadFeishuSessionMemory(workspaceRoot: string, settings?: any): P
       settings?.merged?.memoryDiscoveryMaxDirs,
     );
 
-    // Apply projectMemoryMode filtering (all / deepv-only / none)
+    // Apply projectMemoryMode filtering (all / otto-only / none)
     const mode = settings?.merged?.projectMemoryMode || 'all';
     let filtered = result;
 
     if (mode === 'none') {
       filtered = { memoryContent: '', fileCount: 0, filePaths: [] };
-    } else if (mode === 'deepv-only') {
+    } else if (mode === 'otto-only') {
       const filteredPaths = result.filePaths.filter((fp: string) => {
         const filename = fp.split(/[\\/]/).pop() || '';
         return !filename.toUpperCase().startsWith('AGENTS');
@@ -624,7 +736,7 @@ async function loadFeishuSessionMemory(workspaceRoot: string, settings?: any): P
     try {
       const enc = getEncoding('cl100k_base');
       memoryTokenCount = enc.encode(filtered.memoryContent).length;
-    } catch (e) {
+    } catch {
       // ignore token count error
     }
 
@@ -633,8 +745,8 @@ async function loadFeishuSessionMemory(workspaceRoot: string, settings?: any): P
       memoryTokenCount,
       geminiMdFileCount: filtered.fileCount,
     };
-  } catch (err: any) {
-    dwarn(`Failed to load memory for isolated session on ${workspaceRoot}: ${err.message}`);
+  } catch (err: unknown) {
+    dwarn(`Failed to load memory for isolated session on ${workspaceRoot}: ${unknownErrorMessage(err)}`);
     return {
       userMemory: '',
       memoryTokenCount: 0,
@@ -679,21 +791,21 @@ async function saveProjectRoute(chatId: string, routeUpdate: Partial<FeishuProje
 let activeSenderOpenId: string | null = null;
 
 /** 隔离的运行时环境缓存 (chatId -> { config, geminiClient }) */
-const isolatedSessions = new Map<string, { config: Config; geminiClient: GeminiClient; lastActivityAt?: number }>();
+const isolatedSessions = new Map<string, { config: Config; geminiClient: OttoClient; lastActivityAt?: number }>();
 
 /**
  * 各 chat 正在创建隔离 session 的"在途"Promise，用于消除 TOCTOU 竞态：
  * onMessage 对同一 chat 会并发触发，若两条首消息同时走到"get→await→set"，
- * 会各自 new 一个 GeminiClient（第一个被泄漏，且恢复的历史被覆盖丢失）。
+ * 会各自 new 一个 OttoClient（第一个被泄漏，且恢复的历史被覆盖丢失）。
  * 改为：首个创建者写入此 Map，后到者直接 await 同一 Promise，保证每 chat 只建一次。
  */
 const isolatedSessionInFlight = new Map<
   string,
-  Promise<{ config: Config; geminiClient: GeminiClient; lastActivityAt?: number } | null>
+  Promise<{ config: Config; geminiClient: OttoClient; lastActivityAt?: number } | null>
 >();
 
 /**
- * 把 GeminiClient 的 clientHistory（Content[]）派生成"UI 视角"的 history。
+ * 把 OttoClient 的 clientHistory（Content[]）派生成"UI 视角"的 history。
  *
  * 仅用于让 SessionManager.getLastActiveSession(true) 的"含 user 消息"判断成立
  * （它检查 history.json 里 type==='user' 的条目）。AI 真正消费的是 context.json
@@ -703,14 +815,14 @@ const isolatedSessionInFlight = new Map<
  * 其它（model 回复、functionCall/Response、空文本）一律跳过。
  */
 export function deriveUiHistoryFromClientHistory(
-  clientHistory: any[],
+  clientHistory: unknown,
 ): Array<{ type: string; text: string }> {
   const out: Array<{ type: string; text: string }> = [];
   if (!Array.isArray(clientHistory)) return out;
   for (const entry of clientHistory) {
-    if (!entry || entry.role !== 'user' || !Array.isArray(entry.parts)) continue;
+    if (!isRecord(entry) || entry.role !== 'user' || !Array.isArray(entry.parts)) continue;
     const text = entry.parts
-      .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
+      .map((p) => (isRecord(p) && typeof p.text === 'string' ? p.text : ''))
       .filter(Boolean)
       .join('\n')
       .trim();
@@ -773,7 +885,7 @@ async function ensureFeishuSessionMetadata(
  */
 export async function resolveResumableSessionId(
   workspaceRoot: string,
-): Promise<{ sessionId?: string; clientHistory?: any[]; lastActiveAt?: string }> {
+): Promise<{ sessionId?: string; clientHistory?: Content[]; lastActiveAt?: string }> {
   try {
     const sessionManager = new SessionManager(workspaceRoot);
     const lastSessionId = await sessionManager.getLastActiveSession(true);
@@ -819,7 +931,7 @@ export async function resolveResumableSessionId(
  */
 export async function saveFeishuSessionHistory(
   sessionConfig?: Config,
-  sessionClient?: GeminiClient,
+  sessionClient?: OttoClient,
 ): Promise<void> {
   try {
     if (!sessionConfig || !sessionClient) return;
@@ -851,8 +963,8 @@ export async function saveFeishuSessionHistory(
 
 interface QueuedMessage {
   msg: FeishuMessage;
-  resolve: (value: any) => void;
-  reject: (err: any) => void;
+  resolve: (value: string | null) => void;
+  reject: (err: unknown) => void;
   /** 排队提示消息的 message_id，用于后续更新/撤回 */
   queueTipMessageId?: string | null;
 }
@@ -902,7 +1014,7 @@ export function parseBtwCommand(text: string): string | null {
  * BEFORE any slash-command dispatcher (otherwise `btwCommand.action` from
  * BuiltinCommandLoader will fire first and just return the usage hint).
  *
- * Forks a tool-less single-turn agent on the chat's own GeminiClient,
+ * Forks a tool-less single-turn agent on the chat's own OttoClient,
  * cancels any previous in-flight `/btw` for the same chat, and sends the
  * answer back as a single standalone message. Does NOT enter
  * `messageQueues` and does NOT touch the running task card.
@@ -914,7 +1026,7 @@ export function parseBtwCommand(text: string): string | null {
 async function handleFeishuBtwCommand(
   msg: FeishuMessage,
   gateway: FeishuGateway,
-  currentClient: GeminiClient,
+  currentClient: OttoClient,
   currentConfig: Config | undefined | null,
   messageText: string,
 ): Promise<boolean> {
@@ -932,7 +1044,7 @@ async function handleFeishuBtwCommand(
 
   // Cancel any previous in-flight /btw for this chat — only the latest matters.
   // abort 后立即 delete 旧条目，避免被取消的 controller 残留在 map 里泄漏。
-  // 紧接着的 set 会写入新 ctrl，delete/​set 之间无 await，无并发窗口。
+  // 紧接着的 set 会写入新 ctrl，delete/set 之间无 await，无并发窗口。
   const prevCtrl = sideQuestionControllers.get(msg.chatId);
   if (prevCtrl) {
     prevCtrl.abort();
@@ -975,10 +1087,11 @@ async function handleFeishuBtwCommand(
         body = `❌ 旁路问答失败：${result.error ?? '未知错误'}`;
       }
       await gateway.sendMessage(msg.chatId, header + body, msg.messageId);
-    } catch (err: any) {
-      dwarn(`[Feishu] /btw failed: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      const message = unknownErrorMessage(err);
+      dwarn(`[Feishu] /btw failed: ${message}`);
       await gateway
-        .sendMessage(msg.chatId, `❌ 旁路问答失败：${err?.message ?? err}`, msg.messageId)
+        .sendMessage(msg.chatId, `❌ 旁路问答失败：${message}`, msg.messageId)
         .catch(() => {/* best effort */});
     }
   })();
@@ -1187,7 +1300,7 @@ async function handleSetup(args: string, ctx?: CommandContext): Promise<string> 
 function renderQrCode(text: string): string | null {
   try {
     let output = '';
-    let qt: any = qrcodeTerminal;
+    const qt = qrcodeTerminal as QrCodeTerminalLike;
 
     // 🎯 1. 尝试直接以方法调用的形式在原始对象上调用，以保留正确的 `this` 上下文（否则会因 this 丢失导致 this.error 变成 undefined 进而报错）
     if (qt && typeof qt.generate === 'function') {
@@ -1206,7 +1319,7 @@ function renderQrCode(text: string): string | null {
 
     // 🎯 2. 兜底尝试使用 requireFn 并以方法调用形式执行
     try {
-      const cjsQt = requireFn('qrcode-terminal');
+      const cjsQt = requireFn('qrcode-terminal') as QrCodeTerminalLike;
       if (cjsQt && typeof cjsQt.generate === 'function') {
         cjsQt.generate(text, { small: true }, (qr: string) => {
           output = qr;
@@ -1225,8 +1338,8 @@ function renderQrCode(text: string): string | null {
 
     dwarn('[Feishu] qrcodeTerminal.generate is not a function');
     return null;
-  } catch (e: any) {
-    dwarn(`[Feishu] renderQrCode failed: ${e?.message || e}`);
+  } catch (e: unknown) {
+    dwarn(`[Feishu] renderQrCode failed: ${unknownErrorMessage(e)}`);
     return null;
   }
 }
@@ -1317,11 +1430,11 @@ async function handleQrSetup(ctx?: CommandContext): Promise<string> {
           { type: MessageType.INFO, text: result },
           Date.now(),
         );
-      } catch (err: any) {
+      } catch (err: unknown) {
         ctx.ui.addItem(
           {
             type: MessageType.ERROR,
-            text: `❌ Feishu setup 后台轮询失败：${err?.message || err}`,
+            text: `❌ Feishu setup 后台轮询失败：${unknownErrorMessage(err)}`,
           },
           Date.now(),
         );
@@ -1329,10 +1442,10 @@ async function handleQrSetup(ctx?: CommandContext): Promise<string> {
     })();
 
     return lines.join('\n');
-  } catch (err: any) {
+  } catch (err: unknown) {
     return [
       t('feishu.setup.qr.failed_title'),
-      `  ${err.message}`,
+      `  ${unknownErrorMessage(err)}`,
       '',
       t('feishu.setup.qr.fallback_hint'),
     ].join('\n');
@@ -1386,8 +1499,8 @@ async function finalizeQrSetup(
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     const startMsg = await handleStart(ctx);
     lines.push(startMsg);
-  } catch (err: any) {
-    lines.push(`❌ 自动启动服务失败：${err?.message || err}`);
+  } catch (err: unknown) {
+    lines.push(`❌ 自动启动服务失败：${unknownErrorMessage(err)}`);
   }
 
   lines.push('');
@@ -1532,8 +1645,8 @@ async function handleManualSetup(
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     const startMsg = await handleStart(ctx);
     lines.push(startMsg);
-  } catch (err: any) {
-    lines.push(`❌ 自动启动服务失败：${err?.message || err}`);
+  } catch (err: unknown) {
+    lines.push(`❌ 自动启动服务失败：${unknownErrorMessage(err)}`);
   }
 
   lines.push('');
@@ -1653,7 +1766,7 @@ async function sendDetectedFiles(
  * 该函数是纯函数、绝不抛异常，便于单测与防御性兜底。
  */
 export function normalizeAskUserQuestionArgs(args: unknown): {
-  questions: Array<Record<string, unknown>>;
+  questions: Array<Record<string, unknown> | string>;
 } {
   // 1) 整个 args 是字符串：尝试 parse（失败则视为空）
   if (typeof args === 'string') {
@@ -1682,7 +1795,7 @@ export function normalizeAskUserQuestionArgs(args: unknown): {
 
   // 3) questions 是数组：直接采用
   if (Array.isArray(questions)) {
-    return { questions: questions as Array<Record<string, unknown>> };
+    return { questions: questions.filter((item): item is Record<string, unknown> | string => isRecord(item) || typeof item === 'string') };
   }
 
   // 4) 没有 questions，但 args 本身看起来就是单个问题对象 → 包一层
@@ -1710,21 +1823,13 @@ async function handleAskUserQuestionViaCard(
   gateway: FeishuGateway,
   chatId: string,
   replyToMessageId: string | undefined,
-  args: {
-    questions?: Array<{
-      question: string;
-      header?: string;
-      options?: Array<{ label: string; description?: string }>;
-      multiSelect?: boolean;
-    }>;
-  },
+  args: unknown,
   callId: string,
 ): Promise<Part> {
   // 🚀 数据容错与自愈：先把 args 归一化（防止 args/questions 是 JSON 字符串
   //    导致 `.map is not a function` 崩溃），再处理每个 question 的字段。
   const safeArgs = normalizeAskUserQuestionArgs(args);
-  const normalizedQuestions = safeArgs.questions.map((item: any) => {
-    if (!item) return { question: 'Question', options: [] };
+  const normalizedQuestions: NormalizedAskQuestion[] = safeArgs.questions.map((item) => {
     if (typeof item === 'string') {
       return {
         question: item,
@@ -1737,30 +1842,27 @@ async function handleAskUserQuestionViaCard(
     if (header.length > 12) {
       header = header.substring(0, 12);
     }
-    let options = item.options || [];
-    if (Array.isArray(options)) {
-      options = options.map((opt: any) => {
+    let options: AskQuestionOption[] = [];
+    if (Array.isArray(item.options)) {
+      options = item.options.map((opt) => {
         if (typeof opt === 'string') {
           return { label: opt, description: '' };
         }
-        if (opt && typeof opt === 'object') {
+        if (isRecord(opt)) {
           const rawLabel = opt.label || opt.value || 'Option';
           return {
-            ...opt,
             label: String(rawLabel).trim() || 'Option',
             description: opt.description ? String(opt.description).trim() : '',
           };
         }
         return { label: 'Option', description: '' };
       });
-    } else {
-      options = [];
     }
     return {
-      ...item,
       question,
       header,
       options,
+      multiSelect: Boolean(item.multiSelect),
     };
   });
 
@@ -1791,7 +1893,7 @@ async function handleAskUserQuestionViaCard(
       replyToMessageId,
     );
 
-    if (result.ok && (result as any).otherIdeas) {
+    if (result.ok && 'otherIdeas' in result && result.otherIdeas) {
       formSucceeded = true;
       for (const q of answerableQuestions) {
         answers[q.question] = '用户选择直接提供其他想法，不回答预设选项。请向用户询问其想法并退出当前工具执行等待用户消息。';
@@ -1821,7 +1923,7 @@ async function handleAskUserQuestionViaCard(
       const options = q.options || [];
 
       // 构建卡片正文：列出选项及其描述
-      const contentLines = options.map((opt: any) => {
+      const contentLines = options.map((opt) => {
         const line = `**${opt.label}**`;
         return opt.description ? `${line}: ${opt.description}` : line;
       });
@@ -1837,7 +1939,7 @@ async function handleAskUserQuestionViaCard(
           const content = `${contentLines.join('\n\n')}\n\n💡 **${currentSelectionsStr}**`;
 
           // 构建按钮
-          const buttons = options.map((opt: any) => ({
+          const buttons = options.map((opt) => ({
             label: selectedLabels.includes(opt.label) ? `✅ ${opt.label}` : opt.label,
             value: opt.label,
           }));
@@ -1888,7 +1990,7 @@ async function handleAskUserQuestionViaCard(
         const content = contentLines.join('\n\n');
 
         // 构建按钮
-        const buttons = options.map((opt: any) => ({
+        const buttons = options.map((opt) => ({
           label: opt.label,
           value: opt.label,
         }));
@@ -1966,7 +2068,7 @@ const FEISHU_SLASH_COMMANDS: Record<string, string> = {
 /**
  * 格式化精美的飞书端纯英文 /status 状态卡片内容
  */
-async function formatStatusMessage(config: any, geminiClient: any, chatId?: string): Promise<string> {
+async function formatStatusMessage(config: Config, _geminiClient: OttoClient, chatId?: string): Promise<string> {
   const cliVersion = await getVersion().catch(() => 'unknown');
   const currentModel = config?.getModel() || '未选择';
   const cloudModelInfo = config?.getCloudModelInfo?.(currentModel);
@@ -2025,9 +2127,9 @@ async function formatStatusMessage(config: any, geminiClient: any, chatId?: stri
  * @returns FeishuFooterMetrics 对象
  */
 async function getFeishuStatusMetrics(
-  config: any,
-  geminiClient: any,
-  lastRequestTokenUsage?: any,
+  config: Config,
+  _geminiClient: OttoClient,
+  lastRequestTokenUsage?: TokenUsageLike | null,
 ): Promise<FeishuFooterMetrics> {
   const metrics: FeishuFooterMetrics = {};
 
@@ -2046,14 +2148,16 @@ async function getFeishuStatusMetrics(
     if (lastRequestTokenUsage) {
       const input = lastRequestTokenUsage.inputTokens || 0;
       const output = lastRequestTokenUsage.outputTokens || 0;
+      const cacheReadInputTokens = lastRequestTokenUsage.cacheReadInputTokens || 0;
+      const creditsUsage = lastRequestTokenUsage.creditsUsage || 0;
       metrics.tokens = { input, output };
 
-      if (lastRequestTokenUsage.cacheReadInputTokens > 0) {
-        metrics.cacheRead = lastRequestTokenUsage.cacheReadInputTokens;
-        metrics.cacheHitRate = input > 0 ? (lastRequestTokenUsage.cacheReadInputTokens / input) * 100 : 0;
+      if (cacheReadInputTokens > 0) {
+        metrics.cacheRead = cacheReadInputTokens;
+        metrics.cacheHitRate = input > 0 ? (cacheReadInputTokens / input) * 100 : 0;
       }
-      if (lastRequestTokenUsage.creditsUsage > 0) {
-        metrics.credits = lastRequestTokenUsage.creditsUsage;
+      if (creditsUsage > 0) {
+        metrics.credits = creditsUsage;
       }
       if (input > 0 && maxTokens && maxTokens > 0) {
         metrics.contextPercentage = (input / maxTokens) * 100;
@@ -2071,8 +2175,8 @@ async function getFeishuStatusMetrics(
       }
     }
 
-  } catch (err: any) {
-    dwarn(`Failed to get Feishu status metrics: ${err.message}`);
+  } catch (err: unknown) {
+    dwarn(`Failed to get Feishu status metrics: ${unknownErrorMessage(err)}`);
   }
 
   return metrics;
@@ -2085,8 +2189,8 @@ async function getFeishuStatusMetrics(
  */
 async function handleFeishuCommand(
   messageText: string,
-  geminiClient: any,
-  config: any,
+  geminiClient: OttoClient,
+  config: Config,
   chatId?: string,
 ): Promise<string | null> {
   const cmd = messageText.split(/\s+/)[0].toLowerCase();
@@ -2099,7 +2203,7 @@ async function handleFeishuCommand(
         const sessionManager = new SessionManager(config?.getProjectRoot() || process.cwd());
         const newSession = await sessionManager.createNewSession(undefined, process.cwd());
         return `✅ 新会话已创建\n📝 Session ID: ${newSession.sessionId}\n💬 可以开始新的对话了`;
-      } catch (err: any) {
+      } catch (err: unknown) {
         return `❌ 创建新会话失败: ${sanitizeErrorForUser(err)}`;
       }
     }
@@ -2117,7 +2221,7 @@ async function handleFeishuCommand(
           return `✅ 对话已压缩\n📦 原始 token: ${result.originalTokenCount}\n📦 压缩后 token: ${result.newTokenCount}`;
         }
         return '⚠️ 没有需要压缩的内容';
-      } catch (err: any) {
+      } catch (err: unknown) {
         return `❌ 压缩失败: ${sanitizeErrorForUser(err)}`;
       }
     }
@@ -2157,7 +2261,7 @@ async function handleFeishuCommand(
       try {
         const statusMsg = await formatStatusMessage(config, geminiClient, chatId);
         return statusMsg;
-      } catch (err: any) {
+      } catch (err: unknown) {
         return `❌ 获取状态信息失败: ${sanitizeErrorForUser(err)}`;
       }
     }
@@ -2199,7 +2303,7 @@ async function handleFeishuCommand(
         }
         return `✨ 已成功将思考模式切换为: **${newMode === 'on' ? '开启' : newMode === 'off' ? '关闭' : '自动'}** (力度: ${updated.effort})`;
       } else if (['low', 'medium', 'high', 'max', 'xhigh'].includes(sub)) {
-        const newEffort = sub as any;
+        const newEffort = sub as NonNullable<FeishuProjectRoute['thinking']>['effort'];
         const updated = {
           ...currentConfig,
           mode: 'on' as const,
@@ -2227,12 +2331,12 @@ async function handleFeishuCommand(
       }
 
       try {
-        const { modelNames, modelInfos } = await getAvailableModels(settings, config || undefined);
+        const { modelInfos } = await getAvailableModels(settings, config || undefined);
 
         if (parts.length === 1) {
           // 列出可用模型列表
           const lines = ['🤖 **可用模型列表:**', ''];
-          modelInfos.forEach((m: any) => {
+          modelInfos.forEach((m) => {
             let modelLine = `• **${m.name}** (${m.displayName})`;
             if (m.creditsPerRequest) {
               modelLine += ` - ${m.creditsPerRequest}x credits`;
@@ -2246,7 +2350,7 @@ async function handleFeishuCommand(
 
         const targetModelName = parts[1].trim();
         // 查找最匹配的模型
-        const exactMatch = modelInfos.find((m: any) => m.name.toLowerCase() === targetModelName.toLowerCase() || m.displayName.toLowerCase() === targetModelName.toLowerCase());
+        const exactMatch = modelInfos.find((m) => m.name.toLowerCase() === targetModelName.toLowerCase() || m.displayName.toLowerCase() === targetModelName.toLowerCase());
 
         if (!exactMatch) {
           return `❌ 未能找到模型 "${targetModelName}"，请通过输入 \`/model\` 查看可用模型列表。`;
@@ -2255,7 +2359,7 @@ async function handleFeishuCommand(
         const actualModelName = exactMatch.name;
 
         if (config) {
-          const geminiClient = config.getGeminiClient();
+          const geminiClient = config.getOttoClient();
           if (geminiClient) {
             await geminiClient.waitForChatInitialized();
             const switchResult = await geminiClient.switchModel(actualModelName, new AbortController().signal);
@@ -2289,7 +2393,7 @@ async function handleFeishuCommand(
           await saveProjectRoute(chatId, { model: actualModelName });
         }
         return `✨ 已成功切换 AI 模型为: **${exactMatch.displayName}** (${actualModelName})`;
-      } catch (err: any) {
+      } catch (err: unknown) {
         return `❌ 切换模型失败: ${sanitizeErrorForUser(err)}`;
       }
     }
@@ -2320,8 +2424,8 @@ interface CliSlashCommandResult {
  */
 async function handleCliSlashCommandInFeishu(
   messageText: string,
-  config: any,
-  chatId: string,
+  config: Config,
+  _chatId: string,
 ): Promise<CliSlashCommandResult | null> {
   const settingsManager = new SettingsManager();
   const marketplaceManager = new MarketplaceManager(settingsManager);
@@ -2395,9 +2499,9 @@ async function handleCliSlashCommandInFeishu(
     isNonInteractive: true,
     services: {
       config,
-      settings: globalCommandContext?.services?.settings || ({} as any),
+      settings: globalCommandContext?.services?.settings || ({} as unknown as LoadedSettings),
       git: globalCommandContext?.services?.git,
-      logger: console as any,
+      logger: console as unknown as CommandContext['services']['logger'],
     },
     ui: {
       addItem: (item) => {
@@ -2526,13 +2630,13 @@ function stripBotMention(text: string, botName?: string): string {
 
   // 2. 剥除指定 botName 形式的提及
   if (botName) {
-    const escapedName = botName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const escapedName = botName.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&');
     const regex = new RegExp(`^@${escapedName}\\s*`, 'i');
     cleaned = cleaned.replace(regex, '');
   }
 
   // 3. 兜底剥除通用的 @otto 提及
-  cleaned = cleaned.replace(/^@otto2?\\s*/i, '');
+  cleaned = cleaned.replace(/^@otto2?\s*/i, '');
   cleaned = cleaned.replace(/^@智能体\s*/i, ''); // 飞书自带的应用标签前缀
 
   return cleaned.trim();
@@ -2577,9 +2681,9 @@ async function handleStart(context?: CommandContext): Promise<string> {
   }
   globalCommandContext = context || null;
 
-  // 获取 GeminiClient
+  // 获取 OttoClient
   const config = context?.services?.config;
-  const geminiClient = config?.getGeminiClient?.();
+  const geminiClient = config?.getOttoClient?.();
 
   // 设置消息处理 — 使用主会话的 agent 模式（带工具执行能力）
   gateway.onMessage = async (msg: FeishuMessage): Promise<string | null> => {
@@ -2633,8 +2737,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
         return process.platform === 'win32'
           ? '🔄 收到重启指令，正在热重启飞书机器人（不更新版本），稍候我就回来。'
           : '🔄 收到重启指令，正在热重启飞书机器人（不更新版本）。根据您的操作系统限制，重启后将以后台进程（无界面）运行，使用 `ps -ef | grep otto` 即可查看。';
-      } catch (e: any) {
-        return `❌ 重启失败：${e?.message || String(e)}`;
+      } catch (e: unknown) {
+        return `❌ 重启失败：${unknownErrorMessage(e)}`;
       }
     }
 
@@ -2656,7 +2760,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
           await saveProjectRoute(msg.chatId, { agent });
           emitFeishuProjectRoutesUpdated();
           return `✅ 已将本群的默认执行方切换为 **${agentDisplayLabel(agent)}**。`;
-        } catch (e: any) {
+        } catch (e: unknown) {
           return `❌ 切换默认执行方失败: ${sanitizeErrorForUser(e)}`;
         }
       }
@@ -2680,7 +2784,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
           ? `\n🤖 **默认执行方**: ${agentDisplayLabel(agent)}`
           : '';
         return `✅ 恭喜！本群已成功绑定本地项目工作区！\n📂 **工作目录**: \`${absPath}\`${agentTip}\n💬 您现在可以直接在群里向我提问，我将全力协助您！`;
-      } catch (e: any) {
+      } catch (e: unknown) {
         return `❌ 绑定目录失败: ${sanitizeErrorForUser(e)}`;
       }
     }
@@ -2713,19 +2817,23 @@ async function handleStart(context?: CommandContext): Promise<string> {
     activeSenderOpenId = msg.senderOpenId;
 
     // 🎯 实时、动态拉取最新的 config 和 geminiClient，防止闭包在启动后变化而未感知
-    const activeConfig = globalCommandContext?.services?.config || config;
-    let activeClient: any = null;
+    const activeConfigCandidate = globalCommandContext?.services?.config || config;
+    if (!activeConfigCandidate) {
+      return '❌ AI 客户端尚未就绪，请稍后重试。';
+    }
+    const activeConfig: Config = activeConfigCandidate;
+    let activeClient: OttoClient | null = null;
     let initErrorMsg = '';
     const debugTrail: string[] = [];
 
     if (activeConfig) {
       try {
-        activeClient = activeConfig.getGeminiClient?.();
+        activeClient = activeConfig.getOttoClient?.();
         debugTrail.push(`step1=${activeClient ? 'gotClient' : 'nullClient'}`);
-      } catch (e: any) {
-        initErrorMsg = e.message || String(e);
+      } catch (e: unknown) {
+        initErrorMsg = unknownErrorMessage(e);
         debugTrail.push(`step1=threw:${initErrorMsg.slice(0, 80)}`);
-        dwarn(`[Feishu] getGeminiClient threw: ${initErrorMsg}`);
+        dwarn(`[Feishu] getOttoClient threw: ${initErrorMsg}`);
       }
 
       // 🚀 关键：CLI 启动延迟认证策略 — 用户首次在 TUI 发消息时才会 refreshAuth 初始化 geminiClient。
@@ -2738,13 +2846,13 @@ async function handleStart(context?: CommandContext): Promise<string> {
           debugTrail.push(`step2=lazyRefreshAuth(${authType})`);
           dlog(`[Feishu] geminiClient is not initialized. Triggering lazy refreshAuth(${authType})...`);
           await activeConfig.refreshAuth(authType);
-          activeClient = activeConfig.getGeminiClient?.();
+          activeClient = activeConfig.getOttoClient?.();
           debugTrail.push(`step3=${activeClient ? 'lazyOk' : 'lazyStillNull'}`);
           if (activeClient) {
             dlog(`[Feishu] Lazy refreshAuth succeeded; geminiClient is ready.`);
             initErrorMsg = '';
 
-            // 🔄 异步刷新云端模型列表（与 CLI useGeminiStream 行为对齐）
+            // 🔄 异步刷新云端模型列表（与 CLI useOttoStream 行为对齐）
             // 飞书用户可能从不使用 CLI 交互，若不在消息处理时同步，
             // 模型列表会一直停留在进程启动时的快照，无法感知服务端增删。
             const feishuSettings = globalCommandContext?.services?.settings;
@@ -2754,9 +2862,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
               });
             }
           }
-        } catch (e: any) {
-          initErrorMsg = `Lazy refreshAuth failed: ${e.message || String(e)}`;
-          debugTrail.push(`step2=threw:${(e.message || String(e)).slice(0, 80)}`);
+        } catch (e: unknown) {
+          const message = unknownErrorMessage(e);
+          initErrorMsg = `Lazy refreshAuth failed: ${message}`;
+          debugTrail.push(`step2=threw:${message.slice(0, 80)}`);
           dwarn(`[Feishu] ${initErrorMsg}`);
         }
       }
@@ -2807,8 +2916,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
         pendingGoalResult = normalized.result;
         messageText = buildGoalPrompt(normalized.result);
         msg = { ...msg, text: messageText };
-      } catch (e: any) {
-        return `❌ 启动目标模式失败：${e?.message || String(e)}`;
+      } catch (e: unknown) {
+        return `❌ 启动目标模式失败：${unknownErrorMessage(e)}`;
       }
     }
 
@@ -2839,7 +2948,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
     let currentClient = activeClient;
 
     // 🔒 TOCTOU 守卫：同一 chat 的两条首消息会并发进入此处。若已有"在途"创建
-    //    Promise，直接 await 复用，避免各建一个 GeminiClient（泄漏 + 覆盖恢复历史）。
+    //    Promise，直接 await 复用，避免各建一个 OttoClient（泄漏 + 覆盖恢复历史）。
     if (!session) {
       const inFlight = isolatedSessionInFlight.get(msg.chatId);
       if (inFlight) {
@@ -2852,10 +2961,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
       // 本次调用成为该 chat 的唯一创建者：把创建逻辑包进一个 Promise 存入在途 Map，
       // 后到的并发消息会 await 同一个 Promise（见上方守卫）。
       let resolveInFlight!: (
-        s: { config: Config; geminiClient: GeminiClient; lastActivityAt?: number } | null,
+        s: { config: Config; geminiClient: OttoClient; lastActivityAt?: number } | null,
       ) => void;
       const inFlightPromise = new Promise<
-        { config: Config; geminiClient: GeminiClient; lastActivityAt?: number } | null
+        { config: Config; geminiClient: OttoClient; lastActivityAt?: number } | null
       >((res) => {
         resolveInFlight = res;
       });
@@ -2938,7 +3047,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
       try {
         // 🚀 关键：必须先对全新的 Config 实例执行 initialize()，否则内部的 toolRegistry、
         // hookSystem 等核心组件不会被构建，导致 refreshAuth 抛错或 fallback 回主环境，
-        // 从而引发“群聊工作目录依旧是 D:\projects\deepVcode\DeepCode”的安全状态漂移 Bug。
+        // 从而引发“群聊工作目录依旧是 D:\projects\ottocode\DeepCode”的安全状态漂移 Bug。
         dlog(`[Router] Initializing isolatedConfig on '${workspaceRoot}'...`);
         await isolatedConfig.initialize();
 
@@ -2948,14 +3057,14 @@ async function handleStart(context?: CommandContext): Promise<string> {
           isolatedConfig.setThinkingConfig(route.thinking);
         }
 
-        // 主动 refreshAuth 初始化 GeminiClient
+        // 主动 refreshAuth 初始化 OttoClient
         const settings = globalCommandContext?.services?.settings;
         const isolatedAuthType = settings?.merged?.selectedAuthType || AuthType.USE_PROXY_AUTH;
         dlog(`[Router] Calling refreshAuth(${isolatedAuthType}) on isolatedConfig...`);
         await isolatedConfig.refreshAuth(isolatedAuthType);
-        const isolatedClient = isolatedConfig.getGeminiClient();
+        const isolatedClient = isolatedConfig.getOttoClient();
         if (!isolatedClient) {
-          throw new Error('refreshAuth completed but isolatedConfig.getGeminiClient() still returns null/undefined.');
+          throw new Error('refreshAuth completed but isolatedConfig.getOttoClient() still returns null/undefined.');
         }
 
         // 🎯 在此会话特定的 toolRegistry 中，专属且精确注册飞书工具，绝不污染或错乱其他群的消息卡片
@@ -3000,17 +3109,18 @@ async function handleStart(context?: CommandContext): Promise<string> {
           try {
             isolatedClient.setHistory(resumed.clientHistory);
             dlog(`[Router] Restored ${resumed.clientHistory.length} client-history items for chatId '${msg.chatId}'`);
-          } catch (histErr: any) {
-            dwarn(`[Router] Failed to restore client history for '${msg.chatId}': ${histErr?.message || String(histErr)}`);
+          } catch (histErr: unknown) {
+            dwarn(`[Router] Failed to restore client history for '${msg.chatId}': ${unknownErrorMessage(histErr)}`);
           }
         }
 
         session = { config: isolatedConfig, geminiClient: isolatedClient, lastActivityAt: Date.now() };
         isolatedSessions.set(msg.chatId, session);
         debugTrail.push(`isolatedReady`);
-      } catch (e: any) {
-        initErrorMsg = `Isolated session init failed: ${e.message || String(e)}`;
-        debugTrail.push(`isolatedFail:${(e.message || String(e)).slice(0, 80)}`);
+      } catch (e: unknown) {
+        const message = unknownErrorMessage(e);
+        initErrorMsg = `Isolated session init failed: ${message}`;
+        debugTrail.push(`isolatedFail:${message.slice(0, 80)}`);
         dwarn(`[Router] Failed to init isolated session: ${initErrorMsg}`);
         // 回退
         if (activeConfig && activeClient) {
@@ -3031,6 +3141,11 @@ async function handleStart(context?: CommandContext): Promise<string> {
     if (session) {
       currentConfig = session.config;
       currentClient = session.geminiClient;
+    }
+
+    if (!currentClient) {
+      const detail = initErrorMsg || (debugTrail.length ? `trail=[${debugTrail.join('|')}]` : 'AI client not initialized');
+      return `❌ AI 客户端尚未就绪，请稍后重试。${detail ? `\n${detail}` : ''}`;
     }
 
     // 🎯 延迟启动目标驱动模式：此刻 currentConfig/currentClient（隔离 session）
@@ -3056,8 +3171,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
             `\n我将持续推进直至达成目标。随时可用 \`/goal clear\` 结束。`,
           msg.messageId,
         );
-      } catch (e: any) {
-        return `❌ 启动目标模式失败：${e?.message || String(e)}`;
+      } catch (e: unknown) {
+        return `❌ 启动目标模式失败：${unknownErrorMessage(e)}`;
       }
     }
 
@@ -3156,9 +3271,9 @@ async function handleStart(context?: CommandContext): Promise<string> {
           await gateway.sendMessage(msg.chatId, hint, msg.messageId);
         }
         return null; // 🚀 返回 null，防止 gateway.ts 底层二次发送纯文本消息造成重复
-      } catch (err: any) {
+      } catch (err: unknown) {
         // 完整错误落服务端日志；发给用户的是清洗后的简短消息。
-        derror('Feishu slash-command error:', err?.stack || err?.message || err);
+        derror('Feishu slash-command error:', unknownErrorStackOrMessage(err));
         const errMsg = `❌ 执行命令出错：${sanitizeErrorForUser(err)}`;
         tuiContext?.addItem({ type: 'info', text: errMsg }, Date.now());
 
@@ -3255,8 +3370,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
   async function handleSingleFeishuMessage(
     msg: FeishuMessage,
     gateway: FeishuGateway,
-    config: any,
-    geminiClient: any,
+    config: Config,
+    geminiClient: OttoClient,
     creds: FeishuCredentials,
     initErrorMsg?: string,
   ): Promise<string | null> {
@@ -3293,7 +3408,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
     let activeCardId: string | null = null;
     const blocks: MarkdownBlock[] = [];
-    let lastRequestTokenUsage: any = null;
+    let lastRequestTokenUsage: TokenUsageLike | null = null;
     // CardKit 2.0 流式句柄。为 null 表示流式失败/未启用，会回退到 sendCard 静态卡。
     let streaming: {
       pushContent: (content: string) => Promise<boolean>;
@@ -3314,7 +3429,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
       let messageTextForAI = messageText;
       let currentMessage: PartListUnion = messageTextForAI;
 
-      // 1. 处理文件下载 (落盘至 .deepvcode/inbound/)
+      // 1. 处理文件下载 (落盘至 .otto/inbound/)
       if (msg.pendingFiles && msg.pendingFiles.length > 0) {
         const projectRoot = config?.getProjectRoot?.() || process.cwd();
         const fs = await import('node:fs');
@@ -3344,7 +3459,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
         dlog(`[Feishu] Reconstructed message with file paths: "${safeTruncateForLog(messageTextForAI)}"`);
       }
 
-      // 2. 处理图片下载 (落盘至 .deepvcode/clipboard/)
+      // 2. 处理图片下载 (落盘至 .otto/clipboard/)
       if (msg.pendingImages && msg.pendingImages.length > 0) {
         const projectRoot = config?.getProjectRoot?.() || process.cwd();
         const fs = await import('node:fs');
@@ -3395,8 +3510,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
                 }
               });
               dlog(`[Feishu] Multimodal image part successfully appended for AI from: ${localPath}`);
-            } catch (e: any) {
-              dwarn(`[Feishu] Failed to convert local image to inlineData for AI: ${e?.message || e}`);
+            } catch (e: unknown) {
+              dwarn(`[Feishu] Failed to convert local image to inlineData for AI: ${unknownErrorMessage(e)}`);
             }
           }
         }
@@ -3433,8 +3548,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
             `[Feishu] Delegating message to ${delegation.agent} (reason=${delegation.reason}${delegation.resumeSessionId ? `, resume=${delegation.resumeSessionId}` : ''})`,
           );
         }
-      } catch (e: any) {
-        dwarn(`[Feishu] Delegation routing check failed: ${e?.message || e}`);
+      } catch (e: unknown) {
+        dwarn(`[Feishu] Delegation routing check failed: ${unknownErrorMessage(e)}`);
       }
 
       const MAX_TURNS = 100;
@@ -3459,7 +3574,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
         for await (const event of stream) {
           switch (event.type) {
-            case GeminiEventType.Content: {
+            case OttoEventType.Content: {
               responseText += event.value;
               const currentTotalMarkdown = renderCurrentDisplay(blocks, responseText);
               const trimmed = currentTotalMarkdown.trim();
@@ -3548,20 +3663,22 @@ async function handleStart(context?: CommandContext): Promise<string> {
               }
               break;
             }
-            case GeminiEventType.ToolCallRequest:
+            case OttoEventType.ToolCallRequest:
               toolCallRequests.push(event.value);
               break;
-            case GeminiEventType.TokenUsage:
+            case OttoEventType.TokenUsage:
               lastRequestTokenUsage = event.value;
               if (msg && msg.chatId) {
                 chatLastTokenUsage.set(msg.chatId, event.value);
               }
               break;
-            case GeminiEventType.ChatCompressed:
+            case OttoEventType.ChatCompressed:
               tuiContext?.addItem({ type: 'info', text: t('feishu.tui.context_compressed') }, Date.now());
               break;
-            case GeminiEventType.Error:
+            case OttoEventType.Error:
               throw new Error(event.value?.error?.message || 'unknown error');
+            default:
+              break;
           }
         }
 
@@ -3681,7 +3798,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
                 gateway,
                 msg.chatId,
                 msg.messageId,
-                req.args as any,
+                req.args,
                 req.callId,
               );
               toolResponseParts.push(cardResult);
@@ -3745,7 +3862,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
                 );
 
                 const durationMs = Date.now() - startTime;
-                config?.getTelemetry?.()?.logToolCall?.(config, {
+                logFeishuToolCall(config, {
                   'event.name': 'tool_call',
                   'event.timestamp': new Date().toISOString(),
                   function_name: 'task',
@@ -3808,7 +3925,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
                   : JSON.stringify(toolResult.llmContent).length;
 
                 // 核心的 telemetry 日志
-                config?.getTelemetry?.()?.logToolCall?.(config, {
+                logFeishuToolCall(config, {
                   'event.name': 'tool_call',
                   'event.timestamp': new Date().toISOString(),
                   function_name: 'run_shell_command',
@@ -3869,7 +3986,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
                   ? toolResult.llmContent.length
                   : JSON.stringify(toolResult.llmContent).length;
 
-                config?.getTelemetry?.()?.logToolCall?.(config, {
+                logFeishuToolCall(config, {
                   'event.name': 'tool_call',
                   'event.timestamp': new Date().toISOString(),
                   function_name: 'lark_cli',
@@ -3932,7 +4049,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
                 );
 
                 const durationMs = Date.now() - startTime;
-                config?.getTelemetry?.()?.logToolCall?.(config, {
+                logFeishuToolCall(config, {
                   'event.name': 'tool_call',
                   'event.timestamp': new Date().toISOString(),
                   function_name: 'delegate_to_agent',
@@ -4053,9 +4170,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
             }
 
             emitFeishuMessageLog(msg.chatId, `✅ ${toolName}`, 'tool');
-          } catch (toolErr: any) {
+          } catch (toolErr: unknown) {
             // 工具执行失败追加精美样式
-            const failedReportMarkdown = formatToolCallWithBorder(toolName, req.args, false, toolErr.message || '未知错误', false);
+            const toolErrorMessage = unknownErrorMessage(toolErr);
+            const failedReportMarkdown = formatToolCallWithBorder(toolName, req.args, false, toolErrorMessage || '未知错误', false);
             blocks.push({ type: 'tool', content: failedReportMarkdown });
             if (activeCardId) {
               const failedFooterMetrics = await getFeishuStatusMetrics(config, geminiClient, lastRequestTokenUsage);
@@ -4063,7 +4181,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
               await gateway.updateCard(activeCardId, 'Otto (执行失败)', renderCurrentDisplay(blocks), failedFooterMetrics);
             }
 
-            emitFeishuMessageLog(msg.chatId, `❌ ${toolName}: ${toolErr.message}`, 'tool');
+            emitFeishuMessageLog(msg.chatId, `❌ ${toolName}: ${toolErrorMessage}`, 'tool');
             throw toolErr;
           }
         }
@@ -4145,8 +4263,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
         await gateway.sendMessage(msg.chatId, '（工具调用次数已达到上限）', msg.messageId);
       }
       return null;
-    } catch (err: any) {
-      if (err.name === 'AbortError' || err.message?.includes('aborted') || err.message?.includes('cancelled') || err.message?.includes('canceled')) {
+    } catch (err: unknown) {
+      if (isAbortLikeError(err)) {
         // 注：不在此处清除 isProcessingQueues，因为 processMessageQueueForChat 的
         // while 循环仍在运行。如果在 catch 中设置 isProcessingQueues=false，会破坏
         // 防重入守卫，允许新消息并发进入同一 chat 的处理循环。
@@ -4165,7 +4283,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
         return null;
       }
       // 完整错误（含栈/内部路径）只落服务端日志；发给用户的是清洗后的简短消息。
-      derror('Feishu Agent processing error:', err?.stack || err?.message || err);
+      derror('Feishu Agent processing error:', unknownErrorStackOrMessage(err));
       const userErr = sanitizeErrorForUser(err);
       const errorReply = `❌ 处理消息时出错: ${userErr}`;
       if (activeCardId && streaming) {
@@ -4218,22 +4336,13 @@ async function handleStart(context?: CommandContext): Promise<string> {
     return false;
   }
 
-  function getLatest20Lines(text: string): string {
-    if (!text) return '';
-    const lines = text.split('\n');
-    if (lines.length > 20) {
-      return lines.slice(-20).join('\n');
-    }
-    return text;
-  }
-
   function getToolShortName(name: string): string {
     return feishuGetToolShortName(name);
   }
 
   function formatToolCallWithBorder(
     toolName: string,
-    args: any,
+    args: unknown,
     success: boolean,
     output: string,
     isLive = false
@@ -4244,64 +4353,88 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
     // 1. 提取参数主信息
     let mainArg = '';
-    const keys = Object.keys(args || {});
-    if (toolName === 'run_shell_command' && args.command) {
-      mainArg = args.command;
-    } else if ((toolName === 'read_file' || toolName === 'write_file') && args.absolute_path) {
-      mainArg = args.absolute_path;
-    } else if ((toolName === 'replace' || toolName === 'multiedit') && (args.file_path || args.filePath)) {
-      mainArg = args.file_path || args.filePath;
+    const argsRecord = isRecord(args) ? args : {};
+    const keys = Object.keys(argsRecord);
+    const getStringArg = (key: string): string | undefined => {
+      const value = argsRecord[key];
+      return typeof value === 'string' ? value : undefined;
+    };
+    const getArrayArg = (key: string): unknown[] | undefined => {
+      const value = argsRecord[key];
+      return Array.isArray(value) ? value : undefined;
+    };
+
+    const commandArg = getStringArg('command');
+    const absolutePathArg = getStringArg('absolute_path');
+    const filePathArg = getStringArg('file_path') ?? getStringArg('filePath');
+    const pathArg = getStringArg('path');
+    const patternArg = getStringArg('pattern');
+
+    if (toolName === 'run_shell_command' && commandArg) {
+      mainArg = commandArg;
+    } else if ((toolName === 'read_file' || toolName === 'write_file') && absolutePathArg) {
+      mainArg = absolutePathArg;
+    } else if ((toolName === 'replace' || toolName === 'multiedit') && filePathArg) {
+      mainArg = filePathArg;
     } else if (toolName === 'patch') {
       mainArg = 'unified diff';
     } else if (toolName === 'batch') {
-      const callCount = args.tool_calls ? args.tool_calls.length : 0;
+      const callCount = getArrayArg('tool_calls')?.length ?? 0;
       mainArg = callCount > 0 ? `${callCount} independent operations` : 'operations';
     } else if (toolName === 'ppt_outline') {
-      mainArg = args.action ? `${args.action}${args.topic ? `: ${args.topic}` : ''}` : '';
+      const actionArg = getStringArg('action');
+      const topicArg = getStringArg('topic');
+      mainArg = actionArg ? `${actionArg}${topicArg ? `: ${topicArg}` : ''}` : '';
     } else if (toolName === 'ppt_generate') {
       mainArg = 'Generate PPT';
-    } else if (toolName === 'codesearch' && args.query) {
-      mainArg = args.query;
+    } else if (toolName === 'codesearch' && getStringArg('query')) {
+      mainArg = getStringArg('query') ?? '';
     } else if (toolName === 'lsp') {
-      mainArg = `${args.operation || 'query'}${args.filePath ? ` on ${args.filePath}` : (args.query ? `: ${args.query}` : '')}`;
-    } else if (toolName === 'search_file_content' && args.pattern) {
-      mainArg = `'${args.pattern}'`;
-      if (args.glob) {
-        mainArg += ` in ${args.glob}`;
-      } else if (args.path) {
-        mainArg += ` in ${args.path}`;
+      const operationArg = getStringArg('operation') ?? 'query';
+      const lspFilePathArg = getStringArg('filePath');
+      const queryArg = getStringArg('query');
+      mainArg = `${operationArg}${lspFilePathArg ? ` on ${lspFilePathArg}` : (queryArg ? `: ${queryArg}` : '')}`;
+    } else if (toolName === 'search_file_content' && patternArg) {
+      mainArg = `'${patternArg}'`;
+      const globArg = getStringArg('glob');
+      if (globArg) {
+        mainArg += ` in ${globArg}`;
+      } else if (pathArg) {
+        mainArg += ` in ${pathArg}`;
       }
     } else if (toolName === 'todo_write') {
-      const todoCount = args.todos ? args.todos.length : 0;
+      const todoCount = getArrayArg('todos')?.length ?? 0;
       mainArg = todoCount > 0 ? `Update ${todoCount} items` : 'Update list';
     } else if (toolName === 'task') {
       // 仅显示简短任务描述，绝不显示完整 prompt（含子代理系统规则，过长且泄露内部细节）
-      mainArg = args.description || '';
-    } else if (toolName === 'use_skill' && args.skillName) {
-      mainArg = args.skillName;
-    } else if (toolName === 'lark_cli' && args.command) {
-      mainArg = `${args.command}${args.args && args.args.length > 0 ? ` ${args.args.join(' ')}` : ''}`;
+      mainArg = getStringArg('description') ?? '';
+    } else if (toolName === 'use_skill' && getStringArg('skillName')) {
+      mainArg = getStringArg('skillName') ?? '';
+    } else if (toolName === 'lark_cli' && commandArg) {
+      const larkArgs = getArrayArg('args') ?? [];
+      mainArg = `${commandArg}${larkArgs.length > 0 ? ` ${larkArgs.map(String).join(' ')}` : ''}`;
     } else if (toolName === 'delegate_to_agent') {
-      mainArg = args.agent === 'codex' ? '›_ Codex' : '✳ Claude Code';
-    } else if (args.path) {
-      mainArg = args.path;
-    } else if (args.pattern) {
-      mainArg = args.pattern;
+      mainArg = getStringArg('agent') === 'codex' ? '›_ Codex' : '✳ Claude Code';
+    } else if (pathArg) {
+      mainArg = pathArg;
+    } else if (patternArg) {
+      mainArg = patternArg;
     } else if (keys.length > 0) {
-      const firstVal = args[keys[0]];
+      const firstVal = argsRecord[keys[0]];
       mainArg = typeof firstVal === 'object' && firstVal !== null ? JSON.stringify(firstVal) : String(firstVal);
     }
 
     // 缩短绝对路径到相对路径（看起来更整洁）
-    if (mainArg && mainArg.includes('DeepCode')) {
-      const parts = mainArg.split(/[\\/]DeepCode[\\/]/);
+    if (mainArg && mainArg.includes('Otto')) {
+      const parts = mainArg.split(/[\\/]Otto[\\/]/);
       if (parts.length > 1) {
         mainArg = parts[1];
       }
     }
 
     // 2. 提取 description (很多大模型会在工具调用里附带 description)
-    const descriptionStr = args.description ? ` (${args.description})` : '';
+    const descriptionArg = getStringArg('description');
+    const descriptionStr = descriptionArg ? ` (${descriptionArg})` : '';
 
     // 3. 构建第一行头部
     const headLine = `${liveStatusIcon} **${shortName}** \`${mainArg}\`${descriptionStr}`;
@@ -4311,47 +4444,25 @@ async function handleStart(context?: CommandContext): Promise<string> {
     let contentBox = '';
 
     let isSubAgentDisplay = false;
-    let subagentData: any = null;
+    let subagentData: SubAgentDisplayLike | null = null;
     let isTodoDisplay = false;
-    let todoData: any = null;
+    let todoData: TodoDisplayLike | null = null;
 
     try {
       if (output) {
-        if (typeof output === 'string') {
-          const parsed = JSON.parse(output);
-          // 实时态：task 工具通过 updateOutput 推送 { type:'subagent_update', data:{...} }
-          // 最终态：task 工具的 returnDisplay 直接是 { type:'subagent_display', ... }
-          // 两者都要识别，data 内层即 SubAgentDisplay 对象。
-          if (parsed && parsed.type === 'subagent_update' && parsed.data) {
-            isSubAgentDisplay = true;
-            subagentData = parsed.data;
-          } else if (parsed && parsed.type === 'subagent_display') {
-            isSubAgentDisplay = true;
-            subagentData = parsed;
-          } else if (parsed && parsed.type === 'todo_display') {
-            isTodoDisplay = true;
-            todoData = parsed;
-          }
-        } else if (typeof output === 'object') {
-          const parsed = output as any;
-          if (parsed && parsed.type === 'subagent_update' && parsed.data) {
-            isSubAgentDisplay = true;
-            subagentData = parsed.data;
-          } else if (parsed && parsed.type === 'subagent_display') {
-            isSubAgentDisplay = true;
-            subagentData = parsed;
-          } else if (parsed && parsed.agentId && parsed.status && parsed.stats) {
-            // 如果直接是 SubAgentDisplay 实体对象 (例如 TaskTool 结尾直接返回的 returnDisplay 属性)
-            isSubAgentDisplay = true;
-            subagentData = parsed;
-          } else if (parsed && parsed.type === 'todo_display') {
-            isTodoDisplay = true;
-            todoData = parsed;
-          } else if (parsed && parsed.items) {
-            // 已经是 todoData 实体对象
-            isTodoDisplay = true;
-            todoData = parsed;
-          }
+        const parsed: unknown = JSON.parse(output);
+        // 实时态：task 工具通过 updateOutput 推送 { type:'subagent_update', data:{...} }
+        // 最终态：task 工具的 returnDisplay 直接是 { type:'subagent_display', ... }
+        // 两者都要识别，data 内层即 SubAgentDisplay 对象。
+        if (isRecord(parsed) && parsed['type'] === 'subagent_update' && isRecord(parsed['data'])) {
+          isSubAgentDisplay = true;
+          subagentData = parsed['data'] as SubAgentDisplayLike;
+        } else if (isRecord(parsed) && parsed['type'] === 'subagent_display') {
+          isSubAgentDisplay = true;
+          subagentData = parsed as SubAgentDisplayLike;
+        } else if (isRecord(parsed) && parsed['type'] === 'todo_display') {
+          isTodoDisplay = true;
+          todoData = parsed as TodoDisplayLike;
         }
       }
     } catch {
@@ -4380,12 +4491,14 @@ async function handleStart(context?: CommandContext): Promise<string> {
       // 直接使用飞书原生支持的最美观且自适应等宽的代码框组件，确保在任何端上绝不乱行
       contentBox = `\n\`\`\`bash\n${clampedShell.text}\n\`\`\``;
     } else if (toolName === 'read_file') {
-      const startLine = args.offset !== undefined ? args.offset + 1 : 1;
-      const limit = args.limit !== undefined ? args.limit : 'all';
+      const offsetArg = argsRecord['offset'];
+      const limitArg = argsRecord['limit'];
+      const startLine = typeof offsetArg === 'number' ? offsetArg + 1 : 1;
+      const limit = typeof limitArg === 'number' || typeof limitArg === 'string' ? limitArg : 'all';
       branchLine = `\n └ ( 读取 ${startLine}-${limit === 'all' ? '末行' : startLine + Number(limit) - 1} )`;
     } else if (toolName === 'replace') {
-      const oldStr = args.old_string || '';
-      const newStr = args.new_string || '';
+      const oldStr = getStringArg('old_string') ?? '';
+      const newStr = getStringArg('new_string') ?? '';
       if (oldStr || newStr) {
         const oldLines = oldStr.split('\n');
         const newLines = newStr.split('\n');
@@ -4432,10 +4545,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
         branchLine = `\n └ ( 替换完成 )`;
       }
     } else if (toolName === 'write_file') {
-      const content = args.content || '';
+      const content = getStringArg('content') ?? '';
       const totalLines = content.split('\n').length;
 
-      const filePath = args.file_path || args.absolute_path || '';
+      const filePath = filePathArg ?? absolutePathArg ?? '';
       const ext = filePath.split('.').pop()?.toLowerCase() || '';
       const lang = ['js', 'ts', 'jsx', 'tsx', 'py', 'json', 'md', 'html', 'css', 'yaml', 'yml', 'sh', 'bash'].includes(ext) ? ext : 'text';
 
@@ -4445,13 +4558,16 @@ async function handleStart(context?: CommandContext): Promise<string> {
       branchLine = `\n └ ( 写入完成，共 ${totalLines} 行${clamped.truncated ? '，预览已截断' : ''} )`;
       contentBox = `\n\`\`\`${lang}\n${clamped.text}\n\`\`\``;
     } else if (toolName === 'todo_write' || isTodoDisplay) {
-      const todos = args?.todos || todoData?.items;
-      if (todos && Array.isArray(todos)) {
+      const rawTodos = getArrayArg('todos') ?? todoData?.items;
+      if (rawTodos && Array.isArray(rawTodos)) {
+        const todos = rawTodos
+          .filter(isRecord)
+          .map((todo) => todo as TodoItemLike);
         const todoLines = [
           `📝 **${isLive ? '正在规划/更新任务清单' : '任务待办清单已更新'}**`,
           `────────────────────────`,
         ];
-        todos.forEach((t: any) => {
+        todos.forEach((t) => {
           const statusIcon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '⏳' : '⬜';
           todoLines.push(`${statusIcon} [${t.priority}] ${t.content}`);
         });
@@ -4460,7 +4576,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
       }
       branchLine = `\n └ ( 待办已更新 )`;
     } else if (toolName === 'task' || isSubAgentDisplay) {
-      contentBox = isLive ? buildSubAgentDisplayBox(subagentData, args, isLive) : '';
+      contentBox = isLive ? buildSubAgentDisplayBox(subagentData, argsRecord as TaskToolArgs, isLive) : '';
       branchLine = isLive ? `\n └ ( 子代理执行中... )` : `\n └ ( 子代理任务完成 )`;
     } else if (toolName === 'lark_cli') {
       const hasAuth = output && (output.includes('🔑') || output.includes('🔗'));
@@ -4525,8 +4641,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
   async function processMessageQueueForChat(
     gateway: FeishuGateway,
-    config: any,
-    geminiClient: any,
+    config: Config,
+    geminiClient: OttoClient,
     creds: FeishuCredentials,
     chatId: string,
     initErrorMsg?: string
@@ -4552,7 +4668,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
         try {
           const result = await handleSingleFeishuMessage(msg, gateway, config, geminiClient, creds, initErrorMsg);
           resolve(result);
-        } catch (err) {
+        } catch (err: unknown) {
           reject(err);
         }
       }
@@ -4654,7 +4770,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
               // 构造一个模拟的飞书消息来触发队列处理
               const fakeMsg: FeishuMessage = {
                 messageId: `loop_${now}`,
-                chatId: chatId,
+                chatId,
                 chatType: 'group',
                 senderOpenId: creds.ownerOpenId || '', // 模拟拥有者执行
                 text: loopCtx.prompt,
@@ -4749,8 +4865,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
         await geminiClient.setTools();
         dlog('Registered Feishu file-send tool and group-chat tool successfully.');
-      } catch (toolErr: any) {
-        dwarn('Failed to register Feishu tool (continuing):', toolErr.message);
+      } catch (toolErr: unknown) {
+        dwarn('Failed to register Feishu tool (continuing):', unknownErrorMessage(toolErr));
       }
     }
 
@@ -4780,8 +4896,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
             if (agentHints.length > 0) {
               welcomeLines.push('', ...agentHints);
             }
-          } catch (detectErr: any) {
-            dwarn(`[Feishu] detectLocalAgents failed (non-fatal): ${detectErr?.message ?? detectErr}`);
+          } catch (detectErr: unknown) {
+            dwarn(`[Feishu] detectLocalAgents failed (non-fatal): ${unknownErrorMessage(detectErr)}`);
           }
 
           welcomeLines.push('', `❓ 需要帮助请发送 /help`);
@@ -4841,8 +4957,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
                 welcomeLines.push(`     👉 ${bizUrl}`);
               }
             }
-          } catch (scopeErr: any) {
-            dwarn(`[Feishu] Failed to check scopes for welcome message: ${scopeErr.message}`);
+          } catch (scopeErr: unknown) {
+            dwarn(`[Feishu] Failed to check scopes for welcome message: ${unknownErrorMessage(scopeErr)}`);
           }
 
           const msgId = await gateway.sendPrivateMessage(ownerOpenId, welcomeLines.join('\n'));
@@ -4851,8 +4967,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
           } else {
             dwarn('[Feishu] Welcome private message could not be delivered — the bot may lack the im:message:send_as_bot permission.');
           }
-        } catch (err: any) {
-          dwarn(`[Feishu] Failed to send welcome private message: ${err.message}`);
+        } catch (err: unknown) {
+          dwarn(`[Feishu] Failed to send welcome private message: ${unknownErrorMessage(err)}`);
         }
       })();
     }
@@ -4865,8 +4981,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
       t('feishu.start.success_hint_chat'),
       t('feishu.start.success_hint_stop'),
     ].join('\n');
-  } catch (err: any) {
-    return tp('feishu.start.failed', { error: err.message });
+  } catch (err: unknown) {
+    return tp('feishu.start.failed', { error: unknownErrorMessage(err) });
   } finally {
     // 无论连接成功或失败，都释放互斥守卫，允许后续 start（失败重试 / stop 后重启）。
     startInFlight = false;
@@ -4883,7 +4999,7 @@ async function handleStop(context?: CommandContext): Promise<string> {
 
   // 🎯 动态注销 send_feishu_file 及 create_project_and_group_chat 工具
   const config = context?.services?.config;
-  const geminiClient = config?.getGeminiClient?.();
+  const geminiClient = config?.getOttoClient?.();
   if (config && geminiClient) {
     try {
       const toolRegistry: ToolRegistry = await config.getToolRegistry();
@@ -4895,8 +5011,8 @@ async function handleStop(context?: CommandContext): Promise<string> {
         await geminiClient.setTools();
         dlog('Unregistered Feishu file-send and group-chat tools successfully.');
       }
-    } catch (toolErr: any) {
-      dwarn('Failed to unregister Feishu tool:', toolErr.message);
+    } catch (toolErr: unknown) {
+      dwarn('Failed to unregister Feishu tool:', unknownErrorMessage(toolErr));
     }
   }
 
@@ -5198,7 +5314,7 @@ async function handleLogout(context?: CommandContext): Promise<string> {
   if (activeGateway) {
     // 🎯 注销飞书工具
     const config = context?.services?.config;
-    const geminiClient = config?.getGeminiClient?.();
+    const geminiClient = config?.getOttoClient?.();
     if (config && geminiClient) {
       try {
         const toolRegistry: ToolRegistry = await config.getToolRegistry();
@@ -5299,9 +5415,7 @@ export const feishuCommand: SlashCommand = {
       name: 'stop',
       description: t('feishu.subcmd.stop.description'),
       kind: CommandKind.BUILT_IN,
-      action: async (ctx) => {
-        return msg(await handleStop(ctx));
-      },
+      action: async (ctx) => msg(await handleStop(ctx)),
     },
     {
       name: 'status',

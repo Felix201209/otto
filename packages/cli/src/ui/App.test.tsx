@@ -15,14 +15,14 @@ import {
   ToolRegistry,
   AccessibilitySettings,
   SandboxConfig,
-  GeminiClient,
+  OttoClient,
   ideContext,
 } from 'otto-core';
 import { LoadedSettings, SettingsFile, Settings } from '../config/settings.js';
 import process from 'node:process';
-import { useGeminiStream } from './hooks/useGeminiStream.js';
+import { useOttoStream } from './hooks/useOttoStream.js';
 import { useConsoleMessages } from './hooks/useConsoleMessages.js';
-import { StreamingState, ConsoleMessageItem } from './types.js';
+import { StreamingState, ConsoleMessageItem, HistoryItem } from './types.js';
 
 // Define a more complete mock server config based on actual Config
 interface MockServerConfig {
@@ -69,8 +69,8 @@ interface MockServerConfig {
   getUserAgent: Mock<() => string>;
   getUserMemory: Mock<() => string>;
   setUserMemory: Mock<(newUserMemory: string) => void>;
-  getGeminiMdFileCount: Mock<() => number>;
-  setGeminiMdFileCount: Mock<(count: number) => void>;
+  getOttoMdFileCount: Mock<() => number>;
+  setOttoMdFileCount: Mock<(count: number) => void>;
   getApprovalMode: Mock<() => ApprovalMode>;
   setApprovalMode: Mock<(skip: ApprovalMode) => void>;
   getVertexAI: Mock<() => boolean | undefined>;
@@ -78,12 +78,12 @@ interface MockServerConfig {
   getAccessibility: Mock<() => AccessibilitySettings>;
   getProjectRoot: Mock<() => string | undefined>;
   getAllGeminiMdFilenames: Mock<() => string[]>;
-  getGeminiClient: Mock<() => GeminiClient | undefined>;
+  getOttoClient: Mock<() => OttoClient | undefined>;
   getUserTier: Mock<() => Promise<string | undefined>>;
   getCloudModelInfo: Mock<(model: string) => unknown>;
   getCloudModels: Mock<() => unknown[]>;
   getAgentStyle: Mock<() => string>;
-  getGeminiMdFilePaths: Mock<() => string[]>;
+  getOttoMdFilePaths: Mock<() => string[]>;
   getHealthyUseEnabled: Mock<() => boolean>;
   getIdeClient: Mock<
     () =>
@@ -145,22 +145,22 @@ vi.mock('otto-core', async (importOriginal) => {
         getUserAgent: vi.fn(() => opts.userAgent || 'test-agent'),
         getUserMemory: vi.fn(() => opts.userMemory || ''),
         setUserMemory: vi.fn(),
-        getGeminiMdFileCount: vi.fn(() => opts.geminiMdFileCount || 0),
-        setGeminiMdFileCount: vi.fn(),
+        getOttoMdFileCount: vi.fn(() => opts.geminiMdFileCount || 0),
+        setOttoMdFileCount: vi.fn(),
         getApprovalMode: vi.fn(() => opts.approvalMode ?? ApprovalMode.DEFAULT),
         setApprovalMode: vi.fn(),
         getVertexAI: vi.fn(() => opts.vertexai),
         getShowMemoryUsage: vi.fn(() => opts.showMemoryUsage ?? false),
         getAccessibility: vi.fn(() => opts.accessibility ?? {}),
         getProjectRoot: vi.fn(() => opts.targetDir),
-        getGeminiClient: vi.fn(() => ({
+        getOttoClient: vi.fn(() => ({
           getUserTier: vi.fn(),
         })),
         getCloudModelInfo: vi.fn(() => undefined),
         getCloudModels: vi.fn(() => []),
         getAgentStyle: vi.fn(() => 'default'),
         getThinkingConfig: vi.fn(() => ({ mode: 'auto', effort: 'auto' })),
-        getGeminiMdFilePaths: vi.fn(() => []),
+        getOttoMdFilePaths: vi.fn(() => []),
         getHealthyUseEnabled: vi.fn(() => opts.healthyUse ?? false),
         getIdeClient: vi.fn(() => undefined),
         getGitService: vi.fn().mockResolvedValue(undefined),
@@ -193,8 +193,8 @@ vi.mock('otto-core', async (importOriginal) => {
 });
 
 // Mock heavy dependencies or those with side effects
-vi.mock('./hooks/useGeminiStream', () => ({
-  useGeminiStream: vi.fn(() => ({
+vi.mock('./hooks/useOttoStream', () => ({
+  useOttoStream: vi.fn(() => ({
     streamingState: 'Idle',
     submitQuery: vi.fn(),
     initError: null,
@@ -232,7 +232,7 @@ vi.mock('../config/config.js', async (importOriginal) => {
   return {
     // @ts-expect-error - this is fine
     ...actual,
-    loadHierarchicalGeminiMemory: vi
+    loadHierarchicalOttoMemory: vi
       .fn()
       .mockResolvedValue({ memoryContent: '', fileCount: 0, filePaths: [] }),
   };
@@ -253,6 +253,44 @@ vi.mock('./components/WelcomeScreen.js', () => ({
 vi.mock('./hooks/useFocus.js', () => ({
   useFocus: vi.fn(() => true),
 }));
+
+// Mock useHistory so tests can drive history.length. App.tsx renders the full-screen
+// HomeScreen (hiding the old idle UI: WelcomeScreen banner, context/MCP indicators,
+// input prompt) whenever isHomeIdle is true, which requires history.length === 0.
+// Tests that assert on the normal layout set mockHistory non-empty before render().
+//
+// The mock keeps the real hook's React-state semantics (it seeds from mockHistory
+// and re-renders on addItem/clearItems/loadHistory) so that, e.g., useThemeCommand
+// can still surface the "First launch detected" message by appending a history
+// item on mount. A plain no-op spy would silently drop those items.
+let mockHistory: HistoryItem[] = [];
+vi.mock('./hooks/useHistoryManager.js', async () => {
+  const { useState, useRef, useCallback } = await import('react');
+  return {
+    useHistory: () => {
+      const [history, setHistory] = useState<HistoryItem[]>(mockHistory);
+      const idCounterRef = useRef(history.length);
+      const addItem = useCallback(
+        (itemData: Omit<HistoryItem, 'id'>, baseTimestamp = 0) => {
+          idCounterRef.current += 1;
+          const id = baseTimestamp + idCounterRef.current;
+          setHistory((prev) => [...prev, { ...itemData, id } as HistoryItem]);
+          return id;
+        },
+        [],
+      );
+      const updateItem = useCallback(() => {}, []);
+      const clearItems = useCallback(() => {
+        idCounterRef.current = 0;
+        setHistory([]);
+      }, []);
+      const loadHistory = useCallback((next: HistoryItem[]) => {
+        setHistory(next);
+      }, []);
+      return { history, addItem, updateItem, clearItems, loadHistory };
+    },
+  };
+});
 
 vi.mock('./hooks/useBracketedPaste.js', () => ({
   useBracketedPaste: vi.fn(),
@@ -323,6 +361,10 @@ describe('App UI', () => {
     // Ensure a user theme is set so the theme dialog does not appear.
     mockSettings = createMockSettings({ user: { theme: 'Default' } });
     vi.mocked(ideContext.getOpenFilesContext).mockReturnValue(undefined);
+
+    // Default to empty history (home/idle state). Tests that need the normal
+    // active-conversation layout set this non-empty before render().
+    mockHistory = [];
   });
 
   afterEach(() => {
@@ -339,6 +381,10 @@ describe('App UI', () => {
       recentOpenFiles: [{ filePath: '/path/to/my-file.ts', content: 'hello' }],
       selectedText: 'hello',
     });
+
+    // Active conversation so the normal layout (with context indicators) renders
+    // instead of the full-screen HomeScreen.
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -375,8 +421,9 @@ describe('App UI', () => {
       recentOpenFiles: [{ filePath: '/path/to/my-file.ts', content: 'hello' }],
       selectedText: 'hello',
     });
-    mockConfig.getGeminiMdFileCount.mockReturnValue(1);
+    mockConfig.getOttoMdFileCount.mockReturnValue(1);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue(['GEMINI.md']);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -393,11 +440,12 @@ describe('App UI', () => {
   });
 
   it('should display default "GEMINI.md" in footer when contextFileName is not set and count is 1', async () => {
-    mockConfig.getGeminiMdFileCount.mockReturnValue(1);
+    mockConfig.getOttoMdFileCount.mockReturnValue(1);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue(['GEMINI.md']);
     // For this test, ensure showMemoryUsage is false or debugMode is false if it relies on that
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -412,13 +460,14 @@ describe('App UI', () => {
   });
 
   it('should display default "GEMINI.md" with plural when contextFileName is not set and count is > 1', async () => {
-    mockConfig.getGeminiMdFileCount.mockReturnValue(2);
+    mockConfig.getOttoMdFileCount.mockReturnValue(2);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([
       'GEMINI.md',
       'GEMINI.md',
     ]);
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -437,10 +486,11 @@ describe('App UI', () => {
       user: { theme: 'Default' },
       workspace: { contextFileName: 'AGENTS.md' },
     });
-    mockConfig.getGeminiMdFileCount.mockReturnValue(1);
+    mockConfig.getOttoMdFileCount.mockReturnValue(1);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue(['AGENTS.md']);
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -461,13 +511,14 @@ describe('App UI', () => {
         contextFileName: ['AGENTS.md', 'CONTEXT.md'],
       },
     });
-    mockConfig.getGeminiMdFileCount.mockReturnValue(2);
+    mockConfig.getOttoMdFileCount.mockReturnValue(2);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([
       'AGENTS.md',
       'CONTEXT.md',
     ]);
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -486,7 +537,7 @@ describe('App UI', () => {
       user: { theme: 'Default' },
       workspace: { contextFileName: 'MY_NOTES.TXT' },
     });
-    mockConfig.getGeminiMdFileCount.mockReturnValue(3);
+    mockConfig.getOttoMdFileCount.mockReturnValue(3);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([
       'MY_NOTES.TXT',
       'MY_NOTES.TXT',
@@ -494,6 +545,7 @@ describe('App UI', () => {
     ]);
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -512,7 +564,7 @@ describe('App UI', () => {
       user: { theme: 'Default' },
       workspace: { contextFileName: 'ANY_FILE.MD' },
     });
-    mockConfig.getGeminiMdFileCount.mockReturnValue(0);
+    mockConfig.getOttoMdFileCount.mockReturnValue(0);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([]);
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
@@ -530,7 +582,7 @@ describe('App UI', () => {
   });
 
   it('should display GEMINI.md and MCP server count when both are present', async () => {
-    mockConfig.getGeminiMdFileCount.mockReturnValue(2);
+    mockConfig.getOttoMdFileCount.mockReturnValue(2);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([
       'GEMINI.md',
       'GEMINI.md',
@@ -540,6 +592,7 @@ describe('App UI', () => {
     });
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -554,7 +607,7 @@ describe('App UI', () => {
   });
 
   it('should display only MCP server count when GEMINI.md count is 0', async () => {
-    mockConfig.getGeminiMdFileCount.mockReturnValue(0);
+    mockConfig.getOttoMdFileCount.mockReturnValue(0);
     mockConfig.getAllGeminiMdFilenames.mockReturnValue([]);
     mockConfig.getMcpServers.mockReturnValue({
       server1: {} as MCPServerConfig,
@@ -562,6 +615,7 @@ describe('App UI', () => {
     });
     mockConfig.getDebugMode.mockReturnValue(false);
     mockConfig.getShowMemoryUsage.mockReturnValue(false);
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
 
     const { lastFrame, unmount } = render(
       <App
@@ -575,8 +629,12 @@ describe('App UI', () => {
     expect(sanitizeOutput(lastFrame())).toContain('0/2 MCP servers');
   });
 
-  it('should display WelcomeScreen component by default', async () => {
+  it('should render the WelcomeScreen banner once a conversation has started', async () => {
+    // App.tsx now gates the WelcomeScreen banner on history.length > 0: an empty
+    // conversation shows the full-screen HomeScreen instead. With a non-empty
+    // history the banner renders (unless hideBanner is set, asserted separately).
     const { WelcomeScreen } = await import('./components/WelcomeScreen.js');
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
     const { unmount } = render(
       <App
         config={mockConfig as unknown as ServerConfig}
@@ -668,7 +726,9 @@ describe('App UI', () => {
   });
 
   it('should render correctly with the prompt input box', () => {
-    vi.mocked(useGeminiStream).mockReturnValue({
+    // 非空会话 → 走滚动视图(非满屏 Home),输入框与 cwd 在常规布局中渲染。
+    mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
+    vi.mocked(useOttoStream).mockReturnValue({
       streamingState: StreamingState.Idle,
       submitQuery: vi.fn(),
       initError: null,
@@ -697,7 +757,7 @@ describe('App UI', () => {
 
       mockConfig.getQuestion = vi.fn(() => 'hello from prompt-interactive');
 
-      vi.mocked(useGeminiStream).mockReturnValue({
+      vi.mocked(useOttoStream).mockReturnValue({
         streamingState: StreamingState.Idle,
         submitQuery: mockSubmitQuery,
         initError: null,
@@ -708,10 +768,10 @@ describe('App UI', () => {
         isExecutingTools: false,
       });
 
-      mockConfig.getGeminiClient.mockReturnValue({
+      mockConfig.getOttoClient.mockReturnValue({
         isInitialized: vi.fn(() => true),
         getUserTier: vi.fn(),
-      } as unknown as GeminiClient);
+      } as unknown as OttoClient);
 
       const { unmount, rerender } = render(
         <App
@@ -744,6 +804,8 @@ describe('App UI', () => {
 
   describe('errorCount', () => {
     it('should correctly sum the counts of error messages', async () => {
+      // 非空会话 → 走滚动视图,底部 Footer(含错误计数)渲染。
+      mockHistory = [{ id: 1, type: 'user', text: 'hi' } as HistoryItem];
       const mockConsoleMessages: ConsoleMessageItem[] = [
         { type: 'error', content: 'First error', count: 5 },
         { type: 'log', content: 'some log', count: 1 },

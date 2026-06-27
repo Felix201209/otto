@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +16,7 @@ import {
 } from './tools.js';
 import { ToolRegistry } from './tool-registry.js';
 import { Config } from '../config/config.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { SubAgent, SubAgentResult } from '../core/subAgent.js';
 import { ToolExecutionContext } from '../core/toolSchedulerAdapter.js';
 import { createSubAgentUpdateMessage } from './toolOutputMessage.js';
@@ -267,13 +266,13 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
 
     try {
-      // 获取已初始化的 GeminiClient
-      const geminiClient = this.config.getGeminiClient();
+      // 获取已初始化的 OttoClient
+      const geminiClient = this.config.getOttoClient();
       if (!geminiClient) {
         throw new Error(TaskPrompts.EXECUTION_ERRORS.GEMINI_CLIENT_NOT_INITIALIZED);
       }
 
-      // 验证 GeminiClient 是否已经正确初始化
+      // 验证 OttoClient 是否已经正确初始化
       try {
         geminiClient.getChat();
       } catch (chatError) {

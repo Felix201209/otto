@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,8 +40,8 @@ function makeTool(opts: {
 }
 
 beforeEach(async () => {
-  projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dvcode-feishu-tool-'));
-  outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dvcode-feishu-outside-'));
+  projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-feishu-tool-'));
+  outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-feishu-outside-'));
 
   uploadFileSpy = vi.fn().mockResolvedValue('file_key_xyz');
   sendFileSpy = vi.fn().mockResolvedValue('msg_123');

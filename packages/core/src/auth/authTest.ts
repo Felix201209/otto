@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +37,7 @@ export async function testAuthRefresh() {
   });
 
   const httpClient = new AuthenticatedHttpClient(
-    'https://code.deepvlab.ai',
+    '',
     authManager,
     authHandler
   );

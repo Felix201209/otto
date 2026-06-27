@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import { CommandKind, SlashCommand } from './types.js';
-import { t, tp } from '../utils/i18n.js';
+import { t } from '../utils/i18n.js';
 
 export const queueCommand: SlashCommand = {
   name: 'queue',
@@ -18,7 +17,7 @@ export const queueCommand: SlashCommand = {
       name: 'clear',
       description: t('command.queue.clear.description'),
       kind: CommandKind.BUILT_IN,
-      action: async (context, _args) => {
+      action: async (_context, _args) => {
         // 这个逻辑会被 App.tsx 的特殊处理拦截
         // 但我们仍然提供一个标准实现以保持一致性
         // 返回 void 表示命令已处理，无需进一步操作

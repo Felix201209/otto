@@ -80,7 +80,7 @@ describe('Logger', () => {
   }
 
   describe('initialize', () => {
-    it('should create .deepv directory and an empty log file if none exist', async () => {
+    it('should create .otto directory and an empty log file if none exist', async () => {
       const dirExists = await fs
         .access(testGeminiDir)
         .then(() => true)

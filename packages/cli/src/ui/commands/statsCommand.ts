@@ -6,13 +6,12 @@
 
 import { MessageType, HistoryItemStats, HistoryItemTokenBreakdown } from '../types.js';
 import { formatDuration } from '../utils/formatters.js';
-import { tokenLimit } from 'otto-core';
+import { tokenLimit, uiTelemetryService } from 'otto-core';
 import {
   type CommandContext,
   type SlashCommand,
   CommandKind,
 } from './types.js';
-import { uiTelemetryService } from 'otto-core';
 import { t, tp } from '../utils/i18n.js';
 
 export const statsCommand: SlashCommand = {
@@ -20,7 +19,7 @@ export const statsCommand: SlashCommand = {
   altNames: ['usage'],
   description: t('command.stats.description'),
   kind: CommandKind.BUILT_IN,
-  action: (context: CommandContext, args?: string) => {
+  action: (context: CommandContext, _args?: string) => {
     // 🛡️ 合并：/stats 现在会显示所有统计信息（session + model + tools + token breakdown）
     const now = new Date();
     const { sessionStartTime } = context.session.stats;
@@ -44,8 +43,6 @@ export const statsCommand: SlashCommand = {
     context.ui.addItem(statsItem, Date.now());
 
     // 2. 显示上下文占用细分统计
-    // 获取当前会话的 token 统计信息
-    const metrics = uiTelemetryService.getMetrics();
     // 🛡️ 简化：使用一个默认的模型作为估算基准
     const currentModel = 'claude-opus-4-1';
     const maxTokens = tokenLimit(currentModel, context.services.config || undefined);
@@ -69,8 +66,8 @@ export const statsCommand: SlashCommand = {
       userMessageTokens: Math.max(0, estimatedUserMessageTokens),
       memoryContextTokens: estimatedMemoryContextTokens,
       toolsTokens: estimatedToolsTokens,
-      totalInputTokens: totalInputTokens,
-      maxTokens: maxTokens,
+      totalInputTokens,
+      maxTokens,
     };
     context.ui.addItem(tokenBreakdownItem, Date.now());
 

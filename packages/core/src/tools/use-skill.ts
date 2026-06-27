@@ -234,7 +234,7 @@ If the problem persists, this may be a system bug.`,
       // Determine plugin root directory based on skill source
       let pluginRootDir = '';
       if (skill.marketplaceId) {
-        // Marketplace skills: plugin root is ~/.deepv/marketplace/{marketplaceId}
+        // Marketplace skills: plugin root is ~/.otto/marketplace/{marketplaceId}
         pluginRootDir = path.join(SkillsPaths.MARKETPLACE_ROOT, skill.marketplaceId);
       } else if (skill.location?.rootPath) {
         // Use location.rootPath if available

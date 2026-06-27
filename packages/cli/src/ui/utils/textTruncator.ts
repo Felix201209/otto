@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { tp } from './i18n.js';
 import wrapAnsi from 'wrap-ansi';
+import { tp } from './i18n.js';
 
 /**
  * 文本截断配置
@@ -45,10 +44,9 @@ function wrapTextToLines(text: string, terminalWidth: number): string[] {
 
   try {
     // 使用 wrap-ansi 进行智能换行（支持 ANSI 颜色代码）
-    // @ts-ignore - handle ESM default import compatibility
     const wrapped = (wrapAnsi.default || wrapAnsi)(text, terminalWidth, { hard: false, trim: false });
     return wrapped.split('\n');
-  } catch (error) {
+  } catch (_error) {
     // 降级处理：简单分行
     return text.split('\n');
   }
@@ -91,7 +89,7 @@ export function truncateText(
   const tailLines = lines.slice(-tailRows);
 
   // 构建省略提示行
-  const omittedNotice = tp('text_truncator.omitted_lines', {
+  const _omittedNotice = tp('text_truncator.omitted_lines', {
     count: omittedLines,
   });
 

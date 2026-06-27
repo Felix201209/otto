@@ -7,7 +7,7 @@
  * This is a hidden shortcut command that directly triggers the new session functionality
  */
 
-import { CommandContext, SlashCommand, SwitchSessionActionReturn, CommandKind } from './types.js';
+import { SlashCommand, SwitchSessionActionReturn, CommandKind } from './types.js';
 import { SessionManager } from 'otto-core';
 import { t } from '../utils/i18n.js';
 

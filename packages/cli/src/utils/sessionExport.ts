@@ -1,13 +1,51 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 import { SessionManager } from 'otto-core';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
+
+type ToolArgs = Record<string, unknown>;
+
+interface ExportSessionMetadata {
+  title?: string;
+  createdAt?: string;
+  model?: string;
+}
+
+interface ClientHistoryPart {
+  functionCall?: {
+    id?: string;
+    args?: ToolArgs;
+  };
+}
+
+interface ClientHistoryMessage {
+  parts?: ClientHistoryPart[];
+}
+
+interface ExportedToolCall {
+  callId?: string;
+  name?: string;
+  status?: string;
+  confirmationDetails?: {
+    args?: ToolArgs;
+  };
+  resultDisplay?: {
+    content?: string;
+  } | string;
+  subToolCalls?: ExportedToolCall[];
+}
+
+interface SessionHistoryItem {
+  type?: string;
+  text?: string;
+  content?: string;
+  tools?: ExportedToolCall[];
+}
 
 function revealFile(filePath: string): Promise<void> {
   return new Promise((resolve) => {
@@ -89,41 +127,43 @@ export async function exportSessionToMarkdown(
 
   if (!sessionData.metadata) {
     console.warn(`Session ${sessionId} metadata is missing. Using defaults.`);
-    sessionData.metadata = {
-      title: sessionId,
-      createdAt: new Date().toISOString(),
-      model: 'Unknown',
-    } as any;
   }
 
+  const metadata: ExportSessionMetadata = sessionData.metadata ?? {
+    title: sessionId,
+    createdAt: new Date().toISOString(),
+    model: 'Unknown',
+  };
+
   const n = String.fromCharCode(10);
-  let markdown = '# Session Log: ' + (sessionData.metadata.title || sessionId) + n + n;
+  let markdown = '# Session Log: ' + (metadata.title || sessionId) + n + n;
 
   markdown += '- **Session ID:** ' + sessionId + n;
-  markdown += '- **Date:** ' + new Date(sessionData.metadata.createdAt || new Date()).toLocaleString() + n;
-  markdown += '- **Model:** ' + (sessionData.metadata.model || 'Unknown') + n + n;
+  markdown += '- **Date:** ' + new Date(metadata.createdAt || new Date()).toLocaleString() + n;
+  markdown += '- **Model:** ' + (metadata.model || 'Unknown') + n + n;
   markdown += '---' + n + n;
 
   // Create a map of callId -> args from clientHistory to avoid cluttering UI history
-  const toolArgsMap = new Map<string, any>();
+  const toolArgsMap = new Map<string, ToolArgs>();
   if (sessionData.clientHistory && Array.isArray(sessionData.clientHistory)) {
-    for (const message of sessionData.clientHistory) {
+    for (const message of sessionData.clientHistory as ClientHistoryMessage[]) {
       if (message.parts && Array.isArray(message.parts)) {
         for (const part of message.parts) {
           if (part.functionCall && part.functionCall.id) {
-            toolArgsMap.set(part.functionCall.id, part.functionCall.args);
+            toolArgsMap.set(part.functionCall.id, part.functionCall.args ?? {});
           }
         }
       }
     }
   }
 
-  function exportToolCalls(tools: any[], indent = 0): string {
+  function exportToolCalls(tools: ExportedToolCall[], indent = 0): string {
     let result = '';
     const prefix = ' '.repeat(indent);
     for (const tool of tools) {
       // 🎯 修复 1：参数提取逻辑。优先从 clientHistory 映射中获取，旧会话 fallback 到 confirmationDetails
-      const toolArgs = toolArgsMap.get(tool.callId) || tool.confirmationDetails?.args || {};
+      const mappedArgs = tool.callId ? toolArgsMap.get(tool.callId) : undefined;
+      const toolArgs = mappedArgs || tool.confirmationDetails?.args || {};
       const toolPath = toolArgs.absolute_path || toolArgs.file_path || toolArgs.path || toolArgs.filePath;
       const displayName = toolPath ? `${tool.name}: ${toolPath}` : tool.name;
 
@@ -138,7 +178,11 @@ export async function exportSessionToMarkdown(
 
       if (tool.resultDisplay) {
         // 对结果内容也进行必要的换行处理
-        const resultContent = (tool.resultDisplay.content || '').split('\n').map((line: string) => prefix + line).join(n);
+        const resultDisplayContent =
+          typeof tool.resultDisplay === 'object' && 'content' in tool.resultDisplay
+            ? tool.resultDisplay.content || ''
+            : '';
+        const resultContent = resultDisplayContent.split('\n').map((line: string) => prefix + line).join(n);
         result += prefix + '**Result:**' + n + resultContent + n + n;
       }
 
@@ -152,7 +196,7 @@ export async function exportSessionToMarkdown(
     return result;
   }
 
-  for (const item of sessionData.history) {
+  for (const item of sessionData.history as SessionHistoryItem[]) {
     if (item.type === 'user') {
       const text = (item.text || '').trim();
       if (text) {
@@ -163,7 +207,7 @@ export async function exportSessionToMarkdown(
       if (text) {
         markdown += '### 🤖 Assistant' + n + n + text + n + n;
       }
-    } else if (item.type === 'deepv') {
+    } else if (item.type === 'otto') {
       const content = (item.content || '').trim();
       if (content) {
         markdown += '### 🤖 Assistant (System)' + n + n + content + n + n;

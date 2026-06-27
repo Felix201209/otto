@@ -44,7 +44,7 @@ export class EnhancedLogger {
         os.homedir(),
         '.otto-user',
         'logs',
-        `deepv-${timestamp}.log`
+        `otto-${timestamp}.log`
       );
     }
   }
@@ -106,7 +106,7 @@ export class EnhancedLogger {
       const logDir = path.dirname(this.config.filePath);
       const files = await fs.readdir(logDir);
       const logFiles = files
-        .filter(f => f.startsWith('deepv-') && f.endsWith('.log'))
+        .filter(f => f.startsWith('otto-') && f.endsWith('.log'))
         .map(f => ({
           name: f,
           path: path.join(logDir, f),

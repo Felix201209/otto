@@ -10,7 +10,7 @@ import {
   ContentGeneratorConfig,
   EditTool,
   ErroredToolCall,
-  GeminiClient,
+  OttoClient,
   ToolConfirmationOutcome,
   ToolRegistry,
 } from '../index.js';
@@ -365,7 +365,7 @@ describe('loggers', () => {
     const mockConfig = {
       getSessionId: () => 'test-session-id',
       getTargetDir: () => 'target-dir',
-      getGeminiClient: () => ({}) as any,
+      getOttoClient: () => ({}) as any,
       getUsageStatisticsEnabled: () => true,
       getTelemetryEnabled: () => true,
       getTelemetryLogPromptsEnabled: () => true,

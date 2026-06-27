@@ -14,7 +14,7 @@ import type {
 /** `/memory show` */
 export function showMemory(config: Config): MessageActionReturn {
   const memoryContent = config.getUserMemory() ?? '';
-  const fileCount = config.getGeminiMdFileCount?.() ?? 0;
+  const fileCount = config.getOttoMdFileCount?.() ?? 0;
   const content =
     memoryContent.length > 0
       ? `Current memory content from ${fileCount} file(s):\n\n---\n${memoryContent}\n---`
@@ -67,7 +67,7 @@ export async function refreshMemory(
     }
   }
   const memoryContent = config.getUserMemory() ?? '';
-  const fileCount = config.getGeminiMdFileCount?.() ?? 0;
+  const fileCount = config.getOttoMdFileCount?.() ?? 0;
   const content =
     memoryContent.length > 0
       ? `Memory reloaded. Loaded ${memoryContent.length} characters from ${fileCount} file(s).`
@@ -77,7 +77,7 @@ export async function refreshMemory(
 
 /** `/memory list` — list the discovered memory files. */
 export function listMemoryFiles(config: Config): MessageActionReturn {
-  const filePaths = config.getGeminiMdFilePaths?.() ?? [];
+  const filePaths = config.getOttoMdFilePaths?.() ?? [];
   const fileCount = filePaths.length;
   const content =
     fileCount > 0

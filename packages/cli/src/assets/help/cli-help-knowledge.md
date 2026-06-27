@@ -27,11 +27,20 @@
 ---
 
 ### Q3: 如何保存和恢复会话？
-**A:** 使用 `/session` 命令的子命令：
-- **恢复会话：** `/chat select <ID>`
-  - 示例：`/chat select 1`
-- **查看所有会话详情：** `/session list`
+**A:** Otto 提供两套机制，按需选用：
+
+**1) 会话（session）——按工作目录自动记录的完整对话**
+- **查看所有会话：** `/session list`
+- **恢复指定会话：** `/session select <编号或会话ID>`
+  - 示例：`/session select 1`（按列表编号）或 `/session select abc123`（按会话 ID）
+  - 直接输入 `/session select`（不带参数）会进入交互式选择列表
 - **新建干净的会话：** `/session new`
+
+**2) 对话检查点（chat checkpoint）——手动打标签保存/恢复**
+- **保存：** `/chat save <标签>`
+- **恢复：** `/chat resume <标签>`
+- **查看已保存的检查点：** `/chat list`
+- **删除：** `/chat delete <标签>` 或 `/chat delete --all`
 
 
 ---
@@ -44,7 +53,7 @@
 
 ### Q5: 如何让 CLI 感知 VS Code 中打开的文件或选中的代码？
 **A:** Otto CLI 可以通过 VS Code 扩展与编辑器进行深度集成。
-1. **安装扩展：** 在 VS Code 扩展市场搜索并安装 `Otto Companion` 扩展。
+1. **安装扩展：** 在 VS Code 扩展市场搜索并安装 `IDE Companion for Otto CLI` 扩展。
 2. **启动 CLI：** 在 VS Code 的内置终端中启动 Otto CLI。
 3. **确认连接：** 当 CLI 成功启动后，你会在 VS Code 右下角看到一个绿色的指示器，显示 `IDE 已连接`。这表示 CLI 已成功与 VS Code 建立连接，可以感知你打开的文件和选中的代码。
 
@@ -475,9 +484,7 @@ set ANTHROPIC_API_KEY=sk-ant-your-key-here
 
 **用法：** `/clear`
 
-**快捷键：** `Ctrl+L`
-
-**注意：** 上下文数据会保留，仅清除视觉显示。
+**注意：** 上下文数据会保留，仅清除视觉显示。`Ctrl+L` 现在用于快速切换模型，不再是清屏快捷键，清屏请直接使用 `/clear` 命令。
 
 ---
 
@@ -575,7 +582,7 @@ set ANTHROPIC_API_KEY=sk-ant-your-key-here
    - 开发规范
    - 特殊配置
 
-**注意：** 如果 `OTTO.md` 已存在，此命令则无法执行。
+**注意：** 如果 `OTTO.md` 已存在且非空，命令会弹出选择对话框，让你决定是覆盖重新生成还是保留现有文件；若文件不存在或为空，则直接生成。
 
 **相关：** `/memory refresh`
 
@@ -679,7 +686,7 @@ set ANTHROPIC_API_KEY=sk-ant-your-key-here
 **示例：**
 ```
 /stats
-/stats model gemini-2.0-flash-exp
+/stats model glm-4.6
 /stats tools
 ```
 
@@ -1143,7 +1150,7 @@ Ctrl+G     # Windows 下直接粘贴
 - Linux/macOS：使用 `bash`
 - Windows：使用 `cmd.exe`
 
-**环境变量：** 执行时自动设置 `GEMINI_CLI=1`
+**环境变量：** 执行时自动设置 `OTTO_CLI=1`（同时保留 `GEMINI_CLI=1` 以兼容旧脚本）
 
 **注意：** 命令具有与终端相同的权限和影响。
 
@@ -1228,7 +1235,7 @@ otto --output-format stream-json --yolo "生成代码" @schema.json | jq '.conte
 
 **其他参数示例：**
 ```bash
-otto --model gemini-2.0-flash-exp --debug
+otto --model glm-4.6 --debug
 otto --checkpointing --sandbox
 otto -e my-extension -e another
 ```
@@ -1238,7 +1245,7 @@ otto -e my-extension -e another
 ## 🗂️ 上下文文件（分层记忆）
 
 ### 文件名
-默认：`GEMINI.md`
+默认：`OTTO.md`
 
 可通过 `contextFileName` 设置自定义：
 ```json
@@ -1251,7 +1258,7 @@ otto -e my-extension -e another
 向 AI 提供项目特定的指令、编码规范、背景信息。
 
 ### 层次结构（优先级递增）
-1. **全局：** `~/.otto-user/GEMINI.md`（所有项目）
+1. **全局：** `~/.otto-user/OTTO.md`（所有项目）
 2. **项目根及父目录：** 从当前目录向上搜索（直到项目根或主目录）
 3. **子目录：** 项目内的子目录（限制 200 个目录，可通过 `memoryDiscoveryMaxDirs` 配置）
 
@@ -1538,23 +1545,32 @@ AI：Ping 任务已完成，100 包全部收到，0% 丢包。
 ### Q14: 如何在 CLI 中生成图片？
 **A:** 使用 `/nanobanana` 命令可以直接在 CLI 中生成图片。
 
-**语法：** `/nanobanana <宽高比> <提示词描述>`
+**语法：** `/nanobanana <宽高比> <尺寸> <提示词描述> [@参考图 ...]`
+
+> 宽高比与尺寸均为必填，缺少尺寸会报错。参考图可选，最多 5 张。
 
 **支持的宽高比：**
+- `auto` - 自动
 - `1:1` - 正方形
-- `16:9` - 宽屏横向
-- `9:16` - 竖屏纵向
-- `4:3` - 传统横向
-- `3:4` - 传统纵向
+- `16:9` / `9:16` - 宽屏 / 竖屏
+- `4:3` / `3:4` - 传统横向 / 纵向
+- `3:2` / `2:3` - 经典横向 / 纵向
+- `4:5` / `5:4` - 社交媒体竖 / 横
+- `21:9` - 超宽屏
+
+**支持的尺寸：** `1K`、`2K`
 
 **使用示例：**
 ```
-/nanobanana 16:9 一只可爱的柴犬在樱花树下奔跑
-/nanobanana 1:1 赛博朋克风格的城市夜景，霓虹灯闪烁
-/nanobanana 9:16 手机壁纸，星空下的雪山
+/nanobanana 16:9 2K 一只可爱的柴犬在樱花树下奔跑
+/nanobanana 1:1 1K 赛博朋克风格的城市夜景，霓虹灯闪烁
+/nanobanana 9:16 2K 手机壁纸，星空下的雪山
+/nanobanana 16:9 2K 把这两张图融合成一张 @refA.jpg @refB.png
 ```
 
 **注意事项：**
+- 宽高比与尺寸两个参数缺一不可，否则命令会直接报错
+- 参考图用 `@` 引用，最多 5 张，支持 jpg/png/webp/gif/bmp/tiff 等格式
 - 生成后会显示可访问的 URL，如果系统支持也会自动打开浏览器
 - 提示词越详细，生成的图片质量越高
 - 此功能会消耗一定的积分
@@ -1913,7 +1929,7 @@ A：在配置中设置 `"sequential": true`，后一个 Hook 可以看到前一�
 - 完整文档：`docs/hooks-user-guide.md`
 - 代码示例：`docs/hooks-examples.md`
 - 架构说明：`HOOKS_ARCHITECTURE.md`
-- **详细用法和配置：** 使用 `/hooks` 命令打开官方文档，或访问 https://easycode.bot/hooks-help
+- **详细用法和配置：** 使用 `/hooks` 命令打开官方文档，或访问 https://www.otto.bot/hooks-help
 
 ---
 
@@ -1965,7 +1981,7 @@ Otto 提供了一套完整的语义化工具，帮助 AI 实现“手术刀”�
 ---
 
 **Otto 出品方信息：**
-- 官网：https://easycode.bot/
+- 官网：https://www.otto.bot/
 - 出品公司：Deep X Corporation Limited
 
 **退出智能帮助系统：** 按下ESC键

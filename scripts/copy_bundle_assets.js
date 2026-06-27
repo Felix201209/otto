@@ -116,6 +116,22 @@ async function copyRipgrepModule() {
       }
     }
 
+    // 🔧 移除 bundled ripgrep 的 postinstall：二进制已随包，安装时不应再去 GitHub 下载
+    // (否则离线/受限网络的 Windows 上 npm install -g 会因下载失败而整体中止)
+    try {
+      const rgPkgPath = join(ripgrepBundleDir, 'package.json');
+      if (existsSync(rgPkgPath)) {
+        const rgPkg = JSON.parse(readFileSync(rgPkgPath, 'utf-8'));
+        if (rgPkg.scripts && rgPkg.scripts.postinstall) {
+          delete rgPkg.scripts.postinstall;
+          writeFileSync(rgPkgPath, JSON.stringify(rgPkg, null, 2) + '\n');
+          console.log('  ✅ Stripped ripgrep postinstall (binaries are pre-bundled)');
+        }
+      }
+    } catch (error) {
+      console.warn('  ⚠️  Failed to strip ripgrep postinstall:', error.message);
+    }
+
     // Setup cross-platform binaries
     await setupCrossPlatformRipgrep(ripgrepBundleDir);
 
@@ -361,6 +377,21 @@ module.exports.rgPath = getRgPath();
   fs.writeFileSync(libIndexPath, enhancedIndexContent);
 
   console.log('✅ Enhanced ripgrep index.js for cross-platform support');
+
+  // 🔧 移除 bundled ripgrep 的联网下载死代码：二进制已随包，download.js/postinstall.js
+  // 不该随发布包一起出去（避免离线/受限网络下被触发去 GitHub 下载）。
+  const deadDownloadFiles = ['download.js', 'postinstall.js'];
+  for (const file of deadDownloadFiles) {
+    const deadPath = join(ripgrepBundleDir, 'lib', file);
+    if (existsSync(deadPath)) {
+      try {
+        rmSync(deadPath, { force: true });
+        console.log(`  ✅ Removed bundled ripgrep lib/${file} (network download dead code)`);
+      } catch (error) {
+        console.warn(`  ⚠️  Failed to remove ripgrep lib/${file}: ${error.message}`);
+      }
+    }
+  }
 }
 
 

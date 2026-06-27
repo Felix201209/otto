@@ -10,12 +10,11 @@ import { homedir, platform } from 'os';
 import * as dotenv from 'dotenv';
 import {
   MCPServerConfig,
-  GEMINI_CONFIG_DIR as GEMINI_DIR,
+  OTTO_CONFIG_DIR as OTTO_DIR,
   getErrorMessage,
   BugCommandSettings,
   TelemetrySettings,
   AuthType,
-  logger,
   HookEventName,
   HookDefinition,
   CustomModelConfig,
@@ -31,15 +30,19 @@ export const USER_SETTINGS_DIR = path.join(homedir(), SETTINGS_DIRECTORY_NAME);
 export const USER_SETTINGS_PATH = path.join(USER_SETTINGS_DIR, 'settings.json');
 
 export function getSystemSettingsPath(): string {
-  if (process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH) {
-    return process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+  // New name OTTO_CLI_SYSTEM_SETTINGS_PATH first, legacy GEMINI_* as fallback.
+  const overridePath =
+    process.env.OTTO_CLI_SYSTEM_SETTINGS_PATH ??
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+  if (overridePath) {
+    return overridePath;
   }
   if (platform() === 'darwin') {
-    return '/Library/Application Support/DeepVCli/settings.json';
+    return '/Library/Application Support/OttoCli/settings.json';
   } else if (platform() === 'win32') {
-    return 'C:\\ProgramData\\deepv-cli\\settings.json';
+    return 'C:\\ProgramData\\otto-cli\\settings.json';
   } else {
-    return '/etc/deepv-cli/settings.json';
+    return '/etc/otto-cli/settings.json';
   }
 }
 
@@ -163,8 +166,8 @@ export interface Settings {
   // 语言偏好设置
   preferredLanguage?: string;
 
-  // 项目级记忆加载模式: 'all' = OTTO.md + AGENTS.md, 'deepv-only' = 仅 OTTO.md, 'none' = 不加载
-  projectMemoryMode?: 'all' | 'deepv-only' | 'none';
+  // 项目级记忆加载模式: 'all' = OTTO.md + AGENTS.md, 'otto-only' = 仅 OTTO.md, 'none' = 不加载
+  projectMemoryMode?: 'all' | 'otto-only' | 'none';
 }
 
 export interface SettingsError {
@@ -306,8 +309,8 @@ function resolveEnvVarsInObject<T>(obj: T): T {
 function findEnvFile(startDir: string): string | null {
   let currentDir = path.resolve(startDir);
   while (true) {
-    // prefer gemini-specific .env under GEMINI_DIR
-    const geminiEnvPath = path.join(currentDir, GEMINI_DIR, '.env');
+    // prefer gemini-specific .env under OTTO_DIR
+    const geminiEnvPath = path.join(currentDir, OTTO_DIR, '.env');
     if (fs.existsSync(geminiEnvPath)) {
       return geminiEnvPath;
     }
@@ -318,7 +321,7 @@ function findEnvFile(startDir: string): string | null {
     const parentDir = path.dirname(currentDir);
     if (parentDir === currentDir || !parentDir) {
       // check .env under home as fallback, again preferring gemini-specific .env
-      const homeGeminiEnvPath = path.join(homedir(), GEMINI_DIR, '.env');
+      const homeGeminiEnvPath = path.join(homedir(), OTTO_DIR, '.env');
       if (fs.existsSync(homeGeminiEnvPath)) {
         return homeGeminiEnvPath;
       }
@@ -454,7 +457,7 @@ export function loadSettings(workspaceDir: string): LoadedSettings {
     });
   }
 
-  // Load project-level settings from .deepvcode/settings.json
+  // Load project-level settings from .otto/settings.json
   let projectSettings: Settings = {};
   const projectSettingsPath = path.join(
     workspaceDir,

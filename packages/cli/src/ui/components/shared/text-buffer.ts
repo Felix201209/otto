@@ -1364,7 +1364,11 @@ export function useTextBuffer({
 
       return calculateVisualLayout(lines, [cursorRow, cursorCol], state.viewportWidth);
     },
-    [linesHash, cursorRow, cursorCol, state.viewportWidth], // 🚀 使用hash而不是直接使用lines
+    // 🚀 故意用 linesHash 替代直接依赖 lines/text：lines 是每次渲染都可能新建的数组引用，
+    // 直接依赖会让这个昂贵的视觉布局 useMemo 每帧重算。linesHash 是 lines/text 的稳定哈希，
+    // 内容不变时哈希不变，正确地复用缓存。加 lines/text 会破坏此优化。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [linesHash, cursorRow, cursorCol, state.viewportWidth],
   );
 
   const { visualLines, visualCursor } = visualLayout;
@@ -1624,7 +1628,7 @@ export function useTextBuffer({
         process.env['VISUAL'] ??
         process.env['EDITOR'] ??
         (process.platform === 'win32' ? 'notepad' : 'vi');
-      const tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'deepv-edit-'));
+      const tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'otto-edit-'));
       const filePath = pathMod.join(tmpDir, 'buffer.txt');
       fs.writeFileSync(filePath, text, 'utf8');
 
@@ -1807,9 +1811,7 @@ export function useTextBuffer({
     dispatch({ type: 'move_to_offset', payload: { offset } });
   }, []);
 
-  const getCurrentOffset = useCallback((): number => {
-    return logicalPosToOffset(lines, cursorRow, cursorCol);
-  }, [lines, cursorRow, cursorCol]);
+  const getCurrentOffset = useCallback((): number => logicalPosToOffset(lines, cursorRow, cursorCol), [lines, cursorRow, cursorCol]);
 
   const returnValue: TextBuffer = {
     lines,

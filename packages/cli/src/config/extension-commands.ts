@@ -1,12 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import type { CommandModule } from 'yargs';
+import type { Argv, CommandModule } from 'yargs';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
@@ -127,9 +126,9 @@ export async function loadAllExtensionCommands(
  * Register extension commands to a yargs instance
  */
 export function registerExtensionCommands(
-  yargs: any, // Yargs instance
+  yargs: Argv,
   commands: ExtensionCommand[],
-): any {
+): Argv {
   for (const { command, config } of commands) {
     // Validate command name and add extension prefix to avoid conflicts
     if (!config.name) {

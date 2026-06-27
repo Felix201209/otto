@@ -1,13 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { act,renderHook } from '@testing-library/react';
+import { CustomModelConfig,type Config } from 'otto-core';
+import { beforeEach,describe,expect,it,vi } from 'vitest';
+import type { LoadedSettings } from '../../config/settings.js';
 import { useCustomModelWizard } from './useCustomModelWizard.js';
-import { CustomModelConfig } from 'otto-core';
 
 // Mock the customModelsStorage module
 vi.mock('../../config/customModelsStorage.js', () => ({
@@ -15,14 +16,14 @@ vi.mock('../../config/customModelsStorage.js', () => ({
   loadCustomModels: vi.fn(() => []),
 }));
 
-import { addOrUpdateCustomModel, loadCustomModels } from '../../config/customModelsStorage.js';
+import { addOrUpdateCustomModel,loadCustomModels } from '../../config/customModelsStorage.js';
 
 describe('useCustomModelWizard', () => {
-  const mockLoadedSettings = {} as any;
+  const mockLoadedSettings = {} as Partial<LoadedSettings> as LoadedSettings;
   const mockAddItem = vi.fn();
   const mockConfig = {
     setCustomModels: vi.fn(),
-  } as any;
+  } as Partial<Config> as Config;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -118,7 +119,7 @@ describe('useCustomModelWizard', () => {
     expect(mockAddItem).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'info',
-        text: expect.stringContaining('cancelled'),
+        text: expect.stringContaining('已取消'),
       }),
       expect.any(Number)
     );
@@ -126,7 +127,7 @@ describe('useCustomModelWizard', () => {
 
   it('should handle save errors gracefully', () => {
     // Make addOrUpdateCustomModel throw an error
-    (addOrUpdateCustomModel as any).mockImplementationOnce(() => {
+    vi.mocked(addOrUpdateCustomModel).mockImplementationOnce(() => {
       throw new Error('Storage error');
     });
 
@@ -203,11 +204,11 @@ describe('useCustomModelWizard', () => {
     expect(mockAddItem).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'info',
-        text: expect.stringMatching(/2 custom models saved/),
+        text: expect.stringMatching(/2 个自定义模型/),
       }),
       expect.any(Number),
     );
-    const messageCalls = (mockAddItem as any).mock.calls;
+    const messageCalls = mockAddItem.mock.calls;
     const lastInfo = messageCalls[messageCalls.length - 1][0].text as string;
     expect(lastInfo).toContain('gpt-5.4');
     expect(lastInfo).toContain('claude-opus-4-7');

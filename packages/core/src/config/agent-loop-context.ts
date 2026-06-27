@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { GeminiClient } from '../core/client.js';
+import type { OttoClient } from '../core/client.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { PromptRegistry } from '../prompts/prompt-registry.js';
 import type { ResourceRegistry } from '../resources/resource-registry.js';
@@ -15,7 +15,7 @@ import type { Config } from './config.js';
  *
  * ACP sessions carry one of these alongside the RPC connection so any layer
  * (prompt loop, tool execution, command handling) can reach the same `Config`,
- * `GeminiClient`, registries, etc. without passing seven-argument parameter
+ * `OttoClient`, registries, etc. without passing seven-argument parameter
  * lists around.
  *
  * The `messageBus` and `sandboxManager` slots are declared loosely (using
@@ -49,7 +49,7 @@ export interface AgentLoopContext {
   readonly messageBus?: unknown;
 
   /** The client used to communicate with the LLM in this context. */
-  readonly geminiClient: GeminiClient;
+  readonly geminiClient: OttoClient;
 
   /**
    * The service used to prepare commands for sandboxed execution.

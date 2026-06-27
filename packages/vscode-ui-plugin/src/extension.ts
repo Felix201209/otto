@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@ import { FileRollbackService } from './services/fileRollbackService';
 import { VersionControlManager } from './services/versionControlManager';
 import { SimpleRevertService } from './services/simpleRevertService';
 import { CursorStyleRevertService } from './services/cursorStyleRevertService';
-import { DeepVInlineCompletionProvider } from './services/inlineCompletionProvider';
+import { OttoInlineCompletionProvider } from './services/inlineCompletionProvider';
 import { CompletionCache } from './services/completionCache';
 import { CompletionScheduler } from './services/completionScheduler';
 import { RuleService } from './services/ruleService';
@@ -58,7 +58,7 @@ let fileRollbackService: FileRollbackService;
 let versionControlManager: VersionControlManager;
 let simpleRevertService: SimpleRevertService;
 let cursorStyleRevertService: CursorStyleRevertService;
-let inlineCompletionProvider: DeepVInlineCompletionProvider;
+let inlineCompletionProvider: OttoInlineCompletionProvider;
 let completionCache: CompletionCache;
 let completionScheduler: CompletionScheduler;
 let ruleService: RuleService;
@@ -71,7 +71,7 @@ let slashCommandService: SlashCommandService;
 let servicesInitialized = false;
 
 export async function activate(context: vscode.ExtensionContext) {
-  // 品牌升级：执行历史配置文件夹平滑迁移 (.deepvcode -> .otto 等)
+  // 品牌升级：执行历史配置文件夹平滑迁移 (.otto -> .otto 等)
   // ⚠️ 必须在所有服务初始化之前【同步/阻塞】执行，确保历史数据完整迁移后再启动。
   //    若放到异步流程或晚于其它服务，customModelsStorageService / mcpSettingsService
   //    等会抢先用 mkdirSync 创建空的 ~/.otto-user，导致迁移判定失败、被跳过。
@@ -242,7 +242,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 🎯 初始化行内补全系统（推-拉分离架构）
     completionCache = new CompletionCache();
-    inlineCompletionProvider = new DeepVInlineCompletionProvider(completionCache, logger);
+    inlineCompletionProvider = new OttoInlineCompletionProvider(completionCache, logger);
 
     // 🎯 注册行内补全提供者（支持所有编程语言）
     const completionProviderDisposable = vscode.languages.registerInlineCompletionItemProvider(
@@ -258,7 +258,7 @@ export async function activate(context: vscode.ExtensionContext) {
       100 // 优先级，越大越靠右
     );
     updateInlineCompletionStatusBar();
-    inlineCompletionStatusBar.command = 'deepv.toggleInlineCompletionFromStatusBar';
+    inlineCompletionStatusBar.command = 'otto.toggleInlineCompletionFromStatusBar';
     inlineCompletionStatusBar.show();
     context.subscriptions.push(inlineCompletionStatusBar);
     logger.info('Inline completion status bar created');
@@ -278,13 +278,13 @@ export async function activate(context: vscode.ExtensionContext) {
     // 🎯 立即初始化WebView服务，这样用户点击时就能看到loading界面
     try {
       logger.info('🔧 About to initialize WebViewService...');
-      console.log('[DeepV] About to initialize WebViewService...');
+      console.log('[Otto] About to initialize WebViewService...');
       await webviewService.initialize();
       logger.info('✅ WebView service initialized - ready for immediate display');
-      console.log('[DeepV] WebView service initialized successfully');
+      console.log('[Otto] WebView service initialized successfully');
     } catch (error) {
       logger.warn('❌ WebView service initialization failed, will retry later', error instanceof Error ? error : undefined);
-      console.error('[DeepV] WebView service initialization failed:', error);
+      console.error('[Otto] WebView service initialization failed:', error);
     }
 
     startupOptimizer.endPhase();
@@ -294,7 +294,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 🎯 启动时发送customProxyServerUrl给webview
     setImmediate(async () => {
       try {
-        const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+        const vscodeConfig = vscode.workspace.getConfiguration('otto');
         const customProxyUrl = (vscodeConfig.get<string>('customProxyServerUrl', '') || '').trim();
         logger.info(`🌐 Sending customProxyServerUrl to webview: "${customProxyUrl}"`);
         await communicationService.sendGenericMessage('config_update', {
@@ -328,9 +328,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Verify commands are registered
     vscode.commands.getCommands().then(commands => {
-      const deepvCommands = commands.filter(cmd => cmd.startsWith('deepv.'));
-      logger.info(`Found ${deepvCommands.length} registered DeepV commands`);
-      console.log('Registered DeepV commands:', deepvCommands);
+      const ottoCommands = commands.filter(cmd => cmd.startsWith('otto.'));
+      logger.info(`Found ${ottoCommands.length} registered Otto commands`);
+      console.log('Registered Otto commands:', ottoCommands);
     });
 
   } catch (error) {
@@ -461,10 +461,10 @@ function setupServiceCommunication() {
 
   // 🎯 监听customProxyServerUrl设置变化
   vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration('deepv.customProxyServerUrl')) {
+    if (event.affectsConfiguration('otto.customProxyServerUrl')) {
       setImmediate(async () => {
         try {
-          const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+          const vscodeConfig = vscode.workspace.getConfiguration('otto');
           const customProxyUrl = (vscodeConfig.get<string>('customProxyServerUrl', '') || '').trim();
           logger.info(`🔄 customProxyServerUrl changed: "${customProxyUrl}"`);
           await communicationService.sendGenericMessage('config_update', {
@@ -517,7 +517,7 @@ function setupBasicMessageHandlers() {
       //
       // 当 GoalWizardDialog 提交时，webview 会在 chat_message 上附带
       // goalContext 元数据。在把消息送给 AI 之前，先把 goal context 写到
-      // GeminiClient 的内存里（和 CLI 端 useGoalWizard 同等效果）。
+      // OttoClient 的内存里（和 CLI 端 useGoalWizard 同等效果）。
       //
       // 这一步是 VSCode 端 /goal 模式抗压缩续命的关键：core 的
       // tryCompressChat 在每次自动/手动压缩后会检查 activeGoalContext，
@@ -529,8 +529,8 @@ function setupBasicMessageHandlers() {
       // 同步完成 —— 不存在压缩先于注册触发的可能。
       if (message.goalContext) {
         try {
-          const geminiClient = aiService.getGeminiClient();
-          if (geminiClient) {
+          const ottoClient = aiService.getOttoClient();
+          if (ottoClient) {
             // originalPrompt 直接从 message.content 第一条 text part 提取，
             // 避免 webview 重复传 prompt 字段造成不一致风险。goal 启动消息
             // 在 GoalWizardDialog.handleStart 里只 push 了一条 text part。
@@ -539,7 +539,7 @@ function setupBasicMessageHandlers() {
             );
             const originalPrompt = textPart?.value ?? '';
             if (originalPrompt) {
-              geminiClient.setGoalContext({
+              ottoClient.setGoalContext({
                 originalPrompt,
                 startedAt: message.goalContext.startedAt,
                 hours: message.goalContext.hours,
@@ -552,7 +552,7 @@ function setupBasicMessageHandlers() {
               logger.warn('[Goal] goalContext present but no text part found in content; skipping setGoalContext');
             }
           } else {
-            logger.warn('[Goal] goalContext present but GeminiClient not yet available; goal-mode compression resilience disabled for this session');
+            logger.warn('[Goal] goalContext present but OttoClient not yet available; goal-mode compression resilience disabled for this session');
           }
         } catch (err) {
           // 不阻断 goal 启动 —— 注册失败只是失去压缩续命能力，
@@ -886,7 +886,7 @@ function setupBasicMessageHandlers() {
         } else {
           // 提供更有帮助的错误信息
           const helpMessage = result.error?.includes('not found')
-            ? '\n\n💡 提示：这可能是因为没有记录该消息的版本节点。请检查日志中是否有 "Recording changes for turn" 的信息。运行 "deepv.debugVersionNodes" 命令可以查看当前版本状态。'
+            ? '\n\n💡 提示：这可能是因为没有记录该消息的版本节点。请检查日志中是否有 "Recording changes for turn" 的信息。运行 "otto.debugVersionNodes" 命令可以查看当前版本状态。'
             : '';
 
           vscode.window.showErrorMessage(
@@ -898,7 +898,7 @@ function setupBasicMessageHandlers() {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage(`⚠️ 回退失败: ${errorMsg}。请运行 "deepv.debugVersionNodes" 命令诊断问题。`);
+      vscode.window.showErrorMessage(`⚠️ 回退失败: ${errorMsg}。请运行 "otto.debugVersionNodes" 命令诊断问题。`);
       logger.error('❌ Error reverting to message', error instanceof Error ? error : undefined);
     }
   });
@@ -1086,13 +1086,13 @@ function setupBasicMessageHandlers() {
 
       // 🎯 更新默认模型配置
       if (data.preferredModel) {
-        const config = vscode.workspace.getConfiguration('deepv');
+        const config = vscode.workspace.getConfiguration('otto');
         await config.update('preferredModel', data.preferredModel, vscode.ConfigurationTarget.Global);
         logger.info(`[YOLO] ✅ Preferred model updated to: ${data.preferredModel}`);
       }
 
       if (data.healthyUse !== undefined) {
-        const config = vscode.workspace.getConfiguration('deepv');
+        const config = vscode.workspace.getConfiguration('otto');
         await config.update('healthyUse', data.healthyUse, vscode.ConfigurationTarget.Global);
         logger.info(`[HEALTH] ✅ Healthy use updated to: ${data.healthyUse}`);
       }
@@ -1148,7 +1148,7 @@ function setupBasicMessageHandlers() {
       }
 
       // 🎯 获取默认模型配置
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       const preferredModel = config.get<string>('preferredModel', 'auto');
       const healthyUse = config.get<boolean>('healthyUse', true);
 
@@ -1174,7 +1174,7 @@ function setupBasicMessageHandlers() {
   communicationService.onGetExtensionVersion(async (data) => {
     try {
       logger.info('Received get extension version request');
-      const extension = vscode.extensions.getExtension('deepv.deepv-code-vscode-ui-plugin');
+      const extension = vscode.extensions.getExtension('otto.otto-code-vscode-ui-plugin');
       const extensionVersion = extension?.packageJSON?.version || 'unknown';
       logger.info(`Extension version: ${extensionVersion}`);
       await communicationService.sendExtensionVersionResponse(extensionVersion);
@@ -1186,7 +1186,7 @@ function setupBasicMessageHandlers() {
   // 🎯 处理webview请求配置
   communicationService.addMessageHandler('request_config', async (data: any) => {
     try {
-      const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+      const vscodeConfig = vscode.workspace.getConfiguration('otto');
       const customProxyUrl = (vscodeConfig.get<string>('customProxyServerUrl', '') || '').trim();
       logger.debug(`📤 Responding to request_config: "${customProxyUrl}"`);
       await communicationService.sendGenericMessage('config_update', {
@@ -1203,7 +1203,7 @@ function setupBasicMessageHandlers() {
       logger.info('Received start services request');
 
       // 🎯 读取customProxyServerUrl并发送给webview
-      const vscodeConfig = vscode.workspace.getConfiguration('deepv');
+      const vscodeConfig = vscode.workspace.getConfiguration('otto');
       const customProxyUrl = vscodeConfig.get<string>('customProxyServerUrl', '');
       if (customProxyUrl && customProxyUrl.trim()) {
         logger.info(`Sending customProxyServerUrl to webview: ${customProxyUrl}`);
@@ -1232,13 +1232,21 @@ function setupBasicMessageHandlers() {
       logger.info('Received check for updates request');
 
       // 获取当前扩展版本
-      const extension = vscode.extensions.getExtension('DeepX.deepv-code-vscode-ui-plugin');
+      const extension = vscode.extensions.getExtension('otto.otto-vscode-ui-plugin');
       const currentVersion = extension?.packageJSON?.version || 'unknown';
 
       logger.info(`Checking for updates, current version: ${currentVersion}`);
 
+      // 更新检测后端地址（BYO-key 产品默认不预设后端；留空则跳过更新检查）
+      const updateCheckBaseUrl: string = '';
+      if (!updateCheckBaseUrl) {
+        logger.info('Update check endpoint not configured, skipping update check');
+        await communicationService.sendUpdateCheckResponse({ skipped: true });
+        return;
+      }
+
       // 调用更新检测API
-      const apiUrl = `https://api-code.deepvlab.ai/api/update-check?client_type=vscode&version=${encodeURIComponent(currentVersion)}`;
+      const apiUrl = `${updateCheckBaseUrl}/api/update-check?client_type=vscode&version=${encodeURIComponent(currentVersion)}`;
       logger.info(`Update check API URL: ${apiUrl}`);
 
       const https = require('https');
@@ -1252,7 +1260,7 @@ function setupBasicMessageHandlers() {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            'User-Agent': `DeepV-Code-VSCode/${currentVersion}`
+            'User-Agent': `Otto-Code-VSCode/${currentVersion}`
           },
           timeout: 10000
         };
@@ -1794,7 +1802,7 @@ function setupBasicMessageHandlers() {
           'accept': 'application/json, text/plain, */*',
           'authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'DeepVCode-VSCode'
+          'User-Agent': 'Otto-VSCode'
         },
         timeout: 30000
       } as any);
@@ -2278,7 +2286,7 @@ function setupLoginHandlers() {
   communicationService.addMessageHandler('open_mcp_settings', async () => {
     try {
       logger.info('Opening MCP settings');
-      await vscode.commands.executeCommand('deepv.openMCPSettings');
+      await vscode.commands.executeCommand('otto.openMCPSettings');
     } catch (error) {
       logger.error('Failed to open MCP settings', error instanceof Error ? error : undefined);
     }
@@ -2301,7 +2309,7 @@ function setupLoginHandlers() {
   // 📝 处理获取用户规则请求
   communicationService.addMessageHandler('get_user_rules', async () => {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       const userRules = config.get<string>('userRules', '');
       logger.info('📝 Getting user rules', { length: userRules.length });
       await communicationService.sendMessage({
@@ -2320,7 +2328,7 @@ function setupLoginHandlers() {
   // 📝 处理保存用户规则请求
   communicationService.addMessageHandler('save_user_rules', async (payload: { rules: string }) => {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       await config.update('userRules', payload.rules, vscode.ConfigurationTarget.Global);
       logger.info('📝 User rules saved successfully', { length: payload.rules.length });
 
@@ -2444,9 +2452,9 @@ function setupLoginHandlers() {
         const currentAIService = sessionManager.getAIService(payload.sessionId);
         if (currentAIService) {
           const config = currentAIService.getConfig();
-          const geminiClient = config?.getGeminiClient();
+          const ottoClient = config?.getOttoClient();
 
-          if (geminiClient && config) {
+          if (ottoClient && config) {
             // 🎯 获取当前 token 使用量和目标模型的限制
             const currentTokenUsage = currentAIService.getCurrentTokenUsage();
             const currentTokens = currentTokenUsage?.totalTokens || 0;
@@ -2487,7 +2495,7 @@ function setupLoginHandlers() {
             }, async (progress) => {
               progress.report({ message: "Switching model..." });
 
-              const switchResult = await geminiClient.switchModel(payload.modelName, new AbortController().signal);
+              const switchResult = await ottoClient.switchModel(payload.modelName, new AbortController().signal);
 
               if (!switchResult.success) {
                 throw new Error(`Failed to switch to model ${payload.modelName}. ${switchResult.error || 'Context compression may have failed.'}`);
@@ -2550,10 +2558,10 @@ function setupLoginHandlers() {
       }
 
       const config = currentAIService.getConfig();
-      const geminiClient = config?.getGeminiClient();
+      const ottoClient = config?.getOttoClient();
 
-      if (!geminiClient) {
-        throw new Error('GeminiClient not available');
+      if (!ottoClient) {
+        throw new Error('OttoClient not available');
       }
 
       // 🎯 获取已知的 token 数量，传给 switchModel 避免重新计算
@@ -2567,7 +2575,7 @@ function setupLoginHandlers() {
       }, async (progress) => {
         progress.report({ message: "Compressing context..." });
 
-        const switchResult = await geminiClient.switchModel(payload.targetModel, new AbortController().signal, knownTokenCount);
+        const switchResult = await ottoClient.switchModel(payload.targetModel, new AbortController().signal, knownTokenCount);
 
         if (!switchResult.success) {
           throw new Error(`Failed to switch to model ${payload.targetModel}. ${switchResult.error || 'Context compression failed.'}`);
@@ -2615,7 +2623,7 @@ function setupLoginHandlers() {
   });
 
   // ===========================================================================
-  // 🟢 自定义模型管理 IPC（与 CLI 共享 ~/.deepv/custom-models.json）
+  // 🟢 自定义模型管理 IPC（与 CLI 共享 ~/.otto/custom-models.json）
   //
   // 设计要点：
   // - storage 是单例，与 CLI 一致用 displayName 作为 identity；任何 add 都触发
@@ -2862,9 +2870,9 @@ async function handleRefineCommand(originalText: string) {
 
     // 🎯 获取已初始化的 AI 服务（自动处理初始化）
     const aiService = await sessionManager.getCurrentInitializedAIService();
-    const geminiClient = aiService.getGeminiClient();
+    const ottoClient = aiService.getOttoClient();
 
-    if (!geminiClient) {
+    if (!ottoClient) {
       logger.error('Gemini client not available');
       communicationService.sendGenericMessage('refine_error', {
         error: 'AI client not available.',
@@ -2890,7 +2898,7 @@ Here is my original instruction:
     const abortController = new AbortController();
 
     try {
-      const stream = geminiClient.sendMessageStream(
+      const stream = ottoClient.sendMessageStream(
         [{ text: refinePrompt }],
         abortController.signal,
         `refine - ${Date.now()}`
@@ -3004,7 +3012,7 @@ function setupSlashCommandHandlers() {
       if (command.execution === 'side_effect') {
         if (command.sideEffect === 'compress') {
           // /compress：让 webview 走副作用分支自己驱动压缩，与 CLI compressCommand
-          // 行为对齐（CLI 内部也是直接调 geminiClient.tryCompressChat）。
+          // 行为对齐（CLI 内部也是直接调 ottoClient.tryCompressChat）。
           // 这里只把"我是 compress 副作用"反馈回去；真正调用 tryCompressChat 的
           // 路径已经存在于 MultiSessionApp 里（compression_confirmation 流），
           // webview 收到后转发一条 builtin_compress 消息回 backend 实际执行。
@@ -3039,14 +3047,14 @@ function setupSlashCommandHandlers() {
           return;
         }
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
-        const deepvMdPath = path.join(workspaceRoot, 'OTTO.md');
+        const ottoMdPath = path.join(workspaceRoot, 'OTTO.md');
         try {
           let info: string | undefined;
-          if (fs.existsSync(deepvMdPath)) {
-            const stats = fs.statSync(deepvMdPath);
+          if (fs.existsSync(ottoMdPath)) {
+            const stats = fs.statSync(ottoMdPath);
             if (stats.size === 0) {
               // 空文件：当不存在处理（与 CLI initCommand 行为对齐）
-              info = `Empty OTTO.md detected at ${deepvMdPath}, regenerating…`;
+              info = `Empty OTTO.md detected at ${ottoMdPath}, regenerating…`;
             } else {
               // 非空文件：MVP 阶段保守拒绝执行，避免覆盖用户内容。
               // CLI 端在这里会弹 init-choice 对话框；webview 端先走拒绝路径，
@@ -3063,8 +3071,8 @@ function setupSlashCommandHandlers() {
             }
           } else {
             // 不存在：创建空文件
-            fs.writeFileSync(deepvMdPath, '', 'utf8');
-            info = `Created empty OTTO.md at ${deepvMdPath}`;
+            fs.writeFileSync(ottoMdPath, '', 'utf8');
+            info = `Created empty OTTO.md at ${ottoMdPath}`;
           }
           const processedPrompt = slashCommandService.processCommandPrompt(command, args);
           communicationService.sendMessage({
@@ -3118,9 +3126,9 @@ function setupSlashCommandHandlers() {
       // 当前会话的 AIService —— 与 setupChatHandlers 内 send_message 的
       // 取法（getCurrentInitializedAIService）保持一致。
       const aiService = await sessionManager.getCurrentInitializedAIService();
-      const geminiClient = aiService?.getGeminiClient?.();
-      if (!geminiClient) {
-        logger.warn('[/compress] geminiClient not initialized');
+      const ottoClient = aiService?.getOttoClient?.();
+      if (!ottoClient) {
+        logger.warn('[/compress] ottoClient not initialized');
         communicationService.sendMessage({
           type: 'slash_command_result',
           payload: { success: false, error: 'AI client not ready. Please wait for initialization.' },
@@ -3128,7 +3136,7 @@ function setupSlashCommandHandlers() {
         return;
       }
 
-      if (geminiClient.isCompressionInProgress?.()) {
+      if (ottoClient.isCompressionInProgress?.()) {
         communicationService.sendMessage({
           type: 'slash_command_result',
           payload: { success: false, error: 'Compression already in progress, please wait.' },
@@ -3146,7 +3154,7 @@ function setupSlashCommandHandlers() {
 
       logger.info('[/compress] Manual compression triggered via slash command');
       const promptId = `slash-compress-${Date.now()}`;
-      const result = await geminiClient.tryCompressChat(promptId, new AbortController().signal, true);
+      const result = await ottoClient.tryCompressChat(promptId, new AbortController().signal, true);
 
       if (result) {
         const before = (result as any).originalTokenCount;
@@ -3898,8 +3906,8 @@ function setupMultiSessionHandlers() {
   // =============================================================================
 
   // 服务端配置
-  const PPT_SERVER_URL = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
-  const PPT_WEB_URL = process.env.DEEPX_WEB_URL || 'https://easycode.deepvlab.ai';
+  const PPT_SERVER_URL = process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || '';
+  const PPT_WEB_URL = process.env.OTTO_WEB_URL || process.env.OTTO_WEB_URL || '';
 
   // 🎯 处理PPT生成请求
   // 注意：后端没有 status 轮询接口，任务提交后直接打开浏览器让用户在网页查看进度
@@ -4058,7 +4066,7 @@ ${payload.outline}
 
 请直接输出优化后的大纲内容，不要添加额外说明。使用中文输出。`;
 
-      // 调用 DeepV 服务端 AI API
+      // 调用 Otto 服务端 AI API
       const response = await fetch(`${PPT_SERVER_URL}/v1/chat/messages`, {
         method: 'POST',
         headers: {
@@ -4396,8 +4404,8 @@ function registerCommands(context: vscode.ExtensionContext) {
   console.log('Otto: Registering commands');
 
   const commands = [
-    vscode.commands.registerCommand('deepv.openAIAssistant', async () => {
-      logger.info('deepv.openAIAssistant command executed');
+    vscode.commands.registerCommand('otto.openAIAssistant', async () => {
+      logger.info('otto.openAIAssistant command executed');
       console.log('Otto: openAIAssistant command executed');
 
       // 🎯 显示侧边栏视图
@@ -4410,8 +4418,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 右键菜单命令：添加代码到当前对话（只插入，不自动发送）
-    vscode.commands.registerCommand('deepv.addToCurrentChat', async () => {
-      logger.info('deepv.addToCurrentChat command executed');
+    vscode.commands.registerCommand('otto.addToCurrentChat', async () => {
+      logger.info('otto.addToCurrentChat command executed');
 
       try {
         const editor = vscode.window.activeTextEditor;
@@ -4427,7 +4435,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         const endLine = editor.selection.end.line + 1;
 
         // 🎯 先聚焦侧边栏视图
-        await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+        await vscode.commands.executeCommand('otto.aiAssistant.focus');
 
         // 🎯 等待 webview 准备就绪
         await communicationService.waitForReady(3000);
@@ -4450,8 +4458,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 旧的命令（保留兼容性）- 解释代码
-    vscode.commands.registerCommand('deepv.explainCode', async () => {
-      logger.info('deepv.explainCode command executed');
+    vscode.commands.registerCommand('otto.explainCode', async () => {
+      logger.info('otto.explainCode command executed');
 
       try {
         const selectedText = getSelectedText();
@@ -4461,7 +4469,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
 
         // 🎯 先聚焦侧边栏视图（如果已打开就聚焦，如果没打开就打开）
-        await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+        await vscode.commands.executeCommand('otto.aiAssistant.focus');
 
         // 🎯 等待 webview 准备就绪（最多等待 3 秒）
         await communicationService.waitForReady(3000);
@@ -4483,8 +4491,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 右键菜单命令：优化代码
-    vscode.commands.registerCommand('deepv.optimizeCode', async () => {
-      logger.info('deepv.optimizeCode command executed');
+    vscode.commands.registerCommand('otto.optimizeCode', async () => {
+      logger.info('otto.optimizeCode command executed');
 
       try {
         const selectedText = getSelectedText();
@@ -4494,7 +4502,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
 
         // 🎯 先聚焦侧边栏视图（如果已打开就聚焦，如果没打开就打开）
-        await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+        await vscode.commands.executeCommand('otto.aiAssistant.focus');
 
         // 🎯 等待 webview 准备就绪（最多等待 3 秒）
         await communicationService.waitForReady(3000);
@@ -4516,8 +4524,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 右键菜单命令：生成测试
-    vscode.commands.registerCommand('deepv.generateTests', async () => {
-      logger.info('deepv.generateTests command executed');
+    vscode.commands.registerCommand('otto.generateTests', async () => {
+      logger.info('otto.generateTests command executed');
 
       try {
         const selectedText = getSelectedText();
@@ -4527,7 +4535,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
 
         // 🎯 先聚焦侧边栏视图（如果已打开就聚焦，如果没打开就打开）
-        await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+        await vscode.commands.executeCommand('otto.aiAssistant.focus');
 
         // 🎯 等待 webview 准备就绪（最多等待 3 秒）
         await communicationService.waitForReady(3000);
@@ -4548,8 +4556,8 @@ function registerCommands(context: vscode.ExtensionContext) {
       }
     }),
     // 🎯 打开自定义规则管理
-    vscode.commands.registerCommand('deepv.openRulesManagement', async () => {
-      logger.info('deepv.openRulesManagement command executed');
+    vscode.commands.registerCommand('otto.openRulesManagement', async () => {
+      logger.info('otto.openRulesManagement command executed');
       try {
         // 通过 webview 消息通知前端打开规则管理对话框
         await communicationService.sendMessage({
@@ -4563,11 +4571,11 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 打开目标驱动模式向导（/goal 等价命令）
-    vscode.commands.registerCommand('deepv.openGoalWizard', async () => {
-      logger.info('deepv.openGoalWizard command executed');
+    vscode.commands.registerCommand('otto.openGoalWizard', async () => {
+      logger.info('otto.openGoalWizard command executed');
       try {
         // 先聚焦侧边栏（确保 webview 已经打开）
-        await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+        await vscode.commands.executeCommand('otto.aiAssistant.focus');
         // 等 webview ready，最多 3s
         await communicationService.waitForReady(3000);
         // 通知 webview 打开 GoalWizardDialog
@@ -4582,15 +4590,15 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🔌 MCP 相关命令
-    vscode.commands.registerCommand('deepv.showMCPStatus', async () => {
-      logger.info('deepv.showMCPStatus command executed');
+    vscode.commands.registerCommand('otto.showMCPStatus', async () => {
+      logger.info('otto.showMCPStatus command executed');
       try {
         const { MCPSettingsService } = await import('./services/mcpSettingsService');
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const mcpServers = MCPSettingsService.loadMCPServers(workspaceRoot);
 
         if (Object.keys(mcpServers).length === 0) {
-          vscode.window.showInformationMessage('未配置 MCP 服务器。请编辑 ~/.deepv/settings.json 添加配置。');
+          vscode.window.showInformationMessage('未配置 MCP 服务器。请编辑 ~/.otto/settings.json 添加配置。');
           return;
         }
 
@@ -4617,7 +4625,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         );
 
         if (selected === '📝 打开配置文件') {
-          await vscode.commands.executeCommand('deepv.openMCPSettings');
+          await vscode.commands.executeCommand('otto.openMCPSettings');
         }
       } catch (error) {
         logger.error('Failed to show MCP status', error instanceof Error ? error : undefined);
@@ -4625,8 +4633,8 @@ function registerCommands(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('deepv.openMCPSettings', async () => {
-      logger.info('deepv.openMCPSettings command executed');
+    vscode.commands.registerCommand('otto.openMCPSettings', async () => {
+      logger.info('otto.openMCPSettings command executed');
       try {
         const { MCPSettingsService } = await import('./services/mcpSettingsService');
         const paths = MCPSettingsService.getSettingsPaths(
@@ -4674,7 +4682,7 @@ function registerCommands(context: vscode.ExtensionContext) {
       }
     }),
     // 🎯 添加日志查看命令
-    vscode.commands.registerCommand('deepv.openLogFile', async () => {
+    vscode.commands.registerCommand('otto.openLogFile', async () => {
       try {
         const logPath = logger.getLogFilePath();
         const logUri = vscode.Uri.file(logPath);
@@ -4690,7 +4698,7 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 显示日志文件路径
-    vscode.commands.registerCommand('deepv.showLogPath', async () => {
+    vscode.commands.registerCommand('otto.showLogPath', async () => {
       const logPath = logger.getLogFilePath();
       const action = await vscode.window.showInformationMessage(
         `日志文件位置:\n${logPath}`,
@@ -4714,8 +4722,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 测试行内补全功能
-    vscode.commands.registerCommand('deepv.testInlineCompletion', async () => {
-      const config = vscode.workspace.getConfiguration('deepv');
+    vscode.commands.registerCommand('otto.testInlineCompletion', async () => {
+      const config = vscode.workspace.getConfiguration('otto');
       const isEnabled = config.get<boolean>('enableInlineCompletion', false);
 
       if (!isEnabled) {
@@ -4765,8 +4773,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 切换行内补全开关
-    vscode.commands.registerCommand('deepv.toggleInlineCompletion', async () => {
-      const config = vscode.workspace.getConfiguration('deepv');
+    vscode.commands.registerCommand('otto.toggleInlineCompletion', async () => {
+      const config = vscode.workspace.getConfiguration('otto');
       const isEnabled = config.get<boolean>('enableInlineCompletion', false);
       const newState = !isEnabled;
 
@@ -4782,8 +4790,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 从状态栏切换行内补全开关
-    vscode.commands.registerCommand('deepv.toggleInlineCompletionFromStatusBar', async () => {
-      const config = vscode.workspace.getConfiguration('deepv');
+    vscode.commands.registerCommand('otto.toggleInlineCompletionFromStatusBar', async () => {
+      const config = vscode.workspace.getConfiguration('otto');
       const isEnabled = config.get<boolean>('enableInlineCompletion', false);
       const newState = !isEnabled;
 
@@ -4808,7 +4816,7 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 版本控制命令 - 回退到上一版本
-    vscode.commands.registerCommand('deepv.revertToPrevious', async () => {
+    vscode.commands.registerCommand('otto.revertToPrevious', async () => {
       try {
         const currentSession = sessionManager.getCurrentSession();
         if (!currentSession) {
@@ -4847,7 +4855,7 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 版本控制命令 - 显示版本时间线
-    vscode.commands.registerCommand('deepv.showVersionTimeline', async () => {
+    vscode.commands.registerCommand('otto.showVersionTimeline', async () => {
       try {
         const currentSession = sessionManager.getCurrentSession();
         if (!currentSession) {
@@ -4909,7 +4917,7 @@ function registerCommands(context: vscode.ExtensionContext) {
     }),
 
     // 🎯 调试命令 - 检查版本节点状态
-    vscode.commands.registerCommand('deepv.debugVersionNodes', async () => {
+    vscode.commands.registerCommand('otto.debugVersionNodes', async () => {
       try {
         const currentSession = sessionManager.getCurrentSession();
         if (!currentSession) {
@@ -5009,7 +5017,7 @@ function updateInlineCompletionStatusBar() {
     return;
   }
 
-  const config = vscode.workspace.getConfiguration('deepv');
+  const config = vscode.workspace.getConfiguration('otto');
   const isEnabled = config.get<boolean>('enableInlineCompletion', false);
   const statusText = getI18nText(
     INLINE_COMPLETION_MESSAGES.STATUS_BAR_TEXT,
@@ -5085,9 +5093,9 @@ async function initializeInlineCompletion() {
     extensionContext.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         // 🎯 监听代码补全开关变化，更新状态栏
-        if (e.affectsConfiguration('deepv.enableInlineCompletion')) {
+        if (e.affectsConfiguration('otto.enableInlineCompletion')) {
           updateInlineCompletionStatusBar();
-          const isEnabled = vscode.workspace.getConfiguration('deepv').get<boolean>('enableInlineCompletion', false);
+          const isEnabled = vscode.workspace.getConfiguration('otto').get<boolean>('enableInlineCompletion', false);
           logger.info(`Inline completion status bar updated: ${isEnabled ? 'enabled' : 'disabled'}`);
         }
       })
@@ -5207,7 +5215,7 @@ async function openDiffInEditor(
 ): Promise<void> {
   try {
     // 创建临时目录
-    const tempDir = path.join(require('os').tmpdir(), 'deepv-diffs');
+    const tempDir = path.join(require('os').tmpdir(), 'otto-diffs');
     try {
       if (!fs.existsSync(tempDir)) {
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(tempDir));
@@ -5284,7 +5292,7 @@ async function openDeletedFileContent(
     }
 
     // 创建临时目录
-    const tempDir = path.join(require('os').tmpdir(), 'deepv-diffs');
+    const tempDir = path.join(require('os').tmpdir(), 'otto-diffs');
     try {
       if (!fs.existsSync(tempDir)) {
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(tempDir));
@@ -5536,9 +5544,9 @@ function setupMemoryFileWatcher(context: vscode.ExtensionContext) {
   const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
   // 监听记忆文件变化（OTTO.md, GEMINI.md, AGENTS.md, CLAUDE.md 等）
-  const memoryFilePatterns = ['**/{DEEPV,GEMINI,AGENTS,CLAUDE}.md'];
+  const memoryFilePatterns = ['**/{OTTO,GEMINI,AGENTS,CLAUDE}.md'];
   const fileWatcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(workspaceRoot, '{DEEPV,GEMINI,AGENTS,CLAUDE}.md')
+    new vscode.RelativePattern(workspaceRoot, '{OTTO,GEMINI,AGENTS,CLAUDE}.md')
   );
 
   let refreshTimeout: NodeJS.Timeout | null = null;
@@ -5578,7 +5586,7 @@ function setupOpenExtensionSettings(communicationService: MultiSessionCommunicat
     try {
       logger.info('Opening VS Code extension settings for Otto');
       // 使用 workbench.action.openSettings 命令打开设置面板，并通过 @ext: 过滤器显示扩展配置
-      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:DeepX.deepv-code-vscode-ui-plugin');
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:Otto.otto-code-vscode-ui-plugin');
     } catch (error) {
       logger.error('Failed to open extension settings', error instanceof Error ? error : undefined);
       vscode.window.showErrorMessage('Failed to open extension settings');

@@ -44,7 +44,7 @@ export const lightTheme: ColorsTheme = {
   AccentCyan: '#06B6D4',
   AccentGreen: '#3CA84B',
   AccentYellow: '#D5A40A',
-  AccentOrange: '#FF8C00',
+  AccentOrange: '#fab283', // Otto brand orange (unified with opencode theme)
   AccentRed: '#DD4C4C',
   DiffAdded: '#C6EAD8',
   DiffRemoved: '#FFCCCC',
@@ -64,7 +64,7 @@ export const darkTheme: ColorsTheme = {
   AccentCyan: '#89DCEB',
   AccentGreen: '#A6E3A1',
   AccentYellow: '#F9E2AF',
-  AccentOrange: '#FF8C00',
+  AccentOrange: '#fab283', // Otto brand orange (unified with opencode theme)
   AccentRed: '#F38BA8',
   DiffAdded: '#28350B',
   DiffRemoved: '#430000',

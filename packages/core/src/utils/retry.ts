@@ -8,7 +8,7 @@ import { AuthType } from '../core/contentGenerator.js';
 import {
   isProQuotaExceededError,
   isGenericQuotaExceededError,
-  isDeepXQuotaError,
+  isOttoQuotaError,
 } from './quotaErrorDetection.js';
 
 export interface RetryOptions {
@@ -75,8 +75,8 @@ const AGGRESSIVE_RETRY_OPTIONS: Partial<RetryOptions> = {
  * @returns True if the error is a transient error, false otherwise.
  */
 function defaultShouldRetry(error: Error | unknown): boolean {
-  // 🚫 DeepX配额错误不应重试 - 需要立即显示友好提示
-  if (isDeepXQuotaError(error)) {
+  // 🚫 Otto配额错误不应重试 - 需要立即显示友好提示
+  if (isOttoQuotaError(error)) {
     return false;
   }
 

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,8 +11,8 @@ export const workflowCommand: SlashCommand = {
   altNames: ['wf', 'workflows'],
   description: 'Open the workflow management panel to view running and completed workflows.',
   kind: CommandKind.BUILT_IN,
-  action: (_context: CommandContext, _args?: string) => {
+  action: (_context: CommandContext, _args?: string) => 
     // Delegate to the panel — return a dialog open action
-    return { type: 'dialog', dialog: 'workflow-panel' } as const;
-  },
+     ({ type: 'dialog', dialog: 'workflow-panel' } as const)
+  ,
 };

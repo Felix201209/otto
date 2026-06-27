@@ -15,6 +15,13 @@ import {
   MCPDiscoveryState,
   getMCPDiscoveryState,
   waitForMCPDiscoveryComplete,
+
+  areAllFunctionCallsValid,
+  fixAllFunctionCalls,
+  appearIncompleteFromStreaming,
+  getModelCapabilities,
+  ToolCallResponseInfo,
+  SceneType,
 } from 'otto-core';
 import {
   Content,
@@ -23,22 +30,13 @@ import {
   GenerateContentResponse,
   FinishReason,
 } from '@google/genai';
-import {
-  validateAndFixFunctionCall,
-  areAllFunctionCallsValid,
-  fixAllFunctionCalls,
-  appearIncompleteFromStreaming,
-  getModelCapabilities
-} from 'otto-core';
 
 import { parseAndFormatApiError } from './ui/utils/errorParsing.js';
-import { SceneType } from 'otto-core';
 import {
   outputInit,
   outputMessage,
   outputToolUse,
   outputToolResult,
-  outputFunctionCallFixed,
   outputError,
   outputResult,
   outputFinalJson,
@@ -122,7 +120,7 @@ export async function runNonInteractive(
     }
   });
 
-  const geminiClient = config.getGeminiClient();
+  const geminiClient = config.getOttoClient();
   const toolRegistry: ToolRegistry = await config.getToolRegistry();
 
   const chat = await geminiClient.getChat();
@@ -419,7 +417,6 @@ export async function runNonInteractive(
         }
 
         const toolResponseParts: Part[] = [];
-        let failedToolCount = 0;
         const maxConcurrent = modelCapabilities.maxConcurrentTools;
 
         // Process tools with concurrency limit for small models
@@ -453,9 +450,6 @@ export async function runNonInteractive(
               );
 
               if (toolResponse.error) {
-                const isToolNotFound = toolResponse.error.message.includes(
-                  'not found in registry',
-                );
                 const resultDisplay = toolResponse.resultDisplay
                   ? typeof toolResponse.resultDisplay === 'string'
                     ? toolResponse.resultDisplay
@@ -466,18 +460,19 @@ export async function runNonInteractive(
                 } else {
                   console.error(`Error executing tool ${fc.name}: ${resultDisplay}`);
                 }
-                if (!isToolNotFound) {
-                  failedToolCount++;
-                }
                 // Return the error as a functionResponse so the AI can see it and retry
                 return {
+                  callId,
                   responseParts: [{
                     functionResponse: {
+                      id: callId,
                       name: fc.name ?? '',
                       response: { error: resultDisplay },
                     },
                   }],
-                } as any;
+                  resultDisplay,
+                  error: toolResponse.error,
+                } satisfies ToolCallResponseInfo;
               }
 
               return toolResponse;
@@ -488,7 +483,6 @@ export async function runNonInteractive(
               } else {
                 console.error(`Exception executing tool ${fc.name}:`, error);
               }
-              failedToolCount++;
               return null;
             }
           });
@@ -514,10 +508,16 @@ export async function runNonInteractive(
                 } else if (part && typeof part === 'object') {
                   // Try to extract the actual output from nested functionResponse
                   let actualOutput = '';
-                  if ((part as any).functionResponse?.response?.output) {
-                    actualOutput = (part as any).functionResponse.response.output;
-                  } else if ((part as any).output) {
-                    actualOutput = String((part as any).output);
+                  const typedPart = part as Part & { output?: unknown };
+                  const response = typedPart.functionResponse?.response;
+                  const responseRecord =
+                    response && typeof response === 'object'
+                      ? (response as Record<string, unknown>)
+                      : undefined;
+                  if (responseRecord?.output) {
+                    actualOutput = String(responseRecord.output);
+                  } else if (typedPart.output) {
+                    actualOutput = String(typedPart.output);
                   } else {
                     actualOutput = JSON.stringify(part);
                   }
@@ -571,6 +571,8 @@ export async function runNonInteractive(
     const errorMsg = parseAndFormatApiError(
       error,
       config.getContentGeneratorConfig()?.authType,
+      undefined,
+      config.getModel(),
     );
     if (outputFormat === 'stream-json') {
       outputError(errorMsg);

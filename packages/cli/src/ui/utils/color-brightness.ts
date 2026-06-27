@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -105,7 +104,7 @@ export function createLEDColorPair(originalColor: string) {
  * @param originalColor 原始颜色（已废弃，现在使用固定的精细渐变配色）
  * @returns 包含dim、medium、bright三种颜色的对象
  */
-export function createGradientColorSet(originalColor: string) {
+export function createGradientColorSet(_originalColor: string) {
   // 🎨 使用精心设计的固定配色方案，实现更细腻的跑马灯渐变效果
   return {
     dim: '#666666',      // 文本默认色 - 暗灰色背景

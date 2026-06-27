@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,7 +25,7 @@ export enum MessageType {
   TOOL_STATUS = 'tool_status',       // 工具执行状态更新
 
   // 思考类（thinking mode）
-  // 与本地 CLI 的 GeminiEventType.Thought / Reasoning 一一对应：
+  // 与本地 CLI 的 OttoEventType.Thought / Reasoning 一一对应：
   // - THOUGHT：离散的思考事件，Gemini 风格 (subject + description)
   // - REASONING_CHUNK：流式 reasoning 增量，OpenAI / Claude / DeepSeek 风格
   // 同一轮思考共享 thoughtId，便于 Web 端聚合渲染、飞书端节流 patch
@@ -60,13 +59,17 @@ export enum MessageType {
   DISCONNECT = 'disconnect',     // 断开连接
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 /**
  * 统一消息格式 - 消除所有特殊情况
  */
-export interface RemoteMessage {
+export interface RemoteMessage<TPayload = unknown> {
   id: string;           // 消息唯一标识
   type: MessageType;    // 消息类型
-  payload: any;         // 消息载荷
+  payload: TPayload;    // 消息载荷
   timestamp: number;    // 时间戳
   sessionId?: string;   // 会话标识（云端模式下用于精确路由）
 }
@@ -127,7 +130,7 @@ export interface ToolCallMessage extends RemoteMessage {
     toolName: string;            // 工具显示名称(displayName)
     toolDescription?: string;    // 工具描述信息
     callId: string;              // 调用ID
-    args: Record<string, any>;   // 工具参数
+    args: Record<string, unknown>;   // 工具参数
     result?: string;             // 执行结果显示
     success: boolean;            // 是否成功
     error?: string;              // 错误信息（失败时）
@@ -155,7 +158,7 @@ export interface ToolStatusMessage extends RemoteMessage {
 
 /**
  * 思考事件消息（Gemini 风格的离散思考）
- * 对应 core 层 GeminiEventType.Thought 事件
+ * 对应 core 层 OttoEventType.Thought 事件
  * 服务端用法：
  * - Web 端：渲染为可折叠的思考标题/进展条
  * - 飞书端：累积到卡片顶部"💭 思考过程"折叠区
@@ -171,7 +174,7 @@ export interface ThoughtMessage extends RemoteMessage {
 
 /**
  * 流式 reasoning chunk（OpenAI/Claude/DeepSeek 风格的增量思考）
- * 对应 core 层 GeminiEventType.Reasoning 事件
+ * 对应 core 层 OttoEventType.Reasoning 事件
  * 客户端聚合规则：
  * - 同 thoughtId 的所有 chunk 累加成一段完整 reasoning
  * - isComplete=true 表示该段思考结束（一轮 idle 前必发一条空 isComplete=true 收尾）
@@ -220,8 +223,8 @@ export interface RequestUIStateMessage extends RemoteMessage {
 export interface UIStateResponseMessage extends RemoteMessage {
   type: MessageType.UI_STATE_RESPONSE;
   payload: {
-    completedRecords: any[];     // 已完成的记录
-    currentRecord: any | null;   // 当前正在进行的记录
+    completedRecords: unknown[];     // 已完成的记录
+    currentRecord: unknown | null;   // 当前正在进行的记录
     isProcessing: boolean;       // 是否正在处理
   };
 }
@@ -363,6 +366,34 @@ export interface AuthFailedMessage extends RemoteMessage {
   };
 }
 
+export type RemoteProtocolMessage =
+  | CommandMessage
+  | OutputMessage
+  | ErrorMessage
+  | StatusMessage
+  | ToolCallMessage
+  | ToolStatusMessage
+  | ThoughtMessage
+  | ReasoningChunkMessage
+  | InterruptMessage
+  | PingMessage
+  | PongMessage
+  | RequestUIStateMessage
+  | UIStateResponseMessage
+  | SessionListMessage
+  | SelectSessionMessage
+  | CreateSessionMessage
+  | ClearSessionMessage
+  | FeishuImageMessage
+  | GetModelsRequestMessage
+  | GetModelsResponseMessage
+  | GetStatusRequestMessage
+  | GetStatusResponseMessage
+  | AuthRequiredMessage
+  | AuthSubmitMessage
+  | AuthSuccessMessage
+  | AuthFailedMessage;
+
 /**
  * 消息工厂函数 - Linus风格：简洁的API
  */
@@ -417,7 +448,7 @@ export class MessageFactory {
   static createToolCall(
     toolName: string,
     callId: string,
-    args: Record<string, any>,
+    args: Record<string, unknown>,
     success: boolean,
     result?: string,
     error?: string,
@@ -525,8 +556,8 @@ export class MessageFactory {
   }
 
   static createUIStateResponse(
-    completedRecords: any[],
-    currentRecord: any | null,
+    completedRecords: unknown[],
+    currentRecord: unknown | null,
     isProcessing: boolean
   ): UIStateResponseMessage {
     return {
@@ -664,7 +695,7 @@ export class MessageFactory {
     };
   }
 
-  static createMessage(type: MessageType, payload: any): RemoteMessage {
+  static createMessage<TPayload>(type: MessageType, payload: TPayload): RemoteMessage<TPayload> {
     return {
       id: this.generateId(),
       type,
@@ -678,58 +709,67 @@ export class MessageFactory {
  * 消息验证器
  */
 export class MessageValidator {
-  static isValidMessage(obj: any): obj is RemoteMessage {
+  static isValidMessage(obj: unknown): obj is RemoteMessage {
     return (
-      obj &&
-      typeof obj === 'object' &&
+      isRecord(obj) &&
       typeof obj.id === 'string' &&
       typeof obj.type === 'string' &&
-      Object.values(MessageType).includes(obj.type) &&
+      Object.values(MessageType).includes(obj.type as MessageType) &&
       obj.payload !== undefined &&
       typeof obj.timestamp === 'number'
     );
   }
 
   static isCommandMessage(msg: RemoteMessage): msg is CommandMessage {
+    const payload = msg.payload;
     return (
       msg.type === MessageType.COMMAND &&
-      typeof msg.payload.command === 'string'
+      isRecord(payload) &&
+      typeof payload.command === 'string'
     );
   }
 
   static isOutputMessage(msg: RemoteMessage): msg is OutputMessage {
+    const payload = msg.payload;
     return (
       msg.type === MessageType.OUTPUT &&
-      typeof msg.payload.content === 'string' &&
-      typeof msg.payload.isComplete === 'boolean'
+      isRecord(payload) &&
+      typeof payload.content === 'string' &&
+      typeof payload.isComplete === 'boolean'
     );
   }
 
   static isToolCallMessage(msg: RemoteMessage): msg is ToolCallMessage {
+    const payload = msg.payload;
     return (
       msg.type === MessageType.TOOL_CALL &&
-      typeof msg.payload.toolName === 'string' &&
-      typeof msg.payload.callId === 'string' &&
-      typeof msg.payload.success === 'boolean' &&
-      typeof msg.payload.args === 'object'
+      isRecord(payload) &&
+      typeof payload.toolName === 'string' &&
+      typeof payload.callId === 'string' &&
+      typeof payload.success === 'boolean' &&
+      isRecord(payload.args)
     );
   }
 
   static isThoughtMessage(msg: RemoteMessage): msg is ThoughtMessage {
+    const payload = msg.payload;
     return (
       msg.type === MessageType.THOUGHT &&
-      typeof msg.payload?.thoughtId === 'string' &&
-      typeof msg.payload?.subject === 'string' &&
-      typeof msg.payload?.description === 'string'
+      isRecord(payload) &&
+      typeof payload.thoughtId === 'string' &&
+      typeof payload.subject === 'string' &&
+      typeof payload.description === 'string'
     );
   }
 
   static isReasoningChunkMessage(msg: RemoteMessage): msg is ReasoningChunkMessage {
+    const payload = msg.payload;
     return (
       msg.type === MessageType.REASONING_CHUNK &&
-      typeof msg.payload?.thoughtId === 'string' &&
-      typeof msg.payload?.text === 'string' &&
-      typeof msg.payload?.isComplete === 'boolean'
+      isRecord(payload) &&
+      typeof payload.thoughtId === 'string' &&
+      typeof payload.text === 'string' &&
+      typeof payload.isComplete === 'boolean'
     );
   }
 

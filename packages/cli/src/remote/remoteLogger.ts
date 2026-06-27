@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,13 +43,13 @@ export class RemoteLogger {
     return RemoteLogger.instance;
   }
 
-  private formatMessage(level: string, component: string, message: string, data?: any): string {
+  private formatMessage(level: string, component: string, message: string, data?: unknown): string {
     const timestamp = new Date().toISOString();
     const dataStr = data ? `\nDATA: ${JSON.stringify(data, null, 2)}` : '';
     return `[${timestamp}] [${level}] [${component}] ${message}${dataStr}\n`;
   }
 
-  log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', component: string, message: string, data?: any): void {
+  log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', component: string, message: string, data?: unknown): void {
     const formattedMessage = this.formatMessage(level, component, message, data);
 
     // 写入文件
@@ -60,19 +59,19 @@ export class RemoteLogger {
     // 所有日志已写入日志文件，可通过日志文件查看详细信息
   }
 
-  info(component: string, message: string, data?: any): void {
+  info(component: string, message: string, data?: unknown): void {
     this.log('INFO', component, message, data);
   }
 
-  warn(component: string, message: string, data?: any): void {
+  warn(component: string, message: string, data?: unknown): void {
     this.log('WARN', component, message, data);
   }
 
-  error(component: string, message: string, data?: any): void {
+  error(component: string, message: string, data?: unknown): void {
     this.log('ERROR', component, message, data);
   }
 
-  debug(component: string, message: string, data?: any): void {
+  debug(component: string, message: string, data?: unknown): void {
     this.log('DEBUG', component, message, data);
   }
 

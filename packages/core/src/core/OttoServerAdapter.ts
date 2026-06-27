@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,20 +25,19 @@ import { getDefaultAuthHandler } from '../auth/authNavigator.js';
 import { UnauthorizedError, isOurAuthError } from '../utils/errors.js';
 import { SceneType, SceneManager } from './sceneManager.js';
 import { retryWithBackoff, getErrorStatus } from '../utils/retry.js';
-import { isDeepXQuotaError } from '../utils/quotaErrorDetection.js';
+import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 
 import { realTimeTokenEventManager } from '../events/realTimeTokenEvents.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { getGlobalDispatcher } from 'undici';
 import { isCustomModel, resolveThinkingConfig, effortToGeminiLevel, effortToGeminiBudget, effortToOpenAIEffort, effortToAnthropicEffort, effortToAnthropicBudget, ThinkingConfig, isAdaptiveThinkingClaude, applyAnthropicAdaptiveThinking } from '../types/customModel.js';
 import { callCustomModel, callCustomModelStream } from './customModelAdapter.js';
-import { getGitRemotes, getGitBranch, getSubdirectoryGitInfos, getGitCommitSha, getGitProjectPath } from '../utils/gitUtils.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 /**
- * 把出站请求体落盘到 ~/.deepv/last-N-requests/ 用于事后诊断。
+ * 把出站请求体落盘到 ~/.otto/last-N-requests/ 用于事后诊断。
  *
  * 用途：当用户报告"X 模型 Y 现象不对"时，用 scripts/probe-replay-cli-request.mjs
  * 直接读取这个文件做字节级对账，避免依赖协议层猜测。
@@ -95,7 +93,7 @@ function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
       }
     } catch (err) {
       // 落盘失败不影响主流程，记一条 warn 即可
-      logger.warn?.('[DeepV Server] request dump failed', {
+      logger.warn?.('[Otto Server] request dump failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -103,7 +101,7 @@ function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
 
   // 同步打一行简短日志，便于在 export-debug 里看到落盘行为发生过
   console.log(
-    `[request-dump] ${kind} body dumped (${size}B) → ~/.deepv/last-requests/${path.basename(ringFile)}`,
+    `[request-dump] ${kind} body dumped (${size}B) → ~/.otto/last-requests/${path.basename(ringFile)}`,
   );
 }
 
@@ -114,15 +112,6 @@ function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
  * @param modelName - The model name/ID to check
  * @returns true if the model supports SSE streaming
  */
-/**
- * 过滤 HTTP header 值中的非 Latin-1 字符（如中文分支名）。
- * HTTP/1.1 header 值只允许 Latin-1 字符集（\x00-\xFF）。
- * 非法字符静默移除，保证请求不因 header 格式错误而崩溃。
- */
-function toSafeHeaderValue(value: string): string {
-  return value.replace(/[^\x00-\xFF]/g, '');
-}
-
 function supportsSSEStreaming(modelName: string): boolean {
   const name = modelName.toLowerCase();
 
@@ -157,7 +146,7 @@ function supportsSSEStreaming(modelName: string): boolean {
 }
 
 /**
- * 按模型关键词适配走 GenAI 格式（DeepV 服务端代理）的思考模式配置
+ * 按模型关键词适配走 GenAI 格式（Otto 服务端代理）的思考模式配置
  */
 function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig: ThinkingConfig | undefined): any {
   // 🐛 [thinking-debug] 入口处先把"用户/项目配置中的 thinkingConfig"打印出来
@@ -290,7 +279,7 @@ function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig:
   }
 
   // 🐛 [thinking-debug] 出口处打印"实际写入 generationConfig 的思考字段"
-  // 这是真正会随请求体发到 DeepV 后端的形态
+  // 这是真正会随请求体发到 Otto 后端的形态
   const gc = config.generationConfig || {};
   const injected: Record<string, unknown> = {};
   if (gc.thinkingConfig !== undefined) injected.thinkingConfig = gc.thinkingConfig; // Gemini
@@ -307,7 +296,7 @@ function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig:
 }
 
 /**
- * DeepV服务器适配器 - 精简版
+ * Otto服务器适配器 - 精简版
  * 通过统一的聊天API调用所有AI模型，服务端智能处理模型选择和格式转换
  * 支持Claude和Gemini模型的统一接口
  */
@@ -315,18 +304,6 @@ export class OttoServerAdapter implements ContentGenerator {
   public userTier?: UserTierId;
   private authHandler: (() => Promise<void>) | null = null;
   private config?: Config;
-  private gitHeaders: Record<string, string> | null = null;
-  private gitHeadersResolved = false;
-
-  /**
-   * 内部员工域名白名单
-   * 只有这些域名的用户才会在请求中附带 git 仓库信息
-   */
-  private static readonly INTERNAL_EMAIL_DOMAINS = [
-    '@cmcm.com',
-    '@orionstar.com',
-    '@aicfcf.com',
-  ];
 
   constructor(region: string, projectId: string, proxyServerUrl?: string, config?: Config) {
     // 保存 Config 引用用于模型回退
@@ -339,87 +316,14 @@ export class OttoServerAdapter implements ContentGenerator {
 
     // 初始化认证处理器 - 直接抛出UnauthorizedError触发/auth对话框
     this.authHandler = async () => {
-      console.log('🔄 [DeepV Server] Authentication required, opening auth dialog...');
+      console.log('🔄 [Otto Server] Authentication required, opening auth dialog...');
       throw new UnauthorizedError('Authentication required - please re-authenticate');
     };
 
     // 只在调试模式下显示详细日志
     if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-      console.log(`[DeepV Server] Initialized with proxy server: ${finalProxyUrl}`);
+      console.log(`[Otto Server] Initialized with proxy server: ${finalProxyUrl}`);
     }
-  }
-
-  /**
-   * 判断当前用户是否为内部员工（基于邮箱域名）
-   */
-  private isInternalUser(): boolean {
-    const userInfo = proxyAuthManager.getUserInfo();
-    const email = userInfo?.email?.toLowerCase();
-    if (!email) return false;
-    return OttoServerAdapter.INTERNAL_EMAIL_DOMAINS.some(domain => email.endsWith(domain));
-  }
-
-  /**
-   * 懒加载获取 git 仓库信息 headers。
-   * 仅对内部员工生效，结果在 session 内缓存。
-   */
-  private getGitHeaders(): Record<string, string> {
-    if (this.gitHeadersResolved) {
-      return this.gitHeaders || {};
-    }
-    this.gitHeadersResolved = true;
-
-    if (!this.isInternalUser()) {
-      this.gitHeaders = null;
-      return {};
-    }
-
-    const cwd = this.config?.getWorkingDir?.() || this.config?.getTargetDir?.() || process.cwd();
-    const headers: Record<string, string> = {};
-
-    const remotes = getGitRemotes(cwd);
-    if (remotes) {
-      // JSON格式: {"origin":"https://...","upstream":"https://..."}
-      headers['X-Git-Remotes'] = JSON.stringify(remotes);
-
-      const branch = getGitBranch(cwd);
-      if (branch) {
-        headers['X-Git-Branch'] = toSafeHeaderValue(branch);
-      }
-
-      // 协议 v1.4.2 新增
-      const commitSha = getGitCommitSha(cwd);
-      if (commitSha) {
-        headers['X-Git-Commit'] = commitSha; // sha 只含 [0-9a-f]，无需过滤
-      }
-
-      const projectPath = getGitProjectPath(cwd);
-      if (projectPath) {
-        headers['X-Git-Project-Path'] = toSafeHeaderValue(projectPath);
-      }
-    } else {
-      // 兜底：当前目录不是 git 仓库时，扫描下一级子目录中的 git 仓库
-      const subInfos = getSubdirectoryGitInfos(cwd);
-      if (subInfos.length > 0) {
-        // 收集所有子目录的 remotes，按子目录名分组
-        // 格式: { "project-a": {"origin":"https://..."}, "project-b": {"origin":"https://..."} }
-        const allRemotes: Record<string, Record<string, string>> = {};
-        const branches: Record<string, string> = {};
-        for (const info of subInfos) {
-          allRemotes[info.name] = info.remotes;
-          if (info.branch) {
-            branches[info.name] = info.branch;
-          }
-        }
-        headers['X-Git-Remotes'] = JSON.stringify(allRemotes);
-        if (Object.keys(branches).length > 0) {
-          headers['X-Git-Branch'] = JSON.stringify(branches);
-        }
-      }
-    }
-
-    this.gitHeaders = Object.keys(headers).length > 0 ? headers : null;
-    return this.gitHeaders || {};
   }
 
   /**
@@ -429,7 +333,7 @@ export class OttoServerAdapter implements ContentGenerator {
     proxyAuthManager.setUserInfo(userInfo);
     // 只在调试模式下显示详细日志
     if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-      console.log(`[DeepV Server] User info configured: ${userInfo.name}`);
+      console.log(`[Otto Server] User info configured: ${userInfo.name}`);
     }
   }
 
@@ -442,15 +346,15 @@ export class OttoServerAdapter implements ContentGenerator {
       if (userInfo) {
         // 只在调试模式下显示详细日志
         if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-          console.log(`[DeepV Server] User info found: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
+          console.log(`[Otto Server] User info found: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
         }
         return true;
       } else {
-        console.warn(`[DeepV Server] No user info found, please login first`);
+        console.warn(`[Otto Server] No user info found, please login first`);
         return false;
       }
     } catch (error) {
-      console.error(`[DeepV Server] Authentication check failed:`, error);
+      console.error(`[Otto Server] Authentication check failed:`, error);
       return false;
     }
   }
@@ -687,7 +591,7 @@ export class OttoServerAdapter implements ContentGenerator {
       const userModel = this.config?.getModel();
 
       // 🆕 如果用户使用自定义模型，辅助场景（非主对话场景）应该也使用用户的自定义模型
-      // 这样可以避免在使用自定义模型时仍然调用 DeepV API
+      // 这样可以避免在使用自定义模型时仍然调用 Otto API
       let modelToUse: string;
       if (userModel && isCustomModel(userModel)) {
         // 用户使用自定义模型时：
@@ -698,7 +602,7 @@ export class OttoServerAdapter implements ContentGenerator {
         } else {
           modelToUse = userModel;
         }
-        console.log(`[DeepV Server] User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
+        console.log(`[Otto Server] User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
       } else {
         // 模型解析优先级：request.model > sceneModel > userModel > 'auto'
         // 这样固定值场景（如 'gemini-2.5-flash'）会优先，'auto' 场景会回退到用户模型
@@ -709,7 +613,7 @@ export class OttoServerAdapter implements ContentGenerator {
       if (isCustomModel(modelToUse) && this.config) {
         const customModelConfig = this.config.getCustomModelConfig(modelToUse);
         if (customModelConfig) {
-          console.log(`[DeepV Server] Using custom model: ${customModelConfig.displayName}`);
+          console.log(`[Otto Server] Using custom model: ${customModelConfig.displayName}`);
           // 🆕 注入会话级/项目级 thinking 配置
           const thinkingOverride = this.config.getThinkingConfig();
           const resolvedConfig = {
@@ -718,7 +622,12 @@ export class OttoServerAdapter implements ContentGenerator {
           };
           return await callCustomModel(resolvedConfig, request, request.config?.abortSignal);
         } else {
-          throw new Error(`Custom model configuration not found for: ${modelToUse}`);
+          // 保留 "configuration not found" 英文关键短语，便于上层 errorParsing 识别并友好化；
+          // 同时追加可读中文与自助修复指引，避免该错误若被直接展示给用户时不可读。
+          throw new Error(
+            `Custom model configuration not found for: ${modelToUse}。` +
+              `未找到该自定义模型「${modelToUse}」的配置，请用 /model 重新选择，或运行 otto setup 重新配置。`,
+          );
         }
       }
 
@@ -727,7 +636,7 @@ export class OttoServerAdapter implements ContentGenerator {
         console.log(`[🎯 Model Resolution] Using model: ${modelToUse} for scene: ${scene}`);
       }
 
-      // 🆕 注入走 GenAI 格式 (DeepV 服务端代理) 的思考模式适配
+      // 🆕 注入走 GenAI 格式 (Otto 服务端代理) 的思考模式适配
       const resolvedConfig = applyGenAIThinkingConfig(modelToUse, request.config || {}, this.config?.getThinkingConfig());
 
       const unifiedRequest = {
@@ -747,7 +656,7 @@ export class OttoServerAdapter implements ContentGenerator {
         }
       };
 
-      logger.info(`[DeepV Server] Calling unified chat API with model: ${modelToUse}`);
+      logger.info(`[Otto Server] Calling unified chat API with model: ${modelToUse}`);
 
       // 2. 统一API调用 - 服务端处理所有模型差异
       // scene 是 SceneType 枚举，转为字符串后做合法性守卫，防止 "undefined" 流入服务端
@@ -756,10 +665,10 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 3. 日志记录工具调用
       if (response.functionCalls && response.functionCalls.length > 0 && (process.env.DEBUG || process.env.NODE_ENV === 'development')) {
-        console.log(`[DeepV Server] Model called ${response.functionCalls.length} tool(s): ${response.functionCalls.map(fc => fc.name).join(', ')}`);
+        console.log(`[Otto Server] Model called ${response.functionCalls.length} tool(s): ${response.functionCalls.map(fc => fc.name).join(', ')}`);
       }
 
-      console.log('[DeepV Server] Response received successfully', { model: modelToUse });
+      console.log('[Otto Server] Response received successfully', { model: modelToUse });
       return response;
 
     } catch (error) {
@@ -780,8 +689,8 @@ export class OttoServerAdapter implements ContentGenerator {
         // 使用标准退避配置，适合大多数场景
         // 对于大量工具调用场景，可以在调用处设置 aggressiveBackoff: true
         shouldRetry: (error: Error) => {
-          // 🚫 DeepX配额错误(402) - 不重试，立即显示友好提示
-          if (isDeepXQuotaError(error)) {
+          // 🚫 Otto配额错误(402) - 不重试，立即显示友好提示
+          if (isOttoQuotaError(error)) {
             return false;
           }
           // 🚫 用户取消 - 不重试
@@ -858,7 +767,7 @@ export class OttoServerAdapter implements ContentGenerator {
         controller.abort();
       } else {
         const handleAbort = () => {
-          console.log('[DeepV Server] Request cancelled by user');
+          console.log('[Otto Server] Request cancelled by user');
           controller.abort();
         };
         abortSignal.addEventListener('abort', handleAbort);
@@ -874,14 +783,14 @@ export class OttoServerAdapter implements ContentGenerator {
     //   - 保护完整响应体的接收和 JSON 反序列化
     //   - 总请求时间 = 连接等待 + 数据接收 + 解析，均有保护
     const fetchTimeoutId = setTimeout(() => {
-      console.warn('[DeepV Server] API fetch timeout - aborting connection layer after 300s. Try: check your network, or say "continue" to retry.');
+      console.warn('[Otto Server] API fetch timeout - aborting connection layer after 300s. Try: check your network, or say "continue" to retry.');
       controller.abort();
     }, 300000);
 
     const startTime = Date.now();
 
     try {
-      console.log('[DeepV Server] Making unified API call', {
+      console.log('[Otto Server] Making unified API call', {
         endpoint,
         url: proxyUrl,
         model: requestBody.model
@@ -913,7 +822,6 @@ export class OttoServerAdapter implements ContentGenerator {
         headers: {
           'Content-Type': 'application/json',
           ...userHeaders,
-          ...this.getGitHeaders(),
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
@@ -923,7 +831,7 @@ export class OttoServerAdapter implements ContentGenerator {
       // 响应头已收到说明连接正常，现在保护响应体接收和解析阶段
       clearTimeout(fetchTimeoutId);
       const dataTimeoutId = setTimeout(() => {
-        console.warn('[DeepV Server] API data timeout - response.json() taking too long (>300s) in data layer. Try: check your network, say "continue" to retry, or try a different model.');
+        console.warn('[Otto Server] API data timeout - response.json() taking too long (>300s) in data layer. Try: check your network, say "continue" to retry, or try a different model.');
         controller.abort();
       }, 300000);
 
@@ -933,7 +841,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 401错误特殊处理
         if (response.status === 401 && isOurAuthError(errorText)) {
-          console.error('[DeepV Server] 401 Unauthorized - triggering auth dialog');
+          console.error('[Otto Server] 401 Unauthorized - triggering auth dialog');
           if (this.authHandler) {
             await this.authHandler();
           }
@@ -942,7 +850,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 451错误特殊处理 - 立即中断
         if (response.status === 451) {
-          console.error('[DeepV Server] 451 Region Blocked - IMMEDIATE ABORT');
+          console.error('[Otto Server] 451 Region Blocked - IMMEDIATE ABORT');
           // 立即中断当前请求
           controller.abort();
           // 抛出特殊异常立即中断事件循环
@@ -968,7 +876,7 @@ export class OttoServerAdapter implements ContentGenerator {
       const responseData = await this.withTimeout(
         response.json() as Promise<GenerateContentResponse>,
         300000,
-        '[DeepV Server] API response parsing timeout after 300s - JSON.parse() or streaming took too long. Try: check your network, say "continue" to retry, or try a different model.'
+        '[Otto Server] API response parsing timeout after 300s - JSON.parse() or streaming took too long. Try: check your network, say "continue" to retry, or try a different model.'
       );
       clearTimeout(dataTimeoutId);
 
@@ -999,7 +907,7 @@ export class OttoServerAdapter implements ContentGenerator {
       }
 
       const duration = Date.now() - startTime;
-      console.log('[DeepV Server] API call completed', {
+      console.log('[Otto Server] API call completed', {
         endpoint,
         duration: `${duration}ms`,
         status: response.status
@@ -1025,19 +933,19 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 超时错误处理
       if (error instanceof Error && error.message.includes('timeout')) {
-        logger.warn('[DeepV Server] Request timeout', {
+        logger.warn('[Otto Server] Request timeout', {
           endpoint,
           duration: `${duration}ms`,
           reason: error.message
         });
       } else if (error instanceof Error && error.message.includes('abort')) {
-        logger.warn('[DeepV Server] Request aborted', {
+        logger.warn('[Otto Server] Request aborted', {
           endpoint,
           duration: `${duration}ms`,
           reason: error.message
         });
       } else {
-        logger.error('[DeepV Server] API call failed', {
+        logger.error('[Otto Server] API call failed', {
           endpoint,
           duration: `${duration}ms`,
           error: error instanceof Error ? error.message : error
@@ -1075,7 +983,7 @@ export class OttoServerAdapter implements ContentGenerator {
     if (isConnectionError) {
       console.error(`❌ 无法连接到服务器，请检查网络连接或服务器状态`);
     } else {
-      console.error('[DeepV Server] Error in generateContent:', error);
+      console.error('[Otto Server] Error in generateContent:', error);
     }
 
     // 🚨 特殊处理401错误 - 提供更友好的错误信息
@@ -1108,7 +1016,7 @@ export class OttoServerAdapter implements ContentGenerator {
       } else {
         modelToUse = userModel;
       }
-      console.log(`[DeepV Server] (Stream) User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
+      console.log(`[Otto Server] (Stream) User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
     } else {
       modelToUse = request.model || sceneModel || userModel || 'auto';
     }
@@ -1116,7 +1024,7 @@ export class OttoServerAdapter implements ContentGenerator {
     if (isCustomModel(modelToUse) && this.config) {
       const customModelConfig = this.config.getCustomModelConfig(modelToUse);
       if (customModelConfig) {
-        console.log(`[DeepV Server] Custom model detected, using streaming mode`);
+        console.log(`[Otto Server] Custom model detected, using streaming mode`);
         // 🆕 注入会话级/项目级 thinking 配置
         const thinkingOverride = this.config.getThinkingConfig();
         const resolvedConfig = {
@@ -1132,7 +1040,7 @@ export class OttoServerAdapter implements ContentGenerator {
     // Actual model selection is done by the server based on 'auto' requests
     // Uses broad pattern matching to automatically support new model versions
     //
-    // 注：早期版本曾因 cloud-mode (DEEPV_CLOUD_MODE=true) 强制走非流式以避免
+    // 注：早期版本曾因 cloud-mode (OTTO_CLOUD_MODE=true) 强制走非流式以避免
     // "消息被打断"，但该限制在远程协议加入 thoughtId 聚合 + Thought/Reasoning
     // chunk 转发后已不再需要。流式体验对 thinking mode 至关重要，恢复默认行为。
     if (supportsSSEStreaming(request.model)) {
@@ -1169,7 +1077,7 @@ export class OttoServerAdapter implements ContentGenerator {
         } else {
           modelToUse = userModel;
         }
-        console.log(`[DeepV Server] (_Stream) User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
+        console.log(`[Otto Server] (_Stream) User is using custom model, overriding scene model for ${scene}: ${modelToUse}`);
       } else {
         // 模型解析优先级：request.model > sceneModel > userModel > 'auto'
         // 这样固定值场景（如 'gemini-2.5-flash'）会优先，'auto' 场景会回退到用户模型
@@ -1181,7 +1089,7 @@ export class OttoServerAdapter implements ContentGenerator {
         console.log(`[🎯 Model Resolution (Stream)] Using model: ${modelToUse} for scene: ${scene}`);
       }
 
-      // 🆕 注入走 GenAI 格式 (DeepV 服务端代理) 的思考模式适配 (流式)
+      // 🆕 注入走 GenAI 格式 (Otto 服务端代理) 的思考模式适配 (流式)
       const resolvedConfig = applyGenAIThinkingConfig(modelToUse, request.config || {}, this.config?.getThinkingConfig());
 
       const streamRequest = {
@@ -1202,7 +1110,7 @@ export class OttoServerAdapter implements ContentGenerator {
         }
       };
 
-      logger.info(`[DeepV Server] Starting stream with model: ${modelToUse}`);
+      logger.info(`[Otto Server] Starting stream with model: ${modelToUse}`);
 
       // 调用流式API（错误处理已在callStreamAPI中统一处理）
       // scene 是 SceneType 枚举，转为字符串后做合法性守卫，防止 "undefined" 流入服务端
@@ -1213,7 +1121,7 @@ export class OttoServerAdapter implements ContentGenerator {
       return this.createStreamGenerator(response, request.config?.abortSignal);
 
     } catch (error) {
-      logger.error('[DeepV Server] Stream request failed', { error });
+      logger.error('[Otto Server] Stream request failed', { error });
       return this.handleStreamError(error);
     }
   }
@@ -1229,8 +1137,8 @@ export class OttoServerAdapter implements ContentGenerator {
       () => this.executeStreamAPICall(endpoint, requestBody, abortSignal, sceneType),
       {
         shouldRetry: (error: Error) => {
-          // 🚫 DeepX配额错误(402) - 不重试，立即显示友好提示
-          if (isDeepXQuotaError(error)) {
+          // 🚫 Otto配额错误(402) - 不重试，立即显示友好提示
+          if (isOttoQuotaError(error)) {
             return false;
           }
           // 🚫 用户取消 - 不重试
@@ -1300,7 +1208,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
     // 🔍 调试：打印代理相关信息（流式调用）- 仅在调试模式下显示
     if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-      console.log('🔍 [DeepV Debug Stream] Proxy environment variables:');
+      console.log('🔍 [Otto Debug Stream] Proxy environment variables:');
       console.log('  HTTP_PROXY:', process.env.HTTP_PROXY);
       console.log('  HTTPS_PROXY:', process.env.HTTPS_PROXY);
       console.log('  http_proxy:', process.env.http_proxy);
@@ -1309,7 +1217,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 🔍 检查 undici 全局调度器（流式）
       const globalDispatcher = getGlobalDispatcher();
-      console.log('🔍 [DeepV Debug Stream] Global dispatcher:', globalDispatcher?.constructor?.name || 'undefined');
+      console.log('🔍 [Otto Debug Stream] Global dispatcher:', globalDispatcher?.constructor?.name || 'undefined');
       if (globalDispatcher && 'uri' in globalDispatcher) {
         console.log('  Dispatcher URI:', (globalDispatcher as any).uri);
       }
@@ -1325,7 +1233,7 @@ export class OttoServerAdapter implements ContentGenerator {
       } else {
         const handleAbort = () => {
           if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-            console.log('[DeepV Server] Stream request cancelled by user');
+            console.log('[Otto Server] Stream request cancelled by user');
           }
           controller.abort();
         };
@@ -1344,7 +1252,7 @@ export class OttoServerAdapter implements ContentGenerator {
     const startTime = Date.now();
 
     try {
-      console.log('[DeepV Server] Making stream API call', {
+      console.log('[Otto Server] Making stream API call', {
         endpoint,
         url: proxyUrl,
         model: requestBody.model
@@ -1365,7 +1273,7 @@ export class OttoServerAdapter implements ContentGenerator {
       }
 
       // 落盘出站请求体（异步，不阻塞 fetch）。
-      // 用户报告问题时让他们把 ~/.deepv/last-requests/ 给我们做字节级对账。
+      // 用户报告问题时让他们把 ~/.otto/last-requests/ 给我们做字节级对账。
       dumpOutboundRequest('stream', requestBody);
 
       const response = await fetch(proxyUrl, {
@@ -1374,7 +1282,6 @@ export class OttoServerAdapter implements ContentGenerator {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
           ...userHeaders,
-          ...this.getGitHeaders(),
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
@@ -1385,7 +1292,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 401错误特殊处理 - 与非流式API保持一致
         if (response.status === 401 && isOurAuthError(errorText)) {
-          console.error('[DeepV Server] Stream 401 Unauthorized - triggering auth dialog');
+          console.error('[Otto Server] Stream 401 Unauthorized - triggering auth dialog');
           if (this.authHandler) {
             await this.authHandler();
           }
@@ -1394,7 +1301,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 451错误特殊处理 - 立即中断
         if (response.status === 451) {
-          console.error('[DeepV Server] Stream 451 Region Blocked - IMMEDIATE ABORT');
+          console.error('[Otto Server] Stream 451 Region Blocked - IMMEDIATE ABORT');
           // 立即中断当前请求
           controller.abort();
           // 抛出特殊异常立即中断事件循环
@@ -1408,7 +1315,7 @@ export class OttoServerAdapter implements ContentGenerator {
       }
 
       const duration = Date.now() - startTime;
-      console.log('[DeepV Server] Stream API call initiated', {
+      console.log('[Otto Server] Stream API call initiated', {
         endpoint,
         duration: `${duration}ms`,
         status: response.status
@@ -1433,13 +1340,13 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 超时错误处理
       if (error instanceof Error && error.message.includes('abort')) {
-        logger.warn('[DeepV Server] Stream API aborted', {
+        logger.warn('[Otto Server] Stream API aborted', {
           endpoint,
           duration: `${duration}ms`,
           reason: error.message
         });
       } else {
-        logger.error('[DeepV Server] Stream API call failed', {
+        logger.error('[Otto Server] Stream API call failed', {
           endpoint,
           duration: `${duration}ms`,
           error: error instanceof Error ? error.message : error
@@ -1494,7 +1401,7 @@ export class OttoServerAdapter implements ContentGenerator {
     // 🎯 关键保护机制：监听客户端取消信号
     // 当用户中断时，立即释放流读取器并停止消费数据
     const handleAbort = () => {
-      console.log('[DeepV Server] Stream cancelled by user - releasing reader and stopping consumption');
+      console.log('[Otto Server] Stream cancelled by user - releasing reader and stopping consumption');
       try {
         reader.cancel();  // 立即取消流读取
       } catch (e) {
@@ -1513,11 +1420,11 @@ export class OttoServerAdapter implements ContentGenerator {
       while (true) {
         // 检查是否被用户中止（二次检查 + 快速退出）
         if (abortSignal?.aborted) {
-          console.log('[DeepV Server] Stream generation cancelled by user - exiting loop');
+          console.log('[Otto Server] Stream generation cancelled by user - exiting loop');
 
           // 📊 记录部分消费的tokens（如果有）
           if (lastUsageMetadata) {
-            console.log('[DeepV Server] Partial token consumption recorded:', {
+            console.log('[Otto Server] Partial token consumption recorded:', {
               inputTokens: lastUsageMetadata.promptTokenCount || 0,
               outputTokens: lastUsageMetadata.candidatesTokenCount || 0,
               totalTokens: lastUsageMetadata.totalTokenCount || 0,
@@ -1536,13 +1443,13 @@ export class OttoServerAdapter implements ContentGenerator {
           readResult = await this.withTimeout(
             reader.read(),
             300000,
-            '[DeepV Server] Stream read timeout after 300s (no data received in this chunk)'
+            '[Otto Server] Stream read timeout after 300s (no data received in this chunk)'
           );
         } catch (readError) {
           // 如果是 AbortError（由 reader.cancel() 引发），则优雅退出
           if (readError instanceof Error &&
               (readError.name === 'AbortError' || readError.message.includes('cancelled'))) {
-            console.log('[DeepV Server] Stream read cancelled - exiting');
+            console.log('[Otto Server] Stream read cancelled - exiting');
             break;
           }
 
@@ -1574,7 +1481,7 @@ export class OttoServerAdapter implements ContentGenerator {
               (streamInterruptError as any).isStreamInterrupt = true;
               (streamInterruptError as any).isRetryable = true;
               (streamInterruptError as any).bytesReceived = totalBytesRead;
-              console.warn(`⚠️  [DeepV Server] Stream connection interrupted after ${totalBytesRead} bytes. Cause: ${readError.message}`);
+              console.warn(`⚠️  [Otto Server] Stream connection interrupted after ${totalBytesRead} bytes. Cause: ${readError.message}`);
               throw streamInterruptError;
             }
           }
@@ -1790,7 +1697,7 @@ export class OttoServerAdapter implements ContentGenerator {
       for (const part of response.candidates[0].content.parts) {
         if (part.functionCall && !part.functionCall.id) {
           const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          console.log(`[DeepV Server] 补全缺失的工具 ID (Chunk): ${part.functionCall.name} -> ${generatedId}`);
+          console.log(`[Otto Server] 补全缺失的工具 ID (Chunk): ${part.functionCall.name} -> ${generatedId}`);
           part.functionCall.id = generatedId;
         }
       }
@@ -1852,7 +1759,7 @@ export class OttoServerAdapter implements ContentGenerator {
           }
         } catch (e) {
           console.warn(
-            `[DeepV Server] Failed to parse accumulated functionCall.args as JSON for tool "${fc.name}". Keeping raw string for downstream error reporting. Raw: ${trimmed.substring(0, 200)}`,
+            `[Otto Server] Failed to parse accumulated functionCall.args as JSON for tool "${fc.name}". Keeping raw string for downstream error reporting. Raw: ${trimmed.substring(0, 200)}`,
           );
         }
       } else if (fc.args === undefined || fc.args === null) {
@@ -1911,7 +1818,7 @@ export class OttoServerAdapter implements ContentGenerator {
       for (const p of firstParts) {
         if (p.functionCall && !p.functionCall.id) {
           const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          console.log(`[DeepV Server] 补全缺失的工具 ID (Merge init): ${p.functionCall.name} -> ${generatedId}`);
+          console.log(`[Otto Server] 补全缺失的工具 ID (Merge init): ${p.functionCall.name} -> ${generatedId}`);
           p.functionCall.id = generatedId;
         }
       }
@@ -1973,7 +1880,7 @@ export class OttoServerAdapter implements ContentGenerator {
             const partToPush: any = { ...newPart, functionCall: { ...newFc } };
             if (!partToPush.functionCall.id) {
               const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-              console.log(`[DeepV Server] 补全缺失的工具 ID (Merge parallel): ${partToPush.functionCall.name} -> ${generatedId}`);
+              console.log(`[Otto Server] 补全缺失的工具 ID (Merge parallel): ${partToPush.functionCall.name} -> ${generatedId}`);
               partToPush.functionCall.id = generatedId;
             }
             accumulatedParts.push(partToPush);
@@ -1983,7 +1890,7 @@ export class OttoServerAdapter implements ContentGenerator {
           const partToPush: any = { ...newPart, functionCall: { ...newPart.functionCall } };
           if (!partToPush.functionCall.id) {
             const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            console.log(`[DeepV Server] 补全缺失的工具 ID (Merge): ${partToPush.functionCall.name} -> ${generatedId}`);
+            console.log(`[Otto Server] 补全缺失的工具 ID (Merge): ${partToPush.functionCall.name} -> ${generatedId}`);
             partToPush.functionCall.id = generatedId;
           }
           accumulatedParts.push(partToPush);
@@ -2066,7 +1973,7 @@ export class OttoServerAdapter implements ContentGenerator {
       // 这样可以清楚地看到自定义模型不支持 token 计数
       const modelToUse = request.model || this.config?.getModel() || 'auto';
       if (isCustomModel(modelToUse)) {
-        console.log('[DeepV Server] Custom model detected, token counting not supported');
+        console.log('[Otto Server] Custom model detected, token counting not supported');
         return { totalTokens: 0 };
       }
 
@@ -2108,9 +2015,9 @@ export class OttoServerAdapter implements ContentGenerator {
       // 对于自定义模型，token count 失败是预期行为，使用 debug 级别
       const modelToUse = request.model || this.config?.getModel() || 'auto';
       if (isCustomModel(modelToUse)) {
-        console.log('[DeepV Server] Token count not available for custom model, using fallback');
+        console.log('[Otto Server] Token count not available for custom model, using fallback');
       } else {
-        logger.error('[DeepV Server] Token count failed:', error);
+        logger.error('[Otto Server] Token count failed:', error);
       }
 
       // 回退到估算方法
@@ -2141,7 +2048,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 401错误特殊处理
         if (response.status === 401 && isOurAuthError(errorText)) {
-          console.error('[DeepV Server] Token count 401 Unauthorized');
+          console.error('[Otto Server] Token count 401 Unauthorized');
           if (this.authHandler) {
             await this.authHandler();
           }
@@ -2153,7 +2060,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
       const responseData = await response.json();
 
-      console.log('[DeepV Server] Token count response', {
+      console.log('[Otto Server] Token count response', {
         totalTokens: responseData.totalTokens
       });
 
@@ -2162,7 +2069,7 @@ export class OttoServerAdapter implements ContentGenerator {
       };
 
     } catch (error) {
-      logger.error('[DeepV Server] Token count API call failed:', error);
+      logger.error('[Otto Server] Token count API call failed:', error);
       throw error;
     }
   }
@@ -2225,7 +2132,7 @@ export class OttoServerAdapter implements ContentGenerator {
         totalTokens: estimatedTokens,
       };
     } catch (error) {
-      console.error('[DeepV Server] Fallback estimation error:', error);
+      console.error('[Otto Server] Fallback estimation error:', error);
       return {
         totalTokens: 1000, // Default fallback
       };

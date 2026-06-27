@@ -16,8 +16,8 @@ function makeContext(): {
 } {
   const config = {
     getUserMemory: () => '',
-    getGeminiMdFileCount: () => 0,
-    getGeminiMdFilePaths: () => [],
+    getOttoMdFileCount: () => 0,
+    getOttoMdFilePaths: () => [],
     getTargetDir: () => process.cwd(),
     getModel: () => 'auto',
   } as unknown as Config;
@@ -45,7 +45,7 @@ describe('CommandHandler', () => {
     );
     // `/restore` is intentionally not advertised to ACP clients while the
     // checkpoint flow is still a core-side stub. The user-facing rewind
-    // gesture goes through the `_dvcode/session/rewind` extension RPC.
+    // gesture goes through the `_otto/session/rewind` extension RPC.
     expect(names).not.toContain('restore');
   });
 

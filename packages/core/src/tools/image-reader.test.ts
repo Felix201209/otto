@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,7 +53,7 @@ describe('ImageReaderTool', () => {
       getFileService: () => new FileDiscoveryService(tempRootDir),
       getTargetDir: () => tempRootDir,
       getUsageStatisticsEnabled: () => false,
-      getGeminiClient: () => ({
+      getOttoClient: () => ({
         createTemporaryChat: createTemporaryChatMock,
       }),
     } as unknown as Config;

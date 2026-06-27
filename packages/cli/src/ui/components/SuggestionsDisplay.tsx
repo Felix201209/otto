@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
 import { Colors } from '../colors.js';
 import { getHighlightSegments } from '../utils/fuzzyMatch.js';
 import { t } from '../utils/i18n.js';
@@ -50,11 +50,8 @@ export function SuggestionsDisplay({
 
   // 🎯 提取搜索关键词用于高亮
   let searchQuery = '';
-  let isCommandMode = false;
-
   if (userInput.startsWith('/')) {
     // 斜杠命令模式：提取斜杠后的内容
-    isCommandMode = true;
     const slashIndex = userInput.lastIndexOf('/');
     const commandPart = userInput.substring(slashIndex + 1);
     const spaceIndex = commandPart.indexOf(' ');

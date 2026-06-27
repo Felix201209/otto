@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +9,7 @@ import * as http from 'http';
 import { URL } from 'url';
 import * as crypto from 'crypto';
 
-import { createDeepvlabAuthHandler } from './deepvlabAuth.js';
+import { createOttoAuthHandler } from './ottoAuth.js';
 import { getFeishuConfigFromServer, getFeishuTenantsFromServer } from '../../config/serverConfig.js';
 import { ProxyAuthManager } from '../../core/proxyAuth.js';
 import { AuthTemplates } from './templates/index.js';
@@ -91,10 +90,8 @@ export class AuthServer {
               await this.handleStartFeishuAuth(res);
             }
           });
-        } else if (reqUrl.pathname === '/start-deepvlab-auth' && req.method === 'POST') {
-          await this.handleStartDeepvlabAuth(res);
-        } else if (reqUrl.pathname === '/start-cheetah-auth' && req.method === 'POST') {
-          await this.handleStartCheetahAuth(req, res);
+        } else if (reqUrl.pathname === '/start-otto-auth' && req.method === 'POST') {
+          await this.handleStartOttoAuth(res);
         } else if (reqUrl.pathname === '/start-vipcard-auth' && req.method === 'POST') {
           await this.handleStartVipCardAuth(req, res);
         } else if (reqUrl.pathname === '/api/backend/feishu-allowed' && req.method === 'GET') {
@@ -143,10 +140,8 @@ export class AuthServer {
                   await this.handleStartFeishuAuth(res);
                 }
               });
-            } else if (reqUrl.pathname === '/start-deepvlab-auth' && req.method === 'POST') {
-              await this.handleStartDeepvlabAuth(res);
-            } else if (reqUrl.pathname === '/start-cheetah-auth' && req.method === 'POST') {
-              await this.handleStartCheetahAuth(req, res);
+            } else if (reqUrl.pathname === '/start-otto-auth' && req.method === 'POST') {
+              await this.handleStartOttoAuth(res);
             } else if (reqUrl.pathname === '/start-vipcard-auth' && req.method === 'POST') {
               await this.handleStartVipCardAuth(req, res);
             } else if (reqUrl.pathname === '/api/backend/feishu-allowed' && req.method === 'GET') {
@@ -279,7 +274,11 @@ export class AuthServer {
       console.log('🔍 [Auth Server] 处理飞书允许检查请求');
 
       // 调用后台接口检查是否允许飞书登录
-      const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+      // BYO-key: 未配置 OTTO_SERVER_URL 时无后端，抛错由本方法既有 catch 处理，不 fetch 空 URL。
+      const proxyServerUrl = process.env.OTTO_SERVER_URL || '';
+      if (!proxyServerUrl) {
+        throw new Error('未配置 OTTO_SERVER_URL，飞书登录不可用');
+      }
       const apiUrl = `${proxyServerUrl}/api/client/feishu-allowed`;
 
       console.log('🔍 [Auth Server] 调用后台接口:', apiUrl);
@@ -455,14 +454,14 @@ export class AuthServer {
   }
 
   /**
-   * 处理启动DeepVlab认证请求
+   * 处理启动Otto认证请求
    */
-  private async handleStartDeepvlabAuth(res: http.ServerResponse): Promise<void> {
+  private async handleStartOttoAuth(res: http.ServerResponse): Promise<void> {
     try {
-      console.log('🚀 [Auth Server] 启动DeepVlab认证流程');
+      console.log('🚀 [Auth Server] 启动Otto认证流程');
 
-      const deepvlabHandler = createDeepvlabAuthHandler(this.actualCallbackPort);
-      const authUrl = deepvlabHandler.buildAuthUrl();
+      const ottoHandler = createOttoAuthHandler(this.actualCallbackPort);
+      const authUrl = ottoHandler.buildAuthUrl();
 
       const response = {
         success: true,
@@ -476,193 +475,10 @@ export class AuthServer {
       res.end(JSON.stringify(response));
 
     } catch (error) {
-      console.error('❌ [Auth Server] DeepVlab认证启动失败:', error);
+      console.error('❌ [Auth Server] Otto认证启动失败:', error);
       const response = {
         success: false,
-        error: error instanceof Error ? error.message : 'DeepVlab认证启动失败'
-      };
-
-      res.writeHead(500, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      });
-      res.end(JSON.stringify(response));
-    }
-  }
-
-  /**
-   * 处理启动猎豹OA认证请求
-   */
-  private async handleStartCheetahAuth(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    try {
-      console.log('🚀 [Auth Server] 启动猎豹OA认证流程');
-
-      // 读取请求体
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk.toString();
-      });
-
-      req.on('end', async () => {
-        try {
-          const { email, password } = JSON.parse(body);
-
-          if (!email || !password) {
-            const response = {
-              success: false,
-              message: '邮箱和密码不能为空'
-            };
-
-            res.writeHead(400, {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            });
-            res.end(JSON.stringify(response));
-            return;
-          }
-
-          console.log('🔄 [Auth Server] 验证猎豹OA凭据:', email);
-
-          // 调用后端接口验证猎豹OA
-          const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
-
-          let jwtResponse;
-          try {
-            jwtResponse = await fetch(`${proxyServerUrl}/auth/jwt/cheetah-login`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': getUserAgent()
-              },
-              body: JSON.stringify({
-                email: email,
-                password: password,
-                clientInfo: {
-                  platform: process.platform,
-                  version: process.version,
-                  timestamp: Date.now(),
-                  userAgent: getUserAgent()
-                }
-              })
-            });
-          } catch (fetchError: any) {
-            console.error('❌ [Auth Server] 网络请求失败:', fetchError.message);
-
-            const response = {
-              success: false,
-              message: this.formatNetworkError(fetchError, 'Connecting to authentication server')
-            };
-
-            res.writeHead(200, {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            });
-            res.end(JSON.stringify(response));
-            return;
-          }
-
-          if (!jwtResponse.ok) {
-            const errorText = await jwtResponse.text();
-            console.error('❌ [Auth Server] 猎豹OA验证失败:', jwtResponse.status, errorText);
-
-            const response = {
-              success: false,
-              message: 'Login failed. Please check your credentials.'
-            };
-
-            res.writeHead(200, {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            });
-            res.end(JSON.stringify(response));
-            return;
-          }
-
-          let jwtData;
-          try {
-            jwtData = await jwtResponse.json();
-          } catch (jsonError: any) {
-            console.error('❌ [Auth Server] 响应解析失败:', jsonError.message);
-
-            const response = {
-              success: false,
-              message: 'Server returned an invalid response format. Please try again later.'
-            };
-
-            res.writeHead(200, {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            });
-            res.end(JSON.stringify(response));
-            return;
-          }
-
-          console.log('✅ [Auth Server] 猎豹OA验证成功');
-
-          // 保存JWT令牌和用户信息到~/.deepv/目录
-          const proxyAuthManager = ProxyAuthManager.getInstance();
-
-          // 保存JWT token
-          if (jwtData.accessToken) {
-            proxyAuthManager.setJwtTokenData({
-              accessToken: jwtData.accessToken,
-              refreshToken: jwtData.refreshToken,
-              expiresIn: jwtData.expiresIn || 900
-            });
-            console.log('✅ [Auth Server] JWT访问令牌和刷新令牌已保存到~/.deepv/');
-          }
-
-          // 保存用户信息
-          if (jwtData.user) {
-            const userInfo = {
-              openId: jwtData.user.openId || jwtData.user.userId,
-              userId: jwtData.user.userId,
-              name: jwtData.user.name,
-              enName: jwtData.user.name,
-              email: jwtData.user.email,
-              avatar: jwtData.user.avatar
-            };
-            proxyAuthManager.setUserInfo(userInfo);
-            console.log(`✅ [Auth Server] 用户信息已保存到~/.deepv/: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
-          }
-
-          // 返回成功响应
-          const response = {
-            success: true,
-            message: '登录成功'
-          };
-
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify(response));
-
-          // 延迟恢复终端状态，确保响应已发送
-          setTimeout(() => {
-            this.restoreVSCodeTerminalState();
-          }, 100);
-
-        } catch (parseError) {
-          console.error('❌ [Auth Server] 解析请求体失败:', parseError);
-          const response = {
-            success: false,
-            message: '请求格式错误'
-          };
-
-          res.writeHead(400, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify(response));
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ [Auth Server] 猎豹OA认证启动失败:', error);
-      const response = {
-        success: false,
-        message: error instanceof Error ? error.message : '猎豹OA认证启动失败'
+        error: error instanceof Error ? error.message : 'Otto认证启动失败'
       };
 
       res.writeHead(500, {
@@ -708,7 +524,11 @@ export class AuthServer {
           const trimmedCode = code.trim().toUpperCase();
           console.log('🔄 [Auth Server] VIP卡兑换码:', trimmedCode);
 
-          const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+          // BYO-key: 未配置 OTTO_SERVER_URL 时无后端，抛错由既有 catch 处理，不 fetch 空 URL。
+          const proxyServerUrl = process.env.OTTO_SERVER_URL || '';
+          if (!proxyServerUrl) {
+            throw new Error('未配置 OTTO_SERVER_URL，VIP卡兑换不可用');
+          }
 
           // 智能处理：先尝试登录
           console.log('🔄 [Auth Server] 尝试VIP卡登录...');
@@ -872,7 +692,7 @@ export class AuthServer {
    * @param code 兑换码，用于构造用户信息的fallback
    */
   private async handleVipCardSuccess(res: http.ServerResponse, loginData: any, code: string): Promise<void> {
-    // 保存JWT令牌和用户信息到~/.deepv/目录
+    // 保存JWT令牌和用户信息到~/.otto/目录
     const proxyAuthManager = ProxyAuthManager.getInstance();
 
     // 保存JWT token
@@ -882,7 +702,7 @@ export class AuthServer {
         refreshToken: loginData.refreshToken,
         expiresIn: loginData.expiresIn || 604800 // VIP卡默认7天
       });
-      console.log('✅ [Auth Server] VIP卡JWT访问令牌和刷新令牌已保存到~/.deepv/');
+      console.log('✅ [Auth Server] VIP卡JWT访问令牌和刷新令牌已保存到~/.otto/');
     }
 
     // 保存用户信息（使用code作为显示名称的fallback）
@@ -895,7 +715,7 @@ export class AuthServer {
       avatar: loginData.user?.avatar || ''
     };
     proxyAuthManager.setUserInfo(userInfo);
-    console.log(`✅ [Auth Server] VIP卡用户信息已保存到~/.deepv/: ${userInfo.name} (${userInfo.email || code})`)
+    console.log(`✅ [Auth Server] VIP卡用户信息已保存到~/.otto/: ${userInfo.name} (${userInfo.email || code})`)
 
     // 返回成功响应
     const response = {
@@ -930,9 +750,9 @@ export class AuthServer {
     console.log('🔄 [Auth Server] 回调URL:', url.toString());
     console.log('🔄 [Auth Server] 平台参数:', plat);
 
-    if (plat === 'deepvlab') {
-      // DeepVlab认证回调处理
-      await this.handleDeepvlabCallback(url, res);
+    if (plat === 'otto') {
+      // Otto认证回调处理
+      await this.handleOttoCallback(url, res);
     } else {
       // 飞书认证回调处理（默认）
       console.log('🔄 [Auth Server] 处理飞书认证回调');
@@ -1001,23 +821,23 @@ export class AuthServer {
   }
 
   /**
-   * 处理DeepVlab认证回调
+   * 处理Otto认证回调
    */
-  private async handleDeepvlabCallback(url: URL, res: http.ServerResponse): Promise<void> {
+  private async handleOttoCallback(url: URL, res: http.ServerResponse): Promise<void> {
     try {
-      console.log('🔄 [Auth Server] 处理DeepVlab认证回调');
-      const deepvlabHandler = createDeepvlabAuthHandler(this.actualCallbackPort);
-      const result = deepvlabHandler.handleCallback(url);
+      console.log('🔄 [Auth Server] 处理Otto认证回调');
+      const ottoHandler = createOttoAuthHandler(this.actualCallbackPort);
+      const result = ottoHandler.handleCallback(url);
 
       if (!result.success) {
-        console.error('❌ [Auth Server] DeepVlab认证失败:', result.error);
-        this.sendErrorResponse(res, result.error || 'DeepVlab authentication failed');
+        console.error('❌ [Auth Server] Otto认证失败:', result.error);
+        this.sendErrorResponse(res, result.error || 'Otto authentication failed');
         return;
       }
 
       if (!result.token || !result.user_id) {
-        console.error('❌ [Auth Server] DeepVlab认证回调缺少必要参数');
-        this.sendErrorResponse(res, 'Missing token or user_id in DeepVlab authentication callback');
+        console.error('❌ [Auth Server] Otto认证回调缺少必要参数');
+        this.sendErrorResponse(res, 'Missing token or user_id in Otto authentication callback');
         return;
       }
 
@@ -1034,19 +854,23 @@ export class AuthServer {
       console.log('✅ [Auth Server] JWT格式验证通过，开始交换JWT令牌');
 
       // 调用后端接口交换JWT令牌
-      const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
-      console.log ('deepvlab交换JWT，proxyServerUrl:', `${proxyServerUrl}/auth/jwt/deepvlab-login`);
+      // BYO-key: 未配置 OTTO_SERVER_URL 时无后端，抛错由既有 catch 处理，不 fetch 空 URL。
+      const proxyServerUrl = process.env.OTTO_SERVER_URL || '';
+      if (!proxyServerUrl) {
+        throw new Error('未配置 OTTO_SERVER_URL，登录令牌交换不可用');
+      }
+      console.log ('Otto交换JWT，proxyServerUrl:', `${proxyServerUrl}/auth/jwt/otto-login`);
 
       let jwtResponse;
       try {
-        jwtResponse = await fetch(`${proxyServerUrl}/auth/jwt/deepvlab-login`, {
+        jwtResponse = await fetch(`${proxyServerUrl}/auth/jwt/otto-login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'User-Agent': getUserAgent()
           },
           body: JSON.stringify({
-            plat: 'deepvlab',
+            plat: 'otto',
             token: result.token,
             user_id: result.user_id,
             clientInfo: {
@@ -1087,7 +911,7 @@ export class AuthServer {
         expiresIn: jwtData.expiresIn,
       });
 
-      // 保存JWT令牌和用户信息到~/.deepv/目录
+      // 保存JWT令牌和用户信息到~/.otto/目录
       const proxyAuthManager = ProxyAuthManager.getInstance();
 
       // 保存JWT token
@@ -1097,7 +921,7 @@ export class AuthServer {
           refreshToken: jwtData.refreshToken,
           expiresIn: jwtData.expiresIn || 900
         });
-        console.log('✅ [Auth Server] JWT访问令牌和刷新令牌已保存到~/.deepv/');
+        console.log('✅ [Auth Server] JWT访问令牌和刷新令牌已保存到~/.otto/');
       }
 
       // 保存用户信息
@@ -1111,15 +935,15 @@ export class AuthServer {
           avatar: jwtData.user.avatar
         };
         proxyAuthManager.setUserInfo(userInfo);
-        console.log(`✅ [Auth Server] 用户信息已保存到~/.deepv/: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
+        console.log(`✅ [Auth Server] 用户信息已保存到~/.otto/: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
       }
 
       // 显示成功页面
-      this.sendDeepvlabSuccessResponse(res);
+      this.sendOttoSuccessResponse(res);
 
     } catch (error) {
-      console.error('❌ [Auth Server] DeepVlab认证处理失败:', error);
-      const errorMsg = error instanceof Error ? error.message : 'DeepVlab认证处理失败';
+      console.error('❌ [Auth Server] Otto认证处理失败:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Otto认证处理失败';
       this.sendErrorResponse(res, errorMsg);
     }
   }
@@ -1154,7 +978,11 @@ export class AuthServer {
       const stateAppId = state && state.includes('_') ? state.split('_').slice(1).join('_') : undefined;
 
       // 调用服务端的飞书token交换接口（与官网相同的流程）
-      const proxyServerUrl = process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+      // BYO-key: 未配置 OTTO_SERVER_URL 时无后端，抛错由既有 catch 处理，不 fetch 空 URL。
+      const proxyServerUrl = process.env.OTTO_SERVER_URL || '';
+      if (!proxyServerUrl) {
+        throw new Error('未配置 OTTO_SERVER_URL，飞书token交换不可用');
+      }
       console.log('飞书token交换，proxyServerUrl:', `${proxyServerUrl}/api/auth/feishu/exchange`);
 
       let exchangeResponse;
@@ -1247,7 +1075,7 @@ export class AuthServer {
         expiresIn: jwtData.expiresIn,
       });
 
-      // 保存JWT令牌和用户信息到~/.deepv/目录
+      // 保存JWT令牌和用户信息到~/.otto/目录
       const proxyAuthManager = ProxyAuthManager.getInstance();
 
       // 保存JWT token
@@ -1257,7 +1085,7 @@ export class AuthServer {
           refreshToken: jwtData.refreshToken,
           expiresIn: jwtData.expiresIn || 900
         });
-        console.log('✅ [Auth Server] JWT访问令牌和刷新令牌已保存到~/.deepv/');
+        console.log('✅ [Auth Server] JWT访问令牌和刷新令牌已保存到~/.otto/');
       }
 
       // 保存用户信息（与其他登录方式保持一致的字段映射）
@@ -1271,7 +1099,7 @@ export class AuthServer {
           avatar: jwtData.user.avatar
         };
         proxyAuthManager.setUserInfo(userInfo);
-        console.log(`✅ [Auth Server] 用户信息已保存到~/.deepv/: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
+        console.log(`✅ [Auth Server] 用户信息已保存到~/.otto/: ${userInfo.name} (${userInfo.email || userInfo.openId || 'N/A'})`);
       }
 
       // 显示成功页面
@@ -1287,10 +1115,10 @@ export class AuthServer {
 
 
   /**
-   * 发送DeepVlab认证成功响应
+   * 发送Otto认证成功响应
    */
-  private sendDeepvlabSuccessResponse(res: http.ServerResponse): void {
-    const html = AuthTemplates.getDeepvlabSuccessPage();
+  private sendOttoSuccessResponse(res: http.ServerResponse): void {
+    const html = AuthTemplates.getOttoSuccessPage();
 
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
@@ -1368,7 +1196,7 @@ export class AuthServer {
 
     // TypeError: Only HTTP(S) protocols are supported
     if (error instanceof TypeError && error.message.includes('Only HTTP(S)')) {
-      return '服务器地址配置错误，请检查环境变量 DEEPX_SERVER_URL';
+      return '服务器地址配置错误，请检查环境变量 OTTO_SERVER_URL';
     }
 
     // FetchError with error codes

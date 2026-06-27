@@ -9,7 +9,7 @@ import os from 'os';
 import * as crypto from 'crypto';
 import fs from 'node:fs';
 
-export const GEMINI_DIR = '.otto-user';
+export const OTTO_DIR = '.otto-user';
 export const PROJECT_DIR_PREFIX = '.otto';
 
 export const GOOGLE_ACCOUNTS_FILENAME = 'google_accounts.json';
@@ -169,7 +169,7 @@ export function getProjectHash(projectRoot: string): string {
  */
 export function getProjectTempDir(projectRoot: string): string {
   const hash = getProjectHash(projectRoot);
-  return path.join(os.homedir(), GEMINI_DIR, TMP_DIR_NAME, hash);
+  return path.join(os.homedir(), OTTO_DIR, TMP_DIR_NAME, hash);
 }
 
 /**
@@ -177,7 +177,7 @@ export function getProjectTempDir(projectRoot: string): string {
  * @returns The path to the user's commands directory.
  */
 export function getUserCommandsDir(): string {
-  return path.join(os.homedir(), GEMINI_DIR, COMMANDS_DIR_NAME);
+  return path.join(os.homedir(), OTTO_DIR, COMMANDS_DIR_NAME);
 }
 
 /**
@@ -275,7 +275,7 @@ function copyFolderRecursiveSync(source: string, target: string) {
  *
  * A plain `fs.rmSync(dir, { recursive: true })` aborts the entire deletion the
  * moment it hits a single locked file. On Windows, files inside the legacy
- * `.deepv` dir (logs, jwt-token, installation_id, etc.) may still be held open
+ * `.otto` dir (logs, jwt-token, installation_id, etc.) may still be held open
  * by other early-loaded modules, causing EBUSY/EPERM and leaving the whole
  * legacy folder behind. To make a best-effort cleanup, we delete entries one by
  * one — skipping any individually locked file — and finally try to remove the
@@ -378,22 +378,22 @@ interface LegacyMigrationUnit {
 function getLegacyMigrationUnits(projectRoot: string): LegacyMigrationUnit[] {
   const globalBaseDir = process.platform === 'win32' ? 'C:\\ProgramData' : '/etc';
   return [
-    // 1. Current workspace directory configuration: .deepvcode -> .otto
+    // 1. Current workspace directory configuration: .otto -> .otto
     {
       type: 'project',
-      legacyDir: path.join(projectRoot, '.deepvcode'),
+      legacyDir: path.join(projectRoot, '.otto'),
       newDir: path.join(projectRoot, '.otto'),
     },
-    // 2. User home directory configuration: ~/.deepv -> ~/.otto-user
+    // 2. User home directory configuration: ~/.otto -> ~/.otto-user
     {
       type: 'user',
-      legacyDir: path.join(os.homedir(), '.deepv'),
+      legacyDir: path.join(os.homedir(), '.otto'),
       newDir: path.join(os.homedir(), '.otto-user'),
     },
-    // 3. System global public directory configuration: [GlobalBase]/.deepv -> [GlobalBase]/.otto-global
+    // 3. System global public directory configuration: [GlobalBase]/.otto -> [GlobalBase]/.otto-global
     {
       type: 'global',
-      legacyDir: path.join(globalBaseDir, '.deepv'),
+      legacyDir: path.join(globalBaseDir, '.otto'),
       newDir: path.join(globalBaseDir, '.otto-global'),
     },
   ];

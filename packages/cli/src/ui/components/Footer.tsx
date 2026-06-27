@@ -4,16 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { Box, Text } from 'ink';
-import { Colors } from '../colors.js';
-import { shortenPath, tildeifyPath, IDEConnectionStatus, Config } from 'otto-core';
-import { ConsoleSummaryDisplay } from './ConsoleSummaryDisplay.js';
-import process from 'node:process';
+import { Box,Text } from 'ink';
 import Gradient from 'ink-gradient';
-import { MemoryUsageDisplay } from './MemoryUsageDisplay.js';
+import process from 'node:process';
+import { Config,IDEConnectionStatus,shortenPath,tildeifyPath } from 'otto-core';
+import React from 'react';
+import { Colors } from '../colors.js';
+import { getFooterDisplayConfig,getShortVersion } from '../utils/footerUtils.js';
 import { t } from '../utils/i18n.js';
-import { getFooterDisplayConfig, getShortVersion } from '../utils/footerUtils.js';
+import { ConsoleSummaryDisplay } from './ConsoleSummaryDisplay.js';
+import { MemoryUsageDisplay } from './MemoryUsageDisplay.js';
 
 interface FooterProps {
   model: string;
@@ -35,24 +35,46 @@ interface FooterProps {
   isFeishuProcessing?: boolean;
 }
 
+// 平台感知的「换行/编辑器/取消」键位提示，复用已有 i18n key（与 InputPrompt.getNewlineHint 同源），
+// 让 ⌃J 在 Windows 下自动变为 Ctrl+Enter，并随 locale 切换中/英。
+const getFooterNewlineHint = (): string => {
+  const isVSCodeTerminal = !!(
+    process.env.VSCODE_PID || process.env.TERM_PROGRAM === 'vscode'
+  );
+  switch (process.platform) {
+    case 'darwin':
+      return isVSCodeTerminal
+        ? t('input.hint.newline.darwin.vscode')
+        : t('input.hint.newline.darwin');
+    case 'win32':
+      return isVSCodeTerminal
+        ? t('input.hint.newline.win32.vscode')
+        : t('input.hint.newline.win32');
+    case 'linux':
+      return t('input.hint.newline.linux');
+    default:
+      return t('input.hint.newline.default');
+  }
+};
+
 export const Footer: React.FC<FooterProps> = ({
-  model,
+  model: _model,
   targetDir,
   branchName,
   debugMode,
   debugMessage,
-  corgiMode,
+  corgiMode: _corgiMode,
   errorCount,
   showErrorDetails,
   showMemoryUsage,
-  promptTokenCount,
+  promptTokenCount: _promptTokenCount,
   nightly,
   vimMode,
   version,
   ideConnectionStatus,
   config,
   terminalWidth = 80,
-  isFeishuProcessing = false,
+  isFeishuProcessing: _isFeishuProcessing = false,
 }) => {
   // 响应式显示配置(版本号长短等)
   const displayConfig = getFooterDisplayConfig(terminalWidth);
@@ -75,7 +97,6 @@ export const Footer: React.FC<FooterProps> = ({
           status line. Model leads (what's answering), context next (how much
           room is left), cwd anchors where we are, all in one dim row. */}
       <Box alignItems="center">
-        <Text color={Colors.AccentCyan} bold>{'[Status] '}</Text>
         {vimMode ? <Text color={Colors.Gray}>[{vimMode}] </Text> : null}
 
         {/* Agent Style Indicator — a short text label in the single accent
@@ -94,13 +115,13 @@ export const Footer: React.FC<FooterProps> = ({
           {nightly ? (
             <Gradient colors={Colors.GradientColors}>
               <Text>
-                {shortenPath(tildeifyPath(targetDir), 70)}
+                {shortenPath(tildeifyPath(targetDir), Math.max(20, terminalWidth - 20))}
                 {branchName ? <Text> ({branchName}*)</Text> : null}
               </Text>
             </Gradient>
           ) : (
             <Text color={Colors.Gray} dimColor>
-              {shortenPath(tildeifyPath(targetDir), 70)}
+              {shortenPath(tildeifyPath(targetDir), Math.max(20, terminalWidth - 20))}
               {branchName ? <Text color={Colors.Gray} dimColor> ({branchName}*)</Text> : null}
             </Text>
           )}
@@ -129,8 +150,8 @@ export const Footer: React.FC<FooterProps> = ({
         display="flex"
       >
         {process.env.SANDBOX && process.env.SANDBOX !== 'sandbox-exec' ? (
-          <Text color="green">
-            {process.env.SANDBOX.replace(/^gemini-(?:cli-)?/, '')}
+          <Text color={Colors.AccentGreen}>
+            {process.env.SANDBOX.replace(/^(?:otto|gemini)-(?:cli-)?/, '')}
           </Text>
         ) : process.env.SANDBOX === 'sandbox-exec' ? (
           <Text color={Colors.AccentYellow}>
@@ -146,7 +167,7 @@ export const Footer: React.FC<FooterProps> = ({
         {/* IDE Connection Status */}
         {ideConnectionStatus === IDEConnectionStatus.Connected ? (
           <Box>
-            <Text color="green">{t('ide.connected')}</Text>
+            <Text color={Colors.AccentGreen}>{t('ide.connected')}</Text>
           </Box>
         ) : null}
 
@@ -174,11 +195,12 @@ export const Footer: React.FC<FooterProps> = ({
       </Box>
     </Box>
 
-    {/* [Keys] line — concise keybinding hints, learned from the reference CLI. */}
+    {/* [Keys] line — concise keybinding hints, learned from the reference CLI.
+        换行/编辑器/取消段改用平台感知的 i18n（与 InputPrompt.getNewlineHint 同源），
+        修正 Windows 下 ⌃J 与平台主推键不符的问题；发送/命令/文件标签暂无对应 i18n key，保持原样。 */}
     <Box>
-      <Text color={Colors.AccentCyan} bold>{'[Keys]   '}</Text>
       <Text color={Colors.Gray} dimColor>
-        {'⏎ 发送 · / 命令 · @ 文件 · ⌃J 换行 · ⌃X 编辑器 · Esc 取消'}
+        {`⏎ 发送 · / 命令 · @ 文件 · ${getFooterNewlineHint()}`}
       </Text>
     </Box>
     </Box>

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -428,10 +427,14 @@ let globalTaskManager: BackgroundTaskManager | null = null;
 export function getBackgroundTaskManager(): BackgroundTaskManager {
   if (!globalTaskManager) {
     // Persistence dir resolution for the process-wide singleton:
-    //   - EASYCODE_DELEGATE_TASKS_DIR overrides the location (any deployment).
+    //   - OTTO_DELEGATE_TASKS_DIR overrides the location (legacy:
+    //     OTTO_DELEGATE_TASKS_DIR) (any deployment).
     //   - Under vitest, disable persistence so tests never touch the real home.
     //   - Otherwise default to ~/.otto-user/delegate-tasks.
-    const override = process.env.EASYCODE_DELEGATE_TASKS_DIR?.trim();
+    const override = (
+      process.env.OTTO_DELEGATE_TASKS_DIR ??
+      process.env.OTTO_DELEGATE_TASKS_DIR
+    )?.trim();
     const storageDir = override
       ? override
       : process.env.VITEST

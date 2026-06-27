@@ -6,12 +6,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Config } from '../config/config.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import {
-  GeminiEventType,
-  ServerGeminiContentEvent,
-  ServerGeminiStreamEvent,
-  ServerGeminiToolCallRequestEvent,
+  OttoEventType,
+  ServerOttoContentEvent,
+  ServerOttoStreamEvent,
+  ServerOttoToolCallRequestEvent,
 } from '../core/turn.js';
 import * as loggers from '../telemetry/loggers.js';
 import { LoopType } from '../telemetry/types.js';
@@ -41,8 +41,8 @@ describe('LoopDetectionService', () => {
   const createToolCallRequestEvent = (
     name: string,
     args: Record<string, unknown>,
-  ): ServerGeminiToolCallRequestEvent => ({
-    type: GeminiEventType.ToolCallRequest,
+  ): ServerOttoToolCallRequestEvent => ({
+    type: OttoEventType.ToolCallRequest,
     value: {
       name,
       args,
@@ -52,8 +52,8 @@ describe('LoopDetectionService', () => {
     },
   });
 
-  const createContentEvent = (content: string): ServerGeminiContentEvent => ({
-    type: GeminiEventType.Content,
+  const createContentEvent = (content: string): ServerOttoContentEvent => ({
+    type: OttoEventType.Content,
     value: content,
   });
 
@@ -108,7 +108,7 @@ describe('LoopDetectionService', () => {
       });
       const otherEvent = {
         type: 'thought',
-      } as unknown as ServerGeminiStreamEvent;
+      } as unknown as ServerOttoStreamEvent;
 
       // Send events just below the threshold
       for (let i = 0; i < TOOL_CALL_LOOP_THRESHOLD - 1; i++) {
@@ -218,7 +218,7 @@ describe('LoopDetectionService', () => {
     it('should return false for unhandled event types', () => {
       const otherEvent = {
         type: 'unhandled_event',
-      } as unknown as ServerGeminiStreamEvent;
+      } as unknown as ServerOttoStreamEvent;
       expect(service.addAndCheck(otherEvent)).toBe(false);
       expect(service.addAndCheck(otherEvent)).toBe(false);
     });
@@ -238,8 +238,8 @@ describe('LoopDetectionService - Preview Model Strict Checking', () => {
   const createToolCallRequestEvent = (
     name: string,
     args: Record<string, unknown>,
-  ): ServerGeminiToolCallRequestEvent => ({
-    type: GeminiEventType.ToolCallRequest,
+  ): ServerOttoToolCallRequestEvent => ({
+    type: OttoEventType.ToolCallRequest,
     value: {
       name,
       args,

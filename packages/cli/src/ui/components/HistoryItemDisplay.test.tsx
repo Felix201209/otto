@@ -4,15 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { render } from 'ink-testing-library';
 import { Text } from 'ink';
-import { describe, it, expect, vi } from 'vitest';
-import { HistoryItemDisplay } from './HistoryItemDisplay.js';
-import { HistoryItem, MessageType } from '../types.js';
+import { render } from 'ink-testing-library';
+import { describe,expect,it,vi } from 'vitest';
 import { SessionStatsProvider } from '../contexts/SessionContext.js';
-import { getExpectedText, withMockedLocale } from '../utils/testI18n.js';
 import { WindowSizeLevel } from '../hooks/useSmallWindowOptimization.js';
 import { sanitizeOutput } from '../test-utils.js';
+import { HistoryItem,IndividualToolCallDisplay,MessageType,ToolCallStatus } from '../types.js';
+import { getExpectedText,withMockedLocale } from '../utils/testI18n.js';
+import { HistoryItemDisplay } from './HistoryItemDisplay.js';
 
 // Mock small window optimization to return normal size by default
 vi.mock('../hooks/useSmallWindowOptimization.js', () => ({
@@ -33,7 +33,7 @@ vi.mock('../hooks/useSmallWindowOptimization.js', () => ({
 
 // Mock child components
 vi.mock('./messages/ToolGroupMessage.js', () => ({
-  ToolGroupMessage: ({ toolCalls }: { toolCalls: any[] }) => (
+  ToolGroupMessage: ({ toolCalls }: { toolCalls: IndividualToolCallDisplay[] }) => (
     <Text>
       {toolCalls.map((t) => `MockTool:${t.toolId}`).join('|')}
     </Text>
@@ -159,7 +159,7 @@ describe('<HistoryItemDisplay />', () => {
           toolId: 'read_file',
           description: 'test.txt',
           resultDisplay: 'hello',
-          status: 'success' as any,
+          status: ToolCallStatus.Success,
           confirmationDetails: undefined,
         },
         {
@@ -168,7 +168,7 @@ describe('<HistoryItemDisplay />', () => {
           toolId: 'todo_write',
           description: 'update',
           resultDisplay: 'done',
-          status: 'success' as any,
+          status: ToolCallStatus.Success,
           confirmationDetails: undefined,
         },
       ],
@@ -192,7 +192,7 @@ describe('<HistoryItemDisplay />', () => {
           toolId: 'todo_write',
           description: 'update',
           resultDisplay: 'done',
-          status: 'success' as any,
+          status: ToolCallStatus.Success,
           confirmationDetails: undefined,
         },
       ],

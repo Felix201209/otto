@@ -10,7 +10,7 @@ import * as os from 'os';
 import { isNodeError } from '../utils/errors.js';
 import { exec } from 'node:child_process';
 import { simpleGit, SimpleGit, CheckRepoActions } from 'simple-git';
-import { getProjectHash, GEMINI_DIR } from '../utils/paths.js';
+import { getProjectHash, OTTO_DIR } from '../utils/paths.js';
 
 /**
  * Git service initialization result
@@ -125,7 +125,7 @@ export class GitService {
 
   private getHistoryDir(): string {
     const hash = getProjectHash(this.projectRoot);
-    return path.join(os.homedir(), GEMINI_DIR, 'history', hash);
+    return path.join(os.homedir(), OTTO_DIR, 'history', hash);
   }
 
   async initialize(): Promise<GitServiceInitResult> {
@@ -147,7 +147,10 @@ export class GitService {
       const gitAvailable = await this.verifyGitAvailability();
 
       if (!gitAvailable) {
-        console.error(`[CHECKPOINT DEBUG] Git not available`);
+        // 缺 git 是 Windows 等环境的预期情况，仅在 DEBUG 时打印，避免伪报错噪音。
+        if (process.env.DEBUG) {
+          console.error(`[CHECKPOINT DEBUG] Git not available`);
+        }
         this.displayGitError('not-available');
         this.isDisabled = true;
         this.disabledReason = 'Git is not installed or not available in PATH';
@@ -209,7 +212,9 @@ export class GitService {
     return new Promise((resolve) => {
       exec('git --version', (error) => {
         if (error) {
-          console.error(`[CHECKPOINT DEBUG] Git verification failed:`, error.message);
+          if (process.env.DEBUG) {
+            console.error(`[CHECKPOINT DEBUG] Git verification failed:`, error.message);
+          }
           resolve(false);
         } else {
           resolve(true);
@@ -236,7 +241,7 @@ export class GitService {
     // We don't want to inherit the user's name, email, or gpg signing
     // preferences for the shadow repository, so we create a dedicated gitconfig.
     const gitConfigContent =
-      '[user]\n  name = DvCode CLI\n  email = otto-cli@google.com\n[commit]\n  gpgsign = false\n';
+      '[user]\n  name = Otto CLI\n  email = otto-cli@google.com\n[commit]\n  gpgsign = false\n';
 
     try {
       await fs.writeFile(gitConfigPath, gitConfigContent);
@@ -275,8 +280,8 @@ export class GitService {
         });
 
         // 确保在shadow仓库中设置用户信息
-        await repo.addConfig('user.name', 'DeepV CLI', false);
-        await repo.addConfig('user.email', 'deepv-cli@deepvlab.ai', false);
+        await repo.addConfig('user.name', 'Otto CLI', false);
+        await repo.addConfig('user.email', 'otto-cli@google.com', false);
         await repo.addConfig('commit.gpgsign', 'false', false);
 
         await repo.commit('Initial commit', { '--allow-empty': null });

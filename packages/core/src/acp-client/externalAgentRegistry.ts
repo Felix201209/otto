@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/EasyCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,15 +42,18 @@ export interface ExternalAgentSpec {
 }
 
 /**
- * Per-agent environment variable that overrides the spawn command. The value is
- * split on whitespace into `command` + `args`, e.g.
- *   EASYCODE_CLAUDE_CODE_ACP_CMD="node /abs/path/to/acp-bridge.js --flag"
+ * Per-agent environment variable(s) that override the spawn command. The value
+ * is split on whitespace into `command` + `args`, e.g.
+ *   OTTO_CLAUDE_CODE_ACP_CMD="node /abs/path/to/acp-bridge.js --flag"
  * This lets users point at a globally-installed bridge, a pinned version, or a
  * local build without code changes.
+ *
+ * Each entry lists the names in priority order: the new OTTO_* name first, with
+ * the legacy OTTO_* name kept as a backward-compatible fallback.
  */
-const OVERRIDE_ENV: Record<ExternalAgentType, string> = {
-  'claude-code': 'EASYCODE_CLAUDE_CODE_ACP_CMD',
-  'codex': 'EASYCODE_CODEX_ACP_CMD',
+const OVERRIDE_ENV: Record<ExternalAgentType, readonly string[]> = {
+  'claude-code': ['OTTO_CLAUDE_CODE_ACP_CMD', 'OTTO_CLAUDE_CODE_ACP_CMD'],
+  'codex': ['OTTO_CODEX_ACP_CMD', 'OTTO_CODEX_ACP_CMD'],
 };
 
 const DEFAULT_SPECS: Record<ExternalAgentType, ExternalAgentSpec> = {
@@ -92,7 +94,9 @@ export function resolveExternalAgentSpec(
     throw new Error(`Unknown external agent type: ${type}`);
   }
 
-  const override = env[OVERRIDE_ENV[type]]?.trim();
+  const override = OVERRIDE_ENV[type]
+    .map((name) => env[name]?.trim())
+    .find((value): value is string => !!value);
   if (override) {
     const parts = override.split(/\s+/);
     const [command, ...args] = parts;

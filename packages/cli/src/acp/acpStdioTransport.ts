@@ -10,7 +10,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
 import type { LoadedSettings } from '../config/settings.js';
 import type { CliArgs } from '../config/config.js';
-import { GeminiAgent } from './acpRpcDispatcher.js';
+import { OttoAgent } from './acpRpcDispatcher.js';
 
 /**
  * Redirect all process-wide `console.log/info/warn/debug` output to stderr.
@@ -46,13 +46,13 @@ function redirectConsoleToStderrForAcp(): void {
     }
   };
 
-  // eslint-disable-next-line no-console
+   
   console.log = (...args: unknown[]) => toStderr('', ...args);
-  // eslint-disable-next-line no-console
+   
   console.info = (...args: unknown[]) => toStderr('', ...args);
-  // eslint-disable-next-line no-console
+   
   console.warn = (...args: unknown[]) => toStderr('', ...args);
-  // eslint-disable-next-line no-console
+   
   console.debug = (...args: unknown[]) => toStderr('', ...args);
 }
 
@@ -118,7 +118,7 @@ export async function runAcpClient(
 
   const stream = acp.ndJsonStream(stdout, stdin);
   const connection = new acp.AgentSideConnection(
-    (conn) => new GeminiAgent(config, settings, argv, conn),
+    (conn) => new OttoAgent(config, settings, argv, conn),
     stream,
   );
 

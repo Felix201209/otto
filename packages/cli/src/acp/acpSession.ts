@@ -7,9 +7,8 @@
 import {
   AuthType as _AuthType,
   type Config,
-  type GeminiChat,
+  type OttoChat,
   type ToolResult,
-  type ToolCallConfirmationDetails,
   convertToFunctionResponse,
   logToolCall,
   isNodeError,
@@ -33,20 +32,18 @@ import {
   type FunctionCall,
   type Part,
   type PartListUnion,
-} from '@google/genai';
+ GenerateContentResponse } from '@google/genai';
 import type { LoadedSettings } from '../config/settings.js';
 import { SettingScope } from '../config/settings.js';
 import {
   RequestPermissionResponseSchema,
   buildUsageUpdate,
   confirmationRequiresCallerApproval,
-  hasMeta,
   toToolCallContent,
   toPermissionOptions,
   toAcpToolKind,
 } from './acpUtils.js';
 import { getAcpErrorMessage } from './acpErrors.js';
-import type { GenerateContentResponse } from '@google/genai';
 
 /**
  * Slice a persisted `SessionData.history` array (the UI-shape one stored at
@@ -97,7 +94,7 @@ export function truncateUiHistoryByUserMessageCount(
  * One live ACP chat session.
  *
  * Owns:
- *   - the backing `GeminiChat` (the LLM conversation)
+ *   - the backing `OttoChat` (the LLM conversation)
  *   - an `AbortController` that ties a single prompt turn's lifetime together
  *   - forwarding of approval-mode events back to the IDE via `sessionUpdate`
  *
@@ -117,7 +114,7 @@ export class Session {
 
   constructor(
     readonly id: string,
-    private readonly chat: GeminiChat,
+    private readonly chat: OttoChat,
     private readonly config: Config,
     private readonly connection: acp.AgentSideConnection,
     private readonly _settings: LoadedSettings,
@@ -166,11 +163,11 @@ export class Session {
    * UI also makes the agent forget the trailing exchange.
    *
    * Why mutate `chat.setHistory` directly (instead of `client.resumeChat`):
-   *   `resumeChat` rebuilds an entirely new `GeminiChat` and swaps it onto
-   *   the shared `GeminiClient`. Any prior `Session` (incl. *this* one) keeps
+   *   `resumeChat` rebuilds an entirely new `OttoChat` and swaps it onto
+   *   the shared `OttoClient`. Any prior `Session` (incl. *this* one) keeps
    *   a `private readonly chat` reference to the *old* chat object, so the
    *   rewind would only take effect for sessions created *after* the swap.
-   *   Going through `setHistory` keeps the same `GeminiChat` instance and
+   *   Going through `setHistory` keeps the same `OttoChat` instance and
    *   guarantees the next prompt sees the truncated history.
    *
    * Persistence: in addition to the in-memory truncation, this method also
@@ -264,7 +261,7 @@ export class Session {
    *
    * Strategy:
    *   - `clientHistory` (`context.json`) gets the freshly-truncated
-   *     in-memory `Content[]` straight from `GeminiChat.getHistory()` —
+   *     in-memory `Content[]` straight from `OttoChat.getHistory()` —
    *     this is the array the model will see on the next prompt, so it
    *     IS the source of truth.
    *   - `history` (`history.json`) is loaded from disk and sliced to the
@@ -327,14 +324,14 @@ export class Session {
   /**
    * Switch the active model for this session.
    *
-   * Mirrors the interactive CLI path (`useModelCommand` → `GeminiClient.switchModel`):
+   * Mirrors the interactive CLI path (`useModelCommand` → `OttoClient.switchModel`):
    *   - compresses chat history to fit the new model's context window
    *   - re-registers tools (Claude vs Gemini need different tool schemas)
    *   - pushes a `[Model switched from X to Y]` system message into history
-   *   - only then mutates `Config.setModel` + `GeminiChat.setSpecifiedModel`
+   *   - only then mutates `Config.setModel` + `OttoChat.setSpecifiedModel`
    *
    * Falls back to a pure `Config.setModel` + `chat.setSpecifiedModel` when
-   * `GeminiClient.switchModel` is unavailable (shouldn't happen in prod, but
+   * `OttoClient.switchModel` is unavailable (shouldn't happen in prod, but
    * keeps this callable in minimal test harnesses).
    *
    * Returns a {@link ModelSwitchResult}-shaped object when the full switch
@@ -352,7 +349,7 @@ export class Session {
   } | null> {
     const cfg = this.config as unknown as {
       setModel?: (modelId: string) => void;
-      getGeminiClient?: () => {
+      getOttoClient?: () => {
         switchModel?: (
           newModel: string,
           signal: AbortSignal,
@@ -369,7 +366,7 @@ export class Session {
       };
     };
 
-    const client = cfg.getGeminiClient?.();
+    const client = cfg.getOttoClient?.();
     const signal = abortSignal ?? new AbortController().signal;
 
     if (client?.switchModel) {
@@ -414,7 +411,7 @@ export class Session {
    * Apply a single `session/set_config_option` request.
    *
    * Known configIds are routed to their real backing setter:
-   *   - `"model"`     → `GeminiClient.switchModel` (full compression-aware path)
+   *   - `"model"`     → `OttoClient.switchModel` (full compression-aware path)
    *   - `"mode"`      → `Config.setApprovalMode`
    *
    * Everything else is cached on the session (so `buildConfigOptionsSnapshot`
@@ -540,7 +537,7 @@ export class Session {
   }
 
   /**
-   * Main prompt turn. Consumes `GeminiChat.sendMessageStream`, relays chunks
+   * Main prompt turn. Consumes `OttoChat.sendMessageStream`, relays chunks
    * as `session/update` notifications, and loops while the model issues
    * function calls.
    */

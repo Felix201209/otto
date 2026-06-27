@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,5 +56,3 @@ export const CompactFooter: React.FC<CompactFooterProps> = ({
   // 正常窗口返回null，让原Footer组件处理
   return null;
 };
-
-export default CompactFooter;

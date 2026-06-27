@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 /**
  * 服务端配置获取模块
- * 从DeepX_Code_server获取客户端所需的配置信息
+ * 从Otto服务端获取客户端所需的配置信息
  */
 
 import { getUserAgent } from '../utils/userAgent.js';
@@ -46,9 +45,10 @@ export class ServerConfigFetcher {
   private cachedConfig: ServerClientConfig | null = null;
   private cacheExpiry: Date | null = null;
 
-  // 默认服务器地址，可以通过环境变量覆盖
+  // 默认服务器地址，可以通过环境变量覆盖。
+  // BYO-key: 未配置 OTTO_SERVER_URL 时返回空字符串，调用方需自行跳过网络请求。
   private getServerBaseUrl(): string {
-    return process.env.DEEPX_SERVER_URL || 'https://api-code.deepvlab.ai';
+    return process.env.OTTO_SERVER_URL || '';
   }
 
   private constructor() {
@@ -79,8 +79,13 @@ export class ServerConfigFetcher {
     }
 
     try {
+      // BYO-key: 未配置服务端地址时不发起请求，抛出可被上层捕获的错误而非访问空 URL。
+      const baseUrl = this.getServerBaseUrl();
+      if (!baseUrl) {
+        throw new Error('未配置 OTTO_SERVER_URL，已跳过服务端配置获取');
+      }
 
-      const response = await fetch(`${this.getServerBaseUrl()}/api/config/client`, {
+      const response = await fetch(`${baseUrl}/api/config/client`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -150,7 +155,12 @@ export class ServerConfigFetcher {
    */
   public async testConnection(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.getServerBaseUrl()}/api/config/feishu/health`, {
+      // BYO-key: 未配置服务端地址时直接判定不可连接，不发起请求。
+      const baseUrl = this.getServerBaseUrl();
+      if (!baseUrl) {
+        return false;
+      }
+      const response = await fetch(`${baseUrl}/api/config/feishu/health`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

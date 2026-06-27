@@ -537,7 +537,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
   });
 
   // NOTE TO FUTURE DEVELOPERS:
-  // To re-enable tests for loadHierarchicalGeminiMemory, ensure that:
+  // To re-enable tests for loadHierarchicalOttoMemory, ensure that:
   // 1. os.homedir() is reliably mocked *before* the config.ts module is loaded
   //    and its functions (which use os.homedir()) are called.
   // 2. fs/promises and fs mocks correctly simulate file/directory existence,
@@ -551,7 +551,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
     mockFs({
       [MOCK_GLOBAL_PATH_LOCAL]: { type: 'file', content: 'GlobalContentOnly' }
     });
-    const memory = await loadHierarchicalGeminiMemory("/some/other/cwd", false);
+    const memory = await loadHierarchicalOttoMemory("/some/other/cwd", false);
     expect(memory).toBe('GlobalContentOnly');
     expect(vi.mocked(os.homedir)).toHaveBeenCalled();
     expect(fsPromises.readFile).toHaveBeenCalledWith(MOCK_GLOBAL_PATH_LOCAL, 'utf-8');
@@ -562,7 +562,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
 describe('filterMemoryByMode', () => {
   const sampleResult = {
     memoryContent:
-      '--- Context from: OTTO.md ---\nDeepV content\n--- End of Context from: OTTO.md ---\n\n--- Context from: AGENTS.md ---\nAgents content\n--- End of Context from: AGENTS.md ---',
+      '--- Context from: OTTO.md ---\nOtto content\n--- End of Context from: OTTO.md ---\n\n--- Context from: AGENTS.md ---\nAgents content\n--- End of Context from: AGENTS.md ---',
     fileCount: 2,
     filePaths: ['/project/OTTO.md', '/project/AGENTS.md'],
   };
@@ -570,22 +570,22 @@ describe('filterMemoryByMode', () => {
   it('should return all content when mode is "all"', () => {
     const result = filterMemoryByMode(sampleResult, 'all');
     expect(result.filePaths).toHaveLength(2);
-    expect(result.memoryContent).toContain('DeepV content');
+    expect(result.memoryContent).toContain('Otto content');
     expect(result.memoryContent).toContain('Agents content');
   });
 
   it('should return all content when mode is undefined (default)', () => {
     const result = filterMemoryByMode(sampleResult, undefined);
     expect(result.filePaths).toHaveLength(2);
-    expect(result.memoryContent).toContain('DeepV content');
+    expect(result.memoryContent).toContain('Otto content');
     expect(result.memoryContent).toContain('Agents content');
   });
 
-  it('should filter out AGENTS.md when mode is "deepv-only"', () => {
-    const result = filterMemoryByMode(sampleResult, 'deepv-only');
+  it('should filter out AGENTS.md when mode is "otto-only"', () => {
+    const result = filterMemoryByMode(sampleResult, 'otto-only');
     expect(result.filePaths).toHaveLength(1);
     expect(result.filePaths[0]).toContain('OTTO.md');
-    expect(result.memoryContent).toContain('DeepV content');
+    expect(result.memoryContent).toContain('Otto content');
     expect(result.memoryContent).not.toContain('Agents content');
     expect(result.fileCount).toBe(1);
   });
@@ -597,14 +597,14 @@ describe('filterMemoryByMode', () => {
     expect(result.fileCount).toBe(0);
   });
 
-  it('should handle result with no AGENTS.md in "deepv-only" mode', () => {
-    const deepvOnlyResult = {
-      memoryContent: '--- Context from: OTTO.md ---\nDeepV content\n--- End of Context from: OTTO.md ---',
+  it('should handle result with no AGENTS.md in "otto-only" mode', () => {
+    const ottoOnlyResult = {
+      memoryContent: '--- Context from: OTTO.md ---\nOtto content\n--- End of Context from: OTTO.md ---',
       fileCount: 1,
       filePaths: ['/project/OTTO.md'],
     };
-    const result = filterMemoryByMode(deepvOnlyResult, 'deepv-only');
-    expect(result).toBe(deepvOnlyResult); // Should return same reference
+    const result = filterMemoryByMode(ottoOnlyResult, 'otto-only');
+    expect(result).toBe(ottoOnlyResult); // Should return same reference
   });
 });
 
@@ -1010,7 +1010,7 @@ describe('loadCliConfig ideMode', () => {
     // Explicitly delete TERM_PROGRAM and SANDBOX before each test
     delete process.env.TERM_PROGRAM;
     delete process.env.SANDBOX;
-    delete process.env.DEEPV_CODE_IDE_SERVER_PORT;
+    delete process.env.OTTO_CODE_IDE_SERVER_PORT;
   });
 
   afterEach(() => {
@@ -1047,7 +1047,7 @@ describe('loadCliConfig ideMode', () => {
     process.argv = ['node', 'script.js', '--ide-mode'];
     const argv = await parseArguments();
     process.env.TERM_PROGRAM = 'vscode';
-    process.env.DEEPV_CODE_IDE_SERVER_PORT = '3000';
+    process.env.OTTO_CODE_IDE_SERVER_PORT = '3000';
     const settings: Settings = {};
     const config = await loadCliConfig(settings, [], 'test-session', argv);
     expect(config.getIdeMode()).toBe(true);
@@ -1057,7 +1057,7 @@ describe('loadCliConfig ideMode', () => {
     process.argv = ['node', 'script.js'];
     const argv = await parseArguments();
     process.env.TERM_PROGRAM = 'vscode';
-    process.env.DEEPV_CODE_IDE_SERVER_PORT = '3000';
+    process.env.OTTO_CODE_IDE_SERVER_PORT = '3000';
     const settings: Settings = { ideMode: true };
     const config = await loadCliConfig(settings, [], 'test-session', argv);
     expect(config.getIdeMode()).toBe(true);
@@ -1067,7 +1067,7 @@ describe('loadCliConfig ideMode', () => {
     process.argv = ['node', 'script.js', '--ide-mode'];
     const argv = await parseArguments();
     process.env.TERM_PROGRAM = 'vscode';
-    process.env.DEEPV_CODE_IDE_SERVER_PORT = '3000';
+    process.env.OTTO_CODE_IDE_SERVER_PORT = '3000';
     const settings: Settings = { ideMode: false };
     const config = await loadCliConfig(settings, [], 'test-session', argv);
     expect(config.getIdeMode()).toBe(true);

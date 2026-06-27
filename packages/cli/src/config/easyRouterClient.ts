@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,8 +44,8 @@ export interface FetchEasyRouterModelsOptions {
 export class EasyRouterFetchError extends Error {
   constructor(
     message: string,
-    public readonly status?: number,
-    public readonly cause?: unknown,
+    readonly status?: number,
+    readonly cause?: unknown,
   ) {
     super(message);
     this.name = 'EasyRouterFetchError';

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +22,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { GeminiChat } from './geminiChat.js';
+import { OttoChat } from './ottoChat.js';
 import { Content } from '../types/extendedContent.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { Config } from '../config/config.js';
@@ -64,7 +63,7 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────
 // 1. 静态 / 实例方法行为一致性（防漂移哨兵）
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 静态/实例一致性', () => {
+describe('OttoChat.sanitizeRequestContents > 静态/实例一致性', () => {
   it('简单输入：静态方法应当与实例方法 fixRequestContents 行为完全一致', () => {
     const input: Content[] = [
       {
@@ -75,9 +74,9 @@ describe('GeminiChat.sanitizeRequestContents > 静态/实例一致性', () => {
       },
     ];
 
-    const chat = new GeminiChat(makeMockConfig(), {} as any);
+    const chat = new OttoChat(makeMockConfig(), {} as any);
     const instanceResult = (chat as any).fixRequestContents(input);
-    const staticResult = GeminiChat.sanitizeRequestContents(input);
+    const staticResult = OttoChat.sanitizeRequestContents(input);
     expect(staticResult).toEqual(instanceResult);
   });
 
@@ -112,9 +111,9 @@ describe('GeminiChat.sanitizeRequestContents > 静态/实例一致性', () => {
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: '完成' } as any] },
     ];
 
-    const chat = new GeminiChat(makeMockConfig(), {} as any);
+    const chat = new OttoChat(makeMockConfig(), {} as any);
     const instanceResult = (chat as any).fixRequestContents(dirty);
-    const staticResult = GeminiChat.sanitizeRequestContents(dirty);
+    const staticResult = OttoChat.sanitizeRequestContents(dirty);
     expect(staticResult).toEqual(instanceResult);
   });
 });
@@ -122,7 +121,7 @@ describe('GeminiChat.sanitizeRequestContents > 静态/实例一致性', () => {
 // ─────────────────────────────────────────────────────────────────────
 // 2. 已知生产事故：/session select 加载脏历史 → Bedrock 400
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
+describe('OttoChat.sanitizeRequestContents > 真实事故回归', () => {
   it('Bedrock 400 现场还原：历史首条就是孤立 functionResponse，应当被移除', () => {
     const input: Content[] = [
       {
@@ -147,7 +146,7 @@ describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
 
     const allParts = result.flatMap(c => c.parts || []);
     const hasOrphan = allParts.some(
@@ -165,7 +164,7 @@ describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: '你好啊' } as any] },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const last = result[result.length - 1];
     expect(last.role).toBe(MESSAGE_ROLES.USER);
     expect((last.parts?.[0] as any).text).toBe('[Conversation continues]');
@@ -185,7 +184,7 @@ describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ text: 'continue' } as any] },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const remainingFRIds = result.flatMap(c => c.parts || [])
       .map((p: any) => p.functionResponse?.id)
       .filter(Boolean);
@@ -216,7 +215,7 @@ describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ text: 'next?' } as any] },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const ids = result.flatMap(c => c.parts || [])
       .map((p: any) => p.functionResponse?.id)
       .filter(Boolean);
@@ -228,7 +227,7 @@ describe('GeminiChat.sanitizeRequestContents > 真实事故回归', () => {
 // ─────────────────────────────────────────────────────────────────────
 // 3. 截断 / 流中断的各种残局
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 截断/流中断残局', () => {
+describe('OttoChat.sanitizeRequestContents > 截断/流中断残局', () => {
   it('functionCall 在最后一条 model 没有任何后续：应当被补 user-cancel 并以 user 收尾', () => {
     const input: Content[] = [
       { role: MESSAGE_ROLES.USER, parts: [{ text: '搜个东西' } as any] },
@@ -240,7 +239,7 @@ describe('GeminiChat.sanitizeRequestContents > 截断/流中断残局', () => {
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const last = result[result.length - 1];
     expect(last.role).toBe(MESSAGE_ROLES.USER);
     const cancelPart = last.parts?.find(
@@ -265,7 +264,7 @@ describe('GeminiChat.sanitizeRequestContents > 截断/流中断残局', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ text: '[System] continue' } as any] },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     // 任意相邻两条 role 不能相同
     for (let i = 1; i < result.length; i++) {
       expect(result[i].role).not.toBe(result[i - 1].role);
@@ -300,7 +299,7 @@ describe('GeminiChat.sanitizeRequestContents > 截断/流中断残局', () => {
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fRs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse);
     expect(fRs).toHaveLength(1);
     expect((fRs[0] as any).functionResponse.response.output).toBe('real-result');
@@ -310,7 +309,7 @@ describe('GeminiChat.sanitizeRequestContents > 截断/流中断残局', () => {
 // ─────────────────────────────────────────────────────────────────────
 // 4. Claude / Anthropic 兼容性：ID 缺失 / 模糊匹配
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', () => {
+describe('OttoChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', () => {
   it('Call 无 ID + Response 有 ID：应通过 name 匹配并对齐 ID', () => {
     const input: Content[] = [
       {
@@ -324,7 +323,7 @@ describe('GeminiChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', (
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fr = result.flatMap(c => c.parts || []).find((p: any) => p.functionResponse);
     expect(fr).toBeDefined();
     // 业务的「ID 对齐」逻辑会让 response 的 id 同步成 call 的 id
@@ -344,7 +343,7 @@ describe('GeminiChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', (
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fr = result.flatMap(c => c.parts || []).find((p: any) => p.functionResponse);
     expect(fr).toBeDefined();
     expect((fr as any).functionResponse.name).toBe('search');
@@ -368,7 +367,7 @@ describe('GeminiChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', (
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fNames = result
       .flatMap(c => c.parts || [])
       .filter((p: any) => p.functionResponse)
@@ -381,7 +380,7 @@ describe('GeminiChat.sanitizeRequestContents > Claude/Anthropic 协议兼容', (
 // ─────────────────────────────────────────────────────────────────────
 // 5. 重复 / 仲裁 / 跨轮 ID 复用
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 仲裁与去重', () => {
+describe('OttoChat.sanitizeRequestContents > 仲裁与去重', () => {
   it('完全相同的 functionResponse 出现两次：仅保留一个', () => {
     const input: Content[] = [
       {
@@ -397,7 +396,7 @@ describe('GeminiChat.sanitizeRequestContents > 仲裁与去重', () => {
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fRs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse);
     expect(fRs).toHaveLength(1);
   });
@@ -417,7 +416,7 @@ describe('GeminiChat.sanitizeRequestContents > 仲裁与去重', () => {
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fRs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse);
     expect(fRs).toHaveLength(1);
     expect((fRs[0] as any).functionResponse.response.value).toBe('REAL');
@@ -433,7 +432,7 @@ describe('GeminiChat.sanitizeRequestContents > 仲裁与去重', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ functionResponse: { name: 'fn', id: 'shared', response: { v: 2 } } as any }] },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     // 结构必须保持 model/user 严格交替，不允许相邻同 role
     for (let i = 1; i < result.length; i++) {
       expect(result[i].role).not.toBe(result[i - 1].role);
@@ -447,16 +446,16 @@ describe('GeminiChat.sanitizeRequestContents > 仲裁与去重', () => {
 // ─────────────────────────────────────────────────────────────────────
 // 6. 极端边界 / 奇葩输入：不能崩溃
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格）', () => {
+describe('OttoChat.sanitizeRequestContents > 极端边界（不崩溃即合格）', () => {
   it('空数组：应原样返回空数组', () => {
-    expect(GeminiChat.sanitizeRequestContents([])).toEqual([]);
+    expect(OttoChat.sanitizeRequestContents([])).toEqual([]);
   });
 
   it('仅一条 user 消息：应原样返回（不被错误注入占位符）', () => {
     const input: Content[] = [
       { role: MESSAGE_ROLES.USER, parts: [{ text: '你好' } as any] },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     expect(result).toEqual(input);
   });
 
@@ -464,7 +463,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
     const input: Content[] = [
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'hello' } as any] },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     expect(result).toHaveLength(2);
     expect(result[1].role).toBe(MESSAGE_ROLES.USER);
   });
@@ -474,7 +473,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
       { role: MESSAGE_ROLES.USER, parts: undefined as any },
       { role: MESSAGE_ROLES.MODEL, parts: undefined as any },
     ];
-    expect(() => GeminiChat.sanitizeRequestContents(input)).not.toThrow();
+    expect(() => OttoChat.sanitizeRequestContents(input)).not.toThrow();
   });
 
   it('parts 是空数组：保留消息结构但不报错', () => {
@@ -482,7 +481,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
       { role: MESSAGE_ROLES.USER, parts: [] },
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'ok' } as any] },
     ];
-    expect(() => GeminiChat.sanitizeRequestContents(input)).not.toThrow();
+    expect(() => OttoChat.sanitizeRequestContents(input)).not.toThrow();
   });
 
   it('parts 中混入未知字段（既非 text 也非 functionCall/Response）：应保留', () => {
@@ -491,7 +490,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: '收到图片' } as any] },
       { role: MESSAGE_ROLES.USER, parts: [{ text: '多谢' } as any] },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     // 图片/未知 part 应保留
     const hasInline = result.flatMap(c => c.parts || []).some((p: any) => p.inlineData);
     expect(hasInline).toBe(true);
@@ -504,7 +503,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'b' } as any] },
       { role: MESSAGE_ROLES.USER, parts: [{ text: 'c' } as any] },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     // 不允许相邻同 role
     for (let i = 1; i < result.length; i++) {
       expect(result[i].role).not.toBe(result[i - 1].role);
@@ -524,8 +523,8 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
         parts: [{ functionCall: { name: 'fn', id: 'no-args' } as any }], // 没有 args
       },
     ];
-    expect(() => GeminiChat.sanitizeRequestContents(input)).not.toThrow();
-    const result = GeminiChat.sanitizeRequestContents(input);
+    expect(() => OttoChat.sanitizeRequestContents(input)).not.toThrow();
+    const result = OttoChat.sanitizeRequestContents(input);
     expect(result[result.length - 1].role).toBe(MESSAGE_ROLES.USER);
   });
 
@@ -534,7 +533,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
       { role: MESSAGE_ROLES.MODEL, parts: [{ functionCall: { name: 'fn', id: 'r-1' } as any }] },
       { role: MESSAGE_ROLES.USER, parts: [{ functionResponse: { name: 'fn', id: 'r-1' } as any }] },
     ];
-    expect(() => GeminiChat.sanitizeRequestContents(input)).not.toThrow();
+    expect(() => OttoChat.sanitizeRequestContents(input)).not.toThrow();
   });
 
   it('100 条历史的压力测试：应在毫秒级完成且不丢配对结构', () => {
@@ -551,7 +550,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
     }
 
     const start = Date.now();
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(500); // 极宽松阈值，正常 <50ms
     // 100 条都应保留
@@ -562,7 +561,7 @@ describe('GeminiChat.sanitizeRequestContents > 极端边界（不崩溃即合格
 // ─────────────────────────────────────────────────────────────────────
 // 7. 幂等性：清洗结果再清洗一次应不再变化
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 幂等性', () => {
+describe('OttoChat.sanitizeRequestContents > 幂等性', () => {
   it('对脏历史清洗一次，结果再清洗一次应当与第一次清洗结果完全一致', () => {
     const dirty: Content[] = [
       // 孤立 fr
@@ -571,8 +570,8 @@ describe('GeminiChat.sanitizeRequestContents > 幂等性', () => {
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'last is model' } as any] },
     ];
 
-    const once = GeminiChat.sanitizeRequestContents(dirty);
-    const twice = GeminiChat.sanitizeRequestContents(once);
+    const once = OttoChat.sanitizeRequestContents(dirty);
+    const twice = OttoChat.sanitizeRequestContents(once);
     expect(twice).toEqual(once);
   });
 
@@ -583,9 +582,9 @@ describe('GeminiChat.sanitizeRequestContents > 幂等性', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ text: 'continue' } as any] },
     ];
 
-    const once = GeminiChat.sanitizeRequestContents(clean);
-    const twice = GeminiChat.sanitizeRequestContents(once);
-    const thrice = GeminiChat.sanitizeRequestContents(twice);
+    const once = OttoChat.sanitizeRequestContents(clean);
+    const twice = OttoChat.sanitizeRequestContents(once);
+    const thrice = OttoChat.sanitizeRequestContents(twice);
     expect(once).toEqual(clean);
     expect(twice).toEqual(once);
     expect(thrice).toEqual(once);
@@ -595,7 +594,7 @@ describe('GeminiChat.sanitizeRequestContents > 幂等性', () => {
 // ─────────────────────────────────────────────────────────────────────
 // 8. 不变量保证：清洗结果必须满足下游协议契约
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 协议不变量', () => {
+describe('OttoChat.sanitizeRequestContents > 协议不变量', () => {
   // 通用断言：检查任意输出是否满足下游契约
   function assertContractInvariants(result: Content[]) {
     if (result.length === 0) return;
@@ -639,7 +638,7 @@ describe('GeminiChat.sanitizeRequestContents > 协议不变量', () => {
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: '我又说了一次' } as any] }, // 相邻同 role
       { role: MESSAGE_ROLES.USER, parts: [{ text: '继续' } as any] },
     ];
-    assertContractInvariants(GeminiChat.sanitizeRequestContents(dirty));
+    assertContractInvariants(OttoChat.sanitizeRequestContents(dirty));
   });
 
   it('压力混合输入清洗后满足全部协议不变量', () => {
@@ -653,7 +652,7 @@ describe('GeminiChat.sanitizeRequestContents > 协议不变量', () => {
       // 末尾 model（需要补 user 占位）
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'still model' } as any] },
     ];
-    assertContractInvariants(GeminiChat.sanitizeRequestContents(dirty));
+    assertContractInvariants(OttoChat.sanitizeRequestContents(dirty));
   });
 
   it('极简两条消息（user→model）清洗后也满足全部不变量（追加占位后仍然合法）', () => {
@@ -661,7 +660,7 @@ describe('GeminiChat.sanitizeRequestContents > 协议不变量', () => {
       { role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' } as any] },
       { role: MESSAGE_ROLES.MODEL, parts: [{ text: 'hello' } as any] },
     ];
-    assertContractInvariants(GeminiChat.sanitizeRequestContents(input));
+    assertContractInvariants(OttoChat.sanitizeRequestContents(input));
   });
 });
 
@@ -681,7 +680,7 @@ describe('GeminiChat.sanitizeRequestContents > 协议不变量', () => {
 //   修复行为：sanitize 在最开头做 FIFO 合成 id 配对，仅当**同名 ≥2 个无 id
 //   fc** 触发；任一侧已带 id / 单条无 id 都不动（保护现有 Claude 跨模型场景）。
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', () => {
+describe('OttoChat.sanitizeRequestContents > 并行同名工具调用兜底', () => {
   it('单 turn 内并行调用 2 次同名工具（双方都无 id）：两组 fc/fr 全部保留', () => {
     const input: Content[] = [
       { role: MESSAGE_ROLES.USER, parts: [{ text: '同时读两个文件' } as any] },
@@ -701,7 +700,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
 
     // 关键不变量：fc 的数量必须 === fr 的数量（这正是 Gemini 400 的判定式）
     const fcCount = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).length;
@@ -731,7 +730,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcCount = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).length;
     const frCount = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse).length;
     expect(fcCount).toBe(5);
@@ -760,7 +759,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const frs = result
       .flatMap(c => c.parts || [])
       .filter((p: any) => p.functionResponse)
@@ -788,7 +787,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcCount = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).length;
     const frCount = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse).length;
     // 数量必须严格相等（Gemini 400 的判定式）
@@ -814,7 +813,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fc = result.flatMap(c => c.parts || []).find((p: any) => p.functionCall);
     const fr = result.flatMap(c => c.parts || []).find((p: any) => p.functionResponse);
     // 单条无 id 不应该被加合成 id —— 维持原始无 id 状态（兼容现有 Claude 测试期望）
@@ -840,7 +839,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall);
     expect((fcs[0] as any).functionCall.id).toBe('real-1');
     expect((fcs[1] as any).functionCall.id).toBe('real-2');
@@ -865,12 +864,12 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
     ];
 
     // 注意：sanitize 会 mutate 原对象，所以两次必须用各自的深拷贝
-    const once = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
-    const twice = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
+    const once = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
+    const twice = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
     expect(twice).toEqual(once);
 
     // 把第一次的产出再次清洗，结果也应稳定
-    const onceAgain = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(once)));
+    const onceAgain = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(once)));
     expect(onceAgain).toEqual(once);
   });
 });
@@ -889,7 +888,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行同名工具调用兜底', 
 //
 // 修复后要求：fc 必须借用 fr 的真实 id（权威 id = fr.id），双方严格一致。
 // ─────────────────────────────────────────────────────────────────────
-describe('GeminiChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr 对齐', () => {
+describe('OttoChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr 对齐', () => {
   it('并行 read_file×2（fc 无 id，fr 带 CLI callId）：fc 必须借用 fr 的真实 id 且一一对齐', () => {
     const input: Content[] = [
       { role: MESSAGE_ROLES.USER, parts: [{ text: '同时读两个文件' } as any] },
@@ -909,7 +908,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr �
       },
     ];
 
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).map((p: any) => p.functionCall);
     const frs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse).map((p: any) => p.functionResponse);
 
@@ -952,7 +951,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr �
         ],
       },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).map((p: any) => p.functionCall);
     const frs = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse).map((p: any) => p.functionResponse);
     expect(fcs.length).toBe(2);
@@ -984,7 +983,7 @@ describe('GeminiChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr �
         ],
       },
     ];
-    const result = GeminiChat.sanitizeRequestContents(input);
+    const result = OttoChat.sanitizeRequestContents(input);
     const fcIds = result.flatMap(c => c.parts || []).filter((p: any) => p.functionCall).map((p: any) => p.functionCall.id).sort();
     const frIds = result.flatMap(c => c.parts || []).filter((p: any) => p.functionResponse).map((p: any) => p.functionResponse.id).sort();
     expect(fcIds).toEqual(['rf-A', 'rf-B', 'rf-C']);
@@ -1008,10 +1007,10 @@ describe('GeminiChat.sanitizeRequestContents > 并行无 id fc + 真实 id fr �
         ],
       },
     ];
-    const once = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
-    const twice = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
+    const once = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
+    const twice = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(dirty)));
     expect(twice).toEqual(once);
-    const onceAgain = GeminiChat.sanitizeRequestContents(JSON.parse(JSON.stringify(once)));
+    const onceAgain = OttoChat.sanitizeRequestContents(JSON.parse(JSON.stringify(once)));
     expect(onceAgain).toEqual(once);
   });
 });

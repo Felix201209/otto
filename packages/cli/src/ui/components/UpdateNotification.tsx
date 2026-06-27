@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
+import { useMemo } from 'react';
 import { Colors } from '../colors.js';
-import { t, tp, isChineseLocale } from '../utils/i18n.js';
+import { isChineseLocale,t,tp } from '../utils/i18n.js';
 
 interface UpdateNotificationProps {
   message: string;
@@ -28,8 +27,8 @@ interface UpdateInfo {
 export const UpdateNotification = ({ message }: UpdateNotificationProps) => {
   const isChinese = useMemo(() => isChineseLocale(), []);
   const changelogUrl = isChinese
-    ? 'https://dvcode.deepvlab.ai/zh/changelog'
-    : 'https://dvcode.deepvlab.ai/changelog';
+    ? 'https://www.otto.bot/zh/changelog'
+    : 'https://www.otto.bot/changelog';
 
   const updateInfo = useMemo<UpdateInfo | null>(() => {
     if (!message) return null;

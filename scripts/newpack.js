@@ -201,7 +201,7 @@ async function main() {
       // Uninstall old version first (ignore errors)
       const uninstallSpinner = ora('🗑️ Uninstalling old version...').start();
       try {
-        run('npm uninstall -g deepv-code', { stdio: 'pipe' });
+        run('npm uninstall -g otto-ai', { stdio: 'pipe' });
         uninstallSpinner.succeed(chalk.green('✅ Old version uninstalled'));
       } catch (error) {
         uninstallSpinner.info(chalk.cyan('ℹ️ No previously installed version found'));
@@ -230,13 +230,13 @@ async function main() {
         authSpinner.info(chalk.cyan('ℹ️ Skipped auth reset (script not found or execution failed)'));
       }
 
-      // Test dvcode startup
+      // Test otto startup
       const testSpinner = ora('🚀 Testing new version startup...').start();
       try {
-        run('dvcode --version');
-        testSpinner.succeed(chalk.green('✅ dvcode startup successful!'));
+        run('otto --version');
+        testSpinner.succeed(chalk.green('✅ otto startup successful!'));
       } catch (error) {
-        testSpinner.warn(chalk.yellow('⚠️ dvcode startup failed, please test manually'));
+        testSpinner.warn(chalk.yellow('⚠️ otto startup failed, please test manually'));
       }
 
       progressBar.increment({ step: 'Installation and testing complete' });
@@ -263,7 +263,7 @@ async function main() {
     if (!shouldInstall) {
       console.log(`\n${chalk.yellow('💡 Hint:')} Run ${chalk.cyan.bold(`npm install -g ./${tgzFileName}`)} to install globally.\n`);
     } else {
-      console.log(`\n${chalk.green('🎉')} ${chalk.bold('dvcode')} is now updated and ready for use!\n`);
+      console.log(`\n${chalk.green('🎉')} ${chalk.bold('otto')} is now updated and ready for use!\n`);
     }
 
   } catch (error) {
@@ -291,7 +291,7 @@ Options:
 Features:
   ✅ Auto-increment patch version (modify root package.json only)
   ✅ Standard build workflow (build → bundle → pack)
-  ✅ Generate tgz file (deepv-code-{new-version}.tgz)
+  ✅ Generate tgz file (otto-ai-{new-version}.tgz)
   ✅ Optional global install + auth reset + startup test
 
 Examples:

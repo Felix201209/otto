@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { accountCommand } from './accountCommand.js';
-import { CommandContext } from './types.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 // Mock dependencies
 vi.mock('otto-core', () => ({
@@ -26,18 +25,12 @@ const { ProxyAuthManager } = await import('otto-core');
 const mockProxyAuthManager = vi.mocked(ProxyAuthManager.getInstance) as Mock;
 
 describe('accountCommand', () => {
-  const mockContext: CommandContext = {
-    services: {} as any,
-    ui: {
-      addItem: vi.fn(),
-    } as any,
-    session: {} as any,
-  };
+  const mockContext = createMockCommandContext();
 
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset environment variable
-    delete process.env.DEEPX_SERVER_URL;
+    delete process.env.OTTO_SERVER_URL;
   });
 
   it('should be defined with correct properties', () => {
@@ -79,7 +72,7 @@ describe('accountCommand', () => {
     expect(mockAuthManager.getAccessToken).toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalled();
     expect(mockOpen).toHaveBeenCalledWith(
-      'https://dvcode.deepvlab.ai/token-login?code=temp-code-123&redirect=/userinfo&method=dvcode'
+      'https://www.otto.bot/token-login?code=temp-code-123&redirect=/userinfo&method=otto'
     );
   });
 
@@ -171,7 +164,7 @@ describe('accountCommand', () => {
 
   it('should use custom server URL from environment variable', async () => {
     // Set custom server URL
-    process.env.DEEPX_SERVER_URL = 'https://custom-server.example.com';
+    process.env.OTTO_SERVER_URL = 'https://custom-server.example.com';
 
     const mockAuthManager = {
       getAccessToken: vi.fn().mockResolvedValue('mock-jwt-token'),

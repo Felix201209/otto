@@ -133,7 +133,7 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
       }).substring(0, MAX_CONTENT_LENGTH);
 
       // 使用统一的 generateContent 接口进行 fallback 处理
-      const geminiClient = this.config.getGeminiClient();
+      const geminiClient = this.config.getOttoClient();
 
       const fallbackPrompt = `The user requested the following: "${params.prompt}".
 
@@ -297,7 +297,7 @@ ${textContent}
 
     try {
       // 使用临时Chat获得完整的API监控和错误处理
-      const geminiClient = this.config.getGeminiClient();
+      const geminiClient = this.config.getOttoClient();
 
       console.debug(`[WebFetchTool] Using temporary chat for WEB_FETCH scene with full API monitoring`);
 

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -111,7 +110,7 @@ export const agentStyleCommand: SlashCommand = {
         }
 
         // 3. 刷新当前会话的 system prompt
-        const geminiClient = await config.getGeminiClient();
+        const geminiClient = await config.getOttoClient();
         if (geminiClient) {
           const chat = geminiClient.getChat();
           if (chat) {

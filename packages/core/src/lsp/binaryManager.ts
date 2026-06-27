@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -129,7 +128,7 @@ export class BinaryManager {
       // 创建一个简单的 package.json 确保 npm install 在此目录下工作
       if (!fs.existsSync(path.join(destDir, 'package.json'))) {
         fs.writeFileSync(path.join(destDir, 'package.json'), JSON.stringify({
-          name: `deepv-lsp-${binName}`,
+          name: `otto-lsp-${binName}`,
           version: '1.0.0',
           private: true
         }));
@@ -184,7 +183,7 @@ export class BinaryManager {
         throw new Error(
           `[LSP] Go toolchain not found in PATH (required to install ${binName}). ` +
             `Please install Go from https://go.dev/dl/ and ensure "go" is available in your PATH, ` +
-            `or configure a preinstalled gopls via PATH/DEEPV_GOPLS_PATH.`,
+            `or configure a preinstalled gopls via PATH/OTTO_GOPLS_PATH.`,
         );
       }
 

@@ -6,10 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { authCommand } from './authCommand.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 describe('authCommand', () => {
   it('should return a dialog action to open the auth dialog', async () => {
-    const result = await authCommand.action!({} as any, '');
+    const result = await authCommand.action!(createMockCommandContext(), '');
     expect(result).toEqual({
       type: 'dialog',
       dialog: 'auth',

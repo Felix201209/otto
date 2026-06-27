@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ describe('BinaryManager.goInstaller', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deepv-lsp-go-'));
+    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'otto-lsp-go-'));
     spawnMock.mockReset();
     spawnSyncMock.mockReset();
   });

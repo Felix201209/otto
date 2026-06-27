@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as themeModule from './theme.js';
-import { themeManager } from './theme-manager.js';
+import { themeManager, DEFAULT_THEME } from './theme-manager.js';
 
 const { validateCustomTheme } = themeModule;
 type CustomTheme = themeModule.CustomTheme;
@@ -135,7 +135,6 @@ describe('themeManager.loadCustomThemes', () => {
   };
 
   it('should use values from DEFAULT_THEME when DiffAdded and DiffRemoved are not provided', () => {
-    const { darkTheme } = themeModule;
     const legacyTheme: Partial<CustomTheme> = { ...baseTheme };
     delete legacyTheme.DiffAdded;
     delete legacyTheme.DiffRemoved;
@@ -143,9 +142,10 @@ describe('themeManager.loadCustomThemes', () => {
     themeManager.loadCustomThemes({ 'Legacy Custom Theme': legacyTheme as CustomTheme });
     const result = themeManager.getTheme('Legacy Custom Theme')!;
 
+    // 缺省的 Diff 色应继承自当前 DEFAULT_THEME(现为 opencode),与具体默认主题解耦。
     expect(result).toBeDefined();
-    expect(result.colors.DiffAdded).toBe(darkTheme.DiffAdded);
-    expect(result.colors.DiffRemoved).toBe(darkTheme.DiffRemoved);
+    expect(result.colors.DiffAdded).toBe(DEFAULT_THEME.colors.DiffAdded);
+    expect(result.colors.DiffRemoved).toBe(DEFAULT_THEME.colors.DiffRemoved);
     expect(result.colors.AccentBlue).toBe(legacyTheme.AccentBlue);
     expect(result.name).toBe(legacyTheme.name);
   });

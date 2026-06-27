@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +14,7 @@ import * as crypto from 'node:crypto';
 /**
  * Tests use a per-test isolated fake-home dir inside the OS tmp dir, with
  * os.homedir() mocked to return it, so they never touch the user's real
- * ~/.deepv directory. credentials.ts always writes to <home>/.deepv/.
+ * ~/.otto directory. credentials.ts always writes to <home>/.otto/.
  *
  * Note: on Windows, process.env.USERPROFILE is NOT consulted by the native
  * os.homedir() impl, so vi.mock is the only portable interception point.
@@ -43,7 +42,7 @@ type FeishuCredentials = import('./credentials.js').FeishuCredentials;
 let credsDir: string;
 
 beforeEach(async () => {
-  fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'dvcode-feishu-creds-'));
+  fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-feishu-creds-'));
   credsDir = path.join(fakeHome, '.otto-user');
 });
 
@@ -162,7 +161,7 @@ describe('FeishuCredentials — encryption format', () => {
 });
 
 describe('FeishuCredentials — file location resolution', () => {
-  it('saves under <home>/.deepv (global, not project)', async () => {
+  it('saves under <home>/.otto (global, not project)', async () => {
     await saveCredentials(baseCreds);
     const filePath = path.join(credsDir, 'feishu-credentials.json');
     expect(fsSync.existsSync(filePath)).toBe(true);

@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +12,7 @@
  * ─────────────────────────────────────────────────────────────────────────
  * tryCompressChat 与 switchModel 中存在「sessionTokenCount > 900K 时升级
  * 压缩模型」的逻辑。原实现把目标硬编码为 'x-ai/grok-4.1-fast'，这是只在
- * DeepV 云端协议下才能解析的 ID —— 自定义模型直连用户（走 EasyRouter /
+ * Otto 云端协议下才能解析的 ID —— 自定义模型直连用户（走 EasyRouter /
  * 自有 endpoint）的 baseUrl/apiKey 不会被云端识别，必然 401/404 静默失败，
  * 触发 vscode-ui 用户反馈的「20% 自动压缩失败」。
  *
@@ -32,7 +31,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { GeminiClient } from './client.js';
+import { OttoClient } from './client.js';
 
 // 用 Object.create(prototype) 跳过 constructor 的依赖（与 client.setHistory.sanitize.test.ts 同款手法）
 function makeBareClient(opts: {
@@ -46,8 +45,8 @@ function makeBareClient(opts: {
     apiKey?: string;
   }>;
   customModelConfig?: any;
-}): GeminiClient {
-  const client = Object.create(GeminiClient.prototype) as GeminiClient;
+}): OttoClient {
+  const client = Object.create(OttoClient.prototype) as OttoClient;
   const fakeConfig = {
     getModel: vi.fn().mockReturnValue(opts.currentModel),
     getCustomModels: vi.fn().mockReturnValue(opts.customModels || []),
@@ -63,11 +62,11 @@ function makeBareClient(opts: {
 }
 
 // 反射调用 private 方法
-function call(client: GeminiClient, defaultModel: string | undefined): string {
+function call(client: OttoClient, defaultModel: string | undefined): string {
   return (client as any).resolveLargeContextCompressionModel(defaultModel);
 }
 
-describe('GeminiClient.resolveLargeContextCompressionModel', () => {
+describe('OttoClient.resolveLargeContextCompressionModel', () => {
   // ───────────────────────────────────────────────────────────────────────
   // 不变量 1：云端协议用户 → 永远 grok 云端 ID
   // ───────────────────────────────────────────────────────────────────────
@@ -214,7 +213,7 @@ describe('GeminiClient.resolveLargeContextCompressionModel', () => {
   // sanity：getCustomModels 返回 null/undefined 时不能崩
   // ───────────────────────────────────────────────────────────────────────
   it('config.getCustomModels 返回 undefined 时不会崩', () => {
-    const client = Object.create(GeminiClient.prototype) as GeminiClient;
+    const client = Object.create(OttoClient.prototype) as OttoClient;
     (client as any).config = {
       getModel: () => 'custom:opus',
       getCustomModels: () => undefined,

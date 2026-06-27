@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Otto team
+ * Copyright 2026 Felix
  * https://github.com/Felix201209/otto
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -64,6 +64,117 @@ const API_BASE_URLS: Record<string, string> = {
   lark: 'https://open.larksuite.com',
 };
 
+type FeishuCardPrimitive = string | number | boolean | null;
+export type FeishuCardValue =
+  | FeishuCardPrimitive
+  | FeishuCardObject
+  | FeishuCardValue[];
+export type FeishuCardObject = {
+  [key: string]: FeishuCardValue | undefined;
+};
+type FeishuCardElement = FeishuCardObject;
+
+type FeishuPostElement = {
+  tag: string;
+  text?: string;
+  href?: string;
+  style?: string[];
+  image_key?: string;
+};
+type FeishuPostParagraph = FeishuPostElement[];
+
+type FeishuApiResponse<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+> = {
+  code?: number;
+  msg?: string;
+  data?: TData;
+  tenant_access_token?: string;
+  expire?: number;
+  [key: string]: unknown;
+};
+
+type FeishuWsClient = {
+  start(options: { eventDispatcher: unknown }): Promise<void>;
+  stop?: () => void;
+};
+
+type MergedForwardItem = {
+  message_id?: string;
+  upper_message_id?: string;
+  create_time?: string | number;
+  msg_type?: string;
+  sender?: { id?: string };
+  body?: { content?: string };
+  [key: string]: unknown;
+};
+
+type FeishuIncomingMessage = {
+  message_id?: string;
+  message_type?: string;
+  content?: string;
+  chat_id?: string;
+  chat_type?: string;
+  [key: string]: unknown;
+};
+
+type FeishuIncomingEvent = {
+  message?: FeishuIncomingMessage;
+  sender?: {
+    sender_id?: { open_id?: string };
+    open_id?: string;
+  };
+  mentions?: Array<{ key?: string; open_id?: string }>;
+  conversation?: { chat_id?: string };
+  [key: string]: unknown;
+};
+
+type FeishuIncomingPayload = {
+  event?: FeishuIncomingEvent;
+  header?: { create_time?: string | number };
+  [key: string]: unknown;
+};
+
+type FeishuCardActionPayload = {
+  event?: {
+    action?: FeishuCardAction;
+    operator?: { open_id?: string };
+    sender?: { sender_id?: { open_id?: string } };
+    context?: { open_message_id?: string; open_chat_id?: string };
+    message_id?: string;
+    chat_id?: string;
+  };
+  action?: FeishuCardAction;
+  operator?: { open_id?: string };
+  context?: { open_message_id?: string };
+  message_id?: string;
+  [key: string]: unknown;
+};
+
+type FeishuCardAction = {
+  value?: unknown;
+  option?: unknown;
+  form_value?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function responseDataString(
+  data: FeishuApiResponse,
+  key: string,
+): string | null {
+  return (asRecord(data.data)?.[key] as string | undefined) || null;
+}
+
 /**
  * 卡片交互（等待用户点击/提交）的默认超时时间（毫秒）。
  *
@@ -80,9 +191,9 @@ export interface FeishuMessage {
   senderOpenId: string;
   mentions: Array<{ key: string; openId: string }>;
   messageType: string;
-  /** 待下载的图片信息（不在 gateway 中直接下载，留给 feishuCommand 在确定 projectRoot 后下载到 .deepvcode/clipboard/） */
+  /** 待下载的图片信息（不在 gateway 中直接下载，留给 feishuCommand 在确定 projectRoot 后下载到 .otto/clipboard/） */
   pendingImages?: Array<{ imageKey: string; placeholder: string }>;
-  /** 待下载的文件信息（不在 gateway 中直接下载，留给 feishuCommand 在确定 projectRoot 后下载到 .deepvcode/inbound/） */
+  /** 待下载的文件信息（不在 gateway 中直接下载，留给 feishuCommand 在确定 projectRoot 后下载到 .otto/inbound/） */
   pendingFiles?: Array<{ fileKey: string; fileName: string; placeholder: string }>;
   /** 消息创建时间（毫秒时间戳），来自飞书事件 header.create_time，用于陈旧消息过滤 */
   createTime?: number;
@@ -155,10 +266,14 @@ export const CARDKIT_LOADING_ELEMENT_ID = 'loading_icon';
  *
  * 当前 CardKit 2.0 在生产环境表现不稳定（创建/推送偶发 5xx、卡片渲染不一致），
  * 默认禁用 CardKit 2.0，统一走老版带标题的交互卡片（sendCard + updateCard）。
- * 设置环境变量 EASYCODE_FEISHU_CARDKIT_V2=1 可临时启用（仅供测试 / 开发）。
+ * 设置环境变量 OTTO_FEISHU_CARDKIT_V2=1 可临时启用（仅供测试 / 开发）。
+ * 向后兼容旧环境变量 OTTO_FEISHU_CARDKIT_V2。
  */
 export function isCardKitV2Enabled(): boolean {
-  return process.env['EASYCODE_FEISHU_CARDKIT_V2'] === '1';
+  const v =
+    process.env['OTTO_FEISHU_CARDKIT_V2'] ??
+    process.env['OTTO_FEISHU_CARDKIT_V2'];
+  return v === '1';
 }
 
 /**
@@ -239,7 +354,7 @@ export function renderFooterMarkdown(metrics: FeishuFooterMetrics): string {
  * 构建一个标准飞书卡片页脚元素数组（旧版 1.x 卡片用）。
  * 新版 CardKit 2.0 的卡片直接走 renderFooterMarkdown + 单 markdown 元素。
  */
-function buildFeishuFooterElements(metrics: FeishuFooterMetrics): any[] {
+function buildFeishuFooterElements(metrics: FeishuFooterMetrics): FeishuCardElement[] {
   const content = renderFooterMarkdown(metrics);
   if (!content) return [];
   return [
@@ -268,8 +383,8 @@ function buildFeishuFooterElements(metrics: FeishuFooterMetrics): any[] {
  *   4) loading_icon 元素的存在让客户端显示加载动画 — 终态用 card.update 整卡
  *      覆盖时不再带这个元素，动画即自动消失（不需要主动 PATCH 移除）
  */
-export function buildCardKitStreamingCard(initialContent: string = '', initialFooter: string = ''): Record<string, any> {
-  const elements: any[] = [
+export function buildCardKitStreamingCard(initialContent: string = '', initialFooter: string = ''): FeishuCardObject {
+  const elements: FeishuCardElement[] = [
     {
       tag: 'markdown',
       element_id: CARDKIT_STREAMING_ELEMENT_ID,
@@ -322,8 +437,8 @@ export function buildCardKitStreamingCard(initialContent: string = '', initialFo
 /**
  * 构建 CardKit 2.0 终态卡片（streaming_mode 关闭后用 card.update 整卡覆盖）。
  */
-export function buildCardKitFinalCard(content: string, footerMetrics?: FeishuFooterMetrics, headerTitle?: string): Record<string, any> {
-  const elements: any[] = [
+export function buildCardKitFinalCard(content: string, footerMetrics?: FeishuFooterMetrics, headerTitle?: string): FeishuCardObject {
+  const elements: FeishuCardElement[] = [
     {
       tag: 'markdown',
       element_id: CARDKIT_STREAMING_ELEMENT_ID,
@@ -347,7 +462,7 @@ export function buildCardKitFinalCard(content: string, footerMetrics?: FeishuFoo
   // 按码点截断，避免把 emoji 等代理对从中间劈开。
   const summaryText = truncateByCodePoints(content.replace(/[*_`#>[\]()~]/g, '').trim(), 120) || 'Done';
 
-  const card: Record<string, any> = {
+  const card: FeishuCardObject = {
     schema: '2.0',
     config: {
       streaming_mode: false,
@@ -381,7 +496,7 @@ export class FeishuGateway {
   private domain: string;
   private tenantToken: string = '';
   private tokenExpiresAt: number = 0;
-  private wsClient: any = null;
+  private wsClient: FeishuWsClient | null = null;
   private _onReady: (() => void) | null = null;
   private _onDisconnect: ((error?: Error) => void) | null = null;
 
@@ -444,8 +559,8 @@ export class FeishuGateway {
         this.processedMessages.set(id, ts);
       }
       dlog(`[Feishu] Loaded ${this.processedMessages.size} processed message IDs from persistent cache.`);
-    } catch (e: any) {
-      dwarn(`[Feishu] Failed to load processed messages: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dwarn(`[Feishu] Failed to load processed messages: ${errorMessage(e)}`);
       this.processedMessages = new Map();
     }
   }
@@ -461,8 +576,8 @@ export class FeishuGateway {
       const entries = Array.from(this.processedMessages.entries());
       fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), 'utf8');
       dlog(`[Feishu] Saved ${entries.length} processed message IDs to persistent cache.`);
-    } catch (e: any) {
-      dwarn(`[Feishu] Failed to save processed messages: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dwarn(`[Feishu] Failed to save processed messages: ${errorMessage(e)}`);
     }
   }
 
@@ -544,8 +659,8 @@ export class FeishuGateway {
           dlog(`[Feishu] Loaded ${this.highRiskHashes.size} active high-risk dedup entries from disk.`);
         }
       }
-    } catch (e: any) {
-      dwarn(`[Feishu] Failed to load high-risk dedup cache: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dwarn(`[Feishu] Failed to load high-risk dedup cache: ${errorMessage(e)}`);
     }
   }
 
@@ -559,8 +674,8 @@ export class FeishuGateway {
       }
       const entries = Array.from(this.highRiskHashes.entries());
       fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), 'utf8');
-    } catch (e: any) {
-      dwarn(`[Feishu] Failed to save high-risk dedup cache: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dwarn(`[Feishu] Failed to save high-risk dedup cache: ${errorMessage(e)}`);
     }
   }
 
@@ -655,8 +770,8 @@ export class FeishuGateway {
     if (this.cardActionAuthorizer) {
       try {
         return this.cardActionAuthorizer(openId);
-      } catch (e: any) {
-        dwarn(`[Feishu] cardActionAuthorizer threw, denying: ${e?.message || e}`);
+      } catch (e: unknown) {
+        dwarn(`[Feishu] cardActionAuthorizer threw, denying: ${errorMessage(e)}`);
         return false;
       }
     }
@@ -679,9 +794,9 @@ export class FeishuGateway {
             return (id: string) => isSenderAuthorized(creds, id);
           }
           return null; // 无凭证 / 非本 Bot 凭证 → 交由上层处理（见下方 fallback）
-        } catch (e: any) {
+        } catch (e: unknown) {
           // 凭证无法读取：不阻断（与消息路径一致由上层处理），但记录。
-          dwarn(`[Feishu] card-action authorization: failed to load credentials, allowing: ${e?.message || e}`);
+          dwarn(`[Feishu] card-action authorization: failed to load credentials, allowing: ${errorMessage(e)}`);
           return null;
         }
       })();
@@ -771,7 +886,7 @@ export class FeishuGateway {
     if (!res.ok) {
       throw new Error(`tenant_access_token HTTP ${res.status} ${res.statusText}`);
     }
-    let data: any;
+    let data: FeishuApiResponse<{ tenant_access_token?: string; expire?: number }>;
     try {
       data = await res.json();
     } catch {
@@ -867,7 +982,7 @@ export class FeishuGateway {
     } else if (msgType === 'post') {
       try {
         const content = JSON.parse(contentStr || '{}');
-        let postContent: any[][] = [];
+        let postContent: FeishuPostParagraph[] = [];
         let title = '';
 
         const locales = Object.keys(content);
@@ -882,7 +997,7 @@ export class FeishuGateway {
           postContent = content;
         }
 
-        let parts: string[] = [];
+        const parts: string[] = [];
         if (title) {
           parts.push(`**${title}**`);
         }
@@ -913,7 +1028,7 @@ export class FeishuGateway {
           }
         }
         text = parts.join('\n');
-      } catch (e: any) {
+      } catch (e: unknown) {
         derror('Parse feishu post message failed in sub-parser:', e);
         text = `[解析富文本消息失败]`;
       }
@@ -932,7 +1047,7 @@ export class FeishuGateway {
         this.dumpCardContentForDebug(messageId, contentStr);
 
         // 解析 user_dsl —— 卡片的完整 DSL，优先级最高
-        let dsl: any = null;
+        let dsl: Record<string, unknown> | null = null;
         if (typeof content?.user_dsl === 'string') {
           try {
             dsl = JSON.parse(content.user_dsl);
@@ -981,7 +1096,7 @@ export class FeishuGateway {
         }
         // 只有标注、没有任何可读文本时，给出更明确的兜底
         text = parts.length > 1 ? parts.join('\n') : '[卡片消息]';
-      } catch (e: any) {
+      } catch (e: unknown) {
         derror('Parse feishu interactive card failed in sub-parser:', e);
         text = '[卡片消息]';
       }
@@ -1001,7 +1116,7 @@ export class FeishuGateway {
    *
    * 注意：这里有意 **不** 处理图片占位符与按钮文案——按产品决策，转发卡片仅提取正文文本并标注 [卡片]。
    */
-  private extractCardText(node: any, out: string[], seen: Set<string>): void {
+  private extractCardText(node: unknown, out: string[], seen: Set<string>): void {
     if (node == null) return;
 
     if (typeof node === 'string') {
@@ -1020,10 +1135,12 @@ export class FeishuGateway {
     }
 
     if (typeof node === 'object') {
+      const nodeRecord = asRecord(node);
+      if (!nodeRecord) return;
       // table 组件需保留行列对应关系，单独渲染为 markdown 表格后即停止下钻，
       // 否则通用递归会把列定义与行数据平铺、丢失结构。
-      if (node.tag === 'table' && Array.isArray(node.columns)) {
-        const tableMd = this.renderCardTable(node);
+      if (nodeRecord['tag'] === 'table' && Array.isArray(nodeRecord['columns'])) {
+        const tableMd = this.renderCardTable(nodeRecord);
         if (tableMd && !seen.has(tableMd)) {
           seen.add(tableMd);
           out.push(tableMd);
@@ -1032,15 +1149,15 @@ export class FeishuGateway {
       }
 
       // 直接文本承载字段：content / text（text 可能是字符串，也可能是 {content} 对象）
-      if (typeof node.content === 'string') {
-        this.extractCardText(node.content, out, seen);
+      if (typeof nodeRecord['content'] === 'string') {
+        this.extractCardText(nodeRecord['content'], out, seen);
       }
-      if (typeof node.text === 'string') {
-        this.extractCardText(node.text, out, seen);
+      if (typeof nodeRecord['text'] === 'string') {
+        this.extractCardText(nodeRecord['text'], out, seen);
       }
       // 递归常见的容器/子节点字段
       for (const key of ['text', 'elements', 'columns', 'fields', 'actions', 'options']) {
-        const child = (node as any)[key];
+        const child = nodeRecord[key];
         if (child && typeof child === 'object') {
           this.extractCardText(child, out, seen);
         }
@@ -1063,15 +1180,17 @@ export class FeishuGateway {
    *
    * 无 rows 时仅输出表头（仍是合法 markdown 表格）。
    */
-  private renderCardTable(node: any): string {
-    const columns: any[] = Array.isArray(node.columns) ? node.columns : [];
+  private renderCardTable(node: Record<string, unknown>): string {
+    const columns: Array<Record<string, unknown>> = Array.isArray(node.columns)
+      ? node.columns.filter((column): column is Record<string, unknown> => Boolean(asRecord(column)))
+      : [];
     if (columns.length === 0) return '';
 
     const headers = columns.map(
       (c, i) => String(c?.display_name ?? c?.name ?? `列${i + 1}`).trim() || `列${i + 1}`,
     );
 
-    const formatCell = (val: any): string => {
+    const formatCell = (val: unknown): string => {
       if (val == null) return '';
       if (typeof val === 'string') return val.replace(/\|/g, '\\|').replace(/\n/g, ' ').trim();
       if (typeof val === 'number' || typeof val === 'boolean') return String(val);
@@ -1081,7 +1200,8 @@ export class FeishuGateway {
             if (item == null) return '';
             if (typeof item === 'string' || typeof item === 'number') return String(item);
             // options: {text,color}；其它对象尽量取 text/content
-            return String(item.text ?? item.content ?? '').trim();
+            const itemRecord = asRecord(item);
+            return String(itemRecord?.['text'] ?? itemRecord?.['content'] ?? '').trim();
           })
           .filter((s) => s)
           .join(', ');
@@ -1090,31 +1210,40 @@ export class FeishuGateway {
         // 飞书 table 单元格 data_type 为 markdown 时，值是嵌套对象：
         //   { tag: "markdown", property: { elements: [{ tag: "plain_text", property: { content: "2.24亿" } }] } }
         // 需要递归提取 property.elements 中的 content
-        const prop = val.property;
+        const valRecord = asRecord(val) ?? {};
+        const prop = asRecord(valRecord['property']);
         if (prop && Array.isArray(prop.elements)) {
           const texts = prop.elements
-            .map((el: any) => el?.property?.content ?? el?.content ?? el?.text ?? '')
-            .filter((s: string) => s);
+            .map((el) => {
+              const elRecord = asRecord(el);
+              return asRecord(elRecord?.['property'])?.['content'] ?? elRecord?.['content'] ?? elRecord?.['text'] ?? '';
+            })
+            .filter(Boolean);
           if (texts.length > 0) return texts.join(', ');
         }
         // markdownElements 二级兜底
         if (prop && Array.isArray(prop.markdownElements) && prop.markdownElements.length > 0) {
           const texts = prop.markdownElements
-            .map((el: any) => el?.property?.content ?? el?.content ?? el?.text ?? '')
-            .filter((s: string) => s);
+            .map((el) => {
+              const elRecord = asRecord(el);
+              return asRecord(elRecord?.['property'])?.['content'] ?? elRecord?.['content'] ?? elRecord?.['text'] ?? '';
+            })
+            .filter(Boolean);
           if (texts.length > 0) return texts.join(', ');
         }
-        return String(val.text ?? val.content ?? '').trim();
+        return String(valRecord['text'] ?? valRecord['content'] ?? '').trim();
       }
       return '';
     };
 
-    const rows: any[] = Array.isArray(node.rows) ? node.rows : [];
+    const rows: Array<Record<string, unknown>> = Array.isArray(node.rows)
+      ? node.rows.filter((row): row is Record<string, unknown> => Boolean(asRecord(row)))
+      : [];
     const lines: string[] = [];
     lines.push(`| ${headers.join(' | ')} |`);
     lines.push(`| ${headers.map(() => '---').join(' | ')} |`);
     for (const row of rows) {
-      const cells = columns.map((c) => formatCell(row?.[c?.name]));
+      const cells = columns.map((c) => formatCell(row[String(c.name ?? '')]));
       lines.push(`| ${cells.join(' | ')} |`);
     }
     return lines.join('\n');
@@ -1128,7 +1257,7 @@ export class FeishuGateway {
   private dumpCardContentForDebug(messageId: string, contentStr: string): void {
     // 在 WS 事件回调中调用，必须非阻塞：用异步 fs（fire-and-forget），
     // 避免同步 appendFileSync 卡住事件循环。失败静默，绝不影响主流程。
-    let pretty: any = contentStr;
+    let pretty: unknown = contentStr;
     try {
       pretty = JSON.parse(contentStr || '{}');
     } catch {
@@ -1171,12 +1300,12 @@ export class FeishuGateway {
    */
   private renderMergedForwardItems(
     rootId: string,
-    items: any[],
+    items: MergedForwardItem[],
     pendingImages: Array<{ imageKey: string; placeholder: string }>,
     pendingFiles: Array<{ fileKey: string; fileName: string; placeholder: string }>
   ): string {
     // 按 upper_message_id 构建 父id -> 子消息[] 映射（根消息本身不计入）
-    const childrenMap = new Map<string, any[]>();
+    const childrenMap = new Map<string, MergedForwardItem[]>();
     for (const item of items) {
       if (item.message_id === rootId && !item.upper_message_id) continue;
       const parentId = item.upper_message_id || rootId;
@@ -1211,13 +1340,13 @@ export class FeishuGateway {
         let subText: string;
         if (subMsgType === 'merge_forward') {
           // 嵌套合并转发：就地递归展开（子孙节点已在同一 items 中）
-          const nested = renderSubtree(item.message_id, depth + 1);
+          const nested = renderSubtree(item.message_id as string, depth + 1);
           subText = nested || '[空的合并转发消息]';
         } else {
           subText = this.parseSingleMessageContent(
-            item.message_id,
+            item.message_id as string,
             subMsgType,
-            item.body?.content,
+            item.body?.content as string,
             pendingImages,
             pendingFiles
           );
@@ -1251,7 +1380,7 @@ export class FeishuGateway {
    *
    * 这里只负责取回原始 `items`，树形拼装与渲染交由调用方处理。
    */
-  async getMergedForwardMessages(messageId: string): Promise<{ items: any[]; error?: string }> {
+  async getMergedForwardMessages(messageId: string): Promise<{ items: MergedForwardItem[]; error?: string }> {
     try {
       const token = await this.getTenantToken();
       if (!token) {
@@ -1265,7 +1394,7 @@ export class FeishuGateway {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ items?: MergedForwardItem[] }>;
 
       if (data.code !== 0) {
         dlog(`[Feishu] getMergedForwardMessages(${messageId}) failed: ${JSON.stringify(data)}`);
@@ -1274,9 +1403,10 @@ export class FeishuGateway {
 
       const items = data.data?.items || [];
       return { items };
-    } catch (e: any) {
-      dlog(`[Feishu] getMergedForwardMessages(${messageId}) threw: ${e?.message || e}`);
-      return { items: [], error: `网络或未知请求异常: ${e?.message || e}` };
+    } catch (e: unknown) {
+      const message = errorMessage(e);
+      dlog(`[Feishu] getMergedForwardMessages(${messageId}) threw: ${message}`);
+      return { items: [], error: `网络或未知请求异常: ${message}` };
     }
   }
 
@@ -1351,7 +1481,7 @@ export class FeishuGateway {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ chat_mode?: string; name?: string }>;
 
       if (data.code !== 0) {
         dlog(`[Feishu] fetchChatInfo(${chatId}) failed: ${JSON.stringify(data)}`);
@@ -1370,8 +1500,8 @@ export class FeishuGateway {
       if (name) {
         this.chatNameCache.set(chatId, name);
       }
-    } catch (e: any) {
-      dlog(`[Feishu] fetchChatInfo(${chatId}) threw: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dlog(`[Feishu] fetchChatInfo(${chatId}) threw: ${errorMessage(e)}`);
     }
   }
 
@@ -1415,8 +1545,8 @@ export class FeishuGateway {
       const localPath = path.join(tempDir, `feishu-image-${safeKey}${ext}`);
       await fs.promises.writeFile(localPath, Buffer.from(buffer));
       return localPath;
-    } catch (e: any) {
-      dlog(`[Feishu] downloadImageResource failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dlog(`[Feishu] downloadImageResource failed: ${errorMessage(e)}`);
       return null;
     }
   }
@@ -1465,8 +1595,8 @@ export class FeishuGateway {
       const localPath = path.join(targetDir, `feishu-image-${safeKey}${ext}`);
       await fs.promises.writeFile(localPath, Buffer.from(buffer));
       return localPath;
-    } catch (e: any) {
-      dlog(`[Feishu] downloadImageToDir failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dlog(`[Feishu] downloadImageToDir failed: ${errorMessage(e)}`);
       return null;
     }
   }
@@ -1534,8 +1664,8 @@ export class FeishuGateway {
 
       await fs.promises.writeFile(localPath, Buffer.from(buffer));
       return localPath;
-    } catch (e: any) {
-      dlog(`[Feishu] downloadFileToDir failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dlog(`[Feishu] downloadFileToDir failed: ${errorMessage(e)}`);
       return null;
     }
   }
@@ -1567,9 +1697,9 @@ export class FeishuGateway {
     });
 
     dispatcher.register({
-      'im.message.receive_v1': async (data: any) => {
+      'im.message.receive_v1': async (data: FeishuIncomingPayload) => {
       try {
-        const event = data.event || data;
+        const event = data.event || (data as FeishuIncomingEvent);
         const header = data.header || {};
         const message = event.message || {};
         const sender = event.sender || {};
@@ -1589,10 +1719,10 @@ export class FeishuGateway {
         if (msgType === 'merge_forward') {
           try {
             dlog(`Received merge_forward message, fetching sub-messages for ${message.message_id}...`);
-            const { items: subMessages, error } = await this.getMergedForwardMessages(message.message_id);
+            const { items: subMessages, error } = await this.getMergedForwardMessages(message.message_id as string);
             if (subMessages && subMessages.length > 0) {
               const body = this.renderMergedForwardItems(
-                message.message_id,
+                message.message_id as string,
                 subMessages,
                 pendingImages,
                 pendingFiles
@@ -1603,15 +1733,15 @@ export class FeishuGateway {
             } else {
               text = `[合并转发消息，但未获取到任何子消息内容${error ? `。原因: ${error}` : ''}]`;
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             derror(`Failed to parse merge_forward message:`, err);
-            text = `[解析合并转发消息失败: ${err?.message || err}]`;
+            text = `[解析合并转发消息失败: ${errorMessage(err)}]`;
           }
         } else {
           text = this.parseSingleMessageContent(
-            message.message_id,
+            message.message_id as string,
             msgType,
-            message.content,
+            message.content as string,
             pendingImages,
             pendingFiles
           );
@@ -1631,12 +1761,12 @@ export class FeishuGateway {
 
         const feishuMsg: FeishuMessage = {
           text,
-          messageId: message.message_id,
+          messageId: message.message_id as string,
           chatId: message.chat_id || event.conversation?.chat_id || '',
           chatType,
           senderOpenId: sender.sender_id?.open_id || sender.open_id || '',
-          mentions: (event.mentions || []).map((m: any) => ({
-            key: m.key,
+          mentions: (event.mentions || []).map((m: { key?: string; open_id?: string }) => ({
+            key: m.key as string,
             openId: m.open_id || '',
           })),
           messageType: message.message_type || 'text',
@@ -1752,12 +1882,12 @@ export class FeishuGateway {
 
     // 注册卡片按钮点击回调事件
     dispatcher.register({
-      'card.action.trigger': async (data: any) => {
+      'card.action.trigger': async (data: FeishuCardActionPayload) => {
         try {
           dlog('Received card.action.trigger event, full payload:', JSON.stringify(data, null, 2));
           dlog('Current pending cardCallbacks keys:', [...this.cardCallbacks.keys()]);
 
-          const action = data?.event?.action || data?.action || data;
+          const action = data?.event?.action || data?.action || (data as FeishuCardAction);
           const openId = data?.event?.operator?.open_id
             || data?.event?.sender?.sender_id?.open_id
             || data?.operator?.open_id
@@ -1770,7 +1900,7 @@ export class FeishuGateway {
           const rawValue = action?.value ?? action?.option ?? '';
           // action.value 是对象 { choice: "xxx" }，需要提取实际值
           const choiceValue = typeof rawValue === 'object' && rawValue !== null && 'choice' in rawValue
-            ? (rawValue as any).choice
+            ? (rawValue as { choice?: unknown }).choice
             : rawValue;
           const strValue = String(choiceValue ?? '');
 
@@ -1862,7 +1992,7 @@ export class FeishuGateway {
       this.wsClient = client;
 
       // start() 返回 Promise<void>，成功时 resolve
-      client.start({ eventDispatcher: dispatcher }).catch((err: any) => {
+      client.start({ eventDispatcher: dispatcher }).catch((err: unknown) => {
         if (!settled) { settled = true; reject(err); }
       });
     });
@@ -1874,7 +2004,11 @@ export class FeishuGateway {
   async sendMessage(chatId: string, text: string, replyToMessageId?: string): Promise<string | null> {
     const token = await this.getTenantToken();
 
-    const body: any = {
+    const body: {
+      receive_id?: string;
+      msg_type: string;
+      content: string;
+    } = {
       receive_id: chatId,
       msg_type: 'text',
       content: JSON.stringify({ text }),
@@ -1895,9 +2029,9 @@ export class FeishuGateway {
       body: JSON.stringify(body),
     });
 
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
     if (data.code === 0) {
-      return data.data?.message_id || null;
+      return responseDataString(data, 'message_id');
     }
 
     // fallback: 10003 错误时尝试直接发送（不 reply）
@@ -1915,9 +2049,9 @@ export class FeishuGateway {
           content: JSON.stringify({ text }),
         }),
       });
-      const directData: any = await directRes.json();
+      const directData = await directRes.json() as FeishuApiResponse<{ message_id?: string }>;
       if (directData.code === 0) {
-        return directData.data?.message_id || null;
+        return responseDataString(directData, 'message_id');
       }
       derror('Feishu sendMessage failed:', JSON.stringify(directData));
     } else {
@@ -1961,9 +2095,9 @@ export class FeishuGateway {
         body: JSON.stringify(body),
       });
 
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
       if (data.code === 0) {
-        return data.data?.message_id || null;
+        return responseDataString(data, 'message_id');
       }
 
       // Provide specific guidance for common permission errors
@@ -1974,8 +2108,8 @@ export class FeishuGateway {
         derror('Feishu sendPrivateMessage failed:', JSON.stringify(data));
       }
       return null;
-    } catch (e: any) {
-      derror('Feishu sendPrivateMessage threw:', e?.message || e);
+    } catch (e: unknown) {
+      derror('Feishu sendPrivateMessage threw:', errorMessage(e));
       return null;
     }
   }
@@ -2008,7 +2142,7 @@ export class FeishuGateway {
           }),
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code !== 0) {
         dwarn(`Failed to update Feishu message: ${JSON.stringify(data)}`);
         return false;
@@ -2040,7 +2174,7 @@ export class FeishuGateway {
           },
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code !== 0) {
         dwarn(`Failed to recall Feishu message: ${JSON.stringify(data)}`);
         return false;
@@ -2083,7 +2217,7 @@ export class FeishuGateway {
           }),
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code !== 0) {
         dwarn(`Failed to update Feishu Markdown message: ${JSON.stringify(data)}`);
         return false;
@@ -2108,7 +2242,11 @@ export class FeishuGateway {
       },
     };
 
-    const body: any = {
+    const body: {
+      receive_id?: string;
+      msg_type: string;
+      content: string;
+    } = {
       receive_id: chatId,
       msg_type: 'post',
       content: JSON.stringify(postContent),
@@ -2129,12 +2267,12 @@ export class FeishuGateway {
       body: JSON.stringify(body),
     });
 
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
     if (data.code !== 0) {
       derror('Feishu sendMarkdown failed:', JSON.stringify(data));
       return null;
     }
-    return data.data?.message_id || null;
+    return responseDataString(data, 'message_id');
   }
 
   /**
@@ -2142,10 +2280,10 @@ export class FeishuGateway {
    *
    * 支持：标题、加粗、行内代码、代码块、链接、无序/有序列表、表格
    */
-  private mdToPostContent(md: string): any[][] {
+  private mdToPostContent(md: string): FeishuPostParagraph[] {
     const lines = md.split('\n');
-    const paragraphs: any[][] = [];
-    let currentPara: any[] = [];
+    const paragraphs: FeishuPostParagraph[] = [];
+    let currentPara: FeishuPostParagraph = [];
     let inCodeBlock = false;
     let codeBlockContent: string[] = [];
 
@@ -2264,8 +2402,8 @@ export class FeishuGateway {
    * 解析行内 Markdown：加粗、行内代码、链接
    * 返回飞书 post 元素数组
    */
-  private parseInlineMarkdown(text: string): any[] {
-    const elements: any[] = [];
+  private parseInlineMarkdown(text: string): FeishuPostElement[] {
+    const elements: FeishuPostElement[] = [];
     // 匹配顺序：行内代码 > 链接 > 加粗
     const regex = /(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))|(\*\*(.+?)\*\*)/g;
 
@@ -2320,7 +2458,7 @@ export class FeishuGateway {
           body: JSON.stringify({ reaction_type: { emoji_type: emojiType } }),
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ reaction_id?: string }>;
       if (data.code === 0 && data.data?.reaction_id) {
         return data.data.reaction_id;
       }
@@ -2350,7 +2488,7 @@ export class FeishuGateway {
           },
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code !== 0) {
         dwarn(`Failed to remove reaction: ${JSON.stringify(data)}`);
       }
@@ -2379,9 +2517,9 @@ export class FeishuGateway {
       headers: { 'Authorization': `Bearer ${token}` },
       body: formData,
     });
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ file_key?: string }>;
     if (data.code !== 0) throw new Error(`Upload file failed: ${JSON.stringify(data)}`);
-    return data.data.file_key;
+    return (data.data as { file_key: string }).file_key;
   }
 
   /**
@@ -2390,7 +2528,11 @@ export class FeishuGateway {
   async sendFile(chatId: string, fileKey: string, replyToMessageId?: string): Promise<string | null> {
     const token = await this.getTenantToken();
 
-    const body: any = {
+    const body: {
+      receive_id?: string;
+      msg_type: string;
+      content: string;
+    } = {
       receive_id: chatId,
       msg_type: 'file',
       content: JSON.stringify({ file_key: fileKey }),
@@ -2411,12 +2553,12 @@ export class FeishuGateway {
       body: JSON.stringify(body),
     });
 
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
     if (data.code !== 0) {
       derror('Feishu sendFile failed:', JSON.stringify(data));
       return null;
     }
-    return data.data?.message_id || null;
+    return responseDataString(data, 'message_id');
   }
 
   /**
@@ -2436,9 +2578,9 @@ export class FeishuGateway {
       headers: { 'Authorization': `Bearer ${token}` },
       body: formData,
     });
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ image_key?: string }>;
     if (data.code !== 0) throw new Error(`Upload image failed: ${JSON.stringify(data)}`);
-    return data.data.image_key;
+    return (data.data as { image_key: string }).image_key;
   }
 
   /**
@@ -2447,7 +2589,11 @@ export class FeishuGateway {
   async sendImage(chatId: string, imageKey: string, replyToMessageId?: string): Promise<string | null> {
     const token = await this.getTenantToken();
 
-    const body: any = {
+    const body: {
+      receive_id?: string;
+      msg_type: string;
+      content: string;
+    } = {
       receive_id: chatId,
       msg_type: 'image',
       content: JSON.stringify({ image_key: imageKey }),
@@ -2468,12 +2614,12 @@ export class FeishuGateway {
       body: JSON.stringify(body),
     });
 
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
     if (data.code !== 0) {
       derror('Feishu sendImage failed:', JSON.stringify(data));
       return null;
     }
-    return data.data?.message_id || null;
+    return responseDataString(data, 'message_id');
   }
 
   /**
@@ -2497,7 +2643,7 @@ export class FeishuGateway {
     const token = await this.getTenantToken();
 
     // 构建飞书卡片 JSON
-    const elements: any[] = [];
+    const elements: FeishuCardElement[] = [];
 
     // 正文内容
     if (content) {
@@ -2525,7 +2671,7 @@ export class FeishuGateway {
       elements.push(...buildFeishuFooterElements(footerMetrics));
     }
 
-    const cardContent: Record<string, any> = {
+    const cardContent: FeishuCardObject = {
       config: { wide_screen_mode: true, streaming: true },
       elements,
     };
@@ -2539,7 +2685,11 @@ export class FeishuGateway {
     const contentStr = JSON.stringify(cardContent);
 
     // 先尝试直接发送（不 reply），因为 reply 接口对 interactive 类型可能有限制
-    const body: any = {
+    const body: {
+      receive_id: string;
+      msg_type: string;
+      content: string;
+    } = {
       receive_id: chatId,
       msg_type: 'interactive',
       content: contentStr,
@@ -2550,7 +2700,7 @@ export class FeishuGateway {
     dlog('Feishu sendCard request:', JSON.stringify({
       url: directUrl,
       msg_type: 'interactive',
-      cardContent: cardContent,
+      cardContent,
     }));
 
     const res = await fetch(directUrl, {
@@ -2562,17 +2712,20 @@ export class FeishuGateway {
       body: JSON.stringify(body),
     });
 
-    const data: any = await res.json();
+    const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
     if (data.code === 0) {
       dlog('Feishu sendCard ok, message_id:', data.data?.message_id);
-      return data.data?.message_id || null;
+      return responseDataString(data, 'message_id');
     }
 
     // 直接发送失败，尝试 reply 方式
     dwarn(`Feishu sendCard direct failed (code=${data.code}): ${data.msg}`);
     if (replyToMessageId) {
       const replyUrl = `${this.apiBaseUrl}/open-apis/im/v1/messages/${replyToMessageId}/reply`;
-      const replyBody: any = {
+      const replyBody: {
+        msg_type: string;
+        content: string;
+      } = {
         msg_type: 'interactive',
         content: contentStr,
       };
@@ -2585,10 +2738,10 @@ export class FeishuGateway {
         },
         body: JSON.stringify(replyBody),
       });
-      const replyData: any = await replyRes.json();
+      const replyData = await replyRes.json() as FeishuApiResponse<{ message_id?: string }>;
       if (replyData.code === 0) {
         dlog('Feishu sendCard reply ok, message_id:', replyData.data?.message_id);
-        return replyData.data?.message_id || null;
+        return responseDataString(replyData, 'message_id');
       }
       derror('Feishu sendCard reply also failed:', JSON.stringify(replyData));
     } else {
@@ -2622,10 +2775,10 @@ export class FeishuGateway {
         body: JSON.stringify(body),
       });
 
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ chat_id?: string }>;
       if (data.code === 0) {
         dlog(`Successfully created group chat '${name}', chat_id: ${data.data?.chat_id}`);
-        return data.data?.chat_id || null;
+        return responseDataString(data, 'chat_id');
       }
       dwarn(`Failed to create group chat: ${JSON.stringify(data)}`);
       return null;
@@ -2657,7 +2810,7 @@ export class FeishuGateway {
     try {
       const token = await this.getTenantToken();
 
-      const elements: any[] = [];
+      const elements: FeishuCardElement[] = [];
       if (content) {
         elements.push({ tag: 'markdown', content: optimizeMarkdownStyle(content, 1) });
       }
@@ -2667,7 +2820,7 @@ export class FeishuGateway {
         elements.push(...buildFeishuFooterElements(footerMetrics));
       }
 
-      let cardContent: Record<string, any>;
+      let cardContent: FeishuCardObject;
       if (useSchema2) {
         // schema 2.0 格式：body.elements（与 sendRawInteractiveCard 发送时保持一致）
         cardContent = {
@@ -2708,7 +2861,7 @@ export class FeishuGateway {
           }),
         },
       );
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code !== 0) {
         dwarn(`Failed to update Feishu card: ${JSON.stringify(data)}`);
         return false;
@@ -2838,7 +2991,7 @@ export class FeishuGateway {
    * @param card 完整卡片 JSON（schema:'2.0'）
    * @returns card_id 或 null
    */
-  async createCardKitCard(card: Record<string, any>): Promise<string | null> {
+  async createCardKitCard(card: FeishuCardObject): Promise<string | null> {
     try {
       const token = await this.getTenantToken();
       const res = await fetch(`${this.apiBaseUrl}/open-apis/cardkit/v1/cards`, {
@@ -2852,7 +3005,7 @@ export class FeishuGateway {
           data: JSON.stringify(card),
         }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ card_id?: string }>;
       if (data.code !== 0) {
         derror(`Feishu cardkit.card.create failed (code=${data.code}): ${data.msg}`);
         return null;
@@ -2860,8 +3013,8 @@ export class FeishuGateway {
       const cardId = data.data?.card_id || null;
       dlog('Feishu cardkit.card.create ok, card_id:', cardId);
       return cardId;
-    } catch (err: any) {
-      derror('Feishu cardkit.card.create error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu cardkit.card.create error:', errorMessage(err));
       return null;
     }
   }
@@ -2893,10 +3046,10 @@ export class FeishuGateway {
             content: contentStr,
           }),
         });
-        const replyData: any = await replyRes.json();
+        const replyData = await replyRes.json() as FeishuApiResponse<{ message_id?: string }>;
         if (replyData.code === 0) {
           dlog('Feishu sendCardKitMessage(reply) ok, message_id:', replyData.data?.message_id);
-          return replyData.data?.message_id || null;
+          return responseDataString(replyData, 'message_id');
         }
         dwarn(`Feishu sendCardKitMessage(reply) failed (code=${replyData.code}): ${replyData.msg}`);
         // 落到下面的直接发送
@@ -2915,15 +3068,15 @@ export class FeishuGateway {
           content: contentStr,
         }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
       if (data.code === 0) {
         dlog('Feishu sendCardKitMessage(direct) ok, message_id:', data.data?.message_id);
-        return data.data?.message_id || null;
+        return responseDataString(data, 'message_id');
       }
       derror(`Feishu sendCardKitMessage failed (code=${data.code}): ${data.msg}`);
       return null;
-    } catch (err: any) {
-      derror('Feishu sendCardKitMessage error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu sendCardKitMessage error:', errorMessage(err));
       return null;
     }
   }
@@ -2956,7 +3109,7 @@ export class FeishuGateway {
         },
         body: JSON.stringify({ content, sequence }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code === 0) return true;
 
       // 速率限制（230020）— 静默跳过这一帧，不算错
@@ -2968,8 +3121,8 @@ export class FeishuGateway {
         `Feishu cardkit.cardElement.content failed (code=${data.code}, seq=${sequence}): ${data.msg}`,
       );
       return false;
-    } catch (err: any) {
-      derror('Feishu cardkit.cardElement.content error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu cardkit.cardElement.content error:', errorMessage(err));
       return false;
     }
   }
@@ -2997,14 +3150,14 @@ export class FeishuGateway {
           sequence,
         }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code === 0) return true;
       dwarn(
         `Feishu cardkit.card.settings failed (code=${data.code}, seq=${sequence}): ${data.msg}`,
       );
       return false;
-    } catch (err: any) {
-      derror('Feishu cardkit.card.settings error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu cardkit.card.settings error:', errorMessage(err));
       return false;
     }
   }
@@ -3015,7 +3168,7 @@ export class FeishuGateway {
    */
   async updateCardKitCard(
     cardId: string,
-    card: Record<string, any>,
+    card: FeishuCardObject,
     sequence: number,
   ): Promise<boolean> {
     try {
@@ -3032,14 +3185,14 @@ export class FeishuGateway {
           sequence,
         }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse;
       if (data.code === 0) return true;
       dwarn(
         `Feishu cardkit.card.update failed (code=${data.code}, seq=${sequence}): ${data.msg}`,
       );
       return false;
-    } catch (err: any) {
-      derror('Feishu cardkit.card.update error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu cardkit.card.update error:', errorMessage(err));
       return false;
     }
   }
@@ -3066,7 +3219,7 @@ export class FeishuGateway {
     questions: FeishuQuestion[],
     timeoutMs: number = DEFAULT_CARD_ACTION_TIMEOUT_MS,
     replyToMessageId?: string,
-  ): Promise<{ ok: boolean; answers?: FeishuQuestionAnswers }> {
+  ): Promise<{ ok: boolean; answers?: FeishuQuestionAnswers; otherIdeas?: boolean }> {
     if (!questions || questions.length === 0) {
       return { ok: true, answers: {} };
     }
@@ -3075,7 +3228,7 @@ export class FeishuGateway {
     const formName = `aq_form_${Date.now()}`;
 
     // 构建表单内部元素
-    const formElements: any[] = [];
+    const formElements: FeishuCardElement[] = [];
     questions.forEach((q, idx) => {
       const title = q.header ? `${q.header}: ${q.question}` : q.question;
 
@@ -3134,7 +3287,7 @@ export class FeishuGateway {
       form_action_type: 'submit',
     });
 
-    const card: Record<string, any> = {
+    const card: FeishuCardObject = {
       schema: '2.0',
       config: { update_multi: true, wide_screen_mode: true },
       header: {
@@ -3191,7 +3344,7 @@ export class FeishuGateway {
       const updateContent = '你选择直接提供其他想法，不回答预设选项。请直接在下方输入框发送你的要求。';
       await this.updateCard(messageId, updateTitle, updateContent, undefined, true);
 
-      return { ok: true, otherIdeas: true } as any;
+      return { ok: true, otherIdeas: true };
     }
 
     // 检查是否是由于超时而未提交
@@ -3315,7 +3468,7 @@ export class FeishuGateway {
       { text: { tag: 'plain_text', content: '🔥 激进 (intense) — 快而猛，重进度' }, value: 'intense' },
     ];
 
-    const formElements: Record<string, any>[] = [
+    const formElements: FeishuCardElement[] = [
       {
         tag: 'input',
         name: 'task',
@@ -3371,7 +3524,7 @@ export class FeishuGateway {
       },
     ];
 
-    const card: Record<string, any> = {
+    const card: FeishuCardObject = {
       schema: '2.0',
       config: { update_multi: true, wide_screen_mode: true },
       header: {
@@ -3448,7 +3601,7 @@ export class FeishuGateway {
    */
   async sendRawInteractiveCard(
     chatId: string,
-    card: Record<string, any>,
+    card: FeishuCardObject,
     replyToMessageId?: string,
   ): Promise<string | null> {
     try {
@@ -3469,10 +3622,10 @@ export class FeishuGateway {
           content: contentStr,
         }),
       });
-      const data: any = await res.json();
+      const data = await res.json() as FeishuApiResponse<{ message_id?: string }>;
       if (data.code === 0) {
         dlog('Feishu sendRawInteractiveCard ok, message_id:', data.data?.message_id);
-        return data.data?.message_id || null;
+        return responseDataString(data, 'message_id');
       }
 
       dwarn(`Feishu sendRawInteractiveCard direct failed (code=${data.code}): ${data.msg}`);
@@ -3487,16 +3640,16 @@ export class FeishuGateway {
           },
           body: JSON.stringify({ msg_type: 'interactive', content: contentStr }),
         });
-        const replyData: any = await replyRes.json();
+        const replyData = await replyRes.json() as FeishuApiResponse<{ message_id?: string }>;
         if (replyData.code === 0) {
           dlog('Feishu sendRawInteractiveCard(reply) ok, message_id:', replyData.data?.message_id);
-          return replyData.data?.message_id || null;
+          return responseDataString(replyData, 'message_id');
         }
         derror('Feishu sendRawInteractiveCard reply also failed:', JSON.stringify(replyData));
       }
       return null;
-    } catch (err: any) {
-      derror('Feishu sendRawInteractiveCard error:', err?.message || err);
+    } catch (err: unknown) {
+      derror('Feishu sendRawInteractiveCard error:', errorMessage(err));
       return null;
     }
   }
@@ -3594,8 +3747,8 @@ export class FeishuGateway {
     // 导致等待方永久挂起）。发送失败不阻断——仍注册监听，让用户主动回复也能继续。
     try {
       await this.sendMarkdown(chatId, textContent);
-    } catch (e: any) {
-      dwarn(`[Feishu] waitForTextChoice: sendMarkdown failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      dwarn(`[Feishu] waitForTextChoice: sendMarkdown failed: ${errorMessage(e)}`);
     }
 
     return new Promise<string>((resolve) => {

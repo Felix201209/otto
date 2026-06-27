@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,7 +52,7 @@ export interface GoalAchievedParams {
  *   criteria are met, it shouldn't be calling this tool.
  *
  * Behavior:
- *   - Side effect: clears `GeminiClient.activeGoalContext`. Subsequent
+ *   - Side effect: clears `OttoClient.activeGoalContext`. Subsequent
  *     compressions will not re-inject the original goal prompt.
  *     The bottom-bar goal indicator (CLI) flips off within ~1s
  *     (useGoalActive heartbeat).
@@ -148,7 +148,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
 
     let client = null;
     try {
-      client = this.config.getGeminiClient();
+      client = this.config.getOttoClient();
     } catch {
       // Swallow
     }

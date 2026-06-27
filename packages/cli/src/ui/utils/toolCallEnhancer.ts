@@ -1,18 +1,14 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { ToolCallRequestInfo } from 'otto-core';
 import {
-  validateAndFixFunctionCall,
-  areAllFunctionCallsValid,
-  fixAllFunctionCalls,
-  getModelCapabilities,
-  FunctionCallValidationResult
+FunctionCallValidationResult,
+getModelCapabilities,
+ToolCallRequestInfo
 } from 'otto-core';
 
 /**

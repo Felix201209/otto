@@ -6,10 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { editorCommand } from './editorCommand.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 describe('editorCommand', () => {
   it('should return a dialog action to open the editor dialog', async () => {
-    const result = await editorCommand.action!({} as any, '');
+    const result = await editorCommand.action!(createMockCommandContext(), '');
     expect(result).toEqual({
       type: 'dialog',
       dialog: 'editor',

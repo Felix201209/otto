@@ -39,7 +39,7 @@ export interface AuthDetails {
  * Tracks live ACP sessions.
  *
  * DeepCode currently runs a single `Config` per process; every ACP session
- * shares that config but gets its own `Session` (which owns a `GeminiChat`
+ * shares that config but gets its own `Session` (which owns a `OttoChat`
  * and AbortController). This differs from gemini-cli's design where each
  * session rebuilds a `Config` via `loadCliConfig` — DeepCode's config
  * construction is heavier and not safely re-entrant, so we reuse instead.
@@ -86,7 +86,7 @@ export class AcpSessionManager {
    * Steps:
    *   1. Authenticate (honors auth details from the `authenticate` call).
    *   2. Install the ACP-backed FileSystemService if the client supports it.
-   *   3. Start a fresh `GeminiChat` via `GeminiClient.startChat()`.
+   *   3. Start a fresh `OttoChat` via `OttoClient.startChat()`.
    *   4. Register the session and push the initial command list.
    */
   async newSession(
@@ -99,9 +99,9 @@ export class AcpSessionManager {
     await this.authenticate(authDetails);
     this.installFileSystemServiceIfSupported(sessionId, cwd);
 
-    const geminiClient = this.config.getGeminiClient();
-    // IMPORTANT: we deliberately share `GeminiClient.chat` with this session
-    // instead of building an independent one. `GeminiClient.switchModel`,
+    const geminiClient = this.config.getOttoClient();
+    // IMPORTANT: we deliberately share `OttoClient.chat` with this session
+    // instead of building an independent one. `OttoClient.switchModel`,
     // `updateSystemPromptWithMcpPrompts`, compression, etc. all target
     // `this.chat` via `getChat()`. If we held a separate chat here, every
     // subsequent `set_config_option(model)` would update the client's chat
@@ -111,7 +111,7 @@ export class AcpSessionManager {
     // ACP spec allows concurrent sessions, but OpenClaw / acpx spawn one
     // otto process per session, so one-chat-per-process is safe in
     // practice. If we ever need true per-session isolation we'd have to
-    // teach `GeminiClient` about a session id and route switchModel
+    // teach `OttoClient` about a session id and route switchModel
     // accordingly; for now the shared model/tool config is a feature.
     const chat = geminiClient.getChat();
 
@@ -167,7 +167,7 @@ export class AcpSessionManager {
    *
    * The IDE supplies a `sessionId` that DeepCode persisted previously. We
    * locate the backing `SessionData`, convert its client history to Gemini
-   * chat history, call `GeminiClient.resumeChat`, and wrap it in a new
+   * chat history, call `OttoClient.resumeChat`, and wrap it in a new
    * {@link Session}.
    */
   async loadSession(
@@ -191,7 +191,7 @@ export class AcpSessionManager {
         [],
     );
 
-    const geminiClient = this.config.getGeminiClient();
+    const geminiClient = this.config.getOttoClient();
     await geminiClient.resumeChat(hydrated);
 
     const chat = geminiClient.getChat();

@@ -4,14 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { RadioButtonSelect, type RadioSelectItem } from './shared/RadioButtonSelect.js';
-import { SettingScope, type LoadedSettings } from '../../config/settings.js';
-import { Config, ApprovalMode, getCoreSystemPrompt, AgentStyle } from 'otto-core';
-import { Colors } from '../colors.js';
-import { t, tp } from '../utils/i18n.js';
+import { Box,Text,useInput } from 'ink';
+import { AgentStyle,ApprovalMode,Config,getCoreSystemPrompt } from 'otto-core';
+import React,{ useCallback,useState } from 'react';
+import { SettingScope,type LoadedSettings } from '../../config/settings.js';
 import { getModelDisplayName } from '../../utils/modelUtils.js';
+import { Colors } from '../colors.js';
+import { t,tp } from '../utils/i18n.js';
+import { RadioButtonSelect,type RadioSelectItem } from './shared/RadioButtonSelect.js';
+
+type TranslationKey = Parameters<typeof t>[0];
 
 interface SettingsMenuDialogProps {
   onClose: () => void;
@@ -30,17 +32,17 @@ interface SettingsMenuDialogProps {
  * 交互式设置菜单面板
  * 使用键盘上下移动、回车进入子菜单
  */
-export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
+export const SettingsMenuDialog = React.memo(({
   onClose,
   settings,
   config,
   terminalWidth,
-  availableTerminalHeight,
+  availableTerminalHeight: _availableTerminalHeight,
   onOpenTheme,
   onOpenEditor,
   onOpenModel,
   onReloadMemory,
-}: SettingsMenuDialogProps) {
+}: SettingsMenuDialogProps) => {
 
   // Calculate display values
   const themeValue = settings.merged.theme || t('config.value.default');
@@ -53,14 +55,14 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
   const projectMemoryMode = settings.merged.projectMemoryMode || 'all';
   const projectMemoryDisplayValue = (() => {
     switch (projectMemoryMode) {
-      case 'deepv-only': return t('config.value.project.memory.deepvOnly');
+      case 'otto-only': return t('config.value.project.memory.ottoOnly');
       case 'none': return t('config.value.project.memory.none');
       default: return t('config.value.project.memory.all');
     }
   })();
 
   // 主菜单选项 - 按使用频率排序
-  const menuItems: RadioSelectItem<string>[] = [
+  const menuItems: Array<RadioSelectItem<string>> = [
     { label: t('config.menu.model'), value: 'model', rightText: `(${modelValue})` },
     {
       label: `${(function () {
@@ -75,7 +77,7 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
         }
       })()} ${t('config.menu.agent.style')}`,
       value: 'agent-style',
-      rightText: `(${t(`agentStyle.style.${config.getAgentStyle()}.label` as any)})`
+      rightText: `(${t(`agentStyle.style.${config.getAgentStyle()}.label` as TranslationKey)})`
     },
     { label: `${config.getApprovalMode() === ApprovalMode.YOLO ? '🚀' : '🛡️'} ${t('config.menu.yolo')}`, value: 'yolo', rightText: config.getApprovalMode() === ApprovalMode.YOLO ? `(${t('config.value.on')})` : `(${t('config.value.off')})` },
     { label: t('config.menu.theme'), value: 'theme', rightText: `(${themeValue})` },
@@ -87,13 +89,13 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
   ];
 
   // YOLO 模式选项
-  const yoloModeItems: RadioSelectItem<string>[] = [
+  const yoloModeItems: Array<RadioSelectItem<string>> = [
     { label: t('config.option.yolo.enable'), value: 'on' },
     { label: t('config.option.yolo.disable'), value: 'off' },
   ];
 
   // Agent Style 选项
-  const agentStyleItems: RadioSelectItem<string>[] = [
+  const agentStyleItems: Array<RadioSelectItem<string>> = [
     { label: t('config.option.agent.style.default'), value: 'default' },
     { label: t('config.option.agent.style.codex'), value: 'codex' },
     { label: t('config.option.agent.style.cursor'), value: 'cursor' },
@@ -104,15 +106,15 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
   ];
 
   // Healthy Use 选项
-  const healthyUseItems: RadioSelectItem<string>[] = [
+  const healthyUseItems: Array<RadioSelectItem<string>> = [
     { label: t('config.option.healthy.use.enable'), value: 'on' },
     { label: t('config.option.healthy.use.disable'), value: 'off' },
   ];
 
   // Project Memory Mode 选项
-  const projectMemoryItems: RadioSelectItem<string>[] = [
+  const projectMemoryItems: Array<RadioSelectItem<string>> = [
     { label: t('config.option.project.memory.all'), value: 'all' },
-    { label: t('config.option.project.memory.deepvOnly'), value: 'deepv-only' },
+    { label: t('config.option.project.memory.ottoOnly'), value: 'otto-only' },
     { label: t('config.option.project.memory.none'), value: 'none' },
   ];
 
@@ -124,10 +126,11 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
   const [languageInput, setLanguageInput] = useState(settings.merged.preferredLanguage || '');
 
   // 🆕 当进入子菜单前记录当前选择，返回时恢复
-  const handleEnterSubMenu = (subMenu: MenuView, selectedValue: string) => {
+  // 用 useCallback 包稳，避免每次渲染新建函数导致依赖它的 handleMainMenuSelect 失稳
+  const handleEnterSubMenu = useCallback((subMenu: MenuView, selectedValue: string) => {
     setLastSelectedBeforeSubMenu(selectedValue);
     setCurrentView(subMenu);
-  };
+  }, []);
   const [lastSelectedBeforeSubMenu, setLastSelectedBeforeSubMenu] = useState<string>('model');
   const [selectedYolo, setSelectedYolo] = useState<string>(
     config.getApprovalMode() === ApprovalMode.YOLO ? 'on' : 'off'
@@ -211,7 +214,7 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
       }
 
       const { getCoreSystemPrompt } = await import('otto-core');
-      const geminiClient = await config.getGeminiClient();
+      const geminiClient = await config.getOttoClient();
       if (geminiClient) {
         const chat = geminiClient.getChat();
         if (chat) {
@@ -231,7 +234,7 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
 
       const yoloNote = newStyle === 'codex' ? t('config.status.agent.style.yolo.note') : '';
       setStatusMessage(
-        `${tp('config.status.agent.style.switched', { style: t(`agentStyle.style.${newStyle}.label` as any) })}${yoloNote}`
+        `${tp('config.status.agent.style.switched', { style: t(`agentStyle.style.${newStyle}.label` as TranslationKey) })}${yoloNote}`
       );
       setTimeout(() => {
         setCurrentView('main');
@@ -246,7 +249,7 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
     async (value: string) => {
       setSelectedHealthyUse(value);
       settings.setValue(SettingScope.User, 'healthyUse', value === 'on');
-      (config as any).healthyUse = value === 'on';
+      Object.assign(config, { healthyUse: value === 'on' });
 
       setStatusMessage(
         value === 'on'
@@ -265,12 +268,12 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
   const handleProjectMemorySelect = useCallback(
     async (value: string) => {
       setSelectedProjectMemory(value);
-      const newMode = value as 'all' | 'deepv-only' | 'none';
+      const newMode = value as 'all' | 'otto-only' | 'none';
       settings.setValue(SettingScope.Workspace, 'projectMemoryMode', newMode);
 
       const modeLabel = (() => {
         switch (newMode) {
-          case 'deepv-only': return t('config.value.project.memory.deepvOnly');
+          case 'otto-only': return t('config.value.project.memory.ottoOnly');
           case 'none': return t('config.value.project.memory.none');
           default: return t('config.value.project.memory.all');
         }
@@ -297,7 +300,7 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
       settings.setValue(SettingScope.User, 'preferredLanguage', normalizedValue || undefined);
 
       // 刷新 system prompt 以立即生效
-      const geminiClient = await config.getGeminiClient();
+      const geminiClient = await config.getOttoClient();
       if (geminiClient) {
         const chat = geminiClient.getChat();
         if (chat) {
@@ -518,3 +521,5 @@ export const SettingsMenuDialog = React.memo(function SettingsMenuDialog({
     </Box>
   );
 });
+
+SettingsMenuDialog.displayName = 'SettingsMenuDialog';

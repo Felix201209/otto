@@ -16,9 +16,9 @@ export function maskUrl(url: string): string {
 
     // 保留协议和主机名，但用***替代路径和查询参数
     return `${protocol}//${hostname}/***`;
-  } catch (error) {
+  } catch {
     // 如果URL解析失败，简单地用***替代中间部分
-    return url.replace(/\/\/[^\/]+\/.*/, '//***');
+    return url.replace(/\/\/[^/]+\/.*/, '//***');
   }
 }
 
@@ -31,7 +31,7 @@ export function maskServerUrl(serverUrl: string): string {
   try {
     const urlObj = new URL(serverUrl);
     return `${urlObj.protocol}//${urlObj.hostname}`;
-  } catch (error) {
+  } catch {
     return '***';
   }
 }

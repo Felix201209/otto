@@ -22,7 +22,10 @@ describe('restoreCommand', () => {
   let mockContext: CommandContext;
   let mockConfig: Config;
   let mockGitService: GitService;
-  let mockSessionManager: any;
+  let mockSessionManager: {
+    loadSession: ReturnType<typeof vi.fn>;
+    getSessionCheckpoints: ReturnType<typeof vi.fn>;
+  };
   const sessionId = 'test-session-id';
 
   beforeEach(async () => {
@@ -42,7 +45,7 @@ describe('restoreCommand', () => {
     mockConfig = {
       getCheckpointingEnabled: vi.fn().mockReturnValue(true),
       getProjectTempDir: vi.fn().mockReturnValue('/tmp'),
-      getGeminiClient: vi.fn().mockReturnValue({}),
+      getOttoClient: vi.fn().mockReturnValue({}),
       getProjectRoot: vi.fn().mockReturnValue('/project'),
       getSessionId: vi.fn().mockReturnValue(sessionId),
     } as unknown as Config;

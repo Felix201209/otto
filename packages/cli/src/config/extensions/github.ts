@@ -5,8 +5,6 @@
  */
 
 import { execSync } from 'node:child_process';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 
 export interface GitHubUrl {
   owner: string;
@@ -32,7 +30,7 @@ export async function cloneFromGit(
 
   try {
     execSync(command, { stdio: 'pipe' });
-  } catch (error) {
+  } catch {
     throw new Error(`Failed to clone extension from ${source}`);
   }
 }
@@ -41,7 +39,7 @@ export async function downloadFromGitHubRelease(
   owner: string,
   repo: string,
   targetDir: string,
-  allowPreRelease: boolean = false,
+  _allowPreRelease: boolean = false,
 ): Promise<string> {
   // For now, just throw - actual GitHub release download would need proper implementation
   throw new Error('GitHub release download not yet implemented');

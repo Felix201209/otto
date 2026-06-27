@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -220,7 +219,7 @@ export const Gopls = (projectRoot: string): LSPServer.Info => ({
   async spawn(root: string) {
     // Prefer user-provided path, then PATH, finally install via Go toolchain.
     // Note: golang/tools GitHub releases often ship no prebuilt assets.
-    const envPath = process.env.DEEPV_GOPLS_PATH;
+    const envPath = process.env.OTTO_GOPLS_PATH;
     if (envPath && fs.existsSync(envPath)) {
       return { process: spawn(envPath, [], { cwd: root }) };
     }

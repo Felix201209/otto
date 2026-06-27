@@ -4,12 +4,13 @@
 .env.backup.*
 .gemini_security
 1
-# deepv-code settings
+# otto settings (runtime config + working dirs)
+.otto/
+.otto-user/
 .deepv/
-!deepv/config.yaml
+!otto/config.yaml
 
 server/
-# Note: .deepv-clipboard/ is NOT in gitignore so DeepV Code can access pasted images
 
 # Dependency directory
 node_modules
@@ -70,6 +71,7 @@ packages/vscode-ide-companion/*.vsix
 temp
 packages/vscode-ui-plugin/webview/build
 remote-client/build
+.ottocode
 .deepvcode
 .npmrc
 

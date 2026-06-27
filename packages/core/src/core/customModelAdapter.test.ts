@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -2473,7 +2473,7 @@ describe('callGeminiNativeModel', () => {
   it('normalises a string systemInstruction to canonical { parts: [{ text }] }', async () => {
     // The /v1beta endpoint rejects raw strings with HTTP 500
     //   "json: cannot unmarshal string into Go struct field .systemInstruction
-    //    of type GeminiChatContent"
+    //    of type OttoChatContent"
     // — so we must convert any non-canonical shape on the client side.
     let capturedBody: any;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
@@ -3145,7 +3145,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
 describe('sanitiseGeminiTools - functionDeclarations cleanup at the wire boundary', () => {
   it('reproduces the failing-MCP-tool shape (Context7 query-docs) and produces a clean payload', () => {
     // Verbatim re-creation of decl 31 from the captured 400 dump
-    // C:\\Users\\lijingyu\\.deepv\\last-requests\\
+    // C:\\Users\\lijingyu\\.otto\\last-requests\\
     //   2026-05-26T03-17-44-180Z_gemini-stream_gemini-3.5-flash.json
     const tools = [{
       functionDeclarations: [

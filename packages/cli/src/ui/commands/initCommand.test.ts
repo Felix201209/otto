@@ -22,7 +22,7 @@ vi.mock('fs', () => ({
 describe('initCommand', () => {
   let mockContext: CommandContext;
   const targetDir = '/test/dir';
-  const deepvMdPath = path.join(targetDir, 'OTTO.md');
+  const ottoMdPath = path.join(targetDir, 'OTTO.md');
 
   beforeEach(() => {
     // Create a fresh mock context for each test
@@ -43,7 +43,7 @@ describe('initCommand', () => {
   it('should open init-choice dialog if OTTO.md exists and is not empty', async () => {
     // Arrange: Simulate that the file exists and is not empty
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    vi.mocked(fs.statSync).mockReturnValue({ size: 1024 } as any);
+    vi.mocked(fs.statSync).mockReturnValue({ size: 1024 } as fs.Stats);
     vi.mocked(fs.readFileSync).mockReturnValue('Some content\nMore content');
 
     // Act: Run the command's action
@@ -54,7 +54,7 @@ describe('initCommand', () => {
       type: 'dialog',
       dialog: 'init-choice',
       metadata: {
-        filePath: deepvMdPath,
+        filePath: ottoMdPath,
         fileSize: 1,
         lineCount: 2,
       },
@@ -66,7 +66,7 @@ describe('initCommand', () => {
   it('should proceed with init when OTTO.md is empty (0 bytes)', async () => {
     // Arrange: Simulate that the file exists but is empty
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    vi.mocked(fs.statSync).mockReturnValue({ size: 0 } as any);
+    vi.mocked(fs.statSync).mockReturnValue({ size: 0 } as fs.Stats);
 
     // Act: Run the command's action
     const result = await initCommand.action!(mockContext, '');
@@ -88,7 +88,7 @@ describe('initCommand', () => {
     const result = await initCommand.action!(mockContext, '');
 
     // Assert: Check that writeFileSync was called correctly
-    expect(fs.writeFileSync).toHaveBeenCalledWith(deepvMdPath, '', 'utf8');
+    expect(fs.writeFileSync).toHaveBeenCalledWith(ottoMdPath, '', 'utf8');
 
     // Assert: Check that an informational message was added to the UI
     expect(mockContext.ui.addItem).toHaveBeenCalledWith(

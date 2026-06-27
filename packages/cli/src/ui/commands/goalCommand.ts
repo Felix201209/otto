@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,7 @@
  *   useGoalWizard.handleComplete 拼装 prompt + setGoalContext + submitQuery。
  *
  * 清理流程（/goal clear）：
- *   - 调用 GeminiClient.clearGoalContext() 释放内存里的 activeGoalContext，
+ *   - 调用 OttoClient.clearGoalContext() 释放内存里的 activeGoalContext，
  *     这样后续自动/手动压缩不再注入原 goal prompt。
  *   - 注入一条系统消息（buildGoalClearMessage）告诉模型契约已作废，
  *     防止它继续按"必须工作满 N 小时"的纪律推进。
@@ -79,10 +79,10 @@ const clearAction = async (
   }
 
   // 检查当前是否处于 goal 模式 —— 没启动过就直接告知用户。
-  // getGeminiClient() 在 CLI 启动早期可能还没就绪；同样按"未激活"处理。
+  // getOttoClient() 在 CLI 启动早期可能还没就绪；同样按"未激活"处理。
   let isActive = false;
   try {
-    const client = config.getGeminiClient();
+    const client = config.getOttoClient();
     isActive = !!client?.getGoalContext();
     if (isActive) {
       // 释放内存里的 goal context 状态。
@@ -92,7 +92,7 @@ const clearAction = async (
       client!.clearGoalContext();
     }
   } catch (err) {
-    // getGeminiClient 抛错时按"未激活"处理：依然返回 info 提示，
+    // getOttoClient 抛错时按"未激活"处理：依然返回 info 提示，
     // 不影响用户后续操作。
     void err;
   }

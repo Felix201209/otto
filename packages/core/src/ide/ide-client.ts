@@ -12,7 +12,7 @@ const logger = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   debug: (...args: any[]) => {
     // 只在开发模式或明确启用调试时才输出
-    if (process.env.NODE_ENV === 'development' || process.env.DEBUG || process.env.DEEPV_CODE_DEBUG) {
+    if (process.env.NODE_ENV === 'development' || process.env.DEBUG || process.env.OTTO_CODE_DEBUG) {
       console.debug('[DEBUG] [IdeClient]', ...args);
     }
   },
@@ -49,8 +49,8 @@ export class IdeClient {
   } {
     let details: string | undefined;
     if (this.connectionStatus === IDEConnectionStatus.Disconnected) {
-      if (!process.env['DEEPV_CODE_IDE_SERVER_PORT']) {
-        details = 'DEEPV_CODE_IDE_SERVER_PORT environment variable is not set.';
+      if (!process.env['OTTO_CODE_IDE_SERVER_PORT']) {
+        details = 'OTTO_CODE_IDE_SERVER_PORT environment variable is not set.';
       }
     }
     return {
@@ -61,7 +61,7 @@ export class IdeClient {
 
   async connectToMcpServer(): Promise<void> {
     this.connectionStatus = IDEConnectionStatus.Connecting;
-    const idePort = process.env['DEEPV_CODE_IDE_SERVER_PORT'];
+    const idePort = process.env['OTTO_CODE_IDE_SERVER_PORT'];
     if (!idePort) {
       // IDE服务器端口未设置，静默失败
       this.connectionStatus = IDEConnectionStatus.Disconnected;

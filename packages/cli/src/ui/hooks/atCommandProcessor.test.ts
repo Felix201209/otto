@@ -4,20 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
-import { handleAtCommand } from './atCommandProcessor.js';
-import {
-  Config,
-  FileDiscoveryService,
-  GlobTool,
-  ReadManyFilesTool,
-  ToolRegistry,
-} from 'otto-core';
-import * as os from 'os';
-import { ToolCallStatus } from '../types.js';
-import { UseHistoryManagerReturn } from './useHistoryManager.js';
 import * as fsPromises from 'fs/promises';
+import * as os from 'os';
+import {
+Config,
+FileDiscoveryService,
+GlobTool,
+ReadManyFilesTool,
+ToolRegistry,
+} from 'otto-core';
 import * as path from 'path';
+import { afterEach,beforeEach,describe,expect,it,Mock,vi } from 'vitest';
+import { handleAtCommand } from './atCommandProcessor.js';
+import { UseHistoryManagerReturn } from './useHistoryManager.js';
 
 describe('handleAtCommand', () => {
   let testRootDir: string;
@@ -272,7 +271,7 @@ describe('handleAtCommand', () => {
   describe('gemini-ignore filtering', () => {
     it('should skip gemini-ignored files in @ commands', async () => {
       await createTestFile(
-        path.join(testRootDir, '.deepvignore'),
+        path.join(testRootDir, '.ottoignore'),
         'build/output.js',
       );
       const geminiIgnoredFile = await createTestFile(

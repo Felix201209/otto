@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -68,7 +67,7 @@ export class InlineCommandLoader implements ICommandLoader {
    * @param commandDef 命令定义
    * @returns SlashCommand 对象
    */
-  private createSlashCommand(commandDef: InlineCommandDef): SlashCommand {
+  createSlashCommand(commandDef: InlineCommandDef): SlashCommand {
     const processors = this.createPromptProcessors(commandDef.prompt);
 
     return {
@@ -139,5 +138,5 @@ export class InlineCommandLoader implements ICommandLoader {
  */
 export function createInlineCommand(def: InlineCommandDef): SlashCommand {
   const loader = new InlineCommandLoader(null);
-  return (loader as any).createSlashCommand(def);
+  return loader.createSlashCommand(def);
 }

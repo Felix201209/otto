@@ -1,25 +1,20 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 import WebSocket from 'ws';
-import { Config, ToolRegistry, executeToolCall, GeminiClient, ToolCallRequestInfo, SceneType, AuthType, ApprovalMode, GeminiChat, MESSAGE_ROLES, GeminiEventType, ServerGeminiStreamEvent, CoreToolScheduler, ToolCall as EngineToolCall, CompletedToolCall, ToolConfirmationOutcome } from 'otto-core';
-import { EditorType } from 'otto-core';
-import { GenerateContentResponse, FunctionCall, Part } from '@google/genai';
-import { Content } from 'otto-core';
+import { type Config, type ToolRegistry, type OttoClient, type ToolCallRequestInfo, AuthType, ApprovalMode, type OttoChat, OttoEventType, type ServerOttoStreamEvent, CoreToolScheduler, type ToolCall as EngineToolCall, type CompletedToolCall, ToolConfirmationOutcome, type EditorType, type Content, getMCPDiscoveryState, MCPDiscoveryState, getMCPServerStatus, MCPServerStatus } from 'otto-core';
+import type { Part } from '@google/genai';
 import {
   RemoteMessage,
-  MessageType,
   MessageFactory,
   CommandMessage,
 } from './remoteProtocol.js';
 import { parseAndFormatApiError } from '../ui/utils/errorParsing.js';
 import { remoteLogger } from './remoteLogger.js';
-import { getMCPDiscoveryState, MCPDiscoveryState, getMCPServerStatus, MCPServerStatus } from 'otto-core';
 import { t, tp, isChineseLocale } from '../ui/utils/i18n.js';
 
 /**
@@ -36,23 +31,66 @@ function formatTimestamp(date: Date = new Date()): string {
 }
 
 /**
- * UI展示记录接口 - 不同于GeminiChat的对话历史，这是专门为UI展示设计的数据结构
+ * UI展示记录接口 - 不同于OttoChat的对话历史，这是专门为UI展示设计的数据结构
  */
-interface UIDisplayRecord {
+interface UIDisplayRecordBase {
   id: string;
   timestamp: number;
-  type: 'user_input' | 'ai_response' | 'tool_call' | 'status' | 'error';
-  content: any;
   status?: 'pending' | 'in_progress' | 'completed' | 'error';
 }
+
+interface UIDisplayToolCallContent {
+  toolName: string;
+  toolDescription: string;
+  callId: string;
+  args: Record<string, unknown>;
+  success: boolean;
+  result?: string;
+  error?: string;
+  duration: number;
+}
+
+interface UserInputUIDisplayRecord extends UIDisplayRecordBase {
+  type: 'user_input';
+  content: string;
+}
+
+interface AIResponseUIDisplayRecord extends UIDisplayRecordBase {
+  type: 'ai_response';
+  content: string;
+}
+
+interface StatusUIDisplayRecord extends UIDisplayRecordBase {
+  type: 'status';
+  content: string;
+}
+
+interface ErrorUIDisplayRecord extends UIDisplayRecordBase {
+  type: 'error';
+  content: string;
+}
+
+interface ToolCallUIDisplayRecord extends UIDisplayRecordBase {
+  type: 'tool_call';
+  content: UIDisplayToolCallContent;
+}
+
+export type UIDisplayRecord =
+  | UserInputUIDisplayRecord
+  | AIResponseUIDisplayRecord
+  | StatusUIDisplayRecord
+  | ErrorUIDisplayRecord
+  | ToolCallUIDisplayRecord;
+type UIDisplayRecordInput = Omit<UIDisplayRecord, 'id' | 'timestamp'>;
+type AwaitingApprovalToolCall = Extract<EngineToolCall, { status: 'awaiting_approval' }>;
 
 /**
  * 远程会话管理类
  * 为每个WebSocket连接维护独立的对话状态和历史记录
  */
 export class RemoteSession {
-  private geminiClient: GeminiClient | null = null;
-  private geminiChat: GeminiChat | null = null; // GeminiChat实例
+  private geminiClient: OttoClient | null = null;
+  private geminiChat: OttoChat | null = null; // OttoChat实例
   private toolRegistry: ToolRegistry | null = null;
   private currentProcessingPromise: Promise<void> | null = null;
   private sessionId: string;
@@ -69,7 +107,7 @@ export class RemoteSession {
 
   // UI展示记录存储 - 用于断线重连后恢复UI状态
   private uiDisplayRecords: UIDisplayRecord[] = [];
-  private currentAIResponse: UIDisplayRecord | null = null; // 当前正在进行的AI响应
+  private currentAIResponse: AIResponseUIDisplayRecord | null = null; // 当前正在进行的AI响应
   private lastPromptTokenCount = 0; // 最近一次 API 调用的 prompt token 数
 
   // 思考流跟踪：每轮对话生成一个 thoughtId，所有 Thought/Reasoning chunk 共享
@@ -127,19 +165,19 @@ export class RemoteSession {
 
       this.config.setApprovalMode(ApprovalMode.YOLO);
 
-      // 获取 GeminiClient（在 config 初始化后）
+      // 获取 OttoClient（在 config 初始化后）
 
-      this.geminiClient = this.config.getGeminiClient();
+      this.geminiClient = this.config.getOttoClient();
 
       if (!this.geminiClient) {
-        throw new Error('无法获取GeminiClient，请检查配置和认证状态');
+        throw new Error('无法获取OttoClient，请检查配置和认证状态');
       }
 
       // 初始化工具注册表
 
       this.toolRegistry = await this.config.getToolRegistry();
 
-      // 创建GeminiChat实例，这个实例会保持整个对话历史
+      // 创建OttoChat实例，这个实例会保持整个对话历史
 
       this.geminiChat = await this.geminiClient.getChat();
 
@@ -469,7 +507,7 @@ export class RemoteSession {
   }
 
   /**
-   * 处理单个指令 - 使用持久化的GeminiChat实现连续对话
+   * 处理单个指令 - 使用持久化的OttoChat实现连续对话
    */
   private async processCommand(input: string): Promise<void> {
     const prompt_id = Math.random().toString(16).slice(2);
@@ -502,7 +540,7 @@ export class RemoteSession {
 
 
       // 多轮对话循环：处理用户输入 → AI响应 → 工具执行 → 结果反馈 → 循环
-      let currentInput: any[] = [{ text: input }];
+      let currentInput: Part[] = [{ text: input }];
       let turnCount = 0;
 
       while (true) {
@@ -529,7 +567,7 @@ export class RemoteSession {
         );
 
         // 收集当前轮次的工具调用请求
-        const toolCallRequests: any[] = [];
+        const toolCallRequests: ToolCallRequestInfo[] = [];
         let hasContent = false;
 
         // 处理AI响应事件
@@ -542,10 +580,10 @@ export class RemoteSession {
             return;
           }
 
-          if (event.type === GeminiEventType.Content) {
+          if (event.type === OttoEventType.Content) {
             hasContent = true;
             await this.handleContentEvent(event.value, turnCount);
-          } else if (event.type === GeminiEventType.ToolCallRequest) {
+          } else if (event.type === OttoEventType.ToolCallRequest) {
             toolCallRequests.push(event.value);
           } else {
             await this.handleOtherEvent(event);
@@ -558,8 +596,8 @@ export class RemoteSession {
         });
 
         // 🔧 修复: 标记当前轮次的AI响应为完成状态
-        if (this.currentAIResponse && hasContent) {
-          const currentResponse: UIDisplayRecord = this.currentAIResponse; // 明确类型
+        const currentResponse = this.currentAIResponse as AIResponseUIDisplayRecord | null;
+        if (currentResponse && hasContent) {
           currentResponse.status = 'completed';
           remoteLogger.info('RemoteSession', `第${turnCount}轮AI响应完成: ${this.sessionId}`, {
             recordId: currentResponse.id,
@@ -597,8 +635,8 @@ export class RemoteSession {
       }
 
       // 更新当前AI响应为错误状态
-      if (this.currentAIResponse) {
-        const currentResponse: UIDisplayRecord = this.currentAIResponse; // 明确类型
+      const currentResponse = this.currentAIResponse as AIResponseUIDisplayRecord | null;
+      if (currentResponse) {
         currentResponse.status = 'error';
         currentResponse.content += '\n\n[执行出错]';
       }
@@ -715,12 +753,12 @@ export class RemoteSession {
   /**
    * 添加UI展示记录
    */
-  private addUIRecord(record: Omit<UIDisplayRecord, 'id' | 'timestamp'>): UIDisplayRecord {
-    const fullRecord: UIDisplayRecord = {
+  private addUIRecord(record: UIDisplayRecordInput): UIDisplayRecord {
+    const fullRecord = {
       id: `ui_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       timestamp: Date.now(),
       ...record
-    };
+    } as UIDisplayRecord;
 
     this.uiDisplayRecords.push(fullRecord);
 
@@ -761,14 +799,14 @@ export class RemoteSession {
   /**
    * 处理除content和tool_call_request之外的其他事件
    */
-  private async handleOtherEvent(event: ServerGeminiStreamEvent): Promise<void> {
+  private async handleOtherEvent(event: ServerOttoStreamEvent): Promise<void> {
     switch (event.type) {
-      case GeminiEventType.ToolCallResponse:
+      case OttoEventType.ToolCallResponse:
         // 工具调用响应 - 记录到UI
 
         break;
 
-      case GeminiEventType.ChatCompressed: {
+      case OttoEventType.ChatCompressed: {
         // 对话压缩通知 - 按成功/降级/失败分类处理。
         // 关键：remoteLogger 只写服务端本地日志文件，不经 WebSocket。
         // 必须同时 sendMessage 把状态发到远端客户端，否则远程用户会遇到
@@ -824,14 +862,14 @@ export class RemoteSession {
         break;
       }
 
-      case GeminiEventType.MaxSessionTurns:
+      case OttoEventType.MaxSessionTurns:
         // 达到最大会话轮次
         this.sendError('达到最大会话轮次，请增加 maxSessionTurns 设置');
         break;
 
-      case GeminiEventType.LoopDetected:
+      case OttoEventType.LoopDetected: {
         // 检测到循环
-        const loopType = (event as any).value;
+        const loopType = event.value;
         let loopMessage = '';
 
         switch (loopType) {
@@ -854,10 +892,11 @@ export class RemoteSession {
         this.finalizeThought();
         this.sendMessage(MessageFactory.createStatus('idle', loopMessage));
         break;
+      }
 
-      case GeminiEventType.Thought: {
+      case OttoEventType.Thought: {
         // Gemini 风格的离散 Thought 事件 (subject + description)
-        // 与本地 useGeminiStream 一致：本机端会在 LoadingIndicator 显示 subject。
+        // 与本地 useOttoStream 一致：本机端会在 LoadingIndicator 显示 subject。
         // 远程端转发为 THOUGHT 消息，便于 Web/飞书展示思考标题与进展。
         const thoughtId = this.ensureThoughtId();
         const subject = (event.value as { subject?: string })?.subject ?? '';
@@ -866,7 +905,7 @@ export class RemoteSession {
         break;
       }
 
-      case GeminiEventType.Reasoning: {
+      case OttoEventType.Reasoning: {
         // OpenAI/Claude/DeepSeek 风格的流式 reasoning chunk
         // 远程端按 thoughtId 聚合：所有 chunk 累加成完整 reasoning，
         // 客户端可折叠展示。该轮结束时必须发一条 isComplete=true 收尾。
@@ -878,23 +917,23 @@ export class RemoteSession {
         break;
       }
 
-      case GeminiEventType.UserCancelled:
+      case OttoEventType.UserCancelled:
         // 用户取消
         remoteLogger.info('RemoteSession', `用户取消操作: ${this.sessionId}`);
         break;
 
-      case GeminiEventType.Error:
+      case OttoEventType.Error:
         // 错误事件
         remoteLogger.error('RemoteSession', `收到错误事件: ${this.sessionId}`, event.value);
         this.sendError(`AI处理错误: ${event.value.error.message || '未知错误'}`);
         break;
 
-      case GeminiEventType.Finished:
+      case OttoEventType.Finished:
         // 对话完成
         remoteLogger.info('RemoteSession', `对话完成: ${this.sessionId}`);
         break;
 
-      case GeminiEventType.TokenUsage:
+      case OttoEventType.TokenUsage:
         // Token使用统计 - 记录最近一次的 prompt token count（用于 context left 计算）
         if (event.value && typeof event.value === 'object' && 'inputTokens' in event.value) {
           this.lastPromptTokenCount = (event.value as { inputTokens: number }).inputTokens;
@@ -1084,13 +1123,19 @@ export class RemoteSession {
       },
       onToolCallsUpdate: (toolCalls: EngineToolCall[]) => {
         // 🆕 检测是否有工具进入 awaiting_approval 状态（危险命令确认）
-        const confirmingTool = toolCalls.find(tc => tc.status === 'awaiting_approval');
+        const confirmingTool = toolCalls.find(
+          (tc): tc is AwaitingApprovalToolCall => tc.status === 'awaiting_approval',
+        );
         if (confirmingTool && !this.pendingConfirmation) {
-          const confirmingAny = confirmingTool as any;
-          const details = confirmingAny.confirmationDetails;
-          const command = details?.command || confirmingAny.request?.args?.command || String(confirmingAny.request?.args);
-          const warning = details?.warning || '这是一个需要确认的敏感操作。';
-          const toolName = confirmingAny.tool?.displayName || confirmingAny.tool?.name || confirmingAny.request?.name || 'Unknown';
+          const details = confirmingTool.confirmationDetails;
+          const requestCommand = confirmingTool.request.args.command;
+          const command = details.type === 'exec'
+            ? details.command || requestCommand || String(confirmingTool.request.args)
+            : requestCommand || String(confirmingTool.request.args);
+          const warning = details.type === 'exec' && details.warning
+            ? details.warning
+            : '这是一个需要确认的敏感操作。';
+          const toolName = confirmingTool.tool.displayName || confirmingTool.tool.name || confirmingTool.request.name || 'Unknown';
 
           // 保存确认上下文，等待用户回复
           this.pendingConfirmation = {
@@ -1161,21 +1206,24 @@ export class RemoteSession {
     if (!content) return;
 
     // 内容已经开始，对应的思考段落必须收尾。
-    // 这里保持本地 CLI useGeminiStream 的行为：reasoning 在 content 出现时被清空。
+    // 这里保持本地 CLI useOttoStream 的行为：reasoning 在 content 出现时被清空。
     this.finalizeThought();
 
 
 
     // 🔧 修复: 为每轮AI响应创建独立的记录，避免多轮响应被合并
     if (!this.currentAIResponse) {
-      this.currentAIResponse = this.addUIRecord({
+      const responseRecord = this.addUIRecord({
         type: 'ai_response',
         content: '',
         status: 'in_progress'
       });
+      if (responseRecord.type === 'ai_response') {
+        this.currentAIResponse = responseRecord;
+      }
 
       // 记录当前是第几轮对话，用于调试
-      if (turnCount) {
+      if (turnCount && this.currentAIResponse) {
         remoteLogger.info('RemoteSession', `创建新的AI响应记录 - 第${turnCount}轮: ${this.sessionId}`, {
           recordId: this.currentAIResponse.id
         });

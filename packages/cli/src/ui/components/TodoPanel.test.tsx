@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it } from 'vitest';
-import React from 'react';
 import { render } from 'ink-testing-library';
 import type { TodoItem } from 'otto-core';
-import { selectTodoPanelView, TodoPanel } from './TodoPanel.js';
+import { describe,expect,it } from 'vitest';
+import { selectTodoPanelView,TodoPanel } from './TodoPanel.js';
 
 const todo = (id: string, status: TodoItem['status'], content = id): TodoItem => ({
   id,

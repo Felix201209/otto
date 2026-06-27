@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -252,11 +252,11 @@ IMPORTANT — sub-agent output discipline:
       };
     }
 
-    const geminiClient = this.config.getGeminiClient();
+    const geminiClient = this.config.getOttoClient();
     if (!geminiClient) {
       return {
-        llmContent: 'Workflow failed: GeminiClient not initialized.',
-        returnDisplay: '**Workflow Error:** GeminiClient not initialized.',
+        llmContent: 'Workflow failed: OttoClient not initialized.',
+        returnDisplay: '**Workflow Error:** OttoClient not initialized.',
       };
     }
 

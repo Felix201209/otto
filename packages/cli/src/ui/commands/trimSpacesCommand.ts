@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,7 +59,7 @@ export const trimSpacesCommand: SlashCommand = {
                 `  /trim-spaces on       - 启用自动删除行末空格\n` +
                 `  /trim-spaces off      - 禁用自动删除行末空格\n` +
                 `  /trim-spaces default  - 使用语言默认设置\n\n` +
-                `配置文件：.deepvcode/settings.json`,
+                `配置文件：.otto/settings.json`,
       };
     }
 
@@ -82,7 +81,7 @@ export const trimSpacesCommand: SlashCommand = {
           messageType: 'info',
           content: '✅ 已启用自动删除行末空格！\n\n' +
                   '📝 编辑C++、Python等源代码文件时，将自动删除行末空格。\n' +
-                  '📁 配置已保存到 .deepvcode/settings.json',
+                  '📁 配置已保存到 .otto/settings.json',
         };
       } catch (error) {
         return {
@@ -111,7 +110,7 @@ export const trimSpacesCommand: SlashCommand = {
           messageType: 'info',
           content: '❌ 已禁用自动删除行末空格。\n\n' +
                   '📝 编辑任何文件时都会保留原始的行末空格。\n' +
-                  '📁 配置已保存到 .deepvcode/settings.json',
+                  '📁 配置已保存到 .otto/settings.json',
         };
       } catch (error) {
         return {
@@ -135,7 +134,7 @@ export const trimSpacesCommand: SlashCommand = {
       try {
         // 通过重新保存不包含此配置项的设置来"删除"它
         const currentSettings = projectSettingsManager.getSettings();
-        const { autoTrimTrailingSpaces, ...otherSettings } = currentSettings;
+        const { autoTrimTrailingSpaces: _autoTrimTrailingSpaces, ...otherSettings } = currentSettings;
         projectSettingsManager.save(otherSettings);
 
         return {
@@ -146,7 +145,7 @@ export const trimSpacesCommand: SlashCommand = {
                   '• C/C++: 删除行末空格\n' +
                   '• Python: 删除行末空格\n' +
                   '• JavaScript/TypeScript: 删除行末空格\n' +
-                  '📁 配置已更新到 .deepvcode/settings.json',
+                  '📁 配置已更新到 .otto/settings.json',
         };
       } catch (error) {
         return {

@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
 import { ConsoleMessageItem } from '../types.js';
 
@@ -24,10 +23,10 @@ function PaginatedDebugConsoleComponent({
   currentPage,
   pageSize,
   width,
-  isManuallyBrowsing,
+  isManuallyBrowsing: _isManuallyBrowsing,
 }: PaginatedDebugConsoleProps) {
   const startIndex = currentPage * pageSize;
-  const pageMessages = messages.slice(startIndex, startIndex + pageSize);
+  const _pageMessages = messages.slice(startIndex, startIndex + pageSize);
   const totalPages = Math.ceil(messages.length / pageSize) || 1;
   const errorCount = messages.filter((msg) => msg.type === 'error').length;
   const errorMessages = messages.filter((msg) => msg.type === 'error');
@@ -36,7 +35,7 @@ function PaginatedDebugConsoleComponent({
   const errorPanelHeight = errorCount > 0 ? Math.min(4, errorCount + 1) : 0;
   const scrollableHeight = Math.max(5, pageSize - errorPanelHeight);
 
-  const borderAndPadding = 4;
+  const _borderAndPadding = 4;
   const scrollPageMessages = messages.slice(startIndex, startIndex + scrollableHeight);
 
   return (
@@ -151,14 +150,14 @@ function PaginatedDebugConsoleComponent({
 
 export const PaginatedDebugConsole = React.memo(
   PaginatedDebugConsoleComponent,
-  (prevProps, nextProps) => {
+  (prevProps, nextProps) => 
     // Return true if props are equal (no re-render), false to re-render
-    return (
+     (
       prevProps.messages.length === nextProps.messages.length &&
       prevProps.currentPage === nextProps.currentPage &&
       prevProps.pageSize === nextProps.pageSize &&
       prevProps.width === nextProps.width &&
       prevProps.isManuallyBrowsing === nextProps.isManuallyBrowsing
-    );
-  }
+    )
+  
 );

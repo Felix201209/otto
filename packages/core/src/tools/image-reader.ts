@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -347,7 +346,7 @@ export class ImageReaderTool extends BaseTool<ImageReaderToolParams, ToolResult>
 
     // Delegate the actual vision work to a cheap, dedicated Gemini Flash chat.
     try {
-      const geminiClient = this.config.getGeminiClient();
+      const geminiClient = this.config.getOttoClient();
       const temporaryChat = await geminiClient.createTemporaryChat(
         SceneType.IMAGE_READER,
         resolvedModel, // use scene-recommended model (gemini-2.5-flash) or custom Gemini Flash model

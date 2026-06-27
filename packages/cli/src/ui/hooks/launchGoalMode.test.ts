@@ -1,13 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { launchGoalMode } from './launchGoalMode.js';
-import { ApprovalMode } from 'otto-core';
+import { ApprovalMode,type Config } from 'otto-core';
+import { beforeEach,describe,expect,it,vi } from 'vitest';
 import type { GoalWizardResult } from '../components/GoalWizard.js';
+import { launchGoalMode } from './launchGoalMode.js';
 
 /**
  * launchGoalMode — UI 无关的"启动目标驱动模式"共享内核。
@@ -36,7 +36,7 @@ describe('launchGoalMode', () => {
   let setApprovalModeWithProjectSync: ReturnType<typeof vi.fn>;
   let getApprovalMode: ReturnType<typeof vi.fn>;
   let client: { setGoalContext: typeof setGoalContext };
-  let config: any;
+  let config: Pick<Config, 'getApprovalMode' | 'setApprovalModeWithProjectSync' | 'getOttoClient'>;
 
   beforeEach(() => {
     setGoalContext = vi.fn();
@@ -46,20 +46,20 @@ describe('launchGoalMode', () => {
     config = {
       getApprovalMode,
       setApprovalModeWithProjectSync,
-      getGeminiClient: vi.fn(() => client),
+      getOttoClient: vi.fn(() => client),
     };
   });
 
   it('returns a non-empty assembled prompt containing the task', () => {
     const result = makeResult({ task: '独特任务标记XYZ' });
-    const out = launchGoalMode(config, result);
+    const out = launchGoalMode(config as Config, result);
     expect(out.prompt).toBeTruthy();
     expect(out.prompt).toContain('独特任务标记XYZ');
   });
 
   it('enables YOLO when not already in YOLO mode', () => {
     getApprovalMode.mockReturnValue(ApprovalMode.DEFAULT);
-    const out = launchGoalMode(config, makeResult());
+    const out = launchGoalMode(config as Config, makeResult());
     expect(setApprovalModeWithProjectSync).toHaveBeenCalledWith(
       ApprovalMode.YOLO,
       true,
@@ -69,14 +69,14 @@ describe('launchGoalMode', () => {
 
   it('does NOT re-enable YOLO when already in YOLO mode', () => {
     getApprovalMode.mockReturnValue(ApprovalMode.YOLO);
-    const out = launchGoalMode(config, makeResult());
+    const out = launchGoalMode(config as Config, makeResult());
     expect(setApprovalModeWithProjectSync).not.toHaveBeenCalled();
     expect(out.yoloWasEnabled).toBe(false);
   });
 
   it('registers goal context with the assembled prompt, hours and task', () => {
     const result = makeResult({ hours: 5, task: '任务A' });
-    const out = launchGoalMode(config, result);
+    const out = launchGoalMode(config as Config, result);
     expect(setGoalContext).toHaveBeenCalledTimes(1);
     const ctx = setGoalContext.mock.calls[0][0];
     expect(ctx.originalPrompt).toBe(out.prompt);
@@ -89,7 +89,7 @@ describe('launchGoalMode', () => {
     setGoalContext.mockImplementation(() => {
       throw new Error('client not ready');
     });
-    const out = launchGoalMode(config, makeResult());
+    const out = launchGoalMode(config as Config, makeResult());
     expect(out.prompt).toBeTruthy();
   });
 
@@ -97,12 +97,12 @@ describe('launchGoalMode', () => {
     setApprovalModeWithProjectSync.mockImplementation(() => {
       throw new Error('cannot set mode');
     });
-    expect(() => launchGoalMode(config, makeResult())).toThrow('cannot set mode');
+    expect(() => launchGoalMode(config as Config, makeResult())).toThrow('cannot set mode');
   });
 
-  it('does not throw if getGeminiClient returns null', () => {
-    config.getGeminiClient = vi.fn(() => null);
-    const out = launchGoalMode(config, makeResult());
+  it('does not throw if getOttoClient returns null', () => {
+    config.getOttoClient = vi.fn(() => null);
+    const out = launchGoalMode(config as Config, makeResult());
     expect(out.prompt).toBeTruthy();
     expect(setGoalContext).not.toHaveBeenCalled();
   });

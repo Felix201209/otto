@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { render } from 'ink-testing-library';
-import { describe, it, expect, vi } from 'vitest';
-import { RadioButtonSelect, RadioSelectItem } from './RadioButtonSelect.js';
+import { describe,expect,it,vi } from 'vitest';
+import { RadioButtonSelect,RadioSelectItem } from './RadioButtonSelect.js';
 
 describe('RadioButtonSelect Horizontal Layout', () => {
   const mockItems: Array<RadioSelectItem<string>> = [

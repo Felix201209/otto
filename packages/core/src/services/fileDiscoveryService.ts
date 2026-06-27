@@ -8,7 +8,7 @@ import { GitIgnoreParser, GitIgnoreFilter } from '../utils/gitIgnoreParser.js';
 import { isGitRepository } from '../utils/gitUtils.js';
 import * as path from 'path';
 
-const GEMINI_IGNORE_FILE_NAME = '.deepvignore';
+const GEMINI_IGNORE_FILE_NAME = '.ottoignore';
 
 export interface FilterFilesOptions {
   respectGitIgnore?: boolean;
@@ -17,7 +17,7 @@ export interface FilterFilesOptions {
 
 export class FileDiscoveryService {
   private gitIgnoreFilter: GitIgnoreFilter | null = null;
-  private deepvIgnoreFilter: GitIgnoreFilter | null = null;
+  private ottoIgnoreFilter: GitIgnoreFilter | null = null;
   private projectRoot: string;
 
   constructor(projectRoot: string) {
@@ -37,7 +37,7 @@ export class FileDiscoveryService {
     } catch (_error) {
       // ignore file not found
     }
-    this.deepvIgnoreFilter = gParser;
+    this.ottoIgnoreFilter = gParser;
   }
 
   /**
@@ -78,8 +78,8 @@ export class FileDiscoveryService {
    * Checks if a single file should be gemini-ignored
    */
   shouldGeminiIgnoreFile(filePath: string): boolean {
-    if (this.deepvIgnoreFilter) {
-      return this.deepvIgnoreFilter.isIgnored(filePath);
+    if (this.ottoIgnoreFilter) {
+      return this.ottoIgnoreFilter.isIgnored(filePath);
     }
     return false;
   }
@@ -103,9 +103,9 @@ export class FileDiscoveryService {
   }
 
   /**
-   * Returns loaded patterns from .deepvignore
+   * Returns loaded patterns from .ottoignore
    */
-  getGeminiIgnorePatterns(): string[] {
-    return this.deepvIgnoreFilter?.getPatterns() ?? [];
+  getOttoIgnorePatterns(): string[] {
+    return this.ottoIgnoreFilter?.getPatterns() ?? [];
   }
 }

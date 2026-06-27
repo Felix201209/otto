@@ -14,7 +14,7 @@ import fs from 'node:fs/promises';
  * writes to the editor so unsaved buffer state is honored.
  *
  * NOTE: Do not confuse with {@link FileDiscoveryService}, which handles
- * gitignore/deepvignore discovery and filtering. The names are historical.
+ * gitignore/ottoignore discovery and filtering. The names are historical.
  */
 export interface FileSystemService {
   /**

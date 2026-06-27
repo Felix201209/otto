@@ -154,8 +154,8 @@ index 1234567..1234567 100644
     expect(mockColorizeCode).not.toHaveBeenCalled();
   });
 
-  it('should not render "No changes detected" for DeepV patch custom format (*** Begin Patch)', () => {
-    const deepVPatchDiff = `*** Begin Patch
+  it('should not render "No changes detected" for Otto patch custom format (*** Begin Patch)', () => {
+    const ottoPatchDiff = `*** Begin Patch
 *** Update File: file.txt
 @@
 -old
@@ -163,7 +163,7 @@ index 1234567..1234567 100644
 *** End Patch`;
     const { lastFrame } = render(
       <OverflowProvider>
-        <DiffRenderer diffContent={deepVPatchDiff} filename="file.txt" terminalWidth={80} />
+        <DiffRenderer diffContent={ottoPatchDiff} filename="file.txt" terminalWidth={80} />
       </OverflowProvider>,
     );
 

@@ -1,8 +1,7 @@
 
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,10 +10,19 @@ import { healthyUseCommand } from './healthyUseCommand.js';
 import { CommandContext } from './types.js';
 import { SettingScope } from '../../config/settings.js';
 
+interface MockSettings {
+  setValue: ReturnType<typeof vi.fn>;
+}
+
+interface MockConfig {
+  getHealthyUseEnabled: ReturnType<typeof vi.fn>;
+  healthyUse?: boolean;
+}
+
 describe('healthyUseCommand', () => {
   let mockContext: CommandContext;
-  let mockSettings: any;
-  let mockConfig: any;
+  let mockSettings: MockSettings;
+  let mockConfig: MockConfig;
 
   beforeEach(() => {
     mockSettings = {
@@ -33,7 +41,7 @@ describe('healthyUseCommand', () => {
     // Mock i18n
     vi.mock('../utils/i18n.js', () => ({
       t: (key: string) => key,
-      tp: (key: string, args: any) => `${key}:${JSON.stringify(args)}`,
+      tp: (key: string, args: Record<string, unknown>) => `${key}:${JSON.stringify(args)}`,
     }));
   });
 

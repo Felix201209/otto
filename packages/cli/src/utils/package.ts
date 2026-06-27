@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,11 +32,6 @@ export async function getPackageJson(): Promise<PackageJson | undefined> {
   if (!result) {
     // TODO: Maybe bubble this up as an error.
     return;
-  }
-
-  // 调试信息：显示实际读取的文件路径 (仅开发模式)
-  if (process.env.DEV === 'true' || process.env.NODE_ENV === 'development') {
-
   }
 
   packageJson = result.packageJson;

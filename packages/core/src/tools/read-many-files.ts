@@ -242,7 +242,7 @@ This tool automatically enables external file access when absolute paths are det
     const paramUseDefaultExcludes = params.useDefaultExcludes !== false;
     const geminiIgnorePatterns = this.config
       .getFileService()
-      .getGeminiIgnorePatterns();
+      .getOttoIgnorePatterns();
     const finalExclusionPatternsForDescription: string[] =
       paramUseDefaultExcludes
         ? [...DEFAULT_EXCLUDES, ...paramExcludes, ...geminiIgnorePatterns]
@@ -652,7 +652,7 @@ This tool automatically enables external file access when absolute paths are det
         );
 
         // 追踪文件读取，用于压缩后上下文恢复
-        this.config.getGeminiClient?.()?.trackFileRead(filePath);
+        this.config.getOttoClient?.()?.trackFileRead(filePath);
       }
     }
 

@@ -6,7 +6,7 @@
  * 管理多个会话的版本控制实例
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';

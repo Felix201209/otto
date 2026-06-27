@@ -7,7 +7,7 @@
  * Provides commands for listing, selecting, creating, and rebuilding sessions
  */
 
-import { CommandContext, SlashCommand, MessageActionReturn, SwitchSessionActionReturn, CommandKind, SelectSessionActionReturn, SessionOption } from './types.js';
+import { SlashCommand, MessageActionReturn, SwitchSessionActionReturn, CommandKind, SelectSessionActionReturn, SlashCommandActionReturn } from './types.js';
 import { SessionManager } from 'otto-core';
 import { HistoryItemWithoutId } from '../types.js';
 import type { Suggestion } from '../components/SuggestionsDisplay.js';
@@ -87,7 +87,7 @@ const selectSessionCommand: SlashCommand = {
   name: 'select',
   description: t('command.session.select.description'),
   kind: CommandKind.BUILT_IN,
-  action: async (context, args): Promise<any> => {
+  action: async (context, args): Promise<SlashCommandActionReturn> => {
     const { config } = context.services;
     const sessionArg = args.trim();
 
@@ -144,7 +144,7 @@ const selectSessionCommand: SlashCommand = {
       let targetSession = null;
 
       // 尝试按编号查找
-      const sessionNumber = parseInt(sessionArg);
+      const sessionNumber = parseInt(sessionArg, 10);
       if (!isNaN(sessionNumber) && sessionNumber >= 1 && sessionNumber <= sortedSessions.length) {
         targetSession = sortedSessions[sessionNumber - 1];
       } else {
@@ -177,7 +177,7 @@ const selectSessionCommand: SlashCommand = {
       if (sessionData.history && Array.isArray(sessionData.history)) {
         for (const item of sessionData.history) {
           // 创建基础历史项，去除id字段但保留所有其他属性
-          const { id, ...historyItemWithoutId } = item;
+          const { id: _id, ...historyItemWithoutId } = item;
           uiHistory.push(historyItemWithoutId as HistoryItemWithoutId);
         }
       }
@@ -325,7 +325,7 @@ const helpCommand: SlashCommand = {
   name: 'help',
   description: t('command.session.help.description'),
   kind: CommandKind.BUILT_IN,
-  action: async (context): Promise<MessageActionReturn> => {
+  action: async (_context): Promise<MessageActionReturn> => {
     const helpMessage = `📖 会话管理帮助\n\n` +
       `🔍 \u001b[36m/session list\u001b[0m - 列出所有可用的会话记录\n` +
       `   显示会话的详细信息，包括创建时间、消息数量、Token消耗等\n\n` +

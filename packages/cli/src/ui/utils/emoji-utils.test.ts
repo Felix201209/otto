@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,16 +101,16 @@ describe('emoji-utils', () => {
     });
 
     it('should handle mixed emoji and text', () => {
-      const text = '💡 Use dvcode -c 🚀';
+      const text = '💡 Use otto -c 🚀';
       const result = calculateHighlightableLength(text);
       // 让我们验证实际长度：总长度减去emoji数量
-      const codePointLength = Array.from(text).length; // 应该是17
+      const codePointLength = Array.from(text).length; // 应该是15
       const emojiCount = 2; // 💡 和 🚀
-      expect(result).toBe(codePointLength - emojiCount); // 17 - 2 = 15
+      expect(result).toBe(codePointLength - emojiCount); // 15 - 2 = 13
     });
 
     it('should handle Chinese text with emojis', () => {
-      expect(calculateHighlightableLength('💡 使用dvcode命令')).toBe(11); // 12 - 1 emoji
+      expect(calculateHighlightableLength('💡 使用otto命令')).toBe(9); // 10 - 1 emoji
     });
   });
 });

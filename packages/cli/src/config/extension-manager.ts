@@ -10,25 +10,18 @@ import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { ExtensionEnablementManager } from './extensions/extensionEnablement.js';
 import { type Settings } from './settings.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { loadInstallMetadata, type ExtensionConfig } from './extension.js';
 import {
   cloneFromGit,
   downloadFromGitHubRelease,
   tryParseGithubUrl,
 } from './extensions/github.js';
-import { maybeRequestConsentOrFail } from './extensions/consent.js';
-import { resolveEnvVarsInObject } from '../utils/envVarResolver.js';
-import { ExtensionStorage } from './extensions/storage.js';
 import {
   EXTENSIONS_CONFIG_FILENAME,
   INSTALL_METADATA_FILENAME,
-  recursivelyHydrateStrings,
-  type JsonObject,
 } from './extensions/variables.js';
 import {
-  getEnvContents,
-  maybePromptForSettings,
   type ExtensionSetting,
 } from './extensions/extensionSettings.js';
 import { debugLogger, getErrorMessage } from '../utils/errors.js';
@@ -49,7 +42,7 @@ interface ExtensionInstallMetadata {
   allowPreRelease?: boolean;
 }
 
-interface DVCodeExtension {
+interface OttoExtension {
   config: ExtensionConfig;
   contextFiles: string[];
   isActive?: boolean;
@@ -57,7 +50,7 @@ interface DVCodeExtension {
 }
 
 /**
- * Extension Manager for DVCode - handles installation, loading, enabling/disabling of extensions.
+ * Extension Manager for Otto - handles installation, loading, enabling/disabling of extensions.
  */
 export class ExtensionManager {
   private extensionEnablementManager: ExtensionEnablementManager;
@@ -67,7 +60,7 @@ export class ExtensionManager {
     | ((setting: ExtensionSetting) => Promise<string>)
     | undefined;
   private workspaceDir: string;
-  private loadedExtensions: DVCodeExtension[] | undefined;
+  private loadedExtensions: OttoExtension[] | undefined;
 
   constructor(options: ExtensionManagerParams) {
     this.workspaceDir = options.workspaceDir;
@@ -91,7 +84,7 @@ export class ExtensionManager {
     this.requestSetting = requestSetting;
   }
 
-  getExtensions(): DVCodeExtension[] {
+  getExtensions(): OttoExtension[] {
     if (!this.loadedExtensions) {
       throw new Error(
         'Extensions not yet loaded, must call `loadExtensions` first',
@@ -103,11 +96,11 @@ export class ExtensionManager {
   async installOrUpdateExtension(
     installMetadata: ExtensionInstallMetadata,
     previousExtensionConfig?: ExtensionConfig,
-  ): Promise<DVCodeExtension> {
+  ): Promise<OttoExtension> {
     const isUpdate = !!previousExtensionConfig;
     let newExtensionConfig: ExtensionConfig | null = null;
     let localSourcePath: string | undefined;
-    let extension: DVCodeExtension | null;
+    let extension: OttoExtension | null;
     try {
       // Determine the local path for the extension
       if (installMetadata.type === 'git') {
@@ -218,7 +211,7 @@ export class ExtensionManager {
             installMetadata.allowPreRelease,
           );
           return releaseDir;
-        } catch (e) {
+        } catch {
           // Fall back to git clone
           debugLogger.log('Falling back to git clone...');
         }
@@ -262,20 +255,20 @@ export class ExtensionManager {
     }
   }
 
-  async loadExtensions(): Promise<DVCodeExtension[]> {
+  async loadExtensions(): Promise<OttoExtension[]> {
     const allExtensions = await this.loadExtensionsFromDir(os.homedir());
 
     this.loadedExtensions = allExtensions;
     return this.loadedExtensions;
   }
 
-  private async loadExtensionsFromDir(dir: string): Promise<DVCodeExtension[]> {
+  private async loadExtensionsFromDir(dir: string): Promise<OttoExtension[]> {
     const extensionsDir = path.join(dir, '.otto-user', 'extensions');
     if (!fs.existsSync(extensionsDir)) {
       return [];
     }
 
-    const extensions: DVCodeExtension[] = [];
+    const extensions: OttoExtension[] = [];
     try {
       for (const subdir of fs.readdirSync(extensionsDir)) {
         const extensionDir = path.join(extensionsDir, subdir);
@@ -284,7 +277,7 @@ export class ExtensionManager {
           extensions.push(extension);
         }
       }
-    } catch (error) {
+    } catch {
       debugLogger.log(`Warning: failed to load extensions from ${extensionsDir}`);
     }
     return extensions;
@@ -292,7 +285,7 @@ export class ExtensionManager {
 
   private async loadExtensionWithMetadata(
     extensionDir: string,
-  ): Promise<DVCodeExtension | null> {
+  ): Promise<OttoExtension | null> {
     if (!fs.statSync(extensionDir).isDirectory()) {
       return null;
     }
@@ -419,7 +412,7 @@ export class ExtensionManager {
     return semverRegex.test(version);
   }
 
-  toOutputString(extension: DVCodeExtension): string {
+  toOutputString(extension: OttoExtension): string {
     let output = `✓ ${extension.config.name} (${extension.config.version})`;
 
     if (extension.contextFiles.length > 0) {

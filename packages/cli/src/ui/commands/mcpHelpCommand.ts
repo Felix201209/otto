@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,8 +23,7 @@ const COLOR_GREY = '\u001b[90m';
 const RESET_COLOR = '\u001b[0m';
 const BOLD = '\u001b[1m';
 
-const getMainHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}${t('mcp.help.main.title')}${RESET_COLOR}
+const getMainHelp = (): string => `${COLOR_CYAN}${BOLD}${t('mcp.help.main.title')}${RESET_COLOR}
 
 ${t('mcp.help.main.description')}
 
@@ -49,13 +47,11 @@ ${COLOR_YELLOW}${t('mcp.help.main.quickstart.title')}${RESET_COLOR}
   ${COLOR_GREY}3.${RESET_COLOR} ${t('mcp.help.main.quickstart.step3')}
   ${COLOR_GREY}4.${RESET_COLOR} ${tp('mcp.help.main.quickstart.step4', { command: `${COLOR_CYAN}'/mcp'${RESET_COLOR}` })}
 
-${COLOR_MAGENTA}${tp('mcp.help.main.tip', { path: `${COLOR_GREY}.deepv/settings.json${RESET_COLOR}` })}${RESET_COLOR}
+${COLOR_MAGENTA}${tp('mcp.help.main.tip', { path: `${COLOR_GREY}.otto/settings.json${RESET_COLOR}` })}${RESET_COLOR}
 
 ${tp('mcp.help.main.subcommand', { example: `${COLOR_CYAN}/mcp help add${RESET_COLOR}` })}`;
-};
 
-const getAddHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}🔧 MCP Add 命令详细指南${RESET_COLOR}
+const getAddHelp = (): string => `${COLOR_CYAN}${BOLD}🔧 MCP Add 命令详细指南${RESET_COLOR}
 
 ${COLOR_CYAN}/mcp add${RESET_COLOR} 命令用于添加新的MCP服务器到您的配置中。
 
@@ -118,10 +114,8 @@ ${COLOR_MAGENTA}💡 实用示例:${RESET_COLOR}
 
 ${COLOR_RED}❌ 常见问题:${RESET_COLOR}
   查看 ${COLOR_CYAN}'/mcp help troubleshooting'${RESET_COLOR} 解决配置问题`;
-};
 
-const getTemplatesHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}${t('mcp.help.templates.title')}${RESET_COLOR}
+const getTemplatesHelp = (): string => `${COLOR_CYAN}${BOLD}${t('mcp.help.templates.title')}${RESET_COLOR}
 
 ${t('mcp.help.templates.description')}
 
@@ -173,10 +167,8 @@ ${COLOR_GREY}${tp('mcp.help.templates.tips.update', { command: `${COLOR_CYAN}'/m
 ${COLOR_YELLOW}${t('mcp.help.templates.need.more')}${RESET_COLOR}
   ${t('mcp.help.templates.github.issues')}
   ${tp('mcp.help.templates.custom.wizard', { command: `${COLOR_CYAN}'/mcp add'${RESET_COLOR}` })}`;
-};
 
-const getExamplesHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}💡 MCP 配置示例集合${RESET_COLOR}
+const getExamplesHelp = (): string => `${COLOR_CYAN}${BOLD}💡 MCP 配置示例集合${RESET_COLOR}
 
 这里提供了各种场景下的实际配置示例，可以直接复制使用。
 
@@ -244,10 +236,8 @@ ${COLOR_GREY}•${RESET_COLOR} 根据项目需要选择配置范围
 ${COLOR_YELLOW}🔄 批量配置:${RESET_COLOR}
   可以编写脚本批量添加多个服务器
   或直接编辑settings.json文件进行配置`;
-};
 
-const getTroubleshootingHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}🔧 MCP 故障排除指南${RESET_COLOR}
+const getTroubleshootingHelp = (): string => `${COLOR_CYAN}${BOLD}🔧 MCP 故障排除指南${RESET_COLOR}
 
 遇到MCP服务器连接或配置问题？这里提供了常见问题的解决方案。
 
@@ -288,7 +278,7 @@ ${COLOR_BLUE}🔍 测试连接${RESET_COLOR}
    ${COLOR_CYAN}/mcp refresh <server>${RESET_COLOR}     # 重新连接特定服务器
 
 ${COLOR_BLUE}🔍 验证配置${RESET_COLOR}
-   ${COLOR_CYAN}cat .deepv/settings.json${RESET_COLOR}  # 检查配置文件
+   ${COLOR_CYAN}cat .otto/settings.json${RESET_COLOR}  # 检查配置文件
    ${COLOR_CYAN}/mcp help examples${RESET_COLOR}        # 对比正确配置
 
 ${COLOR_YELLOW}🆘 获取帮助${RESET_COLOR}
@@ -301,19 +291,17 @@ ${COLOR_BLUE}📧 提交Issue${RESET_COLOR}
    ${COLOR_GREY}•${RESET_COLOR} 错误信息完整日志
    ${COLOR_GREY}•${RESET_COLOR} 配置文件内容 (移除敏感信息)
    ${COLOR_GREY}•${RESET_COLOR} 系统信息: ${COLOR_CYAN}uname -a${RESET_COLOR}
-   ${COLOR_GREY}•${RESET_COLOR} DeepV版本: ${COLOR_CYAN}deepv --version${RESET_COLOR}
+   ${COLOR_GREY}•${RESET_COLOR} Otto版本: ${COLOR_CYAN}otto --version${RESET_COLOR}
 
 ${COLOR_BLUE}💬 社区支持${RESET_COLOR}
-   Discord: https://discord.gg/deepv
-   论坛: https://community.deepv.ai
+   Discord: https://discord.gg/otto
+   论坛: https://community.otto.ai
 
 ${COLOR_BLUE}📖 官方文档${RESET_COLOR}
-   完整指南: https://deepv.ai/docs/mcp
-   API文档: https://deepv.ai/docs/mcp-api`;
-};
+   完整指南: https://otto.ai/docs/mcp
+   API文档: https://otto.ai/docs/mcp-api`;
 
-const getOAuthHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}${t('mcp.help.oauth.title')}${RESET_COLOR}
+const getOAuthHelp = (): string => `${COLOR_CYAN}${BOLD}${t('mcp.help.oauth.title')}${RESET_COLOR}
 
 ${t('mcp.help.oauth.description')}
 
@@ -343,10 +331,8 @@ ${COLOR_GREY}${t('mcp.help.oauth.best.practices.update')}${RESET_COLOR}
 ${COLOR_GREY}${t('mcp.help.oauth.best.practices.minimal')}${RESET_COLOR}
 ${COLOR_GREY}${t('mcp.help.oauth.best.practices.protect')}${RESET_COLOR}
 ${COLOR_GREY}${t('mcp.help.oauth.best.practices.monitor')}${RESET_COLOR}`;
-};
 
-const getSecurityHelp = (): string => {
-  return `${COLOR_CYAN}${BOLD}🛡️ MCP 安全最佳实践${RESET_COLOR}
+const getSecurityHelp = (): string => `${COLOR_CYAN}${BOLD}🛡️ MCP 安全最佳实践${RESET_COLOR}
 
 使用MCP服务器时，请遵循以下安全指导原则：
 
@@ -387,7 +373,6 @@ ${COLOR_GREY}•${RESET_COLOR} 定期检查MCP服务器状态
 ${COLOR_GREY}•${RESET_COLOR} 监控异常连接和错误
 ${COLOR_GREY}•${RESET_COLOR} 审查工具使用日志
 ${COLOR_GREY}•${RESET_COLOR} 及时更新服务器版本`;
-};
 
 // Help command implementation
 const helpCommand: SlashCommand = {

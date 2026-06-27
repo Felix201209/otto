@@ -1,18 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
+import { SubAgentDisplay } from 'otto-core';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../../colors.js';
 import { ToolCallStatus } from '../../types.js';
-import { SubAgentDisplay } from 'otto-core';
-import { GeminiRespondingSpinner } from '../GeminiRespondingSpinner.js';
-import { getLocalizedToolName, t, tp } from '../../utils/i18n.js';
+import { getLocalizedToolName,t,tp } from '../../utils/i18n.js';
+import { OttoRespondingSpinner } from '../OttoRespondingSpinner.js';
 
 interface SubAgentDisplayRendererProps {
   data: SubAgentDisplay;
@@ -40,7 +39,7 @@ export const SubAgentDisplayRenderer: React.FC<SubAgentDisplayRendererProps> = (
     }
   };
 
-  const titleInfo = getTitleInfo();
+  const _titleInfo = getTitleInfo();
 
   // 工具状态对应的图标
   const getToolStatusIcon = (status: ToolCallStatus) => {
@@ -197,7 +196,7 @@ export const SubAgentDisplayRenderer: React.FC<SubAgentDisplayRendererProps> = (
       {data.status === 'running' && data.toolCalls && data.toolCalls.length > 0 && (
         <Box marginTop={1}>
           <Text color={Colors.Gray}>   </Text>
-          <GeminiRespondingSpinner
+          <OttoRespondingSpinner
             nonRespondingDisplay="⠏"
           />
           <Text color={Colors.AccentBlue}> {t('subagent.running')}</Text>

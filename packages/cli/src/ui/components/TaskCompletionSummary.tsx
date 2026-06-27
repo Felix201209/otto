@@ -1,16 +1,15 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
+import { Box,Text } from 'ink';
 import React from 'react';
-import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { formatDuration } from '../utils/formatters.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
+import { formatDuration } from '../utils/formatters.js';
 
 interface TaskCompletionSummaryProps {
   elapsedTime: number; // 秒数
@@ -26,7 +25,7 @@ export const TaskCompletionSummary: React.FC<TaskCompletionSummaryProps> = ({
   elapsedTime,
   isVisible,
 }) => {
-  const { columns } = useTerminalSize();
+  const { columns: _columns } = useTerminalSize();
 
   if (!isVisible || elapsedTime < 20) {
     return null;

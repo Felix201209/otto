@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { expect, afterEach } from 'vitest';
+import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { JSDOM } from 'jsdom';
 
 // Cleanup after each test case (removes any fragments from the DOM)
 afterEach(() => {
@@ -14,7 +15,6 @@ afterEach(() => {
 
 // Polyfill for jsdom: ensure document is available
 if (typeof document === 'undefined') {
-  const { JSDOM } = require('jsdom');
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
   global.document = dom.window.document;
   global.window = dom.window;

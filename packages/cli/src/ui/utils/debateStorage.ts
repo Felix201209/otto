@@ -1,11 +1,11 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  *
  * Per-project persistence for debate presets.
  *
- * Stored at `<projectRoot>/.deepvcode/debate-history.json` — same directory
+ * Stored at `<projectRoot>/.otto/debate-history.json` — same directory
  * as the project-level settings file, so users already expect this folder.
  *
  * Rules:

@@ -1,11 +1,10 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { thinkingCommand } from './thinkingCommand.js';
 import { CommandContext, SlashCommand } from './types.js';
 import { SettingScope } from '../../config/settings.js';
@@ -13,7 +12,7 @@ import { SettingScope } from '../../config/settings.js';
 // Mock i18n: keep keys as raw strings so assertions stay readable.
 vi.mock('../utils/i18n.js', () => ({
   t: (key: string) => key,
-  tp: (key: string, args: any) => `${key}:${JSON.stringify(args)}`,
+  tp: (key: string, args: Record<string, unknown>) => `${key}:${JSON.stringify(args)}`,
 }));
 
 // Mock otto-core extractProvider (only piece used by showStatus).
@@ -30,7 +29,12 @@ interface MockServices {
   };
 }
 
-const buildContext = (currentThinking: any): { context: CommandContext; services: MockServices } => {
+type ThinkingState = {
+  mode: string;
+  effort: string;
+};
+
+const buildContext = (currentThinking: ThinkingState): { context: CommandContext; services: MockServices } => {
   const services: MockServices = {
     settings: { setValue: vi.fn() },
     config: {

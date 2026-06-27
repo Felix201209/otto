@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +9,10 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Config, SceneType } from 'otto-core';
+
+type HelpResponsePart = {
+  text?: string;
+};
 
 // 扩展 globalThis 类型以支持 esbuild banner 注入的变量
 declare global {
@@ -164,7 +167,7 @@ Please answer the user's question directly.`;
     config: Config,
   ): Promise<string> {
     // 获取 Gemini Client
-    const geminiClient = config.getGeminiClient();
+    const geminiClient = config.getOttoClient();
     if (!geminiClient) {
       throw new Error('Gemini client not available');
     }
@@ -199,7 +202,7 @@ Please answer the user's question directly.`;
       responseText = response.text;
     } else if (response.candidates && response.candidates[0]?.content?.parts) {
       const parts = response.candidates[0].content.parts;
-      responseText = parts.map((p: any) => p.text || '').join('');
+      responseText = (parts as HelpResponsePart[]).map((p) => p.text || '').join('');
     }
 
     if (!responseText) {

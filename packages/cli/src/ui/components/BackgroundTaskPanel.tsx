@@ -1,14 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { getBackgroundTaskManager, BackgroundTask } from 'otto-core';
+import { Box,Text,useInput } from 'ink';
+import { BackgroundTask,getBackgroundTaskManager } from 'otto-core';
+import React,{ useCallback,useEffect,useState } from 'react';
 import { Colors } from '../colors.js';
 import { t } from '../utils/i18n.js';
 
@@ -24,7 +23,7 @@ interface BackgroundTaskPanelProps {
  */
 export const BackgroundTaskPanel: React.FC<BackgroundTaskPanelProps> = ({
   isVisible,
-  onClose,
+  onClose: _onClose,
   terminalWidth,
 }) => {
   const [tasks, setTasks] = useState<BackgroundTask[]>([]);

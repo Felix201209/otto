@@ -12,6 +12,7 @@ import {
   Config,
   ConfigParameters,
   ContentGeneratorConfig,
+  SandboxConfig,
 } from 'otto-core';
 
 const TEST_CONTENT_GENERATOR_CONFIG: ContentGeneratorConfig = {
@@ -19,6 +20,11 @@ const TEST_CONTENT_GENERATOR_CONFIG: ContentGeneratorConfig = {
   model: 'test-model',
   vertexai: false,
   authType: undefined,
+};
+
+const TEST_SANDBOX_CONFIG: SandboxConfig = {
+  command: 'docker',
+  image: 'test-image',
 };
 
 // Mock file discovery service and tool registry
@@ -57,7 +63,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFilteringRespectGitIgnore: undefined, // Should default to true
@@ -73,7 +79,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFiltering: {
@@ -91,7 +97,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFilteringRespectGitIgnore: true,
@@ -109,7 +115,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFiltering: {
@@ -128,7 +134,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFilteringRespectGitIgnore: undefined,
@@ -145,7 +151,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         // Missing fileFiltering configuration
@@ -164,7 +170,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFilteringRespectGitIgnore: true,
@@ -180,7 +186,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         fileFiltering: {
@@ -200,7 +206,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         checkpointing: true,
@@ -218,7 +224,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
       };
@@ -232,7 +238,7 @@ describe('Configuration Integration Tests', () => {
         cwd: '/tmp',
         contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
         embeddingModel: 'test-embedding-model',
-        sandbox: { command: 'docker', image: 'test-image' } as any,
+        sandbox: TEST_SANDBOX_CONFIG,
         targetDir: tempDir,
         debugMode: false,
         extensionContextFilePaths: contextFiles,

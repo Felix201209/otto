@@ -214,15 +214,15 @@ describe('ReadFileTool', () => {
       });
     });
 
-    describe('with .deepvignore', () => {
+    describe('with .ottoignore', () => {
       beforeEach(async () => {
         await fsp.writeFile(
-          path.join(tempRootDir, '.deepvignore'),
+          path.join(tempRootDir, '.ottoignore'),
           ['foo.*', 'ignored/'].join('\n'),
         );
       });
 
-      it('should return error if path is ignored by a .deepvignore pattern', async () => {
+      it('should return error if path is ignored by a .ottoignore pattern', async () => {
         const ignoredFilePath = path.join(tempRootDir, 'foo.bar');
         await fsp.writeFile(ignoredFilePath, 'content', 'utf-8');
         const params: ReadFileToolParams = {

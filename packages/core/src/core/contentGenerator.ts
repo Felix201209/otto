@@ -79,15 +79,15 @@ export async function createContentGenerator(
   gcConfig: Config,
   sessionId?: string,
 ): Promise<ContentGenerator> {
-  // NOTE: The DeepV server path below (the only active path) builds its request
+  // NOTE: The Otto server path below (the only active path) builds its request
   // headers — including the User-Agent — via proxyAuthManager.getUserHeaders(),
   // which uses the unified getUserAgent() from utils/userAgent.ts. No local
   // httpOptions/User-Agent is needed here.
 
-  // 🎯 统一DeepV Server处理：所有模型都使用OttoServerAdapter，但路由逻辑会自动选择正确的API端点
-  const isDeepVServer = true; // 现在所有模型都通过DeepV Server，适配器内部会根据模型类型选择正确路径
+  // 🎯 统一Otto Server处理：所有模型都使用OttoServerAdapter，但路由逻辑会自动选择正确的API端点
+  const isOttoServer = true; // 现在所有模型都通过Otto Server，适配器内部会根据模型类型选择正确路径
 
-  if (isDeepVServer) {
+  if (isOttoServer) {
 
     // Use custom proxy server URL if configured, otherwise use default
     const customProxyUrl = gcConfig.getCustomProxyServerUrl();
@@ -95,7 +95,7 @@ export async function createContentGenerator(
 
     if (customProxyUrl) {
       proxyServerUrl = customProxyUrl;
-      console.log(`[DeepX] Using custom proxy server: ${proxyServerUrl}`);
+      console.log(`[Otto] Using custom proxy server: ${proxyServerUrl}`);
     } else {
       // 确保有可用的代理服务器
       if (!hasAvailableProxyServer()) {
@@ -106,7 +106,7 @@ export async function createContentGenerator(
       }
 
       proxyServerUrl = getActiveProxyServerUrl();
-      console.log(`[DeepX] Connecting to Otto server: ${proxyServerUrl}`);
+      console.log(`[Otto] Connecting to Otto server: ${proxyServerUrl}`);
     }
 
     // 🔧 Linus式修复：统一使用OttoServerAdapter，内部会根据模型类型自动路由

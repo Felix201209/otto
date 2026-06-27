@@ -332,7 +332,7 @@ function handleModelConfig(context: CommandContext, args: string): SlashCommandA
             const displayName = getModelDisplayName(m, config);
             let line = `  - ${displayName}`;
             if (m !== 'auto' && modelInfos.length > 0) {
-              const modelInfo = modelInfos.find((model: any) => model.name === m);
+              const modelInfo = modelInfos.find((model) => model.name === m);
               if (modelInfo?.creditsPerRequest) {
                 line += ` - ${modelInfo.creditsPerRequest}x credits`;
               }
@@ -355,7 +355,7 @@ function handleModelConfig(context: CommandContext, args: string): SlashCommandA
       settings.setValue(SettingScope.User, 'preferredModel', actualModelName);
 
       if (config) {
-        const geminiClient = config.getGeminiClient();
+        const geminiClient = config.getOttoClient();
         if (geminiClient) {
           await geminiClient.waitForChatInitialized();
           const switchResult = await geminiClient.switchModel(
@@ -401,7 +401,7 @@ function handleModelConfig(context: CommandContext, args: string): SlashCommandA
   });
 
   // 返回空，避免显示加载消息
-  return undefined as any;
+  return undefined as unknown as SlashCommandActionReturn;
 }
 
 /**
@@ -487,7 +487,7 @@ ${t('agentStyle.usage.title')}
       }
 
       // 刷新 system prompt
-      const geminiClient = await config.getGeminiClient();
+      const geminiClient = await config.getOttoClient();
       if (geminiClient) {
         const chat = geminiClient.getChat();
         if (chat) {
@@ -704,7 +704,7 @@ Usage:
     }
 
     settings.setValue(SettingScope.User, 'healthyUse', true);
-    (config as any).healthyUse = true;
+    Object.assign(config, { healthyUse: true });
 
     return {
       type: 'message',
@@ -724,7 +724,7 @@ Usage:
     }
 
     settings.setValue(SettingScope.User, 'healthyUse', false);
-    (config as any).healthyUse = false;
+    Object.assign(config, { healthyUse: false });
 
     return {
       type: 'message',
@@ -779,7 +779,7 @@ Usage:
 
   // 刷新 system prompt 以立即生效
   if (config) {
-    const geminiClient = await config.getGeminiClient();
+    const geminiClient = await config.getOttoClient();
     if (geminiClient) {
       const chat = geminiClient.getChat();
       if (chat) {
@@ -829,7 +829,7 @@ function handleProjectMemoryModeConfig(context: CommandContext, args: string): S
   if (!trimmedArgs) {
     const modeLabel = (() => {
       switch (currentMode) {
-        case 'deepv-only': return t('config.value.project.memory.deepvOnly');
+        case 'otto-only': return t('config.value.project.memory.ottoOnly');
         case 'none': return t('config.value.project.memory.none');
         default: return t('config.value.project.memory.all');
       }
@@ -842,16 +842,16 @@ function handleProjectMemoryModeConfig(context: CommandContext, args: string): S
 
 Usage:
   /config memory-mode all        - Load OTTO.md + AGENTS.md (default)
-  /config memory-mode deepv-only - Load OTTO.md only
+  /config memory-mode otto-only - Load OTTO.md only
   /config memory-mode none       - Don't load project memory`,
     };
   }
 
-  const modeMap: Record<string, 'all' | 'deepv-only' | 'none'> = {
+  const modeMap: Record<string, 'all' | 'otto-only' | 'none'> = {
     'all': 'all',
     'both': 'all',
-    'deepv-only': 'deepv-only',
-    'deepv': 'deepv-only',
+    'otto-only': 'otto-only',
+    'otto': 'otto-only',
     'none': 'none',
     'off': 'none',
     'disable': 'none',
@@ -862,7 +862,7 @@ Usage:
     return {
       type: 'message',
       messageType: 'error',
-      content: `Invalid mode: ${args}\n\nValid modes: all, deepv-only, none`,
+      content: `Invalid mode: ${args}\n\nValid modes: all, otto-only, none`,
     };
   }
 
@@ -870,7 +870,7 @@ Usage:
 
   const modeLabel = (() => {
     switch (newMode) {
-      case 'deepv-only': return t('config.value.project.memory.deepvOnly');
+      case 'otto-only': return t('config.value.project.memory.ottoOnly');
       case 'none': return t('config.value.project.memory.none');
       default: return t('config.value.project.memory.all');
     }
@@ -897,5 +897,5 @@ function getConfigHelp(): string {
   /config yolo [on|off]      - Toggle YOLO mode
   /config healthy-use [on|off] - Toggle healthy use mode
   /config language [name]    - Set preferred response language
-  /config memory-mode [mode] - Set project memory mode (all|deepv-only|none)`;
+  /config memory-mode [mode] - Set project memory mode (all|otto-only|none)`;
 }

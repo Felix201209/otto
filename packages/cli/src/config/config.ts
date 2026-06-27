@@ -10,10 +10,9 @@ import process from 'node:process';
 import {
   Config,
   loadServerHierarchicalMemory,
-  setGeminiMdFilename as setServerGeminiMdFilename,
+  setOttoMdFilename as setServerGeminiMdFilename,
   getCurrentGeminiMdFilename,
   ApprovalMode,
-  DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_EMBEDDING_MODEL,
   DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
   FileDiscoveryService,
@@ -21,7 +20,7 @@ import {
   FileFilteringOptions,
   IdeClient,
 } from 'otto-core';
-import { encodingForModel, getEncoding } from 'js-tiktoken';
+import { getEncoding } from 'js-tiktoken';
 import { Settings } from './settings.js';
 import { loadCustomModels } from './customModelsStorage.js';
 
@@ -264,8 +263,8 @@ export async function parseArguments(extensions: Extension[] = []): Promise<CliA
     })
     .option('cloud-server', {
       type: 'string',
-      description: 'Cloud server URL for cloud mode',
-      default: 'https://api-code.deepvlab.ai',
+      description: 'Cloud server URL for cloud mode (BYO: set via --cloud-server or OTTO_SERVER_URL)',
+      default: '',
     })
     .option('test-audio', {
       type: 'boolean',
@@ -313,7 +312,7 @@ export async function parseArguments(extensions: Extension[] = []): Promise<CliA
     });
 
   yargsInstance.wrap(yargsInstance.terminalWidth());
-  const parsedArgs = yargsInstance.argv as any;
+  const parsedArgs = yargsInstance.argv as unknown as CliArgs;
 
   // Type-safe conversion for outputFormat
   if (parsedArgs.outputFormat && !['stream-json', 'json', 'default'].includes(parsedArgs.outputFormat)) {
@@ -366,7 +365,7 @@ export async function parseArguments(extensions: Extension[] = []): Promise<CliA
 /**
  * Filter memory loading results based on projectMemoryMode setting.
  * - 'all' (default): keep both OTTO.md and AGENTS.md
- * - 'deepv-only': keep only OTTO.md (filter out AGENTS.md)
+ * - 'otto-only': keep only OTTO.md (filter out AGENTS.md)
  * - 'none': return empty results
  */
 export function filterMemoryByMode(
@@ -377,7 +376,7 @@ export function filterMemoryByMode(
     return { memoryContent: '', fileCount: 0, filePaths: [] };
   }
 
-  if (mode === 'deepv-only') {
+  if (mode === 'otto-only') {
     const filteredPaths = result.filePaths.filter((fp) => {
       const filename = fp.split(/[\\/]/).pop() || '';
       return !filename.toUpperCase().startsWith('AGENTS');
@@ -405,7 +404,7 @@ export function filterMemoryByMode(
 // This function is now a thin wrapper around the server's implementation.
 // It's kept in the CLI for now as App.tsx directly calls it for memory refresh.
 // TODO: Consider if App.tsx should get memory via a server call or if Config should refresh itself.
-export async function loadHierarchicalGeminiMemory(
+export async function loadHierarchicalOttoMemory(
   currentWorkingDirectory: string,
   debugMode: boolean,
   fileService: FileDiscoveryService,
@@ -443,7 +442,7 @@ export async function loadCliConfig(
   // Check if in non-interactive mode (-p flag) for silent operation
   // Also check environment variable set by start.js
   const isNonInteractiveMode = !!(argv.prompt && !argv.promptInteractive) ||
-                               process.env.DEEPV_SILENT_MODE === 'true';
+                               process.env.OTTO_SILENT_MODE === 'true';
 
   const debugMode = false; // 默认关闭调试模式，只保留必要的用户信息输出
 
@@ -473,8 +472,8 @@ export async function loadCliConfig(
 
   // Set the context filename in the server's memoryTool module BEFORE loading memory
   // TODO(b/343434939): This is a bit of a hack. The contextFileName should ideally be passed
-  // directly to the Config constructor in core, and have core handle setGeminiMdFilename.
-  // However, loadHierarchicalGeminiMemory is called *before* createServerConfig.
+  // directly to the Config constructor in core, and have core handle setOttoMdFilename.
+  // However, loadHierarchicalOttoMemory is called *before* createServerConfig.
   if (settings.contextFileName) {
     setServerGeminiMdFilename(settings.contextFileName);
   } else {
@@ -493,8 +492,8 @@ export async function loadCliConfig(
     ...settings.fileFiltering,
   };
 
-  // Call the (now wrapper) loadHierarchicalGeminiMemory which calls the server's version
-  const { memoryContent, fileCount, filePaths } = await loadHierarchicalGeminiMemory(
+  // Call the (now wrapper) loadHierarchicalOttoMemory which calls the server's version
+  const { memoryContent, fileCount, filePaths } = await loadHierarchicalOttoMemory(
     process.cwd(),
     debugMode,
     fileService,
@@ -570,7 +569,7 @@ export async function loadCliConfig(
   try {
     const enc = getEncoding('cl100k_base');
     memoryTokenCount = enc.encode(memoryContent).length;
-  } catch (e) {
+  } catch {
     memoryTokenCount = 0;
   }
 
@@ -662,7 +661,7 @@ export async function loadCliConfig(
   });
 
   // Set memory file paths for display in UI
-  config.setGeminiMdFilePaths(filePaths);
+  config.setOttoMdFilePaths(filePaths);
 
   return config;
 }

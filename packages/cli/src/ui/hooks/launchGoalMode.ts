@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,7 +57,7 @@ export function launchGoalMode(
 
   // 3) 注册压缩抗性上下文。失败不阻断启动（仅丢失压缩后重注入能力）。
   try {
-    const client = config.getGeminiClient();
+    const client = config.getOttoClient();
     if (client) {
       client.setGoalContext({
         originalPrompt: prompt,

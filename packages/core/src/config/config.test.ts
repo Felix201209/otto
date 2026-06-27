@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { Config, ConfigParameters, SandboxConfig } from './config.js';
 import * as path from 'path';
-import { setGeminiMdFilename as mockSetGeminiMdFilename } from '../tools/memoryTool.js';
+import { setOttoMdFilename as mockSetGeminiMdFilename } from '../tools/memoryTool.js';
 import {
   DEFAULT_TELEMETRY_TARGET,
   DEFAULT_OTLP_ENDPOINT,
@@ -16,7 +16,7 @@ import {
   AuthType,
   createContentGeneratorConfig,
 } from '../core/contentGenerator.js';
-import { GeminiClient } from '../core/client.js';
+import { OttoClient } from '../core/client.js';
 import { GitService } from '../services/gitService.js';
 
 // Mock dependencies that might be called during Config construction or createServerConfig
@@ -48,10 +48,10 @@ vi.mock('../tools/web-fetch');
 vi.mock('../tools/read-many-files');
 vi.mock('../tools/memoryTool', () => ({
   MemoryTool: vi.fn(),
-  setGeminiMdFilename: vi.fn(),
+  setOttoMdFilename: vi.fn(),
   getCurrentGeminiMdFilename: vi.fn(() => 'GEMINI.md'), // Mock the original filename
   DEFAULT_CONTEXT_FILENAME: 'GEMINI.md',
-  GEMINI_CONFIG_DIR: '.gemini',
+  OTTO_CONFIG_DIR: '.gemini',
 }));
 
 vi.mock('../core/contentGenerator.js', async (importOriginal) => {
@@ -64,7 +64,7 @@ vi.mock('../core/contentGenerator.js', async (importOriginal) => {
 });
 
 vi.mock('../core/client.js', () => ({
-  GeminiClient: vi.fn().mockImplementation(() => ({
+  OttoClient: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
   })),
 }));
@@ -171,7 +171,7 @@ describe('Server Config (config.ts)', () => {
       );
       // Verify that contentGeneratorConfig is updated with the new model
       expect(config.getContentGeneratorConfig()).toEqual(mockContentConfig);
-      expect(GeminiClient).toHaveBeenCalledWith(config);
+      expect(OttoClient).toHaveBeenCalledWith(config);
     });
   });
 
@@ -199,7 +199,7 @@ describe('Server Config (config.ts)', () => {
     expect(config.getUserMemory()).toBe('');
   });
 
-  it('Config constructor should call setGeminiMdFilename with contextFileName if provided', () => {
+  it('Config constructor should call setOttoMdFilename with contextFileName if provided', () => {
     const contextFileName = 'CUSTOM_AGENTS.md';
     const paramsWithContextFile: ConfigParameters = {
       ...baseParams,
@@ -209,7 +209,7 @@ describe('Server Config (config.ts)', () => {
     expect(mockSetGeminiMdFilename).toHaveBeenCalledWith(contextFileName);
   });
 
-  it('Config constructor should not call setGeminiMdFilename if contextFileName is not provided', () => {
+  it('Config constructor should not call setOttoMdFilename if contextFileName is not provided', () => {
     new Config(baseParams); // baseParams does not have contextFileName
     expect(mockSetGeminiMdFilename).not.toHaveBeenCalled();
   });

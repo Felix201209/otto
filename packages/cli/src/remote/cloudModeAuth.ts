@@ -1,14 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { AuthType, Config, ProxyAuthManager } from 'otto-core';
-import { handleDeepvlabAuth } from '../config/auth.js';
-import { LoadedSettings, SettingScope } from '../config/settings.js';
+import { Config, ProxyAuthManager } from 'otto-core';
+import { handleOttoAuth } from '../config/auth.js';
 import { t, tp } from '../ui/utils/i18n.js';
 
 /**
@@ -116,9 +114,9 @@ export class CloudModeAuth {
       console.log(t('cloud.auth.starting'));
       console.log(t('cloud.auth.instruction'));
 
-      // 复用 handleDeepvlabAuth 的认证逻辑
-      // 注意：handleDeepvlabAuth 现在会等待用户完成认证再返回结果
-      const authResult = await handleDeepvlabAuth('http://localhost:9000');
+      // 复用 handleOttoAuth 的认证逻辑
+      // 注意：handleOttoAuth 现在会等待用户完成认证再返回结果
+      const authResult = await handleOttoAuth('http://localhost:9000');
 
       if (authResult.success) {
         console.log(t('cloud.auth.success'));

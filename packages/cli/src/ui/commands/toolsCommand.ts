@@ -64,7 +64,7 @@ export const toolsCommand: SlashCommand = {
     let toolRegistry;
     try {
       toolRegistry = await context.services.config?.getToolRegistry();
-    } catch (e) {
+    } catch {
       // Fallback below
     }
 

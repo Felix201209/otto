@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 import path from 'path';
@@ -37,7 +36,7 @@ export class PluginStructureAnalyzer {
     const hasScripts = await isDir('scripts') || await isDir('.claude/scripts');
 
     // 确定格式类型
-    let detectedFormat: 'claude-code' | 'deepv-code' | 'hybrid' | 'unknown' = 'unknown';
+    let detectedFormat: 'claude-code' | 'otto-code' | 'hybrid' | 'unknown' = 'unknown';
 
     if (hasClaudePluginDir) {
       // 标准 Claude Code 格式 (带 .claude-plugin)
@@ -47,7 +46,7 @@ export class PluginStructureAnalyzer {
       detectedFormat = 'claude-code';
     } else if (hasPluginJson && hasSkills && !hasAgents && !hasCommands) {
       // 传统 Otto 格式
-      detectedFormat = 'deepv-code';
+      detectedFormat = 'otto-code';
     } else if (hasPluginJson && (hasAgents || hasCommands)) {
       // 混合格式
       detectedFormat = 'hybrid';

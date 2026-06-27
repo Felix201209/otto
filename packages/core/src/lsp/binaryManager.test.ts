@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -36,7 +36,7 @@ describe('BinaryManager.githubInstaller (zip extraction)', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'deepv-lsp-bin-'));
+    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'otto-lsp-bin-'));
     requestMock.mockReset();
     spawnMock.mockReset();
   });

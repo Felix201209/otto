@@ -1,17 +1,18 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useEffect, useState, useCallback } from 'react';
 import {
-  BackgroundTask,
-  BackgroundTaskEvent,
-  getBackgroundTaskManager,
+BackgroundTask,
+BackgroundTaskEvent,
+getBackgroundTaskManager,
 } from 'otto-core';
+import { spawn } from 'node:child_process';
+import * as os from 'node:os';
+import { useCallback,useEffect,useState } from 'react';
 
 export interface UseBackgroundTasksReturn {
   tasks: BackgroundTask[];
@@ -46,7 +47,7 @@ export function useBackgroundTasks(): UseBackgroundTasksReturn {
     updateTasks();
 
     // 监听任务事件
-    const handler = (event: BackgroundTaskEvent) => {
+    const handler = (_event: BackgroundTaskEvent) => {
       updateTasks();
     };
 
@@ -62,9 +63,7 @@ export function useBackgroundTasks(): UseBackgroundTasksReturn {
   }, [taskManager]);
 
   const getTask = useCallback(
-    (taskId: string): BackgroundTask | undefined => {
-      return taskManager.getTask(taskId);
-    },
+    (taskId: string): BackgroundTask | undefined => taskManager.getTask(taskId),
     [taskManager],
   );
 
@@ -73,8 +72,6 @@ export function useBackgroundTasks(): UseBackgroundTasksReturn {
       const task = taskManager.getTask(taskId);
       if (task && task.pid !== undefined && task.status === 'running') {
         // 尝试杀死进程
-        const { spawn } = require('child_process');
-        const os = require('os');
         const pid = task.pid; // 保存 pid 到本地变量以供闭包使用
 
         if (os.platform() === 'win32') {
@@ -88,7 +85,7 @@ export function useBackgroundTasks(): UseBackgroundTasksReturn {
                 process.kill(-pid, 'SIGKILL');
               }
             }, 200);
-          } catch (e) {
+          } catch (_e) {
             // ignore
           }
         }

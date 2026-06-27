@@ -7,7 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runNonInteractive } from './nonInteractiveCli.js';
-import { Config, GeminiClient, ToolRegistry } from 'otto-core';
+import { Config, OttoClient, ToolRegistry } from 'otto-core';
 import { GenerateContentResponse, Part, FunctionCall } from '@google/genai';
 
 // Mock dependencies
@@ -17,7 +17,7 @@ vi.mock('otto-core', async () => {
   >('otto-core');
   return {
     ...actualCore,
-    GeminiClient: vi.fn(),
+    OttoClient: vi.fn(),
     ToolRegistry: vi.fn(),
     executeToolCall: vi.fn(),
   };
@@ -25,7 +25,7 @@ vi.mock('otto-core', async () => {
 
 describe.skip('runNonInteractive', () => {
   let mockConfig: Config;
-  let mockGeminiClient: GeminiClient;
+  let mockGeminiClient: OttoClient;
   let mockToolRegistry: ToolRegistry;
   let mockChat: {
     sendMessageStream: ReturnType<typeof vi.fn>;
@@ -40,18 +40,18 @@ describe.skip('runNonInteractive', () => {
     };
     mockGeminiClient = {
       getChat: vi.fn().mockResolvedValue(mockChat),
-    } as unknown as GeminiClient;
+    } as unknown as OttoClient;
     mockToolRegistry = {
       getFunctionDeclarations: vi.fn().mockReturnValue([]),
       getTool: vi.fn(),
     } as unknown as ToolRegistry;
 
-    vi.mocked(GeminiClient).mockImplementation(() => mockGeminiClient);
+    vi.mocked(OttoClient).mockImplementation(() => mockGeminiClient);
     vi.mocked(ToolRegistry).mockImplementation(() => mockToolRegistry);
 
     mockConfig = {
       getToolRegistry: vi.fn().mockReturnValue(mockToolRegistry),
-      getGeminiClient: vi.fn().mockReturnValue(mockGeminiClient),
+      getOttoClient: vi.fn().mockReturnValue(mockGeminiClient),
       getContentGeneratorConfig: vi.fn().mockReturnValue({}),
       getMaxSessionTurns: vi.fn().mockReturnValue(10),
       initialize: vi.fn(),

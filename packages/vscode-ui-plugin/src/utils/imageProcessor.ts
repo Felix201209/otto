@@ -80,7 +80,7 @@ export function formatFileSize(bytes: number): string {
 
 /**
  * 确保图片内容有可访问的本地文件路径。
- * 所有图片统一落盘到 <projectRoot>/.deepvcode/clipboard/ 目录，
+ * 所有图片统一落盘到 <projectRoot>/.otto/clipboard/ 目录，
  * 文件名格式：vscode-<timestamp>-<random>.jpg
  * 这样非多模态模型和工具也能通过路径访问图片。
  */

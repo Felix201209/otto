@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  *
  * Shared filesystem helpers for skill / plugin directory scanning.
@@ -10,7 +10,7 @@
  *   objects whose `isDirectory()` method returns **false** for symbolic
  *   links, even when the link target is a directory. This means any code
  *   that filters entries with `entry.isDirectory()` silently drops
- *   symlinked subdirectories — exactly the "skills in ~/.deepv/skills
+ *   symlinked subdirectories — exactly the "skills in ~/.otto/skills
  *   aren't loaded when the folder is a symlink" bug reported by users on
  *   macOS.
  *

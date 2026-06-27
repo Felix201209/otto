@@ -6,10 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { themeCommand } from './themeCommand.js';
+import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
 describe('themeCommand', () => {
   it('should return a dialog action to open the theme dialog', async () => {
-    const result = await themeCommand.action!({} as any, '');
+    const result = await themeCommand.action!(createMockCommandContext(), '');
     expect(result).toEqual({
       type: 'dialog',
       dialog: 'theme',

@@ -566,9 +566,9 @@ export class PluginInstaller {
   /**
    * 复制 Plugin 到个人目录
    * 注意: Skills 支持多层级存储：
-   * - 项目级: <项目根目录>/.deepvcode/skills/
-   * - 用户级: ~/.deepv/skills/
-   * - Marketplace: ~/.deepv/marketplace/
+   * - 项目级: <项目根目录>/.otto/skills/
+   * - 用户级: ~/.otto/skills/
+   * - Marketplace: ~/.otto/marketplace/
    * 当前方法将 Plugin 复制到用户级目录
    */
   private async copyPluginToPersonalDir(

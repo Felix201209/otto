@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,7 +67,7 @@ export class CompletionScheduler {
 
     // 监听配置变化
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('deepv.inlineCompletionDelay')) {
+      if (e.affectsConfiguration('otto.inlineCompletionDelay')) {
         this.updateDelayFromConfig();
       }
     });
@@ -77,7 +77,7 @@ export class CompletionScheduler {
    * 从配置更新延迟时间
    */
   private updateDelayFromConfig() {
-    const config = vscode.workspace.getConfiguration('deepv');
+    const config = vscode.workspace.getConfiguration('otto');
     const configuredDelay = config.get<number>('inlineCompletionDelay');
 
     if (configuredDelay !== undefined && configuredDelay > 0) {
@@ -368,7 +368,7 @@ export class CompletionScheduler {
     const prefix = document.getText(prefixRange).slice(-4000);
 
     // 读取配置：是否使用后缀上下文（FIM模式）
-    const config = vscode.workspace.getConfiguration('deepv');
+    const config = vscode.workspace.getConfiguration('otto');
     const useSuffix = config.get<boolean>('inlineCompletionUseSuffix', true);
 
     // 提取上下文 - 后缀（⚠️ 修复：必须取到行尾）

@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useEffect, useState, useCallback } from 'react';
-import { useKeypress, type Key } from './useKeypress.js';
+import { useCallback,useState } from 'react';
+import { useKeypress,type Key } from './useKeypress.js';
 
 export interface UseBackgroundTasksUIReturn {
   isPanelOpen: boolean;
@@ -51,9 +50,7 @@ export function useBackgroundTasksUI(
     [totalTasks],
   );
 
-  const requestKillTask = useCallback(() => {
-    return taskToKill;
-  }, [taskToKill]);
+  const requestKillTask = useCallback(() => taskToKill, [taskToKill]);
 
   const clearKillRequest = useCallback(() => {
     setTaskToKill(null);

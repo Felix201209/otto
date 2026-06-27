@@ -136,7 +136,7 @@ export class ModelService {
    */
   private saveCloudModelsToSettings(models: ModelInfo[]): void {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       config.update('cloudModels', models, vscode.ConfigurationTarget.Global);
       this.logger.info('✅ Cloud models saved to VSCode settings');
     } catch (error) {
@@ -149,7 +149,7 @@ export class ModelService {
    */
   private getLocalCachedModels(): ModelInfo[] {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       const cloudModels = config.get<ModelInfo[]>('cloudModels', []);
       if (Array.isArray(cloudModels) && cloudModels.length > 0) {
         return cloudModels;
@@ -177,7 +177,7 @@ export class ModelService {
   }
 
   /**
-   * 把 ~/.deepv/custom-models.json 里的自定义模型转成与云模型同形状的
+   * 把 ~/.otto/custom-models.json 里的自定义模型转成与云模型同形状的
    * ModelInfo，以便和 cloudModels 合并后塞给 webview。displayName 直接
    * 透传，name 走 `custom:{displayName}` 协议（与 core 的 isCustomModel
    * + OttoServerAdapter 派发完全对齐）。
@@ -299,7 +299,7 @@ export class ModelService {
    * 获取当前配置的模型
    */
   getCurrentModel(): string {
-    const config = vscode.workspace.getConfiguration('deepv');
+    const config = vscode.workspace.getConfiguration('otto');
     const preferredModel = config.get<string>('preferredModel', 'auto');
 
     // 🎯 如果配置是 'auto'，直接返回 'auto'，不要解析为具体模型
@@ -316,7 +316,7 @@ export class ModelService {
    */
   async setCurrentModel(modelName: string): Promise<void> {
     try {
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       await config.update('preferredModel', modelName, vscode.ConfigurationTarget.Global);
       this.logger.info(`✅ Model set to: ${modelName}`);
     } catch (error) {

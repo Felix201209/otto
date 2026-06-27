@@ -1,15 +1,13 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import React from 'react';
 import { render } from 'ink-testing-library';
+import { describe,expect,it,vi } from 'vitest';
 import { TaskCompletionSummary } from './TaskCompletionSummary.js';
-import { describe, it, expect, vi } from 'vitest';
 
 describe('<TaskCompletionSummary />', () => {
   // Mock useStdout to provide consistent column width

@@ -20,14 +20,14 @@ export class WebViewService {
       this.logger.info('Initializing WebViewService');
 
       // Register view provider for the sidebar
-      const provider = new DeepVWebviewViewProvider(
+      const provider = new OttoWebviewViewProvider(
         this.context,
         this.communicationService,
         this.logger
       );
 
       const registration = vscode.window.registerWebviewViewProvider(
-        'deepv.aiAssistant',
+        'otto.aiAssistant',
         provider,
         {
           webviewOptions: {
@@ -50,7 +50,7 @@ export class WebViewService {
   async show() {
     try {
       // 🎯 通过命令行显示并聚焦侧边栏视图，这样即使关闭也会自动恢复
-      await vscode.commands.executeCommand('deepv.aiAssistant.focus');
+      await vscode.commands.executeCommand('otto.aiAssistant.focus');
       this.logger.info('Sidebar view revealed');
     } catch (error) {
       this.logger.error('Failed to show sidebar view', error instanceof Error ? error : undefined);
@@ -128,7 +128,7 @@ export class WebViewService {
         /* Dark theme specific styling */
       }
     </style>
-    <title>DeepVCode</title>
+    <title>Otto</title>
 </head>
 <body>
     <div id="root"></div>
@@ -161,7 +161,7 @@ export class WebViewService {
 /**
  * WebView View Provider for the sidebar integration
  */
-class DeepVWebviewViewProvider implements vscode.WebviewViewProvider {
+class OttoWebviewViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private context: vscode.ExtensionContext,
     private communicationService: MultiSessionCommunicationService,
@@ -211,7 +211,7 @@ class DeepVWebviewViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource}; img-src 'self' data: blob: ${webview.cspSource}; object-src 'none'; media-src 'none';">
-    <title>DeepVCode</title>
+    <title>Otto</title>
     <style>
       body {
         margin: 0;

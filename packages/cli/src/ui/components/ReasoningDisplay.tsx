@@ -1,18 +1,17 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useState, useEffect, useRef } from 'react';
-import { Box, Text } from 'ink';
+import { Box,Text } from 'ink';
+import type { ReasoningSummary } from 'otto-core';
+import { useEffect,useRef,useState } from 'react';
 import { Colors } from '../colors.js';
-import { t } from '../utils/i18n.js';
 import { useStreamingContext } from '../contexts/StreamingContext.js';
 import { StreamingState } from '../types.js';
-import type { ReasoningSummary } from 'otto-core';
+import { t } from '../utils/i18n.js';
 
 interface ReasoningDisplayProps {
   reasoning: ReasoningSummary | null;
@@ -30,7 +29,7 @@ interface ReasoningDisplayProps {
 export const ReasoningDisplay = ({
   reasoning,
   terminalHeight,
-  terminalWidth,
+  terminalWidth: _terminalWidth,
 }: ReasoningDisplayProps) => {
   const streamingState = useStreamingContext();
   const [isFilled, setIsFilled] = useState(true); // true=实心•, false=空心◦

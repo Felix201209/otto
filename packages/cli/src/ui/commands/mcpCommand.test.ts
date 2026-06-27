@@ -8,13 +8,13 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { mcpCommand } from './mcpCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import {
+  type Config,
   MCPServerStatus,
   MCPDiscoveryState,
   getMCPServerStatus,
   getMCPDiscoveryState,
   DiscoveredMCPTool,
 } from 'otto-core';
-import open from 'open';
 import { MessageActionReturn } from './types.js';
 import { Type, CallableTool } from '@google/genai';
 
@@ -24,11 +24,10 @@ vi.mock('open', () => ({
 }));
 
 // Mock i18n to return key names for predictable testing
-vi.mock('../utils/i18n.js', () => {
-  return {
+vi.mock('../utils/i18n.js', () => ({
     isChineseLocale: () => false,
     t: (key: string) => key,
-    tp: (key: string, params?: any) => {
+    tp: (key: string, params?: Record<string, unknown>) => {
       let result = key;
       if (params && typeof params === 'object') {
         for (const v of Object.values(params)) {
@@ -40,8 +39,7 @@ vi.mock('../utils/i18n.js', () => {
       return result;
     },
     getLocalizedToolName: (name: string) => name,
-  };
-});
+  }));
 
 vi.mock('otto-core', async (importOriginal) => {
   const actual =
@@ -87,7 +85,13 @@ const createMockMCPTool = (
 
 describe('mcpCommand', () => {
   let mockContext: ReturnType<typeof createMockCommandContext>;
-  let mockConfig: any;
+  let mockConfig: {
+    getToolRegistry: ReturnType<typeof vi.fn>;
+    getMcpServers: ReturnType<typeof vi.fn>;
+    getBlockedMcpServers: ReturnType<typeof vi.fn>;
+    getPromptRegistry: ReturnType<typeof vi.fn>;
+    getOttoClient: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -112,14 +116,14 @@ describe('mcpCommand', () => {
         getAllPrompts: vi.fn().mockReturnValue([]),
         getPromptsByServer: vi.fn().mockReturnValue([]),
       }),
-      getGeminiClient: vi.fn().mockReturnValue({
+      getOttoClient: vi.fn().mockReturnValue({
         setTools: vi.fn(),
       }),
     };
 
     mockContext = createMockCommandContext({
       services: {
-        config: mockConfig,
+        config: mockConfig as unknown as Config,
       },
     });
   });

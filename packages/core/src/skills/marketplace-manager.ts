@@ -70,7 +70,7 @@ interface MarketplacePluginEntry {
   agents?: string | string[];
   hooks?: unknown;
   mcpServers?: unknown;
-  // Legacy/DeepV specific
+  // Legacy/Otto specific
   skills?: string[];
 }
 
@@ -191,7 +191,7 @@ export class MarketplaceManager {
    *
    * 行为说明：
    * - 总是删除：marketplace 配置 + 相关的 installed plugins 记录
-   * - 条件删除：仅删除 Git Marketplace 的克隆目录（~/.deepv/marketplace/{id}）
+   * - 条件删除：仅删除 Git Marketplace 的克隆目录（~/.otto/marketplace/{id}）
    * - 保护策略：本地 Marketplace 的原始目录永远不会被删除（用户拥有的文件）
    *
    * @param marketplaceId Marketplace ID

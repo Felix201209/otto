@@ -3,7 +3,7 @@
  * 自定义规则管理类型定义
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 // =============================================================================
@@ -152,7 +152,7 @@ export const DEFAULT_RULE_FRONTMATTER: RuleFrontmatter = {
  */
 export const RULE_FILE_LOCATIONS = {
   /** 规则目录 */
-  RULES_DIR: '.deepvcode/rules',
+  RULES_DIR: '.otto/rules',
   /** 主配置文件（自动加载为规则） */
   MAIN_CONFIG: 'OTTO.md',
   /** 代理配置文件（自动加载为规则） */

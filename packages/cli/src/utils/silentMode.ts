@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +57,7 @@ export function isSilentModeEnabled(): boolean {
  * Logs a message only if silent mode is disabled
  * Use this for optional informational messages
  */
-export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args: any[]): void {
+export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args: unknown[]): void {
   if (!isSilentMode) {
     originalConsole[level](...args);
   }
@@ -68,6 +67,6 @@ export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args
  * Always logs an error message regardless of silent mode
  * Errors are always shown as they indicate problems
  */
-export function logError(...args: any[]): void {
+export function logError(...args: unknown[]): void {
   console.error(...args);
 }

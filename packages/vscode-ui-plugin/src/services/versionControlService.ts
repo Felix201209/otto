@@ -5,7 +5,7 @@
  * 负责管理对话级别的代码变更版本控制，实现类似Cursor的回退功能
  *
  * @license Apache-2.0
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  */
 
 import * as vscode from 'vscode';

@@ -15,7 +15,7 @@ vi.mock('../utils/editCorrector.js', () => ({
 }));
 
 vi.mock('../core/client.js', () => ({
-  GeminiClient: vi.fn().mockImplementation(() => ({
+  OttoClient: vi.fn().mockImplementation(() => ({
     generateJson: mockGenerateJson,
   })),
 }));
@@ -51,11 +51,11 @@ describe('EditTool', () => {
     };
 
     mockConfig = {
-      getGeminiClient: vi.fn().mockReturnValue(geminiClient),
+      getOttoClient: vi.fn().mockReturnValue(geminiClient),
       getTargetDir: () => rootDir,
       getApprovalMode: vi.fn(),
       setApprovalMode: vi.fn(),
-      // getGeminiConfig: () => ({ apiKey: 'test-api-key' }), // This was not a real Config method
+      // getOttoConfig: () => ({ apiKey: 'test-api-key' }), // This was not a real Config method
       // Add other properties/methods of Config if EditTool uses them
       // Minimal other methods to satisfy Config type if needed by EditTool constructor or other direct uses:
       getApiKey: () => 'test-key',
@@ -71,8 +71,8 @@ describe('EditTool', () => {
       getUserAgent: () => 'test-agent',
       getUserMemory: () => '',
       setUserMemory: vi.fn(),
-      getGeminiMdFileCount: () => 0,
-      setGeminiMdFileCount: vi.fn(),
+      getOttoMdFileCount: () => 0,
+      setOttoMdFileCount: vi.fn(),
       getToolRegistry: () => ({}) as any, // Minimal mock for ToolRegistry
       getProjectSettingsManager: vi.fn().mockReturnValue({
         getSettings: vi.fn().mockReturnValue({ autoTrimTrailingSpaces: true })

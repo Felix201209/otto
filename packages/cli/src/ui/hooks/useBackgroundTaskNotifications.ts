@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-import { useEffect, useCallback } from 'react';
-import { getBackgroundTaskManager, BackgroundTask } from 'otto-core';
+import { BackgroundTask,getBackgroundTaskManager } from 'otto-core';
+import { useEffect } from 'react';
 
 interface BackgroundTaskNotificationsProps {
   onTaskCompleted?: (task: BackgroundTask) => void;

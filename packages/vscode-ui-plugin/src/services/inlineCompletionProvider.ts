@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Easy Code
+ * Copyright 2025 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,7 +21,7 @@ import { Logger } from '../utils/logger';
  * - 推（后台）：CompletionScheduler 监听文档变化，执行防抖和 API 请求
  * - 拉（前台）：Provider 只读缓存，立即返回
  */
-export class DeepVInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
+export class OttoInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
   private logger: Logger;
   private cache: CompletionCache;
 
@@ -54,7 +54,7 @@ export class DeepVInlineCompletionProvider implements vscode.InlineCompletionIte
 
     try {
       // 检查是否启用了补全功能
-      const config = vscode.workspace.getConfiguration('deepv');
+      const config = vscode.workspace.getConfiguration('otto');
       const enableInlineCompletion = config.get<boolean>('enableInlineCompletion', false);
 
       if (!enableInlineCompletion) {

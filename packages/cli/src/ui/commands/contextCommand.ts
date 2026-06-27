@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2026 Easy Code team
- * https://github.com/OrionStarAI/DeepVCode
+ * Copyright 2026 Felix
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,6 +14,28 @@ import {
 } from './types.js';
 import { t } from '../utils/i18n.js';
 import { getEncoding } from 'js-tiktoken';
+
+interface ToolRegistryLike {
+  getTools?: () => unknown[];
+  getAllTools?: () => unknown[];
+}
+
+interface ConfigWithToolRegistry {
+  toolRegistry?: ToolRegistryLike;
+}
+
+function toSerializableTool(tool: unknown): Record<string, unknown> {
+  if (!tool || typeof tool !== 'object') {
+    return {};
+  }
+
+  const record = tool as Record<string, unknown>;
+  return {
+    name: record.name,
+    description: record.description,
+    parameters: record.parameters,
+  };
+}
 
 export const contextCommand: SlashCommand = {
   name: 'context',
@@ -50,10 +71,6 @@ export const contextCommand: SlashCommand = {
       Date.now(),
     );
 
-    // 系统提示词的固定 token 数（Claude 系列模型）
-    // 通过 Claude API countTokens 精确计算：6,069 tokens
-    const SYSTEM_PROMPT_TOKENS = 6069;
-
     // 获取当前会话的实际统计数据
     const metrics = uiTelemetryService.getMetrics();
     const modelMetrics = metrics.models[preferredModel];
@@ -62,8 +79,6 @@ export const contextCommand: SlashCommand = {
     // 注意：modelMetrics.tokens.prompt 是累加值，不能用于计算当前上下文占用
     // 我们应该使用 lastPromptTokenCount，它代表最后一次请求的 input token，即当前上下文大小
     const actualPromptTokens = uiTelemetryService.getLastPromptTokenCount();
-    const actualTotalTokens = actualPromptTokens; // Context Usage 只看 Input
-
     // 1. 获取 Memory Token (从 Config)
     const memoryFilesTokens = context.services.config?.getMemoryTokenCount() ?? 0;
 
@@ -89,7 +104,7 @@ export const contextCommand: SlashCommand = {
       } else {
         systemPromptTokens = totalSystemTokens;
       }
-    } catch (e) {
+    } catch {
       // Fallback: 使用 Claude 默认值
       systemPromptTokens = 6069;
     }
@@ -101,27 +116,23 @@ export const contextCommand: SlashCommand = {
     if (systemToolsTokens === 0) {
       try {
         // 直接访问私有属性 toolRegistry，绕过 async 方法调用可能的问题
-        const config = context.services.config as any;
+        const config = context.services.config as ConfigWithToolRegistry | null;
         const toolRegistry = config?.toolRegistry;
 
         if (toolRegistry) {
-          let tools: any[] = [];
+          let tools: unknown[] = [];
           // 尝试获取工具定义
           if (typeof toolRegistry.getTools === 'function') {
             tools = toolRegistry.getTools();
           } else if (typeof toolRegistry.getAllTools === 'function') {
             // 如果只有 getAllTools，我们需要转换
             const toolInstances = toolRegistry.getAllTools();
-            tools = toolInstances.map((t: any) => {
-              if (typeof t.getDefinition === 'function') {
-                return t.getDefinition();
+            tools = toolInstances.map((tool) => {
+              if (tool && typeof tool === 'object' && typeof (tool as { getDefinition?: unknown }).getDefinition === 'function') {
+                return (tool as { getDefinition: () => unknown }).getDefinition();
               }
               // 如果没有 getDefinition，尝试提取基本属性，避免循环引用
-              return {
-                name: t.name,
-                description: t.description,
-                parameters: t.parameters,
-              };
+              return toSerializableTool(tool);
             });
           }
 
@@ -130,18 +141,14 @@ export const contextCommand: SlashCommand = {
             // 使用 safe stringify 或者 try-catch
             try {
               systemToolsTokens = enc.encode(JSON.stringify(tools)).length;
-            } catch (jsonError) {
+            } catch {
               // 如果还是失败，尝试只序列化必要字段
-              const safeTools = tools.map((t: any) => ({
-                name: t.name,
-                description: t.description,
-                parameters: t.parameters,
-              }));
+              const safeTools = tools.map(toSerializableTool);
               systemToolsTokens = enc.encode(JSON.stringify(safeTools)).length;
             }
           }
         }
-      } catch (e) {
+      } catch {
         // ignore
       }
     }

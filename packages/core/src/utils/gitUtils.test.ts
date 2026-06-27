@@ -145,9 +145,9 @@ describe('getGitProjectPath', () => {
 
   it('parses HTTPS remote URL without .git suffix', () => {
     mockGitRemoteOutput(
-      'origin\thttps://github.com/OrionStarAI/DeepVCode (fetch)\n',
+      'origin\thttps://github.com/Felix/Otto (fetch)\n',
     );
-    expect(getGitProjectPath('/some/repo')).toBe('OrionStarAI/DeepVCode');
+    expect(getGitProjectPath('/some/repo')).toBe('Felix/Otto');
   });
 
   it('parses SSH remote URL (colon syntax) with .git suffix', () => {
@@ -159,16 +159,16 @@ describe('getGitProjectPath', () => {
 
   it('parses SSH remote URL (colon syntax) without .git suffix', () => {
     mockGitRemoteOutput(
-      'origin\tgit@github.com:OrionStarAI/DeepVCode (fetch)\n',
+      'origin\tgit@github.com:Felix/Otto (fetch)\n',
     );
-    expect(getGitProjectPath('/some/repo')).toBe('OrionStarAI/DeepVCode');
+    expect(getGitProjectPath('/some/repo')).toBe('Felix/Otto');
   });
 
   it('parses SSH remote URL with multi-level subgroup path', () => {
     mockGitRemoteOutput(
-      'origin\tgit@gitlab.example.com:group/DeepVCode/DeepVcodeClient.git (fetch)\n',
+      'origin\tgit@gitlab.example.com:group/Otto/OttoClient.git (fetch)\n',
     );
-    expect(getGitProjectPath('/some/repo')).toBe('group/DeepVCode/DeepVcodeClient');
+    expect(getGitProjectPath('/some/repo')).toBe('group/Otto/OttoClient');
   });
 
   it('falls back to first remote when origin is absent', () => {
