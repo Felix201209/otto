@@ -1,0 +1,37 @@
+{
+  "name": "otto-server",
+  "version": "0.1.0",
+  "description": "Otto - local app server (single source of session truth, HTTP/WS, Feishu bridge)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "otto-server": "dist/bin.js"
+  },
+  "scripts": {
+    "build": "node ../../scripts/build_package.js",
+    "start": "node dist/bin.js start",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:ci": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@google/genai": "1.35.0",
+    "@larksuiteoapi/node-sdk": "^1.66.0",
+    "otto-core": "file:../core",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.9",
+    "@types/ws": "^8.5.12",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

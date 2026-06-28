@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["node"],
+    "typeRoots": ["../../node_modules/@types", "./node_modules/@types"],
+    "composite": true,
+    "sourceMap": true
+  },
+  "include": ["index.ts", "bin.ts", "src/**/*.ts", "src/**/*.json", "./package.json"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"],
+  "references": [{ "path": "../core" }]
+}
