@@ -1,0 +1,582 @@
+/**
+ * @license
+ * Copyright 2025 Otto
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * otto-server：本地 HTTP + WS app server 骨架。
+ *
+ * 唯一会话源：所有客户端（desktop renderer / 未来 TUI 只读 / 飞书网关）都经
+ * 这里读写同一份 SessionStore，并通过 WS 收到同一会话的实时广播。
+ *
+ * 本文件立「服务外壳 + 路由 + WS 收发分发 + registerFeishu 接缝」。
+ * core 驱动（跑一轮对话）由 Issue #1 实装：把 SessionRuntime 接上后，
+ * handleSendUserMessage 调 runtime.run() 即可，无需改本文件的分发结构。
+ *
+ * 参照：packages/core/src/auth/login/authServer.ts（OAuth 回调小 server 模式）。
+ */
+
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
+import { WebSocketServer, type WebSocket } from 'ws';
+import {
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  HTTP_ROUTES,
+  PROTOCOL_VERSION,
+  isClientToServer,
+  type ApiResponse,
+  type ClientToServer,
+  type HealthInfo,
+  type ModelInfo,
+  type ServerToClient,
+} from './protocol.js';
+import {
+  InMemorySessionStore,
+  type SessionRuntime,
+  type SessionStore,
+  type Unsubscribe,
+} from './sessions.js';
+import { registerFeishu, type FeishuRegistration } from './feishu/register.js';
+import { createCoreConfig } from './coreConfig.js';
+import { createCoreSessionRuntime } from './runtime.js';
+import {
+  listModelInfos,
+  loadCustomModels,
+  saveCustomModel,
+} from './customModels.js';
+import type { CustomModelConfig } from 'otto-core';
+
+/** server 版本（实装时可从 package.json 注入）。 */
+const SERVER_VERSION = '0.1.0';
+
+/**
+ * 会话运行时工厂：为某会话建并初始化一个 SessionRuntime。
+ * 默认实现 = 包 otto-core（createCoreSessionRuntime）。可注入替换（测试 / mock）。
+ */
+export type RuntimeFactory = (
+  store: SessionStore,
+  sessionId: string,
+  model: string | undefined,
+) => Promise<SessionRuntime>;
+
+/** 默认运行时工厂：构造 headless core Config 并包进 CoreSessionRuntime。 */
+const defaultRuntimeFactory: RuntimeFactory = async (store, sessionId, model) => {
+  const config = createCoreConfig({ sessionId, model });
+  return createCoreSessionRuntime(store, sessionId, config);
+};
+
+export interface OttoServerOptions {
+  host?: string;
+  port?: number;
+  /** 是否启用飞书网关（缺省读 env / credentials 探测）。 */
+  enableFeishu?: boolean;
+  store?: SessionStore;
+  /**
+   * 会话运行时工厂。缺省 = 包 otto-core 的真实运行时。
+   * 注入自定义工厂用于测试或 mock 模式。
+   */
+  runtimeFactory?: RuntimeFactory;
+  /**
+   * 强制 mock 模式：不接 core，send_user_message 走占位回声。
+   * 缺省 false；但若未配置任何模型（无 BYO-key 且无 env auth），会自动降级 mock，
+   * 让无 key 的全新机器也能端到端验证收发链路。可被 env OTTO_SERVER_MOCK=1 置真。
+   */
+  mock?: boolean;
+}
+
+/**
+ * 单个 WS 连接的会话上下文：持有该连接对各会话的订阅取消句柄，
+ * 断开时统一清理。
+ */
+interface ClientConn {
+  socket: WebSocket;
+  subscriptions: Map<string, Unsubscribe>;
+}
+
+/**
+ * OttoServer：可被 bin（start/stop/status）或 Electron 主进程内嵌拉起。
+ */
+export class OttoServer {
+  readonly store: SessionStore;
+  private readonly host: string;
+  private readonly port: number;
+  private readonly enableFeishu: boolean;
+  private readonly startedAt = Date.now();
+  private readonly runtimeFactory: RuntimeFactory;
+  private readonly mock: boolean;
+  /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
+  private readonly runtimeInit = new Map<string, Promise<SessionRuntime | undefined>>();
+
+  private http?: HttpServer;
+  private wss?: WebSocketServer;
+  private feishu?: FeishuRegistration;
+  private readonly conns = new Set<ClientConn>();
+
+  constructor(opts: OttoServerOptions = {}) {
+    this.host = opts.host ?? DEFAULT_HOST;
+    this.port =
+      opts.port ?? Number(process.env.OTTO_SERVER_PORT ?? DEFAULT_PORT);
+    this.enableFeishu =
+      opts.enableFeishu ?? process.env.OTTO_FEISHU_ENABLED === '1';
+    this.store = opts.store ?? new InMemorySessionStore();
+    this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
+    // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
+    this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
+  }
+
+  /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
+  private shouldMock(): boolean {
+    if (this.mock) return true;
+    // 无任何自定义模型（且无 env auth）时降级 mock，让无 key 机器也能验证收发链路。
+    try {
+      // 与 coreConfig 的 enabled 过滤口径一致：全部 enabled:false 也视为「无可用模型」走 mock，
+      // 避免真实 runtime 以 model=undefined 初始化（code review HIGH）。
+      return loadCustomModels().filter((m) => m.enabled !== false).length === 0;
+    } catch {
+      return true;
+    }
+  }
+
+  /** 启动 HTTP + WS，并按需注册飞书网关。 */
+  async start(): Promise<void> {
+    this.http = createServer((req, res) => this.handleHttp(req, res));
+    this.wss = new WebSocketServer({ server: this.http, path: HTTP_ROUTES.ws });
+    this.wss.on('connection', (socket) => this.handleConnection(socket));
+
+    await new Promise<void>((resolve, reject) => {
+      this.http!.once('error', reject);
+      this.http!.listen(this.port, this.host, () => resolve());
+    });
+
+    if (this.enableFeishu) {
+      // ── registerFeishu 接缝（Issue #3）──
+      // 飞书网关迁入 server：gateway.onMessage → store.getOrCreateFeishuSession +
+      // appendMessage(source:'feishu') + publish；app→飞书回推走 registration.pushToFeishu。
+      this.feishu = await registerFeishu({
+        store: this.store,
+        broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+      });
+    }
+  }
+
+  /** 停止服务（关 WS、HTTP、飞书）。 */
+  async stop(): Promise<void> {
+    await this.feishu?.stop().catch(() => undefined);
+    for (const c of this.conns) c.socket.close();
+    this.conns.clear();
+    await new Promise<void>((resolve) =>
+      this.wss ? this.wss.close(() => resolve()) : resolve(),
+    );
+    await new Promise<void>((resolve) =>
+      this.http ? this.http.close(() => resolve()) : resolve(),
+    );
+  }
+
+  /** 运行期状态（status 命令 / /health 复用）。 */
+  health(): HealthInfo {
+    return {
+      status: 'ok',
+      serverVersion: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      uptimeMs: Date.now() - this.startedAt,
+      sessionCount: this.store.listSessions().length,
+      feishu: {
+        enabled: this.enableFeishu,
+        connected: this.feishu?.isConnected() ?? false,
+      },
+    };
+  }
+
+  get endpoint(): { host: string; port: number } {
+    return { host: this.host, port: this.port };
+  }
+
+  /** 可用模型列表（BYO-key 自定义模型）。/models 与 get_models 共用。 */
+  private modelInfos(): ModelInfo[] {
+    try {
+      return listModelInfos();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * setup 落盘（save_custom_model 帧）：
+   *   校验 → 复用 customModels.saveCustomModel 原子写盘（CLI 同格式）
+   *   → 成功广播最新 models_list；失败回 error(code:'save_failed')。
+   *
+   * 广播用 broadcastAll：多窗口（及未来只读 TUI 视图）同步刷新模型列表。
+   * makeActive 由前端用回包后的 set_model 自行处理，server 仅负责写盘+广播。
+   */
+  private handleSaveCustomModel(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'save_custom_model' }>,
+  ): void {
+    const p = msg.payload;
+    // 服务端二次校验 baseUrl 格式（客户端校验不可信；防止 file:// 等非 http(s) scheme
+    // 被写入用户配置 ~/.otto-user/custom-models.json，code review HIGH）。
+    if (!/^https?:\/\//i.test((p.baseUrl ?? '').trim())) {
+      this.send(conn.socket, {
+        type: 'error',
+        payload: {
+          code: 'save_failed',
+          message: '保存失败：baseUrl 必须是 http(s):// 开头的绝对地址',
+        },
+      });
+      return;
+    }
+    // 由结构化字段拼出 CustomModelConfig；displayName 缺省取 modelId 兜底。
+    const model = {
+      displayName: (p.displayName ?? '').trim() || p.modelId,
+      provider: p.provider as CustomModelConfig['provider'],
+      baseUrl: p.baseUrl,
+      apiKey: p.apiKey,
+      modelId: p.modelId,
+      ...(p.maxTokens !== undefined ? { maxTokens: p.maxTokens } : {}),
+      enabled: p.enabled !== false,
+    } as CustomModelConfig;
+
+    try {
+      // 写盘（内部再次校验，非法即抛）。返回统一 id 备用。
+      saveCustomModel(model);
+      // 写成功 → 广播最新模型列表（modelInfos 每次实时 loadCustomModels）。
+      this.broadcastAll({
+        type: 'models_list',
+        payload: { models: this.modelInfos() },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'save_failed', message: `保存自定义模型失败：${message}` },
+      });
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // HTTP REST
+  // ──────────────────────────────────────────────────────────────────────
+
+  private handleHttp(req: IncomingMessage, res: ServerResponse): void {
+    const url = new URL(req.url ?? '/', `http://${this.host}:${this.port}`);
+    const path = url.pathname;
+
+    if (path === HTTP_ROUTES.health) {
+      return sendJson(res, 200, ok(this.health()));
+    }
+    if (path === HTTP_ROUTES.sessions && req.method === 'GET') {
+      return sendJson(res, 200, ok(this.store.listSessions()));
+    }
+    if (path === HTTP_ROUTES.sessions && req.method === 'POST') {
+      const summary = this.store.createSession();
+      this.broadcastAll({ type: 'session_upsert', payload: { session: summary } });
+      return sendJson(res, 201, ok(summary));
+    }
+    const histMatch = path.match(/^\/sessions\/([^/]+)\/history$/);
+    if (histMatch && req.method === 'GET') {
+      const limit = url.searchParams.has('limit')
+        ? Number(url.searchParams.get('limit'))
+        : undefined;
+      return sendJson(res, 200, ok(this.store.getHistory(histMatch[1], limit)));
+    }
+    if (path === HTTP_ROUTES.models && req.method === 'GET') {
+      return sendJson(res, 200, ok(this.modelInfos()));
+    }
+
+    sendJson(res, 404, err('not_found'));
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // WS 连接 + 帧分发
+  // ──────────────────────────────────────────────────────────────────────
+
+  private handleConnection(socket: WebSocket): void {
+    const conn: ClientConn = { socket, subscriptions: new Map() };
+    this.conns.add(conn);
+
+    this.send(socket, {
+      type: 'welcome',
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        serverVersion: SERVER_VERSION,
+      },
+    });
+
+    socket.on('message', (raw) => {
+      let msg: unknown;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return this.send(socket, errorFrame(undefined, 'bad_json', '无法解析的帧'));
+      }
+      if (!isClientToServer(msg)) {
+        return this.send(
+          socket,
+          errorFrame(undefined, 'bad_frame', '未知帧形态'),
+        );
+      }
+      this.dispatch(conn, msg).catch((e) => {
+        this.send(
+          socket,
+          errorFrame(undefined, 'internal', String(e instanceof Error ? e.message : e)),
+        );
+      });
+    });
+
+    socket.on('close', () => {
+      for (const unsub of conn.subscriptions.values()) unsub();
+      conn.subscriptions.clear();
+      this.conns.delete(conn);
+    });
+  }
+
+  /** 把一帧 ClientToServer 分发到对应处理。 */
+  private async dispatch(conn: ClientConn, msg: ClientToServer): Promise<void> {
+    switch (msg.type) {
+      case 'hello':
+        // 握手已由 welcome 回应；此处可校验 protocolVersion（TODO 版本协商）。
+        return;
+      case 'list_sessions':
+        return this.send(conn.socket, {
+          type: 'sessions_list',
+          payload: { sessions: this.store.listSessions() },
+        });
+      case 'get_history':
+        return this.send(conn.socket, {
+          type: 'history',
+          payload: {
+            sessionId: msg.payload.sessionId,
+            messages: this.store.getHistory(
+              msg.payload.sessionId,
+              msg.payload.limit,
+              msg.payload.before,
+            ),
+          },
+        });
+      case 'subscribe':
+        return this.subscribeConn(conn, msg.payload.sessionId);
+      case 'unsubscribe': {
+        const unsub = conn.subscriptions.get(msg.payload.sessionId);
+        unsub?.();
+        conn.subscriptions.delete(msg.payload.sessionId);
+        return;
+      }
+      case 'create_session': {
+        const summary = this.store.createSession({
+          title: msg.payload.title,
+          model: msg.payload.model,
+        });
+        this.broadcastAll({
+          type: 'session_upsert',
+          payload: { session: summary },
+        });
+        return;
+      }
+      case 'send_user_message':
+        return this.handleSendUserMessage(conn, msg);
+      case 'set_model': {
+        const { sessionId, model } = msg.payload;
+        // 既更新会话摘要（让懒构建的 runtime 用对模型），也即时切换已存在的 runtime。
+        this.store.patchSessionModel(sessionId, model);
+        this.store.getRuntime(sessionId)?.setModel(model);
+        return;
+      }
+      case 'cancel': {
+        this.store.getRuntime(msg.payload.sessionId)?.cancel();
+        return;
+      }
+      case 'tool_confirmation_response':
+        // 当前 runtime 走 executeToolCall（YOLO，不上抛确认），无待确认队列可路由。
+        // 带确认的工具调度（CoreToolScheduler.handleConfirmationResponse）是后续增强，
+        // 届时在此把 outcome 路由进 runtime 的 scheduler。
+        // TODO(tool-confirm): runtime 暴露 confirmTool(callId, outcome) 后接线。
+        return;
+      case 'get_models':
+        return this.send(conn.socket, {
+          type: 'models_list',
+          payload: { models: this.modelInfos() },
+        });
+      case 'save_custom_model':
+        return this.handleSaveCustomModel(conn, msg);
+      default: {
+        // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
+        const _exhaustive: never = msg;
+        void _exhaustive;
+        return;
+      }
+    }
+  }
+
+  /**
+   * 用户消息入口（app→server）：落库 user 消息 + 广播，然后驱动一轮回复。
+   * - mock 模式（无 core / 无 BYO-key）：回占位回声，验证收发链路。
+   * - 实装模式：懒构建会话 runtime（包 otto-core），runtime.run 跑一整轮，
+   *   流式/工具事件由 runtime 内部 publish 广播给所有订阅者。
+   */
+  private async handleSendUserMessage(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'send_user_message' }>,
+  ): Promise<void> {
+    const { sessionId, content, source } = msg.payload;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+
+    const userMsg = this.store.appendMessage(sessionId, {
+      role: 'user',
+      content,
+      source,
+    });
+    this.store.publish(sessionId, {
+      type: 'message_start',
+      payload: { message: userMsg },
+    });
+
+    // mock 模式（无 core / 无 key）：占位回声，验证收发链路。
+    if (this.shouldMock()) {
+      await this.mockEcho(sessionId);
+      return;
+    }
+
+    // 实装路径：首次 send 时懒构建并 attach runtime（包 otto-core）。
+    const runtime = await this.ensureRuntime(sessionId);
+    if (!runtime) {
+      // 初始化失败（如鉴权未配）：已在 ensureRuntime 内发过 error 帧，这里收口。
+      this.store.setStatus(sessionId, 'idle');
+      return;
+    }
+    // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
+    await runtime.run(content, source);
+  }
+
+  /**
+   * 懒构建会话 runtime（去重并发初始化）。
+   * 已 attach 直接返回；否则经 runtimeFactory 建并 attach。
+   * 初始化失败时发 error 帧并返回 undefined（不抛，避免拖垮 WS 分发）。
+   */
+  private async ensureRuntime(
+    sessionId: string,
+  ): Promise<SessionRuntime | undefined> {
+    const existing = this.store.getRuntime(sessionId);
+    if (existing) return existing;
+
+    const inFlight = this.runtimeInit.get(sessionId);
+    if (inFlight) return inFlight;
+
+    const summary = this.store.getSession(sessionId);
+    const model = summary?.model;
+    const task = (async (): Promise<SessionRuntime | undefined> => {
+      try {
+        const runtime = await this.runtimeFactory(this.store, sessionId, model);
+        this.store.attachRuntime(sessionId, runtime);
+        return runtime;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.store.publish(sessionId, {
+          type: 'error',
+          payload: {
+            sessionId,
+            code: 'runtime_init_failed',
+            message: `会话运行时初始化失败：${message}`,
+          },
+        });
+        this.store.setStatus(sessionId, 'error');
+        return undefined;
+      } finally {
+        this.runtimeInit.delete(sessionId);
+      }
+    })();
+    this.runtimeInit.set(sessionId, task);
+    return task;
+  }
+
+  /** mock：core 未接时回一条占位流式回复，验证收发链路。实装后删。 */
+  private async mockEcho(sessionId: string): Promise<void> {
+    this.store.setStatus(sessionId, 'streaming');
+    const assistant = this.store.appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{ type: 'text', value: '' }],
+      source: 'local',
+      isStreaming: true,
+    });
+    this.store.publish(sessionId, {
+      type: 'message_start',
+      payload: { message: assistant },
+    });
+    const text =
+      '（mock）otto-server 已就绪，core 驱动尚未接入（Issue #1）。收发链路 OK。';
+    this.store.publish(sessionId, {
+      type: 'chat_chunk',
+      payload: { sessionId, messageId: assistant.id, delta: text },
+    });
+    this.store.patchMessage(sessionId, assistant.id, {
+      content: [{ type: 'text', value: text }],
+      isStreaming: false,
+    });
+    this.store.publish(sessionId, {
+      type: 'chat_complete',
+      payload: { sessionId, messageId: assistant.id },
+    });
+    this.store.setStatus(sessionId, 'idle');
+  }
+
+  private subscribeConn(conn: ClientConn, sessionId: string): void {
+    if (conn.subscriptions.has(sessionId)) return;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const unsub = this.store.subscribe(sessionId, (frame) =>
+      this.send(conn.socket, frame),
+    );
+    conn.subscriptions.set(sessionId, unsub);
+    // 订阅即回灌历史，便于 UI 恢复。
+    this.send(conn.socket, {
+      type: 'history',
+      payload: { sessionId, messages: this.store.getHistory(sessionId) },
+    });
+  }
+
+  /** 广播给所有连接（与会话订阅无关的全局帧，如 session_upsert）。 */
+  private broadcastAll(frame: ServerToClient): void {
+    for (const c of this.conns) this.send(c.socket, frame);
+  }
+
+  private send(socket: WebSocket, frame: ServerToClient): void {
+    if (socket.readyState === socket.OPEN) {
+      socket.send(JSON.stringify(frame));
+    }
+  }
+}
+
+// ── helpers ──
+
+function ok<T>(data: T): ApiResponse<T> {
+  return { ok: true, data, error: null };
+}
+function err(message: string): ApiResponse<null> {
+  return { ok: false, data: null, error: message };
+}
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const json = JSON.stringify(body);
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(json);
+}
+function errorFrame(
+  sessionId: string | undefined,
+  code: string,
+  message: string,
+): ServerToClient {
+  return { type: 'error', payload: { sessionId, code, message } };
+}

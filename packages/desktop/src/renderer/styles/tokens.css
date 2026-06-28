@@ -1,0 +1,150 @@
+/**
+ * @license
+ * Copyright 2025 Otto
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * Otto Desktop 渲染层设计 token（浅色主题 + amber 强调）。
+ * 唯一基准：docs/otto-desktop-ui-spec.md。
+ * 所有组件只引用这些变量，不硬编码颜色 / 间距 / 圆角。
+ */
+
+:root {
+  /* —— 表面 / 文字 —— */
+  --otto-bg: #ffffff;
+  --otto-sidebar-bg: #f7f7f8;
+  --otto-surface: #ffffff;
+  --otto-surface-raised: #fbfbfc;
+  --otto-text: #1d1d1f;
+  --otto-text-secondary: #8a8a8e;
+  --otto-text-tertiary: #aeaeb2;
+  --otto-border: #ececec;
+  --otto-border-strong: #e0e0e2;
+
+  /* —— amber 强调 —— */
+  --otto-accent: #e8893a;
+  --otto-accent-hover: #e07b2e;
+  --otto-accent-soft: #fdefe3; /* 选中态 cream 底 */
+  --otto-accent-gradient: linear-gradient(135deg, #f0a35a 0%, #e8893a 55%, #e07b2e 100%);
+
+  /* —— 语义来源徽章 —— */
+  --otto-feishu-fg: #1c7ed6;
+  --otto-feishu-bg: #e7f1fb;
+  --otto-local-fg: #2f9e44;
+  --otto-local-bg: #e6f4ea;
+
+  /* —— 气泡 —— */
+  --otto-user-bubble: #fbe0cc; /* peach/cream，较纯白背景压深半档以获得实体感 */
+  --otto-user-bubble-border: #f3cdaf; /* 1px 暖描边，进一步把气泡从白底剥离 */
+  --otto-user-bubble-text: #5a3d28;
+
+  /* —— diff —— */
+  --otto-diff-add-bg: #e6f4ea;
+  --otto-diff-add-gutter: #cce8d4;
+  --otto-diff-del-bg: #fbe9e9;
+  --otto-diff-del-gutter: #f3d2d2;
+  --otto-diff-text: #1d1d1f;
+  --otto-diff-gutter-text: #a0a0a4;
+  --otto-diff-hunk-bg: #eef3fb; /* hunk 头蓝灰底（原硬编码进 token） */
+  --otto-diff-hunk-fg: #4b6584;
+  --otto-diff-stat-add: #2f9e44;
+  --otto-diff-stat-del: #e03131;
+
+  /* —— 状态 —— */
+  --otto-success: #2f9e44;
+  --otto-danger: #e03131;
+  --otto-running: #e8893a;
+
+  /* —— 行内代码 —— */
+  --otto-code-bg: #f1f1f3;
+  --otto-code-text: #c2410c;
+
+  /* —— 半径 —— */
+  --otto-radius-sm: 6px;
+  --otto-radius: 12px;
+  --otto-radius-lg: 16px;
+  --otto-radius-pill: 999px;
+
+  /* —— 阴影（分层景深：卡片轻浮 < 浮层 < 弹层）—— */
+  --otto-shadow-xs: 0 1px 1px rgba(28, 25, 23, 0.04);
+  --otto-shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05), 0 1px 3px rgba(28, 25, 23, 0.04);
+  --otto-shadow-card: 0 1px 2px rgba(28, 25, 23, 0.04), 0 2px 8px rgba(28, 25, 23, 0.05);
+  --otto-shadow: 0 4px 16px rgba(28, 25, 23, 0.08);
+  --otto-shadow-pop: 0 8px 28px rgba(28, 25, 23, 0.13), 0 2px 6px rgba(28, 25, 23, 0.06);
+  --otto-shadow-focus: 0 0 0 3px rgba(232, 137, 58, 0.2);
+  /* 顶栏滚动分隔 hairline */
+  --otto-hairline: rgba(28, 25, 23, 0.08);
+
+  /* —— 字体 —— */
+  --otto-font:
+    -apple-system, 'PingFang SC', BlinkMacSystemFont, 'Segoe UI', system-ui,
+    'Helvetica Neue', Arial, sans-serif;
+  --otto-font-mono:
+    'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  /* —— 动效 —— */
+  --otto-ease: cubic-bezier(0.2, 0, 0, 1);
+  --otto-dur-fast: 120ms;
+  --otto-dur: 200ms;
+
+  /* —— VSCode 变量兜底（webview 残留引用万一被牵入时不至于裸默认；
+     本渲染层未使用 webview 组件，仅作防御）。 —— */
+  --vscode-editor-background: var(--otto-bg);
+  --vscode-editor-foreground: var(--otto-text);
+  --vscode-foreground: var(--otto-text);
+  --vscode-panel-border: var(--otto-border);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  font-family: var(--otto-font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 细滚动条，贴桌面观感 */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.14);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.24);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

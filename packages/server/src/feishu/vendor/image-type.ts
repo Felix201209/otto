@@ -1,0 +1,1 @@
+../../../../cli/src/services/feishu/image-type.ts

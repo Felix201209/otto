@@ -12,6 +12,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8092"],
       "port": 8092
+    },
+    {
+      "name": "otto-preview",
+      "runtimeExecutable": "/opt/homebrew/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8771", "--directory", "/Users/felix/Desktop/EasyCode/packages/desktop/preview-dist"],
+      "port": 8771
     }
   ]
 }

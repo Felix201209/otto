@@ -1,0 +1,12 @@
+# electron-builder 输出（.app / dmg / blockmap）—— 可重生成，不入库
+release/
+
+# 交付聚合临时 staging（make-delivery-zip.mjs 产出）
+release/_delivery/
+
+# 构建产物（与根 .gitignore 的 dist 重复，本地兜底）
+dist/
+
+# 可视化自检的静态产物（webpack.preview.cjs / setup 预览 输出，可重生成）
+preview-dist/
+setup-preview-dist/

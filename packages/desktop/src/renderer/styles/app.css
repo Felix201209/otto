@@ -1,0 +1,1710 @@
+/**
+ * @license
+ * Copyright 2025 Otto
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * 全部渲染层组件样式。1:1 还原 docs/otto-desktop-ui-spec.md。
+ * 配色 / 间距 / 圆角全部走 tokens.css 变量，不硬编码。
+ * hover / focus / active 态全部显式定义（spec：不留裸默认）。
+ */
+
+/* ══════════════ 应用骨架 ══════════════ */
+
+.otto-app {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  background: var(--otto-bg);
+  overflow: hidden;
+}
+
+/* ══════════════ 左侧栏 ══════════════ */
+
+.otto-sidebar {
+  width: 264px;
+  min-width: 264px;
+  height: 100%;
+  background: var(--otto-sidebar-bg);
+  border-right: 1px solid var(--otto-border);
+  display: flex;
+  flex-direction: column;
+  /* 顶部留出 mac 交通灯（窗口 titleBarStyle=hiddenInset 时） */
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+.otto-sidebar__traffic {
+  height: 38px;
+  flex: 0 0 auto;
+  -webkit-app-region: drag; /* 顶部可拖拽窗口 */
+}
+
+.otto-sidebar__brandrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 16px 12px;
+}
+
+.otto-brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: var(--otto-accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  user-select: none;
+}
+
+.otto-brand__sparkle {
+  color: var(--otto-accent);
+  -webkit-text-fill-color: var(--otto-accent);
+  transform: translateY(-2px);
+}
+
+.otto-iconbtn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--otto-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-iconbtn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--otto-text);
+}
+.otto-iconbtn:active {
+  background: rgba(0, 0, 0, 0.09);
+}
+.otto-iconbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+.otto-newchat {
+  margin: 0 14px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 38px;
+  border-radius: var(--otto-radius);
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-newchat:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-sm);
+}
+.otto-newchat:active {
+  transform: translateY(0.5px);
+}
+.otto-newchat:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+.otto-sessions {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 10px 8px;
+}
+
+.otto-group__label {
+  padding: 12px 8px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--otto-text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+/* —— 会话项 —— */
+.otto-session {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 9px 11px 10px 13px;
+  margin-bottom: 2px;
+  border-radius: var(--otto-radius);
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-session:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.otto-session:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-session--active {
+  background: var(--otto-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(232, 137, 58, 0.14);
+}
+.otto-session--active:hover {
+  background: var(--otto-accent-soft);
+}
+/* 选中态左竖条 */
+.otto-session--active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--otto-accent);
+}
+
+.otto-session__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.otto-session__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--otto-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-session__time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+}
+.otto-session__preview {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-session__meta {
+  margin-top: 7px;
+}
+
+/* —— 来源徽章 —— */
+.otto-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 7px 0 6px;
+  border-radius: var(--otto-radius-pill);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+.otto-badge--feishu {
+  color: var(--otto-feishu-fg);
+  background: var(--otto-feishu-bg);
+}
+.otto-badge--local {
+  color: var(--otto-local-fg);
+  background: var(--otto-local-bg);
+}
+
+.otto-sidebar__footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--otto-border);
+  padding: 8px 12px;
+}
+.otto-viewall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-viewall:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--otto-text);
+}
+.otto-viewall__chev {
+  margin-left: auto;
+}
+
+/* ══════════════ 主聊天区 ══════════════ */
+
+.otto-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--otto-bg);
+  position: relative;
+}
+
+.otto-main__topbar {
+  height: 38px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--otto-dur) var(--otto-ease);
+}
+/* 消息流滚动后，顶栏底部浮现 hairline，把标题与消息分开（JS 加 --scrolled）。 */
+.otto-main__topbar--scrolled {
+  border-bottom-color: var(--otto-hairline);
+}
+.otto-main__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-main__sync {
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+}
+.otto-user-avatar {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--otto-accent-gradient);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.otto-thread {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 0 8px;
+  scroll-behavior: smooth;
+}
+.otto-thread__inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 28px;
+}
+
+/* —— 用户消息（右对齐 peach 气泡）—— */
+.otto-msg-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 14px 0;
+}
+.otto-msg-user__bubble {
+  max-width: 78%;
+  background: var(--otto-user-bubble);
+  border: 1px solid var(--otto-user-bubble-border);
+  color: var(--otto-user-bubble-text);
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: var(--otto-shadow-xs);
+}
+.otto-msg-user__receipt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  padding-right: 2px;
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+}
+.otto-msg-user__check {
+  color: var(--otto-accent);
+}
+
+/* —— Otto 回复（左对齐）—— */
+.otto-msg-bot {
+  display: flex;
+  gap: 11px;
+  margin: 18px 0;
+}
+.otto-msg-bot__avatar {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.otto-msg-bot__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.otto-msg-bot__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.otto-msg-bot__name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--otto-text);
+}
+.otto-msg-bot__time {
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+}
+.otto-prose {
+  font-size: 14px;
+  color: var(--otto-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.otto-prose code {
+  font-family: var(--otto-font-mono);
+  font-size: 12.5px;
+  background: var(--otto-code-bg);
+  color: var(--otto-code-text);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+/* 打字光标 */
+.otto-caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--otto-accent);
+  border-radius: 1px;
+  animation: otto-blink 1s steps(2, start) infinite;
+}
+@keyframes otto-blink {
+  to {
+    opacity: 0;
+  }
+}
+
+/* 思考中 typing indicator（流式但正文尚空时显示）。三点依次跳动。 */
+.otto-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 2px;
+}
+.otto-typing__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--otto-text-tertiary);
+  animation: otto-typing 1.3s var(--otto-ease) infinite;
+}
+.otto-typing__dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.otto-typing__dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes otto-typing {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* —— reasoning —— */
+.otto-reasoning {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--otto-border-strong);
+  color: var(--otto-text-secondary);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+/* ══════════════ 工具调用折叠卡 ══════════════ */
+
+.otto-tools {
+  margin: 12px 0 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface-raised);
+  overflow: hidden;
+  box-shadow: var(--otto-shadow-card);
+}
+
+/* 折叠/展开动画：grid-template-rows 0fr→1fr 平滑滑入（无需测高）。 */
+.otto-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition:
+    grid-template-rows var(--otto-dur) var(--otto-ease),
+    opacity var(--otto-dur) var(--otto-ease);
+  opacity: 0;
+}
+.otto-collapse--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.otto-collapse__inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.otto-tools__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 10px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-tools__summary:hover {
+  background: rgba(0, 0, 0, 0.025);
+}
+.otto-tools__chev {
+  margin-left: auto;
+  color: var(--otto-text-secondary);
+  transition: transform var(--otto-dur) var(--otto-ease);
+}
+.otto-tools__chev--open {
+  transform: rotate(90deg);
+}
+.otto-tools__list {
+  border-top: 1px solid var(--otto-border);
+}
+
+/* —— 单个工具卡 —— */
+.otto-tool {
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-tool:last-child {
+  border-bottom: none;
+}
+.otto-tool__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 10px 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-tool__head:hover {
+  background: rgba(0, 0, 0, 0.025);
+}
+.otto-tool__icon {
+  flex: 0 0 auto;
+  color: var(--otto-text-secondary);
+  display: inline-flex;
+}
+.otto-tool__kind {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-tool__target {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--otto-font-mono);
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-tool__status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: color var(--otto-dur) var(--otto-ease);
+}
+.otto-tool__status--done {
+  color: var(--otto-success);
+}
+/* 完成勾的弹入：从运行态切到已完成时给即时反馈 */
+.otto-tool__status--done svg {
+  animation: otto-pop-in 220ms var(--otto-ease);
+}
+@keyframes otto-pop-in {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.otto-tool__status--running {
+  color: var(--otto-running);
+}
+.otto-tool__status--error {
+  color: var(--otto-danger);
+}
+/* 状态文案切换（运行中→已完成/失败）时淡入，配合 React key 重挂，不再硬切。 */
+.otto-tool__statustext {
+  animation: otto-status-fade 240ms var(--otto-ease);
+}
+@keyframes otto-status-fade {
+  from {
+    opacity: 0;
+    transform: translateY(1px);
+  }
+}
+.otto-tool__chev {
+  flex: 0 0 auto;
+  color: var(--otto-text-tertiary);
+  transition: transform var(--otto-dur) var(--otto-ease);
+}
+.otto-tool__chev--open {
+  transform: rotate(90deg);
+}
+
+/* 运行中转圈 */
+.otto-spin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--otto-accent-soft);
+  border-top-color: var(--otto-accent);
+  border-radius: 50%;
+  animation: otto-rot 0.7s linear infinite;
+}
+@keyframes otto-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* —— diff 视图 —— */
+.otto-diff {
+  border-top: 1px solid var(--otto-border);
+  background: var(--otto-surface);
+}
+/* 统计摘要条：文件名（可截断+hover 看全） + +N −M。 */
+.otto-diff__stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 13px;
+  border-bottom: 1px solid var(--otto-border);
+  background: var(--otto-surface-raised);
+  font-size: 11.5px;
+}
+.otto-diff__stat-path {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-family: var(--otto-font-mono);
+  color: var(--otto-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-diff__stat-counts {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--otto-font-mono);
+  font-weight: 600;
+}
+.otto-diff__stat-add {
+  color: var(--otto-diff-stat-add);
+}
+.otto-diff__stat-del {
+  color: var(--otto-diff-stat-del);
+}
+/* 横向可滚动容器：长行可横滚，右缘 mask 渐隐提示「还有更多」。
+   纯 CSS 渐隐：最后 28px 淡出。短行内容不触及右缘，淡的是空白，无副作用。 */
+.otto-diff__scroll {
+  font-family: var(--otto-font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+}
+.otto-diff__row {
+  display: flex;
+  white-space: pre;
+  min-width: max-content;
+}
+.otto-diff__row--hunk {
+  background: var(--otto-diff-hunk-bg);
+  color: var(--otto-diff-hunk-fg);
+}
+.otto-diff__row--add {
+  background: var(--otto-diff-add-bg);
+}
+.otto-diff__row--del {
+  background: var(--otto-diff-del-bg);
+}
+.otto-diff__gutter {
+  flex: 0 0 auto;
+  min-width: 38px;
+  text-align: right;
+  padding: 0 8px 0 6px;
+  color: var(--otto-diff-gutter-text);
+  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--otto-surface);
+}
+.otto-diff__row--hunk .otto-diff__gutter {
+  background: var(--otto-diff-hunk-bg);
+}
+.otto-diff__row--add .otto-diff__gutter {
+  background: var(--otto-diff-add-gutter);
+}
+.otto-diff__row--del .otto-diff__gutter {
+  background: var(--otto-diff-del-gutter);
+}
+.otto-diff__row--context .otto-diff__gutter {
+  background: var(--otto-surface);
+}
+.otto-diff__sign {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--otto-diff-gutter-text);
+}
+.otto-diff__row--add .otto-diff__sign {
+  color: var(--otto-success);
+}
+.otto-diff__row--del .otto-diff__sign {
+  color: var(--otto-danger);
+}
+.otto-diff__code {
+  flex: 1 1 auto;
+  padding-right: 16px;
+  color: var(--otto-diff-text);
+}
+
+/* 终端运行卡展开输出 */
+.otto-tool__output {
+  border-top: 1px solid var(--otto-border);
+  background: #1d1d1f;
+  color: #e6e6e6;
+  font-family: var(--otto-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* —— 动作行 —— */
+.otto-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  margin-left: -6px;
+}
+.otto-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-action:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--otto-text-secondary);
+}
+.otto-action:active {
+  background: rgba(0, 0, 0, 0.09);
+}
+.otto-action--on {
+  color: var(--otto-accent);
+}
+.otto-action:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* ══════════════ 底部输入区 ══════════════ */
+
+.otto-composer {
+  flex: 0 0 auto;
+  padding: 10px 28px 18px;
+}
+.otto-composer__inner {
+  max-width: 760px;
+  margin: 0 auto;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-lg);
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-sm);
+  transition:
+    border-color var(--otto-dur) var(--otto-ease),
+    box-shadow var(--otto-dur) var(--otto-ease);
+}
+.otto-composer__inner:focus-within {
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-composer__textarea {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--otto-text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 14px 16px 6px;
+  max-height: 180px;
+}
+.otto-composer__textarea::placeholder {
+  color: var(--otto-text-tertiary);
+}
+.otto-composer__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 9px;
+}
+
+/* model pill */
+.otto-modelpill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-modelpill:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-text);
+}
+.otto-modelpill:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-modelpill__chev {
+  color: var(--otto-text-tertiary);
+}
+
+/* model 下拉 */
+.otto-modelmenu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 248px;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  box-shadow: var(--otto-shadow-pop);
+  padding: 5px;
+  z-index: 20;
+  animation: otto-menu-in 140ms var(--otto-ease);
+  transform-origin: bottom left;
+}
+@keyframes otto-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+.otto-modelmenu__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text);
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-modelmenu__item:hover,
+.otto-modelmenu__item:focus-visible {
+  outline: none;
+  background: var(--otto-accent-soft);
+}
+.otto-modelmenu__check {
+  flex: 0 0 auto;
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--otto-accent);
+}
+.otto-modelmenu__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.otto-modelmenu__name {
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-modelmenu__provider {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--otto-text-tertiary);
+}
+.otto-modelmenu__item--active .otto-modelmenu__name {
+  color: var(--otto-accent);
+  font-weight: 600;
+}
+.otto-modelmenu__sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--otto-border);
+}
+.otto-modelmenu__manage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--otto-radius-sm);
+  font-size: 12.5px;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-modelmenu__manage:hover,
+.otto-modelmenu__manage:focus-visible {
+  outline: none;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--otto-text);
+}
+.otto-modelmenu__manage svg {
+  flex: 0 0 auto;
+}
+.otto-modelmenu__empty {
+  padding: 10px;
+  font-size: 12.5px;
+  color: var(--otto-text-tertiary);
+}
+
+.otto-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-attach:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--otto-text);
+}
+
+.otto-send {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--otto-accent-gradient);
+  color: #fff;
+  cursor: pointer;
+  transition:
+    filter var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease),
+    opacity var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-send:hover {
+  filter: brightness(1.06);
+}
+.otto-send:active {
+  transform: scale(0.94);
+}
+.otto-send:disabled {
+  background: transparent;
+  border: 1px solid var(--otto-border-strong);
+  color: var(--otto-text-tertiary);
+  cursor: default;
+  filter: none;
+}
+.otto-send:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* ══════════════ 空态 / 连接态 ══════════════ */
+
+.otto-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--otto-text-tertiary);
+  text-align: center;
+  padding: 40px;
+}
+.otto-empty__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--otto-text-secondary);
+}
+
+.otto-conn-banner {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: var(--otto-radius-pill);
+  background: #fff4e6;
+  border: 1px solid #ffd8a8;
+  color: #b8541a;
+  font-size: 12.5px;
+  font-weight: 500;
+  box-shadow: var(--otto-shadow);
+}
+.otto-conn-banner__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--otto-running);
+  animation: otto-pulse 1.2s ease-in-out infinite;
+}
+@keyframes otto-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* —— 空态示例 prompt 胶囊（点击填入 composer）—— */
+.otto-empty__prompts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+  max-width: 460px;
+}
+.otto-prompt-chip {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 12.5px;
+  padding: 7px 13px;
+  border-radius: var(--otto-radius-pill);
+  cursor: pointer;
+  box-shadow: var(--otto-shadow-xs);
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-prompt-chip:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-prompt-chip:active {
+  transform: translateY(0.5px);
+}
+.otto-prompt-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* —— 滚动到底浮标（流式时用户上翻历史，不强拽，给「↓ 新消息」）—— */
+.otto-jump {
+  position: absolute;
+  bottom: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px 0 11px;
+  border-radius: var(--otto-radius-pill);
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--otto-shadow);
+  animation: otto-jump-in 180ms var(--otto-ease);
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-jump:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+}
+.otto-jump:active {
+  transform: translateX(-50%) translateY(0.5px);
+}
+.otto-jump:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+@keyframes otto-jump-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+}
+
+/* toast */
+.otto-toast {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 420px;
+  padding: 9px 10px 9px 14px;
+  border-radius: var(--otto-radius);
+  background: #fff0f0;
+  border: 1px solid #ffc9c9;
+  color: var(--otto-danger);
+  font-size: 12.5px;
+  box-shadow: var(--otto-shadow-pop);
+  animation: otto-toast-in 200ms var(--otto-ease);
+}
+@keyframes otto-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+}
+.otto-toast__msg {
+  flex: 1 1 auto;
+  padding-top: 2px;
+  line-height: 1.45;
+}
+.otto-toast__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-danger);
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    opacity var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-toast__close:hover {
+  background: rgba(224, 49, 49, 0.1);
+  opacity: 1;
+}
+.otto-toast__close:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * setup / BYO-key 引导（Issue #7）—— 独立段，不改上方既有规则。
+ * 全部走 tokens.css 变量，浅色 + amber，hover/focus 态显式。
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/* 右上角不显眼的设置入口齿轮 */
+.otto-setup-launch {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  box-shadow: var(--otto-shadow-xs);
+  transition:
+    color var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup-launch:hover {
+  color: var(--otto-accent);
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-setup-launch:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 模态遮罩 + 卡片 */
+.otto-setup-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 20px;
+  background: rgba(28, 25, 23, 0.28);
+  backdrop-filter: blur(2px);
+  overflow-y: auto;
+  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
+}
+@keyframes otto-setup-fade {
+  from {
+    opacity: 0;
+  }
+}
+.otto-setup {
+  width: 100%;
+  max-width: 460px;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  box-shadow: var(--otto-shadow-pop);
+  overflow: hidden;
+  animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
+}
+@keyframes otto-setup-rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
+
+/* 头部 */
+.otto-setup__head {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-setup__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 2px;
+}
+.otto-setup__wordmark {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: var(--otto-accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.otto-setup__spark {
+  font-size: 10px;
+  color: var(--otto-accent);
+}
+.otto-setup__titles {
+  flex: 1;
+  min-width: 0;
+}
+.otto-setup__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--otto-text);
+}
+.otto-setup__subtitle {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--otto-text-secondary);
+}
+.otto-setup__close {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--otto-radius-sm);
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__close:hover {
+  background: var(--otto-code-bg);
+  color: var(--otto-text);
+}
+.otto-setup__close:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 已配置提示条 */
+.otto-setup__existing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 22px;
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-local-bg);
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-setup__existing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--otto-local-fg);
+}
+.otto-setup__chip {
+  padding: 1px 7px;
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  font-family: var(--otto-font-mono);
+  font-size: 11px;
+  color: var(--otto-text);
+}
+
+/* 表单体 */
+.otto-setup__body {
+  padding: 16px 22px 6px;
+}
+.otto-setup__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-setup__body > .otto-setup__label:first-child {
+  margin-top: 0;
+}
+.otto-setup__locked {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+}
+.otto-setup__linkbtn {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--otto-accent);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.otto-setup__linkbtn:hover {
+  color: var(--otto-accent-hover);
+  text-decoration: underline;
+}
+
+/* 供应商预设 pill 组 */
+.otto-setup__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.otto-setup__preset {
+  padding: 6px 12px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__preset:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-text);
+}
+.otto-setup__preset.is-active {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+  font-weight: 600;
+}
+.otto-setup__preset:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 输入 / 下拉 */
+.otto-setup__input,
+.otto-setup__select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  font-family: var(--otto-font);
+  font-size: 13px;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__input::placeholder {
+  color: var(--otto-text-tertiary);
+}
+.otto-setup__input:focus,
+.otto-setup__select:focus {
+  outline: none;
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-setup__input[readonly] {
+  background: var(--otto-surface-raised);
+  color: var(--otto-text-secondary);
+}
+.otto-setup__input.is-error {
+  border-color: var(--otto-danger);
+}
+
+/* key 行：输入 + 显隐/粘贴 */
+.otto-setup__keyrow {
+  display: flex;
+  gap: 6px;
+}
+.otto-setup__keyinput {
+  flex: 1;
+  font-family: var(--otto-font-mono);
+  letter-spacing: 0.02em;
+}
+.otto-setup__iconbtn {
+  flex-shrink: 0;
+  padding: 0 10px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__iconbtn:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-setup__iconbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 示例模型快填 */
+.otto-setup__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.otto-setup__example {
+  padding: 3px 9px;
+  border: 1px dashed var(--otto-border-strong);
+  border-radius: var(--otto-radius-pill);
+  background: transparent;
+  color: var(--otto-text-secondary);
+  font-family: var(--otto-font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__example:hover {
+  border-color: var(--otto-accent);
+  border-style: solid;
+  color: var(--otto-accent-hover);
+}
+
+/* 提示 / 错误 */
+.otto-setup__hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--otto-text-tertiary);
+}
+.otto-setup__err {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--otto-danger);
+}
+
+/* 落盘说明块 */
+.otto-setup__persist {
+  margin: 14px 22px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--otto-diff-del-gutter);
+  border-radius: var(--otto-radius);
+  background: var(--otto-diff-del-bg);
+}
+.otto-setup__persist-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--otto-text);
+}
+.otto-setup__warn {
+  color: var(--otto-accent);
+}
+.otto-setup__persist-body {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--otto-text-secondary);
+}
+.otto-setup__persist-body code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--otto-code-bg);
+  font-family: var(--otto-font-mono);
+  font-size: 10.5px;
+  color: var(--otto-text);
+}
+.otto-setup__copyrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.otto-setup__copybtn {
+  flex: 1;
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__copybtn:hover:not(:disabled) {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-setup__copybtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.otto-setup__copybtn:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 底部动作 */
+.otto-setup__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 22px 20px;
+}
+.otto-setup__btn {
+  padding: 9px 18px;
+  border-radius: var(--otto-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    opacity var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__btn--ghost {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+}
+.otto-setup__btn--ghost:hover {
+  border-color: var(--otto-text-secondary);
+  color: var(--otto-text);
+}
+.otto-setup__btn--primary {
+  border: 1px solid var(--otto-accent);
+  background: var(--otto-accent);
+  color: #fff;
+}
+.otto-setup__btn--primary:hover:not(:disabled) {
+  background: var(--otto-accent-hover);
+  border-color: var(--otto-accent-hover);
+}
+.otto-setup__btn--primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.otto-setup__btn:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+/* 主按钮内联布局：保存中 spinner + 文案居中对齐。 */
+.otto-setup__btn--primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+/* 保存中转圈（白色 on accent 底，复用 otto-rot keyframe）。 */
+.otto-setup__spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: otto-rot 0.7s linear infinite;
+}
+
+/* 落盘失败提示条（save_failed）。 */
+.otto-setup__savefail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 22px 0;
+  padding: 10px 13px;
+  border: 1px solid #ffc9c9;
+  border-radius: var(--otto-radius);
+  background: #fff0f0;
+  color: var(--otto-danger);
+  font-size: 12.5px;
+  line-height: 1.5;
+}

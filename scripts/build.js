@@ -78,7 +78,10 @@ if (!existsSync(join(root, 'node_modules'))) {
 const allWorkspaces = [
   { path: 'packages/core', name: 'core' },
   { path: 'packages/cli', name: 'cli' },
+  { path: 'packages/server', name: 'server' },
   { path: 'packages/vscode-ui-plugin', name: 'vscode-ui-plugin' }
+  // 注意: packages/desktop 刻意不进主链 (独立 electron/webpack 构建, 同 vscode-ui-plugin/webview 范式)。
+  // 用 `npm run build --workspace=packages/desktop` 单独构建, 避免 electron native 拖垮 core/cli/CI 主链。
 ];
 
 // Filter workspaces based on NPM_PUBLISH_MODE
@@ -91,7 +94,7 @@ const results = [];
 
 // Determine which packages are required (critical) for build success
 // vscode-ui-plugin is optional and won't block the build process
-const criticalPackages = new Set(['core', 'cli']);
+const criticalPackages = new Set(['core', 'cli', 'server']);
 
 printHeader('Building workspaces');
 
@@ -150,7 +153,7 @@ printSummary(results);
 
 function printSummary(workspaceResults) {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  const criticalPackages = new Set(['core', 'cli']);
+  const criticalPackages = new Set(['core', 'cli', 'server']);
 
   console.log(`\n${COLORS.bright}${COLORS.blue}----------------------- Build Summary -----------------------${COLORS.reset}`);
 

@@ -11,6 +11,9 @@
 !otto/config.yaml
 
 server/
+# but keep the new otto-server workspace package tracked (its dist/ + node_modules
+# are still ignored by the generic `dist` and `node_modules` rules below)
+!packages/server/
 
 # Dependency directory
 node_modules
