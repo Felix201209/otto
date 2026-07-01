@@ -10,17 +10,19 @@
  *   - Otto 回复：头像 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制/重生成/赞/踩）。
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { ToolCallsCard } from './ToolCalls.js';
 import {
   OttoAvatar,
   IconCheckCheck,
+  IconCheck,
   IconCopy,
   IconRegenerate,
   IconThumbUp,
   IconThumbDown,
+  IconChevron,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -88,7 +90,10 @@ function BotMessage({
         </div>
 
         {message.reasoning ? (
-          <div className="otto-reasoning">{message.reasoning}</div>
+          <Reasoning
+            text={message.reasoning}
+            active={Boolean(message.isReasoning)}
+          />
         ) : null}
 
         {text ? (
@@ -121,6 +126,54 @@ function TypingIndicator(): React.JSX.Element {
   );
 }
 
+/**
+ * 思考过程折叠块。流式推理期间（active）默认展开，标注「思考中」；
+ * 推理结束（active: true→false）自动折叠成一行标题。用户可随时手动展开/收起。
+ */
+function Reasoning({
+  text,
+  active,
+}: {
+  text: string;
+  active: boolean;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(active);
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    // 推理结束的那一帧（true→false）自动收起，避免长思考顶下正文。
+    if (prevActiveRef.current && !active) {
+      setOpen(false);
+    }
+    prevActiveRef.current = active;
+  }, [active]);
+
+  return (
+    <div className="otto-reasoning">
+      <button
+        type="button"
+        className="otto-reasoning__head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="otto-reasoning__title">
+          {active ? '思考中…' : '思考过程'}
+        </span>
+        <IconChevron
+          size={14}
+          className={`otto-reasoning__chev${
+            open ? ' otto-reasoning__chev--open' : ''
+          }`}
+        />
+      </button>
+      <div className={`otto-collapse${open ? ' otto-collapse--open' : ''}`}>
+        <div className="otto-collapse__inner">
+          <div className="otto-reasoning__body">{text}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MessageActions({
   onCopy,
   onRegenerate,
@@ -129,16 +182,30 @@ function MessageActions({
   onRegenerate: () => void;
 }): React.JSX.Element {
   const [vote, setVote] = useState<'up' | 'down' | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
+  const handleCopy = (): void => {
+    onCopy();
+    setCopied(true);
+    if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1200);
+  };
   return (
     <div className="otto-actions">
       <button
         type="button"
-        className="otto-action"
-        title="复制"
-        aria-label="复制"
-        onClick={onCopy}
+        className={`otto-action${copied ? ' otto-action--on' : ''}`}
+        title={copied ? '已复制' : '复制'}
+        aria-label={copied ? '已复制' : '复制'}
+        onClick={handleCopy}
       >
-        <IconCopy size={16} />
+        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
       </button>
       <button
         type="button"

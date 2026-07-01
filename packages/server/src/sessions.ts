@@ -91,7 +91,26 @@ export interface SessionStore {
   publish(sessionId: string, frame: ServerToClient): void;
 
   deleteSession(sessionId: string): Promise<void>;
+
+  /**
+   * 订阅「会话被淘汰」事件（容量上限触发的自动回收）。
+   * FeishuAdapter 据此摘除它自己持有的回推桥订阅，避免桥订阅泄漏 / 对已淘汰会话仍回推。
+   * 返回取消订阅句柄。
+   */
+  onEvict(cb: (sessionId: string) => void): Unsubscribe;
 }
+
+/** InMemorySessionStore 容量上限（防长跑常驻进程内存单调上涨）。 */
+export interface InMemorySessionStoreLimits {
+  /** 最多保留的会话数（LRU 淘汰最久未更新的）。<=0 表示不限。 */
+  maxSessions?: number;
+  /** 每个会话最多保留的消息条数（超限丢最旧）。<=0 表示不限。 */
+  maxMessagesPerSession?: number;
+}
+
+/** 默认容量上限：对内嵌常驻桌面进程足够宽松，又能兜住无界增长。 */
+const DEFAULT_MAX_SESSIONS = 200;
+const DEFAULT_MAX_MESSAGES_PER_SESSION = 1000;
 
 /**
  * 内存实现（in-memory 起步；落盘走 P1）。
@@ -101,6 +120,67 @@ export class InMemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionState>();
   /** feishu chatId → sessionId 索引，保证一一对应。 */
   private readonly feishuIndex = new Map<string, string>();
+  /** 会话淘汰监听者（FeishuAdapter 订阅以摘除回推桥）。 */
+  private readonly evictListeners = new Set<(sessionId: string) => void>();
+  private readonly maxSessions: number;
+  private readonly maxMessagesPerSession: number;
+
+  constructor(limits: InMemorySessionStoreLimits = {}) {
+    this.maxSessions = limits.maxSessions ?? DEFAULT_MAX_SESSIONS;
+    this.maxMessagesPerSession =
+      limits.maxMessagesPerSession ?? DEFAULT_MAX_MESSAGES_PER_SESSION;
+  }
+
+  onEvict(cb: (sessionId: string) => void): Unsubscribe {
+    this.evictListeners.add(cb);
+    return () => {
+      this.evictListeners.delete(cb);
+    };
+  }
+
+  /**
+   * 容量上限超出时按 LRU（最久未更新）淘汰会话，但绝不淘汰刚被写入的 keepId。
+   * 复用 deleteSession 的回收语义（dispose runtime + 清 feishuIndex），
+   * 并通知 evictListeners 让 FeishuAdapter 摘除回推桥，避免订阅泄漏。
+   */
+  private enforceSessionCap(keepId: string): void {
+    if (this.maxSessions <= 0) return;
+    while (this.sessions.size > this.maxSessions) {
+      // 选最久未更新（updatedAt 最小）的、且不是刚写入的那个会话淘汰。
+      let victimId: string | undefined;
+      let oldest = Infinity;
+      for (const [id, state] of this.sessions) {
+        if (id === keepId) continue;
+        if (state.summary.updatedAt < oldest) {
+          oldest = state.summary.updatedAt;
+          victimId = id;
+        }
+      }
+      if (!victimId) break;
+      this.evictSession(victimId);
+    }
+  }
+
+  /**
+   * 同步淘汰单个会话：清 feishuIndex、从 sessions 移除、通知 evictListeners、
+   * 并 fire-and-forget dispose runtime（不阻塞同步写路径）。
+   */
+  private evictSession(sessionId: string): void {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    if (s.summary.feishuChatId) {
+      this.feishuIndex.delete(s.summary.feishuChatId);
+    }
+    this.sessions.delete(sessionId);
+    void s.runtime?.dispose().catch(() => undefined);
+    for (const cb of this.evictListeners) {
+      try {
+        cb(sessionId);
+      } catch {
+        // 单个监听者抛错不影响其余淘汰通知。
+      }
+    }
+  }
 
   createSession(init: Partial<SessionSummary> = {}): SessionSummary {
     const now = Date.now();
@@ -125,6 +205,8 @@ export class InMemorySessionStore implements SessionStore {
     if (summary.feishuChatId) {
       this.feishuIndex.set(summary.feishuChatId, sessionId);
     }
+    // 超出会话上限 → LRU 淘汰最久未更新的（绝不淘汰刚建的这个）。
+    this.enforceSessionCap(sessionId);
     return summary;
   }
 
@@ -177,7 +259,17 @@ export class InMemorySessionStore implements SessionStore {
       sessionId,
       timestamp: msg.timestamp ?? Date.now(),
     };
-    s.messages = [...s.messages, full];
+    let nextMessages = [...s.messages, full];
+    // 超出每会话消息上限 → 丢最旧（FIFO），防超长会话内存单调上涨。
+    if (
+      this.maxMessagesPerSession > 0 &&
+      nextMessages.length > this.maxMessagesPerSession
+    ) {
+      nextMessages = nextMessages.slice(
+        nextMessages.length - this.maxMessagesPerSession,
+      );
+    }
+    s.messages = nextMessages;
     s.summary = {
       ...s.summary,
       updatedAt: full.timestamp,

@@ -13,9 +13,9 @@
  * 状态/传输走 useOttoStore（preload WS ↔ otto-server，协议见 packages/server/src/protocol.ts）。
  *
  * 已接：会话分组列表（今天/昨天）、选择/新建会话、发消息（乐观渲染）、模型选择、
- *       流式回复、工具调用卡（含 diff）、错误 toast。
- * 待办：setup/BYO-key 图形引导（Issue #7，SetupPanel 仍为占位）；附件入站；slash 命令面板；
- *       「查看全部对话」检索视图。
+ *       流式回复、工具调用卡（含 diff）、错误 toast、setup/BYO-key 图形引导（Issue #7，
+ *       SetupPanel 完整向导 + save_custom_model 落盘闭环）、断连/重连横幅、流式停止。
+ * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为空 TODO）。
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -45,18 +45,22 @@ export function App(): React.JSX.Element {
     if (
       !autoFloated.current &&
       state.connection === 'connected' &&
+      state.modelsLoaded &&
       state.models.length === 0
     ) {
       autoFloated.current = true;
       setSetupOpen(true);
     }
-  }, [state.connection, state.models.length]);
+  }, [state.connection, state.modelsLoaded, state.models.length]);
 
-  // setup 落盘闭环：面板打开且处于「保存中」时，监听原始帧裁决成功/失败。
-  //   models_list  → 落盘成功（server 写盘后广播最新列表）→ 关面板。
+  // setup 落盘闭环：仅当面板打开且**本次保存进行中（saving）**时，才让裁决帧驱动面板开合。
+  //   models_list  → 本次落盘成功（server 写盘后广播最新列表）→ 关面板。
   //   error(save_failed) → 落盘失败 → 面板内提示，不关。
+  // 加 saving 闸门的原因：models_list 还会因 get_models 回包、或其它客户端（如 TUI）
+  // save_custom_model 成功后的 broadcastAll 而到来；若不区分「是不是本次保存」，这些与本次
+  // 无关的广播会把用户正在填 key 的面板意外关掉、丢掉输入。只认 saving=true 之后的裁决帧。
   useEffect(() => {
-    if (!setupOpen) return;
+    if (!setupOpen || !saving) return;
     const off = transport.onFrame((frame) => {
       if (frame.type === 'models_list') {
         setSaving(false);
@@ -71,7 +75,7 @@ export function App(): React.JSX.Element {
       }
     });
     return off;
-  }, [setupOpen]);
+  }, [setupOpen, saving]);
 
   // 关面板时复位落盘态，避免下次打开残留旧错误/转圈。
   const closeSetup = (): void => {
@@ -86,6 +90,45 @@ export function App(): React.JSX.Element {
     setSaving(true);
     transport.send({ type: 'save_custom_model', payload });
   };
+
+  // —— 首启/新建自动引导 ——
+  // 连上且会话列表已知晓（sessionsLoaded）后：
+  //   · 若一个会话都没有且本次尚未引导过 → 建一个现成会话（首启即可直接打字，消除死路）；
+  //   · 否则若无选中但有会话 → 选中第一个。
+  // 用 ref 记「本次会话内是否已引导过」，避免 sessions_list 反复到达时重复建会话。
+  const bootstrappedRef = useRef(false);
+  useEffect(() => {
+    if (state.connection !== 'connected' || !state.sessionsLoaded) return;
+    if (state.sessionIds.length === 0) {
+      if (!bootstrappedRef.current) {
+        bootstrappedRef.current = true;
+        actions.createSession();
+      }
+      return;
+    }
+    // 有会话：标记已引导（防止之后清空又误建），无选中则补选第一个。
+    bootstrappedRef.current = true;
+    if (!state.activeSessionId) {
+      actions.selectSession(state.sessionIds[0]);
+    }
+  }, [
+    state.connection,
+    state.sessionsLoaded,
+    state.sessionIds,
+    state.activeSessionId,
+    actions,
+  ]);
+
+  // —— 应用菜单 IPC ——
+  // 主进程菜单（File→New Chat / Settings…，含 Cmd+N、Cmd+,）经 transport.onMenu 广播 action。
+  // 订阅并路由：'new-chat'→新建会话；'open-settings'→打开 setup。卸载时取消订阅。
+  useEffect(() => {
+    const off = transport.onMenu((action) => {
+      if (action === 'new-chat') actions.createSession();
+      else if (action === 'open-settings') setSetupOpen(true);
+    });
+    return off;
+  }, [actions]);
 
   const groups = useMemo(() => groupSessions(state), [state]);
 
@@ -114,13 +157,31 @@ export function App(): React.JSX.Element {
     actions.sendMessage(text, source);
   };
 
+  // 新建对话：若已存在一个「无消息的空会话」，直接复用（选中它）而非再建一个，
+  // 避免连点堆出一串空壳。找不到才真正新建。
+  const handleNewChat = (): void => {
+    const empty = state.sessionIds
+      .map((id) => state.sessions[id])
+      .find(
+        (s) =>
+          Boolean(s) &&
+          s.messageCount === 0 &&
+          (state.messages[s.sessionId]?.length ?? 0) === 0,
+      );
+    if (empty) {
+      actions.selectSession(empty.sessionId);
+      return;
+    }
+    actions.createSession();
+  };
+
   return (
     <div className="otto-app" data-connection={state.connection}>
       <Sidebar
         groups={groups}
         activeSessionId={state.activeSessionId}
         onSelect={actions.selectSession}
-        onNewChat={() => actions.createSession()}
+        onNewChat={handleNewChat}
         onViewAll={() => {
           /* TODO(Issue#7 之后): 全部对话检索视图 */
         }}
@@ -133,6 +194,7 @@ export function App(): React.JSX.Element {
         userInitial="F"
         busy={busy}
         onSend={handleSend}
+        onCancel={actions.cancel}
         onSetModel={actions.setModel}
         onRegenerate={handleRegenerate}
         onOpenSetup={() => setSetupOpen(true)}

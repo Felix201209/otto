@@ -35,10 +35,35 @@ import type { ModelInfo } from './protocol.js';
 
 const SETTINGS_DIR_NAME = '.otto-user';
 const CUSTOM_MODELS_FILE = 'custom-models.json';
+const SECRETS_DIR_NAME = 'secrets';
 
 /** 自定义模型配置文件路径（与 CLI 同一约定）。 */
 export function customModelsFilePath(): string {
   return path.join(os.homedir(), SETTINGS_DIR_NAME, CUSTOM_MODELS_FILE);
+}
+
+/** 已是 `{file:...}` / `{env:...}` 引用形态的 key（无需二次写文件，原样透传）。 */
+function isKeyReference(key: string): boolean {
+  const t = key.trim();
+  return /^\{file:[^}]+\}$/.test(t) || /^\{env:[^}]+\}$/.test(t);
+}
+
+/**
+ * 把明文 API key 写进 `~/.otto-user/secrets/<safe-name>`（0600，目录 0700），
+ * 返回 `{file:绝对路径}` 引用 —— 对齐 CLI 的 0600 secret 文件 + {file:} 安全模型，
+ * 让明文 key 永不落进 world-readable 的 custom-models.json。
+ *
+ * 文件名由 **displayName**（saveCustomModel 的去重键）派生并安全化：
+ * 不能按 provider（协议名 openai/anthropic…）命名，否则两个都走 openai 协议的
+ * 不同真实供应商会写到同一 secret 文件互相覆盖 key。覆盖同名模型时复用同一路径。
+ */
+function writeApiKeySecret(displayName: string, key: string): string {
+  const dir = path.join(os.homedir(), SETTINGS_DIR_NAME, SECRETS_DIR_NAME);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const safe = displayName.replace(/[^\w.-]/g, '_') || 'model';
+  const secretPath = path.join(dir, safe);
+  fs.writeFileSync(secretPath, key.trim() + '\n', { mode: 0o600 });
+  return `{file:${secretPath}}`;
 }
 
 /**
@@ -63,17 +88,40 @@ function stripJsonCommentsLoose(input: string): string {
   return out;
 }
 
+/** custom-models.json 的解析形态（models + 可选 _metadata）。 */
+interface ModelsFileShape {
+  models?: unknown;
+  _metadata?: { preferredModel?: unknown };
+}
+
 /** 解析 custom-models.json 文本，宽容注释。失败返回 undefined。 */
-function parseModelsFile(raw: string): { models?: unknown } | undefined {
+function parseModelsFile(raw: string): ModelsFileShape | undefined {
   try {
-    return JSON.parse(raw) as { models?: unknown };
+    return JSON.parse(raw) as ModelsFileShape;
   } catch {
     // 兜底：剥离注释再试一次。
     try {
-      return JSON.parse(stripJsonCommentsLoose(raw)) as { models?: unknown };
+      return JSON.parse(stripJsonCommentsLoose(raw)) as ModelsFileShape;
     } catch {
       return undefined;
     }
+  }
+}
+
+/**
+ * 读取「当前生效模型」id（makeActive 写入的 `_metadata.preferredModel`）。
+ * 文件不存在 / 无该字段 / 损坏时返回 undefined。这是 server 端单一事实源：
+ * createCoreConfig 优先用它（而非死取 enabled[0]），models_list 用它填 current。
+ */
+export function loadPreferredModel(): string | undefined {
+  const filePath = customModelsFilePath();
+  try {
+    if (!fs.existsSync(filePath)) return undefined;
+    const parsed = parseModelsFile(fs.readFileSync(filePath, 'utf-8'));
+    const pref = parsed?._metadata?.preferredModel;
+    return typeof pref === 'string' && pref.length > 0 ? pref : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -122,7 +170,10 @@ function ensureDirectoryExists(dirPath: string): void {
  *   保证 CLI/TUI 与 GUI 读到同一份、互不破坏格式。
  * - 原子写：先写 `.tmp` 再 `rename`，避免半截文件。
  */
-export function saveCustomModels(models: CustomModelConfig[]): void {
+export function saveCustomModels(
+  models: CustomModelConfig[],
+  preferredModel?: string,
+): void {
   const filePath = customModelsFilePath();
   ensureDirectoryExists(path.dirname(filePath));
 
@@ -140,6 +191,8 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
     _metadata: {
       version: '1.0',
       lastModified: new Date().toISOString(),
+      // 「当前生效模型」单一事实源；undefined 时不写该键，保持向后兼容。
+      ...(preferredModel ? { preferredModel } : {}),
     },
   };
   const jsonContent = JSON.stringify(data, null, 2);
@@ -155,24 +208,41 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
  * （`generateCustomModelId`，与 listModelInfos / core 解析同源），供上层广播/选中。
  * 入参非法（缺 baseUrl/apiKey/modelId 等）会在 saveCustomModels 内抛出。
  */
-export function saveCustomModel(model: CustomModelConfig): string {
+export function saveCustomModel(
+  model: CustomModelConfig,
+  makeActive = false,
+): string {
   // 先单独校验，给出比「整批写」更早、更聚焦的失败点。
   const errors = validateCustomModelConfig(model);
   if (errors.length > 0) {
     throw new Error(errors.join('; '));
   }
 
+  // 安全：把明文 API key 提取成 0600 secret 文件，config 里只存 {file:} 引用，
+  // 让明文 key 永不落进 world-readable 的 custom-models.json（对齐 CLI 安全模型）。
+  // 用户若本就粘的是 {file:}/{env:} 引用，则原样透传，不二次写文件。
+  const toSave: CustomModelConfig = isKeyReference(model.apiKey)
+    ? model
+    : {
+        ...model,
+        apiKey: writeApiKeySecret(model.displayName, model.apiKey),
+      };
+
   const models = loadCustomModels();
   const existingIndex = models.findIndex(
-    (m) => m.displayName === model.displayName,
+    (m) => m.displayName === toSave.displayName,
   );
   const next =
     existingIndex >= 0
-      ? models.map((m, i) => (i === existingIndex ? model : m))
-      : [...models, model];
+      ? models.map((m, i) => (i === existingIndex ? toSave : m))
+      : [...models, toSave];
 
-  saveCustomModels(next);
-  return generateCustomModelId(model);
+  const id = generateCustomModelId(toSave);
+  // makeActive → 把该模型设为「当前生效模型」（单一事实源，createCoreConfig 优先用）；
+  // 否则保留既有 preferredModel（非激活式保存不应抹掉用户已选的生效模型）。
+  const preferred = makeActive ? id : loadPreferredModel();
+  saveCustomModels(next, preferred);
+  return id;
 }
 
 /**

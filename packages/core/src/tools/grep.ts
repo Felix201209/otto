@@ -45,8 +45,28 @@ function getRipgrepPath(): string {
     return findVSCodeRipgrep();
   } else {
     logger.info('[GrepTool] CLI environment detected - using bundled ripgrep');
-    return rgPath;
+    return resolvePackagedRgPath(rgPath);
   }
+}
+
+/**
+ * In a packaged Electron app the bundled rgPath points inside `app.asar`, where
+ * the executable cannot be spawned by child_process. The rg binary is shipped
+ * outside the archive to `<app>/Contents/Resources/ripgrep/rg` via electron-builder
+ * `extraResources`; resolve to that real file. No-op outside a packaged app
+ * (process.resourcesPath unset, or the default path is not inside an asar).
+ */
+function resolvePackagedRgPath(defaultPath: string): string {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
+  if (resourcesPath && defaultPath.includes('app.asar')) {
+    const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+    const candidate = path.join(resourcesPath, 'ripgrep', binName);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return defaultPath;
 }
 
 

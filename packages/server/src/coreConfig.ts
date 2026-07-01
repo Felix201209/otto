@@ -24,7 +24,7 @@ import {
   isCustomModel,
   type CustomModelConfig,
 } from 'otto-core';
-import { loadCustomModels } from './customModels.js';
+import { loadCustomModels, loadPreferredModel } from './customModels.js';
 
 export interface CreateCoreConfigOptions {
   sessionId: string;
@@ -57,11 +57,18 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const enabled = customModels.filter((m) => m.enabled !== false);
   const wantsCustom =
     typeof opts.model === 'string' && isCustomModel(opts.model);
+  // 会话未显式选模型时的兜底次序：
+  //   1) makeActive 写入的「当前生效模型」preferredModel（前提：它仍在 enabled 列表里）；
+  //   2) 退回第一个 enabled 自定义模型（历史行为）。
+  // 这样多模型场景下「配置后立刻用新模型」（makeActive）才真正生效，而非永远跑 enabled[0]。
+  const enabledIds = new Set(enabled.map((m) => generateCustomModelId(m)));
+  const preferred = opts.customModels ? undefined : loadPreferredModel();
+  const preferredIfEnabled =
+    preferred && enabledIds.has(preferred) ? preferred : undefined;
   const resolvedModel = wantsCustom
     ? opts.model
-    : enabled.length > 0
-      ? generateCustomModelId(enabled[0])
-      : opts.model;
+    : (preferredIfEnabled ??
+      (enabled.length > 0 ? generateCustomModelId(enabled[0]) : opts.model));
 
   return new Config({
     sessionId: opts.sessionId,

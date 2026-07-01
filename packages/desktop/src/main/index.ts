@@ -12,7 +12,7 @@
  *   2. 安全基线：禁 nodeIntegration、开 contextIsolation + sandbox、本地 CSP、
  *      导航/新窗口/权限/webview 全部按白名单收紧。
  *   3. 用 ServerManager 确保有可用 otto-server：发现已运行的就复用，否则
- *      优先 detached 子进程拉起（app 关了 server 仍活，Issue #9），失败回退内嵌。
+ *      同进程内嵌拉起（embedded-only；随 app 退出而停）。
  *   4. 把发现/拉起的 server 端点经 IPC（拉取 + 主动推送）交给 preload，
  *      供 renderer 建 WS 连接。
  *   5. 完整生命周期：单实例锁、activate、window-all-closed、before-quit、
@@ -267,7 +267,7 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
-    // 仅内嵌 server 随 app 退出而停；detached/discovered 故意留活（Issue #9）。
+    // 仅内嵌 server 随 app 退出而停；discovered（headless/CLI 已在跑）故意留活。
     void serverManager.shutdown();
   });
 }

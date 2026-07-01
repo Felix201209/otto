@@ -787,6 +787,12 @@ export class OttoServerAdapter implements ContentGenerator {
       controller.abort();
     }, 300000);
 
+    // 🆕 数据层超时句柄提到外层作用域：在 try 内创建（833 行），
+    // 但要让 catch / finally 也能看到并清理它，否则当
+    // withTimeout(response.json()) reject 时这个 300s 幽灵定时器永不清除，
+    // 会一直拖住 AbortController 闭包并在 300s 后对已结束请求误触发 abort。
+    let dataTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
     const startTime = Date.now();
 
     try {
@@ -830,7 +836,7 @@ export class OttoServerAdapter implements ContentGenerator {
       // 🚨 获取响应头后清理连接层超时，启用数据层超时
       // 响应头已收到说明连接正常，现在保护响应体接收和解析阶段
       clearTimeout(fetchTimeoutId);
-      const dataTimeoutId = setTimeout(() => {
+      dataTimeoutId = setTimeout(() => {
         console.warn('[Otto Server] API data timeout - response.json() taking too long (>300s) in data layer. Try: check your network, say "continue" to retry, or try a different model.');
         controller.abort();
       }, 300000);
@@ -923,6 +929,7 @@ export class OttoServerAdapter implements ContentGenerator {
         abortListener();
       }
       clearTimeout(fetchTimeoutId);
+      if (dataTimeoutId) clearTimeout(dataTimeoutId);
 
       // 用户取消请求的优雅处理
       if (error instanceof Error &&
@@ -956,6 +963,7 @@ export class OttoServerAdapter implements ContentGenerator {
     } finally {
       // 🚨 最终清理：确保资源一定被释放
       clearTimeout(fetchTimeoutId);
+      if (dataTimeoutId) clearTimeout(dataTimeoutId);
       if (abortListener) {
         abortListener();
       }
@@ -1591,7 +1599,13 @@ export class OttoServerAdapter implements ContentGenerator {
 
               // 处理错误
               if (chunk.error) {
-                throw new Error(chunk.error);
+                // 🆕 这是 server/proxy 主动下发的流内错误帧（如 upstream 529
+                // overloaded），不是 SSE 边界解析失败。打上标记，确保下方的
+                // catch(parseError) 把它重新抛出而非当成解析错误吞掉，
+                // 让 Turn.run() 能把真实错误浮给用户。
+                const streamError = new Error(String(chunk.error));
+                (streamError as { isStreamError?: boolean }).isStreamError = true;
+                throw streamError;
               }
 
               // 📊 记录最新的使用数据以备客户端取消时记录
@@ -1650,6 +1664,13 @@ export class OttoServerAdapter implements ContentGenerator {
               }
 
             } catch (parseError) {
+              // 🆕 区分真正的流内错误帧与 SSE 边界解析失败：
+              // 若是上面打了 isStreamError 标记的 server/proxy 错误帧，
+              // 必须重新抛出，让它传播到 Turn.run() 浮给用户，
+              // 不能当成解析失败静默吞掉（否则 turn 会无错误地静默中断）。
+              if ((parseError as { isStreamError?: boolean })?.isStreamError) {
+                throw parseError;
+              }
               // 🆕 SSE chunk 解析失败 — 用 console.error 替代 logger.warn，
               // 让它一定进入 ConsolePatcher → /export-debug。同时打印完整
               // 出错的 data 字节内容（不要截断），便于排查 SSE 边界 / 转义问题。
@@ -1659,7 +1680,7 @@ export class OttoServerAdapter implements ContentGenerator {
               console.error(
                 `[REASONING-TRACE][adapter] failed-data length=${data.length}, full content: ${data}`,
               );
-              // 忽略解析错误，继续处理
+              // 忽略真正的解析错误，继续处理
             }
           }
         }

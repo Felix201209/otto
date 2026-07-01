@@ -327,18 +327,23 @@ export class BackgroundTaskManager extends EventEmitter {
   onTaskEvent(callback: (event: BackgroundTaskEvent) => void): () => void {
     const handler = (event: BackgroundTaskEvent) => callback(event);
 
-    // 监听所有事件
-    this.on('task-started', (evt) => handler(evt));
-    this.on('task-output', (evt) => handler(evt));
-    this.on('task-stderr', (evt) => handler(evt));
-    this.on('task-progress', (evt) => handler(evt));
-    this.on('task-completed', (evt) => handler(evt));
-    this.on('task-failed', (evt) => handler(evt));
-    this.on('task-cancelled', (evt) => handler(evt));
+    // 监听所有事件——保存每个事件名 + 同一个 handler 引用，
+    // 退订时只 off 自己注册的这几个，绝不在共享单例上 removeAllListeners()
+    // （那会连带删掉其它订阅者注册的监听器）。
+    const eventNames = [
+      'task-started',
+      'task-output',
+      'task-stderr',
+      'task-progress',
+      'task-completed',
+      'task-failed',
+      'task-cancelled',
+    ] as const;
+    for (const name of eventNames) this.on(name, handler);
 
-    // 返回取消监听函数
+    // 返回取消监听函数：只移除本次注册的 handler
     return () => {
-      this.removeAllListeners();
+      for (const name of eventNames) this.off(name, handler);
     };
   }
 

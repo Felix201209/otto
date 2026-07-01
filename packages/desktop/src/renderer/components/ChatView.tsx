@@ -41,6 +41,8 @@ interface ChatViewProps {
   userInitial: string;
   busy: boolean;
   onSend: (text: string, source: MessageSource) => void;
+  /** 中止当前流式生成（busy 时停止按钮）。 */
+  onCancel: () => void;
   onSetModel: (model: string) => void;
   onRegenerate: () => void;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
@@ -55,6 +57,7 @@ export function ChatView({
   userInitial,
   busy,
   onSend,
+  onCancel,
   onSetModel,
   onRegenerate,
   onOpenSetup,
@@ -194,10 +197,15 @@ export function ChatView({
       <Composer
         models={models}
         currentModel={currentModel}
-        disabled={!session || busy}
+        // 切换/新建会话后据此自动聚焦输入框。
+        sessionId={session?.sessionId ?? null}
+        // 无会话才整体禁用；生成中（busy）由 Composer 把发送按钮换成停止，textarea 仍可输入。
+        disabled={!session}
+        busy={busy}
         draft={draft.text}
         draftNonce={draft.n}
         onSend={(text) => onSend(text, sendSource)}
+        onCancel={onCancel}
         onSetModel={onSetModel}
         onManageModels={onOpenSetup}
       />

@@ -95,6 +95,17 @@ export function bridgeSessionToFeishu(
   // 同一会话同一时刻只跟踪「当前正在流的那条 assistant 消息」。
   let active: OutboundStream | null = null;
 
+  /**
+   * 回推失败上报：向会话订阅者广播一帧 feishu_push_result(ok:false)，
+   * 让 renderer 浮出「飞书回推失败」提示，不再静默吞掉失败。
+   */
+  const reportPushFailure = (messageId: string, error: string): void => {
+    store.publish(sessionId, {
+      type: 'feishu_push_result',
+      payload: { sessionId, feishuChatId, messageId, ok: false, error },
+    });
+  };
+
   const startStream = (messageId: string): OutboundStream => {
     const s: OutboundStream = {
       messageId,
@@ -107,9 +118,14 @@ export function bridgeSessionToFeishu(
     return s;
   };
 
-  /** 串行排队一个回推动作，吞掉单次失败不阻断后续。 */
+  /**
+   * 串行排队一个回推动作：单次失败不阻断后续，但抛错时上报 feishu_push_result。
+   * fn 内部对「返回 false（未抛但失败）」的情形也应自行调 reportPushFailure。
+   */
   const enqueue = (s: OutboundStream, fn: () => Promise<void>): void => {
-    s.pending = s.pending.then(fn).catch(() => undefined);
+    s.pending = s.pending.then(fn).catch((e) => {
+      reportPushFailure(s.messageId, e instanceof Error ? e.message : String(e));
+    });
   };
 
   const handleFrame = (frame: ServerToClient): void => {
@@ -162,7 +178,11 @@ export function bridgeSessionToFeishu(
           s.lastPushAt = now;
           const snapshot = s.text.trim();
           enqueue(s, async () => {
-            await s.streaming?.pushContent(snapshot || ' ');
+            // pushContent 返回 false = 未抛但回推失败（限流/网络）；显式上报。
+            const okPush = await s.streaming?.pushContent(snapshot || ' ');
+            if (okPush === false) {
+              reportPushFailure(s.messageId, '飞书流式卡更新失败');
+            }
           });
         }
         return;
@@ -176,10 +196,22 @@ export function bridgeSessionToFeishu(
         const finalText = s.text.trim() || '（空回复）';
         enqueue(s, async () => {
           if (s.streaming) {
-            await s.streaming.finalize(finalText);
+            // finalize 返回 false = 定稿失败（未抛）；显式上报。
+            const okFinal = await s.streaming.finalize(finalText);
+            if (okFinal === false) {
+              reportPushFailure(s.messageId, '飞书流式卡定稿失败');
+            }
           } else {
             // 兜底：没有 CardKit 流式卡时，整段一次性发出。
-            await gateway.sendMarkdown(feishuChatId, finalText, replyToMessageId);
+            // sendMarkdown 返回 null = 发送失败（未抛）；显式上报。
+            const sent = await gateway.sendMarkdown(
+              feishuChatId,
+              finalText,
+              replyToMessageId,
+            );
+            if (sent === null) {
+              reportPushFailure(s.messageId, '飞书消息发送失败');
+            }
           }
         });
         // 本条流结束。下一条 message_start 会重置 active。

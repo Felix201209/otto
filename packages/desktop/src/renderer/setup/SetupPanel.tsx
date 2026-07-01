@@ -74,6 +74,10 @@ export function SetupPanel({
   const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
   const keyRef = useRef<HTMLInputElement>(null);
+  /** 对话框根容器（焦点陷阱以它为边界）。 */
+  const dialogRef = useRef<HTMLDivElement>(null);
+  /** 打开前的焦点元素，关闭时还回。 */
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   const preset = findPreset(form.presetId) ?? DEFAULT_PRESET;
   const errors = useMemo(() => validateForm(form), [form]);
@@ -88,6 +92,64 @@ export function SetupPanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 焦点管理（无障碍：role=dialog aria-modal 的语义承诺）：
+  //   1. 打开时把焦点移进对话框（API key 输入框），并记住触发它的元素。
+  //   2. 背景内容（.otto-app 下除本 overlay 外的兄弟）加 inert + aria-hidden，
+  //      让 Tab/读屏都困在对话框内（焦点陷阱在 onKeyDown 里补 Tab 循环）。
+  //   3. 卸载时撤销 inert/aria-hidden，并把焦点还回触发元素。
+  useEffect(() => {
+    triggerRef.current = (document.activeElement as HTMLElement | null) ?? null;
+    // 首个可交互元素：API key 输入框（向导核心动作）。
+    keyRef.current?.focus();
+
+    const overlay = dialogRef.current?.closest('.otto-setup-overlay');
+    const appRoot = overlay?.parentElement ?? null;
+    const hidden: HTMLElement[] = [];
+    if (appRoot) {
+      for (const child of Array.from(appRoot.children)) {
+        if (child === overlay || !(child instanceof HTMLElement)) continue;
+        child.setAttribute('inert', '');
+        child.setAttribute('aria-hidden', 'true');
+        hidden.push(child);
+      }
+    }
+
+    return () => {
+      for (const el of hidden) {
+        el.removeAttribute('inert');
+        el.removeAttribute('aria-hidden');
+      }
+      // 焦点还回触发元素（若仍在文档内）。
+      const trigger = triggerRef.current;
+      if (trigger && document.contains(trigger)) trigger.focus();
+    };
+  }, []);
+
+  // 焦点陷阱：Tab/Shift+Tab 在对话框可聚焦元素间循环，不穿出去。
+  const onDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'Tab') return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusables = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || !root.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const patch = (next: Partial<SetupFormState>): void => {
     setForm((f) => ({ ...f, ...next }));
@@ -158,7 +220,7 @@ export function SetupPanel({
 
   return (
     <div className="otto-setup-overlay" role="dialog" aria-modal="true">
-      <div className="otto-setup">
+      <div className="otto-setup" ref={dialogRef} onKeyDown={onDialogKeyDown}>
         <header className="otto-setup__head">
           <div className="otto-setup__brand">
             <span className="otto-setup__wordmark">otto</span>

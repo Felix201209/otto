@@ -162,6 +162,22 @@ export function IconArrowUp({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 停止（流式生成中的中止按钮）：实心圆角方块。 */
+export function IconStop({ size = 14, className }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      className={className}
+    >
+      <rect x="6" y="6" width="12" height="12" rx="2.5" />
+    </svg>
+  );
+}
+
 /** 本地来源徽章用的小方块勾选图标。 */
 export function IconLocalMark({ size, className }: IconProps): React.JSX.Element {
   return (

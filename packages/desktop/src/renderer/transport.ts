@@ -30,6 +30,9 @@ declare global {
 }
 
 export type FrameHandler = (frame: ServerToClient) => void;
+export type ConnectionHandler = (connected: boolean) => void;
+/** 应用菜单动作回调（'new-chat' | 'open-settings'）。 */
+export type MenuHandler = (action: string) => void;
 
 /** 连接到本地 server（preload 已持有端点）。 */
 export async function connect(): Promise<boolean> {
@@ -46,8 +49,25 @@ export function onFrame(handler: FrameHandler): () => void {
   return window.otto.onFrame(handler);
 }
 
+/**
+ * 订阅连接状态变化（断线/重连）。返回取消订阅函数。
+ * 透传封装：组件/store 经此订阅，不直接碰 window.otto。
+ * preload 会在注册时立即以当前状态回调一次。
+ */
+export function onConnectionChange(handler: ConnectionHandler): () => void {
+  return window.otto.onConnectionChange(handler);
+}
+
 export function isConnected(): boolean {
   return window.otto.isConnected();
+}
+
+/**
+ * 订阅应用菜单动作（main 经 preload 下发）：'new-chat' | 'open-settings'。
+ * 返回取消订阅函数。透传封装：App 经此订阅，不直接碰 window.otto。
+ */
+export function onMenu(handler: MenuHandler): () => void {
+  return window.otto.onMenu(handler);
 }
 
 // ── 便捷封装（实装可直接用，也可由 webview service 自行组装）──

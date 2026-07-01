@@ -48,6 +48,52 @@ function addFunctionCallsGetter(obj: any) {
   });
 }
 
+/**
+ * ⏱️ 流空闲/读取超时保护（BYO-key 自定义模型流共用）。
+ *
+ * 直连 BYO-key provider 时，fetch 的 signal 只覆盖连接建立阶段，无法发现
+ * 「响应头已到、流中途卡死」（half-open TCP / provider 挂起 / 代理握住 socket
+ * 不发 RST）——这种情况 reader.read() 既不 resolve 也不 reject，整个 agent turn
+ * 会无限挂起到用户手动 abort。这里给每个 read() 包一层空闲超时，镜像
+ * OttoServerAdapter.withTimeout 的代理路径模式，保持两条路径行为一致：
+ * 超时即 cancel reader 并抛出可重试的 stream-interrupt 错误，让 turn 快速失败带指引。
+ *
+ * 每来一个数据块计时器就重置（下一次 read() 新建定时器），所以只防单块卡顿，
+ * 不对总时长设限——长推理同样不受影响。
+ */
+const STREAM_READ_IDLE_TIMEOUT_MS = 300000;
+
+async function readStreamWithIdleTimeout<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  timeoutMs: number = STREAM_READ_IDLE_TIMEOUT_MS,
+): Promise<ReadableStreamReadResult<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      // 中断卡死的连接，并抛出带标记的可重试错误（与代理路径一致）
+      reader.cancel().catch(() => undefined);
+      const err = new Error(
+        `[Custom Model] Stream read timeout after ${Math.round(timeoutMs / 1000)}s ` +
+          `(no data received in this chunk). The upstream connection appears stalled. ` +
+          `Please retry your request.`,
+      );
+      (err as { isStreamInterrupt?: boolean }).isStreamInterrupt = true;
+      (err as { isRetryable?: boolean }).isRetryable = true;
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([reader.read(), timeoutPromise]);
+  } finally {
+    // 🔑 关键清理：read() 先完成时务必清掉定时器，否则形成幽灵定时器
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 /** 展开开头的 ~ 到用户主目录（跨平台）。 */
 function expandHome(p: string): string {
   if (p === '~') return homedir();
@@ -1538,7 +1584,7 @@ export async function* callOpenAIResponsesModelStream(
   try {
     let isDone = false;
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamWithIdleTimeout(reader);
       if (done) {
         isDone = true;
       }
@@ -1896,7 +1942,7 @@ export async function* callOpenAICompatibleModelStream(
   try {
     let isDone = false;
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamWithIdleTimeout(reader);
       if (done) {
         isDone = true;
       }
@@ -2107,7 +2153,7 @@ export async function* callAnthropicModelStream(
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamWithIdleTimeout(reader);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -3097,7 +3143,7 @@ export async function* callGeminiNativeModelStream(
   let buffer = '';
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await readStreamWithIdleTimeout(reader);
       if (done) {
         buffer += decoder.decode(undefined, { stream: false });
       } else {

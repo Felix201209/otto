@@ -21,8 +21,9 @@ import type {
   OttoMessage,
 } from 'otto-server';
 
-// ── mock transport：捕获 frame handler，connect 立即 resolve(true) ──
+// ── mock transport：捕获 frame / connection handler，connect 立即 resolve(true) ──
 let capturedHandler: ((f: ServerToClient) => void) | null = null;
+let capturedConnHandler: ((connected: boolean) => void) | null = null;
 const sendSpy = vi.fn();
 
 vi.mock('../transport.js', () => ({
@@ -32,6 +33,14 @@ vi.mock('../transport.js', () => ({
     capturedHandler = handler;
     return () => {
       capturedHandler = null;
+    };
+  },
+  // 模拟 preload：注册时立即以「已连接」回调一次（onConnectionChange 契约）。
+  onConnectionChange: (handler: (connected: boolean) => void) => {
+    capturedConnHandler = handler;
+    handler(true);
+    return () => {
+      capturedConnHandler = null;
     };
   },
   isConnected: () => true,
@@ -341,6 +350,7 @@ describe('groupSessions selector', () => {
       activeSessionId: null,
       messages: {},
       models: [],
+      modelsLoaded: true,
       currentModel: null,
       lastError: null,
     };

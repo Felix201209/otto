@@ -35,12 +35,15 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  menu: 'otto:menu',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
 type FrameHandler = (frame: ServerToClient) => void;
 /** 连接状态变化回调。 */
 type ConnectionHandler = (connected: boolean) => void;
+/** 应用菜单动作回调（'new-chat' | 'open-settings'）。 */
+type MenuHandler = (action: string) => void;
 
 /** preload 暴露给 renderer 的 API 形状（renderer 据此声明 window.otto 类型）。 */
 export interface OttoBridge {
@@ -56,6 +59,11 @@ export interface OttoBridge {
   onConnectionChange(handler: ConnectionHandler): () => void;
   /** 连接状态。 */
   isConnected(): boolean;
+  /**
+   * 订阅应用菜单动作（main 经 IPC.menu 下发）：'new-chat' | 'open-settings'。
+   * 返回取消订阅函数。
+   */
+  onMenu(handler: MenuHandler): () => void;
   /** host-only 命令：用系统浏览器打开外链。 */
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
@@ -238,6 +246,16 @@ const bridge: OttoBridge = {
 
   isConnected(): boolean {
     return !!ws && ws.readyState === WebSocket.OPEN;
+  },
+
+  onMenu(handler: MenuHandler): () => void {
+    // 仿 endpointChanged 订阅：_e 由 Electron 推断（IpcRendererEvent），action 显式为 string。
+    const listener = (_e: Electron.IpcRendererEvent, action: string): void =>
+      handler(action);
+    ipcRenderer.on(IPC.menu, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC.menu, listener);
+    };
   },
 
   openExternal(url: string): Promise<void> {

@@ -85,6 +85,8 @@ export class FeishuAdapter {
 
   /** 已挂回推桥的飞书会话（sessionId → 取消订阅），避免重复订阅导致重复回推。 */
   private readonly bridged = new Map<string, Unsubscribe>();
+  /** 会话淘汰监听取消句柄：会话被 store 容量淘汰时，连带摘除其回推桥。 */
+  private readonly offEvict: Unsubscribe;
 
   constructor(deps: FeishuAdapterDeps) {
     this.store = deps.store;
@@ -94,6 +96,18 @@ export class FeishuAdapter {
       deps.gatewayFactory ??
       ((creds) =>
         new FeishuGateway(creds.appId, creds.appSecret, creds.domain));
+    // 会话被容量上限淘汰时，连带摘除其回推桥订阅（避免桥订阅泄漏 / 对已淘汰会话仍回推）。
+    this.offEvict = this.store.onEvict((sessionId) => {
+      const unsub = this.bridged.get(sessionId);
+      if (unsub) {
+        try {
+          unsub();
+        } catch {
+          // 取消订阅失败不影响后续清理。
+        }
+        this.bridged.delete(sessionId);
+      }
+    });
   }
 
   isConnected(): boolean {
@@ -281,6 +295,11 @@ export class FeishuAdapter {
 
   /** 停止：摘除所有回推桥订阅，断开网关长连接。 */
   async stop(): Promise<void> {
+    try {
+      this.offEvict();
+    } catch {
+      // 取消淘汰监听失败不影响后续清理。
+    }
     for (const unsub of this.bridged.values()) {
       try {
         unsub();

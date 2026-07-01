@@ -148,12 +148,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     id: 'custom',
     label: '自定义 / 兼容端点',
     provider: 'openai',
+    // key 必填（与 server/core 校验对齐）；本地代理无需真实 key 时填任意占位（如 sk-local）。
+    keyHint: '你的 API Key（本地代理可填任意占位，如 sk-local）',
     baseUrl: '',
     baseUrlLocked: false,
-    keyHint: '你的 API Key（可留空走代理）',
     modelHint: '传给接口的实际模型 id',
     exampleModels: [],
-    note: '任意 OpenAI / Anthropic 兼容端点或本地代理。可自选协议。',
+    note: '任意 OpenAI / Anthropic 兼容端点或本地代理。可自选协议。本地代理也请在 key 处填任意占位。',
   },
 ];
 
