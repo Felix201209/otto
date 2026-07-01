@@ -51,13 +51,25 @@
     "files": [
       "dist/**/*",
       "package.json",
-      "!**/*.map"
+      "!**/*.map",
+      "!**/coverage/**",
+      "!**/junit.xml",
+      "!**/*.tsbuildinfo",
+      "!**/*.test.*",
+      "!**/__tests__/**"
     ],
     "extraMetadata": {
-      "main": "dist/main/index.js"
+      "main": "dist/main/index.js",
+      "version": "1.1.13"
     },
     "includeSubNodeModules": true,
     "asar": true,
+    "extraResources": [
+      {
+        "from": "../../node_modules/@vscode/ripgrep/bin/rg",
+        "to": "ripgrep/rg"
+      }
+    ],
     "npmRebuild": false,
     "mac": {
       "target": [

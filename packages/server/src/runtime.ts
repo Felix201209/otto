@@ -245,6 +245,13 @@ export class CoreSessionRuntime implements SessionRuntime {
           break;
         }
 
+        // 本轮一开始就落一条 assistant 占位（isStreaming=true、正文暂空）：让渲染层在
+        // 等待 LLM 首个 token 期间就显示"思考中"三点跳动，而不是空白→正文突然蹦出。
+        // 多回合工具往返里每轮都补一次（上一轮工具执行后 assistantId 会被重置为 null）。
+        if (assistantId === null) {
+          assistantId = startAssistant();
+        }
+
         const functionCalls: FunctionCall[] = [];
         let lastFinishReason: FinishReason | undefined;
 

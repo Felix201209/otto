@@ -453,13 +453,41 @@
   }
 }
 
-/* —— reasoning —— */
+/* —— reasoning（思考过程，可折叠）—— */
 .otto-reasoning {
   margin: 8px 0;
-  padding: 8px 12px;
   border-left: 2px solid var(--otto-border-strong);
   color: var(--otto-text-secondary);
   font-size: 12.5px;
+}
+.otto-reasoning__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--otto-text-secondary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  transition: color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-reasoning__head:hover {
+  color: var(--otto-text);
+}
+.otto-reasoning__chev {
+  margin-left: auto;
+  display: inline-flex;
+  transition: transform var(--otto-dur) var(--otto-ease);
+}
+.otto-reasoning__chev--open {
+  transform: rotate(90deg);
+}
+.otto-reasoning__body {
+  padding: 2px 12px 8px;
   white-space: pre-wrap;
 }
 
@@ -542,6 +570,14 @@
 .otto-tool__head:hover {
   background: rgba(0, 0, 0, 0.025);
 }
+/* 无展开体的工具行（hasBody=false）：不可展开，去掉点击可供性——
+   ToolCalls 在无 body 时挂 .otto-tool__head--static。 */
+.otto-tool__head--static {
+  cursor: default;
+}
+.otto-tool__head--static:hover {
+  background: transparent;
+}
 .otto-tool__icon {
   flex: 0 0 auto;
   color: var(--otto-text-secondary);
@@ -597,6 +633,19 @@
 }
 .otto-tool__status--error {
   color: var(--otto-danger);
+}
+/* 待确认（awaiting_approval）：中性色，不再借用成功勾。 */
+.otto-tool__status--pending {
+  color: var(--otto-text-secondary);
+}
+/* queued/pending 的小静态圆点（非转圈）：取当前状态色，表示"尚未开始/等待"。 */
+.otto-tool__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  opacity: 0.6;
 }
 /* 状态文案切换（运行中→已完成/失败）时淡入，配合 React key 重挂，不再硬切。 */
 .otto-tool__statustext {
@@ -836,6 +885,22 @@
 .otto-composer__textarea::placeholder {
   color: var(--otto-text-tertiary);
 }
+/* 禁用态（无选中会话）：整块降透明、灰化边框，让「不可输入」在视觉上成立。
+   由 Composer 根节点在 disabled 时挂 .is-disabled。 */
+.otto-composer.is-disabled .otto-composer__inner {
+  opacity: 0.55;
+  border-color: var(--otto-border);
+  box-shadow: none;
+}
+.otto-composer.is-disabled .otto-composer__inner:focus-within {
+  /* 禁用时不应因内部聚焦而点亮描边。 */
+  border-color: var(--otto-border);
+  box-shadow: none;
+}
+.otto-composer__textarea:disabled {
+  color: var(--otto-text-tertiary);
+  cursor: not-allowed;
+}
 .otto-composer__bar {
   display: flex;
   align-items: center;
@@ -1008,12 +1073,15 @@
   justify-content: center;
   width: 34px;
   height: 34px;
-  border: none;
+  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心↔实心切换时 border-color 可平滑插值。 */
+  border: 1px solid transparent;
   border-radius: 50%;
   background: var(--otto-accent-gradient);
   color: #fff;
   cursor: pointer;
   transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
     filter var(--otto-dur-fast) var(--otto-ease),
     transform var(--otto-dur-fast) var(--otto-ease),
     opacity var(--otto-dur-fast) var(--otto-ease);
@@ -1034,6 +1102,17 @@
 .otto-send:focus-visible {
   outline: none;
   box-shadow: var(--otto-shadow-focus);
+}
+
+/* 停止按钮（流式生成中替换发送）：中性表面 + 实心方块，区别于 amber 发送。 */
+.otto-send--stop {
+  background: var(--otto-surface-raised, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--otto-border-strong);
+  color: var(--otto-text-secondary, currentColor);
+}
+.otto-send--stop:hover {
+  filter: none;
+  background: var(--otto-surface-hover, rgba(255, 255, 255, 0.14));
 }
 
 /* ══════════════ 空态 / 连接态 ══════════════ */
@@ -1228,11 +1307,13 @@
  * 全部走 tokens.css 变量，浅色 + amber，hover/focus 态显式。
  * ════════════════════════════════════════════════════════════════════════ */
 
-/* 右上角不显眼的设置入口齿轮 */
+/* 右上角不显眼的设置入口齿轮。
+   顶栏右端已有 .otto-user-avatar（right 18–48px、纵向 4–34px）；齿轮让位落到其左侧，
+   与头像共用一条基线（top 4px、height 30 与头像一致），right 56px 避免叠图。 */
 .otto-setup-launch {
   position: absolute;
-  top: 14px;
-  right: 16px;
+  top: 4px;
+  right: 56px;
   z-index: 30;
   display: inline-flex;
   align-items: center;
@@ -1245,6 +1326,8 @@
   color: var(--otto-text-secondary);
   cursor: pointer;
   box-shadow: var(--otto-shadow-xs);
+  /* 位于顶栏 drag 带内（top 4px），须显式 no-drag 才可点击。 */
+  -webkit-app-region: no-drag;
   transition:
     color var(--otto-dur-fast) var(--otto-ease),
     border-color var(--otto-dur-fast) var(--otto-ease),

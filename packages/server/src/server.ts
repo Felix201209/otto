@@ -33,6 +33,7 @@ import {
   type ApiResponse,
   type ClientToServer,
   type HealthInfo,
+  type MessageContent,
   type ModelInfo,
   type ServerToClient,
 } from './protocol.js';
@@ -48,6 +49,7 @@ import { createCoreSessionRuntime } from './runtime.js';
 import {
   listModelInfos,
   loadCustomModels,
+  loadPreferredModel,
   saveCustomModel,
 } from './customModels.js';
 import type { CustomModelConfig } from 'otto-core';
@@ -146,7 +148,12 @@ export class OttoServer {
   /** 启动 HTTP + WS，并按需注册飞书网关。 */
   async start(): Promise<void> {
     this.http = createServer((req, res) => this.handleHttp(req, res));
-    this.wss = new WebSocketServer({ server: this.http, path: HTTP_ROUTES.ws });
+    this.wss = new WebSocketServer({
+      server: this.http,
+      path: HTTP_ROUTES.ws,
+      verifyClient: (info: { req: IncomingMessage }) =>
+        this.isLocalRequestAllowed(info.req),
+    });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
 
     await new Promise<void>((resolve, reject) => {
@@ -207,12 +214,35 @@ export class OttoServer {
   }
 
   /**
+   * 当前生效模型 id（与 createCoreConfig 的兜底次序一致）：
+   *   preferredModel（makeActive 写入，且仍在 enabled 列表里）→ 否则首个 enabled 模型。
+   * 供 get_models 回包填 current，让 renderer 模型药丸/菜单勾号反映真实生效模型，
+   * 而非长期回退到硬编码名。无任何模型时返回 undefined。
+   */
+  private currentModel(): string | undefined {
+    const enabled = this.modelInfos().filter((m) => m.enabled);
+    if (enabled.length === 0) return undefined;
+    let preferred: string | undefined;
+    try {
+      preferred = loadPreferredModel();
+    } catch {
+      preferred = undefined;
+    }
+    if (preferred && enabled.some((m) => m.id === preferred)) {
+      return preferred;
+    }
+    return enabled[0].id;
+  }
+
+  /**
    * setup 落盘（save_custom_model 帧）：
    *   校验 → 复用 customModels.saveCustomModel 原子写盘（CLI 同格式）
-   *   → 成功广播最新 models_list；失败回 error(code:'save_failed')。
+   *   → 成功广播最新 models_list（含 current）；失败回 error(code:'save_failed')。
    *
    * 广播用 broadcastAll：多窗口（及未来只读 TUI 视图）同步刷新模型列表。
-   * makeActive 由前端用回包后的 set_model 自行处理，server 仅负责写盘+广播。
+   * makeActive：server 端真正实现——写盘时把该模型设为「当前生效模型」
+   * （customModels 的 preferredModel 单一事实源），createCoreConfig 优先用它，
+   * 广播 models_list 时带 current，让 renderer 模型药丸/菜单勾号反映真实生效模型。
    */
   private handleSaveCustomModel(
     conn: ClientConn,
@@ -243,12 +273,17 @@ export class OttoServer {
     } as CustomModelConfig;
 
     try {
-      // 写盘（内部再次校验，非法即抛）。返回统一 id 备用。
-      saveCustomModel(model);
+      // 写盘（内部再次校验，非法即抛）。makeActive 缺省视为 true（向导默认即用新模型）。
+      const makeActive = p.makeActive !== false;
+      const savedId = saveCustomModel(model, makeActive);
       // 写成功 → 广播最新模型列表（modelInfos 每次实时 loadCustomModels）。
+      // makeActive 时带 current=新模型，让 renderer 立刻把药丸切到刚配的模型。
       this.broadcastAll({
         type: 'models_list',
-        payload: { models: this.modelInfos() },
+        payload: {
+          models: this.modelInfos(),
+          ...(makeActive ? { current: savedId } : {}),
+        },
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -259,11 +294,70 @@ export class OttoServer {
     }
   }
 
+  /**
+   * 切换会话模型（set_model 帧）：
+   *   校验目标模型「存在且 enabled」→ 更新会话摘要 + 即时切已存在的 runtime
+   *   → 回发一帧 models_list（带 current），让 renderer 的模型药丸反映真实生效模型。
+   * 非法模型（不存在 / 被禁用）→ 回 error(code:'unknown_model')，不污染会话摘要与 runtime。
+   */
+  private handleSetModel(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_model' }>,
+  ): void {
+    const { sessionId, model } = msg.payload;
+    const known = this.modelInfos().find((m) => m.id === model && m.enabled);
+    if (!known) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'unknown_model', `未知或未启用的模型：${model}`),
+      );
+    }
+    // 既更新会话摘要（让懒构建的 runtime 用对模型），也即时切换已存在的 runtime。
+    this.store.patchSessionModel(sessionId, model);
+    this.store.getRuntime(sessionId)?.setModel(model);
+    // 回发带 current 的 models_list，让 renderer 模型药丸/菜单勾号反映真实生效模型。
+    this.send(conn.socket, {
+      type: 'models_list',
+      payload: { models: this.modelInfos(), current: model },
+    });
+  }
+
   // ──────────────────────────────────────────────────────────────────────
   // HTTP REST
   // ──────────────────────────────────────────────────────────────────────
 
+  /**
+   * 本地 app server 防滥用闸门：仅放行本机/Electron 自身的连接，拒绝任意网页
+   * 经 DNS-rebinding 或 localhost WebSocket 无鉴权驱动本 server（越权跑工具/读历史）。
+   * - Origin：浏览器对 ws 握手与跨源 http 必带 Origin 且无法伪造。放行 无 Origin（Node 客户端
+   *   如 TUI）、`null`/`file://`（Electron file:// 渲染层）、localhost/127.0.0.1（本地 dev/工具）；
+   *   其余 http(s):// 网页来源一律拒。
+   * - Host：要求主机名是 localhost/127.0.0.1/[::1]，挡 DNS-rebinding。
+   */
+  private isLocalRequestAllowed(req: IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (origin && origin !== 'null' && !origin.startsWith('file://')) {
+      try {
+        const h = new URL(origin).hostname;
+        if (h !== 'localhost' && h !== '127.0.0.1' && h !== '::1') return false;
+      } catch {
+        return false;
+      }
+    }
+    const hostHeader = req.headers.host;
+    if (hostHeader) {
+      const h = hostHeader.startsWith('[')
+        ? hostHeader.slice(0, hostHeader.indexOf(']') + 1)
+        : hostHeader.split(':')[0];
+      if (h !== 'localhost' && h !== '127.0.0.1' && h !== '[::1]') return false;
+    }
+    return true;
+  }
+
   private handleHttp(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.isLocalRequestAllowed(req)) {
+      return sendJson(res, 403, err('forbidden'));
+    }
     const url = new URL(req.url ?? '/', `http://${this.host}:${this.port}`);
     const path = url.pathname;
 
@@ -380,13 +474,8 @@ export class OttoServer {
       }
       case 'send_user_message':
         return this.handleSendUserMessage(conn, msg);
-      case 'set_model': {
-        const { sessionId, model } = msg.payload;
-        // 既更新会话摘要（让懒构建的 runtime 用对模型），也即时切换已存在的 runtime。
-        this.store.patchSessionModel(sessionId, model);
-        this.store.getRuntime(sessionId)?.setModel(model);
-        return;
-      }
+      case 'set_model':
+        return this.handleSetModel(conn, msg);
       case 'cancel': {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
         return;
@@ -400,7 +489,7 @@ export class OttoServer {
       case 'get_models':
         return this.send(conn.socket, {
           type: 'models_list',
-          payload: { models: this.modelInfos() },
+          payload: { models: this.modelInfos(), current: this.currentModel() },
         });
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
@@ -423,23 +512,42 @@ export class OttoServer {
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'send_user_message' }>,
   ): Promise<void> {
-    const { sessionId, content, source } = msg.payload;
-    if (!this.store.getSession(sessionId)) {
+    const { sessionId, content, source, clientMessageId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
 
+    // 透传 clientMessageId 作为消息 id：让 message_start 回声的 id 与 renderer
+    // 乐观渲染的临时 id 一致，store 按 id 覆盖去重，避免用户气泡重复显示两条。
     const userMsg = this.store.appendMessage(sessionId, {
       role: 'user',
       content,
       source,
+      ...(clientMessageId ? { id: clientMessageId } : {}),
     });
     this.store.publish(sessionId, {
       type: 'message_start',
       payload: { message: userMsg },
     });
+
+    // app→飞书 回推：用户在 app 里对一个飞书会话手敲的这句话，回推飞书侧。
+    // 只推用户输入这一句；AI 回复仍由 streamBridge 自动回推，勿在此重复。
+    if (
+      source === 'local' &&
+      session.source === 'feishu' &&
+      session.feishuChatId
+    ) {
+      void this.pushUserMessageToFeishu(
+        sessionId,
+        session.feishuChatId,
+        userMsg.id,
+        content,
+      );
+    }
 
     // mock 模式（无 core / 无 key）：占位回声，验证收发链路。
     if (this.shouldMock()) {
@@ -456,6 +564,53 @@ export class OttoServer {
     }
     // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
+  }
+
+  /**
+   * app→飞书 回推：把 app 内对飞书会话的用户发言推回飞书，并广播 feishu_push_result
+   * 帧（ok/error），让 renderer 对账同步状态（成功/失败均反馈，不再静默）。
+   *
+   * 失败不抛、不阻断主对话流：仅把失败经 feishu_push_result(ok:false) 上报。
+   */
+  private async pushUserMessageToFeishu(
+    sessionId: string,
+    feishuChatId: string,
+    messageId: string,
+    content: MessageContent,
+  ): Promise<void> {
+    const text = plainTextOf(content);
+    if (!text) return;
+    if (!this.feishu) {
+      this.store.publish(sessionId, {
+        type: 'feishu_push_result',
+        payload: {
+          sessionId,
+          feishuChatId,
+          messageId,
+          ok: false,
+          error: '飞书网关未启用，无法回推。',
+        },
+      });
+      return;
+    }
+    try {
+      await this.feishu.pushToFeishu(feishuChatId, text);
+      this.store.publish(sessionId, {
+        type: 'feishu_push_result',
+        payload: { sessionId, feishuChatId, messageId, ok: true },
+      });
+    } catch (e) {
+      this.store.publish(sessionId, {
+        type: 'feishu_push_result',
+        payload: {
+          sessionId,
+          feishuChatId,
+          messageId,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        },
+      });
+    }
   }
 
   /**
@@ -579,4 +734,15 @@ function errorFrame(
   message: string,
 ): ServerToClient {
   return { type: 'error', payload: { sessionId, code, message } };
+}
+/**
+ * 从富消息内容里取纯文本（用于 app→飞书 回推）。
+ * 只回推用户实际敲的文字片段；文件/图片等引用片段不回推（飞书侧仅需文字）。
+ */
+function plainTextOf(content: MessageContent): string {
+  return content
+    .filter((p) => p.type === 'text')
+    .map((p) => (p.type === 'text' ? p.value : ''))
+    .join('\n')
+    .trim();
 }

@@ -39,6 +39,18 @@ export interface OttoState {
   /** 每会话消息表。 */
   messages: Record<string, OttoMessage[]>;
   models: ModelInfo[];
+  /**
+   * 是否已收到过至少一帧 models_list。首帧到达前 models 恒为空数组，那是"尚未知晓"
+   * 而非"确无模型"——用它把两者区分开，避免连上瞬间就误判无模型而弹出 setup 面板。
+   */
+  modelsLoaded: boolean;
+  /**
+   * 是否已收到过至少一帧 sessions_list。首帧到达前 sessionIds 恒为空数组，那是"尚未知晓"
+   * 而非"确无会话"——仿照 modelsLoaded，让 App 的自动引导 effect 只在真正拿到列表后才
+   * 决定是否新建/选中，避免连上瞬间凭空判空乱建会话。可选：老的完整 state 字面量（如单测）
+   * 未提供时按未加载（undefined→falsy）处理。
+   */
+  sessionsLoaded?: boolean;
   currentModel: string | null;
   /** 末次错误（toast 用）。 */
   lastError: string | null;
@@ -51,6 +63,8 @@ const initialState: OttoState = {
   activeSessionId: null,
   messages: {},
   models: [],
+  modelsLoaded: false,
+  sessionsLoaded: false,
   currentModel: null,
   lastError: null,
 };
@@ -139,7 +153,8 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       if (!next.activeSessionId && frame.payload.sessions.length > 0) {
         next = { ...next, activeSessionId: frame.payload.sessions[0].sessionId };
       }
-      return next;
+      // 标记列表已知晓（首帧到达）。仿照 modelsLoaded，供 App 的自动引导 effect 判空用。
+      return next.sessionsLoaded ? next : { ...next, sessionsLoaded: true };
     }
 
     case 'session_upsert':
@@ -213,6 +228,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return {
         ...state,
         models: frame.payload.models,
+        modelsLoaded: true,
         currentModel: frame.payload.current ?? state.currentModel,
       };
 
@@ -279,26 +295,37 @@ export function useOttoStore(): UseOttoStore {
   activeRef.current = state.activeSessionId;
 
   useEffect(() => {
-    let unsub: (() => void) | undefined;
     let cancelled = false;
 
-    unsub = transport.onFrame((frame) => {
+    const unsubFrame = transport.onFrame((frame) => {
       dispatch({ kind: 'frame', frame });
     });
 
-    (async () => {
-      const ok = await transport.connect();
+    // 订阅连接状态：断线立即翻到 disconnected（浮出横幅），重连即翻回 connected。
+    // 这样 state.connection 不再僵死，下方 subscribe/get_history effect 会随之
+    // 在重连后重新订阅当前会话；初次连上则补拉会话列表与模型。
+    let wasConnected = false;
+    const unsubConn = transport.onConnectionChange((connected) => {
       if (cancelled) return;
-      dispatch({ kind: 'connection', value: ok ? 'connected' : 'disconnected' });
-      if (ok) {
+      dispatch({
+        kind: 'connection',
+        value: connected ? 'connected' : 'disconnected',
+      });
+      // 每次「从未连到已连」的上升沿都补拉一次列表与模型（首连 + 重连后恢复）。
+      if (connected && !wasConnected) {
         transport.send({ type: 'list_sessions', payload: {} });
         transport.send({ type: 'get_models', payload: {} });
       }
-    })();
+      wasConnected = connected;
+    });
+
+    // 触发 preload 建连（onConnectionChange 已负责后续状态广播，这里不再单独 dispatch）。
+    void transport.connect();
 
     return () => {
       cancelled = true;
-      unsub?.();
+      unsubFrame();
+      unsubConn();
     };
   }, []);
 

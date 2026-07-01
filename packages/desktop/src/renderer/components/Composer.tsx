@@ -6,11 +6,12 @@
 
 /**
  * 底部输入区。spec §底部输入区：
- *   圆角输入框（占位「给 Otto 发送消息...」）+ model 选择器 pill（claude-opus-4 ▾）
- *   + 回形针附件 + amber 圆形发送（↑）。
+ *   圆角输入框（占位「给 Otto 发送消息...」）+ model 选择器 pill（反映真实生效模型 ▾）
+ *   + 回形针附件 + amber 圆形发送（↑），生成中发送按钮变「停止」。
  *
- * model pill 点击弹出可用模型菜单（来自协议 models_list）。Enter 发送、
- * Shift+Enter 换行。slash 命令在 SetupPanel 路由的命令面板里（Issue #7）。
+ * model pill 点击弹出可用模型菜单（来自协议 models_list）。pill 文字取 currentModel
+ * （models_list/currentModel 帧）对应名，无则回退首个可用模型，不硬编码模型名。
+ * Enter 发送、Shift+Enter 换行。slash 命令在 SetupPanel 路由的命令面板里（Issue #7）。
  */
 
 import React, { useRef, useState } from 'react';
@@ -21,13 +22,24 @@ import {
   IconArrowUp,
   IconCheck,
   IconSettings,
+  IconStop,
 } from './icons.js';
 
 interface ComposerProps {
   models: ModelInfo[];
   currentModel: string | null;
+  /** 当前选中会话 id：切换会话后据此自动聚焦 textarea，避免手动再点一下。 */
+  sessionId?: string | null;
+  /** 整体禁用（无选中会话）：textarea 与发送按钮都禁用。 */
   disabled?: boolean;
+  /**
+   * 流式生成中。busy 时 textarea 仍可输入下一条，发送按钮变「停止」按钮调 onCancel。
+   * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
+   */
+  busy?: boolean;
   onSend: (text: string) => void;
+  /** 中止当前流式生成（busy 时停止按钮调用）。 */
+  onCancel?: () => void;
   onSetModel: (model: string) => void;
   /** 受控初值（空态示例胶囊点击后注入草稿）。 */
   draft?: string;
@@ -40,8 +52,11 @@ interface ComposerProps {
 export function Composer({
   models,
   currentModel,
+  sessionId,
   disabled,
+  busy = false,
   onSend,
+  onCancel,
   onSetModel,
   draft,
   draftNonce,
@@ -64,7 +79,16 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftNonce]);
 
-  const canSend = text.trim().length > 0 && !disabled;
+  // 切换/新建会话就绪后自动聚焦 textarea，省去手动再点一下。
+  // 仅在有会话（sessionId）且未禁用时聚焦；不依赖 busy，避免打断发送流。
+  React.useEffect(() => {
+    if (disabled || sessionId == null) return;
+    taRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, disabled]);
+
+  // 生成中（busy）不发送，但 textarea 仍可输入下一条；无会话（disabled）才整体锁死。
+  const canSend = text.trim().length > 0 && !disabled && !busy;
 
   const submit = () => {
     if (!canSend) return;
@@ -87,13 +111,17 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   };
 
+  // 反映真实生效模型：优先 currentModel（来自 models_list/currentModel 帧）对应的 displayName，
+  // 否则回退到首个可用模型的名字，最后才用「选择模型」占位。
+  // 不再硬编码具体模型名（如 'claude-opus-4'）——BYO-key 用户可能根本没配 Claude。
   const modelLabel =
     models.find((m) => m.id === currentModel)?.displayName ??
     currentModel ??
-    'claude-opus-4';
+    models[0]?.displayName ??
+    '选择模型';
 
   return (
-    <div className="otto-composer">
+    <div className={`otto-composer${disabled ? ' is-disabled' : ''}`}>
       <div className="otto-composer__inner">
         <textarea
           ref={taRef}
@@ -103,6 +131,7 @@ export function Composer({
           value={text}
           onChange={autoGrow}
           onKeyDown={onKeyDown}
+          // 生成中仍可输入下一条；仅无会话（disabled）时锁死。
           disabled={disabled}
         />
         <div className="otto-composer__bar">
@@ -137,22 +166,35 @@ export function Composer({
           <button
             type="button"
             className="otto-attach"
-            title="附件"
-            aria-label="附件"
+            title="附件（暂未支持）"
+            aria-label="附件（暂未支持）"
+            disabled
           >
             <IconPaperclip size={17} />
           </button>
 
-          <button
-            type="button"
-            className="otto-send"
-            title="发送"
-            aria-label="发送"
-            disabled={!canSend}
-            onClick={submit}
-          >
-            <IconArrowUp size={17} />
-          </button>
+          {busy && onCancel ? (
+            <button
+              type="button"
+              className="otto-send otto-send--stop"
+              title="停止生成"
+              aria-label="停止生成"
+              onClick={onCancel}
+            >
+              <IconStop size={15} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="otto-send"
+              title="发送"
+              aria-label="发送"
+              disabled={!canSend}
+              onClick={submit}
+            >
+              <IconArrowUp size={17} />
+            </button>
+          )}
         </div>
       </div>
     </div>
