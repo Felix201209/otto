@@ -480,6 +480,294 @@ export function buildCardKitFinalCard(content: string, footerMetrics?: FeishuFoo
   return card;
 }
 
+// ---------------------------------------------------------------------------
+// 跨进程连接互斥锁（同一 appId 全机只允许一个进程建立飞书长连接）
+//
+// 背景：进程内去重表（processedMessages / inFlightMessages）只在单进程内生效。
+// server 侧 FeishuAdapter（OTTO_FEISHU_ENABLED=1）与 cli 侧 daemon 若同时对
+// 同一 appId connect，每条飞书消息会被两个进程各处理一遍、回复两遍。
+// 因此 connect() 前必须先按 appId 拿到 ~/.otto-user/ 下的锁文件（O_EXCL 原子
+// 创建，内容含 pid + startedAt）；持有者已死（stale）则接管，持有者存活则
+// fail-loud 拒绝连接。
+// ---------------------------------------------------------------------------
+
+/** 连接互斥锁存放目录（与凭证同在 ~/.otto-user/；OTTO_FEISHU_LOCK_DIR 仅供测试隔离）。 */
+function gatewayLockDir(): string {
+  return process.env['OTTO_FEISHU_LOCK_DIR'] || path.join(os.homedir(), '.otto-user');
+}
+
+/** 某 appId 的连接锁文件路径（appId 经净化后拼入文件名，杜绝路径穿越）。 */
+export function feishuGatewayLockPath(appId: string, dir = gatewayLockDir()): string {
+  return path.join(dir, `feishu-gateway-${sanitizeResourceKey(appId)}.lock`);
+}
+
+/** 拿不到连接锁（另一存活进程持有）时抛出，调用方可据此提示用户。 */
+export class FeishuGatewayLockError extends Error {
+  constructor(
+    message: string,
+    readonly holderPid: number,
+  ) {
+    super(message);
+    this.name = 'FeishuGatewayLockError';
+  }
+}
+
+/** 连接锁句柄：release 幂等，只删自己写入的锁文件。 */
+export interface FeishuGatewayLockHandle {
+  readonly path: string;
+  release(): void;
+}
+
+/** 读取锁文件里的持有者信息；文件缺失/损坏返回 null（视为可接管）。 */
+function readLockHolder(lockPath: string): { pid: number; startedAt?: number } | null {
+  try {
+    const obj = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    const pid = Number(obj?.pid);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    const startedAt = Number(obj?.startedAt);
+    return { pid, startedAt: Number.isFinite(startedAt) ? startedAt : undefined };
+  } catch {
+    return null;
+  }
+}
+
+/** 进程存活探测（signal 0；EPERM = 存在但无权限，也算存活）。 */
+function defaultIsPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: unknown) {
+    return (e as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
+
+/**
+ * 按 appId 获取跨进程连接锁。
+ *
+ *   - O_EXCL 原子创建锁文件，内容 { pid, startedAt }；
+ *   - 已存在且持有者存活（且不是自己）→ 抛 {@link FeishuGatewayLockError}；
+ *   - 已存在但持有者已死 / 文件损坏 / 持有者就是本进程（残留）→ 接管（删旧重建）；
+ *   - 进程正常退出时兜底释放（异常被杀由下一次的 stale 接管收尾）。
+ *
+ * @param opts.dir / opts.pid / opts.isPidAlive 仅供测试注入。
+ */
+export function acquireFeishuGatewayLock(
+  appId: string,
+  opts: { dir?: string; pid?: number; isPidAlive?: (pid: number) => boolean } = {},
+): FeishuGatewayLockHandle {
+  const dir = opts.dir ?? gatewayLockDir();
+  const pid = opts.pid ?? process.pid;
+  const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
+  const lockPath = feishuGatewayLockPath(appId, dir);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  // 最多两轮：首轮 EEXIST → 判定 stale 接管后重试一轮；再失败视为竞争冲突。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx', 0o600); // O_EXCL：原子创建，已存在则抛 EEXIST
+      fs.writeSync(fd, JSON.stringify({ pid, startedAt: Date.now() }));
+      fs.closeSync(fd);
+      return makeLockHandle(lockPath, pid);
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException)?.code !== 'EEXIST') throw e;
+      const holder = readLockHolder(lockPath);
+      if (holder && holder.pid !== pid && isPidAlive(holder.pid)) {
+        throw new FeishuGatewayLockError(
+          `另一进程 (pid ${holder.pid}) 已持有该飞书应用 (${appId}) 的连接锁，拒绝重复连接` +
+            `（两个进程同时连同一 appId 会导致每条消息被处理/回复两遍）。` +
+            `若确认该进程已不再服务飞书，请先停掉它（如 otto feishu daemon stop）后重试。`,
+          holder.pid,
+        );
+      }
+      // stale：持有者已死 / 锁文件损坏 / 本进程残留 → 接管（删掉后重试原子创建）。
+      dlog(`[Feishu] 接管 stale 连接锁：${lockPath}（原持有者 pid=${holder?.pid ?? '未知'}）`);
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // 已被别的进程抢先清掉也无妨，下一轮重试见分晓。
+      }
+    }
+  }
+  throw new FeishuGatewayLockError(
+    `飞书连接锁竞争冲突（${lockPath}），本次放弃连接，请稍后重试。`,
+    -1,
+  );
+}
+
+/** 构造锁句柄：release 幂等；进程正常退出时兜底释放（best effort）。 */
+function makeLockHandle(lockPath: string, pid: number): FeishuGatewayLockHandle {
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    process.removeListener('exit', release);
+    try {
+      // 只删自己写的锁：释放前校验文件里的 pid 仍是自己（防误删接管者的新锁）。
+      const holder = readLockHolder(lockPath);
+      if (holder && holder.pid === pid) fs.unlinkSync(lockPath);
+    } catch {
+      // best effort：删不掉留给下一次 stale 接管。
+    }
+  };
+  process.once('exit', release);
+  return { path: lockPath, release };
+}
+
+// ---------------------------------------------------------------------------
+// 出站消息超长分片
+// ---------------------------------------------------------------------------
+
+/**
+ * 出站单条消息的安全长度上限（字符数）。
+ *
+ * 飞书 im/v1/messages 的 content 官方上限为 150KB（UTF-8 字节），post 富文本经
+ * mdToPostContent 展开还有结构开销。这里取远低于上限的保守值：超过即按段落/
+ * 代码块边界分片为多条顺序发送，避免整条被飞书 API 拒收导致回复丢失。
+ */
+export const FEISHU_OUTBOUND_SAFE_CHARS = 20000;
+
+/**
+ * 把超长 markdown 按段落 / 代码块边界切成 ≤ limit 的多段。
+ *
+ * 规则：
+ *   - 围栏代码块（``` / ~~~）视为整块，绝不在片间劈开围栏；
+ *   - 普通文本以空行（段落）为边界贪心装箱，片内换行原样保留
+ *     （片间重组时段落一律以空行分隔，连续多空行会折叠为一个空行）；
+ *   - 单块自身超限时兜底硬切：代码块按行切并给每段首尾补回围栏（保留语言标签），
+ *     普通段落按行切、单行仍超限再按码点硬切（不劈开 emoji 代理对）。
+ */
+export function splitMarkdownForFeishu(
+  markdown: string,
+  limit: number = FEISHU_OUTBOUND_SAFE_CHARS,
+): string[] {
+  if (markdown.length <= limit) return [markdown];
+
+  const pieces: string[] = [];
+  let cur = '';
+  const flush = (): void => {
+    if (cur) {
+      pieces.push(cur);
+      cur = '';
+    }
+  };
+
+  for (const block of splitMarkdownBlocks(markdown)) {
+    const parts = block.length <= limit ? [block] : hardSplitBlock(block, limit);
+    for (const part of parts) {
+      if (!cur) {
+        cur = part;
+      } else if (cur.length + 2 + part.length <= limit) {
+        cur = `${cur}\n\n${part}`;
+      } else {
+        flush();
+        cur = part;
+      }
+    }
+  }
+  flush();
+  return pieces.length > 0 ? pieces : [markdown];
+}
+
+/** 把 markdown 切成块：围栏代码块整块保留，其余按空行分段。 */
+function splitMarkdownBlocks(markdown: string): string[] {
+  const lines = markdown.split('\n');
+  const blocks: string[] = [];
+  let cur: string[] = [];
+  let inFence = false;
+  let fenceMarker = '';
+  const flush = (): void => {
+    if (cur.length > 0) {
+      blocks.push(cur.join('\n'));
+      cur = [];
+    }
+  };
+  for (const line of lines) {
+    const t = line.trimStart();
+    if (!inFence && (t.startsWith('```') || t.startsWith('~~~'))) {
+      flush();
+      inFence = true;
+      fenceMarker = t.startsWith('```') ? '```' : '~~~';
+      cur.push(line);
+      continue;
+    }
+    if (inFence) {
+      cur.push(line);
+      if (t.startsWith(fenceMarker)) {
+        inFence = false;
+        flush();
+      }
+      continue;
+    }
+    if (line.trim() === '') {
+      flush(); // 段落边界：空行本身丢弃，重组时以 \n\n 连接
+    } else {
+      cur.push(line);
+    }
+  }
+  flush();
+  return blocks;
+}
+
+/** 单块超限时的兜底硬切（代码块补围栏；普通块按行/码点切）。 */
+function hardSplitBlock(block: string, limit: number): string[] {
+  const lines = block.split('\n');
+  const first = lines[0]?.trimStart() ?? '';
+  if (first.startsWith('```') || first.startsWith('~~~')) {
+    // 超大代码块：去首尾围栏按行装箱，每段重新包围栏（保留 ```lang 语言标签）。
+    const openLine = lines[0];
+    const closeMarker = first.startsWith('~~~') ? '~~~' : '```';
+    const hasClose =
+      lines.length > 1 && lines[lines.length - 1].trimStart().startsWith(closeMarker);
+    const body = hasClose ? lines.slice(1, -1) : lines.slice(1);
+    const overhead = openLine.length + closeMarker.length + 2; // 首尾围栏 + 两个换行
+    return packLines(body, Math.max(1, limit - overhead)).map(
+      (chunk) => `${openLine}\n${chunk}\n${closeMarker}`,
+    );
+  }
+  return packLines(lines, limit);
+}
+
+/** 按行贪心装箱到 ≤ limit；单行超限再按码点硬切。 */
+function packLines(lines: string[], limit: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  const flush = (): void => {
+    if (cur) {
+      out.push(cur);
+      cur = '';
+    }
+  };
+  for (const line of lines) {
+    const segs = line.length <= limit ? [line] : hardSplitByCodePoints(line, limit);
+    for (const seg of segs) {
+      if (!cur) {
+        cur = seg;
+      } else if (cur.length + 1 + seg.length <= limit) {
+        cur = `${cur}\n${seg}`;
+      } else {
+        flush();
+        cur = seg;
+      }
+    }
+  }
+  flush();
+  return out.length > 0 ? out : [''];
+}
+
+/**
+ * 按码点硬切单行（不劈开 emoji 代理对）。
+ * 注：按码点计数时，全 emoji 的极端行单段 UTF-16 长度可能略超 limit，
+ * 但相对真实 API 上限（150KB）仍有巨大余量，可接受。
+ */
+function hardSplitByCodePoints(line: string, limit: number): string[] {
+  const cps = Array.from(line);
+  const out: string[] = [];
+  for (let i = 0; i < cps.length; i += limit) {
+    out.push(cps.slice(i, i + limit).join(''));
+  }
+  return out;
+}
+
 /**
  * 飞书 WS 网关（基于 @larksuiteoapi/node-sdk）
  *
@@ -499,6 +787,8 @@ export class FeishuGateway {
   private wsClient: FeishuWsClient | null = null;
   private _onReady: (() => void) | null = null;
   private _onDisconnect: ((error?: Error) => void) | null = null;
+  /** 跨进程连接互斥锁（connect 时获取，disconnect/进程退出时释放）。 */
+  private connectionLock: FeishuGatewayLockHandle | null = null;
 
   /**
    * 消息去重：记录已"受理"的消息 ID（at-most-once）。value 为首次受理的时间戳。
@@ -1683,6 +1973,12 @@ export class FeishuGateway {
     // 先清理旧连接，避免事件处理器重复触发
     await this.disconnect();
 
+    // 🔒 跨进程互斥：同一 appId 全机只允许一个进程建立飞书长连接。
+    // 进程内去重表拦不住第二个进程（server 侧 adapter 与 cli 侧 daemon 同时
+    // 在跑时每条消息会被处理/回复两遍）。拿不到锁 fail-loud：抛
+    // FeishuGatewayLockError（含中文说明与持有者 pid），调用方能感知并提示用户。
+    this.connectionLock = acquireFeishuGatewayLock(this.appId);
+
     const { WSClient, EventDispatcher } = await import('@larksuiteoapi/node-sdk');
 
     const domainUrl = this.domain === 'lark'
@@ -2230,9 +2526,47 @@ export class FeishuGateway {
   }
 
   /**
-   * 发送 markdown 消息（post 格式，支持富文本），返回 message_id
+   * 发送 markdown 消息（post 格式，支持富文本），返回 message_id。
+   *
+   * 超长内容（> {@link FEISHU_OUTBOUND_SAFE_CHARS}）自动按段落/代码块边界分片
+   * 为多条顺序发送，每片带 (i/n) 标记；单片失败重试一次，仍失败记失败并返回
+   * null（调用方据此上报回推失败，不再整条静默丢失）。多片时返回首片 message_id。
    */
   async sendMarkdown(chatId: string, markdown: string, replyToMessageId?: string): Promise<string | null> {
+    const pieces = splitMarkdownForFeishu(markdown);
+    if (pieces.length <= 1) {
+      return this.sendMarkdownSingle(chatId, markdown, replyToMessageId);
+    }
+
+    let firstId: string | null = null;
+    for (let i = 0; i < pieces.length; i++) {
+      const marked = `**(${i + 1}/${pieces.length})**\n\n${pieces[i]}`;
+      // 分片路径把抛错也归一为 null（避免中途抛错吞掉"已发出前几片"的事实），
+      // 单片失败重试一次，仍失败才放弃剩余分片并整体报失败。
+      const trySend = async (): Promise<string | null> => {
+        try {
+          return await this.sendMarkdownSingle(chatId, marked, replyToMessageId);
+        } catch (e: unknown) {
+          dwarn(`[Feishu] 分片 ${i + 1}/${pieces.length} 发送抛错: ${errorMessage(e)}`);
+          return null;
+        }
+      };
+      let id = await trySend();
+      if (id === null) {
+        dwarn(`[Feishu] 分片 ${i + 1}/${pieces.length} 发送失败，重试一次…`);
+        id = await trySend();
+      }
+      if (id === null) {
+        derror(`[Feishu] 分片 ${i + 1}/${pieces.length} 重试后仍失败，放弃剩余分片。`);
+        return null;
+      }
+      if (firstId === null) firstId = id;
+    }
+    return firstId;
+  }
+
+  /** 单条 markdown 发送（不分片），sendMarkdown 的底层实现。 */
+  private async sendMarkdownSingle(chatId: string, markdown: string, replyToMessageId?: string): Promise<string | null> {
     const token = await this.getTenantToken();
 
     const postContent = {
@@ -3796,6 +4130,12 @@ export class FeishuGateway {
         // ignore
       }
       this.wsClient = null;
+    }
+
+    // 释放跨进程连接锁（幂等，只删本进程写入的锁文件）。
+    if (this.connectionLock) {
+      this.connectionLock.release();
+      this.connectionLock = null;
     }
   }
 }

@@ -268,9 +268,15 @@ export async function main() {
     const setupArgs = process.argv.slice(3);
     const getFlag = (n: string): string | undefined => {
       const i = setupArgs.indexOf(n);
-      return i >= 0 ? setupArgs[i + 1] : undefined;
+      const v = i >= 0 ? setupArgs[i + 1] : undefined;
+      // 下一个 token 缺失或本身是另一个 flag（以 -- 开头）→ 视为未提供取值，
+      // 防止 `--key --model glm-5.1` 把 "--model" 误当 key 写进密钥文件。
+      return v !== undefined && !v.startsWith('--') ? v : undefined;
     };
     const hasFlag = (n: string): boolean => setupArgs.includes(n);
+    // 出现了却没跟取值的参数，交给 modelSetupCli 统一报中文错误并非零退出
+    const VALUE_FLAGS = ['--provider', '--key', '--model', '--name', '--base-url', '--key-env', '--key-file', '--models'];
+    const missingValueFlags = VALUE_FLAGS.filter((n) => hasFlag(n) && getFlag(n) === undefined);
     // `otto setup --help` / `-h`：打印用法后退出，不要误启交互式 TUI。
     if (hasFlag('--help') || hasFlag('-h')) {
       console.log(
@@ -297,6 +303,7 @@ export async function main() {
       process.exit(0);
     }
     if (
+      missingValueFlags.length > 0 ||
       hasFlag('--list') ||
       getFlag('--models') ||
       getFlag('--key') ||
@@ -316,6 +323,7 @@ export async function main() {
         keyFile: getFlag('--key-file'),
         list: hasFlag('--list'),
         listModels: getFlag('--models'),
+        missingValueFlags,
       });
       console.log(r.text);
       process.exit(r.code);

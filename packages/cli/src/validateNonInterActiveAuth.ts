@@ -5,26 +5,15 @@
  */
 
 import { AuthType, Config } from 'otto-core';
-import { USER_SETTINGS_PATH } from './config/settings.js';
 import { validateAuthMethod } from './config/auth.js';
-
-function getAuthTypeFromEnv(): AuthType | undefined {
-  // 默认使用 Otto custom-model 认证
-  return AuthType.USE_PROXY_AUTH;
-}
 
 export async function validateNonInteractiveAuth(
   configuredAuthType: AuthType | undefined,
   nonInteractiveConfig: Config,
 ) {
-  const effectiveAuthType = configuredAuthType || getAuthTypeFromEnv();
-
-  if (!effectiveAuthType) {
-    console.error(
-      `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: GEMINI_API_KEY, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA`,
-    );
-    process.exit(1);
-  }
+  // Otto 统一走服务端代理认证（飞书登录 / 自定义模型），
+  // 未显式配置时兜底 USE_PROXY_AUTH，因此这里恒有有效认证方式。
+  const effectiveAuthType = configuredAuthType || AuthType.USE_PROXY_AUTH;
 
   const err = validateAuthMethod(effectiveAuthType);
   if (err != null) {

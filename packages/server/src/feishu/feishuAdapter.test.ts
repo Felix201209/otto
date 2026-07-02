@@ -264,6 +264,55 @@ describe('FeishuAdapter 双向链路', () => {
     );
   });
 
+  it('同一会话连发两条消息 → 串行执行（第二轮等第一轮结束），顺序正确', async () => {
+    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    await adapter.start();
+    void adapter;
+
+    // 第一轮 run 卡在 gate 上，用于验证第二轮不会并发启动。
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((r) => {
+      releaseFirst = r;
+    });
+    let calls = 0;
+    const runtime: SessionRuntime = {
+      async run(input: MessageContent) {
+        const n = ++calls;
+        const text = (input[0] as { type: 'text'; value: string }).value;
+        events.push(`start${n}:${text}`);
+        if (n === 1) await gate;
+        events.push(`end${n}`);
+      },
+      cancel() {},
+      setModel() {},
+      async dispose() {},
+    };
+    const pre = store.getOrCreateFeishuSession('oc_chat_Q');
+    store.attachRuntime(pre.sessionId, runtime);
+
+    await fake.fireMessage(
+      makeMsg({ chatId: 'oc_chat_Q', messageId: 'om_q1', text: '第一条' }),
+    );
+    await fake.fireMessage(
+      makeMsg({ chatId: 'oc_chat_Q', messageId: 'om_q2', text: '第二条' }),
+    );
+    await flush();
+
+    // 第一轮尚未结束时，第二轮绝不能开跑（否则 streamBridge 会互相踩踏）。
+    expect(events).toEqual(['start1:第一条']);
+    // 排队时给用户发了简短提示。
+    expect(
+      log.markdowns.some(
+        (m) => m.chatId === 'oc_chat_Q' && m.text.includes('排队'),
+      ),
+    ).toBe(true);
+
+    releaseFirst();
+    await flush();
+    expect(events).toEqual(['start1:第一条', 'end1', 'start2:第二条', 'end2']);
+  });
+
   // appFrames 仅作占位说明：broadcast 直接走 store.publish，
   // 上面各用例已通过 store.getHistory / log 断言广播效果。
   void appFrames;

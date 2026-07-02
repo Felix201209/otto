@@ -85,6 +85,15 @@ export class FeishuAdapter {
 
   /** 已挂回推桥的飞书会话（sessionId → 取消订阅），避免重复订阅导致重复回推。 */
   private readonly bridged = new Map<string, Unsubscribe>();
+  /**
+   * 每会话串行队列（sessionId → promise 链尾 + 在跑/排队轮数）。
+   * 同一飞书会话同一时刻只跑一轮 agent turn：streamBridge 一次只跟踪一条
+   * active assistant 流，并发两轮会互相踩踏导致第一轮回复半截丢失。
+   */
+  private readonly runQueues = new Map<
+    string,
+    { tail: Promise<void>; depth: number }
+  >();
   /** 会话淘汰监听取消句柄：会话被 store 容量淘汰时，连带摘除其回推桥。 */
   private readonly offEvict: Unsubscribe;
 
@@ -222,30 +231,70 @@ export class FeishuAdapter {
       payload: { message: userMsg },
     });
 
-    // 驱动 core 跑一轮（Issue #1 接 runtime；未接走 mock 兜底）。
-    const runtime = this.store.getRuntime(session.sessionId);
-    if (runtime) {
-      this.store.setStatus(session.sessionId, 'thinking');
-      // 不 await：让 onMessage 尽快返回，core 流式经 store.publish 广播 +
-      // streamBridge 异步回推飞书。错误经 error 帧广播 + bridge 回推飞书。
-      void runtime.run(content, 'feishu').catch((e) => {
-        this.store.publish(session.sessionId, {
-          type: 'error',
-          payload: {
-            sessionId: session.sessionId,
-            code: 'runtime_error',
-            message: errMsg(e),
-          },
-        });
-        this.store.setStatus(session.sessionId, 'error');
+    // 驱动 core 跑一轮 —— 经每会话串行队列：会话正忙（上一轮未结束）时把本轮
+    // 排到 promise 链尾，当前轮结束后依次跑，杜绝同一会话并发两轮 agent turn。
+    // 不 await 链尾：让 onMessage 尽快返回，core 流式经 store.publish 广播 +
+    // streamBridge 异步回推飞书。错误在 runTurn 内经 error 帧广播 + bridge 回推。
+    const queue = this.runQueues.get(session.sessionId) ?? {
+      tail: Promise.resolve(),
+      depth: 0,
+    };
+    const wasBusy = queue.depth > 0;
+    queue.depth += 1;
+    queue.tail = queue.tail
+      .then(() => this.runTurn(session.sessionId, content))
+      .finally(() => {
+        queue.depth -= 1;
+        // 链上最后一轮跑完即摘除队列项，避免 Map 无界增长。
+        if (queue.depth === 0 && this.runQueues.get(session.sessionId) === queue) {
+          this.runQueues.delete(session.sessionId);
+        }
       });
-    } else {
-      // mock 兜底：core 未接时，回一条占位流式回复（对齐 server.ts mockEcho 精神），
-      // 既广播给 app、又经 streamBridge 回推飞书 —— 双向链路今晚即可端到端验证。
-      void this.mockEcho(session.sessionId);
+    this.runQueues.set(session.sessionId, queue);
+
+    // 排队提示（best effort）：会话正忙时告知用户消息已收到、在上一轮结束后处理。
+    if (wasBusy && this.gateway) {
+      void this.gateway
+        .sendMarkdown(
+          msg.chatId,
+          '⏳ 上一条消息还在处理中，这条已排队，稍后按顺序处理。',
+          msg.messageId,
+        )
+        .catch(() => undefined);
     }
 
     return null;
+  }
+
+  /**
+   * 跑一轮 agent turn（串行队列的执行单元）：接了 runtime 走 core，未接走 mock。
+   * 错误不抛出（经 error 帧广播，streamBridge 会把它回推飞书），保证队列不断链。
+   */
+  private async runTurn(
+    sessionId: string,
+    content: MessageContent,
+  ): Promise<void> {
+    const runtime = this.store.getRuntime(sessionId);
+    if (!runtime) {
+      // mock 兜底：core 未接时，回一条占位流式回复（对齐 server.ts mockEcho 精神），
+      // 既广播给 app、又经 streamBridge 回推飞书 —— 双向链路可端到端验证。
+      await this.mockEcho(sessionId);
+      return;
+    }
+    this.store.setStatus(sessionId, 'thinking');
+    try {
+      await runtime.run(content, 'feishu');
+    } catch (e) {
+      this.store.publish(sessionId, {
+        type: 'error',
+        payload: {
+          sessionId,
+          code: 'runtime_error',
+          message: errMsg(e),
+        },
+      });
+      this.store.setStatus(sessionId, 'error');
+    }
   }
 
   /**

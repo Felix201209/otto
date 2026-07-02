@@ -98,10 +98,22 @@ export async function loadSandboxConfig(
   const command = getSandboxCommand(sandboxOption);
 
   const packageJson = await getPackageJson();
-  const image =
+  // 用户显式指定的镜像：命令行参数 > OTTO_SANDBOX_IMAGE > GEMINI_SANDBOX_IMAGE（上游兼容）
+  const userConfiguredImage =
     argv.sandboxImage ??
-    process.env.GEMINI_SANDBOX_IMAGE ??
-    packageJson?.config?.sandboxImageUri;
+    process.env.OTTO_SANDBOX_IMAGE ??
+    process.env.GEMINI_SANDBOX_IMAGE;
+  const image = userConfiguredImage ?? packageJson?.config?.sandboxImageUri;
+
+  // 容器沙箱（docker/podman）会真正拉取并运行镜像；用户显式启用沙箱、
+  // 却没指定自有镜像而回落到 package.json 里的上游默认镜像时给出提示。
+  // macOS 的 sandbox-exec（seatbelt）不使用容器镜像，无需提示。
+  if (command && command !== 'sandbox-exec' && image && !userConfiguredImage) {
+    console.warn(
+      '提示：当前沙箱镜像为上游第三方镜像（Otto 尚未自建），' +
+        '建议通过 OTTO_SANDBOX_IMAGE 环境变量指定自有镜像。',
+    );
+  }
 
   return command && image ? { command, image } : undefined;
 }

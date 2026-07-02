@@ -14,19 +14,80 @@ const SETTINGS_DIRECTORY_NAME = '.otto-user';
 const CUSTOM_MODELS_FILE = 'custom-models.json';
 
 /**
- * 获取自定义模型配置文件路径
+ * 配置根目录：默认 ~/.otto-user；
+ * 可用 OTTO_USER_DIR 环境变量覆盖（测试隔离 / 沙箱重定向用）。
  */
-export function getCustomModelsFilePath(): string {
-  return path.join(homedir(), SETTINGS_DIRECTORY_NAME, CUSTOM_MODELS_FILE);
+function getSettingsDir(): string {
+  return process.env.OTTO_USER_DIR || path.join(homedir(), SETTINGS_DIRECTORY_NAME);
 }
 
 /**
- * 确保目录存在
+ * 获取自定义模型配置文件路径
+ */
+export function getCustomModelsFilePath(): string {
+  return path.join(getSettingsDir(), CUSTOM_MODELS_FILE);
+}
+
+/**
+ * 确保目录存在（0700：仅本用户可读写，配置目录可能存有 API key 相关文件）
  */
 function ensureDirectoryExists(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+    fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  } else {
+    // 旧版本可能以默认 umask 建目录，读写时顺手收紧
+    try {
+      fs.chmodSync(dirPath, 0o700);
+    } catch {
+      // Windows / 只读文件系统等场景忽略
+    }
   }
+}
+
+/**
+ * 把 API key 写进 ~/.otto-user/secrets/<name>（目录 0700、文件 0600），返回文件路径。
+ * 配置里只存 {file:...} 引用，明文 key 不落进 custom-models.json。
+ * 非交互 setup（modelSetupCli）与交互式向导的保存路径共用这一份逻辑。
+ */
+export function writeSecretFile(name: string, key: string): string {
+  const dir = path.join(getSettingsDir(), 'secrets');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch {
+    // 目录已存在时 mkdirSync 的 mode 不生效，chmod 兜底；失败（Windows 等）忽略
+  }
+  const safe = name.replace(/[^\w.-]/g, '_') || 'model';
+  const filePath = path.join(dir, safe);
+  fs.writeFileSync(filePath, key.trim() + '\n', { mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // 覆盖已存在文件时 writeFileSync 的 mode 不生效，chmod 兜底
+  }
+  return filePath;
+}
+
+/**
+ * 判断 apiKey 是否已是引用而非明文：
+ *   {file:...} / {env:...}（opencode 语法）、${VAR} / $VAR（旧语法，
+ *   含 Codex OAuth 哨兵 '${CODEX_OAUTH}'）。这些值由 core 侧 resolveEnvVar 解析。
+ */
+function isApiKeyReference(value: string): boolean {
+  const trimmed = (value || '').trim();
+  return /^\{(file|env):[^}]+\}$/.test(trimmed) || /\$\{[^}]+\}|\$\w+/.test(trimmed);
+}
+
+/**
+ * 落盘前收口：明文 apiKey 一律先写 0600 secret 文件，配置里改存 {file:...} 引用。
+ * 已是引用的原样返回。文件名用 displayName（配置主键），不同模型互不覆盖。
+ */
+function withSecuredApiKey(model: CustomModelConfig): CustomModelConfig {
+  if (!model.apiKey || isApiKeyReference(model.apiKey)) {
+    return model;
+  }
+  const secretPath = writeSecretFile(model.displayName, model.apiKey);
+  return { ...model, apiKey: `{file:${secretPath}}` };
 }
 
 /**
@@ -39,6 +100,13 @@ export function loadCustomModels(): CustomModelConfig[] {
   try {
     if (!fs.existsSync(filePath)) {
       return [];
+    }
+
+    // 旧版本以默认 umask（0644）落盘的文件，读到时顺手收紧权限
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch {
+      // Windows / 只读文件系统等场景忽略
     }
 
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -87,9 +155,14 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
       }
     }
 
+    // 明文 key 收口：落盘前统一转成 0600 secret 文件 + {file:...} 引用，
+    // custom-models.json 里不出现明文 API key（交互式向导等所有保存路径生效）。
+    // 读取侧不变：旧配置里已存在的明文 apiKey 照常可用（resolveEnvVar 原样返回）。
+    const securedModels = models.map(withSecuredApiKey);
+
     // 准备数据
     const data = {
-      models,
+      models: securedModels,
       _metadata: {
         version: '1.0',
         lastModified: new Date().toISOString(),
@@ -98,9 +171,9 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
 
     const jsonContent = JSON.stringify(data, null, 2);
 
-    // 原子写入：先写临时文件，再重命名
+    // 原子写入：先写临时文件（0600），再重命名（覆盖后权限随临时文件收紧）
     const tempFilePath = filePath + '.tmp';
-    fs.writeFileSync(tempFilePath, jsonContent, 'utf-8');
+    fs.writeFileSync(tempFilePath, jsonContent, { encoding: 'utf-8', mode: 0o600 });
     fs.renameSync(tempFilePath, filePath);
 
     console.log(`[CustomModels] Successfully saved ${models.length} custom model(s) to ${filePath}`);

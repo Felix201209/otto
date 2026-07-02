@@ -5,6 +5,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   FeishuGateway,
   buildCardKitStreamingCard,
@@ -13,7 +16,17 @@ import {
   CARDKIT_STREAMING_ELEMENT_ID,
   CARDKIT_FOOTER_ELEMENT_ID,
   CARDKIT_LOADING_ELEMENT_ID,
+  acquireFeishuGatewayLock,
+  feishuGatewayLockPath,
+  FeishuGatewayLockError,
+  splitMarkdownForFeishu,
 } from './gateway.js';
+
+// 连接锁隔离：connect() 会在锁目录创建 feishu-gateway-*.lock。测试一律指到
+// 临时目录，避免污染真实 ~/.otto-user/（甚至干扰本机正在跑的 daemon）。
+process.env['OTTO_FEISHU_LOCK_DIR'] = fs.mkdtempSync(
+  path.join(os.tmpdir(), 'otto-feishu-lock-test-'),
+);
 
 // Mock logger
 vi.mock('./logger.js', () => ({
@@ -2725,5 +2738,240 @@ describe('FeishuGateway - askGoalFormViaCard (goal contract form card)', () => {
     const result = await gateway.askGoalFormViaCard('oc_goal_chat', 50);
     expect(result.ok).toBe(false);
     expect(result.timedOut).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 跨进程连接互斥锁
+// ---------------------------------------------------------------------------
+
+describe('acquireFeishuGatewayLock (跨进程连接互斥)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-lock-unit-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('获取锁 → 写入 pid+startedAt；release 后锁文件删除', () => {
+    const handle = acquireFeishuGatewayLock('app_a', { dir, pid: 4242 });
+    expect(fs.existsSync(handle.path)).toBe(true);
+    const holder = JSON.parse(fs.readFileSync(handle.path, 'utf8'));
+    expect(holder.pid).toBe(4242);
+    expect(holder.startedAt).toBeGreaterThan(0);
+
+    handle.release();
+    expect(fs.existsSync(handle.path)).toBe(false);
+    // release 幂等
+    handle.release();
+  });
+
+  it('持有者存活 → 抛 FeishuGatewayLockError（冲突拒绝，含持有者 pid）', () => {
+    acquireFeishuGatewayLock('app_b', { dir, pid: 111 });
+    expect(() =>
+      acquireFeishuGatewayLock('app_b', {
+        dir,
+        pid: 222,
+        isPidAlive: (pid) => pid === 111,
+      }),
+    ).toThrowError(FeishuGatewayLockError);
+    try {
+      acquireFeishuGatewayLock('app_b', {
+        dir,
+        pid: 222,
+        isPidAlive: (pid) => pid === 111,
+      });
+    } catch (e) {
+      expect((e as FeishuGatewayLockError).holderPid).toBe(111);
+      expect((e as Error).message).toContain('另一进程 (pid 111)');
+    }
+  });
+
+  it('stale 锁（持有者已死）→ 接管成功，锁内容更新为新 pid', () => {
+    acquireFeishuGatewayLock('app_c', { dir, pid: 111 });
+    const handle = acquireFeishuGatewayLock('app_c', {
+      dir,
+      pid: 222,
+      isPidAlive: () => false, // 持有者已死
+    });
+    const holder = JSON.parse(fs.readFileSync(handle.path, 'utf8'));
+    expect(holder.pid).toBe(222);
+  });
+
+  it('损坏的锁文件 → 视为 stale 接管', () => {
+    const lockPath = feishuGatewayLockPath('app_d', dir);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(lockPath, 'not json at all');
+    const handle = acquireFeishuGatewayLock('app_d', {
+      dir,
+      pid: 333,
+      isPidAlive: () => true,
+    });
+    expect(JSON.parse(fs.readFileSync(handle.path, 'utf8')).pid).toBe(333);
+  });
+
+  it('appId 含危险字符 → 锁文件名被净化，不越出目录', () => {
+    const p = feishuGatewayLockPath('../../evil/app', dir);
+    // 关键安全属性：路径分隔符全部被净化，锁文件永远落在锁目录本层。
+    expect(path.dirname(p)).toBe(dir);
+    expect(path.basename(p)).not.toContain('/');
+    expect(path.basename(p).startsWith('feishu-gateway-')).toBe(true);
+  });
+});
+
+describe('FeishuGateway.connect 的连接锁集成', () => {
+  it('另一存活进程持有锁 → connect 拒绝（fail-loud 中文报错）', async () => {
+    const dir = process.env['OTTO_FEISHU_LOCK_DIR']!;
+    // pid 1 (launchd/init) 恒存活且非本进程 → 触发冲突分支。
+    fs.writeFileSync(
+      feishuGatewayLockPath('locked-app', dir),
+      JSON.stringify({ pid: 1, startedAt: Date.now() }),
+    );
+    const gw = new FeishuGateway('locked-app', 'secret');
+    await expect(gw.connect()).rejects.toThrow(/另一进程 \(pid 1\)/);
+  });
+
+  it('connect 获取锁（记录本进程 pid），disconnect 释放', async () => {
+    const dir = process.env['OTTO_FEISHU_LOCK_DIR']!;
+    const gw = new FeishuGateway('lock-flow-app', 'secret');
+    await gw.connect();
+    const lockPath = feishuGatewayLockPath('lock-flow-app', dir);
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8')).pid).toBe(process.pid);
+
+    await gw.disconnect();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 出站消息超长分片
+// ---------------------------------------------------------------------------
+
+describe('splitMarkdownForFeishu (出站超长分片)', () => {
+  it('不超限 → 原样单条', () => {
+    expect(splitMarkdownForFeishu('hello\n\nworld', 100)).toEqual([
+      'hello\n\nworld',
+    ]);
+  });
+
+  it('超长文本按段落边界分片，每片不超限且内容无损', () => {
+    const para = 'x'.repeat(40);
+    const md = [para, para, para].join('\n\n');
+    const pieces = splitMarkdownForFeishu(md, 100);
+    expect(pieces).toHaveLength(2); // 40+2+40=82 装得下，再加 42 超限
+    for (const p of pieces) {
+      expect(p.length).toBeLessThanOrEqual(100);
+    }
+    expect(pieces.join('\n\n')).toBe(md);
+  });
+
+  it('代码块围栏不被打断（跨界代码块整体挪到下一片）', () => {
+    const intro = 'a'.repeat(80);
+    const code = '```ts\n' + 'line\n'.repeat(10) + '```';
+    const pieces = splitMarkdownForFeishu(`${intro}\n\n${code}`, 100);
+    expect(pieces).toEqual([intro, code]);
+    // 每片围栏数配平（偶数个围栏行 = 无被劈开的代码块）
+    for (const p of pieces) {
+      const fences = p
+        .split('\n')
+        .filter((l) => l.trimStart().startsWith('```')).length;
+      expect(fences % 2).toBe(0);
+    }
+  });
+
+  it('单个超大代码块拆分时每片自动补回围栏（保留语言标签）', () => {
+    const body = Array.from(
+      { length: 50 },
+      (_, i) => `print(${i})  # ${'y'.repeat(20)}`,
+    ).join('\n');
+    const code = '```python\n' + body + '\n```';
+    const pieces = splitMarkdownForFeishu(code, 300);
+    expect(pieces.length).toBeGreaterThan(1);
+    for (const p of pieces) {
+      expect(p.startsWith('```python\n')).toBe(true);
+      expect(p.endsWith('\n```')).toBe(true);
+      expect(p.length).toBeLessThanOrEqual(300);
+    }
+    // 代码行内容无损（去围栏后拼回 = 原 body）
+    const rejoined = pieces
+      .map((p) => p.split('\n').slice(1, -1).join('\n'))
+      .join('\n');
+    expect(rejoined).toBe(body);
+  });
+});
+
+describe('FeishuGateway.sendMarkdown 超长分片发送', () => {
+  let gateway: FeishuGateway;
+  const mockFetchOk = (body: unknown) =>
+    ({ ok: true, json: async () => body }) as unknown as Response;
+
+  beforeEach(() => {
+    gateway = new FeishuGateway('mock-app-id', 'mock-app-secret');
+    vi.spyOn(gateway, 'getTenantToken').mockResolvedValue('mock-token');
+  });
+
+  it('超长内容 → 按 (i/n) 标记分片顺序发出，返回首片 message_id', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(mockFetchOk({ code: 0, data: { message_id: 'om_piece' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 45 段 × 1000 字符 ≈ 45KB → 默认 20000 上限下切成 3 片
+    const md = Array.from({ length: 45 }, () => 'A'.repeat(1000)).join('\n\n');
+    const id = await gateway.sendMarkdown('oc_long', md);
+
+    expect(id).toBe('om_piece');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(firstBody.content).toContain('(1/3)');
+    const lastBody = JSON.parse(fetchMock.mock.calls[2][1]?.body as string);
+    expect(lastBody.content).toContain('(3/3)');
+  });
+
+  it('单片失败重试一次成功 → 整体成功', async () => {
+    const fetchMock = vi
+      .fn()
+      // 第 1 片 OK
+      .mockResolvedValueOnce(mockFetchOk({ code: 0, data: { message_id: 'om_1' } }))
+      // 第 2 片首发失败 → 重试成功
+      .mockResolvedValueOnce(mockFetchOk({ code: 99, msg: 'rate limited' }))
+      .mockResolvedValueOnce(mockFetchOk({ code: 0, data: { message_id: 'om_2' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const md = Array.from({ length: 25 }, () => 'B'.repeat(1000)).join('\n\n'); // 2 片
+    const id = await gateway.sendMarkdown('oc_long', md);
+    expect(id).toBe('om_1'); // 首片 id
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('单片重试后仍失败 → 返回 null（调用方可上报失败）', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchOk({ code: 0, data: { message_id: 'om_1' } }))
+      .mockResolvedValueOnce(mockFetchOk({ code: 99, msg: 'too large' }))
+      .mockResolvedValueOnce(mockFetchOk({ code: 99, msg: 'too large' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const md = Array.from({ length: 25 }, () => 'C'.repeat(1000)).join('\n\n'); // 2 片
+    const id = await gateway.sendMarkdown('oc_long', md);
+    expect(id).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3); // 1 片成功 + 2 片两次失败后放弃
+  });
+
+  it('短内容 → 不分片，单条原样发出（无 (i/n) 标记）', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(mockFetchOk({ code: 0, data: { message_id: 'om_s' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const id = await gateway.sendMarkdown('oc_short', '短消息');
+    expect(id).toBe('om_s');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(body.content).not.toContain('(1/');
   });
 });

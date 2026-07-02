@@ -17,11 +17,11 @@
  *   2. API key 默认写进一个 0600 加密文件，配置里只存 {file:...} 引用，
  *      key 不落进 custom-models.json，且永远不必经过 TUI 粘贴。
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { loadSettings, SettingScope } from './config/settings.js';
-import { addOrUpdateCustomModel } from './config/customModelsStorage.js';
+import {
+  addOrUpdateCustomModel,
+  writeSecretFile,
+} from './config/customModelsStorage.js';
 import {
   loadModelsDevCatalog,
   findProvider,
@@ -48,6 +48,12 @@ export interface NonInteractiveModelSetupOpts {
   list?: boolean;
   /** --models <provider>：列出某供应商的模型。 */
   listModels?: string;
+  /**
+   * 出现在命令行里、却没跟取值的参数（如 `--key --model glm-5.1` 里的 --key，
+   * 下一个 token 是另一个 flag）。由 otto.tsx 的 getFlag 侧判定后传入，
+   * 这里统一给出中文报错并非零退出，防止把 "--model" 之类误当 key 写进密钥文件。
+   */
+  missingValueFlags?: string[];
   workspaceRoot?: string;
 }
 
@@ -55,16 +61,6 @@ type SetupResult = { text: string; code: number };
 
 const err = (text: string): SetupResult => ({ text, code: 1 });
 const ok = (text: string): SetupResult => ({ text, code: 0 });
-
-/** 把 key 写进 ~/.otto-user/secrets/<provider>（0600），返回路径。 */
-function writeSecretFile(providerId: string, key: string): string {
-  const dir = join(homedir(), '.otto-user', 'secrets');
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const safe = providerId.replace(/[^\w.-]/g, '_') || 'model';
-  const path = join(dir, safe);
-  writeFileSync(path, key.trim() + '\n', { mode: 0o600 });
-  return path;
-}
 
 function listProviders(providers: CatalogProvider[]): SetupResult {
   // 优先把常用的几家排前面，其余按名称
@@ -102,6 +98,14 @@ function listModels(providers: CatalogProvider[], query: string): SetupResult {
 export async function runNonInteractiveModelSetup(
   opts: NonInteractiveModelSetupOpts,
 ): Promise<SetupResult> {
+  // 先拦缺取值的参数（在加载 models.dev 目录之前），给出明确中文报错
+  if (opts.missingValueFlags && opts.missingValueFlags.length > 0) {
+    return err(
+      `参数 ${opts.missingValueFlags.join('、')} 缺少取值。` +
+        '请在参数后紧跟对应的值，例如：otto setup --provider zhipuai --model glm-5.1 --key <你的KEY>',
+    );
+  }
+
   const providers = await loadModelsDevCatalog();
 
   if (opts.list) return listProviders(providers);

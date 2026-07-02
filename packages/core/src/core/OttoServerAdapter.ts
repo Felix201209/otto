@@ -42,6 +42,8 @@ import * as os from 'os';
  * 用途：当用户报告"X 模型 Y 现象不对"时，用 scripts/probe-replay-cli-request.mjs
  * 直接读取这个文件做字节级对账，避免依赖协议层猜测。
  *
+ * - 默认关闭：请求体含完整对话内容，仅当 FILE_DEBUG=1（与 enhancedLogger 的
+ *   requestData 落盘开关一致）时才 dump；开启时目录 0700、文件 0600
  * - 滚动保留最近 5 次（按调用时间命名）
  * - 同时维护 last-stream-request.json 软链等价文件指向最新一次（兼容旧 probe 脚本）
  * - 异步写入，失败只 warn 不阻塞主流程
@@ -54,6 +56,11 @@ const REQUEST_DUMP_DIR = path.join(os.homedir(), '.otto-user', 'last-requests');
 const REQUEST_DUMP_LATEST = path.join(os.homedir(), '.otto-user', 'last-stream-request.json');
 const REQUEST_DUMP_RING_SIZE = 5;
 function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
+  // 默认关闭：仅显式开启文件级调试时才把含对话内容的请求体落盘
+  if (process.env.FILE_DEBUG !== '1') {
+    return;
+  }
+
   // 同步部分尽量短；真正落盘走 promise 异步
   let serialized: string;
   let size: number;
@@ -70,8 +77,10 @@ function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
   // 异步执行，错误吞掉避免污染主流程
   void (async () => {
     try {
-      await fs.promises.mkdir(REQUEST_DUMP_DIR, { recursive: true });
-      await fs.promises.writeFile(ringFile, serialized, 'utf8');
+      await fs.promises.mkdir(REQUEST_DUMP_DIR, { recursive: true, mode: 0o700 });
+      // 目录已存在时 mkdir 的 mode 不生效，chmod 兜底收紧
+      await fs.promises.chmod(REQUEST_DUMP_DIR, 0o700).catch(() => {});
+      await fs.promises.writeFile(ringFile, serialized, { encoding: 'utf8', mode: 0o600 });
 
       // 维护 ring：保留最近 N 个，删掉更老的
       const entries = await fs.promises.readdir(REQUEST_DUMP_DIR);
@@ -89,7 +98,9 @@ function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
       // 兼容旧 probe 脚本：写一份 last-stream-request.json 指向最新
       // （仅 stream 路径写，避免 unified 请求覆盖掉 stream 路径的诊断价值）
       if (kind === 'stream') {
-        await fs.promises.writeFile(REQUEST_DUMP_LATEST, serialized, 'utf8');
+        await fs.promises.writeFile(REQUEST_DUMP_LATEST, serialized, { encoding: 'utf8', mode: 0o600 });
+        // 覆盖已存在文件时 writeFile 的 mode 不生效，chmod 兜底收紧
+        await fs.promises.chmod(REQUEST_DUMP_LATEST, 0o600).catch(() => {});
       }
     } catch (err) {
       // 落盘失败不影响主流程，记一条 warn 即可
@@ -820,7 +831,7 @@ export class OttoServerAdapter implements ContentGenerator {
         // 日志不能障碍请求
       }
 
-      // 落盘出站请求体（异步，不阻塞 fetch）。non-stream 路径也保留诊断价值。
+      // 落盘出站请求体（异步，不阻塞 fetch；默认关闭，FILE_DEBUG=1 开启）。
       dumpOutboundRequest('unified', requestBody);
 
       const response = await fetch(proxyUrl, {
@@ -1280,8 +1291,8 @@ export class OttoServerAdapter implements ContentGenerator {
         // 日志不能障碍请求
       }
 
-      // 落盘出站请求体（异步，不阻塞 fetch）。
-      // 用户报告问题时让他们把 ~/.otto/last-requests/ 给我们做字节级对账。
+      // 落盘出站请求体（异步，不阻塞 fetch；默认关闭）。
+      // 用户报告问题时让他们带 FILE_DEBUG=1 复现，再把 ~/.otto-user/last-requests/ 给我们做字节级对账。
       dumpOutboundRequest('stream', requestBody);
 
       const response = await fetch(proxyUrl, {

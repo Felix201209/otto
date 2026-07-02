@@ -13,7 +13,7 @@
  *
  * 命令：otto feishu daemon <start|stop|status>
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -62,6 +62,41 @@ function clearPidFile(): void {
     fs.unlinkSync(PID_FILE);
   } catch {
     /* 文件不存在即可忽略 */
+  }
+}
+
+/** 进程身份信息（stop 前校验用，防 PID 复用误杀无关进程）。 */
+export interface ProcIdentity {
+  /** 进程启动时间（毫秒时间戳）；ps lstart 解析失败时为 null。 */
+  startedAtMs: number | null;
+  /** 进程完整命令行。 */
+  command: string;
+}
+
+/**
+ * pid 文件记录的 startedAt 与 ps 实测启动时间的允许误差。
+ * 正常 spawn → 写 pid 文件间隔 <1s（ps lstart 精度 1s）；PID 被复用的无关进程
+ * 启动时间通常与记录相差极大，60s 容差足以区分且不误伤。
+ */
+const PID_START_TOLERANCE_MS = 60_000;
+
+/**
+ * 用 ps 读取进程的启动时间与命令行（macOS/Linux 通用列）。
+ * 进程不存在 / ps 不可用返回 null。
+ */
+function readProcIdentity(pid: number): ProcIdentity | null {
+  try {
+    const lstart = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+    }).trim();
+    const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+      encoding: 'utf8',
+    }).trim();
+    if (!command) return null;
+    const parsed = Date.parse(lstart);
+    return { startedAtMs: Number.isNaN(parsed) ? null : parsed, command };
+  } catch {
+    return null;
   }
 }
 
@@ -176,13 +211,39 @@ export function feishuDaemonStatus(now = Date.now()): { text: string; running: b
   };
 }
 
-export function feishuDaemonStop(): { text: string } {
+/**
+ * 停止 daemon。
+ * @param readIdentity 仅供测试注入：进程身份读取器（缺省用 ps 实测）。
+ */
+export function feishuDaemonStop(
+  readIdentity: (pid: number) => ProcIdentity | null = readProcIdentity,
+): { text: string } {
   const info = readPidInfo();
   if (!info || !isAlive(info.pid)) {
     clearPidFile();
     clearHealth();
     return { text: '⚪ 飞书 daemon 未在运行。' };
   }
+
+  // 🛡️ 防 PID 复用误杀：SIGTERM 前校验该 pid 的命令行确实像 otto/node 进程，
+  // 且（若 pid 文件记录了 startedAt）实测启动时间与记录相符（允许合理误差）。
+  // 校验不过 → 只清理 pid 文件，不发信号。
+  const ident = readIdentity(info.pid);
+  const looksLikeOtto = ident !== null && /otto|node/i.test(ident.command);
+  const startMatches =
+    !info.startedAt ||
+    ident?.startedAtMs == null ||
+    Math.abs(ident.startedAtMs - info.startedAt) <= PID_START_TOLERANCE_MS;
+  if (!ident || !looksLikeOtto || !startMatches) {
+    clearPidFile();
+    clearHealth();
+    return {
+      text:
+        `⚠️ PID ${info.pid} 已不是当初启动的 daemon 进程（疑似 PID 被系统复用给了无关进程），` +
+        `仅清理记录，不发送停止信号。`,
+    };
+  }
+
   try {
     process.kill(info.pid, 'SIGTERM');
     clearPidFile();
@@ -191,6 +252,42 @@ export function feishuDaemonStop(): { text: string } {
   } catch (e) {
     return { text: `❌ 停止失败 (PID ${info.pid}): ${(e as Error).message}` };
   }
+}
+
+/** 新建占位 pid 文件被视为「另一个 start 正在进行」的时效窗口。 */
+const PID_PLACEHOLDER_FRESH_MS = 30_000;
+
+/**
+ * O_EXCL 原子创建 pid 文件（并发 start 互斥）。
+ *
+ * 成功返回打开的 fd（已写入 pid:0 占位内容）；EEXIST 时：
+ *   - 持有者 pid 存活 → 返回 null（已在运行/正在启动）；
+ *   - 文件无法解析且很新 → 视为另一个 start 的占位，返回 null；
+ *   - 其余（stale 残留：持有者已死 / 老旧损坏文件）→ 清掉重试一轮。
+ */
+function openPidFileExclusive(now: number): number | null {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(PID_FILE, 'wx', 0o600);
+      fs.writeSync(fd, JSON.stringify({ pid: 0, startedAt: now }));
+      return fd;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+      const holder = readPidInfo();
+      if (holder && isAlive(holder.pid)) return null; // 真有 daemon 在跑/在启动
+      if (!holder) {
+        // 解析不出 pid：可能是并发 start 刚创建的占位文件 —— 很新就让路。
+        try {
+          const st = fs.statSync(PID_FILE);
+          if (now - st.mtimeMs < PID_PLACEHOLDER_FRESH_MS) return null;
+        } catch {
+          /* 文件已消失，直接重试 */
+        }
+      }
+      clearPidFile(); // stale 残留 → 清掉重试一轮
+    }
+  }
+  return null;
 }
 
 /**
@@ -220,6 +317,16 @@ export function feishuDaemonStart(
     /* 目录已存在即可忽略 */
   }
 
+  // 🔒 并发 start 互斥：O_EXCL 原子创建 pid 文件占位（先写 pid:0 占位，spawn 成功
+  // 后回填真实 pid）。上面的存活探测与写 pid 之间原本无锁，双开 start 会各 spawn
+  // 一个子进程、后写者覆盖前者的 pid 记录，产生不被追踪的孤儿进程。
+  const pidFd = openPidFileExclusive(now);
+  if (pidFd === null) {
+    return {
+      text: '⚠️ 检测到另一个 daemon start 正在进行（pid 文件已被占用），本次不启动。稍后用 otto feishu daemon status 查看。',
+    };
+  }
+
   // 日志会捕获子进程 stdout/stderr（含 OAuth 授权 URL 等敏感输出），与同目录其它
   // 文件一样收紧到 0o600（openSync 的 mode 仅对新建文件生效，旧日志再 chmod 兜底）。
   const logFd = fs.openSync(LOG_FILE, 'a', 0o600);
@@ -241,13 +348,20 @@ export function feishuDaemonStart(
   child.unref();
 
   if (!child.pid) {
+    // spawn 失败：释放占位 pid 文件，避免死锁后续 start。
+    try {
+      fs.closeSync(pidFd);
+    } catch {
+      /* ignore */
+    }
+    clearPidFile();
     return { text: '❌ 启动失败：无法 spawn daemon 进程。' };
   }
 
-  fs.writeFileSync(PID_FILE, JSON.stringify({ pid: child.pid, startedAt: now }), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  // 回填真实 pid（占位内容长度可能不同，先截断再从头写）。
+  fs.ftruncateSync(pidFd, 0);
+  fs.writeSync(pidFd, JSON.stringify({ pid: child.pid, startedAt: now }), 0);
+  fs.closeSync(pidFd);
 
   return {
     pid: child.pid,

@@ -9,7 +9,8 @@ import os from 'os';
 import { join as pathJoin } from 'node:path';
 import { getErrorMessage } from 'otto-core';
 
-const warningsFilePath = pathJoin(os.tmpdir(), 'gemini-cli-warnings.txt');
+// 注意：与 scripts/check-build-status.js（写入方）使用同一文件名，改名需两处同步
+const warningsFilePath = pathJoin(os.tmpdir(), 'otto-warnings.txt');
 
 export async function getStartupWarnings(): Promise<string[]> {
   try {

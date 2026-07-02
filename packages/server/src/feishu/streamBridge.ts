@@ -19,9 +19,13 @@
  *     桥照常订阅回推。
  *   - core 未接（mock 兜底）时，mock 也走同一套 publish，飞书侧同样能看到回推。
  *
- * 节流逻辑对齐 cli `feishuCommand.ts` 主循环：CardKit 2.0 流式卡 +
- * 1.5s 节流 pushContent + chat_complete 时 finalize。CardKit 创建失败则
- * 回退到「整段 sendMarkdown」一次性发出。
+ * 回推策略与实际行为一致（注意 CardKit 2.0 默认是**关闭**的，见
+ * gateway.isCardKitV2Enabled：生产不稳定，需 OTTO_FEISHU_CARDKIT_V2=1 显式开启）：
+ *   - CardKit 启用且起卡成功：1.5s 节流 pushContent 打字机流式 +
+ *     chat_complete 时 finalize（对齐 cli `feishuCommand.ts` 主循环）。
+ *   - CardKit 关闭 / 起卡失败（默认配置即如此）：首个 chunk 先发一条
+ *     「⏳ 正在处理」提示（每条 assistant 流仅一次，避免长任务期间全程静默），
+ *     chat_complete 时整段 sendMarkdown 一次性发出。
  */
 
 import type { ServerToClient } from '../protocol.js';
@@ -164,9 +168,19 @@ export function bridgeSessionToFeishu(
                 finalize: handle.finalize,
               };
             } else {
-              // CardKit 不可用：本流降级为「最终一次 sendMarkdown」，
-              // 中途增量不刷（避免狂发普通消息刷屏）。
+              // CardKit 不可用（默认配置即如此，见 isCardKitV2Enabled）：
+              // 本流降级为「最终一次 sendMarkdown」，中途增量不刷（避免狂发
+              // 普通消息刷屏）。但长任务期间不能全程静默——先发一条提示让
+              // 用户知道已受理（本块只在首个 chunk 进入一次，天然只发一次；
+              // best effort，提示发不出去不影响最终回复）。
               s.streaming = null;
+              await gateway
+                .sendMarkdown(
+                  feishuChatId,
+                  '⏳ 正在处理，完成后回复完整结果…',
+                  replyToMessageId,
+                )
+                .catch(() => null);
             }
             s.lastPushAt = Date.now();
           });
