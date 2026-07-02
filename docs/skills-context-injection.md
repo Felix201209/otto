@@ -434,7 +434,7 @@ When in doubt, prefer loading the skill first.
 ### 相关文档
 - `docs/skills-usage.md` - Skills 使用指南
 - `docs/HOOKS_INDEX.md` - Hooks 系统文档
-- `SKILL_MIGRATION.md` - Skills 系统迁移指南
+- `docs/archive/SKILL_MIGRATION.md` - Skills 系统迁移指南
 
 ---
 

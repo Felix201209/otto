@@ -89,6 +89,10 @@ packages/cli/clipboard/
 # Debug exports (local diagnostics)
 debug_export_*.md
 probe-output.jsonl
+build_output.txt
+
+# LLM-generated wiki (local diagnostics)
+.llm-wiki/
 
 # Local runtime config & artifacts (per-project, never commit)
 .easycode/
