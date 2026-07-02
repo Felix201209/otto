@@ -460,6 +460,9 @@ export function SetupPanel({
               {copied === 'cli' ? '已复制命令 ✓' : '复制 otto setup 命令'}
             </button>
           </div>
+          <p className="otto-setup__hint">
+            已用占位符代替 API Key，粘贴后请自行填入。
+          </p>
         </div>
 
         <footer className="otto-setup__foot">

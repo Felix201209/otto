@@ -12,7 +12,7 @@
  * 纯内存，无 DOM / 无网络。
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InMemorySessionStore } from './sessions.js';
 import type { SessionRuntime } from './sessions.js';
 import type { OttoMessage, ServerToClient } from './protocol.js';
@@ -334,6 +334,45 @@ describe('InMemorySessionStore', () => {
       // feishuIndex 已清：getOrCreate 会建新会话
       const recreated = store.getOrCreateFeishuSession('oc_del');
       expect(recreated.sessionId).not.toBe(s.sessionId);
+    });
+
+    it('runtime.dispose 失败 → console.warn 带 sessionId，不改变控制流', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const runtime: SessionRuntime = {
+        async run() {},
+        cancel() {},
+        setModel() {},
+        async dispose() {
+          throw new Error('dispose 炸了');
+        },
+      };
+      const s = store.createSession();
+      store.attachRuntime(s.sessionId, runtime);
+      await expect(store.deleteSession(s.sessionId)).resolves.toBeUndefined();
+      expect(store.getSession(s.sessionId)).toBeUndefined(); // 会话照删
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(String(warnSpy.mock.calls[0][0])).toContain(s.sessionId);
+      warnSpy.mockRestore();
+    });
+
+    it('LRU 淘汰路径 dispose 失败 → 也打 console.warn（fire-and-forget）', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const small = new InMemorySessionStore({ maxSessions: 1 });
+      const runtime: SessionRuntime = {
+        async run() {},
+        cancel() {},
+        setModel() {},
+        async dispose() {
+          throw new Error('dispose 炸了');
+        },
+      };
+      const s1 = small.createSession({ title: '旧' });
+      small.attachRuntime(s1.sessionId, runtime);
+      small.createSession({ title: '新' }); // 触发淘汰 s1
+      await new Promise((r) => setTimeout(r, 0)); // 等 fire-and-forget 的 catch 跑完
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(String(warnSpy.mock.calls[0][0])).toContain(s1.sessionId);
+      warnSpy.mockRestore();
     });
 
     it('删不存在的 session 不抛', async () => {

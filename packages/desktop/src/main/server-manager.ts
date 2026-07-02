@@ -49,18 +49,26 @@ export interface EnsuredServer {
 }
 
 export class ServerManager {
-  /** 仅当 ownership==='embedded' 时持有，用于 before-quit 时停掉。 */
+  /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
   private embedded?: OttoServer;
   private ownership: ServerOwnership = 'discovered';
+  /**
+   * 已进入退出流程（shutdown 被调过）。ensure 的每个异步完成点都要检查它：
+   * 用户可能在 ensure 完成前就关窗退出，此时 shutdown 先跑完、拉起才结束，
+   * 不检查就会留下一个没人管的孤儿 server。
+   */
+  private shuttingDown = false;
 
   /**
    * 确保有可用 server，返回其端点。已尽量幂等：可重复调用（重连场景）。
    */
   async ensure(): Promise<EnsuredServer> {
+    this.throwIfShuttingDown();
     // 1) 发现并探活已运行的 server（headless / CLI 已在跑时直接复用）。
     const discovered = readEndpoint();
     if (discovered && pidAlive(discovered.pid)) {
       const healthy = await probeHealth(discovered.host, discovered.port);
+      this.throwIfShuttingDown();
       if (healthy) {
         this.ownership = 'discovered';
         return { endpoint: discovered, ownership: 'discovered' };
@@ -85,9 +93,13 @@ export class ServerManager {
 
   /**
    * app 退出清理：只在内嵌时停 server（discovered 的 server 故意留活）。
+   * 先置 shuttingDown，让还在跑的 ensure()/startEmbedded() 在完成点自行终止。
    */
   async shutdown(): Promise<void> {
-    if (this.ownership === 'embedded' && this.embedded) {
+    this.shuttingDown = true;
+    // 判 this.embedded 而非 ownership：embedded 只在本进程拉起时赋值，
+    // 且 ownership 的赋值晚于拉起完成，退出竞态窗口内以 embedded 为准。
+    if (this.embedded) {
       try {
         await this.embedded.stop();
       } catch {
@@ -101,14 +113,36 @@ export class ServerManager {
 
   // ──────────────────────────────────────────────────────────────────────
 
+  /** 已进入退出流程时抛错，令 ensure 调用方终止后续动作。 */
+  private throwIfShuttingDown(): void {
+    if (this.shuttingDown) {
+      throw new Error('app 正在退出，放弃确保 server');
+    }
+  }
+
   /** 同进程内嵌 OttoServer（embedded-only 的唯一拉起路径）。 */
   private async startEmbedded(port: number): Promise<ServerEndpoint> {
     // 用户已 setup 飞书凭证时启用飞书网关，让桌面 app 的飞书双向同步真正激活
     // （adapter 对无凭证已 fail-soft，这里仅在凭证文件存在时开）。Issue #3/#6。
     const enableFeishu = feishuCredentialsExist();
-    this.embedded = new OttoServer({ host: DEFAULT_HOST, port, enableFeishu });
-    await this.embedded.start();
-    const { host, port: boundPort } = this.embedded.endpoint;
+    const server = new OttoServer({ host: DEFAULT_HOST, port, enableFeishu });
+    await server.start();
+    // listen 完成时若已进入退出流程（shutdown 与 ensure 竞态：shutdown 先跑完、
+    // 这里才 listen 成功），立即停掉刚起的 server 并清理端点文件，不留孤儿。
+    if (this.shuttingDown) {
+      try {
+        await server.stop();
+      } catch {
+        // 退出路径，吞掉。
+      } finally {
+        clearEndpoint();
+      }
+      throw new Error('app 正在退出，已停掉刚拉起的内嵌 server');
+    }
+    // start 成功且未在退出流程，才把引用交给 shutdown 管理
+    // （避免 shutdown 对一个 start 尚未完成的 server 调 stop）。
+    this.embedded = server;
+    const { host, port: boundPort } = server.endpoint;
     // 内嵌 server 由本进程写端点文件。
     return writeEndpoint(host, boundPort);
   }

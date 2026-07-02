@@ -107,6 +107,25 @@ describe('parseDiff', () => {
     expect(add?.content).toBe('new'); // 无尾随 \r
   });
 
+  it('`\\ No newline at end of file` 标记行被跳过且不推进行号', () => {
+    const raw = [
+      '@@ -1,2 +1,2 @@',
+      ' a',
+      '-old',
+      '\\ No newline at end of file',
+      '+new',
+      '\\ No newline at end of file',
+    ].join('\n');
+    const { lines, stats } = parseDiff(raw);
+    expect(stats).toEqual({ added: 1, removed: 1 });
+    // 标记行不出现在输出里：只剩 hunk + context + del + add
+    expect(lines).toHaveLength(4);
+    expect(lines.some((l) => l.content.includes('No newline'))).toBe(false);
+    // 行号不被标记行多推
+    expect(lines.find((l) => l.type === 'del')?.oldLine).toBe(2);
+    expect(lines.find((l) => l.type === 'add')?.newLine).toBe(2);
+  });
+
   it('内容去掉前缀符号', () => {
     const { lines } = parseDiff('@@ -1,1 +1,1 @@\n+hello');
     const add = lines.find((l) => l.type === 'add');

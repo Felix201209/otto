@@ -51,33 +51,50 @@ interface Segment {
   value: string;
 }
 
-/** 匹配闭合的围栏代码块：```lang\n…``` */
-const FENCE = /```([^\n`]*)\n?([\s\S]*?)```/g;
+/** 围栏开启行：``` 位于行首，其余为语言信息串（GFM：信息串不含反引号）。 */
+const FENCE_OPEN = /^```([^`]*)$/;
+/** 围栏结束行：``` 位于行首且独占一行（允许尾随空白）。 */
+const FENCE_CLOSE = /^```\s*$/;
 
+/**
+ * 按行扫描解析围栏代码块（标准 Markdown 语义）：
+ *   - 开启/结束定界符必须位于行首；结束行独占一行（允许尾随空白）。
+ *   - 行中间出现的 ``` 一律当普通文本/代码内容，不作定界符。
+ *   - 未闭合的围栏按 GFM 行为算到文末（流式期间自然呈现为进行中的代码块）。
+ */
 function parseSegments(text: string): Segment[] {
   const segments: Segment[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  FENCE.lastIndex = 0;
-  while ((m = FENCE.exec(text)) !== null) {
-    if (m.index > last) {
-      segments.push({ type: 'text', value: text.slice(last, m.index) });
+  let textBuf: string[] = [];
+  let codeBuf: string[] | null = null;
+  let lang: string | undefined;
+
+  const flushText = (): void => {
+    const value = textBuf.join('\n');
+    if (value) segments.push({ type: 'text', value });
+    textBuf = [];
+  };
+
+  for (const line of text.split('\n')) {
+    if (codeBuf === null) {
+      const m = FENCE_OPEN.exec(line);
+      if (m) {
+        flushText();
+        lang = m[1].trim() || undefined;
+        codeBuf = [];
+      } else {
+        textBuf.push(line);
+      }
+    } else if (FENCE_CLOSE.test(line)) {
+      segments.push({ type: 'code', lang, value: codeBuf.join('\n') });
+      codeBuf = null;
+    } else {
+      codeBuf.push(line);
     }
-    segments.push({ type: 'code', lang: m[1].trim() || undefined, value: m[2] });
-    last = m.index + m[0].length;
   }
-  // 处理剩余部分：流式期间可能有「已开头但未闭合」的代码块。
-  const rest = text.slice(last);
-  const open = rest.indexOf('```');
-  if (open >= 0) {
-    if (open > 0) segments.push({ type: 'text', value: rest.slice(0, open) });
-    const after = rest.slice(open + 3);
-    const nl = after.indexOf('\n');
-    const lang = (nl >= 0 ? after.slice(0, nl) : after).trim();
-    const body = nl >= 0 ? after.slice(nl + 1) : '';
-    segments.push({ type: 'code', lang: lang || undefined, value: body });
-  } else if (rest.length > 0) {
-    segments.push({ type: 'text', value: rest });
+  if (codeBuf !== null) {
+    segments.push({ type: 'code', lang, value: codeBuf.join('\n') });
+  } else {
+    flushText();
   }
   return segments;
 }

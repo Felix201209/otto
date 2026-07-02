@@ -283,10 +283,11 @@ export function validateForm(form: SetupFormState): Record<string, string> {
 /**
  * 生成与 CLI/server 完全一致的 `~/.otto-user/custom-models.json` 文本片段。
  * 落盘端点未实装时，把这段交给用户复制 / CLI 写入（见 SetupPanel 的「写入端点待补」）。
+ * apiKey 与 buildCliCommand 一致用占位符——明文 key 不进剪贴板，粘贴后用户自行填入。
  */
 export function buildModelsFileJson(cfg: CustomModelConfig): string {
   const data = {
-    models: [cfg],
+    models: [{ ...cfg, apiKey: '<你的API_KEY>' }],
     _metadata: {
       version: '1.0',
       lastModified: new Date().toISOString(),

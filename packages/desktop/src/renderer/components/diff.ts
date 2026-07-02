@@ -80,6 +80,11 @@ export function parseDiff(raw: string): ParsedDiff {
       continue;
     }
 
+    // `\ No newline at end of file` 标记行：非内容行，跳过且不推进行号。
+    if (row.startsWith('\\')) {
+      continue;
+    }
+
     const marker = row[0];
     const content = row.slice(1);
     if (marker === '+') {

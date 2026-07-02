@@ -172,7 +172,12 @@ export class InMemorySessionStore implements SessionStore {
       this.feishuIndex.delete(s.summary.feishuChatId);
     }
     this.sessions.delete(sessionId);
-    void s.runtime?.dispose().catch(() => undefined);
+    void s.runtime?.dispose().catch((e) => {
+      // dispose 失败不影响淘汰流程，但留一条日志便于排查资源泄漏。
+      console.warn(
+        `[sessions] runtime dispose 失败（sessionId=${sessionId}）：${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
     for (const cb of this.evictListeners) {
       try {
         cb(sessionId);
@@ -352,7 +357,12 @@ export class InMemorySessionStore implements SessionStore {
   async deleteSession(sessionId: string): Promise<void> {
     const s = this.sessions.get(sessionId);
     if (!s) return;
-    await s.runtime?.dispose().catch(() => undefined);
+    await s.runtime?.dispose().catch((e) => {
+      // dispose 失败不阻断删除，但留一条日志便于排查资源泄漏。
+      console.warn(
+        `[sessions] runtime dispose 失败（sessionId=${sessionId}）：${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
     if (s.summary.feishuChatId) {
       this.feishuIndex.delete(s.summary.feishuChatId);
     }

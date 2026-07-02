@@ -534,6 +534,165 @@ export function isClientToServer(
   );
 }
 
+// ── 入站 payload 形状校验（第二道闸，轻量手写，不引 zod）──────────────────
+//
+// isClientToServer 只保证 {type,payload} 信封；畸形 payload（如 send_user_message
+// 的 content 传字符串/null）若直接进 handler，会先 appendMessage 落库广播、
+// 再在 previewOf 炸 TypeError，留下脏数据。这里按 type 校验每个 handler
+// 依赖的字段，server 在 dispatch 前调用：失败回 bad_payload 帧，零副作用。
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0;
+}
+
+function isMessageSourceValue(v: unknown): v is MessageSource {
+  return v === 'local' || v === 'feishu' || v === 'tui';
+}
+
+/** 校验单个 MessageContentPart 的形状（按判别 type 查各自 value 必备字段）。 */
+function isMessageContentPart(p: unknown): p is MessageContentPart {
+  if (!isPlainObject(p)) return false;
+  const v = p['value'];
+  switch (p['type']) {
+    case 'text':
+      return typeof v === 'string';
+    case 'file_reference':
+      return (
+        isPlainObject(v) &&
+        typeof v['fileName'] === 'string' &&
+        typeof v['filePath'] === 'string'
+      );
+    case 'folder_reference':
+      return (
+        isPlainObject(v) &&
+        typeof v['folderName'] === 'string' &&
+        typeof v['folderPath'] === 'string'
+      );
+    case 'image_reference':
+      return (
+        isPlainObject(v) &&
+        typeof v['id'] === 'string' &&
+        typeof v['fileName'] === 'string' &&
+        typeof v['data'] === 'string' &&
+        typeof v['mimeType'] === 'string'
+      );
+    case 'code_reference':
+      return (
+        isPlainObject(v) &&
+        typeof v['fileName'] === 'string' &&
+        typeof v['filePath'] === 'string' &&
+        typeof v['code'] === 'string'
+      );
+    case 'text_file_content':
+      return (
+        isPlainObject(v) &&
+        typeof v['fileName'] === 'string' &&
+        typeof v['content'] === 'string'
+      );
+    default:
+      return false;
+  }
+}
+
+/** 校验 MessageContent：必须是 MessageContentPart 数组（字符串 / null / 对象均拒）。 */
+function isMessageContentValue(v: unknown): v is MessageContent {
+  return Array.isArray(v) && v.every(isMessageContentPart);
+}
+
+/**
+ * 按 type 校验 client 帧 payload 形状。
+ * 返回 null = 通过；否则返回人类可读的失败原因（server 据此回 bad_payload 帧）。
+ * 未知 type 也在此拒绝（dispatch 的穷尽 switch 不再兜运行期垃圾 type）。
+ */
+export function validateClientPayload(msg: {
+  type: string;
+  payload: unknown;
+}): string | null {
+  const p = msg.payload;
+  switch (msg.type as ClientToServerType) {
+    case 'hello':
+    case 'list_sessions':
+    case 'get_models':
+      return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
+    case 'get_history': {
+      if (!isPlainObject(p)) return 'get_history payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (p['limit'] !== undefined && typeof p['limit'] !== 'number')
+        return 'limit 必须是数字';
+      if (p['before'] !== undefined && typeof p['before'] !== 'number')
+        return 'before 必须是数字';
+      return null;
+    }
+    case 'subscribe':
+    case 'unsubscribe':
+    case 'cancel': {
+      if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
+      return isNonEmptyString(p['sessionId'])
+        ? null
+        : 'sessionId 必须是非空字符串';
+    }
+    case 'create_session': {
+      if (!isPlainObject(p)) return 'create_session payload 必须是对象';
+      if (p['title'] !== undefined && typeof p['title'] !== 'string')
+        return 'title 必须是字符串';
+      if (p['model'] !== undefined && typeof p['model'] !== 'string')
+        return 'model 必须是字符串';
+      return null;
+    }
+    case 'send_user_message': {
+      if (!isPlainObject(p)) return 'send_user_message payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isMessageContentValue(p['content']))
+        return 'content 必须是 MessageContentPart 数组';
+      if (!isMessageSourceValue(p['source']))
+        return 'source 必须是 local | feishu | tui';
+      if (
+        p['clientMessageId'] !== undefined &&
+        typeof p['clientMessageId'] !== 'string'
+      )
+        return 'clientMessageId 必须是字符串';
+      return null;
+    }
+    case 'tool_confirmation_response': {
+      if (!isPlainObject(p)) return 'tool_confirmation_response payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['callId'])) return 'callId 必须是非空字符串';
+      const o = p['outcome'];
+      if (o !== 'approved' && o !== 'rejected' && o !== 'always_approve')
+        return 'outcome 必须是 approved | rejected | always_approve';
+      return null;
+    }
+    case 'set_model': {
+      if (!isPlainObject(p)) return 'set_model payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
+      return null;
+    }
+    case 'save_custom_model': {
+      if (!isPlainObject(p)) return 'save_custom_model payload 必须是对象';
+      if (!isNonEmptyString(p['provider'])) return 'provider 必须是非空字符串';
+      if (typeof p['baseUrl'] !== 'string') return 'baseUrl 必须是字符串';
+      if (typeof p['apiKey'] !== 'string') return 'apiKey 必须是字符串';
+      if (!isNonEmptyString(p['modelId'])) return 'modelId 必须是非空字符串';
+      if (p['displayName'] !== undefined && typeof p['displayName'] !== 'string')
+        return 'displayName 必须是字符串';
+      if (p['maxTokens'] !== undefined && typeof p['maxTokens'] !== 'number')
+        return 'maxTokens 必须是数字';
+      if (p['enabled'] !== undefined && typeof p['enabled'] !== 'boolean')
+        return 'enabled 必须是布尔';
+      if (p['makeActive'] !== undefined && typeof p['makeActive'] !== 'boolean')
+        return 'makeActive 必须是布尔';
+      return null;
+    }
+    default:
+      return `未知帧类型：${msg.type}`;
+  }
+}
+
 /** 便捷构造器：保证 type/payload 配对，避免实装手写出错。 */
 export function frame<T extends ServerToClient>(msg: T): T {
   return msg;

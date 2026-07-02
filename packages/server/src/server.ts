@@ -30,6 +30,7 @@ import {
   HTTP_ROUTES,
   PROTOCOL_VERSION,
   isClientToServer,
+  validateClientPayload,
   type ApiResponse,
   type ClientToServer,
   type HealthInfo,
@@ -56,6 +57,9 @@ import type { CustomModelConfig } from 'otto-core';
 
 /** server 版本（实装时可从 package.json 注入）。 */
 const SERVER_VERSION = '0.1.0';
+
+/** WS 单帧上限（10MB）：防超大帧打爆内存（图片引用 base64 也远小于此）。 */
+const WS_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024;
 
 /**
  * 会话运行时工厂：为某会话建并初始化一个 SessionRuntime。
@@ -151,6 +155,7 @@ export class OttoServer {
     this.wss = new WebSocketServer({
       server: this.http,
       path: HTTP_ROUTES.ws,
+      maxPayload: WS_MAX_PAYLOAD_BYTES,
       verifyClient: (info: { req: IncomingMessage }) =>
         this.isLocalRequestAllowed(info.req),
     });
@@ -172,9 +177,19 @@ export class OttoServer {
     }
   }
 
-  /** 停止服务（关 WS、HTTP、飞书）。 */
+  /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
     await this.feishu?.stop().catch(() => undefined);
+    // 停机不留孤儿轮次：cancel + dispose 所有已 attach 的 runtime，
+    // 否则 server 关了 agent 还在后台烧 token / 跑工具（maxTurns=-1 不限回合）。
+    await Promise.all(
+      this.store.listSessions().map(async (s) => {
+        const runtime = this.store.getRuntime(s.sessionId);
+        if (!runtime) return;
+        runtime.cancel();
+        await runtime.dispose().catch(() => undefined);
+      }),
+    );
     for (const c of this.conns) c.socket.close();
     this.conns.clear();
     await new Promise<void>((resolve) =>
@@ -415,6 +430,12 @@ export class OttoServer {
           errorFrame(undefined, 'bad_frame', '未知帧形态'),
         );
       }
+      // 第二道闸：按 type 校验 payload 形状（含未知 type）。
+      // 畸形 payload 在此拒绝、零副作用，不会先落库再炸（脏数据）。
+      const invalid = validateClientPayload(msg);
+      if (invalid) {
+        return this.send(socket, errorFrame(undefined, 'bad_payload', invalid));
+      }
       this.dispatch(conn, msg).catch((e) => {
         this.send(
           socket,
@@ -424,10 +445,29 @@ export class OttoServer {
     });
 
     socket.on('close', () => {
+      const subscribedIds = [...conn.subscriptions.keys()];
       for (const unsub of conn.subscriptions.values()) unsub();
       conn.subscriptions.clear();
       this.conns.delete(conn);
+      // 断开即止损：该连接订阅过的会话若已无其他存活连接在看，取消其正在跑的轮次
+      // （否则关窗后 agent 继续烧 token；maxTurns=-1 不限回合）。
+      for (const sessionId of subscribedIds) {
+        this.cancelIfOrphaned(sessionId);
+      }
     });
+  }
+
+  /**
+   * 若会话已无任何存活 WS 连接订阅、且未绑定飞书，则取消其 runtime 当前轮。
+   * 飞书驱动的会话（feishuChatId 非空）不因桌面端断开而取消——飞书侧还在等回复。
+   */
+  private cancelIfOrphaned(sessionId: string): void {
+    const session = this.store.getSession(sessionId);
+    if (!session || session.feishuChatId) return;
+    for (const c of this.conns) {
+      if (c.subscriptions.has(sessionId)) return;
+    }
+    this.store.getRuntime(sessionId)?.cancel();
   }
 
   /** 把一帧 ClientToServer 分发到对应处理。 */
@@ -518,6 +558,15 @@ export class OttoServer {
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+
+    // 会话正忙（thinking/streaming）：直接回 busy 错误帧，不落库不广播。
+    // 否则消息落了库、runtime.run 又拒绝这一轮，留下一条永远没有回复的消息。
+    if (session.status === 'thinking' || session.status === 'streaming') {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'busy', '该会话正在生成回复，请稍候或先取消。'),
       );
     }
 

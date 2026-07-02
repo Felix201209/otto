@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isClientToServer,
+  validateClientPayload,
   frame,
   HTTP_ROUTES,
   PROTOCOL_VERSION,
@@ -52,6 +53,130 @@ describe('isClientToServer 守卫', () => {
   it('type 非 string → false', () => {
     expect(isClientToServer({ type: 123, payload: {} })).toBe(false);
     expect(isClientToServer({ type: null, payload: {} })).toBe(false);
+  });
+});
+
+describe('validateClientPayload 形状校验（第二道闸）', () => {
+  it('合法 send_user_message → null（通过）', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('send_user_message：content 传字符串 / null / 对象 → 拒绝', () => {
+    for (const content of ['不是数组', null, { type: 'text', value: 'x' }]) {
+      expect(
+        validateClientPayload({
+          type: 'send_user_message',
+          payload: { sessionId: 's1', content, source: 'local' },
+        }),
+      ).not.toBeNull();
+    }
+  });
+
+  it('send_user_message：content 数组内片段畸形 → 拒绝', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 42 }],
+          source: 'local',
+        },
+      }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: { sessionId: 's1', content: [null], source: 'local' },
+      }),
+    ).not.toBeNull();
+  });
+
+  it('send_user_message：sessionId 空 / source 非法 → 拒绝', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: '',
+          content: [{ type: 'text', value: 'x' }],
+          source: 'local',
+        },
+      }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'x' }],
+          source: 'evil',
+        },
+      }),
+    ).not.toBeNull();
+  });
+
+  it('未知 type → 拒绝', () => {
+    expect(
+      validateClientPayload({ type: 'nope_type', payload: {} }),
+    ).not.toBeNull();
+  });
+
+  it('subscribe / cancel / set_model：sessionId 缺失或非字符串 → 拒绝', () => {
+    expect(
+      validateClientPayload({ type: 'subscribe', payload: {} }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({ type: 'cancel', payload: { sessionId: 1 } }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: { sessionId: 's1' },
+      }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: { sessionId: 's1', model: 'm1' },
+      }),
+    ).toBeNull();
+  });
+
+  it('save_custom_model：必填字段缺失 → 拒绝；齐全 → 通过', () => {
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: { baseUrl: 'https://x', apiKey: 'k', modelId: 'm' },
+      }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: {
+          provider: 'openai',
+          baseUrl: 'https://x',
+          apiKey: 'k',
+          modelId: 'm',
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('payload 非对象（null / 字符串）→ 拒绝', () => {
+    expect(
+      validateClientPayload({ type: 'list_sessions', payload: null }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({ type: 'get_history', payload: 'x' }),
+    ).not.toBeNull();
   });
 });
 

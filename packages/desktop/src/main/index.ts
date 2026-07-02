@@ -39,6 +39,17 @@ import { installAppMenu } from './menu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * renderer 静态资源目录。与 createWindow 的 loadFile 用同一推导
+ * （dist/main → dist/renderer），开发模式与 asar 打包内路径均成立；
+ * 也是 isLocalAppUrl 白名单的锚点。
+ */
+const RENDERER_DIR = path.join(__dirname, '../renderer');
+
+/** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
+const CRASH_RELOAD_WINDOW_MS = 60_000;
+const CRASH_RELOAD_MAX = 3;
+
 /** server 生命周期管理器（发现/拉起/探活/退出清理）。 */
 const serverManager = new ServerManager();
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
@@ -63,7 +74,7 @@ const IPC = {
  * （Electron 在无图标时回退默认，不报错）。真正的品牌图标由 #8 打包时补。
  */
 function loadIcon(): NativeImage {
-  const iconPath = path.join(__dirname, '../renderer/icon.png');
+  const iconPath = path.join(RENDERER_DIR, 'icon.png');
   if (fs.existsSync(iconPath)) {
     return nativeImage.createFromPath(iconPath);
   }
@@ -97,7 +108,7 @@ function createWindow(): BrowserWindow {
 
   hardenWebContents(win);
 
-  void win.loadFile(path.join(__dirname, '../renderer/index.html'));
+  void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
   return win;
 }
 
@@ -117,11 +128,24 @@ function hardenWebContents(win: BrowserWindow): void {
     }
   });
 
-  // 渲染进程崩溃 / 卡死：记录并尝试恢复（重载）。
+  // 渲染进程崩溃 / 卡死：记录并尝试恢复（重载）。带退避：60s 内最多重载
+  // CRASH_RELOAD_MAX 次，超限视为必现崩溃，改为展示错误页，防白屏无限闪烁。
+  let crashReloadTimes: number[] = [];
   win.webContents.on('render-process-gone', (_e, details) => {
     console.error('[otto-desktop] renderer 进程退出:', details.reason);
-    if (details.reason !== 'clean-exit' && !win.isDestroyed()) {
+    if (details.reason === 'clean-exit' || win.isDestroyed()) return;
+    const now = Date.now();
+    crashReloadTimes = crashReloadTimes.filter(
+      (t) => now - t < CRASH_RELOAD_WINDOW_MS,
+    );
+    if (crashReloadTimes.length < CRASH_RELOAD_MAX) {
+      crashReloadTimes = [...crashReloadTimes, now];
       win.webContents.reload();
+    } else {
+      console.error(
+        '[otto-desktop] renderer 短时间内反复崩溃，停止自动重载，改为展示错误页',
+      );
+      void win.webContents.loadURL(crashPageDataUrl());
     }
   });
   win.webContents.on('unresponsive', () => {
@@ -129,9 +153,37 @@ function hardenWebContents(win: BrowserWindow): void {
   });
 }
 
-/** 是否本地 app 资源（file:// 加载的 renderer 页）。 */
+/**
+ * 是否本地 app 资源：仅放行 renderer 目录内的 file:// URL。
+ * 只判 file:// 前缀会放行任意本地文件，被劫持时可导航到磁盘上任何页面。
+ */
 function isLocalAppUrl(url: string): boolean {
-  return url.startsWith('file://');
+  if (!url.startsWith('file://')) return false;
+  try {
+    const target = path.resolve(fileURLToPath(url));
+    return (
+      target === RENDERER_DIR || target.startsWith(RENDERER_DIR + path.sep)
+    );
+  } catch {
+    // 非法 file URL（如带 host 段）→ 拒绝。
+    return false;
+  }
+}
+
+/** 反复崩溃后的兜底错误页（data: URL；朴素静态页，无脚本）。 */
+function crashPageDataUrl(): string {
+  const html =
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">' +
+    '<title>Otto - 界面已停止响应</title></head>' +
+    '<body style="margin:0;display:flex;align-items:center;justify-content:center;' +
+    'min-height:100vh;background:#181818;color:#ddd;' +
+    'font-family:system-ui,-apple-system,sans-serif">' +
+    '<div style="max-width:32em;padding:2em;line-height:1.8">' +
+    '<h1 style="font-size:1.3em;color:#fff">Otto 界面多次崩溃</h1>' +
+    '<p>渲染进程在短时间内反复异常退出，已停止自动恢复以避免闪烁。</p>' +
+    '<p>请退出并重新启动 Otto；若问题持续出现，请附终端日志反馈。</p>' +
+    '</div></body></html>';
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 /** 是否可放行到系统浏览器的外链（仅 http/https）。 */
@@ -217,9 +269,17 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
+    // realpath 解析符号链接后再比较前缀，防 home 内 symlink 指向外部绕过；
+    // 目标不存在（realpath 抛 ENOENT）时直接拒绝。
     if (typeof p === 'string' && p.length > 0 && path.isAbsolute(p)) {
-      const home = app.getPath('home');
-      const resolved = path.resolve(p);
+      let home: string;
+      let resolved: string;
+      try {
+        home = fs.realpathSync(app.getPath('home'));
+        resolved = fs.realpathSync(path.resolve(p));
+      } catch {
+        return Promise.resolve('');
+      }
       if (resolved === home || resolved.startsWith(home + path.sep)) {
         return shell.openPath(resolved);
       }

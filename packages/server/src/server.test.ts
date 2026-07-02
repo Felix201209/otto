@@ -319,6 +319,59 @@ describe('OttoServer WS（mock 模式）', () => {
     }
     c.close();
   });
+
+  it('畸形 payload：content 传字符串 → error{bad_payload}，不落库', async () => {
+    const s = server.store.createSession({ title: 'bad1' });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: '不是数组', source: 'local' },
+    });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'bad_payload',
+    );
+    expect(errFrame.type).toBe('error');
+    // 零副作用：不落库、不广播 message_start。
+    expect(server.store.getHistory(s.sessionId)).toHaveLength(0);
+    expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(0);
+    c.close();
+  });
+
+  it('畸形 payload：content 传 null → error{bad_payload}，不落库', async () => {
+    const s = server.store.createSession({ title: 'bad2' });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: null, source: 'local' },
+    });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'bad_payload',
+    );
+    expect(errFrame.type).toBe('error');
+    expect(server.store.getHistory(s.sessionId)).toHaveLength(0);
+    expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(0);
+    c.close();
+  });
+
+  it('畸形 payload：未知 type → error{bad_payload}', async () => {
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'nope_type', payload: {} });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'bad_payload',
+    );
+    expect(errFrame.type).toBe('error');
+    c.close();
+  });
+
+  it('WS maxPayload 显式上限 10MB', () => {
+    const wss = (
+      server as unknown as { wss: { options: { maxPayload?: number } } }
+    ).wss;
+    expect(wss.options.maxPayload).toBe(10 * 1024 * 1024);
+  });
 });
 
 describe('OttoServer runtimeFactory（非 mock 路径）', () => {
@@ -421,6 +474,179 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
       (f) => f.type === 'error' && f.payload.code === 'runtime_init_failed',
     );
     expect(errFrame.type).toBe('error');
+    c.close();
+  });
+
+  // ── P0-1（断开/停机取消）与 P0-4（busy 不落库）────────────────────────────
+
+  /** 挂起式 fake runtime：run 设 thinking 后一直挂到 cancel/dispose，模拟长跑轮次。 */
+  function makeHangingRuntime(): {
+    factory: RuntimeFactory;
+    calls: { run: number; cancel: number; dispose: number };
+  } {
+    const calls = { run: 0, cancel: 0, dispose: 0 };
+    let release: (() => void) | undefined;
+    const factory: RuntimeFactory = async (store, sessionId) => ({
+      async run() {
+        calls.run++;
+        store.setStatus(sessionId, 'thinking');
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        store.setStatus(sessionId, 'idle');
+      },
+      cancel() {
+        calls.cancel++;
+        release?.();
+        release = undefined;
+      },
+      setModel() {},
+      async dispose() {
+        calls.dispose++;
+        release?.();
+        release = undefined;
+      },
+    });
+    return { factory, calls };
+  }
+
+  /** 轮询等到条件成立（或超时抛错）。 */
+  async function waitUntil(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) throw new Error('waitUntil 超时');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  it('最后一个订阅连接断开 → cancel 当前轮；仍有其他连接订阅则不取消', async () => {
+    const { factory, calls } = makeHangingRuntime();
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+    const s = server.store.createSession({ title: 'orphan' });
+
+    const c1 = await connectWs(baseUrl);
+    const c2 = await connectWs(baseUrl);
+    await c1.waitFor((f) => f.type === 'welcome');
+    await c2.waitFor((f) => f.type === 'welcome');
+    c1.send({ type: 'subscribe', payload: { sessionId: s.sessionId } });
+    c2.send({ type: 'subscribe', payload: { sessionId: s.sessionId } });
+    await c1.waitFor((f) => f.type === 'history');
+    await c2.waitFor((f) => f.type === 'history');
+
+    c1.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: [{ type: 'text', value: 'x' }], source: 'local' },
+    });
+    await waitUntil(() => calls.run === 1);
+
+    // c1 断开：c2 仍订阅 → 不取消。
+    c1.close();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(calls.cancel).toBe(0);
+
+    // c2 也断开：已无存活订阅连接 → 取消当前轮。
+    c2.close();
+    await waitUntil(() => calls.cancel === 1);
+    expect(calls.cancel).toBe(1);
+  });
+
+  it('飞书绑定会话：桌面端全部断开也不取消（飞书侧还在等回复）', async () => {
+    const { factory, calls } = makeHangingRuntime();
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+    const s = server.store.createSession({
+      title: 'feishu-bound',
+      source: 'feishu',
+      feishuChatId: 'oc_test',
+    });
+
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'subscribe', payload: { sessionId: s.sessionId } });
+    await c.waitFor((f) => f.type === 'history');
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: [{ type: 'text', value: 'x' }], source: 'local' },
+    });
+    await waitUntil(() => calls.run === 1);
+
+    c.close();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(calls.cancel).toBe(0);
+  });
+
+  it('server.stop() → cancel + dispose 活跃 runtime', async () => {
+    const { factory, calls } = makeHangingRuntime();
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+    const s = server.store.createSession({ title: 'stopme' });
+
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: [{ type: 'text', value: 'x' }], source: 'local' },
+    });
+    await waitUntil(() => calls.run === 1);
+
+    await server.stop();
+    // stop 先 cancel 再 dispose；socket close 兜底路径可能再补一次 cancel（幂等）。
+    expect(calls.cancel).toBeGreaterThanOrEqual(1);
+    expect(calls.dispose).toBe(1);
+  });
+
+  it('会话正忙（thinking）再来一条 → error{busy}，不落库不广播', async () => {
+    const { factory, calls } = makeHangingRuntime();
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+    const s = server.store.createSession({ title: 'busy' });
+
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'subscribe', payload: { sessionId: s.sessionId } });
+    await c.waitFor((f) => f.type === 'history');
+
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: [{ type: 'text', value: '第一条' }], source: 'local' },
+    });
+    await c.waitFor(
+      (f) => f.type === 'session_status' && f.payload.status === 'thinking',
+    );
+
+    c.send({
+      type: 'send_user_message',
+      payload: { sessionId: s.sessionId, content: [{ type: 'text', value: '第二条' }], source: 'local' },
+    });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'busy',
+    );
+    expect(errFrame.type).toBe('error');
+    // 第二条没有落库：历史里只有第一条 user 消息；run 也只被驱动一次。
+    expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
+    expect(calls.run).toBe(1);
+    expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
     c.close();
   });
 });
