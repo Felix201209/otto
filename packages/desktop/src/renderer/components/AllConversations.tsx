@@ -8,6 +8,10 @@
  * 「查看全部对话」检索面板。浮层 + 搜索框，在全量会话里按标题/末条预览过滤，
  * 点击某条即选中该会话并关闭。数据来自 store 的 selectSortedSessions（已按
  * updatedAt 倒序），纯前端过滤，不额外请求 server。
+ *
+ * 键盘导航（与 Composer 模型菜单看齐）：↑↓ 移动高亮、Enter 打开当前高亮、Esc 关闭。
+ * 焦点留在搜索框（边打边过滤），方向键 / Enter 由搜索框 onKeyDown 统一分流。
+ * 每行 hover 出删除按钮 → inline 二次确认（「确定删除?」），删除不可逆。
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -30,11 +34,32 @@ function formatWhen(ts: number): string {
   return `${MM}-${DD} ${hh}:${mm}`;
 }
 
+/** 垃圾桶图标（内联，避免动 icons.tsx）。 */
+function IconTrash(): React.JSX.Element {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 interface AllConversationsProps {
   sessions: SessionSummary[];
   activeSessionId: string | null;
   onSelect: (id: string) => void;
   onClose: () => void;
+  onDelete: (id: string) => void;
 }
 
 export function AllConversations({
@@ -42,22 +67,15 @@ export function AllConversations({
   activeSessionId,
   onSelect,
   onClose,
+  onDelete,
 }: AllConversationsProps): React.JSX.Element {
   const [query, setQuery] = useState('');
+  // 键盘高亮下标（对齐 filtered 列表）。查询变化时复位到 0。
+  const [highlight, setHighlight] = useState(0);
+  // 正处于删除确认态的 sessionId（inline 二次确认，删除不可逆）。
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // 打开即聚焦搜索框；Esc 关闭。
-  useEffect(() => {
-    inputRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -69,9 +87,49 @@ export function AllConversations({
     );
   }, [query, sessions]);
 
+  // 打开即聚焦搜索框。
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // 过滤结果变化时把高亮钳在有效范围内（复位到 0，避免越界高亮空行）。
+  useEffect(() => {
+    setHighlight(0);
+  }, [query]);
+
+  // 高亮项滚动进视野（列表长到需要滚动时）。jsdom 无 scrollIntoView，存在才调。
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(
+      '.otto-allconv__item--highlight',
+    );
+    el?.scrollIntoView?.({ block: 'nearest' });
+  }, [highlight]);
+
   const pick = (id: string): void => {
     onSelect(id);
     onClose();
+  };
+
+  // 搜索框键盘分流：↑↓ 移高亮、Enter 打开高亮项、Esc 关闭（含先撤销删除确认）。
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((i) => (filtered.length ? (i + 1) % filtered.length : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((i) =>
+        filtered.length ? (i - 1 + filtered.length) % filtered.length : 0,
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const target = filtered[highlight];
+      if (target) pick(target.sessionId);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirmId) setConfirmId(null);
+      else onClose();
+    }
   };
 
   return (
@@ -91,6 +149,7 @@ export function AllConversations({
             placeholder="搜索对话标题或内容…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onSearchKeyDown}
           />
           <button
             type="button"
@@ -103,7 +162,7 @@ export function AllConversations({
           </button>
         </div>
 
-        <div className="otto-allconv__list">
+        <div className="otto-allconv__list" ref={listRef}>
           {filtered.length === 0 ? (
             <div className="otto-allconv__empty">
               {sessions.length === 0
@@ -111,16 +170,27 @@ export function AllConversations({
                 : '没有匹配的对话'}
             </div>
           ) : (
-            filtered.map((s) => (
-              <button
+            filtered.map((s, i) => (
+              <div
                 key={s.sessionId}
-                type="button"
+                role="button"
+                tabIndex={-1}
+                aria-current={
+                  s.sessionId === activeSessionId ? 'true' : undefined
+                }
                 className={`otto-allconv__item${
                   s.sessionId === activeSessionId
                     ? ' otto-allconv__item--active'
                     : ''
-                }`}
+                }${i === highlight ? ' otto-allconv__item--highlight' : ''}`}
+                onMouseEnter={() => setHighlight(i)}
                 onClick={() => pick(s.sessionId)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    pick(s.sessionId);
+                  }
+                }}
               >
                 <div className="otto-allconv__itemtop">
                   <span className="otto-allconv__title">
@@ -129,6 +199,18 @@ export function AllConversations({
                   <span className="otto-allconv__time">
                     {formatWhen(s.updatedAt)}
                   </span>
+                  <button
+                    type="button"
+                    className="otto-allconv__del"
+                    title="删除对话"
+                    aria-label="删除对话"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmId(s.sessionId);
+                    }}
+                  >
+                    <IconTrash />
+                  </button>
                 </div>
                 {s.lastMessagePreview ? (
                   <div className="otto-allconv__preview">
@@ -138,7 +220,37 @@ export function AllConversations({
                 <div className="otto-allconv__meta">
                   <SourceBadge source={s.source} />
                 </div>
-              </button>
+
+                {confirmId === s.sessionId ? (
+                  <div
+                    className="otto-allconv__confirm"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="otto-allconv__confirmtext">
+                      删除此对话？不可撤销。
+                    </span>
+                    <div className="otto-allconv__confirmbtns">
+                      <button
+                        type="button"
+                        className="otto-allconv__confirmcancel"
+                        onClick={() => setConfirmId(null)}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="otto-allconv__confirmdel"
+                        onClick={() => {
+                          onDelete(s.sessionId);
+                          setConfirmId(null);
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ))
           )}
         </div>

@@ -380,6 +380,42 @@ describe('InMemorySessionStore', () => {
     });
   });
 
+  describe('renameSession', () => {
+    it('改 title、刷新 updatedAt、返回新摘要并 publish session_upsert', () => {
+      const s = store.createSession({ title: '旧名' });
+      const frames: ServerToClient[] = [];
+      store.subscribe(s.sessionId, (f) => frames.push(f));
+      const updated = store.renameSession(s.sessionId, '新名');
+      expect(updated).toBeDefined();
+      expect(updated!.title).toBe('新名');
+      expect(store.getSession(s.sessionId)!.title).toBe('新名');
+      expect(frames).toHaveLength(1);
+      expect(frames[0].type).toBe('session_upsert');
+    });
+
+    it('title 首尾空白被 trim', () => {
+      const s = store.createSession();
+      const updated = store.renameSession(s.sessionId, '  含空白  ');
+      expect(updated!.title).toBe('含空白');
+    });
+
+    it('超长 title 截断到 120 字', () => {
+      const s = store.createSession();
+      const updated = store.renameSession(s.sessionId, 'x'.repeat(300));
+      expect(updated!.title.length).toBe(120);
+    });
+
+    it('纯空白 title → 返回 undefined、不改动', () => {
+      const s = store.createSession({ title: '原名' });
+      expect(store.renameSession(s.sessionId, '   ')).toBeUndefined();
+      expect(store.getSession(s.sessionId)!.title).toBe('原名');
+    });
+
+    it('不存在的 session → 返回 undefined、不抛', () => {
+      expect(store.renameSession('no-session', '任意')).toBeUndefined();
+    });
+  });
+
   describe('listSessions', () => {
     it('按 updatedAt 倒序', () => {
       store.createSession({ sessionId: 'a' });

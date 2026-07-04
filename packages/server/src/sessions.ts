@@ -19,13 +19,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type {
-  MessageContent,
-  MessageSource,
-  OttoMessage,
-  ServerToClient,
-  SessionStatus,
-  SessionSummary,
+import {
+  SESSION_TITLE_MAX_LEN,
+  type MessageContent,
+  type MessageSource,
+  type OttoMessage,
+  type ServerToClient,
+  type SessionStatus,
+  type SessionSummary,
 } from './protocol.js';
 
 /** 订阅者回调：收到一帧广播。 */
@@ -82,6 +83,11 @@ export interface SessionStore {
   setStatus(sessionId: string, status: SessionStatus): void;
   /** 更新会话选定模型（懒构建 runtime 时按此取模型）。 */
   patchSessionModel(sessionId: string, model: string): void;
+  /**
+   * 重命名会话：改 title、刷新 updatedAt，并广播 session_upsert。
+   * 返回更新后的摘要；会话不存在返回 undefined。
+   */
+  renameSession(sessionId: string, title: string): SessionSummary | undefined;
   attachRuntime(sessionId: string, runtime: SessionRuntime): void;
   getRuntime(sessionId: string): SessionRuntime | undefined;
 
@@ -323,6 +329,20 @@ export class InMemorySessionStore implements SessionStore {
       type: 'session_upsert',
       payload: { session: s.summary },
     });
+  }
+
+  renameSession(sessionId: string, title: string): SessionSummary | undefined {
+    const s = this.sessions.get(sessionId);
+    if (!s) return undefined;
+    // 兜底：trim + 截断到上限（协议校验已挡纯空白，这里再收口超长）。
+    const clean = title.trim().slice(0, SESSION_TITLE_MAX_LEN);
+    if (!clean) return undefined;
+    s.summary = { ...s.summary, title: clean, updatedAt: Date.now() };
+    this.publish(sessionId, {
+      type: 'session_upsert',
+      payload: { session: s.summary },
+    });
+    return { ...s.summary };
   }
 
   attachRuntime(sessionId: string, runtime: SessionRuntime): void {

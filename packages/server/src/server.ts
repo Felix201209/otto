@@ -350,6 +350,60 @@ export class OttoServer {
     });
   }
 
+  /**
+   * 删除会话（delete_session 帧，不可逆）：
+   *   校验会话存在 → 取消该会话正在跑的轮次（止损，别让删掉的会话继续烧 token）
+   *   → store.deleteSession（内部 dispose runtime + 清 feishuIndex + 从表移除）
+   *   → 广播最新 sessions_list（权威快照：多窗口据此同步移除该会话行）。
+   * 会话不存在 → 回 error(code:'no_session')，不广播。
+   */
+  private async handleDeleteSession(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'delete_session' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    // 先取消当前轮：deleteSession 只 dispose，不 cancel；正在跑的轮次要显式止损。
+    this.store.getRuntime(sessionId)?.cancel();
+    await this.store.deleteSession(sessionId);
+    // 广播权威快照，让所有客户端把这条会话从列表里剔除（sessions_list 现在是快照语义）。
+    this.broadcastAll({
+      type: 'sessions_list',
+      payload: { sessions: this.store.listSessions() },
+    });
+  }
+
+  /**
+   * 重命名会话（rename_session 帧）：
+   *   校验会话存在 → store.renameSession（trim + 截断兜底，改 title + publish
+   *   session_upsert 给订阅者）→ 再 broadcastAll 一帧 session_upsert，让未订阅该
+   *   会话的其它窗口的列表也即时更新标题。
+   * 会话不存在 / 兜底后为空 → 回 error(code:'no_session')。
+   */
+  private handleRenameSession(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'rename_session' }>,
+  ): void {
+    const { sessionId, title } = msg.payload;
+    const updated = this.store.renameSession(sessionId, title);
+    if (!updated) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    // renameSession 已 publish 给该会话订阅者；再全局广播一帧，覆盖未订阅它的窗口列表。
+    this.broadcastAll({
+      type: 'session_upsert',
+      payload: { session: updated },
+    });
+  }
+
   // ──────────────────────────────────────────────────────────────────────
   // HTTP REST
   // ──────────────────────────────────────────────────────────────────────
@@ -546,6 +600,10 @@ export class OttoServer {
         });
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
+      case 'delete_session':
+        return this.handleDeleteSession(conn, msg);
+      case 'rename_session':
+        return this.handleRenameSession(conn, msg);
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;

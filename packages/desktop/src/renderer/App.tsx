@@ -203,6 +203,8 @@ export function App(): React.JSX.Element {
         onSelect={actions.selectSession}
         onNewChat={handleNewChat}
         onViewAll={() => setAllConvOpen(true)}
+        onRename={actions.renameSession}
+        onDelete={actions.deleteSession}
       />
       <ChatView
         session={activeSession}
@@ -259,6 +261,7 @@ export function App(): React.JSX.Element {
           activeSessionId={state.activeSessionId}
           onSelect={actions.selectSession}
           onClose={() => setAllConvOpen(false)}
+          onDelete={actions.deleteSession}
         />
       ) : null}
 

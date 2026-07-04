@@ -96,6 +96,45 @@ function upsertSession(
   return { ...state, sessions, sessionIds };
 }
 
+/**
+ * 以 sessions_list 权威快照对账整份会话表：
+ *   - 服务器返回的会话为准：新增/更新入表，快照里没有的会话（被删）从表与消息缓存里剔除。
+ *   - activeSessionId 善后：若当前选中的会话已不在快照里（被删），落到快照第一个；
+ *     快照为空则置 null。若原本无选中且快照非空，默认选第一个（沿用旧行为）。
+ *   - 首帧到达即置 sessionsLoaded=true（供 App 自动引导 effect 判空）。
+ * 快照顺序即服务器 listSessions 顺序（已按 updatedAt 倒序），直接沿用。
+ */
+function reconcileSessions(
+  state: OttoState,
+  list: SessionSummary[],
+): OttoState {
+  const sessions: Record<string, SessionSummary> = {};
+  const sessionIds: string[] = [];
+  for (const s of list) {
+    sessions[s.sessionId] = s;
+    sessionIds.push(s.sessionId);
+  }
+  const liveIds = new Set(sessionIds);
+  // 只保留仍存活会话的消息缓存，随删除会话一并回收，避免内存里留孤儿消息。
+  const messages: Record<string, OttoMessage[]> = {};
+  for (const id of sessionIds) {
+    if (state.messages[id]) messages[id] = state.messages[id];
+  }
+  // activeSessionId 善后：被删（或原本就无选中）时落到第一个存活会话，空快照置 null。
+  let activeSessionId = state.activeSessionId;
+  if (!activeSessionId || !liveIds.has(activeSessionId)) {
+    activeSessionId = sessionIds.length > 0 ? sessionIds[0] : null;
+  }
+  return {
+    ...state,
+    sessions,
+    sessionIds,
+    messages,
+    activeSessionId,
+    sessionsLoaded: true,
+  };
+}
+
 function appendMessage(
   state: OttoState,
   message: OttoMessage,
@@ -157,16 +196,10 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     case 'welcome':
       return state;
 
-    case 'sessions_list': {
-      let next = state;
-      for (const s of frame.payload.sessions) next = upsertSession(next, s);
-      // 默认选中第一个（若尚无选中）。
-      if (!next.activeSessionId && frame.payload.sessions.length > 0) {
-        next = { ...next, activeSessionId: frame.payload.sessions[0].sessionId };
-      }
-      // 标记列表已知晓（首帧到达）。仿照 modelsLoaded，供 App 的自动引导 effect 判空用。
-      return next.sessionsLoaded ? next : { ...next, sessionsLoaded: true };
-    }
+    case 'sessions_list':
+      // sessions_list 是**权威快照**：不再只累加 upsert，而是以这份列表为准——
+      // 服务器上已被删除的会话，客户端要据此同步剔除（否则删掉的会话行永远赖着不走）。
+      return reconcileSessions(state, frame.payload.sessions);
 
     case 'session_upsert':
       return upsertSession(state, frame.payload.session);
@@ -281,6 +314,10 @@ function mergeTextDelta(
 export interface OttoActions {
   selectSession(sessionId: string): void;
   createSession(title?: string): void;
+  /** 删除会话（不可逆）。发帧后由 server 广播的 sessions_list 快照落地移除。 */
+  deleteSession(sessionId: string): void;
+  /** 重命名会话。发帧后由 server 广播的 session_upsert 落地新标题。 */
+  renameSession(sessionId: string, title: string): void;
   sendMessage(
     text: string,
     source?: MessageSource,
@@ -366,6 +403,20 @@ export function useOttoStore(): UseOttoStore {
     transport.send({ type: 'create_session', payload: { title } });
   }, []);
 
+  const deleteSession = useCallback((sessionId: string) => {
+    if (!sessionId) return;
+    // 只发帧；移除与 activeSessionId 善后统一由 server 回的 sessions_list 快照落地，
+    // 保持「服务器为唯一真相源」，前端不抢先本地删（避免与广播不一致）。
+    transport.send({ type: 'delete_session', payload: { sessionId } });
+  }, []);
+
+  const renameSession = useCallback((sessionId: string, title: string) => {
+    const clean = title.trim();
+    // 空白标题不发（server 也会拒），静默忽略即可（UI 侧当作取消）。
+    if (!sessionId || !clean) return;
+    transport.send({ type: 'rename_session', payload: { sessionId, title: clean } });
+  }, []);
+
   const sendMessage = useCallback(
     (
       text: string,
@@ -441,6 +492,8 @@ export function useOttoStore(): UseOttoStore {
     actions: {
       selectSession,
       createSession,
+      deleteSession,
+      renameSession,
       sendMessage,
       setModel,
       cancel,

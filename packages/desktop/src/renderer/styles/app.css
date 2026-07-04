@@ -2229,3 +2229,236 @@ h6.otto-prose__h {
   font-size: 12.5px;
   line-height: 1.5;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  会话删除 / 重命名 —— Sidebar 会话项溢出菜单 + inline 重命名 + 删除二次确认
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 会话项现为 role=button 的 div：光标与选中态沿用 .otto-session 既有样式。
+ * 三点按钮平时隐藏，hover 整项或键盘聚焦时浮现，避免常驻干扰列表。 */
+.otto-session__more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -3px -4px -3px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-session:hover .otto-session__more,
+.otto-session:focus-within .otto-session__more,
+.otto-session__more:focus-visible {
+  opacity: 1;
+}
+.otto-session__more:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--otto-text);
+}
+.otto-session__more:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* 溢出小菜单（重命名 / 删除）：贴会话项右上浮出。 */
+.otto-session__menu {
+  position: absolute;
+  top: 32px;
+  right: 8px;
+  z-index: 20;
+  min-width: 118px;
+  padding: 4px;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  box-shadow: var(--otto-shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.otto-session__menuitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-session__menuitem:hover {
+  background: var(--otto-sidebar-bg);
+}
+.otto-session__menuitem--danger {
+  color: var(--otto-danger);
+}
+.otto-session__menuitem--danger:hover {
+  background: #fff0f0;
+}
+
+/* 删除二次确认条（inline，删除不可逆）。 */
+.otto-session__confirm {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border: 1px solid #ffc9c9;
+  border-radius: var(--otto-radius-sm);
+  background: #fff5f5;
+}
+.otto-session__confirmtext {
+  display: block;
+  font-size: 12px;
+  color: var(--otto-danger);
+  margin-bottom: 7px;
+}
+.otto-session__confirmbtns {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.otto-session__confirmcancel,
+.otto-session__confirmdel {
+  padding: 4px 12px;
+  border-radius: var(--otto-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-session__confirmcancel {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+}
+.otto-session__confirmcancel:hover {
+  color: var(--otto-text);
+  border-color: var(--otto-text-tertiary);
+}
+.otto-session__confirmdel {
+  border: 1px solid var(--otto-danger);
+  background: var(--otto-danger);
+  color: #fff;
+}
+.otto-session__confirmdel:hover {
+  background: #c92a2a;
+  border-color: #c92a2a;
+}
+
+/* inline 重命名输入框（整行替换会话项）。 */
+.otto-session--editing {
+  padding-top: 8px;
+  padding-bottom: 9px;
+}
+.otto-session__renameinput {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--otto-accent);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* ── AllConversations 检索面板：每行删除按钮 + 键盘高亮 + 二次确认 ── */
+
+/* 行现为 role=button 的 div，itemtop 三列（标题 / 时间 / 删除）。 */
+.otto-allconv__del {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -4px -4px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-allconv__item:hover .otto-allconv__del,
+.otto-allconv__item--highlight .otto-allconv__del {
+  opacity: 1;
+}
+.otto-allconv__del:hover {
+  background: #fff0f0;
+  color: var(--otto-danger);
+}
+/* 键盘高亮态（↑↓ 移动）：与 hover 同视觉，供无鼠标操作。 */
+.otto-allconv__item--highlight {
+  background: var(--otto-sidebar-bg);
+}
+.otto-allconv__item--active.otto-allconv__item--highlight {
+  background: var(--otto-accent-soft);
+}
+
+/* 删除二次确认条（复刻 Sidebar 确认样式）。 */
+.otto-allconv__confirm {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border: 1px solid #ffc9c9;
+  border-radius: var(--otto-radius-sm);
+  background: #fff5f5;
+}
+.otto-allconv__confirmtext {
+  display: block;
+  font-size: 12px;
+  color: var(--otto-danger);
+  margin-bottom: 7px;
+}
+.otto-allconv__confirmbtns {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.otto-allconv__confirmcancel,
+.otto-allconv__confirmdel {
+  padding: 4px 12px;
+  border-radius: var(--otto-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-allconv__confirmcancel {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+}
+.otto-allconv__confirmcancel:hover {
+  color: var(--otto-text);
+  border-color: var(--otto-text-tertiary);
+}
+.otto-allconv__confirmdel {
+  border: 1px solid var(--otto-danger);
+  background: var(--otto-danger);
+  color: #fff;
+}
+.otto-allconv__confirmdel:hover {
+  background: #c92a2a;
+  border-color: #c92a2a;
+}

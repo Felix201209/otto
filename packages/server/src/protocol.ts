@@ -290,6 +290,22 @@ export type SetModelMsg = Envelope<
 export type GetModelsMsg = Envelope<'get_models', Record<string, never>>;
 
 /**
+ * 删除会话（不可逆）。server 收到后：从 store 删会话（dispose runtime + 清
+ * feishuIndex）→ 广播最新 `sessions_list`（权威快照，客户端据此移除该会话）。
+ * 删除当前选中会话时的善后（落到下一个 / 置空）由前端 reducer 处理。
+ */
+export type DeleteSessionMsg = Envelope<'delete_session', { sessionId: string }>;
+
+/**
+ * 重命名会话。server 收到后：改 title → 广播最新 `sessions_list`（权威快照）。
+ * title 空白 / 超长由 server 做兜底（trim + 截断），非法即回 error(bad_payload)。
+ */
+export type RenameSessionMsg = Envelope<
+  'rename_session',
+  { sessionId: string; title: string }
+>;
+
+/**
  * setup 落盘：写入一个 BYO-key 自定义模型到 `~/.otto-user/custom-models.json`。
  *
  * payload 传 **结构化字段**（与 core `CustomModelConfig` 的子集对齐），**不传**
@@ -337,9 +353,14 @@ export type ClientToServer =
   | CancelMsg
   | SetModelMsg
   | GetModelsMsg
-  | SaveCustomModelMsg;
+  | SaveCustomModelMsg
+  | DeleteSessionMsg
+  | RenameSessionMsg;
 
 export type ClientToServerType = ClientToServer['type'];
+
+/** 会话标题最大长度（server 兜底截断，防超长标题撑爆列表 / 内存）。 */
+export const SESSION_TITLE_MAX_LEN = 120;
 
 // ============================================================================
 // 4. Server → Client 帧（入站，server 广播）
@@ -635,11 +656,20 @@ export function validateClientPayload(msg: {
     }
     case 'subscribe':
     case 'unsubscribe':
-    case 'cancel': {
+    case 'cancel':
+    case 'delete_session': {
       if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
       return isNonEmptyString(p['sessionId'])
         ? null
         : 'sessionId 必须是非空字符串';
+    }
+    case 'rename_session': {
+      if (!isPlainObject(p)) return 'rename_session payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (typeof p['title'] !== 'string') return 'title 必须是字符串';
+      // trim 后不能为空（纯空白标题无意义，server 也不会兜底成有效名）。
+      if (p['title'].trim().length === 0) return 'title 不能为空白';
+      return null;
     }
     case 'create_session': {
       if (!isPlainObject(p)) return 'create_session payload 必须是对象';

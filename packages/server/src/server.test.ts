@@ -366,6 +366,82 @@ describe('OttoServer WS（mock 模式）', () => {
     c.close();
   });
 
+  it('delete_session：删会话 → 广播 sessions_list 权威快照（不含被删会话）', async () => {
+    const keep = server.store.createSession({ title: 'keep' });
+    const gone = server.store.createSession({ title: 'gone' });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'delete_session', payload: { sessionId: gone.sessionId } });
+    const list = await c.waitFor((f) => f.type === 'sessions_list');
+    if (list.type === 'sessions_list') {
+      const ids = list.payload.sessions.map((s) => s.sessionId);
+      expect(ids).toContain(keep.sessionId);
+      expect(ids).not.toContain(gone.sessionId);
+    }
+    // 会话确已从 store 移除
+    expect(server.store.getSession(gone.sessionId)).toBeUndefined();
+    c.close();
+  });
+
+  it('delete_session：不存在的会话 → error{no_session}，不广播 sessions_list', async () => {
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'delete_session', payload: { sessionId: 'ghost' } });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'no_session',
+    );
+    expect(errFrame.type).toBe('error');
+    expect(c.frames.filter((f) => f.type === 'sessions_list')).toHaveLength(0);
+    c.close();
+  });
+
+  it('rename_session：改 title → 广播 session_upsert（新标题）', async () => {
+    const s = server.store.createSession({ title: '旧标题' });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'rename_session',
+      payload: { sessionId: s.sessionId, title: '新标题' },
+    });
+    const upsert = await c.waitFor((f) => f.type === 'session_upsert');
+    if (upsert.type === 'session_upsert') {
+      expect(upsert.payload.session.sessionId).toBe(s.sessionId);
+      expect(upsert.payload.session.title).toBe('新标题');
+    }
+    expect(server.store.getSession(s.sessionId)!.title).toBe('新标题');
+    c.close();
+  });
+
+  it('rename_session：纯空白 title → error{bad_payload}（校验拦截）', async () => {
+    const s = server.store.createSession({ title: '不变' });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'rename_session',
+      payload: { sessionId: s.sessionId, title: '   ' },
+    });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'bad_payload',
+    );
+    expect(errFrame.type).toBe('error');
+    expect(server.store.getSession(s.sessionId)!.title).toBe('不变');
+    c.close();
+  });
+
+  it('rename_session：不存在的会话 → error{no_session}', async () => {
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({
+      type: 'rename_session',
+      payload: { sessionId: 'ghost', title: '任意' },
+    });
+    const errFrame = await c.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'no_session',
+    );
+    expect(errFrame.type).toBe('error');
+    c.close();
+  });
+
   it('WS maxPayload 显式上限 10MB', () => {
     const wss = (
       server as unknown as { wss: { options: { maxPayload?: number } } }
