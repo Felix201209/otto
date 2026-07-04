@@ -27,8 +27,9 @@ export default defineConfig({
       enabled: true,
       provider: 'v8',
       reportsDirectory: './coverage',
-      include: ['src/**/*'],
-      reporter: [
+      include: ['src/tools/desktop-automation.ts','src/tools/convert-document.ts','src/tools/generate-document.ts','src/tools/analyze-data.ts','src/tools/diagnose-system.ts'],
+      thresholds: { lines: 30, branches: 30, functions: 15, statements: 30 },
+    reporter: [
         ['text', { file: 'full-text-summary.txt' }],
         'html',
         'json',

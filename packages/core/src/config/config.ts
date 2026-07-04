@@ -54,6 +54,11 @@ import { LocalTimeTool } from '../tools/local-time.js';
 import { LarkCliTool } from '../tools/lark-cli.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
+import { DesktopAutomationTool } from '../tools/desktop-automation.js';
+import { ConvertDocumentTool } from '../tools/convert-document.js';
+import { GenerateDocumentTool } from '../tools/generate-document.js';
+import { AnalyzeDataTool } from '../tools/analyze-data.js';
+import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
 import { ProjectSettingsManager } from './projectSettings.js';
 import { generateCustomModelId } from '../types/customModel.js';
 import { OttoClient } from '../core/client.js';
@@ -1187,6 +1192,12 @@ export class Config {
     // Code; gracefully reports a readable error if the bridge isn't installed.
     registerCoreTool(DelegateToAgentTool, this);
     registerCoreTool(CheckDelegateStatusTool, this);
+// Desktop automation, document tools, data analysis, system diagnostics
+    registerCoreTool(DesktopAutomationTool, this);
+    registerCoreTool(ConvertDocumentTool, this);
+    registerCoreTool(GenerateDocumentTool, this);
+    registerCoreTool(AnalyzeDataTool, this);
+    registerCoreTool(DiagnoseSystemTool, this);
 
     // TaskTool (SubAgent) is available in both CLI and VSCode environments
     registerCoreTool(TaskTool, this, registry);
