@@ -26,6 +26,7 @@ import {
   BrowserWindow,
   ipcMain,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   type NativeImage,
@@ -88,7 +89,10 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: 'Otto',
-    backgroundColor: '#181818',
+    // 初始底色跟随系统深浅：暗色 #181818 / 浅色 #ffffff。硬编码任一固定色会在
+    // 系统主题与之相反时于内容就绪前（及窗口边缘）闪出错误底色。themeSource 已
+    // 在 whenReady 里设为 'system'，故 shouldUseDarkColors 反映的即 OS 当前主题。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#ffffff',
     icon: loadIcon(),
     // 内容就绪再显示，避免白屏闪烁。
     show: false,
@@ -305,6 +309,11 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // 让 Chromium 的 prefers-color-scheme 跟随 macOS 系统深浅色主题：这是
+    // renderer 里 @media (prefers-color-scheme: dark) 能被触发的关键。'system'
+    // 虽是默认值，但显式设定可确保不被别处改写，且 activate 重建窗口时同样生效。
+    nativeTheme.themeSource = 'system';
+
     registerIpc();
     installAppMenu(() => mainWindow);
 
