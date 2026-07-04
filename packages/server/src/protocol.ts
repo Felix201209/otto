@@ -310,6 +310,12 @@ export type SaveCustomModelMsg = Envelope<
     modelId: string;
     /** 显示名（唯一标识，去重键）。缺省时 server 取 modelId 兜底。 */
     displayName?: string;
+    /**
+     * 批量：同一 provider / baseUrl / apiKey 下要一次性加入的多个模型 id。
+     * 给出且非空时，忽略单个 modelId/displayName，按此列表批量落盘（共享同一个 key），
+     * 每条 displayName 取其 modelId。makeActive 只作用于列表第一个。
+     */
+    modelIds?: string[];
     /** 上下文窗口大小（可选）。 */
     maxTokens?: number;
     /** 是否启用（缺省 true）。 */
@@ -678,6 +684,15 @@ export function validateClientPayload(msg: {
       if (typeof p['baseUrl'] !== 'string') return 'baseUrl 必须是字符串';
       if (typeof p['apiKey'] !== 'string') return 'apiKey 必须是字符串';
       if (!isNonEmptyString(p['modelId'])) return 'modelId 必须是非空字符串';
+      if (p['modelIds'] !== undefined) {
+        const ids = p['modelIds'];
+        if (
+          !Array.isArray(ids) ||
+          !ids.every((x) => typeof x === 'string' && x.trim().length > 0)
+        ) {
+          return 'modelIds 必须是非空字符串数组';
+        }
+      }
       if (p['displayName'] !== undefined && typeof p['displayName'] !== 'string')
         return 'displayName 必须是字符串';
       if (p['maxTokens'] !== undefined && typeof p['maxTokens'] !== 'number')

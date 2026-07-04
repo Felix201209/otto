@@ -9,6 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildConfig,
+  buildSavePayload,
+  effectiveModelIds,
   buildModelsFileJson,
   buildCliCommand,
   type SetupFormState,
@@ -20,6 +22,7 @@ const form: SetupFormState = {
   baseUrl: 'https://api.openai.com/v1',
   apiKey: 'sk-real-secret-123',
   modelId: 'gpt-5.1',
+  selectedModels: [],
   displayName: '',
 };
 
@@ -59,5 +62,40 @@ describe('buildCliCommand', () => {
     const cmd = buildCliCommand(form);
     expect(cmd).toContain('--key <你的API_KEY>');
     expect(cmd).not.toContain('sk-real-secret-123');
+  });
+});
+
+describe('多选批量（填一次 key → 多模型）', () => {
+  it('effectiveModelIds 合并已选 + 输入框待添加，去重去空', () => {
+    expect(
+      effectiveModelIds({ ...form, selectedModels: ['a', 'b'], modelId: 'c' }),
+    ).toEqual(['a', 'b', 'c']);
+    // 输入框里的重复项不再追加
+    expect(
+      effectiveModelIds({ ...form, selectedModels: ['a'], modelId: 'a' }),
+    ).toEqual(['a']);
+    // 空白输入不算
+    expect(
+      effectiveModelIds({ ...form, selectedModels: [], modelId: '   ' }),
+    ).toEqual([]);
+  });
+
+  it('多选 → payload 带 modelIds 批量；单个不带', () => {
+    const multi = buildSavePayload({
+      ...form,
+      selectedModels: ['glm-5.1', 'glm-5v-turbo'],
+      modelId: '',
+    });
+    expect(multi.modelId).toBe('glm-5.1');
+    expect(multi.modelIds).toEqual(['glm-5.1', 'glm-5v-turbo']);
+    expect(multi.apiKey).toBe('sk-real-secret-123'); // 共用同一个 key
+
+    const single = buildSavePayload({
+      ...form,
+      selectedModels: [],
+      modelId: 'gpt-5.1',
+    });
+    expect(single.modelIds).toBeUndefined();
+    expect(single.modelId).toBe('gpt-5.1');
   });
 });

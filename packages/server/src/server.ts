@@ -276,28 +276,41 @@ export class OttoServer {
       });
       return;
     }
-    // 由结构化字段拼出 CustomModelConfig；displayName 缺省取 modelId 兜底。
-    const model = {
-      displayName: (p.displayName ?? '').trim() || p.modelId,
-      provider: p.provider as CustomModelConfig['provider'],
-      baseUrl: p.baseUrl,
-      apiKey: p.apiKey,
-      modelId: p.modelId,
-      ...(p.maxTokens !== undefined ? { maxTokens: p.maxTokens } : {}),
-      enabled: p.enabled !== false,
-    } as CustomModelConfig;
+    // 批量：modelIds 非空 → 同 provider/baseUrl/key 下一次加入多个模型（共享 key），
+    // 每条 displayName 取其 modelId；否则退回单个 modelId（保留用户填的 displayName）。
+    const batchIds =
+      Array.isArray(p.modelIds) && p.modelIds.length > 0
+        ? p.modelIds.map((s) => s.trim()).filter(Boolean)
+        : null;
+    const ids = batchIds ?? [p.modelId];
+    const buildModel = (mid: string): CustomModelConfig =>
+      ({
+        // 批量时用 modelId 作显示名；单个时保留用户填的 displayName。
+        displayName: batchIds ? mid : (p.displayName ?? '').trim() || p.modelId,
+        provider: p.provider as CustomModelConfig['provider'],
+        baseUrl: p.baseUrl,
+        apiKey: p.apiKey,
+        modelId: mid,
+        ...(p.maxTokens !== undefined ? { maxTokens: p.maxTokens } : {}),
+        enabled: p.enabled !== false,
+      }) as CustomModelConfig;
 
     try {
       // 写盘（内部再次校验，非法即抛）。makeActive 缺省视为 true（向导默认即用新模型）。
+      // 批量时只把列表第一个设为当前生效模型。
       const makeActive = p.makeActive !== false;
-      const savedId = saveCustomModel(model, makeActive);
+      let firstId: string | undefined;
+      for (let i = 0; i < ids.length; i++) {
+        const savedId = saveCustomModel(buildModel(ids[i]), makeActive && i === 0);
+        if (i === 0) firstId = savedId;
+      }
       // 写成功 → 广播最新模型列表（modelInfos 每次实时 loadCustomModels）。
-      // makeActive 时带 current=新模型，让 renderer 立刻把药丸切到刚配的模型。
+      // makeActive 时带 current=首个模型，让 renderer 立刻把药丸切到它。
       this.broadcastAll({
         type: 'models_list',
         payload: {
           models: this.modelInfos(),
-          ...(makeActive ? { current: savedId } : {}),
+          ...(makeActive && firstId ? { current: firstId } : {}),
         },
       });
     } catch (e) {

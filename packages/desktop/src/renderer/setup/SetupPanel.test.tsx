@@ -33,7 +33,8 @@ describe('SetupPanel 复制路径', () => {
     fireEvent.change(getByPlaceholderText('sk-...'), {
       target: { value: 'sk-real-secret-123' },
     });
-    fireEvent.change(getByPlaceholderText('例如 gpt-5.1 / gpt-4o'), {
+    // 模型输入框占位符现含「回车或点添加」（多选批量后）；输入的待添加项也算进 effectiveModelIds。
+    fireEvent.change(getByPlaceholderText(/回车或点添加/), {
       target: { value: 'gpt-5.1' },
     });
 

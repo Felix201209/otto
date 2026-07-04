@@ -29,6 +29,7 @@ import {
   buildConfig,
   buildSavePayload,
   validateForm,
+  effectiveModelIds,
   buildModelsFileJson,
   buildCliCommand,
   type CustomModelProvider,
@@ -58,6 +59,7 @@ function initialForm(): SetupFormState {
     baseUrl: DEFAULT_PRESET.baseUrl,
     apiKey: '',
     modelId: '',
+    selectedModels: [],
     displayName: '',
   };
 }
@@ -163,7 +165,35 @@ export function SetupPanel({
       provider: p.provider,
       // 锁定 baseUrl 的预设直接填官方端点；custom 清空让用户填。
       baseUrl: p.baseUrlLocked ? p.baseUrl : '',
+      // 换供应商 → 清空已选模型（不同家的模型 id 不通用）。
+      selectedModels: [],
+      modelId: '',
     });
+  };
+
+  /** 勾选 / 取消一个示例模型（进出 selectedModels）。 */
+  const toggleModel = (id: string): void => {
+    setForm((f) => ({
+      ...f,
+      selectedModels: f.selectedModels.includes(id)
+        ? f.selectedModels.filter((m) => m !== id)
+        : [...f.selectedModels, id],
+    }));
+    markTouched('modelId');
+  };
+
+  /** 把输入框里的自定义模型 id 加入已选集合，并清空输入框。 */
+  const addTypedModel = (): void => {
+    const id = form.modelId.trim();
+    if (!id) return;
+    setForm((f) => ({
+      ...f,
+      modelId: '',
+      selectedModels: f.selectedModels.includes(id)
+        ? f.selectedModels
+        : [...f.selectedModels, id],
+    }));
+    markTouched('modelId');
   };
 
   const markTouched = (field: string): void => {
@@ -380,32 +410,82 @@ export function SetupPanel({
             </p>
           )}
 
-          {/* —— 模型 id —— */}
-          <label className="otto-setup__label">模型 id</label>
-          <input
-            className={
-              'otto-setup__input' + (showErr('modelId') ? ' is-error' : '')
-            }
-            type="text"
-            value={form.modelId}
-            placeholder={preset.modelHint}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            onChange={(e) => patch({ modelId: e.target.value })}
-            onBlur={() => markTouched('modelId')}
-          />
+          {/* —— 模型（可多选：填一次 key 批量加入）—— */}
+          <label className="otto-setup__label">
+            模型
+            <span className="otto-setup__locked">
+              可多选 · 填一次 key 全部加入
+            </span>
+          </label>
+
+          {/* 示例模型：点击勾选 / 取消 */}
           {preset.exampleModels.length > 0 ? (
             <div className="otto-setup__examples">
-              {preset.exampleModels.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className="otto-setup__example"
-                  onClick={() => patch({ modelId: m })}
-                >
+              {preset.exampleModels.map((m) => {
+                const on = form.selectedModels.includes(m);
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    className={
+                      'otto-setup__example' + (on ? ' is-selected' : '')
+                    }
+                    onClick={() => toggleModel(m)}
+                  >
+                    {on ? '✓ ' : '+ '}
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {/* 自定义模型 id：输入 + 添加（回车也可） */}
+          <div className="otto-setup__keyrow">
+            <input
+              className={
+                'otto-setup__input' + (showErr('modelId') ? ' is-error' : '')
+              }
+              type="text"
+              value={form.modelId}
+              placeholder={`${preset.modelHint}（回车或点添加）`}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              onChange={(e) => patch({ modelId: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addTypedModel();
+                }
+              }}
+              onBlur={() => markTouched('modelId')}
+            />
+            <button
+              type="button"
+              className="otto-setup__iconbtn"
+              onClick={addTypedModel}
+              disabled={!form.modelId.trim()}
+            >
+              添加
+            </button>
+          </div>
+
+          {/* 已选模型 chips（可删） */}
+          {form.selectedModels.length > 0 ? (
+            <div className="otto-setup__chosen">
+              {form.selectedModels.map((m) => (
+                <span key={m} className="otto-setup__chosen-chip">
                   {m}
-                </button>
+                  <button
+                    type="button"
+                    className="otto-setup__chosen-x"
+                    onClick={() => toggleModel(m)}
+                    aria-label={`移除 ${m}`}
+                  >
+                    ✕
+                  </button>
+                </span>
               ))}
             </div>
           ) : null}
@@ -413,16 +493,25 @@ export function SetupPanel({
             <p className="otto-setup__err">{showErr('modelId')}</p>
           ) : null}
 
-          {/* —— 显示名（可选）—— */}
-          <label className="otto-setup__label">显示名（可选）</label>
-          <input
-            className="otto-setup__input"
-            type="text"
-            value={form.displayName}
-            placeholder={cfg.displayName || '在模型菜单里怎么称呼它'}
-            spellCheck={false}
-            onChange={(e) => patch({ displayName: e.target.value })}
-          />
+          {/* —— 显示名（仅当最终恰好 1 个模型时）—— */}
+          {effectiveModelIds(form).length <= 1 ? (
+            <>
+              <label className="otto-setup__label">显示名（可选）</label>
+              <input
+                className="otto-setup__input"
+                type="text"
+                value={form.displayName}
+                placeholder={cfg.displayName || '在模型菜单里怎么称呼它'}
+                spellCheck={false}
+                onChange={(e) => patch({ displayName: e.target.value })}
+              />
+            </>
+          ) : (
+            <p className="otto-setup__hint">
+              已选 {effectiveModelIds(form).length} 个模型，将各自以模型 id
+              命名、共用这一个 key 一次性加入。
+            </p>
+          )}
         </div>
 
         {/* —— 落盘失败提示（save_failed）—— */}

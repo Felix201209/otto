@@ -140,8 +140,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     baseUrlLocked: true,
     keyHint: '你的 API Key',
-    modelHint: '例如 glm-4.6 / glm-4-plus',
-    exampleModels: ['glm-4.6', 'glm-4-plus'],
+    modelHint: '例如 glm-5v-turbo / glm-4.6',
+    exampleModels: ['glm-5v-turbo', 'glm-5.1', 'glm-4.6', 'glm-4-plus'],
     keyConsoleUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
   },
   {
@@ -183,8 +183,24 @@ export interface SetupFormState {
   provider: CustomModelProvider;
   baseUrl: string;
   apiKey: string;
+  /** 「添加模型」输入框的当前值（点添加/回车后并入 selectedModels）。 */
   modelId: string;
+  /** 已勾选 / 添加的模型 id 集合——填一次 key 批量落盘的核心。 */
+  selectedModels: string[];
+  /** 仅当最终恰好 1 个模型时用作显示名；批量（多个）时忽略，每条取其 modelId。 */
   displayName: string;
+}
+
+/**
+ * 本次要落盘的模型 id 列表 = 已勾选集合 + 输入框里尚未点「添加」的那个（若非空），去重去空。
+ * 让用户输入到一半直接点「完成」也不丢那个模型。
+ */
+export function effectiveModelIds(form: SetupFormState): string[] {
+  const pending = form.modelId.trim();
+  const all = [...form.selectedModels, ...(pending ? [pending] : [])].map((s) =>
+    s.trim(),
+  );
+  return Array.from(new Set(all.filter(Boolean)));
 }
 
 /**
@@ -213,9 +229,10 @@ export function generateCustomModelId(cfg: {
 /** 把表单构造成落盘 CustomModelConfig（去掉末尾斜杠，与 CLI 行为一致）。 */
 export function buildConfig(form: SetupFormState): CustomModelConfig {
   const baseUrl = form.baseUrl.trim().replace(/\/+$/, '');
-  const modelId = form.modelId.trim();
+  const ids = effectiveModelIds(form);
+  const modelId = ids[0] ?? '';
   const displayName =
-    form.displayName.trim() ||
+    (ids.length <= 1 ? form.displayName.trim() : '') ||
     `${findPreset(form.presetId)?.label ?? form.provider} ${modelId}`;
   return {
     displayName,
@@ -234,13 +251,17 @@ export function buildConfig(form: SetupFormState): CustomModelConfig {
  */
 export function buildSavePayload(form: SetupFormState): SaveCustomModelPayload {
   const cfg = buildConfig(form);
+  const ids = effectiveModelIds(form);
   const userNamed = form.displayName.trim();
   return {
     provider: cfg.provider,
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
-    modelId: cfg.modelId,
-    ...(userNamed ? { displayName: userNamed } : {}),
+    // 主 modelId 取第一个（向后兼容单条校验）；多个时附 modelIds 批量落盘。
+    modelId: ids[0] ?? '',
+    ...(ids.length > 1 ? { modelIds: ids } : {}),
+    // 显示名仅在恰好 1 个模型时有意义；批量每条取其 modelId。
+    ...(ids.length === 1 && userNamed ? { displayName: userNamed } : {}),
     enabled: true,
     makeActive: true,
   };
@@ -253,9 +274,10 @@ export function buildSavePayload(form: SetupFormState): SaveCustomModelPayload {
 export function validateForm(form: SetupFormState): Record<string, string> {
   const errors: Record<string, string> = {};
   const cfg = buildConfig(form);
+  const ids = effectiveModelIds(form);
 
-  if (!cfg.modelId) {
-    errors.modelId = '请填写模型 id（传给接口的实际模型名）';
+  if (ids.length === 0) {
+    errors.modelId = '请至少勾选或填写一个模型 id';
   }
   if (!cfg.baseUrl) {
     errors.baseUrl = '请填写接口地址 base URL';
@@ -274,7 +296,8 @@ export function validateForm(form: SetupFormState): Record<string, string> {
     // 这里与之对齐（用户用本地代理时可随便填一个占位）。
     errors.apiKey = '请粘贴 API key（本地代理可填任意占位）';
   }
-  if (!cfg.displayName) {
+  // 显示名只在单个模型时相关；批量每条取 modelId，无需显示名。
+  if (ids.length === 1 && !cfg.displayName) {
     errors.displayName = '显示名不能为空';
   }
   return errors;

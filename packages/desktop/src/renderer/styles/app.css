@@ -1963,6 +1963,49 @@ h6.otto-prose__h {
   border-style: solid;
   color: var(--otto-accent-hover);
 }
+/* 已勾选的示例模型：实心 amber 底。 */
+.otto-setup__example.is-selected {
+  border-style: solid;
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+}
+
+/* 已选模型 chips（可删） */
+.otto-setup__chosen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.otto-setup__chosen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 10px;
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+  font-family: var(--otto-font-mono);
+  font-size: 11px;
+}
+.otto-setup__chosen-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.otto-setup__chosen-x:hover {
+  background: rgba(0, 0, 0, 0.24);
+}
 
 /* 提示 / 错误 */
 .otto-setup__hint {
