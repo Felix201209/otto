@@ -1,23 +1,28 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * Otto Memory Manager - Auto-learning knowledge base for departments and employees.
- * Learns from every task execution, stores as .markdown files, syncs to cloud.
+ * Otto Memory Manager v2 - Auto-learning knowledge base + HR lifecycle.
+ *
+ * 4 core capabilities:
+ * 1. Onboard: new employee inherits department + role knowledge instantly
+ * 2. Offboard: departing employee's experience auto-merges into department
+ * 3. Learn: every task execution auto-extracts knowledge, syncs in real-time
+ * 4. Report: management sees token spend, time saved, ROI per role/dept
  *
  * Files structure:
  *   ~/.otto/memory/
- *   ├── employee.markdown   (local, personal habits + efficiency)
- *   ├── department.markdown (cloud sync, SOPs + templates + common errors)
- *   ├── role.markdown       (cloud sync, role-specific workflows)
- *   └── workflows/
- *       ├── <task>.markdown (specific workflow templates)
+ *   ├── employee.markdown       (local, personal habits + efficiency)
+ *   ├── department.markdown     (cloud sync, SOPs + templates)
+ *   ├── role.markdown           (cloud sync, role-specific workflows)
+ *   ├── workflows/*.md          (task-specific templates)
+ *   └── reports/
+ *       ├── token_report.md     (monthly token spend by role/dept)
+ *       └── efficiency_report.md (time saved, ROI)
  */
 
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import {
   BaseTool, ToolResult, ToolCallConfirmationDetails,
   ToolConfirmationOutcome, Icon, ToolLocation,
@@ -26,60 +31,68 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 
-const execAsync = promisify(exec);
-
 const MEMORY_DIR = path.join(os.homedir(), '.otto', 'memory');
 const WORKFLOWS_DIR = path.join(MEMORY_DIR, 'workflows');
+const REPORTS_DIR = path.join(MEMORY_DIR, 'reports');
 
 export interface MemoryManagerToolParams {
-  action: 'learn' | 'recall' | 'update' | 'sync' | 'export' | 'list';
-  /** What task was just executed (for learn/recall) */
-  task_type?: string;
-  /** The natural language context of the task */
-  context?: string;
-  /** Result of the task execution (for learn) */
-  task_result?: string;
-  /** Employee identifier (defaults to system user) */
-  employee_id?: string;
-  /** Department identifier */
-  department_id?: string;
-  /** Role identifier (e.g. "real_estate_agent") */
-  role_id?: string;
-  /** For update: which file to update */
-  target?: 'employee' | 'department' | 'role' | 'workflow';
-  /** For update/sync: specific content to write */
-  content?: string;
-  /** For export: output file path */
-  output_path?: string;
-}
+  action:
+    | 'learn'      // Auto-extract knowledge from task execution
+    | 'recall'     // Retrieve relevant knowledge before task
+    | 'onboard'    // New employee inherits dept+role knowledge
+    | 'offboard'   // Departing employee's experience merges to dept
+    | 'report'     // Management: token spend, time saved, ROI
+    | 'update'     // Manually update a knowledge file
+    | 'sync'       // Prepare anonymized knowledge for cloud
+    | 'export'     // Export all knowledge
+    | 'list';      // Show all knowledge files
 
-interface KnowledgeEntry {
-  category: string;
-  content: string;
-  source: string;
-  timestamp: string;
-  confidence: number;
+  task_type?: string;
+  context?: string;
+  task_result?: string;
+  employee_id?: string;
+  department_id?: string;
+  role_id?: string;
+  target?: 'employee' | 'department' | 'role' | 'workflow';
+  content?: string;
+  output_path?: string;
+  /** For report: time range (7d, 30d, 90d) */
+  period?: string;
+  /** For report: who is viewing ('employee' sees own, 'manager' sees aggregated) */
+  viewer?: 'employee' | 'manager';
 }
 
 export class MemoryManagerTool extends BaseTool<MemoryManagerToolParams, ToolResult> {
   static readonly Name: string = 'memory_manager';
 
   constructor(private readonly config: Config) {
-    const desc = `Otto Memory Manager - Auto-learning knowledge base.
+    const desc = `Otto Memory Manager v2 - Knowledge base + HR lifecycle.
 
-Files created automatically:
-  ~/.otto/memory/employee.markdown   - Personal habits, efficiency data (LOCAL)
-  ~/.otto/memory/department.markdown - SOPs, templates, common errors (CLOUD SYNC)
-  ~/.otto/memory/role.markdown       - Role-specific workflows (CLOUD SYNC)
+ACTIONS:
+  learn:     Auto-extract knowledge after task execution.
+             {action:"learn", task_type:"listing_entry", context:"...", task_result:"success 3.2min"}
+  recall:    Retrieve relevant knowledge before executing a task.
+             {action:"recall", task_type:"listing_entry"}
+  onboard:   New employee inherits ALL department + role knowledge instantly.
+             {action:"onboard", employee_id:"new_hire_001", role_id:"real_estate_agent", department_id:"wangjing"}
+  offboard:  Departing employee's experience auto-merges into department knowledge.
+             Individual profile archived, no manual handover needed.
+             {action:"offboard", employee_id:"zhangxue"}
+  report:    Management dashboard: token spend, time saved, ROI by role/dept.
+             {action:"report", period:"30d", viewer:"manager"}
+             Employee version: {action:"report", period:"30d", viewer:"employee"}
+  update:    Manually update knowledge file.
+             {action:"update", target:"department", content:"## new SOP..."}
+  sync:      Prepare anonymized knowledge for cloud upload.
+  export:    Export all knowledge to single file.
+  list:      Show all knowledge files and sizes.
+
+FILES CREATED:
+  ~/.otto/memory/employee.markdown   - Personal habits + efficiency (LOCAL)
+  ~/.otto/memory/department.markdown - SOPs + templates (CLOUD SYNC)
+  ~/.otto/memory/role.markdown       - Role workflows (CLOUD SYNC)
   ~/.otto/memory/workflows/*.md      - Task-specific templates
-
-EXAMPLES:
-  learn: {action:"learn", task_type:"listing_entry", context:"User录入望京西园3栋1202...", task_result:"success 3.2min"}
-  recall: {action:"recall", task_type:"listing_entry"} -> returns relevant knowledge
-  update: {action:"update", target:"department", content:"## 新增: 望京西园物业费2.5元"}
-  sync: {action:"sync"} -> upload department+role to cloud (anonymized)
-  export: {action:"export", output_path:"~/Desktop/knowledge_export.md"}
-  list: {action:"list"} -> show all knowledge files and sizes`;
+  ~/.otto/memory/reports/*.md        - Token + efficiency reports`;
 
     super(MemoryManagerTool.Name, 'MemoryManager', desc, Icon.Info,
       {
@@ -88,17 +101,19 @@ EXAMPLES:
           action: {
             type: Type.STRING,
             description: 'Memory operation',
-            enum: ['learn', 'recall', 'update', 'sync', 'export', 'list'],
+            enum: ['learn', 'recall', 'onboard', 'offboard', 'report', 'update', 'sync', 'export', 'list'],
           },
-          task_type: { type: Type.STRING, description: 'Task type: listing_entry, contract_generation, inspection_report, data_analysis, etc.' },
-          context: { type: Type.STRING, description: 'Natural language description of what was done' },
-          task_result: { type: Type.STRING, description: 'Outcome of the task (success/fail + duration)' },
+          task_type: { type: Type.STRING, description: 'Task type: listing_entry, contract_generation, etc.' },
+          context: { type: Type.STRING, description: 'What was done (for learn)' },
+          task_result: { type: Type.STRING, description: 'Task outcome + duration (for learn)' },
           employee_id: { type: Type.STRING, description: 'Employee ID (defaults to OS username)' },
-          department_id: { type: Type.STRING, description: 'Department ID for cloud sync' },
+          department_id: { type: Type.STRING, description: 'Department ID' },
           role_id: { type: Type.STRING, description: 'Role ID: real_estate_agent, accountant, etc.' },
-          target: { type: Type.STRING, description: 'Which knowledge file to update', enum: ['employee', 'department', 'role', 'workflow'] },
-          content: { type: Type.STRING, description: 'Content to write/update in the target file' },
+          target: { type: Type.STRING, description: 'Which file to update', enum: ['employee', 'department', 'role', 'workflow'] },
+          content: { type: Type.STRING, description: 'Content to write' },
           output_path: { type: Type.STRING, description: 'Export output path' },
+          period: { type: Type.STRING, description: 'Report period: 7d, 30d, 90d. Default: 30d' },
+          viewer: { type: Type.STRING, description: 'Report viewer: employee (own stats) or manager (aggregated)', enum: ['employee', 'manager'] },
         },
         required: ['action'],
       },
@@ -110,18 +125,19 @@ EXAMPLES:
     if (e) return e;
     if (p.action === 'learn' && !p.task_type) return 'memory_manager/learn: task_type required';
     if (p.action === 'recall' && !p.task_type) return 'memory_manager/recall: task_type required';
+    if (p.action === 'onboard' && !p.employee_id) return 'memory_manager/onboard: employee_id required';
+    if (p.action === 'offboard' && !p.employee_id) return 'memory_manager/offboard: employee_id required';
     if (p.action === 'update' && (!p.target || !p.content)) return 'memory_manager/update: target and content required';
     return null;
   }
 
   toolLocations(): ToolLocation[] { return []; }
-
   getDescription(p: MemoryManagerToolParams): string {
-    return 'memory: ' + p.action + (p.task_type ? ' ' + p.task_type : '');
+    return 'memory: ' + p.action + (p.task_type ? ' ' + p.task_type : '') + (p.employee_id ? ' ' + p.employee_id : '');
   }
 
   async shouldConfirmExecute(_p: MemoryManagerToolParams, _s: AbortSignal): Promise<ToolCallConfirmationDetails | false> {
-    return false; // memory operations are safe, auto-approve
+    return false;
   }
 
   async execute(p: MemoryManagerToolParams, _s: AbortSignal): Promise<ToolResult> {
@@ -129,107 +145,105 @@ EXAMPLES:
     if (err) return { llmContent: err, returnDisplay: err };
 
     this.ensureDirs();
+    const logLabel = 'memory.' + p.action;
+    console.time(logLabel);
 
     try {
       let r = '';
       switch (p.action) {
-        case 'learn': r = await this.learn(p); break;
-        case 'recall': r = await this.recall(p); break;
+        case 'learn': r = this.learn(p); break;
+        case 'recall': r = this.recall(p); break;
+        case 'onboard': r = this.onboard(p); break;
+        case 'offboard': r = this.offboard(p); break;
+        case 'report': r = this.report(p); break;
         case 'update': r = this.update(p); break;
-        case 'sync': r = await this.sync(p); break;
+        case 'sync': r = this.sync(p); break;
         case 'export': r = this.export(p); break;
         case 'list': r = this.list(); break;
-        default: return { llmContent: 'memory_manager FAIL: unknown action', returnDisplay: 'memory_manager FAIL: unknown action' };
+        default: return { llmContent: 'memory FAIL: unknown action', returnDisplay: 'memory FAIL: unknown action' };
       }
-      return { llmContent: 'memory_manager OK: ' + r, returnDisplay: 'memory_manager OK: ' + r.split('\n')[0] };
+      console.timeEnd(logLabel);
+      return { llmContent: 'memory OK: ' + r, returnDisplay: 'memory OK: ' + r.split('\n')[0] };
     } catch (e: unknown) {
+      console.timeEnd(logLabel);
       const m = e instanceof Error ? e.message : String(e);
-      return { llmContent: 'memory_manager FAIL: ' + m, returnDisplay: 'memory_manager FAIL: ' + m };
+      return { llmContent: 'memory FAIL: ' + m, returnDisplay: 'memory FAIL: ' + m };
     }
   }
 
   // ============================================================
-  // Core: learn - extract knowledge from task execution
+  // LEARN: auto-extract knowledge from task execution
   // ============================================================
-  private async learn(p: MemoryManagerToolParams): Promise<string> {
+  private learn(p: MemoryManagerToolParams): string {
     const empId = p.employee_id || os.userInfo().username;
     const now = new Date().toISOString().split('T')[0];
-
-    // 1. Update employee.markdown with task execution record
-    const empFile = path.join(MEMORY_DIR, 'employee.markdown');
-    let empContent = '';
-    if (fs.existsSync(empFile)) {
-      empContent = fs.readFileSync(empFile, 'utf8');
-    } else {
-      empContent = `# Employee Profile: ${empId}\n\n## Task History\n`;
-    }
-
-    // Extract duration from task_result if present
     const durationMatch = p.task_result?.match(/(\d+\.?\d*)\s*min/);
-    const duration = durationMatch ? durationMatch[1] : 'unknown';
+    const duration = durationMatch ? parseFloat(durationMatch[1]) : 0;
+    const success = p.task_result?.includes('fail') ? false : true;
 
-    // Append task record
-    const record = `- [${now}] ${p.task_type}: ${p.context?.substring(0, 200) || ''} -> ${p.task_result || 'ok'} (${duration}min)\n`;
+    // 1. Update employee.markdown
+    const empFile = path.join(MEMORY_DIR, 'employee.markdown');
+    let empContent = fs.existsSync(empFile) ? fs.readFileSync(empFile, 'utf8') : `# Employee: ${empId}\n\n## Task History\n`;
+
+    const record = `- [${now}] ${p.task_type}: ${(p.context || '').substring(0, 200)} -> ${p.task_result || 'ok'}${duration ? ' (' + duration + 'min)' : ''}\n`;
     empContent += record;
+
+    // Track efficiency trend
+    this.updateEfficiencyTrend(empFile, empContent, p.task_type!, duration, success);
     fs.writeFileSync(empFile, empContent);
 
-    // 2. Extract knowledge for department.markdown
-    // Simple extraction: if context contains patterns like locations, templates, etc.
-    const deptFile = path.join(MEMORY_DIR, 'department.markdown');
-    let deptContent = '';
-    if (fs.existsSync(deptFile)) {
-      deptContent = fs.readFileSync(deptFile, 'utf8');
-    } else {
-      deptContent = `# Department Knowledge Base\n\n## Auto-generated by Otto\n`;
-    }
-
-    // Check if this task_type has a workflow file
+    // 2. Update workflow file
     const wfFile = path.join(WORKFLOWS_DIR, p.task_type! + '.markdown');
     if (!fs.existsSync(wfFile)) {
-      // Create workflow template from first execution
-      const wfContent = `# Workflow: ${p.task_type}\n\n## First Execution\n- Date: ${now}\n- Employee: ${empId}\n- Context: ${p.context?.substring(0, 500) || 'N/A'}\n- Result: ${p.task_result || 'success'}\n- Duration: ${duration}min\n\n## Steps\n(Auto-populated as more executions are recorded)\n`;
+      const wfContent = `# Workflow: ${p.task_type}\n\n## First Execution\n- Date: ${now}\n- Employee: ${empId}\n- Context: ${(p.context || '').substring(0, 500)}\n- Result: ${p.task_result || 'success'}\n- Duration: ${duration || 'unknown'}min\n\n## Steps\n(Auto-populated)\n`;
       fs.writeFileSync(wfFile, wfContent);
     } else {
-      // Append to existing workflow
       const wfContent = fs.readFileSync(wfFile, 'utf8');
-      const appendBlock = `\n## Execution [${now}]\n- Employee: ${empId}\n- Context: ${p.context?.substring(0, 300) || 'N/A'}\n- Result: ${p.task_result || 'success'}\n- Duration: ${duration}min\n`;
+      const execCount = (wfContent.match(/## Execution/g) || []).length + 1;
+      const appendBlock = `\n## Execution ${execCount} [${now}]\n- Employee: ${empId}\n- Context: ${(p.context || '').substring(0, 300)}\n- Result: ${p.task_result || 'success'}\n- Duration: ${duration || 'unknown'}min\n`;
       fs.writeFileSync(wfFile, wfContent + appendBlock);
+
+      // Auto-discover patterns after 3+ executions
+      if (execCount >= 3) {
+        this.discoverPatterns(wfFile, p.task_type!);
+      }
     }
 
-    // 3. Track efficiency trend in employee file
-    this.updateEfficiencyTrend(empFile, p.task_type!, parseFloat(duration) || 0);
-
-    return `Learned: task=${p.task_type}, duration=${duration}min, employee=${empId}`;
+    return `Learned: task=${p.task_type}, duration=${duration || 'unknown'}min, success=${success}, employee=${empId}`;
   }
 
   // ============================================================
-  // Core: recall - retrieve relevant knowledge
+  // RECALL: retrieve relevant knowledge before task
   // ============================================================
-  private async recall(p: MemoryManagerToolParams): Promise<string> {
+  private recall(p: MemoryManagerToolParams): string {
     const parts: string[] = [];
 
-    // 1. Check employee habits
+    // 1. Employee history
     const empFile = path.join(MEMORY_DIR, 'employee.markdown');
     if (fs.existsSync(empFile)) {
       const emp = fs.readFileSync(empFile, 'utf8');
-      // Find last 3 executions of same task_type
       const lines = emp.split('\n').filter(l => l.includes(p.task_type!));
       if (lines.length > 0) {
-        parts.push('## Employee History (last 3)');
+        parts.push('## Your History (last 3)');
         parts.push(lines.slice(-3).join('\n'));
+      }
+      // Efficiency trend
+      const trendMatch = emp.match(new RegExp(`- ${p.task_type}: (.+)`));
+      if (trendMatch) {
+        parts.push(`## Your Efficiency Trend: ${trendMatch[1]}`);
       }
     }
 
-    // 2. Check department knowledge
+    // 2. Department knowledge
     const deptFile = path.join(MEMORY_DIR, 'department.markdown');
     if (fs.existsSync(deptFile)) {
       const dept = fs.readFileSync(deptFile, 'utf8');
-      // Find sections relevant to task_type
       const sections = dept.split('\n## ');
       const relevant = sections.filter(s =>
         s.toLowerCase().includes(p.task_type!.toLowerCase()) ||
         s.toLowerCase().includes('sop') ||
-        s.toLowerCase().includes('template')
+        s.toLowerCase().includes('template') ||
+        s.toLowerCase().includes('common')
       );
       if (relevant.length > 0) {
         parts.push('## Department Knowledge');
@@ -237,23 +251,237 @@ EXAMPLES:
       }
     }
 
-    // 3. Check workflow file
+    // 3. Workflow template
     const wfFile = path.join(WORKFLOWS_DIR, p.task_type! + '.markdown');
     if (fs.existsSync(wfFile)) {
-      const wf = fs.readFileSync(wfFile, 'utf8');
       parts.push('## Workflow Template');
-      parts.push(wf.substring(0, 1000));
+      parts.push(fs.readFileSync(wfFile, 'utf8').substring(0, 1000));
     }
 
-    if (parts.length === 0) {
-      return `No prior knowledge for task_type=${p.task_type}. This may be the first execution.`;
-    }
-
-    return parts.join('\n\n');
+    return parts.length > 0 ? parts.join('\n\n') : `No prior knowledge for task_type=${p.task_type}. First execution.`;
   }
 
   // ============================================================
-  // Core: update - manually update a knowledge file
+  // ONBOARD: new employee inherits everything instantly
+  // ============================================================
+  private onboard(p: MemoryManagerToolParams): string {
+    const empId = p.employee_id!;
+    const empFile = path.join(MEMORY_DIR, 'employee.markdown');
+
+    // Create fresh employee profile
+    const profile = `# Employee: ${empId}
+
+## Profile
+- Role: ${p.role_id || 'unassigned'}
+- Department: ${p.department_id || 'unassigned'}
+- Onboarded: ${new Date().toISOString().split('T')[0]}
+- Status: ACTIVE
+
+## Task History
+(No tasks yet - Otto will learn as you work)
+
+## Efficiency Trends
+(No data yet - Otto will track your improvement)
+
+## Inherited Knowledge
+`;
+
+    let inherited = profile;
+
+    // Inherit department knowledge
+    const deptFile = path.join(MEMORY_DIR, 'department.markdown');
+    if (fs.existsSync(deptFile)) {
+      const dept = fs.readFileSync(deptFile, 'utf8');
+      inherited += `### Department SOPs (inherited)\n${dept.substring(0, 2000)}\n\n`;
+    }
+
+    // Inherit role knowledge
+    const roleFile = path.join(MEMORY_DIR, 'role.markdown');
+    if (fs.existsSync(roleFile)) {
+      const role = fs.readFileSync(roleFile, 'utf8');
+      inherited += `### Role Workflows (inherited)\n${role.substring(0, 2000)}\n\n`;
+    }
+
+    // List available workflow templates
+    if (fs.existsSync(WORKFLOWS_DIR)) {
+      const wfs = fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.markdown'));
+      if (wfs.length > 0) {
+        inherited += `### Available Workflow Templates\n${wfs.map(w => '- ' + w.replace('.markdown', '')).join('\n')}\n`;
+      }
+    }
+
+    fs.writeFileSync(empFile, inherited);
+
+    return `Onboarded: ${empId}\nRole: ${p.role_id || 'unassigned'}\nDept: ${p.department_id || 'unassigned'}\nInherited: department SOPs + role workflows + ${fs.existsSync(WORKFLOWS_DIR) ? fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.markdown')).length : 0} workflow templates\n\nDay 1 ready. No training needed.`;
+  }
+
+  // ============================================================
+  // OFFBOARD: auto-merge experience into department, archive profile
+  // ============================================================
+  private offboard(p: MemoryManagerToolParams): string {
+    const empId = p.employee_id!;
+    const empFile = path.join(MEMORY_DIR, 'employee.markdown');
+
+    if (!fs.existsSync(empFile)) {
+      return `Employee ${empId} has no profile. Nothing to offboard.`;
+    }
+
+    const empContent = fs.readFileSync(empFile, 'utf8');
+    const now = new Date().toISOString().split('T')[0];
+
+    // 1. Extract transferable knowledge from employee profile
+    const taskLines = empContent.split('\n').filter(l => l.startsWith('- ['));
+    const efficiencyLines = empContent.split('\n').filter(l => l.includes('avg:'));
+
+    // 2. Merge into department knowledge
+    const deptFile = path.join(MEMORY_DIR, 'department.markdown');
+    let deptContent = fs.existsSync(deptFile) ? fs.readFileSync(deptFile, 'utf8') : `# Department Knowledge Base\n`;
+
+    const mergeBlock = `\n## Offboarded Experience [${empId}] [${now}]
+### Task Patterns Learned
+${taskLines.slice(-20).join('\n')}
+
+### Efficiency Benchmarks
+${efficiencyLines.join('\n')}
+
+### Notes
+- Auto-merged from ${empId}'s profile on ${now}
+- Individual personal preferences NOT transferred (only methodology)
+`;
+    deptContent += mergeBlock;
+    fs.writeFileSync(deptFile, deptContent);
+
+    // 3. Archive employee profile
+    const archiveDir = path.join(MEMORY_DIR, 'archive');
+    if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+    const archiveFile = path.join(archiveDir, `${empId}_${now}.markdown`);
+    fs.writeFileSync(archiveFile, empContent);
+
+    // 4. Reset active employee profile
+    fs.writeFileSync(empFile, `# Employee: (vacant)\n- Previous: ${empId} (offboarded ${now})\n- Experience merged to department knowledge\n- Awaiting new assignment\n`);
+
+    return `Offboarded: ${empId}\n- ${taskLines.length} task records merged to department\n- ${efficiencyLines.length} efficiency benchmarks merged\n- Profile archived to: archive/${empId}_${now}.markdown\n- No manual handover needed. Next hire inherits everything.`;
+  }
+
+  // ============================================================
+  // REPORT: token spend, time saved, ROI
+  // ============================================================
+  private report(p: MemoryManagerToolParams): string {
+    const period = p.period || '30d';
+    const viewer = p.viewer || 'employee';
+    const empId = p.employee_id || os.userInfo().username;
+
+    const empFile = path.join(MEMORY_DIR, 'employee.markdown');
+    if (!fs.existsSync(empFile)) {
+      return 'No employee profile found. Use Otto more to generate data.';
+    }
+
+    const emp = fs.readFileSync(empFile, 'utf8');
+
+    // Parse task history
+    const taskLines = emp.split('\n').filter(l => l.startsWith('- ['));
+    const tasks = taskLines.map(l => {
+      const durationMatch = l.match(/(\d+\.?\d*)\s*min/);
+      const typeMatch = l.match(/\]\s+(\w+):/);
+      const successMatch = l.includes('success') || l.includes('ok');
+      return {
+        type: typeMatch ? typeMatch[1] : 'unknown',
+        duration: durationMatch ? parseFloat(durationMatch[1]) : 0,
+        success: successMatch,
+        raw: l,
+      };
+    });
+
+    // Calculate metrics
+    const totalTasks = tasks.length;
+    const totalMinutes = tasks.reduce((sum, t) => sum + t.duration, 0);
+    const avgDuration = totalTasks > 0 ? totalMinutes / totalTasks : 0;
+
+    // Group by task type
+    const byType: Record<string, { count: number; totalMin: number; avgMin: number }> = {};
+    for (const t of tasks) {
+      if (!byType[t.type]) byType[t.type] = { count: 0, totalMin: 0, avgMin: 0 };
+      byType[t.type].count++;
+      byType[t.type].totalMin += t.duration;
+    }
+    for (const [type, data] of Object.entries(byType)) {
+      data.avgMin = data.totalMin / data.count;
+    }
+
+    // Estimate time saved (assume manual takes 3x Otto time)
+    const estimatedManualMin = totalMinutes * 3;
+    const timeSavedMin = estimatedManualMin - totalMinutes;
+    const timeSavedHours = (timeSavedMin / 60).toFixed(1);
+
+    // Estimate token cost (rough: ~2000 tokens per task, $0.002/1K tokens)
+    const estTokensPerTask = 2000;
+    const totalTokens = totalTasks * estTokensPerTask;
+    const tokenCostCNY = (totalTokens / 1000 * 0.014).toFixed(2); // ~0.014 CNY per 1K tokens
+    const hourlyRate = 50; // CNY per hour
+    const moneySaved = ((timeSavedMin / 60) * hourlyRate).toFixed(0);
+    const roi = parseFloat(tokenCostCNY) > 0 ? (parseFloat(moneySaved) / parseFloat(tokenCostCNY)).toFixed(0) : 'N/A';
+
+    if (viewer === 'employee') {
+      // Employee sees: how much time THEY saved
+      let report = `## Your Otto Report (${period})\n\n`;
+      report += `Tasks completed: ${totalTasks}\n`;
+      report += `Time spent with Otto: ${totalMinutes.toFixed(0)} min\n`;
+      report += `Estimated time without Otto: ${estimatedManualMin.toFixed(0)} min\n`;
+      report += `Time saved: ${timeSavedHours} hours (${timeSavedMin.toFixed(0)} min)\n`;
+      report += `That's ${(parseFloat(timeSavedHours) / 8).toFixed(1)} extra work days freed up.\n\n`;
+      report += `### By Task Type\n`;
+      report += `| Task | Count | Avg Time | Total Time |\n|------|-------|----------|------------|\n`;
+      for (const [type, data] of Object.entries(byType)) {
+        report += `| ${type} | ${data.count} | ${data.avgMin.toFixed(1)}min | ${data.totalMin.toFixed(0)}min |\n`;
+      }
+      return report;
+    } else {
+      // Manager sees: ROI, token spend, aggregated efficiency
+      let report = `## Management Report (${period})\n\n`;
+      report += `### ROI Summary\n`;
+      report += `- Total tasks: ${totalTasks}\n`;
+      report += `- Time saved: ${timeSavedHours} hours\n`;
+      report += `- Estimated money saved: CNY ${moneySaved} (at ${hourlyRate} CNY/hour)\n`;
+      report += `- Token cost: CNY ${tokenCostCNY}\n`;
+      report += `- ROI: ${roi}x\n\n`;
+      report += `### Token Spend Breakdown\n`;
+      report += `| Task Type | Tasks | Est. Tokens | Est. Cost (CNY) |\n|-----------|-------|-------------|------------------|\n`;
+      for (const [type, data] of Object.entries(byType)) {
+        const tokens = data.count * estTokensPerTask;
+        const cost = (tokens / 1000 * 0.014).toFixed(2);
+        report += `| ${type} | ${data.count} | ${tokens.toLocaleString()} | ${cost} |\n`;
+      }
+      report += `| **Total** | **${totalTasks}** | **${totalTokens.toLocaleString()}** | **${tokenCostCNY}** |\n\n`;
+      report += `### Efficiency Trends\n`;
+      const trendLines = emp.split('\n').filter(l => l.includes('avg:'));
+      if (trendLines.length > 0) {
+        for (const line of trendLines) {
+          report += `- ${line.replace('- ', '')}\n`;
+        }
+      } else {
+        report += '(Not enough data for trends yet)\n';
+      }
+      report += `\n### Bottleneck Analysis\n`;
+      const slowest = Object.entries(byType).sort((a, b) => b[1].avgMin - a[1].avgMin)[0];
+      if (slowest) {
+        report += `- Slowest task: ${slowest[0]} (avg ${slowest[1].avgMin.toFixed(1)}min) - consider optimizing\n`;
+      }
+      const mostFrequent = Object.entries(byType).sort((a, b) => b[1].count - a[1].count)[0];
+      if (mostFrequent) {
+        report += `- Most frequent: ${mostFrequent[0]} (${mostFrequent[1].count} times)\n`;
+      }
+
+      // Save report
+      const reportFile = path.join(REPORTS_DIR, `report_${period}_${new Date().toISOString().split('T')[0]}.md`);
+      fs.writeFileSync(reportFile, report);
+      report += `\nReport saved: ${reportFile}`;
+
+      return report;
+    }
+  }
+
+  // ============================================================
+  // UPDATE: manually update knowledge file
   // ============================================================
   private update(p: MemoryManagerToolParams): string {
     const targetMap: Record<string, string> = {
@@ -262,103 +490,75 @@ EXAMPLES:
       'role': path.join(MEMORY_DIR, 'role.markdown'),
       'workflow': path.join(WORKFLOWS_DIR, (p.task_type || 'general') + '.markdown'),
     };
-
     const filePath = targetMap[p.target!];
     if (!filePath) return 'Invalid target: ' + p.target;
-
-    let existing = '';
-    if (fs.existsSync(filePath)) {
-      existing = fs.readFileSync(filePath, 'utf8');
-    }
-
-    // Append content (don't overwrite)
-    const updated = existing + '\n' + p.content + '\n';
-    fs.writeFileSync(filePath, updated);
-
+    let existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    fs.writeFileSync(filePath, existing + '\n' + p.content + '\n');
     return `Updated ${p.target}.markdown (+${p.content!.length} chars)`;
   }
 
   // ============================================================
-  // Core: sync - prepare anonymized knowledge for cloud upload
+  // SYNC: anonymize + prepare for cloud
   // ============================================================
-  private async sync(p: MemoryManagerToolParams): Promise<string> {
-    const deptFile = path.join(MEMORY_DIR, 'department.markdown');
-    const roleFile = path.join(MEMORY_DIR, 'role.markdown');
-
+  private sync(p: MemoryManagerToolParams): string {
     const files: string[] = [];
     let totalSize = 0;
-
-    for (const [name, fpath] of [['department', deptFile], ['role', roleFile]]) {
+    for (const [name, fpath] of [['department', path.join(MEMORY_DIR, 'department.markdown')], ['role', path.join(MEMORY_DIR, 'role.markdown')]]) {
       if (fs.existsSync(fpath)) {
         let content = fs.readFileSync(fpath, 'utf8');
-        // Anonymize: remove employee names, phone numbers, emails
         content = content.replace(/1[3-9]\d{9}/g, '[PHONE_REDACTED]');
         content = content.replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL_REDACTED]');
         content = content.replace(/Employee:\s*\w+/g, 'Employee: [REDACTED]');
-
-        // Write anonymized version to temp
         const tmpFile = path.join(os.tmpdir(), `otto_sync_${name}_${Date.now()}.md`);
         fs.writeFileSync(tmpFile, content);
         files.push(`${name}: ${tmpFile} (${content.length} chars)`);
         totalSize += content.length;
       }
     }
-
-    if (files.length === 0) {
-      return 'No knowledge files to sync. Use the tool more to build knowledge first.';
-    }
-
-    return `Sync prepared (${totalSize} chars total):\n${files.join('\n')}\n\nNote: Cloud upload endpoint not configured. Files saved to temp for manual upload.`;
+    return files.length > 0
+      ? `Sync prepared (${totalSize} chars):\n${files.join('\n')}\n\nNote: Upload endpoint not configured. Files saved to temp.`
+      : 'No knowledge files to sync.';
   }
 
   // ============================================================
-  // Core: export - export all knowledge to a single file
+  // EXPORT: all knowledge to single file
   // ============================================================
   private export(p: MemoryManagerToolParams): string {
     const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'otto_knowledge_export.md');
     const parts: string[] = ['# Otto Knowledge Export', `Generated: ${new Date().toISOString()}`, ''];
-
-    // Collect all knowledge files
-    const collectFiles = (dir: string, prefix: string) => {
+    const collect = (dir: string, prefix: string) => {
       if (!fs.existsSync(dir)) return;
-      const items = fs.readdirSync(dir);
-      for (const item of items) {
-        const fullPath = path.join(dir, item);
-        const stat = fs.statSync(fullPath);
-        if (stat.isFile() && item.endsWith('.markdown')) {
+      for (const item of fs.readdirSync(dir)) {
+        const fp = path.join(dir, item);
+        if (fs.statSync(fp).isFile() && item.endsWith('.markdown')) {
           parts.push(`---\n# ${prefix}/${item}\n`);
-          parts.push(fs.readFileSync(fullPath, 'utf8'));
+          parts.push(fs.readFileSync(fp, 'utf8'));
           parts.push('');
         }
       }
     };
-
-    collectFiles(MEMORY_DIR, 'memory');
-    collectFiles(WORKFLOWS_DIR, 'workflows');
-
+    collect(MEMORY_DIR, 'memory');
+    collect(WORKFLOWS_DIR, 'workflows');
+    collect(REPORTS_DIR, 'reports');
     fs.writeFileSync(outPath, parts.join('\n'));
     return `Exported to: ${outPath} (${fs.statSync(outPath).size} bytes)`;
   }
 
   // ============================================================
-  // Core: list - show all knowledge files
+  // LIST: show all knowledge files
   // ============================================================
   private list(): string {
     const parts: string[] = ['## Otto Memory Files\n'];
-
-    const showFile = (name: string, fpath: string) => {
+    const show = (name: string, fpath: string) => {
       if (fs.existsSync(fpath)) {
         const stat = fs.statSync(fpath);
-        const content = fs.readFileSync(fpath, 'utf8');
-        const lines = content.split('\n').length;
+        const lines = fs.readFileSync(fpath, 'utf8').split('\n').length;
         parts.push(`- ${name}: ${Math.round(stat.size / 1024)}KB, ${lines} lines`);
       }
     };
-
-    showFile('employee.markdown (LOCAL)', path.join(MEMORY_DIR, 'employee.markdown'));
-    showFile('department.markdown (CLOUD)', path.join(MEMORY_DIR, 'department.markdown'));
-    showFile('role.markdown (CLOUD)', path.join(MEMORY_DIR, 'role.markdown'));
-
+    show('employee.markdown (LOCAL)', path.join(MEMORY_DIR, 'employee.markdown'));
+    show('department.markdown (CLOUD)', path.join(MEMORY_DIR, 'department.markdown'));
+    show('role.markdown (CLOUD)', path.join(MEMORY_DIR, 'role.markdown'));
     if (fs.existsSync(WORKFLOWS_DIR)) {
       const wfs = fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.markdown'));
       if (wfs.length > 0) {
@@ -369,7 +569,13 @@ EXAMPLES:
         }
       }
     }
-
+    if (fs.existsSync(REPORTS_DIR)) {
+      const rps = fs.readdirSync(REPORTS_DIR).filter(f => f.endsWith('.md'));
+      if (rps.length > 0) {
+        parts.push('\n### Reports:');
+        for (const rp of rps) parts.push(`- ${rp}`);
+      }
+    }
     return parts.join('\n');
   }
 
@@ -377,42 +583,54 @@ EXAMPLES:
   // Helpers
   // ============================================================
   private ensureDirs(): void {
-    if (!fs.existsSync(MEMORY_DIR)) {
-      fs.mkdirSync(MEMORY_DIR, { recursive: true });
-    }
-    if (!fs.existsSync(WORKFLOWS_DIR)) {
-      fs.mkdirSync(WORKFLOWS_DIR, { recursive: true });
+    for (const d of [MEMORY_DIR, WORKFLOWS_DIR, REPORTS_DIR]) {
+      if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     }
   }
 
-  private updateEfficiencyTrend(empFile: string, taskType: string, duration: number): void {
+  private updateEfficiencyTrend(empFile: string, content: string, taskType: string, duration: number, success: boolean): void {
     if (duration <= 0) return;
-    let content = fs.readFileSync(empFile, 'utf8');
-
-    // Find or create efficiency section
     const sectionHeader = '## Efficiency Trends';
-    if (!content.includes(sectionHeader)) {
-      content += `\n${sectionHeader}\n`;
-    }
-
-    // Find task trend line
+    let c = content;
+    if (!c.includes(sectionHeader)) c += `\n${sectionHeader}\n`;
     const trendPattern = new RegExp(`- ${taskType}: (.+)`, 'g');
-    const match = trendPattern.exec(content);
-
+    const match = trendPattern.exec(c);
     if (match) {
-      // Parse existing trend data
       const dataPoints = match[1].split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
       dataPoints.push(duration);
-      // Keep last 10 data points
       const recent = dataPoints.slice(-10);
       const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
       const trend = recent.length > 1 && recent[recent.length - 1] < avg ? 'improving' : 'stable';
-      content = content.replace(trendPattern, `- ${taskType}: ${recent.join(', ')} (avg: ${avg.toFixed(1)}min, ${trend})`);
+      c = c.replace(trendPattern, `- ${taskType}: ${recent.join(', ')} (avg: ${avg.toFixed(1)}min, ${trend})`);
     } else {
-      // Add new trend line
-      content += `- ${taskType}: ${duration} (first record)\n`;
+      c += `- ${taskType}: ${duration} (first record)\n`;
+    }
+    fs.writeFileSync(empFile, c);
+  }
+
+  private discoverPatterns(wfFile: string, taskType: string): void {
+    // Read all execution records and find common patterns
+    const content = fs.readFileSync(wfFile, 'utf8');
+    const executions = content.split('## Execution').filter(s => s.trim());
+    if (executions.length < 3) return;
+
+    // Extract durations to find average
+    const durations: number[] = [];
+    for (const exec of executions) {
+      const m = exec.match(/Duration:\s*(\d+\.?\d*)\s*min/);
+      if (m) durations.push(parseFloat(m[1]));
     }
 
-    fs.writeFileSync(empFile, content);
+    if (durations.length >= 3) {
+      const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
+      const min = Math.min(...durations);
+      const max = Math.max(...durations);
+
+      // Check if pattern section already exists
+      if (!content.includes('## Discovered Patterns')) {
+        const patternBlock = `\n## Discovered Patterns\n- Total executions: ${durations.length}\n- Average duration: ${avg.toFixed(1)}min\n- Fastest: ${min}min\n- Slowest: ${max}min\n- Trend: ${durations[durations.length - 1] < avg ? 'improving' : 'stable'}\n`;
+        fs.writeFileSync(wfFile, content + patternBlock);
+      }
+    }
   }
 }
