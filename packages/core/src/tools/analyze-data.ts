@@ -116,7 +116,7 @@ DEPENDENCIES: duckdb + gnuplot. macOS: brew install duckdb gnuplot. Windows: win
   private async duckdb(sql: string): Promise<string> {
     const tmp = path.join(os.tmpdir(),'otto-sql-'+Date.now()+'.sql');
     fs.writeFileSync(tmp, sql);
-    try { const { stdout } = await execAsync('duckdb -csv -c "' + sql.replace(/'/g, "'\\''") + '"', { maxBuffer:20*1024*1024 }); return stdout.trim(); }
+    try { const tmp = path.join(os.tmpdir(), 'otto-sql-'+Date.now()+'.sql'); fs.writeFileSync(tmp, sql); const { stdout } = await execAsync('duckdb -csv < "'+tmp+'"', { maxBuffer:20*1024*1024 }); fs.unlinkSync(tmp); return stdout.trim(); }
     finally { try { fs.unlinkSync(tmp); } catch {} }
   }
   private tbl(f: string): string {

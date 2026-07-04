@@ -102,7 +102,7 @@ export function createEmployee(emp: {
   getDB().prepare(
     `INSERT INTO employees (id, name, role, department, invite_code, personality)
      VALUES (@id, @name, @role, @department, @invite_code, @personality)`
-  ).run(emp);
+  ).run({ ...emp, role: emp.role || null, department: emp.department || null, invite_code: emp.invite_code || null, personality: emp.personality || null });
   logAudit('onboard', emp.id, `Employee ${emp.name} onboarded to ${emp.department || 'unassigned'}`);
 }
 
