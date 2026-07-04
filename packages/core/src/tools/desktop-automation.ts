@@ -31,6 +31,8 @@ public class Win32Api {
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
   [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, ref RECT rect);
 }
 "@`.trim();
 
@@ -368,7 +370,7 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
     return 'Typed: '+t.substring(0,80);
   }
   private async winHotkey(keys: string): Promise<string> {
-    const VK: Record<string,number>={ctrl:0x11,alt:0x12,shift:0x10,win:0x5B,enter:0x0D,tab:0x09,esc:0x1B,space:0x20,left:0x25,up:0x26,right:0x27,down:0x28,delete:0x2E,f1:0x70,f2:0x71,f3:0x72,f4:0x73,f5:0x74,f6:0x75,f7:0x76,f8:0x77,f9:0x78,f10:0x79,f11:0x7A,f12:0x7B};
+    const VK: Record<string,number>={ctrl:0x11,alt:0x12,shift:0x10,win:0x5B,cmd:0x5B,enter:0x0D,tab:0x09,esc:0x1B,space:0x20,left:0x25,up:0x26,right:0x27,down:0x28,delete:0x2E,f1:0x70,f2:0x71,f3:0x72,f4:0x73,f5:0x74,f6:0x75,f7:0x76,f8:0x77,f9:0x78,f10:0x79,f11:0x7A,f12:0x7B};
     const parts=keys.toLowerCase().replace(/\s+/g,'').split('+'); const key=parts.pop()!; const mods=parts;
     const pd=mods.map(m=>'[Win32Api]::keybd_event('+(VK[m]||m.charCodeAt(0))+',0,0,[UIntPtr]::Zero)').join(';');
     const pu=mods.reverse().map(m=>'[Win32Api]::keybd_event('+(VK[m]||m.charCodeAt(0))+',0,2,[UIntPtr]::Zero)').join(';');
@@ -389,8 +391,9 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
     return 'Drag ('+x+','+y+') -> ('+tx+','+ty+')';
   }
   private async winScroll(amount: number): Promise<string> {
-    const flag=amount>0?'0x0078':'0xFF88';
-    for(let i=0;i<Math.abs(amount);i++) await this.ps(`[Win32Api]::mouse_event(${flag},0,0,120,[UIntPtr]::Zero);Start-Sleep -ms 10`);
+    const flag='0x0800'; // MOUSEEVENTF_WHEEL
+    const delta=amount>0?120:-120;
+    for(let i=0;i<Math.abs(amount);i++) await this.ps(`[Win32Api]::mouse_event(${flag},0,0,${delta},[UIntPtr]::Zero);Start-Sleep -ms 10`);
     return 'Scrolled '+(amount>0?'up':'down')+' '+Math.abs(amount)+' clicks';
   }
   private async winScreenshot(out?: string): Promise<string> {
@@ -427,11 +430,16 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
       '$a -join [Environment]::NewLine');
   }
   private async winWaitForApp(app: string, timeout: number): Promise<string> {
-    const o=await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
+    try {
+      const o=await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
       'while($sw.ElapsedMilliseconds -lt $d){$p=Get-Process "'+this.pe(this.wpn(app))+'" -ErrorAction SilentlyContinue;if($p){$p.ProcessName;exit}}'+
       'throw "timeout"');
-    if (o==='timeout') throw new Error('Timeout: '+app+' not started within '+timeout+'ms');
-    return 'App running: '+app;
+          return 'App running: '+app;
+    } catch(e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('timeout')) throw new Error('Timeout: '+app+' not started within '+timeout+'ms');
+      throw e;
+    }
   }
   private async winGetWinPos(app: string): Promise<string> {
     const o=await this.ps('$t=Get-Process "'+this.pe(this.wpn(app))+'" -ErrorAction SilentlyContinue|Select -First 1;'+

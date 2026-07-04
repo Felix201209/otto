@@ -95,7 +95,8 @@ REQUIREMENTS:
     try {
       // Find the voice_bridge.py script
       const scriptPath = path.join(path.dirname(path.dirname(__dirname)), 'scripts', 'voice_bridge.py');
-      const cmd = `python3 "${scriptPath}" --duration ${duration} --mode ${mode}`;
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const cmd = `${pyCmd} "${scriptPath}" --duration ${duration} --mode ${mode}`;
 
       const result = await ProcessGuard.exec({
         command: cmd,

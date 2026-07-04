@@ -99,8 +99,8 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
       startup:      ()=>isMac?this.macStartup():this.winStartup(),
       bluetooth:    ()=>isMac?this.macBluetooth():this.winBluetooth(),
       printer:      ()=>isMac?this.macPrinter():this.winPrinter(),
-      brew_doctor:  ()=>this.macBrewDoctor(),
-      repair_permissions: ()=>this.macRepairPerms(),
+      brew_doctor:  ()=>{ if(os.platform()!=='darwin') return Promise.resolve('brew_doctor: macOS only action'); return this.macBrewDoctor(); },
+      repair_permissions: ()=>{ if(os.platform()!=='darwin') return Promise.resolve('repair_permissions: macOS only action'); return this.macRepairPerms(); },
     };
     const fn = map[action];
     if (!fn) throw new Error('Unknown action: '+action);
@@ -185,13 +185,13 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
     return this.hf('Physical Disks',smart)+this.hf('chkdsk C: /scan',chk);
   }
   private async winDiskUsage():Promise<string>{
-    const drives=await this.ps('Get-PSDrive -PSProvider FileSystem|Select Name,Used,Free,@{{N="SizeGB";E={{[math]::Round(($_.Used+$_.Free)/1GB,1)}}}}|Format-Table -AutoSize|Out-String');
-    const top=await this.ps('Get-ChildItem C:\\ -Directory -ErrorAction SilentlyContinue|ForEach-Object{{$s=(Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue|Measure-Object -Property Length -Sum).Sum;[PSCustomObject]@{{Name=$_.Name;SizeGB=[math]::Round($s/1GB,2)}}}}|Sort SizeGB -Descending|Select -First 15|Format-Table -AutoSize|Out-String');
+    const drives=await this.ps('Get-PSDrive -PSProvider FileSystem|Select Name,Used,Free,@{N="SizeGB";E={[math]::Round(($_.Used+$_.Free)/1GB,1)}}|Format-Table -AutoSize|Out-String');
+    const top=await this.ps('Get-ChildItem C:\\ -Directory -ErrorAction SilentlyContinue|ForEach-Object{$s=(Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue|Measure-Object -Property Length -Sum).Sum;[PSCustomObject]@{Name=$_.Name;SizeGB=[math]::Round($s/1GB,2)}}|Sort SizeGB -Descending|Select -First 15|Format-Table -AutoSize|Out-String');
     return this.hf('Drives',drives)+this.hf('C:\\ top-level',top);
   }
   private async winMemory():Promise<string>{
     const mem=await this.ps('Get-CimInstance Win32_OperatingSystem|Select TotalVisibleMemorySize,FreePhysicalMemory|Format-List|Out-String');
-    const top=await this.ps('Get-Process|Sort WorkingSet64 -Descending|Select -First 15 ProcessName,@{N="MemMB";E={{[math]::Round($_.WorkingSet64/1MB,0)}}}|Format-Table -AutoSize|Out-String');
+    const top=await this.ps('Get-Process|Sort WorkingSet64 -Descending|Select -First 15 ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,0)}}}|Format-Table -AutoSize|Out-String');
     return this.hf('Memory',mem)+this.hf('Top Processes',top);
   }
   private async winNetwork():Promise<string>{
@@ -201,7 +201,7 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
     return this.hf('Adapters',ad)+this.hf('IP',ip)+this.hf('Ping 8.8.8.8',ping);
   }
   private async winProcesses():Promise<string>{
-    return this.hf('Top CPU',await this.ps('Get-Process|Sort CPU -Descending|Select -First 25 ProcessName,Id,@{N="CPU(s)";E={{[math]::Round($_.CPU,1)}}},@{N="MemMB";E={{[math]::Round($_.WorkingSet64/1MB,0)}}}|Format-Table -AutoSize|Out-String'));
+    return this.hf('Top CPU',await this.ps('Get-Process|Sort CPU -Descending|Select -First 25 ProcessName,Id,@{N="CPU(s)";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,0)}}}|Format-Table -AutoSize|Out-String'));
   }
   private async winCleanup():Promise<string>{
     const p:string[]=[];
@@ -224,7 +224,7 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
   }
   private async winPrinter():Promise<string>{
     try{return this.hf('Printers',await this.ps('Get-Printer|Select Name,DriverName,PortName,PrinterStatus,Shared|Format-Table -AutoSize|Out-String -Width 200')||'None')+
-      this.hf('Queue',await this.ps('Get-PrintJob -ErrorAction SilentlyContinue|Select PrinterName,JobId,@{N="SizeKB";E={{[math]::Round($_.Size/1KB,0)}}}|Format-Table -AutoSize|Out-String')||'Empty');}
+      this.hf('Queue',await this.ps('Get-PrintJob -ErrorAction SilentlyContinue|Select PrinterName,JobId,@{N="SizeKB";E={[math]::Round($_.Size/1KB,0)}}}|Format-Table -AutoSize|Out-String')||'Empty');}
     catch{return 'Printer check requires Windows 10+.';}
   }
 }

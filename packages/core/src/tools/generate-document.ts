@@ -88,7 +88,7 @@ DEPENDENCIES: typst + marp-cli + pandoc. macOS: brew install typst pandoc; npm i
     const { content, format, output_format, title, author } = p;
     const titleStr = title || 'Untitled';
     const authorStr = author || '';
-    const outPath = p.output_path || os.homedir()+'/Desktop/generated_'+Date.now()+'.'+output_format;
+    const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'generated_'+Date.now()+'.'+output_format);
     const tmpDir = path.join(os.tmpdir(), 'otto-doc-'+Date.now());
     fs.mkdirSync(tmpDir, { recursive: true });
 

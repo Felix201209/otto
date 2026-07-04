@@ -138,7 +138,8 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     }
 
     if (eng === 'libreoffice') {
-      await execAsync(`libreoffice --headless --convert-to ${fmt} --outdir "${dir}" "${ip}"${options?' '+options:''}`, { maxBuffer:50*1024*1024 });
+      const loCmd = process.platform === 'win32' ? 'soffice' : 'libreoffice';
+      await execAsync(`${loCmd} --headless --convert-to ${fmt} --outdir "${dir}" "${ip}"${options?' '+options:''}`, { maxBuffer:50*1024*1024 });
       const loName = path.basename(ip!, path.extname(ip!))+'.'+fmt;
       const loPath = path.join(dir, loName);
       if (p.output_path && path.resolve(loPath) !== path.resolve(p.output_path) && fs.existsSync(loPath)) {
@@ -195,7 +196,8 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     const settings = ['/default','/screen','/ebook','/printer','/prepress','/prepress'];
     const s = settings[Math.min(level, 5)];
     const tmp = file + '.tmp.pdf';
-    await execAsync(`gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${s} -dNOPAUSE -dQUIET -dBATCH -sOutputFile="${tmp}" "${file}"`, { maxBuffer:100*1024*1024 });
+    const gsCmd = process.platform === 'win32' ? 'gswin64c' : 'gs';
+    await execAsync(`${gsCmd} -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${s} -dNOPAUSE -dQUIET -dBATCH -sOutputFile="${tmp}" "${file}"`, { maxBuffer:100*1024*1024 });
     if (fs.existsSync(tmp)) { fs.unlinkSync(file); fs.renameSync(tmp, file); }
   }
 }
