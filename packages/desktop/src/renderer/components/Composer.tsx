@@ -11,10 +11,14 @@
  *
  * model pill 点击弹出可用模型菜单（来自协议 models_list）。pill 文字取 currentModel
  * （models_list/currentModel 帧）对应名，无则回退首个可用模型，不硬编码模型名。
- * Enter 发送、Shift+Enter 换行。slash 命令在 SetupPanel 路由的命令面板里（Issue #7）。
+ * Enter 发送、Shift+Enter 换行。
+ *
+ * 斜杠命令：textarea 以 `/` 开头且在首行时浮出命令面板（SlashCommands 组件）。
+ * 面板打开时 Enter/Tab = 执行选中命令、方向键选择、Esc 关闭；面板关闭时 Enter 才发送。
+ * 命令本地执行（新建/清空/开模型菜单/开设置），不经过 onSend 发给模型。
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import type { ImageAttachment } from '../state/useOttoStore.js';
 import {
@@ -22,6 +26,12 @@ import {
   attachmentToDataUrl,
   MAX_ATTACHMENTS,
 } from '../lib/image.js';
+import {
+  SlashCommands,
+  filterCommands,
+  parseSlashQuery,
+  type SlashCommand,
+} from './SlashCommands.js';
 import {
   IconChevronDown,
   IconPaperclip,
@@ -31,6 +41,14 @@ import {
   IconStop,
   IconClose,
 } from './icons.js';
+
+/** 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。 */
+const SLASH_COMMANDS: readonly SlashCommand[] = [
+  { id: 'new', description: '新建会话' },
+  { id: 'model', description: '打开模型菜单' },
+  { id: 'clear', description: '清空当前会话上下文' },
+  { id: 'settings', description: '打开设置面板' },
+];
 
 interface ComposerProps {
   models: ModelInfo[];
@@ -54,6 +72,12 @@ interface ComposerProps {
   draftNonce?: number;
   /** 「在设置里管理模型」入口（接 Issue #7）。未传则不渲染该入口。 */
   onManageModels?: () => void;
+  /** 斜杠命令 `/new`：新建会话（App 已有 handleNewChat）。未传则该命令不可用。 */
+  onNewChat?: () => void;
+  /** 斜杠命令 `/clear`：清空当前会话上下文。未传则该命令不可用。 */
+  onClearContext?: () => void;
+  /** 斜杠命令 `/settings`：打开设置面板（App 已有 onOpenSetup）。未传则该命令不可用。 */
+  onOpenSettings?: () => void;
 }
 
 export function Composer({
@@ -68,14 +92,40 @@ export function Composer({
   draft,
   draftNonce,
   onManageModels,
+  onNewChat,
+  onClearContext,
+  onOpenSettings,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  // 斜杠命令面板：当前高亮项下标。面板是否可见由 slashCommands.length>0 && !disabled 决定。
+  const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 由当前文本解析斜杠命令 query，再过滤出候选。无会话（disabled）时不弹面板。
+  // parseSlashQuery=null → 非命令输入态；候选为空 → 无匹配（如 `/xyz`），也不显示面板。
+  const slashQuery = disabled ? null : parseSlashQuery(text);
+  const slashCommands = useMemo(
+    () => (slashQuery == null ? [] : filterCommands(SLASH_COMMANDS, slashQuery)),
+    [slashQuery],
+  );
+  const slashOpen = slashCommands.length > 0;
+  // query 变化后把高亮夹回合法范围（候选变少时 slashIndex 可能越界）。
+  const activeSlash =
+    slashCommands.length > 0
+      ? Math.min(slashIndex, slashCommands.length - 1)
+      : 0;
+
+  // 关闭面板 = 清空输入里的斜杠命令文本（面板本就随文本存在，单纯"关"要移除触发文本）。
+  // 但 Esc 的语义是"我不想用命令了"：保留已输入文本、仅收起面板不自然，
+  // 这里用一个显式的 dismissed 标志更稳妥。见 slashDismissed。
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  // 面板真正可见：有候选、未被 Esc 主动关闭。文本再变化（onChange）会复位 dismissed。
+  const slashVisible = slashOpen && !slashDismissed;
 
   const pickFiles = () => {
     setAttachError(null);
@@ -154,7 +204,71 @@ export function Composer({
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
+  // 清空 textarea（命令执行后消费掉触发命令的文本）。
+  const clearInput = () => {
+    setText('');
+    setSlashIndex(0);
+    setSlashDismissed(false);
+    if (taRef.current) taRef.current.style.height = 'auto';
+  };
+
+  // 执行一条斜杠命令 → 本地分派（不发给模型），随后清空输入。
+  // 未接对应回调的命令静默忽略（面板本不该列出它，双保险）。
+  const runSlashCommand = (cmd: SlashCommand) => {
+    switch (cmd.id) {
+      case 'new':
+        onNewChat?.();
+        break;
+      case 'model':
+        setMenuOpen(true);
+        break;
+      case 'clear':
+        onClearContext?.();
+        break;
+      case 'settings':
+        onOpenSettings?.();
+        break;
+      default:
+        break;
+    }
+    clearInput();
+    // 命令执行后把焦点还给 textarea，方便继续输入。
+    taRef.current?.focus();
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // —— 斜杠命令面板打开时，键盘事件优先给面板，Enter 不再是「发送」——
+    if (slashVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex((i) => (i + 1) % slashCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex(
+          (i) => (i - 1 + slashCommands.length) % slashCommands.length,
+        );
+        return;
+      }
+      // Enter / Tab = 执行当前高亮命令（isComposing 时不拦，交给输入法）。
+      if (
+        (e.key === 'Enter' || e.key === 'Tab') &&
+        !e.nativeEvent.isComposing
+      ) {
+        e.preventDefault();
+        runSlashCommand(slashCommands[activeSlash]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // 收起面板但保留已输入文本（用户可能想把 `/foo` 当普通消息发）。
+        setSlashDismissed(true);
+        return;
+      }
+    }
+
+    // —— 面板关闭：Enter 发送、Shift+Enter 换行 ——
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -163,6 +277,9 @@ export function Composer({
 
   const autoGrow = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
+    // 文本变化即复位「Esc 主动关闭」标志与高亮：重新打字应让面板按新 query 复现。
+    setSlashDismissed(false);
+    setSlashIndex(0);
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
@@ -176,6 +293,14 @@ export function Composer({
     currentModel ??
     models[0]?.displayName ??
     '选择模型';
+
+  // 发送按钮的悬浮提示：禁用时说明原因，让用户知道为何点不了（而非恒为「发送」）。
+  //   无会话 → 先选/建会话；有会话但内容为空 → 先输入内容；否则正常「发送」。
+  const sendTitle = disabled
+    ? '请先选择或新建会话'
+    : canSend
+      ? '发送'
+      : '请先输入内容';
 
   return (
     <div className={`otto-composer${disabled ? ' is-disabled' : ''}`}>
@@ -222,6 +347,17 @@ export function Composer({
           onChange={onFilesChosen}
         />
 
+        {/* 斜杠命令面板：浮在输入框上方，焦点仍在 textarea。 */}
+        {slashVisible ? (
+          <SlashCommands
+            commands={slashCommands}
+            activeIndex={activeSlash}
+            onExecute={runSlashCommand}
+            onHover={setSlashIndex}
+            onClose={() => setSlashDismissed(true)}
+          />
+        ) : null}
+
         <textarea
           ref={taRef}
           className="otto-composer__textarea"
@@ -230,6 +366,8 @@ export function Composer({
           value={text}
           onChange={autoGrow}
           onKeyDown={onKeyDown}
+          aria-expanded={slashVisible}
+          aria-controls={slashVisible ? 'otto-slashmenu' : undefined}
           // 生成中仍可输入下一条；仅无会话（disabled）时锁死。
           disabled={disabled}
         />
@@ -244,11 +382,14 @@ export function Composer({
               }}
               aria-haspopup="listbox"
               aria-expanded={menuOpen}
+              // 与 textarea 一致：无会话（disabled）时也锁模型菜单，避免「输入锁了菜单还能开」的不一致。
+              disabled={disabled}
+              title={disabled ? '请先选择或新建会话' : '切换模型'}
             >
               {modelLabel}
               <IconChevronDown size={14} className="otto-modelpill__chev" />
             </button>
-            {menuOpen ? (
+            {menuOpen && !disabled ? (
               <ModelMenu
                 models={models}
                 current={currentModel}
@@ -287,7 +428,7 @@ export function Composer({
             <button
               type="button"
               className="otto-send"
-              title="发送"
+              title={sendTitle}
               aria-label="发送"
               disabled={!canSend}
               onClick={submit}
@@ -297,6 +438,13 @@ export function Composer({
           )}
         </div>
       </div>
+
+      {/* 极简键位提示：让首次使用者知道 Enter/Shift+Enter 的分工。无会话时不显示（避免噪声）。 */}
+      {!disabled ? (
+        <div className="otto-composer__hint" aria-hidden>
+          Enter 发送 · Shift+Enter 换行 · 输入 / 唤起命令
+        </div>
+      ) : null}
     </div>
   );
 }

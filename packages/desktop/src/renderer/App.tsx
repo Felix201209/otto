@@ -188,6 +188,13 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
+  // 斜杠命令 /clear：清空当前会话上下文。store/协议目前没有「清空历史」能力
+  // （reducer 无 clear 帧、server 协议也未定义），为不改协议/后端，退化为「新建会话」——
+  // 语义上等价于「开一段全新的、没有上文的对话」，是最小可行方案。
+  const handleClearContext = (): void => {
+    actions.createSession();
+  };
+
   return (
     <div className="otto-app" data-connection={state.connection}>
       <Sidebar
@@ -209,6 +216,8 @@ export function App(): React.JSX.Element {
         onSetModel={actions.setModel}
         onRegenerate={handleRegenerate}
         onOpenSetup={() => setSetupOpen(true)}
+        onNewChat={handleNewChat}
+        onClearContext={handleClearContext}
       />
 
       {/* 断连 / 重连横幅：WS 非 connected 时浮出，给用户可见反馈。 */}

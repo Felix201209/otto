@@ -52,6 +52,10 @@ interface ChatViewProps {
   onRegenerate: () => void;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
+  /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
+  onNewChat: () => void;
+  /** 斜杠命令 `/clear`：清空当前会话上下文。 */
+  onClearContext: () => void;
 }
 
 export function ChatView({
@@ -66,6 +70,8 @@ export function ChatView({
   onSetModel,
   onRegenerate,
   onOpenSetup,
+  onNewChat,
+  onClearContext,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -213,6 +219,10 @@ export function ChatView({
         onCancel={onCancel}
         onSetModel={onSetModel}
         onManageModels={onOpenSetup}
+        // 斜杠命令接线：/new /clear 走 App 回调，/settings 复用打开设置。
+        onNewChat={onNewChat}
+        onClearContext={onClearContext}
+        onOpenSettings={onOpenSetup}
       />
     </section>
   );

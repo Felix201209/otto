@@ -82,6 +82,7 @@ type Action =
   | { kind: 'frame'; frame: ServerToClient }
   | { kind: 'select'; sessionId: string }
   | { kind: 'optimistic_user'; message: OttoMessage }
+  | { kind: 'local_error'; message: string }
   | { kind: 'clear_error' };
 
 function upsertSession(
@@ -134,6 +135,10 @@ function reducer(state: OttoState, action: Action): OttoState {
 
     case 'optimistic_user':
       return appendMessage(state, action.message);
+
+    case 'local_error':
+      // 本地产生的错误（如断连时拦截发送）——复用 lastError 的 toast 通道。
+      return { ...state, lastError: action.message };
 
     case 'clear_error':
       return state.lastError === null ? state : { ...state, lastError: null };
@@ -303,6 +308,9 @@ export function useOttoStore(): UseOttoStore {
   // reducer 在闭包里读不到最新 activeSessionId，用 ref 兜底动作里取值。
   const activeRef = useRef<string | null>(null);
   activeRef.current = state.activeSessionId;
+  // 同理用 ref 兜底 connection：sendMessage 是稳定回调（deps 空），需读最新连接态做断连校验。
+  const connectionRef = useRef<ConnectionState>(state.connection);
+  connectionRef.current = state.connection;
 
   useEffect(() => {
     let cancelled = false;
@@ -368,6 +376,12 @@ export function useOttoStore(): UseOttoStore {
       const trimmed = text.trim();
       // 纯文本或纯图片都可发；两者皆空才拦截。
       if (!sessionId || (!trimmed && attachments.length === 0)) return;
+      // 断连校验：WS 未连上时消息发不出去，不做乐观渲染（否则会留一条永远不会有回复的
+      // 用户气泡），改为走 toast 明确告知「未连接，消息未送达」。
+      if (connectionRef.current !== 'connected') {
+        dispatch({ kind: 'local_error', message: '未连接，消息未送达' });
+        return;
+      }
       const clientMessageId = `c-${Date.now()}-${clientMsgSeq++}`;
       const content: OttoMessage['content'] = [];
       if (trimmed) content.push({ type: 'text', value: trimmed });
