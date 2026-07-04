@@ -6,8 +6,8 @@
 
 /** Prose 轻量 Markdown 渲染单测：围栏代码块 / 行内代码 / 加粗 / 流式未闭合。 */
 
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, fireEvent } from '@testing-library/react';
 import { Prose, contentToText } from './Prose.js';
 
 describe('Prose 轻量 Markdown', () => {
@@ -167,6 +167,86 @@ describe('Prose 轻量 Markdown', () => {
     );
     expect(container.querySelector('ol.otto-prose__ol li')?.textContent).toBe(
       '甲',
+    );
+  });
+
+  // 每个用例后清掉注入到 window 的 otto 桩，避免相互污染。
+  afterEach(() => {
+    delete (window as unknown as { otto?: unknown }).otto;
+    vi.restoreAllMocks();
+  });
+
+  it('[文本](url) → <a>，显示文本、href 指向 url', () => {
+    const { container } = render(
+      <Prose text={'见 [Otto 仓库](https://github.com/Felix201209/otto) 了解'} />,
+    );
+    const a = container.querySelector('a.otto-prose__link');
+    expect(a?.textContent).toBe('Otto 仓库');
+    expect(a?.getAttribute('href')).toBe('https://github.com/Felix201209/otto');
+    // 链接前后正文保留。
+    expect(container.textContent).toContain('见');
+    expect(container.textContent).toContain('了解');
+  });
+
+  it('裸 http(s) URL 自动成链，文本与目标同为该 url', () => {
+    const { container } = render(
+      <Prose text={'文档在 https://example.com/docs 这里'} />,
+    );
+    const a = container.querySelector('a.otto-prose__link');
+    expect(a?.textContent).toBe('https://example.com/docs');
+    expect(a?.getAttribute('href')).toBe('https://example.com/docs');
+  });
+
+  it('裸 URL 末尾的中文标点不被吞进链接', () => {
+    const { container } = render(
+      <Prose text={'打开 https://example.com。然后关掉'} />,
+    );
+    const a = container.querySelector('a.otto-prose__link');
+    expect(a?.getAttribute('href')).toBe('https://example.com');
+    expect(container.textContent).toContain('。然后关掉');
+  });
+
+  it('点击链接走 window.otto.openExternal（系统浏览器），并阻止 app 内导航', () => {
+    const openExternal = vi.fn(() => Promise.resolve());
+    (window as unknown as { otto: { openExternal: typeof openExternal } }).otto =
+      { openExternal };
+    const { container } = render(
+      <Prose text={'[链接](https://example.com/x)'} />,
+    );
+    const a = container.querySelector('a.otto-prose__link') as HTMLAnchorElement;
+    // fireEvent.click 返回 false 表示某个 handler 调了 preventDefault（默认导航被拦）。
+    const notPrevented = fireEvent.click(a);
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/x');
+    expect(notPrevented).toBe(false);
+  });
+
+  it('链接与加粗混排互不破坏', () => {
+    const { container } = render(
+      <Prose text={'**重点**：见 [这里](https://a.co)'} />,
+    );
+    expect(container.querySelector('strong')?.textContent).toBe('重点');
+    expect(container.querySelector('a.otto-prose__link')?.textContent).toBe(
+      '这里',
+    );
+  });
+
+  it('代码块内的 URL 不被当链接渲染', () => {
+    const { container } = render(
+      <Prose text={'```\ncurl https://example.com\n```'} />,
+    );
+    expect(container.querySelector('a.otto-prose__link')).toBeNull();
+    expect(container.querySelector('pre.otto-code__pre')?.textContent).toContain(
+      'https://example.com',
+    );
+  });
+
+  it('行内代码内的 URL 不被当链接渲染', () => {
+    const { container } = render(
+      <Prose text={'用 `https://example.com` 作示例'} />,
+    );
+    expect(container.querySelector('a.otto-prose__link')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe(
+      'https://example.com',
     );
   });
 

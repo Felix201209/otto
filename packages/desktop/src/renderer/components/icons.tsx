@@ -232,6 +232,39 @@ export function IconClose({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 眼睛（显示明文 API key）。线性描边，与图标集统一。 */
+export function IconEye({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** 眼睛带斜杠（隐藏 API key，遮回掩码）。 */
+export function IconEyeOff({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-2.9 3.9" />
+      <path d="M6.3 6.3A17.8 17.8 0 0 0 2 12s3.5 7 10 7a10.4 10.4 0 0 0 4.2-.9" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="M3 3l18 18" />
+    </svg>
+  );
+}
+
+/** 警告三角（落盘失败等提示条）。 */
+export function IconWarning({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
 /** 向下箭头（滚动到底浮标）。 */
 export function IconArrowDown({ size, className }: IconProps): React.JSX.Element {
   return (

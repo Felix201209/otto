@@ -192,10 +192,24 @@ function parseBlocks(value: string): Block[] {
   return blocks;
 }
 
-// ── 行内：代码 `x`、加粗 **x**、斜体 *x* / _x_ ──
-// 顺序要紧：先匹配 ``（代码），再 **（加粗），最后单 * / _（斜体），避免 ** 被拆成两个 *。
+// ── 行内：代码 `x`、链接 [t](url) / 裸 URL、加粗 **x**、斜体 *x* / _x_ ──
+// 顺序要紧（同一起点上左侧 alternation 优先）：
+//   1. `` 代码：代码里的 [x](y) / http 不当链接，整段先吞掉。
+//   2. [文本](http…) markdown 链接：优先于裸 URL，避免其 url 段被裸 URL 抢先。
+//   3. 裸 http(s) URL：末尾不含常见中英文标点（避免把「。」「)」等吞进链接）。
+//   4. ** 加粗 → 单 * / _ 斜体：** 先于单 * 匹配，避免被拆成两个 *。
+// 组号：m[1]=code，m[2..3]=[文本](url) 的文本/url，m[4]=裸 url，m[5]=bold，m[6]=* 斜体，m[7]=_ 斜体。
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\b_[^_\n]+_\b)/g;
+  /(`[^`\n]+`)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()[\]，。！？；：、）】》「」""'']+)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\b_[^_\n]+_\b)/g;
+
+/** 外链点击：阻止 app 内导航，改用系统浏览器打开（openExternal 已由 preload 暴露）。 */
+function onExternalLink(
+  e: React.MouseEvent<HTMLAnchorElement>,
+  url: string,
+): void {
+  e.preventDefault();
+  void window.otto?.openExternal?.(url);
+}
 
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
@@ -209,14 +223,40 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
       nodes.push(
         <code key={`${keyPrefix}-c-${key++}`}>{m[1].slice(1, -1)}</code>,
       );
-    } else if (m[2]) {
+    } else if (m[2] !== undefined && m[3] !== undefined) {
+      // [文本](url)：显示文本、跳目标 url。
+      const url = m[3];
       nodes.push(
-        <strong key={`${keyPrefix}-b-${key++}`}>{m[2].slice(2, -2)}</strong>,
+        <a
+          key={`${keyPrefix}-l-${key++}`}
+          className="otto-prose__link"
+          href={url}
+          onClick={(e) => onExternalLink(e, url)}
+        >
+          {m[2]}
+        </a>,
       );
-    } else if (m[3]) {
-      nodes.push(<em key={`${keyPrefix}-i-${key++}`}>{m[3].slice(1, -1)}</em>);
     } else if (m[4]) {
-      nodes.push(<em key={`${keyPrefix}-u-${key++}`}>{m[4].slice(1, -1)}</em>);
+      // 裸 URL：文本与目标同为该 url。
+      const url = m[4];
+      nodes.push(
+        <a
+          key={`${keyPrefix}-a-${key++}`}
+          className="otto-prose__link"
+          href={url}
+          onClick={(e) => onExternalLink(e, url)}
+        >
+          {url}
+        </a>,
+      );
+    } else if (m[5]) {
+      nodes.push(
+        <strong key={`${keyPrefix}-b-${key++}`}>{m[5].slice(2, -2)}</strong>,
+      );
+    } else if (m[6]) {
+      nodes.push(<em key={`${keyPrefix}-i-${key++}`}>{m[6].slice(1, -1)}</em>);
+    } else if (m[7]) {
+      nodes.push(<em key={`${keyPrefix}-u-${key++}`}>{m[7].slice(1, -1)}</em>);
     }
     last = m.index + m[0].length;
   }

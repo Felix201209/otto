@@ -19,7 +19,7 @@ export function SourceBadge({
     return (
       <span className="otto-badge otto-badge--feishu">
         <IconFeishuPetal size={11} />
-        Feishu
+        飞书
       </span>
     );
   }
@@ -27,7 +27,7 @@ export function SourceBadge({
   return (
     <span className="otto-badge otto-badge--local">
       <IconLocalMark size={11} />
-      Local
+      本地
     </span>
   );
 }

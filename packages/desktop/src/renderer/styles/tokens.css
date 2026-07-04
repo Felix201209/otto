@@ -97,6 +97,78 @@
   --vscode-panel-border: var(--otto-border);
 }
 
+/*
+ * 暗色主题：跟随系统 prefers-color-scheme: dark，整体覆盖上面 :root 的每一档变量。
+ * 只改变量、不动结构 —— 组件层零硬编码，故换一套值即整屏切暗。
+ * 设计取向：暖中性深灰打底（非纯黑，避免 OLED 死黑割裂 + 保住 amber 的暖脾气），
+ * 表面分三层递进（bg < surface < raised）；amber 在暗底略提亮防发闷；
+ * 文字/边框/气泡/diff/code/阴影各给一档暗值，正文对比度保持在舒适区、不刺眼。
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* —— 表面 / 文字 —— */
+    --otto-bg: #1a1918; /* 主背景：暖中性深灰，非纯黑 */
+    --otto-sidebar-bg: #171615; /* 侧栏比主区再压深半档 */
+    --otto-surface: #201f1d; /* 卡片/浮层表面，浮在 bg 之上 */
+    --otto-surface-raised: #262523; /* 更高一层（代码头/统计条等） */
+    --otto-text: #ededec; /* 主文字：暖白，不用纯白防刺眼 */
+    --otto-text-secondary: #a3a29d; /* 次级文字，约 6:1 */
+    --otto-text-tertiary: #706f6a; /* 时间戳/占位等弱文字 */
+    --otto-border: #322f2c; /* 常规分隔线 */
+    --otto-border-strong: #423f3b; /* 强描边（输入框/按钮） */
+
+    /* —— amber 强调（暗底略提亮，防橙色发闷）—— */
+    --otto-accent: #f0a35a;
+    --otto-accent-hover: #f4b06e;
+    --otto-accent-soft: rgba(240, 163, 90, 0.16); /* 选中态：低透明暖橙叠加 */
+    --otto-accent-gradient: linear-gradient(135deg, #f4b06e 0%, #ef9a4e 55%, #e8893a 100%);
+
+    /* —— 语义来源徽章（暗底低饱和底 + 提亮前景）—— */
+    --otto-feishu-fg: #6cb6f5;
+    --otto-feishu-bg: rgba(56, 132, 214, 0.18);
+    --otto-local-fg: #63d68c;
+    --otto-local-bg: rgba(47, 158, 68, 0.18);
+
+    /* —— 气泡（暖褐深底 + 暖描边 + 亮暖文字，延续 peach 性格）—— */
+    --otto-user-bubble: #3a2c20;
+    --otto-user-bubble-border: #55402e;
+    --otto-user-bubble-text: #f2dcc7;
+
+    /* —— diff（暗底半透明色块，gutter 略深，文字用暗色主文字）—— */
+    --otto-diff-add-bg: rgba(47, 158, 68, 0.16);
+    --otto-diff-add-gutter: rgba(47, 158, 68, 0.28);
+    --otto-diff-del-bg: rgba(224, 49, 49, 0.15);
+    --otto-diff-del-gutter: rgba(224, 49, 49, 0.28);
+    --otto-diff-text: #ededec;
+    --otto-diff-gutter-text: #7a7974;
+    --otto-diff-hunk-bg: rgba(75, 101, 132, 0.22); /* hunk 头蓝灰底 */
+    --otto-diff-hunk-fg: #93aacb;
+    --otto-diff-stat-add: #63d68c;
+    --otto-diff-stat-del: #f16d6d;
+
+    /* —— 状态 —— */
+    --otto-success: #63d68c;
+    --otto-danger: #f16d6d;
+    --otto-running: #f0a35a;
+
+    /* —— 行内代码（暗底 + 提亮暖橙文字，保对比）—— */
+    --otto-code-bg: #2a2825;
+    --otto-code-text: #f0a878;
+
+    /* —— 半径：与浅色一致，不随主题变 —— */
+
+    /* —— 阴影（暗色用更深的黑，景深靠明度差 + 阴影共同建立）—— */
+    --otto-shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
+    --otto-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --otto-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.36);
+    --otto-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    --otto-shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+    --otto-shadow-focus: 0 0 0 3px rgba(240, 163, 90, 0.32);
+    /* 顶栏滚动分隔 hairline：暗底用浅色低透明 */
+    --otto-hairline: rgba(255, 255, 255, 0.1);
+  }
+}
+
 * {
   box-sizing: border-box;
 }

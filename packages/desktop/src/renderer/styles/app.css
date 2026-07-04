@@ -458,6 +458,26 @@ h6.otto-prose__h {
   padding: 1px 5px;
   border-radius: 5px;
 }
+/* —— 正文行内链接（[文本](url) / 裸 URL）：amber 强调 + 下划线，点击走系统浏览器 —— */
+.otto-prose__link {
+  color: var(--otto-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--otto-accent) 45%, transparent);
+  cursor: pointer;
+  word-break: break-all; /* 长 URL 不撑破气泡 */
+  transition: color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-prose__link:hover {
+  color: var(--otto-accent-hover);
+  text-decoration-color: currentColor;
+}
+.otto-prose__link:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: var(--otto-shadow-focus);
+}
 /* 打字光标 */
 .otto-caret {
   display: inline-block;
@@ -2230,6 +2250,68 @@ h6.otto-prose__h {
   line-height: 1.5;
 }
 
+/* ── setup 面板 SVG 图标接线（emoji → 统一线性 SVG 后的对齐）──
+   这些容器原为纯文本 emoji，换 SVG 后补 inline-flex 居中，避免图标偏上/偏左。 */
+.otto-setup__spark,
+.otto-setup__close,
+.otto-setup__warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 显隐钮从「粘贴」等文字钮共用 .otto-setup__iconbtn，图标态额外居中其 SVG。 */
+.otto-setup__iconbtn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.otto-setup__warn {
+  /* 警告三角与首行文字基线对齐（savefail 用 align-items: flex-start）。 */
+  margin-top: 1px;
+}
+
+/* ── 离线兜底「高级」折叠：默认一行中性触发器，展开露出复制路径 ── */
+.otto-setup__advanced {
+  margin: 14px 22px 0;
+}
+.otto-setup__advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  margin-left: -4px;
+  border: none;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--otto-radius-sm);
+  transition: color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__advanced-toggle:hover {
+  color: var(--otto-text);
+}
+.otto-setup__advanced-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-setup__advanced-chev {
+  flex: 0 0 auto;
+  color: var(--otto-text-tertiary);
+  transition: transform var(--otto-dur) var(--otto-ease);
+}
+.otto-setup__advanced-chev--open {
+  transform: rotate(90deg);
+}
+/* 展开后的落盘说明盒：贴在触发器下方，去掉外边距（外层 .otto-setup__advanced 已给），
+   并把原 persist 的红色警示底改为中性表面——它是可选高级信息，不是错误。 */
+.otto-setup__advanced .otto-setup__persist {
+  margin: 8px 0 0;
+  border-color: var(--otto-border);
+  background: var(--otto-surface-raised);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  会话删除 / 重命名 —— Sidebar 会话项溢出菜单 + inline 重命名 + 删除二次确认
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -2461,4 +2543,95 @@ h6.otto-prose__h {
 .otto-allconv__confirmdel:hover {
   background: #c92a2a;
   border-color: #c92a2a;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  暗色主题补丁（追加，不改上方任何浅色规则）
+ *  —— 绝大多数配色已走 tokens.css 变量、暗色下自动跟随；本段只收尾上面少数
+ *     写死的浅色硬编码点：黑底 hover 叠加、终端块、各提示/确认条的浅底与红字。
+ *  设计取向与 tokens 暗色一致：暖中性深底、amber 暖脾气、正文对比舒适不刺眼。
+ * ════════════════════════════════════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  /* 细滚动条：浅色下用黑色半透明 thumb，暗底不可见 → 换成白色半透明。 */
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+  }
+
+  /* —— 各处 hover/active 的黑色叠加：暗底不可见 → 反相为白色低透明 —— */
+  .otto-iconbtn:hover,
+  .otto-session:hover,
+  .otto-viewall:hover,
+  .otto-action:hover,
+  .otto-attach:hover,
+  .otto-tools__summary:hover,
+  .otto-tool__head:hover,
+  .otto-modelmenu__manage:hover,
+  .otto-modelmenu__manage:focus-visible {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .otto-iconbtn:active,
+  .otto-action:active {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .otto-session__more:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  /* 已选模型 chip 的删除小圆钮：黑底叠加 → 白色叠加。 */
+  .otto-setup__chosen-x {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .otto-setup__chosen-x:hover {
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  /* 终端运行卡输出：浅色下是深灰块；暗色下压得比表面更沉，仍保留与 bg 的区隔。 */
+  .otto-tool__output {
+    background: #100f0e;
+    color: #d8d8d4;
+  }
+
+  /* 连接中横幅：浅奶油底 → 暖褐深底 + 提亮暖字。 */
+  .otto-conn-banner {
+    background: rgba(240, 163, 90, 0.14);
+    border-color: rgba(240, 163, 90, 0.38);
+    color: #f0b072;
+  }
+
+  /* 错误 toast：浅粉底 → 暗红半透明底 + 提亮红字（沿用暗色 danger）。 */
+  .otto-toast {
+    background: rgba(224, 49, 49, 0.14);
+    border-color: rgba(224, 49, 49, 0.4);
+  }
+  .otto-toast__close:hover {
+    background: rgba(241, 109, 109, 0.16);
+  }
+
+  /* 落盘失败提示条：与 toast 同色系。 */
+  .otto-setup__savefail {
+    background: rgba(224, 49, 49, 0.14);
+    border-color: rgba(224, 49, 49, 0.4);
+  }
+
+  /* —— 删除相关的红色确认条 / 悬浮红底（会话项 + 检索面板）—— */
+  .otto-session__menuitem--danger:hover,
+  .otto-allconv__del:hover {
+    background: rgba(224, 49, 49, 0.16);
+  }
+  .otto-session__confirm,
+  .otto-allconv__confirm {
+    background: rgba(224, 49, 49, 0.1);
+    border-color: rgba(224, 49, 49, 0.35);
+  }
+  /* 删除按钮 hover：浅色下加深纯红，暗色下沿用亮一档的暖红。 */
+  .otto-session__confirmdel:hover,
+  .otto-allconv__confirmdel:hover {
+    background: #d64545;
+    border-color: #d64545;
+  }
+
+  /* setup 关闭钮 hover 底：浅色借用 code-bg（暗色已是深灰）即可，无需额外覆盖。 */
 }

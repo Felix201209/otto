@@ -23,6 +23,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import {
+  IconClose,
+  IconEye,
+  IconEyeOff,
+  IconSparkle,
+  IconWarning,
+  IconChevron,
+} from '../components/icons.js';
+import {
   PROVIDER_PRESETS,
   PROVIDER_OPTIONS,
   findPreset,
@@ -75,6 +83,8 @@ export function SetupPanel({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
+  /** 「离线兜底」高级块折叠态：默认收起（对新手是噪音），点击展开。 */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const keyRef = useRef<HTMLInputElement>(null);
   /** 对话框根容器（焦点陷阱以它为边界）。 */
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -255,7 +265,7 @@ export function SetupPanel({
           <div className="otto-setup__brand">
             <span className="otto-setup__wordmark">otto</span>
             <span className="otto-setup__spark" aria-hidden>
-              ✦
+              <IconSparkle size={10} />
             </span>
           </div>
           <div className="otto-setup__titles">
@@ -270,7 +280,7 @@ export function SetupPanel({
             onClick={onClose}
             aria-label="关闭"
           >
-            ✕
+            <IconClose size={15} />
           </button>
         </header>
 
@@ -386,12 +396,12 @@ export function SetupPanel({
             />
             <button
               type="button"
-              className="otto-setup__iconbtn"
+              className="otto-setup__iconbtn otto-setup__iconbtn--icon"
               onClick={() => setRevealKey((v) => !v)}
               aria-label={revealKey ? '隐藏' : '显示'}
               title={revealKey ? '隐藏' : '显示'}
             >
-              {revealKey ? '🙈' : '👁'}
+              {revealKey ? <IconEyeOff size={15} /> : <IconEye size={15} />}
             </button>
             <button
               type="button"
@@ -483,7 +493,7 @@ export function SetupPanel({
                     onClick={() => toggleModel(m)}
                     aria-label={`移除 ${m}`}
                   >
-                    ✕
+                    <IconClose size={10} />
                   </button>
                 </span>
               ))}
@@ -518,40 +528,60 @@ export function SetupPanel({
         {saveError ? (
           <div className="otto-setup__savefail" role="alert">
             <span className="otto-setup__warn" aria-hidden>
-              ⚠
+              <IconWarning size={15} />
             </span>
             <span>{saveError}</span>
           </div>
         ) : null}
 
-        {/* —— 离线兜底：不依赖 server 也能落盘的两条路径 —— */}
-        <div className="otto-setup__persist">
-          <p className="otto-setup__persist-title">离线兜底（可选）</p>
-          <p className="otto-setup__persist-body">
-            「完成配置」会直接写入
-            <code>~/.otto-user/custom-models.json</code>。若需在别处手动落盘，也可复制：
-          </p>
-          <div className="otto-setup__copyrow">
-            <button
-              type="button"
-              className="otto-setup__copybtn"
-              disabled={!valid}
-              onClick={() => void copy('json')}
-            >
-              {copied === 'json' ? '已复制 JSON ✓' : '复制 custom-models.json'}
-            </button>
-            <button
-              type="button"
-              className="otto-setup__copybtn"
-              disabled={!valid}
-              onClick={() => void copy('cli')}
-            >
-              {copied === 'cli' ? '已复制命令 ✓' : '复制 otto setup 命令'}
-            </button>
-          </div>
-          <p className="otto-setup__hint">
-            已用占位符代替 API Key，粘贴后请自行填入。
-          </p>
+        {/* —— 离线兜底：默认折叠成一行「高级」，对新手隐去噪音；展开才露两条复制路径 —— */}
+        <div className="otto-setup__advanced">
+          <button
+            type="button"
+            className="otto-setup__advanced-toggle"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+          >
+            <IconChevron
+              size={13}
+              className={
+                'otto-setup__advanced-chev' +
+                (advancedOpen ? ' otto-setup__advanced-chev--open' : '')
+              }
+            />
+            高级：手动落盘方式
+          </button>
+          {advancedOpen ? (
+            <div className="otto-setup__persist">
+              <p className="otto-setup__persist-body">
+                「完成配置」会直接写入
+                <code>~/.otto-user/custom-models.json</code>。若需在别处手动落盘，也可复制：
+              </p>
+              <div className="otto-setup__copyrow">
+                <button
+                  type="button"
+                  className="otto-setup__copybtn"
+                  disabled={!valid}
+                  onClick={() => void copy('json')}
+                >
+                  {copied === 'json'
+                    ? '已复制 JSON ✓'
+                    : '复制 custom-models.json'}
+                </button>
+                <button
+                  type="button"
+                  className="otto-setup__copybtn"
+                  disabled={!valid}
+                  onClick={() => void copy('cli')}
+                >
+                  {copied === 'cli' ? '已复制命令 ✓' : '复制 otto setup 命令'}
+                </button>
+              </div>
+              <p className="otto-setup__hint">
+                已用占位符代替 API Key，粘贴后请自行填入。
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <footer className="otto-setup__foot">

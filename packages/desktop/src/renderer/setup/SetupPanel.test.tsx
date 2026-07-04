@@ -38,6 +38,8 @@ describe('SetupPanel 复制路径', () => {
       target: { value: 'gpt-5.1' },
     });
 
+    // 离线兜底默认折叠，先展开「高级：手动落盘方式」才见复制按钮。
+    fireEvent.click(getByText('高级：手动落盘方式'));
     const btn = getByText('复制 custom-models.json') as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
@@ -50,6 +52,8 @@ describe('SetupPanel 复制路径', () => {
 
   it('复制按钮旁展示占位符提示', () => {
     const { getByText } = renderPanel();
+    // 展开高级块后才显示复制路径及其占位符提示。
+    fireEvent.click(getByText('高级：手动落盘方式'));
     expect(getByText('已用占位符代替 API Key，粘贴后请自行填入。')).toBeTruthy();
   });
 });
