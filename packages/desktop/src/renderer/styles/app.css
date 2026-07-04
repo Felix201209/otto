@@ -2635,3 +2635,110 @@ h6.otto-prose__h {
 
   /* setup 关闭钮 hover 底：浅色借用 code-bg（暗色已是深灰）即可，无需额外覆盖。 */
 }
+
+/* ══════════════ 用户图片缩略图 → 点开放大（lightbox） ══════════════ */
+
+/* 缩略图外层按钮：去掉原生按钮样式，让内部 <img> 保持原视觉，仅加可点提示。 */
+.otto-msg-user__thumb {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
+  border-radius: var(--otto-radius-sm);
+  line-height: 0;
+  transition: opacity var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-msg-user__thumb:hover {
+  opacity: 0.9;
+}
+.otto-msg-user__thumb:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+/* contain 而非 cover：缩略图完整显示不裁掉关键内容（截图/长图不再被切）。 */
+.otto-msg-user__thumb .otto-msg-user__image {
+  object-fit: contain;
+  background: var(--otto-code-bg);
+}
+
+/* 放大浮层：铺满聊天面、居中大图，点遮罩/Esc 关闭。 */
+.otto-lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(28, 25, 23, 0.62);
+  backdrop-filter: blur(3px);
+  cursor: zoom-out;
+  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
+}
+.otto-lightbox__img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--otto-radius);
+  box-shadow: var(--otto-shadow-pop);
+  cursor: default;
+  animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
+}
+.otto-lightbox__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+.otto-lightbox__close:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+/* ══════════════ 模型菜单：搜索框 + provider 分组 ══════════════ */
+
+.otto-modelmenu__search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  font-size: 13px;
+  color: var(--otto-text);
+  transition: border-color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-modelmenu__search::placeholder {
+  color: var(--otto-text-tertiary);
+}
+.otto-modelmenu__search:focus-visible {
+  outline: none;
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-modelmenu__group + .otto-modelmenu__group {
+  margin-top: 2px;
+}
+/* provider 分组小标题：低对比、大写间距，作分区上下文而非可点项。 */
+.otto-modelmenu__grouphead {
+  padding: 6px 10px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--otto-text-tertiary);
+}

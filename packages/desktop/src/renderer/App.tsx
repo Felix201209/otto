@@ -151,15 +151,33 @@ export function App(): React.JSX.Element {
   // 忙碌态：有消息在流式输出或正在跑工具时禁用输入。
   const busy = activeMessages.some((m) => m.isStreaming || m.isProcessingTools);
 
-  // 重新生成：重发当前会话最后一条用户消息（保持其来源）。
-  const handleRegenerate = (): void => {
-    const lastUser = [...activeMessages].reverse().find((m) => m.role === 'user');
-    if (!lastUser) return;
-    const text = lastUser.content
+  // 重新生成：重发**被点 bot 消息所对应的那一轮用户提问**（保持其来源），而非
+  // 永远重发全会话最后一轮。据 messageId 在列表里定位该 bot 消息，往前找最近的
+  // 一条用户消息即是它的提问轮次。messageId 缺失/未命中时兜底回退到最后一条用户消息。
+  const handleRegenerate = (messageId?: string): void => {
+    let target: (typeof activeMessages)[number] | undefined;
+    const idx = messageId
+      ? activeMessages.findIndex((m) => m.id === messageId)
+      : -1;
+    if (idx >= 0) {
+      // 从被点的 bot 消息往前回溯，命中的第一条用户消息就是这轮的提问。
+      for (let i = idx; i >= 0; i--) {
+        if (activeMessages[i].role === 'user') {
+          target = activeMessages[i];
+          break;
+        }
+      }
+    }
+    // 兜底：无 id 或未定位到（异常数据）→ 退回最后一条用户消息。
+    if (!target) {
+      target = [...activeMessages].reverse().find((m) => m.role === 'user');
+    }
+    if (!target) return;
+    const text = target.content
       .map((p) => (p.type === 'text' ? p.value : ''))
       .join('')
       .trim();
-    if (text) actions.sendMessage(text, lastUser.source);
+    if (text) actions.sendMessage(text, target.source);
   };
 
   const handleSend = (

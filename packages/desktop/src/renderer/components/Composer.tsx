@@ -42,6 +42,12 @@ import {
   IconClose,
 } from './icons.js';
 
+/**
+ * 模型菜单超过此数量才显示搜索框 + 按 provider 分组。BYO-key 用户接多个
+ * provider 后列表会很长，少量模型时平铺更省事，无需搜索噪声。
+ */
+const MODEL_SEARCH_THRESHOLD = 8;
+
 /** 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。 */
 const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'new', description: '新建会话' },
@@ -463,6 +469,10 @@ function ModelMenu({
   onManage?: () => void;
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+
+  // 模型多到一定数量才显示搜索框（+ 分组）；少量时平铺即可，不加噪声。
+  const showSearch = models.length > MODEL_SEARCH_THRESHOLD;
 
   // 点击菜单外关闭 + Esc 关闭。
   React.useEffect(() => {
@@ -481,7 +491,31 @@ function ModelMenu({
     };
   }, [onClose]);
 
-  // 方向键在选项间移动焦点（role=listbox 名副其实）。
+  // 按 displayName 过滤（大小写不敏感，去空白）。空 query 返回全部。
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return models;
+    return models.filter((m) => m.displayName.toLowerCase().includes(q));
+  }, [models, query]);
+
+  // 是否分组：显示搜索区（即模型较多）且存在多个 provider 时，按 provider 归类，
+  // 便于多 provider 的 BYO-key 用户快速定位。搜索有结果时也保持分组，标题即上下文。
+  const groups = useMemo(() => {
+    if (!showSearch) return null;
+    const byProvider = new Map<string, ModelInfo[]>();
+    for (const m of filtered) {
+      const key = m.provider ?? '其他';
+      const list = byProvider.get(key);
+      if (list) list.push(m);
+      else byProvider.set(key, [m]);
+    }
+    // 仅一个 provider（或全无 provider）时不值得分组，退回平铺。
+    if (byProvider.size <= 1) return null;
+    return Array.from(byProvider.entries());
+  }, [showSearch, filtered]);
+
+  // 方向键在选项间移动焦点（role=listbox 名副其实）。搜索框聚焦时 ↓ 也能进入列表
+  // （输入框非 .otto-modelmenu__item，idx=-1 → ArrowDown 落到首个候选）。
   const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
@@ -499,6 +533,33 @@ function ModelMenu({
     next?.focus();
   };
 
+  // 单个模型选项按钮（平铺与分组共用，保留勾选 + 当前高亮逻辑）。
+  const renderItem = (m: ModelInfo): React.JSX.Element => {
+    const active = m.id === current;
+    return (
+      <button
+        key={m.id}
+        type="button"
+        role="option"
+        aria-selected={active}
+        className={`otto-modelmenu__item${
+          active ? ' otto-modelmenu__item--active' : ''
+        }`}
+        onClick={() => onPick(m.id)}
+      >
+        <span className="otto-modelmenu__check">
+          {active ? <IconCheck size={15} /> : null}
+        </span>
+        <span className="otto-modelmenu__text">
+          <span className="otto-modelmenu__name">{m.displayName}</span>
+          {m.provider ? (
+            <span className="otto-modelmenu__provider">{m.provider}</span>
+          ) : null}
+        </span>
+      </button>
+    );
+  };
+
   return (
     <div
       ref={menuRef}
@@ -508,37 +569,36 @@ function ModelMenu({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={onMenuKeyDown}
     >
+      {showSearch ? (
+        <input
+          className="otto-modelmenu__search"
+          type="text"
+          placeholder="搜索模型…"
+          aria-label="搜索模型"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          // 输入框内不吞 Esc/方向键给菜单：Esc 关菜单、↓ 进列表由 onMenuKeyDown 处理。
+          autoFocus
+        />
+      ) : null}
+
       {models.length === 0 ? (
         <div className="otto-modelmenu__empty">
           暂无可用模型，先在「设置」里配置 BYO-key
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="otto-modelmenu__empty">未找到匹配的模型</div>
+      ) : groups ? (
+        groups.map(([provider, items]) => (
+          <div key={provider} className="otto-modelmenu__group">
+            <div className="otto-modelmenu__grouphead">{provider}</div>
+            {items.map(renderItem)}
+          </div>
+        ))
       ) : (
-        models.map((m) => {
-          const active = m.id === current;
-          return (
-            <button
-              key={m.id}
-              type="button"
-              role="option"
-              aria-selected={active}
-              className={`otto-modelmenu__item${
-                active ? ' otto-modelmenu__item--active' : ''
-              }`}
-              onClick={() => onPick(m.id)}
-            >
-              <span className="otto-modelmenu__check">
-                {active ? <IconCheck size={15} /> : null}
-              </span>
-              <span className="otto-modelmenu__text">
-                <span className="otto-modelmenu__name">{m.displayName}</span>
-                {m.provider ? (
-                  <span className="otto-modelmenu__provider">{m.provider}</span>
-                ) : null}
-              </span>
-            </button>
-          );
-        })
+        filtered.map(renderItem)
       )}
+
       {onManage ? (
         <>
           <div className="otto-modelmenu__sep" />

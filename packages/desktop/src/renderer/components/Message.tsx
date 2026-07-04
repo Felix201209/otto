@@ -6,8 +6,11 @@
 
 /**
  * 单条消息渲染。spec §主聊天区：
- *   - 用户消息：右对齐 peach 气泡 + 时间 + amber 双勾已读回执。
- *   - Otto 回复：头像 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制/重生成/赞/踩）。
+ *   - 用户消息：右对齐 peach 气泡 + 时间 + amber 双勾已读回执；图片缩略图可点开放大。
+ *   - Otto 回复：头像 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制 / 重新生成）。
+ *
+ * 动作行只保留复制与重新生成——这两个是真的落地功能；原先的赞/踩仅本地高亮、
+ * 不落库不发帧、切会话即丢，是误导用户的假按钮，已移除。
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -21,9 +24,8 @@ import {
   IconCheck,
   IconCopy,
   IconRegenerate,
-  IconThumbUp,
-  IconThumbDown,
   IconChevron,
+  IconClose,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -36,7 +38,11 @@ function formatTime(ts: number): string {
 interface MessageProps {
   message: OttoMessage;
   onCopy: (text: string) => void;
-  onRegenerate: () => void;
+  /**
+   * 重新生成。携带被点的那条 bot 消息 id，App 据此定位「该条之前最近的一条
+   * 用户消息」重发——而非永远重发全会话最后一轮，否则上翻对旧回复点重生成会串轮。
+   */
+  onRegenerate: (messageId: string) => void;
 }
 
 export function Message({
@@ -66,18 +72,33 @@ function UserMessage({ message }: { message: OttoMessage }): React.JSX.Element {
       { type: 'image_reference' }
     > => p.type === 'image_reference',
   );
+  // 点开放大的图（lightbox）：null 时不显示遮罩。存 dataUrl + 文件名两项供大图渲染。
+  const [zoomed, setZoomed] = useState<{ src: string; alt: string } | null>(
+    null,
+  );
   return (
     <div className="otto-msg-user">
       {images.length > 0 ? (
         <div className="otto-msg-user__images">
-          {images.map((p) => (
-            <img
-              key={p.value.id}
-              className="otto-msg-user__image"
-              src={attachmentToDataUrl(p.value)}
-              alt={p.value.fileName}
-            />
-          ))}
+          {images.map((p) => {
+            const src = attachmentToDataUrl(p.value);
+            return (
+              <button
+                key={p.value.id}
+                type="button"
+                className="otto-msg-user__thumb"
+                title="点击查看大图"
+                aria-label={`查看大图：${p.value.fileName}`}
+                onClick={() => setZoomed({ src, alt: p.value.fileName })}
+              >
+                <img
+                  className="otto-msg-user__image"
+                  src={src}
+                  alt={p.value.fileName}
+                />
+              </button>
+            );
+          })}
         </div>
       ) : null}
       {text ? <div className="otto-msg-user__bubble">{text}</div> : null}
@@ -85,6 +106,68 @@ function UserMessage({ message }: { message: OttoMessage }): React.JSX.Element {
         <span>{formatTime(message.timestamp)}</span>
         <IconCheckCheck size={14} className="otto-msg-user__check" />
       </div>
+      {zoomed ? (
+        <ImageLightbox
+          src={zoomed.src}
+          alt={zoomed.alt}
+          onClose={() => setZoomed(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 图片放大浮层（lightbox）。点遮罩或按 Esc 关闭；大图用 object-fit: contain
+ * 完整显示不裁切。挂载时把焦点移到关闭按钮，便于键盘直接 Esc/Enter 操作。
+ */
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}): React.JSX.Element {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    closeRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="otto-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+      onClick={onClose}
+    >
+      <button
+        ref={closeRef}
+        type="button"
+        className="otto-lightbox__close"
+        aria-label="关闭预览"
+        title="关闭"
+        onClick={onClose}
+      >
+        <IconClose size={18} />
+      </button>
+      {/* 点图本身不关闭：拦截冒泡，只有点遮罩空白处才关。 */}
+      <img
+        className="otto-lightbox__img"
+        src={src}
+        alt={alt}
+        onClick={(e) => e.stopPropagation()}
+      />
     </div>
   );
 }
@@ -128,7 +211,7 @@ function BotMessage({
         {!message.isStreaming ? (
           <MessageActions
             onCopy={() => onCopy(text)}
-            onRegenerate={onRegenerate}
+            onRegenerate={() => onRegenerate(message.id)}
           />
         ) : null}
       </div>
@@ -202,7 +285,6 @@ function MessageActions({
   onCopy: () => void;
   onRegenerate: () => void;
 }): React.JSX.Element {
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -236,24 +318,6 @@ function MessageActions({
         onClick={onRegenerate}
       >
         <IconRegenerate size={16} />
-      </button>
-      <button
-        type="button"
-        className={`otto-action${vote === 'up' ? ' otto-action--on' : ''}`}
-        title="赞"
-        aria-label="赞"
-        onClick={() => setVote((v) => (v === 'up' ? null : 'up'))}
-      >
-        <IconThumbUp size={16} />
-      </button>
-      <button
-        type="button"
-        className={`otto-action${vote === 'down' ? ' otto-action--on' : ''}`}
-        title="踩"
-        aria-label="踩"
-        onClick={() => setVote((v) => (v === 'down' ? null : 'down'))}
-      >
-        <IconThumbDown size={16} />
       </button>
     </div>
   );

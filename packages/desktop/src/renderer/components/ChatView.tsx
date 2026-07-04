@@ -49,7 +49,11 @@ interface ChatViewProps {
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
   onSetModel: (model: string) => void;
-  onRegenerate: () => void;
+  /**
+   * 重新生成某条 bot 回复：携带被点消息 id，App 据此定位「该条之前最近的
+   * 一条用户消息」重发，而非永远重发全会话最后一轮。
+   */
+  onRegenerate: (messageId: string) => void;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
@@ -186,7 +190,8 @@ export function ChatView({
                 key={m.id}
                 message={m}
                 onCopy={copy}
-                onRegenerate={onRegenerate}
+                // 把当前消息 id 一并传出，让 App 定位对应用户轮次而非最新一轮。
+                onRegenerate={() => onRegenerate(m.id)}
               />
             ))
           )}
