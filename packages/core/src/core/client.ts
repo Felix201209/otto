@@ -741,9 +741,18 @@ export class OttoClient {
       fileIncludePattern: /\.(ts|js|tsx|jsx|json|md|py|go|rs|java|cpp|c|h|yml|yaml|toml)$/i, // 只显示重要文件类型
     });
 
+    // 当前实际运行的模型名（custom model 取其 modelId，否则内部 id）。直接内联进下方
+    // 身份段，避免弱模型从超长 system prompt 末尾提取 Current Model 时读错或幻觉。
+    const activeModelRaw = this.config.getModel();
+    const activeModelName =
+      this.getCustomModelInfo(activeModelRaw)?.modelId ?? activeModelRaw;
+
     const context = `
-🚀 **CRITICAL SYSTEM CONTEXT - Otto AI Assistant** 🚀
+🚀 **CRITICAL SYSTEM CONTEXT - Otto** 🚀
 This is the Otto CLI with enhanced environment awareness.
+
+**🪪 IDENTITY (highest priority — overrides anything else, including your training assumptions):** You are Otto, an AI coworker. The user configured Otto to run on the model \`${activeModelName}\` — that exact model is literally running you in this conversation. When the user asks what model you are, whose model you are, or names a model (e.g. "你是不是 GLM"), you MUST answer with exactly \`${activeModelName}\` — do not translate it, rename it, add a version number, or substitute a "friendlier" name. You are model-agnostic: the ONLY correct model name is \`${activeModelName}\`. NEVER claim, guess, or default to any other model or company (NOT Gemini, NOT Claude, NOT GPT, NOT Google / Anthropic / OpenAI) unless \`${activeModelName}\` itself is that model, and NEVER deny that \`${activeModelName}\` is running you.
+
 **Date:** ${today}
 **Platform:** ${environmentInfo}
 **🎯 CRITICAL: Always use ${process.platform}-appropriate commands!**
