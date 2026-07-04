@@ -6,13 +6,15 @@
 
 /**
  * 轻量正文渲染（零额外依赖，不引 react-markdown —— 与渲染层「独立可编译、无重依赖」
- * 的设计一致）。渐进增强地支持对编程助手最要紧的几种 Markdown：
- *   - 围栏代码块 ```lang …```：等宽 <pre>，带语言标签 + 一键复制（编程场景高频）。
- *   - 行内代码 `x`：等宽浅底 <code>。
- *   - 加粗 **x**：<strong>。
- *   - 保留换行（white-space: pre-wrap）。
- * 其余 Markdown 语法暂按纯文本原样显示（表格/列表/标题等为后续增强点）。
- * 流式友好：末尾未闭合的 ``` 也按「进行中的代码块」渲染，不会漏字或错位。
+ * 的设计一致）。手写解析器，覆盖聊天里最常见的 Markdown：
+ *   - 围栏代码块 ```lang …```：等宽 <pre>，带语言标签 + 一键复制。
+ *   - 标题 # … ######：<h1>–<h6>。
+ *   - 无序列表 - / * / +、有序列表 1. 2. 3.：<ul>/<ol>。
+ *   - 引用块 > …：<blockquote>。
+ *   - 水平线 --- / *** / ___：<hr>。
+ *   - 行内：代码 `x`、加粗 **x**、斜体 *x* / _x_。
+ * 表格暂按纯文本原样显示（宽表格在窄窗口/移动端渲染差，作为后续增强点）。
+ * 流式友好：末尾未闭合的 ``` 也按「进行中的代码块」渲染，不漏字/错位。
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -43,7 +45,7 @@ export function contentToText(content: MessageContentPart[]): string {
     .join('');
 }
 
-// ── 分段：把正文切成「代码块」与「普通文本」交替的段 ──
+// ── 第一层分段：把正文切成「代码块」与「普通文本」交替的段 ──
 
 interface Segment {
   type: 'code' | 'text';
@@ -99,9 +101,101 @@ function parseSegments(text: string): Segment[] {
   return segments;
 }
 
-// ── 行内：代码 `x` 与加粗 **x** ──
+// ── 第二层：把「普通文本」段解析为块级元素（标题/列表/引用/水平线/段落）──
 
-const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)/g;
+type Block =
+  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'ul'; items: string[] }
+  | { kind: 'ol'; items: string[]; start: number }
+  | { kind: 'quote'; text: string }
+  | { kind: 'hr' }
+  | { kind: 'para'; text: string };
+
+const RE_HEADING = /^(#{1,6})\s+(.*)$/;
+const RE_HR = /^(?:-{3,}|\*{3,}|_{3,})\s*$/;
+const RE_UL = /^\s*[-*+]\s+(.*)$/;
+const RE_OL = /^\s*(\d+)\.\s+(.*)$/;
+const RE_QUOTE = /^\s*>\s?(.*)$/;
+
+/** 把一个普通文本段按行解析成块级元素。空行分隔段落；同类连续行合并成列表/引用。 */
+function parseBlocks(value: string): Block[] {
+  const blocks: Block[] = [];
+  const lines = value.split('\n');
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.trim() === '') {
+      i++;
+      continue;
+    }
+    if (RE_HR.test(line)) {
+      blocks.push({ kind: 'hr' });
+      i++;
+      continue;
+    }
+    const h = RE_HEADING.exec(line);
+    if (h) {
+      blocks.push({ kind: 'heading', level: h[1].length, text: h[2].trim() });
+      i++;
+      continue;
+    }
+    if (RE_UL.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && RE_UL.test(lines[i])) {
+        items.push(RE_UL.exec(lines[i])![1]);
+        i++;
+      }
+      blocks.push({ kind: 'ul', items });
+      continue;
+    }
+    const firstOl = RE_OL.exec(line);
+    if (firstOl) {
+      const items: string[] = [];
+      const start = Number(firstOl[1]) || 1;
+      while (i < lines.length && RE_OL.test(lines[i])) {
+        items.push(RE_OL.exec(lines[i])![2]);
+        i++;
+      }
+      blocks.push({ kind: 'ol', items, start });
+      continue;
+    }
+    if (RE_QUOTE.test(line)) {
+      const qs: string[] = [];
+      while (i < lines.length && RE_QUOTE.test(lines[i])) {
+        qs.push(RE_QUOTE.exec(lines[i])![1]);
+        i++;
+      }
+      blocks.push({ kind: 'quote', text: qs.join('\n') });
+      continue;
+    }
+    // 普通段落：收集连续的非空、非块级起始行。
+    const para: string[] = [];
+    while (i < lines.length) {
+      const l = lines[i];
+      if (
+        l.trim() === '' ||
+        RE_HR.test(l) ||
+        RE_HEADING.test(l) ||
+        RE_UL.test(l) ||
+        RE_OL.test(l) ||
+        RE_QUOTE.test(l)
+      ) {
+        break;
+      }
+      para.push(l);
+      i++;
+    }
+    blocks.push({ kind: 'para', text: para.join('\n') });
+  }
+  return blocks;
+}
+
+// ── 行内：代码 `x`、加粗 **x**、斜体 *x* / _x_ ──
+// 顺序要紧：先匹配 ``（代码），再 **（加粗），最后单 * / _（斜体），避免 ** 被拆成两个 *。
+const INLINE =
+  /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\b_[^_\n]+_\b)/g;
 
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
@@ -112,16 +206,69 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   while ((m = INLINE.exec(text)) !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     if (m[1]) {
-      nodes.push(<code key={`${keyPrefix}-c-${key++}`}>{m[1].slice(1, -1)}</code>);
+      nodes.push(
+        <code key={`${keyPrefix}-c-${key++}`}>{m[1].slice(1, -1)}</code>,
+      );
     } else if (m[2]) {
       nodes.push(
         <strong key={`${keyPrefix}-b-${key++}`}>{m[2].slice(2, -2)}</strong>,
       );
+    } else if (m[3]) {
+      nodes.push(<em key={`${keyPrefix}-i-${key++}`}>{m[3].slice(1, -1)}</em>);
+    } else if (m[4]) {
+      nodes.push(<em key={`${keyPrefix}-u-${key++}`}>{m[4].slice(1, -1)}</em>);
     }
     last = m.index + m[0].length;
   }
   if (last < text.length) nodes.push(text.slice(last));
   return nodes;
+}
+
+/** 渲染一个普通文本段的块级元素。 */
+function renderTextSegment(value: string, keyPrefix: string): React.ReactNode[] {
+  return parseBlocks(value).map((b, i) => {
+    const k = `${keyPrefix}-b${i}`;
+    switch (b.kind) {
+      case 'hr':
+        return <hr className="otto-prose__hr" key={k} />;
+      case 'heading': {
+        const Tag = `h${b.level}` as keyof React.JSX.IntrinsicElements;
+        return (
+          <Tag className="otto-prose__h" key={k}>
+            {renderInline(b.text, k)}
+          </Tag>
+        );
+      }
+      case 'ul':
+        return (
+          <ul className="otto-prose__ul" key={k}>
+            {b.items.map((it, j) => (
+              <li key={`${k}-${j}`}>{renderInline(it, `${k}-${j}`)}</li>
+            ))}
+          </ul>
+        );
+      case 'ol':
+        return (
+          <ol className="otto-prose__ol" start={b.start} key={k}>
+            {b.items.map((it, j) => (
+              <li key={`${k}-${j}`}>{renderInline(it, `${k}-${j}`)}</li>
+            ))}
+          </ol>
+        );
+      case 'quote':
+        return (
+          <blockquote className="otto-prose__quote" key={k}>
+            {renderInline(b.text, k)}
+          </blockquote>
+        );
+      default:
+        return (
+          <p className="otto-prose__p" key={k}>
+            {renderInline(b.text, k)}
+          </p>
+        );
+    }
+  });
 }
 
 /** 围栏代码块：语言标签 + 复制按钮 + 等宽预格式化正文。 */
@@ -167,7 +314,7 @@ function CodeBlock({
   );
 }
 
-/** 渲染正文：代码块 + 含行内代码/加粗的文本段，保留换行；流式时带闪烁光标。 */
+/** 渲染正文：代码块 + 块级文本（标题/列表/引用/段落）；流式时带闪烁光标。 */
 export function Prose({
   text,
   streaming,
@@ -182,9 +329,9 @@ export function Prose({
         seg.type === 'code' ? (
           <CodeBlock key={`s-${i}`} lang={seg.lang} value={seg.value} />
         ) : (
-          <span className="otto-prose__text" key={`s-${i}`}>
-            {renderInline(seg.value, `s-${i}`)}
-          </span>
+          <React.Fragment key={`s-${i}`}>
+            {renderTextSegment(seg.value, `s-${i}`)}
+          </React.Fragment>
         ),
       )}
       {streaming ? <span className="otto-caret" aria-hidden /> : null}

@@ -107,6 +107,69 @@ describe('Prose 轻量 Markdown', () => {
     expect(container.querySelector('.otto-caret')).toBeTruthy();
   });
 
+  it('标题 # / ## / ### → <h1>–<h3>', () => {
+    const { container } = render(
+      <Prose text={'# 大标题\n## 中标题\n### 小标题'} />,
+    );
+    expect(container.querySelector('h1')?.textContent).toBe('大标题');
+    expect(container.querySelector('h2')?.textContent).toBe('中标题');
+    expect(container.querySelector('h3')?.textContent).toBe('小标题');
+  });
+
+  it('无序列表 - / * / + → <ul><li>', () => {
+    const { container } = render(<Prose text={'- 第一\n- 第二\n* 第三'} />);
+    const lis = container.querySelectorAll('ul.otto-prose__ul li');
+    expect(lis).toHaveLength(3);
+    expect(lis[0].textContent).toBe('第一');
+    expect(lis[2].textContent).toBe('第三');
+  });
+
+  it('有序列表 1. → <ol><li>，保留起始号', () => {
+    const { container } = render(<Prose text={'2. 甲\n3. 乙'} />);
+    const ol = container.querySelector('ol.otto-prose__ol');
+    expect(ol?.getAttribute('start')).toBe('2');
+    expect(ol?.querySelectorAll('li')).toHaveLength(2);
+  });
+
+  it('列表项内的加粗照常渲染（截图里"– **文件操作**"场景）', () => {
+    const { container } = render(<Prose text={'- **文件操作** — 读写文件'} />);
+    const li = container.querySelector('ul.otto-prose__ul li');
+    expect(li?.querySelector('strong')?.textContent).toBe('文件操作');
+    expect(li?.textContent).toContain('读写文件');
+  });
+
+  it('引用 > → <blockquote>', () => {
+    const { container } = render(<Prose text={'> 一句引用'} />);
+    expect(
+      container.querySelector('blockquote.otto-prose__quote')?.textContent,
+    ).toBe('一句引用');
+  });
+
+  it('水平线 --- → <hr>，前后正文保留', () => {
+    const { container } = render(<Prose text={'上\n\n---\n\n下'} />);
+    expect(container.querySelector('hr.otto-prose__hr')).toBeTruthy();
+    expect(container.textContent).toContain('上');
+    expect(container.textContent).toContain('下');
+  });
+
+  it('斜体 *x*（含中文）→ <em>', () => {
+    const { container } = render(<Prose text={'这是 *斜体* 示例'} />);
+    expect(container.querySelector('em')?.textContent).toBe('斜体');
+  });
+
+  it('代码块与列表混排：代码块不被块级解析吞', () => {
+    const { container } = render(
+      <Prose text={'- 项\n\n```js\nx\n```\n\n1. 甲'} />,
+    );
+    expect(container.querySelectorAll('.otto-code')).toHaveLength(1);
+    expect(container.querySelector('ul.otto-prose__ul li')?.textContent).toBe(
+      '项',
+    );
+    expect(container.querySelector('ol.otto-prose__ol li')?.textContent).toBe(
+      '甲',
+    );
+  });
+
   it('contentToText 折叠片段为纯文本', () => {
     expect(
       contentToText([

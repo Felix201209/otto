@@ -391,8 +391,64 @@
 .otto-prose {
   font-size: 14px;
   color: var(--otto-text);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+/* —— 块级：段落 / 标题 / 列表 / 引用 / 水平线 —— */
+.otto-prose__p {
+  margin: 0 0 8px;
+  white-space: pre-wrap; /* 段落内保留换行 */
+}
+.otto-prose__p:last-child {
+  margin-bottom: 0;
+}
+.otto-prose__h {
+  margin: 12px 0 6px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.otto-prose__h:first-child {
+  margin-top: 0;
+}
+h1.otto-prose__h {
+  font-size: 19px;
+}
+h2.otto-prose__h {
+  font-size: 17px;
+}
+h3.otto-prose__h {
+  font-size: 15.5px;
+}
+h4.otto-prose__h,
+h5.otto-prose__h,
+h6.otto-prose__h {
+  font-size: 14px;
+}
+.otto-prose__ul,
+.otto-prose__ol {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+.otto-prose__ul {
+  list-style: disc;
+}
+.otto-prose__ol {
+  list-style: decimal;
+}
+.otto-prose__ul li,
+.otto-prose__ol li {
+  margin: 2px 0;
+}
+.otto-prose__quote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--otto-border-strong);
+  color: var(--otto-text-secondary);
+  white-space: pre-wrap;
+}
+.otto-prose__hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--otto-border);
 }
 .otto-prose code {
   font-family: var(--otto-font-mono);
