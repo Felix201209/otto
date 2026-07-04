@@ -89,6 +89,7 @@ import {
 import { shouldAttemptBrowserLaunch } from '../utils/browser.js';
 import { MCPOAuthConfig } from '../mcp/oauth-provider.js';
 import { IdeClient } from '../ide/ide-client.js';
+import { enableAutoLearning } from '../utils/post-exec-hook.js';
 import { HookSystem } from '../hooks/hookSystem.js';
 
 // Re-export OAuth config type
@@ -1224,6 +1225,8 @@ export class Config {
     // 快速启动优化：只发现命令行工具，MCP工具将在后台异步加载
     // 这样可以让CLI界面立即显示，不用等待所有MCP服务器连接完成
     await registry.discoverCommandLineTools();
+    // Enable auto-learning: every task execution auto-logs to memory_manager
+    enableAutoLearning(registry, this);
     return registry;
   }
 }
