@@ -170,6 +170,49 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     ).toBeNull();
   });
 
+  it('delete_session：sessionId 缺失 → 拒绝；齐全 → 通过', () => {
+    expect(
+      validateClientPayload({ type: 'delete_session', payload: {} }),
+    ).not.toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'delete_session',
+        payload: { sessionId: 's1' },
+      }),
+    ).toBeNull();
+  });
+
+  it('rename_session：sessionId/title 校验（空白 title 拒绝，齐全通过）', () => {
+    // sessionId 缺失
+    expect(
+      validateClientPayload({
+        type: 'rename_session',
+        payload: { title: '新名' },
+      }),
+    ).not.toBeNull();
+    // title 非字符串
+    expect(
+      validateClientPayload({
+        type: 'rename_session',
+        payload: { sessionId: 's1', title: 42 },
+      }),
+    ).not.toBeNull();
+    // title 纯空白
+    expect(
+      validateClientPayload({
+        type: 'rename_session',
+        payload: { sessionId: 's1', title: '   ' },
+      }),
+    ).not.toBeNull();
+    // 齐全通过
+    expect(
+      validateClientPayload({
+        type: 'rename_session',
+        payload: { sessionId: 's1', title: '新名' },
+      }),
+    ).toBeNull();
+  });
+
   it('payload 非对象（null / 字符串）→ 拒绝', () => {
     expect(
       validateClientPayload({ type: 'list_sessions', payload: null }),

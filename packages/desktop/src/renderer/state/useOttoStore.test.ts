@@ -110,13 +110,58 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.activeSessionId).toBe('a');
   });
 
-  it('sessions_list：已有选中则不覆盖', () => {
+  it('sessions_list：选中仍在快照里则保持不动', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 'a' }), makeSession({ sessionId: 'b' })] },
+    });
+    expect(view.result.current.state.activeSessionId).toBe('a');
+    // 第二份快照仍含 a → 选中保持不变（不因刷新而跳到别处）。
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 'b' }), makeSession({ sessionId: 'a' })] },
+    });
+    expect(view.result.current.state.activeSessionId).toBe('a');
+  });
+
+  it('sessions_list 是权威快照：快照里没有的会话被剔除（删除落地）', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 'a' }), makeSession({ sessionId: 'b' })] },
+    });
+    // 塞一条 b 的消息，验证删除后其消息缓存也被回收。
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'bm', sessionId: 'b' }) } });
+    expect(view.result.current.state.messages['b']).toHaveLength(1);
+    // 新快照只剩 a（b 被删）。
+    push({ type: 'sessions_list', payload: { sessions: [makeSession({ sessionId: 'a' })] } });
+    expect(view.result.current.state.sessionIds).toEqual(['a']);
+    expect(view.result.current.state.sessions['b']).toBeUndefined();
+    expect(view.result.current.state.messages['b']).toBeUndefined();
+  });
+
+  it('sessions_list：删掉当前选中会话 → 落到快照第一个', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 'a' }), makeSession({ sessionId: 'b' })] },
+    });
+    expect(view.result.current.state.activeSessionId).toBe('a'); // 默认选第一个
+    // 删掉当前选中的 a：新快照只剩 b → active 落到 b。
+    push({ type: 'sessions_list', payload: { sessions: [makeSession({ sessionId: 'b' })] } });
+    expect(view.result.current.state.activeSessionId).toBe('b');
+  });
+
+  it('sessions_list：删光所有会话 → activeSessionId 置 null', () => {
     const { view, push } = setup();
     push({ type: 'sessions_list', payload: { sessions: [makeSession({ sessionId: 'a' })] } });
     expect(view.result.current.state.activeSessionId).toBe('a');
-    push({ type: 'sessions_list', payload: { sessions: [makeSession({ sessionId: 'b' })] } });
-    // 仍是 a（已有选中不被第二批覆盖）
-    expect(view.result.current.state.activeSessionId).toBe('a');
+    push({ type: 'sessions_list', payload: { sessions: [] } });
+    expect(view.result.current.state.activeSessionId).toBeNull();
+    expect(view.result.current.state.sessionIds).toEqual([]);
+    // 空快照仍标记为已加载（sessionsLoaded），供 App 引导 effect 判空建会话。
+    expect(view.result.current.state.sessionsLoaded).toBe(true);
   });
 
   it('session_upsert：新增不重复 / 更新已存在', () => {
@@ -330,6 +375,56 @@ describe('applyFrame 各帧分支', () => {
     const before = view.result.current.state;
     push({ type: 'welcome', payload: { protocolVersion: '1', serverVersion: '0.1.0' } });
     expect(view.result.current.state).toBe(before);
+  });
+});
+
+describe('deleteSession / renameSession actions（发帧）', () => {
+  it('deleteSession(id) → 发 delete_session 帧', () => {
+    const { view } = setup();
+    act(() => {
+      view.result.current.actions.deleteSession('sX');
+    });
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'delete_session',
+      payload: { sessionId: 'sX' },
+    });
+  });
+
+  it('deleteSession(空 id) → 不发帧', () => {
+    const { view } = setup();
+    sendSpy.mockClear();
+    act(() => {
+      view.result.current.actions.deleteSession('');
+    });
+    expect(
+      sendSpy.mock.calls.some(
+        (c) => (c[0] as { type?: string })?.type === 'delete_session',
+      ),
+    ).toBe(false);
+  });
+
+  it('renameSession(id, title) → 发 rename_session 帧（title 已 trim）', () => {
+    const { view } = setup();
+    act(() => {
+      view.result.current.actions.renameSession('sX', '  新名  ');
+    });
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'rename_session',
+      payload: { sessionId: 'sX', title: '新名' },
+    });
+  });
+
+  it('renameSession(id, 纯空白) → 不发帧', () => {
+    const { view } = setup();
+    sendSpy.mockClear();
+    act(() => {
+      view.result.current.actions.renameSession('sX', '   ');
+    });
+    expect(
+      sendSpy.mock.calls.some(
+        (c) => (c[0] as { type?: string })?.type === 'rename_session',
+      ),
+    ).toBe(false);
   });
 });
 
