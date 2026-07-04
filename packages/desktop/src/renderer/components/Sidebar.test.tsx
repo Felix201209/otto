@@ -109,28 +109,45 @@ describe('Sidebar 会话项：inline 重命名', () => {
   });
 });
 
-describe('Sidebar 会话项：删除二次确认', () => {
-  it('菜单「删除」→ 出确认条；点「删除」才真正回调', () => {
+describe('Sidebar 会话项：删除二次确认（弹窗）', () => {
+  it('菜单「删除」→ 弹出确认弹窗；点弹窗「删除」才真正回调', () => {
     const { onDelete } = renderSidebar();
     fireEvent.click(screen.getByLabelText('更多操作'));
     fireEvent.click(screen.getByText('删除'));
-    expect(screen.getByText('删除此对话？不可撤销。')).toBeTruthy();
+    // 弹窗出现（带会话标题 + 不可撤销提示）
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(
+      screen.getByText('确定删除「旧标题」吗？此操作不可撤销。'),
+    ).toBeTruthy();
     // 未点确认前不删
     expect(onDelete).not.toHaveBeenCalled();
-    // 确认条里的「删除」按钮
+    // 弹窗里的「删除」按钮
     const confirmDel = screen.getByText('删除', {
-      selector: '.otto-session__confirmdel',
+      selector: '.otto-confirm__confirm',
     });
     fireEvent.click(confirmDel);
     expect(onDelete).toHaveBeenCalledWith('s1');
   });
 
-  it('确认条「取消」→ 不删、收起确认', () => {
+  it('弹窗「取消」→ 不删、关闭弹窗', () => {
     const { onDelete } = renderSidebar();
     fireEvent.click(screen.getByLabelText('更多操作'));
     fireEvent.click(screen.getByText('删除'));
     fireEvent.click(screen.getByText('取消'));
     expect(onDelete).not.toHaveBeenCalled();
-    expect(screen.queryByText('删除此对话？不可撤销。')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('标题为空 → 弹窗回退「未命名对话」', () => {
+    renderSidebar({
+      groups: [
+        { label: '今天', sessions: [makeSession({ title: '' })] },
+      ],
+    });
+    fireEvent.click(screen.getByLabelText('更多操作'));
+    fireEvent.click(screen.getByText('删除'));
+    expect(
+      screen.getByText('确定删除「未命名对话」吗？此操作不可撤销。'),
+    ).toBeTruthy();
   });
 });

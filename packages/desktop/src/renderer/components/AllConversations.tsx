@@ -11,11 +11,12 @@
  *
  * 键盘导航（与 Composer 模型菜单看齐）：↑↓ 移动高亮、Enter 打开当前高亮、Esc 关闭。
  * 焦点留在搜索框（边打边过滤），方向键 / Enter 由搜索框 onKeyDown 统一分流。
- * 每行 hover 出删除按钮 → inline 二次确认（「确定删除?」），删除不可逆。
+ * 每行 hover 出删除按钮 → 居中弹窗 ConfirmDialog 二次确认，删除不可逆。
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import { IconClose, IconList } from './icons.js';
 
@@ -72,7 +73,7 @@ export function AllConversations({
   const [query, setQuery] = useState('');
   // 键盘高亮下标（对齐 filtered 列表）。查询变化时复位到 0。
   const [highlight, setHighlight] = useState(0);
-  // 正处于删除确认态的 sessionId（inline 二次确认，删除不可逆）。
+  // 正处于删除确认态的 sessionId（居中弹窗二次确认，删除不可逆）。null = 无弹窗。
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -220,36 +221,6 @@ export function AllConversations({
                 <div className="otto-allconv__meta">
                   <SourceBadge source={s.source} />
                 </div>
-
-                {confirmId === s.sessionId ? (
-                  <div
-                    className="otto-allconv__confirm"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span className="otto-allconv__confirmtext">
-                      删除此对话？不可撤销。
-                    </span>
-                    <div className="otto-allconv__confirmbtns">
-                      <button
-                        type="button"
-                        className="otto-allconv__confirmcancel"
-                        onClick={() => setConfirmId(null)}
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="button"
-                        className="otto-allconv__confirmdel"
-                        onClick={() => {
-                          onDelete(s.sessionId);
-                          setConfirmId(null);
-                        }}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
               </div>
             ))
           )}
@@ -260,6 +231,19 @@ export function AllConversations({
           {query.trim() ? `，匹配 ${filtered.length} 个` : ''}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmId !== null}
+        title="删除对话"
+        message={`确定删除「${
+          sessions.find((s) => s.sessionId === confirmId)?.title || '未命名对话'
+        }」吗？此操作不可撤销。`}
+        onCancel={() => setConfirmId(null)}
+        onConfirm={() => {
+          if (confirmId) onDelete(confirmId);
+          setConfirmId(null);
+        }}
+      />
     </div>
   );
 }

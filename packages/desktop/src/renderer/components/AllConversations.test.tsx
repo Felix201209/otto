@@ -82,15 +82,18 @@ describe('AllConversations：键盘导航', () => {
   });
 });
 
-describe('AllConversations：每行删除二次确认', () => {
-  it('点删除按钮出确认条；确认后回调 onDelete，面板不关', () => {
+describe('AllConversations：每行删除二次确认（弹窗）', () => {
+  it('点删除按钮弹出确认弹窗；确认后回调 onDelete，面板不关', () => {
     const { onDelete, onClose } = renderPanel();
     const delBtns = screen.getAllByLabelText('删除对话');
     fireEvent.click(delBtns[1]); // 会话B 那行
-    expect(screen.getByText('删除此对话？不可撤销。')).toBeTruthy();
+    // 弹窗出现（面板本身也是 role=dialog，故以确认文案判定弹窗存在）
+    expect(
+      screen.getByText('确定删除「会话B」吗？此操作不可撤销。'),
+    ).toBeTruthy();
     expect(onDelete).not.toHaveBeenCalled();
     const confirmDel = screen.getByText('删除', {
-      selector: '.otto-allconv__confirmdel',
+      selector: '.otto-confirm__confirm',
     });
     fireEvent.click(confirmDel);
     expect(onDelete).toHaveBeenCalledWith('b');
@@ -103,12 +106,26 @@ describe('AllConversations：每行删除二次确认', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('确认态下 Esc 先撤销确认，不关面板', () => {
+  it('确认态下 Esc（搜索框）先撤销确认，不关面板', () => {
     const { onClose } = renderPanel();
     fireEvent.click(screen.getAllByLabelText('删除对话')[0]);
-    expect(screen.getByText('删除此对话？不可撤销。')).toBeTruthy();
+    expect(
+      screen.getByText('确定删除「会话A」吗？此操作不可撤销。'),
+    ).toBeTruthy();
     fireEvent.keyDown(search(), { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.queryByText('删除此对话？不可撤销。')).toBeNull();
+    expect(
+      screen.queryByText('确定删除「会话A」吗？此操作不可撤销。'),
+    ).toBeNull();
+  });
+
+  it('弹窗「取消」→ 不删、关闭弹窗', () => {
+    const { onDelete } = renderPanel();
+    fireEvent.click(screen.getAllByLabelText('删除对话')[0]);
+    fireEvent.click(screen.getByText('取消'));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText('确定删除「会话A」吗？此操作不可撤销。'),
+    ).toBeNull();
   });
 });

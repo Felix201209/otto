@@ -2391,53 +2391,8 @@ h6.otto-prose__h {
   background: #fff0f0;
 }
 
-/* 删除二次确认条（inline，删除不可逆）。 */
-.otto-session__confirm {
-  margin-top: 8px;
-  padding: 8px 9px;
-  border: 1px solid #ffc9c9;
-  border-radius: var(--otto-radius-sm);
-  background: #fff5f5;
-}
-.otto-session__confirmtext {
-  display: block;
-  font-size: 12px;
-  color: var(--otto-danger);
-  margin-bottom: 7px;
-}
-.otto-session__confirmbtns {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-.otto-session__confirmcancel,
-.otto-session__confirmdel {
-  padding: 4px 12px;
-  border-radius: var(--otto-radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background var(--otto-dur-fast) var(--otto-ease),
-    border-color var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-session__confirmcancel {
-  border: 1px solid var(--otto-border-strong);
-  background: var(--otto-surface);
-  color: var(--otto-text-secondary);
-}
-.otto-session__confirmcancel:hover {
-  color: var(--otto-text);
-  border-color: var(--otto-text-tertiary);
-}
-.otto-session__confirmdel {
-  border: 1px solid var(--otto-danger);
-  background: var(--otto-danger);
-  color: #fff;
-}
-.otto-session__confirmdel:hover {
-  background: #c92a2a;
-  border-color: #c92a2a;
-}
+/* 删除二次确认已改为居中弹窗 ConfirmDialog（样式见文件尾 .otto-confirm*），
+ * 原 inline 确认条 .otto-session__confirm* 样式随之移除。 */
 
 /* inline 重命名输入框（整行替换会话项）。 */
 .otto-session--editing {
@@ -2497,53 +2452,8 @@ h6.otto-prose__h {
   background: var(--otto-accent-soft);
 }
 
-/* 删除二次确认条（复刻 Sidebar 确认样式）。 */
-.otto-allconv__confirm {
-  margin-top: 8px;
-  padding: 8px 9px;
-  border: 1px solid #ffc9c9;
-  border-radius: var(--otto-radius-sm);
-  background: #fff5f5;
-}
-.otto-allconv__confirmtext {
-  display: block;
-  font-size: 12px;
-  color: var(--otto-danger);
-  margin-bottom: 7px;
-}
-.otto-allconv__confirmbtns {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-.otto-allconv__confirmcancel,
-.otto-allconv__confirmdel {
-  padding: 4px 12px;
-  border-radius: var(--otto-radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background var(--otto-dur-fast) var(--otto-ease),
-    border-color var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-allconv__confirmcancel {
-  border: 1px solid var(--otto-border-strong);
-  background: var(--otto-surface);
-  color: var(--otto-text-secondary);
-}
-.otto-allconv__confirmcancel:hover {
-  color: var(--otto-text);
-  border-color: var(--otto-text-tertiary);
-}
-.otto-allconv__confirmdel {
-  border: 1px solid var(--otto-danger);
-  background: var(--otto-danger);
-  color: #fff;
-}
-.otto-allconv__confirmdel:hover {
-  background: #c92a2a;
-  border-color: #c92a2a;
-}
+/* 删除二次确认已改为居中弹窗 ConfirmDialog（样式见文件尾 .otto-confirm*），
+ * 原 inline 确认条 .otto-allconv__confirm* 样式随之移除。 */
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  暗色主题补丁（追加，不改上方任何浅色规则）
@@ -2616,21 +2526,10 @@ h6.otto-prose__h {
     border-color: rgba(224, 49, 49, 0.4);
   }
 
-  /* —— 删除相关的红色确认条 / 悬浮红底（会话项 + 检索面板）—— */
+  /* —— 删除入口的悬浮红底（会话项菜单「删除」项 + 检索面板行删除钮）—— */
   .otto-session__menuitem--danger:hover,
   .otto-allconv__del:hover {
     background: rgba(224, 49, 49, 0.16);
-  }
-  .otto-session__confirm,
-  .otto-allconv__confirm {
-    background: rgba(224, 49, 49, 0.1);
-    border-color: rgba(224, 49, 49, 0.35);
-  }
-  /* 删除按钮 hover：浅色下加深纯红，暗色下沿用亮一档的暖红。 */
-  .otto-session__confirmdel:hover,
-  .otto-allconv__confirmdel:hover {
-    background: #d64545;
-    border-color: #d64545;
   }
 
   /* setup 关闭钮 hover 底：浅色借用 code-bg（暗色已是深灰）即可，无需额外覆盖。 */
@@ -2741,4 +2640,96 @@ h6.otto-prose__h {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--otto-text-tertiary);
+}
+
+/* ══════════════ 居中确认弹窗 ConfirmDialog（删除对话二次确认） ══════════════
+ * 取代原 inline 确认条。半透明遮罩铺满窗口 + 居中卡片，全走 token 随暗色主题切换。
+ * 视觉与现有浮层对齐：遮罩同 lightbox（暖黑 + blur），卡片同 setup（surface + 大圆角 +
+ * shadow-pop + 升起动画）。z-index 100 盖过检索面板（55）等所有既有浮层。 */
+.otto-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(28, 25, 23, 0.62);
+  backdrop-filter: blur(3px);
+  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
+}
+.otto-confirm {
+  width: 100%;
+  max-width: 380px;
+  padding: 20px 22px 18px;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  box-shadow: var(--otto-shadow-pop);
+  animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
+}
+.otto-confirm__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--otto-text);
+}
+.otto-confirm__message {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--otto-text-secondary);
+  /* 长标题会话名不撑破卡片、可断行。 */
+  overflow-wrap: anywhere;
+}
+.otto-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.otto-confirm__cancel,
+.otto-confirm__confirm {
+  padding: 7px 16px;
+  border-radius: var(--otto-radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-confirm__cancel {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+}
+.otto-confirm__cancel:hover {
+  color: var(--otto-text);
+  border-color: var(--otto-text-tertiary);
+}
+.otto-confirm__cancel:focus-visible,
+.otto-confirm__confirm:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+/* 中性确认钮（danger=false）：走主色描边。 */
+.otto-confirm__confirm {
+  border: 1px solid var(--otto-accent);
+  background: var(--otto-accent);
+  color: #fff;
+}
+.otto-confirm__confirm:hover {
+  background: var(--otto-accent-hover);
+  border-color: var(--otto-accent-hover);
+}
+/* 危险确认钮（danger=true，默认）：红色。 */
+.otto-confirm__confirm--danger {
+  border-color: var(--otto-danger);
+  background: var(--otto-danger);
+}
+/* hover 加深：从 danger 派生，浅色偏黑、暗色偏黑均能加深一档，无需写死双主题值。 */
+.otto-confirm__confirm--danger:hover {
+  background: color-mix(in srgb, var(--otto-danger) 82%, #000);
+  border-color: color-mix(in srgb, var(--otto-danger) 82%, #000);
 }

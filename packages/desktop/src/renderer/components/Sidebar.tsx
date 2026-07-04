@@ -11,13 +11,14 @@
  *
  * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
  *   - 重命名走 inline 输入框（双击标题 或 菜单「重命名」→ 变输入框，Enter 提交、Esc 取消）。
- *   - 删除**二次确认**（inline「确定删除?」条），删除不可逆。
+ *   - 删除**二次确认**走居中弹窗 ConfirmDialog（半透明遮罩 + 居中卡片），删除不可逆。
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import {
   IconCompose,
@@ -152,9 +153,11 @@ function SessionItem({
     }
   }, [mode]);
 
-  // 菜单/确认态打开时，点击本项之外则收起（回 idle），避免菜单悬挂。
+  // 菜单态打开时，点击本项之外则收起（回 idle），避免菜单悬挂。
+  // 确认态由 ConfirmDialog 弹窗自己管开关（点遮罩/Esc/取消），不走这套外点收起——
+  // 否则点弹窗卡片（在本项 DOM 之外）会被误判为外点而把弹窗关掉。
   useEffect(() => {
-    if (mode !== 'menu' && mode !== 'confirm') return;
+    if (mode !== 'menu') return;
     const onDoc = (e: MouseEvent): void => {
       if (!rootRef.current?.contains(e.target as Node)) setMode('idle');
     };
@@ -280,33 +283,16 @@ function SessionItem({
         </div>
       ) : null}
 
-      {mode === 'confirm' ? (
-        <div
-          className="otto-session__confirm"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="otto-session__confirmtext">删除此对话？不可撤销。</span>
-          <div className="otto-session__confirmbtns">
-            <button
-              type="button"
-              className="otto-session__confirmcancel"
-              onClick={() => setMode('idle')}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="otto-session__confirmdel"
-              onClick={() => {
-                onDelete(session.sessionId);
-                setMode('idle');
-              }}
-            >
-              删除
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        open={mode === 'confirm'}
+        title="删除对话"
+        message={`确定删除「${session.title || '未命名对话'}」吗？此操作不可撤销。`}
+        onCancel={() => setMode('idle')}
+        onConfirm={() => {
+          onDelete(session.sessionId);
+          setMode('idle');
+        }}
+      />
     </div>
   );
 }
