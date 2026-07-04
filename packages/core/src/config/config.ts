@@ -59,6 +59,7 @@ import { ConvertDocumentTool } from '../tools/convert-document.js';
 import { GenerateDocumentTool } from '../tools/generate-document.js';
 import { AnalyzeDataTool } from '../tools/analyze-data.js';
 import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
+import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { ProjectSettingsManager } from './projectSettings.js';
 import { generateCustomModelId } from '../types/customModel.js';
 import { OttoClient } from '../core/client.js';
@@ -1198,6 +1199,7 @@ export class Config {
     registerCoreTool(GenerateDocumentTool, this);
     registerCoreTool(AnalyzeDataTool, this);
     registerCoreTool(DiagnoseSystemTool, this);
+    registerCoreTool(VoiceBridgeTool, this);
 
     // TaskTool (SubAgent) is available in both CLI and VSCode environments
     registerCoreTool(TaskTool, this, registry);
