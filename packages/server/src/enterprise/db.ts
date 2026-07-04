@@ -181,8 +181,11 @@ export function getKnowledge(department?: string, category?: string): any[] {
 }
 
 export function searchKnowledge(query: string, department?: string): any[] {
-  let sql = 'SELECT * FROM knowledge WHERE content LIKE ?';
-  const params: any[] = [`%${query}%`];
+  // Match against both category (task_type is usually stored here, e.g. "contract_review")
+  // and content (free-text description), otherwise knowledge tagged by category never
+  // surfaces during recall when task_type doesn't literally appear in the Chinese content.
+  let sql = 'SELECT * FROM knowledge WHERE (content LIKE ? OR category LIKE ?)';
+  const params: any[] = [`%${query}%`, `%${query}%`];
   if (department) { sql += ' AND department = ?'; params.push(department); }
   sql += ' ORDER BY confidence DESC LIMIT 20';
   return getDB().prepare(sql).all(...params);
@@ -294,7 +297,10 @@ export function getAuditLogs(limit = 50): any[] {
 // ============================================================
 export function exportAll(): any {
   return {
-    employees: listEmployees(),
+    // Full backup must include offboarded employees too, otherwise every
+    // offboarding silently erases historical employee records from the
+    // export — contradicting the "export ALL data" guarantee.
+    employees: getDB().prepare('SELECT * FROM employees ORDER BY onboarded_at').all(),
     taskLogs: getDB().prepare('SELECT * FROM task_logs ORDER BY created_at DESC LIMIT 1000').all(),
     knowledge: getKnowledge(),
     inviteCodes: getDB().prepare('SELECT * FROM invite_codes').all(),
