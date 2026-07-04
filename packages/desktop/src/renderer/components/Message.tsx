@@ -13,6 +13,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
+import { attachmentToDataUrl } from '../lib/image.js';
 import { ToolCallsCard } from './ToolCalls.js';
 import {
   OttoAvatar,
@@ -57,9 +58,29 @@ export function Message({
 
 function UserMessage({ message }: { message: OttoMessage }): React.JSX.Element {
   const text = contentToText(message.content);
+  const images = message.content.filter(
+    (
+      p,
+    ): p is Extract<
+      OttoMessage['content'][number],
+      { type: 'image_reference' }
+    > => p.type === 'image_reference',
+  );
   return (
     <div className="otto-msg-user">
-      <div className="otto-msg-user__bubble">{text}</div>
+      {images.length > 0 ? (
+        <div className="otto-msg-user__images">
+          {images.map((p) => (
+            <img
+              key={p.value.id}
+              className="otto-msg-user__image"
+              src={attachmentToDataUrl(p.value)}
+              alt={p.value.fileName}
+            />
+          ))}
+        </div>
+      ) : null}
+      {text ? <div className="otto-msg-user__bubble">{text}</div> : null}
       <div className="otto-msg-user__receipt">
         <span>{formatTime(message.timestamp)}</span>
         <IconCheckCheck size={14} className="otto-msg-user__check" />

@@ -22,15 +22,24 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
 import type { MessageSource } from 'otto-server';
-import { useOttoStore, groupSessions } from './state/useOttoStore.js';
+import {
+  useOttoStore,
+  groupSessions,
+  selectSortedSessions,
+} from './state/useOttoStore.js';
+import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
+import { AllConversations } from './components/AllConversations.js';
 import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
+
+  // —— 「查看全部对话」检索面板 ——
+  const [allConvOpen, setAllConvOpen] = useState(false);
 
   // —— setup / BYO-key 引导（Issue #7）——
   const [setupOpen, setSetupOpen] = useState(false);
@@ -153,8 +162,12 @@ export function App(): React.JSX.Element {
     if (text) actions.sendMessage(text, lastUser.source);
   };
 
-  const handleSend = (text: string, source: MessageSource): void => {
-    actions.sendMessage(text, source);
+  const handleSend = (
+    text: string,
+    source: MessageSource,
+    attachments?: ImageAttachment[],
+  ): void => {
+    actions.sendMessage(text, source, attachments);
   };
 
   // 新建对话：若已存在一个「无消息的空会话」，直接复用（选中它）而非再建一个，
@@ -182,9 +195,7 @@ export function App(): React.JSX.Element {
         activeSessionId={state.activeSessionId}
         onSelect={actions.selectSession}
         onNewChat={handleNewChat}
-        onViewAll={() => {
-          /* TODO(Issue#7 之后): 全部对话检索视图 */
-        }}
+        onViewAll={() => setAllConvOpen(true)}
       />
       <ChatView
         session={activeSession}
@@ -232,6 +243,15 @@ export function App(): React.JSX.Element {
           />
         </svg>
       </button>
+
+      {allConvOpen ? (
+        <AllConversations
+          sessions={selectSortedSessions(state)}
+          activeSessionId={state.activeSessionId}
+          onSelect={actions.selectSession}
+          onClose={() => setAllConvOpen(false)}
+        />
+      ) : null}
 
       {setupOpen ? (
         <SetupPanel

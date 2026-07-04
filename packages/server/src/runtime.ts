@@ -68,33 +68,50 @@ export async function createCoreSessionRuntime(
 }
 
 /**
- * 从纯文本输入构造 core 的 Content[]（首轮 user message）。
- * 把协议的 MessageContent（富片段）压平成文本——非文本片段（文件/图片引用）
- * 当前取其可读表述，真正的多模态注入是后续增强（TODO）。
+ * 把协议的 MessageContent（富片段）构造成 core 的 Part[]（首轮 user message）。
+ * 文本类片段（text / 各种引用）合并成一个 text part；image_reference 转成
+ * inlineData part —— core 的 customModelAdapter 会据 provider 自动转成 OpenAI
+ * image_url / Anthropic image / Responses input_image，无需在此区分 provider。
+ * 文本置于图片之前；若既无文本也无图片，回退一个空 text part 避免空 user turn。
  */
-function messageContentToText(content: MessageContent): string {
-  return content
-    .map((part) => {
-      switch (part.type) {
-        case 'text':
-          return part.value;
-        case 'file_reference':
-          return `@${part.value.filePath}`;
-        case 'folder_reference':
-          return `@${part.value.folderPath}`;
-        case 'code_reference':
-          return `\n\`\`\`\n${part.value.code}\n\`\`\`\n`;
-        case 'text_file_content':
-          return `\n[${part.value.fileName}]\n${part.value.content}\n`;
-        case 'image_reference':
-          // TODO(多模态): 把 image_reference 转成 inlineData Part 注入。
-          return `[image: ${part.value.fileName}]`;
-        default:
-          return '';
-      }
-    })
-    .join('\n')
-    .trim();
+function messageContentToParts(content: MessageContent): Part[] {
+  const imageParts: Part[] = [];
+  const textChunks: string[] = [];
+  for (const part of content) {
+    switch (part.type) {
+      case 'text':
+        textChunks.push(part.value);
+        break;
+      case 'file_reference':
+        textChunks.push(`@${part.value.filePath}`);
+        break;
+      case 'folder_reference':
+        textChunks.push(`@${part.value.folderPath}`);
+        break;
+      case 'code_reference':
+        textChunks.push(`\n\`\`\`\n${part.value.code}\n\`\`\`\n`);
+        break;
+      case 'text_file_content':
+        textChunks.push(`\n[${part.value.fileName}]\n${part.value.content}\n`);
+        break;
+      case 'image_reference':
+        imageParts.push({
+          inlineData: {
+            mimeType: part.value.mimeType,
+            data: part.value.data,
+          },
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  const text = textChunks.join('\n').trim();
+  const parts: Part[] = [];
+  if (text) parts.push({ text });
+  parts.push(...imageParts);
+  if (parts.length === 0) parts.push({ text: '' });
+  return parts;
 }
 
 /** 从一条流式响应里抽取可流式输出的文本（跳过 thought 片段）。 */
@@ -200,11 +217,11 @@ export class CoreSessionRuntime implements SessionRuntime {
     const modelName = this.config.getModel();
     const caps = getModelCapabilities(modelName);
 
-    // 首轮 user message：把协议 content 压平成文本注入 core。
+    // 首轮 user message：把协议 content 构造成 core Part[]（文本 + 图片 inlineData）。
     let currentMessages: Content[] = [
       {
         role: MESSAGE_ROLES.USER,
-        parts: [{ text: messageContentToText(input) }],
+        parts: messageContentToParts(input),
       },
     ];
 

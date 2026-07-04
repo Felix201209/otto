@@ -30,6 +30,12 @@ import type {
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 
+/** 图片附件（image_reference part 的 value）——Composer 选图后组进 content 发送。 */
+export type ImageAttachment = Extract<
+  OttoMessage['content'][number],
+  { type: 'image_reference' }
+>['value'];
+
 export interface OttoState {
   connection: ConnectionState;
   sessions: Record<string, SessionSummary>;
@@ -270,7 +276,11 @@ function mergeTextDelta(
 export interface OttoActions {
   selectSession(sessionId: string): void;
   createSession(title?: string): void;
-  sendMessage(text: string, source?: MessageSource): void;
+  sendMessage(
+    text: string,
+    source?: MessageSource,
+    attachments?: ImageAttachment[],
+  ): void;
   setModel(model: string): void;
   cancel(): void;
   respondToolConfirmation(
@@ -349,11 +359,21 @@ export function useOttoStore(): UseOttoStore {
   }, []);
 
   const sendMessage = useCallback(
-    (text: string, source: MessageSource = 'local') => {
+    (
+      text: string,
+      source: MessageSource = 'local',
+      attachments: ImageAttachment[] = [],
+    ) => {
       const sessionId = activeRef.current;
       const trimmed = text.trim();
-      if (!sessionId || !trimmed) return;
+      // 纯文本或纯图片都可发；两者皆空才拦截。
+      if (!sessionId || (!trimmed && attachments.length === 0)) return;
       const clientMessageId = `c-${Date.now()}-${clientMsgSeq++}`;
+      const content: OttoMessage['content'] = [];
+      if (trimmed) content.push({ type: 'text', value: trimmed });
+      for (const value of attachments) {
+        content.push({ type: 'image_reference', value });
+      }
       // 乐观渲染：先把用户消息塞进列表，server 回的 message_start 会按 id 对账覆盖。
       dispatch({
         kind: 'optimistic_user',
@@ -361,19 +381,14 @@ export function useOttoStore(): UseOttoStore {
           id: clientMessageId,
           sessionId,
           role: 'user',
-          content: [{ type: 'text', value: trimmed }],
+          content,
           timestamp: Date.now(),
           source,
         },
       });
       transport.send({
         type: 'send_user_message',
-        payload: {
-          sessionId,
-          content: [{ type: 'text', value: trimmed }],
-          source,
-          clientMessageId,
-        },
+        payload: { sessionId, content, source, clientMessageId },
       });
     },
     [],
@@ -458,4 +473,12 @@ export function groupSessions(state: OttoState): SessionGroup[] {
   if (yesterday.length) groups.push({ label: '昨天', sessions: yesterday });
   if (earlier.length) groups.push({ label: '更早', sessions: earlier });
   return groups;
+}
+
+/** 全量会话按 updatedAt 倒序（「查看全部对话」检索面板用）。 */
+export function selectSortedSessions(state: OttoState): SessionSummary[] {
+  return state.sessionIds
+    .map((id) => state.sessions[id])
+    .filter((s): s is SessionSummary => Boolean(s))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }

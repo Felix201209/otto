@@ -20,6 +20,7 @@ import type {
   ModelInfo,
   MessageSource,
 } from 'otto-server';
+import type { ImageAttachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
 import { Composer } from './Composer.js';
 import { OttoAvatar, IconArrowDown } from './icons.js';
@@ -40,7 +41,11 @@ interface ChatViewProps {
   currentModel: string | null;
   userInitial: string;
   busy: boolean;
-  onSend: (text: string, source: MessageSource) => void;
+  onSend: (
+    text: string,
+    source: MessageSource,
+    attachments?: ImageAttachment[],
+  ) => void;
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
   onSetModel: (model: string) => void;
@@ -204,7 +209,7 @@ export function ChatView({
         busy={busy}
         draft={draft.text}
         draftNonce={draft.n}
-        onSend={(text) => onSend(text, sendSource)}
+        onSend={(text, attachments) => onSend(text, sendSource, attachments)}
         onCancel={onCancel}
         onSetModel={onSetModel}
         onManageModels={onOpenSetup}

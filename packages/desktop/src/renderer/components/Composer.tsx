@@ -16,6 +16,12 @@
 
 import React, { useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
+import type { ImageAttachment } from '../state/useOttoStore.js';
+import {
+  fileToImageAttachment,
+  attachmentToDataUrl,
+  MAX_ATTACHMENTS,
+} from '../lib/image.js';
 import {
   IconChevronDown,
   IconPaperclip,
@@ -23,6 +29,7 @@ import {
   IconCheck,
   IconSettings,
   IconStop,
+  IconClose,
 } from './icons.js';
 
 interface ComposerProps {
@@ -37,7 +44,7 @@ interface ComposerProps {
    * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
    */
   busy?: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments: ImageAttachment[]) => void;
   /** 中止当前流式生成（busy 时停止按钮调用）。 */
   onCancel?: () => void;
   onSetModel: (model: string) => void;
@@ -64,7 +71,54 @@ export function Composer({
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const pickFiles = () => {
+    setAttachError(null);
+    fileInputRef.current?.click();
+  };
+
+  // 选中图片 → 逐张压缩成 image_reference。超出张数上限的截断并提示；
+  // 单张失败（类型/过大/解码）记录首个错误但不阻断其余成功项。
+  const onFilesChosen = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // 允许连选同一文件
+    if (files.length === 0) return;
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (room <= 0) {
+      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 张图片`);
+      return;
+    }
+    setAttaching(true);
+    let firstError: string | null = null;
+    const added: ImageAttachment[] = [];
+    for (const file of files.slice(0, room)) {
+      try {
+        added.push(await fileToImageAttachment(file));
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof Error ? err.message : '图片处理失败';
+        }
+      }
+    }
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+    setAttachError(
+      firstError ??
+        (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 张图片` : null),
+    );
+    setAttaching(false);
+  };
+
+  const removeAttachment = (id: string): void => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setAttachError(null);
+  };
 
   // 空态示例胶囊注入草稿：填入并聚焦、自适应高度。draftNonce 递增触发再注入。
   React.useEffect(() => {
@@ -84,16 +138,19 @@ export function Composer({
   React.useEffect(() => {
     if (disabled || sessionId == null) return;
     taRef.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, disabled]);
 
   // 生成中（busy）不发送，但 textarea 仍可输入下一条；无会话（disabled）才整体锁死。
-  const canSend = text.trim().length > 0 && !disabled && !busy;
+  // 有文本或有图片附件即可发送。
+  const canSend =
+    (text.trim().length > 0 || attachments.length > 0) && !disabled && !busy;
 
   const submit = () => {
     if (!canSend) return;
-    onSend(text);
+    onSend(text, attachments);
     setText('');
+    setAttachments([]);
+    setAttachError(null);
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
@@ -123,6 +180,48 @@ export function Composer({
   return (
     <div className={`otto-composer${disabled ? ' is-disabled' : ''}`}>
       <div className="otto-composer__inner">
+        {attachments.length > 0 || attaching || attachError ? (
+          <div className="otto-attachments">
+            {attachments.map((a) => (
+              <div key={a.id} className="otto-attachment">
+                <img
+                  className="otto-attachment__img"
+                  src={attachmentToDataUrl(a)}
+                  alt={a.fileName}
+                />
+                <button
+                  type="button"
+                  className="otto-attachment__remove"
+                  title="移除"
+                  aria-label={`移除 ${a.fileName}`}
+                  onClick={() => removeAttachment(a.id)}
+                >
+                  <IconClose size={11} />
+                </button>
+              </div>
+            ))}
+            {attaching ? (
+              <div className="otto-attachment otto-attachment--loading">
+                处理中…
+              </div>
+            ) : null}
+            {attachError ? (
+              <div className="otto-attachments__error" role="alert">
+                {attachError}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={onFilesChosen}
+        />
+
         <textarea
           ref={taRef}
           className="otto-composer__textarea"
@@ -166,9 +265,10 @@ export function Composer({
           <button
             type="button"
             className="otto-attach"
-            title="附件（暂未支持）"
-            aria-label="附件（暂未支持）"
-            disabled
+            title="添加图片"
+            aria-label="添加图片"
+            onClick={pickFiles}
+            disabled={disabled || attaching}
           >
             <IconPaperclip size={17} />
           </button>
