@@ -132,7 +132,7 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     let eng = engine || 'auto';
     if (eng === 'auto') {
       const offIn = ['docx','xlsx','pptx','odt','ods','odp'];
-      const offOut = ['pdf','docx','xlsx','pptx','odt','ods','odp','html','csv'];
+      const offOut = ['pdf','docx','xlsx','pptx','odt','ods','odp'];
       eng = offIn.includes(ext) || offOut.includes(fmt) ? 'libreoffice' : 'pandoc';
     }
 
