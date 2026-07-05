@@ -61,9 +61,9 @@
   --otto-code-text: #c2410c;
 
   /* —— 半径 —— */
-  --otto-radius-sm: 6px;
-  --otto-radius: 12px;
-  --otto-radius-lg: 16px;
+  --otto-radius-sm: 8px;
+  --otto-radius: 16px;
+  --otto-radius-lg: 24px;
   --otto-radius-pill: 999px;
 
   /* —— 阴影（分层景深：卡片轻浮 < 浮层 < 弹层）—— */
@@ -78,8 +78,7 @@
 
   /* —— 字体 —— */
   --otto-font:
-    -apple-system, 'PingFang SC', BlinkMacSystemFont, 'Segoe UI', system-ui,
-    'Helvetica Neue', Arial, sans-serif;
+    -apple-system, 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --otto-font-mono:
     'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono',
     monospace;

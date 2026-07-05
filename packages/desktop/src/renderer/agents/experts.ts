@@ -43,7 +43,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'ppt',
     name: 'PPT 创作专家',
     tagline: '从主题到成稿：结构化叙事幻灯片',
-    emoji: '📊',
+    emoji: '🖾',
     accent: '#e8893a',
     skills: ['ppt-creator'],
     kickoff:
@@ -53,7 +53,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'meeting',
     name: '会议纪要转录',
     tagline: '录音/长文一键成规范纪要',
-    emoji: '🎙️',
+    emoji: '🗣',
     accent: '#0ea5a4',
     skills: ['meeting-notes'],
     kickoff:
@@ -63,7 +63,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'doc',
     name: 'Word 公文撰写',
     tagline: '商务报告、方案、公文的规范中文写作',
-    emoji: '📝',
+    emoji: '🖹',
     accent: '#3b82f6',
     skills: ['doc-writer'],
     kickoff:
@@ -73,7 +73,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'sheet',
     name: 'Excel 数据表格',
     tagline: '建模、公式、透视与数据清洗',
-    emoji: '📈',
+    emoji: '↗',
     accent: '#22a06b',
     skills: ['spreadsheet-pro'],
     kickoff:
@@ -83,7 +83,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'pdf',
     name: 'PDF 文档处理',
     tagline: '合并拆分、提取、摘要与表单',
-    emoji: '📄',
+    emoji: '🗎',
     accent: '#e05a4e',
     skills: ['pdf-toolkit'],
     kickoff:
@@ -93,7 +93,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'dataviz',
     name: '数据可视化',
     tagline: '从数据到图表选型与解读',
-    emoji: '📉',
+    emoji: '↘',
     accent: '#7c5cff',
     skills: ['data-viz-pro'],
     kickoff:
@@ -103,7 +103,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'research',
     name: '市场竞品调研',
     tagline: '结构化调研、竞品对比与 SWOT',
-    emoji: '🔍',
+    emoji: '🛈',
     accent: '#5b6ee1',
     skills: ['market-research'],
     kickoff:
@@ -113,7 +113,7 @@ export const EXPERTS: readonly Expert[] = [
     id: 'copy',
     name: '品牌营销文案',
     tagline: '落地页、slogan 与营销邮件',
-    emoji: '✍️',
+    emoji: '✎',
     accent: '#d6549b',
     skills: ['copywriting'],
     kickoff:
