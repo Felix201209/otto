@@ -26,13 +26,24 @@ export default tseslint.config(
   {
     // Global ignores
     ignores: [
-      'node_modules/*',
+      '**/node_modules/**',
       'eslint.config.js',
       'packages/cli/dist/**',
       'packages/core/dist/**',
       'packages/server/dist/**',
+      'packages/desktop/build/**',
+      'packages/desktop/dist/**',
+      'packages/desktop/release/**',
+      'packages/desktop/preview/**',
+      'packages/desktop/scripts/**',
+      'packages/desktop/webpack*.cjs',
+      'packages/vscode-ui-plugin/dist/**',
+      'packages/vscode-ui-plugin/webview/dist/**',
+      'packages/vscode-ui-plugin/webview/coverage/**',
       'packages/vscode-ide-companion/dist/**',
       'bundle/**',
+      'packages/web/**',
+      'packages/*/coverage/**',
       // Ignore compiled JS files in src directories (when TS compiles to same dir)
       'packages/*/src/**/*.js',
       'packages/*/src/**/*.js.map',
@@ -40,6 +51,9 @@ export default tseslint.config(
       // Ignore compiled package entry artifacts (index.ts -> index.js at package root)
       'packages/*/index.js',
       'packages/*/index.js.map',
+      'packages/*/vitest.config.js',
+      'packages/*/vitest.config.d.ts',
+      'packages/*/vitest.config.js.map',
     ],
   },
   eslint.configs.recommended,
@@ -121,7 +135,7 @@ export default tseslint.config(
       'import/no-internal-modules': [
         'error',
         {
-          allow: ['react-dom/test-utils', 'memfs/lib/volume.js', 'yargs/**'],
+          allow: ['react-dom/test-utils', 'react-dom/client', 'memfs/lib/volume.js', 'yargs/**', '**/styles/**', '**/assets/**'],
         },
       ],
       'import/no-relative-packages': 'error',

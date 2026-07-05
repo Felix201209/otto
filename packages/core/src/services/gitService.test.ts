@@ -18,7 +18,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 // Use a shared mock object for the repo
-const mockRepo: any = {
+const mockRepo = {
   checkIsRepo: vi.fn(),
   init: vi.fn(),
   raw: vi.fn(),
@@ -56,7 +56,7 @@ describe('GitService', () => {
   let hash: string;
 
   beforeEach(async () => {
-    testRootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-service-test-'));
+    testRootDir = await fs.mkdtemp(path.join(process.cwd(), '.git-service-test-'));
     projectRoot = path.join(testRootDir, 'project');
     homedir = path.join(testRootDir, 'home');
     await fs.mkdir(projectRoot, { recursive: true });

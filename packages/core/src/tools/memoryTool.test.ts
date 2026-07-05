@@ -19,8 +19,16 @@ import * as os from 'os';
 import { glob } from 'glob';
 
 // Mock dependencies
+const hoistedMockHomedir = vi.hoisted(() => vi.fn(() => '/mock/home'));
+
 vi.mock('fs/promises');
-vi.mock('os');
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal<typeof os>();
+  return {
+    ...actual,
+    homedir: hoistedMockHomedir,
+  };
+});
 vi.mock('glob');
 
 const MEMORY_SECTION_HEADER = '## Otto Added Memories';

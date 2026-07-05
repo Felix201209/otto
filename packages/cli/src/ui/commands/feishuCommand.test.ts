@@ -121,7 +121,7 @@ describe('feishuCommand', () => {
 
     const result = await allowCmd?.action!(context, 'ou_test_user');
     expect(result?.type).toBe('message');
-    expect(result?.content).toMatch(/Added|成功加入/i);
+    expect(result?.content).toMatch(/Added|成功加入|加入授权白名单/i);
     expect(credentials.saveCredentials).toHaveBeenCalledWith(expect.objectContaining({
       allowlist: ['ou_test_user'],
     }));
@@ -142,7 +142,7 @@ describe('feishuCommand', () => {
 
     const result = await denyCmd?.action!(context, 'ou_test_user');
     expect(result?.type).toBe('message');
-    expect(result?.content).toMatch(/Removed|已移除/i);
+    expect(result?.content).toMatch(/Removed|已移除|移出授权白名单/i);
     expect(credentials.saveCredentials).toHaveBeenCalledWith(expect.objectContaining({
       allowlist: [],
     }));

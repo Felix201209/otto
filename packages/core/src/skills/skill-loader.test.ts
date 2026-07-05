@@ -28,6 +28,9 @@ describe('SkillLoader', () => {
     );
     testMarketplacePath = path.join(testRoot, 'test-marketplace');
 
+    // Isolate user-global skills from the developer machine.
+    vi.spyOn(os, 'homedir').mockReturnValue(testRoot);
+
     // Mock SkillsPaths
     vi.spyOn(SkillsPaths, 'OTTO_HOME', 'get').mockReturnValue(testRoot);
     vi.spyOn(SkillsPaths, 'SKILLS_ROOT', 'get').mockReturnValue(
@@ -362,7 +365,7 @@ Content
       expect(stats1.total).toBe(2);
 
       // Simulate external config change by directly modifying settings
-      const settingsManager = (loader as any).settingsManager;
+      const settingsManager = (loader as unknown as { settingsManager: SettingsManager }).settingsManager;
       const readSettingsSpy = vi.spyOn(settingsManager, 'readSettings');
 
       // Second call with force reload
@@ -442,10 +445,10 @@ Content
       const linkPath = path.join(projectSkillsDir, 'external-skill');
       try {
         await fs.symlink(externalSkillDir, linkPath, 'dir');
-      } catch (err: any) {
+      } catch (err: unknown) {
         // On Windows without Developer Mode / admin rights symlink creation
         // fails with EPERM; the bug can't be reproduced there, so skip.
-        if (err.code === 'EPERM' || err.code === 'ENOSYS') return;
+        if (err instanceof Error && 'code' in err && (err.code === 'EPERM' || err.code === 'ENOSYS')) return;
         throw err;
       }
 

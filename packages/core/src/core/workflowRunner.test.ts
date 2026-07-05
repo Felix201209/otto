@@ -13,7 +13,7 @@
  * 5. Scripts with no return value must produce a graceful "(workflow completed with no return value)".
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { runWorkflowScript, extractMeta } from './workflowRunner.js';
 import { WorkflowAgentAPI, WorkflowAgentRunResult } from './workflowAgentBridge.js';
 
@@ -265,6 +265,9 @@ describe('runWorkflowScript — phase tracking', () => {
     const api = {
       ...makeMockAPI(),
       currentPhaseIndex: 0,
+      setCurrentPhaseIndex(index: number) {
+        this.currentPhaseIndex = index;
+      },
     };
     const script = `
 export const meta = {
@@ -283,6 +286,6 @@ export default async function(agent) {
     const result = await runWorkflowScript(script, api as WorkflowAgentAPI, makeAbortSignal());
     expect(result.success).toBe(true);
     // After script completes, phase index should be at index 1 (阶段二)
-    expect((api as any).currentPhaseIndex).toBe(1);
+    expect(api.currentPhaseIndex).toBe(1);
   });
 });

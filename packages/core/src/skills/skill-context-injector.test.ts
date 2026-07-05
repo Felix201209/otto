@@ -11,7 +11,6 @@ import { SkillLoader } from './skill-loader.js';
 import { SettingsManager, SkillsPaths } from './settings-manager.js';
 import { MarketplaceManager } from './marketplace-manager.js';
 import { PluginInstaller } from './plugin-installer.js';
-import { SkillLoadLevel } from './skill-types.js';
 
 describe('SkillContextInjector', () => {
   let injector: SkillContextInjector;
@@ -29,6 +28,9 @@ describe('SkillContextInjector', () => {
       `otto-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
     );
     testMarketplacePath = path.join(testRoot, 'test-marketplace');
+
+    // Isolate user-global skills from the developer machine.
+    vi.spyOn(os, 'homedir').mockReturnValue(testRoot);
 
     // Mock SkillsPaths
     vi.spyOn(SkillsPaths, 'OTTO_HOME', 'get').mockReturnValue(testRoot);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import React from 'react';
 import { useYoloMode, YoloModeProvider, useProjectSettings, useExecutionSettings } from './useProjectSettings';
 import * as globalMessageServiceModule from '../services/globalMessageService';
@@ -7,8 +7,16 @@ import * as globalMessageServiceModule from '../services/globalMessageService';
 // Mock the global message service
 vi.mock('../services/globalMessageService');
 
+type ProjectSettingsPayload = { yoloMode: boolean; preferredModel: string; healthyUse: boolean; thinkingConfig?: { mode: string; effort: string } };
+type SettingsCallback = (settings: ProjectSettingsPayload) => void;
+type MockMessageService = {
+  onProjectSettingsResponse: ReturnType<typeof vi.fn>;
+  requestProjectSettings: ReturnType<typeof vi.fn>;
+  sendProjectSettingsUpdate: ReturnType<typeof vi.fn>;
+};
+
 describe('useProjectSettings', () => {
-  let mockMessageService: any;
+  let mockMessageService: MockMessageService;
 
   beforeEach(() => {
     mockMessageService = {
@@ -50,8 +58,8 @@ describe('useProjectSettings', () => {
     });
 
     it('should load settings from core', async () => {
-      let settingsCallback: any;
-      mockMessageService.onProjectSettingsResponse.mockImplementation((cb: any) => {
+      let settingsCallback: SettingsCallback;
+      mockMessageService.onProjectSettingsResponse.mockImplementation((cb: SettingsCallback) => {
         settingsCallback = cb;
       });
 
@@ -199,7 +207,7 @@ describe('useProjectSettings', () => {
 
   describe('message service integration', () => {
     it('should handle missing message service gracefully', async () => {
-      vi.mocked(globalMessageServiceModule.getGlobalMessageService).mockReturnValue(null as any);
+      vi.mocked(globalMessageServiceModule.getGlobalMessageService).mockReturnValue(null as never);
 
       const { result } = renderHook(() => useYoloMode(), { wrapper });
 
@@ -212,8 +220,8 @@ describe('useProjectSettings', () => {
     });
 
     it('should send complete payload on update', async () => {
-      let settingsCallback: any;
-      mockMessageService.onProjectSettingsResponse.mockImplementation((cb: any) => {
+      let settingsCallback: SettingsCallback;
+      mockMessageService.onProjectSettingsResponse.mockImplementation((cb: SettingsCallback) => {
         settingsCallback = cb;
       });
 
@@ -244,6 +252,7 @@ describe('useProjectSettings', () => {
         yoloMode: false,
         preferredModel: 'claude-3-opus',
         healthyUse: false,
+        thinkingConfig: { mode: 'auto', effort: 'auto' },
       });
     });
   });

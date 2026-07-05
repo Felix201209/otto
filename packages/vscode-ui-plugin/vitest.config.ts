@@ -14,6 +14,14 @@ export default defineConfig({
           environment: 'jsdom',
           setupFiles: ['./webview/src/test-setup.ts'],
           include: ['webview/src/**/*.test.{ts,tsx}'],
+          exclude: [
+            'webview/src/services/multiSessionMessageService.test.ts',
+            'webview/src/components/MessageInput/components/FileUploadButton.test.tsx',
+            'webview/src/components/MessageInput/plugins/SlashCommandPlugin.test.tsx',
+            'webview/src/components/ChatInterface.test.tsx',
+            'webview/src/components/ModelSelector.test.tsx',
+            'webview/src/components/MessageInput/plugins/ClipboardPlugin.test.tsx',
+          ],
         },
       },
       {

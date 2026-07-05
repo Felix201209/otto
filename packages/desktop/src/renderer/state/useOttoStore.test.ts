@@ -23,7 +23,7 @@ import type {
 
 // ── mock transport：捕获 frame / connection handler，connect 立即 resolve(true) ──
 let capturedHandler: ((f: ServerToClient) => void) | null = null;
-let capturedConnHandler: ((connected: boolean) => void) | null = null;
+let _capturedConnHandler: ((connected: boolean) => void) | null = null;
 const sendSpy = vi.fn();
 
 vi.mock('../transport.js', () => ({
@@ -37,10 +37,10 @@ vi.mock('../transport.js', () => ({
   },
   // 模拟 preload：注册时立即以「已连接」回调一次（onConnectionChange 契约）。
   onConnectionChange: (handler: (connected: boolean) => void) => {
-    capturedConnHandler = handler;
+    _capturedConnHandler = handler;
     handler(true);
     return () => {
-      capturedConnHandler = null;
+      _capturedConnHandler = null;
     };
   },
   isConnected: () => true,

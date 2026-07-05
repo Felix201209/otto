@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
 import { getCoreSystemPrompt, isGemini3Model, formatCompactSummary } from './prompts.js';
 
@@ -28,7 +28,7 @@ describe('prompts', () => {
 
     it('should use CLI instructions when isVSCode is false', () => {
       const prompt = getCoreSystemPrompt(undefined, false);
-      expect(prompt).toContain('interactive CLI tool');
+      expect(prompt).toContain('runs in their terminal and inside Feishu');
     });
 
     it('should include Feishu-specific instructions when isFeishu is true', () => {

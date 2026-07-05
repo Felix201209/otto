@@ -21,6 +21,9 @@ const mockRequestConsentNonInteractive: Mock<
   typeof requestConsentNonInteractive
 > = vi.hoisted(() => vi.fn());
 const mockStat: Mock<typeof fs.stat> = vi.hoisted(() => vi.fn());
+const mockReadFile: Mock<typeof fs.readFile> = vi.hoisted(() => vi.fn());
+const mockWriteFile: Mock<typeof fs.writeFile> = vi.hoisted(() => vi.fn());
+const mockMkdir: Mock<typeof fs.mkdir> = vi.hoisted(() => vi.fn());
 
 vi.mock('../../config/extensions/consent.js', () => ({
   requestConsentNonInteractive: mockRequestConsentNonInteractive,
@@ -49,8 +52,14 @@ vi.mock('../../utils/errors.js', () => ({
 
 vi.mock('node:fs/promises', () => ({
   stat: mockStat,
+  readFile: mockReadFile,
+  writeFile: mockWriteFile,
+  mkdir: mockMkdir,
   default: {
     stat: mockStat,
+    readFile: mockReadFile,
+    writeFile: mockWriteFile,
+    mkdir: mockMkdir,
   },
 }));
 
@@ -76,6 +85,9 @@ describe('handleInstall', () => {
     mockInstallOrUpdateExtension.mockClear();
     mockRequestConsentNonInteractive.mockClear();
     mockStat.mockClear();
+    mockReadFile.mockClear();
+    mockWriteFile.mockClear();
+    mockMkdir.mockClear();
     vi.clearAllMocks();
   });
 

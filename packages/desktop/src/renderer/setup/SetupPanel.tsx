@@ -96,7 +96,7 @@ export function SetupPanel({
 
   const checkFeishuStatus = async () => {
     try {
-      const res = await (window as any).otto?.feishuStatus();
+      const res = await window.otto?.feishuStatus();
       if (res) {
         setFsStatus(res.text);
         setFsRunning(res.running);
@@ -117,16 +117,16 @@ export function SetupPanel({
     try {
       if (fsRunning) {
         setFsStatus('正在停止...');
-        const res = await (window as any).otto?.feishuStop();
+        const res = await window.otto?.feishuStop();
         setFsStatus(res.text);
       } else {
         setFsStatus('正在开启...');
-        const res = await (window as any).otto?.feishuStart();
+        const res = await window.otto?.feishuStart();
         setFsStatus(res.text);
       }
       await checkFeishuStatus();
-    } catch (e: any) {
-      setFsStatus('操作失败: ' + (e.message || '未知错误'));
+    } catch (e: unknown) {
+      setFsStatus('操作失败: ' + (e instanceof Error ? e.message : '未知错误'));
     }
     setFsRunningLoading(false);
   };
@@ -548,7 +548,7 @@ export function SetupPanel({
               type="button"
               className="otto-setup__btn otto-setup__btn--ghost"
               style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
-              onClick={() => void (window as any).otto?.openExternal('https://open.feishu.cn')}
+              onClick={() => void window.otto?.openExternal('https://open.feishu.cn')}
             >
               飞书开发者平台 ↗
             </button>

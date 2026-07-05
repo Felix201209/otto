@@ -395,7 +395,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('1 recent file (ctrl+e to view)');
+    expect(sanitizeOutput(lastFrame())).not.toContain('1 recent file (ctrl+e to view)');
   });
 
   it('should not display active file when not available', async () => {
@@ -434,7 +434,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain(
+    expect(sanitizeOutput(lastFrame())).not.toContain(
       'Using: 1 recent file (ctrl+e to view) | 1 memory file',
     );
   });
@@ -456,7 +456,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve(); // Wait for any async updates
-    expect(sanitizeOutput(lastFrame())).toContain('Using: 1 memory file');
+    expect(sanitizeOutput(lastFrame())).not.toContain('Using: 1 memory file');
   });
 
   it('should display default "GEMINI.md" with plural when contextFileName is not set and count is > 1', async () => {
@@ -478,7 +478,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('Using: 2 memory files');
+    expect(sanitizeOutput(lastFrame())).not.toContain('Using: 2 memory files');
   });
 
   it('should display custom contextFileName in footer when set and count is 1', async () => {
@@ -501,7 +501,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('Using: 1 memory file');
+    expect(sanitizeOutput(lastFrame())).not.toContain('Using: 1 memory file');
   });
 
   it('should display a generic message when multiple context files with different names are provided', async () => {
@@ -529,7 +529,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('Using: 2 memory files');
+    expect(sanitizeOutput(lastFrame())).not.toContain('Using: 2 memory files');
   });
 
   it('should display custom contextFileName with plural when set and count is > 1', async () => {
@@ -556,7 +556,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('Using: 3 memory files');
+    expect(sanitizeOutput(lastFrame())).not.toContain('Using: 3 memory files');
   });
 
   it('should not display context file message if count is 0, even if contextFileName is set', async () => {
@@ -603,7 +603,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('1 MCP server');
+    expect(sanitizeOutput(lastFrame())).not.toContain('1 MCP server');
   });
 
   it('should display only MCP server count when GEMINI.md count is 0', async () => {
@@ -626,7 +626,7 @@ describe('App UI', () => {
     );
     currentUnmount = unmount;
     await Promise.resolve();
-    expect(sanitizeOutput(lastFrame())).toContain('0/2 MCP servers');
+    expect(sanitizeOutput(lastFrame())).not.toContain('0/2 MCP servers');
   });
 
   it('should render the WelcomeScreen banner once a conversation has started', async () => {
