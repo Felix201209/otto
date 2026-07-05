@@ -52,6 +52,14 @@ import { BatchTool } from '../tools/batch.js';
 import { AskUserQuestionTool } from '../tools/ask-user-question.js';
 import { LocalTimeTool } from '../tools/local-time.js';
 import { LarkCliTool } from '../tools/lark-cli.js';
+// —— Otto Enterprise 能力工具（桌面/文档/数据/诊断/浏览器/知识沉淀）——
+import { DesktopAutomationTool } from '../tools/desktop-automation.js';
+import { ConvertDocumentTool } from '../tools/convert-document.js';
+import { GenerateDocumentTool } from '../tools/generate-document.js';
+import { AnalyzeDataTool } from '../tools/analyze-data.js';
+import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
+import { WebAutomationTool } from '../tools/web-automation.js';
+import { MemoryManagerTool } from '../tools/memory-manager.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
 import { ProjectSettingsManager } from './projectSettings.js';
@@ -1182,6 +1190,18 @@ export class Config {
 
     registerCoreTool(LocalTimeTool, this);
     registerCoreTool(LarkCliTool, this);
+
+    // —— Otto Enterprise 九大能力：把「AI 办公同事」落到实处 ——
+    // 这些工具对系统二进制/依赖均做优雅降级（缺依赖时 fail-loud，不崩）。
+    registerCoreTool(DesktopAutomationTool, this); // 桌面自动化（窗口/键鼠/脚本）
+    registerCoreTool(ConvertDocumentTool, this); // 文档格式转换（pandoc/LibreOffice）
+    registerCoreTool(GenerateDocumentTool, this); // 文档生成（Typst/Marp）
+    registerCoreTool(AnalyzeDataTool, this); // 数据分析出图（DuckDB/gnuplot）
+    registerCoreTool(DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
+    registerCoreTool(WebAutomationTool, this); // 浏览器自动化（Playwright）
+    registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
+    // 注：voice-bridge（语音输入）已随源码保留在 tools/voice-bridge.ts，但**暂不注册**——
+    // 它依赖尚未带出的外部脚本 scripts/voice_bridge.py，缺脚本时永远 fail。补齐脚本后在此注册即可。
 
     // Delegate-to-external-agent (ACP client). Drives the user's local Claude
     // Code; gracefully reports a readable error if the bridge isn't installed.

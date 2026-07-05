@@ -180,6 +180,15 @@ export * from './tools/todo-store.js';
 // PPT tools
 export * from './tools/ppt/index.js';
 
+// Otto Enterprise 能力工具
+export * from './tools/desktop-automation.js';
+export * from './tools/convert-document.js';
+export * from './tools/generate-document.js';
+export * from './tools/analyze-data.js';
+export * from './tools/diagnose-system.js';
+export * from './tools/web-automation.js';
+export * from './tools/memory-manager.js';
+
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';
 export {

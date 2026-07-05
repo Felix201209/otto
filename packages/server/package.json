@@ -10,6 +10,8 @@
   "scripts": {
     "build": "node ../../scripts/build_package.js",
     "start": "node dist/bin.js start",
+    "enterprise": "node dist/enterprise/bin.js",
+    "enterprise:seed": "node dist/enterprise/bin.js --seed",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "test": "vitest run",
