@@ -32,6 +32,29 @@ describe('Prose 轻量 Markdown', () => {
     expect(container.querySelector('strong')?.textContent).toBe('重要');
   });
 
+  it('GFM 表格 → <table> + thead/tbody + 列对齐', () => {
+    const md = '| 名称 | 价格 |\n|:--|--:|\n| A | 10 |\n| B | 20 |';
+    const { container } = render(<Prose text={md} />);
+    expect(container.querySelector('table.otto-prose__table')).toBeTruthy();
+    expect(container.querySelectorAll('thead th').length).toBe(2);
+    expect(container.querySelectorAll('tbody tr').length).toBe(2);
+    // 末列分隔为 --: → 右对齐
+    const ths = container.querySelectorAll('thead th');
+    expect((ths[1] as HTMLElement).style.textAlign).toBe('right');
+    expect(container.textContent).toContain('名称');
+    expect(container.textContent).toContain('20');
+  });
+
+  it('段落后紧跟的表格也能识别（不被并进段落）', () => {
+    const { container } = render(
+      <Prose text={'下面是数据：\n| a | b |\n| - | - |\n| 1 | 2 |'} />,
+    );
+    expect(container.querySelector('table.otto-prose__table')).toBeTruthy();
+    expect(container.querySelector('p.otto-prose__p')?.textContent).toContain(
+      '下面是数据',
+    );
+  });
+
   it('流式未闭合的围栏也按代码块渲染（不漏字）', () => {
     const { container } = render(<Prose text={'```js\nconst a = 1'} />);
     const pre = container.querySelector('pre.otto-code__pre');

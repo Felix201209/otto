@@ -13,7 +13,7 @@
  *   - 引用块 > …：<blockquote>。
  *   - 水平线 --- / *** / ___：<hr>。
  *   - 行内：代码 `x`、加粗 **x**、斜体 *x* / _x_。
- * 表格暂按纯文本原样显示（宽表格在窄窗口/移动端渲染差，作为后续增强点）。
+ *   - GFM 表格 |a|b| + |---|:--:|：渲染成 <table>，支持列对齐，宽表横向滚动。
  * 流式友好：末尾未闭合的 ``` 也按「进行中的代码块」渲染，不漏字/错位。
  */
 
@@ -103,11 +103,14 @@ function parseSegments(text: string): Segment[] {
 
 // ── 第二层：把「普通文本」段解析为块级元素（标题/列表/引用/水平线/段落）──
 
+type Align = 'left' | 'center' | 'right' | null;
+
 type Block =
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'ul'; items: string[] }
   | { kind: 'ol'; items: string[]; start: number }
   | { kind: 'quote'; text: string }
+  | { kind: 'table'; headers: string[]; aligns: Align[]; rows: string[][] }
   | { kind: 'hr' }
   | { kind: 'para'; text: string };
 
@@ -116,6 +119,38 @@ const RE_HR = /^(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const RE_UL = /^\s*[-*+]\s+(.*)$/;
 const RE_OL = /^\s*(\d+)\.\s+(.*)$/;
 const RE_QUOTE = /^\s*>\s?(.*)$/;
+
+// ── GFM 表格：header 行 + 分隔行(|---|:--:|) + 0..n 数据行 ──
+/** 把一行按 | 切成单元格，去掉首尾竖线带来的空单元格。 */
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+/** 分隔行：每个单元格只由可选冒号 + 一串连字符组成（如 ---, :--, :-:, --:）。 */
+function isTableDelimiter(line: string): boolean {
+  if (!line.includes('-')) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+/** 从分隔单元格读对齐。 */
+function alignOf(cell: string): Align {
+  const l = cell.startsWith(':');
+  const r = cell.endsWith(':');
+  if (l && r) return 'center';
+  if (r) return 'right';
+  if (l) return 'left';
+  return null;
+}
+/** 第 idx 行是否是一张表的起点（含 | 且下一行是分隔行）。 */
+function isTableStart(lines: string[], idx: number): boolean {
+  return (
+    lines[idx].includes('|') &&
+    idx + 1 < lines.length &&
+    isTableDelimiter(lines[idx + 1])
+  );
+}
 
 /** 把一个普通文本段按行解析成块级元素。空行分隔段落；同类连续行合并成列表/引用。 */
 function parseBlocks(value: string): Block[] {
@@ -139,6 +174,19 @@ function parseBlocks(value: string): Block[] {
     if (h) {
       blocks.push({ kind: 'heading', level: h[1].length, text: h[2].trim() });
       i++;
+      continue;
+    }
+    // GFM 表格：当前行是 header、下一行是分隔行 → 吃掉 header + 分隔 + 连续数据行。
+    if (isTableStart(lines, i)) {
+      const headers = splitTableRow(lines[i]);
+      const aligns = splitTableRow(lines[i + 1]).map(alignOf);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|')) {
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      blocks.push({ kind: 'table', headers, aligns, rows });
       continue;
     }
     if (RE_UL.test(line)) {
@@ -180,7 +228,8 @@ function parseBlocks(value: string): Block[] {
         RE_HEADING.test(l) ||
         RE_UL.test(l) ||
         RE_OL.test(l) ||
-        RE_QUOTE.test(l)
+        RE_QUOTE.test(l) ||
+        isTableStart(lines, i)
       ) {
         break;
       }
@@ -300,6 +349,39 @@ function renderTextSegment(value: string, keyPrefix: string): React.ReactNode[] 
           <blockquote className="otto-prose__quote" key={k}>
             {renderInline(b.text, k)}
           </blockquote>
+        );
+      case 'table':
+        return (
+          <div className="otto-prose__tablewrap" key={k}>
+            <table className="otto-prose__table">
+              <thead>
+                <tr>
+                  {b.headers.map((h, j) => (
+                    <th
+                      key={`${k}-h${j}`}
+                      style={b.aligns[j] ? { textAlign: b.aligns[j]! } : undefined}
+                    >
+                      {renderInline(h, `${k}-h${j}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {b.rows.map((row, r) => (
+                  <tr key={`${k}-r${r}`}>
+                    {b.headers.map((_, c) => (
+                      <td
+                        key={`${k}-r${r}c${c}`}
+                        style={b.aligns[c] ? { textAlign: b.aligns[c]! } : undefined}
+                      >
+                        {renderInline(row[c] ?? '', `${k}-r${r}c${c}`)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         );
       default:
         return (

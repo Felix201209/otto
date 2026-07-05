@@ -507,6 +507,43 @@ h6.otto-prose__h {
   border: none;
   border-top: 1px solid var(--otto-border);
 }
+/* —— GFM 表格：整表描边 + 表头底色 + 斑马纹；宽表在自身容器内横向滚动 —— */
+.otto-prose__tablewrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+}
+.otto-prose__table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.otto-prose__table th,
+.otto-prose__table td {
+  padding: 7px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--otto-border);
+  border-right: 1px solid var(--otto-border);
+}
+.otto-prose__table th:last-child,
+.otto-prose__table td:last-child {
+  border-right: none;
+}
+.otto-prose__table tbody tr:last-child td {
+  border-bottom: none;
+}
+.otto-prose__table th {
+  background: var(--otto-surface-raised);
+  font-weight: 600;
+  color: var(--otto-text);
+  white-space: nowrap;
+}
+.otto-prose__table tbody tr:nth-child(even) td {
+  background: var(--otto-surface-raised);
+}
 .otto-prose code {
   font-family: var(--otto-font-mono);
   font-size: 12.5px;
