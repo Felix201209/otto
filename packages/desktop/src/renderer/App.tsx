@@ -30,6 +30,7 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
+import { RightMascotPanel } from './components/RightMascotPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import type { Expert } from './agents/experts.js';
@@ -262,21 +263,24 @@ export function App(): React.JSX.Element {
           onBack={() => setMainView('chat')}
         />
       ) : (
-        <ChatView
-          session={activeSession}
-          messages={activeMessages}
-          models={state.models}
-          currentModel={state.currentModel}
-          userInitial="F"
-          busy={busy}
-          onSend={handleSend}
-          onCancel={actions.cancel}
-          onSetModel={actions.setModel}
-          onRegenerate={handleRegenerate}
-          onOpenSetup={() => setMainView('settings')}
-          onNewChat={handleNewChat}
-          onClearContext={handleClearContext}
-        />
+        <>
+          <ChatView
+            session={activeSession}
+            messages={activeMessages}
+            models={state.models}
+            currentModel={state.currentModel}
+            userInitial="F"
+            busy={busy}
+            onSend={handleSend}
+            onCancel={actions.cancel}
+            onSetModel={actions.setModel}
+            onRegenerate={handleRegenerate}
+            onOpenSetup={() => setMainView('settings')}
+            onNewChat={handleNewChat}
+            onClearContext={handleClearContext}
+          />
+          <RightMascotPanel />
+        </>
       )}
 
       {/* 断连 / 重连横幅：WS 非 connected 时浮出，给用户可见反馈。 */}
