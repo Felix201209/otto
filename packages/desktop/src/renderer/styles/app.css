@@ -1597,9 +1597,9 @@ h6.otto-prose__h {
   gap: 8px;
   padding: 7px 14px;
   border-radius: var(--otto-radius-pill);
-  background: #fff4e6;
-  border: 1px solid #ffd8a8;
-  color: #b8541a;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border-strong);
+  color: var(--otto-text-secondary);
   font-size: 12.5px;
   font-weight: 500;
   box-shadow: var(--otto-shadow);
@@ -1710,9 +1710,9 @@ h6.otto-prose__h {
   max-width: 420px;
   padding: 9px 10px 9px 14px;
   border-radius: var(--otto-radius);
-  background: #fff0f0;
-  border: 1px solid #ffc9c9;
-  color: var(--otto-danger);
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border-strong);
+  color: var(--otto-text);
   font-size: 12.5px;
   box-shadow: var(--otto-shadow-pop);
   animation: otto-toast-in 200ms var(--otto-ease);
@@ -1746,7 +1746,7 @@ h6.otto-prose__h {
     opacity var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-toast__close:hover {
-  background: rgba(224, 49, 49, 0.1);
+  background: var(--otto-surface-raised);
   opacity: 1;
 }
 .otto-toast__close:focus-visible {
@@ -1765,7 +1765,7 @@ h6.otto-prose__h {
 .otto-setup-launch {
   position: absolute;
   top: 4px;
-  right: 56px;
+  right: 356px;
   z-index: 30;
   display: inline-flex;
   align-items: center;
@@ -1786,9 +1786,9 @@ h6.otto-prose__h {
     background var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-setup-launch:hover {
-  color: var(--otto-accent);
-  border-color: var(--otto-accent);
-  background: var(--otto-accent-soft);
+  color: var(--otto-text);
+  border-color: var(--otto-border-strong);
+  background: var(--otto-surface-raised);
 }
 .otto-setup-launch:focus-visible {
   outline: none;
@@ -2553,7 +2553,7 @@ h6.otto-prose__h {
   width: 13px;
   height: 13px;
   border: 2px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #fff;
+  border-top-color: var(--otto-text);
   border-radius: 50%;
   animation: otto-rot 0.7s linear infinite;
 }
@@ -2565,9 +2565,9 @@ h6.otto-prose__h {
   gap: 8px;
   margin: 14px 22px 0;
   padding: 10px 13px;
-  border: 1px solid #ffc9c9;
+  border: 1px solid var(--otto-border-strong);
   border-radius: var(--otto-radius);
-  background: #fff0f0;
+  background: var(--otto-surface-raised);
   color: var(--otto-danger);
   font-size: 12.5px;
   line-height: 1.5;
@@ -2711,7 +2711,7 @@ h6.otto-prose__h {
   color: var(--otto-danger);
 }
 .otto-session__menuitem--danger:hover {
-  background: #fff0f0;
+  background: var(--otto-surface-raised);
 }
 
 /* 删除二次确认已改为居中弹窗 ConfirmDialog（样式见文件尾 .otto-confirm*），
@@ -2764,7 +2764,7 @@ h6.otto-prose__h {
   opacity: 1;
 }
 .otto-allconv__del:hover {
-  background: #fff0f0;
+  background: var(--otto-surface-raised);
   color: var(--otto-danger);
 }
 /* 键盘高亮态（↑↓ 移动）：与 hover 同视觉，供无鼠标操作。 */
@@ -2829,30 +2829,30 @@ h6.otto-prose__h {
 
   /* 连接中横幅：浅奶油底 → 暖褐深底 + 提亮暖字。 */
   .otto-conn-banner {
-    background: rgba(240, 163, 90, 0.14);
-    border-color: rgba(240, 163, 90, 0.38);
-    color: #f0b072;
+    background: var(--otto-surface);
+    border-color: var(--otto-border-strong);
+    color: var(--otto-text-secondary);
   }
 
   /* 错误 toast：浅粉底 → 暗红半透明底 + 提亮红字（沿用暗色 danger）。 */
   .otto-toast {
-    background: rgba(224, 49, 49, 0.14);
-    border-color: rgba(224, 49, 49, 0.4);
+    background: var(--otto-surface);
+    border-color: var(--otto-border-strong);
   }
   .otto-toast__close:hover {
-    background: rgba(241, 109, 109, 0.16);
+    background: var(--otto-surface-raised);
   }
 
   /* 落盘失败提示条：与 toast 同色系。 */
   .otto-setup__savefail {
-    background: rgba(224, 49, 49, 0.14);
-    border-color: rgba(224, 49, 49, 0.4);
+    background: var(--otto-surface);
+    border-color: var(--otto-border-strong);
   }
 
   /* —— 删除入口的悬浮红底（会话项菜单「删除」项 + 检索面板行删除钮）—— */
   .otto-session__menuitem--danger:hover,
   .otto-allconv__del:hover {
-    background: rgba(224, 49, 49, 0.16);
+    background: var(--otto-surface-raised);
   }
 
   /* setup 关闭钮 hover 底：浅色借用 code-bg（暗色已是深灰）即可，无需额外覆盖。 */
@@ -3056,3 +3056,32 @@ h6.otto-prose__h {
   background: color-mix(in srgb, var(--otto-danger) 82%, #000);
   border-color: color-mix(in srgb, var(--otto-danger) 82%, #000);
 }
+
+/* 顶栏内设置按钮：放在头像左侧，不再全局绝对定位，避免右侧栏遮挡。 */
+.otto-topbar-setup {
+  margin-left: auto;
+  margin-right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.otto-topbar-setup:hover {
+  color: var(--otto-text);
+  border-color: var(--otto-border-strong);
+  background: var(--otto-surface-raised);
+}
+.otto-topbar-setup:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+
+
+

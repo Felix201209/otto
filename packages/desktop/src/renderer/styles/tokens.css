@@ -23,42 +23,42 @@
   --otto-border-strong: #e0e0e2;
 
   /* —— amber 强调 —— */
-  --otto-accent: #e8893a;
-  --otto-accent-hover: #e07b2e;
-  --otto-accent-soft: #fdefe3; /* 选中态 cream 底 */
-  --otto-accent-gradient: linear-gradient(135deg, #f0a35a 0%, #e8893a 55%, #e07b2e 100%);
+  --otto-accent: #38bdf8;
+  --otto-accent-hover: #0ea5e9;
+  --otto-accent-soft: #e0f2fe; /* 选中态 cream 底 */
+  --otto-accent-gradient: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
 
   /* —— 语义来源徽章 —— */
-  --otto-feishu-fg: #1c7ed6;
-  --otto-feishu-bg: #e7f1fb;
-  --otto-local-fg: #2f9e44;
-  --otto-local-bg: #e6f4ea;
+  --otto-feishu-fg: #0284c7;
+  --otto-feishu-bg: #e0f2fe;
+  --otto-local-fg: #4b5563;
+  --otto-local-bg: #f3f4f6;
 
   /* —— 气泡 —— */
-  --otto-user-bubble: #fbe0cc; /* peach/cream，较纯白背景压深半档以获得实体感 */
-  --otto-user-bubble-border: #f3cdaf; /* 1px 暖描边，进一步把气泡从白底剥离 */
-  --otto-user-bubble-text: #5a3d28;
+  --otto-user-bubble: #f2f2f3; /* peach/cream，较纯白背景压深半档以获得实体感 */
+  --otto-user-bubble-border: #dedee0; /* 1px 暖描边，进一步把气泡从白底剥离 */
+  --otto-user-bubble-text: #1d1d1f;
 
   /* —— diff —— */
-  --otto-diff-add-bg: #e6f4ea;
-  --otto-diff-add-gutter: #cce8d4;
-  --otto-diff-del-bg: #fbe9e9;
-  --otto-diff-del-gutter: #f3d2d2;
+  --otto-diff-add-bg: #f2f2f3;
+  --otto-diff-add-gutter: #e0e0e2;
+  --otto-diff-del-bg: #f2f2f3;
+  --otto-diff-del-gutter: #e0e0e2;
   --otto-diff-text: #1d1d1f;
   --otto-diff-gutter-text: #a0a0a4;
-  --otto-diff-hunk-bg: #eef3fb; /* hunk 头蓝灰底（原硬编码进 token） */
-  --otto-diff-hunk-fg: #4b6584;
-  --otto-diff-stat-add: #2f9e44;
-  --otto-diff-stat-del: #e03131;
+  --otto-diff-hunk-bg: #eeeeef; /* hunk 头蓝灰底（原硬编码进 token） */
+  --otto-diff-hunk-fg: #6f6f73;
+  --otto-diff-stat-add: #6f6f73;
+  --otto-diff-stat-del: #6f6f73;
 
   /* —— 状态 —— */
-  --otto-success: #2f9e44;
-  --otto-danger: #e03131;
-  --otto-running: #e8893a;
+  --otto-success: #4b5563;
+  --otto-danger: #4b5563;
+  --otto-running: #0284c7;
 
   /* —— 行内代码 —— */
   --otto-code-bg: #f1f1f3;
-  --otto-code-text: #c2410c;
+  --otto-code-text: #4b4b4f;
 
   /* —— 半径 —— */
   --otto-radius-sm: 8px;
@@ -117,16 +117,16 @@
     --otto-border-strong: #423f3b; /* 强描边（输入框/按钮） */
 
     /* —— amber 强调（暗底略提亮，防橙色发闷）—— */
-    --otto-accent: #f0a35a;
-    --otto-accent-hover: #f4b06e;
-    --otto-accent-soft: rgba(240, 163, 90, 0.16); /* 选中态：低透明暖橙叠加 */
-    --otto-accent-gradient: linear-gradient(135deg, #f4b06e 0%, #ef9a4e 55%, #e8893a 100%);
+    --otto-accent: #7dd3fc;
+    --otto-accent-hover: #38bdf8;
+    --otto-accent-soft: rgba(163, 162, 157, 0.16); /* 选中态：低透明暖橙叠加 */
+    --otto-accent-gradient: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
 
     /* —— 语义来源徽章（暗底低饱和底 + 提亮前景）—— */
-    --otto-feishu-fg: #6cb6f5;
+    --otto-feishu-fg: #7dd3fc;
     --otto-feishu-bg: rgba(56, 132, 214, 0.18);
-    --otto-local-fg: #63d68c;
-    --otto-local-bg: rgba(47, 158, 68, 0.18);
+    --otto-local-fg: #a3a29d;
+    --otto-local-bg: rgba(163, 162, 157, 0.18);
 
     /* —— 气泡（暖褐深底 + 暖描边 + 亮暖文字，延续 peach 性格）—— */
     --otto-user-bubble: #3a2c20;
@@ -134,25 +134,25 @@
     --otto-user-bubble-text: #f2dcc7;
 
     /* —— diff（暗底半透明色块，gutter 略深，文字用暗色主文字）—— */
-    --otto-diff-add-bg: rgba(47, 158, 68, 0.16);
-    --otto-diff-add-gutter: rgba(47, 158, 68, 0.28);
-    --otto-diff-del-bg: rgba(224, 49, 49, 0.15);
-    --otto-diff-del-gutter: rgba(224, 49, 49, 0.28);
+    --otto-diff-add-bg: rgba(163, 162, 157, 0.16);
+    --otto-diff-add-gutter: rgba(163, 162, 157, 0.28);
+    --otto-diff-del-bg: rgba(163, 162, 157, 0.15);
+    --otto-diff-del-gutter: rgba(163, 162, 157, 0.28);
     --otto-diff-text: #ededec;
     --otto-diff-gutter-text: #7a7974;
     --otto-diff-hunk-bg: rgba(75, 101, 132, 0.22); /* hunk 头蓝灰底 */
-    --otto-diff-hunk-fg: #93aacb;
-    --otto-diff-stat-add: #63d68c;
-    --otto-diff-stat-del: #f16d6d;
+    --otto-diff-hunk-fg: #a3a29d;
+    --otto-diff-stat-add: #a3a29d;
+    --otto-diff-stat-del: #a3a29d;
 
     /* —— 状态 —— */
-    --otto-success: #63d68c;
-    --otto-danger: #f16d6d;
-    --otto-running: #f0a35a;
+    --otto-success: #a3a29d;
+    --otto-danger: #a3a29d;
+    --otto-running: #7dd3fc;
 
     /* —— 行内代码（暗底 + 提亮暖橙文字，保对比）—— */
     --otto-code-bg: #2a2825;
-    --otto-code-text: #f0a878;
+    --otto-code-text: #d0d0cc;
 
     /* —— 半径：与浅色一致，不随主题变 —— */
 
@@ -162,7 +162,7 @@
     --otto-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.36);
     --otto-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     --otto-shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
-    --otto-shadow-focus: 0 0 0 3px rgba(240, 163, 90, 0.32);
+    --otto-shadow-focus: 0 0 0 3px rgba(163, 162, 157, 0.32);
     /* 顶栏滚动分隔 hairline：暗底用浅色低透明 */
     --otto-hairline: rgba(255, 255, 255, 0.1);
   }

@@ -294,31 +294,6 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* 不显眼的设置入口：右上角齿轮，仅在对话页显示（设置本身已是整页）。 */}
-      {mainView === 'chat' ? (
-        <button
-          type="button"
-          className="otto-setup-launch"
-          onClick={() => setMainView('settings')}
-          title="模型与 BYO-key 设置"
-          aria-label="模型与 BYO-key 设置"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-              d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-              stroke="currentColor"
-              strokeWidth="1.6"
-            />
-            <path
-              d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-      ) : null}
-
       {allConvOpen ? (
         <AllConversations
           sessions={selectSortedSessions(state)}
