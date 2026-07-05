@@ -60,6 +60,7 @@ import { AnalyzeDataTool } from '../tools/analyze-data.js';
 import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
 import { WebAutomationTool } from '../tools/web-automation.js';
 import { MemoryManagerTool } from '../tools/memory-manager.js';
+import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
 import { ProjectSettingsManager } from './projectSettings.js';
@@ -1200,8 +1201,9 @@ export class Config {
     registerCoreTool(DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
     registerCoreTool(WebAutomationTool, this); // 浏览器自动化（Playwright）
     registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
-    // 注：voice-bridge（语音输入）已随源码保留在 tools/voice-bridge.ts，但**暂不注册**——
-    // 它依赖尚未带出的外部脚本 scripts/voice_bridge.py，缺脚本时永远 fail。补齐脚本后在此注册即可。
+    // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
+    // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
+    registerCoreTool(VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
 
     // Delegate-to-external-agent (ACP client). Drives the user's local Claude
     // Code; gracefully reports a readable error if the bridge isn't installed.
