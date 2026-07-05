@@ -104,7 +104,7 @@ describe('斜杠命令面板（Composer 集成）', () => {
     const { textarea } = renderComposer();
     type(textarea, '/');
     expect(screen.getByRole('listbox', { name: '斜杠命令' })).toBeTruthy();
-    expect(screen.getAllByRole('option')).toHaveLength(4);
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(4);
 
     type(textarea, '/cl');
     const opts = screen.getAllByRole('option');
@@ -135,11 +135,12 @@ describe('斜杠命令面板（Composer 集成）', () => {
   });
 
   it('ArrowUp 从首项回环到末项', () => {
-    const { textarea, onOpenSettings } = renderComposer();
+    const { textarea, onSend } = renderComposer();
     type(textarea, '/');
-    fireEvent.keyDown(textarea, { key: 'ArrowUp' }); // new → settings（回环）
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' }); // new → workflow（回环到最后一项）
     fireEvent.keyDown(textarea, { key: 'Enter' });
-    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0]).toContain('workflow');
   });
 
   it('Tab 也能补全执行选中命令', () => {

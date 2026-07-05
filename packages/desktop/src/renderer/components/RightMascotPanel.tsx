@@ -25,7 +25,9 @@ export function RightMascotPanel(): React.JSX.Element {
         'workflows/listing_entry.markdown - 3次自动沉淀模型',
         'reports/report_30d_2026.md - 团队省时与Token花费月报'
       ]);
-    } catch {}
+    } catch {
+      setMemoryFiles([]);
+    }
   };
 
   const fetchCommands = async () => {
@@ -80,7 +82,7 @@ export function RightMascotPanel(): React.JSX.Element {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {memoryFiles.map((file, i) => (
                 <div key={i} style={{ padding: '8px 10px', background: 'var(--otto-surface)', border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', fontSize: '11px', color: 'var(--otto-text)', cursor: 'pointer' }}
-                     onClick={() => alert(`正在查看: ${file.split(' - ')[0]}`)}>
+                     title={`正在查看: ${file.split(' - ')[0]}`}>
                   <span style={{ color: 'var(--otto-text-secondary)', marginRight: '6px' }}>□</span>
                   {file}
                 </div>
@@ -121,7 +123,7 @@ export function RightMascotPanel(): React.JSX.Element {
               <button style={{ fontSize: '10px', padding: '4px 8px', background: 'var(--otto-accent)', color: 'var(--otto-bg)', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                       onClick={() => setBrowserUrl(browserUrl)}>Go</button>
             </div>
-            <div style={{ flex: 1, border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', background: 'var(--otto-surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContext: 'center' }}>
+            <div style={{ flex: 1, border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', background: 'var(--otto-surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <iframe
                 src={browserUrl}
                 style={{ width: '100%', height: '100%', border: 'none' }}
@@ -136,11 +138,11 @@ export function RightMascotPanel(): React.JSX.Element {
             <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', textTransform: 'uppercase' }}>内置极客 IDE</div>
             <div style={{ flex: 1, border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', background: 'var(--otto-surface)', padding: '8px', fontFamily: 'var(--otto-font-mono)', fontSize: '11px', color: 'var(--otto-text-secondary)', overflowY: 'auto' }}>
               <div><span style={{ color: 'var(--otto-text-secondary)' }}>const</span> <span style={{ color: 'var(--otto-text)' }}>main</span> = () =&gt; &#123;</div>
-              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>const</span> <span style={{ color: 'var(--otto-text-secondary)' }}>agent</span> = <span style={{ color: '#cc7832' }}>new</span> <span style={{ color: 'var(--otto-text)' }}>Otto</span>(&#123;</div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;role: <span style={{ color: 'var(--otto-text-tertiary)' }}>"real_estate_agent"</span>,</div>
+              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>const</span> <span style={{ color: 'var(--otto-text-secondary)' }}>agent</span> = <span style={{ color: 'var(--otto-text-secondary)' }}>new</span> <span style={{ color: 'var(--otto-text)' }}>Otto</span>(&#123;</div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;role: <span style={{ color: 'var(--otto-text-tertiary)' }}>&quot;real_estate_agent&quot;</span>,</div>
               <div>&nbsp;&nbsp;&nbsp;&nbsp;memory: <span style={{ color: 'var(--otto-text-secondary)' }}>true</span></div>
               <div>&nbsp;&nbsp;&#125;);</div>
-              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>agent</span>.<span style={{ color: 'var(--otto-text)' }}>learn</span>(<span style={{ color: 'var(--otto-text-tertiary)' }}>"onboard"</span>);</div>
+              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>agent</span>.<span style={{ color: 'var(--otto-text)' }}>learn</span>(<span style={{ color: 'var(--otto-text-tertiary)' }}>&quot;onboard&quot;</span>);</div>
               <div>&#125;;</div>
             </div>
           </div>

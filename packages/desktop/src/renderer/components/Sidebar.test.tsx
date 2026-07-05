@@ -44,6 +44,7 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
       onSelect={onSelect}
       onNewChat={vi.fn()}
       onOpenAgents={onOpenAgents}
+      onLaunchExpert={vi.fn()}
       onViewAll={vi.fn()}
       onRename={onRename}
       onDelete={onDelete}
@@ -54,21 +55,22 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
 }
 
 describe('Sidebar：智能体入口', () => {
-  it('渲染「智能体」入口按钮（含 8 位企业专家提示）', () => {
+  it('渲染左侧常见任务与全部智能体入口', () => {
     renderSidebar();
-    expect(screen.getByText('智能体')).toBeTruthy();
-    expect(screen.getByText('8 位企业专家')).toBeTruthy();
+    expect(screen.getByText('常见任务')).toBeTruthy();
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(screen.getByText('全部智能体')).toBeTruthy();
   });
 
-  it('点击「智能体」入口 → 回调 onOpenAgents', () => {
+  it('点击「全部智能体」入口 → 回调 onOpenAgents', () => {
     const { onOpenAgents } = renderSidebar();
-    fireEvent.click(screen.getByTitle('智能体 · 企业专家'));
+    fireEvent.click(screen.getByTitle('查看完整智能体画廊'));
     expect(onOpenAgents).toHaveBeenCalledTimes(1);
   });
 
   it('在智能体页时入口高亮（aria-current=page）', () => {
     renderSidebar({ agentsActive: true });
-    expect(screen.getByTitle('智能体 · 企业专家').getAttribute('aria-current')).toBe(
+    expect(screen.getByTitle('查看完整智能体画廊').getAttribute('aria-current')).toBe(
       'page',
     );
   });

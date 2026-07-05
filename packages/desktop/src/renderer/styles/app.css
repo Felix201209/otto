@@ -1759,42 +1759,6 @@ h6.otto-prose__h {
  * 全部走 tokens.css 变量，浅色 + amber，hover/focus 态显式。
  * ════════════════════════════════════════════════════════════════════════ */
 
-/* 右上角不显眼的设置入口齿轮。
-   顶栏右端已有 .otto-user-avatar（right 18–48px、纵向 4–34px）；齿轮让位落到其左侧，
-   与头像共用一条基线（top 4px、height 30 与头像一致），right 56px 避免叠图。 */
-.otto-setup-launch {
-  position: absolute;
-  top: 4px;
-  right: 356px;
-  z-index: 30;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-pill);
-  background: var(--otto-surface);
-  color: var(--otto-text-secondary);
-  cursor: pointer;
-  box-shadow: var(--otto-shadow-xs);
-  /* 位于顶栏 drag 带内（top 4px），须显式 no-drag 才可点击。 */
-  -webkit-app-region: no-drag;
-  transition:
-    color var(--otto-dur-fast) var(--otto-ease),
-    border-color var(--otto-dur-fast) var(--otto-ease),
-    background var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-setup-launch:hover {
-  color: var(--otto-text);
-  border-color: var(--otto-border-strong);
-  background: var(--otto-surface-raised);
-}
-.otto-setup-launch:focus-visible {
-  outline: none;
-  box-shadow: var(--otto-shadow-focus);
-}
-
 /* 模态遮罩 + 卡片 */
 /* —— 「查看全部对话」检索面板 —— */
 .otto-allconv-overlay {
