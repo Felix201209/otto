@@ -152,6 +152,10 @@
 .otto-agents-entry:active {
   transform: translateY(0.5px);
 }
+.otto-agents-entry.is-active {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
 .otto-agents-entry:focus-visible {
   outline: none;
   box-shadow: var(--otto-shadow-focus);
@@ -1813,37 +1817,30 @@ h6.otto-prose__h {
 }
 
 /* ══════════════ 智能体画廊浮层 ══════════════ */
-.otto-agents-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 56;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 20px;
-  background: rgba(28, 25, 23, 0.28);
-  backdrop-filter: blur(2px);
-  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
-}
-.otto-agents {
-  width: 100%;
-  max-width: 680px;
-  max-height: calc(100% - 96px);
+/* 「智能体」整页：占主内容区（右侧栏常驻），无遮罩，头部固定 + 卡片区滚动。 */
+.otto-agents-page {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--otto-surface);
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-lg);
-  box-shadow: var(--otto-shadow-pop);
+  background: var(--otto-bg);
   overflow: hidden;
-  animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
+  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
+}
+.otto-agents__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 26px 32px;
 }
 .otto-agents__head {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 16px 18px;
+  padding: 18px 26px;
   border-bottom: 1px solid var(--otto-border);
+  flex-shrink: 0;
 }
 .otto-agents__headicon {
   color: var(--otto-accent);
@@ -1863,31 +1860,40 @@ h6.otto-prose__h {
   font-size: 12px;
   color: var(--otto-text-secondary);
 }
-.otto-agents__close {
+.otto-agents__back {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  border-radius: var(--otto-radius-sm);
+  gap: 3px;
+  height: 30px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--otto-border);
+  background: var(--otto-surface);
+  border-radius: var(--otto-radius);
   color: var(--otto-text-secondary);
+  font-size: 12.5px;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background var(--otto-dur-fast) var(--otto-ease);
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
 }
-.otto-agents__close:hover {
-  background: rgba(0, 0, 0, 0.05);
+.otto-agents__back:hover {
+  border-color: var(--otto-accent);
   color: var(--otto-text);
 }
+.otto-agents__back:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-agents__back-chev {
+  transform: rotate(180deg);
+}
 .otto-agents__grid {
-  flex: 1;
-  overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-  padding: 14px;
+  gap: 12px;
+  max-width: 1040px;
+  margin: 0 auto;
 }
 .otto-agent-card {
   display: flex;
@@ -1959,24 +1965,21 @@ h6.otto-prose__h {
   background: color-mix(in srgb, var(--card-accent) 12%, transparent);
 }
 .otto-agents__foot {
-  padding: 10px 16px;
-  border-top: 1px solid var(--otto-border);
+  max-width: 1040px;
+  margin: 16px auto 0;
   font-size: 11px;
   color: var(--otto-text-tertiary);
   text-align: center;
 }
 
-.otto-setup-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 20px;
-  background: rgba(28, 25, 23, 0.28);
-  backdrop-filter: blur(2px);
+/* 「设置」整页：占主内容区，整页滚动，向导卡片居中。 */
+.otto-setup-page {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   overflow-y: auto;
+  padding: 40px 24px 48px;
+  background: var(--otto-bg);
   animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
 }
 @keyframes otto-setup-fade {
@@ -1986,11 +1989,12 @@ h6.otto-prose__h {
 }
 .otto-setup {
   width: 100%;
-  max-width: 460px;
+  max-width: 520px;
+  margin: 0 auto;
   background: var(--otto-surface);
   border: 1px solid var(--otto-border);
   border-radius: var(--otto-radius-lg);
-  box-shadow: var(--otto-shadow-pop);
+  box-shadow: var(--otto-shadow-card);
   overflow: hidden;
   animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
 }

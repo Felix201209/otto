@@ -5,26 +5,27 @@
  */
 
 /**
- * 「智能体」画廊浮层。展示 8 个企业专家卡片（PPT 创作 / 会议纪要 / 公文撰写 …），
- * 点击某张卡片即启动该专家（onLaunch）：由上层起一段新会话并注入专家开场消息。
+ * 「智能体」页面。整页展示 8 个企业专家卡片（PPT 创作 / 会议纪要 / 公文撰写 …），
+ * 点击某张卡片即启动该专家（onLaunch）：由上层起一段新会话并注入专家开场消息、切回对话页。
  *
- * 交互复刻 AllConversations 浮层规范：半透明遮罩 + 居中卡片，点遮罩 / 点关闭 / Esc 关闭。
- * 打开即把焦点落到第一张卡片，方便键盘用户直接回车启动。数据来自纯静态目录 agents/experts。
+ * 这是**页面**不是弹窗：占据主内容区（右侧栏常驻），无遮罩。返回对话经头部「返回对话」
+ * 或 Esc（onBack），也可直接点左侧栏任意会话/新建对话切走。打开即聚焦第一张卡片，
+ * 键盘可直接回车启动。数据来自纯静态目录 agents/experts。
  */
 
 import React, { useEffect, useRef } from 'react';
 import type { Expert } from '../agents/experts.js';
 import { EXPERTS } from '../agents/experts.js';
-import { IconClose, IconAgent } from './icons.js';
+import { IconAgent, IconChevron } from './icons.js';
 
 interface AgentGalleryProps {
   onLaunch: (expert: Expert) => void;
-  onClose: () => void;
+  onBack: () => void;
 }
 
 export function AgentGallery({
   onLaunch,
-  onClose,
+  onBack,
 }: AgentGalleryProps): React.JSX.Element {
   const firstCardRef = useRef<HTMLButtonElement>(null);
 
@@ -33,42 +34,41 @@ export function AgentGallery({
     firstCardRef.current?.focus();
   }, []);
 
-  // Esc 关闭（挂在浮层根上，捕获冒泡上来的按键）。
+  // Esc 返回对话页。
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      e.stopPropagation();
-      onClose();
+      onBack();
     }
   };
 
   return (
-    <div className="otto-agents-overlay" onClick={onClose} onKeyDown={onKeyDown}>
-      <div
-        className="otto-agents"
-        role="dialog"
-        aria-label="智能体 · 企业专家"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="otto-agents__head">
-          <IconAgent size={18} className="otto-agents__headicon" />
-          <div className="otto-agents__headtext">
-            <div className="otto-agents__title">智能体 · 企业专家</div>
-            <div className="otto-agents__subtitle">
-              选一位专家开始 —— 它会加载对应技能并按方法协助你
-            </div>
+    <section
+      className="otto-agents-page"
+      aria-label="智能体 · 企业专家"
+      onKeyDown={onKeyDown}
+    >
+      <header className="otto-agents__head">
+        <IconAgent size={20} className="otto-agents__headicon" />
+        <div className="otto-agents__headtext">
+          <div className="otto-agents__title">智能体 · 企业专家</div>
+          <div className="otto-agents__subtitle">
+            选一位专家开始 —— 它会加载对应技能并按方法协助你
           </div>
-          <button
-            type="button"
-            className="otto-agents__close"
-            onClick={onClose}
-            title="关闭"
-            aria-label="关闭"
-          >
-            <IconClose size={16} />
-          </button>
         </div>
+        <button
+          type="button"
+          className="otto-agents__back"
+          onClick={onBack}
+          title="返回对话"
+          aria-label="返回对话"
+        >
+          <IconChevron size={14} className="otto-agents__back-chev" />
+          返回对话
+        </button>
+      </header>
 
+      <div className="otto-agents__scroll">
         <div className="otto-agents__grid">
           {EXPERTS.map((expert, i) => (
             <button
@@ -101,6 +101,6 @@ export function AgentGallery({
           共 {EXPERTS.length} 位专家 · 点击即开一段新对话
         </div>
       </div>
-    </div>
+    </section>
   );
 }

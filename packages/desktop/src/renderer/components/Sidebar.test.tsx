@@ -65,6 +65,13 @@ describe('Sidebar：智能体入口', () => {
     fireEvent.click(screen.getByTitle('智能体 · 企业专家'));
     expect(onOpenAgents).toHaveBeenCalledTimes(1);
   });
+
+  it('在智能体页时入口高亮（aria-current=page）', () => {
+    renderSidebar({ agentsActive: true });
+    expect(screen.getByTitle('智能体 · 企业专家').getAttribute('aria-current')).toBe(
+      'page',
+    );
+  });
 });
 
 describe('Sidebar 会话项：溢出菜单', () => {

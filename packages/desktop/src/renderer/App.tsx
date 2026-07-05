@@ -37,17 +37,19 @@ import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
 
+/** 主内容区当前视图：对话 / 智能体 / 设置——三者都是整页，不再是弹窗浮层。 */
+type MainView = 'chat' | 'agents' | 'settings';
+
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
 
-  // —— 「查看全部对话」检索面板 ——
+  // —— 「查看全部对话」检索面板（仍是浮层） ——
   const [allConvOpen, setAllConvOpen] = useState(false);
 
-  // —— 「智能体」企业专家画廊 ——
-  const [agentsOpen, setAgentsOpen] = useState(false);
-
-  // —— setup / BYO-key 引导（Issue #7）——
-  const [setupOpen, setSetupOpen] = useState(false);
+  // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
+  const [mainView, setMainView] = useState<MainView>('chat');
+  // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
+  const setupOpen = mainView === 'settings';
   // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。
   // 由 App 在 setupOpen 期间临时监听原始帧驱动（models_list=成功 / error(save_failed)=失败），
   // 不污染全局 lastError，也不动 store 的 error 落地逻辑。
@@ -63,7 +65,7 @@ export function App(): React.JSX.Element {
       state.models.length === 0
     ) {
       autoFloated.current = true;
-      setSetupOpen(true);
+      setMainView('settings');
     }
   }, [state.connection, state.modelsLoaded, state.models.length]);
 
@@ -79,7 +81,7 @@ export function App(): React.JSX.Element {
       if (frame.type === 'models_list') {
         setSaving(false);
         setSaveError(null);
-        setSetupOpen(false);
+        setMainView('chat');
       } else if (
         frame.type === 'error' &&
         frame.payload.code === 'save_failed'
@@ -93,7 +95,7 @@ export function App(): React.JSX.Element {
 
   // 关面板时复位落盘态，避免下次打开残留旧错误/转圈。
   const closeSetup = (): void => {
-    setSetupOpen(false);
+    setMainView('chat');
     setSaving(false);
     setSaveError(null);
   };
@@ -138,8 +140,10 @@ export function App(): React.JSX.Element {
   // 订阅并路由：'new-chat'→新建会话；'open-settings'→打开 setup。卸载时取消订阅。
   useEffect(() => {
     const off = transport.onMenu((action) => {
-      if (action === 'new-chat') actions.createSession();
-      else if (action === 'open-settings') setSetupOpen(true);
+      if (action === 'new-chat') {
+        setMainView('chat');
+        actions.createSession();
+      } else if (action === 'open-settings') setMainView('settings');
     });
     return off;
   }, [actions]);
@@ -196,6 +200,7 @@ export function App(): React.JSX.Element {
   // 新建对话：若已存在一个「无消息的空会话」，直接复用（选中它）而非再建一个，
   // 避免连点堆出一串空壳。找不到才真正新建。
   const handleNewChat = (): void => {
+    setMainView('chat');
     const empty = state.sessionIds
       .map((id) => state.sessions[id])
       .find(
@@ -215,12 +220,13 @@ export function App(): React.JSX.Element {
   // （reducer 无 clear 帧、server 协议也未定义），为不改协议/后端，退化为「新建会话」——
   // 语义上等价于「开一段全新的、没有上文的对话」，是最小可行方案。
   const handleClearContext = (): void => {
+    setMainView('chat');
     actions.createSession();
   };
 
-  // 启动一个专家：关画廊 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
+  // 启动一个专家：回到对话页 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
   const handleLaunchExpert = (expert: Expert): void => {
-    setAgentsOpen(false);
+    setMainView('chat');
     actions.launchExpert(expert.name, expert.kickoff);
   };
 
@@ -229,28 +235,49 @@ export function App(): React.JSX.Element {
       <Sidebar
         groups={groups}
         activeSessionId={state.activeSessionId}
-        onSelect={actions.selectSession}
+        agentsActive={mainView === 'agents'}
+        onSelect={(id) => {
+          setMainView('chat');
+          actions.selectSession(id);
+        }}
         onNewChat={handleNewChat}
-        onOpenAgents={() => setAgentsOpen(true)}
+        onOpenAgents={() => setMainView('agents')}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
       />
-      <ChatView
-        session={activeSession}
-        messages={activeMessages}
-        models={state.models}
-        currentModel={state.currentModel}
-        userInitial="F"
-        busy={busy}
-        onSend={handleSend}
-        onCancel={actions.cancel}
-        onSetModel={actions.setModel}
-        onRegenerate={handleRegenerate}
-        onOpenSetup={() => setSetupOpen(true)}
-        onNewChat={handleNewChat}
-        onClearContext={handleClearContext}
-      />
+
+      {/* 主内容区：设置 / 智能体 / 对话，整页切换（不再是弹窗）。 */}
+      {mainView === 'settings' ? (
+        <SetupPanel
+          models={state.models}
+          saving={saving}
+          saveError={saveError}
+          onClose={closeSetup}
+          onSave={handleSaveModel}
+        />
+      ) : mainView === 'agents' ? (
+        <AgentGallery
+          onLaunch={handleLaunchExpert}
+          onBack={() => setMainView('chat')}
+        />
+      ) : (
+        <ChatView
+          session={activeSession}
+          messages={activeMessages}
+          models={state.models}
+          currentModel={state.currentModel}
+          userInitial="F"
+          busy={busy}
+          onSend={handleSend}
+          onCancel={actions.cancel}
+          onSetModel={actions.setModel}
+          onRegenerate={handleRegenerate}
+          onOpenSetup={() => setMainView('settings')}
+          onNewChat={handleNewChat}
+          onClearContext={handleClearContext}
+        />
+      )}
 
       {/* 断连 / 重连横幅：WS 非 connected 时浮出，给用户可见反馈。 */}
       {state.connection !== 'connected' ? (
@@ -262,53 +289,41 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* 不显眼的设置入口：右上角齿轮，常驻打开 BYO-key 引导。 */}
-      <button
-        type="button"
-        className="otto-setup-launch"
-        onClick={() => setSetupOpen(true)}
-        title="模型与 BYO-key 设置"
-        aria-label="模型与 BYO-key 设置"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path
-            d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-          />
-          <path
-            d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-
-      {agentsOpen ? (
-        <AgentGallery
-          onLaunch={handleLaunchExpert}
-          onClose={() => setAgentsOpen(false)}
-        />
+      {/* 不显眼的设置入口：右上角齿轮，仅在对话页显示（设置本身已是整页）。 */}
+      {mainView === 'chat' ? (
+        <button
+          type="button"
+          className="otto-setup-launch"
+          onClick={() => setMainView('settings')}
+          title="模型与 BYO-key 设置"
+          aria-label="模型与 BYO-key 设置"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            />
+            <path
+              d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
       ) : null}
 
       {allConvOpen ? (
         <AllConversations
           sessions={selectSortedSessions(state)}
           activeSessionId={state.activeSessionId}
-          onSelect={actions.selectSession}
+          onSelect={(id) => {
+            setMainView('chat');
+            actions.selectSession(id);
+          }}
           onClose={() => setAllConvOpen(false)}
           onDelete={actions.deleteSession}
-        />
-      ) : null}
-
-      {setupOpen ? (
-        <SetupPanel
-          models={state.models}
-          saving={saving}
-          saveError={saveError}
-          onClose={closeSetup}
-          onSave={handleSaveModel}
         />
       ) : null}
 

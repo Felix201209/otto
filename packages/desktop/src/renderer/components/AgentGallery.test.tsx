@@ -5,8 +5,8 @@
  */
 
 /**
- * AgentGallery 画廊浮层单测：渲染全部专家卡片、点击卡片以对应专家回调 onLaunch、
- * 关闭按钮 / 点遮罩 / Esc 均回调 onClose。
+ * AgentGallery 页面单测：渲染全部专家卡片、点击卡片以对应专家回调 onLaunch、
+ * 「返回对话」按钮 / Esc 均回调 onBack（页面化后不再有遮罩/关闭弹窗语义）。
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -16,12 +16,12 @@ import { EXPERTS } from '../agents/experts.js';
 
 function renderGallery() {
   const onLaunch = vi.fn();
-  const onClose = vi.fn();
-  render(<AgentGallery onLaunch={onLaunch} onClose={onClose} />);
-  return { onLaunch, onClose };
+  const onBack = vi.fn();
+  render(<AgentGallery onLaunch={onLaunch} onBack={onBack} />);
+  return { onLaunch, onBack };
 }
 
-describe('AgentGallery', () => {
+describe('AgentGallery（页面）', () => {
   it('渲染全部 8 张专家卡片（按名称）', () => {
     renderGallery();
     for (const e of EXPERTS) {
@@ -37,22 +37,17 @@ describe('AgentGallery', () => {
     expect(onLaunch).toHaveBeenCalledWith(target);
   });
 
-  it('点关闭按钮 → onClose', () => {
-    const { onClose } = renderGallery();
-    fireEvent.click(screen.getByLabelText('关闭'));
-    expect(onClose).toHaveBeenCalledTimes(1);
+  it('点「返回对话」→ onBack', () => {
+    const { onBack } = renderGallery();
+    fireEvent.click(screen.getByRole('button', { name: '返回对话' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('Esc → onClose', () => {
-    const { onClose } = renderGallery();
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('点卡片外的遮罩 → onClose', () => {
-    const { onClose } = renderGallery();
-    // 对话框内部点击不关闭（stopPropagation）
-    fireEvent.click(screen.getByRole('dialog'));
-    expect(onClose).not.toHaveBeenCalled();
+  it('Esc → onBack', () => {
+    const { onBack } = renderGallery();
+    fireEvent.keyDown(screen.getByRole('region', { name: '智能体 · 企业专家' }), {
+      key: 'Escape',
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

@@ -39,6 +39,8 @@ function formatTime(ts: number): string {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
+  /** 当前是否停在「智能体」页（高亮该入口）。 */
+  agentsActive?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenAgents: () => void;
@@ -50,6 +52,7 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   activeSessionId,
+  agentsActive = false,
   onSelect,
   onNewChat,
   onOpenAgents,
@@ -84,8 +87,11 @@ export function Sidebar({
 
       <button
         type="button"
-        className="otto-agents-entry"
+        className={
+          'otto-agents-entry' + (agentsActive ? ' is-active' : '')
+        }
         onClick={onOpenAgents}
+        aria-current={agentsActive ? 'page' : undefined}
         title="智能体 · 企业专家"
       >
         <span className="otto-agents-entry__icon">
