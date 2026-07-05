@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
