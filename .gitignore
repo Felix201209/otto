@@ -101,3 +101,7 @@ build_output.txt
 .easycode/
 .easycode-bak/
 .easycode-user/
+
+# Next.js build output
+packages/web/.next/
+packages/web/out/
