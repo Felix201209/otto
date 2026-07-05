@@ -68,6 +68,9 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  feishuStart(): Promise<{ text: string; pid?: number }>;
+  feishuStop(): Promise<{ text: string }>;
+  feishuStatus(): Promise<{ text: string; running: boolean }>;
 }
 
 // ── 退避参数 ──
@@ -264,6 +267,15 @@ const bridge: OttoBridge = {
 
   openPath(path: string): Promise<void> {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
+  },
+  feishuStart(): Promise<{ text: string; pid?: number }> {
+    return ipcRenderer.invoke('otto:feishu-start') as Promise<{ text: string; pid?: number }>;
+  },
+  feishuStop(): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:feishu-stop') as Promise<{ text: string }>;
+  },
+  feishuStatus(): Promise<{ text: string; running: boolean }> {
+    return ipcRenderer.invoke('otto:feishu-status') as Promise<{ text: string; running: boolean }>;
   },
 };
 

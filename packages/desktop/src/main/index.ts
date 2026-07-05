@@ -36,6 +36,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DEFAULT_HOST, DEFAULT_PORT, type ServerEndpoint } from 'otto-server';
 import { ServerManager } from './server-manager.js';
+import { feishuDaemonStart, feishuDaemonStop, feishuDaemonStatus } from 'otto-cli/src/feishuDaemon.js';
 import { installAppMenu } from './menu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

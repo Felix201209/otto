@@ -88,6 +88,49 @@ export function SetupPanel({
   const keyRef = useRef<HTMLInputElement>(null);
 
   const preset = findPreset(form.presetId) ?? DEFAULT_PRESET;
+
+  // ── 飞书一键连接控制 ──
+  const [fsStatus, setFsStatus] = useState<string>('获取中...');
+  const [fsRunning, setFsRunning] = useState<boolean>(false);
+  const [fsLoading, setFsRunningLoading] = useState<boolean>(false);
+
+  const checkFeishuStatus = async () => {
+    try {
+      const res = await (window as any).otto?.feishuStatus();
+      if (res) {
+        setFsStatus(res.text);
+        setFsRunning(res.running);
+      }
+    } catch {
+      setFsStatus('无法读取状态');
+    }
+  };
+
+  useEffect(() => {
+    checkFeishuStatus();
+    const interval = setInterval(checkFeishuStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleToggleFeishu = async () => {
+    setFsRunningLoading(true);
+    try {
+      if (fsRunning) {
+        setFsStatus('正在停止...');
+        const res = await (window as any).otto?.feishuStop();
+        setFsStatus(res.text);
+      } else {
+        setFsStatus('正在开启...');
+        const res = await (window as any).otto?.feishuStart();
+        setFsStatus(res.text);
+      }
+      await checkFeishuStatus();
+    } catch (e: any) {
+      setFsStatus('操作失败: ' + (e.message || '未知错误'));
+    }
+    setFsRunningLoading(false);
+  };
+
   const errors = useMemo(() => validateForm(form), [form]);
   const valid = Object.keys(errors).length === 0;
   const cfg = useMemo(() => buildConfig(form), [form]);
@@ -478,6 +521,39 @@ export function SetupPanel({
             <span>{saveError}</span>
           </div>
         ) : null}
+
+
+        {/* —— 飞书一键控制面板 —— */}
+        <div className="otto-setup__section" style={{ marginTop: '24px', padding: '16px', background: 'var(--otto-sidebar-bg)', borderRadius: 'var(--otto-radius)' }}>
+          <label className="otto-setup__label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span>飞书双向控制与常驻守护</span>
+            <span className="otto-badge otto-badge--feishu" style={{ fontSize: '11px' }}>
+              {fsRunning ? '运行中' : '未开启'}
+            </span>
+          </label>
+          <p className="otto-setup__hint" style={{ marginBottom: '14px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+            {fsStatus}
+          </p>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              disabled={fsLoading}
+              className={`otto-setup__btn ${fsRunning ? 'otto-setup__btn--ghost' : 'otto-setup__btn--primary'}`}
+              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
+              onClick={handleToggleFeishu}
+            >
+              {fsLoading ? '处理中...' : fsRunning ? '🛑 停止飞书控制' : '🚀 一键开启飞书控制'}
+            </button>
+            <button
+              type="button"
+              className="otto-setup__btn otto-setup__btn--ghost"
+              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
+              onClick={() => void (window as any).otto?.openExternal('https://open.feishu.cn')}
+            >
+              飞书开发者平台 ↗
+            </button>
+          </div>
+        </div>
 
         {/* —— 离线兜底：默认折叠成一行「高级」，对新手隐去噪音；展开才露两条复制路径 —— */}
         <div className="otto-setup__advanced">
