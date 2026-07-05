@@ -11,8 +11,9 @@
 import {
   existsSync,
   mkdirSync,
-  cpSync,
   readdirSync,
+  readFileSync,
+  writeFileSync,
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -20,6 +21,21 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * 手写递归复制——不用 fs.cpSync：打包后 skills-seed 在 app.asar 内，cpSync 的原生递归
+ * 实现可能绕过 Electron 对 asar 的 fs 补丁而读不到；readdir/readFileSync/writeFileSync
+ * 都走补丁、从 asar 读没问题。
+ */
+function copyDirDeep(src: string, dst: string): void {
+  mkdirSync(dst, { recursive: true });
+  for (const ent of readdirSync(src, { withFileTypes: true })) {
+    const s = join(src, ent.name);
+    const d = join(dst, ent.name);
+    if (ent.isDirectory()) copyDirDeep(s, d);
+    else writeFileSync(d, readFileSync(s));
+  }
+}
 
 /** 定位随包的 skills-seed/ 目录（兼容 dev 的 src 布局与打包后的 dist 布局）。 */
 function findSeedDir(): string | null {
@@ -59,8 +75,7 @@ export function seedDefaultSkills(): string[] {
     const dst = join(target, name);
     if (existsSync(dst)) continue; // 已存在（用户可能改过）→ 不动
     try {
-      mkdirSync(target, { recursive: true });
-      cpSync(join(seedDir, name), dst, { recursive: true });
+      copyDirDeep(join(seedDir, name), dst);
       seeded.push(name);
     } catch {
       // 单个失败不影响其它

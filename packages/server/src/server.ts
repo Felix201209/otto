@@ -166,6 +166,17 @@ export class OttoServer {
       this.http!.listen(this.port, this.host, () => resolve());
     });
 
+    // 内置 skill 预置 + 技能上下文初始化（幂等，best-effort）：内嵌 server 一起来就把随包的
+    // 8 个办公 skill 装进 ~/.otto-user/skills/ 并注入系统提示词——agent 开箱即用、不再因
+    // "没装 skill" 退回内置工具。放在 start() 而非 per-session runtime.initialize()，
+    // 确保 app 一启动就就位，不必等用户发第一条消息。失败不影响对话。
+    try {
+      const { initializeSkillsContext } = await import('otto-core');
+      await initializeSkillsContext(process.cwd());
+    } catch {
+      // skills 系统可选。
+    }
+
     if (this.enableFeishu) {
       // ── registerFeishu 接缝（Issue #3）──
       // 飞书网关迁入 server：gateway.onMessage → store.getOrCreateFeishuSession +

@@ -165,16 +165,6 @@ export class CoreSessionRuntime implements SessionRuntime {
     } catch {
       // MCP 不可用不影响纯对话与内置工具。
     }
-    // 内置 skill 预置 + 技能上下文初始化（幂等）：桌面内嵌 server 之前完全不初始化 skills，
-    // 导致 agent 系统提示词里没有 skill、发现"没装 skill"就退回内置工具。这里补上——
-    // 把随包的 8 个办公 skill 预置到 ~/.otto-user/skills/ 并把技能元数据注入系统提示词。
-    // 失败不阻塞纯对话。
-    try {
-      const { initializeSkillsContext } = await import('otto-core');
-      await initializeSkillsContext(process.cwd());
-    } catch {
-      // skills 系统可选。
-    }
   }
 
   setModel(model: string): void {
