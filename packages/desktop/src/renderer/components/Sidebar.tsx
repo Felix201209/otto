@@ -26,6 +26,7 @@ import {
   IconList,
   IconChevron,
   IconSparkle,
+  IconAgent,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -40,6 +41,7 @@ interface SidebarProps {
   activeSessionId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
+  onOpenAgents: () => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -50,6 +52,7 @@ export function Sidebar({
   activeSessionId,
   onSelect,
   onNewChat,
+  onOpenAgents,
   onViewAll,
   onRename,
   onDelete,
@@ -77,6 +80,20 @@ export function Sidebar({
       <button type="button" className="otto-newchat" onClick={onNewChat}>
         <IconPlus size={15} />
         新建对话
+      </button>
+
+      <button
+        type="button"
+        className="otto-agents-entry"
+        onClick={onOpenAgents}
+        title="智能体 · 企业专家"
+      >
+        <span className="otto-agents-entry__icon">
+          <IconAgent size={16} />
+        </span>
+        <span className="otto-agents-entry__label">智能体</span>
+        <span className="otto-agents-entry__hint">8 位企业专家</span>
+        <IconChevron size={15} className="otto-agents-entry__chev" />
       </button>
 
       <div className="otto-sessions">

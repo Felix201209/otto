@@ -18,6 +18,12 @@
       "runtimeExecutable": "/opt/homebrew/bin/python3",
       "runtimeArgs": ["-m", "http.server", "8771", "--directory", "/Users/felix/Desktop/EasyCode/packages/desktop/preview-dist"],
       "port": 8771
+    },
+    {
+      "name": "otto-agents-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8793", "--directory", "/Users/felix/Desktop/Otto/packages/desktop/preview-dist"],
+      "port": 8793
     }
   ]
 }

@@ -46,6 +46,19 @@ export function IconPlus({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 智能体/机器人：带天线的方脑袋 + 双眼 + 两侧耳，作「智能体」入口图标。 */
+export function IconAgent({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="4" y="8" width="16" height="11" rx="3" />
+      <path d="M12 4.5V8" />
+      <circle cx="12" cy="4" r="1.1" />
+      <path d="M9.2 13h.01M14.8 13h.01" />
+      <path d="M2.5 12.5v3M21.5 12.5v3" />
+    </svg>
+  );
+}
+
 export function IconList({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>

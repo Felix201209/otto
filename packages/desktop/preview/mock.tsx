@@ -84,6 +84,23 @@ const mockBridge = {
     if (frame.type === 'list_sessions') emit({ type: 'sessions_list', payload: { sessions: SESSIONS } });
     else if (frame.type === 'get_models') emit({ type: 'models_list', payload: { models: MODELS, current: 'claude-opus-4' } });
     else if (frame.type === 'get_history') emit({ type: 'history', payload: { sessionId: frame.payload.sessionId, messages: HISTORY[frame.payload.sessionId] ?? [] } });
+    // 智能体启动自检：create_session → 回一份新会话摘要（store 据此关联并选中，再发开场消息）。
+    else if (frame.type === 'create_session') {
+      const sid = `sx-${Date.now()}`;
+      const summary = { sessionId: sid, source: 'local', title: frame.payload?.title || '新对话', status: 'idle', createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 };
+      SESSIONS.unshift(summary as Frame);
+      emit({ type: 'session_upsert', payload: { session: summary } });
+    }
+    // 收到用户消息 → 短暂延时后回一条助手消息（演示专家开场后的回应）。
+    else if (frame.type === 'send_user_message') {
+      const sid = frame.payload.sessionId;
+      const aid = `a-${Date.now()}`;
+      window.setTimeout(() => {
+        emit({ type: 'message_start', payload: { message: { id: aid, sessionId: sid, role: 'assistant', source: 'local', timestamp: Date.now(), content: [] } } });
+        emit({ type: 'chat_chunk', payload: { sessionId: sid, messageId: aid, delta: '好的！我已按角色就位，并会用 use_skill 加载对应技能。先跟我说说这次的具体需求吧——主题、受众和目标，我们就开始。' } });
+        emit({ type: 'chat_complete', payload: { sessionId: sid, messageId: aid } });
+      }, 300);
+    }
     // setup 落盘闭环自检：modelId 含 "fail" → 模拟 save_failed；否则追加模型并广播 models_list。
     else if (frame.type === 'save_custom_model') {
       const p = frame.payload;

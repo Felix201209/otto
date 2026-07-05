@@ -318,6 +318,11 @@ export interface OttoActions {
   deleteSession(sessionId: string): void;
   /** 重命名会话。发帧后由 server 广播的 session_upsert 落地新标题。 */
   renameSession(sessionId: string, title: string): void;
+  /**
+   * 启动一个专家：起一段新会话（title）并在其选中就绪后注入开场消息（kickoff）。
+   * 新会话由 server 回的 session_upsert 关联（首个「未见过的 id」即它），随后自动选中并发送。
+   */
+  launchExpert(title: string, kickoff: string): void;
   sendMessage(
     text: string,
     source?: MessageSource,
@@ -348,12 +353,43 @@ export function useOttoStore(): UseOttoStore {
   // 同理用 ref 兜底 connection：sendMessage 是稳定回调（deps 空），需读最新连接态做断连校验。
   const connectionRef = useRef<ConnectionState>(state.connection);
   connectionRef.current = state.connection;
+  // 会话 id 列表镜像：onFrame 闭包判断「刚广播的 session_upsert 是不是新会话」需要最新的
+  // 已知 id 集，而闭包读不到最新 state，用 ref 兜底。
+  const sessionIdsRef = useRef<string[]>([]);
+  sessionIdsRef.current = state.sessionIds;
+  // 专家启动关联：launchRef 记「正在等 create_session 回来的新会话 + 开场消息」；新会话到达后
+  // 转存到 kickoffRef，等它被选中且连接就绪时再发开场消息（见下方 kickoff effect）。
+  const launchRef = useRef<{ kickoff: string; source: MessageSource } | null>(
+    null,
+  );
+  const kickoffRef = useRef<{
+    sessionId: string;
+    kickoff: string;
+    source: MessageSource;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const unsubFrame = transport.onFrame((frame) => {
       dispatch({ kind: 'frame', frame });
+      // 专家启动：create_session 之后广播的首个「id 未见过」的 session_upsert 即新会话。
+      // sessionIdsRef 此刻仍是「本帧应用前」的已知 id 集（dispatch 异步），故新 id 必不在其中。
+      if (
+        launchRef.current &&
+        frame.type === 'session_upsert' &&
+        !sessionIdsRef.current.includes(frame.payload.session.sessionId)
+      ) {
+        const sid = frame.payload.session.sessionId;
+        const spec = launchRef.current;
+        launchRef.current = null;
+        kickoffRef.current = {
+          sessionId: sid,
+          kickoff: spec.kickoff,
+          source: spec.source,
+        };
+        dispatch({ kind: 'select', sessionId: sid });
+      }
     });
 
     // 订阅连接状态：断线立即翻到 disconnected（浮出横幅），重连即翻回 connected。
@@ -395,6 +431,43 @@ export function useOttoStore(): UseOttoStore {
     };
   }, [state.activeSessionId, state.connection]);
 
+  // 专家开场消息发送：等新会话被选中（activeSessionId 命中 kickoffRef）且连接就绪。
+  // 声明顺序刻意排在上面的「订阅 + 拉历史」effect 之后——同一次 commit 里 effect 按声明
+  // 顺序执行，故发送 send_user_message 时本会话的 subscribe 帧已先行发出，流式回复不漏收。
+  // 发完即清空 kickoffRef，保证每次启动只发一次。
+  useEffect(() => {
+    const pk = kickoffRef.current;
+    if (!pk) return;
+    if (state.activeSessionId !== pk.sessionId) return;
+    if (state.connection !== 'connected') return;
+    kickoffRef.current = null;
+    const clientMessageId = `c-${Date.now()}-${clientMsgSeq++}`;
+    const content: OttoMessage['content'] = [
+      { type: 'text', value: pk.kickoff },
+    ];
+    // 乐观渲染开场消息（server 回的 message_start 会按 id 对账覆盖）。
+    dispatch({
+      kind: 'optimistic_user',
+      message: {
+        id: clientMessageId,
+        sessionId: pk.sessionId,
+        role: 'user',
+        content,
+        timestamp: Date.now(),
+        source: pk.source,
+      },
+    });
+    transport.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: pk.sessionId,
+        content,
+        source: pk.source,
+        clientMessageId,
+      },
+    });
+  }, [state.activeSessionId, state.connection]);
+
   const selectSession = useCallback((sessionId: string) => {
     dispatch({ kind: 'select', sessionId });
   }, []);
@@ -415,6 +488,19 @@ export function useOttoStore(): UseOttoStore {
     // 空白标题不发（server 也会拒），静默忽略即可（UI 侧当作取消）。
     if (!sessionId || !clean) return;
     transport.send({ type: 'rename_session', payload: { sessionId, title: clean } });
+  }, []);
+
+  const launchExpert = useCallback((title: string, kickoff: string) => {
+    const clean = kickoff.trim();
+    if (!clean) return;
+    // 断连时不启动：否则会建一个永远收不到回复的空会话。走 toast 明确告知。
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，无法启动专家' });
+      return;
+    }
+    // 记下待发的开场消息，随后由 onFrame 关联新会话、kickoff effect 择机发送。
+    launchRef.current = { kickoff: clean, source: 'local' };
+    transport.send({ type: 'create_session', payload: { title } });
   }, []);
 
   const sendMessage = useCallback(
@@ -494,6 +580,7 @@ export function useOttoStore(): UseOttoStore {
       createSession,
       deleteSession,
       renameSession,
+      launchExpert,
       sendMessage,
       setModel,
       cancel,

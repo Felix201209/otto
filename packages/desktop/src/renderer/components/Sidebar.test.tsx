@@ -33,6 +33,7 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   const onSelect = vi.fn();
   const onRename = vi.fn();
   const onDelete = vi.fn();
+  const onOpenAgents = vi.fn();
   const groups: SessionGroup[] = [
     { label: '今天', sessions: [makeSession()] },
   ];
@@ -42,14 +43,29 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
       activeSessionId="s1"
       onSelect={onSelect}
       onNewChat={vi.fn()}
+      onOpenAgents={onOpenAgents}
       onViewAll={vi.fn()}
       onRename={onRename}
       onDelete={onDelete}
       {...over}
     />,
   );
-  return { onSelect, onRename, onDelete };
+  return { onSelect, onRename, onDelete, onOpenAgents };
 }
+
+describe('Sidebar：智能体入口', () => {
+  it('渲染「智能体」入口按钮（含 8 位企业专家提示）', () => {
+    renderSidebar();
+    expect(screen.getByText('智能体')).toBeTruthy();
+    expect(screen.getByText('8 位企业专家')).toBeTruthy();
+  });
+
+  it('点击「智能体」入口 → 回调 onOpenAgents', () => {
+    const { onOpenAgents } = renderSidebar();
+    fireEvent.click(screen.getByTitle('智能体 · 企业专家'));
+    expect(onOpenAgents).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('Sidebar 会话项：溢出菜单', () => {
   it('点 ⋯ 展开菜单（重命名 / 删除）', () => {

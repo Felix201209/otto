@@ -1,0 +1,122 @@
+/**
+ * @license
+ * Copyright 2025 Otto
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * 「智能体」画廊的企业专家目录（纯静态配置，无副作用）。
+ *
+ * 每个专家 = 一个预设人设 + 一个绑定的 Skill。点击专家即以「开场消息（kickoff）」
+ * 起一段新会话：kickoff 是一条自然的第一人称用户消息，明确要求 Agent 先用
+ * `use_skill` 加载对应技能，再按技能方法协助，并反问用户本次的具体需求。
+ *
+ * 之所以用「用户消息」而非「系统提示」注入人设：现有 server/协议未提供 per-session
+ * system prompt 通道（见 packages/server/src/protocol.ts），用开场用户消息是零协议改动、
+ * 最稳妥的接法——它既能触发 use_skill 加载技能，读起来也像用户自己在发起委派。
+ *
+ * skills 里的技能名与 .otto/skills/<name>/SKILL.md 的 frontmatter `name` 一一对应，
+ * 由 core 的 SkillLoader 从项目级 .otto/skills / 用户级 ~/.otto-user/skills 装载，
+ * Agent 通过 list_skills / use_skill / get_skill_details 工具发现并调用。
+ */
+
+/** 一个企业专家的完整定义。 */
+export interface Expert {
+  /** 稳定短 id（英文小写），用作 React key 与埋点。 */
+  id: string;
+  /** 展示名（会同时作为新会话标题）。 */
+  name: string;
+  /** 一句话卖点，卡片副标题。 */
+  tagline: string;
+  /** 卡片头像 emoji（各专家互不重复，便于一眼区分）。 */
+  emoji: string;
+  /** 主题色 hex，作头像底色与技能徽章的低透明叠加。 */
+  accent: string;
+  /** 绑定的技能名（对应 .otto/skills/<name>/SKILL.md 的 name），可多个。 */
+  skills: string[];
+  /** 启动该专家时自动发出的开场用户消息（含 use_skill 指令 + 反问）。 */
+  kickoff: string;
+}
+
+export const EXPERTS: readonly Expert[] = [
+  {
+    id: 'ppt',
+    name: 'PPT 创作专家',
+    tagline: '从主题到成稿：结构化叙事幻灯片',
+    emoji: '📊',
+    accent: '#e8893a',
+    skills: ['ppt-creator'],
+    kickoff:
+      '我要做一份 PPT 演示。请先用 use_skill 加载 `ppt-creator` 技能，按它的方法帮我把内容组织成结构清晰、叙事有起伏的幻灯片（含每页要点与讲者备注）。开始前先问我：演示主题、目标受众、大致时长与风格偏好。',
+  },
+  {
+    id: 'meeting',
+    name: '会议纪要转录',
+    tagline: '录音/长文一键成规范纪要',
+    emoji: '🎙️',
+    accent: '#0ea5a4',
+    skills: ['meeting-notes'],
+    kickoff:
+      '我需要整理一份会议纪要。请先用 use_skill 加载 `meeting-notes` 技能，按它的模板把内容提炼成：议题、关键结论、待办事项（负责人+截止时间）、风险与后续跟进。先问我：会议主题、参会人，以及录音转写文本或要点是以什么形式提供。',
+  },
+  {
+    id: 'doc',
+    name: 'Word 公文撰写',
+    tagline: '商务报告、方案、公文的规范中文写作',
+    emoji: '📝',
+    accent: '#3b82f6',
+    skills: ['doc-writer'],
+    kickoff:
+      '我要写一份正式文档（报告/方案/公文）。请先用 use_skill 加载 `doc-writer` 技能，按它的结构与措辞规范来写。先问我：文档类型、用途与读者、需要覆盖的要点，以及篇幅要求。',
+  },
+  {
+    id: 'sheet',
+    name: 'Excel 数据表格',
+    tagline: '建模、公式、透视与数据清洗',
+    emoji: '📈',
+    accent: '#22a06b',
+    skills: ['spreadsheet-pro'],
+    kickoff:
+      '我要处理一份表格数据。请先用 use_skill 加载 `spreadsheet-pro` 技能，帮我做建模、公式、数据透视或清洗分析。先问我：数据长什么样（字段/示例）、我想得到什么结果，以及目标是 Excel 还是 CSV。',
+  },
+  {
+    id: 'pdf',
+    name: 'PDF 文档处理',
+    tagline: '合并拆分、提取、摘要与表单',
+    emoji: '📄',
+    accent: '#e05a4e',
+    skills: ['pdf-toolkit'],
+    kickoff:
+      '我要处理 PDF 文档。请先用 use_skill 加载 `pdf-toolkit` 技能，帮我完成合并/拆分/提取文字/内容摘要/填表等操作。先问我：手上的 PDF 是什么、具体想做哪一类处理，以及期望的输出形式。',
+  },
+  {
+    id: 'dataviz',
+    name: '数据可视化',
+    tagline: '从数据到图表选型与解读',
+    emoji: '📉',
+    accent: '#7c5cff',
+    skills: ['data-viz-pro'],
+    kickoff:
+      '我要把一批数据做成图表。请先用 use_skill 加载 `data-viz-pro` 技能，帮我选择合适的图表类型、给出配置并解读趋势。先问我：数据内容与来源、我想传达的核心信息，以及用于报告还是网页展示。',
+  },
+  {
+    id: 'research',
+    name: '市场竞品调研',
+    tagline: '结构化调研、竞品对比与 SWOT',
+    emoji: '🔍',
+    accent: '#5b6ee1',
+    skills: ['market-research'],
+    kickoff:
+      '我需要做一次市场/竞品调研。请先用 use_skill 加载 `market-research` 技能，按它的框架输出：市场概览、竞品对比表、SWOT 与结论建议。先问我：调研对象/行业、主要竞品，以及这份调研要支撑什么决策。',
+  },
+  {
+    id: 'copy',
+    name: '品牌营销文案',
+    tagline: '落地页、slogan 与营销邮件',
+    emoji: '✍️',
+    accent: '#d6549b',
+    skills: ['copywriting'],
+    kickoff:
+      '我要写一组营销文案。请先用 use_skill 加载 `copywriting` 技能，帮我产出符合品牌调性、有转化力的中文文案。先问我：产品/品牌是什么、目标人群、文案用在哪（落地页/slogan/邮件/社媒），以及想要的语气。',
+  },
+] as const;

@@ -31,6 +31,8 @@ import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
 import { AllConversations } from './components/AllConversations.js';
+import { AgentGallery } from './components/AgentGallery.js';
+import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
@@ -40,6 +42,9 @@ export function App(): React.JSX.Element {
 
   // —— 「查看全部对话」检索面板 ——
   const [allConvOpen, setAllConvOpen] = useState(false);
+
+  // —— 「智能体」企业专家画廊 ——
+  const [agentsOpen, setAgentsOpen] = useState(false);
 
   // —— setup / BYO-key 引导（Issue #7）——
   const [setupOpen, setSetupOpen] = useState(false);
@@ -213,6 +218,12 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
+  // 启动一个专家：关画廊 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
+  const handleLaunchExpert = (expert: Expert): void => {
+    setAgentsOpen(false);
+    actions.launchExpert(expert.name, expert.kickoff);
+  };
+
   return (
     <div className="otto-app" data-connection={state.connection}>
       <Sidebar
@@ -220,6 +231,7 @@ export function App(): React.JSX.Element {
         activeSessionId={state.activeSessionId}
         onSelect={actions.selectSession}
         onNewChat={handleNewChat}
+        onOpenAgents={() => setAgentsOpen(true)}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
@@ -272,6 +284,13 @@ export function App(): React.JSX.Element {
           />
         </svg>
       </button>
+
+      {agentsOpen ? (
+        <AgentGallery
+          onLaunch={handleLaunchExpert}
+          onClose={() => setAgentsOpen(false)}
+        />
+      ) : null}
 
       {allConvOpen ? (
         <AllConversations

@@ -127,6 +127,59 @@
   box-shadow: var(--otto-shadow-focus);
 }
 
+/* —— 「智能体」入口：新建对话下方的主操作行 —— */
+.otto-agents-entry {
+  margin: 0 14px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: calc(100% - 28px);
+  height: 40px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--otto-radius);
+  border: 1px solid var(--otto-border);
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-agents-entry:hover {
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-sm);
+}
+.otto-agents-entry:active {
+  transform: translateY(0.5px);
+}
+.otto-agents-entry:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-agents-entry__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+}
+.otto-agents-entry__label {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.otto-agents-entry__hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--otto-text-tertiary);
+}
+.otto-agents-entry__chev {
+  color: var(--otto-text-tertiary);
+}
+
 .otto-sessions {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -1757,6 +1810,160 @@ h6.otto-prose__h {
   border-top: 1px solid var(--otto-border);
   font-size: 11px;
   color: var(--otto-text-tertiary);
+}
+
+/* ══════════════ 智能体画廊浮层 ══════════════ */
+.otto-agents-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 56;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 20px;
+  background: rgba(28, 25, 23, 0.28);
+  backdrop-filter: blur(2px);
+  animation: otto-setup-fade var(--otto-dur) var(--otto-ease);
+}
+.otto-agents {
+  width: 100%;
+  max-width: 680px;
+  max-height: calc(100% - 96px);
+  display: flex;
+  flex-direction: column;
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  box-shadow: var(--otto-shadow-pop);
+  overflow: hidden;
+  animation: otto-setup-rise var(--otto-dur) var(--otto-ease);
+}
+.otto-agents__head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-agents__headicon {
+  color: var(--otto-accent);
+  flex-shrink: 0;
+}
+.otto-agents__headtext {
+  flex: 1;
+  min-width: 0;
+}
+.otto-agents__title {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--otto-text);
+}
+.otto-agents__subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+}
+.otto-agents__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-agents__close:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--otto-text);
+}
+.otto-agents__grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+.otto-agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  padding: 13px 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface-raised);
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-agent-card:hover {
+  border-color: color-mix(in srgb, var(--card-accent) 55%, var(--otto-border));
+  box-shadow: var(--otto-shadow-card);
+  transform: translateY(-1px);
+}
+.otto-agent-card:active {
+  transform: translateY(0);
+}
+.otto-agent-card:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-agent-card__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--otto-radius);
+  font-size: 20px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--card-accent) 16%, transparent);
+}
+.otto-agent-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.otto-agent-card__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-agent-card__tag {
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+  line-height: 1.4;
+}
+.otto-agent-card__skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.otto-agent-card__skill {
+  font-size: 10.5px;
+  font-family: var(--otto-font-mono);
+  padding: 2px 7px;
+  border-radius: var(--otto-radius-pill);
+  color: color-mix(in srgb, var(--card-accent) 82%, var(--otto-text));
+  background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+}
+.otto-agents__foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--otto-border);
+  font-size: 11px;
+  color: var(--otto-text-tertiary);
+  text-align: center;
 }
 
 .otto-setup-overlay {
