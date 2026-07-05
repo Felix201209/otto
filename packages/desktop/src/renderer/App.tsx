@@ -263,7 +263,7 @@ export function App(): React.JSX.Element {
           onBack={() => setMainView('chat')}
         />
       ) : (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
           <ChatView
             session={activeSession}
             messages={activeMessages}
@@ -280,7 +280,7 @@ export function App(): React.JSX.Element {
             onClearContext={handleClearContext}
           />
           <RightMascotPanel />
-        </>
+        </div>
       )}
 
       {/* 断连 / 重连横幅：WS 非 connected 时浮出，给用户可见反馈。 */}
