@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #ffffff;
+  --bg-panel: #f7f7f8;
+  --accent: #d97757;
+  --text: #1a1a1a;
+  --text-sec: #6b6b70;
+  --border: #e5e5e8;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
