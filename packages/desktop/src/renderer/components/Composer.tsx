@@ -133,6 +133,27 @@ export function Composer({
   // 面板真正可见：有候选、未被 Esc 主动关闭。文本再变化（onChange）会复位 dismissed。
   const slashVisible = slashOpen && !slashDismissed;
 
+  // —— 每会话草稿隔离 ——
+  // Composer 是底部输入区的全局单例，切换会话时组件不卸载、text state 原样留存；
+  // 若不隔离，会话 A 里没发出去的草稿会串进会话 B（本次修的 bug）。用一张
+  // sessionId→草稿 表，在「会话切换的那一次 render」里存下旧会话草稿、取出新会话草稿，
+  // 让每个会话各记各的待发送内容。走 React 官方「prop 变化时同步调整 state」模式：
+  // 有条件守卫（sessionId 变了才跑），React 立即丢弃本次输出并用新 state 重渲染，不额外 paint、无闪烁。
+  const draftsRef = useRef<Record<string, string>>({});
+  const [draftSessionId, setDraftSessionId] = useState<
+    string | null | undefined
+  >(sessionId);
+  if (sessionId !== draftSessionId) {
+    // 存下上一个会话此刻的草稿（无会话 id 时不存，避免以 '' 之类的键污染表）。
+    if (draftSessionId != null) draftsRef.current[draftSessionId] = text;
+    // 恢复目标会话的草稿；从未输入过则为空。切走再切回可原样复现。
+    setText(sessionId != null ? draftsRef.current[sessionId] ?? '' : '');
+    // 会话变了，斜杠命令面板的高亮 / 关闭态一并复位，别把上个会话的命令态带进来。
+    setSlashIndex(0);
+    setSlashDismissed(false);
+    setDraftSessionId(sessionId);
+  }
+
   const pickFiles = () => {
     setAttachError(null);
     fileInputRef.current?.click();
@@ -193,7 +214,12 @@ export function Composer({
   // 仅在有会话（sessionId）且未禁用时聚焦；不依赖 busy，避免打断发送流。
   React.useEffect(() => {
     if (disabled || sessionId == null) return;
-    taRef.current?.focus();
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    // 恢复草稿后按内容重算高度：不同会话草稿长短不同，避免沿用上个会话的输入框高度。
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }, [sessionId, disabled]);
 
   // 生成中（busy）不发送，但 textarea 仍可输入下一条；无会话（disabled）才整体锁死。
@@ -207,6 +233,8 @@ export function Composer({
     setText('');
     setAttachments([]);
     setAttachError(null);
+    // 发送后清掉本会话草稿，避免切走再切回时又冒出已发送的内容。
+    if (sessionId != null) draftsRef.current[sessionId] = '';
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 

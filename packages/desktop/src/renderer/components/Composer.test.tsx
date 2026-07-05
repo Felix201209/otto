@@ -83,6 +83,106 @@ describe('模型菜单搜索过滤', () => {
   });
 });
 
+describe('每会话草稿隔离', () => {
+  const ta = () =>
+    document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+
+  it('切换会话时各自保留未发送的草稿，切回原样复现', () => {
+    const { rerender } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    // 在 s1 打一段草稿。
+    fireEvent.change(ta(), { target: { value: 'draft-for-s1' } });
+    expect(ta().value).toBe('draft-for-s1');
+
+    // 切到 s2：不该串到 s1 的草稿，应是空的。
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s2"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    expect(ta().value).toBe('');
+
+    // 在 s2 打另一段草稿。
+    fireEvent.change(ta(), { target: { value: 'draft-for-s2' } });
+    expect(ta().value).toBe('draft-for-s2');
+
+    // 切回 s1：恢复 s1 自己的草稿。
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    expect(ta().value).toBe('draft-for-s1');
+
+    // 再切回 s2：恢复 s2 自己的草稿。
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s2"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    expect(ta().value).toBe('draft-for-s2');
+  });
+
+  it('发送后清空，切走再切回不残留已发送内容', () => {
+    const onSend = vi.fn();
+    const { rerender } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(ta(), { target: { value: 'hello' } });
+    fireEvent.keyDown(ta(), { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledWith('hello', []);
+    expect(ta().value).toBe('');
+
+    // 切走再切回 s1：草稿表里不该残留已发送的 'hello'。
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s2"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    expect(ta().value).toBe('');
+  });
+});
+
 describe('模型菜单 provider 分组与勾选', () => {
   it('多 provider 时出现分组标题', () => {
     renderComposer(makeModels(10), 'm0');

@@ -164,6 +164,44 @@ function patchMessage(
   return { ...state, messages: { ...state.messages, [sessionId]: next } };
 }
 
+/**
+ * 结算「在途」消息：把仍标记 isStreaming/isReasoning/isProcessingTools 的消息一律收口成
+ * false。用于流式中途收到 error 帧时——server 出错走 fail() 只广播 error 帧、**不发
+ * chat_complete**（对比取消走 onCancelled 会补发 chat_complete），且它对存储消息的
+ * isStreaming=false patch 不经 publish 广播。若客户端不在此自行收口，那条 assistant 占位
+ * 会永远停在 isStreaming=true → 派生的 busy 卡死 → 发送键锁在「停止」态，用户再也发不出
+ * 下一条（「有时无法继续对话」bug）。带 sessionId 只结算该会话，无则兜底结算全部。
+ */
+function settleInFlight(state: OttoState, sessionId?: string): OttoState {
+  const ids =
+    sessionId != null
+      ? state.messages[sessionId]
+        ? [sessionId]
+        : []
+      : Object.keys(state.messages);
+  let changed = false;
+  const messages = { ...state.messages };
+  for (const id of ids) {
+    const list = state.messages[id];
+    let listChanged = false;
+    const next = list.map((m) => {
+      if (!m.isStreaming && !m.isReasoning && !m.isProcessingTools) return m;
+      listChanged = true;
+      return {
+        ...m,
+        isStreaming: false,
+        isReasoning: false,
+        isProcessingTools: false,
+      };
+    });
+    if (listChanged) {
+      messages[id] = next;
+      changed = true;
+    }
+  }
+  return changed ? { ...state, messages } : state;
+}
+
 function reducer(state: OttoState, action: Action): OttoState {
   switch (action.kind) {
     case 'connection':
@@ -277,7 +315,12 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       };
 
     case 'error':
-      return { ...state, lastError: frame.payload.message };
+      // 收口在途消息再落错误：否则流式中途报错时那条 assistant 占位永远 isStreaming=true，
+      // busy 卡死、发送键锁在「停止」，用户无法继续对话（见 settleInFlight 注释）。
+      return {
+        ...settleInFlight(state, frame.payload.sessionId),
+        lastError: frame.payload.message,
+      };
 
     case 'feishu_push_result':
       // 同步状态指示（Issue #6）：失败时浮一条错误。

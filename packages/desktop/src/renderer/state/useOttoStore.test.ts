@@ -351,6 +351,43 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.lastError).toBe('出错了');
   });
 
+  it('error：收口在途消息（清 isStreaming/isReasoning/isProcessingTools 解 busy 卡死）', () => {
+    const { view, push } = setup();
+    // 流式中途：assistant 占位仍 isStreaming=true（server 出错只发 error、不发 chat_complete）。
+    push({
+      type: 'message_start',
+      payload: {
+        message: makeMsg({
+          id: 'm1',
+          isStreaming: true,
+          isReasoning: true,
+          isProcessingTools: true,
+        }),
+      },
+    });
+    push({ type: 'error', payload: { sessionId: 's1', code: 'core_error', message: '模型报错' } });
+    const m = view.result.current.state.messages['s1'][0];
+    expect(m.isStreaming).toBe(false);
+    expect(m.isReasoning).toBe(false);
+    expect(m.isProcessingTools).toBe(false);
+    expect(view.result.current.state.lastError).toBe('模型报错');
+  });
+
+  it('error：无 sessionId 时兜底收口全部会话的在途消息', () => {
+    const { view, push } = setup();
+    push({
+      type: 'message_start',
+      payload: { message: makeMsg({ id: 'a1', sessionId: 'a', isStreaming: true }) },
+    });
+    push({
+      type: 'message_start',
+      payload: { message: makeMsg({ id: 'b1', sessionId: 'b', isStreaming: true }) },
+    });
+    push({ type: 'error', payload: { code: 'x', message: '全局错误' } });
+    expect(view.result.current.state.messages['a'][0].isStreaming).toBe(false);
+    expect(view.result.current.state.messages['b'][0].isStreaming).toBe(false);
+  });
+
   it('feishu_push_result(ok:false)：写 lastError', () => {
     const { view, push } = setup();
     push({
