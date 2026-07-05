@@ -127,6 +127,81 @@
   box-shadow: var(--otto-shadow-focus);
 }
 
+
+/* —— 左侧常见任务：8 个企业专家直接入口 —— */
+.otto-common-tasks {
+  margin: 0 10px 10px;
+  padding: 8px 4px 6px;
+  border-top: 1px solid var(--otto-border);
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-common-tasks__head {
+  padding: 0 8px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--otto-text-tertiary);
+  letter-spacing: 0.04em;
+}
+.otto-common-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--otto-radius-sm);
+  background: transparent;
+  color: var(--otto-text);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-common-task:hover {
+  background: var(--otto-accent-soft);
+}
+.otto-common-task:active {
+  transform: translateY(0.5px);
+}
+.otto-common-task:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-common-task__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--otto-surface);
+}
+.otto-common-task__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.otto-common-task__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otto-common-task__desc {
+  font-size: 10.5px;
+  color: var(--otto-text-tertiary);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* —— 「智能体」入口：新建对话下方的主操作行 —— */
 .otto-agents-entry {
   margin: 0 14px 12px;

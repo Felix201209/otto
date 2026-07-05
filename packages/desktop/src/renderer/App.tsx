@@ -243,6 +243,7 @@ export function App(): React.JSX.Element {
         }}
         onNewChat={handleNewChat}
         onOpenAgents={() => setMainView('agents')}
+        onLaunchExpert={handleLaunchExpert}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}

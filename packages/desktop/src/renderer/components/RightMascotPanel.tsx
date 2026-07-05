@@ -4,12 +4,12 @@
 
 import React, { useState, useEffect } from 'react';
 
-type TabType = 'memory' | 'skills' | 'browser' | 'ide' | 'notes';
+type TabType = 'memory' | 'commands' | 'browser' | 'ide' | 'notes';
 
 export function RightMascotPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabType>('memory');
   const [memoryFiles, setMemoryFiles] = useState<string[]>([]);
-  const [skillsList, setSkillsList] = useState<string[]>([]);
+  const [commandList, setCommandList] = useState<string[]>([]);
   const [noteText, setNoteText] = useState<string>('# 我的工作笔记\n\n- 今日任务：分析朝阳区数据并生成周报。');
   const [browserUrl, setBrowserUrl] = useState<string>('https://huggingface.co/spaces/DyrusQZ/LHM');
 
@@ -28,29 +28,29 @@ export function RightMascotPanel(): React.JSX.Element {
     } catch {}
   };
 
-  const fetchSkills = async () => {
-    setSkillsList([
-      'ppt-creator - 结构化叙事幻灯片',
-      'doc-writer - Word 公文报告规范写作',
-      'meeting-notes - 会议录音一键成纪要',
-      'data-viz-pro - 图表选型与自动出图',
-      'pdf-toolkit - PDF合并拆分与高压缩',
-      'spreadsheet-pro - Excel 建模与透视表',
-      'market-research - 竞品调研与 SWOT',
-      'copywriting - 品牌营销文案生成'
+  const fetchCommands = async () => {
+    setCommandList([
+      '/new - 新建会话',
+      '/model - 切换模型',
+      '/settings - 模型与飞书设置',
+      '/feishu-start - 开启飞书控制',
+      '/feishu-stop - 停止飞书控制',
+      '/doctor - 本机环境诊断',
+      '/workflow - 启动工作流任务',
+      '/export - 导出当前结果'
     ]);
   };
 
   useEffect(() => {
     fetchMemory();
-    fetchSkills();
+    fetchCommands();
   }, []);
 
   return (
     <aside className="otto-right-panel" style={{ width: '300px', minWidth: '300px', height: '100%', background: 'var(--otto-sidebar-bg)', borderLeft: '1px solid var(--otto-border)', display: 'flex', flexDirection: 'column' }}>
       {/* Tab Selectors */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--otto-border)', background: 'var(--otto-surface)', padding: '4px' }}>
-        {(['memory', 'skills', 'browser', 'ide', 'notes'] as TabType[]).map((tab) => (
+        {(['memory', 'commands', 'browser', 'ide', 'notes'] as TabType[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -67,7 +67,7 @@ export function RightMascotPanel(): React.JSX.Element {
               transition: 'all 0.12s'
             }}
           >
-            {tab === 'memory' ? '记忆' : tab === 'skills' ? '技能' : tab === 'browser' ? '浏览器' : tab === 'ide' ? 'IDE' : '笔记'}
+            {tab === 'memory' ? '记忆' : tab === 'commands' ? '命令' : tab === 'browser' ? '浏览器' : tab === 'ide' ? 'IDE' : '笔记'}
           </button>
         ))}
       </div>
@@ -92,16 +92,19 @@ export function RightMascotPanel(): React.JSX.Element {
           </div>
         )}
 
-        {activeTab === 'skills' && (
+        {activeTab === 'commands' && (
           <div>
-            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', marginBottom: '8px', textTransform: 'uppercase' }}>已装载企业技能</div>
+            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', marginBottom: '8px', textTransform: 'uppercase' }}>Otto / EasyCode 命令索引</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {skillsList.map((skill, i) => (
+              {commandList.map((cmd, i) => (
                 <div key={i} style={{ padding: '8px 10px', background: 'var(--otto-surface)', border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', fontSize: '11px', color: 'var(--otto-text)' }}>
-                  <span style={{ color: 'var(--otto-local-fg)', marginRight: '6px' }}>⚡</span>
-                  {skill}
+                  <span style={{ color: 'var(--otto-accent)', marginRight: '6px' }}>/</span>
+                  {cmd}
                 </div>
               ))}
+            </div>
+            <div style={{ fontSize: '10px', color: 'var(--otto-text-secondary)', marginTop: '16px', lineHeight: '1.4' }}>
+              8 个专家已移入左侧「常见任务」。这里仅保留命令与工作台能力索引。
             </div>
           </div>
         )}

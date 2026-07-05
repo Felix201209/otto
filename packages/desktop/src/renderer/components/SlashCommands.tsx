@@ -24,6 +24,10 @@ export interface SlashCommand {
   id: string;
   /** 一句话说明，右侧灰字。 */
   description: string;
+  /** 本地命令走 local；prompt 命令点击后直接发送给 Otto 执行。 */
+  action?: 'local' | 'prompt';
+  /** action=prompt 时发送给 Otto 的完整指令。 */
+  prompt?: string;
 }
 
 /**
