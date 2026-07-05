@@ -13,6 +13,7 @@
 
 export * from './protocol.js';
 export * from './sessions.js';
+export * from './sessions-persistent.js';
 export { OttoServer } from './server.js';
 export type { OttoServerOptions, RuntimeFactory } from './server.js';
 export { createCoreConfig } from './coreConfig.js';

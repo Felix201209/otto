@@ -24,6 +24,7 @@ import {
   isCustomModel,
   type CustomModelConfig,
 } from 'otto-core';
+import os from 'node:os';
 import { loadCustomModels, loadPreferredModel } from './customModels.js';
 
 export interface CreateCoreConfigOptions {
@@ -42,8 +43,20 @@ export interface CreateCoreConfigOptions {
  * 注意：这里**不**调用 initialize()/refreshAuth()——把它留给 runtime，
  * 因为这两步是 async 且会触发网络/鉴权，构造与初始化分离便于测试。
  */
+/**
+ * 默认工作目录（agent 主动保存的落点根）：正常用 server 进程 cwd；但 Electron .app 启动时
+ * cwd 常是 '/'（只读根目录），会让 save_memory / 文件写入落到 /OTTO.md 之类只读位置而失败
+ * （截图里的 EROFS）。这种情况退回用户主目录——可写，对个人助手也合理。
+ * CLI（cwd = 真实项目目录）不受影响。
+ */
+function resolveDefaultCwd(): string {
+  const c = process.cwd();
+  if (!c || c === '/' || c === '\\') return os.homedir();
+  return c;
+}
+
 export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
-  const cwd = opts.cwd ?? process.cwd();
+  const cwd = opts.cwd ?? resolveDefaultCwd();
   const customModels = opts.customModels ?? loadCustomModels();
 
   // ── LLM-URL 崩溃根因兜底（BYO-key 化后必备）──

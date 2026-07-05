@@ -396,6 +396,21 @@ export class InMemorySessionStore implements SessionStore {
     }
     return s;
   }
+
+  /**
+   * 供落盘子类（PersistentSessionStore）启动时把持久化的会话 + 消息灌回内存。
+   * 不广播、不再触发持久化——纯粹重建内部状态。status 由调用方归一为 idle。
+   */
+  protected hydrate(summary: SessionSummary, messages: OttoMessage[]): void {
+    this.sessions.set(summary.sessionId, {
+      summary,
+      messages,
+      subscribers: new Set(),
+    });
+    if (summary.feishuChatId) {
+      this.feishuIndex.set(summary.feishuChatId, summary.sessionId);
+    }
+  }
 }
 
 /** 从消息内容里取一段预览文本（用于会话列表 lastMessagePreview）。 */

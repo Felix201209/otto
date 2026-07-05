@@ -24,6 +24,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   OttoServer,
+  PersistentSessionStore,
   readEndpoint,
   writeEndpoint,
   clearEndpoint,
@@ -32,6 +33,11 @@ import {
   HTTP_ROUTES,
   type ServerEndpoint,
 } from 'otto-server';
+
+/** 聊天记录落盘目录：~/.otto-user/sessions/（每个会话一个 json 文件）。 */
+function sessionsDir(): string {
+  return path.join(os.homedir(), '.otto-user', 'sessions');
+}
 
 /** 一次健康探测的超时（ms）。 */
 const HEALTH_TIMEOUT_MS = 1500;
@@ -125,7 +131,15 @@ export class ServerManager {
     // 用户已 setup 飞书凭证时启用飞书网关，让桌面 app 的飞书双向同步真正激活
     // （adapter 对无凭证已 fail-soft，这里仅在凭证文件存在时开）。Issue #3/#6。
     const enableFeishu = feishuCredentialsExist();
-    const server = new OttoServer({ host: DEFAULT_HOST, port, enableFeishu });
+    // 聊天记录落盘（被动保存）：内嵌 server 用文件持久化会话/消息，重启后原样恢复
+    // （否则 InMemorySessionStore 一退出全丢）。落 ~/.otto-user/sessions/。
+    const store = new PersistentSessionStore(sessionsDir());
+    const server = new OttoServer({
+      host: DEFAULT_HOST,
+      port,
+      enableFeishu,
+      store,
+    });
     await server.start();
     // listen 完成时若已进入退出流程（shutdown 与 ensure 竞态：shutdown 先跑完、
     // 这里才 listen 成功），立即停掉刚起的 server 并清理端点文件，不留孤儿。

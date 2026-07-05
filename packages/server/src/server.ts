@@ -190,6 +190,15 @@ export class OttoServer {
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。
+    const flush = (this.store as { flush?: () => void }).flush;
+    if (typeof flush === 'function') {
+      try {
+        flush.call(this.store);
+      } catch {
+        // 落盘失败不阻断停机
+      }
+    }
     await this.feishu?.stop().catch(() => undefined);
     // 停机不留孤儿轮次：cancel + dispose 所有已 attach 的 runtime，
     // 否则 server 关了 agent 还在后台烧 token / 跑工具（maxTurns=-1 不限回合）。

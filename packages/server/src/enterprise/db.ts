@@ -6,7 +6,7 @@
  * 存储层用 Node 内置 node:sqlite（见 sqlite-compat），无原生依赖。
  */
 
-import { Database } from './sqlite-compat.js';
+import { Database } from '../sqlite-compat.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
