@@ -5,6 +5,7 @@
  */
 
 import { SkillContextInjector, SkillLoadLevel } from './index.js';
+import { seedDefaultSkills } from './seed-skills.js';
 
 let cachedSkillsContext: string | null = null;
 let lastCacheTime: number = 0;
@@ -36,6 +37,13 @@ export async function initializeSkillsContext(projectRoot?: string): Promise<voi
   }
 
   try {
+    // 预置内置 skill 到 ~/.otto-user/skills/（幂等），保证开箱即有 skill 可被发现/加载。
+    try {
+      seedDefaultSkills();
+    } catch {
+      // 预置失败不影响后续（skills 系统本就可选）
+    }
+
     // Create dependencies
     const { SettingsManager, MarketplaceManager, SkillLoader } = await import('./index.js');
 

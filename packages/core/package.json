@@ -18,7 +18,8 @@
   },
   "files": [
     "dist",
-    "scripts"
+    "scripts",
+    "skills-seed"
   ],
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
