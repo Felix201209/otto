@@ -60,7 +60,7 @@ function parseProjectArgs(args = ''): Record<string, string> {
 
 async function runProjectMemoryAction(
   context: Parameters<NonNullable<SlashCommand['action']>>[0],
-  action: 'project_create' | 'project_list' | 'project_add' | 'project_archive',
+  action: 'project_create' | 'project_list' | 'project_add' | 'project_archive' | 'project_code_config' | 'project_code_status',
   args?: string,
 ): Promise<void> {
   const config = await context.services.config;
@@ -70,19 +70,22 @@ async function runProjectMemoryAction(
   }
   const parsed = parseProjectArgs(args || '');
   const tool = new MemoryManagerTool(config);
+  const params = {
+    action,
+    project_id: parsed.id || parsed.project || (action !== 'project_create' && action !== 'project_code_config' ? parsed._ : undefined),
+    project_name: parsed.name || (action === 'project_create' ? parsed._ : undefined),
+    project_goal: parsed.goal,
+    project_type: parsed.type,
+    team_id: parsed.team,
+    company_id: parsed.company,
+    user_id: parsed.user,
+    memory_title: parsed.title,
+    content: action === 'project_add' ? parsed.content || parsed._ : undefined,
+    repo_path: parsed.repo || parsed.path || (action === 'project_code_config' ? parsed._ : undefined),
+    mcp_server: parsed.server,
+  };
   const result = await tool.execute(
-    {
-      action,
-      project_id: parsed.id || parsed.project || (action !== 'project_create' ? parsed._ : undefined),
-      project_name: parsed.name || (action === 'project_create' ? parsed._ : undefined),
-      project_goal: parsed.goal,
-      project_type: parsed.type as never,
-      team_id: parsed.team,
-      company_id: parsed.company,
-      user_id: parsed.user,
-      memory_title: parsed.title,
-      content: action === 'project_add' ? parsed.content || parsed._ : undefined,
-    },
+    params as never,
     new AbortController().signal,
   );
   context.ui.addItem(
@@ -309,6 +312,18 @@ export const memoryCommand: SlashCommand = {
           kind: CommandKind.BUILT_IN,
           action: async (context, args) => runProjectMemoryAction(context, 'project_archive', args),
         },
+        {
+          name: 'code-config',
+          description: 'Attach codebase-memory-mcp config to a project',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_code_config', args),
+        },
+        {
+          name: 'code-status',
+          description: 'Show codebase-memory-mcp status for a project',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_code_status', args),
+        }
       ],
     },
     {

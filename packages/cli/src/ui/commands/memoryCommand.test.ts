@@ -148,6 +148,8 @@ describe('memoryCommand', () => {
         'list',
         'add',
         'archive',
+        'code-config',
+        'code-status',
       ]);
     });
   });

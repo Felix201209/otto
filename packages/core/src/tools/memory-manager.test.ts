@@ -13,7 +13,7 @@ describe('MemoryManagerTool project actions', () => {
 
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-memory-manager-'));
-    tool = new MemoryManagerTool({ getProjectRoot: () => root } as unknown as Config);
+    tool = new MemoryManagerTool({ getProjectRoot: () => root, getMcpServers: () => undefined } as unknown as Config);
   });
 
   afterEach(async () => {
@@ -80,5 +80,25 @@ describe('MemoryManagerTool project actions', () => {
     const archived = await tool.execute({ action: 'project_archive', project_id: 'project-skill', user_id: 'user-1' }, new AbortController().signal);
     expect(archived.llmContent).toContain('candidate skill: skill_project-skill');
     expect((await store.load()).skills).toHaveLength(1);
+  });
+
+
+  it('configures codebase memory for a project and reports status', async () => {
+    await tool.execute({ action: 'project_create', project_id: 'project-code', project_name: 'Code Project' }, new AbortController().signal);
+
+    const configured = await tool.execute({
+      action: 'project_code_config',
+      project_id: 'project-code',
+      repo_path: root,
+      mcp_server: 'codebase-memory',
+    }, new AbortController().signal);
+    expect(configured.llmContent).toContain('project codebase memory configured: project-code');
+    expect(configured.llmContent).toContain('not configured');
+
+    const status = await tool.execute({ action: 'project_code_status', project_id: 'project-code' }, new AbortController().signal);
+    expect(status.llmContent).toContain('indexStatus: failed');
+
+    const data = await new OrgMemoryStore(root).load();
+    expect(data.projects[0].codebase?.mcpServerName).toBe('codebase-memory');
   });
 });

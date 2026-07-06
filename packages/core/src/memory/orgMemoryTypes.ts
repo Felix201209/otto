@@ -1,3 +1,5 @@
+import type { CodebaseMemoryConfig } from './codebaseMemoryTypes.js';
+
 export type OrgMemoryScope = 'self' | 'session' | 'project' | 'team' | 'company' | 'skill';
 export type OrgMemoryType = 'profile' | 'preference' | 'fact' | 'decision' | 'workflow' | 'policy' | 'lesson' | 'warning' | 'summary' | 'skill_candidate';
 export type OrgMemoryVisibility = 'private' | 'project_members' | 'team_visible' | 'manager_visible' | 'company_visible';
@@ -55,6 +57,7 @@ export interface ProjectRecord {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  codebase?: CodebaseMemoryConfig;
 }
 
 
