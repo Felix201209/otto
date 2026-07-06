@@ -99,6 +99,7 @@ export * from './services/mcpResponseGuard.js';
 export * from './services/fileOperationQueue.js';
 export * from './services/backgroundTaskManager.js';
 export * from './services/backgroundModeSignal.js';
+export * from './services/doctor.js';
 export { formatClaudeCodeTaskResult, isAcpDelegateTask } from './tools/delegate-agent.js';
 export {
   CacheSafeParamsStore,
@@ -195,6 +196,7 @@ export * from './tools/diagnose-system.js';
 export * from './tools/web-automation.js';
 export * from './tools/memory-manager.js';
 export * from './tools/voice-bridge.js';
+export * from './tools/doctor.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';
