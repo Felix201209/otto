@@ -61,6 +61,7 @@ import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
 import { WebAutomationTool } from '../tools/web-automation.js';
 import { MultiChannelTool } from '../tools/multi-channel.js';
 import { MemoryManagerTool } from '../tools/memory-manager.js';
+import { FeishuProjectCollabTool } from '../tools/feishu-project-collab.js';
 import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
@@ -1203,6 +1204,7 @@ export class Config {
     registerCoreTool(WebAutomationTool, this);
     registerCoreTool(MultiChannelTool, this); // 浏览器自动化（Playwright）
     registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
+    registerCoreTool(FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
     // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
     // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
     registerCoreTool(VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
