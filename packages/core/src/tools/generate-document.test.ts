@@ -1,16 +1,30 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { execSync } from 'child_process';
 import { GenerateDocumentTool } from './generate-document.js';
 import { createMockConfig } from '../utils/test-helpers.js';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
+function hasBin(name: string): boolean {
+  try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
+}
 
 describe('GenerateDocumentTool', () => {
   let tool: GenerateDocumentTool;
+  let tmpDir: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
     tool = new GenerateDocumentTool(createMockConfig());
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-test-gen-'));
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
 
   // --- Metadata ---
@@ -52,6 +66,53 @@ describe('GenerateDocumentTool', () => {
     expect(r).not.toBe(false);
   });
 
-  // --- md2typst (private, test via execute mock) ---
-  // Tested via integration in execute when child_process is mocked
+  // --- markdown output needs no external tool (pure fs write) ---
+  it('markdown output writes a file with zero dependencies', async () => {
+    const out = path.join(tmpDir, 'doc.md');
+    const r = await tool.execute(
+      { content: '# Hello\n\nWorld', format: 'article', output_format: 'markdown', title: 'T', output_path: out },
+      new AbortController().signal,
+    );
+    expect(r.llmContent).toContain('generate_document OK');
+    expect(fs.existsSync(out)).toBe(true);
+    expect(fs.readFileSync(out, 'utf8')).toContain('# T');
+  });
+
+  // --- Doctor preflight: engine binaries checked BEFORE rendering ---
+  const typstAvailable = hasBin('typst');
+  const marpAvailable = hasBin('marp') || hasBin('marp-cli');
+  const pandocAvailable = hasBin('pandoc');
+
+  it.runIf(!typstAvailable)('report->pdf fails loud with typst install command when typst is missing', async () => {
+    const out = path.join(tmpDir, 'r.pdf');
+    const r = await tool.execute(
+      { content: '# Report\n\nBody', format: 'report', output_format: 'pdf', title: 'R', output_path: out },
+      new AbortController().signal,
+    );
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('typst');
+    expect(r.llmContent).toContain('brew install typst');
+  });
+
+  it.runIf(!marpAvailable)('slides->pptx fails loud with marp install command when marp is missing', async () => {
+    const out = path.join(tmpDir, 's.pptx');
+    const r = await tool.execute(
+      { content: '# Slide 1\n---\n# Slide 2', format: 'slides', output_format: 'pptx', title: 'S', output_path: out },
+      new AbortController().signal,
+    );
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('marp');
+    expect(r.llmContent).toContain('@marp-team/marp-cli');
+  });
+
+  it.runIf(!pandocAvailable)('article->docx fails loud with pandoc install command when pandoc is missing', async () => {
+    const out = path.join(tmpDir, 'a.docx');
+    const r = await tool.execute(
+      { content: '# Article\n\nText', format: 'article', output_format: 'docx', title: 'A', output_path: out },
+      new AbortController().signal,
+    );
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('pandoc');
+    expect(r.llmContent).toContain('brew install pandoc');
+  });
 });

@@ -12,8 +12,40 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
+import { DoctorService, CommandRunner } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
+
+/**
+ * 执行前置体检：只读复用 DoctorService，但用一个「只放行目标二进制」的 runner，
+ * 避免每次都 spawn 全部 10 个探测进程。缺任一目标依赖返回 fail-loud 错误（含平台
+ * 安装命令）；全部就绪返回 null。注意：libreoffice 的 spec 名是 'libreoffice'
+ * （会同时探测 libreoffice/soffice 与 mac .app 兜底）。
+ */
+async function preflightBinaries(names: string[]): Promise<string | null> {
+  const wanted = new Set(names);
+  // 允许目标 spec 名以及其候选 bin（如 libreoffice→soffice、ghostscript→gs）都被放行。
+  const binAliases = new Set<string>([...names, 'soffice', 'gs', 'gswin64c']);
+  const gatedRunner: CommandRunner = (command, timeoutMs) => {
+    const touches = [...binAliases].some((n) =>
+      new RegExp('(^|\\s|/)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)').test(command),
+    );
+    if (!touches) return Promise.reject(new Error('skipped: ' + command));
+    return new Promise<string>((resolve, reject) => {
+      exec(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        const out = (stdout || stderr || '').trim();
+        if (err) { if (out) { resolve(out); return; } reject(err); return; }
+        resolve(out);
+      });
+    });
+  };
+  const report = await new DoctorService(gatedRunner).check();
+  const missing = report.checks.filter((c) => wanted.has(c.name) && !c.present);
+  if (missing.length === 0) return null;
+  return missing
+    .map((c) => c.name + ' 未安装（' + c.category + '）。安装：' + (c.installHint || '见官方文档'))
+    .join('；');
+}
 
 export interface ConvertDocumentToolParams {
   input_path?: string; input_paths?: string[];
@@ -138,6 +170,11 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
       eng = offIn.includes(ext) || offOut.includes(fmt) ? 'libreoffice' : 'pandoc';
     }
 
+    // Doctor preflight: verify the chosen engine binary is present before we run it,
+    // failing loud (with install command) instead of catching a half-run failure.
+    const engMissing = await preflightBinaries([eng === 'libreoffice' ? 'libreoffice' : 'pandoc']);
+    if (engMissing) throw new Error('convert_document needs ' + eng + ': ' + engMissing);
+
     if (eng === 'libreoffice') {
       const loCmd = process.platform === 'win32' ? 'soffice' : 'libreoffice';
       await execAsync(`${loCmd} --headless --convert-to ${fmt} --outdir "${dir}" "${ip}"${options?' '+options:''}`, { maxBuffer:50*1024*1024 });
@@ -228,6 +265,9 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
   }
 
   private async compressPDF(file: string, level: number): Promise<void> {
+    // Doctor preflight: PDF compression uses ghostscript. Fail loud if missing.
+    const gsMissing = await preflightBinaries(['ghostscript']);
+    if (gsMissing) throw new Error('convert_document compress needs ghostscript: ' + gsMissing);
     const settings = ['/default','/screen','/ebook','/printer','/prepress','/prepress'];
     const s = settings[Math.min(level, 5)];
     const tmp = file + '.tmp.pdf';

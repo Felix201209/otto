@@ -138,4 +138,31 @@ describe('ConvertDocumentTool', () => {
       expect(info).toMatch(/Pages:\s*3/);
     }
   });
+
+  // --- Doctor preflight: engine binaries checked BEFORE the conversion runs ---
+  const pandocAvailable = hasBin('pandoc');
+  const libreofficeAvailable = hasBin('libreoffice') || hasBin('soffice') || fs.existsSync('/Applications/LibreOffice.app');
+
+  it.runIf(!pandocAvailable)('pandoc conversion fails loud with install command when pandoc is missing', async () => {
+    const f = path.join(tmpDir, 'doc.md'); fs.writeFileSync(f, '# Title\n\nBody');
+    const out = path.join(tmpDir, 'doc.html');
+    // .md -> .html routes to pandoc via auto engine
+    const r = await tool.execute({ input_path: f, output_format: 'html', engine: 'pandoc', output_path: out }, new AbortController().signal);
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('pandoc');
+    expect(r.llmContent).toContain('brew install pandoc');
+  });
+
+  it.runIf(!libreofficeAvailable)('libreoffice conversion fails loud with install command when libreoffice is missing', async () => {
+    const f = path.join(tmpDir, 'doc.md'); fs.writeFileSync(f, '# Title');
+    const out = path.join(tmpDir, 'doc.docx');
+    const r = await tool.execute({ input_path: f, output_format: 'docx', engine: 'libreoffice', output_path: out }, new AbortController().signal);
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('libreoffice');
+    expect(r.llmContent).toContain('brew install --cask libreoffice');
+  });
+
+  // NOTE: pure PDF compression (pdf->pdf + compress) first runs the libreoffice
+  // conversion step, so a ghostscript-only preflight cannot be isolated without
+  // libreoffice present; covered instead at the unit level by the ghostscript spec.
 });

@@ -124,12 +124,106 @@ describe('AnalyzeDataTool', () => {
     expect(fs.existsSync(path.join(tmpDir, 'want.svg'))).toBe(true);
   });
 
-  it('non-pie chart fails loud when gnuplot is missing', async () => {
-    const f = writeCsv('bar.csv', 'm,r\nJan,10\nFeb,20');
-    const r = await tool.execute({ input_path: f, operation: 'chart', chart_type: 'bar', x_column: 'm', y_column: 'r' }, sig());
-    // gnuplot is not installed in this env -> must fail loud, not fake a chart
+  // --- bar / line / scatter / histogram: pure-TS inline SVG (zero dependency) ---
+  it('bar chart writes a real SVG with one rect per aggregated category', async () => {
+    const f = writeCsv('bar.csv', 'm,r\nJan,10\nFeb,20\nJan,5');
+    const out = path.join(tmpDir, 'bar.svg');
+    const r = await tool.execute({ input_path: f, operation: 'chart', chart_type: 'bar', x_column: 'm', y_column: 'r', output_path: out }, sig());
+    expect(r.llmContent).toContain('analyze_data OK');
+    expect(fs.existsSync(out)).toBe(true);
+    const svg = fs.readFileSync(out, 'utf8');
+    expect(svg).toContain('<svg');
+    // 2 aggregated categories (Jan merged = 15, Feb = 20) => 2 data-bar rects.
+    // (the frame's background <rect width="800"...> is filtered out by width check)
+    const dataBars = (svg.match(/<rect [^>]*fill="#4A90D9"/g) || []).length;
+    expect(dataBars).toBe(2);
+    // x labels present
+    expect(svg).toContain('Jan');
+    expect(svg).toContain('Feb');
+  });
+
+  it('bar chart .png request auto-writes a real .svg (no gnuplot)', async () => {
+    const f = writeCsv('barpng.csv', 'm,r\nA,1\nB,2');
+    const out = path.join(tmpDir, 'bar.png');
+    const r = await tool.execute({ input_path: f, operation: 'chart', chart_type: 'bar', x_column: 'm', y_column: 'r', output_path: out, output_format: 'png' }, sig());
+    expect(r.llmContent).toContain('OK');
+    expect(fs.existsSync(path.join(tmpDir, 'bar.svg'))).toBe(true);
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
+  it('line chart writes an SVG polyline plus one circle per point', async () => {
+    const f = writeCsv('line.csv', 'x,y\n1,10\n3,5\n2,8');
+    const out = path.join(tmpDir, 'line.svg');
+    await tool.execute({ input_path: f, operation: 'chart', chart_type: 'line', x_column: 'x', y_column: 'y', output_path: out }, sig());
+    const svg = fs.readFileSync(out, 'utf8');
+    expect(svg).toContain('<polyline');
+    const dots = (svg.match(/<circle /g) || []).length;
+    expect(dots).toBe(3);
+  });
+
+  it('scatter chart writes one circle per numeric row', async () => {
+    const f = writeCsv('sc2.csv', 'x,y\n1,2\n2,4\n3,6\n4,8');
+    const out = path.join(tmpDir, 'scatter.svg');
+    await tool.execute({ input_path: f, operation: 'chart', chart_type: 'scatter', x_column: 'x', y_column: 'y', output_path: out }, sig());
+    const svg = fs.readFileSync(out, 'utf8');
+    expect(svg).not.toContain('<polyline');
+    const dots = (svg.match(/<circle /g) || []).length;
+    expect(dots).toBe(4);
+  });
+
+  it('histogram bins a single numeric column into rects', async () => {
+    const f = writeCsv('hist.csv', 'v,ignored\n1,a\n2,a\n2,a\n3,a\n3,a\n3,a\n9,a\n10,a');
+    const out = path.join(tmpDir, 'hist.svg');
+    await tool.execute({ input_path: f, operation: 'chart', chart_type: 'histogram', x_column: 'v', output_path: out }, sig());
+    const svg = fs.readFileSync(out, 'utf8');
+    expect(svg).toContain('<svg');
+    // at least one histogram bar rect
+    const bars = (svg.match(/<rect [^>]*fill="#4A90D9"/g) || []).length;
+    expect(bars).toBeGreaterThanOrEqual(1);
+  });
+
+  it('line chart on JSON also renders SVG (zero dependency)', async () => {
+    const f = path.join(tmpDir, 'line.json');
+    fs.writeFileSync(f, JSON.stringify([{ x: 1, y: 5 }, { x: 2, y: 9 }, { x: 3, y: 4 }]));
+    const out = path.join(tmpDir, 'ljson.svg');
+    await tool.execute({ input_path: f, operation: 'chart', chart_type: 'line', x_column: 'x', y_column: 'y', output_path: out }, sig());
+    const svg = fs.readFileSync(out, 'utf8');
+    expect((svg.match(/<circle /g) || []).length).toBe(3);
+  });
+
+  it('line chart fails loud on non-numeric columns (does not fake a chart)', async () => {
+    const f = writeCsv('cat.csv', 'name,city\nAlice,NYC\nBob,LA');
+    const r = await tool.execute({ input_path: f, operation: 'chart', chart_type: 'line', x_column: 'name', y_column: 'city' }, sig());
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('numeric');
+  });
+
+  // --- box chart still needs gnuplot -> doctor preflight fail-loud when missing ---
+  it('box chart fails loud when gnuplot is missing (with install command)', async () => {
+    const f = writeCsv('box.csv', 'g,v\nA,10\nA,20\nB,5');
+    const r = await tool.execute({ input_path: f, operation: 'chart', chart_type: 'box', x_column: 'g', y_column: 'v' }, sig());
+    // gnuplot is not installed in this env -> must fail loud with install hint
     expect(r.llmContent).toContain('FAIL');
     expect(r.llmContent.toLowerCase()).toContain('gnuplot');
+    expect(r.llmContent).toContain('brew install gnuplot');
+  });
+
+  // --- doctor preflight: duckdb-dependent ops fail loud when duckdb is missing ---
+  it('summary fails loud with duckdb install command when duckdb is missing', async () => {
+    const f = writeCsv('s.csv', 'a,b\n1,2');
+    const r = await tool.execute({ input_path: f, operation: 'summary' }, sig());
+    // duckdb is not installed in this env
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('duckdb');
+    expect(r.llmContent).toContain('brew install duckdb');
+  });
+
+  it('export_excel from CSV fails loud when duckdb is missing', async () => {
+    const f = writeCsv('e.csv', 'a,b\n1,2');
+    const out = path.join(tmpDir, 'out.xlsx');
+    const r = await tool.execute({ input_path: f, operation: 'export_excel', output_path: out }, sig());
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('duckdb');
   });
 
   // --- 2-D cross-tab pivot (pure TS, no duckdb) ---
