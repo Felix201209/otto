@@ -163,10 +163,11 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
         default:
           return { llmContent: 'Unknown action', returnDisplay: 'FAIL' };
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const m = e instanceof Error ? e.message : String(e);
       return {
-        llmContent: `multi_channel FAIL: ${e.message}`,
-        returnDisplay: `[FAIL] ${e.message}`,
+        llmContent: `multi_channel FAIL: ${m}`,
+        returnDisplay: `[FAIL] ${m}`,
       };
     }
   }

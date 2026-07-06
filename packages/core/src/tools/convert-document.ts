@@ -12,7 +12,6 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
 
 const execAsync = promisify(exec);
 
@@ -108,7 +107,7 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     const logLabel = 'convert_document.'+(p.output_format || 'single');
     console.time(logLabel);
     const err = this.validateToolParams(p);
-    if (err) return { llmContent: err, returnDisplay: err };
+    if (err) { console.timeEnd(logLabel); return { llmContent: err, returnDisplay: err }; }
 
     try {
       if (p.merge && p.input_paths && p.input_paths.length >= 2) return await this.doMerge(p);
@@ -121,6 +120,8 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
         return { llmContent: 'convert_document FAIL: '+m+'. Install: '+(isMac?'brew install pandoc libreoffice':'winget install pandoc LibreOffice'), returnDisplay: 'convert_document FAIL: tool not installed' };
       }
       return { llmContent: 'convert_document FAIL: '+m, returnDisplay: 'convert_document FAIL: '+m };
+    } finally {
+      console.timeEnd(logLabel);
     }
   }
 

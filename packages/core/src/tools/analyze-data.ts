@@ -13,7 +13,6 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
 
 const execAsync = promisify(exec);
 
@@ -93,7 +92,7 @@ DEPENDENCIES: Pie chart + CSV/JSON pivot need NO external tools (pure TS). summa
     const logLabel = 'analyze_data.'+(p.operation || 'unknown');
     console.time(logLabel);
     const err = this.validateToolParams(p);
-    if (err) return { llmContent: err, returnDisplay: err };
+    if (err) { console.timeEnd(logLabel); return { llmContent: err, returnDisplay: err }; }
     try {
       let r = '';
       switch (p.operation) {
@@ -110,14 +109,20 @@ DEPENDENCIES: Pie chart + CSV/JSON pivot need NO external tools (pure TS). summa
       const m = e instanceof Error ? e.message : String(e);
       if (m.includes('not found')) return { llmContent:'analyze_data FAIL: tool not installed. macOS: brew install duckdb gnuplot. Windows: winget install DuckDB; choco install gnuplot.', returnDisplay:'analyze_data FAIL: tool not installed' };
       return { llmContent:'analyze_data FAIL: '+m, returnDisplay:'analyze_data FAIL: '+m };
+    } finally {
+      console.timeEnd(logLabel);
     }
   }
 
   private async duckdb(sql: string): Promise<string> {
-    const tmp = path.join(os.tmpdir(),'otto-sql-'+Date.now()+'.sql');
+    const tmp = path.join(os.tmpdir(), 'otto-sql-'+Date.now()+'.sql');
     fs.writeFileSync(tmp, sql);
-    try { const tmp = path.join(os.tmpdir(), 'otto-sql-'+Date.now()+'.sql'); fs.writeFileSync(tmp, sql); const { stdout } = await execAsync('duckdb -csv < "'+tmp+'"', { maxBuffer:20*1024*1024 }); fs.unlinkSync(tmp); return stdout.trim(); }
-    finally { try { fs.unlinkSync(tmp); } catch {} }
+    try {
+      const { stdout } = await execAsync('duckdb -csv < "'+tmp+'"', { maxBuffer:20*1024*1024 });
+      return stdout.trim();
+    } finally {
+      try { fs.unlinkSync(tmp); } catch {}
+    }
   }
   private tbl(f: string): string {
     const sp = f.replace(/'/g,"''"); const e=path.extname(f).toLowerCase();
@@ -269,7 +274,12 @@ DEPENDENCIES: Pie chart + CSV/JSON pivot need NO external tools (pure TS). summa
         angle = end;
       }
       const ly = 90 + i * 26;
-      legend.push(`<rect x="580" y="${ly - 12}" width="16" height="16" fill="${color}"/><text x="604" y="${ly}" font-size="14" fill="#333" dominant-baseline="middle">${esc(labels[i])} (${pct.toFixed(1)}%)</text>`);
+      // Legend text starts at x=604; SVG is 800 wide. Truncate long labels with an
+      // ellipsis (on the raw string, before esc(), so HTML entities stay intact)
+      // so they never run past the right edge.
+      const rawLabel = labels[i];
+      const shownLabel = rawLabel.length > 22 ? rawLabel.slice(0, 21) + '…' : rawLabel;
+      legend.push(`<rect x="580" y="${ly - 12}" width="16" height="16" fill="${color}"/><text x="604" y="${ly}" font-size="14" fill="#333" dominant-baseline="middle">${esc(shownLabel)} (${pct.toFixed(1)}%)</text>`);
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <rect width="${W}" height="${H}" fill="#ffffff"/>
