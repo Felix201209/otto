@@ -131,6 +131,8 @@
     "yargs": "17.7.2"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.7",
     "@larksuiteoapi/node-sdk": "^1.66.0",
     "@vscode/ripgrep": "1.17.0",
     "fs-extra": "^11.3.1",

@@ -162,6 +162,7 @@ export * from './tools/write-file.js';
 export * from './tools/web-fetch.js';
 export * from './tools/memoryTool.js';
 export * from './memory/memoryProvider.js';
+export * from './memory/mem0Adapter.js';
 export * from './memory/codebaseMemoryTypes.js';
 export * from './memory/codebaseMemoryProvider.js';
 export * from './memory/orgMemoryTypes.js';
@@ -194,6 +195,7 @@ export * from './tools/analyze-data.js';
 export * from './tools/diagnose-system.js';
 export * from './tools/web-automation.js';
 export * from './tools/memory-manager.js';
+export * from './orchestration/index.js';
 export * from './tools/voice-bridge.js';
 
 // MCP OAuth
