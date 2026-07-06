@@ -2,8 +2,39 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import os from 'os';
 import { DesktopAutomationTool } from './desktop-automation.js';
 import { createMockConfig } from '../utils/test-helpers.js';
+import { ProcessGuard } from '../utils/process-guard.js';
+import {
+  DoctorService,
+  type CommandRunner,
+  type ModuleResolver,
+} from '../services/doctor.js';
+
+const NO_MODULES: ModuleResolver = () => {
+  throw new Error('no modules');
+};
+
+/** fake runner：present 集合里的二进制 which 命中，其余失败。 */
+function makeRunner(present: Set<string>): CommandRunner {
+  return async (command: string) => {
+    const w = command.match(/^(?:which|where)\s+(\S+)/);
+    if (w) {
+      if (present.has(w[1])) return `/usr/local/bin/${w[1]}`;
+      throw new Error(`which: ${w[1]} not found`);
+    }
+    const v = command.match(/^(\S+)\s/);
+    if (v && present.has(v[1])) return `${v[1]} version 1.0.0`;
+    throw new Error(`${command}: not found`);
+  };
+}
+
+/** 构造装了「缺 cliclick 的 mac DoctorService」的工具（不触碰真实二进制）。 */
+function toolMissingCliclick(): DesktopAutomationTool {
+  const doctor = new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false);
+  return new DesktopAutomationTool(createMockConfig(), doctor);
+}
 
 describe('DesktopAutomationTool', () => {
   let tool: DesktopAutomationTool;
@@ -143,6 +174,52 @@ describe('DesktopAutomationTool', () => {
     );
     if (r && typeof r === 'object') {
       expect(r.title).toContain('[WARN]');
+    }
+  });
+
+  // --- doctor 前置：cliclick（仅 mac 键鼠/输入类动作）---
+  const isMac = os.platform() === 'darwin';
+
+  it.runIf(isMac)('fails loudly on keyboard when cliclick missing, with install command', async () => {
+    const t = toolMissingCliclick();
+    const r = await t.execute({ action: 'keyboard', keys: 'cmd+c' }, new AbortController().signal);
+    const content = String(r.llmContent);
+    expect(content).toContain('keyboard FAIL');
+    expect(content).toContain('cliclick');
+    expect(content).toContain('brew install cliclick');
+  });
+
+  it.runIf(isMac)('fails loudly on mouse click when cliclick missing', async () => {
+    const t = toolMissingCliclick();
+    const r = await t.execute({ action: 'mouse', x: 10, y: 10 }, new AbortController().signal);
+    expect(String(r.llmContent)).toContain('cliclick');
+  });
+
+  it.runIf(isMac)('does NOT run cliclick preflight for window_manager (osascript path)', async () => {
+    // 窗口类走 osascript，不应触发 cliclick 前置体检。用 spy 断言 doctor.check
+    // 对 window_manager 未被调用（若被调用即说明误拦），同时对 keyboard 会被调用。
+    // mock ProcessGuard.exec 让底层 osascript 秒回，避免真实执行副作用/超时。
+    const execSpy = vi
+      .spyOn(ProcessGuard, 'exec')
+      .mockResolvedValue({ stdout: '', stderr: '' });
+    try {
+      const doctor = new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false);
+      const spy = vi.spyOn(doctor, 'check');
+      const t = new DesktopAutomationTool(createMockConfig(), doctor);
+
+      // keyboard：应触发 cliclick 前置（doctor.check 被调用）。
+      await t.execute({ action: 'keyboard', keys: 'cmd+c' }, new AbortController().signal);
+      expect(spy).toHaveBeenCalled();
+
+      // window_manager：不应触发 cliclick 前置。重置计数后单独验证。
+      spy.mockClear();
+      await t.execute(
+        { action: 'window_manager', app_name: '__NoSuchApp_ZZZ__', window_operation: 'tile_left' },
+        new AbortController().signal,
+      );
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      execSpy.mockRestore();
     }
   });
 });

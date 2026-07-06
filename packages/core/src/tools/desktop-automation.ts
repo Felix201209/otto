@@ -12,8 +12,14 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ProcessGuard } from '../utils/process-guard.js';
+import { DoctorService } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
+
+/** mac 上依赖 cliclick 的动作（键鼠/输入类）。窗口类走 osascript，不在此拦。 */
+const CLICLICK_ACTIONS: ReadonlySet<string> = new Set([
+  'keyboard', 'type_text', 'mouse', 'drag', 'scroll',
+]);
 
 const WIN32_PINVOKE = `
 Add-Type -ErrorAction SilentlyContinue @"
@@ -57,7 +63,11 @@ function fail<T extends ToolResult>(action: string, reason: string): T {
 export class DesktopAutomationTool extends BaseTool<DesktopAutomationToolParams, ToolResult> {
   static readonly Name: string = 'desktop_automation';
 
-  constructor(private readonly config: Config) {
+  /**
+   * DoctorService 只读复用：仅在键鼠/输入类动作（需要 cliclick）执行前体检。
+   * 窗口管理等走 osascript 的动作不查 cliclick。可注入以便测试。
+   */
+  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
     const desc = `Cross-platform desktop automation (macOS+Windows). 17 actions.
 
 EXAMPLES:
@@ -148,11 +158,12 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
     const err = this.validateToolParams(p);
     if (err) { console.timeEnd(logLabel); return fail(p.action, err); }
 
-    // Preflight: check cliclick on macOS
+    // 执行前依赖体检（fail-loud，只读复用 DoctorService）：仅键鼠/输入类动作在
+    // macOS 上需要 cliclick；窗口类走 osascript 的动作不查，避免过度拦截。
     const isMac = os.platform()==='darwin';
-    if (isMac && ['keyboard','type_text','mouse','drag','scroll'].includes(p.action)) {
-      try { await execAsync('which cliclick'); }
-      catch { return fail(p.action, 'cliclick not installed. Run: brew install cliclick'); }
+    if (isMac && CLICLICK_ACTIONS.has(p.action)) {
+      const depErr = await this.preflightCliclick();
+      if (depErr) { console.timeEnd(logLabel); return fail(p.action, depErr); }
     }
 
     try {
@@ -184,6 +195,28 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
       const m = e instanceof Error ? e.message : String(e);
       return fail(p.action, m);
     }
+  }
+
+  /**
+   * cliclick 就绪体检（fail-loud）。DoctorService 里 cliclick 走 PATH 探测且
+   * 仅 mac 平台。缺则返回带安装命令的错误串；就绪返回 null。
+   */
+  private async preflightCliclick(): Promise<string | null> {
+    let present = false;
+    let installHint = 'brew install cliclick';
+    try {
+      const report = await this.doctor.check();
+      const c = report.checks.find((x) => x.name === 'cliclick');
+      if (c) {
+        present = c.present;
+        if (c.installHint) installHint = c.installHint;
+      }
+    } catch {
+      // 体检异常保守判为缺失（fail-loud）。
+      present = false;
+    }
+    if (present) return null;
+    return `cliclick 未安装（键鼠/输入类动作依赖它）。安装：${installHint}`;
   }
 
   // ============================ macOS ============================

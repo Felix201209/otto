@@ -7,12 +7,9 @@
  * Handles: login, navigate, fill forms, click, scrape tables/text, screenshot.
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'node:url';
 import {
   BaseTool, ToolResult, ToolCallConfirmationDetails,
   Icon, ToolLocation,
@@ -21,10 +18,7 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ProcessGuard } from '../utils/process-guard.js';
-
-const execAsync = promisify(exec);
-// ESM 下没有 __dirname，从 import.meta.url 派生，供 playwright 兜底查找用。
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+import { DoctorService } from '../services/doctor.js';
 
 export interface WebAutomationToolParams {
   action: 'navigate' | 'fill' | 'click' | 'scrape' | 'screenshot' | 'run_script' | 'wait' | 'list_tabs' | 'extract_table';
@@ -55,7 +49,12 @@ export interface WebAutomationToolParams {
 export class WebAutomationTool extends BaseTool<WebAutomationToolParams, ToolResult> {
   static readonly Name: string = 'web_automation';
 
-  constructor(private readonly config: Config) {
+  /**
+   * DoctorService 只读复用：真正启动浏览器前先确认 playwright 就绪。
+   * 注意 playwright 走 node 模块解析（不是 PATH 二进制）——本机全局装了二进制但
+   * node_modules 里没有时，应判为「缺失」。可注入以便测试。
+   */
+  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
     const desc = `Browser automation via Playwright for OA/ERP/web scraping.
 
 EXAMPLES:
@@ -144,13 +143,12 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
 
-    // Check if playwright is installed
-    const hasPlaywright = await this.checkPlaywright();
-    if (!hasPlaywright) {
-      return {
-        llmContent: 'web_automation FAIL: Playwright not installed.\nInstall: npm install playwright && npx playwright install chromium',
-        returnDisplay: 'web_automation FAIL: Playwright not installed',
-      };
+    // 执行前依赖体检（fail-loud）：playwright 走 node 模块解析（DoctorService
+    // 内部用 require.resolve，不看 PATH 二进制）。缺就一上来明说，别跑到启动浏览器
+    // 才报错。
+    const depErr = await this.preflightPlaywright();
+    if (depErr) {
+      return { llmContent: depErr, returnDisplay: 'web_automation FAIL: Playwright 未安装' };
     }
 
     const logLabel = 'web_automation.' + p.action;
@@ -211,20 +209,30 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
     }
   }
 
-  private async checkPlaywright(): Promise<boolean> {
+  /**
+   * playwright 就绪体检（fail-loud）。DoctorService 的 playwright 探测走
+   * require.resolve('playwright' / 'playwright-core')，正确反映「二进制在但 node
+   * 模块没装」的情况。缺则返回带安装命令的错误串；就绪返回 null。
+   */
+  private async preflightPlaywright(): Promise<string | null> {
+    let present = false;
+    let installHint = 'npm install playwright && npx playwright install chromium';
     try {
-      await execAsync('node -e "require(\'playwright\')" 2>/dev/null');
-      return true;
-    } catch {
-      try {
-        // Check in the otto project's node_modules
-        const ottoPath = path.resolve(moduleDir, '..', '..', '..');
-        await execAsync('node -e "require(\'' + path.join(ottoPath, 'node_modules', 'playwright') + '\')"');
-        return true;
-      } catch {
-        return false;
+      const report = await this.doctor.check();
+      const pw = report.checks.find((c) => c.name === 'playwright');
+      if (pw) {
+        present = pw.present;
+        if (pw.installHint) installHint = pw.installHint;
       }
+    } catch {
+      // 体检异常时保守判为缺失，给出通用安装命令（fail-loud）。
+      present = false;
     }
+    if (present) return null;
+    return (
+      'web_automation FAIL: Playwright 未安装（node 模块缺失）。\n' +
+      `安装：${installHint}`
+    );
   }
 
   private buildPlaywrightScript(p: WebAutomationToolParams): string {

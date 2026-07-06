@@ -23,6 +23,7 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ProcessGuard } from '../utils/process-guard.js';
+import { DoctorService, DoctorReport } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
 // ESM 下无 __dirname，从 import.meta.url 派生。
@@ -36,7 +37,11 @@ export interface VoiceBridgeToolParams {
 export class VoiceBridgeTool extends BaseTool<VoiceBridgeToolParams, ToolResult> {
   static readonly Name: string = 'voice_bridge';
 
-  constructor(private readonly config: Config) {
+  /**
+   * DoctorService 只读复用：真正录音/转写前先体检依赖。可注入以便测试
+   * （测试传入注入了 fake runner 的 DoctorService，模拟缺 ffmpeg/whisper）。
+   */
+  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
     const desc = `Voice input bridge - speak naturally, get structured text back.
 
 EXAMPLES:
@@ -92,9 +97,48 @@ REQUIREMENTS:
     return false; // voice input is safe, auto-approve
   }
 
+  /**
+   * 执行前依赖体检（fail-loud）：录音需 ffmpeg（必需）；转写需本地 whisper
+   * 或云端 key（OPENAI_API_KEY / ARK_API_KEY）二选一。缺就提前返回明确错误 +
+   * 安装命令，避免录了音才在管线里失败。python3 不在此拦（脚本缺失时另有 fail-loud）。
+   * @returns 缺依赖时返回错误串，全部就绪返回 null。
+   */
+  private async preflight(): Promise<string | null> {
+    let report: DoctorReport;
+    try {
+      report = await this.doctor.check();
+    } catch {
+      // 体检本身异常不阻断（保持既有行为，让后续脚本自行 fail）。
+      return null;
+    }
+    const find = (name: string) => report.checks.find((c) => c.name === name);
+    const missing: string[] = [];
+
+    const ffmpeg = find('ffmpeg');
+    if (ffmpeg && !ffmpeg.present) {
+      missing.push(`  - ffmpeg（录音）未安装。安装：${ffmpeg.installHint}`);
+    }
+
+    const whisper = find('whisper');
+    const hasCloudKey = !!(process.env.OPENAI_API_KEY || process.env.ARK_API_KEY);
+    if (whisper && !whisper.present && !hasCloudKey) {
+      missing.push(
+        `  - whisper（转写）未安装，且未配置云端 key。任选其一：\n` +
+        `      本地转写：${whisper.installHint}\n` +
+        `      云端转写：设置环境变量 OPENAI_API_KEY 或 ARK_API_KEY`,
+      );
+    }
+
+    if (missing.length === 0) return null;
+    return 'voice_bridge FAIL: 缺少语音依赖，无法录音/转写：\n' + missing.join('\n');
+  }
+
   async execute(p: VoiceBridgeToolParams, _s: AbortSignal): Promise<ToolResult> {
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
+
+    const depErr = await this.preflight();
+    if (depErr) return { llmContent: depErr, returnDisplay: 'voice_bridge FAIL: 缺少语音依赖（见详情）' };
 
     const duration = p.duration || (p.action === 'listen_long' ? 60 : 10);
     const mode = p.action === 'listen_raw' ? 'raw' : 'polished';

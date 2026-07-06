@@ -20,6 +20,31 @@ import { execSync } from 'child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * esbuild plugin: strip `//# sourceMappingURL=` comments from pdf-parse's
+ * vendored pdf.js / pdf.worker files before esbuild follows them.
+ *
+ * pdf-parse ships pre-built pdf.js bundles whose `.map` files are corrupt
+ * (esbuild reports "Unterminated string literal" on
+ * pdf.js/v1.10.88/build/pdf.worker.js.map at col 872419), which hard-fails the
+ * whole extension build. Those maps are third-party debug artifacts we never
+ * ship or need — pdf-parse is still fully bundled and its runtime behaviour is
+ * unchanged; we only prevent esbuild from loading the broken maps.
+ *
+ * Scope is limited to pdf-parse's own files so no other package's sourcemaps
+ * are affected.
+ */
+const stripPdfParseSourceMaps = {
+  name: 'strip-pdf-parse-sourcemaps',
+  setup(build) {
+    build.onLoad({ filter: /pdf-parse[\\/].*\.js$/ }, async (args) => {
+      const raw = await fs.promises.readFile(args.path, 'utf8');
+      const contents = raw.replace(/\/\/[#@]\s*sourceMappingURL=.*$/gm, '');
+      return { contents, loader: 'js' };
+    });
+  },
+};
+
 // Parse command line arguments
 const args = process.argv.slice(2);
 const isWatch = args.includes('--watch');
@@ -98,6 +123,8 @@ if (typeof globalThis.__dirname === 'undefined') {
     '.ts': 'ts',
     '.tsx': 'tsx',
   },
+  // Skip pdf-parse's corrupt vendored sourcemaps (see plugin note above).
+  plugins: [stripPdfParseSourceMaps],
   logLevel: 'info',
 };
 
