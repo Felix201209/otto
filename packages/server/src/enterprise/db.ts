@@ -42,7 +42,28 @@ export const ESTIMATE = {
   defaultTokensPerTask: 2000,
   /** 单任务默认成本估计（元）。 */
   defaultCostPerTaskCNY: 0.028,
+  /**
+   * 「每 ¥1 token 省下多少人力」的可解释上限（封顶倍数）。
+   * 单任务成本兜底后本已一致，但为防极端稀疏数据仍爆表，加一道封顶双保险。
+   * 命中封顶时看板/返回值会标注 capped=true。可用 OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP 覆盖。
+   */
+  laborPerTokenCap: envNum('OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP', 50),
 };
+
+/**
+ * 成本口径归一：非正/缺失的单任务成本一律回落到默认成本估计，避免「显式上报 0」
+ * 把整体成本口径拉塌，导致 laborSaved/totalCost 爆表。tokens 同理。
+ * 集中在此，logTask 落库前与 report 聚合口径保持一致。
+ */
+export function normalizeCostCNY(cost: unknown): number {
+  const n = typeof cost === 'number' ? cost : Number(cost);
+  return Number.isFinite(n) && n > 0 ? n : ESTIMATE.defaultCostPerTaskCNY;
+}
+
+export function normalizeTokens(tokens: unknown): number {
+  const n = typeof tokens === 'number' ? tokens : Number(tokens);
+  return Number.isFinite(n) && n > 0 ? n : ESTIMATE.defaultTokensPerTask;
+}
 
 let db: Database | null = null;
 
@@ -160,10 +181,17 @@ export function logTask(task: {
   employee_id: string; task_type: string; context?: string;
   result?: string; duration_min?: number; tokens_used?: number; cost_cny?: number;
 }): void {
+  // 成本/token 口径归一：显式上报 0 或非正值时回落到默认估计，保证与 report 聚合口径一致，
+  // 避免「多数任务 cost=0、少数有真实成本」时 totalCost 塌到极小、laborPerToken 爆表。
+  const normalized = {
+    ...task,
+    tokens_used: normalizeTokens(task.tokens_used),
+    cost_cny: normalizeCostCNY(task.cost_cny),
+  };
   getDB().prepare(
     `INSERT INTO task_logs (employee_id, task_type, context, result, duration_min, tokens_used, cost_cny)
      VALUES (@employee_id, @task_type, @context, @result, @duration_min, @tokens_used, @cost_cny)`
-  ).run(task);
+  ).run(normalized);
   logAudit('learn', task.employee_id, `Task: ${task.task_type} (${task.duration_min || 0}min)`);
 }
 
@@ -255,8 +283,10 @@ export function getReport(periodDays = 30, department?: string): any {
   const totalTasks = tasks.length;
   // ottoMin = Otto 实际记录的耗时（这就是「用了 Otto 之后花的时间」）。
   const ottoMin = tasks.reduce((s, t) => s + (t.duration_min || 0), 0);
-  const totalTokens = tasks.reduce((s, t) => s + (t.tokens_used || 0), 0);
-  const totalCost = tasks.reduce((s, t) => s + (t.cost_cny || 0), 0);
+  // token/成本聚合时对每条也走归一化：即便有历史脏数据或绕过 logTask 直接写库的
+  // cost=0 记录，成本口径也一致，不会把 totalCost 拖塌导致 laborPerToken 爆表。
+  const totalTokens = tasks.reduce((s, t) => s + normalizeTokens(t.tokens_used), 0);
+  const totalCost = tasks.reduce((s, t) => s + normalizeCostCNY(t.cost_cny), 0);
 
   // 真·省时：人工估时 − Otto 实际耗时，不双算。
   //   manualMin = ottoMin × mult；savedMin = manualMin − ottoMin = ottoMin × (mult − 1)。
@@ -265,18 +295,22 @@ export function getReport(periodDays = 30, department?: string): any {
   const laborSavedCNY = (savedMin / 60) * ESTIMATE.cnyPerHour; // 省下的人力成本（元）
   // 净收益 = 省下的人力成本 − 花掉的 token 成本。诚实口径，可为负。
   const netBenefitCNY = laborSavedCNY - totalCost;
-  // 「每花 ¥1 token 估算省下 ¥X 人力」——比「省钱÷token成本」的纯倍率更可解释，
-  // 且不会因 token 成本极小而爆表到几百倍。仍是估算，前端需标注。
-  const laborPerTokenCNY = totalCost > 0 ? laborSavedCNY / totalCost : 0;
+  // 「每花 ¥1 token 估算省下 ¥X 人力」——比「省钱÷token成本」的纯倍率更可解释。
+  // 成本口径已归一（不再有 cost=0 拖塌），但仍对倍率封顶作双保险：命中封顶时标注
+  // laborPerTokenCapped=true，看板可注明「已封顶」，避免展示不可解释的天文数字。
+  const rawLaborPerToken = totalCost > 0 ? laborSavedCNY / totalCost : 0;
+  const cap = ESTIMATE.laborPerTokenCap;
+  const laborPerTokenCapped = rawLaborPerToken > cap;
+  const laborPerTokenCNY = laborPerTokenCapped ? cap : rawLaborPerToken;
 
-  // By task type
+  // By task type（成本/token 同样归一，与顶层 totalCost/totalTokens 口径一致）
   const byType: Record<string, { count: number; min: number; tokens: number; cost: number }> = {};
   for (const t of tasks) {
     if (!byType[t.task_type]) byType[t.task_type] = { count: 0, min: 0, tokens: 0, cost: 0 };
     byType[t.task_type].count++;
     byType[t.task_type].min += t.duration_min || 0;
-    byType[t.task_type].tokens += t.tokens_used || 0;
-    byType[t.task_type].cost += t.cost_cny || 0;
+    byType[t.task_type].tokens += normalizeTokens(t.tokens_used);
+    byType[t.task_type].cost += normalizeCostCNY(t.cost_cny);
   }
 
   const activeEmployees = listEmployees(department).length;
@@ -292,12 +326,15 @@ export function getReport(periodDays = 30, department?: string): any {
     tokenCostCNY: Math.round(totalCost * 100) / 100,
     // 保留 laborPerTokenCNY 作为「诚实版 ROI」——每 ¥1 token 省下多少人力（估算）。
     laborPerTokenCNY: Math.round(laborPerTokenCNY * 10) / 10,
+    // 是否命中封顶：为 true 时上面的值是封顶后的上限，看板据此标注「已封顶」。
+    laborPerTokenCapped,
     activeEmployees,
     // 省时/省钱/净收益/每元产出 均为估算值，前端需明示。
     estimated: true,
     assumptions: {
       manualTimeMultiplier: mult,
       cnyPerHour: ESTIMATE.cnyPerHour,
+      laborPerTokenCap: cap,
     },
     byType: Object.entries(byType).map(([type, d]) => ({
       taskType: type, count: d.count, minutes: Math.round(d.min),

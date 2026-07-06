@@ -212,8 +212,11 @@ function makeHandler(adminToken: string) {
           context: body.context as string | undefined,
           result: body.result as string | undefined,
           duration_min: (body.duration_min as number) || 0,
-          tokens_used: (body.tokens_used as number) ?? db.ESTIMATE.defaultTokensPerTask,
-          cost_cny: (body.cost_cny as number) ?? db.ESTIMATE.defaultCostPerTaskCNY,
+          // 直接透传原始上报值；成本/token 的兜底口径统一交给 db.logTask 里的归一化。
+          // 之前用 `?? default` 时，显式上报 cost_cny:0 不会兜底、会存 0，导致
+          // 多数任务 cost=0 时 totalCost 塌小、laborPerToken 爆表。
+          tokens_used: body.tokens_used as number | undefined,
+          cost_cny: body.cost_cny as number | undefined,
         });
         sendJSON(res, 200, { status: 'logged' });
         return;
@@ -416,15 +419,26 @@ async function j(u){const r=await fetch(u,{headers:H});if(!r.ok)throw new Error(
 // ---- 内联 SVG 图表（无外部依赖，CSP 友好）----
 function barChartSVG(rows){
   if(!rows||!rows.length)return '<div class="chart-empty">暂无任务数据</div>';
-  const W=460,H=40+rows.length*34,padL=90,padR=54,barH=18;
+  // padR 需容纳「NN分 · N次」标签；条形最长只画到 barMax，剩余留给外侧标签，避免标签越界或与条末端重叠。
+  const W=460,H=40+rows.length*34,padL=90,padR=96,barH=18,labelGap=6,fontSize=11;
   const maxMin=Math.max(1,...rows.map(r=>r.minutes));
+  const barMax=W-padL-padR;
   let s='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="各任务类型耗时柱状图">';
   rows.forEach((r,i)=>{
-    const y=24+i*34;
-    const w=Math.round((W-padL-padR)*r.minutes/maxMin);
-    s+='<text x="'+(padL-8)+'" y="'+(y+barH-5)+'" text-anchor="end" fill="#94a3b8" font-size="12">'+esc(r.taskType)+'</text>';
-    s+='<rect x="'+padL+'" y="'+y+'" width="'+Math.max(w,2)+'" height="'+barH+'" rx="4" fill="#60a5fa"/>';
-    s+='<text x="'+(padL+Math.max(w,2)+6)+'" y="'+(y+barH-5)+'" fill="#e2e8f0" font-size="11">'+r.minutes+'分 · '+r.count+'次</text>';
+    const y=i*34+24;
+    const w=Math.max(Math.round(barMax*r.minutes/maxMin),2);
+    const label=r.minutes+'分 · '+r.count+'次';
+    // 估算标签像素宽（数字/点/空格约 0.55em、中文约 1em），用于判断外侧是否放得下。
+    const labelW=[...label].reduce((n,ch)=>n+(/[0-9.\s·]/.test(ch)?fontSize*0.55:fontSize),0);
+    const ty=y+barH-5;
+    s+='<text x="'+(padL-8)+'" y="'+ty+'" text-anchor="end" fill="#94a3b8" font-size="12">'+esc(r.taskType)+'</text>';
+    s+='<rect x="'+padL+'" y="'+y+'" width="'+w+'" height="'+barH+'" rx="4" fill="#60a5fa"/>';
+    // 外侧放得下 → 外侧左对齐；否则塞进条内右对齐（白字），两种情形都不会与条末端重叠或越界。
+    if(padL+w+labelGap+labelW<=W-4){
+      s+='<text x="'+(padL+w+labelGap)+'" y="'+ty+'" fill="#e2e8f0" font-size="'+fontSize+'">'+label+'</text>';
+    }else{
+      s+='<text x="'+(padL+w-labelGap)+'" y="'+ty+'" text-anchor="end" fill="#0f172a" font-size="'+fontSize+'" font-weight="600">'+label+'</text>';
+    }
   });
   s+='</svg>';return s;
 }
@@ -470,7 +484,7 @@ async function load(){
       {l:'省下人力成本',v:'¥'+report.laborSavedCNY,c:'green',s:'按 ¥'+a.cnyPerHour+'/时折算',e:1},
       {l:'Token 成本',v:'¥'+report.tokenCostCNY,c:'orange',s:(report.totalTokens||0)+' tokens',e:0},
       {l:'净收益',v:'¥'+report.netBenefitCNY,c:(report.netBenefitCNY>=0?'green':'orange'),s:'省下人力 − Token 成本',e:1},
-      {l:'每 ¥1 Token 产出',v:'¥'+report.laborPerTokenCNY,c:'blue',s:'估算省下的人力（非纯倍率）',e:1},
+      {l:'每 ¥1 Token 产出',v:'¥'+report.laborPerTokenCNY,c:'blue',s:report.laborPerTokenCapped?('已封顶 ¥'+(a.laborPerTokenCap||50)+'（估算，防极端值）'):'估算省下的人力（非纯倍率）',e:1},
       {l:'活跃员工',v:report.activeEmployees,c:'blue',s:'正在使用 Otto',e:0},
     ];
     document.getElementById('cards').innerHTML=cards.map(c=>'<div class="card"><div class="label">'+c.l+(c.e?est:'')+'</div><div class="value '+c.c+'">'+c.v+'</div><div class="sub">'+c.s+'</div></div>').join('');
