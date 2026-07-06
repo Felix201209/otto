@@ -4,10 +4,14 @@ import { Config } from '../config/config.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 
 export interface FeishuProjectCollabParams {
-  action: 'plan' | 'base_plan' | 'progress_sync' | 'reminder_plan';
+  action: 'plan' | 'base_plan' | 'progress_sync' | 'reminder_plan' | 'create_base' | 'sync_progress' | 'schedule_reminders' | 'archive_acceptance';
   project_name: string;
   project_goal?: string;
   chat_id?: string;
+  base_token?: string;
+  table_id?: string;
+  spreadsheet_token?: string;
+  acceptance_content?: string;
   collaborators?: Array<{ name: string; role: string; responsibility: string }>;
   acceptance_nodes?: Array<{ name: string; due: string; standard: string; owner?: string; reminderMinutesBefore?: number }>;
   progress_owner?: string;
@@ -29,10 +33,14 @@ export class FeishuProjectCollabTool extends BaseTool<FeishuProjectCollabParams,
       {
         type: Type.OBJECT,
         properties: {
-          action: { type: Type.STRING, enum: ['plan', 'base_plan', 'progress_sync', 'reminder_plan'] },
+          action: { type: Type.STRING, enum: ['plan', 'base_plan', 'progress_sync', 'reminder_plan', 'create_base', 'sync_progress', 'schedule_reminders', 'archive_acceptance'] },
           project_name: { type: Type.STRING },
           project_goal: { type: Type.STRING },
           chat_id: { type: Type.STRING },
+          base_token: { type: Type.STRING },
+          table_id: { type: Type.STRING },
+          spreadsheet_token: { type: Type.STRING },
+          acceptance_content: { type: Type.STRING },
           collaborators: { type: Type.ARRAY, items: { type: Type.OBJECT } },
           acceptance_nodes: { type: Type.ARRAY, items: { type: Type.OBJECT } },
           progress_owner: { type: Type.STRING },
@@ -47,7 +55,7 @@ export class FeishuProjectCollabTool extends BaseTool<FeishuProjectCollabParams,
   validateToolParams(params: FeishuProjectCollabParams): string | null {
     const error = SchemaValidator.validate(this.schema.parameters!, params, FeishuProjectCollabTool.Name);
     if (error) return error;
-    if (params.action === 'progress_sync' && !params.progress_content) return 'progress_sync requires progress_content';
+    if ((params.action === 'progress_sync' || params.action === 'sync_progress') && !params.progress_content) return 'progress sync requires progress_content';
     return null;
   }
 
@@ -67,6 +75,10 @@ export class FeishuProjectCollabTool extends BaseTool<FeishuProjectCollabParams,
   }
 
   private render(params: FeishuProjectCollabParams): string {
+    if (params.action === 'create_base') return this.createBasePlan(params);
+    if (params.action === 'sync_progress') return this.progress(params);
+    if (params.action === 'schedule_reminders') return this.reminders(params);
+    if (params.action === 'archive_acceptance') return this.archiveAcceptance(params);
     if (params.action === 'base_plan') return this.basePlan(params);
     if (params.action === 'progress_sync') return this.progress(params);
     if (params.action === 'reminder_plan') return this.reminders(params);
@@ -96,4 +108,14 @@ export class FeishuProjectCollabTool extends BaseTool<FeishuProjectCollabParams,
     const reminders = (params.acceptance_nodes || []).map((node) => ({ node: node.name, owner: node.owner || 'TBD', due: node.due, reminderMinutesBefore: node.reminderMinutesBefore ?? 1440, message: 'Acceptance node upcoming: ' + node.name + '. Standard: ' + node.standard }));
     return ['# Acceptance Reminder Plan', '', json(reminders), '', 'Feishu actions:', '- calendar +create for acceptance reminders, or scheduled project bot messages.', '- Mention owner before due date.', '- Ask owner to submit acceptance evidence and update milestone status.'].join('\n');
   }
+
+  private createBasePlan(params: FeishuProjectCollabParams): string {
+    return ['# Executable Base Creation', '', 'lark-cli base +base-create --name ' + JSON.stringify(params.project_name + ' Project Collaboration'), 'After base is created, create tables: Project Charter, Responsibility Matrix, Acceptance Milestones, Progress Log, Risk Register.', 'Then run base +record-batch-create for project goal, collaborators, and milestones.'].join('\n');
+  }
+
+  private archiveAcceptance(params: FeishuProjectCollabParams): string {
+    const target = params.base_token ? 'base ' + params.base_token : 'sheet ' + (params.spreadsheet_token || '<spreadsheet_token>');
+    return ['# Executable Acceptance Archive', '', 'Target: ' + target, 'Content: ' + (params.acceptance_content || params.progress_content || 'Acceptance output archived.'), 'Next: append archive row and promote accepted output into Otto Project Memory.'].join('\n');
+  }
+
 }
