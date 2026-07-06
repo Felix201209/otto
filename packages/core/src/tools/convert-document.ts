@@ -32,7 +32,8 @@ export class ConvertDocumentTool extends BaseTool<ConvertDocumentToolParams, Too
 EXAMPLES:
   Single: {input_path:"/path/to/report.docx", output_format:"pdf"}
   Batch: {input_paths:["/a.docx","/b.docx"], output_format:"pdf"}
-  Merge: {input_paths:["/a.docx","/b.docx"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
+  Merge (all PDF, lossless via pdfunite): {input_paths:["/a.pdf","/b.pdf"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
+  Merge (mixed, via pandoc markdown round-trip): {input_paths:["/a.docx","/b.md"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
   Compress: {input_path:"/big.pdf", output_format:"pdf", compress:3}
   Custom: {input_path:"/doc.md", output_format:"pdf", engine:"pandoc", options:"--toc --number-sections"}
 
@@ -170,14 +171,48 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     return { llmContent: 'convert_document batch OK: '+results.length+' files converted\n'+results.join('\n'), returnDisplay: 'convert_document OK: '+results.length+' files batch-converted' };
   }
 
+  private async hasBinary(name: string): Promise<boolean> {
+    const probe = process.platform === 'win32' ? 'where ' + name : 'command -v ' + name;
+    try { await execAsync(probe); return true; } catch { return false; }
+  }
+
   private async doMerge(p: ConvertDocumentToolParams): Promise<ToolResult> {
-    const tmpDir = path.join(path.dirname(p.input_paths![0]), '.otto-merge-'+Date.now());
+    const inputs = p.input_paths!;
+    const allPdf = inputs.every((f) => path.extname(f).toLowerCase() === '.pdf');
+    const wantPdf = p.output_format.trim().toLowerCase() === 'pdf';
+
+    // Lossless path: all inputs are PDF and target is PDF -> merge with pdfunite.
+    // This preserves tables, images and styling instead of round-tripping through markdown.
+    if (allPdf && wantPdf) {
+      if (!(await this.hasBinary('pdfunite'))) {
+        return {
+          llmContent: 'convert_document FAIL: merging PDFs needs pdfunite (from poppler), which is not installed. macOS: brew install poppler. Linux: apt install poppler-utils.',
+          returnDisplay: 'convert_document FAIL: pdfunite not installed',
+        };
+      }
+      const args = inputs.map((f) => `"${f}"`).join(' ');
+      await execAsync(`pdfunite ${args} "${p.output_path}"`, { maxBuffer: 100 * 1024 * 1024 });
+      const sz = fs.existsSync(p.output_path!) ? fs.statSync(p.output_path!).size : 0;
+      if (sz === 0) throw new Error('pdfunite produced no output');
+      const label = inputs.length + ' PDFs merged -> ' + path.basename(p.output_path!) + ' (' + sz + ' bytes, lossless)';
+      return { llmContent: 'convert_document OK: ' + label, returnDisplay: 'convert_document OK: ' + label };
+    }
+
+    // Mixed / non-PDF merge still needs pandoc (markdown round-trip, may lose tables/images/styling).
+    // If pandoc is missing, fail loud rather than pretend.
+    if (!(await this.hasBinary('pandoc'))) {
+      return {
+        llmContent: 'convert_document FAIL: merging non-PDF (mixed) documents needs pandoc, which is not installed. For lossless merging, provide all-PDF inputs (uses pdfunite). macOS: brew install pandoc.',
+        returnDisplay: 'convert_document FAIL: pandoc not installed (mixed merge)',
+      };
+    }
+    const tmpDir = path.join(path.dirname(inputs[0]), '.otto-merge-'+Date.now());
     fs.mkdirSync(tmpDir, { recursive: true });
     try {
       const mdFiles: string[] = [];
-      for (let i = 0; i < p.input_paths!.length; i++) {
+      for (let i = 0; i < inputs.length; i++) {
         const mdPath = path.join(tmpDir, 'part_'+i+'.md');
-        await execAsync(`pandoc "${p.input_paths![i]}" -o "${mdPath}" -t markdown`, { maxBuffer:50*1024*1024 });
+        await execAsync(`pandoc "${inputs[i]}" -o "${mdPath}" -t markdown`, { maxBuffer:50*1024*1024 });
         mdFiles.push(mdPath);
       }
       const merged = path.join(tmpDir, 'merged.md');
