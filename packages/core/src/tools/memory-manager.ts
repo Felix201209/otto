@@ -55,6 +55,9 @@ export interface MemoryManagerToolParams {
     | 'project_archive'
     | 'project_code_config'
     | 'project_code_status'
+    | 'project_code_index'
+    | 'project_code_arch'
+    | 'project_code_search'
     | 'list';      // Show all knowledge files
 
   task_type?: string;
@@ -80,6 +83,7 @@ export interface MemoryManagerToolParams {
   memory_title?: string;
   repo_path?: string;
   mcp_server?: string;
+  query?: string;
 }
 
 export class MemoryManagerTool extends BaseTool<MemoryManagerToolParams, ToolResult> {
@@ -125,7 +129,7 @@ FILES CREATED:
           action: {
             type: Type.STRING,
             description: 'Memory operation',
-            enum: ['learn', 'recall', 'onboard', 'offboard', 'report', 'update', 'sync', 'export', 'project_create', 'project_list', 'project_add', 'project_archive', 'project_code_config', 'project_code_status', 'list'],
+            enum: ['learn', 'recall', 'onboard', 'offboard', 'report', 'update', 'sync', 'export', 'project_create', 'project_list', 'project_add', 'project_archive', 'project_code_config', 'project_code_status', 'project_code_index', 'project_code_arch', 'project_code_search', 'list'],
           },
           task_type: { type: Type.STRING, description: 'Task type: listing_entry, contract_generation, etc.' },
           context: { type: Type.STRING, description: 'What was done (for learn)' },
@@ -148,6 +152,7 @@ FILES CREATED:
           memory_title: { type: Type.STRING, description: 'Title for project_add memory record' },
           repo_path: { type: Type.STRING, description: 'Repository path for codebase-memory-mcp indexing' },
           mcp_server: { type: Type.STRING, description: 'MCP server name for codebase-memory-mcp' },
+          query: { type: Type.STRING, description: 'Search query for project_code_search' },
         },
         required: ['action'],
       },
@@ -163,9 +168,10 @@ FILES CREATED:
     if (p.action === 'offboard' && !p.employee_id) return 'memory_manager/offboard: employee_id required';
     if (p.action === 'update' && (!p.target || !p.content)) return 'memory_manager/update: target and content required';
     if (p.action === 'project_create' && !p.project_name) return 'memory_manager/project_create: project_name required';
-    if ((p.action === 'project_add' || p.action === 'project_archive' || p.action === 'project_code_config' || p.action === 'project_code_status') && !p.project_id) return 'memory_manager/project: project_id required';
+    if ((p.action === 'project_add' || p.action === 'project_archive' || p.action === 'project_code_config' || p.action === 'project_code_status' || p.action === 'project_code_index' || p.action === 'project_code_arch' || p.action === 'project_code_search') && !p.project_id) return 'memory_manager/project: project_id required';
     if (p.action === 'project_add' && !p.content) return 'memory_manager/project_add: content required';
     if (p.action === 'project_code_config' && !p.repo_path) return 'memory_manager/project_code_config: repo_path required';
+    if (p.action === 'project_code_search' && !p.query) return 'memory_manager/project_code_search: query required';
     return null;
   }
 
@@ -203,6 +209,9 @@ FILES CREATED:
         case 'project_archive': r = await this.projectArchive(p); break;
         case 'project_code_config': r = await this.projectCodeConfig(p); break;
         case 'project_code_status': r = await this.projectCodeStatus(p); break;
+        case 'project_code_index': r = await this.projectCodeIndex(p); break;
+        case 'project_code_arch': r = await this.projectCodeArch(p); break;
+        case 'project_code_search': r = await this.projectCodeSearch(p); break;
         case 'list': r = this.list(); break;
         default: return { llmContent: 'memory FAIL: unknown action', returnDisplay: 'memory FAIL: unknown action' };
       }
@@ -762,6 +771,37 @@ ${efficiencyLines.join('\n')}
       'indexStatus: ' + project.codebase.indexStatus,
       status.message,
     ].join('\n');
+  }
+
+  private getProjectCodebaseOrThrow(p: MemoryManagerToolParams): ProjectRecord {
+    const data = this.cachedProjectData;
+    const project = data?.projects.find((item) => item.id === p.project_id);
+    if (!project) throw new Error('project not found: ' + p.project_id);
+    if (!project.codebase) throw new Error('codebase memory not configured for project: ' + project.id);
+    return project;
+  }
+
+  private cachedProjectData: Awaited<ReturnType<OrgMemoryStore['load']>> | undefined;
+
+  private async projectCodeIndex(p: MemoryManagerToolParams): Promise<string> {
+    this.cachedProjectData = await this.getOrgStore().load();
+    const project = this.getProjectCodebaseOrThrow(p);
+    const result = await new CodebaseMemoryProvider(this.config).indexRepository(project.codebase!);
+    return ['project code index: ' + project.id, result.message].join('\n');
+  }
+
+  private async projectCodeArch(p: MemoryManagerToolParams): Promise<string> {
+    this.cachedProjectData = await this.getOrgStore().load();
+    const project = this.getProjectCodebaseOrThrow(p);
+    const result = await new CodebaseMemoryProvider(this.config).getArchitecture(project.codebase!);
+    return ['project code architecture: ' + project.id, result.message, JSON.stringify(result.data ?? null)].join('\n');
+  }
+
+  private async projectCodeSearch(p: MemoryManagerToolParams): Promise<string> {
+    this.cachedProjectData = await this.getOrgStore().load();
+    const project = this.getProjectCodebaseOrThrow(p);
+    const result = await new CodebaseMemoryProvider(this.config).searchGraph(project.codebase!, p.query!);
+    return ['project code search: ' + project.id, result.message, JSON.stringify(result.data ?? null)].join('\n');
   }
 
   // ============================================================

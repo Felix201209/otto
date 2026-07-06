@@ -5,6 +5,7 @@ import { DEFAULT_CODEBASE_MEMORY_SERVER } from './codebaseMemoryTypes.js';
 
 export interface CodebaseMemoryConfigHost {
   getMcpServers(): Record<string, MCPServerConfig> | undefined;
+  getToolRegistry?(): Promise<{ getTool(name: string): { execute(params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> } | undefined }>;
 }
 
 export class CodebaseMemoryProvider {
@@ -29,8 +30,36 @@ export class CodebaseMemoryProvider {
     }
     return {
       ok: false,
-      message: 'codebase-memory-mcp is not configured. Add an MCP server named  + serverName +  before indexing or querying codebase graph memory.',
+      message: 'codebase-memory-mcp is not configured. Add an MCP server named ' + serverName + ' before indexing or querying codebase graph memory.',
     };
+  }
+
+
+  async invokeTool(serverName: string, toolName: string, params: Record<string, unknown>): Promise<CodebaseMemoryToolResult> {
+    const configured = this.requireConfigured(serverName);
+    if (!configured.ok) return configured;
+    if (!this.host.getToolRegistry) {
+      return { ok: false, message: 'Tool registry is not available for codebase-memory-mcp invocation.' };
+    }
+    const registry = await this.host.getToolRegistry();
+    const tool = registry.getTool(serverName + '__' + toolName) || registry.getTool(toolName);
+    if (!tool) {
+      return { ok: false, message: 'MCP tool not discovered: ' + serverName + '__' + toolName };
+    }
+    const result = await tool.execute(params, new AbortController().signal);
+    return { ok: true, message: 'MCP tool executed: ' + toolName, data: result };
+  }
+
+  indexRepository(config: CodebaseMemoryConfig): Promise<CodebaseMemoryToolResult> {
+    return this.invokeTool(config.mcpServerName, 'index_repository', { repo_path: config.repoPath });
+  }
+
+  getArchitecture(config: CodebaseMemoryConfig): Promise<CodebaseMemoryToolResult> {
+    return this.invokeTool(config.mcpServerName, 'get_architecture', { repo_path: config.repoPath });
+  }
+
+  searchGraph(config: CodebaseMemoryConfig, query: string): Promise<CodebaseMemoryToolResult> {
+    return this.invokeTool(config.mcpServerName, 'search_graph', { repo_path: config.repoPath, name_pattern: query });
   }
 
   getSuggestedMcpServerName(): string {

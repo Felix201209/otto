@@ -150,6 +150,9 @@ describe('memoryCommand', () => {
         'archive',
         'code-config',
         'code-status',
+        'code-index',
+        'code-arch',
+        'code-search',
       ]);
     });
   });

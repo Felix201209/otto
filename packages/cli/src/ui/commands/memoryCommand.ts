@@ -60,7 +60,7 @@ function parseProjectArgs(args = ''): Record<string, string> {
 
 async function runProjectMemoryAction(
   context: Parameters<NonNullable<SlashCommand['action']>>[0],
-  action: 'project_create' | 'project_list' | 'project_add' | 'project_archive' | 'project_code_config' | 'project_code_status',
+  action: 'project_create' | 'project_list' | 'project_add' | 'project_archive' | 'project_code_config' | 'project_code_status' | 'project_code_index' | 'project_code_arch' | 'project_code_search',
   args?: string,
 ): Promise<void> {
   const config = await context.services.config;
@@ -83,6 +83,7 @@ async function runProjectMemoryAction(
     content: action === 'project_add' ? parsed.content || parsed._ : undefined,
     repo_path: parsed.repo || parsed.path || (action === 'project_code_config' ? parsed._ : undefined),
     mcp_server: parsed.server,
+    query: action === 'project_code_search' ? parsed.query || parsed._ : undefined,
   };
   const result = await tool.execute(
     params as never,
@@ -323,6 +324,24 @@ export const memoryCommand: SlashCommand = {
           description: 'Show codebase-memory-mcp status for a project',
           kind: CommandKind.BUILT_IN,
           action: async (context, args) => runProjectMemoryAction(context, 'project_code_status', args),
+        },
+        {
+          name: 'code-index',
+          description: 'Index project repo with codebase-memory-mcp',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_code_index', args),
+        },
+        {
+          name: 'code-arch',
+          description: 'Query project architecture from codebase-memory-mcp',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_code_arch', args),
+        },
+        {
+          name: 'code-search',
+          description: 'Search project code graph with codebase-memory-mcp',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_code_search', args),
         }
       ],
     },
