@@ -1,0 +1,55 @@
+name: CI
+
+# 在每个 PR 和推送到 internal 分支时跑起，作为合并前的强制质量门槛。
+# 之前仓库只有 release.yml（打 tag 才跑，且不含任何测试步骤），PR 阶段没有任何
+# 自动化检查——这正是像本次 desktop/main/index.ts 的 CJS/ESM 编译错误、
+# core/doctor.ts 的 ESM 运行时崩溃这类回归能一直躺到有人手动发现才修的原因。
+
+on:
+  pull_request:
+    branches: [internal, main]
+  push:
+    branches: [internal]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    # desktop 走 electron-builder，用 macOS runner 更贴近实际交付平台
+    # （项目目前只交付 mac .app）。
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.3'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm install
+
+      - name: 🔍 Typecheck (all workspaces, including desktop)
+        run: npm run typecheck --workspaces --if-present
+
+      - name: 🏗️ Build main chain (core/cli/server/vscode-ui-plugin)
+        run: npm run build
+
+      - name: 🏗️ Build desktop (independent electron/webpack chain)
+        run: npm run build --workspace=packages/desktop
+
+      - name: 🧪 Test core
+        run: npm run test --workspace=packages/core
+
+      - name: 🧪 Test server
+        run: npm run test --workspace=packages/server
+
+      - name: 🧪 Test cli
+        run: npm run test --workspace=packages/cli
+
+      - name: 🧪 Test desktop
+        run: npm run test --workspace=packages/desktop
