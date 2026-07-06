@@ -17,6 +17,7 @@
 import { exec } from 'child_process';
 import { existsSync } from 'fs';
 import { createRequire } from 'module';
+import { pathToFileURL } from 'url';
 
 /** 一次探测的结果。 */
 export interface DoctorCheck {
@@ -106,7 +107,7 @@ const defaultRunner: CommandRunner = (command, timeoutMs) =>
 
 /** 默认模块解析器：相对本文件所在包解析（能命中 monorepo/依赖树里的 playwright）。 */
 const defaultResolver: ModuleResolver = (moduleName) => {
-  const req = createRequire(import.meta.url);
+  const req = createRequire(pathToFileURL(__filename));
   return req.resolve(moduleName);
 };
 
