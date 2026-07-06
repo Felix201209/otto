@@ -34,7 +34,7 @@ const mockLoadServerHierarchicalMemory = loadServerHierarchicalMemory as Mock;
 describe('memoryCommand', () => {
   let mockContext: CommandContext;
 
-  const getSubCommand = (name: 'show' | 'add' | 'refresh'): SlashCommand => {
+  const getSubCommand = (name: 'show' | 'add' | 'refresh' | 'project'): SlashCommand => {
     const subCommand = memoryCommand.subCommands?.find(
       (cmd) => cmd.name === name,
     );
@@ -136,6 +136,19 @@ describe('memoryCommand', () => {
         }),
         expect.any(Number),
       );
+    });
+  });
+
+
+  describe('/memory project', () => {
+    it('should expose project memory subcommands', () => {
+      const projectCommand = getSubCommand('project');
+      expect(projectCommand.subCommands?.map((cmd) => cmd.name)).toEqual([
+        'create',
+        'list',
+        'add',
+        'archive',
+      ]);
     });
   });
 

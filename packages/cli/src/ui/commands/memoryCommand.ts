@@ -8,6 +8,7 @@ import {
   getErrorMessage,
   loadServerHierarchicalMemory,
   MemoryTool,
+  MemoryManagerTool,
   getCoreSystemPrompt,
 } from 'otto-core';
 import { getEncoding } from 'js-tiktoken';
@@ -35,6 +36,62 @@ function updateSystemInstruction(
   if (chat?.generationConfig) {
     chat.generationConfig.systemInstruction = systemInstruction;
   }
+}
+
+
+function parseProjectArgs(args = ''): Record<string, string> {
+  const result: Record<string, string> = {};
+  const parts = args.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const positional: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index].replace(/^"|"$/g, '');
+    if (part.startsWith('--')) {
+      const key = part.slice(2);
+      const value = parts[index + 1]?.replace(/^"|"$/g, '') || '';
+      result[key] = value;
+      index += 1;
+    } else {
+      positional.push(part);
+    }
+  }
+  result._ = positional.join(' ');
+  return result;
+}
+
+async function runProjectMemoryAction(
+  context: Parameters<NonNullable<SlashCommand['action']>>[0],
+  action: 'project_create' | 'project_list' | 'project_add' | 'project_archive',
+  args?: string,
+): Promise<void> {
+  const config = await context.services.config;
+  if (!config) {
+    context.ui.addItem({ type: MessageType.ERROR, text: 'Config not loaded.' }, Date.now());
+    return;
+  }
+  const parsed = parseProjectArgs(args || '');
+  const tool = new MemoryManagerTool(config);
+  const result = await tool.execute(
+    {
+      action,
+      project_id: parsed.id || parsed.project || (action !== 'project_create' ? parsed._ : undefined),
+      project_name: parsed.name || (action === 'project_create' ? parsed._ : undefined),
+      project_goal: parsed.goal,
+      project_type: parsed.type as never,
+      team_id: parsed.team,
+      company_id: parsed.company,
+      user_id: parsed.user,
+      memory_title: parsed.title,
+      content: action === 'project_add' ? parsed.content || parsed._ : undefined,
+    },
+    new AbortController().signal,
+  );
+  context.ui.addItem(
+    {
+      type: String(result.llmContent).startsWith('memory FAIL') ? MessageType.ERROR : MessageType.INFO,
+      text: typeof result.returnDisplay === 'string' ? result.returnDisplay : JSON.stringify(result.returnDisplay),
+    },
+    Date.now(),
+  );
 }
 
 export const memoryCommand: SlashCommand = {
@@ -222,6 +279,37 @@ export const memoryCommand: SlashCommand = {
           );
         }
       },
+    },
+    {
+      name: 'project',
+      description: 'Manage organization project memory',
+      kind: CommandKind.BUILT_IN,
+      subCommands: [
+        {
+          name: 'create',
+          description: 'Create a project memory container',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_create', args),
+        },
+        {
+          name: 'list',
+          description: 'List project memory containers',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_list', args),
+        },
+        {
+          name: 'add',
+          description: 'Add memory to a project',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_add', args),
+        },
+        {
+          name: 'archive',
+          description: 'Archive project and generate candidate skill',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args) => runProjectMemoryAction(context, 'project_archive', args),
+        },
+      ],
     },
     {
       name: 'refresh',
