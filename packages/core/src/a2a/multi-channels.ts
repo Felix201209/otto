@@ -2,19 +2,34 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
  * Otto Multi-Channel Gateway.
- * Bridges corporate communication channels:
- *   - WeChat (微信)
- *   - WeCom (企业微信)
- *   - DingTalk (钉钉)
- *   - Feishu (飞书 - natively aligned)
  *
- * This acts as an abstract routing system so agents can:
- *   1. Read messages from multiple platforms
- *   2. Synchronize tasks and progress universally
- *   3. Deliver structured documents seamlessly
+ * 诚实边界（重要）：
+ *   除飞书外的渠道（微信 / 企业微信 / 钉钉）**尚未真正接通**——本文件不含任何
+ *   真实的鉴权、Webhook 注册或消息投递逻辑。因此这些渠道的 connect/broadcast
+ *   一律返回「未实现 / 未送达」，绝不谎报成功。
+ *
+ *   飞书本身也不在本网关内直接发送：真正的飞书收发走独立的飞书网关 / daemon
+ *   （见 cli 的 feishuDaemon）。本文件对飞书同样不声称「已群发」。
+ *
+ *   之所以保留这层壳，是为了在真正接入前，给调用方（Agent / 工具）一个统一的
+ *   入口，并让它们拿到「没发出去」的真话，而不是假的「已送达」。
  */
 
 export type ChannelType = 'wechat' | 'wecom' | 'dingtalk' | 'feishu';
+
+/** 尚未真正实现收发的渠道；对它们的 connect/broadcast 一律 fail-loud。 */
+const UNIMPLEMENTED_CHANNELS: readonly ChannelType[] = [
+  'wechat',
+  'wecom',
+  'dingtalk',
+];
+
+const CHANNEL_LABEL: Record<ChannelType, string> = {
+  wechat: '微信',
+  wecom: '企业微信',
+  dingtalk: '钉钉',
+  feishu: '飞书',
+};
 
 export interface ChannelMessage {
   id: string;
@@ -35,87 +50,64 @@ export interface ChannelCredentials {
 }
 
 export class MultiChannelGateway {
-  private activeChannels: Map<ChannelType, boolean> = new Map();
-
-  constructor() {
-    this.activeChannels.set('feishu', true); // Feishu is natively enabled
-    this.activeChannels.set('wechat', false);
-    this.activeChannels.set('wecom', false);
-    this.activeChannels.set('dingtalk', false);
+  /**
+   * 判断某渠道当前是否有真实收发能力。
+   * 目前恒为 false（含飞书——飞书走独立网关，不在本文件内发送）。
+   * 真接入某渠道后，在此返回其真实连接状态即可。
+   */
+  isChannelReady(channel: ChannelType): boolean {
+    void channel;
+    return false;
   }
 
   /**
-   * Connect and activate an enterprise communication channel.
-   * Pulls QR codes or registers Webhook endpoints depending on platform.
+   * 尝试连接一个渠道。
+   *
+   * 诚实实现：微信 / 企业微信 / 钉钉尚无真实鉴权逻辑，一律返回 success:false，
+   * message 明说未实现；飞书不在本网关内直连，引导走飞书网关。
    */
-  async connectChannel(channel: ChannelType, creds: ChannelCredentials): Promise<{ success: boolean; message: string }> {
-    try {
-      console.log(`[Multi-Channel] Connecting to ${channel.toUpperCase()}...`);
+  async connectChannel(
+    channel: ChannelType,
+    _creds: ChannelCredentials,
+  ): Promise<{ success: boolean; message: string }> {
+    const label = CHANNEL_LABEL[channel] ?? channel;
 
-      switch (channel) {
-        case 'wecom':
-          return await this.initWeCom(creds);
-        case 'dingtalk':
-          return await this.initDingTalk(creds);
-        case 'wechat':
-          return await this.initWeChatPersonal();
-        case 'feishu':
-          return { success: true, message: 'Feishu natively connected and active' };
-        default:
-          return { success: false, message: `Unsupported channel: ${channel}` };
-      }
-    } catch (e: any) {
-      return { success: false, message: `Connection failed: ${e.message}` };
+    if (channel === 'feishu') {
+      return {
+        success: false,
+        message:
+          '飞书不在 multi_channel 网关内直连：请通过独立的飞书网关 / daemon（otto feishu daemon start）接入，本工具不代为连接。',
+      };
     }
+
+    if (UNIMPLEMENTED_CHANNELS.includes(channel)) {
+      return {
+        success: false,
+        message: `${label}（${channel}）渠道尚未实现：暂无真实鉴权与消息通道，拒绝谎报已连接。待接入后此处才会返回成功。`,
+      };
+    }
+
+    return { success: false, message: `不支持的渠道：${channel}` };
   }
 
   /**
-   * Broadcast message/progress update to all active corporate channels simultaneously.
+   * 广播消息 / 进度更新。
+   *
+   * 诚实实现：没有任何渠道具备真实投递能力，故所有渠道一律返回 false（未送达）。
+   * 调用方据此可如实告知「消息没有发出去」，绝不假报送达。
    */
-  async broadcastUpdate(title: string, body: string, fileUrl?: string): Promise<Record<ChannelType, boolean>> {
-    const results: Record<ChannelType, boolean> = {
-      feishu: true,
+  async broadcastUpdate(
+    title: string,
+    _body: string,
+    _fileUrl?: string,
+  ): Promise<Record<ChannelType, boolean>> {
+    void title;
+    // 每个渠道都未真正实现投递 → 一律 false。
+    return {
+      feishu: false,
       wecom: false,
       dingtalk: false,
-      wechat: false
+      wechat: false,
     };
-
-    console.log(`[Multi-Channel] Broadcasting: "${title}"`);
-
-    for (const [channel, active] of this.activeChannels.entries()) {
-      if (active && channel !== 'feishu') {
-        try {
-          // Push logic to third-party Webhook API endpoints
-          results[channel] = true;
-          console.log(`[Multi-Channel] Broadcast succeeded for ${channel.toUpperCase()}`);
-        } catch {
-          results[channel] = false;
-        }
-      }
-    }
-
-    return results;
-  }
-
-  private async initWeCom(creds: ChannelCredentials): Promise<{ success: boolean; message: string }> {
-    // WeCom uses corporate App-id + AgentSecret
-    const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${creds.appId}&corpsecret=${creds.appSecret}`;
-    // Fetch and cache corporate access token
-    this.activeChannels.set('wecom', true);
-    return { success: true, message: 'WeCom (企业微信) successfully linked and listening' };
-  }
-
-  private async initDingTalk(creds: ChannelCredentials): Promise<{ success: boolean; message: string }> {
-    // DingTalk uses AppKey + AppSecret
-    const url = `https://oapi.dingtalk.com/gettoken?appkey=${creds.appId}&appsecret=${creds.appSecret}`;
-    // Fetch and cache DingTalk credentials
-    this.activeChannels.set('dingtalk', true);
-    return { success: true, message: 'DingTalk (钉钉) successfully linked and listening' };
-  }
-
-  private async initWeChatPersonal(): Promise<{ success: boolean; message: string }> {
-    // Personal WeChat is bridged via Webhook wrappers or local automated clients (like iPad protocol / Wechaty)
-    this.activeChannels.set('wechat', true);
-    return { success: true, message: 'WeChat (微信) successfully linked via iPad gateway' };
   }
 }

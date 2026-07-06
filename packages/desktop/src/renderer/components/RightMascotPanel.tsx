@@ -2,57 +2,35 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
-type TabType = 'memory' | 'commands' | 'browser' | 'ide' | 'notes';
+// 诚实原则：只保留有真实功能或诚实空态的 tab。
+//   - memory：暂无后端 → 诚实空态占位（不再编造「望京店房源」等假条目）。
+//   - browser：内置 iframe 浏览器，真实可用，保留。
+//   - notes：真实可编辑的本地文本框；暂不落盘，明确标注「不保存」。
+// 已移除的 tab：
+//   - commands：纯展示文字、点了无反应，且含桌面端已禁用的假命令 → 撤下。
+//   - ide：硬编码的假代码片段装饰、纯摆设 → 撤下。
+type TabType = 'memory' | 'browser' | 'notes';
+
+const TAB_LABEL: Record<TabType, string> = {
+  memory: '记忆',
+  browser: '浏览器',
+  notes: '笔记',
+};
+
+const TABS: TabType[] = ['memory', 'browser', 'notes'];
 
 export function RightMascotPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabType>('memory');
-  const [memoryFiles, setMemoryFiles] = useState<string[]>([]);
-  const [commandList, setCommandList] = useState<string[]>([]);
-  const [noteText, setNoteText] = useState<string>('# 我的工作笔记\n\n- 今日任务：分析朝阳区数据并生成周报。');
+  const [noteText, setNoteText] = useState<string>('');
   const [browserUrl, setBrowserUrl] = useState<string>('about:blank');
-
-  // Load local memory indices
-  const fetchMemory = async () => {
-    try {
-      // In production, fetch via window.otto API or endpoint.
-      // Mocking highly descriptive organizational memories.
-      setMemoryFiles([
-        'employee.markdown - 个人习惯与效率趋势',
-        'department.markdown - 望京店标准房源录入SOP',
-        'role.markdown - 房产经纪人高频协作流程',
-        'workflows/listing_entry.markdown - 3次自动沉淀模型',
-        'reports/report_30d_2026.md - 团队省时与Token花费月报'
-      ]);
-    } catch {
-      setMemoryFiles([]);
-    }
-  };
-
-  const fetchCommands = async () => {
-    setCommandList([
-      '/new - 新建会话',
-      '/model - 切换模型',
-      '/settings - 模型与飞书设置',
-      '/feishu-start - 开启飞书控制',
-      '/feishu-stop - 停止飞书控制',
-      '/doctor - 本机环境诊断',
-      '/workflow - 启动工作流任务',
-      '/export - 导出当前结果'
-    ]);
-  };
-
-  useEffect(() => {
-    fetchMemory();
-    fetchCommands();
-  }, []);
 
   return (
     <aside className="otto-right-panel" style={{ width: '300px', minWidth: '300px', height: '100%', background: 'var(--otto-sidebar-bg)', borderLeft: '1px solid var(--otto-border)', display: 'flex', flexDirection: 'column' }}>
       {/* Tab Selectors */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--otto-border)', background: 'var(--otto-surface)', padding: '4px' }}>
-        {(['memory', 'commands', 'browser', 'ide', 'notes'] as TabType[]).map((tab) => (
+        {TABS.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -69,7 +47,7 @@ export function RightMascotPanel(): React.JSX.Element {
               transition: 'all 0.12s'
             }}
           >
-            {tab === 'memory' ? '记忆' : tab === 'commands' ? '命令' : tab === 'browser' ? '浏览器' : tab === 'ide' ? 'IDE' : '笔记'}
+            {TAB_LABEL[tab]}
           </button>
         ))}
       </div>
@@ -79,34 +57,11 @@ export function RightMascotPanel(): React.JSX.Element {
         {activeTab === 'memory' && (
           <div>
             <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', marginBottom: '8px', textTransform: 'uppercase' }}>组织/部门记忆文件</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {memoryFiles.map((file, i) => (
-                <div key={i} style={{ padding: '8px 10px', background: 'var(--otto-surface)', border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', fontSize: '11px', color: 'var(--otto-text)', cursor: 'pointer' }}
-                     title={`正在查看: ${file.split(' - ')[0]}`}>
-                  <span style={{ color: 'var(--otto-text-secondary)', marginRight: '6px' }}>□</span>
-                  {file}
-                </div>
-              ))}
-            </div>
-            <div style={{ fontSize: '10px', color: 'var(--otto-text-secondary)', marginTop: '16px', lineHeight: '1.4' }}>
-              * 记忆由 learn 机制在干活过程中静默生长、脱敏，并在 onboard 时由新员工自动继承。
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'commands' && (
-          <div>
-            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', marginBottom: '8px', textTransform: 'uppercase' }}>Otto / EasyCode 命令索引</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {commandList.map((cmd, i) => (
-                <div key={i} style={{ padding: '8px 10px', background: 'var(--otto-surface)', border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', fontSize: '11px', color: 'var(--otto-text)' }}>
-                  <span style={{ color: 'var(--otto-text-secondary)', marginRight: '6px' }}>/</span>
-                  {cmd}
-                </div>
-              ))}
-            </div>
-            <div style={{ fontSize: '10px', color: 'var(--otto-text-secondary)', marginTop: '16px', lineHeight: '1.4' }}>
-              8 个专家已移入左侧「常见任务」。这里仅保留命令与工作台能力索引。
+            {/* 诚实空态：未接入记忆后端前不展示任何编造条目。 */}
+            <div style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--otto-text-secondary)', fontSize: '11px', lineHeight: '1.6', background: 'var(--otto-surface)', border: '1px dashed var(--otto-border)', borderRadius: 'var(--otto-radius-sm)' }}>
+              接入记忆后端后，这里会显示组织 / 部门 / 角色的真实记忆文件。
+              <br />
+              当前尚未接入，暂无内容。
             </div>
           </div>
         )}
@@ -133,27 +88,17 @@ export function RightMascotPanel(): React.JSX.Element {
           </div>
         )}
 
-        {activeTab === 'ide' && (
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', textTransform: 'uppercase' }}>内置极客 IDE</div>
-            <div style={{ flex: 1, border: '1px solid var(--otto-border)', borderRadius: 'var(--otto-radius-sm)', background: 'var(--otto-surface)', padding: '8px', fontFamily: 'var(--otto-font-mono)', fontSize: '11px', color: 'var(--otto-text-secondary)', overflowY: 'auto' }}>
-              <div><span style={{ color: 'var(--otto-text-secondary)' }}>const</span> <span style={{ color: 'var(--otto-text)' }}>main</span> = () =&gt; &#123;</div>
-              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>const</span> <span style={{ color: 'var(--otto-text-secondary)' }}>agent</span> = <span style={{ color: 'var(--otto-text-secondary)' }}>new</span> <span style={{ color: 'var(--otto-text)' }}>Otto</span>(&#123;</div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;role: <span style={{ color: 'var(--otto-text-tertiary)' }}>&quot;real_estate_agent&quot;</span>,</div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;memory: <span style={{ color: 'var(--otto-text-secondary)' }}>true</span></div>
-              <div>&nbsp;&nbsp;&#125;);</div>
-              <div>&nbsp;&nbsp;<span style={{ color: 'var(--otto-text-secondary)' }}>agent</span>.<span style={{ color: 'var(--otto-text)' }}>learn</span>(<span style={{ color: 'var(--otto-text-tertiary)' }}>&quot;onboard&quot;</span>);</div>
-              <div>&#125;;</div>
-            </div>
-          </div>
-        )}
-
         {activeTab === 'notes' && (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', textTransform: 'uppercase' }}>Markdown 本地笔记</div>
+            <div style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--otto-text-secondary)', textTransform: 'uppercase' }}>本地笔记</div>
+            {/* 诚实：暂不落盘，明确告知仅当前会话有效，避免用户误以为已保存。 */}
+            <div style={{ fontSize: '10px', color: 'var(--otto-text-secondary)', lineHeight: '1.4' }}>
+              临时草稿：仅当前会话有效，暂不保存到本地。
+            </div>
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
+              placeholder="随手记点什么…（暂不保存）"
               style={{
                 flex: 1,
                 width: '100%',

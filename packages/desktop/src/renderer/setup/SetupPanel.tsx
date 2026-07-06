@@ -89,47 +89,27 @@ export function SetupPanel({
 
   const preset = findPreset(form.presetId) ?? DEFAULT_PRESET;
 
-  // ── 飞书一键连接控制 ──
-  const [fsStatus, setFsStatus] = useState<string>('获取中...');
-  const [fsRunning, setFsRunning] = useState<boolean>(false);
-  const [fsLoading, setFsRunningLoading] = useState<boolean>(false);
-
-  const checkFeishuStatus = async () => {
-    try {
-      const res = await window.otto?.feishuStatus();
-      if (res) {
-        setFsStatus(res.text);
-        setFsRunning(res.running);
-      }
-    } catch {
-      setFsStatus('无法读取状态');
-    }
-  };
+  // ── 飞书一键连接控制（桌面端暂未接管 daemon）──
+  // 诚实说明来自 main 的 feishuStatus handler（返回「桌面端暂不支持、请用 CLI」）。
+  // 桌面端并未托管进程，因此不提供启停按钮、不假报「运行中」；仅展示这段说明。
+  const [fsStatus, setFsStatus] = useState<string>(
+    '桌面端暂不支持在此一键启停飞书守护进程，请在终端使用：otto feishu daemon start / stop / status。',
+  );
 
   useEffect(() => {
-    checkFeishuStatus();
-    const interval = setInterval(checkFeishuStatus, 4000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleToggleFeishu = async () => {
-    setFsRunningLoading(true);
-    try {
-      if (fsRunning) {
-        setFsStatus('正在停止...');
-        const res = await window.otto?.feishuStop();
-        setFsStatus(res.text);
-      } else {
-        setFsStatus('正在开启...');
-        const res = await window.otto?.feishuStart();
-        setFsStatus(res.text);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await window.otto?.feishuStatus();
+        if (!cancelled && res?.text) setFsStatus(res.text);
+      } catch {
+        // 读取失败保留默认诚实说明。
       }
-      await checkFeishuStatus();
-    } catch (e: unknown) {
-      setFsStatus('操作失败: ' + (e instanceof Error ? e.message : '未知错误'));
-    }
-    setFsRunningLoading(false);
-  };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const errors = useMemo(() => validateForm(form), [form]);
   const valid = Object.keys(errors).length === 0;
@@ -523,12 +503,12 @@ export function SetupPanel({
         ) : null}
 
 
-        {/* —— 飞书一键控制面板 —— */}
+        {/* —— 飞书一键控制面板（桌面端暂未接管 daemon，诚实禁用）—— */}
         <div className="otto-setup__section" style={{ marginTop: '24px', padding: '16px', background: 'var(--otto-sidebar-bg)', borderRadius: 'var(--otto-radius)' }}>
           <label className="otto-setup__label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span>飞书双向控制与常驻守护</span>
             <span className="otto-badge otto-badge--feishu" style={{ fontSize: '11px' }}>
-              {fsRunning ? '运行中' : '未开启'}
+              即将支持
             </span>
           </label>
           <p className="otto-setup__hint" style={{ marginBottom: '14px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
@@ -537,12 +517,12 @@ export function SetupPanel({
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
               type="button"
-              disabled={fsLoading}
-              className={`otto-setup__btn ${fsRunning ? 'otto-setup__btn--ghost' : 'otto-setup__btn--primary'}`}
-              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
-              onClick={handleToggleFeishu}
+              disabled
+              className="otto-setup__btn otto-setup__btn--ghost"
+              title="桌面端暂不支持一键启停，请在终端使用 otto feishu daemon"
+              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px', opacity: 0.6, cursor: 'not-allowed' }}
             >
-              {fsLoading ? '处理中...' : fsRunning ? '🛑 停止飞书控制' : '🚀 一键开启飞书控制'}
+              飞书一键控制（即将支持）
             </button>
             <button
               type="button"

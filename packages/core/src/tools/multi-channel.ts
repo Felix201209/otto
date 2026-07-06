@@ -110,6 +110,13 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
             appId: p.app_id || '',
             appSecret: p.app_secret || '',
           });
+          // 诚实：连接失败（含「未实现」）不许包装成 OK。
+          if (!res.success) {
+            return {
+              llmContent: `multi_channel FAIL: ${res.message}`,
+              returnDisplay: `[FAIL] ${p.channel}: ${res.message}`,
+            };
+          }
           return {
             llmContent: `multi_channel OK: ${res.message}`,
             returnDisplay: `[OK] Connected to ${p.channel}`,
@@ -117,19 +124,40 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
         }
         case 'broadcast': {
           const res = await this.gateway.broadcastUpdate(p.title!, p.content!);
-          const successful = Object.entries(res)
-            .filter(([_, active]) => active)
+          const delivered = Object.entries(res)
+            .filter(([, ok]) => ok)
             .map(([chan]) => chan.toUpperCase());
 
+          // 一个渠道都没真正送达 → 明确报「未发送」，不谎报已群发。
+          if (delivered.length === 0) {
+            const msg =
+              '消息未发送：微信 / 企业微信 / 钉钉渠道尚未实现真实投递，飞书请走独立飞书网关。' +
+              '本工具不会假报送达。';
+            return {
+              llmContent: `multi_channel FAIL: ${msg}`,
+              returnDisplay: `[FAIL] 未送达任何渠道`,
+            };
+          }
+
           return {
-            llmContent: `multi_channel OK: Broadcast completed. Successfully delivered to: ${successful.join(', ')}`,
-            returnDisplay: `[OK] Broadcasted to ${successful.length} channels`,
+            llmContent: `multi_channel OK: 已送达以下渠道：${delivered.join(', ')}`,
+            returnDisplay: `[OK] Broadcasted to ${delivered.length} channels`,
           };
         }
         case 'status': {
+          // 诚实：如实反映每个渠道是否真的接通，不再硬编码「全部已连接」。
+          const channels: ChannelType[] = ['wechat', 'wecom', 'dingtalk', 'feishu'];
+          const lines = channels.map((c) => {
+            if (c === 'feishu') {
+              return 'Feishu (飞书): 未在本工具内接通，请走独立飞书网关 (otto feishu daemon)';
+            }
+            return this.gateway.isChannelReady(c)
+              ? `${c}: Connected`
+              : `${c}: 未接通（尚未实现）`;
+          });
           return {
-            llmContent: `multi_channel OK: WeChat (Connected), WeCom (Connected), DingTalk (Connected), Feishu (Connected)`,
-            returnDisplay: `[OK] All channels active`,
+            llmContent: `multi_channel status:\n${lines.join('\n')}`,
+            returnDisplay: `[INFO] 无渠道真实接通（微信/企微/钉钉未实现，飞书走独立网关）`,
           };
         }
         default:
