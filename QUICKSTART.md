@@ -4,9 +4,33 @@
 
 ## 环境要求
 
+### 必需（核心功能）
+
 - **Node.js 20+**（推荐用 [nvm](https://github.com/nvm-sh/nvm) 安装）
 - macOS 或 Linux
 - git
+
+### 可选（高级功能，按需安装）
+
+以下依赖为可选的高级功能模块。未安装时 Otto 核心功能不受影响，对应模块会自动降级。
+
+| 依赖 | 安装命令 | 提供的能力 | 未装时的降级行为 |
+|------|---------|-----------|----------------|
+| **Python 3.10+** | 系统包管理器 | OR-Tools 任务优化服务 | — |
+| **ortools + flask** | `pip install -r requirements.txt` | 多约束任务最优分配（数学优化层） | 降级为 LLM/规则分配 |
+| **mem0ai** | 已包含在 npm 依赖中（`npm install` 自动安装） | 结构化记忆图谱（实体/关系/偏好自动提取） | 降级为文本文件记忆 |
+
+> **Windows 用户注意**：`mem0ai` 依赖 `better-sqlite3` 原生模块。如果安装时报 SSL 证书错误或 node-gyp 编译失败，执行：
+> ```bash
+> # 方案1：关闭 SSL 验证后重装
+> npm config set strict-ssl false
+> npm install
+> npm config set strict-ssl true
+>
+> # 方案2：如果 node-gyp 编译失败（Python 3.12+ 缺少 distutils）
+> pip install setuptools
+> # 或指定 Python 3.10/3.11 给 node-gyp
+> ```
 
 ## 三步安装
 

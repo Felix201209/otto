@@ -1,0 +1,5 @@
+# Otto Python 依赖（OR-Tools 任务分配优化服务）
+# 安装: pip install -r requirements.txt
+
+ortools>=9.15
+flask>=3.1

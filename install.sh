@@ -46,6 +46,22 @@ npm link --ignore-scripts
 command -v otto >/dev/null 2>&1 || die "otto 命令未链接成功（可能是全局目录无写权限）。试试：sudo npm link --ignore-scripts"
 ok "otto 命令已就位：$(command -v otto)"
 
+# ── 4. 可选：安装 Python 依赖（OR-Tools 任务优化） ──────────
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+  command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
+  step "检测到 Python，安装可选依赖（OR-Tools 任务优化服务）"
+  if $PYTHON_BIN -m pip install -r requirements.txt >/dev/null 2>&1; then
+    ok "Python 依赖已安装（OR-Tools 任务优化可用）"
+  else
+    warn "Python 依赖安装失败（不影响核心功能，OR-Tools 任务优化将降级为规则分配）"
+    warn "可稍后手动执行：pip install -r requirements.txt"
+  fi
+else
+  warn "未检测到 Python，OR-Tools 任务优化服务不可用（核心功能不受影响）"
+  warn "如需启用，请安装 Python 3.10+ 后执行：pip install -r requirements.txt"
+fi
+
 # ── 完成 ───────────────────────────────────────────────────────
 printf "\n${green}安装完成！${reset}\n\n"
 printf "${cyan}下一步：配置一个模型${reset}（二选一）\n"
