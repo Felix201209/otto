@@ -29,7 +29,10 @@ import {
 } from './tools.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
-import { Config, ApprovalMode } from '../config/config.js';
+import { Config } from '../config/config.js';
+import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
+import { createProjectArchiveSummary, createSkillCandidate } from '../memory/skillFormation.js';
+import type { OrgMemoryRecord, ProjectRecord, ProjectType, UsageRecord } from '../memory/orgMemoryTypes.js';
 
 const MEMORY_DIR = path.join(os.homedir(), '.otto', 'memory');
 const WORKFLOWS_DIR = path.join(MEMORY_DIR, 'workflows');
@@ -45,6 +48,10 @@ export interface MemoryManagerToolParams {
     | 'update'     // Manually update a knowledge file
     | 'sync'       // Prepare anonymized knowledge for cloud
     | 'export'     // Export all knowledge
+    | 'project_create'
+    | 'project_list'
+    | 'project_add'
+    | 'project_archive'
     | 'list';      // Show all knowledge files
 
   task_type?: string;
@@ -60,6 +67,14 @@ export interface MemoryManagerToolParams {
   period?: string;
   /** For report: who is viewing ('employee' sees own, 'manager' sees aggregated) */
   viewer?: 'employee' | 'manager';
+  project_id?: string;
+  project_name?: string;
+  project_type?: ProjectType;
+  project_goal?: string;
+  team_id?: string;
+  company_id?: string;
+  user_id?: string;
+  memory_title?: string;
 }
 
 export class MemoryManagerTool extends BaseTool<MemoryManagerToolParams, ToolResult> {
@@ -85,6 +100,10 @@ ACTIONS:
              {action:"update", target:"department", content:"## new SOP..."}
   sync:      Prepare anonymized knowledge for cloud upload.
   export:    Export all knowledge to single file.
+  project_create: Create a staged-goal project memory container.
+  project_list:   List organization memory projects.
+  project_add:    Add a memory record to a project.
+  project_archive: Archive a project and generate a candidate skill when usage qualifies.
   list:      Show all knowledge files and sizes.
 
 FILES CREATED:
@@ -101,7 +120,7 @@ FILES CREATED:
           action: {
             type: Type.STRING,
             description: 'Memory operation',
-            enum: ['learn', 'recall', 'onboard', 'offboard', 'report', 'update', 'sync', 'export', 'list'],
+            enum: ['learn', 'recall', 'onboard', 'offboard', 'report', 'update', 'sync', 'export', 'project_create', 'project_list', 'project_add', 'project_archive', 'list'],
           },
           task_type: { type: Type.STRING, description: 'Task type: listing_entry, contract_generation, etc.' },
           context: { type: Type.STRING, description: 'What was done (for learn)' },
@@ -114,6 +133,14 @@ FILES CREATED:
           output_path: { type: Type.STRING, description: 'Export output path' },
           period: { type: Type.STRING, description: 'Report period: 7d, 30d, 90d. Default: 30d' },
           viewer: { type: Type.STRING, description: 'Report viewer: employee (own stats) or manager (aggregated)', enum: ['employee', 'manager'] },
+          project_id: { type: Type.STRING, description: 'Project id for project memory operations' },
+          project_name: { type: Type.STRING, description: 'Project name for project_create' },
+          project_type: { type: Type.STRING, description: 'Project type such as code, marketing, sales, product, docs, other' },
+          project_goal: { type: Type.STRING, description: 'Project staged goal' },
+          team_id: { type: Type.STRING, description: 'Team or department id' },
+          company_id: { type: Type.STRING, description: 'Company id' },
+          user_id: { type: Type.STRING, description: 'User id for ownership and attribution' },
+          memory_title: { type: Type.STRING, description: 'Title for project_add memory record' },
         },
         required: ['action'],
       },
@@ -128,6 +155,9 @@ FILES CREATED:
     if (p.action === 'onboard' && !p.employee_id) return 'memory_manager/onboard: employee_id required';
     if (p.action === 'offboard' && !p.employee_id) return 'memory_manager/offboard: employee_id required';
     if (p.action === 'update' && (!p.target || !p.content)) return 'memory_manager/update: target and content required';
+    if (p.action === 'project_create' && !p.project_name) return 'memory_manager/project_create: project_name required';
+    if ((p.action === 'project_add' || p.action === 'project_archive') && !p.project_id) return 'memory_manager/project: project_id required';
+    if (p.action === 'project_add' && !p.content) return 'memory_manager/project_add: content required';
     return null;
   }
 
@@ -159,6 +189,10 @@ FILES CREATED:
         case 'update': r = this.update(p); break;
         case 'sync': r = this.sync(p); break;
         case 'export': r = this.export(p); break;
+        case 'project_create': r = await this.projectCreate(p); break;
+        case 'project_list': r = await this.projectList(p); break;
+        case 'project_add': r = await this.projectAdd(p); break;
+        case 'project_archive': r = await this.projectArchive(p); break;
         case 'list': r = this.list(); break;
         default: return { llmContent: 'memory FAIL: unknown action', returnDisplay: 'memory FAIL: unknown action' };
       }
@@ -492,7 +526,7 @@ ${efficiencyLines.join('\n')}
     };
     const filePath = targetMap[p.target!];
     if (!filePath) return 'Invalid target: ' + p.target;
-    let existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
     fs.writeFileSync(filePath, existing + '\n' + p.content + '\n');
     return `Updated ${p.target}.markdown (+${p.content!.length} chars)`;
   }
@@ -577,6 +611,113 @@ ${efficiencyLines.join('\n')}
       }
     }
     return parts.join('\n');
+  }
+
+  private getOrgStore(): OrgMemoryStore {
+    return new OrgMemoryStore(this.config.getProjectRoot());
+  }
+
+  private makeId(prefix: string, seed: string): string {
+    const safe = seed.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+    return prefix + '_' + (safe || Date.now().toString(36));
+  }
+
+  private async projectCreate(p: MemoryManagerToolParams): Promise<string> {
+    const now = new Date().toISOString();
+    const companyId = p.company_id || 'default-company';
+    const teamId = p.team_id || 'default-team';
+    const userId = p.user_id || os.userInfo().username;
+    const project: ProjectRecord = {
+      id: p.project_id || this.makeId('project', p.project_name!),
+      companyId,
+      teamId,
+      name: p.project_name!,
+      type: p.project_type || 'other',
+      status: 'active',
+      goal: p.project_goal || p.project_name!,
+      ownerUserId: userId,
+      memberUserIds: [userId],
+      linkedSessionIds: [],
+      assetRefs: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.getOrgStore().upsertProject(project);
+    return 'project created: ' + project.id + ' (' + project.name + ')';
+  }
+
+  private async projectList(p: MemoryManagerToolParams): Promise<string> {
+    const data = await this.getOrgStore().load();
+    const projects = data.projects.filter((project) => {
+      if (p.company_id && project.companyId !== p.company_id) return false;
+      if (p.team_id && project.teamId !== p.team_id) return false;
+      return true;
+    });
+    if (projects.length === 0) return 'no projects';
+    return projects.map((project) => '- ' + project.id + ': ' + project.name + ' [' + project.status + '] ' + project.goal).join('\n');
+  }
+
+  private async projectAdd(p: MemoryManagerToolParams): Promise<string> {
+    const data = await this.getOrgStore().load();
+    const project = data.projects.find((item) => item.id === p.project_id);
+    if (!project) throw new Error('project not found: ' + p.project_id);
+    const now = new Date().toISOString();
+    const memory: OrgMemoryRecord = {
+      id: this.makeId('memory', project.id + '_' + Date.now()),
+      scope: 'project',
+      companyId: project.companyId,
+      teamId: project.teamId,
+      projectId: project.id,
+      type: 'fact',
+      title: p.memory_title || 'Project memory',
+      content: p.content!,
+      tags: [],
+      visibility: 'project_members',
+      source: 'manual',
+      confidence: 1,
+      createdBy: p.user_id || os.userInfo().username,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.getOrgStore().addMemory(memory);
+    return 'project memory added: ' + project.id + ' ' + memory.id;
+  }
+
+  private async projectArchive(p: MemoryManagerToolParams): Promise<string> {
+    const store = this.getOrgStore();
+    const data = await store.load();
+    const project = data.projects.find((item) => item.id === p.project_id);
+    if (!project) throw new Error('project not found: ' + p.project_id);
+    const now = new Date().toISOString();
+    const archivedProject: ProjectRecord = { ...project, status: 'archived', updatedAt: now, completedAt: now };
+    await store.upsertProject(archivedProject);
+    const memories = data.memories.filter((memory) => memory.projectId === project.id);
+    const usage: UsageRecord[] = data.usage.filter((record) => record.projectId === project.id);
+    const summary = createProjectArchiveSummary(archivedProject, memories);
+    const summaryMemory: OrgMemoryRecord = {
+      id: this.makeId('memory', project.id + '_archive'),
+      scope: 'project',
+      companyId: project.companyId,
+      teamId: project.teamId,
+      projectId: project.id,
+      type: 'summary',
+      title: 'Archive: ' + project.name,
+      content: summary,
+      tags: ['archive'],
+      visibility: 'team_visible',
+      source: 'auto_learned',
+      confidence: 1,
+      createdBy: p.user_id || os.userInfo().username,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await store.addMemory(summaryMemory);
+    const candidate = createSkillCandidate({ project: archivedProject, memories, usage, now, createdBy: summaryMemory.createdBy });
+    if (candidate) {
+      await store.addSkill(candidate);
+      return 'project archived: ' + project.id + '\n' + 'candidate skill: ' + candidate.id;
+    }
+    return 'project archived: ' + project.id + '\n' + 'candidate skill: not enough successful repeated usage';
   }
 
   // ============================================================
