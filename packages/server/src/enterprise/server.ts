@@ -382,11 +382,26 @@ td{padding:10px 12px;border-top:1px solid #334155;font-size:13px}
 .section{margin-bottom:26px}
 .section h2{font-size:16px;color:#94a3b8;margin-bottom:11px}
 .empty{color:#475569;font-size:13px;padding:14px;text-align:center}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:26px}
+.chart-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px 18px}
+.chart-card h3{font-size:14px;color:#94a3b8;margin-bottom:12px;font-weight:600}
+.chart-card svg{width:100%;height:auto;display:block}
+.chart-empty{color:#475569;font-size:13px;padding:28px 0;text-align:center}
+.bottlenecks{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.bn{background:#1e293b;border:1px solid #334155;border-left:3px solid #fb923c;border-radius:8px;padding:12px 14px}
+.bn .k{color:#94a3b8;font-size:12px;margin-bottom:6px}
+.bn .t{color:#f1f5f9;font-size:15px;font-weight:600}
+.bn .m{color:#64748b;font-size:12px;margin-top:4px}
 </style>
 </head><body>
 <div class="header"><h1>Otto Enterprise</h1><span id="updateTime"></span></div>
-<div class="note">数据全部存在本机 <b>~/.otto-enterprise/data.db</b>，零云端。标 <b>估算</b> 的指标基于假设（手工耗时 3×、¥50/时），非实测。</div>
+<div class="note" id="discloseNote">数据全部存在本机 <b>~/.otto-enterprise/data.db</b>，零云端。标 <b>估算</b> 的指标基于假设，非实测。</div>
 <div class="grid" id="cards"></div>
+<div class="charts">
+  <div class="chart-card"><h3>各任务类型：耗时与次数</h3><div id="barChart"></div></div>
+  <div class="chart-card"><h3>累计省时趋势（按任务累积）</h3><div id="lineChart"></div></div>
+</div>
+<div class="section"><h2>瓶颈提示</h2><div class="bottlenecks" id="bottlenecks"></div></div>
 <div class="section"><h2>各任务类型 Token 花费</h2>
   <table id="taskTable"><thead><tr><th>任务类型</th><th>次数</th><th>时长(分)</th><th>Tokens</th><th>成本(元)</th></tr></thead><tbody></tbody></table></div>
 <div class="section"><h2>员工</h2>
@@ -398,19 +413,70 @@ const TOKEN=${tokenJson};
 const H=TOKEN?{'x-otto-admin-token':TOKEN}:{};
 const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function j(u){const r=await fetch(u,{headers:H});if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
+// ---- 内联 SVG 图表（无外部依赖，CSP 友好）----
+function barChartSVG(rows){
+  if(!rows||!rows.length)return '<div class="chart-empty">暂无任务数据</div>';
+  const W=460,H=40+rows.length*34,padL=90,padR=54,barH=18;
+  const maxMin=Math.max(1,...rows.map(r=>r.minutes));
+  let s='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="各任务类型耗时柱状图">';
+  rows.forEach((r,i)=>{
+    const y=24+i*34;
+    const w=Math.round((W-padL-padR)*r.minutes/maxMin);
+    s+='<text x="'+(padL-8)+'" y="'+(y+barH-5)+'" text-anchor="end" fill="#94a3b8" font-size="12">'+esc(r.taskType)+'</text>';
+    s+='<rect x="'+padL+'" y="'+y+'" width="'+Math.max(w,2)+'" height="'+barH+'" rx="4" fill="#60a5fa"/>';
+    s+='<text x="'+(padL+Math.max(w,2)+6)+'" y="'+(y+barH-5)+'" fill="#e2e8f0" font-size="11">'+r.minutes+'分 · '+r.count+'次</text>';
+  });
+  s+='</svg>';return s;
+}
+function lineChartSVG(trend){
+  if(!trend||trend.length<2)return '<div class="chart-empty">数据点不足，无法绘制趋势</div>';
+  const W=460,H=200,padL=44,padR=16,padT=16,padB=28;
+  const n=trend.length;
+  const maxY=Math.max(1,...trend.map(p=>p.cumSavedHours));
+  const px=i=>padL+(W-padL-padR)*(n===1?0:i/(n-1));
+  const py=v=>padT+(H-padT-padB)*(1-v/maxY);
+  let path='';
+  trend.forEach((p,i)=>{path+=(i?'L':'M')+px(i).toFixed(1)+' '+py(p.cumSavedHours).toFixed(1)+' ';});
+  const area=path+'L'+px(n-1).toFixed(1)+' '+py(0)+' L'+px(0).toFixed(1)+' '+py(0)+' Z';
+  let s='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="累计省时趋势折线图">';
+  // 网格 + Y 轴刻度
+  for(let g=0;g<=2;g++){const v=maxY*g/2;const y=py(v);s+='<line x1="'+padL+'" y1="'+y+'" x2="'+(W-padR)+'" y2="'+y+'" stroke="#334155" stroke-width="1"/>';s+='<text x="'+(padL-6)+'" y="'+(y+4)+'" text-anchor="end" fill="#64748b" font-size="10">'+(Math.round(v*10)/10)+'h</text>';}
+  s+='<path d="'+area+'" fill="#4ade8022"/>';
+  s+='<path d="'+path.trim()+'" fill="none" stroke="#4ade80" stroke-width="2"/>';
+  s+='<text x="'+padL+'" y="'+(H-8)+'" fill="#64748b" font-size="10">第1个任务</text>';
+  s+='<text x="'+(W-padR)+'" y="'+(H-8)+'" text-anchor="end" fill="#64748b" font-size="10">第'+n+'个任务</text>';
+  s+='</svg>';return s;
+}
+function bottlenecksHTML(b){
+  if(!b)return '<div class="chart-empty">暂无数据</div>';
+  const items=[];
+  if(b.slowestTotal)items.push({k:'累计最耗时',t:b.slowestTotal.taskType,m:'共 '+b.slowestTotal.minutes+' 分钟'});
+  if(b.mostFrequent)items.push({k:'最频繁',t:b.mostFrequent.taskType,m:'共 '+b.mostFrequent.count+' 次'});
+  if(b.slowestAvg)items.push({k:'单次平均最慢',t:b.slowestAvg.taskType,m:'平均 '+b.slowestAvg.avgMinutes+' 分钟/次'});
+  if(!items.length)return '<div class="chart-empty">暂无数据</div>';
+  return items.map(x=>'<div class="bn"><div class="k">'+x.k+'</div><div class="t">'+esc(x.t)+'</div><div class="m">'+x.m+'</div></div>').join('');
+}
 async function load(){
   try{
     const [report,emps,audit]=await Promise.all([j('/enterprise/report?period=30'),j('/enterprise/employees'),j('/enterprise/audit')]);
     document.getElementById('updateTime').textContent='更新于 '+new Date().toLocaleTimeString();
     const est='<span class="est">估算</span>';
-    document.getElementById('cards').innerHTML=[
+    const a=report.assumptions||{manualTimeMultiplier:2,cnyPerHour:50};
+    // 披露文案直接引用后端返回的假设常量，不再手写数字，杜绝文案与代码打架。
+    document.getElementById('discloseNote').innerHTML='数据全部存在本机 <b>~/.otto-enterprise/data.db</b>，零云端。标 '+est+' 的指标基于假设（纯人工耗时按 <b>'+a.manualTimeMultiplier+'×</b> Otto 折算、人力 <b>¥'+a.cnyPerHour+'/时</b>），非实测。省时 = Otto 耗时 ×（倍率−1），只算净节省、不双算。';
+    const cards=[
       {l:'总任务数',v:report.totalTasks,c:'blue',s:'近 30 天',e:0},
-      {l:'省下时间',v:report.timeSavedHours+'h',c:'green',s:'约 '+(report.timeSavedHours/8).toFixed(1)+' 个工作日',e:1},
-      {l:'省下成本',v:'¥'+report.moneySavedCNY,c:'green',s:'按 ¥50/时折算',e:1},
+      {l:'省下时间',v:report.timeSavedHours+'h',c:'green',s:'约 '+(report.timeSavedHours/8).toFixed(1)+' 个工作日（净节省）',e:1},
+      {l:'省下人力成本',v:'¥'+report.laborSavedCNY,c:'green',s:'按 ¥'+a.cnyPerHour+'/时折算',e:1},
       {l:'Token 成本',v:'¥'+report.tokenCostCNY,c:'orange',s:(report.totalTokens||0)+' tokens',e:0},
-      {l:'ROI',v:report.roi+'×',c:'blue',s:'省下成本 / Token 成本',e:1},
+      {l:'净收益',v:'¥'+report.netBenefitCNY,c:(report.netBenefitCNY>=0?'green':'orange'),s:'省下人力 − Token 成本',e:1},
+      {l:'每 ¥1 Token 产出',v:'¥'+report.laborPerTokenCNY,c:'blue',s:'估算省下的人力（非纯倍率）',e:1},
       {l:'活跃员工',v:report.activeEmployees,c:'blue',s:'正在使用 Otto',e:0},
-    ].map(c=>'<div class="card"><div class="label">'+c.l+(c.e?est:'')+'</div><div class="value '+c.c+'">'+c.v+'</div><div class="sub">'+c.s+'</div></div>').join('');
+    ];
+    document.getElementById('cards').innerHTML=cards.map(c=>'<div class="card"><div class="label">'+c.l+(c.e?est:'')+'</div><div class="value '+c.c+'">'+c.v+'</div><div class="sub">'+c.s+'</div></div>').join('');
+    document.getElementById('barChart').innerHTML=barChartSVG(report.byType);
+    document.getElementById('lineChart').innerHTML=lineChartSVG(report.trend);
+    document.getElementById('bottlenecks').innerHTML=bottlenecksHTML(report.bottlenecks);
     const tb=document.querySelector('#taskTable tbody');
     tb.innerHTML=report.byType.length?report.byType.map(t=>'<tr><td>'+esc(t.taskType)+'</td><td>'+t.count+'</td><td>'+t.minutes+'</td><td>'+t.tokens+'</td><td>'+t.costCNY+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">暂无任务数据</td></tr>';
     const eb=document.querySelector('#empTable tbody');

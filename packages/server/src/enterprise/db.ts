@@ -15,14 +15,29 @@ const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.ot
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 /**
+ * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
+ */
+function envNum(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
  * 人效换算假设——**这些是估算参数，不是真实计量**。
- * 看板会显式标注「估算」，避免把估值当实测。集中在此，保证全项目口径一致。
+ * 看板会显式标注「估算」，避免把估值当实测。集中在此，保证全项目口径一致，
+ * 且可用环境变量覆盖（消除写死感）。看板披露文案直接引用这里的常量，不再手写数字。
  */
 export const ESTIMATE = {
-  /** 假设手工完成同样任务耗时是 Otto 的 3 倍 → 省下的时间 = 记录时长 × 2。 */
-  manualTimeMultiplier: 2,
-  /** 折算人力成本（元/小时）。 */
-  cnyPerHour: 50,
+  /**
+   * 假设「同一件事纯人工做」耗时是 Otto 的几倍。默认 2（人工 2× → Otto 1×）。
+   * 可用 OTTO_ESTIMATE_MANUAL_MULT 覆盖。
+   * 真·省时 = 人工估时 − Otto 实际耗时 = ottoMinutes × (mult − 1)，不把 Otto 自己的耗时也算成节省。
+   */
+  manualTimeMultiplier: envNum('OTTO_ESTIMATE_MANUAL_MULT', 2),
+  /** 折算人力成本（元/小时）。可用 OTTO_ESTIMATE_CNY_PER_HOUR 覆盖。 */
+  cnyPerHour: envNum('OTTO_ESTIMATE_CNY_PER_HOUR', 50),
   /** 单任务默认 token 估计（未上报真实用量时）。 */
   defaultTokensPerTask: 2000,
   /** 单任务默认成本估计（元）。 */
@@ -238,11 +253,21 @@ export function getReport(periodDays = 30, department?: string): any {
   ).all(...params);
 
   const totalTasks = tasks.length;
-  const totalMin = tasks.reduce((s, t) => s + (t.duration_min || 0), 0);
+  // ottoMin = Otto 实际记录的耗时（这就是「用了 Otto 之后花的时间」）。
+  const ottoMin = tasks.reduce((s, t) => s + (t.duration_min || 0), 0);
   const totalTokens = tasks.reduce((s, t) => s + (t.tokens_used || 0), 0);
   const totalCost = tasks.reduce((s, t) => s + (t.cost_cny || 0), 0);
-  const savedMin = totalMin * ESTIMATE.manualTimeMultiplier; // 估算：手工 3×、Otto 1×，省 2×
-  const moneySaved = (savedMin / 60) * ESTIMATE.cnyPerHour; // 估算：¥50/时
+
+  // 真·省时：人工估时 − Otto 实际耗时，不双算。
+  //   manualMin = ottoMin × mult；savedMin = manualMin − ottoMin = ottoMin × (mult − 1)。
+  const mult = ESTIMATE.manualTimeMultiplier;
+  const savedMin = ottoMin * Math.max(mult - 1, 0);
+  const laborSavedCNY = (savedMin / 60) * ESTIMATE.cnyPerHour; // 省下的人力成本（元）
+  // 净收益 = 省下的人力成本 − 花掉的 token 成本。诚实口径，可为负。
+  const netBenefitCNY = laborSavedCNY - totalCost;
+  // 「每花 ¥1 token 估算省下 ¥X 人力」——比「省钱÷token成本」的纯倍率更可解释，
+  // 且不会因 token 成本极小而爆表到几百倍。仍是估算，前端需标注。
+  const laborPerTokenCNY = totalCost > 0 ? laborSavedCNY / totalCost : 0;
 
   // By task type
   const byType: Record<string, { count: number; min: number; tokens: number; cost: number }> = {};
@@ -259,23 +284,87 @@ export function getReport(periodDays = 30, department?: string): any {
   return {
     period: `${periodDays}d`,
     totalTasks,
-    totalMinutes: Math.round(totalMin),
+    totalMinutes: Math.round(ottoMin),
     totalTokens,
-    timeSavedHours: Math.round(savedMin / 60 * 10) / 10,
-    moneySavedCNY: Math.round(moneySaved),
+    timeSavedHours: Math.round((savedMin / 60) * 10) / 10,
+    laborSavedCNY: Math.round(laborSavedCNY),
+    netBenefitCNY: Math.round(netBenefitCNY),
     tokenCostCNY: Math.round(totalCost * 100) / 100,
-    roi: totalCost > 0 ? Math.round(moneySaved / totalCost) : 0,
+    // 保留 laborPerTokenCNY 作为「诚实版 ROI」——每 ¥1 token 省下多少人力（估算）。
+    laborPerTokenCNY: Math.round(laborPerTokenCNY * 10) / 10,
     activeEmployees,
-    // 省时/省钱/ROI 均为估算值，前端需明示。
+    // 省时/省钱/净收益/每元产出 均为估算值，前端需明示。
     estimated: true,
     assumptions: {
-      manualTimeMultiplier: ESTIMATE.manualTimeMultiplier,
+      manualTimeMultiplier: mult,
       cnyPerHour: ESTIMATE.cnyPerHour,
     },
     byType: Object.entries(byType).map(([type, d]) => ({
       taskType: type, count: d.count, minutes: Math.round(d.min),
       tokens: d.tokens, costCNY: Math.round(d.cost * 100) / 100,
     })),
+    // 图表数据：任务累积趋势（按时间序累积任务数与省时分钟），以及瓶颈提示。
+    trend: buildTrend(tasks, mult),
+    bottlenecks: buildBottlenecks(byType),
+  };
+}
+
+/**
+ * 任务累积趋势：按 created_at 升序，逐条累积「任务数」和「累计省时(小时)」。
+ * seed 数据常落在同一天，按天分组只会得到一个点，故用「按任务累积」口径，
+ * 既满足趋势可视化，也对稀疏/同日数据成立。返回轻量点集供 SVG 折线图用。
+ */
+function buildTrend(
+  tasks: Array<{ created_at?: string; duration_min?: number }>,
+  mult: number,
+): Array<{ i: number; at: string; cumTasks: number; cumSavedHours: number }> {
+  const sorted = [...tasks].sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || '')),
+  );
+  const out: Array<{ i: number; at: string; cumTasks: number; cumSavedHours: number }> = [];
+  let cumTasks = 0;
+  let cumSavedMin = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    cumTasks += 1;
+    cumSavedMin += (sorted[i].duration_min || 0) * Math.max(mult - 1, 0);
+    out.push({
+      i: i + 1,
+      at: String(sorted[i].created_at || ''),
+      cumTasks,
+      cumSavedHours: Math.round((cumSavedMin / 60) * 100) / 100,
+    });
+  }
+  return out;
+}
+
+/**
+ * 瓶颈提示：从 byType 聚合里挑「最耗时」「最频繁」「单次平均最慢」三类。
+ */
+function buildBottlenecks(
+  byType: Record<string, { count: number; min: number; tokens: number; cost: number }>,
+): {
+  slowestTotal: { taskType: string; minutes: number } | null;
+  mostFrequent: { taskType: string; count: number } | null;
+  slowestAvg: { taskType: string; avgMinutes: number } | null;
+} {
+  const entries = Object.entries(byType);
+  if (entries.length === 0) {
+    return { slowestTotal: null, mostFrequent: null, slowestAvg: null };
+  }
+  const slowestTotal = entries.reduce((a, b) => (b[1].min > a[1].min ? b : a));
+  const mostFrequent = entries.reduce((a, b) => (b[1].count > a[1].count ? b : a));
+  const slowestAvg = entries.reduce((a, b) => {
+    const avgA = a[1].count ? a[1].min / a[1].count : 0;
+    const avgB = b[1].count ? b[1].min / b[1].count : 0;
+    return avgB > avgA ? b : a;
+  });
+  return {
+    slowestTotal: { taskType: slowestTotal[0], minutes: Math.round(slowestTotal[1].min) },
+    mostFrequent: { taskType: mostFrequent[0], count: mostFrequent[1].count },
+    slowestAvg: {
+      taskType: slowestAvg[0],
+      avgMinutes: Math.round((slowestAvg[1].min / (slowestAvg[1].count || 1)) * 10) / 10,
+    },
   };
 }
 
