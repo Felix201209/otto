@@ -12,9 +12,40 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
+import { DoctorService, CommandRunner } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
+
+/**
+ * 执行前置体检：只读复用 DoctorService，但用一个「只放行目标二进制」的 runner，
+ * 避免每次都 spawn 全部 10 个探测进程。缺任一目标依赖返回 fail-loud 错误（含平台
+ * 安装命令）；全部就绪返回 null。注意：libreoffice 的 spec 名是 'libreoffice'
+ * （会同时探测 libreoffice/soffice 与 mac .app 兜底）。
+ */
+async function preflightBinaries(names: string[]): Promise<string | null> {
+  const wanted = new Set(names);
+  // 允许目标 spec 名以及其候选 bin（如 libreoffice→soffice、ghostscript→gs）都被放行。
+  const binAliases = new Set<string>([...names, 'soffice', 'gs', 'gswin64c']);
+  const gatedRunner: CommandRunner = (command, timeoutMs) => {
+    const touches = [...binAliases].some((n) =>
+      new RegExp('(^|\\s|/)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)').test(command),
+    );
+    if (!touches) return Promise.reject(new Error('skipped: ' + command));
+    return new Promise<string>((resolve, reject) => {
+      exec(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        const out = (stdout || stderr || '').trim();
+        if (err) { if (out) { resolve(out); return; } reject(err); return; }
+        resolve(out);
+      });
+    });
+  };
+  const report = await new DoctorService(gatedRunner).check();
+  const missing = report.checks.filter((c) => wanted.has(c.name) && !c.present);
+  if (missing.length === 0) return null;
+  return missing
+    .map((c) => c.name + ' 未安装（' + c.category + '）。安装：' + (c.installHint || '见官方文档'))
+    .join('；');
+}
 
 export interface ConvertDocumentToolParams {
   input_path?: string; input_paths?: string[];
@@ -32,7 +63,8 @@ export class ConvertDocumentTool extends BaseTool<ConvertDocumentToolParams, Too
 EXAMPLES:
   Single: {input_path:"/path/to/report.docx", output_format:"pdf"}
   Batch: {input_paths:["/a.docx","/b.docx"], output_format:"pdf"}
-  Merge: {input_paths:["/a.docx","/b.docx"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
+  Merge (all PDF, lossless via pdfunite): {input_paths:["/a.pdf","/b.pdf"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
+  Merge (mixed, via pandoc markdown round-trip): {input_paths:["/a.docx","/b.md"], output_format:"pdf", merge:true, output_path:"/merged.pdf"}
   Compress: {input_path:"/big.pdf", output_format:"pdf", compress:3}
   Custom: {input_path:"/doc.md", output_format:"pdf", engine:"pandoc", options:"--toc --number-sections"}
 
@@ -107,7 +139,7 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     const logLabel = 'convert_document.'+(p.output_format || 'single');
     console.time(logLabel);
     const err = this.validateToolParams(p);
-    if (err) return { llmContent: err, returnDisplay: err };
+    if (err) { console.timeEnd(logLabel); return { llmContent: err, returnDisplay: err }; }
 
     try {
       if (p.merge && p.input_paths && p.input_paths.length >= 2) return await this.doMerge(p);
@@ -120,6 +152,8 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
         return { llmContent: 'convert_document FAIL: '+m+'. Install: '+(isMac?'brew install pandoc libreoffice':'winget install pandoc LibreOffice'), returnDisplay: 'convert_document FAIL: tool not installed' };
       }
       return { llmContent: 'convert_document FAIL: '+m, returnDisplay: 'convert_document FAIL: '+m };
+    } finally {
+      console.timeEnd(logLabel);
     }
   }
 
@@ -132,9 +166,14 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     let eng = engine || 'auto';
     if (eng === 'auto') {
       const offIn = ['docx','xlsx','pptx','odt','ods','odp'];
-      const offOut = ['pdf','docx','xlsx','pptx','odt','ods','odp','html','csv'];
+      const offOut = ['pdf','docx','xlsx','pptx','odt','ods','odp'];
       eng = offIn.includes(ext) || offOut.includes(fmt) ? 'libreoffice' : 'pandoc';
     }
+
+    // Doctor preflight: verify the chosen engine binary is present before we run it,
+    // failing loud (with install command) instead of catching a half-run failure.
+    const engMissing = await preflightBinaries([eng === 'libreoffice' ? 'libreoffice' : 'pandoc']);
+    if (engMissing) throw new Error('convert_document needs ' + eng + ': ' + engMissing);
 
     if (eng === 'libreoffice') {
       const loCmd = process.platform === 'win32' ? 'soffice' : 'libreoffice';
@@ -170,14 +209,48 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     return { llmContent: 'convert_document batch OK: '+results.length+' files converted\n'+results.join('\n'), returnDisplay: 'convert_document OK: '+results.length+' files batch-converted' };
   }
 
+  private async hasBinary(name: string): Promise<boolean> {
+    const probe = process.platform === 'win32' ? 'where ' + name : 'command -v ' + name;
+    try { await execAsync(probe); return true; } catch { return false; }
+  }
+
   private async doMerge(p: ConvertDocumentToolParams): Promise<ToolResult> {
-    const tmpDir = path.join(path.dirname(p.input_paths![0]), '.otto-merge-'+Date.now());
+    const inputs = p.input_paths!;
+    const allPdf = inputs.every((f) => path.extname(f).toLowerCase() === '.pdf');
+    const wantPdf = p.output_format.trim().toLowerCase() === 'pdf';
+
+    // Lossless path: all inputs are PDF and target is PDF -> merge with pdfunite.
+    // This preserves tables, images and styling instead of round-tripping through markdown.
+    if (allPdf && wantPdf) {
+      if (!(await this.hasBinary('pdfunite'))) {
+        return {
+          llmContent: 'convert_document FAIL: merging PDFs needs pdfunite (from poppler), which is not installed. macOS: brew install poppler. Linux: apt install poppler-utils.',
+          returnDisplay: 'convert_document FAIL: pdfunite not installed',
+        };
+      }
+      const args = inputs.map((f) => `"${f}"`).join(' ');
+      await execAsync(`pdfunite ${args} "${p.output_path}"`, { maxBuffer: 100 * 1024 * 1024 });
+      const sz = fs.existsSync(p.output_path!) ? fs.statSync(p.output_path!).size : 0;
+      if (sz === 0) throw new Error('pdfunite produced no output');
+      const label = inputs.length + ' PDFs merged -> ' + path.basename(p.output_path!) + ' (' + sz + ' bytes, lossless)';
+      return { llmContent: 'convert_document OK: ' + label, returnDisplay: 'convert_document OK: ' + label };
+    }
+
+    // Mixed / non-PDF merge still needs pandoc (markdown round-trip, may lose tables/images/styling).
+    // If pandoc is missing, fail loud rather than pretend.
+    if (!(await this.hasBinary('pandoc'))) {
+      return {
+        llmContent: 'convert_document FAIL: merging non-PDF (mixed) documents needs pandoc, which is not installed. For lossless merging, provide all-PDF inputs (uses pdfunite). macOS: brew install pandoc.',
+        returnDisplay: 'convert_document FAIL: pandoc not installed (mixed merge)',
+      };
+    }
+    const tmpDir = path.join(path.dirname(inputs[0]), '.otto-merge-'+Date.now());
     fs.mkdirSync(tmpDir, { recursive: true });
     try {
       const mdFiles: string[] = [];
-      for (let i = 0; i < p.input_paths!.length; i++) {
+      for (let i = 0; i < inputs.length; i++) {
         const mdPath = path.join(tmpDir, 'part_'+i+'.md');
-        await execAsync(`pandoc "${p.input_paths![i]}" -o "${mdPath}" -t markdown`, { maxBuffer:50*1024*1024 });
+        await execAsync(`pandoc "${inputs[i]}" -o "${mdPath}" -t markdown`, { maxBuffer:50*1024*1024 });
         mdFiles.push(mdPath);
       }
       const merged = path.join(tmpDir, 'merged.md');
@@ -192,6 +265,9 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
   }
 
   private async compressPDF(file: string, level: number): Promise<void> {
+    // Doctor preflight: PDF compression uses ghostscript. Fail loud if missing.
+    const gsMissing = await preflightBinaries(['ghostscript']);
+    if (gsMissing) throw new Error('convert_document compress needs ghostscript: ' + gsMissing);
     const settings = ['/default','/screen','/ebook','/printer','/prepress','/prepress'];
     const s = settings[Math.min(level, 5)];
     const tmp = file + '.tmp.pdf';

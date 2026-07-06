@@ -14,8 +14,38 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ProcessGuard } from '../utils/process-guard.js';
+import { DoctorService, CommandRunner } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
+
+/**
+ * 执行前置体检：只读复用 DoctorService，但用一个「只放行目标二进制」的 runner，
+ * 避免每次都 spawn 全部 10 个探测进程。缺任一目标依赖返回 fail-loud 错误（含平台
+ * 安装命令）；全部就绪返回 null。marp 的 spec 会同时探测 marp/marp-cli。
+ */
+async function preflightBinaries(names: string[]): Promise<string | null> {
+  const wanted = new Set(names);
+  const binAliases = new Set<string>([...names, 'marp-cli']);
+  const gatedRunner: CommandRunner = (command, timeoutMs) => {
+    const touches = [...binAliases].some((n) =>
+      new RegExp('(^|\\s|/)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)').test(command),
+    );
+    if (!touches) return Promise.reject(new Error('skipped: ' + command));
+    return new Promise<string>((resolve, reject) => {
+      exec(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        const out = (stdout || stderr || '').trim();
+        if (err) { if (out) { resolve(out); return; } reject(err); return; }
+        resolve(out);
+      });
+    });
+  };
+  const report = await new DoctorService(gatedRunner).check();
+  const missing = report.checks.filter((c) => wanted.has(c.name) && !c.present);
+  if (missing.length === 0) return null;
+  return missing
+    .map((c) => c.name + ' 未安装（' + c.category + '）。安装：' + (c.installHint || '见官方文档'))
+    .join('；');
+}
 
 export interface GenerateDocumentToolParams {
   content: string;
@@ -39,7 +69,7 @@ EXAMPLES:
 
 ENGINES: PDF -> Typst (reports/letters/resume) or Pandoc (tables). Slides -> Marp (pdf, html, pptx). docx/html -> Pandoc.
 
-DEPENDENCIES: typst + marp-cli + pandoc. macOS: brew install typst pandoc; npm i -g @marp-team/marp-cli. Windows: winget install typst pandoc; npm i -g @marp-team/marp-cli.`;
+DEPENDENCIES: typst + marp-cli + pandoc (markdown output needs none). Each engine runs a doctor preflight and fails loud with an install command if its binary is missing (never faking output). macOS: brew install typst pandoc; npm i -g @marp-team/marp-cli. Windows: winget install typst pandoc; npm i -g @marp-team/marp-cli.`;
     super(GenerateDocumentTool.Name, 'GenerateDocument', desc, Icon.Pencil,
       {
         type: Type.OBJECT,
@@ -117,6 +147,9 @@ DEPENDENCIES: typst + marp-cli + pandoc. macOS: brew install typst pandoc; npm i
   }
 
   private async genSlides(content: string, fmt: string, outPath: string, tmpDir: string, title: string): Promise<void> {
+    // Doctor preflight: slides render via marp. Fail loud if missing.
+    const missing = await preflightBinaries(['marp']);
+    if (missing) throw new Error('generate_document/slides needs marp: ' + missing);
     const mdFile = path.join(tmpDir, 'slides.md');
     fs.writeFileSync(mdFile, '---\nmarp: true\ntheme: default\npaginate: true\ntitle: '+title+'\n---\n\n'+content);
     if (fmt === 'pptx') {
@@ -126,11 +159,17 @@ DEPENDENCIES: typst + marp-cli + pandoc. macOS: brew install typst pandoc; npm i
     }
   }
   private async genTypst(content: string, format: string, outPath: string, tmpDir: string, title: string, author: string): Promise<void> {
+    // Doctor preflight: typst-rendered PDFs (report/article/letter/resume) need typst.
+    const missing = await preflightBinaries(['typst']);
+    if (missing) throw new Error('generate_document (' + format + ' -> pdf) needs typst: ' + missing);
     const typFile = path.join(tmpDir, 'doc.typ');
     fs.writeFileSync(typFile, this.md2typst(content, format, title, author));
     await execAsync('typst compile "'+typFile+'" "'+outPath+'"', { maxBuffer:50*1024*1024 });
   }
   private async genPandoc(content: string, outPath: string, tmpDir: string, title: string, author: string, fmt: string, format: string): Promise<void> {
+    // Doctor preflight: docx/html and table PDFs render via pandoc. Fail loud if missing.
+    const missing = await preflightBinaries(['pandoc']);
+    if (missing) throw new Error('generate_document (' + format + ' -> ' + fmt + ') needs pandoc: ' + missing);
     const mdFile = path.join(tmpDir, 'doc.md');
     fs.writeFileSync(mdFile, '# '+title+'\n'+(author?'**'+author+'**\n':'')+'\n'+content);
     const extra = format==='report' ? ' --toc --number-sections' : '';

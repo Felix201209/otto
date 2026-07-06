@@ -64,7 +64,26 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  feishuStart: 'otto:feishu-start',
+  feishuStop: 'otto:feishu-stop',
+  feishuStatus: 'otto:feishu-status',
 } as const;
+
+/**
+ * 飞书一键开关在桌面端的现状（诚实说明）。
+ *
+ * 飞书 daemon 的真实启停逻辑在 CLI 包（otto feishu daemon），它依赖 `otto --feishu`
+ * 这个 CLI 进程入口（通过 process.argv[1] 定位 otto.js）。在 Electron 主进程里
+ * process.argv[1] 指向的是 Electron/app 入口而非 otto.js，直接调用会 spawn 错误的
+ * 进程；且 desktop 目前并未依赖 CLI 包。因此桌面端暂不直接代管飞书 daemon。
+ *
+ * 处置：注册这三个 handler，让 renderer 的调用不再 reject 报「操作失败」，而是拿到
+ * 一句明确的「桌面端暂不支持、请用 CLI」——诚实告知，绝不假报「已开启 / 运行中」。
+ */
+const FEISHU_DESKTOP_NOTICE =
+  '桌面端暂不支持在此一键启停飞书守护进程。\n' +
+  '请在终端使用命令行：otto feishu daemon start / stop / status。\n' +
+  '（该能力后续接入桌面端后此开关才会启用。）';
 
 // ────────────────────────────────────────────────────────────────────────
 // 窗口
@@ -271,6 +290,19 @@ function registerIpc(): void {
     }
     return Promise.resolve();
   });
+  // 飞书一键开关（诚实占位）：桌面端暂不代管飞书 daemon，见 FEISHU_DESKTOP_NOTICE。
+  // 返回明确的「暂不支持」而非 reject，让 renderer 显示真话而不是「操作失败」。
+  // running 恒为 false：桌面端并未托管进程，不谎报「运行中」。
+  ipcMain.handle(IPC.feishuStart, () =>
+    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
+  );
+  ipcMain.handle(IPC.feishuStop, () =>
+    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
+  );
+  ipcMain.handle(IPC.feishuStatus, () =>
+    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE, running: false }),
+  );
+
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
     // realpath 解析符号链接后再比较前缀，防 home 内 symlink 指向外部绕过；

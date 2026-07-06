@@ -65,6 +65,7 @@ import { FeishuProjectCollabTool } from '../tools/feishu-project-collab.js';
 import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
+import { DoctorTool } from '../tools/doctor.js';
 import { ProjectSettingsManager } from './projectSettings.js';
 import { generateCustomModelId } from '../types/customModel.js';
 import { OttoClient } from '../core/client.js';
@@ -90,6 +91,7 @@ import {
 import { shouldAttemptBrowserLaunch } from '../utils/browser.js';
 import { MCPOAuthConfig } from '../mcp/oauth-provider.js';
 import { IdeClient } from '../ide/ide-client.js';
+import { enableAutoLearning } from '../utils/post-exec-hook.js';
 import { HookSystem } from '../hooks/hookSystem.js';
 
 // Re-export OAuth config type
@@ -1202,12 +1204,13 @@ export class Config {
     registerCoreTool(AnalyzeDataTool, this); // 数据分析出图（DuckDB/gnuplot）
     registerCoreTool(DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
     registerCoreTool(WebAutomationTool, this);
-    registerCoreTool(MultiChannelTool, this); // 浏览器自动化（Playwright）
+    registerCoreTool(MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
     registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
     registerCoreTool(FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
     // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
     // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
     registerCoreTool(VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
+    registerCoreTool(DoctorTool, this); // 依赖体检（一次性自检上述能力所需的外部二进制/模块）
 
     // Delegate-to-external-agent (ACP client). Drives the user's local Claude
     // Code; gracefully reports a readable error if the bridge isn't installed.
@@ -1226,6 +1229,8 @@ export class Config {
     // 快速启动优化：只发现命令行工具，MCP工具将在后台异步加载
     // 这样可以让CLI界面立即显示，不用等待所有MCP服务器连接完成
     await registry.discoverCommandLineTools();
+    // Enable auto-learning: every task execution auto-logs to memory_manager
+    enableAutoLearning(registry, this);
     return registry;
   }
 }
