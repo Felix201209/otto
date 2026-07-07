@@ -243,11 +243,59 @@ export class EnterpriseSync {
     data.users = users;
 
     // 6.5 自动生成权限许可（基于飞书组织架构角色推断）
-    data.licenses = users.map((user) => {
+    //    离职用户（不在本次同步的 users 列表中）的 License 标记为 revoked
+    const activeUserIds = new Set(users.map((u) => u.id));
+    const now = new Date().toISOString();
+    const oldLicenses = data.licenses || [];
+
+    // 保留旧 License 但撤销离职用户的
+    const preservedLicenses = oldLicenses.map((lic) => {
+      if (!activeUserIds.has(lic.assigneeUserId) && !lic.revokedAt) {
+        return { ...lic, revokedAt: now };
+      }
+      return lic;
+    });
+
+    // 为在职用户生成新 License（如果已有则更新，不重复创建）
+    const existingLicenseUserIds = new Set(preservedLicenses.map((l) => l.assigneeUserId));
+    const newLicenses = users
+      .filter((user) => !existingLicenseUserIds.has(user.id))
+      .map((user) => {
+        const isAdmin = user.id === config.adminUserId;
+        const userRole = inferUserRole(user.id, isAdmin, teams, user.role);
+        return createLicenseForUser(user.id, config.companyId, userRole, user.teamIds[0]);
+      });
+
+    // 更新已有在职用户的 License（角色可能变了）
+    for (const user of users) {
       const isAdmin = user.id === config.adminUserId;
       const userRole = inferUserRole(user.id, isAdmin, teams, user.role);
-      return createLicenseForUser(user.id, config.companyId, userRole, user.teamIds[0]);
-    });
+      const newPermissions = PERMISSION_SETS[userRole];
+      const newFeatures = FEATURE_SETS[userRole];
+      const newLicenseRole = LICENSE_ROLE_MAP[userRole];
+
+      const existingIdx = preservedLicenses.findIndex(
+        (l) => l.assigneeUserId === user.id && !l.revokedAt,
+      );
+      if (existingIdx !== -1) {
+        const lic = preservedLicenses[existingIdx];
+        // 权限或角色变了才更新
+        if (lic.role !== newLicenseRole ||
+            lic.permissions.length !== newPermissions.length ||
+            !lic.permissions.every((p, i) => p === newPermissions[i])) {
+          preservedLicenses[existingIdx] = {
+            ...lic,
+            role: newLicenseRole,
+            permissions: newPermissions,
+            features: newFeatures,
+            scope: userRole === 'company_admin' ? 'company' : 'team',
+            teamId: user.teamIds[0],
+          };
+        }
+      }
+    }
+
+    data.licenses = [...preservedLicenses, ...newLicenses];
 
     await this.store.save(data);
 
