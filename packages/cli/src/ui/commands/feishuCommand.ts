@@ -4711,14 +4711,14 @@ async function handleStart(context?: CommandContext): Promise<string> {
       const proactive = getProactiveService();
       proactive.setFeishuSender({
         sendCard: async (userId: string, message: string) => {
-          // 通过飞书单聊发卡片
           if (activeGateway) {
-            // 使用 gateway 的发消息能力
+            // 用 open_id 发文本消息（卡片降级为文本，确保送达）
+            await activeGateway.sendMessage(userId, message).catch(() => {});
           }
         },
         sendMessage: async (userId: string, message: string) => {
           if (activeGateway) {
-            // 通过飞书单聊发文本
+            await activeGateway.sendMessage(userId, message).catch(() => {});
           }
         },
       });
@@ -4737,12 +4737,12 @@ async function handleStart(context?: CommandContext): Promise<string> {
       collab.setFeishuSender({
         sendMessageToUser: async (openId: string, text: string) => {
           if (activeGateway) {
-            // 通过飞书单聊发协作请求
+            await activeGateway.sendMessage(openId, text).catch(() => {});
           }
         },
         sendMessageToChat: async (chatId: string, text: string) => {
           if (activeGateway) {
-            // 通过飞书群发协作请求
+            await activeGateway.sendMessage(chatId, text).catch(() => {});
           }
         },
       });
@@ -4752,7 +4752,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
       skillShare.setNotificationSender({
         sendToTeamMembers: async (teamId: string, notification: any) => {
           if (activeGateway) {
-            // 通知小组成员
+            // 通知发到群（teamId 作为 chatId）
+            await activeGateway.sendMessage(teamId, notification.message).catch(() => {});
           }
         },
       });

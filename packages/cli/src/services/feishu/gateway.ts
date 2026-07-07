@@ -2298,6 +2298,20 @@ export class FeishuGateway {
    * 发送消息到飞书聊天，返回 message_id（用于后续 updateMessage）
    */
   async sendMessage(chatId: string, text: string, replyToMessageId?: string): Promise<string | null> {
+    // 自动判断：以 ou_ 开头的是 open_id，其他按 chat_id 处理
+    const isOpenId = chatId.startsWith('ou_');
+    return this.sendMessageRaw(chatId, text, isOpenId ? 'open_id' : 'chat_id', replyToMessageId);
+  }
+
+  /**
+   * 发送消息的底层实现，支持指定 receive_id_type。
+   */
+  private async sendMessageRaw(
+    receiveId: string,
+    text: string,
+    receiveIdType: string,
+    replyToMessageId?: string,
+  ): Promise<string | null> {
     const token = await this.getTenantToken();
 
     const body: {
@@ -2305,12 +2319,12 @@ export class FeishuGateway {
       msg_type: string;
       content: string;
     } = {
-      receive_id: chatId,
+      receive_id: receiveId,
       msg_type: 'text',
       content: JSON.stringify({ text }),
     };
 
-    let url = `${this.apiBaseUrl}/open-apis/im/v1/messages?receive_id_type=chat_id`;
+    let url = `${this.apiBaseUrl}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`;
     if (replyToMessageId) {
       url = `${this.apiBaseUrl}/open-apis/im/v1/messages/${replyToMessageId}/reply`;
       delete body.receive_id;
@@ -2340,7 +2354,7 @@ export class FeishuGateway {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          receive_id: chatId,
+          receive_id: receiveId,
           msg_type: 'text',
           content: JSON.stringify({ text }),
         }),
