@@ -96,6 +96,8 @@ export interface SkillShareRecord {
   ratingCount: number;
   /** 分享时的备注 */
   note?: string;
+  /** 自动提取的功能描述（中文，展示用） */
+  featureDescription: string;
 }
 
 /** 已安装记录（追踪每个用户安装的版本） */
@@ -292,6 +294,7 @@ export class SkillShareManager {
       rating: 0,
       ratingCount: 0,
       note: params.note,
+      featureDescription: extractFeature(skillContent),
     };
 
     // 5. 同步到 OrgMemoryStore
@@ -716,6 +719,7 @@ export class SkillShareManager {
 
   /**
    * 格式化分享列表为可读文本（用于飞书卡片展示）。
+   * 自动从 SKILL.md 提取功能描述，直接展示中文说明。
    */
   formatSharedSkillsForDisplay(shares: SkillShareRecord[]): string {
     if (shares.length === 0) {
@@ -727,7 +731,10 @@ export class SkillShareManager {
     for (const share of shares) {
       const status = share.status === 'active' ? '✅' : share.status === 'revoked' ? '❌' : '⚠️';
       const stars = '⭐'.repeat(Math.round(share.rating));
-      lines.push(`${status} ${share.skillName}`);
+      const feature = share.featureDescription || extractFeature(share.content);
+
+      lines.push(`${status} ${share.skillName} (v${share.version})`);
+      lines.push(`   功能：${feature}`);
       lines.push(`   分享者：${share.sharedByName}`);
       lines.push(`   小组：${share.teamName}`);
       lines.push(`   安装数：${share.installCount}  评分：${stars || '暂无'}`);
@@ -749,6 +756,27 @@ export class SkillShareManager {
 function extractDescription(content: string): string | null {
   const match = content.match(/^---[\s\S]*?description:\s*(.+?)$/m);
   return match ? match[1].trim().replace(/^["']|["']$/g, '') : null;
+}
+
+/**
+ * 从 SKILL.md 内容提取功能描述（中文，直接可读）。
+ * 按优先级尝试：YAML description → 一级标题 → 第一段正文。
+ */
+function extractFeature(content: string): string {
+  // 1. YAML frontmatter 的 description（最准确）
+  const desc = extractDescription(content);
+  if (desc) return desc;
+
+  // 2. 第一个一级标题（# 标题）
+  const titleMatch = content.match(/^#\s+(.+?)$/m);
+  if (titleMatch) return titleMatch[1].trim();
+
+  // 3. 正文第一段（去掉 frontmatter 和注释后的第一行非空文本）
+  const body = content.replace(/^---[\s\S]*?---\n/, '').trim();
+  const firstLine = body.split('\n').find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('>'));
+  if (firstLine) return firstLine.trim();
+
+  return '暂无功能描述';
 }
 
 /** 从 SKILL.md 内容提取 name */
