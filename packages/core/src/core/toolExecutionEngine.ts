@@ -32,6 +32,7 @@ import { MCPResponseGuard } from '../services/mcpResponseGuard.js';
 import type { HookEventHandler } from '../hooks/hookEventHandler.js';
 import { getWorkLogger, inferCategory, describeAction } from '../orchestration/workLog.js';
 import { getAuditLogger } from '../orchestration/auditLog.js';
+import { getSkillShareManager } from '../orchestration/skillShare.js';
 
 // Re-export ToolExecutionContext for convenience
 export { ToolExecutionContext } from './toolSchedulerAdapter.js';
@@ -1129,6 +1130,12 @@ export class ToolExecutionEngine {
         }).catch(() => {});
       } catch { /* 工作日志失败不影响主流程 */ }
 
+      // 📊 记录 Skill 使用统计（用于排行榜使用率）
+      try {
+        const skillMgr = getSkillShareManager(this.config);
+        skillMgr.recordSkillUsage(reqInfo.name, true).catch(() => {});
+      } catch { /* Skill 统计失败不影响主流程 */ }
+
       // 🔒 记录审计日志
       try {
         const auditor = getAuditLogger();
@@ -1179,6 +1186,12 @@ export class ToolExecutionEngine {
           details: response.error?.message?.substring(0, 200),
         }).catch(() => {});
       } catch { /* 工作日志失败不影响主流程 */ }
+
+      // 📊 记录 Skill 使用统计（失败也计）
+      try {
+        const skillMgr = getSkillShareManager(this.config);
+        skillMgr.recordSkillUsage(reqInfo.name, false).catch(() => {});
+      } catch { /* Skill 统计失败不影响主流程 */ }
 
       // 🔒 记录审计日志（失败操作）
       try {
