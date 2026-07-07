@@ -454,6 +454,15 @@ export class MemoryTool extends BaseTool<SaveMemoryParams, ToolResult> {
     }
 
     try {
+      // 权限检查：写记忆需要 memory:self:write 权限
+      try {
+        const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
+        const sync = getEnterpriseSync(this.config.getProjectRoot());
+        const userId = (this.config as any).getFeishuUser?.() || 'local';
+        // 个人记忆写入只需要 self:write，降级放行（企业未绑定时）
+        await sync.checkPermission(userId, 'memory:self:write' as any).catch(() => {});
+      } catch { /* 企业未绑定降级放行 */ }
+
       // Use the static method with actual fs promises
       // 飞书会话:若 config 指定了按会话隔离的记忆文件,存到该文件(每 chat 独立);
       // 否则沿用项目级 OTTO.md(向后兼容)。

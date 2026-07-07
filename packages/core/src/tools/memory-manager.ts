@@ -188,6 +188,38 @@ FILES CREATED:
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
 
+    // 权限检查：按操作类型映射所需权限
+    const permissionMap: Record<string, string> = {
+      learn: 'memory:team:write',
+      recall: 'memory:team:read',
+      onboard: 'memory:team:write',
+      offboard: 'memory:company:write',
+      report: 'analytics:team:read',
+      update: 'memory:team:write',
+      sync: 'memory:company:write',
+      export: 'analytics:team:read',
+      project_create: 'memory:project:write',
+      project_list: 'memory:project:read',
+      project_add: 'memory:project:write',
+      project_archive: 'memory:project:write',
+      list: 'memory:team:read',
+    };
+    const requiredPermission = permissionMap[p.action];
+    if (requiredPermission) {
+      try {
+        const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
+        const sync = getEnterpriseSync(this.config.getProjectRoot());
+        const userId = (this.config as any).getFeishuUser?.() || 'local';
+        const hasPermission = await sync.checkPermission(userId, requiredPermission as any).catch(() => true);
+        if (!hasPermission) {
+          return {
+            llmContent: `权限不足：需要 ${requiredPermission} 权限`,
+            returnDisplay: `权限不足：需要 ${requiredPermission} 权限`,
+          };
+        }
+      } catch { /* 企业未绑定降级放行 */ }
+    }
+
     this.ensureDirs();
     const logLabel = 'memory.' + p.action;
     console.time(logLabel);
