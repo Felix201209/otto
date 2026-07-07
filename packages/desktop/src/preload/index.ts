@@ -78,6 +78,10 @@ export interface OttoBridge {
     starBoard: string;
     tabs: Array<{ id: string; label: string; icon: string }>;
   }>;
+  /** 获取今日工作日志汇总 */
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
+  /** 获取审计日志最近记录 */
+  auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }>;
 }
 
 // ── 退避参数 ──
@@ -294,6 +298,12 @@ const bridge: OttoBridge = {
       starBoard: string;
       tabs: Array<{ id: string; label: string; icon: string }>;
     }>;
+  },
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }> {
+    return ipcRenderer.invoke('otto:worklog-today') as Promise<{ summary: string; date: string; totalActions: number }>;
+  },
+  auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }> {
+    return ipcRenderer.invoke('otto:auditlog-recent', days, limit) as Promise<{ report: string; count: number }>;
   },
 };
 

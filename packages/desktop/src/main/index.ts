@@ -68,6 +68,8 @@ const IPC = {
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
   skillLeaderboard: 'otto:skill-leaderboard',
+  workLogToday: 'otto:worklog-today',
+  auditLogRecent: 'otto:auditlog-recent',
 } as const;
 
 /**
@@ -320,11 +322,11 @@ function registerIpc(): void {
       const teamName = activeShares[0]?.teamName || '本小组';
 
       // 排行榜文本
-      const medals = ['🥇', '🥈', '🥉'];
+      const medals = ['1.', '2.', '3.'];
       const maxInstalls = Math.max(...activeShares.map((s: any) => s.installCount || 0), 1);
       const maxUsage = Math.max(...activeShares.map((s: any) => s.usageCount || 0), 1);
 
-      const lbLines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
       const scored = activeShares.map((s: any) => {
         const ratingScore = (s.rating || 0) / 5 * 100;
         const installScore = (s.installCount || 0) / maxInstalls * 100;
@@ -335,7 +337,7 @@ function registerIpc(): void {
 
       scored.forEach((item: any, i: number) => {
         const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
+        const stars = '★'.repeat(Math.round(item.s.rating || 0));
         lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
         lbLines.push(`   ${item.s.featureDescription || ''}`);
         lbLines.push(`   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`);
@@ -352,7 +354,7 @@ function registerIpc(): void {
         contributorMap[s.sharedBy].installs += s.installCount || 0;
         contributorMap[s.sharedBy].skills.push(s.skillName);
       }
-      const sbLines: string[] = [`🌟 ${teamName} 贡献明星榜`, ''];
+      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
       Object.values(contributorMap).sort((a: any, b: any) => b.installs - a.installs).forEach((c: any, i: number) => {
         const rank = i < 3 ? medals[i] : `${i + 1}.`;
         sbLines.push(`${rank} ${c.name}`);
@@ -364,8 +366,8 @@ function registerIpc(): void {
         leaderboard: lbLines.join('\n'),
         starBoard: sbLines.join('\n'),
         tabs: [
-          { id: 'leaderboard', label: '排行榜', icon: '🏆' },
-          { id: 'stars', label: '明星榜', icon: '🌟' },
+          { id: 'leaderboard', label: '排行榜', icon: '' },
+          { id: 'stars', label: '明星榜', icon: '' },
         ],
       };
     } catch (err) {
@@ -373,10 +375,129 @@ function registerIpc(): void {
         leaderboard: '暂无排行榜数据',
         starBoard: '暂无明星榜数据',
         tabs: [
-          { id: 'leaderboard', label: '排行榜', icon: '🏆' },
-          { id: 'stars', label: '明星榜', icon: '🌟' },
+          { id: 'leaderboard', label: '排行榜', icon: '' },
+          { id: 'stars', label: '明星榜', icon: '' },
         ],
       };
+    }
+  });
+
+  // 工作日志：读取今天的 JSONL 日志，生成汇总文本
+  ipcMain.handle(IPC.workLogToday, async () => {
+    try {
+      const os = require('os');
+      const pathMod = require('path');
+      const worklogDir = pathMod.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
+      const today = new Date().toISOString().split('T')[0];
+      const filePath = pathMod.join(worklogDir, `${today}.jsonl`);
+
+      let entries: any[] = [];
+      try {
+        const raw = await fs.promises.readFile(filePath, 'utf-8');
+        entries = raw.trim().split('\n').filter((l: string) => l.length > 0).map((l: string) => JSON.parse(l));
+      } catch { /* 文件不存在 */ }
+
+      if (entries.length === 0) {
+        return { summary: '今天还没有操作记录。', date: today, totalActions: 0 };
+      }
+
+      const byCategory: Record<string, number> = {};
+      let successCount = 0;
+      let failCount = 0;
+      const actionCounts: Record<string, number> = {};
+
+      for (const entry of entries) {
+        byCategory[entry.category] = (byCategory[entry.category] || 0) + 1;
+        if (entry.success) successCount++; else failCount++;
+        actionCounts[entry.action] = (actionCounts[entry.action] || 0) + 1;
+      }
+
+      const topActions = Object.entries(actionCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const firstTime = entries[0]?.timestamp || '';
+      const lastTime = entries[entries.length - 1]?.timestamp || '';
+
+      const cats = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}:${n}`).join(' | ');
+
+      let summary = `今日工作日志 (${today})\n\n`;
+      summary += `总操作：${entries.length} 次\n`;
+      summary += `成功：${successCount}  失败：${failCount}\n`;
+      summary += `首次：${firstTime.substring(11, 19) || '—'}\n`;
+      summary += `最后：${lastTime.substring(11, 19) || '—'}\n\n`;
+      summary += `分类：${cats}\n\n`;
+      summary += `高频操作：\n`;
+      for (const [action, count] of topActions) {
+        summary += `  ${action} (${count}次)\n`;
+      }
+
+      return { summary, date: today, totalActions: entries.length };
+    } catch (err) {
+      return { summary: '读取工作日志失败。', date: '', totalActions: 0 };
+    }
+  });
+
+  // 审计日志：读取最近N天的审计记录，生成报告
+  ipcMain.handle(IPC.auditLogRecent, async (_e, days?: number, limit?: number) => {
+    try {
+      const os = require('os');
+      const pathMod = require('path');
+      const auditDir = pathMod.join(os.homedir(), '.otto-user', 'audit');
+      const dayCount = days || 7;
+      const maxResults = limit || 50;
+
+      const entries: any[] = [];
+      const today = new Date();
+      for (let i = 0; i < dayCount; i++) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        const filePath = pathMod.join(auditDir, `audit-${dateStr}.jsonl`);
+        try {
+          const raw = await fs.promises.readFile(filePath, 'utf-8');
+          const dayEntries = raw.trim().split('\n').filter((l: string) => l.length > 0).map((l: string) => JSON.parse(l));
+          entries.push(...dayEntries);
+        } catch { /* 文件不存在 */ }
+      }
+
+      if (entries.length === 0) {
+        return { report: `最近 ${dayCount} 天无审计记录。`, count: 0 };
+      }
+
+      // 按时间倒序
+      entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      const recent = entries.slice(0, maxResults);
+
+      const byUser: Record<string, number> = {};
+      const byCategory: Record<string, number> = {};
+      let highRisk = 0;
+      let successCount = 0;
+
+      for (const e of entries) {
+        byUser[e.userId] = (byUser[e.userId] || 0) + 1;
+        byCategory[e.category] = (byCategory[e.category] || 0) + 1;
+        if (e.riskLevel === 'high') highRisk++;
+        if (e.success) successCount++;
+      }
+
+      let report = `审计日志 (最近${dayCount}天)\n\n`;
+      report += `总操作：${entries.length} | 成功：${successCount} | 失败：${entries.length - successCount} | 高风险：${highRisk}\n\n`;
+      report += `按用户：\n`;
+      for (const [user, count] of Object.entries(byUser).sort((a, b) => b[1] - a[1])) {
+        report += `  ${user}: ${count}次\n`;
+      }
+      report += `\n按类别：\n`;
+      for (const [cat, count] of Object.entries(byCategory).sort((a, b) => b[1] - a[1])) {
+        report += `  ${cat}: ${count}次\n`;
+      }
+      report += `\n最近 ${recent.length} 条记录：\n`;
+      for (const e of recent) {
+        const time = e.timestamp.substring(5, 19).replace('T', ' ');
+        const risk = e.riskLevel === 'high' ? '[高风险]' : e.riskLevel === 'medium' ? '[中风险]' : '';
+        report += `  ${time} ${e.userId} ${e.action} ${e.success ? 'OK' : 'FAIL'} ${risk}\n`;
+      }
+
+      return { report, count: entries.length };
+    } catch (err) {
+      return { report: '读取审计日志失败。', count: 0 };
     }
   });
 
