@@ -208,13 +208,18 @@ describe('AnalyzeDataTool', () => {
     expect(r.llmContent).toContain('brew install gnuplot');
   });
 
-  // --- summary is pure TS now, so it must work without duckdb ---
-  it('summary works without duckdb using the pure TS fallback', async () => {
+  // --- doctor preflight: duckdb-dependent ops fail loud when duckdb is missing ---
+  // 之前误改为"summary 是纯 TS 实现"的断言是错的：analyze-data.ts 里 summary 分支
+  // 明确 `await this.requireDuckdb('summary')`，本地曾因机器装了 duckdb（brew）而
+  // 误判通过，在无 duckdb 的 CI 环境（clean macOS runner）里立即暴露。还原为验证
+  // 真实行为——缺 duckdb 时必须 fail loud 并给出安装提示，不允许假成功。
+  it('summary fails loud with duckdb install command when duckdb is missing', async () => {
     const f = writeCsv('s.csv', 'a,b\n1,2');
     const r = await tool.execute({ input_path: f, operation: 'summary' }, sig());
-    expect(r.llmContent).toContain('analyze_data OK');
-    expect(r.llmContent).toContain('Numeric stats');
-    expect(r.llmContent).toContain('a_count');
+    // duckdb is not installed in this env
+    expect(r.llmContent).toContain('FAIL');
+    expect(r.llmContent.toLowerCase()).toContain('duckdb');
+    expect(r.llmContent).toContain('brew install duckdb');
   });
 
   it('export_excel from CSV fails loud when duckdb is missing', async () => {
