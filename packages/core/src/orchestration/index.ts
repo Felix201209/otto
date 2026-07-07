@@ -54,4 +54,4 @@ export type { SkillCandidate } from './autoSkillGenerator.js';
 
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';
-export type { SkillShareRecord, ShareSkillParams, ListSharedSkillsParams, ShareStatus, InstallRecord } from './skillShare.js';
+export type { SkillShareRecord, ShareSkillParams, ListSharedSkillsParams, ShareStatus, InstallRecord, SkillShareEvent, SkillShareNotification, NotificationSender } from './skillShare.js';

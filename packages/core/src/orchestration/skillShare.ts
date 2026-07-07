@@ -23,9 +23,35 @@ import type { Config } from '../config/config.js';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import type { SkillRecord } from '../memory/orgMemoryTypes.js';
 import { getWorkLogger } from './workLog.js';
+import { getProactiveService } from './proactiveService.js';
 
 /** 分享状态 */
 export type ShareStatus = 'active' | 'revoked' | 'deprecated';
+
+/** 通知事件类型 */
+export type SkillShareEvent =
+  | 'skill_shared'      // 有人分享了新 Skill
+  | 'skill_revoked'     // 有人撤回了 Skill
+  | 'skill_updated';    // 分享者更新了 Skill
+
+/** 通知消息 */
+export interface SkillShareNotification {
+  event: SkillShareEvent;
+  shareId: string;
+  skillName: string;
+  sharerName: string;
+  teamId: string;
+  teamName: string;
+  version?: number;
+  changeNote?: string;
+  message: string;
+  timestamp: string;
+}
+
+/** 通知发送器接口 */
+export interface NotificationSender {
+  sendToTeamMembers(teamId: string, notification: SkillShareNotification): Promise<void>;
+}
 
 /** 个人 Skill 分享记录 */
 export interface SkillShareRecord {
@@ -111,9 +137,44 @@ export interface ListSharedSkillsParams {
  */
 export class SkillShareManager {
   private store: OrgMemoryStore;
+  private notificationSender: NotificationSender | null = null;
 
   constructor(private readonly config: Config) {
     this.store = new OrgMemoryStore(config.getProjectRoot());
+  }
+
+  /** 设置通知发送器（由外部注入，如飞书消息通道） */
+  setNotificationSender(sender: NotificationSender): void {
+    this.notificationSender = sender;
+  }
+
+  /** 发送通知给小组成员 */
+  private async notifyTeamMembers(
+    teamId: string,
+    teamName: string,
+    notification: Omit<SkillShareNotification, 'teamId' | 'teamName' | 'timestamp'>,
+  ): Promise<void> {
+    const fullNotification: SkillShareNotification = {
+      ...notification,
+      teamId,
+      teamName,
+      timestamp: new Date().toISOString(),
+    };
+
+    // 1. 通过注入的通知发送器发送（如飞书消息）
+    if (this.notificationSender) {
+      try {
+        await this.notificationSender.sendToTeamMembers(teamId, fullNotification);
+      } catch (err) {
+        console.warn(`[SkillShare] Notification sender failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. 通过主动服务记录事件（下次 checkAndTrigger 时触发提醒）
+    try {
+      const proactive = getProactiveService();
+      proactive.recordAction('team', `[skill_share] ${fullNotification.message}`);
+    } catch { /* 不影响主流程 */ }
   }
 
   /** 分享记录存储路径 */
@@ -287,6 +348,15 @@ export class SkillShareManager {
       });
     } catch { /* 不影响主流程 */ }
 
+    // 8. 通知小组成员
+    await this.notifyTeamMembers(params.teamId, team.name, {
+      event: 'skill_shared',
+      shareId: shareRecord.id,
+      skillName: params.skillName,
+      sharerName: params.userName,
+      message: `${params.userName} 向小组 "${team.name}" 分享了 Skill "${params.skillName}"${params.note ? '：' + params.note : ''}`,
+    });
+
     return shareRecord;
   }
 
@@ -316,11 +386,16 @@ export class SkillShareManager {
       (s) => !(s.name === share.skillName && s.teamId === share.teamId),
     );
     await this.store.save(data);
-  }
 
-  /**
-   * 查看小组共享的 Skill 列表。
-   */
+    // 通知小组成员
+    await this.notifyTeamMembers(share.teamId, share.teamName, {
+      event: 'skill_revoked',
+      shareId: share.id,
+      skillName: share.skillName,
+      sharerName: share.sharedByName,
+      message: `${share.sharedByName} 撤回了 Skill "${share.skillName}"，已从小组共享中移除。已安装的版本不受影响。`,
+    });
+  }
   async listSharedSkills(params: ListSharedSkillsParams = {}): Promise<SkillShareRecord[]> {
     let shares = await this.loadShares();
 
@@ -475,6 +550,17 @@ export class SkillShareManager {
         details: changeNote,
       });
     } catch { /* 不影响主流程 */ }
+
+    // 通知小组成员有新版本
+    await this.notifyTeamMembers(share.teamId, share.teamName, {
+      event: 'skill_updated',
+      shareId: share.id,
+      skillName: share.skillName,
+      sharerName: share.sharedByName,
+      version: newVersion,
+      changeNote,
+      message: `${share.sharedByName} 更新了 Skill "${share.skillName}" 到 v${newVersion}${changeNote ? '：' + changeNote : ''}。可在共享列表中查看更新。`,
+    });
 
     return share;
   }
