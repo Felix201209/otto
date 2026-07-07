@@ -125,19 +125,23 @@ export function ChatView({
   // 部门/岗位：从飞书同步数据读取，纯展示，不可修改
   const [deptLabel, setDeptLabel] = useState<string>('通用 · 通用助手');
 
-  // 启动时加载用户部门信息
-  useEffect(() => {
-    (async () => {
-      try {
-        const info = await (window as any).otto.userDepartment();
-        if (info && info.department) {
-          // 岗位格式化：dev.frontend → 前端
-          const roleDisplay = formatRole(info.role);
-          setDeptLabel(`${info.department} · ${roleDisplay}`);
-        }
-      } catch { /* 降级用默认值 */ }
-    })();
+  // 加载用户部门信息
+  const loadDept = React.useCallback(async () => {
+    try {
+      const info = await (window as any).otto.userDepartment();
+      if (info && info.department) {
+        const roleDisplay = formatRole(info.role);
+        setDeptLabel(`${info.department} · ${roleDisplay}`);
+      }
+    } catch { /* 降级用默认值 */ }
   }, []);
+
+  // 启动时加载 + 每10分钟刷新（人事在飞书改了部门后自动更新）
+  useEffect(() => {
+    loadDept();
+    const timer = setInterval(loadDept, 10 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [loadDept]);
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
