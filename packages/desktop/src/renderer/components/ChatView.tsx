@@ -103,11 +103,9 @@ export function ChatView({
     text: '',
     n: 0,
   });
-  // 部门/岗位选择：纯展示，任何人都不能通过此按钮修改自身部门
-  // 人事部有权调换其他员工的部门，但需通过专门的管理入口操作
+  // 部门/岗位：纯展示，不可修改
   const [selectedDept, setSelectedDept] = useState<string>('general');
   const [selectedRole, setSelectedRole] = useState<string>('通用助手');
-  const [deniedHint, setDeniedHint] = useState<string | null>(null);
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
@@ -188,49 +186,26 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {/* 部门/岗位：纯展示，不允许自行修改 */}
-        <div style={{ position: 'relative' }}>
-          <button
-            type="button"
-            onClick={() => {
-              setDeniedHint('部门/岗位由人事部分配，不可自行修改');
-              setTimeout(() => setDeniedHint(null), 2500);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '3px 10px',
-              fontSize: '11px',
-              fontWeight: 500,
-              color: 'var(--otto-text-secondary)',
-              background: 'var(--otto-surface)',
-              border: '1px solid var(--otto-border)',
-              borderRadius: 'var(--otto-radius-sm)',
-              cursor: 'default',
-              whiteSpace: 'nowrap',
-              opacity: 0.8,
-            }}
-            title="部门/岗位由人事部分配"
-          >
-            {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
-            <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
-          </button>
-
-          {/* 提示 */}
-          {deniedHint ? (
-            <span style={{
-              fontSize: '10px',
-              color: '#e85d5d',
-              background: 'rgba(232,93,93,0.1)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              whiteSpace: 'nowrap',
-            }}>
-              {deniedHint}
-            </span>
-          ) : null}
-        </div>
+        {/* 部门/岗位：纯展示，不可修改 */}
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '3px 10px',
+            fontSize: '11px',
+            fontWeight: 500,
+            color: 'var(--otto-text-secondary)',
+            background: 'var(--otto-surface)',
+            border: '1px solid var(--otto-border)',
+            borderRadius: 'var(--otto-radius-sm)',
+            whiteSpace: 'nowrap',
+            opacity: 0.8,
+          }}
+        >
+          {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
+          <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
+        </span>
 
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
