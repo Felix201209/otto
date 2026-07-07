@@ -34,6 +34,18 @@ const EXAMPLE_PROMPTS = [
   '给这个函数补一组单元测试',
 ];
 
+/** 岗位/部门定义 */
+const DEPARTMENTS = [
+  { id: 'general', name: '通用', roles: ['通用助手'] },
+  { id: 'dev', name: '研发部', roles: ['前端', '后端', '全栈', '测试', '运维'] },
+  { id: 'product', name: '产品部', roles: ['产品经理', '交互设计', '用户研究'] },
+  { id: 'marketing', name: '市场部', roles: ['品牌', '内容', '投放', '活动'] },
+  { id: 'sales', name: '销售部', roles: ['客户经理', '商务', '渠道'] },
+  { id: 'hr', name: '人事部', roles: ['招聘', '薪酬', '员工关系'] },
+  { id: 'finance', name: '财务部', roles: ['会计', '出纳', '分析'] },
+  { id: 'ops', name: '运营部', roles: ['用户运营', '内容运营', '数据运营'] },
+] as const;
+
 interface ChatViewProps {
   session: SessionSummary | null;
   messages: OttoMessage[];
@@ -91,6 +103,10 @@ export function ChatView({
     text: '',
     n: 0,
   });
+  // 部门/岗位选择
+  const [deptOpen, setDeptOpen] = useState(false);
+  const [selectedDept, setSelectedDept] = useState<string>('general');
+  const [selectedRole, setSelectedRole] = useState<string>('通用助手');
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
@@ -170,6 +186,106 @@ export function ChatView({
         <span className="otto-main__title">
           {session?.title ?? 'Otto'}
         </span>
+
+        {/* 部门/岗位选择器 */}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setDeptOpen((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '3px 10px',
+              fontSize: '11px',
+              fontWeight: 500,
+              color: 'var(--otto-text-secondary)',
+              background: 'var(--otto-surface)',
+              border: '1px solid var(--otto-border)',
+              borderRadius: 'var(--otto-radius-sm)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+            title="切换部门/岗位"
+          >
+            {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
+            <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
+          </button>
+
+          {deptOpen ? (
+            <>
+              {/* 点击外部关闭 */}
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 998 }}
+                onClick={() => setDeptOpen(false)}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '4px',
+                  background: 'var(--otto-sidebar-bg)',
+                  border: '1px solid var(--otto-border)',
+                  borderRadius: 'var(--otto-radius-sm)',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                  zIndex: 999,
+                  maxHeight: '360px',
+                  overflowY: 'auto',
+                  minWidth: '160px',
+                }}
+              >
+                {DEPARTMENTS.map((dept) => (
+                  <div key={dept.id}>
+                    <div
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: 'var(--otto-text-secondary)',
+                        textTransform: 'uppercase',
+                        borderBottom: '1px solid var(--otto-border)',
+                      }}
+                    >
+                      {dept.name}
+                    </div>
+                    {dept.roles.map((role) => (
+                      <button
+                        key={dept.id + role}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDept(dept.id);
+                          setSelectedRole(role);
+                          setDeptOpen(false);
+                        }}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '5px 16px',
+                          fontSize: '11px',
+                          color:
+                            selectedDept === dept.id && selectedRole === role
+                              ? 'var(--otto-accent)'
+                              : 'var(--otto-text)',
+                          background:
+                            selectedDept === dept.id && selectedRole === role
+                              ? 'var(--otto-accent-soft)'
+                              : 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </div>
+
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
