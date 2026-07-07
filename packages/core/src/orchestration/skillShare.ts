@@ -784,7 +784,93 @@ export class SkillShareManager {
   }
 
   /**
-   * 生成小组 Skill 排行榜。
+   * 生成小组 Skill 贡献明星榜。
+   *
+   * 按综合贡献度排序：分享数×0.3 + 总安装数×0.3 + 平均评分×0.2 + 总评分数×0.2
+   *
+   * @param teamId 小组 ID
+   */
+  async getTeamSharerLeaderboard(teamId: string): Promise<string> {
+    const shares = await this.loadShares();
+    const activeShares = shares.filter((s) => s.teamId === teamId && s.status === 'active');
+
+    if (activeShares.length === 0) {
+      return `本小组暂无贡献者。`;
+    }
+
+    const teamName = activeShares[0]?.teamName || '本小组';
+
+    // 按分享者聚合
+    const contributorMap: Record<string, {
+      name: string;
+      skillCount: number;
+      totalInstalls: number;
+      totalRatingScore: number;
+      ratingCount: number;
+      skills: string[];
+    }> = {};
+
+    for (const share of activeShares) {
+      const key = share.sharedBy;
+      if (!contributorMap[key]) {
+        contributorMap[key] = {
+          name: share.sharedByName,
+          skillCount: 0,
+          totalInstalls: 0,
+          totalRatingScore: 0,
+          ratingCount: 0,
+          skills: [],
+        };
+      }
+      const c = contributorMap[key];
+      c.skillCount++;
+      c.totalInstalls += share.installCount;
+      c.totalRatingScore += share.rating * share.ratingCount;
+      c.ratingCount += share.ratingCount;
+      c.skills.push(share.skillName);
+    }
+
+    // 计算综合贡献度
+    const maxInstalls = Math.max(...Object.values(contributorMap).map((c) => c.totalInstalls), 1);
+    const maxRatingCount = Math.max(...Object.values(contributorMap).map((c) => c.ratingCount), 1);
+
+    const contributors = Object.values(contributorMap).map((c) => {
+      const avgRating = c.ratingCount > 0 ? (c.totalRatingScore / c.ratingCount) : 0;
+      // 标准化到 0-100
+      const shareScore = (c.skillCount / Math.max(...Object.values(contributorMap).map((x) => x.skillCount), 1)) * 100;
+      const installScore = (c.totalInstalls / maxInstalls) * 100;
+      const ratingScore = (avgRating / 5) * 100;
+      const feedbackScore = (c.ratingCount / maxRatingCount) * 100;
+
+      const contributionScore = shareScore * 0.3 + installScore * 0.3 + ratingScore * 0.2 + feedbackScore * 0.2;
+
+      return { ...c, avgRating, contributionScore };
+    });
+
+    contributors.sort((a, b) => b.contributionScore - a.contributionScore);
+
+    // 格式化明星榜
+    const lines: string[] = [];
+    lines.push(`🌟 ${teamName} Skill 贡献明星榜`);
+    lines.push('');
+
+    const medals = ['🥇', '🥈', '🥉'];
+    for (let i = 0; i < contributors.length; i++) {
+      const c = contributors[i];
+      const rank = i < 3 ? medals[i] : `${i + 1}.`;
+      const stars = '⭐'.repeat(Math.round(c.avgRating));
+
+      lines.push(`${rank} ${c.name}`);
+      lines.push(`   分享：${c.skillCount} 个 | 安装：${c.totalInstalls} 次 | 评分：${stars || '暂无'} (${c.ratingCount}人) | 贡献度：${c.contributionScore.toFixed(0)}`);
+      lines.push(`   作品：${c.skills.join('、')}`);
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * 生成小组 Skill 排行榜 + 贡献明星榜（并排展示）。
    *
    * 按综合得分排序（评分×0.6 + 安装数×0.4），
    * 只展示活跃状态的 Skill。
@@ -863,6 +949,16 @@ export class SkillShareManager {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, limit);
+  }
+
+  /**
+   * 生成 Skill 排行榜 + 贡献明星榜（合并展示）。
+   */
+  async getTeamDashboard(teamId: string): Promise<string> {
+    const leaderboard = await this.getTeamLeaderboard(teamId);
+    const starBoard = await this.getTeamSharerLeaderboard(teamId);
+
+    return `${leaderboard}\n\n${'─'.repeat(40)}\n\n${starBoard}`;
   }
 }
 
