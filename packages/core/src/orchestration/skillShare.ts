@@ -98,8 +98,8 @@ export interface SkillShareRecord {
   note?: string;
   /** 自动提取的功能描述（中文，展示用） */
   featureDescription: string;
-  /** 评分明细（记录谁打了多少分，防止重复打分） */
-  ratings: Array<{ userId: string; score: number; ratedAt: string }>;
+  /** 评分明细（仅存哈希用于去重，不记录可识别身份信息，确保匿名） */
+  ratings: Array<{ userHash: string; score: number; ratedAt: string }>;
 }
 
 /** 已安装记录（追踪每个用户安装的版本） */
@@ -694,16 +694,16 @@ export class SkillShareManager {
       share.ratings = [];
     }
 
-    // 检查是否已打分
-    const existing = share.ratings.find((r) => r.userId === userId);
+    // 用 userId 的哈希做去重，不存原始 userId，确保匿名
+    const userHash = this.hashContent(userId + share.id);
+
+    const existing = share.ratings.find((r) => r.userHash === userHash);
     if (existing) {
-      // 更新已有评分
       existing.score = rating;
       existing.ratedAt = new Date().toISOString();
     } else {
-      // 新增评分
       share.ratings.push({
-        userId,
+        userHash,
         score: rating,
         ratedAt: new Date().toISOString(),
       });
@@ -715,12 +715,12 @@ export class SkillShareManager {
 
     await this.saveShares(shares);
 
-    // 记录工作日志
+    // 记录工作日志（不记录是谁打的分，保护匿名）
     try {
       const logger = getWorkLogger();
       await logger.log({
         toolName: 'skill_rate',
-        action: `为 Skill "${share.skillName}" 打了 ${rating} 星`,
+        action: `为 Skill "${share.skillName}" 打了 ${rating} 星（匿名）`,
         category: 'other',
         success: true,
       });
