@@ -98,6 +98,8 @@ export interface SkillShareRecord {
   note?: string;
   /** 自动提取的功能描述（中文，展示用） */
   featureDescription: string;
+  /** 评分明细（记录谁打了多少分，防止重复打分） */
+  ratings: Array<{ userId: string; score: number; ratedAt: string }>;
 }
 
 /** 已安装记录（追踪每个用户安装的版本） */
@@ -293,6 +295,7 @@ export class SkillShareManager {
       installCount: 0,
       rating: 0,
       ratingCount: 0,
+      ratings: [],
       note: params.note,
       featureDescription: extractFeature(skillContent),
     };
@@ -671,7 +674,10 @@ export class SkillShareManager {
   }
 
   /**
-   * 评价已安装的共享 Skill。
+   * 评价共享 Skill。
+   *
+   * 每个用户只能打一次分，再次打分则更新已有评分。
+   * 打分范围 1-5 星。
    */
   async rateSharedSkill(shareId: string, rating: number, userId: string): Promise<void> {
     if (rating < 1 || rating > 5) {
@@ -684,11 +690,41 @@ export class SkillShareManager {
       throw new Error(`Share not found: ${shareId}`);
     }
 
-    // 简单平均评分
-    const totalScore = share.rating * share.ratingCount + rating;
-    share.ratingCount++;
-    share.rating = totalScore / share.ratingCount;
+    if (!share.ratings) {
+      share.ratings = [];
+    }
+
+    // 检查是否已打分
+    const existing = share.ratings.find((r) => r.userId === userId);
+    if (existing) {
+      // 更新已有评分
+      existing.score = rating;
+      existing.ratedAt = new Date().toISOString();
+    } else {
+      // 新增评分
+      share.ratings.push({
+        userId,
+        score: rating,
+        ratedAt: new Date().toISOString(),
+      });
+    }
+
+    // 重新计算平均分
+    share.ratingCount = share.ratings.length;
+    share.rating = share.ratings.reduce((sum, r) => sum + r.score, 0) / share.ratingCount;
+
     await this.saveShares(shares);
+
+    // 记录工作日志
+    try {
+      const logger = getWorkLogger();
+      await logger.log({
+        toolName: 'skill_rate',
+        action: `为 Skill "${share.skillName}" 打了 ${rating} 星`,
+        category: 'other',
+        success: true,
+      });
+    } catch { /* 不影响主流程 */ }
   }
 
   /**
