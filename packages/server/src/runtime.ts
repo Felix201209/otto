@@ -54,6 +54,7 @@ import {
   type MessageSource,
   type ToolCall,
   type ToolExecutionResult,
+  type TokenUsage,
 } from './protocol.js';
 
 /** 创建并初始化一个绑定到指定 core Config 的会话运行时。 */
@@ -115,6 +116,24 @@ function messageContentToParts(content: MessageContent): Part[] {
 }
 
 /** 从一条流式响应里抽取可流式输出的文本（跳过 thought 片段）。 */
+/**
+ * 把 core 的流式响应 usageMetadata 转成协议的 TokenUsage（chat_complete 帧用）。
+ * 覆盖式取值：流的最后一个带 usageMetadata 的 chunk 即代表本轮全量用量
+ * （与 core turn.ts 对同一字段的处理方式一致，不是逐 chunk 累加）。
+ */
+function toProtocolTokenUsage(
+  usage: GenerateContentResponse['usageMetadata'] | undefined,
+  modelName: string,
+): TokenUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    inputTokens: usage.promptTokenCount || 0,
+    outputTokens: usage.candidatesTokenCount || 0,
+    totalTokens: usage.totalTokenCount || 0,
+    model: modelName,
+  };
+}
+
 function extractStreamText(resp: GenerateContentResponse): string | null {
   const candidate = resp.candidates?.[0];
   const parts = candidate?.content?.parts;
@@ -271,6 +290,7 @@ export class CoreSessionRuntime implements SessionRuntime {
 
         const functionCalls: FunctionCall[] = [];
         let lastFinishReason: FinishReason | undefined;
+        let lastUsage: GenerateContentResponse['usageMetadata'] | undefined;
 
         const responseStream = await chat.sendMessageStream(
           {
@@ -292,6 +312,9 @@ export class CoreSessionRuntime implements SessionRuntime {
           if (signal.aborted) break;
           if (resp.candidates?.[0]?.finishReason) {
             lastFinishReason = resp.candidates[0].finishReason;
+          }
+          if (resp.usageMetadata) {
+            lastUsage = resp.usageMetadata;
           }
           const delta = extractStreamText(resp);
           if (delta) {
@@ -336,6 +359,7 @@ export class CoreSessionRuntime implements SessionRuntime {
               finishReason: lastFinishReason
                 ? String(lastFinishReason)
                 : undefined,
+              tokenUsage: toProtocolTokenUsage(lastUsage, modelName),
             },
           });
           this.store.setStatus(this.sessionId, 'idle');
@@ -351,7 +375,11 @@ export class CoreSessionRuntime implements SessionRuntime {
           });
           this.store.publish(this.sessionId, {
             type: 'chat_complete',
-            payload: { sessionId: this.sessionId, messageId: assistantId },
+            payload: {
+              sessionId: this.sessionId,
+              messageId: assistantId,
+              tokenUsage: toProtocolTokenUsage(lastUsage, modelName),
+            },
           });
         }
 
