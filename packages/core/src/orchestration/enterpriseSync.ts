@@ -329,24 +329,34 @@ export class EnterpriseSync {
       const newFeatures = FEATURE_SETS[userRole];
       const newLicenseRole = LICENSE_ROLE_MAP[userRole];
 
-      const existingIdx = preservedLicenses.findIndex(
-        (l) => l.assigneeUserId === user.id && !l.revokedAt,
-      );
-      if (existingIdx !== -1) {
-        const lic = preservedLicenses[existingIdx];
-        // 权限或角色变了才更新
-        if (lic.role !== newLicenseRole ||
-            lic.permissions.length !== newPermissions.length ||
-            !lic.permissions.every((p, i) => p === newPermissions[i])) {
-          preservedLicenses[existingIdx] = {
-            ...lic,
-            role: newLicenseRole,
-            permissions: newPermissions,
-            features: newFeatures,
-            scope: userRole === 'company_admin' ? 'company' : 'team',
-            teamId: user.teamIds[0],
-          };
-        }
+      // 找到该用户所有未撤销的 License
+      const activeLicenses = preservedLicenses
+        .map((l, i) => ({ lic: l, idx: i }))
+        .filter(({ lic }) => lic.assigneeUserId === user.id && !lic.revokedAt);
+
+      if (activeLicenses.length === 0) continue; // 新用户已在上面处理
+
+      // 只保留第一条，撤销多余的（防止重复 License）
+      for (let j = 1; j < activeLicenses.length; j++) {
+        preservedLicenses[activeLicenses[j].idx] = {
+          ...activeLicenses[j].lic,
+          revokedAt: now,
+        };
+      }
+
+      // 更新保留的那条
+      const lic = activeLicenses[0].lic;
+      if (lic.role !== newLicenseRole ||
+          lic.permissions.length !== newPermissions.length ||
+          !lic.permissions.every((p, i) => p === newPermissions[i])) {
+        preservedLicenses[activeLicenses[0].idx] = {
+          ...lic,
+          role: newLicenseRole,
+          permissions: newPermissions,
+          features: newFeatures,
+          scope: userRole === 'company_admin' ? 'company' : 'team',
+          teamId: user.teamIds[0],
+        };
       }
     }
 
