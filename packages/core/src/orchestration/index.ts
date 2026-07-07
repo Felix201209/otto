@@ -34,7 +34,7 @@ export {
   getCollaborationManager,
   initCollaboration,
 } from './multiAgent.js';
-export type { CollaborationRequest, CollaborationResponse, AgentRegistration } from './multiAgent.js';
+export type { CollaborationRequest, CollaborationResponse, AgentRegistration, FeishuMessageSender } from './multiAgent.js';
 
 // 主动服务
 export { ProactiveService, getProactiveService } from './proactiveService.js';

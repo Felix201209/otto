@@ -15,13 +15,23 @@ import type { Config } from '../config/config.js';
 /** 协作角色 */
 export type CollaborationRole = 'initiator' | 'coordinator' | 'executor' | 'reviewer';
 
+/** 飞书消息发送器接口（由 CLI 的 gateway 注入） */
+export interface FeishuMessageSender {
+  /** 给指定用户发单聊消息 */
+  sendMessageToUser(openId: string, text: string): Promise<void>;
+  /** 给指定群发消息 */
+  sendMessageToChat(chatId: string, text: string): Promise<void>;
+}
+
 /** 协作请求 */
 export interface CollaborationRequest {
   id: string;
   fromUserId: string;
   fromAgentId: string;
+  fromUserName: string;
   toUserId: string;
   toAgentId: string;
+  toUserName: string;
   role: CollaborationRole;
   task: string;
   context?: string;
@@ -50,6 +60,10 @@ export interface AgentRegistration {
   endpoint?: string; // 可达的 HTTP/WS 端点
   status: 'online' | 'busy' | 'offline';
   lastSeen: string;
+  /** 飞书 open_id（用于通过飞书消息发送协作请求） */
+  feishuOpenId?: string;
+  /** 飞书 chat_id（如果 Otto 在某个群里） */
+  feishuChatId?: string;
 }
 
 /**
@@ -64,6 +78,13 @@ export interface AgentRegistration {
 export class MultiAgentCollaboration {
   private agents = new Map<string, AgentRegistration>();
   private pendingRequests = new Map<string, CollaborationRequest>();
+  private feishuSender: FeishuMessageSender | null = null;
+
+  /** 注入飞书消息发送器（由 CLI gateway 初始化时注入） */
+  setFeishuSender(sender: FeishuMessageSender): void {
+    this.feishuSender = sender;
+    console.log('[MultiAgent] Feishu message sender injected');
+  }
 
   /**
    * 注册当前 Otto 实例。
@@ -124,7 +145,7 @@ export class MultiAgentCollaboration {
       };
     }
 
-    // 尝试 HTTP 直连
+    // 1. 尝试 HTTP 直连（最低延迟）
     if (targetAgent.endpoint) {
       try {
         const response = await fetch(`${targetAgent.endpoint}/collab`, {
@@ -144,16 +165,102 @@ export class MultiAgentCollaboration {
       }
     }
 
-    // 降级：通过飞书消息发送
-    // 实际实现中，这里会调用飞书 API 给目标用户发消息
-    // 目标 Otto 在飞书里收到消息后处理并回复
+    // 2. 通过飞书消息发送协作请求
+    if (this.feishuSender && targetAgent.feishuOpenId) {
+      const msgText = this.formatCollabRequestForFeishu(fullReq);
+      try {
+        await this.feishuSender.sendMessageToUser(targetAgent.feishuOpenId, msgText);
+        return {
+          requestId,
+          fromAgentId: req.toAgentId,
+          accepted: true,
+          message: `协作请求已通过飞书发送给 ${targetAgent.userName}：${req.task}`,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        console.warn(`[MultiAgent] Feishu send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // 3. 通过群聊发送（如果有 chatId）
+    if (this.feishuSender && targetAgent.feishuChatId) {
+      const msgText = this.formatCollabRequestForFeishu(fullReq);
+      try {
+        await this.feishuSender.sendMessageToChat(targetAgent.feishuChatId, msgText);
+        return {
+          requestId,
+          fromAgentId: req.toAgentId,
+          accepted: true,
+          message: `协作请求已通过飞书群发送给 ${targetAgent.userName}：${req.task}`,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        console.warn(`[MultiAgent] Feishu group send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // 4. 所有通道都不可用
     return {
       requestId,
       fromAgentId: req.toAgentId,
-      accepted: true,
-      message: `Collaboration request sent via Feishu to ${targetAgent.userName}`,
+      accepted: false,
+      message: `无法联系 ${targetAgent.userName} 的 Otto（无 HTTP 端点、无飞书 openId）`,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  /**
+   * 将协作请求格式化为飞书消息文本。
+   */
+  private formatCollabRequestForFeishu(req: CollaborationRequest): string {
+    const lines: string[] = [];
+    lines.push(`[Otto 协作请求]`);
+    lines.push(`来自：${req.fromUserName} 的 Otto`);
+    lines.push(`任务：${req.task}`);
+    if (req.context) {
+      lines.push(`背景：${req.context}`);
+    }
+    if (req.deadline) {
+      lines.push(`截止：${req.deadline}`);
+    }
+    lines.push(`优先级：${req.priority}`);
+    lines.push(`请求ID：${req.id}`);
+    lines.push('');
+    lines.push(`请回复 "协作接受 ${req.id}" 或 "协作拒绝 ${req.id}" 来处理此请求。`);
+    return lines.join('\n');
+  }
+
+  /**
+   * 解析飞书消息，判断是否是协作请求的回复。
+   * 如果是，返回请求 ID 和是否接受。
+   */
+  parseCollabReply(messageText: string): { requestId: string; accepted: boolean } | null {
+    const text = messageText.trim();
+    const acceptMatch = text.match(/^协作接受\s+(\S+)/i);
+    if (acceptMatch) {
+      return { requestId: acceptMatch[1], accepted: true };
+    }
+    const rejectMatch = text.match(/^协作拒绝\s+(\S+)/i);
+    if (rejectMatch) {
+      return { requestId: rejectMatch[1], accepted: false };
+    }
+    // 也支持英文
+    const acceptEn = text.match(/^collab accept\s+(\S+)/i);
+    if (acceptEn) {
+      return { requestId: acceptEn[1], accepted: true };
+    }
+    const rejectEn = text.match(/^collab reject\s+(\S+)/i);
+    if (rejectEn) {
+      return { requestId: rejectEn[1], accepted: false };
+    }
+    return null;
+  }
+
+  /**
+   * 判断飞书消息是否是 Otto 协作请求（而非普通对话）。
+   */
+  isCollabRequest(messageText: string): boolean {
+    return messageText.trim().startsWith('[Otto 协作请求]');
   }
 
   /**
@@ -230,9 +337,11 @@ export function initCollaboration(
   userName: string,
   department: string,
   capabilities: string[] = ['calendar', 'docs', 'tasks', 'email'],
+  feishuOpenId?: string,
+  feishuChatId?: string,
 ): void {
   const mgr = getCollaborationManager();
-  const agentId = config.getSessionId?.() || 'otto-main';
+  const agentId = (config as any).getSessionId?.() || 'otto-main';
   const userId = (config as any).getFeishuUser?.() || userName;
 
   mgr.register({
@@ -241,5 +350,7 @@ export function initCollaboration(
     userName,
     department,
     capabilities,
+    feishuOpenId,
+    feishuChatId,
   });
 }
