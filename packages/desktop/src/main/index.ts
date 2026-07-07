@@ -75,21 +75,22 @@ const IPC = {
   userDepartment: 'otto:user-department',
 } as const;
 
+const { execSync, spawn } = require('child_process');
+
+function getOttoBinPath(): string {
+  const candidates = [
+    path.join(__dirname, '..', '..', '..', 'bundle', 'otto.js'),
+    path.join(__dirname, '..', 'bundle', 'otto.js'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return '';
+}
+
 /**
- * 飞书一键开关在桌面端的现状（诚实说明）。
- *
- * 飞书 daemon 的真实启停逻辑在 CLI 包（otto feishu daemon），它依赖 `otto --feishu`
- * 这个 CLI 进程入口（通过 process.argv[1] 定位 otto.js）。在 Electron 主进程里
- * process.argv[1] 指向的是 Electron/app 入口而非 otto.js，直接调用会 spawn 错误的
- * 进程；且 desktop 目前并未依赖 CLI 包。因此桌面端暂不直接代管飞书 daemon。
- *
- * 处置：注册这三个 handler，让 renderer 的调用不再 reject 报「操作失败」，而是拿到
- * 一句明确的「桌面端暂不支持、请用 CLI」——诚实告知，绝不假报「已开启 / 运行中」。
+ * 飞书 daemon 管理：通过 spawn 调用 otto feishu daemon start/stop/status
  */
-const FEISHU_DESKTOP_NOTICE =
-  '桌面端暂不支持在此一键启停飞书守护进程。\n' +
-  '请在终端使用命令行：otto feishu daemon start / stop / status。\n' +
-  '（该能力后续接入桌面端后此开关才会启用。）';
 
 // ────────────────────────────────────────────────────────────────────────
 // 窗口
@@ -296,18 +297,48 @@ function registerIpc(): void {
     }
     return Promise.resolve();
   });
-  // 飞书一键开关（诚实占位）：桌面端暂不代管飞书 daemon，见 FEISHU_DESKTOP_NOTICE。
-  // 返回明确的「暂不支持」而非 reject，让 renderer 显示真话而不是「操作失败」。
-  // running 恒为 false：桌面端并未托管进程，不谎报「运行中」。
-  ipcMain.handle(IPC.feishuStart, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
-  );
-  ipcMain.handle(IPC.feishuStop, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
-  );
-  ipcMain.handle(IPC.feishuStatus, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE, running: false }),
-  );
+  // 飞书 daemon 一键启停：通过 spawn 调用 CLI 的 daemon 命令
+  ipcMain.handle(IPC.feishuStart, async () => {
+    try {
+      const ottoPath = getOttoBinPath();
+      if (!ottoPath) return { text: '未找到 otto 命令，请确保已安装。' };
+      const child = spawn(process.execPath, [ottoPath, 'feishu', 'daemon', 'start'], {
+        detached: true, stdio: 'ignore',
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
+      });
+      child.unref();
+      await new Promise(r => setTimeout(r, 1000));
+      return { text: '飞书守护进程已启动。', pid: child.pid };
+    } catch (err) {
+      return { text: `启动失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+  });
+  ipcMain.handle(IPC.feishuStop, async () => {
+    try {
+      const ottoPath = getOttoBinPath();
+      if (!ottoPath) return { text: '未找到 otto 命令。' };
+      execSync(`"${process.execPath}" "${ottoPath}" feishu daemon stop`, {
+        stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined }, timeout: 5000,
+      });
+      return { text: '飞书守护进程已停止。' };
+    } catch (err) {
+      return { text: `停止失败：${err instanceof Error ? err.message : String(err)}` };
+    }
+  });
+  ipcMain.handle(IPC.feishuStatus, async () => {
+    try {
+      const ottoPath = getOttoBinPath();
+      if (!ottoPath) return { text: '未找到 otto 命令。', running: false };
+      const output = execSync(`"${process.execPath}" "${ottoPath}" feishu daemon status`, {
+        stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
+        timeout: 5000, encoding: 'utf-8',
+      });
+      const running = output.includes('running') || output.includes('运行中');
+      return { text: output.trim(), running };
+    } catch {
+      return { text: '未运行', running: false };
+    }
+  });
 
   // Skill 排行榜：读取本地 skill-shares.json，返回排行榜+明星榜文本
   ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
