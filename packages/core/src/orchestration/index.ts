@@ -51,3 +51,7 @@ export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './wo
 // 自动 Skill 生成
 export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent } from './autoSkillGenerator.js';
 export type { SkillCandidate } from './autoSkillGenerator.js';
+
+// Skill 分享
+export { SkillShareManager, getSkillShareManager } from './skillShare.js';
+export type { SkillShareRecord, ShareSkillParams, ListSharedSkillsParams, ShareStatus } from './skillShare.js';
