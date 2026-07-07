@@ -34,6 +34,25 @@ const EXAMPLE_PROMPTS = [
   '给这个函数补一组单元测试',
 ];
 
+/** 岗位标准化枚举 → 中文显示 */
+const ROLE_DISPLAY: Record<string, string> = {
+  'dev.frontend': '前端', 'dev.backend': '后端', 'dev.fullstack': '全栈',
+  'dev.qa': '测试', 'dev.ops': '运维', 'dev.architect': '架构师', 'dev.lead': '技术主管',
+  'product.manager': '产品经理', 'product.design': '设计', 'product.research': '用户研究',
+  'marketing.brand': '品牌', 'marketing.content': '内容', 'marketing.ads': '投放', 'marketing.events': '活动',
+  'sales.account': '客户经理', 'sales.bd': '商务', 'sales.channel': '渠道',
+  'hr.recruit': '招聘', 'hr.compensation': '薪酬', 'hr.relations': '员工关系',
+  'finance.accountant': '会计', 'finance.cashier': '出纳', 'finance.analyst': '财务分析',
+  'ops.user': '用户运营', 'ops.content': '内容运营', 'ops.data': '数据运营',
+  'exec.ceo': 'CEO', 'exec.cto': 'CTO', 'exec.cfo': 'CFO', 'exec.coo': 'COO',
+  'exec.vp': 'VP', 'exec.director': '总监',
+  'general': '通用助手',
+};
+
+function formatRole(role: string): string {
+  return ROLE_DISPLAY[role] || role || '通用助手';
+}
+
 /** 岗位/部门定义 */
 const DEPARTMENTS = [
   { id: 'general', name: '通用', roles: ['通用助手'] },
@@ -103,9 +122,22 @@ export function ChatView({
     text: '',
     n: 0,
   });
-  // 部门/岗位：纯展示，不可修改
-  const [selectedDept, setSelectedDept] = useState<string>('general');
-  const [selectedRole, setSelectedRole] = useState<string>('通用助手');
+  // 部门/岗位：从飞书同步数据读取，纯展示，不可修改
+  const [deptLabel, setDeptLabel] = useState<string>('通用 · 通用助手');
+
+  // 启动时加载用户部门信息
+  useEffect(() => {
+    (async () => {
+      try {
+        const info = await (window as any).otto.userDepartment();
+        if (info && info.department) {
+          // 岗位格式化：dev.frontend → 前端
+          const roleDisplay = formatRole(info.role);
+          setDeptLabel(`${info.department} · ${roleDisplay}`);
+        }
+      } catch { /* 降级用默认值 */ }
+    })();
+  }, []);
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
@@ -202,9 +234,9 @@ export function ChatView({
             whiteSpace: 'nowrap',
             opacity: 0.8,
           }}
+          title="部门/岗位由人事部分配"
         >
-          {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
-          <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
+          {deptLabel}
         </span>
 
         {session?.source === 'feishu' ? (

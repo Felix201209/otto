@@ -86,6 +86,8 @@ export interface OttoBridge {
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 获取公司 Skill 市场列表 */
   skillMarketplace(): Promise<{ text: string }>;
+  /** 获取当前用户的部门/岗位 */
+  userDepartment(): Promise<{ department: string; role: string; name: string }>;
 }
 
 // ── 退避参数 ──
@@ -314,6 +316,9 @@ const bridge: OttoBridge = {
   },
   skillMarketplace(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+  },
+  userDepartment(): Promise<{ department: string; role: string; name: string }> {
+    return ipcRenderer.invoke('otto:user-department') as Promise<{ department: string; role: string; name: string }>;
   },
 };
 

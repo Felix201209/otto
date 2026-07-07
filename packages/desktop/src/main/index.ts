@@ -72,6 +72,7 @@ const IPC = {
   auditLogRecent: 'otto:auditlog-recent',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
+  userDepartment: 'otto:user-department',
 } as const;
 
 /**
@@ -500,6 +501,36 @@ function registerIpc(): void {
       return { report, count: entries.length };
     } catch (err) {
       return { report: '读取审计日志失败。', count: 0 };
+    }
+  });
+
+  // 获取当前用户的部门/岗位（从飞书同步的组织架构读取）
+  ipcMain.handle(IPC.userDepartment, async () => {
+    try {
+      const os = require('os');
+      const pathMod = require('path');
+      const orgPath = pathMod.join(process.cwd(), '.otto', 'org', 'memory-store.json');
+      let userName = os.userInfo().username;
+
+      // 尝试读取组织架构
+      try {
+        const raw = await fs.promises.readFile(orgPath, 'utf-8');
+        const orgData = JSON.parse(raw);
+        const user = orgData.users?.find((u: any) => u.name === userName || u.id === userName);
+        if (user) {
+          const team = orgData.teams?.find((t: any) => t.id === user.teamIds?.[0]);
+          return {
+            department: team?.name || '通用',
+            role: user.role || '通用助手',
+            name: user.name,
+          };
+        }
+      } catch { /* 文件不存在 */ }
+
+      // 降级：返回默认值
+      return { department: '通用', role: '通用助手', name: userName };
+    } catch {
+      return { department: '通用', role: '通用助手', name: 'unknown' };
     }
   });
 

@@ -52,6 +52,10 @@ export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './wo
 export { AuditLogger, getAuditLogger } from './auditLog.js';
 export type { AuditEntry, AuditQueryParams } from './auditLog.js';
 
+// 企业组织架构同步
+export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole } from './enterpriseSync.js';
+export type { EnterpriseConfig } from './enterpriseSync.js';
+
 // 自动 Skill 生成
 export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent, setAutoSkillFeishuNotifier, startAutoSkillScanner, stopAutoSkillScanner } from './autoSkillGenerator.js';
 export type { SkillCandidate, AutoSkillFeishuNotifier } from './autoSkillGenerator.js';
