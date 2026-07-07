@@ -11,7 +11,7 @@ import React, { useState } from 'react';
 // 已移除的 tab：
 //   - commands：纯展示文字、点了无反应，且含桌面端已禁用的假命令 → 撤下。
 //   - ide：硬编码的假代码片段装饰、纯摆设 → 撤下。
-type TabType = 'memory' | 'browser' | 'notes' | 'leaderboard' | 'worklog' | 'audit';
+type TabType = 'memory' | 'browser' | 'notes' | 'leaderboard' | 'worklog' | 'audit' | 'skillmarket';
 
 const TAB_LABEL: Record<TabType, string> = {
   memory: '记忆',
@@ -20,9 +20,10 @@ const TAB_LABEL: Record<TabType, string> = {
   leaderboard: '排行榜',
   worklog: '工作日志',
   audit: '审计',
+  skillmarket: 'Skill市场',
 };
 
-const TABS: TabType[] = ['memory', 'browser', 'notes', 'leaderboard', 'worklog', 'audit'];
+const TABS: TabType[] = ['memory', 'browser', 'notes', 'leaderboard', 'worklog', 'audit', 'skillmarket'];
 
 export function RightMascotPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabType>('memory');
@@ -37,6 +38,8 @@ export function RightMascotPanel(): React.JSX.Element {
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [worklogData, setWorklogData] = useState<{ summary: string; date: string; totalActions: number } | null>(null);
   const [auditData, setAuditData] = useState<{ report: string; count: number } | null>(null);
+  const [skillMarketData, setSkillMarketData] = useState<string>('');
+  const [skillMarketLoading, setSkillMarketLoading] = useState(false);
 
   return (
     <aside className="otto-right-panel" style={{ width: '300px', minWidth: '300px', height: '100%', background: 'var(--otto-sidebar-bg)', borderLeft: '1px solid var(--otto-border)', display: 'flex', flexDirection: 'column' }}>
@@ -272,6 +275,70 @@ export function RightMascotPanel(): React.JSX.Element {
               color: 'var(--otto-text)',
             }}>
               {auditData ? auditData.report : '点击「刷新审计日志」加载最近7天记录。'}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'skillmarket' && (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                onClick={async () => {
+                  setSkillMarketLoading(true);
+                  try {
+                    const data = await (window as any).otto.skillShareList();
+                    setSkillMarketData(data.text);
+                  } catch { /* ignore */ }
+                  setSkillMarketLoading(false);
+                }}
+                style={{
+                  fontSize: '10px',
+                  padding: '4px 8px',
+                  background: 'var(--otto-surface)',
+                  color: 'var(--otto-text-secondary)',
+                  border: '1px solid var(--otto-border)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                {skillMarketLoading ? '加载中…' : '部门共享'}
+              </button>
+              <button
+                onClick={async () => {
+                  setSkillMarketLoading(true);
+                  try {
+                    const data = await (window as any).otto.skillMarketplace();
+                    setSkillMarketData(data.text);
+                  } catch { /* ignore */ }
+                  setSkillMarketLoading(false);
+                }}
+                style={{
+                  fontSize: '10px',
+                  padding: '4px 8px',
+                  background: 'var(--otto-surface)',
+                  color: 'var(--otto-text-secondary)',
+                  border: '1px solid var(--otto-border)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                {skillMarketLoading ? '加载中…' : '公司市场'}
+              </button>
+            </div>
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '8px',
+              background: 'var(--otto-surface)',
+              border: '1px solid var(--otto-border)',
+              borderRadius: 'var(--otto-radius-sm)',
+              fontFamily: 'var(--otto-font-mono)',
+              fontSize: '10px',
+              lineHeight: '1.6',
+              whiteSpace: 'pre-wrap',
+              color: 'var(--otto-text)',
+            }}>
+              {skillMarketData || '点击上方按钮加载 Skill 列表。'}
             </div>
           </div>
         )}

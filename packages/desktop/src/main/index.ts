@@ -70,6 +70,8 @@ const IPC = {
   skillLeaderboard: 'otto:skill-leaderboard',
   workLogToday: 'otto:worklog-today',
   auditLogRecent: 'otto:auditlog-recent',
+  skillShareList: 'otto:skill-share-list',
+  skillMarketplace: 'otto:skill-marketplace',
 } as const;
 
 /**
@@ -498,6 +500,74 @@ function registerIpc(): void {
       return { report, count: entries.length };
     } catch (err) {
       return { report: '读取审计日志失败。', count: 0 };
+    }
+  });
+
+  // 部门共享 Skill 列表
+  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: any[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8'));
+      } catch { /* 无文件 */ }
+
+      const active = shares.filter((s: any) =>
+        s.status === 'active' && (!teamId || s.teamId === teamId),
+      );
+
+      if (active.length === 0) {
+        return { text: '本部门暂无共享 Skill。' };
+      }
+
+      const lines: string[] = ['部门共享 Skill 列表', ''];
+      for (const s of active) {
+        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName}`);
+        lines.push(`  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`);
+        if (s.note) lines.push(`  备注：${s.note}`);
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 列表失败。' };
+    }
+  });
+
+  // 公司 Skill 市场
+  ipcMain.handle(IPC.skillMarketplace, async () => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: any[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8'));
+      } catch { /* 无文件 */ }
+
+      const market = shares.filter((s: any) =>
+        s.publishedToMarketplace === true && s.status === 'active',
+      );
+
+      if (market.length === 0) {
+        return { text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。' };
+      }
+
+      // 按评分排序
+      market.sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0));
+
+      const lines: string[] = ['公司 Skill 市场', ''];
+      for (const s of market) {
+        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
+        lines.push(`  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`);
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 市场失败。' };
     }
   });
 

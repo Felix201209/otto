@@ -82,6 +82,10 @@ export interface OttoBridge {
   workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
   /** 获取审计日志最近记录 */
   auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }>;
+  /** 获取部门共享 Skill 列表 */
+  skillShareList(teamId?: string): Promise<{ text: string }>;
+  /** 获取公司 Skill 市场列表 */
+  skillMarketplace(): Promise<{ text: string }>;
 }
 
 // ── 退避参数 ──
@@ -304,6 +308,12 @@ const bridge: OttoBridge = {
   },
   auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }> {
     return ipcRenderer.invoke('otto:auditlog-recent', days, limit) as Promise<{ report: string; count: number }>;
+  },
+  skillShareList(teamId?: string): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
+  },
+  skillMarketplace(): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
   },
 };
 
