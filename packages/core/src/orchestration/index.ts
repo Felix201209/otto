@@ -43,3 +43,7 @@ export type { ProactiveRule, ProactiveContext } from './proactiveService.js';
 // 离职交接
 export { exportMemoryPackage, importMemoryPackage } from './knowledgeTransfer.js';
 export type { MemoryPackage } from './knowledgeTransfer.js';
+
+// 工作日志
+export { WorkLogger, getWorkLogger, inferCategory, describeAction } from './workLog.js';
+export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './workLog.js';

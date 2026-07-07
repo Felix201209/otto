@@ -30,6 +30,7 @@ import {
 } from './toolSchedulerAdapter.js';
 import { MCPResponseGuard } from '../services/mcpResponseGuard.js';
 import type { HookEventHandler } from '../hooks/hookEventHandler.js';
+import { getWorkLogger, inferCategory, describeAction } from '../orchestration/workLog.js';
 
 // Re-export ToolExecutionContext for convenience
 export { ToolExecutionContext } from './toolSchedulerAdapter.js';
@@ -1112,6 +1113,20 @@ export class ToolExecutionEngine {
           );
         }
       }
+
+      // 📋 记录工作日志
+      try {
+        const logger = getWorkLogger();
+        logger.log({
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          category: inferCategory(reqInfo.name, reqInfo.args),
+          success: true,
+          details: typeof toolResult.llmContent === 'string'
+            ? toolResult.llmContent.substring(0, 200)
+            : undefined,
+        }).catch(() => {});
+      } catch { /* 工作日志失败不影响主流程 */ }
     } catch (error) {
       const response = createErrorResponse(
         reqInfo,
@@ -1133,6 +1148,18 @@ export class ToolExecutionEngine {
           );
         }
       }
+
+      // 📋 记录工作日志（失败操作）
+      try {
+        const logger = getWorkLogger();
+        logger.log({
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          category: inferCategory(reqInfo.name, reqInfo.args),
+          success: false,
+          details: response.error?.message?.substring(0, 200),
+        }).catch(() => {});
+      } catch { /* 工作日志失败不影响主流程 */ }
     }
   }
 
