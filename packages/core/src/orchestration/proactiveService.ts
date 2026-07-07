@@ -12,6 +12,7 @@
  */
 
 import type { Config } from '../config/config.js';
+import { getWorkLogger } from './workLog.js';
 
 /** 主动服务规则 */
 export interface ProactiveRule {
@@ -116,6 +117,23 @@ const BUILTIN_RULES: ProactiveRule[] = [
     enabled: true,
     minIntervalHours: 20,
   },
+  {
+    id: 'daily_work_summary',
+    name: '每日工作汇总推送',
+    trigger: { type: 'cron', cron: '0 18 * * 1-5' }, // 工作日18:00
+    condition: (ctx) => {
+      // 只在有操作记录时推送
+      const logger = getWorkLogger();
+      return true; // checkAndTrigger 内部会调用，这里先放行，实际推送时判断有无数据
+    },
+    action: {
+      type: 'feishu_card',
+      message: '📋 今日工作汇总已生成，点击查看详情',
+      priority: 'medium',
+    },
+    enabled: true,
+    minIntervalHours: 20,
+  },
 ];
 
 /**
@@ -168,6 +186,21 @@ export class ProactiveService {
 
       // 匹配触发条件
       if (this.matchTrigger(rule, ctx)) {
+        // 每日工作汇总：生成当日汇总内容替换 message
+        if (rule.id === 'daily_work_summary') {
+          try {
+            const logger = getWorkLogger();
+            const today = new Date().toISOString().split('T')[0];
+            const summary = await logger.generateDailySummary(today);
+            if (summary.totalActions === 0) {
+              continue; // 今天没有操作记录，不推送
+            }
+            rule.action.message = logger.formatDailySummaryForFeishu(summary);
+          } catch {
+            continue; // 生成汇总失败，跳过
+          }
+        }
+
         triggered.push(rule);
         rule.lastTriggered = new Date().toISOString();
         this.triggeredToday.add(triggerKey);
