@@ -25,10 +25,17 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
+      # packages/server/src/sqlite-compat.ts 用 Node 内置 `node:sqlite`（企业服务端
+      # 存储层，零原生依赖）。该模块 v22.5 引入且需要 --experimental-sqlite flag，
+      # v22.13.0 / v23.4.0 起才不需要 flag 即可用。之前钉的 20.19.3 完全没有这个
+      # 内置模块，会在 packages/server 测试阶段炸 "No such built-in module:
+      # node:sqlite"（真实复现过）。顺带发现 packages/server/package.json 的
+      # engines 字段（原 >=20）与 README 承诺的 Node 20+ 也是错的、已一并修正为
+      # >=22.13.0，否则真实用户在 Node 20/21 上跑 enterprise server 会同样崩溃。
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.19.3'
+          node-version: '22.13.0'
           cache: 'npm'
 
       # macOS runner 默认 Python 已升到 3.12+，标准库移除了 distutils，
