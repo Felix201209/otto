@@ -1,3 +1,4 @@
+
 name: CI
 
 # 在每个 PR 和推送到 internal 分支时跑起，作为合并前的强制质量门槛。
@@ -30,8 +31,20 @@ jobs:
           node-version: '20.19.3'
           cache: 'npm'
 
+      # macOS runner 默认 Python 已升到 3.12+，标准库移除了 distutils，
+      # 而 node-gyp（编译 better-sqlite3 等原生模块的必经路径）的 gyp 脚本
+      # 仍 `from distutils.version import StrictVersion`，导致 npm install
+      # 在无预编译二进制可用时必然失败。钉住 3.11（最后一个自带 distutils
+      # 的版本）并让 node-gyp 用它，而非 runner 默认的新版 python3。
+      - name: 🐍 Setup Python 3.11 (node-gyp 需要 distutils)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: 📦 Install dependencies
         run: npm install
+        env:
+          PYTHON: python3.11
 
       - name: 🔍 Typecheck (all workspaces, including desktop)
         run: npm run typecheck --workspaces --if-present
