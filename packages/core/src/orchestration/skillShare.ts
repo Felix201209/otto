@@ -24,6 +24,8 @@ import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import type { SkillRecord } from '../memory/orgMemoryTypes.js';
 import { getWorkLogger } from './workLog.js';
 import { getProactiveService } from './proactiveService.js';
+import { getEnterpriseSync, checkUserPermission } from './enterpriseSync.js';
+import type { Permission, LicenseRecord } from '../memory/orgMemoryTypes.js';
 
 /** 分享状态 */
 export type ShareStatus = 'active' | 'revoked' | 'deprecated';
@@ -182,6 +184,42 @@ export class SkillShareManager {
   }
 
   /** 发送通知给小组成员 */
+  /** 检查用户是否有指定权限 */
+  private async requirePermission(userId: string, permission: Permission): Promise<void> {
+    try {
+      const sync = getEnterpriseSync(this.config.getProjectRoot());
+      const has = await sync.checkPermission(userId, permission);
+      if (!has) {
+        throw new Error(`权限不足：需要 ${permission} 权限`);
+      }
+    } catch (err) {
+      // 如果权限系统不可用（企业未绑定），降级为允许（向后兼容）
+      if (err instanceof Error && err.message.startsWith('权限不足')) {
+        throw err;
+      }
+      // 企业未绑定等异常，降级放行
+    }
+  }
+
+  /** 检查用户是否为部门负责人或管理员（可管理部门 Skill） */
+  private async requireManagerPermission(userId: string): Promise<void> {
+    try {
+      const sync = getEnterpriseSync(this.config.getProjectRoot());
+      const roleInfo = await sync.getUserRoleAndPermissions(userId);
+      if (roleInfo) {
+        const allowed = roleInfo.permissions.includes('skill:team:approve' as Permission);
+        if (!allowed) {
+          throw new Error('权限不足：仅部门负责人或管理员可执行此操作');
+        }
+      }
+      // roleInfo 为 null（企业未绑定）时降级放行
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('权限不足')) {
+        throw err;
+      }
+    }
+  }
+
   private async notifyTeamMembers(
     teamId: string,
     teamName: string,
@@ -271,6 +309,9 @@ export class SkillShareManager {
    * 4. 记录工作日志
    */
   async shareToTeam(params: ShareSkillParams): Promise<SkillShareRecord> {
+    // 权限检查：需要 skill:team:write 权限
+    await this.requirePermission(params.userId, 'skill:team:write' as Permission);
+
     // 1. 读取源 Skill
     const skillDir = path.join(this.personalSkillsDir, params.skillName);
     const skillFile = path.join(skillDir, 'SKILL.md');
@@ -404,6 +445,9 @@ export class SkillShareManager {
    * 撤回已分享的 Skill。
    */
   async revokeShare(shareId: string, userId: string): Promise<void> {
+    // 权限检查：需要 skill:team:write 权限
+    await this.requirePermission(userId, 'skill:team:write' as Permission);
+
     const shares = await this.loadShares();
     const share = shares.find((s) => s.id === shareId);
     if (!share) {
@@ -793,6 +837,9 @@ export class SkillShareManager {
    * 只有分享者本人可以发布。
    */
   async publishToMarketplace(shareId: string, userId: string): Promise<void> {
+    // 权限检查：发布到公司市场需要 skill:company:approve 权限
+    await this.requirePermission(userId, 'skill:company:approve' as Permission);
+
     const shares = await this.loadShares();
     const share = shares.find((s) => s.id === shareId);
     if (!share) throw new Error(`Share not found: ${shareId}`);
