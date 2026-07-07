@@ -41,10 +41,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      # @vscode/ripgrep 的 postinstall 会拉取 GitHub Releases 上的预编译二进制，
+      # 不带鉴权的 CI runner IP 请求量大，常被限流成 403。它的下载脚本
+      # （lib/postinstall.js）会读取 GITHUB_TOKEN 环境变量做鉴权请求，传入
+      # workflow 自带的 token 即可避免限流。
       - name: 📦 Install dependencies
         run: npm install
         env:
           PYTHON: python3.11
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔍 Typecheck (all workspaces, including desktop)
         run: npm run typecheck --workspaces --if-present
