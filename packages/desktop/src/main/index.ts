@@ -18,7 +18,9 @@
  *   5. 完整生命周期：单实例锁、activate、window-all-closed、before-quit、
  *      渲染进程崩溃 / 卡死处置。
  *
- * 注意：main 是 ESM（package "type":"module"）；preload 是 CJS（Electron 标准）。
+ * 注意：package.json 无 "type":"module" → main/preload 均编译为 CJS（Electron 标准，
+ * 且 import.meta.url 在 CJS 输出下会被 tsc 直接拒绝/TS1470）。__dirname 用 CJS 原生
+ * 全局变量，不需要（也不能用）ESM 的 fileURLToPath(import.meta.url) 重建。
  */
 
 import {
@@ -37,8 +39,6 @@ import * as path from 'node:path';
 import { DEFAULT_HOST, DEFAULT_PORT, type ServerEndpoint } from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * renderer 静态资源目录。与 createWindow 的 loadFile 用同一推导

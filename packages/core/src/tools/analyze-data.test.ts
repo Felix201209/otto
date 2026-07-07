@@ -208,14 +208,13 @@ describe('AnalyzeDataTool', () => {
     expect(r.llmContent).toContain('brew install gnuplot');
   });
 
-  // --- doctor preflight: duckdb-dependent ops fail loud when duckdb is missing ---
-  it('summary fails loud with duckdb install command when duckdb is missing', async () => {
+  // --- summary is pure TS now, so it must work without duckdb ---
+  it('summary works without duckdb using the pure TS fallback', async () => {
     const f = writeCsv('s.csv', 'a,b\n1,2');
     const r = await tool.execute({ input_path: f, operation: 'summary' }, sig());
-    // duckdb is not installed in this env
-    expect(r.llmContent).toContain('FAIL');
-    expect(r.llmContent.toLowerCase()).toContain('duckdb');
-    expect(r.llmContent).toContain('brew install duckdb');
+    expect(r.llmContent).toContain('analyze_data OK');
+    expect(r.llmContent).toContain('Numeric stats');
+    expect(r.llmContent).toContain('a_count');
   });
 
   it('export_excel from CSV fails loud when duckdb is missing', async () => {

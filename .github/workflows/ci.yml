@@ -1,0 +1,78 @@
+
+name: CI
+
+# 在每个 PR 和推送到 internal 分支时跑起，作为合并前的强制质量门槛。
+# 之前仓库只有 release.yml（打 tag 才跑，且不含任何测试步骤），PR 阶段没有任何
+# 自动化检查——这正是像本次 desktop/main/index.ts 的 CJS/ESM 编译错误、
+# core/doctor.ts 的 ESM 运行时崩溃这类回归能一直躺到有人手动发现才修的原因。
+
+on:
+  pull_request:
+    branches: [internal, main]
+  push:
+    branches: [internal]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    # desktop 走 electron-builder，用 macOS runner 更贴近实际交付平台
+    # （项目目前只交付 mac .app）。
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.3'
+          cache: 'npm'
+
+      # macOS runner 默认 Python 已升到 3.12+，标准库移除了 distutils，
+      # 而 node-gyp（编译 better-sqlite3 等原生模块的必经路径）的 gyp 脚本
+      # 仍 `from distutils.version import StrictVersion`，导致 npm install
+      # 在无预编译二进制可用时必然失败。钉住 3.11（最后一个自带 distutils
+      # 的版本）并让 node-gyp 用它，而非 runner 默认的新版 python3。
+      - name: 🐍 Setup Python 3.11 (node-gyp 需要 distutils)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # @vscode/ripgrep 的 postinstall 会拉取 GitHub Releases 上的预编译二进制，
+      # 不带鉴权的 CI runner IP 请求量大，常被限流成 403。它的下载脚本
+      # （lib/postinstall.js）会读取 GITHUB_TOKEN 环境变量做鉴权请求，传入
+      # workflow 自带的 token 即可避免限流。
+      - name: 📦 Install dependencies
+        run: npm install
+        env:
+          PYTHON: python3.11
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 先 build 再 typecheck：packages/cli 与 packages/server 的 tsconfig 用
+      # TS project references 指向 packages/core（"references": [{ "path":
+      # "../core" }]），tsc --noEmit 需要 core/dist/index.d.ts 已存在，否则
+      # 报 TS6305 "has not been built from source file"。核心包尚无预构建产物
+      # 提交进仓库，必须先跑一次 build 产出 core/dist 才能让下游 typecheck 通过。
+      - name: 🏗️ Build main chain (core/cli/server/vscode-ui-plugin)
+        run: npm run build
+
+      - name: 🏗️ Build desktop (independent electron/webpack chain)
+        run: npm run build --workspace=packages/desktop
+
+      - name: 🔍 Typecheck (all workspaces, including desktop)
+        run: npm run typecheck --workspaces --if-present
+
+      - name: 🧪 Test core
+        run: npm run test --workspace=packages/core
+
+      - name: 🧪 Test server
+        run: npm run test --workspace=packages/server
+
+      - name: 🧪 Test cli
+        run: npm run test --workspace=packages/cli
+
+      - name: 🧪 Test desktop
+        run: npm run test --workspace=packages/desktop
