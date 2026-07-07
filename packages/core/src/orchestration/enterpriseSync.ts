@@ -40,6 +40,8 @@ export interface EnterpriseConfig {
   boundAt: string;
   /** 上次同步时间 */
   lastSyncAt?: string;
+  /** 飞书 API 域名（国内 open.feishu.cn，国际 open.larksuite.com） */
+  apiDomain?: string;
 }
 
 /** 飞书部门 */
@@ -131,6 +133,11 @@ export class EnterpriseSync {
   private static readonly GCM_IV_BYTES = 12;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
 
+  /** 获取飞书 API 域名（国内默认 open.feishu.cn，国际版 open.larksuite.com） */
+  private getApiDomain(): string {
+    return this.enterpriseConfig?.apiDomain || 'https://open.feishu.cn';
+  }
+
   constructor(private readonly projectRoot: string) {
     this.store = new OrgMemoryStore(projectRoot);
     this.configPath = path.join(homedir(), '.otto-user', 'enterprise.json');
@@ -203,7 +210,7 @@ export class EnterpriseSync {
     const config = this.enterpriseConfig || await this.loadConfig();
     if (!config) throw new Error('企业未绑定，请先运行 enterprise setup');
 
-    const res = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+    const res = await fetch(`${this.getApiDomain()}/open-apis/auth/v3/tenant_access_token/internal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: config.appId, app_secret: config.appSecret }),
@@ -461,7 +468,7 @@ export class EnterpriseSync {
     let pageToken: string | undefined;
 
     do {
-      const url = new URL('https://open.feishu.cn/open-apis/contact/v3/departments');
+      const url = new URL(`${this.getApiDomain()}/open-apis/contact/v3/departments`);
       url.searchParams.set('page_size', '50');
       if (pageToken) url.searchParams.set('page_token', pageToken);
       url.searchParams.set('fetch_child', 'true');
@@ -500,7 +507,7 @@ export class EnterpriseSync {
     let pageToken: string | undefined;
 
     do {
-      const url = new URL('https://open.feishu.cn/open-apis/contact/v3/users');
+      const url = new URL(`${this.getApiDomain()}/open-apis/contact/v3/users`);
       url.searchParams.set('page_size', '50');
       if (pageToken) url.searchParams.set('page_token', pageToken);
 
