@@ -510,27 +510,40 @@ function registerIpc(): void {
       const os = require('os');
       const pathMod = require('path');
       const orgPath = pathMod.join(process.cwd(), '.otto', 'org', 'memory-store.json');
-      let userName = os.userInfo().username;
 
-      // 尝试读取组织架构
+      // 1. 从飞书凭证文件读取 ownerOpenId（与飞书组织架构里的 user.id 对齐）
+      let openId: string | undefined;
+      try {
+        const credPath = pathMod.join(os.homedir(), '.otto-user', 'feishu-credentials.json');
+        const credRaw = await fs.promises.readFile(credPath, 'utf-8');
+        const cred = JSON.parse(credRaw);
+        openId = cred.ownerOpenId || cred.botOpenId;
+      } catch { /* 凭证文件不存在 */ }
+
+      // 2. 读取组织架构
       try {
         const raw = await fs.promises.readFile(orgPath, 'utf-8');
         const orgData = JSON.parse(raw);
-        const user = orgData.users?.find((u: any) => u.name === userName || u.id === userName);
+        // 优先用 openId 匹配，降级用 OS 用户名匹配 name 字段
+        const userName = os.userInfo().username;
+        const user = orgData.users?.find(
+          (u: any) => (openId && u.id === openId) || u.name === userName,
+        );
         if (user) {
           const team = orgData.teams?.find((t: any) => t.id === user.teamIds?.[0]);
           return {
             department: team?.name || '通用',
             role: user.role || '通用助手',
             name: user.name,
+            openId: openId || user.id,
           };
         }
       } catch { /* 文件不存在 */ }
 
-      // 降级：返回默认值
-      return { department: '通用', role: '通用助手', name: userName };
+      // 3. 降级：返回默认值
+      return { department: '通用', role: '通用助手', name: os.userInfo().username, openId: openId || '' };
     } catch {
-      return { department: '通用', role: '通用助手', name: 'unknown' };
+      return { department: '通用', role: '通用助手', name: 'unknown', openId: '' };
     }
   });
 
