@@ -334,6 +334,114 @@ export async function main() {
     process.argv.splice(2, 1);
   }
 
+  // `otto enterprise`：企业组织架构管理。
+  //   otto enterprise setup --app-id <ID> --app-secret <SECRET> --admin-name <NAME>
+  //   otto enterprise sync
+  //   otto enterprise status
+  if (process.argv[2] === 'enterprise') {
+    const subCmd = process.argv[3];
+    const enterpriseArgs = process.argv.slice(4);
+    const getEnterpriseFlag = (n: string): string | undefined => {
+      const i = enterpriseArgs.indexOf(n);
+      const v = i >= 0 ? enterpriseArgs[i + 1] : undefined;
+      return v !== undefined && !v.startsWith('--') ? v : undefined;
+    };
+
+    if (subCmd === 'setup') {
+      const appId = getEnterpriseFlag('--app-id');
+      const appSecret = getEnterpriseFlag('--app-secret');
+      const adminName = getEnterpriseFlag('--admin-name') || 'admin';
+
+      if (!appId || !appSecret) {
+        console.log([
+          'otto enterprise setup —— 绑定飞书企业应用',
+          '',
+          '用法：',
+          '  otto enterprise setup --app-id <ID> --app-secret <SECRET> [--admin-name <NAME>]',
+          '',
+          '参数：',
+          '  --app-id        飞书应用 App ID（cli_xxx）',
+          '  --app-secret    飞书应用 App Secret',
+          '  --admin-name    管理员名称（默认 admin）',
+          '',
+          '获取 App ID 和 Secret：',
+          '  1. 登录飞书开放平台 https://open.feishu.cn/app',
+          '  2. 创建企业自建应用',
+          '  3. 在「凭证与基础信息」页获取 App ID 和 App Secret',
+          '  4. 确保应用已开通通讯录权限（contact:department:readonly, contact:user:readonly）',
+        ].join('\n'));
+        process.exit(1);
+      }
+
+      const { getEnterpriseSync } = await import('otto-core');
+      const sync = getEnterpriseSync(process.cwd());
+      const config = {
+        companyId: `feishu_${appId}`,
+        companyName: adminName + '的企业',
+        appId,
+        appSecret,
+        adminUserId: adminName,
+        adminUserName: adminName,
+        boundAt: new Date().toISOString(),
+      };
+      await sync.saveConfig(config);
+      console.log(`✅ 企业绑定成功：${config.companyName} (${config.companyId})`);
+      console.log('   运行 `otto enterprise sync` 同步组织架构。');
+      process.exit(0);
+    }
+
+    if (subCmd === 'sync') {
+      const { getEnterpriseSync } = await import('otto-core');
+      const sync = getEnterpriseSync(process.cwd());
+      const config = await sync.loadConfig();
+      if (!config) {
+        console.error('❌ 企业未绑定，请先运行：otto enterprise setup --app-id <ID> --app-secret <SECRET>');
+        process.exit(1);
+      }
+      console.log(`同步组织架构（${config.companyName}）...`);
+      try {
+        const result = await sync.syncAll();
+        console.log(`✅ 同步完成：${result.departments} 个部门，${result.users} 名员工`);
+        console.log('   权限许可已自动生成。');
+      } catch (err) {
+        console.error(`❌ 同步失败：${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+      process.exit(0);
+    }
+
+    if (subCmd === 'status') {
+      const { getEnterpriseSync } = await import('otto-core');
+      const sync = getEnterpriseSync(process.cwd());
+      const config = await sync.loadConfig();
+      if (!config) {
+        console.log('企业未绑定。运行 `otto enterprise setup` 绑定。');
+        process.exit(0);
+      }
+      console.log([
+        `企业：${config.companyName} (${config.companyId})`,
+        `管理员：${config.adminUserName}`,
+        `绑定时间：${config.boundAt}`,
+        `上次同步：${config.lastSyncAt || '从未同步'}`,
+      ].join('\n'));
+      process.exit(0);
+    }
+
+    // 未知子命令
+    console.log([
+      'otto enterprise —— 企业组织架构管理',
+      '',
+      '用法：',
+      '  otto enterprise setup --app-id <ID> --app-secret <SECRET> [--admin-name <NAME>]',
+      '      绑定飞书企业应用',
+      '  otto enterprise sync',
+      '      同步飞书组织架构（部门 + 人员 + 权限）',
+      '  otto enterprise status',
+      '      查看企业绑定状态',
+    ].join('\n'));
+    process.exit(0);
+  }
+
   // 品牌升级：执行历史配置文件夹平滑迁移 (.otto -> .otto 等)
   try {
     migrateLegacyDirectories(process.cwd(), () => {
