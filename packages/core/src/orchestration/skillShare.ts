@@ -782,6 +782,88 @@ export class SkillShareManager {
 
     return lines.join('\n');
   }
+
+  /**
+   * 生成小组 Skill 排行榜。
+   *
+   * 按综合得分排序（评分×0.6 + 安装数×0.4），
+   * 只展示活跃状态的 Skill。
+   *
+   * @param teamId 小组 ID
+   * @param limit 返回条数，默认10
+   */
+  async getTeamLeaderboard(teamId: string, limit: number = 10): Promise<string> {
+    const shares = await this.loadShares();
+    const activeShares = shares.filter((s) => s.teamId === teamId && s.status === 'active');
+
+    if (activeShares.length === 0) {
+      return `本小组暂无共享 Skill 排行榜。`;
+    }
+
+    // 获取小组名称
+    const teamName = activeShares[0]?.teamName || '本小组';
+
+    // 计算综合得分：评分（0-5标准化到0-100）× 0.6 + 安装数×0.4
+    // 安装数标准化：安装数 / 最大安装数 × 100
+    const maxInstalls = Math.max(...activeShares.map((s) => s.installCount), 1);
+    const scored = activeShares.map((s) => {
+      const ratingScore = (s.rating / 5) * 100; // 0-100
+      const installScore = (s.installCount / maxInstalls) * 100; // 0-100
+      const totalScore = ratingScore * 0.6 + installScore * 0.4;
+      return { share: s, totalScore };
+    });
+
+    // 按综合得分降序
+    scored.sort((a, b) => b.totalScore - a.totalScore);
+
+    // 取前N名
+    const top = scored.slice(0, limit);
+
+    // 格式化排行榜
+    const lines: string[] = [];
+    lines.push(`🏆 ${teamName} Skill 排行榜`);
+    lines.push('');
+
+    const medals = ['🥇', '🥈', '🥉'];
+    for (let i = 0; i < top.length; i++) {
+      const { share, totalScore } = top[i];
+      const rank = i < 3 ? medals[i] : `${i + 1}.`;
+      const stars = '⭐'.repeat(Math.round(share.rating));
+      const feature = share.featureDescription || extractFeature(share.content);
+
+      lines.push(`${rank} ${share.skillName} (v${share.version})`);
+      lines.push(`   功能：${feature}`);
+      lines.push(`   分享者：${share.sharedByName}`);
+      lines.push(`   评分：${stars || '暂无'} (${share.ratingCount}人) | 安装：${share.installCount}次 | 综合：${totalScore.toFixed(0)}分`);
+      lines.push('');
+    }
+
+    // 统计信息
+    lines.push('📊 小组统计');
+    lines.push(`   共享 Skill 总数：${activeShares.length}`);
+    lines.push(`   总安装次数：${activeShares.reduce((sum, s) => sum + s.installCount, 0)}`);
+    lines.push(`   总评分数：${activeShares.reduce((sum, s) => sum + s.ratingCount, 0)}`);
+    const topSharers = this.getTopSharers(activeShares, 3);
+    if (topSharers.length > 0) {
+      lines.push(`   活跃贡献者：${topSharers.map((s) => `${s.name}(${s.count}个)`).join('、')}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * 获取小组内分享最多的成员。
+   */
+  private getTopSharers(shares: SkillShareRecord[], limit: number): Array<{ name: string; count: number }> {
+    const counts: Record<string, number> = {};
+    for (const share of shares) {
+      counts[share.sharedByName] = (counts[share.sharedByName] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+  }
 }
 
 // ============================================================
