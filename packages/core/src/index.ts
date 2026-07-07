@@ -174,6 +174,7 @@ export * from './tools/shell.js';
 export * from './tools/web-search.js';
 export * from './tools/image-reader.js';
 export * from './tools/audio-reader.js';
+export * from './tools/video-analyzer.js';
 export * from './tools/self-update.js';
 export * from './tools/read-many-files.js';
 export * from './tools/read-lints.js';

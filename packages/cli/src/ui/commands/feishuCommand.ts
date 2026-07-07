@@ -83,6 +83,7 @@ import {
   SkillLoader,
   getSpecificMimeType,
   AudioReaderTool,
+  VideoAnalyzerTool,
   SelfUpdateTool,
   launchRelaunchHelper,
   type RelaunchInstallMode,
@@ -3097,6 +3098,9 @@ async function handleStart(context?: CommandContext): Promise<string> {
         // 注册飞书模式专属的音频朗读/转录工具（正常模式下不加载，避免污染和误导模型）
         toolRegistry.registerTool(new AudioReaderTool(isolatedConfig));
 
+        // 注册视频分析工具（飞书模式专属）
+        toolRegistry.registerTool(new VideoAnalyzerTool(isolatedConfig));
+
         // 注册飞书模式专属的自更新重启工具（普通 CLI 模式绝不注册）
         toolRegistry.registerTool(new SelfUpdateTool(isolatedConfig));
 
@@ -4838,6 +4842,9 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
         // 🎯 动态注册专属的音频朗读/转录工具（正常模式下不加载，避免污染和误导模型）
         toolRegistry.registerTool(new AudioReaderTool(config));
+
+        // 🎯 动态注册视频分析工具：丢一个网址 → 下载 → 场景检测截帧 → 字幕 → LLM分析 → 知识库
+        toolRegistry.registerTool(new VideoAnalyzerTool(config));
 
         // 🎯 动态注册自更新重启工具（仅飞书模式可见）：模型一调用即升级 otto-ai
         //    到 latest 并以 `otto --feishu` 自动重启。普通 CLI 模式绝不注册。
