@@ -106,6 +106,27 @@ export interface SkillShareRecord {
   featureDescription: string;
   /** 评分明细（仅存哈希用于去重，不记录可识别身份信息，确保匿名） */
   ratings: Array<{ userHash: string; score: number; ratedAt: string }>;
+  /** 评论列表 */
+  comments: SkillComment[];
+}
+
+/** Skill 评论 */
+export interface SkillComment {
+  id: string;
+  /** 评论者用户哈希（匿名） */
+  userHash: string;
+  /** 评论者显示名（可选，不填则匿名） */
+  displayName?: string;
+  /** 评论内容 */
+  content: string;
+  /** 评论时间 */
+  createdAt: string;
+  /** 是否是分享者的回复 */
+  isReply: boolean;
+  /** 如果是回复，指向被回复的评论 ID */
+  replyTo?: string;
+  /** 点赞数 */
+  likes: number;
 }
 
 /** 已安装记录（追踪每个用户安装的版本） */
@@ -305,6 +326,7 @@ export class SkillShareManager {
       rating: 0,
       ratingCount: 0,
       ratings: [],
+      comments: [],
       note: params.note,
       featureDescription: extractFeature(skillContent),
     };
@@ -761,6 +783,82 @@ export class SkillShareManager {
         success: true,
       });
     } catch { /* 不影响主流程 */ }
+  }
+
+  /**
+   * 对 Skill 发表评论或提问。
+   */
+  async addComment(
+    shareId: string,
+    userId: string,
+    content: string,
+    options: { displayName?: string; replyTo?: string } = {},
+  ): Promise<SkillComment> {
+    if (!content.trim()) {
+      throw new Error('Comment content cannot be empty');
+    }
+
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId && s.status === 'active');
+    if (!share) {
+      throw new Error(`Active share not found: ${shareId}`);
+    }
+
+    if (!share.comments) share.comments = [];
+
+    // 判断是否是分享者的回复
+    const isReply = !!options.replyTo || share.sharedBy === userId;
+
+    const comment: SkillComment = {
+      id: `comment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userHash: this.hashContent(userId + share.id),
+      displayName: isReply ? share.sharedByName : options.displayName,
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+      isReply,
+      replyTo: options.replyTo,
+      likes: 0,
+    };
+
+    share.comments.push(comment);
+    await this.saveShares(shares);
+
+    // 通知分享者有人评论（除非是自己回复自己）
+    if (!isReply) {
+      await this.notifyTeamMembers(share.teamId, share.teamName, {
+        event: 'skill_shared',
+        shareId: share.id,
+        skillName: share.skillName,
+        sharerName: share.sharedByName,
+        message: `${options.displayName || '匿名用户'} 对你的 Skill "${share.skillName}" 发表了评论：${content.substring(0, 50)}`,
+      });
+    }
+
+    return comment;
+  }
+
+  /**
+   * 获取 Skill 的所有评论（按时间排序）。
+   */
+  async getComments(shareId: string): Promise<SkillComment[]> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId);
+    if (!share || !share.comments) return [];
+    return share.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /**
+   * 点赞评论。
+   */
+  async likeComment(shareId: string, commentId: string): Promise<void> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId);
+    if (!share || !share.comments) return;
+    const comment = share.comments.find((c) => c.id === commentId);
+    if (comment) {
+      comment.likes++;
+      await this.saveShares(shares);
+    }
   }
 
   /**
