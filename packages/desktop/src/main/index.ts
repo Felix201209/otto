@@ -337,7 +337,7 @@ function registerIpc(): void {
 
       scored.forEach((item: any, i: number) => {
         const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const stars = '★'.repeat(Math.round(item.s.rating || 0));
+        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
         lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
         lbLines.push(`   ${item.s.featureDescription || ''}`);
         lbLines.push(`   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`);
