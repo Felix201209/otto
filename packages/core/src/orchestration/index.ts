@@ -47,3 +47,7 @@ export type { MemoryPackage } from './knowledgeTransfer.js';
 // 工作日志
 export { WorkLogger, getWorkLogger, inferCategory, describeAction } from './workLog.js';
 export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './workLog.js';
+
+// 自动 Skill 生成
+export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent } from './autoSkillGenerator.js';
+export type { SkillCandidate } from './autoSkillGenerator.js';
