@@ -16,6 +16,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { homedir } from 'os';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import type {
@@ -125,28 +126,75 @@ export class EnterpriseSync {
   private store: OrgMemoryStore;
   private enterpriseConfig: EnterpriseConfig | null = null;
   private configPath: string;
+  private keyPath: string;
+  private static readonly GCM_PREFIX = 'gcm:';
+  private static readonly GCM_IV_BYTES = 12;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly projectRoot: string) {
     this.store = new OrgMemoryStore(projectRoot);
     this.configPath = path.join(homedir(), '.otto-user', 'enterprise.json');
+    this.keyPath = path.join(homedir(), '.otto-user', 'enterprise.key');
   }
 
   /** 加载企业配置 */
+  /** 加载或创建加密密钥 */
+  private async loadOrCreateKey(): Promise<Buffer> {
+    await fs.mkdir(path.dirname(this.keyPath), { recursive: true });
+    try {
+      return await fs.readFile(this.keyPath);
+    } catch {
+      const key = crypto.randomBytes(32);
+      await fs.writeFile(this.keyPath, key, { mode: 0o600 });
+      return key;
+    }
+  }
+
+  /** AES-256-GCM 加密 */
+  private encryptSecret(plain: string, key: Buffer): string {
+    const iv = crypto.randomBytes(EnterpriseSync.GCM_IV_BYTES);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${EnterpriseSync.GCM_PREFIX}${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  }
+
+  /** AES-256-GCM 解密 */
+  private decryptSecret(payload: string, key: Buffer): string {
+    const body = payload.slice(EnterpriseSync.GCM_PREFIX.length);
+    const [ivHex, tagHex, encHex] = body.split(':');
+    if (!ivHex || !tagHex || !encHex) throw new Error('Malformed GCM payload');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]).toString('utf8');
+  }
+
   async loadConfig(): Promise<EnterpriseConfig | null> {
     try {
       const raw = await fs.readFile(this.configPath, 'utf-8');
-      this.enterpriseConfig = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      // 解密 appSecret
+      if (parsed.appSecret && parsed.appSecret.startsWith(EnterpriseSync.GCM_PREFIX)) {
+        const key = await this.loadOrCreateKey();
+        parsed.appSecret = this.decryptSecret(parsed.appSecret, key);
+      }
+      this.enterpriseConfig = parsed;
       return this.enterpriseConfig;
     } catch {
       return null;
     }
   }
 
-  /** 保存企业配置 */
+  /** 保存企业配置（appSecret 加密存储） */
   async saveConfig(config: EnterpriseConfig): Promise<void> {
+    const key = await this.loadOrCreateKey();
+    const toSave = {
+      ...config,
+      appSecret: this.encryptSecret(config.appSecret, key),
+    };
     await fs.mkdir(path.dirname(this.configPath), { recursive: true });
-    await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
+    await fs.writeFile(this.configPath, JSON.stringify(toSave, null, 2), { mode: 0o600 });
+    // 内存里保留明文版本（运行时用）
     this.enterpriseConfig = config;
   }
 
