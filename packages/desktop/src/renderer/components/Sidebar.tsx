@@ -18,7 +18,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
-import { EXPERTS, type Expert } from '../agents/experts.js';
+import { getAllExperts, type Expert } from '../agents/experts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import {
@@ -90,7 +90,7 @@ export function Sidebar({
 
       <div className="otto-common-tasks" aria-label="常见任务">
         <div className="otto-common-tasks__head">常见任务</div>
-        {EXPERTS.map((expert) => (
+        {getAllExperts().map((expert) => (
           <button
             key={expert.id}
             type="button"

@@ -15,7 +15,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import type { Expert } from '../agents/experts.js';
-import { EXPERTS } from '../agents/experts.js';
+import { getAllExperts } from '../agents/experts.js';
 import { IconAgent, IconChevron } from './icons.js';
 
 interface AgentGalleryProps {
@@ -70,7 +70,7 @@ export function AgentGallery({
 
       <div className="otto-agents__scroll">
         <div className="otto-agents__grid">
-          {EXPERTS.map((expert, i) => (
+          {getAllExperts().map((expert, i) => (
             <button
               key={expert.id}
               ref={i === 0 ? firstCardRef : undefined}
@@ -98,7 +98,7 @@ export function AgentGallery({
         </div>
 
         <div className="otto-agents__foot">
-          共 {EXPERTS.length} 位专家 · 点击即开一段新对话
+          共 {getAllExperts().length} 位专家 · 点击即开一段新对话
         </div>
       </div>
     </section>
