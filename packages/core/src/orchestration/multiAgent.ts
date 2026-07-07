@@ -11,6 +11,9 @@
  */
 
 import type { Config } from '../config/config.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { homedir } from 'os';
 
 /** 协作角色 */
 export type CollaborationRole = 'initiator' | 'coordinator' | 'executor' | 'reviewer';
@@ -77,6 +80,30 @@ export interface AgentRegistration {
  */
 export class MultiAgentCollaboration {
   private agents = new Map<string, AgentRegistration>();
+  private registryPath = path.join(homedir(), '.otto-user', 'agent-registry.json');
+
+  /** 持久化注册表到磁盘 */
+  private async saveRegistry(): Promise<void> {
+    try {
+      const data = Array.from(this.agents.values());
+      await fs.mkdir(path.dirname(this.registryPath), { recursive: true });
+      await fs.writeFile(this.registryPath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch { /* 不影响主流程 */ }
+  }
+
+  /** 从磁盘加载注册表 */
+  private async loadRegistry(): Promise<void> {
+    try {
+      const raw = await fs.readFile(this.registryPath, 'utf-8');
+      const data = JSON.parse(raw) as AgentRegistration[];
+      for (const agent of data) {
+        // 超过5分钟未更新的标记为offline
+        const age = Date.now() - new Date(agent.lastSeen).getTime();
+        agent.status = age > 5 * 60 * 1000 ? 'offline' : agent.status;
+        this.agents.set(agent.agentId, agent);
+      }
+    } catch { /* 文件不存在 */ }
+  }
   private pendingRequests = new Map<string, CollaborationRequest>();
   private feishuSender: FeishuMessageSender | null = null;
 
@@ -89,13 +116,14 @@ export class MultiAgentCollaboration {
   /**
    * 注册当前 Otto 实例。
    */
-  register(reg: Omit<AgentRegistration, 'lastSeen' | 'status'>): void {
+  async register(reg: Omit<AgentRegistration, 'lastSeen' | 'status'>): Promise<void> {
     const full: AgentRegistration = {
       ...reg,
       status: 'online',
       lastSeen: new Date().toISOString(),
     };
     this.agents.set(reg.agentId, full);
+    await this.saveRegistry();
     console.log(`[MultiAgent] Registered: ${reg.userName} (${reg.agentId})`);
   }
 
@@ -113,7 +141,8 @@ export class MultiAgentCollaboration {
   /**
    * 查找能执行某项任务的 Agent。
    */
-  findCapableAgents(capability: string): AgentRegistration[] {
+  async findCapableAgents(capability: string): Promise<AgentRegistration[]> {
+    await this.loadRegistry();
     return Array.from(this.agents.values()).filter(
       a => a.capabilities.includes(capability) && a.status !== 'offline'
     );
@@ -299,7 +328,8 @@ export class MultiAgentCollaboration {
   /**
    * 获取所有在线 Agent。
    */
-  getOnlineAgents(): AgentRegistration[] {
+  async getOnlineAgents(): Promise<AgentRegistration[]> {
+    await this.loadRegistry();
     return Array.from(this.agents.values()).filter(a => a.status === 'online');
   }
 
