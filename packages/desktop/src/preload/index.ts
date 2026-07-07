@@ -36,6 +36,7 @@ const IPC = {
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
   menu: 'otto:menu',
+  skillLeaderboard: 'otto:skill-leaderboard',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -71,6 +72,12 @@ export interface OttoBridge {
   feishuStart(): Promise<{ text: string; pid?: number }>;
   feishuStop(): Promise<{ text: string }>;
   feishuStatus(): Promise<{ text: string; running: boolean }>;
+  /** 获取小组 Skill 排行榜数据（排行榜+明星榜） */
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }>;
 }
 
 // ── 退避参数 ──
@@ -276,6 +283,17 @@ const bridge: OttoBridge = {
   },
   feishuStatus(): Promise<{ text: string; running: boolean }> {
     return ipcRenderer.invoke('otto:feishu-status') as Promise<{ text: string; running: boolean }>;
+  },
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }> {
+    return ipcRenderer.invoke(IPC.skillLeaderboard, teamId) as Promise<{
+      leaderboard: string;
+      starBoard: string;
+      tabs: Array<{ id: string; label: string; icon: string }>;
+    }>;
   },
 };
 

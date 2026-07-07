@@ -11,20 +11,28 @@ import React, { useState } from 'react';
 // 已移除的 tab：
 //   - commands：纯展示文字、点了无反应，且含桌面端已禁用的假命令 → 撤下。
 //   - ide：硬编码的假代码片段装饰、纯摆设 → 撤下。
-type TabType = 'memory' | 'browser' | 'notes';
+type TabType = 'memory' | 'browser' | 'notes' | 'leaderboard';
 
 const TAB_LABEL: Record<TabType, string> = {
   memory: '记忆',
   browser: '浏览器',
   notes: '笔记',
+  leaderboard: '排行榜',
 };
 
-const TABS: TabType[] = ['memory', 'browser', 'notes'];
+const TABS: TabType[] = ['memory', 'browser', 'notes', 'leaderboard'];
 
 export function RightMascotPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabType>('memory');
   const [noteText, setNoteText] = useState<string>('');
   const [browserUrl, setBrowserUrl] = useState<string>('about:blank');
+  const [leaderboardData, setLeaderboardData] = useState<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  } | null>(null);
+  const [leaderboardTab, setLeaderboardTab] = useState<string>('leaderboard');
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
   return (
     <aside className="otto-right-panel" style={{ width: '300px', minWidth: '300px', height: '100%', background: 'var(--otto-sidebar-bg)', borderLeft: '1px solid var(--otto-border)', display: 'flex', flexDirection: 'column' }}>
@@ -111,6 +119,78 @@ export function RightMascotPanel(): React.JSX.Element {
                 resize: 'none'
               }}
             />
+          </div>
+        )}
+
+        {activeTab === 'leaderboard' && (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {/* 排行榜/明星榜 切换键 */}
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {(leaderboardData?.tabs || [
+                { id: 'leaderboard', label: '排行榜', icon: '🏆' },
+                { id: 'stars', label: '明星榜', icon: '🌟' },
+              ]).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setLeaderboardTab(tab.id)}
+                  style={{
+                    flex: 1,
+                    padding: '5px 4px',
+                    border: '1px solid var(--otto-border)',
+                    background: leaderboardTab === tab.id ? 'var(--otto-accent-soft)' : 'var(--otto-surface)',
+                    color: leaderboardTab === tab.id ? 'var(--otto-accent)' : 'var(--otto-text-secondary)',
+                    fontSize: '10px',
+                    fontWeight: leaderboardTab === tab.id ? 'bold' : 'normal',
+                    borderRadius: 'var(--otto-radius-sm)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tab.icon} {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 刷新按钮 */}
+            <button
+              onClick={async () => {
+                setLeaderboardLoading(true);
+                try {
+                  const data = await (window as any).otto.skillLeaderboard();
+                  setLeaderboardData(data);
+                } catch { /* ignore */ }
+                setLeaderboardLoading(false);
+              }}
+              style={{
+                fontSize: '10px',
+                padding: '4px 8px',
+                background: 'var(--otto-surface)',
+                color: 'var(--otto-text-secondary)',
+                border: '1px solid var(--otto-border)',
+                borderRadius: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              {leaderboardLoading ? '加载中…' : '🔄 刷新'}
+            </button>
+
+            {/* 排行榜内容 */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '8px',
+              background: 'var(--otto-surface)',
+              border: '1px solid var(--otto-border)',
+              borderRadius: 'var(--otto-radius-sm)',
+              fontFamily: 'var(--otto-font-mono)',
+              fontSize: '10px',
+              lineHeight: '1.6',
+              whiteSpace: 'pre-wrap',
+              color: 'var(--otto-text)',
+            }}>
+              {leaderboardData
+                ? (leaderboardTab === 'leaderboard' ? leaderboardData.leaderboard : leaderboardData.starBoard)
+                : '点击「刷新」加载排行榜数据。'}
+            </div>
           </div>
         )}
       </div>

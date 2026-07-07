@@ -67,6 +67,7 @@ const IPC = {
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
+  skillLeaderboard: 'otto:skill-leaderboard',
 } as const;
 
 /**
@@ -302,6 +303,82 @@ function registerIpc(): void {
   ipcMain.handle(IPC.feishuStatus, () =>
     Promise.resolve({ text: FEISHU_DESKTOP_NOTICE, running: false }),
   );
+
+  // Skill 排行榜：读取本地 skill-shares.json，返回排行榜+明星榜文本
+  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: any[] = [];
+      try {
+        const raw = await fs.promises.readFile(sharesPath, 'utf-8');
+        shares = JSON.parse(raw);
+      } catch { /* 文件不存在，返回空 */ }
+
+      const activeShares = shares.filter((s: any) =>
+        (!teamId || s.teamId === teamId) && s.status === 'active',
+      );
+      const teamName = activeShares[0]?.teamName || '本小组';
+
+      // 排行榜文本
+      const medals = ['🥇', '🥈', '🥉'];
+      const maxInstalls = Math.max(...activeShares.map((s: any) => s.installCount || 0), 1);
+      const maxUsage = Math.max(...activeShares.map((s: any) => s.usageCount || 0), 1);
+
+      const lbLines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+      const scored = activeShares.map((s: any) => {
+        const ratingScore = (s.rating || 0) / 5 * 100;
+        const installScore = (s.installCount || 0) / maxInstalls * 100;
+        const successRate = s.usageCount > 0 ? (s.successCount || 0) / s.usageCount * 100 : 50;
+        const usageScore = (s.usageCount || 0) / maxUsage * 100;
+        return { s, score: ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15 };
+      }).sort((a: any, b: any) => b.score - a.score);
+
+      scored.forEach((item: any, i: number) => {
+        const rank = i < 3 ? medals[i] : `${i + 1}.`;
+        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
+        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
+        lbLines.push(`   ${item.s.featureDescription || ''}`);
+        lbLines.push(`   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`);
+        lbLines.push('');
+      });
+
+      // 明星榜文本
+      const contributorMap: Record<string, any> = {};
+      for (const s of activeShares) {
+        if (!contributorMap[s.sharedBy]) {
+          contributorMap[s.sharedBy] = { name: s.sharedByName, count: 0, installs: 0, skills: [] };
+        }
+        contributorMap[s.sharedBy].count++;
+        contributorMap[s.sharedBy].installs += s.installCount || 0;
+        contributorMap[s.sharedBy].skills.push(s.skillName);
+      }
+      const sbLines: string[] = [`🌟 ${teamName} 贡献明星榜`, ''];
+      Object.values(contributorMap).sort((a: any, b: any) => b.installs - a.installs).forEach((c: any, i: number) => {
+        const rank = i < 3 ? medals[i] : `${i + 1}.`;
+        sbLines.push(`${rank} ${c.name}`);
+        sbLines.push(`   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`);
+        sbLines.push('');
+      });
+
+      return {
+        leaderboard: lbLines.join('\n'),
+        starBoard: sbLines.join('\n'),
+        tabs: [
+          { id: 'leaderboard', label: '排行榜', icon: '🏆' },
+          { id: 'stars', label: '明星榜', icon: '🌟' },
+        ],
+      };
+    } catch (err) {
+      return {
+        leaderboard: '暂无排行榜数据',
+        starBoard: '暂无明星榜数据',
+        tabs: [
+          { id: 'leaderboard', label: '排行榜', icon: '🏆' },
+          { id: 'stars', label: '明星榜', icon: '🌟' },
+        ],
+      };
+    }
+  });
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
