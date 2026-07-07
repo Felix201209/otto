@@ -159,14 +159,85 @@ export function createEmployee(emp: {
 }
 
 export function getEmployee(id: string): any | null {
-  return getDB().prepare('SELECT * FROM employees WHERE id = ?').get(id) || null;
+  // 1. 先查 SQLite（B套本地数据）
+  const local = getDB().prepare('SELECT * FROM employees WHERE id = ?').get(id);
+  if (local) return local;
+
+  // 2. 降级查 OrgMemoryStore（A套飞书同步数据）
+  try {
+    const orgData = loadOrgMemoryStore();
+    const user = orgData.users?.find((u: any) => u.id === id);
+    if (user) {
+      const team = orgData.teams?.find((t: any) => t.id === user.teamIds?.[0]);
+      return {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        department: team?.name || null,
+        status: 'active',
+        onboarded_at: user.createdAt,
+      };
+    }
+  } catch { /* A套数据不可用时降级返回null */ }
+
+  return null;
 }
 
 export function listEmployees(department?: string): any[] {
+  // 1. 先查 SQLite
+  let local: any[];
   if (department) {
-    return getDB().prepare('SELECT * FROM employees WHERE department = ? AND status = ? ORDER BY onboarded_at').all(department, 'active');
+    local = getDB().prepare('SELECT * FROM employees WHERE department = ? AND status = ? ORDER BY onboarded_at').all(department, 'active');
+  } else {
+    local = getDB().prepare('SELECT * FROM employees WHERE status = ? ORDER BY onboarded_at').all('active');
   }
-  return getDB().prepare('SELECT * FROM employees WHERE status = ? ORDER BY onboarded_at').all('active');
+
+  // 2. 合并 OrgMemoryStore 的飞书同步数据（去重）
+  try {
+    const orgData = loadOrgMemoryStore();
+    const localIds = new Set(local.map((e: any) => e.id));
+    const orgUsers = (orgData.users || [])
+      .filter((u: any) => !localIds.has(u.id))
+      .map((u: any) => {
+        const team = orgData.teams?.find((t: any) => t.id === u.teamIds?.[0]);
+        return {
+          id: u.id,
+          name: u.name,
+          role: u.role,
+          department: team?.name || null,
+          status: 'active',
+          onboarded_at: u.createdAt,
+        };
+      })
+      .filter((u: any) => !department || u.department === department);
+
+    return [...local, ...orgUsers];
+  } catch {
+    return local;
+  }
+}
+
+/**
+ * 加载 A套（OrgMemoryStore）的数据。
+ * 用于统一两套企业系统的员工数据。
+ */
+function loadOrgMemoryStore(): any {
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  // 尝试几个可能的路径
+  const candidates = [
+    path.join(process.cwd(), '.otto', 'org', 'memory-store.json'),
+    path.join(os.homedir(), '.otto-user', 'org', 'memory-store.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      }
+    } catch { /* skip */ }
+  }
+  return { users: [], teams: [], companies: [], licenses: [] };
 }
 
 export function offboardEmployee(id: string): void {
