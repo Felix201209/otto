@@ -14,6 +14,14 @@
 import type { Config } from '../config/config.js';
 import { getWorkLogger } from './workLog.js';
 
+/** 飞书推送接口（由 CLI gateway 注入） */
+export interface ProactiveFeishuSender {
+  /** 发送飞书卡片消息给用户 */
+  sendCard(userId: string, message: string): Promise<void>;
+  /** 发送飞书文本消息给用户 */
+  sendMessage(userId: string, message: string): Promise<void>;
+}
+
 /** 主动服务规则 */
 export interface ProactiveRule {
   id: string;
@@ -143,6 +151,75 @@ export class ProactiveService {
   private rules: ProactiveRule[] = [...BUILTIN_RULES];
   private actionHistory: Map<string, string[]> = new Map(); // userId -> recent actions
   private triggeredToday: Set<string> = new Set(); // 防止同一天重复触发
+  private feishuSender: ProactiveFeishuSender | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  /** 注入飞书发送器 */
+  setFeishuSender(sender: ProactiveFeishuSender): void {
+    this.feishuSender = sender;
+    console.log('[ProactiveService] Feishu sender injected');
+  }
+
+  /**
+   * 启动定时驱动器（每5分钟检查一次 cron 规则）。
+   * 由 CLI gateway 或桌面端 main 进程调用。
+   */
+  startScheduler(getContext: () => ProactiveContext): void {
+    if (this.timer) return; // 已启动
+    // 每5分钟检查一次
+    this.timer = setInterval(async () => {
+      try {
+        const ctx = getContext();
+        const triggered = await this.checkAndTrigger(ctx);
+        for (const rule of triggered) {
+          await this.executeAndLog(rule, ctx);
+        }
+      } catch (err) {
+        // 定时器出错不能崩溃
+        console.warn(`[ProactiveService] Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, 5 * 60 * 1000);
+    console.log('[ProactiveService] Scheduler started (5min interval)');
+  }
+
+  /** 停止定时驱动器 */
+  stopScheduler(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+      console.log('[ProactiveService] Scheduler stopped');
+    }
+  }
+
+  /**
+   * 执行触发的规则：发飞书消息 + 记工作日志（标注主动服务）。
+   */
+  private async executeAndLog(rule: ProactiveRule, ctx: ProactiveContext): Promise<void> {
+    // 1. 发飞书消息
+    if (this.feishuSender) {
+      try {
+        if (rule.action.type === 'feishu_card') {
+          await this.feishuSender.sendCard(ctx.userId, rule.action.message);
+        } else if (rule.action.type === 'feishu_message') {
+          await this.feishuSender.sendMessage(ctx.userId, rule.action.message);
+        }
+      } catch (err) {
+        console.warn(`[ProactiveService] Feishu send failed for rule ${rule.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. 记工作日志（标注主动服务，与普通操作区分）
+    try {
+      const logger = getWorkLogger();
+      await logger.log({
+        toolName: 'proactive_service',
+        action: `[主动服务] ${rule.name}：${rule.action.message.substring(0, 100)}`,
+        category: 'other',
+        success: true,
+        details: `触发规则：${rule.id} | 优先级：${rule.action.priority} | 用户：${ctx.userName}`,
+      });
+    } catch { /* 不影响主流程 */ }
+  }
 
   /**
    * 添加自定义规则。
@@ -229,6 +306,9 @@ export class ProactiveService {
       triggered.push(rule);
       rule.lastTriggered = new Date().toISOString();
       this.triggeredToday.add(triggerKey);
+
+      // 执行：发飞书 + 记工作日志
+      await this.executeAndLog(rule, ctx);
     }
 
     return triggered;
