@@ -1,6 +1,48 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import type { CompanyRecord, LicenseRecord, OrgMemoryRecord, ProjectRecord, SkillRecord, TeamRecord, UsageRecord, UserProfileRecord } from './orgMemoryTypes.js';
+
+/** 简易文件锁：用 .lock 文件 + 原子写入实现互斥 */
+async function acquireLock(lockPath: string, timeoutMs: number = 5000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // 原子写入：O_EXCL 确保只有一方能创建
+      const handle = await fs.open(lockPath, 'wx');
+      await handle.write(Buffer.from(`${process.pid}\n${Date.now()}\n`));
+      await handle.close();
+      return;
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        // 检查是否是陈旧锁（超过30秒）
+        try {
+          const content = await fs.readFile(lockPath, 'utf-8');
+          const lines = content.split('\n');
+          const lockTime = parseInt(lines[1] || '0');
+          if (Date.now() - lockTime > 30000) {
+            // 陈旧锁，强制释放
+            await fs.unlink(lockPath).catch(() => {});
+            continue;
+          }
+        } catch {
+          // 读锁失败也释放
+          await fs.unlink(lockPath).catch(() => {});
+          continue;
+        }
+        // 等待10ms重试
+        await new Promise((r) => setTimeout(r, 10));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`Lock timeout after ${timeoutMs}ms: ${lockPath}`);
+}
+
+async function releaseLock(lockPath: string): Promise<void> {
+  await fs.unlink(lockPath).catch(() => {});
+}
 
 export interface OrgMemoryStoreData {
   companies: CompanyRecord[];
@@ -48,8 +90,17 @@ export class OrgMemoryStore {
   }
 
   async save(data: OrgMemoryStoreData) {
-    await fs.mkdir(path.dirname(this.storePath), { recursive: true });
-    await fs.writeFile(this.storePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    const lockPath = this.storePath + '.lock';
+    await acquireLock(lockPath);
+    try {
+      await fs.mkdir(path.dirname(this.storePath), { recursive: true });
+      // 原子写入：先写临时文件再 rename
+      const tmpPath = this.storePath + '.tmp';
+      await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+      await fs.rename(tmpPath, this.storePath);
+    } finally {
+      await releaseLock(lockPath);
+    }
   }
 
   async upsertProject(project: ProjectRecord) {
