@@ -37,18 +37,28 @@ import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
+import { useSettingsData } from './state/useSettingsData.js';
+import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 
-/** 主内容区当前视图：对话 / 智能体 / 设置——三者都是整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings';
+/** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
+type MainView = 'chat' | 'agents' | 'settings' | 'hub';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
+  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/stats/doctor/todos。
+  const settingsData = useSettingsData();
 
   // —— 「查看全部对话」检索面板（仍是浮层） ——
   const [allConvOpen, setAllConvOpen] = useState(false);
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
+  // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
+  const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
+  const openHub = (tab: HubTabId = 'prefs'): void => {
+    setHubInitialTab(tab);
+    setMainView('hub');
+  };
   // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
   const setupOpen = mainView === 'settings';
   // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。
@@ -237,19 +247,21 @@ export function App(): React.JSX.Element {
         groups={groups}
         activeSessionId={state.activeSessionId}
         agentsActive={mainView === 'agents'}
+        hubActive={mainView === 'hub'}
         onSelect={(id) => {
           setMainView('chat');
           actions.selectSession(id);
         }}
         onNewChat={handleNewChat}
         onOpenAgents={() => setMainView('agents')}
+        onOpenHub={() => openHub('prefs')}
         onLaunchExpert={handleLaunchExpert}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
       />
 
-      {/* 主内容区：设置 / 智能体 / 对话，整页切换（不再是弹窗）。 */}
+      {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
       {mainView === 'settings' ? (
         <SetupPanel
           models={state.models}
@@ -262,6 +274,13 @@ export function App(): React.JSX.Element {
         <AgentGallery
           onLaunch={handleLaunchExpert}
           onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'hub' ? (
+        <SettingsHubPage
+          data={settingsData}
+          activeSession={activeSession}
+          onBack={() => setMainView('chat')}
+          initialTab={hubInitialTab}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
@@ -279,6 +298,14 @@ export function App(): React.JSX.Element {
             onOpenSetup={() => setMainView('settings')}
             onNewChat={handleNewChat}
             onClearContext={handleClearContext}
+            onExport={
+              activeSession
+                ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                : undefined
+            }
+            onOpenDoctor={() => openHub('doctor')}
+            onOpenMemory={() => openHub('memory')}
+            onOpenSkills={() => openHub('skills')}
           />
           <RightMascotPanel />
         </div>
@@ -309,6 +336,13 @@ export function App(): React.JSX.Element {
 
       {state.lastError ? (
         <ErrorToast message={state.lastError} onClose={actions.clearError} />
+      ) : null}
+
+      {settingsData.state.exportMessage ? (
+        <ErrorToast
+          message={settingsData.state.exportMessage}
+          onClose={settingsData.actions.clearExportMessage}
+        />
       ) : null}
     </div>
   );

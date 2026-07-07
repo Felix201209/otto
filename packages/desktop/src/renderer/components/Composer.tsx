@@ -54,14 +54,15 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'model', description: '打开模型菜单', action: 'local' },
   { id: 'clear', description: '清空当前会话上下文', action: 'local' },
   { id: 'settings', description: '打开设置面板', action: 'local' },
-  { id: 'doctor', description: '检查 Otto / EasyCode / 系统环境', action: 'prompt', prompt: '请运行一次完整环境诊断：检查 Otto、EasyCode、Node、npm、git、Electron、桌面端、飞书网关、常用依赖是否正常，并给出修复建议。' },
+  { id: 'doctor', description: '依赖体检（pandoc/ffmpeg 等外部工具）', action: 'local' },
+  { id: 'memory', description: '查看/新增记忆（项目 + 全局 OTTO.md）', action: 'local' },
+  { id: 'skills', description: '浏览已装技能库', action: 'local' },
+  { id: 'export', description: '导出当前会话为 Markdown', action: 'local' },
   { id: 'desktop', description: '启动/修复桌面端 Otto', action: 'prompt', prompt: '请检查并修复 Otto 桌面端：构建 renderer/main/preload，重新打包 Electron，覆盖 /Applications/Otto.app，并验证界面是否为最新。' },
   { id: 'feishu-start', description: '开启飞书控制网关', action: 'prompt', prompt: '请开启飞书/Lark 控制网关并检查连接状态。' },
   { id: 'feishu-stop', description: '停止飞书控制网关', action: 'prompt', prompt: '请停止飞书/Lark 控制网关并确认进程已退出。' },
   { id: 'feishu-status', description: '检查飞书连接状态', action: 'prompt', prompt: '请检查飞书/Lark 网关、授权、消息同步和群绑定状态。' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
-  { id: 'memory', description: '查看组织/部门/个人记忆文件', action: 'prompt', prompt: '请列出并总结 Otto/EasyCode 当前可用的个人、部门、组织记忆文件，以及哪些记忆会影响当前任务。' },
-  { id: 'skills', description: '列出可用 Skill 和专家能力', action: 'prompt', prompt: '请列出当前可用 skills、专家能力、用途和调用方式，并指出缺失或需要补齐的技能。' },
   { id: 'ppt', description: 'PPT 创作专家', action: 'prompt', prompt: '我要做一份 PPT。请调用 PPT 创作专家流程，先询问主题、受众、页数、风格和素材。' },
   { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
   { id: 'pdf', description: 'PDF 处理', action: 'prompt', prompt: '我要处理 PDF。请调用 PDF 文档处理流程，先询问文件路径、操作类型和输出格式。' },
@@ -70,7 +71,6 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'research', description: '市场/竞品调研', action: 'prompt', prompt: '我要做市场或竞品调研。请调用市场调研专家流程，先询问行业、对象、竞品和决策目标。' },
   { id: 'browser', description: '内置浏览器/网页自动化', action: 'prompt', prompt: '请打开或使用内置浏览器/网页自动化能力。先询问目标网址和要完成的操作。' },
   { id: 'ide', description: '内置 IDE / 代码任务', action: 'prompt', prompt: '请进入代码任务模式。先检查当前项目结构，询问要实现或修复的目标，然后给出计划。' },
-  { id: 'export', description: '导出当前结果/文件', action: 'prompt', prompt: '请把当前任务结果导出为合适的文件格式，并告诉我输出路径。' },
   { id: 'workflow', description: '启动 workflow 任务', action: 'prompt', prompt: 'workflow 请根据我的目标创建并执行一个完整工作流。先问我目标、输入材料、输出格式和约束。' },
 ];
 
@@ -102,6 +102,14 @@ interface ComposerProps {
   onClearContext?: () => void;
   /** 斜杠命令 `/settings`：打开设置面板（App 已有 onOpenSetup）。未传则该命令不可用。 */
   onOpenSettings?: () => void;
+  /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
+  onOpenDoctor?: () => void;
+  /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
+  onOpenMemory?: () => void;
+  /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
+  onOpenSkills?: () => void;
+  /** 斜杠命令 `/export`：导出当前会话为 Markdown（真实落盘）。 */
+  onExport?: () => void;
 }
 
 export function Composer({
@@ -119,6 +127,10 @@ export function Composer({
   onNewChat,
   onClearContext,
   onOpenSettings,
+  onOpenDoctor,
+  onOpenMemory,
+  onOpenSkills,
+  onExport,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -286,6 +298,18 @@ export function Composer({
         break;
       case 'settings':
         onOpenSettings?.();
+        break;
+      case 'doctor':
+        onOpenDoctor?.();
+        break;
+      case 'memory':
+        onOpenMemory?.();
+        break;
+      case 'skills':
+        onOpenSkills?.();
+        break;
+      case 'export':
+        onExport?.();
         break;
       default:
         break;

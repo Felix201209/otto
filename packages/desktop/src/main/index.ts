@@ -26,6 +26,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -64,6 +65,7 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  saveTextFile: 'otto:save-text-file',
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
@@ -322,6 +324,30 @@ function registerIpc(): void {
     }
     return Promise.resolve('');
   });
+
+  // 导出会话（对齐 CLI /export）：原生保存对话框 + 写文件。取消返回 null，
+  // 写入失败抛错由 renderer 侧捕获展示；内容/文件名均来自 server 的 export_result 帧。
+  ipcMain.handle(
+    IPC.saveTextFile,
+    async (_e, suggestedFileName: unknown, content: unknown) => {
+      if (typeof suggestedFileName !== 'string' || typeof content !== 'string') {
+        return null;
+      }
+      const win = mainWindow;
+      const result = win
+        ? await dialog.showSaveDialog(win, {
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          })
+        : await dialog.showSaveDialog({
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          });
+      if (result.canceled || !result.filePath) return null;
+      await fs.promises.writeFile(result.filePath, content, 'utf-8');
+      return result.filePath;
+    },
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────

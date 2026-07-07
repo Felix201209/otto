@@ -60,6 +60,14 @@ interface ChatViewProps {
   onNewChat: () => void;
   /** 斜杠命令 `/clear`：清空当前会话上下文。 */
   onClearContext: () => void;
+  /** 导出当前会话为 Markdown 文件（真实落盘，对齐 CLI /export）。无会话时隐藏。 */
+  onExport?: () => void;
+  /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
+  onOpenDoctor?: () => void;
+  /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
+  onOpenMemory?: () => void;
+  /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
+  onOpenSkills?: () => void;
 }
 
 export function ChatView({
@@ -76,6 +84,10 @@ export function ChatView({
   onOpenSetup,
   onNewChat,
   onClearContext,
+  onExport,
+  onOpenDoctor,
+  onOpenMemory,
+  onOpenSkills,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -173,21 +185,37 @@ export function ChatView({
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
-        <button
-          type="button"
-          className="otto-topbar-setup"
-          onClick={onOpenSetup}
-          title="模型与 BYO-key 设置"
-          aria-label="模型与 BYO-key 设置"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
-            <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <span className="otto-user-avatar" title="当前用户">
-          {userInitial}
-        </span>
+        <div className="otto-topbar__actions">
+          {session && onExport ? (
+            <button
+              type="button"
+              className="otto-topbar-export"
+              onClick={onExport}
+              title="导出会话为 Markdown"
+              aria-label="导出会话为 Markdown"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M12 3v12m0 0-4-4m4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="otto-topbar-setup"
+            onClick={onOpenSetup}
+            title="模型与 BYO-key 设置"
+            aria-label="模型与 BYO-key 设置"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <span className="otto-user-avatar" title="当前用户">
+            {userInitial}
+          </span>
+        </div>
       </header>
 
       <div className="otto-thread" ref={threadRef} onScroll={onThreadScroll}>
@@ -240,6 +268,10 @@ export function ChatView({
         onNewChat={onNewChat}
         onClearContext={onClearContext}
         onOpenSettings={onOpenSetup}
+        onOpenDoctor={onOpenDoctor}
+        onOpenMemory={onOpenMemory}
+        onOpenSkills={onOpenSkills}
+        onExport={onExport}
       />
     </section>
   );

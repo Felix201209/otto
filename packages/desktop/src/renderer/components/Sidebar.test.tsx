@@ -44,6 +44,7 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
       onSelect={onSelect}
       onNewChat={vi.fn()}
       onOpenAgents={onOpenAgents}
+      onOpenHub={vi.fn()}
       onLaunchExpert={vi.fn()}
       onViewAll={vi.fn()}
       onRename={onRename}

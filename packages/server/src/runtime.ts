@@ -191,6 +191,11 @@ export class CoreSessionRuntime implements SessionRuntime {
     this.config.setModel(model);
   }
 
+  /** 供 server.ts 的 GUI 面板 handler 只读查询/即时应用设置（context 分解/mcp/healthyUse 等）。 */
+  getConfig(): Config {
+    return this.config;
+  }
+
   cancel(): void {
     this.abort?.abort();
   }
