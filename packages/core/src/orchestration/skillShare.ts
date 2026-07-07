@@ -952,13 +952,124 @@ export class SkillShareManager {
   }
 
   /**
-   * 生成 Skill 排行榜 + 贡献明星榜（合并展示）。
+   * 生成小组看板数据（排行榜 + 明星榜），供 UI 侧边切换展示。
+   * 返回结构化数据，由前端渲染为带切换键的两个面板。
    */
-  async getTeamDashboard(teamId: string): Promise<string> {
-    const leaderboard = await this.getTeamLeaderboard(teamId);
-    const starBoard = await this.getTeamSharerLeaderboard(teamId);
+  async getTeamDashboard(teamId: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    leaderboardData: Array<{ rank: number; skillName: string; version: number; feature: string; sharerName: string; rating: number; ratingCount: number; installCount: number; score: number }>;
+    starBoardData: Array<{ rank: number; name: string; skillCount: number; totalInstalls: number; avgRating: number; ratingCount: number; score: number; skills: string[] }>;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }> {
+    const shares = await this.loadShares();
+    const activeShares = shares.filter((s) => s.teamId === teamId && s.status === 'active');
+    const teamName = activeShares[0]?.teamName || '本小组';
 
-    return `${leaderboard}\n\n${'─'.repeat(40)}\n\n${starBoard}`;
+    // 排行榜数据
+    const maxInstalls = Math.max(...activeShares.map((s) => s.installCount), 1);
+    const leaderboardData = activeShares.map((s) => {
+      const ratingScore = (s.rating / 5) * 100;
+      const installScore = (s.installCount / maxInstalls) * 100;
+      return {
+        rank: 0,
+        skillName: s.skillName,
+        version: s.version,
+        feature: s.featureDescription || extractFeature(s.content),
+        sharerName: s.sharedByName,
+        rating: s.rating,
+        ratingCount: s.ratingCount,
+        installCount: s.installCount,
+        score: ratingScore * 0.6 + installScore * 0.4,
+      };
+    }).sort((a, b) => b.score - a.score);
+    leaderboardData.forEach((item, i) => { item.rank = i + 1; });
+
+    // 明星榜数据
+    const contributorMap: Record<string, { name: string; skillCount: number; totalInstalls: number; totalRatingScore: number; ratingCount: number; skills: string[] }> = {};
+    for (const share of activeShares) {
+      const key = share.sharedBy;
+      if (!contributorMap[key]) {
+        contributorMap[key] = { name: share.sharedByName, skillCount: 0, totalInstalls: 0, totalRatingScore: 0, ratingCount: 0, skills: [] };
+      }
+      const c = contributorMap[key];
+      c.skillCount++;
+      c.totalInstalls += share.installCount;
+      c.totalRatingScore += share.rating * share.ratingCount;
+      c.ratingCount += share.ratingCount;
+      c.skills.push(share.skillName);
+    }
+
+    const maxContributorInstalls = Math.max(...Object.values(contributorMap).map((c) => c.totalInstalls), 1);
+    const maxContributorRatingCount = Math.max(...Object.values(contributorMap).map((c) => c.ratingCount), 1);
+    const maxSkillCount = Math.max(...Object.values(contributorMap).map((c) => c.skillCount), 1);
+
+    const starBoardData = Object.values(contributorMap).map((c) => {
+      const avgRating = c.ratingCount > 0 ? (c.totalRatingScore / c.ratingCount) : 0;
+      const shareScore = (c.skillCount / maxSkillCount) * 100;
+      const installScore = (c.totalInstalls / maxContributorInstalls) * 100;
+      const ratingScore = (avgRating / 5) * 100;
+      const feedbackScore = (c.ratingCount / maxContributorRatingCount) * 100;
+      return {
+        rank: 0,
+        name: c.name,
+        skillCount: c.skillCount,
+        totalInstalls: c.totalInstalls,
+        avgRating,
+        ratingCount: c.ratingCount,
+        score: shareScore * 0.3 + installScore * 0.3 + ratingScore * 0.2 + feedbackScore * 0.2,
+        skills: c.skills,
+      };
+    }).sort((a, b) => b.score - a.score);
+    starBoardData.forEach((item, i) => { item.rank = i + 1; });
+
+    // 格式化文本版本（供飞书卡片等纯文本场景）
+    const leaderboardText = this.formatLeaderboardText(teamName, leaderboardData);
+    const starBoardText = this.formatStarBoardText(teamName, starBoardData);
+
+    return {
+      leaderboard: leaderboardText,
+      starBoard: starBoardText,
+      leaderboardData,
+      starBoardData,
+      tabs: [
+        { id: 'leaderboard', label: 'Skill 排行榜', icon: '🏆' },
+        { id: 'stars', label: '贡献明星榜', icon: '🌟' },
+      ],
+    };
+  }
+
+  /** 格式化排行榜文本 */
+  private formatLeaderboardText(teamName: string, data: Array<{ rank: number; skillName: string; version: number; feature: string; sharerName: string; rating: number; ratingCount: number; installCount: number; score: number }>): string {
+    if (data.length === 0) return `${teamName} 暂无共享 Skill。`;
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+    for (const item of data) {
+      const rank = item.rank <= 3 ? medals[item.rank - 1] : `${item.rank}.`;
+      const stars = '⭐'.repeat(Math.round(item.rating));
+      lines.push(`${rank} ${item.skillName} (v${item.version})`);
+      lines.push(`   功能：${item.feature}`);
+      lines.push(`   分享者：${item.sharerName}`);
+      lines.push(`   评分：${stars || '暂无'} (${item.ratingCount}人) | 安装：${item.installCount}次 | 综合：${item.score.toFixed(0)}分`);
+      lines.push('');
+    }
+    return lines.join('\n');
+  }
+
+  /** 格式化明星榜文本 */
+  private formatStarBoardText(teamName: string, data: Array<{ rank: number; name: string; skillCount: number; totalInstalls: number; avgRating: number; ratingCount: number; score: number; skills: string[] }>): string {
+    if (data.length === 0) return `${teamName} 暂无贡献者。`;
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines: string[] = [`🌟 ${teamName} Skill 贡献明星榜`, ''];
+    for (const item of data) {
+      const rank = item.rank <= 3 ? medals[item.rank - 1] : `${item.rank}.`;
+      const stars = '⭐'.repeat(Math.round(item.avgRating));
+      lines.push(`${rank} ${item.name}`);
+      lines.push(`   分享：${item.skillCount} 个 | 安装：${item.totalInstalls} 次 | 评分：${stars || '暂无'} (${item.ratingCount}人) | 贡献度：${item.score.toFixed(0)}`);
+      lines.push(`   作品：${item.skills.join('、')}`);
+      lines.push('');
+    }
+    return lines.join('\n');
   }
 }
 
