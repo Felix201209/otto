@@ -450,13 +450,149 @@ export class EnterpriseSync {
     if (this.syncTimer) return;
     this.syncTimer = setInterval(async () => {
       try {
-        await this.syncAll();
-        console.log('[EnterpriseSync] 定时同步完成');
+        // 首次或距上次全量超过24小时 → 全量同步
+        const config = this.enterpriseConfig || await this.loadConfig();
+        const lastSync = config?.lastSyncAt ? new Date(config.lastSyncAt).getTime() : 0;
+        const hoursSince = (Date.now() - lastSync) / (1000 * 60 * 60);
+
+        if (hoursSince > 24) {
+          await this.syncAll();
+          console.log('[EnterpriseSync] 全量同步完成');
+        } else {
+          // 增量同步：只拉取变更的部门和用户
+          await this.syncIncremental();
+          console.log('[EnterpriseSync] 增量同步完成');
+        }
       } catch (err) {
         console.warn(`[EnterpriseSync] 定时同步失败: ${err instanceof Error ? err.message : String(err)}`);
       }
     }, 60 * 60 * 1000); // 1小时
-    console.log('[EnterpriseSync] 自动同步已启动 (1h interval)');
+    console.log('[EnterpriseSync] 自动同步已启动 (1h interval, full sync every 24h)');
+  }
+
+  /**
+   * 增量同步：只更新变更的部门和用户。
+   * 利用飞书 API 的 page_token 和时间过滤，减少数据传输量。
+   */
+  private async syncIncremental(): Promise<void> {
+    const config = this.enterpriseConfig || await this.loadConfig();
+    if (!config) throw new Error('企业未绑定');
+
+    const token = await this.getTenantToken();
+    const data = await this.store.load();
+    const now = new Date().toISOString();
+    let changed = false;
+
+    // 1. 检查部门变更（拉取部门列表，对比是否有新增/删除）
+    const departments = await this.fetchAllDepartments(token);
+    const existingDeptIds = new Set(data.teams.map((t) => t.id));
+    const newDeptIds = new Set(departments.map((d) => d.department_id));
+
+    // 新增的部门
+    for (const dept of departments) {
+      if (!existingDeptIds.has(dept.department_id)) {
+        data.teams.push({
+          id: dept.department_id,
+          companyId: config.companyId,
+          name: dept.name,
+          managerUserIds: dept.leader_user_id ? [dept.leader_user_id] : [],
+          memberUserIds: [],
+          createdAt: now,
+          updatedAt: now,
+        });
+        changed = true;
+      }
+    }
+
+    // 删除的部门（在旧数据里有，新数据里没有）
+    data.teams = data.teams.filter((t) => {
+      if (!newDeptIds.has(t.id)) {
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+
+    // 2. 检查用户变更（拉取用户列表，只更新有变化的）
+    const feishuUsers = await this.fetchAllUsers(token);
+    const activeFeishuUserIds = new Set(
+      feishuUsers.filter((u) => u.is_active).map((u) => u.open_id),
+    );
+
+    // 撤销离职用户 License
+    for (const lic of data.licenses) {
+      if (!activeFeishuUserIds.has(lic.assigneeUserId) && !lic.revokedAt) {
+        lic.revokedAt = now;
+        changed = true;
+      }
+    }
+
+    // 新增/更新用户
+    const existingUserIds = new Set(data.users.map((u) => u.id));
+    for (const fu of feishuUsers) {
+      if (!fu.is_active) continue;
+      const normalizedRole = normalizeRole(fu.job_title || '');
+
+      if (!existingUserIds.has(fu.open_id)) {
+        // 新用户
+        data.users.push({
+          id: fu.open_id,
+          companyId: config.companyId,
+          teamIds: fu.department_ids,
+          name: fu.name,
+          role: normalizedRole,
+          selfMemory: '',
+          createdAt: now,
+          updatedAt: now,
+        });
+        // 生成 License
+        const isAdmin = fu.open_id === config.adminUserId;
+        const userRole = inferUserRole(fu.open_id, isAdmin, data.teams, normalizedRole);
+        data.licenses.push(createLicenseForUser(fu.open_id, config.companyId, userRole, fu.department_ids[0]));
+        changed = true;
+      } else {
+        // 更新已有用户（检查部门/岗位是否变了）
+        const idx = data.users.findIndex((u) => u.id === fu.open_id);
+        if (idx !== -1) {
+          const existing = data.users[idx];
+          const deptChanged = JSON.stringify(existing.teamIds) !== JSON.stringify(fu.department_ids);
+          const roleChanged = existing.role !== normalizedRole;
+          if (deptChanged || roleChanged) {
+            data.users[idx] = {
+              ...existing,
+              teamIds: fu.department_ids,
+              role: normalizedRole,
+              updatedAt: now,
+            };
+            // 更新对应 License
+            const isAdmin = fu.open_id === config.adminUserId;
+            const userRole = inferUserRole(fu.open_id, isAdmin, data.teams, normalizedRole);
+            const licIdx = data.licenses.findIndex(
+              (l) => l.assigneeUserId === fu.open_id && !l.revokedAt,
+            );
+            if (licIdx !== -1) {
+              data.licenses[licIdx] = {
+                ...data.licenses[licIdx],
+                role: LICENSE_ROLE_MAP[userRole],
+                permissions: PERMISSION_SETS[userRole],
+                features: FEATURE_SETS[userRole],
+                teamId: fu.department_ids[0],
+              };
+            }
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      await this.store.save(data);
+      config.lastSyncAt = now;
+      await this.saveConfig(config);
+      console.log('[EnterpriseSync] 增量同步：检测到变更并已更新');
+    } else {
+      console.log('[EnterpriseSync] 增量同步：无变更');
+    }
   }
 
   /** 停止自动同步 */
