@@ -22,6 +22,10 @@ import type {
   CompanyRecord,
   TeamRecord,
   UserProfileRecord,
+  LicenseRecord,
+  Permission,
+  LicenseRole,
+  FeatureFlag,
 } from '../memory/orgMemoryTypes.js';
 
 /** 企业配置 */
@@ -237,6 +241,14 @@ export class EnterpriseSync {
     // 6. 写入 store（全量替换）
     data.teams = teams;
     data.users = users;
+
+    // 6.5 自动生成权限许可（基于飞书组织架构角色推断）
+    data.licenses = users.map((user) => {
+      const isAdmin = user.id === config.adminUserId;
+      const userRole = inferUserRole(user.id, isAdmin, teams, user.role);
+      return createLicenseForUser(user.id, config.companyId, userRole, user.teamIds[0]);
+    });
+
     await this.store.save(data);
 
     // 7. 更新同步时间
@@ -270,6 +282,52 @@ export class EnterpriseSync {
       normalizedRole: user.role,
       name: user.name,
     };
+  }
+
+  /**
+   * 获取用户的角色和权限信息。
+   */
+  async getUserRoleAndPermissions(openId: string): Promise<{
+    role: UserRole;
+    roleLabel: string;
+    permissions: Permission[];
+    features: FeatureFlag[];
+    department: string;
+    name: string;
+  } | null> {
+    const data = await this.store.load();
+    const user = data.users.find((u) => u.id === openId);
+    if (!user) return null;
+
+    const config = this.enterpriseConfig || await this.loadConfig();
+    const isAdmin = user.id === config?.adminUserId;
+    const team = data.teams.find((t) => t.id === user.teamIds[0]);
+    const userRole = inferUserRole(user.id, isAdmin, data.teams, user.role);
+
+    // 从 license 记录读取权限
+    const license = data.licenses.find((l) => l.assigneeUserId === openId && !l.revokedAt);
+    const permissions = license?.permissions || PERMISSION_SETS[userRole];
+    const features = license?.features || FEATURE_SETS[userRole];
+
+    return {
+      role: userRole,
+      roleLabel: getRoleLabel(userRole),
+      permissions,
+      features,
+      department: team?.name || '未分配',
+      name: user.name,
+    };
+  }
+
+  /**
+   * 检查用户是否有某项权限。
+   */
+  async checkPermission(openId: string, permission: Permission): Promise<boolean> {
+    const data = await this.store.load();
+    const license = data.licenses.find(
+      (l) => l.assigneeUserId === openId && !l.revokedAt,
+    );
+    return checkUserPermission(license || null, permission);
   }
 
   /**
@@ -408,6 +466,163 @@ export function normalizeRole(jobTitle: string): string {
 export function getDepartmentFromRole(normalizedRole: string): string {
   const prefix = normalizedRole.split('.')[0];
   return ROLE_TO_DEPT[prefix] || '通用';
+}
+
+// ============================================================
+// 权限映射
+// ============================================================
+
+/** 用户角色类型（从飞书组织架构推断） */
+export type UserRole = 'company_admin' | 'team_manager' | 'hr' | 'employee';
+
+/** 权限集定义 */
+const PERMISSION_SETS: Record<UserRole, Permission[]> = {
+  // 企业管理员：全权限
+  company_admin: [
+    'memory:self:read', 'memory:self:write',
+    'memory:project:read', 'memory:project:write',
+    'memory:team:read', 'memory:team:write',
+    'memory:company:read', 'memory:company:write',
+    'skill:team:read', 'skill:team:write', 'skill:team:approve',
+    'skill:company:read', 'skill:company:approve',
+    'analytics:self:read', 'analytics:team:read', 'analytics:company:read',
+    'license:assign', 'license:revoke',
+  ],
+  // 部门负责人：管理部门级
+  team_manager: [
+    'memory:self:read', 'memory:self:write',
+    'memory:project:read', 'memory:project:write',
+    'memory:team:read', 'memory:team:write',
+    'skill:team:read', 'skill:team:write', 'skill:team:approve',
+    'skill:company:read',
+    'analytics:self:read', 'analytics:team:read',
+  ],
+  // 人事部：可调换人员部门 + 管理人员
+  hr: [
+    'memory:self:read', 'memory:self:write',
+    'memory:team:read', 'memory:team:write',
+    'memory:company:read',
+    'skill:team:read', 'skill:team:write',
+    'skill:company:read',
+    'analytics:self:read', 'analytics:team:read', 'analytics:company:read',
+    'license:assign', 'license:revoke',
+  ],
+  // 普通员工：个人级 + 部门只读
+  employee: [
+    'memory:self:read', 'memory:self:write',
+    'memory:project:read', 'memory:project:write',
+    'memory:team:read',
+    'skill:team:read',
+    'skill:company:read',
+    'analytics:self:read',
+  ],
+};
+
+/** 功能开关定义 */
+const FEATURE_SETS: Record<UserRole, FeatureFlag[]> = {
+  company_admin: ['desktop', 'feishu-bot', 'voice-input', 'browser', 'ide', 'ppt', 'docs', 'data-analysis', 'custom-skills', 'company-dashboard', 'team-dashboard'],
+  team_manager: ['desktop', 'feishu-bot', 'voice-input', 'browser', 'ide', 'ppt', 'docs', 'data-analysis', 'custom-skills', 'team-dashboard'],
+  hr: ['desktop', 'feishu-bot', 'voice-input', 'browser', 'ide', 'ppt', 'docs', 'data-analysis', 'custom-skills', 'company-dashboard'],
+  employee: ['desktop', 'feishu-bot', 'voice-input', 'browser', 'ide', 'ppt', 'docs', 'data-analysis', 'custom-skills'],
+};
+
+/** LicenseRole 映射 */
+const LICENSE_ROLE_MAP: Record<UserRole, LicenseRole> = {
+  company_admin: 'owner',
+  team_manager: 'manager',
+  hr: 'manager',
+  employee: 'employee',
+};
+
+/**
+ * 推断用户角色：企业管理员 / 部门负责人 / 人事 / 普通员工。
+ *
+ * 判断逻辑：
+ * 1. 飞书管理员 → company_admin
+ * 2. 部门 leader_user_id 匹配 → team_manager
+ * 3. 岗位属于 hr.* → hr
+ * 4. 其他 → employee
+ */
+export function inferUserRole(
+  userId: string,
+  isAdmin: boolean,
+  teams: TeamRecord[],
+  normalizedRole: string,
+): UserRole {
+  // 1. 飞书管理员
+  if (isAdmin) return 'company_admin';
+
+  // 2. 部门负责人
+  const isManager = teams.some(
+    (t) => t.managerUserIds.includes(userId),
+  );
+  if (isManager) return 'team_manager';
+
+  // 3. 人事部
+  if (normalizedRole.startsWith('hr.')) return 'hr';
+
+  // 4. 普通员工
+  return 'employee';
+}
+
+/**
+ * 为用户生成 LicenseRecord（权限许可）。
+ * 根据 inferUserRole 的结果自动分配权限。
+ */
+export function createLicenseForUser(
+  userId: string,
+  companyId: string,
+  role: UserRole,
+  teamId?: string,
+): LicenseRecord {
+  const now = new Date().toISOString();
+  return {
+    id: `license_${userId}_${Date.now()}`,
+    companyId,
+    issuerUserId: 'system', // 自动分配
+    assigneeUserId: userId,
+    scope: role === 'company_admin' ? 'company' : 'team',
+    teamId,
+    role: LICENSE_ROLE_MAP[role],
+    permissions: PERMISSION_SETS[role],
+    tokenQuota: {
+      monthlyLimit: role === 'company_admin' ? 10000000 : role === 'team_manager' || role === 'hr' ? 5000000 : 1000000,
+      usedThisMonth: 0,
+      hardLimit: role === 'employee',
+    },
+    allowedModels: [], // 空表示允许所有已配置的模型
+    allowedSkillIds: [], // 空表示允许所有已安装的 Skill
+    allowedKnowledgeScopes: role === 'company_admin'
+      ? ['self', 'session', 'project', 'team', 'company', 'skill']
+      : role === 'team_manager' || role === 'hr'
+        ? ['self', 'session', 'project', 'team', 'skill']
+        : ['self', 'session', 'project', 'skill'],
+    features: FEATURE_SETS[role],
+    startsAt: now,
+  };
+}
+
+/**
+ * 检查用户是否拥有某项权限。
+ */
+export function checkUserPermission(license: LicenseRecord | null, permission: Permission): boolean {
+  if (!license) return false;
+  if (license.revokedAt) return false;
+  if (license.expiresAt && new Date(license.expiresAt) < new Date()) return false;
+  return license.permissions.includes(permission);
+}
+
+/**
+ * 获取用户角色描述（中文，用于 UI 展示）。
+ */
+export function getRoleLabel(role: UserRole): string {
+  const labels: Record<UserRole, string> = {
+    company_admin: '企业管理员',
+    team_manager: '部门负责人',
+    hr: '人事管理',
+    employee: '普通员工',
+  };
+  return labels[role];
 }
 
 /**

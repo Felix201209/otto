@@ -53,8 +53,8 @@ export { AuditLogger, getAuditLogger } from './auditLog.js';
 export type { AuditEntry, AuditQueryParams } from './auditLog.js';
 
 // 企业组织架构同步
-export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole } from './enterpriseSync.js';
-export type { EnterpriseConfig } from './enterpriseSync.js';
+export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole, inferUserRole, createLicenseForUser, checkUserPermission, getRoleLabel } from './enterpriseSync.js';
+export type { EnterpriseConfig, UserRole } from './enterpriseSync.js';
 
 // 自动 Skill 生成
 export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent, setAutoSkillFeishuNotifier, startAutoSkillScanner, stopAutoSkillScanner } from './autoSkillGenerator.js';
