@@ -103,12 +103,10 @@ export function ChatView({
     text: '',
     n: 0,
   });
-  // 部门/岗位选择
-  const [deptOpen, setDeptOpen] = useState(false);
+  // 部门/岗位选择：纯展示，任何人都不能通过此按钮修改自身部门
+  // 人事部有权调换其他员工的部门，但需通过专门的管理入口操作
   const [selectedDept, setSelectedDept] = useState<string>('general');
   const [selectedRole, setSelectedRole] = useState<string>('通用助手');
-  // 权限：只有人事部（hr）可以调换部门/岗位
-  const canSwitchDept = selectedDept === 'hr';
   const [deniedHint, setDeniedHint] = useState<string | null>(null);
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
@@ -190,17 +188,13 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {/* 部门/岗位选择器 */}
+        {/* 部门/岗位：纯展示，不允许自行修改 */}
         <div style={{ position: 'relative' }}>
           <button
             type="button"
             onClick={() => {
-              if (canSwitchDept) {
-                setDeptOpen((v) => !v);
-              } else {
-                setDeniedHint('只有人事部有权调换部门/岗位');
-                setTimeout(() => setDeniedHint(null), 2500);
-              }
+              setDeniedHint('部门/岗位由人事部分配，不可自行修改');
+              setTimeout(() => setDeniedHint(null), 2500);
             }}
             style={{
               display: 'flex',
@@ -213,18 +207,17 @@ export function ChatView({
               background: 'var(--otto-surface)',
               border: '1px solid var(--otto-border)',
               borderRadius: 'var(--otto-radius-sm)',
-              cursor: canSwitchDept ? 'pointer' : 'default',
+              cursor: 'default',
               whiteSpace: 'nowrap',
-              opacity: canSwitchDept ? 1 : 0.7,
+              opacity: 0.8,
             }}
-            title={canSwitchDept ? '切换部门/岗位' : '当前岗位无权调换（仅人事部可操作）'}
+            title="部门/岗位由人事部分配"
           >
             {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
             <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
-            {canSwitchDept && <span style={{ fontSize: '9px', opacity: 0.5 }}>▼</span>}
           </button>
 
-          {/* 权限不足提示 */}
+          {/* 提示 */}
           {deniedHint ? (
             <span style={{
               fontSize: '10px',
@@ -236,79 +229,6 @@ export function ChatView({
             }}>
               {deniedHint}
             </span>
-          ) : null}
-
-          {deptOpen ? (
-            <>
-              {/* 点击外部关闭 */}
-              <div
-                style={{ position: 'fixed', inset: 0, zIndex: 998 }}
-                onClick={() => setDeptOpen(false)}
-              />
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  marginTop: '4px',
-                  background: 'var(--otto-sidebar-bg)',
-                  border: '1px solid var(--otto-border)',
-                  borderRadius: 'var(--otto-radius-sm)',
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-                  zIndex: 999,
-                  maxHeight: '360px',
-                  overflowY: 'auto',
-                  minWidth: '160px',
-                }}
-              >
-                {DEPARTMENTS.map((dept) => (
-                  <div key={dept.id}>
-                    <div
-                      style={{
-                        padding: '6px 12px',
-                        fontSize: '10px',
-                        fontWeight: 700,
-                        color: 'var(--otto-text-secondary)',
-                        textTransform: 'uppercase',
-                        borderBottom: '1px solid var(--otto-border)',
-                      }}
-                    >
-                      {dept.name}
-                    </div>
-                    {dept.roles.map((role) => (
-                      <button
-                        key={dept.id + role}
-                        type="button"
-                        onClick={() => {
-                          setSelectedDept(dept.id);
-                          setSelectedRole(role);
-                          setDeptOpen(false);
-                        }}
-                        style={{
-                          display: 'block',
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '5px 16px',
-                          fontSize: '11px',
-                          color:
-                            selectedDept === dept.id && selectedRole === role
-                              ? 'var(--otto-accent)'
-                              : 'var(--otto-text)',
-                          background:
-                            selectedDept === dept.id && selectedRole === role
-                              ? 'var(--otto-accent-soft)'
-                              : 'transparent',
-                          border: 'none',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {role}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </>
           ) : null}
         </div>
 
