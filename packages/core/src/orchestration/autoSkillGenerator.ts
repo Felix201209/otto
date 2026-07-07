@@ -17,6 +17,12 @@ import { homedir } from 'os';
 import { getWorkLogger, type WorkLogEntry, type DailySummary } from './workLog.js';
 import type { Config } from '../config/config.js';
 
+/** 飞书通知接口（用于检测到候选时推送给用户） */
+export interface AutoSkillFeishuNotifier {
+  /** 推送 Skill 候选通知给用户 */
+  notifyCandidate(userId: string, candidates: SkillCandidate[]): Promise<void>;
+}
+
 /** 自动生成的 Skill 候选 */
 export interface SkillCandidate {
   id: string;
@@ -241,6 +247,19 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
   await fs.writeFile(candidate.filePath, candidate.skillContent, 'utf-8');
 
   console.log(`[AutoSkill] Saved: ${candidate.filePath}`);
+
+  // 记工作日志（标注自动 Skill，与普通操作区分）
+  try {
+    const logger = getWorkLogger();
+    await logger.log({
+      toolName: 'auto_skill_confirm',
+      action: `[自动Skill] 用户确认生成 Skill "${candidate.name}"（检测到 ${candidate.occurrenceCount} 次重复模式）`,
+      category: 'other',
+      success: true,
+      details: `模式：${candidate.detectedPattern} | 路径：${candidate.filePath}`,
+    });
+  } catch { /* 不影响主流程 */ }
+
   return candidate.filePath;
 }
 
@@ -249,7 +268,7 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
  */
 export async function rejectSkill(candidate: SkillCandidate): Promise<void> {
   // 记录到拒绝列表，避免短期内重复推荐
-  const rejectDir = path.join(require('os').homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
+  const rejectDir = path.join(homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
   await fs.mkdir(rejectDir, { recursive: true });
   const rejectFile = path.join(rejectDir, `${candidate.name}.json`);
   await fs.writeFile(rejectFile, JSON.stringify({
@@ -257,13 +276,25 @@ export async function rejectSkill(candidate: SkillCandidate): Promise<void> {
     pattern: candidate.detectedPattern,
     rejectedAt: new Date().toISOString(),
   }), 'utf-8');
+
+  // 记工作日志（标注自动 Skill 拒绝）
+  try {
+    const logger = getWorkLogger();
+    await logger.log({
+      toolName: 'auto_skill_reject',
+      action: `[自动Skill] 用户拒绝生成 Skill "${candidate.name}"`,
+      category: 'other',
+      success: true,
+      details: `模式：${candidate.detectedPattern}`,
+    });
+  } catch { /* 不影响主流程 */ }
 }
 
 /**
  * 获取已拒绝的 Skill 列表（避免重复推荐）。
  */
 async function getRejectedSkills(): Promise<Set<string>> {
-  const rejectDir = path.join(require('os').homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
+  const rejectDir = path.join(homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
   try {
     const files = await fs.readdir(rejectDir);
     const rejected: string[] = [];
@@ -314,4 +345,60 @@ function generateDescription(steps: string[], count: number): string {
 
 function formatTitle(steps: string[]): string {
   return steps.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' → ');
+}
+
+// ============================================================
+// 飞书通知器 + 定时扫描
+// ============================================================
+
+let globalFeishuNotifier: AutoSkillFeishuNotifier | null = null;
+let scanTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 注入飞书通知器 */
+export function setAutoSkillFeishuNotifier(notifier: AutoSkillFeishuNotifier): void {
+  globalFeishuNotifier = notifier;
+  console.log('[AutoSkill] Feishu notifier injected');
+}
+
+/**
+ * 启动定时扫描（每天扫描一次工作日志，发现新模式时推送飞书通知）。
+ * 由 CLI gateway 或桌面端调用。
+ */
+export function startAutoSkillScanner(
+  config: Config,
+  getUserId: () => string,
+): void {
+  if (scanTimer) return;
+  // 每24小时扫描一次
+  scanTimer = setInterval(async () => {
+    try {
+      const candidates = await generateSkillCandidates(config);
+      if (candidates.length > 0 && globalFeishuNotifier) {
+        const userId = getUserId();
+        await globalFeishuNotifier.notifyCandidate(userId, candidates);
+
+        // 记工作日志（标注自动 Skill）
+        const logger = getWorkLogger();
+        await logger.log({
+          toolName: 'auto_skill_scan',
+          action: `[自动Skill] 检测到 ${candidates.length} 个候选模式，已推送飞书通知`,
+          category: 'other',
+          success: true,
+          details: candidates.map((c) => `${c.name}(${c.occurrenceCount}次)`).join(', '),
+        });
+      }
+    } catch (err) {
+      console.warn(`[AutoSkill] Scanner error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, 24 * 60 * 60 * 1000); // 24小时
+  console.log('[AutoSkill] Scanner started (24h interval)');
+}
+
+/** 停止定时扫描 */
+export function stopAutoSkillScanner(): void {
+  if (scanTimer) {
+    clearInterval(scanTimer);
+    scanTimer = null;
+    console.log('[AutoSkill] Scanner stopped');
+  }
 }

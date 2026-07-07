@@ -53,8 +53,8 @@ export { AuditLogger, getAuditLogger } from './auditLog.js';
 export type { AuditEntry, AuditQueryParams } from './auditLog.js';
 
 // 自动 Skill 生成
-export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent } from './autoSkillGenerator.js';
-export type { SkillCandidate } from './autoSkillGenerator.js';
+export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent, setAutoSkillFeishuNotifier, startAutoSkillScanner, stopAutoSkillScanner } from './autoSkillGenerator.js';
+export type { SkillCandidate, AutoSkillFeishuNotifier } from './autoSkillGenerator.js';
 
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';
