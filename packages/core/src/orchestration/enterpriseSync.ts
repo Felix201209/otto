@@ -44,6 +44,8 @@ export interface EnterpriseConfig {
   apiDomain?: string;
 }
 
+import { getAuditLogger } from './auditLog.js';
+
 /** 飞书部门 */
 interface FeishuDepartment {
   department_id: string;
@@ -369,6 +371,22 @@ export class EnterpriseSync {
     await this.saveConfig(config);
 
     console.log(`[EnterpriseSync] 同步完成: ${departments.length} 个部门, ${users.length} 名员工`);
+
+    // 审计日志
+    try {
+      const auditor = getAuditLogger();
+      await auditor.log({
+        sessionId: 'enterprise_sync',
+        userId: config.adminUserId,
+        toolName: 'enterprise_sync',
+        action: `[企业同步] 全量同步完成：${departments.length}个部门，${users.length}名员工`,
+        category: 'other',
+        success: true,
+        inputSummary: `companyId=${config.companyId}`,
+        outputSummary: `departments=${departments.length}, users=${users.length}`,
+        source: 'system',
+      });
+    } catch { /* 不影响主流程 */ }
     return { departments: departments.length, users: users.length };
   }
 
@@ -590,6 +608,22 @@ export class EnterpriseSync {
       config.lastSyncAt = now;
       await this.saveConfig(config);
       console.log('[EnterpriseSync] 增量同步：检测到变更并已更新');
+
+      // 审计日志
+      try {
+        const auditor = getAuditLogger();
+        await auditor.log({
+          sessionId: 'enterprise_sync',
+          userId: config.adminUserId,
+          toolName: 'enterprise_sync',
+          action: `[企业同步] 增量同步：检测到组织架构变更`,
+          category: 'other',
+          success: true,
+          inputSummary: `companyId=${config.companyId}`,
+          outputSummary: 'incremental update applied',
+          source: 'system',
+        });
+      } catch { /* 不影响主流程 */ }
     } else {
       console.log('[EnterpriseSync] 增量同步：无变更');
     }
