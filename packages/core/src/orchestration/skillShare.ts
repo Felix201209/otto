@@ -17,6 +17,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { homedir } from 'os';
 import type { Config } from '../config/config.js';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
@@ -35,6 +36,18 @@ export interface SkillShareRecord {
   sourcePath: string;
   /** SKILL.md 内容 */
   content: string;
+  /** 内容哈希（用于版本追踪） */
+  contentHash: string;
+  /** 版本号，每次更新递增 */
+  version: number;
+  /** 版本历史 */
+  versionHistory: Array<{
+    version: number;
+    hash: string;
+    updatedAt: string;
+    updatedBy: string;
+    changeNote?: string;
+  }>;
   /** 分享到哪个小组 */
   teamId: string;
   teamName: string;
@@ -43,6 +56,8 @@ export interface SkillShareRecord {
   sharedByName: string;
   /** 分享时间 */
   sharedAt: string;
+  /** 最后更新时间 */
+  lastUpdatedAt: string;
   /** 状态 */
   status: ShareStatus;
   /** 撤回时间 */
@@ -55,6 +70,16 @@ export interface SkillShareRecord {
   ratingCount: number;
   /** 分享时的备注 */
   note?: string;
+}
+
+/** 已安装记录（追踪每个用户安装的版本） */
+export interface InstallRecord {
+  shareId: string;
+  userId: string;
+  installedVersion: number;
+  installedAt: string;
+  /** 个人目录下的 SKILL.md 路径 */
+  localPath: string;
 }
 
 /** 分享请求参数 */
@@ -99,6 +124,32 @@ export class SkillShareManager {
   /** 个人 Skills 目录 */
   private get personalSkillsDir(): string {
     return path.join(this.config.getProjectRoot(), '.otto', 'skills');
+  }
+
+  /** 安装记录存储路径 */
+  private get installRecordsPath(): string {
+    return path.join(this.config.getProjectRoot(), '.otto', 'org', 'skill-installs.json');
+  }
+
+  /** 计算内容哈希 */
+  private hashContent(content: string): string {
+    return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
+  }
+
+  /** 加载安装记录 */
+  private async loadInstallRecords(): Promise<InstallRecord[]> {
+    try {
+      const content = await fs.readFile(this.installRecordsPath, 'utf-8');
+      return JSON.parse(content) as InstallRecord[];
+    } catch {
+      return [];
+    }
+  }
+
+  /** 保存安装记录 */
+  private async saveInstallRecords(records: InstallRecord[]): Promise<void> {
+    await fs.mkdir(path.dirname(this.installRecordsPath), { recursive: true });
+    await fs.writeFile(this.installRecordsPath, JSON.stringify(records, null, 2) + '\n', 'utf-8');
   }
 
   /** 加载所有分享记录 */
@@ -155,16 +206,26 @@ export class SkillShareManager {
 
     // 4. 创建分享记录
     const now = new Date().toISOString();
+    const contentHash = this.hashContent(skillContent);
     const shareRecord: SkillShareRecord = {
       id: `share_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       skillName: params.skillName,
       sourcePath: skillFile,
       content: skillContent,
+      contentHash,
+      version: 1,
+      versionHistory: [{
+        version: 1,
+        hash: contentHash,
+        updatedAt: now,
+        updatedBy: params.userId,
+      }],
       teamId: params.teamId,
       teamName: team.name,
       sharedBy: params.userId,
       sharedByName: params.userName,
       sharedAt: now,
+      lastUpdatedAt: now,
       status: 'active',
       installCount: 0,
       rating: 0,
@@ -280,6 +341,7 @@ export class SkillShareManager {
    * 安装小组共享的 Skill 到个人目录。
    *
    * 小组成员调用此方法，将团队共享的 Skill 复制到自己的 .otto/skills/ 下。
+   * 记录安装的版本号，用于后续更新检查。
    */
   async installSharedSkill(shareId: string, userId: string): Promise<string> {
     const shares = await this.loadShares();
@@ -293,10 +355,10 @@ export class SkillShareManager {
     const targetFile = path.join(targetDir, 'SKILL.md');
     await fs.mkdir(targetDir, { recursive: true });
 
-    // 在内容头部添加来源信息
+    // 在内容头部添加来源信息和版本
     const contentWithMeta = share.content.replace(
       /^---\n/,
-      `---\n# Shared from team "${share.teamName}" by ${share.sharedByName}\n# Installed at ${new Date().toISOString()}\n`,
+      `---\n# Shared from team "${share.teamName}" by ${share.sharedByName}\n# Version: ${share.version} (hash: ${share.contentHash})\n# Installed at ${new Date().toISOString()}\n`,
     );
     await fs.writeFile(targetFile, contentWithMeta, 'utf-8');
 
@@ -304,12 +366,213 @@ export class SkillShareManager {
     share.installCount++;
     await this.saveShares(shares);
 
+    // 记录安装版本（用于更新检查）
+    const installs = await this.loadInstallRecords();
+    const existingInstall = installs.find(
+      (r) => r.shareId === shareId && r.userId === userId,
+    );
+    if (existingInstall) {
+      existingInstall.installedVersion = share.version;
+      existingInstall.installedAt = new Date().toISOString();
+      existingInstall.localPath = targetFile;
+    } else {
+      installs.push({
+        shareId,
+        userId,
+        installedVersion: share.version,
+        installedAt: new Date().toISOString(),
+        localPath: targetFile,
+      });
+    }
+    await this.saveInstallRecords(installs);
+
     // 记录工作日志
     try {
       const logger = getWorkLogger();
       await logger.log({
         toolName: 'skill_install',
-        action: `安装小组共享 Skill "${share.skillName}"（来自 ${share.sharedByName}）`,
+        action: `安装小组共享 Skill "${share.skillName}" v${share.version}（来自 ${share.sharedByName}）`,
+        category: 'other',
+        success: true,
+      });
+    } catch { /* 不影响主流程 */ }
+
+    return targetFile;
+  }
+
+  /**
+   * 分享者更新已分享的 Skill。
+   *
+   * 重新读取源 SKILL.md，计算新哈希。如果内容变化，版本号递增，
+   * 记录到版本历史，同步更新 OrgMemoryStore。
+   * 已安装的成员在下次 checkForUpdates 时会发现新版本。
+   */
+  async updateSharedSkill(shareId: string, userId: string, changeNote?: string): Promise<SkillShareRecord> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId);
+    if (!share) {
+      throw new Error(`Share not found: ${shareId}`);
+    }
+    if (share.sharedBy !== userId) {
+      throw new Error('Only the original sharer can update');
+    }
+    if (share.status !== 'active') {
+      throw new Error(`Cannot update ${share.status} share`);
+    }
+
+    // 重新读取源文件
+    let newContent: string;
+    try {
+      newContent = await fs.readFile(share.sourcePath, 'utf-8');
+    } catch {
+      throw new Error(`Source skill file not found: ${share.sourcePath}`);
+    }
+
+    const newHash = this.hashContent(newContent);
+    if (newHash === share.contentHash) {
+      // 内容未变化
+      return share;
+    }
+
+    // 内容有变化，递增版本
+    const now = new Date().toISOString();
+    const newVersion = share.version + 1;
+    share.content = newContent;
+    share.contentHash = newHash;
+    share.version = newVersion;
+    share.lastUpdatedAt = now;
+    share.versionHistory.push({
+      version: newVersion,
+      hash: newHash,
+      updatedAt: now,
+      updatedBy: userId,
+      changeNote,
+    });
+
+    await this.saveShares(shares);
+
+    // 同步更新 OrgMemoryStore 中的 SkillRecord
+    const data = await this.store.load();
+    const skillIdx = data.skills.findIndex(
+      (s) => s.name === share.skillName && s.teamId === share.teamId,
+    );
+    if (skillIdx !== -1) {
+      data.skills[skillIdx].description = extractDescription(newContent) || data.skills[skillIdx].description;
+      data.skills[skillIdx].triggerPatterns = extractTriggerPatterns(newContent);
+      data.skills[skillIdx].workflowSteps = extractWorkflowSteps(newContent);
+      data.skills[skillIdx].updatedAt = now;
+      await this.store.save(data);
+    }
+
+    // 记录工作日志
+    try {
+      const logger = getWorkLogger();
+      await logger.log({
+        toolName: 'skill_update',
+        action: `更新共享 Skill "${share.skillName}" 到 v${newVersion}`,
+        category: 'other',
+        success: true,
+        details: changeNote,
+      });
+    } catch { /* 不影响主流程 */ }
+
+    return share;
+  }
+
+  /**
+   * 检查已安装的 Skill 是否有更新。
+   *
+   * 小组成员调用此方法，对比自己安装的版本和分享者最新版本。
+   * 返回需要更新的列表，用户决定是否更新。
+   */
+  async checkForUpdates(userId: string): Promise<Array<{
+    shareId: string;
+    skillName: string;
+    sharedByName: string;
+    teamName: string;
+    installedVersion: number;
+    latestVersion: number;
+    changeNote?: string;
+    isUpdateAvailable: boolean;
+  }>> {
+    const shares = await this.loadShares();
+    const installs = await this.loadInstallRecords();
+    const userInstalls = installs.filter((r) => r.userId === userId);
+
+    const results: Array<{
+      shareId: string;
+      skillName: string;
+      sharedByName: string;
+      teamName: string;
+      installedVersion: number;
+      latestVersion: number;
+      changeNote?: string;
+      isUpdateAvailable: boolean;
+    }> = [];
+
+    for (const install of userInstalls) {
+      const share = shares.find((s) => s.id === install.shareId && s.status === 'active');
+      if (!share) continue;
+
+      const isUpdateAvailable = share.version > install.installedVersion;
+      const lastVersionEntry = share.versionHistory[share.versionHistory.length - 1];
+
+      results.push({
+        shareId: share.id,
+        skillName: share.skillName,
+        sharedByName: share.sharedByName,
+        teamName: share.teamName,
+        installedVersion: install.installedVersion,
+        latestVersion: share.version,
+        changeNote: lastVersionEntry?.changeNote,
+        isUpdateAvailable,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * 更新已安装的 Skill 到最新版本。
+   *
+   * 用户从 checkForUpdates 发现更新后，调用此方法拉取最新版本。
+   */
+  async updateInstalledSkill(shareId: string, userId: string): Promise<string> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId && s.status === 'active');
+    if (!share) {
+      throw new Error(`Active share not found: ${shareId}`);
+    }
+
+    const installs = await this.loadInstallRecords();
+    const install = installs.find((r) => r.shareId === shareId && r.userId === userId);
+    if (!install) {
+      throw new Error('Skill not installed. Use installSharedSkill first.');
+    }
+
+    if (install.installedVersion >= share.version) {
+      return install.localPath; // 已是最新
+    }
+
+    // 写入最新版本
+    const targetFile = install.localPath;
+    const contentWithMeta = share.content.replace(
+      /^---\n/,
+      `---\n# Shared from team "${share.teamName}" by ${share.sharedByName}\n# Version: ${share.version} (hash: ${share.contentHash})\n# Updated at ${new Date().toISOString()}\n`,
+    );
+    await fs.writeFile(targetFile, contentWithMeta, 'utf-8');
+
+    // 更新安装记录
+    install.installedVersion = share.version;
+    install.installedAt = new Date().toISOString();
+    await this.saveInstallRecords(installs);
+
+    // 记录工作日志
+    try {
+      const logger = getWorkLogger();
+      await logger.log({
+        toolName: 'skill_update_install',
+        action: `更新 Skill "${share.skillName}" 到 v${share.version}`,
         category: 'other',
         success: true,
       });
