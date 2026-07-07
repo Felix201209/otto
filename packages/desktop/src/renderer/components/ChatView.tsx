@@ -107,6 +107,9 @@ export function ChatView({
   const [deptOpen, setDeptOpen] = useState(false);
   const [selectedDept, setSelectedDept] = useState<string>('general');
   const [selectedRole, setSelectedRole] = useState<string>('通用助手');
+  // 权限：只有人事部（hr）可以调换部门/岗位
+  const canSwitchDept = selectedDept === 'hr';
+  const [deniedHint, setDeniedHint] = useState<string | null>(null);
 
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
@@ -191,7 +194,14 @@ export function ChatView({
         <div style={{ position: 'relative' }}>
           <button
             type="button"
-            onClick={() => setDeptOpen((v) => !v)}
+            onClick={() => {
+              if (canSwitchDept) {
+                setDeptOpen((v) => !v);
+              } else {
+                setDeniedHint('只有人事部有权调换部门/岗位');
+                setTimeout(() => setDeniedHint(null), 2500);
+              }
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -203,14 +213,30 @@ export function ChatView({
               background: 'var(--otto-surface)',
               border: '1px solid var(--otto-border)',
               borderRadius: 'var(--otto-radius-sm)',
-              cursor: 'pointer',
+              cursor: canSwitchDept ? 'pointer' : 'default',
               whiteSpace: 'nowrap',
+              opacity: canSwitchDept ? 1 : 0.7,
             }}
-            title="切换部门/岗位"
+            title={canSwitchDept ? '切换部门/岗位' : '当前岗位无权调换（仅人事部可操作）'}
           >
             {DEPARTMENTS.find((d) => d.id === selectedDept)?.name}
             <span style={{ opacity: 0.6, fontSize: '10px' }}>· {selectedRole}</span>
+            {canSwitchDept && <span style={{ fontSize: '9px', opacity: 0.5 }}>▼</span>}
           </button>
+
+          {/* 权限不足提示 */}
+          {deniedHint ? (
+            <span style={{
+              fontSize: '10px',
+              color: '#e85d5d',
+              background: 'rgba(232,93,93,0.1)',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              whiteSpace: 'nowrap',
+            }}>
+              {deniedHint}
+            </span>
+          ) : null}
 
           {deptOpen ? (
             <>
