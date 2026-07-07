@@ -1,3 +1,4 @@
+
 name: Build and Release
 
 # 触发条件
@@ -42,15 +43,23 @@ jobs:
           fetch-depth: 0
 
       # 2. 设置 Node.js 环境
+      # packages/server 的企业服务端存储层依赖 Node 内置 node:sqlite（v22.13.0起
+      # 才不需要 --experimental-sqlite flag），与 packages/server/package.json
+      # 的 engines（已同步修正为 >=22.13.0）保持一致，避免打包产物在低版本 Node
+      # 上运行 enterprise server 时崩溃。
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.19.3'
+          node-version: '22.13.0'
           cache: 'npm'
 
       # 3. 安装依赖
+      # GITHUB_TOKEN：@vscode/ripgrep 的 postinstall 拉取 GitHub Releases 预编译
+      # 二进制，匿名请求量大易被限流 403（ci.yml 里真实复现过），传入 token 鉴权规避。
       - name: 📦 Install dependencies
         run: npm install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 3.1 构建 Webview (VSCode 插件 UI)
       - name: 🌐 Build Webview
