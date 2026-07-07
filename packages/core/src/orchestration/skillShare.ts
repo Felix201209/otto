@@ -108,6 +108,8 @@ export interface SkillShareRecord {
   ratings: Array<{ userHash: string; score: number; ratedAt: string }>;
   /** 评论列表 */
   comments: SkillComment[];
+  /** 是否发布到公司 Skill 市场（跨小组可见） */
+  publishedToMarketplace: boolean;
 }
 
 /** Skill 评论 */
@@ -327,6 +329,7 @@ export class SkillShareManager {
       ratingCount: 0,
       ratings: [],
       comments: [],
+      publishedToMarketplace: false,
       note: params.note,
       featureDescription: extractFeature(skillContent),
     };
@@ -783,6 +786,127 @@ export class SkillShareManager {
         success: true,
       });
     } catch { /* 不影响主流程 */ }
+  }
+
+  /**
+   * 将已分享的 Skill 发布到公司 Skill 市场（跨小组可见）。
+   * 只有分享者本人可以发布。
+   */
+  async publishToMarketplace(shareId: string, userId: string): Promise<void> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId);
+    if (!share) throw new Error(`Share not found: ${shareId}`);
+    if (share.sharedBy !== userId) throw new Error('Only the sharer can publish to marketplace');
+    if (share.status !== 'active') throw new Error(`Cannot publish ${share.status} share`);
+
+    share.publishedToMarketplace = true;
+    await this.saveShares(shares);
+
+    // 同步到 OrgMemoryStore 的 company scope
+    const data = await this.store.load();
+    const companySkill: SkillRecord = {
+      id: `market_skill_${share.skillName}`,
+      companyId: data.companies[0]?.id || 'default',
+      name: share.skillName,
+      description: share.featureDescription || share.skillName,
+      scope: 'company',
+      status: 'company_candidate',
+      triggerPatterns: extractTriggerPatterns(share.content),
+      requiredInputs: ['context'],
+      workflowSteps: extractWorkflowSteps(share.content),
+      outputSchema: 'Markdown',
+      examples: [],
+      sourceProjectIds: [],
+      sourceTaskIds: [],
+      usageCount: share.usageCount,
+      successRate: share.usageCount > 0 ? share.successCount / share.usageCount : 1,
+      avgTokenCost: 0,
+      avgRevisionCount: 0,
+      avgTimeSavedMinutes: 0,
+      createdBy: share.sharedBy,
+      approvedBy: share.sharedBy,
+      createdAt: share.sharedAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const existingIdx = data.skills.findIndex(
+      (s) => s.id === companySkill.id || (s.name === companySkill.name && s.scope === 'company'),
+    );
+    if (existingIdx !== -1) {
+      data.skills[existingIdx] = companySkill;
+    } else {
+      data.skills.push(companySkill);
+    }
+    await this.store.save(data);
+  }
+
+  /**
+   * 从公司 Skill 市场下架。
+   */
+  async unpublishFromMarketplace(shareId: string, userId: string): Promise<void> {
+    const shares = await this.loadShares();
+    const share = shares.find((s) => s.id === shareId);
+    if (!share) throw new Error(`Share not found: ${shareId}`);
+    if (share.sharedBy !== userId) throw new Error('Only the sharer can unpublish');
+
+    share.publishedToMarketplace = false;
+    await this.saveShares(shares);
+
+    // 从 OrgMemoryStore 移除 company scope
+    const data = await this.store.load();
+    data.skills = data.skills.filter(
+      (s) => !(s.name === share.skillName && s.scope === 'company'),
+    );
+    await this.store.save(data);
+  }
+
+  /**
+   * 浏览公司 Skill 市场（跨小组，所有已发布的 Skill）。
+   */
+  async browseMarketplace(options: { category?: string; sortBy?: 'rating' | 'installs' | 'usage' | 'newest'; limit?: number } = {}): Promise<SkillShareRecord[]> {
+    const shares = await this.loadShares();
+    let marketShares = shares.filter((s) => s.publishedToMarketplace && s.status === 'active');
+
+    // 排序
+    const sortBy = options.sortBy || 'rating';
+    switch (sortBy) {
+      case 'rating':
+        marketShares.sort((a, b) => b.rating - a.rating);
+        break;
+      case 'installs':
+        marketShares.sort((a, b) => b.installCount - a.installCount);
+        break;
+      case 'usage':
+        marketShares.sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0));
+        break;
+      case 'newest':
+        marketShares.sort((a, b) => b.sharedAt.localeCompare(a.sharedAt));
+        break;
+    }
+
+    if (options.limit) marketShares = marketShares.slice(0, options.limit);
+    return marketShares;
+  }
+
+  /**
+   * 格式化市场列表为可读文本。
+   */
+  formatMarketplaceForDisplay(shares: SkillShareRecord[]): string {
+    if (shares.length === 0) {
+      return '公司 Skill 市场暂无已发布的 Skill。';
+    }
+
+    const lines: string[] = ['🏪 公司 Skill 市场', ''];
+    for (const share of shares) {
+      const stars = '⭐'.repeat(Math.round(share.rating));
+      const feature = share.featureDescription || extractFeature(share.content);
+      lines.push(`📌 ${share.skillName} (v${share.version})`);
+      lines.push(`   功能：${feature}`);
+      lines.push(`   分享者：${share.sharedByName} (${share.teamName})`);
+      lines.push(`   评分：${stars || '暂无'} (${share.ratingCount}人) | 安装：${share.installCount}次 | 使用：${share.usageCount || 0}次`);
+      lines.push('');
+    }
+    return lines.join('\n');
   }
 
   /**
