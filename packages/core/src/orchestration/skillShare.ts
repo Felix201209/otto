@@ -90,6 +90,12 @@ export interface SkillShareRecord {
   revokedAt?: string;
   /** 使用次数（小组成员安装数） */
   installCount: number;
+  /** 实际使用次数（安装后执行了 Skill 的次数） */
+  usageCount: number;
+  /** 使用成功次数 */
+  successCount: number;
+  /** 使用失败次数 */
+  failureCount: number;
   /** 评分 */
   rating: number;
   /** 评分数 */
@@ -293,6 +299,9 @@ export class SkillShareManager {
       lastUpdatedAt: now,
       status: 'active',
       installCount: 0,
+      usageCount: 0,
+      successCount: 0,
+      failureCount: 0,
       rating: 0,
       ratingCount: 0,
       ratings: [],
@@ -674,6 +683,33 @@ export class SkillShareManager {
   }
 
   /**
+   * 记录 Skill 使用情况（由工具执行引擎在 Skill 被使用后调用）。
+   *
+   * @param skillName Skill 名称
+   * @param success 是否成功
+   */
+  async recordSkillUsage(skillName: string, success: boolean): Promise<void> {
+    const shares = await this.loadShares();
+    // 找到所有活跃的、同名的分享记录（可能跨多个小组）
+    const matching = shares.filter(
+      (s) => s.skillName === skillName && s.status === 'active',
+    );
+
+    for (const share of matching) {
+      share.usageCount++;
+      if (success) {
+        share.successCount++;
+      } else {
+        share.failureCount++;
+      }
+    }
+
+    if (matching.length > 0) {
+      await this.saveShares(shares);
+    }
+  }
+
+  /**
    * 评价共享 Skill。
    *
    * 每个用户只能打一次分，再次打分则更新已有评分。
@@ -889,13 +925,15 @@ export class SkillShareManager {
     // 获取小组名称
     const teamName = activeShares[0]?.teamName || '本小组';
 
-    // 计算综合得分：评分（0-5标准化到0-100）× 0.6 + 安装数×0.4
-    // 安装数标准化：安装数 / 最大安装数 × 100
+    // 计算综合得分：评分×0.35 + 安装数×0.25 + 使用成功率×0.25 + 使用次数×0.15
     const maxInstalls = Math.max(...activeShares.map((s) => s.installCount), 1);
+    const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
     const scored = activeShares.map((s) => {
-      const ratingScore = (s.rating / 5) * 100; // 0-100
-      const installScore = (s.installCount / maxInstalls) * 100; // 0-100
-      const totalScore = ratingScore * 0.6 + installScore * 0.4;
+      const ratingScore = (s.rating / 5) * 100;
+      const installScore = (s.installCount / maxInstalls) * 100;
+      const successRate = s.usageCount > 0 ? (s.successCount / s.usageCount) * 100 : 50; // 无使用记录默认50分
+      const usageScore = (s.usageCount / maxUsage) * 100;
+      const totalScore = ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15;
       return { share: s, totalScore };
     });
 
@@ -968,9 +1006,12 @@ export class SkillShareManager {
 
     // 排行榜数据
     const maxInstalls = Math.max(...activeShares.map((s) => s.installCount), 1);
+    const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
     const leaderboardData = activeShares.map((s) => {
       const ratingScore = (s.rating / 5) * 100;
       const installScore = (s.installCount / maxInstalls) * 100;
+      const successRate = s.usageCount > 0 ? (s.successCount / s.usageCount) * 100 : 50;
+      const usageScore = maxUsage > 0 ? (s.usageCount / maxUsage) * 100 : 0;
       return {
         rank: 0,
         skillName: s.skillName,
@@ -980,7 +1021,9 @@ export class SkillShareManager {
         rating: s.rating,
         ratingCount: s.ratingCount,
         installCount: s.installCount,
-        score: ratingScore * 0.6 + installScore * 0.4,
+        usageCount: s.usageCount,
+        successRate: s.usageCount > 0 ? Math.round((s.successCount / s.usageCount) * 100) : 0,
+        score: ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15,
       };
     }).sort((a, b) => b.score - a.score);
     leaderboardData.forEach((item, i) => { item.rank = i + 1; });
