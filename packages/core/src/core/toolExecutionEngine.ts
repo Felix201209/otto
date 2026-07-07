@@ -31,6 +31,7 @@ import {
 import { MCPResponseGuard } from '../services/mcpResponseGuard.js';
 import type { HookEventHandler } from '../hooks/hookEventHandler.js';
 import { getWorkLogger, inferCategory, describeAction } from '../orchestration/workLog.js';
+import { getAuditLogger } from '../orchestration/auditLog.js';
 
 // Re-export ToolExecutionContext for convenience
 export { ToolExecutionContext } from './toolSchedulerAdapter.js';
@@ -1127,6 +1128,24 @@ export class ToolExecutionEngine {
             : undefined,
         }).catch(() => {});
       } catch { /* 工作日志失败不影响主流程 */ }
+
+      // 🔒 记录审计日志
+      try {
+        const auditor = getAuditLogger();
+        const cat = inferCategory(reqInfo.name, reqInfo.args);
+        auditor.log({
+          sessionId: this.config?.getSessionId?.() || 'unknown',
+          userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          category: cat,
+          success: true,
+          inputSummary: JSON.stringify(reqInfo.args).substring(0, 500),
+          outputSummary: typeof toolResult.llmContent === 'string'
+            ? toolResult.llmContent.substring(0, 500) : '',
+          source: process.env.TERM_PROGRAM === 'vscode' ? 'desktop' : 'terminal',
+        }).catch(() => {});
+      } catch { /* 审计日志失败不影响主流程 */ }
     } catch (error) {
       const response = createErrorResponse(
         reqInfo,
@@ -1160,6 +1179,22 @@ export class ToolExecutionEngine {
           details: response.error?.message?.substring(0, 200),
         }).catch(() => {});
       } catch { /* 工作日志失败不影响主流程 */ }
+
+      // 🔒 记录审计日志（失败操作）
+      try {
+        const auditor = getAuditLogger();
+        auditor.log({
+          sessionId: this.config?.getSessionId?.() || 'unknown',
+          userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          category: inferCategory(reqInfo.name, reqInfo.args),
+          success: false,
+          inputSummary: JSON.stringify(reqInfo.args).substring(0, 500),
+          outputSummary: response.error?.message?.substring(0, 500) || '',
+          source: process.env.TERM_PROGRAM === 'vscode' ? 'desktop' : 'terminal',
+        }).catch(() => {});
+      } catch { /* 审计日志失败不影响主流程 */ }
     }
   }
 

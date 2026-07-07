@@ -48,6 +48,10 @@ export type { MemoryPackage } from './knowledgeTransfer.js';
 export { WorkLogger, getWorkLogger, inferCategory, describeAction } from './workLog.js';
 export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './workLog.js';
 
+// 审计日志
+export { AuditLogger, getAuditLogger } from './auditLog.js';
+export type { AuditEntry, AuditQueryParams } from './auditLog.js';
+
 // 自动 Skill 生成
 export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent } from './autoSkillGenerator.js';
 export type { SkillCandidate } from './autoSkillGenerator.js';
