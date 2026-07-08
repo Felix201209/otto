@@ -750,3 +750,124 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     c.close();
   });
 });
+
+describe('OttoServer 斜杠命令帧（P3）', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    server = new OttoServer({ port: 0, mock: true, store: new InMemorySessionStore() });
+    baseUrl = await startServer(server);
+  });
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  /** 建一个会话并返回 id（HTTP POST，最省事的真实路径）。 */
+  async function createSession(): Promise<string> {
+    const created = (await (
+      await fetch(`${baseUrl}/sessions`, { method: 'POST' })
+    ).json()) as ApiResponse<SessionSummary>;
+    return created.data!.sessionId;
+  }
+
+  it('list_slash_commands → slash_commands_list（含 kb/about 等）', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({ type: 'list_slash_commands', payload: {} });
+    const frame = await client.waitFor((f) => f.type === 'slash_commands_list');
+    if (frame.type !== 'slash_commands_list') throw new Error('unreachable');
+    const names = frame.payload.commands.map((c) => c.name);
+    expect(names).toContain('kb');
+    expect(names).toContain('about');
+    expect(names).toContain('memory');
+    client.close();
+  });
+
+  it('run_slash_command 会话不存在 → error(no_session)', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'run_slash_command',
+      payload: { sessionId: 'nope', name: 'about' },
+    });
+    const frame = await client.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'no_session',
+    );
+    expect(frame.type).toBe('error');
+    client.close();
+  });
+
+  it('run_slash_command /about → slash_command_result ok:true', async () => {
+    const sessionId = await createSession();
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'run_slash_command',
+      payload: { sessionId, name: 'about' },
+    });
+    const frame = await client.waitFor((f) => f.type === 'slash_command_result');
+    if (frame.type !== 'slash_command_result') throw new Error('unreachable');
+    expect(frame.payload.ok).toBe(true);
+    expect(frame.payload.name).toBe('about');
+    expect(frame.payload.markdown).toContain('关于 Otto');
+    client.close();
+  });
+
+  it('run_slash_command 未知命令 → slash_command_result ok:false（不吞不假成功）', async () => {
+    const sessionId = await createSession();
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'run_slash_command',
+      payload: { sessionId, name: 'frobnicate', args: 'x' },
+    });
+    const frame = await client.waitFor((f) => f.type === 'slash_command_result');
+    if (frame.type !== 'slash_command_result') throw new Error('unreachable');
+    expect(frame.payload.ok).toBe(false);
+    expect(frame.payload.markdown).toContain('未知命令');
+    client.close();
+  });
+
+  it('run_slash_command submit_prompt 形态（/init）在会话正忙时 → ok:false 拒绝，无矛盾双帧', async () => {
+    // /init 依赖 cwd 是否存在 OTTO.md 决定 message/submit_prompt 分叉；
+    // mock 到干净临时目录，确保走 submit_prompt 路径（不受仓库现状影响）。
+    const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-init-busy-'));
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpCwd);
+    try {
+      const sessionId = await createSession();
+      server.store.setStatus(sessionId, 'thinking');
+      const client = await connectWs(baseUrl);
+      client.send({
+        type: 'run_slash_command',
+        payload: { sessionId, name: 'init' },
+      });
+      const frame = await client.waitFor(
+        (f) => f.type === 'slash_command_result',
+      );
+      if (frame.type !== 'slash_command_result') throw new Error('unreachable');
+      expect(frame.payload.ok).toBe(false);
+      expect(frame.payload.markdown).toContain('未提交');
+      // 修复回归点：曾是「ok:true 回执 + error{busy}」矛盾双帧。
+      // 现应既无 busy 错误帧、也没有真的提交（无 message_start）。
+      expect(client.frames.filter((f) => f.type === 'error')).toHaveLength(0);
+      expect(
+        client.frames.filter((f) => f.type === 'message_start'),
+      ).toHaveLength(0);
+      client.close();
+    } finally {
+      cwdSpy.mockRestore();
+      fs.rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('run_slash_command 畸形 payload（缺 name）→ bad_payload，零副作用', async () => {
+    const sessionId = await createSession();
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'run_slash_command',
+      payload: { sessionId },
+    });
+    const frame = await client.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'bad_payload',
+    );
+    expect(frame.type).toBe('error');
+    client.close();
+  });
+});

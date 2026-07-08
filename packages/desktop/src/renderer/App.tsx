@@ -30,6 +30,11 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
+import { SLASH_COMMANDS } from './components/Composer.js';
+import {
+  mergeServerCommands,
+  buildHelpMarkdown,
+} from './components/SlashCommands.js';
 import { RightPanel } from './components/RightPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
@@ -241,6 +246,19 @@ export function App(): React.JSX.Element {
     actions.launchExpert(expert.name, expert.kickoff);
   };
 
+  // —— 斜杠命令：本地 + server 合并清单 ——
+  // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命令
+  // 合并后传给命令面板；server 新增命令时面板自动出现，两处清单不漂移。
+  const slashCommands = useMemo(
+    () => mergeServerCommands(SLASH_COMMANDS, state.slashCommands ?? []),
+    [state.slashCommands],
+  );
+
+  // `/help`：由合并后的完整清单生成命令总览，插一条本地系统气泡（ephemeral）。
+  const handleShowHelp = (): void => {
+    actions.postSystemNote(buildHelpMarkdown(slashCommands));
+  };
+
   return (
     <div className="otto-app" data-connection={state.connection}>
       <Sidebar
@@ -304,6 +322,11 @@ export function App(): React.JSX.Element {
             onOpenDoctor={() => openHub('doctor')}
             onOpenMemory={() => openHub('memory')}
             onOpenSkills={() => openHub('skills')}
+            commands={slashCommands}
+            onRunServerCommand={actions.runSlashCommand}
+            onOpenPrefs={() => openHub('prefs')}
+            onOpenSessions={() => setAllConvOpen(true)}
+            onShowHelp={handleShowHelp}
           />
           <RightPanel
             onLaunchExpert={handleLaunchExpert}

@@ -465,6 +465,29 @@ export type GetExtensionsMsg = Envelope<'get_extensions', Record<string, never>>
 /** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
 export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
 
+// ── P3：斜杠命令（桌面端命令面板 ↔ server 命令执行层）────────────────────
+//
+// 桌面端命令面板把「server 可执行」的命令经 run_slash_command 交给 server 的
+// 命令注册表（src/commands/）执行，结果以 slash_command_result 的 markdown 回来，
+// 渲染成聊天区的一条系统气泡。命令清单由 list_slash_commands / slash_commands_list
+// 下发（单一事实源在 server，renderer 只维护本地面板类命令，避免两处清单漂移）。
+
+/**
+ * 执行一条 server 侧斜杠命令。
+ * name 是命令名（不含前导 `/`），args 是命令名之后的整段原始文本
+ * （如 `/kb search 报销` → name:'kb', args:'search 报销'），子命令解析在 server 侧。
+ */
+export type RunSlashCommandMsg = Envelope<
+  'run_slash_command',
+  { sessionId: string; name: string; args?: string }
+>;
+
+/** 拉取 server 侧可执行的斜杠命令清单（renderer 面板据此合并展示）。 */
+export type ListSlashCommandsMsg = Envelope<
+  'list_slash_commands',
+  Record<string, never>
+>;
+
 export type ClientToServer =
   | HelloMsg
   | ListSessionsMsg
@@ -497,7 +520,9 @@ export type ClientToServer =
   | ExportConversationMsg
   | GetWorkflowsMsg
   | GetExtensionsMsg
-  | GetIdeStatusMsg;
+  | GetIdeStatusMsg
+  | RunSlashCommandMsg
+  | ListSlashCommandsMsg;
 
 export type ClientToServerType = ClientToServer['type'];
 
@@ -841,6 +866,35 @@ export type IdeStatusMsg = Envelope<
   { status: IdeConnectionStatusValue; details?: string }
 >;
 
+// ── P3：斜杠命令 回包 ──────────────────────────────────────────────────────
+
+/** 单条 server 侧斜杠命令的元信息（面板展示用）。 */
+export interface SlashCommandInfo {
+  /** 命令名（不含前导 `/`）。 */
+  name: string;
+  /** 一句话说明（面板右侧灰字）。 */
+  description: string;
+  /** 用法提示（含子命令/参数形态），如 'kb add|search|list|remove …'。 */
+  usage?: string;
+}
+
+/** server 侧可执行命令清单（list_slash_commands 回包）。 */
+export type SlashCommandsListMsg = Envelope<
+  'slash_commands_list',
+  { commands: SlashCommandInfo[] }
+>;
+
+/**
+ * 斜杠命令执行结果。markdown 渲染成聊天区的一条系统气泡；
+ * ok=false 时 markdown 即人类可读的失败原因（渲染层可加警示样式）。
+ * args 回显用户输入的参数（气泡标题里还原完整命令）。
+ * 注意：命令结果**不落库**（详见 server handleRunSlashCommand 注释）。
+ */
+export type SlashCommandResultMsg = Envelope<
+  'slash_command_result',
+  { sessionId: string; name: string; args?: string; ok: boolean; markdown: string }
+>;
+
 export type ServerToClient =
   | WelcomeMsg
   | SessionsListMsg
@@ -869,7 +923,9 @@ export type ServerToClient =
   | ExportResultMsg
   | WorkflowsListMsg
   | ExtensionsListMsg
-  | IdeStatusMsg;
+  | IdeStatusMsg
+  | SlashCommandsListMsg
+  | SlashCommandResultMsg;
 
 export type ServerToClientType = ServerToClient['type'];
 
@@ -884,6 +940,36 @@ export interface ApiResponse<T> {
   error: string | null;
 }
 
+/**
+ * 飞书网关守护状态（/health 携带，桌面端徽标/CLI status 共用）。
+ *
+ * 为什么单独建结构而不只给 connected：断线守护（无限重连）意味着「未连接」
+ * 细分为多种可对用户解释的状态——重连排程中 / 锁被别的进程拿着 / 未配置凭证。
+ * 状态必须诚实：锁冲突时绝不谎报已连接，而是给出持有者 pid。
+ */
+export interface FeishuHealthStatus {
+  /** 凭证已配置（未配置时网关不会启动，属用户未 setup 场景）。 */
+  configured: boolean;
+  /** 守护是否在运行（start 过且未被用户主动 stop）。 */
+  running: boolean;
+  /** WS 长连接当前是否就绪。 */
+  connected: boolean;
+  /** 正在建连/重连中（含 SDK 内部重连与 adapter 层退避排程）。 */
+  reconnecting: boolean;
+  /** 最近一次连接成功时间戳（ms）；从未成功为 null。 */
+  lastConnectedAt: number | null;
+  /** 最近一次断开时间戳（ms）；从未断开为 null。 */
+  lastDisconnectAt: number | null;
+  /** 最近一次断开原因（人话）；无为 null。 */
+  lastDisconnectReason: string | null;
+  /** 自上次成功以来 adapter 层已发起的重连尝试次数（成功归零）。 */
+  reconnectAttempts: number;
+  /** 下次重试时间戳（ms）；无排程为 null。 */
+  nextRetryAt: number | null;
+  /** 连接锁被另一进程持有时的持有者 pid；无冲突为 null。 */
+  lockHeldByOtherPid: number | null;
+}
+
 /** GET /health */
 export interface HealthInfo {
   status: 'ok';
@@ -891,7 +977,12 @@ export interface HealthInfo {
   protocolVersion: string;
   uptimeMs: number;
   sessionCount: number;
-  feishu: { enabled: boolean; connected: boolean };
+  feishu: {
+    enabled: boolean;
+    connected: boolean;
+    /** 守护详情（enableFeishu 且 registration 就绪时携带）。 */
+    status?: FeishuHealthStatus;
+  };
 }
 
 /**
@@ -901,6 +992,8 @@ export interface HealthInfo {
  *   GET  /sessions/:id/history        → ApiResponse<OttoMessage[]>
  *   POST /sessions                    → ApiResponse<SessionSummary>
  *   GET  /models                      → ApiResponse<ModelInfo[]>
+ *   POST /feishu/start                → ApiResponse<FeishuHealthStatus>（运行期启动飞书守护）
+ *   POST /feishu/stop                 → ApiResponse<FeishuHealthStatus>（运行期停止，之后不自动重连）
  *   WS   /ws                          → 双向 ClientToServer / ServerToClient
  */
 export const HTTP_ROUTES = {
@@ -908,6 +1001,8 @@ export const HTTP_ROUTES = {
   sessions: '/sessions',
   sessionHistory: (id: string) => `/sessions/${id}/history`,
   models: '/models',
+  feishuStart: '/feishu/start',
+  feishuStop: '/feishu/stop',
   ws: '/ws',
 } as const;
 
@@ -1129,7 +1224,16 @@ export function validateClientPayload(msg: {
     case 'get_workflows':
     case 'get_extensions':
     case 'get_ide_status':
+    case 'list_slash_commands':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
+    case 'run_slash_command': {
+      if (!isPlainObject(p)) return 'run_slash_command payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['name'])) return 'name 必须是非空字符串';
+      if (p['args'] !== undefined && typeof p['args'] !== 'string')
+        return 'args 必须是字符串';
+      return null;
+    }
     case 'set_setting': {
       if (!isPlainObject(p)) return 'set_setting payload 必须是对象';
       const key = p['key'];

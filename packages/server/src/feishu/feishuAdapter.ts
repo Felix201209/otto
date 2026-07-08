@@ -32,14 +32,18 @@
 
 import { loadCredentials, isSenderAuthorized } from './vendor/credentials.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
-import { FeishuGateway } from './vendor/gateway.js';
+import { FeishuGateway, FeishuGatewayLockError } from './vendor/gateway.js';
 import type { FeishuMessage } from './vendor/gateway.js';
 import {
   bridgeSessionToFeishu,
   type FeishuStreamSink,
 } from './streamBridge.js';
 import type { SessionStore, Unsubscribe } from '../sessions.js';
-import type { MessageContent, ServerToClient } from '../protocol.js';
+import type {
+  FeishuHealthStatus,
+  MessageContent,
+  ServerToClient,
+} from '../protocol.js';
 
 /**
  * adapter 实际用到的 gateway 能力子集（结构子类型）。
@@ -51,9 +55,38 @@ export interface FeishuGatewayLike extends FeishuStreamSink {
   onMessage: ((msg: FeishuMessage) => Promise<string | null>) | null;
   onReady: (() => void) | null;
   onDisconnect: ((error?: Error) => void) | null;
+  /** SDK 内部重连开始/成功（可选：老 fake / 精简实现可以不提供）。 */
+  onReconnecting?: (() => void) | null;
+  onReconnected?: (() => void) | null;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
+  /**
+   * 底层连接健康快照（可选）：僵尸探测用。socketOpen=null 表示「读不到、
+   * 视为未知」，探测方不得据此判死，避免误杀健康连接。
+   */
+  getConnectionHealth?(): { hasClient: boolean; socketOpen: boolean | null };
 }
+
+// ── 守护参数（连上一次之后就不允许永久断开：无限重连 + 心跳探活）──
+
+/** 重连退避起步（1s）。 */
+const RECONNECT_BASE_MS = 1_000;
+/** 重连退避上限（60s）。达到上限后维持此间隔无限重试，永不放弃。 */
+const RECONNECT_MAX_MS = 60_000;
+/** 心跳周期：探测僵尸连接 / 兜底补排重连。 */
+const HEARTBEAT_INTERVAL_MS = 60_000;
+/**
+ * 建连悬挂 / SDK 内部重连的接管时限。
+ *
+ * 为什么需要：SDK（WSClient）自带无限内部重连，断网时 gateway.connect() 的
+ * Promise 会长期不落定（既不 resolve 也不 reject）——这是正常自愈路径，上层
+ * 不应立刻拆台。但若 SDK 内部循环意外死掉（Promise 永远悬着、也不再重试），
+ * 没有时限就等于永久断开。10 分钟（SDK 内部约 5 轮重试的窗口）仍未恢复，
+ * 上层强制收尾重来，保证「永不放弃」不依赖 SDK 内部实现的正确性。
+ */
+const TAKEOVER_STUCK_MS = 10 * 60_000;
+/** 僵尸判定需要的连续心跳次数（防单次抖动误判：2 次 ≈ 持续 1 分钟以上）。 */
+const ZOMBIE_STRIKE_LIMIT = 2;
 
 /** gateway 工厂：缺省 = new FeishuGateway；测试可注入 fake。 */
 export type FeishuGatewayFactory = (
@@ -83,6 +116,30 @@ export class FeishuAdapter {
   private readonly injectedCreds?: FeishuCredentials | null;
   private readonly gatewayFactory: FeishuGatewayFactory;
 
+  // ── 守护状态（重连循环 + 心跳 + 对外可见状态）──
+  /** 用户主动 stop 过（有意停止后绝不自动重连；start 重新调用时恢复守护）。 */
+  private stopped = false;
+  /** 一次 connect() 正在飞（防并发重复建连）。 */
+  private connecting = false;
+  /** 当前这次 connect() 的起点（悬挂超时接管用）；未在连为 null。 */
+  private connectStartedAt: number | null = null;
+  /** SDK 内部重连的开始时间（超时接管用）；SDK 未在自愈为 null。 */
+  private sdkReconnectingSince: number | null = null;
+  /** adapter 层重连排程句柄；无排程为 null。stop() 必须清干净，杜绝幽灵重连。 */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 心跳句柄（僵尸探测 + 守护兜底）。 */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** 自上次成功以来 adapter 层已发起的重连尝试次数（成功归零 → 退避归零）。 */
+  private reconnectAttempts = 0;
+  /** 僵尸判定连击计数（连续 ZOMBIE_STRIKE_LIMIT 次探到 socket 已死才动手）。 */
+  private zombieStrikes = 0;
+  // 对外状态（getStatus / health 端点透出）。
+  private lastConnectedAt: number | null = null;
+  private lastDisconnectAt: number | null = null;
+  private lastDisconnectReason: string | null = null;
+  private nextRetryAt: number | null = null;
+  private lockHeldByOtherPid: number | null = null;
+
   /** 已挂回推桥的飞书会话（sessionId → 取消订阅），避免重复订阅导致重复回推。 */
   private readonly bridged = new Map<string, Unsubscribe>();
   /**
@@ -94,8 +151,12 @@ export class FeishuAdapter {
     string,
     { tail: Promise<void>; depth: number }
   >();
-  /** 会话淘汰监听取消句柄：会话被 store 容量淘汰时，连带摘除其回推桥。 */
-  private readonly offEvict: Unsubscribe;
+  /**
+   * 会话淘汰监听取消句柄：会话被 store 容量淘汰时，连带摘除其回推桥。
+   * 生命周期跟随 start()/stop()（而非构造器）——运行期 stop 后再 start
+   * （守护恢复）时监听必须能重建，否则第二段生命周期里桥订阅会泄漏。
+   */
+  private offEvict: Unsubscribe | null = null;
 
   constructor(deps: FeishuAdapterDeps) {
     this.store = deps.store;
@@ -105,18 +166,6 @@ export class FeishuAdapter {
       deps.gatewayFactory ??
       ((creds) =>
         new FeishuGateway(creds.appId, creds.appSecret, creds.domain));
-    // 会话被容量上限淘汰时，连带摘除其回推桥订阅（避免桥订阅泄漏 / 对已淘汰会话仍回推）。
-    this.offEvict = this.store.onEvict((sessionId) => {
-      const unsub = this.bridged.get(sessionId);
-      if (unsub) {
-        try {
-          unsub();
-        } catch {
-          // 取消订阅失败不影响后续清理。
-        }
-        this.bridged.delete(sessionId);
-      }
-    });
   }
 
   isConnected(): boolean {
@@ -124,12 +173,52 @@ export class FeishuAdapter {
   }
 
   /**
-   * 启动：加载凭证 → new FeishuGateway → 接 onMessage/onReady/onDisconnect → connect。
+   * 守护状态快照（server /health 与桌面端徽标共用）。
+   *
+   * 诚实原则：锁被别的进程拿着时给出 lockHeldByOtherPid，绝不谎报已连接；
+   * reconnecting 覆盖三种「正在抢救」形态——adapter 排程中 / connect 在飞 /
+   * SDK 内部自愈中。
+   */
+  getStatus(): FeishuHealthStatus {
+    return {
+      configured: this.creds !== null,
+      running: this.gateway !== null && !this.stopped,
+      connected: this.connected,
+      reconnecting:
+        !this.connected &&
+        this.gateway !== null &&
+        !this.stopped &&
+        (this.connecting ||
+          this.reconnectTimer !== null ||
+          this.sdkReconnectingSince !== null),
+      lastConnectedAt: this.lastConnectedAt,
+      lastDisconnectAt: this.lastDisconnectAt,
+      lastDisconnectReason: this.lastDisconnectReason,
+      reconnectAttempts: this.reconnectAttempts,
+      nextRetryAt: this.nextRetryAt,
+      lockHeldByOtherPid: this.lockHeldByOtherPid,
+    };
+  }
+
+  /**
+   * 启动：加载凭证 → new FeishuGateway → 接回调 → 发起建连并进入守护。
    *
    * 凭证缺失时**不抛错**：返回未连接状态（server 仍可正常跑，飞书只是没启用）。
    * 这样 enableFeishu 但用户尚未 setup 飞书凭证时，server 启动不被阻断。
+   *
+   * 与旧版的关键差异：**不再 await 建连结果**。SDK 断网时 connect() 会长期
+   * 悬挂（内部无限重连、Promise 不落定），await 会把 server 启动整个卡死。
+   * 现在 start() 只负责接线 + 发起首次建连 + 挂心跳，连接结果经 onReady /
+   * 重连循环异步收敛——server 启动时断网，网络恢复后也能自己连上。
    */
   async start(): Promise<void> {
+    if (this.gateway) {
+      // 已在跑：幂等返回，不重复建网关/心跳（避免双守护互相拆台）。
+      logWarn('飞书网关已在运行，忽略重复 start。');
+      return;
+    }
+    this.stopped = false;
+
     // 1) 凭证：优先注入（测试），否则读盘。
     try {
       this.creds =
@@ -146,30 +235,229 @@ export class FeishuAdapter {
       return;
     }
 
-    // 2) 建网关并接线（缺省 new FeishuGateway；测试可注入 fake）。
+    // 2) 会话淘汰监听：会话被 store 容量淘汰时，连带摘除其回推桥订阅
+    //    （避免桥订阅泄漏 / 对已淘汰会话仍回推）。start/stop 成对注册/注销。
+    this.offEvict ??= this.store.onEvict((sessionId) => {
+      const unsub = this.bridged.get(sessionId);
+      if (unsub) {
+        try {
+          unsub();
+        } catch {
+          // 取消订阅失败不影响后续清理。
+        }
+        this.bridged.delete(sessionId);
+      }
+    });
+
+    // 3) 建网关并接线（缺省 new FeishuGateway；测试可注入 fake）。
     const creds = this.creds;
     const gateway = this.gatewayFactory(creds);
     this.gateway = gateway;
 
-    gateway.onReady = () => {
-      this.connected = true;
-      logInfo('飞书网关已连接（WS 长连接就绪）。');
-    };
+    gateway.onReady = () => this.handleConnected('已连接（WS 长连接就绪）');
     gateway.onDisconnect = (error?: Error) => {
       this.connected = false;
-      logWarn(`飞书网关断开${error ? `：${error.message}` : ''}。`);
+      this.lastDisconnectAt = Date.now();
+      this.lastDisconnectReason = error?.message ?? '连接断开（未给出原因）';
+      if (this.stopped) return; // 有意停止的收尾断开，不进重连循环
+      logWarn(
+        `飞书网关断开${error ? `：${error.message}` : ''}，转入自动重连。`,
+      );
+      this.scheduleReconnect(this.lastDisconnectReason);
     };
+    // SDK 内部自愈事件（可选回调；真 gateway 已透传，老 fake 不接也不影响）：
+    // 自愈期间状态如实标记「未连接/重连中」，自愈成功等价于一次 onReady。
+    gateway.onReconnecting = () => {
+      this.connected = false;
+      if (this.sdkReconnectingSince === null) {
+        this.sdkReconnectingSince = Date.now();
+        this.lastDisconnectAt = Date.now();
+        this.lastDisconnectReason = 'WS 掉线，SDK 内部重连中';
+        logWarn('飞书 WS 掉线，SDK 内部重连中…');
+      }
+    };
+    gateway.onReconnected = () =>
+      this.handleConnected('SDK 内部重连成功，连接恢复');
 
     gateway.onMessage = (msg) => this.handleFeishuMessage(msg, creds);
 
-    // 3) 建连（connect 内部 SDK 自带指数退避重连）。
+    // 4) 心跳守护：僵尸探测 + 悬挂接管 + 兜底补排（详见 heartbeatTick）。
+    this.heartbeatTimer = setInterval(
+      () => this.heartbeatTick(),
+      HEARTBEAT_INTERVAL_MS,
+    );
+    // 心跳不该拽住进程退出（Node 环境才有 unref；类型上防御 fake timer）。
+    (this.heartbeatTimer as { unref?: () => void }).unref?.();
+
+    // 5) 发起首次建连（不 await：失败/悬挂都由守护循环接管，见方法注释）。
+    void this.attemptConnect();
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // 守护循环：断线自动重连（指数退避 + 抖动，无限次）+ 心跳探活
+  // ────────────────────────────────────────────────────────────────────
+
+  /** 连接成功的统一收口（onReady / onReconnected 共用）：归零退避、撤排程。 */
+  private handleConnected(reason: string): void {
+    this.connected = true;
+    this.lastConnectedAt = Date.now();
+    this.reconnectAttempts = 0; // 成功 → 退避归零，下次断线从 1s 重新起步
+    this.nextRetryAt = null;
+    this.lockHeldByOtherPid = null;
+    this.sdkReconnectingSince = null;
+    this.zombieStrikes = 0;
+    // SDK 抢先自愈成功时，撤掉 adapter 层的冗余排程，别到点去拆健康连接。
+    this.clearReconnectTimer();
+    logInfo(`飞书网关${reason}。`);
+  }
+
+  /**
+   * 发起一次建连尝试。失败 → 排下一次重试；成功 → onReady 收口。
+   *
+   * 注意：断网时真 gateway.connect() 可能长期悬挂（SDK 内部无限重连），
+   * 此时 connecting 一直为 true——这是正常自愈路径；若悬挂超过
+   * TAKEOVER_STUCK_MS 仍未连上，心跳会强制收尾重来。
+   */
+  private async attemptConnect(): Promise<void> {
+    const gateway = this.gateway;
+    if (!gateway || this.stopped || this.connected || this.connecting) return;
+    this.connecting = true;
+    this.connectStartedAt = Date.now();
     try {
       await gateway.connect();
+      // 成功路径的状态归位在 onReady 里（真 gateway resolve 与 onReady 同步发生）。
     } catch (e) {
-      // 建连失败不崩 server；保持 connected=false，可由上层重试。
-      this.connected = false;
-      logWarn(`飞书网关 connect 失败：${errMsg(e)}`);
+      if (this.stopped) return;
+      if (e instanceof FeishuGatewayLockError) {
+        // 锁冲突：另一进程（如 CLI daemon）持有同 appId 连接。诚实上报持有者
+        // pid，且**继续退避重试**——对方退出后本进程可接管，无需人工干预。
+        this.lockHeldByOtherPid = e.holderPid;
+        this.lastDisconnectReason = `连接锁被另一进程持有（pid ${e.holderPid}）`;
+      } else {
+        this.lockHeldByOtherPid = null;
+        this.lastDisconnectReason = errMsg(e);
+      }
+      this.scheduleReconnect(this.lastDisconnectReason);
+    } finally {
+      this.connecting = false;
+      this.connectStartedAt = null;
     }
+  }
+
+  /**
+   * 排一次重连（指数退避 + 抖动，1s 起步、60s 封顶，无限次）。
+   * 幂等：已有排程 / 已连接 / 已停止时不重复排。日志一次一行，不刷屏。
+   */
+  private scheduleReconnect(reason: string): void {
+    if (this.stopped || !this.gateway) return;
+    if (this.connected || this.reconnectTimer) return;
+    const delay = this.nextBackoffMs();
+    this.reconnectAttempts += 1;
+    this.nextRetryAt = Date.now() + delay;
+    logWarn(
+      `飞书重连第 ${this.reconnectAttempts} 次将于 ${Math.round(delay / 1000)}s 后发起（${reason}）。`,
+    );
+    const timer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.nextRetryAt = null;
+      void this.attemptConnect();
+    }, delay);
+    (timer as { unref?: () => void }).unref?.();
+    this.reconnectTimer = timer;
+  }
+
+  /** 退避计算：min(60s, 1s·2^n)，±20% 抖动防多实例齐射。 */
+  private nextBackoffMs(): number {
+    const exp = Math.min(this.reconnectAttempts, 6); // 2^6=64 → 已越上限，封顶
+    const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** exp);
+    return Math.min(
+      RECONNECT_MAX_MS,
+      Math.round(base * (0.8 + Math.random() * 0.4)),
+    );
+  }
+
+  /** 撤销 adapter 层重连排程（成功收口 / stop 收尾用）。 */
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.nextRetryAt = null;
+  }
+
+  /**
+   * 强制重连：把旧连接干净收尾（关 WS、释放连接锁）后进重连循环。
+   * 僵尸连接 / 悬挂超时的出口。收尾失败不阻断——下一次 connect() 内部
+   * 还会再 disconnect 一遍（gateway.connect 自带先清后连）。
+   */
+  private async forceReconnect(reason: string): Promise<void> {
+    if (this.stopped || !this.gateway) return;
+    logWarn(`飞书强制重连：${reason}`);
+    this.connected = false;
+    this.connecting = false;
+    this.connectStartedAt = null;
+    this.sdkReconnectingSince = null;
+    this.lastDisconnectAt = Date.now();
+    this.lastDisconnectReason = reason;
+    try {
+      await this.gateway.disconnect();
+    } catch {
+      // 收尾失败不阻断重连。
+    }
+    this.scheduleReconnect(reason);
+  }
+
+  /**
+   * 心跳（每 60s）：
+   *   1. 已连接 → 僵尸探测：底层 socket 连续两拍非 OPEN（SDK 自以为连着、
+   *      实际已死）→ 强制走重连循环。探测走 gateway 内部状态快照，零网络开销；
+   *      读不到（返回 null / fake gateway 未实现）视为未知，不误杀。
+   *   2. 未连接且 connect() 悬挂超时 / SDK 内部自愈超时 → 强制接管重来。
+   *   3. 未连接且无人在抢救（无排程、无在飞的 connect、SDK 也没在自愈）→
+   *      兜底补排一次。正常流程到不了这里，纯防御：任何漏网路径最迟 60s 被拉回。
+   */
+  private heartbeatTick(): void {
+    if (this.stopped || !this.gateway) return;
+
+    if (this.connected) {
+      const health = this.gateway.getConnectionHealth?.();
+      const dead =
+        health !== undefined &&
+        (!health.hasClient || health.socketOpen === false);
+      if (dead) {
+        this.zombieStrikes += 1;
+        if (this.zombieStrikes >= ZOMBIE_STRIKE_LIMIT) {
+          this.zombieStrikes = 0;
+          void this.forceReconnect(
+            '僵尸连接：心跳连续探测到底层 socket 已断，但连接状态未更新',
+          );
+        }
+      } else {
+        this.zombieStrikes = 0;
+      }
+      return;
+    }
+
+    if (this.reconnectTimer) return; // 已有排程，等它到点
+
+    if (this.connecting) {
+      if (
+        this.connectStartedAt !== null &&
+        Date.now() - this.connectStartedAt > TAKEOVER_STUCK_MS
+      ) {
+        void this.forceReconnect('建连尝试悬挂超时（>10 分钟），上层接管重来');
+      }
+      return;
+    }
+
+    if (this.sdkReconnectingSince !== null) {
+      if (Date.now() - this.sdkReconnectingSince > TAKEOVER_STUCK_MS) {
+        void this.forceReconnect('SDK 内部重连超时（>10 分钟），上层接管重来');
+      }
+      return;
+    }
+
+    this.scheduleReconnect('心跳兜底：连接未在守护中');
   }
 
   /**
@@ -342,13 +630,32 @@ export class FeishuAdapter {
     await this.gateway.sendMarkdown(feishuChatId, text);
   }
 
-  /** 停止：摘除所有回推桥订阅，断开网关长连接。 */
+  /**
+   * 停止（用户/宿主主动）：先立「有意停止」旗，再取消全部守护定时器、
+   * 摘除回推桥订阅、断开网关长连接。stop 之后绝不自动重连（无幽灵定时器）；
+   * 再次调用 start() 时恢复守护。
+   */
   async stop(): Promise<void> {
+    // 旗子先立：并发路径（onDisconnect / 在飞的 attemptConnect / 心跳）看到
+    // stopped 一律不再排重连——先清 timer 后立旗会留竞态窗口。
+    this.stopped = true;
+    this.clearReconnectTimer();
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.connecting = false;
+    this.connectStartedAt = null;
+    this.sdkReconnectingSince = null;
+    this.zombieStrikes = 0;
+    this.reconnectAttempts = 0;
+    this.lockHeldByOtherPid = null;
     try {
-      this.offEvict();
+      this.offEvict?.();
     } catch {
       // 取消淘汰监听失败不影响后续清理。
     }
+    this.offEvict = null; // start 重新调用时重建监听（守护恢复语义）
     for (const unsub of this.bridged.values()) {
       try {
         unsub();

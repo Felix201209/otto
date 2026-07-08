@@ -513,7 +513,7 @@ function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
       </div>
       {!report ? (
         <div className="otto-hub__empty">
-          点击"开始体检"检查 pandoc / libreoffice / ffmpeg / playwright 等外部依赖。
+          点击「开始体检」检查 pandoc / libreoffice / ffmpeg / playwright 等外部依赖。
         </div>
       ) : (
         <>

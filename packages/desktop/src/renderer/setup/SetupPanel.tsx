@@ -22,6 +22,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
+import { FeishuStatusBadge } from '../components/FeishuStatusBadge.js';
 import {
   IconClose,
   IconEye,
@@ -117,27 +118,32 @@ export function SetupPanel({
 
   const preset = findPreset(form.presetId) ?? DEFAULT_PRESET;
 
-  // ── 飞书一键连接控制（桌面端暂未接管 daemon）──
-  // 诚实说明来自 main 的 feishuStatus handler（返回「桌面端暂不支持、请用 CLI」）。
-  // 桌面端并未托管进程，因此不提供启停按钮、不假报「运行中」；仅展示这段说明。
-  const [fsStatus, setFsStatus] = useState<string>(
-    '桌面端暂不支持在此一键启停飞书守护进程，请在终端使用：otto feishu daemon start / stop / status。',
-  );
+  // ── 飞书连接状态 + 一键启停（真实通路）──
+  // 状态由 FeishuStatusBadge 轮询驱动（main 真查 server /health → adapter 守护
+  // 状态），长文案承接它上抛的结果。启停按钮真调 server 运行期端点
+  // （POST /feishu/start|stop，经 preload→main），结果原样展示，不谎报。
+  const [fsStatus, setFsStatus] = useState<string>('正在查询飞书连接状态…');
+  const [fsRunning, setFsRunning] = useState<boolean>(false);
+  const [fsBusy, setFsBusy] = useState<boolean>(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await window.otto?.feishuStatus();
-        if (!cancelled && res?.text) setFsStatus(res.text);
-      } catch {
-        // 读取失败保留默认诚实说明。
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  /** 一键启停：running 时停止（之后不自动重连），否则启动/恢复守护。 */
+  const toggleFeishu = async (): Promise<void> => {
+    if (fsBusy) return;
+    setFsBusy(true);
+    try {
+      const res = fsRunning
+        ? await window.otto?.feishuStop()
+        : await window.otto?.feishuStart();
+      if (res?.text) setFsStatus(res.text);
+      // running 不在这里猜——由徽标下一轮轮询的真实 /health 驱动更新。
+    } catch (e) {
+      setFsStatus(
+        `飞书操作失败：${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setFsBusy(false);
+    }
+  };
 
   const errors = useMemo(() => validateForm(form), [form]);
   const valid = Object.keys(errors).length === 0;
@@ -558,13 +564,16 @@ export function SetupPanel({
         ) : null}
 
 
-        {/* —— 飞书一键控制面板（桌面端暂未接管 daemon，诚实禁用）—— */}
+        {/* —— 飞书连接状态与常驻守护（状态真实：徽标轮询 server /health）—— */}
         <div className="otto-setup__section" style={{ marginTop: '24px', padding: '16px', background: 'var(--otto-sidebar-bg)', borderRadius: 'var(--otto-radius)' }}>
           <label className="otto-setup__label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span>飞书双向控制与常驻守护</span>
-            <span className="otto-badge otto-badge--feishu" style={{ fontSize: '11px' }}>
-              即将支持
-            </span>
+            <FeishuStatusBadge
+              onStatus={(res) => {
+                setFsStatus(res.text);
+                setFsRunning(res.running);
+              }}
+            />
           </label>
           <p className="otto-setup__hint" style={{ marginBottom: '14px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
             {fsStatus}
@@ -572,12 +581,13 @@ export function SetupPanel({
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
               type="button"
-              disabled
+              disabled={fsBusy}
               className="otto-setup__btn otto-setup__btn--ghost"
-              title="桌面端暂不支持一键启停，请在终端使用 otto feishu daemon"
-              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px', opacity: 0.6, cursor: 'not-allowed' }}
+              title="真调本地 server 的运行期启停端点：启动后断线自动重连；停止属有意停止，不会自动重连"
+              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px', opacity: fsBusy ? 0.6 : 1, cursor: fsBusy ? 'wait' : 'pointer' }}
+              onClick={() => void toggleFeishu()}
             >
-              飞书一键控制（即将支持）
+              {fsBusy ? '处理中…' : fsRunning ? '停止飞书守护' : '启动飞书守护'}
             </button>
             <button
               type="button"
@@ -618,14 +628,14 @@ export function SetupPanel({
                 无需连接远程组织服务器，把请求指向本机运行的 otto-server。
                 <br />
                 <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
-                  先在终端起本地 server：　
+                  先在终端起本地 server：{'\u3000'}
                   <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
                     OTTO_SERVER_MOCK=1 node packages/server/dist/bin.js start
                   </code>
                 </span>
                 <br />
                 <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
-                  单配了 BYO-key 模型时去掉　
+                  单配了 BYO-key 模型时去掉{'\u3000'}
                   <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
                     OTTO_SERVER_MOCK=1
                   </code>

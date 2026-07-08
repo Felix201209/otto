@@ -24,6 +24,7 @@ import type { ImageAttachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
+import type { SlashCommand } from './SlashCommands.js';
 import { OttoAvatar, IconArrowDown } from './icons.js';
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
@@ -71,6 +72,16 @@ interface ChatViewProps {
   onOpenMemory?: () => void;
   /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
   onOpenSkills?: () => void;
+  /** 命令表（本地 + server 合并后的完整清单），透传给 Composer 的命令面板。 */
+  commands?: readonly SlashCommand[];
+  /** server 侧斜杠命令：经 run_slash_command 帧执行。 */
+  onRunServerCommand?: (name: string, args: string) => void;
+  /** 斜杠命令 `/theme` `/config`：打开设置与诊断中心的「偏好」tab。 */
+  onOpenPrefs?: () => void;
+  /** 斜杠命令 `/session`：打开「查看全部对话」检索面板。 */
+  onOpenSessions?: () => void;
+  /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
+  onShowHelp?: () => void;
 }
 
 export function ChatView({
@@ -92,6 +103,11 @@ export function ChatView({
   onOpenDoctor,
   onOpenMemory,
   onOpenSkills,
+  commands,
+  onRunServerCommand,
+  onOpenPrefs,
+  onOpenSessions,
+  onShowHelp,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -166,6 +182,18 @@ export function ChatView({
 
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text);
+  };
+
+  // 斜杠命令 `/copy`（对齐 CLI）：复制最近一条 Otto 回复的纯文本。
+  // 无可复制内容时静默（面板描述已说明语义，空会话点它没有副作用）。
+  const copyLastReply = () => {
+    const last = [...messages].reverse().find((m) => m.role === 'assistant');
+    if (!last) return;
+    const text = last.content
+      .map((p) => (p.type === 'text' ? p.value : ''))
+      .join('')
+      .trim();
+    if (text) copy(text);
   };
 
   const fillDraft = (text: string) => {
@@ -277,6 +305,12 @@ export function ChatView({
         onOpenMemory={onOpenMemory}
         onOpenSkills={onOpenSkills}
         onExport={onExport}
+        commands={commands}
+        onRunServerCommand={onRunServerCommand}
+        onOpenPrefs={onOpenPrefs}
+        onOpenSessions={onOpenSessions}
+        onCopyLast={copyLastReply}
+        onShowHelp={onShowHelp}
       />
     </section>
   );

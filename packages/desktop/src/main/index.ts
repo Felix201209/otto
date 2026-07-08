@@ -41,8 +41,9 @@ import {
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as path from 'node:path';
-import type { ServerEndpoint } from 'otto-server';
+import type { HealthInfo, ServerEndpoint } from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 
@@ -83,27 +84,151 @@ const IPC = {
 } as const;
 
 /**
- * 本地测试模式：当前设置的本地代理地址。
- * - 应用时：将 OTTO_SERVER_URL 设为该地址，使 core 的 proxyConfig 将请求路由到本机 server。
- * - 清除时：删除该环境变量。
+ * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
+ *
+ * 状态（feishuStatus）：桌面端连接的 server（内嵌或发现的）在 /health 里带出
+ * 飞书守护详情（connected / 重连第 N 次 / 下次重试 / 锁被哪个 pid 持有），
+ * 这里直接查询透传——绝不假报「已连接」；锁被别的进程（如 CLI daemon）拿着时
+ * 如实说「另一进程持有」。
+ *
+ * 启停（feishuStart/feishuStop）：真调 server 的运行期端点
+ * POST /feishu/start、POST /feishu/stop：
+ *   - start：server 未启用（含运行期才配好凭证）→ 现场注册并启动守护；
+ *     已在跑 → 幂等返回当前状态；无凭证 → server 诚实报错（ok:false），
+ *     桌面端原样透传，不谎报「已启动」。
+ *   - stop：有意停止，之后不自动重连，直到再次 start。
+ * 每次操作后附最新真实状态文案。
  */
-let localTestUrl: string | undefined;
+
+/** /health 单次查询超时（ms）。 */
+const FEISHU_HEALTH_TIMEOUT_MS = 1500;
+/** 启停端点超时（ms）：start 含 registerFeishu（不阻塞等建连），给宽一点。 */
+const FEISHU_OP_TIMEOUT_MS = 5000;
 
 /**
- * 飞书一键开关在桌面端的现状（诚实说明）。
- *
- * 飞书 daemon 的真实启停逻辑在 CLI 包（otto feishu daemon），它依赖 `otto --feishu`
- * 这个 CLI 进程入口（通过 process.argv[1] 定位 otto.js）。在 Electron 主进程里
- * process.argv[1] 指向的是 Electron/app 入口而非 otto.js，直接调用会 spawn 错误的
- * 进程；且 desktop 目前并未依赖 CLI 包。因此桌面端暂不直接代管飞书 daemon。
- *
- * 处置：注册这三个 handler，让 renderer 的调用不再 reject 报「操作失败」，而是拿到
- * 一句明确的「桌面端暂不支持、请用 CLI」——诚实告知，绝不假报「已开启 / 运行中」。
+ * POST 一个 server 端点（无 body），解析 ApiResponse 信封。
+ * 网络失败/超时/server 未就绪 → 返回 null（调用方给「未就绪」诚实文案）。
  */
-const FEISHU_DESKTOP_NOTICE =
-  '桌面端暂不支持在此一键启停飞书守护进程。\n' +
-  '请在终端使用命令行：otto feishu daemon start / stop / status。\n' +
-  '（该能力后续接入桌面端后此开关才会启用。）';
+function postServerEndpoint(
+  routePath: string,
+): Promise<{ ok: boolean; data: HealthInfo['feishu']['status'] | null; error: string | null } | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: routePath,
+        method: 'POST',
+        timeout: FEISHU_OP_TIMEOUT_MS,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(
+              JSON.parse(body) as {
+                ok: boolean;
+                data: HealthInfo['feishu']['status'] | null;
+                error: string | null;
+              },
+            );
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+/** 查询当前 server 的 /health（信封 {ok,data,error}），失败/未就绪返回 null。 */
+function fetchServerHealth(): Promise<HealthInfo | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: '/health',
+        timeout: FEISHU_HEALTH_TIMEOUT_MS,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body) as {
+              ok?: boolean;
+              data?: HealthInfo | null;
+            };
+            resolve(parsed.ok && parsed.data ? parsed.data : null);
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/** 把 /health 的飞书守护状态渲染成给用户看的一句人话（状态必须诚实）。 */
+function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
+  const st = feishu.status;
+  if (!feishu.enabled || !st) {
+    return (
+      '本地 server 未启用飞书网关（未检测到飞书凭证）。\n' +
+      '在终端运行 otto feishu setup 配置凭证后重启 Otto 即自动启用。'
+    );
+  }
+  if (!st.configured) {
+    return '飞书凭证缺失或损坏（~/.otto-user/feishu-credentials.json），网关未启动。';
+  }
+  if (st.connected) {
+    return '飞书已连接（WS 长连接就绪，断线自动重连守护中）。';
+  }
+  if (st.lockHeldByOtherPid != null) {
+    return (
+      `飞书连接被另一进程持有（pid ${st.lockHeldByOtherPid}，可能是 otto feishu daemon）。\n` +
+      '本进程未连接（避免同一消息被处理两遍），对方退出后将自动接管。'
+    );
+  }
+  if (st.reconnecting) {
+    const eta = st.nextRetryAt
+      ? Math.max(0, Math.round((st.nextRetryAt - Date.now()) / 1000))
+      : null;
+    return (
+      `飞书重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，约 ${eta}s 后重试` : ''}）` +
+      `${st.lastDisconnectReason ? `：${st.lastDisconnectReason}` : ''}。`
+    );
+  }
+  if (!st.running) {
+    return '飞书守护未在运行。';
+  }
+  return `飞书离线${st.lastDisconnectReason ? `：${st.lastDisconnectReason}` : ''}。`;
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // 窗口
@@ -310,18 +435,55 @@ function registerIpc(): void {
     }
     return Promise.resolve();
   });
-  // 飞书一键开关（诚实占位）：桌面端暂不代管飞书 daemon，见 FEISHU_DESKTOP_NOTICE。
-  // 返回明确的「暂不支持」而非 reject，让 renderer 显示真话而不是「操作失败」。
-  // running 恒为 false：桌面端并未托管进程，不谎报「运行中」。
-  ipcMain.handle(IPC.feishuStart, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
-  );
-  ipcMain.handle(IPC.feishuStop, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
-  );
-  ipcMain.handle(IPC.feishuStatus, () =>
-    Promise.resolve({ text: FEISHU_DESKTOP_NOTICE, running: false }),
-  );
+  // 飞书状态：真查当前 server 的 /health 并透传守护详情（见文件上方说明）。
+  // 状态诚实：server 未就绪 / 查询失败一律如实报告，绝不假报「已连接/运行中」。
+  ipcMain.handle(IPC.feishuStatus, async () => {
+    const health = await fetchServerHealth();
+    if (!health) {
+      return {
+        text: '本地 server 未就绪，暂时无法查询飞书状态。',
+        running: false,
+      };
+    }
+    return {
+      text: renderFeishuStatusText(health.feishu),
+      // running = server 启用了飞书且守护在跑（≠已连接；连接态看 feishu.connected）。
+      running: health.feishu.enabled && (health.feishu.status?.running ?? false),
+      feishu: health.feishu,
+    };
+  });
+  // 启停：真调 server 运行期端点 POST /feishu/start | /feishu/stop，
+  // 透传真实结果（失败原样报错，不谎报动作已执行），并附最新守护状态。
+  ipcMain.handle(IPC.feishuStart, async () => {
+    const r = await postServerEndpoint('/feishu/start');
+    if (!r) {
+      return { text: '本地 server 未就绪，无法启动飞书守护，请稍后重试。' };
+    }
+    if (!r.ok) {
+      // server 诚实报错（典型：凭证未配置），原样透传。
+      return { text: `飞书守护启动失败：${r.error ?? '未知原因'}` };
+    }
+    const health = await fetchServerHealth();
+    return {
+      text:
+        '飞书守护已启动（断线自动重连，连上一次后绝不永久断开）。\n' +
+        (health ? renderFeishuStatusText(health.feishu) : ''),
+    };
+  });
+  ipcMain.handle(IPC.feishuStop, async () => {
+    const r = await postServerEndpoint('/feishu/stop');
+    if (!r) {
+      return { text: '本地 server 未就绪，无法执行停止操作。' };
+    }
+    if (!r.ok) {
+      return { text: `飞书守护停止失败：${r.error ?? '未知原因'}` };
+    }
+    return {
+      text:
+        '飞书守护已停止（有意停止：不会自动重连，再次启动即恢复守护）。\n' +
+        '注：若另有 CLI 守护进程（otto feishu daemon）在跑，请在终端单独停止。',
+    };
+  });
 
   // 本地测试模式：应用/清除 customProxyServerUrl。
   // renderer 通过 preload.setLocalTestUrl() 调用。
@@ -331,13 +493,11 @@ function registerIpc(): void {
     if (typeof url !== 'string') return Promise.resolve();
     const trimmed = url.trim();
     if (trimmed) {
-      // 应用本地测试地址
-      localTestUrl = trimmed;
+      // 应用本地测试地址（真实状态只存 env，不留影子变量）
       process.env.OTTO_SERVER_URL = trimmed;
       console.log(`[otto-desktop] 本地测试模式已应用： OTTO_SERVER_URL=${trimmed}`);
     } else {
       // 清除本地测试
-      localTestUrl = undefined;
       delete process.env.OTTO_SERVER_URL;
       console.log('[otto-desktop] 本地测试模式已清除， OTTO_SERVER_URL 已移除。');
     }

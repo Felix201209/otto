@@ -787,6 +787,16 @@ export class FeishuGateway {
   private wsClient: FeishuWsClient | null = null;
   private _onReady: (() => void) | null = null;
   private _onDisconnect: ((error?: Error) => void) | null = null;
+  /**
+   * SDK 内部重连的开始/成功回调透传。
+   *
+   * 为什么要透传：SDK（WSClient autoReconnect）掉线后会自行无限重连，期间
+   * onError/_onDisconnect 不触发——上层若只听 onDisconnect，连接状态会长期
+   * 停留在「已连接」的假象里。把这两个事件交给上层（server 侧 FeishuAdapter
+   * 的守护循环），状态才诚实。不接（保持 null）时行为与旧版完全一致。
+   */
+  private _onReconnecting: (() => void) | null = null;
+  private _onReconnected: (() => void) | null = null;
   /** 跨进程连接互斥锁（connect 时获取，disconnect/进程退出时释放）。 */
   private connectionLock: FeishuGatewayLockHandle | null = null;
 
@@ -1133,9 +1143,43 @@ export class FeishuGateway {
   get onDisconnect(): ((error?: Error) => void) | null { return this._onDisconnect; }
   set onDisconnect(fn: ((error?: Error) => void) | null) { this._onDisconnect = fn; }
 
+  get onReconnecting(): (() => void) | null { return this._onReconnecting; }
+  set onReconnecting(fn: (() => void) | null) { this._onReconnecting = fn; }
+
+  get onReconnected(): (() => void) | null { return this._onReconnected; }
+  set onReconnected(fn: (() => void) | null) { this._onReconnected = fn; }
+
   getAppId(): string { return this.appId; }
   getAppSecret(): string { return this.appSecret; }
   getDomain(): string { return this.domain; }
+
+  /**
+   * 底层连接健康快照（僵尸连接探测用，只读、零网络开销）。
+   *
+   * 经 duck-typing 读 SDK WSClient 内部的 wsConfig.getWSInstance().readyState：
+   *   - hasClient=false：wsClient 已被置空（未连接/已断开）；
+   *   - socketOpen=true/false：底层 WebSocket 是否处于 OPEN；
+   *   - socketOpen=null：SDK 内部结构不可读（版本变化/测试 fake）→ 探测方
+   *     应视为「未知」而不是「已死」，避免误杀健康连接。
+   */
+  getConnectionHealth(): { hasClient: boolean; socketOpen: boolean | null } {
+    const client = this.wsClient;
+    if (!client) return { hasClient: false, socketOpen: null };
+    try {
+      const inst = (
+        client as unknown as {
+          wsConfig?: { getWSInstance?: () => { readyState?: number } | null };
+        }
+      ).wsConfig?.getWSInstance?.();
+      if (!inst || typeof inst.readyState !== 'number') {
+        return { hasClient: true, socketOpen: null };
+      }
+      // WebSocket.OPEN === 1（ws 库与浏览器标准一致）。
+      return { hasClient: true, socketOpen: inst.readyState === 1 };
+    } catch {
+      return { hasClient: true, socketOpen: null };
+    }
+  }
 
   constructor(appId: string, appSecret: string, domain: 'feishu' | 'lark' = 'feishu') {
     this.appId = appId;
@@ -2278,10 +2322,14 @@ export class FeishuGateway {
         },
         onReconnecting: () => {
           dlog('Feishu reconnecting...');
+          // 透传给上层守护（FeishuAdapter）：SDK 掉线自愈期间状态别谎报「已连接」。
+          this._onReconnecting?.();
         },
         onReconnected: () => {
           this.connectedAtMs = Date.now();
           dlog('Feishu reconnected');
+          // 透传给上层守护：SDK 自愈成功，恢复「已连接」并撤掉上层重连排程。
+          this._onReconnected?.();
         },
       });
 

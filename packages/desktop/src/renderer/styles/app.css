@@ -365,6 +365,27 @@
   color: var(--otto-accent);
 }
 
+/* —— 系统气泡（斜杠命令回执 / 本地提示，ephemeral）—— */
+.otto-msg-system {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+}
+.otto-msg-system__card {
+  max-width: 92%;
+  min-width: 40%;
+  background: var(--otto-surface, rgba(0, 0, 0, 0.03));
+  border: 1px dashed var(--otto-border, rgba(0, 0, 0, 0.12));
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--otto-text-secondary, inherit);
+  word-break: break-word;
+}
+.otto-msg-system__card .otto-prose {
+  font-size: 13px;
+}
+
 /* —— Otto 回复（左对齐）—— */
 .otto-msg-bot {
   display: flex;

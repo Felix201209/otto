@@ -56,6 +56,11 @@ export function Message({
   if (message.role === 'user') {
     return <UserMessage message={message} />;
   }
+  if (message.role === 'system') {
+    // 系统气泡：斜杠命令回执 / 本地提示（/help）。ephemeral（不落库），
+    // 不带头像与「重新生成」动作——它不是模型回复，重生成无意义。
+    return <SystemMessage message={message} />;
+  }
   return (
     <BotMessage
       message={message}
@@ -63,6 +68,17 @@ export function Message({
       onRegenerate={onRegenerate}
       onRespondQuestion={onRespondQuestion}
     />
+  );
+}
+
+/** 系统消息（命令回执）：居中窄卡，markdown 正文（Prose），弱化视觉不抢对话主线。 */
+function SystemMessage({ message }: { message: OttoMessage }): React.JSX.Element {
+  return (
+    <div className="otto-msg-system" role="note">
+      <div className="otto-msg-system__card">
+        <Prose text={contentToText(message.content)} />
+      </div>
+    </div>
   );
 }
 

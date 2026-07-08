@@ -24,6 +24,7 @@ import type {
   ServerToClient,
   ModelInfo,
   MessageSource,
+  SlashCommandInfo,
   ToolConfirmationResponsePayload,
 } from 'otto-server';
 
@@ -59,6 +60,13 @@ export interface OttoState {
    */
   sessionsLoaded?: boolean;
   currentModel: string | null;
+  /**
+   * server 侧可执行的斜杠命令清单（slash_commands_list 帧）。
+   * 面板展示时经 mergeServerCommands 与本地命令合并——server 是 server 命令
+   * 的单一事实源，renderer 不预声明纯 server 命令，防两处清单漂移。
+   * 可选：老的完整 state 字面量（如单测）未提供时按空清单处理。
+   */
+  slashCommands?: SlashCommandInfo[];
   /** 末次错误（toast 用）。 */
   lastError: string | null;
 }
@@ -73,6 +81,7 @@ const initialState: OttoState = {
   modelsLoaded: false,
   sessionsLoaded: false,
   currentModel: null,
+  slashCommands: [],
   lastError: null,
 };
 
@@ -83,6 +92,7 @@ type Action =
   | { kind: 'frame'; frame: ServerToClient }
   | { kind: 'select'; sessionId: string }
   | { kind: 'optimistic_user'; message: OttoMessage }
+  | { kind: 'system_note'; markdown: string }
   | { kind: 'local_error'; message: string }
   | { kind: 'clear_error' };
 
@@ -214,6 +224,19 @@ function reducer(state: OttoState, action: Action): OttoState {
     case 'optimistic_user':
       return appendMessage(state, action.message);
 
+    case 'system_note': {
+      // 本地系统提示气泡（/help 等）：ephemeral，不发帧不落库，刷新后消失是设计行为。
+      if (!state.activeSessionId) return state;
+      return appendMessage(state, {
+        id: `note-${Date.now()}-${clientMsgSeq++}`,
+        sessionId: state.activeSessionId,
+        role: 'system',
+        content: [{ type: 'text', value: action.markdown }],
+        timestamp: Date.now(),
+        source: 'local',
+      });
+    }
+
     case 'local_error':
       // 本地产生的错误（如断连时拦截发送）——复用 lastError 的 toast 通道。
       return { ...state, lastError: action.message };
@@ -338,6 +361,32 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
             lastError: `飞书回推失败：${frame.payload.error ?? '未知错误'}`,
           };
 
+    case 'slash_commands_list':
+      // server 侧命令清单（面板经 mergeServerCommands 合并展示）。
+      return { ...state, slashCommands: frame.payload.commands };
+
+    case 'slash_command_result': {
+      // 斜杠命令回执 → 追加一条 **ephemeral** 系统气泡（role:'system'）。
+      // 有意不落库（见 server handleRunSlashCommand 注释）：它是即时查询回执，
+      // 不属于会话内容。因此刷新 / 切走再切回（history 帧整表覆盖）后消失
+      // 是设计行为，不是 bug。
+      const { sessionId, name, args, ok, markdown } = frame.payload;
+      const echo = `\`/${name}${args?.trim() ? ` ${args.trim()}` : ''}\``;
+      return appendMessage(state, {
+        id: `slash-${Date.now()}-${clientMsgSeq++}`,
+        sessionId,
+        role: 'system',
+        content: [
+          {
+            type: 'text',
+            value: `${echo}\n\n${ok ? '' : '⚠️ '}${markdown}`,
+          },
+        ],
+        timestamp: Date.now(),
+        source: 'local',
+      });
+    }
+
     default:
       return state;
   }
@@ -385,6 +434,16 @@ export interface OttoActions {
     outcome: 'approved' | 'rejected' | 'always_approve',
     payload?: ToolConfirmationResponsePayload,
   ): void;
+  /**
+   * 执行一条 server 侧斜杠命令（当前会话）。结果经 slash_command_result 帧
+   * 回来，渲染成 ephemeral 系统气泡（不落库，见 applyFrame 对应分支注释）。
+   */
+  runSlashCommand(name: string, args: string): void;
+  /**
+   * 在当前会话本地插入一条系统提示气泡（如 /help 的命令总览）。
+   * 纯前端、不发帧不落库——与 slash_command_result 同样的 ephemeral 语义。
+   */
+  postSystemNote(markdown: string): void;
   /** 清掉末次错误（toast 关闭 / 自动消失用）。 */
   clearError(): void;
 }
@@ -457,6 +516,8 @@ export function useOttoStore(): UseOttoStore {
       if (connected && !wasConnected) {
         transport.send({ type: 'list_sessions', payload: {} });
         transport.send({ type: 'get_models', payload: {} });
+        // 顺带拉 server 侧斜杠命令清单（命令面板合并展示的单一事实源）。
+        transport.send({ type: 'list_slash_commands', payload: {} });
       }
       wasConnected = connected;
     });
@@ -624,6 +685,25 @@ export function useOttoStore(): UseOttoStore {
     [],
   );
 
+  const runSlashCommand = useCallback((name: string, args: string) => {
+    const sessionId = activeRef.current;
+    if (!sessionId || !name) return;
+    // 断连时不发（帧会积压在 preload 队列里，但用户以为命令已执行）——走 toast 告知。
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，命令未执行' });
+      return;
+    }
+    transport.send({
+      type: 'run_slash_command',
+      payload: { sessionId, name, ...(args ? { args } : {}) },
+    });
+  }, []);
+
+  const postSystemNote = useCallback((markdown: string) => {
+    if (!markdown.trim()) return;
+    dispatch({ kind: 'system_note', markdown });
+  }, []);
+
   const clearError = useCallback(() => {
     dispatch({ kind: 'clear_error' });
   }, []);
@@ -640,6 +720,8 @@ export function useOttoStore(): UseOttoStore {
       setModel,
       cancel,
       respondToolConfirmation,
+      runSlashCommand,
+      postSystemNote,
       clearError,
     },
   };

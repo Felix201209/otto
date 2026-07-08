@@ -36,13 +36,13 @@ import {
   validateClientPayload,
   type ApiResponse,
   type ClientToServer,
+  type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
   type ModelInfo,
   type ServerToClient,
   type SettingsSnapshot,
   type McpServerInfo,
-  type ContextBreakdown,
   type StatsSnapshot,
   type DoctorReportInfo,
   type TodoItemInfo,
@@ -59,7 +59,16 @@ import {
   type SessionStore,
   type Unsubscribe,
 } from './sessions.js';
-import { registerFeishu, type FeishuRegistration } from './feishu/register.js';
+import {
+  executeSlashCommand,
+  listSlashCommands,
+  type CommandHost,
+} from './commands/index.js';
+import {
+  registerFeishu,
+  type FeishuRegisterDeps,
+  type FeishuRegistration,
+} from './feishu/register.js';
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
@@ -133,6 +142,11 @@ export interface OttoServerOptions {
    * 让无 key 的全新机器也能端到端验证收发链路。可被 env OTTO_SERVER_MOCK=1 置真。
    */
   mock?: boolean;
+  /**
+   * 飞书注入（测试用）：凭证与 gateway 工厂透传给 registerFeishu → adapter，
+   * 让 /feishu/start、/feishu/stop 端点行为可离线单测（不读真凭证、不连真飞书）。
+   */
+  feishuDeps?: Pick<FeishuRegisterDeps, 'credentials' | 'gatewayFactory'>;
 }
 
 /**
@@ -151,7 +165,8 @@ export class OttoServer {
   readonly store: SessionStore;
   private readonly host: string;
   private readonly port: number;
-  private readonly enableFeishu: boolean;
+  /** 飞书网关是否启用。非 readonly：/feishu/start、/feishu/stop 运行期可翻转。 */
+  private enableFeishu: boolean;
   private readonly startedAt = Date.now();
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
@@ -161,6 +176,10 @@ export class OttoServer {
   private http?: HttpServer;
   private wss?: WebSocketServer;
   private feishu?: FeishuRegistration;
+  /** 飞书测试注入（见 OttoServerOptions.feishuDeps）。 */
+  private readonly feishuDeps?: OttoServerOptions['feishuDeps'];
+  /** 运行期飞书启停的单飞锁：并发 POST 复用同一次操作，防重复 register。 */
+  private feishuOpLock: Promise<unknown> = Promise.resolve();
   private readonly conns = new Set<ClientConn>();
   /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
   private workflowUnsub?: () => void;
@@ -175,6 +194,7 @@ export class OttoServer {
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
+    this.feishuDeps = opts.feishuDeps;
   }
 
   /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
@@ -225,6 +245,7 @@ export class OttoServer {
       this.feishu = await registerFeishu({
         store: this.store,
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+        ...this.feishuDeps,
       });
     }
 
@@ -283,6 +304,9 @@ export class OttoServer {
       feishu: {
         enabled: this.enableFeishu,
         connected: this.feishu?.isConnected() ?? false,
+        // 守护详情（断线重连次数 / 下次重试 / 锁冲突持有者等）；registration
+        // 未就绪（未启用飞书）时不携带。桌面端徽标与 CLI status 都吃这份。
+        status: this.feishu?.getStatus(),
       },
     };
   }
@@ -1123,8 +1147,91 @@ export class OttoServer {
     if (path === HTTP_ROUTES.models && req.method === 'GET') {
       return sendJson(res, 200, ok(this.modelInfos()));
     }
+    // 飞书运行期启停（desktop 一键开关走这里）。async handler：完成后再答复。
+    if (path === HTTP_ROUTES.feishuStart && req.method === 'POST') {
+      void this.runtimeFeishuStart()
+        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuStop && req.method === 'POST') {
+      void this.runtimeFeishuStop()
+        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
 
     sendJson(res, 404, err('not_found'));
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 飞书运行期启停（POST /feishu/start | /feishu/stop）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * 运行期启动/恢复飞书守护。幂等；经单飞锁串行化，并发请求不会重复注册。
+   * 覆盖三种入口场景：
+   *   - server 启动时未启用（无凭证/未开开关）→ 现在注册并启动。凭证在
+   *     adapter.start() 里重新读盘——用户运行期才配好凭证也能拉起；
+   *   - 已有 registration 但被 stop 过 → registration.start() 恢复守护
+   *     （断线自动重连随之恢复）；
+   *   - 已在跑 → adapter 幂等 no-op，返回当前状态。
+   * 无凭证时诚实失败（ok:false + 原因），enableFeishu 保持 false，不谎报已启用。
+   */
+  private runtimeFeishuStart(): Promise<ApiResponse<FeishuHealthStatus | null>> {
+    const run = this.feishuOpLock.then(async () => {
+      if (!this.feishu) {
+        this.feishu = await registerFeishu({
+          store: this.store,
+          broadcast: (sessionId, frame) =>
+            this.store.publish(sessionId, frame),
+          ...this.feishuDeps,
+        });
+      } else {
+        await this.feishu.start();
+      }
+      const status = this.feishu.getStatus();
+      if (!status.configured) {
+        this.enableFeishu = false;
+        return {
+          ok: false,
+          data: status,
+          error:
+            '未发现可用的飞书凭证（~/.otto-user/feishu-credentials.json），网关未启动。' +
+            '请先在终端运行 otto feishu setup 配置，再重试。',
+        } satisfies ApiResponse<FeishuHealthStatus | null>;
+      }
+      this.enableFeishu = true;
+      return ok<FeishuHealthStatus | null>(status);
+    });
+    // 锁链只关心「上一个操作结束了没」，吞掉错误防止断链拖死后续操作。
+    this.feishuOpLock = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * 运行期停止飞书守护（有意停止）：取消所有重连定时器，之后**不自动重连**，
+   * 直到再次 start。registration 句柄保留，供后续恢复。
+   */
+  private runtimeFeishuStop(): Promise<ApiResponse<FeishuHealthStatus | null>> {
+    const run = this.feishuOpLock.then(async () => {
+      if (!this.feishu) {
+        return {
+          ok: false,
+          data: null,
+          error: '飞书网关未在运行，无需停止。',
+        } satisfies ApiResponse<FeishuHealthStatus | null>;
+      }
+      await this.feishu.stop();
+      this.enableFeishu = false;
+      return ok<FeishuHealthStatus | null>(this.feishu.getStatus());
+    });
+    this.feishuOpLock = run.catch(() => undefined);
+    return run;
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -1315,6 +1422,14 @@ export class OttoServer {
         return this.handleGetExtensions(conn);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
+      case 'run_slash_command':
+        return this.handleRunSlashCommand(conn, msg);
+      case 'list_slash_commands':
+        // 命令清单的单一事实源：renderer 面板据此合并展示 server 侧命令。
+        return this.send(conn.socket, {
+          type: 'slash_commands_list',
+          payload: { commands: listSlashCommands() },
+        });
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -1395,6 +1510,106 @@ export class OttoServer {
     }
     // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
+  }
+
+  /**
+   * 斜杠命令宿主（src/commands/ 的窄依赖面）：全部用闭包桥接到 server 既有
+   * 私有能力（statsSnapshot / mcpServerInfos / …），命令层不反向持有 OttoServer。
+   */
+  private commandHost(): CommandHost {
+    return {
+      store: this.store,
+      serverVersion: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      uptimeMs: () => Date.now() - this.startedAt,
+      cwd: () => resolveDefaultCwd(),
+      getConfig: (sessionId) =>
+        this.store.getRuntime(sessionId)?.getConfig?.() as
+          | CoreConfig
+          | undefined,
+      currentModel: () => this.currentModel(),
+      modelInfos: () => this.modelInfos(),
+      statsSnapshot: () => this.statsSnapshot(),
+      mcpServerInfos: () => this.mcpServerInfos(),
+      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
+    };
+  }
+
+  /**
+   * 斜杠命令入口（run_slash_command 帧）：路由到 src/commands/ 的注册表执行，
+   * 结果以 slash_command_result 回给**发起连接**（与 get_stats 等查询帧一致，
+   * 不广播——命令回执只属于发起者）。
+   *
+   * 命令结果**有意不落库**：它是「即时查询回执」而非会话内容，落库会污染
+   * 历史/导出与模型上下文。因此刷新或切换会话后气泡消失是设计行为，不是 bug
+   * （renderer 以 ephemeral 系统气泡渲染，见 useOttoStore 的 slash_command_result 分支）。
+   *
+   * submit_prompt 形态（如 /init）先查会话忙闲（忙则用回执通道诚实拒绝），
+   * 再回执行回执并把 prompt 当用户消息走 handleSendUserMessage——复用其
+   * busy 兜底闸门 / mock 降级 / runtime 懒构建，不另起炉灶。
+   */
+  private async handleRunSlashCommand(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'run_slash_command' }>,
+  ): Promise<void> {
+    const { sessionId, name, args } = msg.payload;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const outcome = await executeSlashCommand(
+      this.commandHost(),
+      sessionId,
+      name,
+      args ?? '',
+    );
+    if (outcome.kind === 'submit_prompt') {
+      // 先查忙闲再发「已提交」回执：否则会话 thinking/streaming 时用户先收到
+      // 成功回执、紧接着又收到 busy 错误帧，两条消息互相矛盾（实际任务被拒）。
+      // handleSendUserMessage 内部的 busy 闸门保留作兜底（覆盖此检查后的竞态窗口）。
+      const session = this.store.getSession(sessionId);
+      if (
+        session &&
+        (session.status === 'thinking' || session.status === 'streaming')
+      ) {
+        this.send(conn.socket, {
+          type: 'slash_command_result',
+          payload: {
+            sessionId,
+            name,
+            args,
+            ok: false,
+            markdown: `该会话正在生成回复，/${name} 未提交。请稍候或先取消，再重试。`,
+          },
+        });
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'slash_command_result',
+        payload: { sessionId, name, args, ok: true, markdown: outcome.note },
+      });
+      await this.handleSendUserMessage(conn, {
+        type: 'send_user_message',
+        payload: {
+          sessionId,
+          content: [{ type: 'text', value: outcome.content }],
+          source: 'local',
+        },
+      });
+      return;
+    }
+    this.send(conn.socket, {
+      type: 'slash_command_result',
+      payload: {
+        sessionId,
+        name,
+        args,
+        ok: outcome.ok,
+        markdown: outcome.markdown,
+      },
+    });
   }
 
   /**

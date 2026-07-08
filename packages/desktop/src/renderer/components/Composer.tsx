@@ -20,6 +20,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
+import * as transport from '../transport.js';
 import type { ImageAttachment } from '../state/useOttoStore.js';
 import {
   fileToImageAttachment,
@@ -30,6 +31,7 @@ import {
   SlashCommands,
   filterCommands,
   parseSlashQuery,
+  splitSlashInput,
   type SlashCommand,
 } from './SlashCommands.js';
 import {
@@ -57,10 +59,24 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'model', description: '打开模型菜单', action: 'local' },
   { id: 'clear', description: '清空当前会话上下文', action: 'local' },
   { id: 'settings', description: '打开设置面板', action: 'local' },
+  { id: 'help', description: '查看全部可用命令', action: 'local' },
   { id: 'doctor', description: '依赖体检（pandoc/ffmpeg 等外部工具）', action: 'local' },
-  { id: 'memory', description: '查看/新增记忆（项目 + 全局 OTTO.md）', action: 'local' },
+  // /memory 混合行为：裸调开「记忆」面板（保留旧肌肉记忆）；带 show/add/refresh/list
+  // 参数时交给 server 命令层直接执行（对齐 CLI /memory 子命令）。
+  {
+    id: 'memory',
+    description: '记忆：裸调开面板；子命令直接执行',
+    action: 'server',
+    bareLocal: true,
+    usage: 'memory show|add|refresh|list …',
+  },
   { id: 'skills', description: '浏览已装技能库', action: 'local' },
   { id: 'export', description: '导出当前会话为 Markdown', action: 'local' },
+  { id: 'copy', description: '复制最近一条 Otto 回复', action: 'local' },
+  { id: 'session', description: '浏览/检索全部会话', action: 'local' },
+  { id: 'theme', description: '界面与偏好设置（对齐 CLI /theme）', action: 'local' },
+  { id: 'config', description: '偏好设置（agent 风格 / 语言等）', action: 'local' },
+  { id: 'hooks', description: '打开 hooks 文档', action: 'local' },
   { id: 'desktop', description: '启动/修复桌面端 Otto', action: 'prompt', prompt: '请检查并修复 Otto 桌面端：构建 renderer/main/preload，重新打包 Electron，覆盖 /Applications/Otto.app，并验证界面是否为最新。' },
   { id: 'feishu-start', description: '开启飞书控制网关', action: 'prompt', prompt: '请开启飞书/Lark 控制网关并检查连接状态。' },
   { id: 'feishu-stop', description: '停止飞书控制网关', action: 'prompt', prompt: '请停止飞书/Lark 控制网关并确认进程已退出。' },
@@ -127,6 +143,21 @@ interface ComposerProps {
   onOpenSkills?: () => void;
   /** 斜杠命令 `/export`：导出当前会话为 Markdown（真实落盘）。 */
   onExport?: () => void;
+  /**
+   * 命令表（本地 + server 合并后的完整清单）。缺省用本地 SLASH_COMMANDS——
+   * App 在收到 slash_commands_list 帧后经 mergeServerCommands 传入合并版。
+   */
+  commands?: readonly SlashCommand[];
+  /** action='server' 命令：经 run_slash_command 帧交 server 执行（name + 原始 args）。 */
+  onRunServerCommand?: (name: string, args: string) => void;
+  /** 斜杠命令 `/theme` `/config`：打开设置与诊断中心的「偏好」tab。 */
+  onOpenPrefs?: () => void;
+  /** 斜杠命令 `/session`：打开「查看全部对话」检索面板。 */
+  onOpenSessions?: () => void;
+  /** 斜杠命令 `/copy`：复制最近一条 Otto 回复到剪贴板。 */
+  onCopyLast?: () => void;
+  /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
+  onShowHelp?: () => void;
 }
 
 export function Composer({
@@ -148,6 +179,12 @@ export function Composer({
   onOpenMemory,
   onOpenSkills,
   onExport,
+  commands = SLASH_COMMANDS,
+  onRunServerCommand,
+  onOpenPrefs,
+  onOpenSessions,
+  onCopyLast,
+  onShowHelp,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -161,11 +198,22 @@ export function Composer({
 
   // 由当前文本解析斜杠命令 query，再过滤出候选。无会话（disabled）时不弹面板。
   // parseSlashQuery=null → 非命令输入态；候选为空 → 无匹配（如 `/xyz`），也不显示面板。
+  //
+  // 参数态（splitSlashInput.argMode）：命令名后已敲空白（如 `/kb search 报销`）
+  // → 不再按整串前缀过滤（那会让 `/kb ` 一敲空格面板就消失），而是锁定命令名
+  // **精确命中**的那条命令，空白后的文本作为 args 原样保留、Enter 时随命令发送。
   const slashQuery = disabled ? null : parseSlashQuery(text);
-  const slashCommands = useMemo(
-    () => (slashQuery == null ? [] : filterCommands(SLASH_COMMANDS, slashQuery)),
-    [slashQuery],
-  );
+  const slashInput = slashQuery == null ? null : splitSlashInput(slashQuery);
+  const slashCommands = useMemo(() => {
+    if (slashInput == null) return [];
+    if (!slashInput.argMode) return filterCommands(commands, slashInput.head);
+    const exact = commands.find(
+      (c) => c.id.toLowerCase() === slashInput.head.toLowerCase(),
+    );
+    return exact ? [exact] : [];
+    // slashInput 每次 render 由 text 重建（引用恒变），依赖取其字段而非对象本身。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashInput?.head, slashInput?.argMode, commands]);
   const slashOpen = slashCommands.length > 0;
   // query 变化后把高亮夹回合法范围（候选变少时 slashIndex 可能越界）。
   const activeSlash =
@@ -314,11 +362,23 @@ export function Composer({
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
-  // 执行一条斜杠命令 → 本地分派（不发给模型），随后清空输入。
-  // 未接对应回调的命令静默忽略（面板本不该列出它，双保险）。
+  // 执行一条斜杠命令 → 按 action 分派（prompt=发模型 / server=发帧 / local=回调），
+  // 随后清空输入。未接对应回调的命令静默忽略（面板本不该列出它，双保险）。
   const runSlashCommand = (cmd: SlashCommand) => {
+    // 参数：命令名后的原始文本（`/kb search 报销` → 'search 报销'）。
+    const args = (slashInput?.argMode ? slashInput.args : '').trim();
+
     if (cmd.action === 'prompt' && cmd.prompt) {
       onSend(cmd.prompt, []);
+      clearInput();
+      taRef.current?.focus();
+      return;
+    }
+
+    // server 命令：发 run_slash_command 帧；bareLocal 且无参数时退回本地分派
+    // （如 `/memory` 裸调开「记忆」面板，`/memory add xx` 才走 server）。
+    if (cmd.action === 'server' && !(cmd.bareLocal && args === '')) {
+      onRunServerCommand?.(cmd.id, args);
       clearInput();
       taRef.current?.focus();
       return;
@@ -337,6 +397,9 @@ export function Composer({
       case 'settings':
         onOpenSettings?.();
         break;
+      case 'help':
+        onShowHelp?.();
+        break;
       case 'doctor':
         onOpenDoctor?.();
         break;
@@ -348,6 +411,20 @@ export function Composer({
         break;
       case 'export':
         onExport?.();
+        break;
+      case 'copy':
+        onCopyLast?.();
+        break;
+      case 'session':
+        onOpenSessions?.();
+        break;
+      case 'theme':
+      case 'config':
+        onOpenPrefs?.();
+        break;
+      case 'hooks':
+        // 对齐 CLI /hooks：用系统浏览器打开 hooks 文档（preload openExternal）。
+        void transport.openExternal('https://www.otto.bot/hooks-help');
         break;
       default:
         break;

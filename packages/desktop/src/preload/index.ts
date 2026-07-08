@@ -25,9 +25,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ClientToServer,
+  HealthInfo,
   ServerEndpoint,
   ServerToClient,
 } from 'otto-server';
+
+/**
+ * 飞书守护状态（main 从 server /health 透传；renderer 徽标据此渲染）。
+ * 即 HealthInfo 里的 feishu 字段：enabled/connected + 守护详情 status。
+ */
+export type FeishuStatusDetail = HealthInfo['feishu'];
 
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
@@ -77,7 +84,17 @@ export interface OttoBridge {
   saveTextFile(suggestedFileName: string, content: string): Promise<string | null>;
   feishuStart(): Promise<{ text: string; pid?: number }>;
   feishuStop(): Promise<{ text: string }>;
-  feishuStatus(): Promise<{ text: string; running: boolean }>;
+  /**
+   * 飞书守护状态查询（main 真查 server /health）。
+   * text 为人话说明；running=守护是否在跑；feishu 为结构化守护详情
+   * （connected / 重连第 N 次 / 下次重试时间 / 锁冲突持有者 pid），
+   * server 未就绪时缺省。
+   */
+  feishuStatus(): Promise<{
+    text: string;
+    running: boolean;
+    feishu?: FeishuStatusDetail;
+  }>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -295,8 +312,16 @@ const bridge: OttoBridge = {
   feishuStop(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:feishu-stop') as Promise<{ text: string }>;
   },
-  feishuStatus(): Promise<{ text: string; running: boolean }> {
-    return ipcRenderer.invoke('otto:feishu-status') as Promise<{ text: string; running: boolean }>;
+  feishuStatus(): Promise<{
+    text: string;
+    running: boolean;
+    feishu?: FeishuStatusDetail;
+  }> {
+    return ipcRenderer.invoke('otto:feishu-status') as Promise<{
+      text: string;
+      running: boolean;
+      feishu?: FeishuStatusDetail;
+    }>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
