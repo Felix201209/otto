@@ -1,0 +1,169 @@
+/**
+ * @license
+ * Copyright 2025 Otto
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * ToolCalls · AskUserQuestion 问答卡单测：
+ *   工具卡在 awaiting_approval + confirmationDetails.type==='question' 时，整卡
+ *   替换成交互式问答卡。验证选项作答、Other 自由文本、提交 payload、跳过路径。
+ *   这是「答案能不能正确回传」的前端保证——server 侧闸门由 runtime.test.ts 覆盖。
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent, screen } from '@testing-library/react';
+import type { ToolCall } from 'otto-server';
+import { ToolCallsCard } from './ToolCalls.js';
+
+/** 造一张待作答的 ask_user_question 工具卡。 */
+function questionCard(overrides: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'call-1',
+    toolName: 'ask_user_question',
+    parameters: {},
+    status: 'awaiting_approval' as ToolCall['status'],
+    confirmationDetails: {
+      type: 'question',
+      title: '需要你确认',
+      questions: [
+        {
+          question: '选哪个？',
+          header: '选择',
+          options: [
+            { label: 'A 方案', description: '甲' },
+            { label: 'B 方案', description: '乙' },
+          ],
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+describe('ToolCalls · AskUserQuestion 问答卡', () => {
+  it('渲染问题与选项，选中后提交回传正确 answers', () => {
+    const onRespond = vi.fn();
+    render(
+      <ToolCallsCard
+        toolCalls={[questionCard()]}
+        onRespondQuestion={onRespond}
+      />,
+    );
+
+    // 问题文本与两个选项 + 自动追加的 Other 都在。
+    expect(screen.getByText('选哪个？')).toBeTruthy();
+    expect(screen.getByText('A 方案')).toBeTruthy();
+    expect(screen.getByText('B 方案')).toBeTruthy();
+    expect(screen.getByText('Other')).toBeTruthy();
+
+    // 未作答时提交禁用。
+    const submit = screen.getByRole('button', { name: '提交' });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+
+    // 选 A 方案 → 提交启用 → 点击回传。
+    fireEvent.click(screen.getByText('A 方案'));
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+
+    expect(onRespond).toHaveBeenCalledTimes(1);
+    expect(onRespond).toHaveBeenCalledWith('call-1', 'approved', {
+      answers: { '选哪个？': 'A 方案' },
+    });
+  });
+
+  it('选 Other → 输入自由文本 → 提交用输入内容作答', () => {
+    const onRespond = vi.fn();
+    render(
+      <ToolCallsCard
+        toolCalls={[questionCard()]}
+        onRespondQuestion={onRespond}
+      />,
+    );
+
+    // 选 Other 前无输入框；选中后出现。
+    fireEvent.click(screen.getByText('Other'));
+    const input = screen.getByPlaceholderText('输入你的回答…') as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    // Other 选中但为空时不可提交。
+    const submit = screen.getByRole('button', { name: '提交' });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(input, { target: { value: 'C 自定义' } });
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+
+    expect(onRespond).toHaveBeenCalledWith('call-1', 'approved', {
+      answers: { '选哪个？': 'C 自定义' },
+    });
+  });
+
+  it('跳过 → 以 rejected 回传（不带答案）', () => {
+    const onRespond = vi.fn();
+    render(
+      <ToolCallsCard
+        toolCalls={[questionCard()]}
+        onRespondQuestion={onRespond}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }));
+    expect(onRespond).toHaveBeenCalledWith('call-1', 'rejected');
+  });
+
+  it('多选题：选中多项，提交以逗号连接答案', () => {
+    const onRespond = vi.fn();
+    render(
+      <ToolCallsCard
+        toolCalls={[
+          questionCard({
+            confirmationDetails: {
+              type: 'question',
+              title: 't',
+              questions: [
+                {
+                  question: '要哪些？',
+                  header: '多选',
+                  multiSelect: true,
+                  options: [
+                    { label: '甲', description: '' },
+                    { label: '乙', description: '' },
+                    { label: '丙', description: '' },
+                  ],
+                },
+              ],
+            },
+          }),
+        ]}
+        onRespondQuestion={onRespond}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('甲'));
+    fireEvent.click(screen.getByText('丙'));
+    fireEvent.click(screen.getByRole('button', { name: '提交' }));
+
+    expect(onRespond).toHaveBeenCalledWith('call-1', 'approved', {
+      answers: { '要哪些？': '甲, 丙' },
+    });
+  });
+
+  it('提交后进入已提交态，按钮禁用防重复提交', () => {
+    const onRespond = vi.fn();
+    render(
+      <ToolCallsCard
+        toolCalls={[questionCard()]}
+        onRespondQuestion={onRespond}
+      />,
+    );
+    fireEvent.click(screen.getByText('A 方案'));
+    const submit = screen.getByRole('button', { name: '提交' });
+    fireEvent.click(submit);
+    // 文案变「已提交」，再点无效。
+    const sent = screen.getByRole('button', { name: '已提交' });
+    expect((sent as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(sent);
+    expect(onRespond).toHaveBeenCalledTimes(1);
+  });
+});

@@ -19,6 +19,7 @@ import type {
   ToolCallStatus,
   ToolCall,
   ToolCallConfirmationDetails,
+  ToolConfirmationResponsePayload,
 } from 'otto-server';
 import { parseDiff, type DiffLine } from './diff.js';
 import {
@@ -28,6 +29,16 @@ import {
   IconChevron,
   IconClose,
 } from './icons.js';
+
+/**
+ * 回传工具确认应答（AskUserQuestion 提交答案 / 跳过）。透传自 store 的
+ * respondToolConfirmation；callId = 工具卡 id。
+ */
+export type RespondQuestionFn = (
+  callId: string,
+  outcome: 'approved' | 'rejected' | 'always_approve',
+  payload?: ToolConfirmationResponsePayload,
+) => void;
 
 type ToolKind = 'edit' | 'exec' | 'generic';
 
@@ -178,8 +189,11 @@ function StatusIcon({
 
 export function ToolCallsCard({
   toolCalls,
+  onRespondQuestion,
 }: {
   toolCalls: ToolCall[];
+  /** AskUserQuestion 作答回传；缺省时问答卡以只读态渲染（无交互按钮）。 */
+  onRespondQuestion?: RespondQuestionFn;
 }): React.JSX.Element | null {
   // 顶层「调用了 N 个工具」折叠卡：有运行中的默认展开，否则默认展开（spec 截图为展开态）。
   const [open, setOpen] = useState(true);
@@ -202,13 +216,31 @@ export function ToolCallsCard({
       <div className={`otto-collapse${open ? ' otto-collapse--open' : ''}`}>
         <div className="otto-collapse__inner">
           <div className="otto-tools__list">
-            {toolCalls.map((tc) => (
-              <ToolItem key={tc.id} tool={tc} />
-            ))}
+            {toolCalls.map((tc) =>
+              isPendingQuestion(tc) ? (
+                // 待作答的 AskUserQuestion：整卡换成交互式问答卡。
+                <QuestionCard
+                  key={tc.id}
+                  tool={tc}
+                  onRespond={onRespondQuestion}
+                />
+              ) : (
+                <ToolItem key={tc.id} tool={tc} />
+              ),
+            )}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/** 该工具卡是否是「待用户作答的 AskUserQuestion」（需渲染交互式问答卡）。 */
+function isPendingQuestion(tc: ToolCall): boolean {
+  return (
+    tc.status === 'awaiting_approval' &&
+    tc.confirmationDetails?.type === 'question' &&
+    (tc.confirmationDetails.questions?.length ?? 0) > 0
   );
 }
 
@@ -277,6 +309,170 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** UI 自动追加的自由文本选项 label（与 core 约定一致，不由模型给出）。 */
+const OTHER_LABEL = 'Other';
+
+/**
+ * AskUserQuestion 交互式问答卡：渲染 1-4 个问题，每题选项按钮 + 自动追加的
+ * 「其它」自由文本；答齐后「提交」把 answers 回传 server，「跳过」以拒答收口。
+ * 提交/跳过后卡进入 pending 态（等 server 回 tool_calls_update 收口成成功）。
+ */
+function QuestionCard({
+  tool,
+  onRespond,
+}: {
+  tool: ToolCall;
+  onRespond?: RespondQuestionFn;
+}): React.JSX.Element {
+  const questions = tool.confirmationDetails?.questions ?? [];
+  // 每题已选 label 列表（单选恒为 0/1 个；多选可多个）。
+  const [selections, setSelections] = useState<Record<string, string[]>>({});
+  // 每题「其它」输入框文本。
+  const [otherText, setOtherText] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState(false);
+
+  function toggle(qText: string, label: string, multi: boolean): void {
+    setSelections((prev) => {
+      const cur = prev[qText] ?? [];
+      if (multi) {
+        const next = cur.includes(label)
+          ? cur.filter((l) => l !== label)
+          : [...cur, label];
+        return { ...prev, [qText]: next };
+      }
+      // 单选：再点已选项则取消，否则替换为该项。
+      return { ...prev, [qText]: cur[0] === label ? [] : [label] };
+    });
+  }
+
+  /** 某题最终答案文本（Other → 输入框内容）；未答 / Other 空 → null。 */
+  function answerFor(qText: string): string | null {
+    const sel = selections[qText] ?? [];
+    if (sel.length === 0) return null;
+    const parts = sel.map((l) =>
+      l === OTHER_LABEL ? (otherText[qText] ?? '').trim() : l,
+    );
+    if (parts.some((p) => !p)) return null;
+    return parts.join(', ');
+  }
+
+  const allAnswered =
+    questions.length > 0 && questions.every((q) => answerFor(q.question) !== null);
+
+  function submit(): void {
+    if (!onRespond || sent || !allAnswered) return;
+    const answers: Record<string, string> = {};
+    for (const q of questions) {
+      const a = answerFor(q.question);
+      if (a !== null) answers[q.question] = a;
+    }
+    setSent(true);
+    onRespond(tool.id, 'approved', { answers });
+  }
+
+  function skip(): void {
+    if (!onRespond || sent) return;
+    setSent(true);
+    onRespond(tool.id, 'rejected');
+  }
+
+  return (
+    <div className="otto-tool otto-ask">
+      <div className="otto-ask__head">
+        <span className="otto-ask__badge">需要你确认</span>
+        <span className="otto-ask__title">
+          {tool.confirmationDetails?.title ?? '请选择'}
+        </span>
+      </div>
+
+      {questions.map((q) => {
+        const multi = Boolean(q.multiSelect);
+        const sel = selections[q.question] ?? [];
+        const opts = [
+          ...q.options,
+          { label: OTHER_LABEL, description: '自定义回答' },
+        ];
+        const otherOn = sel.includes(OTHER_LABEL);
+        return (
+          <div className="otto-ask__q" key={q.question}>
+            <div className="otto-ask__qtop">
+              {q.header ? (
+                <span className="otto-ask__chip">{q.header}</span>
+              ) : null}
+              <span className="otto-ask__qtext">{q.question}</span>
+            </div>
+            <div className="otto-ask__opts">
+              {opts.map((opt) => {
+                const active = sel.includes(opt.label);
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    className={`otto-ask__opt${active ? ' otto-ask__opt--on' : ''}`}
+                    aria-pressed={active}
+                    disabled={sent}
+                    onClick={() => toggle(q.question, opt.label, multi)}
+                  >
+                    <span className="otto-ask__optmark" aria-hidden>
+                      {active ? <IconCheck size={13} /> : null}
+                    </span>
+                    <span className="otto-ask__optbody">
+                      <span className="otto-ask__optlabel">{opt.label}</span>
+                      {opt.description ? (
+                        <span className="otto-ask__optdesc">
+                          {opt.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {otherOn ? (
+              <input
+                type="text"
+                className="otto-ask__other"
+                placeholder="输入你的回答…"
+                value={otherText[q.question] ?? ''}
+                disabled={sent}
+                autoFocus
+                onChange={(e) =>
+                  setOtherText((prev) => ({
+                    ...prev,
+                    [q.question]: e.target.value,
+                  }))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && allAnswered) submit();
+                }}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+
+      <div className="otto-ask__actions">
+        <button
+          type="button"
+          className="otto-ask__skip"
+          disabled={sent || !onRespond}
+          onClick={skip}
+        >
+          跳过
+        </button>
+        <button
+          type="button"
+          className="otto-ask__submit"
+          disabled={sent || !allAnswered || !onRespond}
+          onClick={submit}
+        >
+          {sent ? '已提交' : '提交'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -24,6 +24,7 @@ import type {
   ServerToClient,
   ModelInfo,
   MessageSource,
+  ToolConfirmationResponsePayload,
 } from 'otto-server';
 
 // ── 状态形状 ──────────────────────────────────────────────────────────────
@@ -382,6 +383,7 @@ export interface OttoActions {
   respondToolConfirmation(
     callId: string,
     outcome: 'approved' | 'rejected' | 'always_approve',
+    payload?: ToolConfirmationResponsePayload,
   ): void;
   /** 清掉末次错误（toast 关闭 / 自动消失用）。 */
   clearError(): void;
@@ -607,12 +609,16 @@ export function useOttoStore(): UseOttoStore {
   }, []);
 
   const respondToolConfirmation = useCallback(
-    (callId: string, outcome: 'approved' | 'rejected' | 'always_approve') => {
+    (
+      callId: string,
+      outcome: 'approved' | 'rejected' | 'always_approve',
+      payload?: ToolConfirmationResponsePayload,
+    ) => {
       const sessionId = activeRef.current;
       if (!sessionId) return;
       transport.send({
         type: 'tool_confirmation_response',
-        payload: { sessionId, callId, outcome },
+        payload: { sessionId, callId, outcome, payload },
       });
     },
     [],

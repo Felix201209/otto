@@ -1246,12 +1246,16 @@ export class OttoServer {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
         return;
       }
-      case 'tool_confirmation_response':
-        // 当前 runtime 走 executeToolCall（YOLO，不上抛确认），无待确认队列可路由。
-        // 带确认的工具调度（CoreToolScheduler.handleConfirmationResponse）是后续增强，
-        // 届时在此把 outcome 路由进 runtime 的 scheduler。
-        // TODO(tool-confirm): runtime 暴露 confirmTool(callId, outcome) 后接线。
+      case 'tool_confirmation_response': {
+        // 把用户对某待确认工具的应答（AskUserQuestion 的答案 / 危险命令确认等）
+        // 按 callId 路由回该会话 runtime，唤醒 runToolCalls 里挂起的等待。
+        // 会话 / runtime 不存在或 callId 无挂起时静默忽略（幂等）。
+        const { sessionId, callId, outcome, payload } = msg.payload;
+        this.store
+          .getRuntime(sessionId)
+          ?.resolveToolConfirmation(callId, outcome, payload);
         return;
+      }
       case 'get_models':
         return this.send(conn.socket, {
           type: 'models_list',

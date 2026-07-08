@@ -292,6 +292,7 @@ export function App(): React.JSX.Element {
             onCancel={actions.cancel}
             onSetModel={actions.setModel}
             onRegenerate={handleRegenerate}
+            onRespondQuestion={actions.respondToolConfirmation}
             onOpenSetup={() => setMainView('settings')}
             onNewChat={handleNewChat}
             onClearContext={handleClearContext}

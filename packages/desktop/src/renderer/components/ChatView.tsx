@@ -22,6 +22,7 @@ import type {
 } from 'otto-server';
 import type { ImageAttachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
+import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import { OttoAvatar, IconArrowDown } from './icons.js';
 
@@ -54,6 +55,8 @@ interface ChatViewProps {
    * 一条用户消息」重发，而非永远重发全会话最后一轮。
    */
   onRegenerate: (messageId: string) => void;
+  /** AskUserQuestion 作答回传（透传到消息里的工具问答卡）。 */
+  onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
@@ -81,6 +84,7 @@ export function ChatView({
   onCancel,
   onSetModel,
   onRegenerate,
+  onRespondQuestion,
   onOpenSetup,
   onNewChat,
   onClearContext,
@@ -232,6 +236,7 @@ export function ChatView({
                 onCopy={copy}
                 // 把当前消息 id 一并传出，让 App 定位对应用户轮次而非最新一轮。
                 onRegenerate={() => onRegenerate(m.id)}
+                onRespondQuestion={onRespondQuestion}
               />
             ))
           )}

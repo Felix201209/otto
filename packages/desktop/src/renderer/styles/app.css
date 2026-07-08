@@ -843,6 +843,189 @@ h6.otto-prose__h {
   transform: rotate(90deg);
 }
 
+/* ── AskUserQuestion 交互式问答卡 ──────────────────────────────────
+   工具卡在 awaiting_approval 且 confirmationDetails.type==='question' 时，
+   整卡替换成此交互卡：徽章 + 逐题选项按钮 + Other 自由输入 + 提交/跳过。 */
+.otto-ask {
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--otto-surface-raised);
+}
+.otto-ask__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.otto-ask__badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--otto-accent-hover);
+  background: var(--otto-accent-soft);
+  border-radius: var(--otto-radius-pill);
+  padding: 2px 9px;
+}
+.otto-ask__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+  min-width: 0;
+}
+.otto-ask__q {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.otto-ask__qtop {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.otto-ask__chip {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--otto-text-secondary);
+  background: var(--otto-local-bg);
+  border-radius: var(--otto-radius-sm);
+  padding: 1px 7px;
+}
+.otto-ask__qtext {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--otto-text);
+  line-height: 1.45;
+}
+.otto-ask__opts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.otto-ask__opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  cursor: pointer;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease),
+    transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-ask__opt:hover {
+  border-color: var(--otto-accent);
+}
+.otto-ask__opt:active {
+  transform: translateY(1px);
+}
+.otto-ask__opt:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.otto-ask__opt--on {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-ask__optmark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--otto-border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.otto-ask__opt--on .otto-ask__optmark {
+  background: var(--otto-accent);
+  border-color: var(--otto-accent);
+}
+.otto-ask__optbody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.otto-ask__optlabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-ask__optdesc {
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+  line-height: 1.4;
+}
+.otto-ask__other {
+  width: 100%;
+  font-family: var(--otto-font);
+  font-size: 13px;
+  color: var(--otto-text);
+  background: var(--otto-surface);
+  border: 1px solid var(--otto-border-strong);
+  border-radius: var(--otto-radius-sm);
+  padding: 8px 11px;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-ask__other:focus {
+  outline: none;
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-ask__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 2px;
+}
+.otto-ask__skip,
+.otto-ask__submit {
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--otto-radius-sm);
+  padding: 7px 16px;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    opacity var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-ask__skip {
+  border: 1px solid var(--otto-border-strong);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+}
+.otto-ask__skip:hover:not(:disabled) {
+  border-color: var(--otto-text-tertiary);
+  color: var(--otto-text);
+}
+.otto-ask__submit {
+  border: 1px solid transparent;
+  background: var(--otto-accent);
+  color: #fff;
+}
+.otto-ask__submit:hover:not(:disabled) {
+  background: var(--otto-accent-hover);
+}
+.otto-ask__skip:disabled,
+.otto-ask__submit:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 /* 运行中转圈 */
 .otto-spin {
   width: 13px;

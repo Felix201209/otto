@@ -162,10 +162,24 @@ function resultDisplayToString(display: unknown): string {
   }
 }
 
+/** 一次工具确认应答（answers 等经 payload 回传）。 */
+interface ConfirmationResult {
+  outcome: 'approved' | 'rejected' | 'always_approve';
+  payload?: ToolConfirmationResponsePayload;
+}
+
 export class CoreSessionRuntime implements SessionRuntime {
   private toolRegistry?: ToolRegistry;
   private abort?: AbortController;
   private running = false;
+  /**
+   * 挂起中的工具确认：callId → resolver。AskUserQuestion 弹卡后在此登记，
+   * server 收到 tool_confirmation_response 调 resolveToolConfirmation 唤醒。
+   */
+  private pendingConfirmations = new Map<
+    string,
+    (result: ConfirmationResult) => void
+  >();
 
   constructor(
     private readonly store: SessionStore,
@@ -204,8 +218,27 @@ export class CoreSessionRuntime implements SessionRuntime {
     this.abort?.abort();
   }
 
+  /**
+   * 回传一个待确认工具的应答，唤醒 runToolCalls 里挂起的等待。
+   * callId 无对应挂起时静默忽略（幂等：迟到 / 重复应答无害）。
+   */
+  resolveToolConfirmation(
+    callId: string,
+    outcome: 'approved' | 'rejected' | 'always_approve',
+    payload?: ToolConfirmationResponsePayload,
+  ): void {
+    const done = this.pendingConfirmations.get(callId);
+    if (!done) return;
+    done({ outcome, payload });
+  }
+
   async dispose(): Promise<void> {
     this.abort?.abort();
+    // 释放前唤醒所有挂起的问答等待，避免 await 永久悬挂（视作用户取消）。
+    for (const done of this.pendingConfirmations.values()) {
+      done({ outcome: 'rejected' });
+    }
+    this.pendingConfirmations.clear();
     // core Config 目前无显式 close；GC 即可。预留 hook（TODO：若 core 增 dispose 在此调）。
   }
 
@@ -507,6 +540,20 @@ export class CoreSessionRuntime implements SessionRuntime {
           };
 
           try {
+            // AskUserQuestion 交互闸门：headless 的 executeToolCall 不会弹确认框，
+            // 所以在此先弹问答卡、等用户答案写进工具的 pendingAnswers，再落入下面
+            // 统一的 executeToolCall —— 它内部 execute() 会读到答案并格式化结果。
+            // 用户跳过 / 会话取消时 answers 为空，execute() 自然回落到 "declined"。
+            if ((fc.name as string) === 'ask_user_question') {
+              await this.gateAskUserQuestion(
+                requestInfo,
+                toolRegistry,
+                cards,
+                callId,
+                signal,
+              );
+            }
+
             const toolResponse = await executeToolCall(
               this.config,
               requestInfo,
@@ -586,6 +633,117 @@ export class CoreSessionRuntime implements SessionRuntime {
         sessionId: this.sessionId,
         toolCalls: Array.from(cards.values()),
       },
+    });
+  }
+
+  /**
+   * AskUserQuestion 的交互闸门：把工具卡切到「待确认」并附上问题清单广播给客户端，
+   * 挂起等待用户作答，收到答案后调工具的 onConfirm 把答案写进其 pendingAnswers。
+   * 随后调用方的 executeToolCall → execute() 便能读到答案并格式化 tool_result。
+   *
+   * 校验失败 / 注册表无此工具 / 详情非 question 时直接返回，放行给 executeToolCall
+   * 走它自己的错误路径（不吞异常，行为与其它工具一致）。
+   */
+  private async gateAskUserQuestion(
+    requestInfo: ToolCallRequestInfo,
+    toolRegistry: ToolRegistry,
+    cards: Map<string, ToolCall>,
+    callId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const tool = toolRegistry.getTool('ask_user_question');
+    if (!tool) return;
+
+    let details: Awaited<ReturnType<typeof tool.shouldConfirmExecute>>;
+    try {
+      details = await tool.shouldConfirmExecute(requestInfo.args, signal);
+    } catch {
+      // 侦测阶段异常：交给 executeToolCall 复现并产出规范错误。
+      return;
+    }
+    if (!details || (details as { type?: string }).type !== 'question') return;
+
+    // shouldConfirmExecute 已就地自愈过 args，此处的 questions 是规范化后的清单。
+    const args = requestInfo.args as unknown as {
+      questions?: AskUserQuestion[];
+      metadata?: { source?: string };
+    };
+    const questions = args.questions ?? [];
+
+    // 工具卡 → 待确认态，挂上问题清单；广播 tool_calls_update + 单独发 confirmation_request。
+    const base = cards.get(callId);
+    if (base) {
+      const awaitingCard: ToolCall = {
+        ...base,
+        status: ToolCallStatus.WaitingForConfirmation,
+        confirmationDetails: {
+          type: 'question',
+          title: (details as { title?: string }).title ?? '请选择',
+          questions,
+          metadata: args.metadata,
+        },
+      };
+      cards.set(callId, awaitingCard);
+      this.publishToolCards(cards);
+      this.store.publish(this.sessionId, {
+        type: 'tool_confirmation_request',
+        payload: {
+          sessionId: this.sessionId,
+          callId,
+          toolCall: awaitingCard,
+        },
+      });
+    }
+
+    // 挂起等待用户作答（或会话取消）。
+    const result = await this.waitForConfirmation(callId, signal);
+
+    // 把答案交给工具 onConfirm 写进 pendingAnswers；rejected/取消 → Cancel（execute 回落 declined）。
+    const outcome =
+      result.outcome === 'rejected'
+        ? ToolConfirmationOutcome.Cancel
+        : ToolConfirmationOutcome.ProceedOnce;
+    await (details as ToolQuestionConfirmationDetails).onConfirm(
+      outcome,
+      result.payload,
+    );
+
+    // 卡从「待确认」过渡回「执行中」，清掉问答详情，让 UI 收起选项、显示运行态。
+    const answered = cards.get(callId);
+    if (answered) {
+      cards.set(callId, {
+        ...answered,
+        status: ToolCallStatus.Executing,
+        confirmationDetails: undefined,
+      });
+      this.publishToolCards(cards);
+    }
+  }
+
+  /**
+   * 挂起等待某 callId 的确认应答；会话中止（signal.aborted）时按用户拒绝收口，
+   * 避免 await 永久悬挂。resolver 登记进 pendingConfirmations，由 server 路由唤醒。
+   */
+  private waitForConfirmation(
+    callId: string,
+    signal: AbortSignal,
+  ): Promise<ConfirmationResult> {
+    return new Promise<ConfirmationResult>((resolve) => {
+      let settled = false;
+      const finish = (result: ConfirmationResult): void => {
+        if (settled) return;
+        settled = true;
+        this.pendingConfirmations.delete(callId);
+        signal.removeEventListener('abort', onAbort);
+        resolve(result);
+      };
+      const onAbort = (): void => finish({ outcome: 'rejected' });
+      if (signal.aborted) {
+        finish({ outcome: 'rejected' });
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.pendingConfirmations.set(callId, finish);
     });
   }
 

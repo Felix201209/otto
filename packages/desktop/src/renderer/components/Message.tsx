@@ -17,7 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { attachmentToDataUrl } from '../lib/image.js';
-import { ToolCallsCard } from './ToolCalls.js';
+import { ToolCallsCard, type RespondQuestionFn } from './ToolCalls.js';
 import {
   OttoAvatar,
   IconCheckCheck,
@@ -43,12 +43,15 @@ interface MessageProps {
    * 用户消息」重发——而非永远重发全会话最后一轮，否则上翻对旧回复点重生成会串轮。
    */
   onRegenerate: (messageId: string) => void;
+  /** AskUserQuestion 作答回传（透传到工具卡里的问答卡）。 */
+  onRespondQuestion?: RespondQuestionFn;
 }
 
 export function Message({
   message,
   onCopy,
   onRegenerate,
+  onRespondQuestion,
 }: MessageProps): React.JSX.Element {
   if (message.role === 'user') {
     return <UserMessage message={message} />;
@@ -58,6 +61,7 @@ export function Message({
       message={message}
       onCopy={onCopy}
       onRegenerate={onRegenerate}
+      onRespondQuestion={onRespondQuestion}
     />
   );
 }
@@ -176,6 +180,7 @@ function BotMessage({
   message,
   onCopy,
   onRegenerate,
+  onRespondQuestion,
 }: MessageProps): React.JSX.Element {
   const text = contentToText(message.content);
   const tools = message.associatedToolCalls ?? [];
@@ -206,7 +211,12 @@ function BotMessage({
           <TypingIndicator />
         ) : null}
 
-        {tools.length > 0 ? <ToolCallsCard toolCalls={tools} /> : null}
+        {tools.length > 0 ? (
+          <ToolCallsCard
+            toolCalls={tools}
+            onRespondQuestion={onRespondQuestion}
+          />
+        ) : null}
 
         {!message.isStreaming ? (
           <MessageActions
