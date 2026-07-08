@@ -21,11 +21,17 @@
  * 注意：package.json 无 "type":"module" → main/preload 均编译为 CJS（Electron 标准，
  * 且 import.meta.url 在 CJS 输出下会被 tsc 直接拒绝/TS1470）。__dirname 用 CJS 原生
  * 全局变量，不需要（也不能用）ESM 的 fileURLToPath(import.meta.url) 重建。
+ *
+ * ⚠️ otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
+ * （会被编译成 require()，真机运行时抛 ERR_REQUIRE_ESM 崩溃）。DEFAULT_HOST/DEFAULT_PORT
+ * 只是 CSP 兜底默认值的字面量，这里直接内联同样的值，避免为两个常量单独走一次
+ * import()（server-manager.ts 已经承担了对 otto-server 真正需要的值的动态加载）。
  */
 
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -36,9 +42,14 @@ import {
 import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_HOST, DEFAULT_PORT, type ServerEndpoint } from 'otto-server';
+import type { ServerEndpoint } from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
+
+/** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
+ * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
+const CSP_FALLBACK_HOST = '127.0.0.1';
+const CSP_FALLBACK_PORT = 7637;
 
 /**
  * renderer 静态资源目录。与 createWindow 的 loadFile 用同一推导
@@ -64,6 +75,7 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  saveTextFile: 'otto:save-text-file',
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
@@ -221,8 +233,8 @@ function isExternalUrl(url: string): boolean {
 /** 本地 CSP：只允许自身资源 + 连本地 server WS/HTTP。 */
 function applyCsp(): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const host = endpoint?.host ?? DEFAULT_HOST;
-    const port = endpoint?.port ?? DEFAULT_PORT;
+    const host = endpoint?.host ?? CSP_FALLBACK_HOST;
+    const port = endpoint?.port ?? CSP_FALLBACK_PORT;
     const csp = [
       "default-src 'self'",
       // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。
@@ -322,6 +334,30 @@ function registerIpc(): void {
     }
     return Promise.resolve('');
   });
+
+  // 导出会话（对齐 CLI /export）：原生保存对话框 + 写文件。取消返回 null，
+  // 写入失败抛错由 renderer 侧捕获展示；内容/文件名均来自 server 的 export_result 帧。
+  ipcMain.handle(
+    IPC.saveTextFile,
+    async (_e, suggestedFileName: unknown, content: unknown) => {
+      if (typeof suggestedFileName !== 'string' || typeof content !== 'string') {
+        return null;
+      }
+      const win = mainWindow;
+      const result = win
+        ? await dialog.showSaveDialog(win, {
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          })
+        : await dialog.showSaveDialog({
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          });
+      if (result.canceled || !result.filePath) return null;
+      await fs.promises.writeFile(result.filePath, content, 'utf-8');
+      return result.filePath;
+    },
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────

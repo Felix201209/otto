@@ -48,6 +48,13 @@ export interface SessionRuntime {
   setModel(model: string): void;
   /** 释放（关闭 core 资源）。 */
   dispose(): Promise<void>;
+  /**
+   * 取出底层 otto-core Config 实例（用于 GUI 面板只读查询/即时应用设置，
+   * 如 context 用量分解、mcpServers 热更新、healthyUse/preferredLanguage 切换）。
+   * 返回 unknown 避免 sessions.ts 反向依赖 otto-core 的具体 Config 类型；
+   * 调用方（server.ts）按需 cast。
+   */
+  getConfig(): unknown;
 }
 
 /** 单个会话的内部状态。 */

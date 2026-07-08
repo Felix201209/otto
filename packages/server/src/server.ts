@@ -23,6 +23,9 @@ import {
   type Server as HttpServer,
   type ServerResponse,
 } from 'node:http';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   DEFAULT_HOST,
@@ -37,6 +40,18 @@ import {
   type MessageContent,
   type ModelInfo,
   type ServerToClient,
+  type SettingsSnapshot,
+  type McpServerInfo,
+  type ContextBreakdown,
+  type StatsSnapshot,
+  type DoctorReportInfo,
+  type TodoItemInfo,
+  type MemoryFileInfo,
+  type SkillSummary,
+  type ToolSummary,
+  type WorkflowSummary,
+  type WorkflowAgentSummary,
+  type ExtensionSummary,
 } from './protocol.js';
 import {
   InMemorySessionStore,
@@ -45,7 +60,7 @@ import {
   type Unsubscribe,
 } from './sessions.js';
 import { registerFeishu, type FeishuRegistration } from './feishu/register.js';
-import { createCoreConfig } from './coreConfig.js';
+import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
   listModelInfos,
@@ -53,6 +68,30 @@ import {
   loadPreferredModel,
   saveCustomModel,
 } from './customModels.js';
+import {
+  loadUserSettingsSubset,
+  patchUserSettings,
+  loadMcpServers,
+  saveMcpServers,
+} from './userSettings.js';
+import {
+  ProjectSettingsManager,
+  DoctorService,
+  uiTelemetryService,
+  todoStore,
+  tokenLimit,
+  getCoreSystemPrompt,
+  MCPServerConfig,
+  getAllMCPServerStatuses,
+  MCPServerStatus,
+  MemoryTool,
+  OTTO_CONFIG_DIR,
+  DEFAULT_CONTEXT_FILENAME,
+  SkillsCompatAdapter,
+  WorkflowRegistry,
+  type WorkflowAgentRecord,
+  type Config as CoreConfig,
+} from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
 /** server 版本（实装时可从 package.json 注入）。 */
@@ -123,6 +162,8 @@ export class OttoServer {
   private wss?: WebSocketServer;
   private feishu?: FeishuRegistration;
   private readonly conns = new Set<ClientConn>();
+  /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
+  private workflowUnsub?: () => void;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -186,10 +227,21 @@ export class OttoServer {
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
       });
     }
+
+    // WorkflowRegistry 是进程级单例（与会话无关），订阅其变化并广播给所有连接，
+    // 让「Workflow 面板」实时看到进度（agent 开始/结束/token 更新），无需轮询。
+    this.workflowUnsub = WorkflowRegistry.subscribe(() => {
+      this.broadcastAll({
+        type: 'workflows_list',
+        payload: { workflows: this.workflowSummaries() },
+      });
+    });
   }
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    this.workflowUnsub?.();
+    this.workflowUnsub = undefined;
     // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。
     const flush = (this.store as { flush?: () => void }).flush;
     if (typeof flush === 'function') {
@@ -425,6 +477,593 @@ export class OttoServer {
   }
 
   // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 用量统计 / 依赖体检 / Todo）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * 遍历所有存活会话的 runtime，取出其 CoreConfig（若已懒构建）。
+   * 用于把 agentStyle/healthyUse/preferredLanguage 等全局设置即时应用到
+   * 已经在跑的会话——不影响尚未构建 runtime 的会话（它们下次构建时
+   * 会读最新的落盘配置，自然生效）。
+   */
+  private liveConfigs(): CoreConfig[] {
+    const configs: CoreConfig[] = [];
+    for (const s of this.store.listSessions()) {
+      const runtime = this.store.getRuntime(s.sessionId);
+      const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+      if (cfg) configs.push(cfg);
+    }
+    return configs;
+  }
+
+  /** 全局偏好设置快照：agentStyle 读项目级 .otto/settings.json；其余读 ~/.otto-user/settings.json。 */
+  private settingsSnapshot(): SettingsSnapshot {
+    const userSubset = loadUserSettingsSubset();
+    const projectMgr = new ProjectSettingsManager(resolveDefaultCwd());
+    projectMgr.load();
+    return {
+      agentStyle: projectMgr.getAgentStyle(),
+      healthyUse: userSubset.healthyUse ?? true,
+      preferredLanguage: userSubset.preferredLanguage,
+    };
+  }
+
+  /**
+   * 修改一项全局偏好设置：持久化 + 即时应用到所有存活会话 + 广播最新快照。
+   */
+  private handleSetSetting(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_setting' }>,
+  ): void {
+    const { key, value } = msg.payload;
+    try {
+      if (key === 'agentStyle') {
+        if (typeof value !== 'string') {
+          throw new Error('agentStyle 的值必须是字符串');
+        }
+        const projectMgr = new ProjectSettingsManager(resolveDefaultCwd());
+        projectMgr.load();
+        projectMgr.setAgentStyle(value as Parameters<ProjectSettingsManager['setAgentStyle']>[0]);
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setAgentStyle(value as Parameters<CoreConfig['setAgentStyle']>[0]);
+            const client = cfg.getOttoClient();
+            const chat = client?.getChat();
+            if (chat) {
+              const updated = getCoreSystemPrompt(
+                cfg.getUserMemory(),
+                cfg.getVsCodePluginMode(),
+                undefined,
+                cfg.getAgentStyle(),
+                undefined,
+                cfg.getPreferredLanguage(),
+              );
+              chat.setSystemInstruction(updated);
+            }
+          } catch {
+            // 单个会话刷新失败不影响整体设置生效（下次新会话会读到最新落盘值）。
+          }
+        }
+      } else if (key === 'healthyUse') {
+        if (typeof value !== 'boolean') {
+          throw new Error('healthyUse 的值必须是布尔');
+        }
+        patchUserSettings({ healthyUse: value });
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setHealthyUseEnabled(value);
+          } catch {
+            // 忽略单个会话失败。
+          }
+        }
+      } else if (key === 'preferredLanguage') {
+        if (typeof value !== 'string') {
+          throw new Error('preferredLanguage 的值必须是字符串');
+        }
+        patchUserSettings({ preferredLanguage: value });
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setPreferredLanguage(value);
+          } catch {
+            // 忽略单个会话失败。
+          }
+        }
+      }
+      this.broadcastAll({ type: 'settings', payload: this.settingsSnapshot() });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'set_setting_failed', message: `保存设置失败：${message}` },
+      });
+    }
+  }
+
+  /**
+   * MCP 服务器摘要：配置来自 ~/.otto-user/settings.json 的 mcpServers；
+   * 连接状态来自 core 的进程级 getAllMCPServerStatuses。
+   */
+  private mcpServerInfos(): McpServerInfo[] {
+    const servers = loadMcpServers();
+    const statuses = getAllMCPServerStatuses();
+    return Object.entries(servers).map(([name, cfg]) => {
+      const raw = statuses.get(name);
+      const status: McpServerInfo['status'] =
+        raw === MCPServerStatus.CONNECTED
+          ? 'connected'
+          : raw === MCPServerStatus.CONNECTING
+            ? 'connecting'
+            : 'disconnected';
+      return {
+        name,
+        status,
+        command: cfg.command,
+        url: cfg.url,
+        httpUrl: cfg.httpUrl,
+        description: cfg.description,
+      };
+    });
+  }
+
+  /** 添加/更新一个 MCP 服务器：写盘 + 即时应用到所有存活会话的 Config。 */
+  private handleMcpAdd(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'mcp_add' }>,
+  ): void {
+    const p = msg.payload;
+    try {
+      const servers = loadMcpServers();
+      const cfg = new MCPServerConfig(
+        p.command,
+        p.args,
+        p.env,
+        p.cwd,
+        p.url,
+        p.httpUrl,
+        p.headers,
+        undefined,
+        p.timeout,
+        p.trust,
+        p.description,
+      );
+      servers[p.name] = cfg;
+      saveMcpServers(servers);
+      for (const liveCfg of this.liveConfigs()) {
+        try {
+          liveCfg.addMcpServer(p.name, cfg);
+          void liveCfg
+            .getToolRegistry()
+            .then((registry) => registry.discoverToolsForServer(p.name))
+            .catch(() => undefined);
+        } catch {
+          // 忽略单个会话应用失败。
+        }
+      }
+      this.broadcastAll({
+        type: 'mcp_servers',
+        payload: { servers: this.mcpServerInfos() },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'mcp_add_failed', message: `添加 MCP 服务器失败：${message}` },
+      });
+    }
+  }
+
+  /** 移除一个 MCP 服务器：写盘 + 即时从所有存活会话的 Config 移除。 */
+  private handleMcpRemove(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'mcp_remove' }>,
+  ): void {
+    const { name } = msg.payload;
+    try {
+      const servers = loadMcpServers();
+      delete servers[name];
+      saveMcpServers(servers);
+      for (const cfg of this.liveConfigs()) {
+        try {
+          cfg.removeMcpServer(name);
+        } catch {
+          // 忽略单个会话失败。
+        }
+      }
+      this.broadcastAll({
+        type: 'mcp_servers',
+        payload: { servers: this.mcpServerInfos() },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'mcp_remove_failed', message: `移除 MCP 服务器失败：${message}` },
+      });
+    }
+  }
+
+  /** 某会话当前 context 用量分解（对齐 CLI /context 的口径）。 */
+  private handleGetContextBreakdown(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_context_breakdown' }>,
+  ): void {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    const modelId = cfg?.getModel?.() ?? session.model ?? this.currentModel() ?? 'auto';
+    const maxTokens = tokenLimit(modelId, cfg);
+    const memoryFilesTokens = cfg?.getMemoryTokenCount?.() ?? 0;
+    let systemPromptTokens = 0;
+    try {
+      const agentStyle = cfg?.getAgentStyle?.() ?? 'default';
+      const fullPrompt = getCoreSystemPrompt(
+        cfg?.getUserMemory?.() ?? '',
+        false,
+        undefined,
+        agentStyle,
+        undefined,
+        cfg?.getPreferredLanguage?.(),
+      );
+      const totalSystemTokens = Math.ceil(fullPrompt.length / 4);
+      systemPromptTokens =
+        memoryFilesTokens > 0 && totalSystemTokens > memoryFilesTokens
+          ? totalSystemTokens - memoryFilesTokens
+          : totalSystemTokens;
+    } catch {
+      systemPromptTokens = 0;
+    }
+    const modelMetrics = uiTelemetryService.getMetrics().models[modelId];
+    const systemToolsTokens = modelMetrics?.tokens.tool ?? 0;
+    const actualPromptTokens = uiTelemetryService.getLastPromptTokenCount();
+    const messagesTokens =
+      actualPromptTokens > 0
+        ? Math.max(
+            0,
+            actualPromptTokens - systemPromptTokens - memoryFilesTokens - systemToolsTokens,
+          )
+        : 0;
+    const totalInputTokens =
+      actualPromptTokens > 0
+        ? actualPromptTokens
+        : systemPromptTokens + memoryFilesTokens + systemToolsTokens;
+    const freeSpaceTokens = Math.max(0, maxTokens - totalInputTokens);
+    const displayName =
+      this.modelInfos().find((m) => m.id === modelId)?.displayName ?? modelId;
+    this.send(conn.socket, {
+      type: 'context_breakdown',
+      payload: {
+        sessionId,
+        modelDisplayName: displayName,
+        maxTokens,
+        systemPromptTokens,
+        systemToolsTokens,
+        memoryFilesTokens,
+        messagesTokens,
+        totalInputTokens,
+        freeSpaceTokens,
+      },
+    });
+  }
+
+  /** 用量统计快照（对齐 CLI /stats，进程级全部会话聚合）。 */
+  private statsSnapshot(): StatsSnapshot {
+    const metrics = uiTelemetryService.getMetrics();
+    const models: StatsSnapshot['models'] = {};
+    for (const [name, m] of Object.entries(metrics.models)) {
+      models[name] = {
+        requests: m.api.totalRequests,
+        inputTokens: m.tokens.prompt,
+        outputTokens: m.tokens.candidates,
+        totalTokens: m.tokens.total,
+      };
+    }
+    const byName: StatsSnapshot['tools']['byName'] = {};
+    for (const [name, t] of Object.entries(metrics.tools.byName)) {
+      byName[name] = { count: t.count, success: t.success, fail: t.fail };
+    }
+    return {
+      models,
+      tools: {
+        totalCalls: metrics.tools.totalCalls,
+        totalSuccess: metrics.tools.totalSuccess,
+        totalFail: metrics.tools.totalFail,
+        byName,
+      },
+    };
+  }
+
+  /** 触发一次外部依赖体检（异步，跑完再回帧，避免 UI 长时间无反馈）。 */
+  private async handleRunDoctor(conn: ClientConn): Promise<void> {
+    try {
+      const report = await new DoctorService().check();
+      const payload: DoctorReportInfo = {
+        platform: report.platform,
+        checks: report.checks.map((c) => ({
+          name: c.name,
+          category: c.category,
+          present: c.present,
+          version: c.version,
+          installHint: c.installHint,
+        })),
+        presentCount: report.presentCount,
+        missingCount: report.missingCount,
+        affectedCapabilities: report.affectedCapabilities,
+      };
+      this.send(conn.socket, { type: 'doctor_report', payload });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'doctor_failed', message: `依赖体检失败：${message}` },
+      });
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** 拉取层级记忆文件（项目 OTTO.md + 全局 ~/.otto-user/memory/OTTO.md）内容。 */
+  private async handleGetMemory(conn: ClientConn): Promise<void> {
+    try {
+      const cwd = resolveDefaultCwd();
+      const projectPath = path.join(cwd, 'OTTO.md');
+      const globalPath = path.join(homedir(), OTTO_CONFIG_DIR, 'memory', DEFAULT_CONTEXT_FILENAME);
+      const files: MemoryFileInfo[] = await Promise.all(
+        [
+          { scope: 'project' as const, filePath: projectPath },
+          { scope: 'global' as const, filePath: globalPath },
+        ].map(async ({ scope, filePath }) => {
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            return { scope, path: filePath, exists: true, content };
+          } catch {
+            return { scope, path: filePath, exists: false, content: '' };
+          }
+        }),
+      );
+      this.send(conn.socket, { type: 'memory_snapshot', payload: { files } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_memory_failed', message: `读取记忆文件失败：${message}` },
+      });
+    }
+  }
+
+  /** 追加一条记忆事实：写入项目级 OTTO.md（对齐 save_memory 工具的落点），成功后回推最新快照。 */
+  private async handleAddMemory(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'add_memory' }>,
+  ): Promise<void> {
+    const { fact } = msg.payload;
+    try {
+      const memoryFilePath = path.join(resolveDefaultCwd(), 'OTTO.md');
+      await MemoryTool.performAddMemoryEntry(fact, memoryFilePath, {
+        readFile: fs.readFile,
+        writeFile: fs.writeFile,
+        mkdir: fs.mkdir,
+      });
+      await this.handleGetMemory(conn);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'add_memory_failed', message: `保存记忆失败：${message}` },
+      });
+    }
+  }
+
+  /** 拉取已装技能列表（对齐 CLI /skill list，进程级、与会话无关）。 */
+  private async handleGetSkills(conn: ClientConn): Promise<void> {
+    try {
+      const adapter = new SkillsCompatAdapter(resolveDefaultCwd());
+      const skills = await adapter.listSkills();
+      const payload: SkillSummary[] = skills.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        marketplaceId: s.marketplaceId,
+        pluginId: s.pluginId,
+        enabled: s.enabled,
+      }));
+      this.send(conn.socket, { type: 'skills_list', payload: { skills: payload } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_skills_failed', message: `读取技能库失败：${message}` },
+      });
+    }
+  }
+
+  /** 拉取某会话当前可用工具清单（内置 + MCP，对齐 CLI /tools）。 */
+  private async handleGetTools(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_tools' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    if (!cfg) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话尚未初始化，暂无工具信息'),
+      );
+    }
+    try {
+      const registry = await cfg.getToolRegistry();
+      const tools: ToolSummary[] = registry.getAllTools().map((tool) => ({
+        name: tool.name,
+        displayName: tool.displayName,
+        description: tool.description,
+        serverName: (tool as { serverName?: string }).serverName,
+      }));
+      this.send(conn.socket, { type: 'tools_list', payload: { sessionId, tools } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { sessionId, code: 'get_tools_failed', message: `读取工具清单失败：${message}` },
+      });
+    }
+  }
+
+  /** 手动压缩某会话的上下文（对齐 CLI /compress）。 */
+  private async handleCompressContext(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'compress_context' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    const client = cfg?.getOttoClient?.();
+    if (!client) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话尚未初始化，无法压缩'),
+      );
+    }
+    try {
+      if (client.isCompressionInProgress()) {
+        return this.send(conn.socket, {
+          type: 'compress_result',
+          payload: { sessionId, compressed: false, message: '已有压缩任务在进行中，请稍候。' },
+        });
+      }
+      const info = await client.tryCompressChat(
+        `${sessionId}-compress-${Date.now()}`,
+        new AbortController().signal,
+        true,
+      );
+      if (info) {
+        this.send(conn.socket, {
+          type: 'compress_result',
+          payload: {
+            sessionId,
+            compressed: true,
+            originalTokenCount: info.originalTokenCount,
+            newTokenCount: info.newTokenCount,
+            message: `已压缩：${info.originalTokenCount.toLocaleString()} → ${info.newTokenCount.toLocaleString()} tokens`,
+          },
+        });
+      } else {
+        this.send(conn.socket, {
+          type: 'compress_result',
+          payload: { sessionId, compressed: false, message: '当前上下文较小，无需压缩。' },
+        });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { sessionId, code: 'compress_failed', message: `压缩失败：${message}` },
+      });
+    }
+  }
+
+  /** 导出某会话为 Markdown 文本（对齐 CLI /export），落盘由 desktop 侧完成。 */
+  private handleExportConversation(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'export_conversation' }>,
+  ): void {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      return this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+    }
+    const messages = this.store.getHistory(sessionId);
+    const lines: string[] = [`# ${session.title || '未命名对话'}`, ''];
+    for (const m of messages) {
+      const speaker = m.role === 'user' ? '用户' : 'Otto';
+      const text = m.content
+        .map((p) => (p.type === 'text' ? p.value : ''))
+        .join('')
+        .trim();
+      if (!text) continue;
+      lines.push(`## ${speaker}`, '', text, '');
+    }
+    const safeTitle = (session.title || 'conversation').replace(/[\\/:*?"<>|]/g, '_');
+    this.send(conn.socket, {
+      type: 'export_result',
+      payload: {
+        sessionId,
+        suggestedFileName: `${safeTitle}.md`,
+        markdown: lines.join('\n'),
+      },
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P2：Workflow 面板 / 扩展列表 / IDE 伴生状态）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** WorkflowRegistry（进程级单例）→ 协议 WorkflowSummary[]。 */
+  private workflowSummaries(): WorkflowSummary[] {
+    return WorkflowRegistry.getAll().map((wf) => ({
+      id: wf.id,
+      slug: wf.slug,
+      description: wf.description,
+      status: wf.status,
+      startTime: wf.startTime,
+      endTime: wf.endTime,
+      totalTokenUsage: wf.totalTokenUsage,
+      phases: wf.phases.map((p) => ({
+        index: p.index,
+        name: p.name,
+        description: p.description,
+        agents: p.agents.map(toWorkflowAgentSummary),
+      })),
+      agents: wf.agents.map(toWorkflowAgentSummary),
+    }));
+  }
+
+  /** 拉取 workflow 记录。 */
+  private handleGetWorkflows(conn: ClientConn): void {
+    this.send(conn.socket, {
+      type: 'workflows_list',
+      payload: { workflows: this.workflowSummaries() },
+    });
+  }
+
+  /** 拉取已安装扩展列表（项目级 + 全局 ~/.otto-user/extensions，去重）。 */
+  private async handleGetExtensions(conn: ClientConn): Promise<void> {
+    try {
+      const extensions = await discoverExtensionSummaries(resolveDefaultCwd());
+      this.send(conn.socket, { type: 'extensions_list', payload: { extensions } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_extensions_failed', message: `读取扩展列表失败：${message}` },
+      });
+    }
+  }
+
+  /**
+   * IDE 伴生连接状态。desktop 是独立 Electron 应用，不像 CLI 那样跑在 VS Code
+   * 终端内、天然带 OTTO_CODE_IDE_SERVER_PORT；因此恒回 not_applicable + 说明，
+   * 诚实告知而非谎报「未连接」（那会让用户误以为该去连接，其实这条能力不适用桌面端）。
+   */
+  private handleGetIdeStatus(conn: ClientConn): void {
+    this.send(conn.socket, {
+      type: 'ide_status',
+      payload: {
+        status: 'not_applicable',
+        details: 'IDE 伴生状态仅适用于终端内的 CLI（VS Code 集成终端），桌面端不适用。',
+      },
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
   // HTTP REST
   // ──────────────────────────────────────────────────────────────────────
 
@@ -624,6 +1263,54 @@ export class OttoServer {
         return this.handleDeleteSession(conn, msg);
       case 'rename_session':
         return this.handleRenameSession(conn, msg);
+      case 'get_settings':
+        return this.send(conn.socket, {
+          type: 'settings',
+          payload: this.settingsSnapshot(),
+        });
+      case 'set_setting':
+        return this.handleSetSetting(conn, msg);
+      case 'mcp_list':
+        return this.send(conn.socket, {
+          type: 'mcp_servers',
+          payload: { servers: this.mcpServerInfos() },
+        });
+      case 'mcp_add':
+        return this.handleMcpAdd(conn, msg);
+      case 'mcp_remove':
+        return this.handleMcpRemove(conn, msg);
+      case 'get_context_breakdown':
+        return this.handleGetContextBreakdown(conn, msg);
+      case 'get_stats':
+        return this.send(conn.socket, {
+          type: 'stats_snapshot',
+          payload: this.statsSnapshot(),
+        });
+      case 'run_doctor':
+        return this.handleRunDoctor(conn);
+      case 'get_todos':
+        return this.send(conn.socket, {
+          type: 'todos_list',
+          payload: { todos: todoStore.getTodos() as TodoItemInfo[] },
+        });
+      case 'get_memory':
+        return this.handleGetMemory(conn);
+      case 'add_memory':
+        return this.handleAddMemory(conn, msg);
+      case 'get_skills':
+        return this.handleGetSkills(conn);
+      case 'get_tools':
+        return this.handleGetTools(conn, msg);
+      case 'compress_context':
+        return this.handleCompressContext(conn, msg);
+      case 'export_conversation':
+        return this.handleExportConversation(conn, msg);
+      case 'get_workflows':
+        return this.handleGetWorkflows(conn);
+      case 'get_extensions':
+        return this.handleGetExtensions(conn);
+      case 'get_ide_status':
+        return this.handleGetIdeStatus(conn);
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -868,6 +1555,71 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(json);
 }
+/** core WorkflowAgentRecord → 协议 WorkflowAgentSummary（裁掉 prompt/recentToolCalls 等大字段）。 */
+function toWorkflowAgentSummary(a: WorkflowAgentRecord): WorkflowAgentSummary {
+  return {
+    agentId: a.agentId,
+    label: a.label,
+    status: a.status,
+    startTime: a.startTime,
+    endTime: a.endTime,
+    tokenUsage: a.tokenUsage,
+    toolCallCount: a.toolCallCount,
+    currentPhase: a.currentPhase,
+    outcome: a.outcome,
+  };
+}
+
+/** 扩展目录约定：<root>/.otto-user/extensions/<name>/gemini-extension.json（对齐 CLI loadExtensions）。 */
+const EXTENSIONS_DIR_SEGMENTS = ['.otto-user', 'extensions'] as const;
+const EXTENSION_CONFIG_FILENAME = 'gemini-extension.json';
+
+async function loadExtensionSummariesFromDir(
+  rootDir: string,
+): Promise<ExtensionSummary[]> {
+  const extensionsDir = path.join(rootDir, ...EXTENSIONS_DIR_SEGMENTS);
+  let subdirs: string[];
+  try {
+    subdirs = await fs.readdir(extensionsDir);
+  } catch {
+    return [];
+  }
+  const summaries: ExtensionSummary[] = [];
+  for (const subdir of subdirs) {
+    const extensionDir = path.join(extensionsDir, subdir);
+    const configPath = path.join(extensionDir, EXTENSION_CONFIG_FILENAME);
+    try {
+      const raw = await fs.readFile(configPath, 'utf-8');
+      const parsed = JSON.parse(raw) as { name?: string; version?: string };
+      if (typeof parsed.name === 'string') {
+        summaries.push({
+          name: parsed.name,
+          version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
+          path: extensionDir,
+        });
+      }
+    } catch {
+      // 单个扩展目录缺配置/解析失败：跳过，不影响其余扩展。
+    }
+  }
+  return summaries;
+}
+
+/** 项目级 + 全局扩展目录合并去重（同名保留项目级优先，对齐 CLI loadExtensions 的语义）。 */
+async function discoverExtensionSummaries(
+  workspaceDir: string,
+): Promise<ExtensionSummary[]> {
+  const [workspaceExt, globalExt] = await Promise.all([
+    loadExtensionSummariesFromDir(workspaceDir),
+    loadExtensionSummariesFromDir(homedir()),
+  ]);
+  const byName = new Map<string, ExtensionSummary>();
+  for (const ext of [...workspaceExt, ...globalExt]) {
+    if (!byName.has(ext.name)) byName.set(ext.name, ext);
+  }
+  return Array.from(byName.values());
+}
+
 function errorFrame(
   sessionId: string | undefined,
   code: string,

@@ -343,8 +343,8 @@ export class Config {
   private projectSettingsManager: ProjectSettingsManager;
   private planModeActive: boolean = false;
   private readonly hooks: { [K in HookEventName]?: HookDefinition[] };
-  private readonly healthyUse: boolean;
-  private readonly preferredLanguage: string | undefined;
+  private healthyUse: boolean;
+  private preferredLanguage: string | undefined;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -892,8 +892,18 @@ export class Config {
     return this.healthyUse;
   }
 
+  /** 运行期切换健康使用提醒（不落盘；持久化由调用方经 settings.json 负责，如 CLI /config healthy-use）。 */
+  setHealthyUseEnabled(enabled: boolean): void {
+    this.healthyUse = enabled;
+  }
+
   getPreferredLanguage(): string | undefined {
     return this.preferredLanguage;
+  }
+
+  /** 运行期切换偏好语言（不落盘；持久化由调用方负责）。 */
+  setPreferredLanguage(language: string | undefined): void {
+    this.preferredLanguage = language;
   }
 
   /**

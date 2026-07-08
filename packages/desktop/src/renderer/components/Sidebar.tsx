@@ -28,6 +28,7 @@ import {
   IconChevron,
   IconSparkle,
   IconAgent,
+  IconSettings,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -42,9 +43,12 @@ interface SidebarProps {
   activeSessionId: string | null;
   /** 当前是否停在「智能体」页（高亮该入口）。 */
   agentsActive?: boolean;
+  /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
+  hubActive?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenAgents: () => void;
+  onOpenHub: () => void;
   onLaunchExpert: (expert: Expert) => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
@@ -55,9 +59,11 @@ export function Sidebar({
   groups,
   activeSessionId,
   agentsActive = false,
+  hubActive = false,
   onSelect,
   onNewChat,
   onOpenAgents,
+  onOpenHub,
   onLaunchExpert,
   onViewAll,
   onRename,
@@ -118,6 +124,21 @@ export function Sidebar({
         >
           <span className="otto-agents-entry__label">全部智能体</span>
           <span className="otto-agents-entry__hint">画廊</span>
+          <IconChevron size={15} className="otto-agents-entry__chev" />
+        </button>
+        <button
+          type="button"
+          className={
+            'otto-agents-entry' + (hubActive ? ' is-active' : '')
+          }
+          onClick={onOpenHub}
+          aria-current={hubActive ? 'page' : undefined}
+          title="设置与诊断中心"
+        >
+          <span className="otto-agents-entry__icon">
+            <IconSettings size={14} />
+          </span>
+          <span className="otto-agents-entry__label">设置与诊断</span>
           <IconChevron size={15} className="otto-agents-entry__chev" />
         </button>
       </div>

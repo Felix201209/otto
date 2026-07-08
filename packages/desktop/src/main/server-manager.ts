@@ -16,23 +16,33 @@
  * 该路径必失败（process.execPath 是 Electron 二进制，缺 ELECTRON_RUN_AS_NODE 不会当 node
  * 脚本跑，且 single-instance lock 让第二实例立即 quit；bin.js 又在 asar 内），结果永远 15s
  * 超时后静默回退内嵌。既然内嵌才是实际生产路径，这里直接走内嵌，消掉那段必然超时的卡顿。
+ *
+ * ⚠️ 模块加载方式（打包崩溃根因修复）：otto-server 是纯 ESM 包（package.json
+ * "type":"module"），而本文件编译目标是 CJS（tsconfig.main.json 无 "type":"module"，
+ * Electron 主进程标准做法）。CJS 对 ESM 只能用**动态** `import()`，静态
+ * `import {...} from 'otto-server'` 会被 tsc 编译成 `require('otto-server')`，
+ * 在真机运行时抛 `ERR_REQUIRE_ESM` 直接崩溃（Node/Electron 官方错误信息本身就是这句
+ * 建议）。因此这里只保留 `import type` 型引入（纯类型，编译期擦除，不产生 require），
+ * 运行期需要的值全部经 loadOttoServer() 懒加载并缓存。
  */
 
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {
-  OttoServer,
-  PersistentSessionStore,
-  readEndpoint,
-  writeEndpoint,
-  clearEndpoint,
-  DEFAULT_HOST,
-  DEFAULT_PORT,
-  HTTP_ROUTES,
-  type ServerEndpoint,
+import type {
+  OttoServer as OttoServerType,
+  ServerEndpoint,
 } from 'otto-server';
+
+/** otto-server（ESM）动态加载并缓存：避免每次调用都重新 import()。 */
+let ottoServerModulePromise: Promise<typeof import('otto-server')> | undefined;
+function loadOttoServer(): Promise<typeof import('otto-server')> {
+  if (!ottoServerModulePromise) {
+    ottoServerModulePromise = import('otto-server');
+  }
+  return ottoServerModulePromise;
+}
 
 /** 聊天记录落盘目录：~/.otto-user/sessions/（每个会话一个 json 文件）。 */
 function sessionsDir(): string {
@@ -56,7 +66,7 @@ export interface EnsuredServer {
 
 export class ServerManager {
   /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
-  private embedded?: OttoServer;
+  private embedded?: OttoServerType;
   private ownership: ServerOwnership = 'discovered';
   /**
    * 已进入退出流程（shutdown 被调过）。ensure 的每个异步完成点都要检查它：
@@ -70,10 +80,16 @@ export class ServerManager {
    */
   async ensure(): Promise<EnsuredServer> {
     this.throwIfShuttingDown();
+    const mod = await loadOttoServer();
+    this.throwIfShuttingDown();
     // 1) 发现并探活已运行的 server（headless / CLI 已在跑时直接复用）。
-    const discovered = readEndpoint();
+    const discovered = mod.readEndpoint();
     if (discovered && pidAlive(discovered.pid)) {
-      const healthy = await probeHealth(discovered.host, discovered.port);
+      const healthy = await probeHealth(
+        discovered.host,
+        discovered.port,
+        mod.HTTP_ROUTES.health,
+      );
       this.throwIfShuttingDown();
       if (healthy) {
         this.ownership = 'discovered';
@@ -82,12 +98,12 @@ export class ServerManager {
     }
     // 端点文件陈旧（进程没了或不应答）→ 清掉，避免误导后续读取。
     if (discovered && !pidAlive(discovered.pid)) {
-      clearEndpoint();
+      mod.clearEndpoint();
     }
 
     // 2) 没有现成 server → 直接同进程内嵌拉起（embedded-only，见文件头说明）。
-    const port = resolvePort();
-    const embeddedEp = await this.startEmbedded(port);
+    const port = resolvePort(mod.DEFAULT_PORT);
+    const embeddedEp = await this.startEmbedded(port, mod);
     this.ownership = 'embedded';
     return { endpoint: embeddedEp, ownership: 'embedded' };
   }
@@ -111,7 +127,10 @@ export class ServerManager {
       } catch {
         // 退出路径，吞掉。
       } finally {
-        clearEndpoint();
+        // loadOttoServer 此时必已完成过一次（embedded 存在即说明 ensure 跑过），
+        // 缓存命中不会真的再 import()。
+        const mod = await loadOttoServer();
+        mod.clearEndpoint();
         this.embedded = undefined;
       }
     }
@@ -127,15 +146,18 @@ export class ServerManager {
   }
 
   /** 同进程内嵌 OttoServer（embedded-only 的唯一拉起路径）。 */
-  private async startEmbedded(port: number): Promise<ServerEndpoint> {
+  private async startEmbedded(
+    port: number,
+    mod: typeof import('otto-server'),
+  ): Promise<ServerEndpoint> {
     // 用户已 setup 飞书凭证时启用飞书网关，让桌面 app 的飞书双向同步真正激活
     // （adapter 对无凭证已 fail-soft，这里仅在凭证文件存在时开）。Issue #3/#6。
     const enableFeishu = feishuCredentialsExist();
     // 聊天记录落盘（被动保存）：内嵌 server 用文件持久化会话/消息，重启后原样恢复
     // （否则 InMemorySessionStore 一退出全丢）。落 ~/.otto-user/sessions/。
-    const store = new PersistentSessionStore(sessionsDir());
-    const server = new OttoServer({
-      host: DEFAULT_HOST,
+    const store = new mod.PersistentSessionStore(sessionsDir());
+    const server = new mod.OttoServer({
+      host: mod.DEFAULT_HOST,
       port,
       enableFeishu,
       store,
@@ -149,7 +171,7 @@ export class ServerManager {
       } catch {
         // 退出路径，吞掉。
       } finally {
-        clearEndpoint();
+        mod.clearEndpoint();
       }
       throw new Error('app 正在退出，已停掉刚拉起的内嵌 server');
     }
@@ -158,16 +180,16 @@ export class ServerManager {
     this.embedded = server;
     const { host, port: boundPort } = server.endpoint;
     // 内嵌 server 由本进程写端点文件。
-    return writeEndpoint(host, boundPort);
+    return mod.writeEndpoint(host, boundPort);
   }
 }
 
 // ── 自由函数 ──
 
 /** 解析监听端口：env 覆盖 > 默认。 */
-function resolvePort(): number {
+function resolvePort(defaultPort: number): number {
   const fromEnv = Number(process.env.OTTO_SERVER_PORT);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_PORT;
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : defaultPort;
 }
 
 /** pid 是否存活（kill 0 探针）。 */
@@ -195,10 +217,14 @@ function feishuCredentialsExist(): boolean {
 }
 
 /** 单次 GET /health 探活：2xx 即视为健康。 */
-function probeHealth(host: string, port: number): Promise<boolean> {
+function probeHealth(
+  host: string,
+  port: number,
+  healthPath: string,
+): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const req = http.get(
-      { host, port, path: HTTP_ROUTES.health, timeout: HEALTH_TIMEOUT_MS },
+      { host, port, path: healthPath, timeout: HEALTH_TIMEOUT_MS },
       (res) => {
         const okStatus =
           typeof res.statusCode === 'number' &&

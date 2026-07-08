@@ -20,7 +20,13 @@ import {
   type BrowserWindow,
   type MenuItemConstructorOptions,
 } from 'electron';
-import { endpointFilePath } from 'otto-server';
+// otto-server 是纯 ESM 包，本文件编译为 CJS：不能静态 import（会变 require()，
+// 真机运行时抛 ERR_REQUIRE_ESM）。这个值只在「Reveal Server Endpoint File」
+// 菜单项被点击时才需要，天然适合懒加载——点击时才 import()，不影响启动路径。
+async function getEndpointFilePath(): Promise<string> {
+  const mod = await import('otto-server');
+  return mod.endpointFilePath();
+}
 
 const isMac = process.platform === 'darwin';
 
@@ -137,7 +143,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow | undefined): Menu {
           label: 'Reveal Server Endpoint File',
           click: () => {
             // 端点文件存在则在 Finder 高亮，否则打开其所在目录。
-            void shell.showItemInFolder(endpointFilePath());
+            void getEndpointFilePath().then((p) => shell.showItemInFolder(p));
           },
         },
         {

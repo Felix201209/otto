@@ -341,6 +341,88 @@ export type SaveCustomModelMsg = Envelope<
   }
 >;
 
+/**
+ * GetSettingsMsg placeholder doc
+ */
+export type GetSettingsMsg = Envelope<'get_settings', Record<string, never>>;
+
+export type SetSettingMsg = Envelope<
+  'set_setting',
+  {
+    key: 'agentStyle' | 'healthyUse' | 'preferredLanguage';
+    value: string | boolean;
+  }
+>;
+
+export type McpListMsg = Envelope<'mcp_list', Record<string, never>>;
+
+export type McpAddMsg = Envelope<
+  'mcp_add',
+  {
+    name: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    cwd?: string;
+    url?: string;
+    httpUrl?: string;
+    headers?: Record<string, string>;
+    timeout?: number;
+    trust?: boolean;
+    description?: string;
+  }
+>;
+
+export type McpRemoveMsg = Envelope<'mcp_remove', { name: string }>;
+
+export type GetContextBreakdownMsg = Envelope<
+  'get_context_breakdown',
+  { sessionId: string }
+>;
+
+export type GetStatsMsg = Envelope<'get_stats', Record<string, never>>;
+
+export type RunDoctorMsg = Envelope<'run_doctor', Record<string, never>>;
+
+export type GetTodosMsg = Envelope<'get_todos', Record<string, never>>;
+
+// ── P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话 ──────────────
+
+/** 拉取层级记忆文件内容（对齐 CLI /memory show：项目 OTTO.md + 全局 ~/.otto/OTTO.md）。 */
+export type GetMemoryMsg = Envelope<'get_memory', Record<string, never>>;
+
+/** 追加一条记忆事实（对齐 save_memory 工具 / CLI /memory add），写入项目级 OTTO.md。 */
+export type AddMemoryMsg = Envelope<'add_memory', { fact: string }>;
+
+/** 拉取已装技能列表（对齐 CLI /skill list）。 */
+export type GetSkillsMsg = Envelope<'get_skills', Record<string, never>>;
+
+/** 拉取当前会话可用工具清单（内置 + MCP，对齐 CLI /tools）。 */
+export type GetToolsMsg = Envelope<'get_tools', { sessionId: string }>;
+
+/** 手动压缩某会话的上下文（对齐 CLI /compress）。 */
+export type CompressContextMsg = Envelope<
+  'compress_context',
+  { sessionId: string }
+>;
+
+/** 导出某会话为 Markdown 文本（对齐 CLI /export），server 只负责拼文本，落盘由 desktop 侧 dialog 完成。 */
+export type ExportConversationMsg = Envelope<
+  'export_conversation',
+  { sessionId: string }
+>;
+
+// ── P2：Workflow 面板 / 扩展列表 / IDE 伴生状态 ───────────────────────────
+
+/** 拉取 workflow 记录（进程级单例 WorkflowRegistry，与会话无关）。 */
+export type GetWorkflowsMsg = Envelope<'get_workflows', Record<string, never>>;
+
+/** 拉取已安装扩展列表（对齐 CLI /extensions list）。 */
+export type GetExtensionsMsg = Envelope<'get_extensions', Record<string, never>>;
+
+/** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
+export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
+
 export type ClientToServer =
   | HelloMsg
   | ListSessionsMsg
@@ -355,7 +437,25 @@ export type ClientToServer =
   | GetModelsMsg
   | SaveCustomModelMsg
   | DeleteSessionMsg
-  | RenameSessionMsg;
+  | RenameSessionMsg
+  | GetSettingsMsg
+  | SetSettingMsg
+  | McpListMsg
+  | McpAddMsg
+  | McpRemoveMsg
+  | GetContextBreakdownMsg
+  | GetStatsMsg
+  | RunDoctorMsg
+  | GetTodosMsg
+  | GetMemoryMsg
+  | AddMemoryMsg
+  | GetSkillsMsg
+  | GetToolsMsg
+  | CompressContextMsg
+  | ExportConversationMsg
+  | GetWorkflowsMsg
+  | GetExtensionsMsg
+  | GetIdeStatusMsg;
 
 export type ClientToServerType = ClientToServer['type'];
 
@@ -476,6 +576,222 @@ export type FeishuPushResultMsg = Envelope<
   }
 >;
 
+/** 全局偏好设置快照（get_settings 回包 / set_setting 成功后广播）。 */
+export interface SettingsSnapshot {
+  agentStyle: string;
+  healthyUse: boolean;
+  preferredLanguage?: string;
+}
+
+export type SettingsMsg = Envelope<'settings', SettingsSnapshot>;
+
+/** MCP 服务器摘要（配置 + 实时连接状态）。 */
+export interface McpServerInfo {
+  name: string;
+  status: 'connected' | 'connecting' | 'disconnected';
+  command?: string;
+  url?: string;
+  httpUrl?: string;
+  description?: string;
+}
+
+export type McpServersMsg = Envelope<'mcp_servers', { servers: McpServerInfo[] }>;
+
+/** Context 用量分解（对齐 CLI /context 的口径）。 */
+export interface ContextBreakdown {
+  sessionId: string;
+  modelDisplayName: string;
+  maxTokens: number;
+  systemPromptTokens: number;
+  systemToolsTokens: number;
+  memoryFilesTokens: number;
+  messagesTokens: number;
+  totalInputTokens: number;
+  freeSpaceTokens: number;
+}
+
+export type ContextBreakdownMsg = Envelope<'context_breakdown', ContextBreakdown>;
+
+/** 用量统计快照（对齐 CLI /stats，按模型/工具聚合）。 */
+export interface StatsSnapshot {
+  models: Record<
+    string,
+    {
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }
+  >;
+  tools: {
+    totalCalls: number;
+    totalSuccess: number;
+    totalFail: number;
+    byName: Record<string, { count: number; success: number; fail: number }>;
+  };
+}
+
+export type StatsSnapshotMsg = Envelope<'stats_snapshot', StatsSnapshot>;
+
+/** 单项依赖体检结果（对齐 core DoctorCheck）。 */
+export interface DoctorCheckInfo {
+  name: string;
+  category: string;
+  present: boolean;
+  version?: string;
+  installHint?: string;
+}
+
+export interface DoctorReportInfo {
+  platform: string;
+  checks: DoctorCheckInfo[];
+  presentCount: number;
+  missingCount: number;
+  affectedCapabilities: string[];
+}
+
+export type DoctorReportMsg = Envelope<'doctor_report', DoctorReportInfo>;
+
+/** 单条 todo（与 core todoStore 的 TodoItem 同构）。 */
+export interface TodoItemInfo {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  priority: 'high' | 'medium' | 'low';
+}
+
+export type TodosListMsg = Envelope<'todos_list', { todos: TodoItemInfo[] }>;
+
+// ── P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话 回包 ──────────
+
+/** 单个记忆文件（层级：项目 OTTO.md / 全局 ~/.otto/OTTO.md）。 */
+export interface MemoryFileInfo {
+  /** 'project' | 'global'。 */
+  scope: 'project' | 'global';
+  /** 文件绝对路径。 */
+  path: string;
+  /** 文件是否存在（不存在时 content 为空串）。 */
+  exists: boolean;
+  /** 文件全文内容。 */
+  content: string;
+}
+
+export type MemorySnapshotMsg = Envelope<
+  'memory_snapshot',
+  { files: MemoryFileInfo[] }
+>;
+
+/** 单个已装技能摘要（对齐 core SkillInfo）。 */
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  marketplaceId: string;
+  pluginId: string;
+  enabled: boolean;
+}
+
+export type SkillsListMsg = Envelope<'skills_list', { skills: SkillSummary[] }>;
+
+/** 单个可用工具摘要（内置 + MCP，MCP 工具附 serverName）。 */
+export interface ToolSummary {
+  name: string;
+  displayName: string;
+  description: string;
+  /** 来自哪个 MCP 服务器（内置工具为 undefined）。 */
+  serverName?: string;
+}
+
+export type ToolsListMsg = Envelope<
+  'tools_list',
+  { sessionId: string; tools: ToolSummary[] }
+>;
+
+/** 压缩结果：成功携带前后 token 数，失败/无需压缩时 compressed=false。 */
+export type CompressResultMsg = Envelope<
+  'compress_result',
+  {
+    sessionId: string;
+    compressed: boolean;
+    originalTokenCount?: number;
+    newTokenCount?: number;
+    message: string;
+  }
+>;
+
+/** 导出内容：拼好的 Markdown 文本 + 建议文件名，落盘交给 desktop 侧。 */
+export type ExportResultMsg = Envelope<
+  'export_result',
+  { sessionId: string; suggestedFileName: string; markdown: string }
+>;
+
+// ── P2：Workflow 面板 / 扩展列表 / IDE 伴生状态 回包 ───────────────────────
+
+export type WorkflowStatusValue = 'running' | 'completed' | 'failed';
+
+export interface WorkflowAgentSummary {
+  agentId: string;
+  label: string;
+  status: WorkflowStatusValue;
+  startTime: number;
+  endTime?: number;
+  tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  toolCallCount: number;
+  currentPhase?: 'thinking' | 'executing_tools';
+  outcome?: string;
+}
+
+export interface WorkflowPhaseSummary {
+  index: number;
+  name: string;
+  description: string;
+  agents: WorkflowAgentSummary[];
+}
+
+export interface WorkflowSummary {
+  id: string;
+  slug: string;
+  description: string;
+  status: WorkflowStatusValue;
+  startTime: number;
+  endTime?: number;
+  totalTokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  phases: WorkflowPhaseSummary[];
+  /** 无 phase 信息时的兜底扁平 agent 列表。 */
+  agents: WorkflowAgentSummary[];
+}
+
+/** workflow 列表：get_workflows 回包，也在 WorkflowRegistry 变化时主动广播（实时进度）。 */
+export type WorkflowsListMsg = Envelope<
+  'workflows_list',
+  { workflows: WorkflowSummary[] }
+>;
+
+/** 单个已安装扩展摘要（对齐 CLI /extensions list）。 */
+export interface ExtensionSummary {
+  name: string;
+  version: string;
+  /** 扩展所在目录（项目级或全局 ~/.otto-user/extensions）。 */
+  path: string;
+}
+
+export type ExtensionsListMsg = Envelope<
+  'extensions_list',
+  { extensions: ExtensionSummary[] }
+>;
+
+/** IDE 伴生连接状态（对齐 CLI /ide status）。desktop 独立应用不跑该协议，恒为 not_applicable。 */
+export type IdeConnectionStatusValue =
+  | 'connected'
+  | 'connecting'
+  | 'disconnected'
+  | 'not_applicable';
+
+export type IdeStatusMsg = Envelope<
+  'ide_status',
+  { status: IdeConnectionStatusValue; details?: string }
+>;
+
 export type ServerToClient =
   | WelcomeMsg
   | SessionsListMsg
@@ -490,7 +806,21 @@ export type ServerToClient =
   | SessionStatusMsg
   | ErrorMsg
   | ModelsListMsg
-  | FeishuPushResultMsg;
+  | FeishuPushResultMsg
+  | SettingsMsg
+  | McpServersMsg
+  | ContextBreakdownMsg
+  | StatsSnapshotMsg
+  | DoctorReportMsg
+  | TodosListMsg
+  | MemorySnapshotMsg
+  | SkillsListMsg
+  | ToolsListMsg
+  | CompressResultMsg
+  | ExportResultMsg
+  | WorkflowsListMsg
+  | ExtensionsListMsg
+  | IdeStatusMsg;
 
 export type ServerToClientType = ServerToClient['type'];
 
@@ -732,6 +1062,62 @@ export function validateClientPayload(msg: {
       if (p['makeActive'] !== undefined && typeof p['makeActive'] !== 'boolean')
         return 'makeActive 必须是布尔';
       return null;
+    }
+    case 'get_settings':
+    case 'mcp_list':
+    case 'get_stats':
+    case 'run_doctor':
+    case 'get_todos':
+    case 'get_memory':
+    case 'get_skills':
+    case 'get_workflows':
+    case 'get_extensions':
+    case 'get_ide_status':
+      return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
+    case 'set_setting': {
+      if (!isPlainObject(p)) return 'set_setting payload 必须是对象';
+      const key = p['key'];
+      if (key !== 'agentStyle' && key !== 'healthyUse' && key !== 'preferredLanguage')
+        return 'key 必须是 agentStyle | healthyUse | preferredLanguage';
+      const value = p['value'];
+      if (typeof value !== 'string' && typeof value !== 'boolean')
+        return 'value 必须是字符串或布尔';
+      return null;
+    }
+    case 'mcp_add': {
+      if (!isPlainObject(p)) return 'mcp_add payload 必须是对象';
+      if (!isNonEmptyString(p['name'])) return 'name 必须是非空字符串';
+      if (p['command'] !== undefined && typeof p['command'] !== 'string')
+        return 'command 必须是字符串';
+      if (p['url'] !== undefined && typeof p['url'] !== 'string')
+        return 'url 必须是字符串';
+      if (p['httpUrl'] !== undefined && typeof p['httpUrl'] !== 'string')
+        return 'httpUrl 必须是字符串';
+      if (
+        !isNonEmptyString(p['command']) &&
+        !isNonEmptyString(p['url']) &&
+        !isNonEmptyString(p['httpUrl'])
+      ) {
+        return '必须提供 command / url / httpUrl 之一';
+      }
+      return null;
+    }
+    case 'mcp_remove': {
+      if (!isPlainObject(p)) return 'mcp_remove payload 必须是对象';
+      return isNonEmptyString(p['name']) ? null : 'name 必须是非空字符串';
+    }
+    case 'get_context_breakdown':
+    case 'get_tools':
+    case 'compress_context':
+    case 'export_conversation': {
+      if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
+      return isNonEmptyString(p['sessionId'])
+        ? null
+        : 'sessionId 必须是非空字符串';
+    }
+    case 'add_memory': {
+      if (!isPlainObject(p)) return 'add_memory payload 必须是对象';
+      return isNonEmptyString(p['fact']) ? null : 'fact 必须是非空字符串';
     }
     default:
       return `未知帧类型：${msg.type}`;
