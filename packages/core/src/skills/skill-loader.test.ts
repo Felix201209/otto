@@ -410,6 +410,49 @@ Content
   });
 
   // ==========================================================================
+  // 热更新：SKILL.md 内容变更后，无需重启进程、无需清缓存、无需等 TTL，
+  // 下一次 loadSkill/loadEnabledSkills 就应该拿到新内容。
+  // ==========================================================================
+  describe('hot reload (mtime-based cache invalidation)', () => {
+    it('reflects edited SKILL.md content on next load without restart or manual cache clear', async () => {
+      await createTestMarketplace();
+
+      // 1. 首次加载，拿到旧内容，并确认已进缓存。
+      const before = await loader.loadSkill('test-mp:test-plugin:skill1', SkillLoadLevel.FULL);
+      expect(before?.content).toContain('Skill 1 Content');
+      expect(before?.content).not.toContain('HOT-RELOADED');
+      expect(loader.getCacheStats().skills).toContain('test-mp:test-plugin:skill1');
+
+      // 2. 模拟用户编辑 SKILL.md（不调用 clearCache / clearSkillCache，
+      //    也不重建 loader 实例 —— 完全模拟"进程仍在跑，文件被改了"的真实场景）。
+      const skillFilePath = path.join(testMarketplacePath, 'test-plugin', 'skill1', 'SKILL.md');
+      await fs.writeFile(
+        skillFilePath,
+        `---\nname: skill1\ndescription: Test Skill 1\nlicense: MIT\nallowedTools:\n  - read_file\n  - write_file\n---\n\n# Skill 1 Content (HOT-RELOADED)\n\nThis content was edited after the process started.\n`,
+      );
+      // 部分文件系统 mtime 分辨率是秒级，写入后可能与首次加载落在同一秒导致
+      // 误判"未变化"。显式把 mtime 往后拨 2 秒，确保严格变新。
+      const future = new Date(Date.now() + 2000);
+      await fs.utimes(skillFilePath, future, future);
+
+      // 3. 不做任何手动失效操作，直接再 load 一次。
+      const after = await loader.loadSkill('test-mp:test-plugin:skill1', SkillLoadLevel.FULL);
+
+      expect(after?.content).toContain('HOT-RELOADED');
+    });
+
+    it('does not reload when the file is untouched (cache still hits)', async () => {
+      await createTestMarketplace();
+
+      const first = await loader.loadSkill('test-mp:test-plugin:skill1', SkillLoadLevel.FULL);
+      const second = await loader.loadSkill('test-mp:test-plugin:skill1', SkillLoadLevel.FULL);
+
+      // 未修改文件时应命中缓存，拿到同一对象引用（证明没有重新解析磁盘文件）。
+      expect(first).toBe(second);
+    });
+  });
+
+  // ==========================================================================
   // 🎯 Regression: symlinked user-project skills must be discovered.
   //
   // Bug: `fs.readdir(root, { withFileTypes: true })` returns Dirent objects
