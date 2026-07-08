@@ -142,6 +142,41 @@
   color: var(--otto-text-tertiary);
   letter-spacing: 0.04em;
 }
+/* 可点击标题行（折叠/展开触发器） */
+.otto-common-tasks__head--toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--otto-radius-sm);
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-common-tasks__head--toggle:hover {
+  background: var(--otto-accent-soft);
+}
+.otto-common-tasks__head--toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+/* 折叠态下标题底边距收紧（底边框在折叠时就是整块的底） */
+.otto-common-tasks--collapsed {
+  padding-bottom: 4px;
+}
+.otto-common-tasks--collapsed .otto-common-tasks__head--toggle {
+  padding-bottom: 0;
+}
+/* 折叠/展开三角 */
+.otto-common-tasks__toggle-chev {
+  flex-shrink: 0;
+  color: var(--otto-text-tertiary);
+  transition: transform var(--otto-dur) var(--otto-ease);
+}
+.otto-common-tasks__toggle-chev--open {
+  transform: rotate(90deg);
+}
 .otto-common-task {
   display: flex;
   align-items: center;

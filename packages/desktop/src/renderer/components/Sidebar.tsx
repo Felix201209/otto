@@ -15,7 +15,7 @@
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { EXPERTS, type Expert } from '../agents/experts.js';
@@ -55,6 +55,9 @@ interface SidebarProps {
   onDelete: (id: string) => void;
 }
 
+/** 持久化「常见任务」折叠态到 sessionStorage，刷新后保留。 */
+const COMMON_TASKS_STORAGE_KEY = 'otto:common-tasks-collapsed';
+
 export function Sidebar({
   groups,
   activeSessionId,
@@ -69,6 +72,27 @@ export function Sidebar({
   onRename,
   onDelete,
 }: SidebarProps): React.JSX.Element {
+  /** 常见任务折叠态：默认展开（false），可点标题头折叠/展开。持久化到 sessionStorage。 */
+  const [tasksCollapsed, setTasksCollapsed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(COMMON_TASKS_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleTasksCollapsed = useCallback((): void => {
+    setTasksCollapsed((v) => {
+      const next = !v;
+      try {
+        sessionStorage.setItem(COMMON_TASKS_STORAGE_KEY, next ? '1' : '0');
+      } catch {
+        /* storage 不可用时静默 */
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <aside className="otto-sidebar">
       <div className="otto-sidebar__traffic" />
@@ -94,53 +118,78 @@ export function Sidebar({
         新建对话
       </button>
 
-      <div className="otto-common-tasks" aria-label="常见任务">
-        <div className="otto-common-tasks__head">常见任务</div>
-        {EXPERTS.map((expert) => (
-          <button
-            key={expert.id}
-            type="button"
-            className="otto-common-task"
-            onClick={() => onLaunchExpert(expert)}
-            title={expert.tagline}
-          >
-            <span className="otto-common-task__icon" style={{ color: expert.accent }}>
-              <IconAgent size={14} />
-            </span>
-            <span className="otto-common-task__body">
-              <span className="otto-common-task__name">{expert.name}</span>
-              <span className="otto-common-task__desc">{expert.tagline}</span>
-            </span>
-          </button>
-        ))}
+      <div
+        className={'otto-common-tasks' + (tasksCollapsed ? ' otto-common-tasks--collapsed' : '')}
+        aria-label="常见任务"
+      >
+        {/* 标题行：可点击折叠/展开 */}
         <button
           type="button"
-          className={
-            'otto-agents-entry' + (agentsActive ? ' is-active' : '')
-          }
-          onClick={onOpenAgents}
-          aria-current={agentsActive ? 'page' : undefined}
-          title="查看完整智能体画廊"
+          className="otto-common-tasks__head otto-common-tasks__head--toggle"
+          onClick={toggleTasksCollapsed}
+          aria-expanded={!tasksCollapsed}
+          aria-controls="otto-common-tasks-body"
         >
-          <span className="otto-agents-entry__label">全部智能体</span>
-          <span className="otto-agents-entry__hint">画廊</span>
-          <IconChevron size={15} className="otto-agents-entry__chev" />
+          <span>常见任务</span>
+          <IconChevron
+            size={11}
+            className={
+              'otto-common-tasks__toggle-chev' +
+              (tasksCollapsed ? '' : ' otto-common-tasks__toggle-chev--open')
+            }
+          />
         </button>
-        <button
-          type="button"
-          className={
-            'otto-agents-entry' + (hubActive ? ' is-active' : '')
-          }
-          onClick={onOpenHub}
-          aria-current={hubActive ? 'page' : undefined}
-          title="设置与诊断中心"
-        >
-          <span className="otto-agents-entry__icon">
-            <IconSettings size={14} />
-          </span>
-          <span className="otto-agents-entry__label">设置与诊断</span>
-          <IconChevron size={15} className="otto-agents-entry__chev" />
-        </button>
+
+        {/* 任务列表：折叠时隐藏 */}
+        {!tasksCollapsed && (
+          <div id="otto-common-tasks-body">
+            {EXPERTS.map((expert) => (
+              <button
+                key={expert.id}
+                type="button"
+                className="otto-common-task"
+                onClick={() => onLaunchExpert(expert)}
+                title={expert.tagline}
+              >
+                <span className="otto-common-task__icon" style={{ color: expert.accent }}>
+                  <IconAgent size={14} />
+                </span>
+                <span className="otto-common-task__body">
+                  <span className="otto-common-task__name">{expert.name}</span>
+                  <span className="otto-common-task__desc">{expert.tagline}</span>
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className={
+                'otto-agents-entry' + (agentsActive ? ' is-active' : '')
+              }
+              onClick={onOpenAgents}
+              aria-current={agentsActive ? 'page' : undefined}
+              title="查看完整智能体画廊"
+            >
+              <span className="otto-agents-entry__label">全部智能体</span>
+              <span className="otto-agents-entry__hint">画廊</span>
+              <IconChevron size={15} className="otto-agents-entry__chev" />
+            </button>
+            <button
+              type="button"
+              className={
+                'otto-agents-entry' + (hubActive ? ' is-active' : '')
+              }
+              onClick={onOpenHub}
+              aria-current={hubActive ? 'page' : undefined}
+              title="设置与诊断中心"
+            >
+              <span className="otto-agents-entry__icon">
+                <IconSettings size={14} />
+              </span>
+              <span className="otto-agents-entry__label">设置与诊断</span>
+              <IconChevron size={15} className="otto-agents-entry__chev" />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="otto-sessions">
