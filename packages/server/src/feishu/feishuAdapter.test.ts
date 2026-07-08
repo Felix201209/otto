@@ -219,6 +219,7 @@ describe('FeishuAdapter 双向链路', () => {
       },
       cancel() {},
       setModel() {},
+      getConfig() { return undefined; },
       async dispose() {},
     });
 
@@ -286,6 +287,7 @@ describe('FeishuAdapter 双向链路', () => {
       },
       cancel() {},
       setModel() {},
+      getConfig() { return undefined; },
       async dispose() {},
     };
     const pre = store.getOrCreateFeishuSession('oc_chat_Q');

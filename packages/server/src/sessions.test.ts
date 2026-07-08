@@ -322,6 +322,7 @@ describe('InMemorySessionStore', () => {
         async run() {},
         cancel() {},
         setModel() {},
+      getConfig() { return undefined; },
         async dispose() {
           disposed++;
         },
@@ -342,6 +343,7 @@ describe('InMemorySessionStore', () => {
         async run() {},
         cancel() {},
         setModel() {},
+      getConfig() { return undefined; },
         async dispose() {
           throw new Error('dispose 炸了');
         },
@@ -362,6 +364,7 @@ describe('InMemorySessionStore', () => {
         async run() {},
         cancel() {},
         setModel() {},
+      getConfig() { return undefined; },
         async dispose() {
           throw new Error('dispose 炸了');
         },

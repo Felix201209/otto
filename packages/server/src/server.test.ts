@@ -494,6 +494,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
         },
         cancel() {},
         setModel() {},
+      getConfig() { return undefined; },
         async dispose() {},
       };
       return runtime;
@@ -577,6 +578,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
         release = undefined;
       },
       setModel() {},
+      getConfig() { return undefined; },
       async dispose() {
         calls.dispose++;
         release?.();
