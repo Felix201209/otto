@@ -108,3 +108,76 @@ describe('BackgroundTaskManager persistence', () => {
     expect(mgr.getTask(task.id)!.status).toBe('completed');
   });
 });
+
+describe('BackgroundTaskManager conflict detection (multi-agent parallelism)', () => {
+  it('detects a conflict when a new task targets the exact same directory as a running ACP delegate task', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('[Claude Code] refactor', '/repo/project-a', 'claude-code');
+
+    const conflict = mgr.findConflictingTask('/repo/project-a');
+    expect(conflict).toBeDefined();
+    expect(conflict!.kind).toBe('claude-code');
+  });
+
+  it('detects a conflict when the new directory is a subdirectory of a running task\'s directory', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('[Codex] build', '/repo/project-a', 'codex');
+
+    const conflict = mgr.findConflictingTask('/repo/project-a/src/nested');
+    expect(conflict).toBeDefined();
+  });
+
+  it('detects a conflict when the new directory is an ancestor of a running task\'s directory', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('[Claude Code] edit deep file', '/repo/project-a/src/deep', 'claude-code');
+
+    const conflict = mgr.findConflictingTask('/repo/project-a');
+    expect(conflict).toBeDefined();
+  });
+
+  it('does NOT flag a conflict for a sibling directory that merely shares a path prefix', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    // '/repo/project-a' and '/repo/project-ab' share the string prefix
+    // "/repo/project-a" but are NOT nested — a naive startsWith() check
+    // (without the path-separator boundary) would wrongly flag this.
+    mgr.createTask('[Claude Code] x', '/repo/project-a', 'claude-code');
+
+    const conflict = mgr.findConflictingTask('/repo/project-ab');
+    expect(conflict).toBeUndefined();
+  });
+
+  it('does NOT flag a conflict against a completed (non-running) task', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    const task = mgr.createTask('[Codex] x', '/repo/project-a', 'codex');
+    mgr.completeTask(task.id, { exitCode: 0 });
+
+    const conflict = mgr.findConflictingTask('/repo/project-a');
+    expect(conflict).toBeUndefined();
+  });
+
+  it('does NOT flag a conflict against a plain shell task in the same directory', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('npm test', '/repo/project-a', 'shell');
+
+    const conflict = mgr.findConflictingTask('/repo/project-a');
+    expect(conflict).toBeUndefined();
+  });
+
+  it('does NOT flag a conflict for a genuinely unrelated directory', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('[Claude Code] x', '/repo/project-a', 'claude-code');
+
+    const conflict = mgr.findConflictingTask('/repo/totally-different-project');
+    expect(conflict).toBeUndefined();
+  });
+
+  it('allows two ACP delegate tasks to run concurrently in unrelated directories (parallelism preserved)', () => {
+    const mgr = new BackgroundTaskManager({ storageDir: null });
+    mgr.createTask('[Claude Code] x', '/repo/project-a', 'claude-code');
+    mgr.createTask('[Codex] y', '/repo/project-b', 'codex');
+
+    expect(mgr.findConflictingTask('/repo/project-a')).toBeDefined();
+    expect(mgr.findConflictingTask('/repo/project-b')).toBeDefined();
+    expect(mgr.findConflictingTask('/repo/project-c')).toBeUndefined();
+  });
+});

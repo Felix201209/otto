@@ -212,6 +212,29 @@ export class DelegateToAgentTool extends BaseTool<
     const mode: DelegateMode = params.mode ?? DEFAULT_MODE;
     const label = resolveExternalAgentSpec(agent).label;
 
+    // 多 agent 并行冲突检测：resumeSessionId 场景是"回到同一个已有会话继续"，
+    // 本质是同一个逻辑任务的延续而非新开一个并行任务，不做互斥检查（否则
+    // 用户想 resume 自己刚才那个任务时反被自己拦住）。只在真正"新开一个
+    // delegate 任务"时检查目标目录是否已有另一个 ACP agent 在跑。
+    if (!params.resumeSessionId) {
+      const conflict = getBackgroundTaskManager().findConflictingTask(cwd);
+      if (conflict) {
+        const conflictLabel = conflict.kind === 'codex' ? 'Codex' : 'Claude Code';
+        const runningSec = Math.round((Date.now() - conflict.startTime) / 1000);
+        const msg =
+          `Cannot start ${label}: ${conflictLabel} is already running in an overlapping ` +
+          `directory (Task ID: ${conflict.id}, dir: ${conflict.directory}, running for ${runningSec}s). ` +
+          `Running two agents on the same working tree concurrently risks file/git conflicts. ` +
+          `Wait for it to finish, use delegate_status to check progress, or pick a different directory.`;
+        return {
+          status: 'failed',
+          llmContent: JSON.stringify({ status: 'failed', error: msg, conflictingTaskId: conflict.id }),
+          returnDisplay: `⚠️ ${msg}`,
+          summary: `Blocked: ${conflictLabel} already running in this directory`,
+        };
+      }
+    }
+
     if (mode === 'stream') {
       return this.runStream(params, agent, label, cwd, signal, updateOutput);
     }

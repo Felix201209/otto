@@ -348,6 +348,63 @@ describe('DelegateToAgentTool', () => {
       expect(task?.status).toBe('cancelled');
     });
   });
+
+  describe('multi-agent conflict detection', () => {
+    it('refuses to start a second delegate task in the same directory as a running one', async () => {
+      // First task: never resolves, stays "running" for the duration of this test.
+      runDelegatedTask.mockReturnValue(new Promise(() => {}));
+      const tool = makeTool('/shared/project');
+      const first = await tool.execute({ task: 'first task' }, new AbortController().signal);
+      expect(first.status).toBe('success');
+
+      // Second task targets the same directory — must be rejected BEFORE
+      // runDelegatedTask is even called again (no wasted agent launch).
+      const callCountBefore = runDelegatedTask.mock.calls.length;
+      const second = await tool.execute({ task: 'second task' }, new AbortController().signal);
+
+      expect(second.status).toBe('failed');
+      expect(second.returnDisplay).toContain('already running');
+      expect(runDelegatedTask.mock.calls.length).toBe(callCountBefore); // no new launch attempt
+    });
+
+    it('refuses to start when the new directory is nested inside a running task\'s directory', async () => {
+      runDelegatedTask.mockReturnValue(new Promise(() => {}));
+      const tool = makeTool('/shared/project');
+      await tool.execute({ task: 'first task' }, new AbortController().signal);
+
+      const nestedTool = makeTool('/shared/project/src/nested');
+      const second = await nestedTool.execute({ task: 'second task' }, new AbortController().signal);
+      expect(second.status).toBe('failed');
+      expect(second.returnDisplay).toContain('already running');
+    });
+
+    it('allows a second delegate task in a genuinely unrelated directory (parallelism preserved)', async () => {
+      runDelegatedTask.mockReturnValue(new Promise(() => {}));
+      const toolA = makeTool('/shared/project-a');
+      const resA = await toolA.execute({ task: 'task a' }, new AbortController().signal);
+      expect(resA.status).toBe('success');
+
+      const toolB = makeTool('/shared/project-b');
+      const resB = await toolB.execute({ task: 'task b' }, new AbortController().signal);
+      expect(resB.status).toBe('success');
+      expect(resB.returnDisplay).toContain('Task ID:');
+    });
+
+    it('does not apply conflict detection when resuming an existing session (resumeSessionId set)', async () => {
+      runDelegatedTask.mockReturnValue(new Promise(() => {}));
+      const tool = makeTool('/shared/project');
+      await tool.execute({ task: 'first task' }, new AbortController().signal);
+
+      // Same directory, but this is a resume of an existing conversation —
+      // must NOT be blocked by the conflict check (it's a continuation, not
+      // a second parallel agent).
+      const resumed = await tool.execute(
+        { task: 'continue', resumeSessionId: 'some-existing-session-id' },
+        new AbortController().signal,
+      );
+      expect(resumed.status).toBe('success');
+    });
+  });
 });
 
 describe('formatClaudeCodeTaskResult', () => {
