@@ -37,6 +37,7 @@ const IPC = {
   openPath: 'otto:open-path',
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
+  setLocalTestUrl: 'otto:set-local-test-url',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -77,6 +78,12 @@ export interface OttoBridge {
   feishuStart(): Promise<{ text: string; pid?: number }>;
   feishuStop(): Promise<{ text: string }>;
   feishuStatus(): Promise<{ text: string; running: boolean }>;
+  /**
+   * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
+   * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
+   * 返回是否应用成功。
+   */
+  setLocalTestUrl?(url: string): Promise<void>;
 }
 
 // ── 退避参数 ──
@@ -290,6 +297,9 @@ const bridge: OttoBridge = {
   },
   feishuStatus(): Promise<{ text: string; running: boolean }> {
     return ipcRenderer.invoke('otto:feishu-status') as Promise<{ text: string; running: boolean }>;
+  },
+  setLocalTestUrl(url: string): Promise<void> {
+    return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
   },
 };
 

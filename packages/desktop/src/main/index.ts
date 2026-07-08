@@ -79,7 +79,15 @@ const IPC = {
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
+  setLocalTestUrl: 'otto:set-local-test-url',
 } as const;
+
+/**
+ * 本地测试模式：当前设置的本地代理地址。
+ * - 应用时：将 OTTO_SERVER_URL 设为该地址，使 core 的 proxyConfig 将请求路由到本机 server。
+ * - 清除时：删除该环境变量。
+ */
+let localTestUrl: string | undefined;
 
 /**
  * 飞书一键开关在桌面端的现状（诚实说明）。
@@ -314,6 +322,27 @@ function registerIpc(): void {
   ipcMain.handle(IPC.feishuStatus, () =>
     Promise.resolve({ text: FEISHU_DESKTOP_NOTICE, running: false }),
   );
+
+  // 本地测试模式：应用/清除 customProxyServerUrl。
+  // renderer 通过 preload.setLocalTestUrl() 调用。
+  // 实现方式：将 OTTO_SERVER_URL env 设为指定地址，待下次会话创建时 proxyConfig
+  // 会读到该改变的环境变量，从而路由请求到本地。
+  ipcMain.handle(IPC.setLocalTestUrl, (_e, url: unknown) => {
+    if (typeof url !== 'string') return Promise.resolve();
+    const trimmed = url.trim();
+    if (trimmed) {
+      // 应用本地测试地址
+      localTestUrl = trimmed;
+      process.env.OTTO_SERVER_URL = trimmed;
+      console.log(`[otto-desktop] 本地测试模式已应用： OTTO_SERVER_URL=${trimmed}`);
+    } else {
+      // 清除本地测试
+      localTestUrl = undefined;
+      delete process.env.OTTO_SERVER_URL;
+      console.log('[otto-desktop] 本地测试模式已清除， OTTO_SERVER_URL 已移除。');
+    }
+    return Promise.resolve();
+  });
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
