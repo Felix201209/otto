@@ -30,7 +30,7 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { RightMascotPanel } from './components/RightMascotPanel.js';
+import { RightPanel } from './components/RightPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import type { Expert } from './agents/experts.js';
@@ -246,16 +246,13 @@ export function App(): React.JSX.Element {
       <Sidebar
         groups={groups}
         activeSessionId={state.activeSessionId}
-        agentsActive={mainView === 'agents'}
         hubActive={mainView === 'hub'}
         onSelect={(id) => {
           setMainView('chat');
           actions.selectSession(id);
         }}
         onNewChat={handleNewChat}
-        onOpenAgents={() => setMainView('agents')}
         onOpenHub={() => openHub('prefs')}
-        onLaunchExpert={handleLaunchExpert}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
@@ -307,7 +304,10 @@ export function App(): React.JSX.Element {
             onOpenMemory={() => openHub('memory')}
             onOpenSkills={() => openHub('skills')}
           />
-          <RightMascotPanel />
+          <RightPanel
+            onLaunchExpert={handleLaunchExpert}
+            onOpenAgents={() => setMainView('agents')}
+          />
         </div>
       )}
 

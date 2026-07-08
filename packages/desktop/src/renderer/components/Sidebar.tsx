@@ -5,9 +5,10 @@
  */
 
 /**
- * 左侧栏。1:1 还原 spec §左侧栏：
- *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组 /
- *   会话项（标题+时间+预览+来源徽章, 选中态 cream 底+左竖条）/ 查看全部对话。
+ * 左侧栏。以会话列表为主体：
+ *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
+ *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
+ *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
  * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
  *   - 重命名走 inline 输入框（双击标题 或 菜单「重命名」→ 变输入框，Enter 提交、Esc 取消）。
@@ -15,10 +16,9 @@
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
-import { EXPERTS, type Expert } from '../agents/experts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import {
@@ -27,7 +27,6 @@ import {
   IconList,
   IconChevron,
   IconSparkle,
-  IconAgent,
   IconSettings,
 } from './icons.js';
 
@@ -41,58 +40,27 @@ function formatTime(ts: number): string {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
-  /** 当前是否停在「智能体」页（高亮该入口）。 */
-  agentsActive?: boolean;
   /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
   hubActive?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
-  onOpenAgents: () => void;
   onOpenHub: () => void;
-  onLaunchExpert: (expert: Expert) => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
 }
 
-/** 持久化「常见任务」折叠态到 sessionStorage，刷新后保留。 */
-const COMMON_TASKS_STORAGE_KEY = 'otto:common-tasks-collapsed';
-
 export function Sidebar({
   groups,
   activeSessionId,
-  agentsActive = false,
   hubActive = false,
   onSelect,
   onNewChat,
-  onOpenAgents,
   onOpenHub,
-  onLaunchExpert,
   onViewAll,
   onRename,
   onDelete,
 }: SidebarProps): React.JSX.Element {
-  /** 常见任务折叠态：默认展开（false），可点标题头折叠/展开。持久化到 sessionStorage。 */
-  const [tasksCollapsed, setTasksCollapsed] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem(COMMON_TASKS_STORAGE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  const toggleTasksCollapsed = useCallback((): void => {
-    setTasksCollapsed((v) => {
-      const next = !v;
-      try {
-        sessionStorage.setItem(COMMON_TASKS_STORAGE_KEY, next ? '1' : '0');
-      } catch {
-        /* storage 不可用时静默 */
-      }
-      return next;
-    });
-  }, []);
-
   return (
     <aside className="otto-sidebar">
       <div className="otto-sidebar__traffic" />
@@ -117,80 +85,6 @@ export function Sidebar({
         <IconPlus size={15} />
         新建对话
       </button>
-
-      <div
-        className={'otto-common-tasks' + (tasksCollapsed ? ' otto-common-tasks--collapsed' : '')}
-        aria-label="常见任务"
-      >
-        {/* 标题行：可点击折叠/展开 */}
-        <button
-          type="button"
-          className="otto-common-tasks__head otto-common-tasks__head--toggle"
-          onClick={toggleTasksCollapsed}
-          aria-expanded={!tasksCollapsed}
-          aria-controls="otto-common-tasks-body"
-        >
-          <span>常见任务</span>
-          <IconChevron
-            size={11}
-            className={
-              'otto-common-tasks__toggle-chev' +
-              (tasksCollapsed ? '' : ' otto-common-tasks__toggle-chev--open')
-            }
-          />
-        </button>
-
-        {/* 任务列表：折叠时隐藏 */}
-        {!tasksCollapsed && (
-          <div id="otto-common-tasks-body">
-            {EXPERTS.map((expert) => (
-              <button
-                key={expert.id}
-                type="button"
-                className="otto-common-task"
-                onClick={() => onLaunchExpert(expert)}
-                title={expert.tagline}
-              >
-                <span className="otto-common-task__icon" style={{ color: expert.accent }}>
-                  <IconAgent size={14} />
-                </span>
-                <span className="otto-common-task__body">
-                  <span className="otto-common-task__name">{expert.name}</span>
-                  <span className="otto-common-task__desc">{expert.tagline}</span>
-                </span>
-              </button>
-            ))}
-            <button
-              type="button"
-              className={
-                'otto-agents-entry' + (agentsActive ? ' is-active' : '')
-              }
-              onClick={onOpenAgents}
-              aria-current={agentsActive ? 'page' : undefined}
-              title="查看完整智能体画廊"
-            >
-              <span className="otto-agents-entry__label">全部智能体</span>
-              <span className="otto-agents-entry__hint">画廊</span>
-              <IconChevron size={15} className="otto-agents-entry__chev" />
-            </button>
-            <button
-              type="button"
-              className={
-                'otto-agents-entry' + (hubActive ? ' is-active' : '')
-              }
-              onClick={onOpenHub}
-              aria-current={hubActive ? 'page' : undefined}
-              title="设置与诊断中心"
-            >
-              <span className="otto-agents-entry__icon">
-                <IconSettings size={14} />
-              </span>
-              <span className="otto-agents-entry__label">设置与诊断</span>
-              <IconChevron size={15} className="otto-agents-entry__chev" />
-            </button>
-          </div>
-        )}
-      </div>
 
       <div className="otto-sessions">
         {groups.length === 0 ? (
@@ -218,6 +112,18 @@ export function Sidebar({
         <button type="button" className="otto-viewall" onClick={onViewAll}>
           <IconList size={16} />
           查看全部对话
+          <IconChevron size={15} className="otto-viewall__chev" />
+        </button>
+        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
+        <button
+          type="button"
+          className={'otto-viewall otto-viewall--hub' + (hubActive ? ' is-active' : '')}
+          onClick={onOpenHub}
+          aria-current={hubActive ? 'page' : undefined}
+          title="设置与诊断中心"
+        >
+          <IconSettings size={16} />
+          设置与诊断
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
       </div>

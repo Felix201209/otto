@@ -122,6 +122,25 @@ export interface ToolExecutionResult {
   toolName: string;
 }
 
+/**
+ * AskUserQuestion 单个选项（与 core `AskUserQuestionOption` 同构）。
+ * 渲染层据此画选项按钮；label 也是回传答案时的取值。
+ */
+export interface AskUserQuestionOption {
+  label: string;
+  description?: string;
+  /** 可选预览内容（markdown），单选时并排展示。 */
+  preview?: string;
+}
+
+/** AskUserQuestion 单个问题（与 core `AskUserQuestion` 同构）。 */
+export interface AskUserQuestion {
+  question: string;
+  header: string;
+  options: AskUserQuestionOption[];
+  multiSelect?: boolean;
+}
+
 /** 工具确认详情（与 webview ToolCallConfirmationDetails 同构，按需精简）。 */
 export interface ToolCallConfirmationDetails {
   message?: string;
@@ -142,6 +161,11 @@ export interface ToolCallConfirmationDetails {
   command?: string;
   rootCommand?: string;
   metadata?: { source?: string };
+  /**
+   * AskUserQuestion（type === 'question'）待用户作答的问题清单。
+   * 渲染层据此画交互式问答卡，用户提交后经 tool_confirmation_response 回传答案。
+   */
+  questions?: AskUserQuestion[];
 }
 
 /** 单个工具调用卡（与 webview ToolCall 同构）。 */
@@ -266,6 +290,24 @@ export type SendUserMessageMsg = Envelope<
   }
 >;
 
+/**
+ * 工具确认应答携带的用户输入。
+ * AskUserQuestion 走 answers/annotations/feedback；可修改工具的内联改写走 newContent。
+ */
+export interface ToolConfirmationResponsePayload {
+  /**
+   * AskUserQuestion 答案：answers[问题文本] = 选中选项 label。
+   * 多选逗号连接；"Other" 自由文本为原文。
+   */
+  answers?: Record<string, string>;
+  /** 每题可选备注 / 预览内容（回传给模型）。 */
+  annotations?: Record<string, { preview?: string; notes?: string }>;
+  /** 用户选择"聊聊/跳过"时的自由文本反馈。 */
+  feedback?: string;
+  /** 可修改工具的内联改写内容。 */
+  newContent?: string;
+}
+
 /** 工具确认应答。 */
 export type ToolConfirmationResponseMsg = Envelope<
   'tool_confirmation_response',
@@ -273,7 +315,7 @@ export type ToolConfirmationResponseMsg = Envelope<
     sessionId: string;
     callId: string;
     outcome: 'approved' | 'rejected' | 'always_approve';
-    payload?: Record<string, unknown>;
+    payload?: ToolConfirmationResponsePayload;
   }
 >;
 
@@ -520,6 +562,13 @@ export type ChatCompleteMsg = Envelope<
     messageId: string;
     tokenUsage?: TokenUsage;
     finishReason?: string;
+    /**
+     * 定稿纯文本全文（对账自愈）：客户端若中途取消订阅又切回（会话切换），
+     * 切走期间的 chat_chunk 已丢失、本地 content 缺头。带上全文让客户端在
+     * 收口时直接覆盖 content 补齐，而不是永远缺一截。可选：旧端无此字段时
+     * 行为不变（只置 isStreaming=false）。
+     */
+    text?: string;
   }
 >;
 
@@ -1030,6 +1079,13 @@ export function validateClientPayload(msg: {
       const o = p['outcome'];
       if (o !== 'approved' && o !== 'rejected' && o !== 'always_approve')
         return 'outcome 必须是 approved | rejected | always_approve';
+      // payload 可选：存在时须为对象；answers（若给）须为对象（键值对答案）。
+      const pl = p['payload'];
+      if (pl !== undefined) {
+        if (!isPlainObject(pl)) return 'payload 必须是对象';
+        if (pl['answers'] !== undefined && !isPlainObject(pl['answers']))
+          return 'payload.answers 必须是对象';
+      }
       return null;
     }
     case 'set_model': {

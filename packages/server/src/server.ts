@@ -1506,14 +1506,15 @@ export class OttoServer {
     });
     this.store.publish(sessionId, {
       type: 'chat_complete',
-      payload: { sessionId, messageId: assistant.id },
+      payload: { sessionId, messageId: assistant.id, text },
     });
     this.store.setStatus(sessionId, 'idle');
   }
 
   private subscribeConn(conn: ClientConn, sessionId: string): void {
     if (conn.subscriptions.has(sessionId)) return;
-    if (!this.store.getSession(sessionId)) {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
@@ -1527,6 +1528,13 @@ export class OttoServer {
     this.send(conn.socket, {
       type: 'history',
       payload: { sessionId, messages: this.store.getHistory(sessionId) },
+    });
+    // 再单发一帧当前会话状态：session_status 只在状态变化时广播，切走再切回的
+    // 客户端错过了那次广播，不告知就不知道该会话还在 thinking/streaming，
+    // 「正在生成」UI 恢复不出来（任务看起来像被切断了）。
+    this.send(conn.socket, {
+      type: 'session_status',
+      payload: { sessionId, status: session.status },
     });
   }
 

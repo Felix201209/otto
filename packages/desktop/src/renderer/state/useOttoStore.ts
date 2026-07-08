@@ -272,9 +272,15 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     }
 
     case 'chat_complete': {
-      const { sessionId, messageId, tokenUsage } = frame.payload;
+      const { sessionId, messageId, tokenUsage, text } = frame.payload;
       return patchMessage(state, sessionId, messageId, (m) => ({
         ...m,
+        // 帧带定稿全文时用它覆盖本地 content 对账：切走（退订）期间丢失的
+        // chunk 由此自愈——否则缺头的回复永远缺头。旧 server 不带 text 时保持原样。
+        content:
+          text !== undefined
+            ? [{ type: 'text' as const, value: text }]
+            : m.content,
         isStreaming: false,
         isReasoning: false,
         tokenUsage: tokenUsage ?? m.tokenUsage,

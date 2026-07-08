@@ -76,6 +76,8 @@ export interface Settings {
   customThemes?: Record<string, CustomTheme>;
   selectedAuthType?: AuthType;
   customProxyServerUrl?: string; // Custom proxy server URL (overrides default)
+  searchProvider?: 'bing' | 'bocha' | 'gemini'; // web_search 搜索后端（默认 bing，免 key、国内可用）
+  searchApiKey?: string; // bocha 等需要 key 的搜索后端；也可用环境变量 OTTO_BOCHA_API_KEY
   sandbox?: boolean | string;
   coreTools?: string[];
   excludeTools?: string[];

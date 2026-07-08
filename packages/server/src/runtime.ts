@@ -31,6 +31,7 @@ import {
   Config,
   MESSAGE_ROLES,
   SceneType,
+  ToolConfirmationOutcome,
   executeToolCall,
   getModelCapabilities,
   areAllFunctionCallsValid,
@@ -38,6 +39,7 @@ import {
   appearIncompleteFromStreaming,
   type ToolCallRequestInfo,
   type ToolRegistry,
+  type ToolQuestionConfirmationDetails,
 } from 'otto-core';
 import type {
   Content,
@@ -55,6 +57,8 @@ import {
   type ToolCall,
   type ToolExecutionResult,
   type TokenUsage,
+  type AskUserQuestion,
+  type ToolConfirmationResponsePayload,
 } from './protocol.js';
 
 /** 创建并初始化一个绑定到指定 core Config 的会话运行时。 */
@@ -327,6 +331,14 @@ export class CoreSessionRuntime implements SessionRuntime {
               assistantId = startAssistant();
             }
             assistantText += delta;
+            // 每个 delta 都同步把累积文本落进 store：客户端切走（退订）再切回时
+            // get_history 才能拿到已生成的部分，而不是空占位（否则切走期间的
+            // delta 全部丢失、回复缺头）。不改 isStreaming——收口仍由 patch 定稿。
+            // 持久层对高频 patch 已做去抖合并写盘（WRITE_DEBOUNCE_MS），不会写爆；
+            // patchMessage 不广播，不会产生重复帧。
+            this.store.patchMessage(this.sessionId, assistantId, {
+              content: [{ type: 'text', value: assistantText }],
+            });
             this.store.publish(this.sessionId, {
               type: 'chat_chunk',
               payload: {
@@ -365,6 +377,8 @@ export class CoreSessionRuntime implements SessionRuntime {
                 ? String(lastFinishReason)
                 : undefined,
               tokenUsage: toProtocolTokenUsage(lastUsage, modelName),
+              // 带定稿全文：切走期间丢过 chunk 的客户端据此对账自愈（补缺头）。
+              text: assistantText,
             },
           });
           this.store.setStatus(this.sessionId, 'idle');
@@ -384,6 +398,8 @@ export class CoreSessionRuntime implements SessionRuntime {
               sessionId: this.sessionId,
               messageId: assistantId,
               tokenUsage: toProtocolTokenUsage(lastUsage, modelName),
+              // 同收口处：带定稿全文供客户端对账自愈。
+              text: assistantText,
             },
           });
         }
@@ -592,6 +608,8 @@ export class CoreSessionRuntime implements SessionRuntime {
           sessionId: this.sessionId,
           messageId: assistantId,
           finishReason: 'cancelled',
+          // 取消也带已生成部分：客户端缺头时同样能自愈。
+          text: assistantText,
         },
       });
     }

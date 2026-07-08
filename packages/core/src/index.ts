@@ -201,6 +201,10 @@ export * from './orchestration/index.js';
 export * from './tools/voice-bridge.js';
 export * from './tools/doctor.js';
 
+// 个人知识库（本地，无企业授权可用）
+export * from './tools/knowledge-base.js';
+export * from './knowledge/localKnowledgeStore.js';
+
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';
 export {

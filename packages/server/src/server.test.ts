@@ -240,6 +240,28 @@ describe('OttoServer WS（mock 模式）', () => {
     c.close();
   });
 
+  it('subscribe 后单发一帧当前 session_status（切回恢复「正在生成」UI）', async () => {
+    const s = server.store.createSession({ title: 'st' });
+    // 模拟切回时会话还在生成中（setStatus 的广播此刻无人订阅，会被错过——
+    // 订阅时的单发补帧就是给这种客户端的）。
+    server.store.setStatus(s.sessionId, 'thinking');
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+    c.send({ type: 'subscribe', payload: { sessionId: s.sessionId } });
+    const status = await c.waitFor((f) => f.type === 'session_status');
+    if (status.type === 'session_status') {
+      expect(status.payload.sessionId).toBe(s.sessionId);
+      expect(status.payload.status).toBe('thinking');
+    }
+    // 顺序契约：先回灌 history，再补 session_status。
+    const types = c.frames.map((f) => f.type);
+    expect(types.indexOf('history')).toBeGreaterThanOrEqual(0);
+    expect(types.indexOf('history')).toBeLessThan(
+      types.indexOf('session_status'),
+    );
+    c.close();
+  });
+
   it('get_history 往返', async () => {
     const s = server.store.createSession({ title: 'g' });
     const c = await connectWs(baseUrl);

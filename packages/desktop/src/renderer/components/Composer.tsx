@@ -48,8 +48,11 @@ import {
  */
 const MODEL_SEARCH_THRESHOLD = 8;
 
-/** 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。 */
-const SLASH_COMMANDS: readonly SlashCommand[] = [
+/**
+ * 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。
+ * 导出给右侧面板「工具」tab 复用作数据源（RightPanel），避免两处维护命令清单。
+ */
+export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'new', description: '新建会话', action: 'local' },
   { id: 'model', description: '打开模型菜单', action: 'local' },
   { id: 'clear', description: '清空当前会话上下文', action: 'local' },
@@ -73,6 +76,20 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'ide', description: '内置 IDE / 代码任务', action: 'prompt', prompt: '请进入代码任务模式。先检查当前项目结构，询问要实现或修复的目标，然后给出计划。' },
   { id: 'workflow', description: '启动 workflow 任务', action: 'prompt', prompt: 'workflow 请根据我的目标创建并执行一个完整工作流。先问我目标、输入材料、输出格式和约束。' },
 ];
+
+/**
+ * 右侧面板「工具」tab → Composer 的填入桥。走自定义事件而非 props：
+ * Composer 深居 ChatView 之下，为一条注入通路把 draft/draftNonce 逐层穿透
+ * App→ChatView→Composer 不值当；派发函数与事件监听同在本文件维护，耦合可见。
+ */
+const COMPOSER_INSERT_EVENT = 'otto:composer-insert';
+
+/** 把一段文本填入底部输入框（只填入不发送，随后聚焦）。供 RightPanel 工具列表点击调用。 */
+export function insertComposerDraft(text: string): void {
+  window.dispatchEvent(
+    new CustomEvent<string>(COMPOSER_INSERT_EVENT, { detail: text }),
+  );
+}
 
 interface ComposerProps {
   models: ModelInfo[];
@@ -239,6 +256,27 @@ export function Composer({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftNonce]);
+
+  // 右侧面板「工具」点击 → 把命令文本填入输入框（不发送），聚焦以便直接回车执行。
+  // 与手输行为一致：复位斜杠面板的 Esc 关闭/高亮态，`/xxx` 填入即弹出命令面板。
+  React.useEffect(() => {
+    const onInsert = (e: Event): void => {
+      if (disabled) return;
+      const value = (e as CustomEvent<string>).detail;
+      if (typeof value !== 'string') return;
+      setText(value);
+      setSlashDismissed(false);
+      setSlashIndex(0);
+      const el = taRef.current;
+      if (el) {
+        el.focus();
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+      }
+    };
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
+  }, [disabled]);
 
   // 切换/新建会话就绪后自动聚焦 textarea，省去手动再点一下。
   // 仅在有会话（sessionId）且未禁用时聚焦；不依赖 busy，避免打断发送流。

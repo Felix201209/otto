@@ -270,6 +270,42 @@ describe('applyFrame 各帧分支', () => {
     });
   });
 
+  it('chat_complete：带 text 时覆盖 content 对账自愈（切走期间丢的 chunk 补齐）', () => {
+    const { view, push } = setup();
+    // 模拟切走再切回：本地 content 只有缺头的一截（切走期间的 delta 丢了）。
+    push({
+      type: 'message_start',
+      payload: {
+        message: makeMsg({
+          id: 'm1',
+          content: [{ type: 'text', value: '尾巴' }],
+          isStreaming: true,
+        }),
+      },
+    });
+    push({
+      type: 'chat_complete',
+      payload: { sessionId: 's1', messageId: 'm1', text: '完整开头+尾巴' },
+    });
+    const m = view.result.current.state.messages['s1'][0];
+    expect(m.content).toEqual([{ type: 'text', value: '完整开头+尾巴' }]);
+    expect(m.isStreaming).toBe(false);
+  });
+
+  it('chat_complete：不带 text 时保留本地 content（旧 server 兼容）', () => {
+    const { view, push } = setup();
+    push({
+      type: 'message_start',
+      payload: {
+        message: makeMsg({ id: 'm1', content: [{ type: 'text', value: '本地已有' }] }),
+      },
+    });
+    push({ type: 'chat_complete', payload: { sessionId: 's1', messageId: 'm1' } });
+    expect(view.result.current.state.messages['s1'][0].content).toEqual([
+      { type: 'text', value: '本地已有' },
+    ]);
+  });
+
   it('tool_calls_update：有 messageId 挂指定消息 + isProcessingTools 推导', () => {
     const { view, push } = setup();
     push({ type: 'message_start', payload: { message: makeMsg({ id: 'm1' }) } });
