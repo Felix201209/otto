@@ -66,6 +66,59 @@ function copyDir(src, dest) {
   execFileSync('cp', ['-R', src, dest], { stdio: 'inherit' });
 }
 
+// otto-core 顶层【静态】import 的外部运行时依赖：这些若没被 electron-builder 收进
+// app.asar，app 一启动加载 otto-core 就 ERR_MODULE_NOT_FOUND 崩溃（1.2.0 正是此坑：
+// @langchain/langgraph 被 hoist 到 monorepo 根、未打进 asar）。交付前在此体检拦下，
+// 绝不把这类坏包 zip 出去。新增 otto-core 顶层外部依赖时同步补进本清单。
+const REQUIRED_ASAR_DEPS = ['@langchain/langgraph', '@langchain/core'];
+
+/**
+ * 体检 Otto.app 的 app.asar：确认 REQUIRED_ASAR_DEPS 都真被打进去了。
+ * 缺任一 → fail-loud die()。asar 不存在（asar:false 构建）或 @electron/asar
+ * 不可用时降级为 warn，不阻断（best-effort 护栏，不误伤合法构建）。
+ */
+async function verifyAppAsarDeps(app) {
+  const asarPath = join(app, 'Contents', 'Resources', 'app.asar');
+  if (!existsSync(asarPath)) {
+    warn(`未找到 app.asar（${asarPath}）——asar:false 构建可忽略，否则打包异常`);
+    return;
+  }
+  let listPackage;
+  try {
+    const mod = await import('@electron/asar');
+    listPackage = mod.listPackage ?? mod.default?.listPackage;
+  } catch {
+    warn('@electron/asar 不可用，跳过 app.asar 依赖体检（建议装上以启用护栏）');
+    return;
+  }
+  if (typeof listPackage !== 'function') {
+    warn('@electron/asar.listPackage 不可用，跳过 app.asar 依赖体检');
+    return;
+  }
+  let files;
+  try {
+    files = listPackage(asarPath);
+  } catch (e) {
+    warn('读取 app.asar 失败，跳过依赖体检: ' + (e?.message ?? e));
+    return;
+  }
+  // listPackage 返回形如 "/node_modules/@langchain/langgraph/index.js" 的路径清单；
+  // 要求每个依赖目录下至少有一个文件（光有空目录不算数）。
+  const missing = REQUIRED_ASAR_DEPS.filter(
+    (dep) => !files.some((f) => f.includes(`/node_modules/${dep}/`)),
+  );
+  if (missing.length > 0) {
+    die(
+      `app.asar 缺关键运行时依赖：${missing.join(', ')}（otto-core 顶层静态 import，缺了 app 启动即崩 ERR_MODULE_NOT_FOUND）`,
+      '根因多为 monorepo hoist 的传递依赖未被 electron-builder 收进 asar。修复：\n' +
+        '    1) 确认 packages/core/package.json 已声明这些依赖；\n' +
+        '    2) 仓库根重跑 `npm install` 落实 hoist；\n' +
+        '    3) 重新 `npm run dist --workspace=packages/desktop` 出 .app 后再跑本脚本。',
+    );
+  }
+  log(`✓ app.asar 依赖体检通过（${REQUIRED_ASAR_DEPS.join(', ')} 均已打入）`);
+}
+
 // 双击运行的一键修复脚本：给同目录 Otto.app 去「下载隔离」并打开（收件方遇"已损坏"的兜底）。
 const FIX_COMMAND = `#!/bin/bash
 # 双击我：给同目录的 Otto.app 去掉"下载隔离(quarantine)"标记并打开。
@@ -128,6 +181,9 @@ if (!appPath) {
   );
 }
 log(`找到 app: ${appPath}`);
+
+// app.asar 依赖体检：漏了 otto-core 静态依赖的坏包绝不放行（防 1.2.0 崩溃复发）。
+await verifyAppAsarDeps(appPath);
 
 // ── 4. 定位 CLI 兜底 tgz ───────────────────────────────────────────────────
 // 优先级：环境变量 OTTO_CLI_TGZ > ~/Desktop/otto-cli-*.tgz（取最新） > 仓库内
