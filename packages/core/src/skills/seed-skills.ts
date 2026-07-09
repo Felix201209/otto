@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const moduleDir = dirname(fileURLToPath(import.meta.url));
+const moduleDir = __dirname;
 
 /**
  * 手写递归复制——不用 fs.cpSync：打包后 skills-seed 在 app.asar 内，cpSync 的原生递归

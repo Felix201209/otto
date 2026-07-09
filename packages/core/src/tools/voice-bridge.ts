@@ -26,8 +26,7 @@ import { ProcessGuard } from '../utils/process-guard.js';
 import { DoctorService, DoctorReport } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
-// ESM 下无 __dirname，从 import.meta.url 派生。
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const moduleDir = __dirname;
 
 export interface VoiceBridgeToolParams {
   action: 'listen' | 'listen_raw' | 'listen_long';

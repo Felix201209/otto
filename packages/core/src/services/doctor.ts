@@ -104,9 +104,9 @@ const defaultRunner: CommandRunner = (command, timeoutMs) =>
     child.on('error', reject);
   });
 
-/** 默认模块解析器：相对本文件所在包解析（能命中 monorepo/依赖树里的 playwright）。 */
+/** 默认模块解析器：相对本文件所在包解析。 */
 const defaultResolver: ModuleResolver = (moduleName) => {
-  const req = createRequire(import.meta.url);
+  const req = createRequire(__filename);
   return req.resolve(moduleName);
 };
 
