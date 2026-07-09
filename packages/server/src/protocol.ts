@@ -970,6 +970,36 @@ export interface FeishuHealthStatus {
   lockHeldByOtherPid: number | null;
 }
 
+/**
+ * 飞书凭证的对外脱敏视图（GET /feishu/config）。
+ * appSecret 永不出现在任何响应里——客户端只需要知道「配没配」。
+ */
+export interface FeishuConfigPublic {
+  /** 凭证文件存在且可解密。 */
+  configured: boolean;
+  appId?: string;
+  domain?: 'feishu' | 'lark';
+  botName?: string;
+  tenantName?: string;
+  /** Bot 拥有者（授权用户）的飞书 open_id。 */
+  ownerOpenId?: string;
+  /** 额外授权白名单人数（内容不透出，只报数量）。 */
+  allowlistCount?: number;
+  /** 凭证文件存在但解密/解析失败（需清除后重配）。 */
+  corrupted?: boolean;
+}
+
+/**
+ * 保存飞书凭证请求体（POST /feishu/config）。
+ * appSecret 可省略 = 保留盘上已有 secret 只改其他字段（改 App ID 时必须重填）。
+ */
+export interface FeishuConfigSaveRequest {
+  appId: string;
+  appSecret?: string;
+  domain: 'feishu' | 'lark';
+  ownerOpenId?: string;
+}
+
 /** GET /health */
 export interface HealthInfo {
   status: 'ok';
@@ -994,6 +1024,9 @@ export interface HealthInfo {
  *   GET  /models                      → ApiResponse<ModelInfo[]>
  *   POST /feishu/start                → ApiResponse<FeishuHealthStatus>（运行期启动飞书守护）
  *   POST /feishu/stop                 → ApiResponse<FeishuHealthStatus>（运行期停止，之后不自动重连）
+ *   GET  /feishu/config               → ApiResponse<FeishuConfigPublic>（脱敏凭证视图，绝不含 secret）
+ *   POST /feishu/config               → ApiResponse<FeishuConfigPublic>（保存凭证并立即尝试启动守护）
+ *   DELETE /feishu/config             → ApiResponse<FeishuConfigPublic>（停守护并清除凭证）
  *   WS   /ws                          → 双向 ClientToServer / ServerToClient
  */
 export const HTTP_ROUTES = {
@@ -1003,6 +1036,7 @@ export const HTTP_ROUTES = {
   models: '/models',
   feishuStart: '/feishu/start',
   feishuStop: '/feishu/stop',
+  feishuConfig: '/feishu/config',
   ws: '/ws',
 } as const;
 

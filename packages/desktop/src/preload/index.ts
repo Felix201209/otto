@@ -25,6 +25,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ClientToServer,
+  FeishuConfigPublic,
+  FeishuConfigSaveRequest,
   HealthInfo,
   ServerEndpoint,
   ServerToClient,
@@ -35,6 +37,14 @@ import type {
  * 即 HealthInfo 里的 feishu 字段：enabled/connected + 守护详情 status。
  */
 export type FeishuStatusDetail = HealthInfo['feishu'];
+
+/** 飞书凭证配置操作的统一返回：config 为脱敏视图（绝无 appSecret）。 */
+export interface FeishuConfigResult {
+  ok: boolean;
+  config: FeishuConfigPublic | null;
+  error: string | null;
+}
+export type { FeishuConfigPublic, FeishuConfigSaveRequest };
 
 // ── 软件更新的跨进程形状 ──
 // 与 src/main/update-core.ts / update-service.ts 里的定义结构一致的副本。
@@ -149,6 +159,15 @@ export interface OttoBridge {
     running: boolean;
     feishu?: FeishuStatusDetail;
   }>;
+  /**
+   * 飞书凭证配置（「飞书接入」面板）。config 是脱敏视图：
+   * 只有 appId / domain / 授权人等元信息，appSecret 永不回传。
+   */
+  feishuGetConfig(): Promise<FeishuConfigResult>;
+  /** 保存凭证并让守护立即用上（server 侧 stop→start 重读凭证）。 */
+  feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult>;
+  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
+  feishuClearConfig(): Promise<FeishuConfigResult>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -394,6 +413,15 @@ const bridge: OttoBridge = {
       running: boolean;
       feishu?: FeishuStatusDetail;
     }>;
+  },
+  feishuGetConfig(): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-get-config') as Promise<FeishuConfigResult>;
+  },
+  feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-save-config', body) as Promise<FeishuConfigResult>;
+  },
+  feishuClearConfig(): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-clear-config') as Promise<FeishuConfigResult>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;

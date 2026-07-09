@@ -43,7 +43,12 @@ import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import type {
+  FeishuConfigPublic,
+  FeishuConfigSaveRequest,
+  HealthInfo,
+  ServerEndpoint,
+} from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
@@ -81,6 +86,9 @@ const IPC = {
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
+  feishuGetConfig: 'otto:feishu-get-config',
+  feishuSaveConfig: 'otto:feishu-save-config',
+  feishuClearConfig: 'otto:feishu-clear-config',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -170,6 +178,66 @@ function postServerEndpoint(
   });
 }
 
+/**
+ * 请求 /feishu/config（GET/POST/DELETE），解析 ApiResponse 信封。
+ * 网络失败/超时/server 未就绪 → null。POST body 里含 appSecret，
+ * 只走回环 HTTP 到本机 server，不落任何日志。
+ */
+function requestFeishuConfig(
+  method: 'GET' | 'POST' | 'DELETE',
+  body?: FeishuConfigSaveRequest,
+): Promise<{ ok: boolean; data: FeishuConfigPublic | null; error: string | null } | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  const payload = body !== undefined ? JSON.stringify(body) : undefined;
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: '/feishu/config',
+        method,
+        timeout: FEISHU_OP_TIMEOUT_MS,
+        ...(payload !== undefined
+          ? {
+              headers: {
+                'content-type': 'application/json',
+                'content-length': Buffer.byteLength(payload),
+              },
+            }
+          : {}),
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          text += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(
+              JSON.parse(text) as {
+                ok: boolean;
+                data: FeishuConfigPublic | null;
+                error: string | null;
+              },
+            );
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+    req.end(payload);
+  });
+}
+
 /** 查询当前 server 的 /health（信封 {ok,data,error}），失败/未就绪返回 null。 */
 function fetchServerHealth(): Promise<HealthInfo | null> {
   const ep = endpoint;
@@ -216,7 +284,7 @@ function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
   if (!feishu.enabled || !st) {
     return (
       '本地 server 未启用飞书网关（未检测到飞书凭证）。\n' +
-      '在终端运行 otto feishu setup 配置凭证后重启 Otto 即自动启用。'
+      '到「设置与诊断 → 飞书接入」填写 App ID / App Secret 即可启用。'
     );
   }
   if (!st.configured) {
@@ -499,6 +567,27 @@ function registerIpc(): void {
         '飞书守护已停止（有意停止：不会自动重连，再次启动即恢复守护）。\n' +
         '注：若另有 CLI 守护进程（otto feishu daemon）在跑，请在终端单独停止。',
     };
+  });
+  // 飞书凭证配置（「飞书接入」面板）：转发 server /feishu/config。
+  // GET 返回的本来就是脱敏视图（appSecret 只进不出，见 server 端约定）。
+  ipcMain.handle(IPC.feishuGetConfig, async () => {
+    const r = await requestFeishuConfig('GET');
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
+    return { ok: r.ok, config: r.data, error: r.error };
+  });
+  ipcMain.handle(IPC.feishuSaveConfig, async (_e, body: unknown) => {
+    // 形状粗校验后转发；细校验（appId/domain/secret 规则）由 server 端负责。
+    if (typeof body !== 'object' || body === null) {
+      return { ok: false, config: null, error: '配置格式不合法。' };
+    }
+    const r = await requestFeishuConfig('POST', body as FeishuConfigSaveRequest);
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪，凭证未保存。' };
+    return { ok: r.ok, config: r.data, error: r.error };
+  });
+  ipcMain.handle(IPC.feishuClearConfig, async () => {
+    const r = await requestFeishuConfig('DELETE');
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
+    return { ok: r.ok, config: r.data, error: r.error };
   });
 
   // 本地测试模式：应用/清除 customProxyServerUrl。

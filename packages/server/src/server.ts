@@ -36,6 +36,8 @@ import {
   validateClientPayload,
   type ApiResponse,
   type ClientToServer,
+  type FeishuConfigPublic,
+  type FeishuConfigSaveRequest,
   type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
@@ -69,6 +71,12 @@ import {
   type FeishuRegisterDeps,
   type FeishuRegistration,
 } from './feishu/register.js';
+import {
+  loadCredentials,
+  saveCredentials,
+  clearCredentials,
+  type FeishuCredentials,
+} from './feishu/vendor/credentials.js';
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
@@ -147,7 +155,26 @@ export interface OttoServerOptions {
    * 让 /feishu/start、/feishu/stop 端点行为可离线单测（不读真凭证、不连真飞书）。
    */
   feishuDeps?: Pick<FeishuRegisterDeps, 'credentials' | 'gatewayFactory'>;
+  /**
+   * 飞书凭证存取（/feishu/config 端点用）。缺省 = 真实读写
+   * ~/.otto-user/feishu-credentials.json。测试必须注入内存实现——
+   * 绝不允许测试碰用户真实凭证文件。
+   */
+  credentialsStore?: FeishuCredentialsStore;
 }
+
+/** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
+export interface FeishuCredentialsStore {
+  load(): Promise<FeishuCredentials | null>;
+  save(creds: FeishuCredentials): Promise<void>;
+  clear(): Promise<void>;
+}
+
+const defaultCredentialsStore: FeishuCredentialsStore = {
+  load: loadCredentials,
+  save: saveCredentials,
+  clear: clearCredentials,
+};
 
 /**
  * 单个 WS 连接的会话上下文：持有该连接对各会话的订阅取消句柄，
@@ -178,6 +205,8 @@ export class OttoServer {
   private feishu?: FeishuRegistration;
   /** 飞书测试注入（见 OttoServerOptions.feishuDeps）。 */
   private readonly feishuDeps?: OttoServerOptions['feishuDeps'];
+  /** 飞书凭证存取（/feishu/config 端点用）。 */
+  private readonly credentialsStore: FeishuCredentialsStore;
   /** 运行期飞书启停的单飞锁：并发 POST 复用同一次操作，防重复 register。 */
   private feishuOpLock: Promise<unknown> = Promise.resolve();
   private readonly conns = new Set<ClientConn>();
@@ -195,6 +224,7 @@ export class OttoServer {
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
     this.feishuDeps = opts.feishuDeps;
+    this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
   }
 
   /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
@@ -1164,6 +1194,32 @@ export class OttoServer {
         );
       return;
     }
+    // 飞书凭证配置（desktop「飞书接入」面板走这里；appSecret 只进不出）。
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'GET') {
+      void this.feishuConfigView()
+        .then((view) => sendJson(res, 200, ok(view)))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'POST') {
+      void readJsonBody(req)
+        .then((body) => this.runtimeFeishuSaveConfig(body))
+        .then((r) => sendJson(res, r.ok ? 200 : 400, r))
+        .catch((e) =>
+          sendJson(res, 400, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'DELETE') {
+      void this.runtimeFeishuClearConfig()
+        .then((r) => sendJson(res, 200, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
 
     sendJson(res, 404, err('not_found'));
   }
@@ -1232,6 +1288,105 @@ export class OttoServer {
     });
     this.feishuOpLock = run.catch(() => undefined);
     return run;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 飞书凭证配置（GET/POST/DELETE /feishu/config）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** 凭证的脱敏视图：appSecret 永不出现在响应里。 */
+  private async feishuConfigView(): Promise<FeishuConfigPublic> {
+    let creds: FeishuCredentials | null;
+    try {
+      creds = await this.credentialsStore.load();
+    } catch {
+      // 文件存在但解密/解析失败：如实报 corrupted，客户端引导「清除后重配」。
+      return { configured: false, corrupted: true };
+    }
+    if (!creds) return { configured: false };
+    return {
+      configured: true,
+      appId: creds.appId,
+      domain: creds.domain,
+      botName: creds.botName,
+      tenantName: creds.tenantName,
+      ownerOpenId: creds.ownerOpenId,
+      allowlistCount: creds.allowlist?.length ?? 0,
+    };
+  }
+
+  /**
+   * 保存凭证并立即让守护用上新凭证（stop→start；adapter 只在拉起时读盘）。
+   * appSecret 可省略 = 沿用盘上已有 secret（仅限 App ID 未变时，防串号）。
+   */
+  private async runtimeFeishuSaveConfig(
+    body: unknown,
+  ): Promise<ApiResponse<FeishuConfigPublic>> {
+    const parsed = parseFeishuConfigSaveRequest(body);
+    if (typeof parsed === 'string') {
+      return { ok: false, data: await this.feishuConfigView(), error: parsed };
+    }
+
+    let existing: FeishuCredentials | null = null;
+    try {
+      existing = await this.credentialsStore.load();
+    } catch {
+      existing = null; // 损坏文件视为不存在，直接被本次保存覆盖。
+    }
+
+    const sameApp = existing?.appId === parsed.appId;
+    const secret = parsed.appSecret ?? (sameApp ? existing?.appSecret : undefined);
+    if (!secret) {
+      return {
+        ok: false,
+        data: await this.feishuConfigView(),
+        error: sameApp
+          ? '请填写 App Secret。'
+          : '更换 App ID 时必须重新填写 App Secret。',
+      };
+    }
+
+    // 换应用时旧 bot/租户/白名单信息全部作废；同应用则保留。
+    const next: FeishuCredentials = {
+      appId: parsed.appId,
+      appSecret: secret,
+      domain: parsed.domain,
+      ...(sameApp && existing
+        ? {
+            botName: existing.botName,
+            botOpenId: existing.botOpenId,
+            tenantName: existing.tenantName,
+            allowlist: existing.allowlist,
+          }
+        : {}),
+      ...(parsed.ownerOpenId
+        ? { ownerOpenId: parsed.ownerOpenId }
+        : sameApp && existing?.ownerOpenId
+          ? { ownerOpenId: existing.ownerOpenId }
+          : {}),
+    };
+    await this.credentialsStore.save(next);
+
+    // 守护若在跑，stop→start 强制重读凭证（start 对已运行守护是幂等 no-op）。
+    await this.runtimeFeishuStop().catch(() => undefined);
+    const started = await this.runtimeFeishuStart().catch(
+      (e): ApiResponse<FeishuHealthStatus | null> =>
+        err(e instanceof Error ? e.message : String(e)),
+    );
+    return {
+      ok: started.ok,
+      data: await this.feishuConfigView(),
+      error: started.ok
+        ? null
+        : `凭证已保存，但守护启动失败：${started.error ?? '未知原因'}`,
+    };
+  }
+
+  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
+  private async runtimeFeishuClearConfig(): Promise<ApiResponse<FeishuConfigPublic>> {
+    await this.runtimeFeishuStop().catch(() => undefined);
+    await this.credentialsStore.clear();
+    return ok(await this.feishuConfigView());
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -1781,6 +1936,58 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(json);
+}
+
+/** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此，超限即恶意/误用）。 */
+function readJsonBody(
+  req: IncomingMessage,
+  maxBytes = 64 * 1024,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > maxBytes) {
+        reject(new Error('请求体过大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (chunks.length === 0) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        reject(new Error('请求体不是合法 JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+/** 校验 POST /feishu/config 请求体；通过返回规整后的请求，不通过返回错误文案。 */
+function parseFeishuConfigSaveRequest(
+  body: unknown,
+): FeishuConfigSaveRequest | string {
+  if (typeof body !== 'object' || body === null) return '请求体必须是 JSON 对象';
+  const b = body as Record<string, unknown>;
+  const appId = typeof b.appId === 'string' ? b.appId.trim() : '';
+  if (!appId) return '请填写 App ID（形如 cli_xxx）。';
+  const domain = b.domain;
+  if (domain !== 'feishu' && domain !== 'lark') {
+    return 'domain 必须是 feishu（飞书）或 lark（Lark 国际版）。';
+  }
+  const appSecret =
+    typeof b.appSecret === 'string' && b.appSecret.trim()
+      ? b.appSecret.trim()
+      : undefined;
+  const ownerOpenId =
+    typeof b.ownerOpenId === 'string' && b.ownerOpenId.trim()
+      ? b.ownerOpenId.trim()
+      : undefined;
+  return { appId, domain, ...(appSecret ? { appSecret } : {}), ...(ownerOpenId ? { ownerOpenId } : {}) };
 }
 /** core WorkflowAgentRecord → 协议 WorkflowAgentSummary（裁掉 prompt/recentToolCalls 等大字段）。 */
 function toWorkflowAgentSummary(a: WorkflowAgentRecord): WorkflowAgentSummary {

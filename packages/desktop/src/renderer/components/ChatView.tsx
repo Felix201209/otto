@@ -68,6 +68,8 @@ interface ChatViewProps {
   onExport?: () => void;
   /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
   onOpenDoctor?: () => void;
+  /** 斜杠命令 `/feishu` 系列：打开设置与诊断中心的「飞书接入」tab。 */
+  onOpenFeishu?: () => void;
   /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
   onOpenMemory?: () => void;
   /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
@@ -101,6 +103,7 @@ export function ChatView({
   onClearContext,
   onExport,
   onOpenDoctor,
+  onOpenFeishu,
   onOpenMemory,
   onOpenSkills,
   commands,
@@ -302,6 +305,7 @@ export function ChatView({
         onClearContext={onClearContext}
         onOpenSettings={onOpenSetup}
         onOpenDoctor={onOpenDoctor}
+        onOpenFeishu={onOpenFeishu}
         onOpenMemory={onOpenMemory}
         onOpenSkills={onOpenSkills}
         onExport={onExport}

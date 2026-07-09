@@ -78,9 +78,11 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'config', description: '偏好设置（agent 风格 / 语言等）', action: 'local' },
   { id: 'hooks', description: '打开 hooks 文档', action: 'local' },
   { id: 'desktop', description: '启动/修复桌面端 Otto', action: 'prompt', prompt: '请检查并修复 Otto 桌面端：构建 renderer/main/preload，重新打包 Electron，覆盖 /Applications/Otto.app，并验证界面是否为最新。' },
-  { id: 'feishu-start', description: '开启飞书控制网关', action: 'prompt', prompt: '请开启飞书/Lark 控制网关并检查连接状态。' },
-  { id: 'feishu-stop', description: '停止飞书控制网关', action: 'prompt', prompt: '请停止飞书/Lark 控制网关并确认进程已退出。' },
-  { id: 'feishu-status', description: '检查飞书连接状态', action: 'prompt', prompt: '请检查飞书/Lark 网关、授权、消息同步和群绑定状态。' },
+  // 飞书全家桶：真实动作（配置面板 / REST 启停），不再发提示词让 AI 代办。
+  { id: 'feishu', description: '飞书接入：配置凭证 / 查看状态', action: 'local' },
+  { id: 'feishu-start', description: '启动飞书网关（立即执行）', action: 'local' },
+  { id: 'feishu-stop', description: '停止飞书网关（立即执行）', action: 'local' },
+  { id: 'feishu-status', description: '查看飞书连接状态', action: 'local' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
   { id: 'ppt', description: 'PPT 创作专家', action: 'prompt', prompt: '我要做一份 PPT。请调用 PPT 创作专家流程，先询问主题、受众、页数、风格和素材。' },
   { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
@@ -137,6 +139,8 @@ interface ComposerProps {
   onOpenSettings?: () => void;
   /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
   onOpenDoctor?: () => void;
+  /** 斜杠命令 `/feishu` 系列：打开设置与诊断中心的「飞书接入」tab。 */
+  onOpenFeishu?: () => void;
   /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
   onOpenMemory?: () => void;
   /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
@@ -176,6 +180,7 @@ export function Composer({
   onClearContext,
   onOpenSettings,
   onOpenDoctor,
+  onOpenFeishu,
   onOpenMemory,
   onOpenSkills,
   onExport,
@@ -402,6 +407,20 @@ export function Composer({
         break;
       case 'doctor':
         onOpenDoctor?.();
+        break;
+      // 飞书：启停真调 REST（preload 通路），随后打开「飞书接入」面板看真实状态；
+      // 裸 /feishu 与 /feishu-status 直接开面板（面板即配置 + 状态）。
+      case 'feishu':
+      case 'feishu-status':
+        onOpenFeishu?.();
+        break;
+      case 'feishu-start':
+        void window.otto?.feishuStart();
+        onOpenFeishu?.();
+        break;
+      case 'feishu-stop':
+        void window.otto?.feishuStop();
+        onOpenFeishu?.();
         break;
       case 'memory':
         onOpenMemory?.();

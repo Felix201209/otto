@@ -340,6 +340,7 @@ export function App(): React.JSX.Element {
                 : undefined
             }
             onOpenDoctor={() => openHub('doctor')}
+            onOpenFeishu={() => openHub('feishu')}
             onOpenMemory={() => openHub('memory')}
             onOpenSkills={() => openHub('skills')}
             commands={slashCommands}
