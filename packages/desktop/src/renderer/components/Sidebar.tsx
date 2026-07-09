@@ -42,6 +42,8 @@ interface SidebarProps {
   activeSessionId: string | null;
   /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
   hubActive?: boolean;
+  /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
+  updateBadge?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -54,6 +56,7 @@ export function Sidebar({
   groups,
   activeSessionId,
   hubActive = false,
+  updateBadge = false,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -124,6 +127,14 @@ export function Sidebar({
         >
           <IconSettings size={16} />
           设置与诊断
+          {updateBadge ? (
+            <span
+              className="otto-viewall__dot"
+              role="status"
+              aria-label="有可用更新"
+              title="发现新版本，进入「软件更新」查看"
+            />
+          ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
       </div>

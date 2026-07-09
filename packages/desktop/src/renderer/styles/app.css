@@ -268,6 +268,24 @@
   background: var(--otto-accent-soft);
   color: var(--otto-accent);
 }
+/* 软件更新小圆点：静默检查发现新版时亮在设置入口旁（不弹窗、不打扰）。 */
+.otto-viewall__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+  flex-shrink: 0;
+}
+
+/* 软件更新 tab 的更新日志容器：卡片化 + 超长日志自身滚动，不撑爆面板。 */
+.otto-update__notes {
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface-raised);
+  padding: 10px 14px;
+  max-height: 320px;
+  overflow-y: auto;
+}
 
 /* ══════════════ 主聊天区 ══════════════ */
 

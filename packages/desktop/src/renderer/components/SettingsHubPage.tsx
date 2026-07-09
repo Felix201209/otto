@@ -18,6 +18,8 @@
 import React, { useEffect, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import type { UseSettingsData } from '../state/useSettingsData.js';
+import type { UseSoftwareUpdate } from '../state/useSoftwareUpdate.js';
+import { SoftwareUpdatePanel } from './SoftwareUpdatePanel.js';
 import { IconSettings, IconChevron, IconCheck, IconClose } from './icons.js';
 
 export type TabId =
@@ -26,6 +28,7 @@ export type TabId =
   | 'context'
   | 'stats'
   | 'doctor'
+  | 'update'
   | 'todos'
   | 'memory'
   | 'skills'
@@ -40,6 +43,7 @@ const TAB_LABEL: Record<TabId, string> = {
   context: 'Context 用量',
   stats: '用量统计',
   doctor: '依赖体检',
+  update: '软件更新',
   todos: '任务清单',
   memory: '记忆',
   skills: '技能库',
@@ -55,6 +59,7 @@ const TABS: TabId[] = [
   'context',
   'stats',
   'doctor',
+  'update',
   'todos',
   'memory',
   'skills',
@@ -66,6 +71,8 @@ const TABS: TabId[] = [
 
 interface SettingsHubPageProps {
   data: UseSettingsData;
+  /** 软件更新状态机（App 顶层持有，与 Sidebar 入口小圆点共享同一份）。 */
+  update: UseSoftwareUpdate;
   activeSession: SessionSummary | null;
   onBack: () => void;
   /** 打开面板时默认停在哪个 tab（如从斜杠命令 /doctor /memory /skills 直达）。缺省「偏好设置」。 */
@@ -74,6 +81,7 @@ interface SettingsHubPageProps {
 
 export function SettingsHubPage({
   data,
+  update,
   activeSession,
   onBack,
   initialTab,
@@ -101,6 +109,8 @@ export function SettingsHubPage({
     } else if (tab === 'workflows') actions.refreshWorkflows();
     else if (tab === 'extensions') actions.refreshExtensions();
     else if (tab === 'ide') actions.refreshIdeStatus();
+    // 软件更新 tab 不自动发起检查（手动检查才展示完整结果），只把入口小圆点熄灭。
+    else if (tab === 'update') update.actions.markBadgeSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, activeSession?.sessionId]);
 
@@ -118,7 +128,7 @@ export function SettingsHubPage({
         <div className="otto-hub__headtext">
           <div className="otto-hub__title">设置与诊断中心</div>
           <div className="otto-hub__subtitle">
-            风格 / 健康提醒 / 语言 · MCP 服务器 · Context 用量 · 用量统计 · 依赖体检 · 任务清单 · 记忆 · 技能库 · 工具清单 · Workflow · 扩展 · IDE 伴生
+            风格 / 健康提醒 / 语言 · MCP 服务器 · Context 用量 · 用量统计 · 依赖体检 · 软件更新 · 任务清单 · 记忆 · 技能库 · 工具清单 · Workflow · 扩展 · IDE 伴生
           </div>
         </div>
         <button
@@ -165,6 +175,7 @@ export function SettingsHubPage({
         ) : null}
         {tab === 'stats' ? <StatsPanel data={data} /> : null}
         {tab === 'doctor' ? <DoctorPanel data={data} /> : null}
+        {tab === 'update' ? <SoftwareUpdatePanel update={update} /> : null}
         {tab === 'todos' ? <TodosPanel data={data} /> : null}
         {tab === 'memory' ? <MemoryPanel data={data} /> : null}
         {tab === 'skills' ? <SkillsPanel data={data} /> : null}

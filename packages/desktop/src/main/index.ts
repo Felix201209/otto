@@ -46,6 +46,7 @@ import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
+import { UpdateService } from './update-service.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -81,7 +82,22 @@ const IPC = {
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
   setLocalTestUrl: 'otto:set-local-test-url',
+  appVersion: 'otto:app-version',
+  updateCheck: 'otto:update-check',
+  updateDownload: 'otto:update-download',
+  updateCancel: 'otto:update-cancel',
+  updateInstall: 'otto:update-install',
+  updateProgress: 'otto:update-progress',
 } as const;
+
+/**
+ * 软件更新服务（检查 / 下载 / 安装，逻辑见 update-service.ts）。
+ * 进度经 IPC.updateProgress 推给当前主窗口；窗口可能重建，故传 getter。
+ */
+const updateService = new UpdateService(
+  () => mainWindow?.webContents,
+  IPC.updateProgress,
+);
 
 /**
  * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
@@ -503,6 +519,17 @@ function registerIpc(): void {
     }
     return Promise.resolve();
   });
+
+  // ── 软件更新：检查 / 下载 / 取消 / 安装 + 版本查询（逻辑在 update-service.ts）──
+  // 结果全部结构化透传，不在这里加工：「检查失败」与「已是最新」是 UpdateService
+  // 返回的两种不同 status，任何一层都不许把失败粉饰成最新。
+  ipcMain.handle(IPC.appVersion, () => app.getVersion());
+  ipcMain.handle(IPC.updateCheck, () => updateService.checkForUpdate());
+  ipcMain.handle(IPC.updateDownload, () => updateService.downloadUpdate());
+  ipcMain.handle(IPC.updateCancel, () => {
+    updateService.cancelDownload();
+  });
+  ipcMain.handle(IPC.updateInstall, () => updateService.installUpdate());
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。

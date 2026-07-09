@@ -36,6 +36,54 @@ import type {
  */
 export type FeishuStatusDetail = HealthInfo['feishu'];
 
+// ── 软件更新的跨进程形状 ──
+// 与 src/main/update-core.ts / update-service.ts 里的定义结构一致的副本。
+// main 的 tsconfig rootDir 限制两边不能互相 import（同 IPC 常量表的既有做法：
+// 两处各持一份、改动时同步）；renderer 一律从本文件 import type。
+
+/** 单个平台的安装包资产（latest.json 的 assets[platformKey]）。 */
+export interface UpdateAssetInfo {
+  name: string;
+  url: string;
+  size: number;
+  /** 64 位十六进制；下载后 main 强制校验，不匹配删文件报错。 */
+  sha256: string;
+}
+
+/** 检查更新三态：有新版 / 已是最新 / 检查失败——失败绝不冒充最新。 */
+export type UpdateCheckResult =
+  | {
+      status: 'update-available';
+      currentVersion: string;
+      version: string;
+      notes: string;
+      publishedAt: string | null;
+      /** 本平台资产；清单没有本平台包（或兜底源拿不到 sha256）时为 null。 */
+      asset: UpdateAssetInfo | null;
+      /** 资产缺失时引导用户浏览器手动下载的发布页。 */
+      releasePageUrl: string;
+    }
+  | { status: 'up-to-date'; currentVersion: string; latestVersion: string | null }
+  | { status: 'check-failed'; currentVersion: string; message: string };
+
+/** 下载进度（main 经 IPC.updateProgress 节流推送）。 */
+export interface UpdateProgressInfo {
+  percent: number;
+  transferred: number;
+  total: number;
+}
+
+/** 下载结果（结构化；reused=同名文件 sha256 已匹配、直接复用跳过下载）。 */
+export type UpdateDownloadResult =
+  | { ok: true; filePath: string; reused: boolean }
+  | { ok: false; cancelled?: boolean; error: string };
+
+/** 安装结果（message 为按平台给的下一步指引，如「装完请重启 Otto」）。 */
+export interface UpdateInstallResult {
+  ok: boolean;
+  message: string;
+}
+
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
@@ -45,6 +93,12 @@ const IPC = {
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
   setLocalTestUrl: 'otto:set-local-test-url',
+  appVersion: 'otto:app-version',
+  updateCheck: 'otto:update-check',
+  updateDownload: 'otto:update-download',
+  updateCancel: 'otto:update-cancel',
+  updateInstall: 'otto:update-install',
+  updateProgress: 'otto:update-progress',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -101,6 +155,24 @@ export interface OttoBridge {
    * 返回是否应用成功。
    */
   setLocalTestUrl?(url: string): Promise<void>;
+  /** 当前 app 版本号（main 的 app.getVersion()）。 */
+  appVersion(): Promise<string>;
+  /**
+   * 检查软件更新（main 拉 latest.json，兜底 GitHub API）。
+   * 三态结果：有新版 / 已是最新 / 检查失败——失败绝不冒充最新。
+   */
+  updateCheck(): Promise<UpdateCheckResult>;
+  /**
+   * 下载最近一次检查到的新版安装包（main 只信自己缓存的检查结果，
+   * renderer 不传 URL）。下载完成 main 已做 sha256 校验，失败会删文件报错。
+   */
+  updateDownload(): Promise<UpdateDownloadResult>;
+  /** 取消进行中的下载（无任务时安全空操作）。 */
+  updateCancel(): Promise<void>;
+  /** 打开已校验的安装包（win 拉起 NSIS / mac 打开 dmg），message 给下一步指引。 */
+  updateInstall(): Promise<UpdateInstallResult>;
+  /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
+  onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
 }
 
 // ── 退避参数 ──
@@ -325,6 +397,32 @@ const bridge: OttoBridge = {
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
+  },
+  appVersion(): Promise<string> {
+    return ipcRenderer.invoke(IPC.appVersion) as Promise<string>;
+  },
+  updateCheck(): Promise<UpdateCheckResult> {
+    return ipcRenderer.invoke(IPC.updateCheck) as Promise<UpdateCheckResult>;
+  },
+  updateDownload(): Promise<UpdateDownloadResult> {
+    return ipcRenderer.invoke(IPC.updateDownload) as Promise<UpdateDownloadResult>;
+  },
+  updateCancel(): Promise<void> {
+    return ipcRenderer.invoke(IPC.updateCancel) as Promise<void>;
+  },
+  updateInstall(): Promise<UpdateInstallResult> {
+    return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
+  },
+  onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void {
+    // 仿 onMenu 订阅：进度帧由 main 的 UpdateService 节流推送。
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      progress: UpdateProgressInfo,
+    ): void => handler(progress);
+    ipcRenderer.on(IPC.updateProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC.updateProgress, listener);
+    };
   },
 };
 

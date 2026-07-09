@@ -43,7 +43,11 @@ import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
 import { useSettingsData } from './state/useSettingsData.js';
+import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
+
+/** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
+const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub';
@@ -52,6 +56,20 @@ export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/stats/doctor/todos。
   const settingsData = useSettingsData();
+  // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
+  const softwareUpdate = useSoftwareUpdate();
+
+  // 启动后延迟静默检查一次：发现新版只点亮设置入口小圆点（无弹窗），
+  // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户。
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => softwareUpdate.actions.silentCheck(),
+      SILENT_UPDATE_CHECK_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+    // actions 引用稳定（hook 内 useMemo），只在挂载时安排一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // —— 「查看全部对话」检索面板（仍是浮层） ——
   const [allConvOpen, setAllConvOpen] = useState(false);
@@ -265,6 +283,7 @@ export function App(): React.JSX.Element {
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
+        updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
           actions.selectSession(id);
@@ -293,6 +312,7 @@ export function App(): React.JSX.Element {
       ) : mainView === 'hub' ? (
         <SettingsHubPage
           data={settingsData}
+          update={softwareUpdate}
           activeSession={activeSession}
           onBack={() => setMainView('chat')}
           initialTab={hubInitialTab}
