@@ -56,17 +56,6 @@ function formatRole(role: string): string {
   return ROLE_DISPLAY[role] || role || '通用助手';
 }
 
-/** 岗位/部门定义 */
-const DEPARTMENTS = [
-  { id: 'general', name: '通用', roles: ['通用助手'] },
-  { id: 'dev', name: '研发部', roles: ['前端', '后端', '全栈', '测试', '运维'] },
-  { id: 'product', name: '产品部', roles: ['产品经理', '交互设计', '用户研究'] },
-  { id: 'marketing', name: '市场部', roles: ['品牌', '内容', '投放', '活动'] },
-  { id: 'sales', name: '销售部', roles: ['客户经理', '商务', '渠道'] },
-  { id: 'hr', name: '人事部', roles: ['招聘', '薪酬', '员工关系'] },
-  { id: 'finance', name: '财务部', roles: ['会计', '出纳', '分析'] },
-  { id: 'ops', name: '运营部', roles: ['用户运营', '内容运营', '数据运营'] },
-] as const;
 
 interface ChatViewProps {
   session: SessionSummary | null;
@@ -164,9 +153,14 @@ export function ChatView({
   // 加载用户部门信息
   const loadDept = React.useCallback(async () => {
     try {
-      const info = await (window as any).otto.userDepartment();
+      // userDepartment 的 main 侧实现尚未落地（krx 的企业分支超前 UI）；
+      // 可选调用 + catch 降级到默认标签，等后端补上即自动生效。
+      const otto = window.otto as unknown as {
+        userDepartment?: () => Promise<{ department?: string; role?: string } | null>;
+      };
+      const info = await otto.userDepartment?.();
       if (info && info.department) {
-        const roleDisplay = formatRole(info.role);
+        const roleDisplay = formatRole(info.role ?? '');
         setDeptLabel(`${info.department} · ${roleDisplay}`);
       }
     } catch { /* 降级用默认值 */ }
@@ -360,9 +354,9 @@ export function ChatView({
         </button>
       ) : null}
 
-      {/* 宏创AI园区服务插件：右下角悬浮入口 + 居中对话框。仅在有会话时挂载
-          （服务项点击注入输入框草稿，无会话时 Composer 禁用、注入无意义）。 */}
-      {session ? <ParkServicesPlugin /> : null}
+      {/* 园区服务插件：常驻挂载（右侧面板入口经事件打开弹窗，空态也要能开）；
+          右下角悬浮小钮仅在有会话时显示。 */}
+      <ParkServicesPlugin showFab={!!session} />
 
       <Composer
         models={models}

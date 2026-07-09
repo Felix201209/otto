@@ -66,6 +66,33 @@ const CSP_FALLBACK_PORT = 7637;
  */
 const RENDERER_DIR = path.join(__dirname, '../renderer');
 
+/** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
+interface SkillShareRecord {
+  skillName?: string;
+  version?: number;
+  featureDescription?: string;
+  sharedBy?: string;
+  sharedByName?: string;
+  teamId?: string;
+  teamName?: string;
+  status?: string;
+  note?: string;
+  rating?: number;
+  ratingCount?: number;
+  installCount?: number;
+  usageCount?: number;
+  successCount?: number;
+  publishedToMarketplace?: boolean;
+}
+
+/** 工作日志条目（~/.otto-user/memory/worklog/daily/<date>.jsonl 行）。 */
+interface WorkLogEntry {
+  category?: string;
+  action?: string;
+  success?: boolean;
+  timestamp?: string;
+}
+
 /** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
 const CRASH_RELOAD_WINDOW_MS = 60_000;
 const CRASH_RELOAD_MAX = 3;
@@ -91,6 +118,10 @@ const IPC = {
   feishuSaveConfig: 'otto:feishu-save-config',
   feishuClearConfig: 'otto:feishu-clear-config',
   parkConfig: 'otto:park-config',
+  skillLeaderboard: 'otto:skill-leaderboard',
+  workLogToday: 'otto:worklog-today',
+  skillShareList: 'otto:skill-share-list',
+  skillMarketplace: 'otto:skill-marketplace',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -593,6 +624,224 @@ function registerIpc(): void {
   });
   // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
   // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  // ── krx 的企业面板 IPC（排行榜/工作日志/Skill 共享与市场）──
+  // 这批 handler 在 a01198db 的 merge 解冲突时被误删（renderer 调用还在、
+  // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
+  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
+    const emptyTabs = [
+      { id: 'leaderboard', label: '排行榜', icon: '🏆' },
+      { id: 'stars', label: '明星榜', icon: '🌟' },
+    ];
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 文件不存在，返回空 */
+      }
+
+      const activeShares = shares.filter(
+        (s) => (!teamId || s.teamId === teamId) && s.status === 'active',
+      );
+      const teamName = activeShares[0]?.teamName || '本小组';
+
+      const medals = ['🥇', '🥈', '🥉'];
+      const maxInstalls = Math.max(...activeShares.map((s) => s.installCount || 0), 1);
+      const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
+
+      const lbLines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+      const scored = activeShares
+        .map((s) => {
+          const ratingScore = ((s.rating || 0) / 5) * 100;
+          const installScore = ((s.installCount || 0) / maxInstalls) * 100;
+          const successRate =
+            (s.usageCount || 0) > 0 ? ((s.successCount || 0) / (s.usageCount || 1)) * 100 : 50;
+          const usageScore = ((s.usageCount || 0) / maxUsage) * 100;
+          return {
+            s,
+            score: ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15,
+          };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      scored.forEach((item, i) => {
+        const rank = i < 3 ? medals[i] : `${i + 1}.`;
+        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
+        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
+        lbLines.push(`   ${item.s.featureDescription || ''}`);
+        lbLines.push(
+          `   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
+        );
+        lbLines.push('');
+      });
+
+      const contributorMap: Record<
+        string,
+        { name?: string; count: number; installs: number; skills: Array<string | undefined> }
+      > = {};
+      for (const s of activeShares) {
+        const key = s.sharedBy || 'unknown';
+        if (!contributorMap[key]) {
+          contributorMap[key] = { name: s.sharedByName, count: 0, installs: 0, skills: [] };
+        }
+        contributorMap[key].count++;
+        contributorMap[key].installs += s.installCount || 0;
+        contributorMap[key].skills.push(s.skillName);
+      }
+      const sbLines: string[] = [`🌟 ${teamName} 贡献明星榜`, ''];
+      Object.values(contributorMap)
+        .sort((a, b) => b.installs - a.installs)
+        .forEach((c, i) => {
+          const rank = i < 3 ? medals[i] : `${i + 1}.`;
+          sbLines.push(`${rank} ${c.name}`);
+          sbLines.push(`   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`);
+          sbLines.push('');
+        });
+
+      return { leaderboard: lbLines.join('\n'), starBoard: sbLines.join('\n'), tabs: emptyTabs };
+    } catch {
+      return { leaderboard: '暂无排行榜数据', starBoard: '暂无明星榜数据', tabs: emptyTabs };
+    }
+  });
+
+  // 工作日志：读取今天的 JSONL 日志，生成汇总文本
+  ipcMain.handle(IPC.workLogToday, async () => {
+    try {
+      const worklogDir = path.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
+      const today = new Date().toISOString().split('T')[0];
+      const filePath = path.join(worklogDir, `${today}.jsonl`);
+
+      let entries: WorkLogEntry[] = [];
+      try {
+        const raw = await fs.promises.readFile(filePath, 'utf-8');
+        entries = raw
+          .trim()
+          .split('\n')
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as WorkLogEntry);
+      } catch {
+        /* 文件不存在 */
+      }
+
+      if (entries.length === 0) {
+        return { summary: '今天还没有操作记录。', date: today, totalActions: 0 };
+      }
+
+      const byCategory: Record<string, number> = {};
+      let successCount = 0;
+      let failCount = 0;
+      const actionCounts: Record<string, number> = {};
+
+      for (const entry of entries) {
+        const cat = entry.category || '未分类';
+        byCategory[cat] = (byCategory[cat] || 0) + 1;
+        if (entry.success) successCount++;
+        else failCount++;
+        const action = entry.action || '未知操作';
+        actionCounts[action] = (actionCounts[action] || 0) + 1;
+      }
+
+      const topActions = Object.entries(actionCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      const firstTime = entries[0]?.timestamp || '';
+      const lastTime = entries[entries.length - 1]?.timestamp || '';
+      const cats = Object.entries(byCategory)
+        .sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => `${c}:${n}`)
+        .join(' | ');
+
+      let summary = `今日工作日志 (${today})\n\n`;
+      summary += `总操作：${entries.length} 次\n`;
+      summary += `成功：${successCount}  失败：${failCount}\n`;
+      summary += `首次：${firstTime.substring(11, 19) || '—'}\n`;
+      summary += `最后：${lastTime.substring(11, 19) || '—'}\n\n`;
+      summary += `分类：${cats}\n\n`;
+      summary += `高频操作：\n`;
+      for (const [action, count] of topActions) {
+        summary += `  ${action} (${count}次)\n`;
+      }
+
+      return { summary, date: today, totalActions: entries.length };
+    } catch {
+      return { summary: '读取工作日志失败。', date: '', totalActions: 0 };
+    }
+  });
+
+  // 部门共享 Skill 列表
+  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 无文件 */
+      }
+
+      const active = shares.filter((s) => s.status === 'active' && (!teamId || s.teamId === teamId));
+
+      if (active.length === 0) {
+        return { text: '本部门暂无共享 Skill。' };
+      }
+
+      const lines: string[] = ['部门共享 Skill 列表', ''];
+      for (const s of active) {
+        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName}`);
+        lines.push(
+          `  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+        );
+        if (s.note) lines.push(`  备注：${s.note}`);
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 列表失败。' };
+    }
+  });
+
+  // 公司 Skill 市场
+  ipcMain.handle(IPC.skillMarketplace, async () => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 无文件 */
+      }
+
+      const market = shares.filter((s) => s.publishedToMarketplace === true && s.status === 'active');
+
+      if (market.length === 0) {
+        return {
+          text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。',
+        };
+      }
+
+      market.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+
+      const lines: string[] = ['公司 Skill 市场', ''];
+      for (const s of market) {
+        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
+        lines.push(
+          `  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+        );
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 市场失败。' };
+    }
+  });
+
   ipcMain.handle(IPC.parkConfig, async () => {
     try {
       const p = path.join(os.homedir(), '.otto-user', 'park-services.json');

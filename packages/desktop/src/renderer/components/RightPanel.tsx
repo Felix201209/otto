@@ -16,7 +16,8 @@
 import React, { useState } from 'react';
 import { EXPERTS, type Expert } from '../agents/experts.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
-import { IconChevron, IconChevronDown, IconTerminal } from './icons.js';
+import { openParkServices } from './ParkServicesPlugin.js';
+import { IconBuilding, IconChevron, IconChevronDown, IconTerminal } from './icons.js';
 
 const DEV_EXPERT: Expert = {
   id: 'self-dev',
@@ -61,6 +62,7 @@ export function RightPanel({
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [noteText, setNoteText] = useState<string>('');
   const [expertsOpen, setExpertsOpen] = useState<boolean>(true);
+  const [parkOpen, setParkOpen] = useState<boolean>(true);
   const [devOpen, setDevOpen] = useState<boolean>(true);
 
   // 企业面板状态
@@ -126,6 +128,24 @@ export function RightPanel({
                 </button>
               </>
             ) : null}
+            {/* 园区 AI 服务：Jeremy 要求提到显眼位（自主开发横栏上方）。
+                点击卡片经事件通路打开 ChatView 里挂载的园区服务弹窗。 */}
+            <div className="otto-right-panel__waist" role="separator" />
+            <button type="button" className="otto-right-panel__grouphead" onClick={() => setParkOpen((v) => !v)} aria-expanded={parkOpen}>
+              <span>园区 AI 服务</span>
+              <IconChevronDown size={14} className={'otto-right-panel__grouphead-chev' + (parkOpen ? '' : ' is-collapsed')} />
+            </button>
+            {parkOpen ? (
+              <div className="otto-expert-list">
+                <button type="button" className="otto-expert-card" onClick={openParkServices} title="访客邀约 · 会议室 · IT 报修 · 班车 · 餐饮">
+                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden><IconBuilding size={17} /></span>
+                  <span className="otto-expert-card__body">
+                    <span className="otto-expert-card__name">园区服务</span>
+                    <span className="otto-expert-card__desc">访客 · 会议室 · 报修 · 班车 · 餐饮</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
             <div className="otto-right-panel__waist" role="separator" />
             <button type="button" className="otto-right-panel__grouphead" onClick={() => setDevOpen((v) => !v)} aria-expanded={devOpen}>
               <span>自主开发</span>
@@ -184,7 +204,7 @@ export function RightPanel({
               <button style={{ ...btnStyle, flex: 1, fontWeight: leaderboardTab === 'leaderboard' ? 'bold' : 'normal', background: leaderboardTab === 'leaderboard' ? 'var(--otto-accent-soft)' : 'var(--otto-surface)', color: leaderboardTab === 'leaderboard' ? 'var(--otto-accent)' : 'var(--otto-text-secondary)' }} onClick={() => setLeaderboardTab('leaderboard')}>排行榜</button>
               <button style={{ ...btnStyle, flex: 1, fontWeight: leaderboardTab === 'stars' ? 'bold' : 'normal', background: leaderboardTab === 'stars' ? 'var(--otto-accent-soft)' : 'var(--otto-surface)', color: leaderboardTab === 'stars' ? 'var(--otto-accent)' : 'var(--otto-text-secondary)' }} onClick={() => setLeaderboardTab('stars')}>明星榜</button>
             </div>
-            <button style={btnStyle} onClick={async () => { try { const d = await (window as any).otto.skillLeaderboard(); setLeaderboardData(d); } catch {} }}>刷新</button>
+            <button style={btnStyle} onClick={async () => { try { const d = await window.otto?.skillLeaderboard(); setLeaderboardData(d); } catch { /* server 未就绪，保留上次内容 */ } }}>刷新</button>
             <div style={panelStyle}>
               {leaderboardData ? (leaderboardTab === 'leaderboard' ? leaderboardData.leaderboard : leaderboardData.starBoard) : '点击「刷新」加载排行榜数据。'}
             </div>
@@ -194,8 +214,8 @@ export function RightPanel({
         {activeTab === 'skillmarket' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
             <div style={{ display: 'flex', gap: '4px' }}>
-              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await (window as any).otto.skillShareList(); setSkillMarketData(d.text); } catch {} }}>部门共享</button>
-              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await (window as any).otto.skillMarketplace(); setSkillMarketData(d.text); } catch {} }}>公司市场</button>
+              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await window.otto?.skillShareList(); setSkillMarketData(d.text); } catch { /* server 未就绪，保留上次内容 */ } }}>部门共享</button>
+              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await window.otto?.skillMarketplace(); setSkillMarketData(d.text); } catch { /* server 未就绪，保留上次内容 */ } }}>公司市场</button>
             </div>
             <div style={panelStyle}>{skillMarketData || '点击上方按钮加载 Skill 列表。'}</div>
           </div>
@@ -203,7 +223,7 @@ export function RightPanel({
 
         {activeTab === 'worklog' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
-            <button style={btnStyle} onClick={async () => { try { const d = await (window as any).otto.workLogToday(); setWorklogData(d.summary); } catch {} }}>刷新今日日志</button>
+            <button style={btnStyle} onClick={async () => { try { const d = await window.otto?.workLogToday(); setWorklogData(d.summary); } catch { /* server 未就绪，保留上次内容 */ } }}>刷新今日日志</button>
             <div style={panelStyle}>{worklogData || '点击「刷新今日日志」加载。'}</div>
           </div>
         )}

@@ -183,6 +183,18 @@ export interface OttoBridge {
   feishuClearConfig(): Promise<FeishuConfigResult>;
   /** 园区服务企业定制配置；无配置文件时 null（用内置默认）。 */
   parkConfig(): Promise<ParkServicesConfig | null>;
+  /** Skill 排行榜 + 贡献明星榜（krx 企业面板；数据读 .otto/org/skill-shares.json）。 */
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }>;
+  /** 今日工作日志汇总。 */
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
+  /** 部门共享 Skill 列表。 */
+  skillShareList(teamId?: string): Promise<{ text: string }>;
+  /** 公司 Skill 市场。 */
+  skillMarketplace(): Promise<{ text: string }>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -440,6 +452,30 @@ const bridge: OttoBridge = {
   },
   parkConfig(): Promise<ParkServicesConfig | null> {
     return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
+  },
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }> {
+    return ipcRenderer.invoke('otto:skill-leaderboard', teamId) as Promise<{
+      leaderboard: string;
+      starBoard: string;
+      tabs: Array<{ id: string; label: string; icon: string }>;
+    }>;
+  },
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }> {
+    return ipcRenderer.invoke('otto:worklog-today') as Promise<{
+      summary: string;
+      date: string;
+      totalActions: number;
+    }>;
+  },
+  skillShareList(teamId?: string): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
+  },
+  skillMarketplace(): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
