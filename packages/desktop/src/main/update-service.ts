@@ -18,8 +18,12 @@
  * 绝不伪装成「已是最新」。
  *
  * 安全：下载 URL 只允许 https + GitHub 资产域白名单（update-core.isAllowedAssetUrl，
- * 清单解析与下载前双重把关）；下载完成必须 sha256 校验（无签名时的唯一完整性防线），
- * 不匹配删文件报错。同一时间只允许一个下载任务（单例守护），支持取消。
+ * 清单解析、下载前、以及**重定向后的最终 URL**三重把关——审查 H1）；下载完成必须
+ * sha256 校验（无签名时的唯一完整性防线），不匹配删文件报错；写盘有体积硬上限
+ * （审查 M1，均见 update-download.ts）；安装（shell.openPath）前对文件**再重验一次**
+ * sha256（审查 H2 / TOCTOU：下载校验到点击安装之间文件可能被替换）。
+ * 同一时间只允许一个下载任务（单例守护），支持取消；app 退出时 index.ts 的
+ * before-quit 会调 cancelDownload() 中止未完成下载并触发 .part 清理（审查 M2）。
  *
  * 已知限制：中国大陆直连 GitHub release 下载可能较慢或超时——失败文案里如实
  * 提示，可重试或配代理，不做静默降级。
@@ -35,10 +39,10 @@ import {
   parseManifest,
   platformAssetKey,
   resolveCheckOutcome,
-  type UpdateAssetInfo,
   type UpdateCheckResult,
 } from './update-core.js';
-import { computeFileSha256, verifyOrDeleteFile } from './update-verify.js';
+import { computeFileSha256, verifyBeforeInstall } from './update-verify.js';
+import { downloadToFile } from './update-download.js';
 
 /** 主更新源：latest release 的 latest.json 直链（匿名 + 302 跟随，免 API 限流）。 */
 const PRIMARY_MANIFEST_URL =
@@ -51,8 +55,6 @@ const RELEASE_PAGE_URL = 'https://github.com/Felix201209/otto-releases/releases/
 
 /** 检查更新的单次请求超时（任务书定 15s）。 */
 const CHECK_TIMEOUT_MS = 15_000;
-/** 下载进度推送节流（~250ms 一次，别刷爆 IPC）。 */
-const PROGRESS_THROTTLE_MS = 250;
 
 /** 下载进度（webContents.send 推给 renderer）。 */
 export interface UpdateProgressInfo {
@@ -117,26 +119,17 @@ async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResul
   }
 }
 
-/** 写一个 chunk 并等它落盘（借 write 回调自然串行，避免写缓冲无界膨胀）。 */
-function writeChunk(stream: fs.WriteStream, chunk: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    stream.write(chunk, (err) => (err ? reject(err) : resolve()));
-  });
-}
-
-/** 关闭写流（end 完成后 resolve）。 */
-function endStream(stream: fs.WriteStream): Promise<void> {
-  return new Promise((resolve) => stream.end(() => resolve()));
-}
-
 export class UpdateService {
   /** 最近一次「有新版」的检查结果（downloadUpdate 只信它，不接受 renderer 传 URL）。 */
   private lastAvailable: Extract<UpdateCheckResult, { status: 'update-available' }> | null =
     null;
   /** 进行中的下载（单例守护：同一时间只允许一个）。 */
   private downloading: { controller: AbortController; partPath: string } | null = null;
-  /** 已下载并通过 sha256 校验的安装包（installUpdate 只打开它）。 */
-  private readyFile: { filePath: string; version: string } | null = null;
+  /**
+   * 已下载并通过 sha256 校验的安装包。**必须连期望 sha256 一起存**（审查 H2）：
+   * installUpdate 打开前要用它对文件重验，防「校验后被替换」的 TOCTOU 窗口。
+   */
+  private readyFile: { filePath: string; version: string; sha256: string } | null = null;
 
   constructor(
     /** 目标窗口 webContents（进度推送用；窗口可能重建，故传 getter）。 */
@@ -249,7 +242,11 @@ export class UpdateService {
       try {
         const existing = await computeFileSha256(finalPath);
         if (existing === asset.sha256) {
-          this.readyFile = { filePath: finalPath, version: available.version };
+          this.readyFile = {
+            filePath: finalPath,
+            version: available.version,
+            sha256: asset.sha256,
+          };
           return { ok: true, filePath: finalPath, reused: true };
         }
       } catch {
@@ -257,83 +254,32 @@ export class UpdateService {
       }
     }
 
+    // 实际下载走 update-download.ts（无 Electron 依赖、可单测）：
+    // 内含 H1 最终 URL 白名单、M1 体积硬上限、sha256 校验 + .part 清理。
     const partPath = finalPath + '.part';
     const controller = new AbortController();
     this.downloading = { controller, partPath };
     try {
-      return await this.streamDownload(asset, available.version, partPath, finalPath, controller);
+      const outcome = await downloadToFile({
+        url: asset.url,
+        expectedSha256: asset.sha256,
+        expectedSize: asset.size,
+        partPath,
+        finalPath,
+        signal: controller.signal,
+        onProgress: (transferred, total) => this.pushProgress(transferred, total),
+      });
+      if (!outcome.ok) {
+        return outcome;
+      }
+      this.readyFile = {
+        filePath: outcome.filePath,
+        version: available.version,
+        sha256: asset.sha256,
+      };
+      return { ok: true, filePath: outcome.filePath, reused: false };
     } finally {
       this.downloading = null;
-    }
-  }
-
-  /** 实际的流式下载 + 校验 + 落位。 */
-  private async streamDownload(
-    asset: UpdateAssetInfo,
-    version: string,
-    partPath: string,
-    finalPath: string,
-    controller: AbortController,
-  ): Promise<UpdateDownloadResult> {
-    let out: fs.WriteStream | null = null;
-    try {
-      const res = await fetch(asset.url, {
-        signal: controller.signal,
-        redirect: 'follow',
-        headers: { 'user-agent': 'otto-desktop-updater' },
-      });
-      if (!res.ok || !res.body) {
-        return { ok: false, error: `下载失败：更新源返回 HTTP ${res.status}` };
-      }
-      const contentLength = Number(res.headers.get('content-length') ?? '');
-      const total =
-        Number.isFinite(contentLength) && contentLength > 0 ? contentLength : asset.size;
-
-      out = fs.createWriteStream(partPath);
-      const reader = res.body.getReader();
-      let transferred = 0;
-      let lastPushAt = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        transferred += value.byteLength;
-        await writeChunk(out, value);
-        const now = Date.now();
-        if (now - lastPushAt >= PROGRESS_THROTTLE_MS) {
-          lastPushAt = now;
-          this.pushProgress(transferred, total);
-        }
-      }
-      await endStream(out);
-      out = null;
-      // 收尾必推一帧 100%，确保 UI 不停在 9x%。
-      this.pushProgress(transferred, Math.max(total, transferred));
-
-      // sha256 校验：唯一完整性防线，不匹配 → verifyOrDeleteFile 删 .part 并报错。
-      const verified = await verifyOrDeleteFile(partPath, asset.sha256);
-      if (!verified.ok) {
-        return { ok: false, error: verified.error };
-      }
-      // 校验通过才落正式名（覆盖同名旧文件——能走到这里说明旧文件 sha256 不匹配）。
-      await fs.promises.rm(finalPath, { force: true });
-      await fs.promises.rename(partPath, finalPath);
-      this.readyFile = { filePath: finalPath, version };
-      return { ok: true, filePath: finalPath, reused: false };
-    } catch (e) {
-      const cancelled = e instanceof Error && e.name === 'AbortError';
-      if (out) {
-        await endStream(out).catch(() => undefined);
-      }
-      await fs.promises.rm(partPath, { force: true }).catch(() => undefined);
-      if (cancelled) {
-        return { ok: false, cancelled: true, error: '下载已取消' };
-      }
-      return {
-        ok: false,
-        error:
-          '下载中断（中国大陆直连 GitHub 可能较慢或不通，可重试或配置代理）：' +
-          (e instanceof Error ? e.message : String(e)),
-      };
     }
   }
 
@@ -346,6 +292,8 @@ export class UpdateService {
    * 打开已下载并通过校验的安装包：
    *   win → 拉起 NSIS 安装器（用户按向导装完手动重开）；
    *   mac → 打开 dmg（挂载后用户拖入「应用程序」）。
+   * 打开前必对文件**重验 sha256**（审查 H2 / TOCTOU）：下载校验通过到此刻之间
+   * Downloads 里的文件可能被替换——不一致就拒绝打开、删文件、要求重新下载。
    */
   async installUpdate(): Promise<UpdateInstallResult> {
     const ready = this.readyFile;
@@ -353,7 +301,14 @@ export class UpdateService {
       return { ok: false, message: '还没有校验通过的安装包，请先下载更新' };
     }
     if (!fs.existsSync(ready.filePath)) {
+      this.readyFile = null;
       return { ok: false, message: '安装包文件已不存在（可能被移动或删除），请重新下载' };
+    }
+    const verdict = await verifyBeforeInstall(ready.filePath, ready.sha256);
+    if (!verdict.ok) {
+      // 文件已不可信（且已被删除），清掉就绪态，逼用户走重新下载。
+      this.readyFile = null;
+      return { ok: false, message: verdict.message };
     }
     const openError = await shell.openPath(ready.filePath);
     if (openError) {

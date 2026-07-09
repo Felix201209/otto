@@ -19,7 +19,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { computeFileSha256, verifyOrDeleteFile } from '../main/update-verify.js';
+import {
+  computeFileSha256,
+  verifyOrDeleteFile,
+  verifyBeforeInstall,
+} from '../main/update-verify.js';
 
 let dir: string;
 
@@ -76,5 +80,37 @@ describe('verifyOrDeleteFile：校验失败必须删文件', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).toContain('读取下载文件失败');
+  });
+});
+
+describe('verifyBeforeInstall：安装前重验（审查 H2 / TOCTOU）', () => {
+  it('文件未被动过（sha256 仍匹配）→ 放行，文件保留', async () => {
+    const p = await writeSample('good.dmg', 'verified installer');
+    const r = await verifyBeforeInstall(p, sha256Of('verified installer').toUpperCase());
+    expect(r.ok).toBe(true);
+    expect(fs.existsSync(p)).toBe(true);
+  });
+
+  it('下载校验后文件被替换 → 拒绝打开 + 删文件 + 「已被改动，请重新下载」', async () => {
+    // 模拟 TOCTOU：先落一份合法内容并记下其 sha256，再在「点安装前」被篡改。
+    const p = await writeSample('swap.dmg', 'original installer');
+    const expected = sha256Of('original installer');
+    await fs.promises.writeFile(p, 'malicious payload', 'utf-8');
+
+    const r = await verifyBeforeInstall(p, expected);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toContain('被改动');
+    expect(r.message).toContain('已拒绝打开');
+    expect(r.message).toContain('请重新下载');
+    // 不可信文件必须已被删除，绝不留给 shell.openPath。
+    expect(fs.existsSync(p)).toBe(false);
+  });
+
+  it('文件读不了（如已消失）→ 结构化拒绝，不抛裸异常', async () => {
+    const r = await verifyBeforeInstall(path.join(dir, 'gone.dmg'), 'a'.repeat(64));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toContain('无法读取安装包文件');
   });
 });

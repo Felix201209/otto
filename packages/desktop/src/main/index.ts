@@ -620,6 +620,11 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    // 退出前中止未完成的更新下载（审查 M2）：abort 触发下载循环的 AbortError
+    // 清理路径，best-effort 删掉 Downloads 里的 .part 临时文件。幂等，无任务时空操作。
+    // 即使进程赶在异步清理完成前退出，下次下载同一资产会截断重写同名 .part，
+    // 且 sha256 校验兜底完整性，残留无危害。
+    updateService.cancelDownload();
     // 仅内嵌 server 随 app 退出而停；discovered（headless/CLI 已在跑）故意留活。
     void serverManager.shutdown();
   });
