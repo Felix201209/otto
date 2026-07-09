@@ -39,6 +39,13 @@ interface SkillCacheItem {
   skill: Skill;
   timestamp: number;
   loadLevel: SkillLoadLevel;
+  /**
+   * SKILL.md 在缓存时刻的 mtime（epoch ms）。热更新判据：无论 TTL 是否到期，
+   * 只要磁盘文件的 mtime 比这个记录的新，就说明用户编辑过 SKILL.md，缓存立即
+   * 失效重新解析——不需要等 1 小时 TTL、也不需要重启进程。
+   * undefined 表示取 mtime 失败（文件不存在等），此时保守地当作"已过期"处理。
+   */
+  mtimeMs?: number;
 }
 
 /**
@@ -338,6 +345,18 @@ export class SkillLoader {
 
     const content = requestedLevelIndex >= fullLevelIndex ? component.content : undefined;
 
+    // component.location.path 在 SKILL 类型下指向"技能目录"（见
+    // component-parser.ts 里 `component.location.path = itemPath` 那段），
+    // 不是 SKILL.md 本身。之前这里直接把目录路径当 skillFilePath 用，
+    // 导致任何依赖"这是一个文件路径"的逻辑（比如基于 mtime 的热更新失效
+    // 判定）读到的是目录的 mtime——多数文件系统里目录 mtime 只在增删目录项
+    // 时才变化，编辑目录内 SKILL.md 的内容根本不会更新它，看起来"热更新
+    // 不生效"。这里按 location.type 修正：目录型技能拼出真正的 SKILL.md
+    // 路径，文件型（command/agent 的独立 .md）保持原样。
+    const resolvedSkillFilePath = component.location.type === 'directory'
+      ? path.join(component.location.path, 'SKILL.md')
+      : component.location.path;
+
     return {
       id: component.id,
       type,
@@ -346,7 +365,7 @@ export class SkillLoader {
       pluginId: component.pluginId || '',
       marketplaceId: component.marketplaceId || '',
       path: component.location.type === 'directory' ? component.location.path : path.dirname(component.location.path),
-      skillFilePath: component.location.path,
+      skillFilePath: resolvedSkillFilePath,
       metadata,
       content,
       enabled: component.enabled,
@@ -619,18 +638,30 @@ export class SkillLoader {
   // ============================================================================
 
   /**
-   * 添加到缓存
+   * 添加到缓存，同时记录 SKILL.md 当前 mtime 用于热更新失效判定。
    */
   private addToCache(skill: Skill): void {
+    let mtimeMs: number | undefined;
+    try {
+      mtimeMs = fs.statSync(skill.skillFilePath).mtimeMs;
+    } catch {
+      mtimeMs = undefined;
+    }
     this.cache.set(skill.id, {
       skill: skill,
       timestamp: Date.now(),
       loadLevel: skill.loadLevel,
+      mtimeMs,
     });
   }
 
   /**
-   * 从缓存获取
+   * 从缓存获取。
+   *
+   * 热更新核心逻辑：除了原有的 TTL 过期检查，额外对比 SKILL.md 当前磁盘 mtime
+   * 与缓存时刻记录的 mtime——只要用户编辑过 SKILL.md（哪怕在 TTL 有效期内），
+   * mtime 就会变新，缓存立即失效、下次读取会重新解析文件内容。这样技能内容
+   * 变更对下一次工具调用立即生效，不需要等 1 小时 TTL、也不需要重启 CLI 进程。
    */
   private getFromCache(skillId: string, loadLevel: SkillLoadLevel): Skill | null {
     const cached = this.cache.get(skillId);
@@ -639,8 +670,14 @@ export class SkillLoader {
       return null;
     }
 
-    // 检查是否过期
+    // 检查是否过期（原有 TTL 机制，保留作为兜底）
     if (Date.now() - cached.timestamp > this.cacheTTL) {
+      this.cache.delete(skillId);
+      return null;
+    }
+
+    // 热更新检查：磁盘文件被改过（mtime 变新）则立即失效，不等 TTL。
+    if (this.isSkillFileModified(cached)) {
       this.cache.delete(skillId);
       return null;
     }
@@ -659,6 +696,21 @@ export class SkillLoader {
     }
 
     return null;
+  }
+
+  /**
+   * 判断缓存项对应的 SKILL.md 是否已被外部修改（热更新判据）。
+   * 取当前 mtime 失败（文件被删除等）也视为"已修改"，保守地强制重新加载/丢弃。
+   */
+  private isSkillFileModified(cached: SkillCacheItem): boolean {
+    let currentMtimeMs: number | undefined;
+    try {
+      currentMtimeMs = fs.statSync(cached.skill.skillFilePath).mtimeMs;
+    } catch {
+      return true;
+    }
+    if (cached.mtimeMs === undefined) return true;
+    return currentMtimeMs !== cached.mtimeMs;
   }
 
   /**

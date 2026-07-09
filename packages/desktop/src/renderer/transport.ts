@@ -70,6 +70,11 @@ export function onMenu(handler: MenuHandler): () => void {
   return window.otto.onMenu(handler);
 }
 
+/** host-only：用系统浏览器打开外链（斜杠命令 /hooks 等）。透传封装，不直接碰 window.otto。 */
+export function openExternal(url: string): Promise<void> {
+  return window.otto.openExternal(url);
+}
+
 // ── 便捷封装（实装可直接用，也可由 webview service 自行组装）──
 
 export function listSessions(): void {

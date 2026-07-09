@@ -25,27 +25,39 @@
  */
 
 import type { SessionStore } from '../sessions.js';
-import type { ServerToClient } from '../protocol.js';
-import { FeishuAdapter } from './feishuAdapter.js';
+import type { FeishuHealthStatus, ServerToClient } from '../protocol.js';
+import { FeishuAdapter, type FeishuGatewayFactory } from './feishuAdapter.js';
+import type { FeishuCredentials } from './vendor/credentials.js';
 
 /** registerFeishu 的依赖注入（server 提供存储 + 广播能力）。 */
 export interface FeishuRegisterDeps {
   store: SessionStore;
   /** 把一帧广播给某会话的所有订阅者（= store.publish 的薄封装）。 */
   broadcast: (sessionId: string, frame: ServerToClient) => void;
+  /** 可选凭证注入（测试用）；缺省 adapter 内部 loadCredentials() 读盘。 */
+  credentials?: FeishuCredentials | null;
+  /** 可选 gateway 工厂（测试用）；缺省 new FeishuGateway。 */
+  gatewayFactory?: FeishuGatewayFactory;
 }
 
-/** 注册结果句柄：供 server 查询连接态、回推飞书、停止。 */
+/** 注册结果句柄：供 server 查询连接态、回推飞书、启停。 */
 export interface FeishuRegistration {
   /** 飞书 WS 长连接是否已建立。 */
   isConnected(): boolean;
+  /** 守护状态快照（/health 透出：重连次数、下次重试、锁冲突等）。 */
+  getStatus(): FeishuHealthStatus;
+  /**
+   * 运行期启动/恢复守护（幂等）：已在跑时 no-op；stop() 过之后重新拉起
+   * （凭证会重新加载——用户运行期才配好凭证的场景由此覆盖）。
+   */
+  start(): Promise<void>;
   /**
    * app→飞书回推：把 app 内对某飞书会话的发言推回飞书。
    * @param feishuChatId 目标飞书会话 chatId
    * @param text 回推文本（markdown）
    */
   pushToFeishu(feishuChatId: string, text: string): Promise<void>;
-  /** 停止网关、断开长连接。 */
+  /** 停止网关、断开长连接（有意停止：之后不自动重连，直到再次 start）。 */
   stop(): Promise<void>;
 }
 
@@ -61,6 +73,8 @@ export async function registerFeishu(
   const adapter = new FeishuAdapter({
     store: deps.store,
     broadcast: deps.broadcast,
+    credentials: deps.credentials,
+    gatewayFactory: deps.gatewayFactory,
   });
 
   // start 内部 fail-soft：凭证缺失/连接失败只记录不抛错，句柄照常返回。
@@ -69,6 +83,12 @@ export async function registerFeishu(
   return {
     isConnected(): boolean {
       return adapter.isConnected();
+    },
+    getStatus(): FeishuHealthStatus {
+      return adapter.getStatus();
+    },
+    async start(): Promise<void> {
+      await adapter.start();
     },
     async pushToFeishu(feishuChatId: string, text: string): Promise<void> {
       await adapter.pushToFeishu(feishuChatId, text);

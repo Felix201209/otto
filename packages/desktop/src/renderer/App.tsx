@@ -30,25 +30,58 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { RightMascotPanel } from './components/RightMascotPanel.js';
+import { SLASH_COMMANDS } from './components/Composer.js';
+import {
+  mergeServerCommands,
+  buildHelpMarkdown,
+} from './components/SlashCommands.js';
+import { RightPanel } from './components/RightPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
+import { useSettingsData } from './state/useSettingsData.js';
+import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
+import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 
-/** 主内容区当前视图：对话 / 智能体 / 设置——三者都是整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings';
+/** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
+const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
+
+/** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
+type MainView = 'chat' | 'agents' | 'settings' | 'hub';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
+  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/stats/doctor/todos。
+  const settingsData = useSettingsData();
+  // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
+  const softwareUpdate = useSoftwareUpdate();
+
+  // 启动后延迟静默检查一次：发现新版只点亮设置入口小圆点（无弹窗），
+  // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户。
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => softwareUpdate.actions.silentCheck(),
+      SILENT_UPDATE_CHECK_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+    // actions 引用稳定（hook 内 useMemo），只在挂载时安排一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // —— 「查看全部对话」检索面板（仍是浮层） ——
   const [allConvOpen, setAllConvOpen] = useState(false);
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
+  // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
+  const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
+  const openHub = (tab: HubTabId = 'prefs'): void => {
+    setHubInitialTab(tab);
+    setMainView('hub');
+  };
   // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
   const setupOpen = mainView === 'settings';
   // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。
@@ -231,25 +264,38 @@ export function App(): React.JSX.Element {
     actions.launchExpert(expert.name, expert.kickoff);
   };
 
+  // —— 斜杠命令：本地 + server 合并清单 ——
+  // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命令
+  // 合并后传给命令面板；server 新增命令时面板自动出现，两处清单不漂移。
+  const slashCommands = useMemo(
+    () => mergeServerCommands(SLASH_COMMANDS, state.slashCommands ?? []),
+    [state.slashCommands],
+  );
+
+  // `/help`：由合并后的完整清单生成命令总览，插一条本地系统气泡（ephemeral）。
+  const handleShowHelp = (): void => {
+    actions.postSystemNote(buildHelpMarkdown(slashCommands));
+  };
+
   return (
     <div className="otto-app" data-connection={state.connection}>
       <Sidebar
         groups={groups}
         activeSessionId={state.activeSessionId}
-        agentsActive={mainView === 'agents'}
+        hubActive={mainView === 'hub'}
+        updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
           actions.selectSession(id);
         }}
         onNewChat={handleNewChat}
-        onOpenAgents={() => setMainView('agents')}
-        onLaunchExpert={handleLaunchExpert}
+        onOpenHub={() => openHub('prefs')}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
       />
 
-      {/* 主内容区：设置 / 智能体 / 对话，整页切换（不再是弹窗）。 */}
+      {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
       {mainView === 'settings' ? (
         <SetupPanel
           models={state.models}
@@ -262,6 +308,14 @@ export function App(): React.JSX.Element {
         <AgentGallery
           onLaunch={handleLaunchExpert}
           onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'hub' ? (
+        <SettingsHubPage
+          data={settingsData}
+          update={softwareUpdate}
+          activeSession={activeSession}
+          onBack={() => setMainView('chat')}
+          initialTab={hubInitialTab}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
@@ -276,11 +330,29 @@ export function App(): React.JSX.Element {
             onCancel={actions.cancel}
             onSetModel={actions.setModel}
             onRegenerate={handleRegenerate}
+            onRespondQuestion={actions.respondToolConfirmation}
             onOpenSetup={() => setMainView('settings')}
             onNewChat={handleNewChat}
             onClearContext={handleClearContext}
+            onExport={
+              activeSession
+                ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                : undefined
+            }
+            onOpenDoctor={() => openHub('doctor')}
+            onOpenFeishu={() => openHub('feishu')}
+            onOpenMemory={() => openHub('memory')}
+            onOpenSkills={() => openHub('skills')}
+            commands={slashCommands}
+            onRunServerCommand={actions.runSlashCommand}
+            onOpenPrefs={() => openHub('prefs')}
+            onOpenSessions={() => setAllConvOpen(true)}
+            onShowHelp={handleShowHelp}
           />
-          <RightMascotPanel />
+          <RightPanel
+            onLaunchExpert={handleLaunchExpert}
+            onOpenAgents={() => setMainView('agents')}
+          />
         </div>
       )}
 
@@ -309,6 +381,13 @@ export function App(): React.JSX.Element {
 
       {state.lastError ? (
         <ErrorToast message={state.lastError} onClose={actions.clearError} />
+      ) : null}
+
+      {settingsData.state.exportMessage ? (
+        <ErrorToast
+          message={settingsData.state.exportMessage}
+          onClose={settingsData.actions.clearExportMessage}
+        />
       ) : null}
     </div>
   );

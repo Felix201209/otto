@@ -320,3 +320,85 @@ export function OttoAvatar({ size = 30, className }: IconProps): React.JSX.Eleme
     />
   );
 }
+
+// ── 宏创AI园区服务（ParkServicesPlugin）─────────────────────────────────
+
+/** 园区/办公楼：主楼 + 副楼 + 窗格。 */
+export function IconBuilding({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 21h18" />
+      <path d="M5 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v16" />
+      <path d="M14 9h4a1 1 0 0 1 1 1v11" />
+      <path d="M8 8h3M8 12h3M8 16h3" />
+    </svg>
+  );
+}
+
+/** 访客证：卡片 + 头像 + 信息行。 */
+export function IconIdBadge({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8.5" cy="11" r="2" />
+      <path d="M6.2 16a3 3 0 0 1 4.6 0" />
+      <path d="M14 9h4M14 13h4" />
+    </svg>
+  );
+}
+
+/** 会议室预订：日历 + 对勾。 */
+export function IconCalendarCheck({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M3 10h18" />
+      <path d="m9 15.5 2 2 4-4" />
+    </svg>
+  );
+}
+
+/** IT 报修：扳手。 */
+export function IconWrench({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
+/** 行政后勤：立体纸箱。 */
+export function IconPackage({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </svg>
+  );
+}
+
+/** 班车通勤：巴士。 */
+export function IconBus({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M19 17h1a1 1 0 0 0 1-1V7a5 5 0 0 0-5-5H8a5 5 0 0 0-5 5v9a1 1 0 0 0 1 1h1" />
+      <path d="M3 11h18" />
+      <circle cx="7.5" cy="17.5" r="1.8" />
+      <circle cx="16.5" cy="17.5" r="1.8" />
+      <path d="M9.3 17.5h5.4" />
+    </svg>
+  );
+}
+
+/** 餐饮服务：刀叉。 */
+export function IconUtensils({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M5 2v6a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V2" />
+      <path d="M7 2v20" />
+      <path d="M19 15V2a4 4 0 0 0-4 5v6a2 2 0 0 0 2 2h2Z" />
+      <path d="M19 15v7" />
+    </svg>
+  );
+}

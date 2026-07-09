@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.3.0",
+  "version": "1.4.3",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -15,6 +15,7 @@
     "start": "electron .",
     "dist": "npm run build && electron-builder --mac --dir",
     "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
@@ -30,7 +31,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
-    "electron": "^33.2.0",
+    "electron": "^43.1.0",
     "electron-builder": "^25.1.8",
     "html-webpack-plugin": "^5.6.3",
     "style-loader": "^4.0.0",
@@ -44,7 +45,7 @@
     "appId": "ai.otto.desktop",
     "productName": "Otto",
     "copyright": "Copyright © 2025 Otto",
-    "electronVersion": "33.4.11",
+    "electronVersion": "43.1.0",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -64,12 +65,6 @@
     },
     "includeSubNodeModules": true,
     "asar": true,
-    "extraResources": [
-      {
-        "from": "../../node_modules/@vscode/ripgrep/bin/rg",
-        "to": "ripgrep/rg"
-      }
-    ],
     "npmRebuild": false,
     "mac": {
       "target": [
@@ -85,10 +80,39 @@
       "darkModeSupport": true,
       "identity": null,
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extraResources": [
+        {
+          "from": "../../node_modules/@vscode/ripgrep/bin/rg",
+          "to": "ripgrep/rg"
+        }
+      ]
     },
     "dmg": {
       "sign": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "vendor/win/ripgrep/rg.exe",
+          "to": "ripgrep/rg.exe"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Otto",
+      "artifactName": "Otto-Setup-${version}-win-x64.${ext}"
     }
   },
   "engines": {

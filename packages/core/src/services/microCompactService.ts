@@ -31,7 +31,8 @@ export const COMPACTABLE_TOOLS = new Set([
   'ls',
   'run_shell_command',
   'web_fetch',
-  'google_web_search',
+  'web_search',
+  'google_web_search', // 旧名兼容：恢复改名前的历史会话时仍可压缩
   'codesearch',
   'read_lints',
   'lsp',

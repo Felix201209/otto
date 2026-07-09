@@ -34,6 +34,7 @@ import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import { CodebaseMemoryProvider } from '../memory/codebaseMemoryProvider.js';
 import { createProjectArchiveSummary, createSkillCandidate } from '../memory/skillFormation.js';
 import type { OrgMemoryRecord, ProjectRecord, ProjectType, UsageRecord } from '../memory/orgMemoryTypes.js';
+import { findMostSimilarTopic, DEFAULT_MERGE_THRESHOLD, type TopicCandidate } from '../utils/topicSimilarity.js';
 
 const MEMORY_DIR = path.join(os.homedir(), '.otto', 'memory');
 const WORKFLOWS_DIR = path.join(MEMORY_DIR, 'workflows');
@@ -228,7 +229,7 @@ FILES CREATED:
       let r = '';
       switch (p.action) {
         case 'learn': r = this.learn(p); break;
-        case 'recall': r = this.recall(p); break;
+        case 'recall': r = await this.recall(p); break;
         case 'onboard': r = this.onboard(p); break;
         case 'offboard': r = this.offboard(p); break;
         case 'report': r = this.report(p); break;
@@ -300,7 +301,7 @@ FILES CREATED:
   // ============================================================
   // RECALL: retrieve relevant knowledge before task
   // ============================================================
-  private recall(p: MemoryManagerToolParams): string {
+  private async recall(p: MemoryManagerToolParams): Promise<string> {
     const parts: string[] = [];
 
     // 1. Employee history
@@ -319,7 +320,7 @@ FILES CREATED:
       }
     }
 
-    // 2. Department knowledge
+    // 2. Department knowledge（本地 markdown，个人机器上的旧存储）
     const deptFile = path.join(MEMORY_DIR, 'department.markdown');
     if (fs.existsSync(deptFile)) {
       const dept = fs.readFileSync(deptFile, 'utf8');
@@ -331,9 +332,21 @@ FILES CREATED:
         s.toLowerCase().includes('common')
       );
       if (relevant.length > 0) {
-        parts.push('## Department Knowledge');
+        parts.push('## Department Knowledge (local)');
         parts.push(relevant.slice(0, 3).map(s => '## ' + s).join('\n\n'));
       }
+    }
+
+    // 2.5 企业知识库桥接（统一部门/公司知识库）：
+    //   之前部门知识只有本地 markdown 一份，与 enterprise server 的 SQLite
+    //   knowledge 表（真正跨机器共享、按部门维度存储）完全不通——同一个 Otto
+    //   装在两台机器上互相看不到对方学到的东西。这里尝试连一次本机/局域网的
+    //   enterprise server（GET /enterprise/knowledge），拿到的结果与本地
+    //   markdown 合并展示。企业服务端未启动是绝大多数个人用户的常态，此时
+    //   静默跳过，不影响任何现有行为——不假装"服务端一定在跑"。
+    const enterpriseKnowledge = await this.recallFromEnterprise(p);
+    if (enterpriseKnowledge) {
+      parts.push(enterpriseKnowledge);
     }
 
     // 3. Workflow template
@@ -344,6 +357,57 @@ FILES CREATED:
     }
 
     return parts.length > 0 ? parts.join('\n\n') : `No prior knowledge for task_type=${p.task_type}. First execution.`;
+  }
+
+  /**
+   * 从 Otto Enterprise 服务端（packages/server/src/enterprise）拉取部门知识，
+   * 与本地 markdown 部门知识合并，实现"部门知识库统一"。
+   *
+   * 端点/鉴权/超时均可通过环境变量覆盖：
+   *   OTTO_ENTERPRISE_URL         默认 http://127.0.0.1:7777（企业服务端默认监听地址）
+   *   OTTO_ENTERPRISE_ADMIN_TOKEN 若企业服务端配置了 admin token 则需要
+   *   OTTO_ENTERPRISE_RECALL_TIMEOUT_MS 默认 800ms —— 必须短，绝不能让本地
+   *     recall（大多数场景企业服务端根本没启动）被网络等待拖慢。
+   *
+   * 失败模式全部静默降级为空字符串（服务端未启动 / 网络错误 / 超时 / 非 2xx
+   * 响应 / JSON 解析失败），因为对绝大多数个人开发者用户，enterprise server
+   * 本来就不会运行——这不是错误，是常态。
+   */
+  private async recallFromEnterprise(p: MemoryManagerToolParams): Promise<string | null> {
+    const base = (process.env.OTTO_ENTERPRISE_URL || 'http://127.0.0.1:7777').replace(/\/$/, '');
+    const timeoutMs = Number(process.env.OTTO_ENTERPRISE_RECALL_TIMEOUT_MS || 800);
+    const department = p.department_id;
+
+    const url = new URL(base + '/enterprise/knowledge');
+    if (p.task_type) url.searchParams.set('q', p.task_type);
+    if (department) url.searchParams.set('department', department);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const token = process.env.OTTO_ENTERPRISE_ADMIN_TOKEN;
+      const headers: Record<string, string> = {};
+      if (token) headers['x-otto-admin-token'] = token;
+
+      const res = await fetch(url.toString(), { signal: controller.signal, headers });
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as { knowledge?: Array<{ content?: string; category?: string; department?: string; confidence?: number }> };
+      const items = Array.isArray(data.knowledge) ? data.knowledge : [];
+      if (items.length === 0) return null;
+
+      const lines = items.slice(0, 5).map((k) => {
+        const dept = k.department ? `[${k.department}] ` : '';
+        const cat = k.category ? `(${k.category}) ` : '';
+        return `- ${dept}${cat}${k.content || ''}`;
+      });
+      return '## Department/Company Knowledge (enterprise server, shared across machines)\n' + lines.join('\n');
+    } catch {
+      // 企业服务端未启动 / 网络不可达 / 超时——静默降级，不当作错误。
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ============================================================
@@ -678,6 +742,58 @@ ${efficiencyLines.join('\n')}
     const companyId = p.company_id || 'default-company';
     const teamId = p.team_id || 'default-team';
     const userId = p.user_id || os.userInfo().username;
+    // 只有当 goal 与 name 不同（即用户真的补充了额外信息）时才拼进比较文本。
+    // 之前无条件拼 name+' '+goal：projectCreate 落库时 goal 缺省会回退成
+    // name 本身，导致"已存在项目"的比较文本变成 "name name"（重复一次），
+    // 而"这次新请求"若同样没给 goal，比较文本只是 "name "（不重复）——
+    // 两边拼接方式不对称，人为拉低了本该很高的相似度，把明显该合并的重写
+    // 判成了新话题。两侧都用同一条规则（goal 与 name 相同则不重复拼入）
+    // 才能保证比较是对称、公平的。
+    const buildTopicText = (name: string, goal: string): string =>
+      goal && goal !== name ? `${name} ${goal}` : name;
+    const topicText = buildTopicText(p.project_name!, p.project_goal || '');
+
+    // 话题识别：新建项目/任务前，先看看同公司下是否已有一个"活跃"（非归档）
+    // 项目讲的是同一件事，只是换了个说法（常见于中文场景——同一件事被不同人
+    // 或同一人不同时间用不同措辞重新提出）。命中则合并（把这次"创建请求"记
+    // 成一条项目记忆，追加到已有项目），而不是产出一堆名字不同、内容重复的
+    // 项目。只在同一 companyId 范围内比对——不同公司的项目本就该完全隔离，
+    // 不应互相"合并"。已归档（archived）的项目不参与合并判定：一个项目被
+    // 结束后，同名话题重新出现应视为"新一轮"，值得开新项目而不是塞进旧的
+    // 归档记录里。
+    const store = this.getOrgStore();
+    const existing = await store.load();
+    const candidates: TopicCandidate[] = existing.projects
+      .filter((proj) => proj.companyId === companyId && proj.status !== 'archived')
+      .map((proj) => ({ id: proj.id, text: buildTopicText(proj.name, proj.goal) }));
+
+    const match = p.project_id ? null : findMostSimilarTopic(topicText, candidates, DEFAULT_MERGE_THRESHOLD);
+    if (match) {
+      const mergedInto = existing.projects.find((proj) => proj.id === match.id)!;
+      const memory: OrgMemoryRecord = {
+        id: this.makeId('memory', mergedInto.id + '_merge_' + Date.now()),
+        scope: 'project',
+        companyId: mergedInto.companyId,
+        teamId: mergedInto.teamId,
+        projectId: mergedInto.id,
+        type: 'fact',
+        title: 'Merged duplicate topic',
+        content: `Recognized as the same topic as an existing project (similarity ${(match.score * 100).toFixed(0)}%). ` +
+          `Original request: name="${p.project_name}", goal="${p.project_goal || p.project_name}".`,
+        tags: ['topic-merge'],
+        visibility: 'project_members',
+        source: 'auto_learned',
+        confidence: match.score,
+        createdBy: userId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await store.addMemory(memory);
+      return 'topic merged into existing project: ' + mergedInto.id + ' (' + mergedInto.name + ', similarity ' +
+        (match.score * 100).toFixed(0) + '%) — not creating a duplicate';
+    }
+
+    // 未命中任何已有话题：这是一个新话题，正常新建。
     const project: ProjectRecord = {
       id: p.project_id || this.makeId('project', p.project_name!),
       companyId,
@@ -693,7 +809,7 @@ ${efficiencyLines.join('\n')}
       createdAt: now,
       updatedAt: now,
     };
-    await this.getOrgStore().upsertProject(project);
+    await store.upsertProject(project);
     return 'project created: ' + project.id + ' (' + project.name + ')';
   }
 

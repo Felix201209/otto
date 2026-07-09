@@ -30,7 +30,7 @@ async function cmdStart(): Promise<void> {
   await server.start();
   const { host, port: boundPort } = server.endpoint;
   writeEndpoint(host, boundPort);
-  // eslint-disable-next-line no-console
+   
   console.log(`[otto-server] listening on http://${host}:${boundPort} (ws ${host}:${boundPort}/ws)`);
 
   // 防重入：连续 Ctrl-C / 重复信号只跑一次优雅停机，
@@ -39,7 +39,7 @@ async function cmdStart(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    // eslint-disable-next-line no-console
+     
     console.log('\n[otto-server] shutting down…');
     await server.stop();
     clearEndpoint();
@@ -52,13 +52,13 @@ async function cmdStart(): Promise<void> {
 function cmdStatus(): void {
   const ep = readEndpoint();
   if (!ep) {
-    // eslint-disable-next-line no-console
+     
     console.log('[otto-server] 未发现运行中的 server（无端点文件）。');
     process.exitCode = 1;
     return;
   }
   const alive = isAlive(ep.pid);
-  // eslint-disable-next-line no-console
+   
   console.log(
     alive
       ? `[otto-server] 运行中 PID ${ep.pid} @ http://${ep.host}:${ep.port}（协议 v${ep.protocolVersion}）`
@@ -70,7 +70,7 @@ function cmdStatus(): void {
 function cmdStop(): void {
   const ep = readEndpoint();
   if (!ep || !isAlive(ep.pid)) {
-    // eslint-disable-next-line no-console
+     
     console.log('[otto-server] 没有运行中的 server 可停止。');
     clearEndpoint();
     return;
@@ -78,10 +78,10 @@ function cmdStop(): void {
   try {
     process.kill(ep.pid, 'SIGTERM');
     clearEndpoint();
-    // eslint-disable-next-line no-console
+     
     console.log(`[otto-server] 已向 PID ${ep.pid} 发送 SIGTERM。`);
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.error(`[otto-server] 停止失败: ${(e as Error).message}`);
     process.exitCode = 1;
   }
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
       cmdStop();
       break;
     default:
-      // eslint-disable-next-line no-console
+       
       console.error(`未知命令: ${cmd}（用 start | stop | status）`);
       process.exitCode = 2;
   }

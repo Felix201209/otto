@@ -27,6 +27,7 @@ import {
   type ServerToClient,
   type SessionStatus,
   type SessionSummary,
+  type ToolConfirmationResponsePayload,
 } from './protocol.js';
 
 /** 订阅者回调：收到一帧广播。 */
@@ -46,8 +47,25 @@ export interface SessionRuntime {
   cancel(): void;
   /** 设置模型。 */
   setModel(model: string): void;
+  /**
+   * 回传一个待确认工具调用的应答（AskUserQuestion 的答案 / 危险命令确认等）。
+   * server 收到客户端 tool_confirmation_response 后按 callId 路由进来，唤醒
+   * runToolCalls 里挂起的等待。callId 无对应挂起时静默忽略（幂等，重复应答无害）。
+   */
+  resolveToolConfirmation(
+    callId: string,
+    outcome: 'approved' | 'rejected' | 'always_approve',
+    payload?: ToolConfirmationResponsePayload,
+  ): void;
   /** 释放（关闭 core 资源）。 */
   dispose(): Promise<void>;
+  /**
+   * 取出底层 otto-core Config 实例（用于 GUI 面板只读查询/即时应用设置，
+   * 如 context 用量分解、mcpServers 热更新、healthyUse/preferredLanguage 切换）。
+   * 返回 unknown 避免 sessions.ts 反向依赖 otto-core 的具体 Config 类型；
+   * 调用方（server.ts）按需 cast。
+   */
+  getConfig(): unknown;
 }
 
 /** 单个会话的内部状态。 */

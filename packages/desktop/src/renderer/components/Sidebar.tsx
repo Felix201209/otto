@@ -5,9 +5,10 @@
  */
 
 /**
- * 左侧栏。1:1 还原 spec §左侧栏：
- *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组 /
- *   会话项（标题+时间+预览+来源徽章, 选中态 cream 底+左竖条）/ 查看全部对话。
+ * 左侧栏。以会话列表为主体：
+ *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
+ *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
+ *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
  * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
  *   - 重命名走 inline 输入框（双击标题 或 菜单「重命名」→ 变输入框，Enter 提交、Esc 取消）。
@@ -18,7 +19,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
-import { getAllExperts, type Expert } from '../agents/experts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import {
@@ -27,7 +27,7 @@ import {
   IconList,
   IconChevron,
   IconSparkle,
-  IconAgent,
+  IconSettings,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -40,12 +40,13 @@ function formatTime(ts: number): string {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
-  /** 当前是否停在「智能体」页（高亮该入口）。 */
-  agentsActive?: boolean;
+  /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
+  hubActive?: boolean;
+  /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
+  updateBadge?: boolean;
   onSelect: (id: string) => void;
   onNewChat: () => void;
-  onOpenAgents: () => void;
-  onLaunchExpert: (expert: Expert) => void;
+  onOpenHub: () => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -54,11 +55,11 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   activeSessionId,
-  agentsActive = false,
+  hubActive = false,
+  updateBadge = false,
   onSelect,
   onNewChat,
-  onOpenAgents,
-  onLaunchExpert,
+  onOpenHub,
   onViewAll,
   onRename,
   onDelete,
@@ -88,40 +89,6 @@ export function Sidebar({
         新建对话
       </button>
 
-      <div className="otto-common-tasks" aria-label="常见任务">
-        <div className="otto-common-tasks__head">常见任务</div>
-        {getAllExperts().map((expert) => (
-          <button
-            key={expert.id}
-            type="button"
-            className="otto-common-task"
-            onClick={() => onLaunchExpert(expert)}
-            title={expert.tagline}
-          >
-            <span className="otto-common-task__icon" style={{ color: expert.accent }}>
-              <IconAgent size={14} />
-            </span>
-            <span className="otto-common-task__body">
-              <span className="otto-common-task__name">{expert.name}</span>
-              <span className="otto-common-task__desc">{expert.tagline}</span>
-            </span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className={
-            'otto-agents-entry' + (agentsActive ? ' is-active' : '')
-          }
-          onClick={onOpenAgents}
-          aria-current={agentsActive ? 'page' : undefined}
-          title="查看完整智能体画廊"
-        >
-          <span className="otto-agents-entry__label">全部智能体</span>
-          <span className="otto-agents-entry__hint">画廊</span>
-          <IconChevron size={15} className="otto-agents-entry__chev" />
-        </button>
-      </div>
-
       <div className="otto-sessions">
         {groups.length === 0 ? (
           <div className="otto-group__label">暂无对话</div>
@@ -148,6 +115,26 @@ export function Sidebar({
         <button type="button" className="otto-viewall" onClick={onViewAll}>
           <IconList size={16} />
           查看全部对话
+          <IconChevron size={15} className="otto-viewall__chev" />
+        </button>
+        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
+        <button
+          type="button"
+          className={'otto-viewall otto-viewall--hub' + (hubActive ? ' is-active' : '')}
+          onClick={onOpenHub}
+          aria-current={hubActive ? 'page' : undefined}
+          title="设置与诊断中心"
+        >
+          <IconSettings size={16} />
+          设置与诊断
+          {updateBadge ? (
+            <span
+              className="otto-viewall__dot"
+              role="status"
+              aria-label="有可用更新"
+              title="发现新版本，进入「软件更新」查看"
+            />
+          ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
       </div>

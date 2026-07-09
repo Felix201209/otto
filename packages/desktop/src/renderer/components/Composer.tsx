@@ -20,6 +20,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
+import * as transport from '../transport.js';
 import type { ImageAttachment } from '../state/useOttoStore.js';
 import {
   fileToImageAttachment,
@@ -30,6 +31,7 @@ import {
   SlashCommands,
   filterCommands,
   parseSlashQuery,
+  splitSlashInput,
   type SlashCommand,
 } from './SlashCommands.js';
 import {
@@ -48,20 +50,40 @@ import {
  */
 const MODEL_SEARCH_THRESHOLD = 8;
 
-/** 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。 */
-const SLASH_COMMANDS: readonly SlashCommand[] = [
+/**
+ * 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。
+ * 导出给右侧面板「工具」tab 复用作数据源（RightPanel），避免两处维护命令清单。
+ */
+export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'new', description: '新建会话', action: 'local' },
   { id: 'model', description: '打开模型菜单', action: 'local' },
   { id: 'clear', description: '清空当前会话上下文', action: 'local' },
   { id: 'settings', description: '打开设置面板', action: 'local' },
-  { id: 'doctor', description: '检查 Otto / EasyCode / 系统环境', action: 'prompt', prompt: '请运行一次完整环境诊断：检查 Otto、EasyCode、Node、npm、git、Electron、桌面端、飞书网关、常用依赖是否正常，并给出修复建议。' },
+  { id: 'help', description: '查看全部可用命令', action: 'local' },
+  { id: 'doctor', description: '依赖体检（pandoc/ffmpeg 等外部工具）', action: 'local' },
+  // /memory 混合行为：裸调开「记忆」面板（保留旧肌肉记忆）；带 show/add/refresh/list
+  // 参数时交给 server 命令层直接执行（对齐 CLI /memory 子命令）。
+  {
+    id: 'memory',
+    description: '记忆：裸调开面板；子命令直接执行',
+    action: 'server',
+    bareLocal: true,
+    usage: 'memory show|add|refresh|list …',
+  },
+  { id: 'skills', description: '浏览已装技能库', action: 'local' },
+  { id: 'export', description: '导出当前会话为 Markdown', action: 'local' },
+  { id: 'copy', description: '复制最近一条 Otto 回复', action: 'local' },
+  { id: 'session', description: '浏览/检索全部会话', action: 'local' },
+  { id: 'theme', description: '界面与偏好设置（对齐 CLI /theme）', action: 'local' },
+  { id: 'config', description: '偏好设置（agent 风格 / 语言等）', action: 'local' },
+  { id: 'hooks', description: '打开 hooks 文档', action: 'local' },
   { id: 'desktop', description: '启动/修复桌面端 Otto', action: 'prompt', prompt: '请检查并修复 Otto 桌面端：构建 renderer/main/preload，重新打包 Electron，覆盖 /Applications/Otto.app，并验证界面是否为最新。' },
-  { id: 'feishu-start', description: '开启飞书控制网关', action: 'prompt', prompt: '请开启飞书/Lark 控制网关并检查连接状态。' },
-  { id: 'feishu-stop', description: '停止飞书控制网关', action: 'prompt', prompt: '请停止飞书/Lark 控制网关并确认进程已退出。' },
-  { id: 'feishu-status', description: '检查飞书连接状态', action: 'prompt', prompt: '请检查飞书/Lark 网关、授权、消息同步和群绑定状态。' },
+  // 飞书全家桶：真实动作（配置面板 / REST 启停），不再发提示词让 AI 代办。
+  { id: 'feishu', description: '飞书接入：配置凭证 / 查看状态', action: 'local' },
+  { id: 'feishu-start', description: '启动飞书网关（立即执行）', action: 'local' },
+  { id: 'feishu-stop', description: '停止飞书网关（立即执行）', action: 'local' },
+  { id: 'feishu-status', description: '查看飞书连接状态', action: 'local' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
-  { id: 'memory', description: '查看组织/部门/个人记忆文件', action: 'prompt', prompt: '请列出并总结 Otto/EasyCode 当前可用的个人、部门、组织记忆文件，以及哪些记忆会影响当前任务。' },
-  { id: 'skills', description: '列出可用 Skill 和专家能力', action: 'prompt', prompt: '请列出当前可用 skills、专家能力、用途和调用方式，并指出缺失或需要补齐的技能。' },
   { id: 'ppt', description: 'PPT 创作专家', action: 'prompt', prompt: '我要做一份 PPT。请调用 PPT 创作专家流程，先询问主题、受众、页数、风格和素材。' },
   { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
   { id: 'pdf', description: 'PDF 处理', action: 'prompt', prompt: '我要处理 PDF。请调用 PDF 文档处理流程，先询问文件路径、操作类型和输出格式。' },
@@ -70,9 +92,22 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'research', description: '市场/竞品调研', action: 'prompt', prompt: '我要做市场或竞品调研。请调用市场调研专家流程，先询问行业、对象、竞品和决策目标。' },
   { id: 'browser', description: '内置浏览器/网页自动化', action: 'prompt', prompt: '请打开或使用内置浏览器/网页自动化能力。先询问目标网址和要完成的操作。' },
   { id: 'ide', description: '内置 IDE / 代码任务', action: 'prompt', prompt: '请进入代码任务模式。先检查当前项目结构，询问要实现或修复的目标，然后给出计划。' },
-  { id: 'export', description: '导出当前结果/文件', action: 'prompt', prompt: '请把当前任务结果导出为合适的文件格式，并告诉我输出路径。' },
   { id: 'workflow', description: '启动 workflow 任务', action: 'prompt', prompt: 'workflow 请根据我的目标创建并执行一个完整工作流。先问我目标、输入材料、输出格式和约束。' },
 ];
+
+/**
+ * 右侧面板「工具」tab → Composer 的填入桥。走自定义事件而非 props：
+ * Composer 深居 ChatView 之下，为一条注入通路把 draft/draftNonce 逐层穿透
+ * App→ChatView→Composer 不值当；派发函数与事件监听同在本文件维护，耦合可见。
+ */
+const COMPOSER_INSERT_EVENT = 'otto:composer-insert';
+
+/** 把一段文本填入底部输入框（只填入不发送，随后聚焦）。供 RightPanel 工具列表点击调用。 */
+export function insertComposerDraft(text: string): void {
+  window.dispatchEvent(
+    new CustomEvent<string>(COMPOSER_INSERT_EVENT, { detail: text }),
+  );
+}
 
 interface ComposerProps {
   models: ModelInfo[];
@@ -102,6 +137,31 @@ interface ComposerProps {
   onClearContext?: () => void;
   /** 斜杠命令 `/settings`：打开设置面板（App 已有 onOpenSetup）。未传则该命令不可用。 */
   onOpenSettings?: () => void;
+  /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
+  onOpenDoctor?: () => void;
+  /** 斜杠命令 `/feishu` 系列：打开设置与诊断中心的「飞书接入」tab。 */
+  onOpenFeishu?: () => void;
+  /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
+  onOpenMemory?: () => void;
+  /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
+  onOpenSkills?: () => void;
+  /** 斜杠命令 `/export`：导出当前会话为 Markdown（真实落盘）。 */
+  onExport?: () => void;
+  /**
+   * 命令表（本地 + server 合并后的完整清单）。缺省用本地 SLASH_COMMANDS——
+   * App 在收到 slash_commands_list 帧后经 mergeServerCommands 传入合并版。
+   */
+  commands?: readonly SlashCommand[];
+  /** action='server' 命令：经 run_slash_command 帧交 server 执行（name + 原始 args）。 */
+  onRunServerCommand?: (name: string, args: string) => void;
+  /** 斜杠命令 `/theme` `/config`：打开设置与诊断中心的「偏好」tab。 */
+  onOpenPrefs?: () => void;
+  /** 斜杠命令 `/session`：打开「查看全部对话」检索面板。 */
+  onOpenSessions?: () => void;
+  /** 斜杠命令 `/copy`：复制最近一条 Otto 回复到剪贴板。 */
+  onCopyLast?: () => void;
+  /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
+  onShowHelp?: () => void;
 }
 
 export function Composer({
@@ -119,6 +179,17 @@ export function Composer({
   onNewChat,
   onClearContext,
   onOpenSettings,
+  onOpenDoctor,
+  onOpenFeishu,
+  onOpenMemory,
+  onOpenSkills,
+  onExport,
+  commands = SLASH_COMMANDS,
+  onRunServerCommand,
+  onOpenPrefs,
+  onOpenSessions,
+  onCopyLast,
+  onShowHelp,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -132,11 +203,22 @@ export function Composer({
 
   // 由当前文本解析斜杠命令 query，再过滤出候选。无会话（disabled）时不弹面板。
   // parseSlashQuery=null → 非命令输入态；候选为空 → 无匹配（如 `/xyz`），也不显示面板。
+  //
+  // 参数态（splitSlashInput.argMode）：命令名后已敲空白（如 `/kb search 报销`）
+  // → 不再按整串前缀过滤（那会让 `/kb ` 一敲空格面板就消失），而是锁定命令名
+  // **精确命中**的那条命令，空白后的文本作为 args 原样保留、Enter 时随命令发送。
   const slashQuery = disabled ? null : parseSlashQuery(text);
-  const slashCommands = useMemo(
-    () => (slashQuery == null ? [] : filterCommands(SLASH_COMMANDS, slashQuery)),
-    [slashQuery],
-  );
+  const slashInput = slashQuery == null ? null : splitSlashInput(slashQuery);
+  const slashCommands = useMemo(() => {
+    if (slashInput == null) return [];
+    if (!slashInput.argMode) return filterCommands(commands, slashInput.head);
+    const exact = commands.find(
+      (c) => c.id.toLowerCase() === slashInput.head.toLowerCase(),
+    );
+    return exact ? [exact] : [];
+    // slashInput 每次 render 由 text 重建（引用恒变），依赖取其字段而非对象本身。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashInput?.head, slashInput?.argMode, commands]);
   const slashOpen = slashCommands.length > 0;
   // query 变化后把高亮夹回合法范围（候选变少时 slashIndex 可能越界）。
   const activeSlash =
@@ -228,6 +310,27 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftNonce]);
 
+  // 右侧面板「工具」点击 → 把命令文本填入输入框（不发送），聚焦以便直接回车执行。
+  // 与手输行为一致：复位斜杠面板的 Esc 关闭/高亮态，`/xxx` 填入即弹出命令面板。
+  React.useEffect(() => {
+    const onInsert = (e: Event): void => {
+      if (disabled) return;
+      const value = (e as CustomEvent<string>).detail;
+      if (typeof value !== 'string') return;
+      setText(value);
+      setSlashDismissed(false);
+      setSlashIndex(0);
+      const el = taRef.current;
+      if (el) {
+        el.focus();
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+      }
+    };
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
+  }, [disabled]);
+
   // 切换/新建会话就绪后自动聚焦 textarea，省去手动再点一下。
   // 仅在有会话（sessionId）且未禁用时聚焦；不依赖 busy，避免打断发送流。
   React.useEffect(() => {
@@ -264,11 +367,23 @@ export function Composer({
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
-  // 执行一条斜杠命令 → 本地分派（不发给模型），随后清空输入。
-  // 未接对应回调的命令静默忽略（面板本不该列出它，双保险）。
+  // 执行一条斜杠命令 → 按 action 分派（prompt=发模型 / server=发帧 / local=回调），
+  // 随后清空输入。未接对应回调的命令静默忽略（面板本不该列出它，双保险）。
   const runSlashCommand = (cmd: SlashCommand) => {
+    // 参数：命令名后的原始文本（`/kb search 报销` → 'search 报销'）。
+    const args = (slashInput?.argMode ? slashInput.args : '').trim();
+
     if (cmd.action === 'prompt' && cmd.prompt) {
       onSend(cmd.prompt, []);
+      clearInput();
+      taRef.current?.focus();
+      return;
+    }
+
+    // server 命令：发 run_slash_command 帧；bareLocal 且无参数时退回本地分派
+    // （如 `/memory` 裸调开「记忆」面板，`/memory add xx` 才走 server）。
+    if (cmd.action === 'server' && !(cmd.bareLocal && args === '')) {
+      onRunServerCommand?.(cmd.id, args);
       clearInput();
       taRef.current?.focus();
       return;
@@ -286,6 +401,49 @@ export function Composer({
         break;
       case 'settings':
         onOpenSettings?.();
+        break;
+      case 'help':
+        onShowHelp?.();
+        break;
+      case 'doctor':
+        onOpenDoctor?.();
+        break;
+      // 飞书：启停真调 REST（preload 通路），随后打开「飞书接入」面板看真实状态；
+      // 裸 /feishu 与 /feishu-status 直接开面板（面板即配置 + 状态）。
+      case 'feishu':
+      case 'feishu-status':
+        onOpenFeishu?.();
+        break;
+      case 'feishu-start':
+        void window.otto?.feishuStart();
+        onOpenFeishu?.();
+        break;
+      case 'feishu-stop':
+        void window.otto?.feishuStop();
+        onOpenFeishu?.();
+        break;
+      case 'memory':
+        onOpenMemory?.();
+        break;
+      case 'skills':
+        onOpenSkills?.();
+        break;
+      case 'export':
+        onExport?.();
+        break;
+      case 'copy':
+        onCopyLast?.();
+        break;
+      case 'session':
+        onOpenSessions?.();
+        break;
+      case 'theme':
+      case 'config':
+        onOpenPrefs?.();
+        break;
+      case 'hooks':
+        // 对齐 CLI /hooks：用系统浏览器打开 hooks 文档（preload openExternal）。
+        void transport.openExternal('https://www.otto.bot/hooks-help');
         break;
       default:
         break;

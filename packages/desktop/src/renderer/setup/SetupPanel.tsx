@@ -22,6 +22,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
+import { FeishuStatusBadge } from '../components/FeishuStatusBadge.js';
 import {
   IconClose,
   IconEye,
@@ -85,31 +86,64 @@ export function SetupPanel({
   const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
   /** 「离线兜底」高级块折叠态：默认收起（对新手是噪音），点击展开。 */
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  /** 「本地测试模式」块折叠态：默认收起；面向开发者，折叠对普通用户无干扰。 */
+  const [localTestOpen, setLocalTestOpen] = useState(false);
+  /**
+   * 本地测试代理地址（不落盘，仅当前会话生效）。
+   * 用途：无需连接组织服务器，直接把 customProxyServerUrl 指向本机 localhost otto-server
+   * 的 HTTP 端口，配合 BYO-key 自定义模型本地测试整条链路。
+   *
+   * 使用步骤：
+   *   1. 先在终端起本地 server：  OTTO_SERVER_MOCK=1 node packages/server/dist/bin.js start
+   *      （或用真实 BYO-key 不加 MOCK=1 也可）
+   *   2. 在此处填入 http://127.0.0.1:7637  并点「应用本地地址」
+   *   3. 重新打开对话，请求将走本地 server 而非远程组织服务器
+   *   4. 测试完毕后点「清除」即可恢复默认
+   */
+  const [localTestUrl, setLocalTestUrl] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('otto:local-test-url') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [localTestApplied, setLocalTestApplied] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('otto:local-test-applied') === '1';
+    } catch {
+      return false;
+    }
+  });
   const keyRef = useRef<HTMLInputElement>(null);
 
   const preset = findPreset(form.presetId) ?? DEFAULT_PRESET;
 
-  // ── 飞书一键连接控制（桌面端暂未接管 daemon）──
-  // 诚实说明来自 main 的 feishuStatus handler（返回「桌面端暂不支持、请用 CLI」）。
-  // 桌面端并未托管进程，因此不提供启停按钮、不假报「运行中」；仅展示这段说明。
-  const [fsStatus, setFsStatus] = useState<string>(
-    '桌面端暂不支持在此一键启停飞书守护进程，请在终端使用：otto feishu daemon start / stop / status。',
-  );
+  // ── 飞书连接状态 + 一键启停（真实通路）──
+  // 状态由 FeishuStatusBadge 轮询驱动（main 真查 server /health → adapter 守护
+  // 状态），长文案承接它上抛的结果。启停按钮真调 server 运行期端点
+  // （POST /feishu/start|stop，经 preload→main），结果原样展示，不谎报。
+  const [fsStatus, setFsStatus] = useState<string>('正在查询飞书连接状态…');
+  const [fsRunning, setFsRunning] = useState<boolean>(false);
+  const [fsBusy, setFsBusy] = useState<boolean>(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await window.otto?.feishuStatus();
-        if (!cancelled && res?.text) setFsStatus(res.text);
-      } catch {
-        // 读取失败保留默认诚实说明。
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  /** 一键启停：running 时停止（之后不自动重连），否则启动/恢复守护。 */
+  const toggleFeishu = async (): Promise<void> => {
+    if (fsBusy) return;
+    setFsBusy(true);
+    try {
+      const res = fsRunning
+        ? await window.otto?.feishuStop()
+        : await window.otto?.feishuStart();
+      if (res?.text) setFsStatus(res.text);
+      // running 不在这里猜——由徽标下一轮轮询的真实 /health 驱动更新。
+    } catch (e) {
+      setFsStatus(
+        `飞书操作失败：${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setFsBusy(false);
+    }
+  };
 
   const errors = useMemo(() => validateForm(form), [form]);
   const valid = Object.keys(errors).length === 0;
@@ -220,6 +254,33 @@ export function SetupPanel({
     if (!valid || saving) return;
     // 按固定契约发 `save_custom_model` 帧；成功/失败由上层监听 models_list / error 裁决。
     onSave(buildSavePayload(form));
+  };
+
+  /** 应用本地测试地址：通知 app→server 用 customProxyServerUrl 郤盖默认连接。 */
+  const applyLocalTestUrl = (): void => {
+    const url = localTestUrl.trim().replace(/\/+$/, '');
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    try {
+      sessionStorage.setItem('otto:local-test-url', url);
+      sessionStorage.setItem('otto:local-test-applied', '1');
+    } catch {
+      /* storage 不可用时静默 */
+    }
+    setLocalTestApplied(true);
+    // 通过 IPC 通知主进程把 customProxyServerUrl 和 OTTO_SERVER_URL 郤盖到 localTestUrl
+    void window.otto?.setLocalTestUrl?.(url);
+  };
+
+  /** 清除本地测试：恢复默认连接。 */
+  const clearLocalTestUrl = (): void => {
+    try {
+      sessionStorage.removeItem('otto:local-test-url');
+      sessionStorage.removeItem('otto:local-test-applied');
+    } catch {
+      /* storage 不可用时静默 */
+    }
+    setLocalTestApplied(false);
+    void window.otto?.setLocalTestUrl?.('');
   };
 
   const showErr = (field: string): string | undefined =>
@@ -503,13 +564,16 @@ export function SetupPanel({
         ) : null}
 
 
-        {/* —— 飞书一键控制面板（桌面端暂未接管 daemon，诚实禁用）—— */}
+        {/* —— 飞书连接状态与常驻守护（状态真实：徽标轮询 server /health）—— */}
         <div className="otto-setup__section" style={{ marginTop: '24px', padding: '16px', background: 'var(--otto-sidebar-bg)', borderRadius: 'var(--otto-radius)' }}>
           <label className="otto-setup__label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span>飞书双向控制与常驻守护</span>
-            <span className="otto-badge otto-badge--feishu" style={{ fontSize: '11px' }}>
-              即将支持
-            </span>
+            <FeishuStatusBadge
+              onStatus={(res) => {
+                setFsStatus(res.text);
+                setFsRunning(res.running);
+              }}
+            />
           </label>
           <p className="otto-setup__hint" style={{ marginBottom: '14px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
             {fsStatus}
@@ -517,12 +581,13 @@ export function SetupPanel({
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
               type="button"
-              disabled
+              disabled={fsBusy}
               className="otto-setup__btn otto-setup__btn--ghost"
-              title="桌面端暂不支持一键启停，请在终端使用 otto feishu daemon"
-              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px', opacity: 0.6, cursor: 'not-allowed' }}
+              title="真调本地 server 的运行期启停端点：启动后断线自动重连；停止属有意停止，不会自动重连"
+              style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px', opacity: fsBusy ? 0.6 : 1, cursor: fsBusy ? 'wait' : 'pointer' }}
+              onClick={() => void toggleFeishu()}
             >
-              飞书一键控制（即将支持）
+              {fsBusy ? '处理中…' : fsRunning ? '停止飞书守护' : '启动飞书守护'}
             </button>
             <button
               type="button"
@@ -533,6 +598,99 @@ export function SetupPanel({
               飞书开发者平台 ↗
             </button>
           </div>
+        </div>
+
+        {/* ——「本地测试模式」区块：默认折叠，面向开发者 —— */}
+        <div className="otto-setup__advanced" style={{ marginTop: '8px' }}>
+          <button
+            type="button"
+            className="otto-setup__advanced-toggle"
+            onClick={() => setLocalTestOpen((v) => !v)}
+            aria-expanded={localTestOpen}
+          >
+            <IconChevron
+              size={13}
+              className={
+                'otto-setup__advanced-chev' +
+                (localTestOpen ? ' otto-setup__advanced-chev--open' : '')
+              }
+            />
+            本地测试模式（开发者）
+            {localTestApplied ? (
+              <span style={{ marginLeft: '6px', fontSize: '11px', color: 'var(--otto-accent)', fontWeight: 700 }}>
+                • 已应用
+              </span>
+            ) : null}
+          </button>
+          {localTestOpen ? (
+            <div className="otto-setup__persist" style={{ marginTop: '8px' }}>
+              <p className="otto-setup__persist-body" style={{ marginBottom: '10px', lineHeight: '1.6' }}>
+                无需连接远程组织服务器，把请求指向本机运行的 otto-server。
+                <br />
+                <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
+                  先在终端起本地 server：{'\u3000'}
+                  <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
+                    OTTO_SERVER_MOCK=1 node packages/server/dist/bin.js start
+                  </code>
+                </span>
+                <br />
+                <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
+                  单配了 BYO-key 模型时去掉{'\u3000'}
+                  <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
+                    OTTO_SERVER_MOCK=1
+                  </code>
+                  可测真实推理。
+                </span>
+              </p>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  className="otto-setup__input"
+                  type="text"
+                  value={localTestUrl}
+                  placeholder="本地 server 地址，如 http://127.0.0.1:7637"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  onChange={(e) => {
+                    setLocalTestUrl(e.target.value);
+                    if (localTestApplied) setLocalTestApplied(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); applyLocalTestUrl(); }
+                  }}
+                  style={{ flex: 1, fontSize: '12px' }}
+                />
+                <button
+                  type="button"
+                  className="otto-setup__iconbtn"
+                  onClick={applyLocalTestUrl}
+                  disabled={!localTestUrl.trim()}
+                  style={{ whiteSpace: 'nowrap', fontSize: '12px' }}
+                >
+                  应用地址
+                </button>
+                {localTestApplied ? (
+                  <button
+                    type="button"
+                    className="otto-setup__iconbtn"
+                    onClick={clearLocalTestUrl}
+                    style={{ whiteSpace: 'nowrap', fontSize: '12px', color: 'var(--otto-text-secondary)' }}
+                  >
+                    清除
+                  </button>
+                ) : null}
+              </div>
+              {localTestApplied ? (
+                <p className="otto-setup__hint" style={{ marginTop: '8px', color: 'var(--otto-accent)' }}>
+                  ✅ 已应用本地测试地址：{localTestUrl}，下次对话请求将走本机 server。
+                </p>
+              ) : (
+                <p className="otto-setup__hint" style={{ marginTop: '6px' }}>
+                  应用后下次对话请求将通过本机 server（而非连接远程组织服务器）。清除即可恢复默认。
+                </p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         {/* —— 离线兜底：默认折叠成一行「高级」，对新手隐去噪音；展开才露两条复制路径 —— */}

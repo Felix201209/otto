@@ -2226,7 +2226,8 @@ export class AIService {
       'glob': 'FindFiles',
       'list_directory': 'ReadFolder',
       'web_fetch': 'WebFetch',
-      'google_web_search': 'WebSearch',
+      'web_search': 'WebSearch',
+      'google_web_search': 'WebSearch', // 旧名兼容：改名前的历史会话回放仍能正确显示
       'save_memory': 'SaveMemory',
       'task': 'Task',
       'todo_write': 'TodoWrite',
@@ -2287,7 +2288,8 @@ export class AIService {
         const urlMatch = prompt?.match(/https?:\/\/[^\s]+/);
         return urlMatch ? urlMatch[0].substring(0, 40) : '';
       }
-      case 'google_web_search':
+      case 'web_search':
+      case 'google_web_search': // 旧名兼容
         return (parameters.query as string)?.substring(0, 30) || '';
       default:
         return '';

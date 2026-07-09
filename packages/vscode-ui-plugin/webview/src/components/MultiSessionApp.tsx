@@ -1116,7 +1116,7 @@ export const MultiSessionApp: React.FC = () => {
 
             // 网络获取
             'web_fetch',          // 获取网页内容
-            'google_web_search',  // 网页搜索
+            'web_search',         // 网页搜索
 
             // 分析和规划工具
             'task',               // 代码分析工具

@@ -36,7 +36,7 @@ export const INLINE_COMMANDS: InlineCommandDef[] = [
 {{args}}
 
 **IMPORTANT CONSTRAINTS**:
-- 🌐 **Use ONLY web search tools**: Please use google_web_search or web_fetch and other network-related tools to get the latest information
+- 🌐 **Use ONLY web search tools**: Please use web_search or web_fetch and other network-related tools to get the latest information
 - 🚫 **NEVER access local project**: Do NOT use read_file, write_file, list_directory, glob, search_file_content, or any file system tools
 - 🚫 **Do NOT modify code**: Do NOT use replace, delete_file, run_shell_command, or any project modification tools
 - 📡 **Focus on online resources**: Prioritize using public information, documentation, tutorials, and other resources from the internet

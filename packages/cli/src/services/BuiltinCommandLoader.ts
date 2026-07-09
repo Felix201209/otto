@@ -26,6 +26,7 @@ import { helpAskCommand } from '../ui/commands/helpAskCommand.js';
 import { ideCommand } from '../ui/commands/ideCommand.js';
 import { initCommand } from '../ui/commands/initCommand.js';
 // import { mcpCommand } from '../ui/commands/mcpCommand.js'; // 已删除
+import { kbCommand } from '../ui/commands/kbCommand.js';
 import { memoryCommand } from '../ui/commands/memoryCommand.js';
 import { modelCommand } from '../ui/commands/modelCommand.js';
 // Deprecated: Use /models > Model Management instead
@@ -102,6 +103,7 @@ export class BuiltinCommandLoader implements ICommandLoader {
       issueCommand,
       ideCommand(this.config),
       initCommand,
+      kbCommand, // 个人本地知识库 /kb add|search|list|remove
       memoryCommand,
       modelCommand,
       // addModelCommand, // 已废弃，使用 /models > Model Management 代替

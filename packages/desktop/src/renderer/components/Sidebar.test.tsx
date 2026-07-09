@@ -33,7 +33,6 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   const onSelect = vi.fn();
   const onRename = vi.fn();
   const onDelete = vi.fn();
-  const onOpenAgents = vi.fn();
   const groups: SessionGroup[] = [
     { label: '今天', sessions: [makeSession()] },
   ];
@@ -43,36 +42,22 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
       activeSessionId="s1"
       onSelect={onSelect}
       onNewChat={vi.fn()}
-      onOpenAgents={onOpenAgents}
-      onLaunchExpert={vi.fn()}
+      onOpenHub={vi.fn()}
       onViewAll={vi.fn()}
       onRename={onRename}
       onDelete={onDelete}
       {...over}
     />,
   );
-  return { onSelect, onRename, onDelete, onOpenAgents };
+  return { onSelect, onRename, onDelete };
 }
 
-describe('Sidebar：智能体入口', () => {
-  it('渲染左侧常见任务与全部智能体入口', () => {
+describe('Sidebar：布局（工具区已迁右侧面板）', () => {
+  it('不再渲染常见任务 / 全部智能体入口（已迁 RightPanel）', () => {
     renderSidebar();
-    expect(screen.getByText('常见任务')).toBeTruthy();
-    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
-    expect(screen.getByText('全部智能体')).toBeTruthy();
-  });
-
-  it('点击「全部智能体」入口 → 回调 onOpenAgents', () => {
-    const { onOpenAgents } = renderSidebar();
-    fireEvent.click(screen.getByTitle('查看完整智能体画廊'));
-    expect(onOpenAgents).toHaveBeenCalledTimes(1);
-  });
-
-  it('在智能体页时入口高亮（aria-current=page）', () => {
-    renderSidebar({ agentsActive: true });
-    expect(screen.getByTitle('查看完整智能体画廊').getAttribute('aria-current')).toBe(
-      'page',
-    );
+    expect(screen.queryByText('常见任务')).toBeNull();
+    expect(screen.queryByText('PPT 创作专家')).toBeNull();
+    expect(screen.queryByText('全部智能体')).toBeNull();
   });
 });
 

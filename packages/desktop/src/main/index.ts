@@ -21,11 +21,17 @@
  * 注意：package.json 无 "type":"module" → main/preload 均编译为 CJS（Electron 标准，
  * 且 import.meta.url 在 CJS 输出下会被 tsc 直接拒绝/TS1470）。__dirname 用 CJS 原生
  * 全局变量，不需要（也不能用）ESM 的 fileURLToPath(import.meta.url) 重建。
+ *
+ * ⚠️ otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
+ * （会被编译成 require()，真机运行时抛 ERR_REQUIRE_ESM 崩溃）。DEFAULT_HOST/DEFAULT_PORT
+ * 只是 CSP 兜底默认值的字面量，这里直接内联同样的值，避免为两个常量单独走一次
+ * import()（server-manager.ts 已经承担了对 otto-server 真正需要的值的动态加载）。
  */
 
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -35,10 +41,23 @@ import {
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { DEFAULT_HOST, DEFAULT_PORT, type ServerEndpoint } from 'otto-server';
+import type {
+  FeishuConfigPublic,
+  FeishuConfigSaveRequest,
+  HealthInfo,
+  ServerEndpoint,
+} from 'otto-server';
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
+import { UpdateService } from './update-service.js';
+
+/** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
+ * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
+const CSP_FALLBACK_HOST = '127.0.0.1';
+const CSP_FALLBACK_PORT = 7637;
 
 /**
  * renderer 静态资源目录。与 createWindow 的 loadFile 用同一推导
@@ -64,33 +83,238 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  saveTextFile: 'otto:save-text-file',
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
-  skillLeaderboard: 'otto:skill-leaderboard',
-  workLogToday: 'otto:worklog-today',
-  auditLogRecent: 'otto:auditlog-recent',
-  skillShareList: 'otto:skill-share-list',
-  skillMarketplace: 'otto:skill-marketplace',
-  userDepartment: 'otto:user-department',
+  feishuGetConfig: 'otto:feishu-get-config',
+  feishuSaveConfig: 'otto:feishu-save-config',
+  feishuClearConfig: 'otto:feishu-clear-config',
+  parkConfig: 'otto:park-config',
+  setLocalTestUrl: 'otto:set-local-test-url',
+  appVersion: 'otto:app-version',
+  updateCheck: 'otto:update-check',
+  updateDownload: 'otto:update-download',
+  updateCancel: 'otto:update-cancel',
+  updateInstall: 'otto:update-install',
+  updateProgress: 'otto:update-progress',
 } as const;
 
-const { execSync, spawn } = require('child_process');
+/**
+ * 软件更新服务（检查 / 下载 / 安装，逻辑见 update-service.ts）。
+ * 进度经 IPC.updateProgress 推给当前主窗口；窗口可能重建，故传 getter。
+ */
+const updateService = new UpdateService(
+  () => mainWindow?.webContents,
+  IPC.updateProgress,
+);
 
-function getOttoBinPath(): string {
-  const candidates = [
-    path.join(__dirname, '..', '..', '..', 'bundle', 'otto.js'),
-    path.join(__dirname, '..', 'bundle', 'otto.js'),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  return '';
+/**
+ * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
+ *
+ * 状态（feishuStatus）：桌面端连接的 server（内嵌或发现的）在 /health 里带出
+ * 飞书守护详情（connected / 重连第 N 次 / 下次重试 / 锁被哪个 pid 持有），
+ * 这里直接查询透传——绝不假报「已连接」；锁被别的进程（如 CLI daemon）拿着时
+ * 如实说「另一进程持有」。
+ *
+ * 启停（feishuStart/feishuStop）：真调 server 的运行期端点
+ * POST /feishu/start、POST /feishu/stop：
+ *   - start：server 未启用（含运行期才配好凭证）→ 现场注册并启动守护；
+ *     已在跑 → 幂等返回当前状态；无凭证 → server 诚实报错（ok:false），
+ *     桌面端原样透传，不谎报「已启动」。
+ *   - stop：有意停止，之后不自动重连，直到再次 start。
+ * 每次操作后附最新真实状态文案。
+ */
+
+/** /health 单次查询超时（ms）。 */
+const FEISHU_HEALTH_TIMEOUT_MS = 1500;
+/** 启停端点超时（ms）：start 含 registerFeishu（不阻塞等建连），给宽一点。 */
+const FEISHU_OP_TIMEOUT_MS = 5000;
+
+/**
+ * POST 一个 server 端点（无 body），解析 ApiResponse 信封。
+ * 网络失败/超时/server 未就绪 → 返回 null（调用方给「未就绪」诚实文案）。
+ */
+function postServerEndpoint(
+  routePath: string,
+): Promise<{ ok: boolean; data: HealthInfo['feishu']['status'] | null; error: string | null } | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: routePath,
+        method: 'POST',
+        timeout: FEISHU_OP_TIMEOUT_MS,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(
+              JSON.parse(body) as {
+                ok: boolean;
+                data: HealthInfo['feishu']['status'] | null;
+                error: string | null;
+              },
+            );
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
 }
 
 /**
- * 飞书 daemon 管理：通过 spawn 调用 otto feishu daemon start/stop/status
+ * 请求 /feishu/config（GET/POST/DELETE），解析 ApiResponse 信封。
+ * 网络失败/超时/server 未就绪 → null。POST body 里含 appSecret，
+ * 只走回环 HTTP 到本机 server，不落任何日志。
  */
+function requestFeishuConfig(
+  method: 'GET' | 'POST' | 'DELETE',
+  body?: FeishuConfigSaveRequest,
+): Promise<{ ok: boolean; data: FeishuConfigPublic | null; error: string | null } | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  const payload = body !== undefined ? JSON.stringify(body) : undefined;
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: '/feishu/config',
+        method,
+        timeout: FEISHU_OP_TIMEOUT_MS,
+        ...(payload !== undefined
+          ? {
+              headers: {
+                'content-type': 'application/json',
+                'content-length': Buffer.byteLength(payload),
+              },
+            }
+          : {}),
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          text += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(
+              JSON.parse(text) as {
+                ok: boolean;
+                data: FeishuConfigPublic | null;
+                error: string | null;
+              },
+            );
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+    req.end(payload);
+  });
+}
+
+/** 查询当前 server 的 /health（信封 {ok,data,error}），失败/未就绪返回 null。 */
+function fetchServerHealth(): Promise<HealthInfo | null> {
+  const ep = endpoint;
+  if (!ep) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: '/health',
+        timeout: FEISHU_HEALTH_TIMEOUT_MS,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body) as {
+              ok?: boolean;
+              data?: HealthInfo | null;
+            };
+            resolve(parsed.ok && parsed.data ? parsed.data : null);
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/** 把 /health 的飞书守护状态渲染成给用户看的一句人话（状态必须诚实）。 */
+function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
+  const st = feishu.status;
+  if (!feishu.enabled || !st) {
+    return (
+      '本地 server 未启用飞书网关（未检测到飞书凭证）。\n' +
+      '到「设置与诊断 → 飞书接入」填写 App ID / App Secret 即可启用。'
+    );
+  }
+  if (!st.configured) {
+    return '飞书凭证缺失或损坏（~/.otto-user/feishu-credentials.json），网关未启动。';
+  }
+  if (st.connected) {
+    return '飞书已连接（WS 长连接就绪，断线自动重连守护中）。';
+  }
+  if (st.lockHeldByOtherPid != null) {
+    return (
+      `飞书连接被另一进程持有（pid ${st.lockHeldByOtherPid}，可能是 otto feishu daemon）。\n` +
+      '本进程未连接（避免同一消息被处理两遍），对方退出后将自动接管。'
+    );
+  }
+  if (st.reconnecting) {
+    const eta = st.nextRetryAt
+      ? Math.max(0, Math.round((st.nextRetryAt - Date.now()) / 1000))
+      : null;
+    return (
+      `飞书重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，约 ${eta}s 后重试` : ''}）` +
+      `${st.lastDisconnectReason ? `：${st.lastDisconnectReason}` : ''}。`
+    );
+  }
+  if (!st.running) {
+    return '飞书守护未在运行。';
+  }
+  return `飞书离线${st.lastDisconnectReason ? `：${st.lastDisconnectReason}` : ''}。`;
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // 窗口
@@ -228,8 +452,8 @@ function isExternalUrl(url: string): boolean {
 /** 本地 CSP：只允许自身资源 + 连本地 server WS/HTTP。 */
 function applyCsp(): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const host = endpoint?.host ?? DEFAULT_HOST;
-    const port = endpoint?.port ?? DEFAULT_PORT;
+    const host = endpoint?.host ?? CSP_FALLBACK_HOST;
+    const port = endpoint?.port ?? CSP_FALLBACK_PORT;
     const csp = [
       "default-src 'self'",
       // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。
@@ -297,354 +521,137 @@ function registerIpc(): void {
     }
     return Promise.resolve();
   });
-  // 飞书 daemon 一键启停：通过 spawn 调用 CLI 的 daemon 命令
-  ipcMain.handle(IPC.feishuStart, async () => {
-    try {
-      const ottoPath = getOttoBinPath();
-      if (!ottoPath) return { text: '未找到 otto 命令，请确保已安装。' };
-      const child = spawn(process.execPath, [ottoPath, 'feishu', 'daemon', 'start'], {
-        detached: true, stdio: 'ignore',
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
-      });
-      child.unref();
-      await new Promise(r => setTimeout(r, 1000));
-      return { text: '飞书守护进程已启动。', pid: child.pid };
-    } catch (err) {
-      return { text: `启动失败：${err instanceof Error ? err.message : String(err)}` };
+  // 飞书状态：真查当前 server 的 /health 并透传守护详情（见文件上方说明）。
+  // 状态诚实：server 未就绪 / 查询失败一律如实报告，绝不假报「已连接/运行中」。
+  ipcMain.handle(IPC.feishuStatus, async () => {
+    const health = await fetchServerHealth();
+    if (!health) {
+      return {
+        text: '本地 server 未就绪，暂时无法查询飞书状态。',
+        running: false,
+      };
     }
+    return {
+      text: renderFeishuStatusText(health.feishu),
+      // running = server 启用了飞书且守护在跑（≠已连接；连接态看 feishu.connected）。
+      running: health.feishu.enabled && (health.feishu.status?.running ?? false),
+      feishu: health.feishu,
+    };
+  });
+  // 启停：真调 server 运行期端点 POST /feishu/start | /feishu/stop，
+  // 透传真实结果（失败原样报错，不谎报动作已执行），并附最新守护状态。
+  ipcMain.handle(IPC.feishuStart, async () => {
+    const r = await postServerEndpoint('/feishu/start');
+    if (!r) {
+      return { text: '本地 server 未就绪，无法启动飞书守护，请稍后重试。' };
+    }
+    if (!r.ok) {
+      // server 诚实报错（典型：凭证未配置），原样透传。
+      return { text: `飞书守护启动失败：${r.error ?? '未知原因'}` };
+    }
+    const health = await fetchServerHealth();
+    return {
+      text:
+        '飞书守护已启动（断线自动重连，连上一次后绝不永久断开）。\n' +
+        (health ? renderFeishuStatusText(health.feishu) : ''),
+    };
   });
   ipcMain.handle(IPC.feishuStop, async () => {
-    try {
-      const ottoPath = getOttoBinPath();
-      if (!ottoPath) return { text: '未找到 otto 命令。' };
-      execSync(`"${process.execPath}" "${ottoPath}" feishu daemon stop`, {
-        stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined }, timeout: 5000,
-      });
-      return { text: '飞书守护进程已停止。' };
-    } catch (err) {
-      return { text: `停止失败：${err instanceof Error ? err.message : String(err)}` };
+    const r = await postServerEndpoint('/feishu/stop');
+    if (!r) {
+      return { text: '本地 server 未就绪，无法执行停止操作。' };
     }
-  });
-  ipcMain.handle(IPC.feishuStatus, async () => {
-    try {
-      const ottoPath = getOttoBinPath();
-      if (!ottoPath) return { text: '未找到 otto 命令。', running: false };
-      const output = execSync(`"${process.execPath}" "${ottoPath}" feishu daemon status`, {
-        stdio: 'pipe', env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
-        timeout: 5000, encoding: 'utf-8',
-      });
-      const running = output.includes('running') || output.includes('运行中');
-      return { text: output.trim(), running };
-    } catch {
-      return { text: '未运行', running: false };
+    if (!r.ok) {
+      return { text: `飞书守护停止失败：${r.error ?? '未知原因'}` };
     }
+    return {
+      text:
+        '飞书守护已停止（有意停止：不会自动重连，再次启动即恢复守护）。\n' +
+        '注：若另有 CLI 守护进程（otto feishu daemon）在跑，请在终端单独停止。',
+    };
   });
-
-  // Skill 排行榜：读取本地 skill-shares.json，返回排行榜+明星榜文本
-  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
+  // 飞书凭证配置（「飞书接入」面板）：转发 server /feishu/config。
+  // GET 返回的本来就是脱敏视图（appSecret 只进不出，见 server 端约定）。
+  ipcMain.handle(IPC.feishuGetConfig, async () => {
+    const r = await requestFeishuConfig('GET');
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
+    return { ok: r.ok, config: r.data, error: r.error };
+  });
+  ipcMain.handle(IPC.feishuSaveConfig, async (_e, body: unknown) => {
+    // 形状粗校验后转发；细校验（appId/domain/secret 规则）由 server 端负责。
+    if (typeof body !== 'object' || body === null) {
+      return { ok: false, config: null, error: '配置格式不合法。' };
+    }
+    const r = await requestFeishuConfig('POST', body as FeishuConfigSaveRequest);
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪，凭证未保存。' };
+    return { ok: r.ok, config: r.data, error: r.error };
+  });
+  ipcMain.handle(IPC.feishuClearConfig, async () => {
+    const r = await requestFeishuConfig('DELETE');
+    if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
+    return { ok: r.ok, config: r.data, error: r.error };
+  });
+  // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
+  // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  ipcMain.handle(IPC.parkConfig, async () => {
     try {
-      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
-      let shares: any[] = [];
-      try {
-        const raw = await fs.promises.readFile(sharesPath, 'utf-8');
-        shares = JSON.parse(raw);
-      } catch { /* 文件不存在，返回空 */ }
-
-      const activeShares = shares.filter((s: any) =>
-        (!teamId || s.teamId === teamId) && s.status === 'active',
-      );
-      const teamName = activeShares[0]?.teamName || '本小组';
-
-      // 排行榜文本
-      const medals = ['1.', '2.', '3.'];
-      const maxInstalls = Math.max(...activeShares.map((s: any) => s.installCount || 0), 1);
-      const maxUsage = Math.max(...activeShares.map((s: any) => s.usageCount || 0), 1);
-
-      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
-      const scored = activeShares.map((s: any) => {
-        const ratingScore = (s.rating || 0) / 5 * 100;
-        const installScore = (s.installCount || 0) / maxInstalls * 100;
-        const successRate = s.usageCount > 0 ? (s.successCount || 0) / s.usageCount * 100 : 50;
-        const usageScore = (s.usageCount || 0) / maxUsage * 100;
-        return { s, score: ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15 };
-      }).sort((a: any, b: any) => b.score - a.score);
-
-      scored.forEach((item: any, i: number) => {
-        const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
-        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
-        lbLines.push(`   ${item.s.featureDescription || ''}`);
-        lbLines.push(`   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`);
-        lbLines.push('');
-      });
-
-      // 明星榜文本
-      const contributorMap: Record<string, any> = {};
-      for (const s of activeShares) {
-        if (!contributorMap[s.sharedBy]) {
-          contributorMap[s.sharedBy] = { name: s.sharedByName, count: 0, installs: 0, skills: [] };
-        }
-        contributorMap[s.sharedBy].count++;
-        contributorMap[s.sharedBy].installs += s.installCount || 0;
-        contributorMap[s.sharedBy].skills.push(s.skillName);
-      }
-      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
-      Object.values(contributorMap).sort((a: any, b: any) => b.installs - a.installs).forEach((c: any, i: number) => {
-        const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        sbLines.push(`${rank} ${c.name}`);
-        sbLines.push(`   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`);
-        sbLines.push('');
-      });
-
+      const p = path.join(os.homedir(), '.otto-user', 'park-services.json');
+      const raw = await fs.promises.readFile(p, 'utf8');
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof cfg !== 'object' || cfg === null) return null;
+      // 宽松形状校验：只透传认识的字段，坏字段丢弃不炸。
+      const services = Array.isArray(cfg.services)
+        ? cfg.services
+            .filter(
+              (s): s is Record<string, unknown> =>
+                typeof s === 'object' && s !== null,
+            )
+            .map((s) => ({
+              name: typeof s.name === 'string' ? s.name : '',
+              desc: typeof s.desc === 'string' ? s.desc : '',
+              prompt: typeof s.prompt === 'string' ? s.prompt : '',
+            }))
+            .filter((s) => s.name && s.prompt)
+        : undefined;
       return {
-        leaderboard: lbLines.join('\n'),
-        starBoard: sbLines.join('\n'),
-        tabs: [
-          { id: 'leaderboard', label: '排行榜', icon: '' },
-          { id: 'stars', label: '明星榜', icon: '' },
-        ],
+        brandName: typeof cfg.brandName === 'string' ? cfg.brandName : undefined,
+        parkName: typeof cfg.parkName === 'string' ? cfg.parkName : undefined,
+        ...(services && services.length > 0 ? { services } : {}),
       };
-    } catch (err) {
-      return {
-        leaderboard: '暂无排行榜数据',
-        starBoard: '暂无明星榜数据',
-        tabs: [
-          { id: 'leaderboard', label: '排行榜', icon: '' },
-          { id: 'stars', label: '明星榜', icon: '' },
-        ],
-      };
-    }
-  });
-
-  // 工作日志：读取今天的 JSONL 日志，生成汇总文本
-  ipcMain.handle(IPC.workLogToday, async () => {
-    try {
-      const os = require('os');
-      const pathMod = require('path');
-      const worklogDir = pathMod.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
-      const today = new Date().toISOString().split('T')[0];
-      const filePath = pathMod.join(worklogDir, `${today}.jsonl`);
-
-      let entries: any[] = [];
-      try {
-        const raw = await fs.promises.readFile(filePath, 'utf-8');
-        entries = raw.trim().split('\n').filter((l: string) => l.length > 0).map((l: string) => JSON.parse(l));
-      } catch { /* 文件不存在 */ }
-
-      if (entries.length === 0) {
-        return { summary: '今天还没有操作记录。', date: today, totalActions: 0 };
-      }
-
-      const byCategory: Record<string, number> = {};
-      let successCount = 0;
-      let failCount = 0;
-      const actionCounts: Record<string, number> = {};
-
-      for (const entry of entries) {
-        byCategory[entry.category] = (byCategory[entry.category] || 0) + 1;
-        if (entry.success) successCount++; else failCount++;
-        actionCounts[entry.action] = (actionCounts[entry.action] || 0) + 1;
-      }
-
-      const topActions = Object.entries(actionCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      const firstTime = entries[0]?.timestamp || '';
-      const lastTime = entries[entries.length - 1]?.timestamp || '';
-
-      const cats = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}:${n}`).join(' | ');
-
-      let summary = `今日工作日志 (${today})\n\n`;
-      summary += `总操作：${entries.length} 次\n`;
-      summary += `成功：${successCount}  失败：${failCount}\n`;
-      summary += `首次：${firstTime.substring(11, 19) || '—'}\n`;
-      summary += `最后：${lastTime.substring(11, 19) || '—'}\n\n`;
-      summary += `分类：${cats}\n\n`;
-      summary += `高频操作：\n`;
-      for (const [action, count] of topActions) {
-        summary += `  ${action} (${count}次)\n`;
-      }
-
-      return { summary, date: today, totalActions: entries.length };
-    } catch (err) {
-      return { summary: '读取工作日志失败。', date: '', totalActions: 0 };
-    }
-  });
-
-  // 审计日志：读取最近N天的审计记录，生成报告
-  ipcMain.handle(IPC.auditLogRecent, async (_e, days?: number, limit?: number) => {
-    try {
-      const os = require('os');
-      const pathMod = require('path');
-      const auditDir = pathMod.join(os.homedir(), '.otto-user', 'audit');
-      const dayCount = days || 7;
-      const maxResults = limit || 50;
-
-      const entries: any[] = [];
-      const today = new Date();
-      for (let i = 0; i < dayCount; i++) {
-        const d = new Date(today);
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
-        const filePath = pathMod.join(auditDir, `audit-${dateStr}.jsonl`);
-        try {
-          const raw = await fs.promises.readFile(filePath, 'utf-8');
-          const dayEntries = raw.trim().split('\n').filter((l: string) => l.length > 0).map((l: string) => JSON.parse(l));
-          entries.push(...dayEntries);
-        } catch { /* 文件不存在 */ }
-      }
-
-      if (entries.length === 0) {
-        return { report: `最近 ${dayCount} 天无审计记录。`, count: 0 };
-      }
-
-      // 按时间倒序
-      entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      const recent = entries.slice(0, maxResults);
-
-      const byUser: Record<string, number> = {};
-      const byCategory: Record<string, number> = {};
-      let highRisk = 0;
-      let successCount = 0;
-
-      for (const e of entries) {
-        byUser[e.userId] = (byUser[e.userId] || 0) + 1;
-        byCategory[e.category] = (byCategory[e.category] || 0) + 1;
-        if (e.riskLevel === 'high') highRisk++;
-        if (e.success) successCount++;
-      }
-
-      let report = `审计日志 (最近${dayCount}天)\n\n`;
-      report += `总操作：${entries.length} | 成功：${successCount} | 失败：${entries.length - successCount} | 高风险：${highRisk}\n\n`;
-      report += `按用户：\n`;
-      for (const [user, count] of Object.entries(byUser).sort((a, b) => b[1] - a[1])) {
-        report += `  ${user}: ${count}次\n`;
-      }
-      report += `\n按类别：\n`;
-      for (const [cat, count] of Object.entries(byCategory).sort((a, b) => b[1] - a[1])) {
-        report += `  ${cat}: ${count}次\n`;
-      }
-      report += `\n最近 ${recent.length} 条记录：\n`;
-      for (const e of recent) {
-        const time = e.timestamp.substring(5, 19).replace('T', ' ');
-        const risk = e.riskLevel === 'high' ? '[高风险]' : e.riskLevel === 'medium' ? '[中风险]' : '';
-        report += `  ${time} ${e.userId} ${e.action} ${e.success ? 'OK' : 'FAIL'} ${risk}\n`;
-      }
-
-      return { report, count: entries.length };
-    } catch (err) {
-      return { report: '读取审计日志失败。', count: 0 };
-    }
-  });
-
-  // 获取当前用户的部门/岗位（从飞书同步的组织架构读取）
-  ipcMain.handle(IPC.userDepartment, async () => {
-    try {
-      const os = require('os');
-      const pathMod = require('path');
-      const orgPath = pathMod.join(process.cwd(), '.otto', 'org', 'memory-store.json');
-
-      // 1. 从飞书凭证文件读取 ownerOpenId（与飞书组织架构里的 user.id 对齐）
-      let openId: string | undefined;
-      try {
-        const credPath = pathMod.join(os.homedir(), '.otto-user', 'feishu-credentials.json');
-        const credRaw = await fs.promises.readFile(credPath, 'utf-8');
-        const cred = JSON.parse(credRaw);
-        openId = cred.ownerOpenId || cred.botOpenId;
-      } catch { /* 凭证文件不存在 */ }
-
-      // 2. 读取组织架构
-      try {
-        const raw = await fs.promises.readFile(orgPath, 'utf-8');
-        const orgData = JSON.parse(raw);
-        // 优先用 openId 匹配，降级用 OS 用户名匹配 name 字段
-        const userName = os.userInfo().username;
-        const user = orgData.users?.find(
-          (u: any) => (openId && u.id === openId) || u.name === userName,
-        );
-        if (user) {
-          const team = orgData.teams?.find((t: any) => t.id === user.teamIds?.[0]);
-          return {
-            department: team?.name || '通用',
-            role: user.role || '通用助手',
-            name: user.name,
-            openId: openId || user.id,
-          };
-        }
-      } catch { /* 文件不存在 */ }
-
-      // 3. 降级：返回默认值
-      return { department: '通用', role: '通用助手', name: os.userInfo().username, openId: openId || '' };
     } catch {
-      return { department: '通用', role: '通用助手', name: 'unknown', openId: '' };
+      return null;
     }
   });
 
-  // 部门共享 Skill 列表
-  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
-    try {
-      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
-      let shares: any[] = [];
-      try {
-        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8'));
-      } catch { /* 无文件 */ }
-
-      const active = shares.filter((s: any) =>
-        s.status === 'active' && (!teamId || s.teamId === teamId),
-      );
-
-      if (active.length === 0) {
-        return { text: '本部门暂无共享 Skill。' };
-      }
-
-      const lines: string[] = ['部门共享 Skill 列表', ''];
-      for (const s of active) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName}`);
-        lines.push(`  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`);
-        if (s.note) lines.push(`  备注：${s.note}`);
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 列表失败。' };
+  // 本地测试模式：应用/清除 customProxyServerUrl。
+  // renderer 通过 preload.setLocalTestUrl() 调用。
+  // 实现方式：将 OTTO_SERVER_URL env 设为指定地址，待下次会话创建时 proxyConfig
+  // 会读到该改变的环境变量，从而路由请求到本地。
+  ipcMain.handle(IPC.setLocalTestUrl, (_e, url: unknown) => {
+    if (typeof url !== 'string') return Promise.resolve();
+    const trimmed = url.trim();
+    if (trimmed) {
+      // 应用本地测试地址（真实状态只存 env，不留影子变量）
+      process.env.OTTO_SERVER_URL = trimmed;
+      console.log(`[otto-desktop] 本地测试模式已应用： OTTO_SERVER_URL=${trimmed}`);
+    } else {
+      // 清除本地测试
+      delete process.env.OTTO_SERVER_URL;
+      console.log('[otto-desktop] 本地测试模式已清除， OTTO_SERVER_URL 已移除。');
     }
+    return Promise.resolve();
   });
 
-  // 公司 Skill 市场
-  ipcMain.handle(IPC.skillMarketplace, async () => {
-    try {
-      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
-      let shares: any[] = [];
-      try {
-        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8'));
-      } catch { /* 无文件 */ }
-
-      const market = shares.filter((s: any) =>
-        s.publishedToMarketplace === true && s.status === 'active',
-      );
-
-      if (market.length === 0) {
-        return { text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。' };
-      }
-
-      // 按评分排序
-      market.sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0));
-
-      const lines: string[] = ['公司 Skill 市场', ''];
-      for (const s of market) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
-        lines.push(`  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`);
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 市场失败。' };
-    }
+  // ── 软件更新：检查 / 下载 / 取消 / 安装 + 版本查询（逻辑在 update-service.ts）──
+  // 结果全部结构化透传，不在这里加工：「检查失败」与「已是最新」是 UpdateService
+  // 返回的两种不同 status，任何一层都不许把失败粉饰成最新。
+  ipcMain.handle(IPC.appVersion, () => app.getVersion());
+  ipcMain.handle(IPC.updateCheck, () => updateService.checkForUpdate());
+  ipcMain.handle(IPC.updateDownload, () => updateService.downloadUpdate());
+  ipcMain.handle(IPC.updateCancel, () => {
+    updateService.cancelDownload();
   });
+  ipcMain.handle(IPC.updateInstall, () => updateService.installUpdate());
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
@@ -665,6 +672,30 @@ function registerIpc(): void {
     }
     return Promise.resolve('');
   });
+
+  // 导出会话（对齐 CLI /export）：原生保存对话框 + 写文件。取消返回 null，
+  // 写入失败抛错由 renderer 侧捕获展示；内容/文件名均来自 server 的 export_result 帧。
+  ipcMain.handle(
+    IPC.saveTextFile,
+    async (_e, suggestedFileName: unknown, content: unknown) => {
+      if (typeof suggestedFileName !== 'string' || typeof content !== 'string') {
+        return null;
+      }
+      const win = mainWindow;
+      const result = win
+        ? await dialog.showSaveDialog(win, {
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          })
+        : await dialog.showSaveDialog({
+            defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+          });
+      if (result.canceled || !result.filePath) return null;
+      await fs.promises.writeFile(result.filePath, content, 'utf-8');
+      return result.filePath;
+    },
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -711,6 +742,11 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    // 退出前中止未完成的更新下载（审查 M2）：abort 触发下载循环的 AbortError
+    // 清理路径，best-effort 删掉 Downloads 里的 .part 临时文件。幂等，无任务时空操作。
+    // 即使进程赶在异步清理完成前退出，下次下载同一资产会截断重写同名 .part，
+    // 且 sha256 校验兜底完整性，残留无危害。
+    updateService.cancelDownload();
     // 仅内嵌 server 随 app 退出而停；discovered（headless/CLI 已在跑）故意留活。
     void serverManager.shutdown();
   });

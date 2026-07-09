@@ -62,6 +62,7 @@ import { WebAutomationTool } from '../tools/web-automation.js';
 import { MultiChannelTool } from '../tools/multi-channel.js';
 import { MemoryManagerTool } from '../tools/memory-manager.js';
 import { FeishuProjectCollabTool } from '../tools/feishu-project-collab.js';
+import { KnowledgeBaseTool } from '../tools/knowledge-base.js';
 import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
@@ -197,6 +198,14 @@ export type FlashFallbackHandler = (
   error?: unknown,
 ) => Promise<boolean | string | null>;
 
+/**
+ * web_search 工具的搜索后端。
+ * - bing：抓取 cn.bing.com 结果页，免 key、国内开箱可用（默认）
+ * - bocha：博查 Web Search API，需要 API key
+ * - gemini：Gemini API googleSearch grounding（海外可用）
+ */
+export type WebSearchProvider = 'bing' | 'bocha' | 'gemini';
+
 export interface ConfigParameters {
   sessionId: string;
   embeddingModel?: string;
@@ -231,6 +240,10 @@ export interface ConfigParameters {
   checkpointing?: boolean;
   proxy?: string;
   customProxyServerUrl?: string; // Custom proxy server URL (from settings)
+  /** web_search 工具的搜索后端：bing(默认,免key,国内可用) / bocha(需key) / gemini(Google grounding) */
+  searchProvider?: WebSearchProvider;
+  /** bocha 等需要 key 的搜索后端的 API key；未配置时环境变量 OTTO_BOCHA_API_KEY 兜底 */
+  searchApiKey?: string;
   cwd: string;
   fileDiscoveryService?: FileDiscoveryService;
   bugCommand?: BugCommandSettings;
@@ -312,6 +325,8 @@ export class Config {
   private readonly checkpointing: boolean;
   private readonly proxy: string | undefined;
   private readonly customProxyServerUrl: string | undefined;
+  private readonly searchProvider: WebSearchProvider | undefined;
+  private readonly searchApiKey: string | undefined;
   private readonly cwd: string;
   private readonly bugCommand: BugCommandSettings | undefined;
   //private readonly model: string;
@@ -343,8 +358,8 @@ export class Config {
   private projectSettingsManager: ProjectSettingsManager;
   private planModeActive: boolean = false;
   private readonly hooks: { [K in HookEventName]?: HookDefinition[] };
-  private readonly healthyUse: boolean;
-  private readonly preferredLanguage: string | undefined;
+  private healthyUse: boolean;
+  private preferredLanguage: string | undefined;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -401,6 +416,8 @@ export class Config {
     this.checkpointing = params.checkpointing ?? false;
     this.proxy = params.proxy;
     this.customProxyServerUrl = params.customProxyServerUrl;
+    this.searchProvider = params.searchProvider;
+    this.searchApiKey = params.searchApiKey;
     this.fileDiscoveryService = params.fileDiscoveryService ?? null;
     this.bugCommand = params.bugCommand;
     //this.model = params.model;
@@ -892,8 +909,18 @@ export class Config {
     return this.healthyUse;
   }
 
+  /** 运行期切换健康使用提醒（不落盘；持久化由调用方经 settings.json 负责，如 CLI /config healthy-use）。 */
+  setHealthyUseEnabled(enabled: boolean): void {
+    this.healthyUse = enabled;
+  }
+
   getPreferredLanguage(): string | undefined {
     return this.preferredLanguage;
+  }
+
+  /** 运行期切换偏好语言（不落盘；持久化由调用方负责）。 */
+  setPreferredLanguage(language: string | undefined): void {
+    this.preferredLanguage = language;
   }
 
   /**
@@ -1001,6 +1028,16 @@ export class Config {
 
   getCustomProxyServerUrl(): string | undefined {
     return this.customProxyServerUrl;
+  }
+
+  /** web_search 的搜索后端；不配置时默认 bing（免 key、国内开箱可用）。 */
+  getSearchProvider(): WebSearchProvider {
+    return this.searchProvider ?? 'bing';
+  }
+
+  /** 搜索 API key（bocha 用）；settings 未配置时读环境变量 OTTO_BOCHA_API_KEY 兜底。 */
+  getSearchApiKey(): string | undefined {
+    return this.searchApiKey ?? process.env.OTTO_BOCHA_API_KEY ?? undefined;
   }
 
   getWorkingDir(): string {
@@ -1167,6 +1204,8 @@ export class Config {
     registerCoreTool(ShellTool, this);
     registerCoreTool(MemoryTool, this);
     registerCoreTool(WebSearchTool, this);
+    // 个人知识库：完全本地（~/.otto-user/knowledge），不依赖 server / 企业鉴权
+    registerCoreTool(KnowledgeBaseTool, this);
     registerCoreTool(ImageReaderTool, this);
     registerCoreTool(TodoWriteTool, this);
     if (this.getVsCodePluginMode()) {

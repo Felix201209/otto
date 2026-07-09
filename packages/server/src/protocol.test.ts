@@ -251,3 +251,51 @@ describe('HTTP_ROUTES 与常量', () => {
     expect(DEFAULT_HOST).toBe('127.0.0.1');
   });
 });
+
+describe('validateClientPayload：斜杠命令帧（P3）', () => {
+  it('run_slash_command 合法 payload 通过', () => {
+    expect(
+      validateClientPayload({
+        type: 'run_slash_command',
+        payload: { sessionId: 's1', name: 'kb', args: 'search 报销' },
+      }),
+    ).toBeNull();
+    // args 可省略
+    expect(
+      validateClientPayload({
+        type: 'run_slash_command',
+        payload: { sessionId: 's1', name: 'about' },
+      }),
+    ).toBeNull();
+  });
+
+  it('run_slash_command 缺 sessionId / name、args 非法 → 拒绝', () => {
+    expect(
+      validateClientPayload({
+        type: 'run_slash_command',
+        payload: { name: 'kb' },
+      }),
+    ).toContain('sessionId');
+    expect(
+      validateClientPayload({
+        type: 'run_slash_command',
+        payload: { sessionId: 's1', name: '' },
+      }),
+    ).toContain('name');
+    expect(
+      validateClientPayload({
+        type: 'run_slash_command',
+        payload: { sessionId: 's1', name: 'kb', args: 42 },
+      }),
+    ).toContain('args');
+  });
+
+  it('list_slash_commands 空对象 payload 通过，非对象拒绝', () => {
+    expect(
+      validateClientPayload({ type: 'list_slash_commands', payload: {} }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({ type: 'list_slash_commands', payload: null }),
+    ).not.toBeNull();
+  });
+});

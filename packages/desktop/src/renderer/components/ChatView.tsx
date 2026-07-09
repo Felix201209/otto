@@ -22,8 +22,11 @@ import type {
 } from 'otto-server';
 import type { ImageAttachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
+import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
+import type { SlashCommand } from './SlashCommands.js';
 import { OttoAvatar, IconArrowDown } from './icons.js';
+import { ParkServicesPlugin } from './ParkServicesPlugin.js';
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
 const NEAR_BOTTOM = 80;
@@ -85,12 +88,34 @@ interface ChatViewProps {
    * 一条用户消息」重发，而非永远重发全会话最后一轮。
    */
   onRegenerate: (messageId: string) => void;
+  /** AskUserQuestion 作答回传（透传到消息里的工具问答卡）。 */
+  onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
   /** 斜杠命令 `/clear`：清空当前会话上下文。 */
   onClearContext: () => void;
+  /** 导出当前会话为 Markdown 文件（真实落盘，对齐 CLI /export）。无会话时隐藏。 */
+  onExport?: () => void;
+  /** 斜杠命令 `/doctor`：打开设置与诊断中心的「依赖体检」tab。 */
+  onOpenDoctor?: () => void;
+  /** 斜杠命令 `/feishu` 系列：打开设置与诊断中心的「飞书接入」tab。 */
+  onOpenFeishu?: () => void;
+  /** 斜杠命令 `/memory`：打开设置与诊断中心的「记忆」tab。 */
+  onOpenMemory?: () => void;
+  /** 斜杠命令 `/skills`：打开设置与诊断中心的「技能库」tab。 */
+  onOpenSkills?: () => void;
+  /** 命令表（本地 + server 合并后的完整清单），透传给 Composer 的命令面板。 */
+  commands?: readonly SlashCommand[];
+  /** server 侧斜杠命令：经 run_slash_command 帧执行。 */
+  onRunServerCommand?: (name: string, args: string) => void;
+  /** 斜杠命令 `/theme` `/config`：打开设置与诊断中心的「偏好」tab。 */
+  onOpenPrefs?: () => void;
+  /** 斜杠命令 `/session`：打开「查看全部对话」检索面板。 */
+  onOpenSessions?: () => void;
+  /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
+  onShowHelp?: () => void;
 }
 
 export function ChatView({
@@ -104,9 +129,20 @@ export function ChatView({
   onCancel,
   onSetModel,
   onRegenerate,
+  onRespondQuestion,
   onOpenSetup,
   onNewChat,
   onClearContext,
+  onExport,
+  onOpenDoctor,
+  onOpenFeishu,
+  onOpenMemory,
+  onOpenSkills,
+  commands,
+  onRunServerCommand,
+  onOpenPrefs,
+  onOpenSessions,
+  onShowHelp,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -203,6 +239,18 @@ export function ChatView({
     void navigator.clipboard?.writeText(text);
   };
 
+  // 斜杠命令 `/copy`（对齐 CLI）：复制最近一条 Otto 回复的纯文本。
+  // 无可复制内容时静默（面板描述已说明语义，空会话点它没有副作用）。
+  const copyLastReply = () => {
+    const last = [...messages].reverse().find((m) => m.role === 'assistant');
+    if (!last) return;
+    const text = last.content
+      .map((p) => (p.type === 'text' ? p.value : ''))
+      .join('')
+      .trim();
+    if (text) copy(text);
+  };
+
   const fillDraft = (text: string) => {
     setDraft((d) => ({ text, n: d.n + 1 }));
   };
@@ -246,21 +294,37 @@ export function ChatView({
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
-        <button
-          type="button"
-          className="otto-topbar-setup"
-          onClick={onOpenSetup}
-          title="模型与 BYO-key 设置"
-          aria-label="模型与 BYO-key 设置"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
-            <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <span className="otto-user-avatar" title="当前用户">
-          {userInitial}
-        </span>
+        <div className="otto-topbar__actions">
+          {session && onExport ? (
+            <button
+              type="button"
+              className="otto-topbar-export"
+              onClick={onExport}
+              title="导出会话为 Markdown"
+              aria-label="导出会话为 Markdown"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M12 3v12m0 0-4-4m4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="otto-topbar-setup"
+            onClick={onOpenSetup}
+            title="模型与 BYO-key 设置"
+            aria-label="模型与 BYO-key 设置"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <span className="otto-user-avatar" title="当前用户">
+            {userInitial}
+          </span>
+        </div>
       </header>
 
       <div className="otto-thread" ref={threadRef} onScroll={onThreadScroll}>
@@ -277,6 +341,7 @@ export function ChatView({
                 onCopy={copy}
                 // 把当前消息 id 一并传出，让 App 定位对应用户轮次而非最新一轮。
                 onRegenerate={() => onRegenerate(m.id)}
+                onRespondQuestion={onRespondQuestion}
               />
             ))
           )}
@@ -294,6 +359,10 @@ export function ChatView({
           新消息
         </button>
       ) : null}
+
+      {/* 宏创AI园区服务插件：右下角悬浮入口 + 居中对话框。仅在有会话时挂载
+          （服务项点击注入输入框草稿，无会话时 Composer 禁用、注入无意义）。 */}
+      {session ? <ParkServicesPlugin /> : null}
 
       <Composer
         models={models}
@@ -313,6 +382,17 @@ export function ChatView({
         onNewChat={onNewChat}
         onClearContext={onClearContext}
         onOpenSettings={onOpenSetup}
+        onOpenDoctor={onOpenDoctor}
+        onOpenFeishu={onOpenFeishu}
+        onOpenMemory={onOpenMemory}
+        onOpenSkills={onOpenSkills}
+        onExport={onExport}
+        commands={commands}
+        onRunServerCommand={onRunServerCommand}
+        onOpenPrefs={onOpenPrefs}
+        onOpenSessions={onOpenSessions}
+        onCopyLast={copyLastReply}
+        onShowHelp={onShowHelp}
       />
     </section>
   );

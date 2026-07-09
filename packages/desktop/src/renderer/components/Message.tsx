@@ -17,7 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { attachmentToDataUrl } from '../lib/image.js';
-import { ToolCallsCard } from './ToolCalls.js';
+import { ToolCallsCard, type RespondQuestionFn } from './ToolCalls.js';
 import {
   OttoAvatar,
   IconCheckCheck,
@@ -43,22 +43,42 @@ interface MessageProps {
    * 用户消息」重发——而非永远重发全会话最后一轮，否则上翻对旧回复点重生成会串轮。
    */
   onRegenerate: (messageId: string) => void;
+  /** AskUserQuestion 作答回传（透传到工具卡里的问答卡）。 */
+  onRespondQuestion?: RespondQuestionFn;
 }
 
 export function Message({
   message,
   onCopy,
   onRegenerate,
+  onRespondQuestion,
 }: MessageProps): React.JSX.Element {
   if (message.role === 'user') {
     return <UserMessage message={message} />;
+  }
+  if (message.role === 'system') {
+    // 系统气泡：斜杠命令回执 / 本地提示（/help）。ephemeral（不落库），
+    // 不带头像与「重新生成」动作——它不是模型回复，重生成无意义。
+    return <SystemMessage message={message} />;
   }
   return (
     <BotMessage
       message={message}
       onCopy={onCopy}
       onRegenerate={onRegenerate}
+      onRespondQuestion={onRespondQuestion}
     />
+  );
+}
+
+/** 系统消息（命令回执）：居中窄卡，markdown 正文（Prose），弱化视觉不抢对话主线。 */
+function SystemMessage({ message }: { message: OttoMessage }): React.JSX.Element {
+  return (
+    <div className="otto-msg-system" role="note">
+      <div className="otto-msg-system__card">
+        <Prose text={contentToText(message.content)} />
+      </div>
+    </div>
   );
 }
 
@@ -176,6 +196,7 @@ function BotMessage({
   message,
   onCopy,
   onRegenerate,
+  onRespondQuestion,
 }: MessageProps): React.JSX.Element {
   const text = contentToText(message.content);
   const tools = message.associatedToolCalls ?? [];
@@ -206,7 +227,12 @@ function BotMessage({
           <TypingIndicator />
         ) : null}
 
-        {tools.length > 0 ? <ToolCallsCard toolCalls={tools} /> : null}
+        {tools.length > 0 ? (
+          <ToolCallsCard
+            toolCalls={tools}
+            onRespondQuestion={onRespondQuestion}
+          />
+        ) : null}
 
         {!message.isStreaming ? (
           <MessageActions

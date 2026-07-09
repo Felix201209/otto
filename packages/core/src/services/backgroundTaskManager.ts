@@ -182,6 +182,41 @@ export class BackgroundTaskManager extends EventEmitter {
     return Array.from(this.tasks.values()).filter(t => t.status === 'running');
   }
 
+  /**
+   * 多 agent 并行冲突检测：判断 `directory` 是否与某个正在运行的 ACP delegate
+   * 任务（claude-code / codex）的工作目录"重叠"——同一目录，或一个是另一个的
+   * 祖先/后代目录。两个外部 agent 同时在重叠目录树下跑（典型场景：都在改同一个
+   * git 仓库）会产生真实的文件写冲突、git index 锁冲突、构建产物互相覆盖等问题。
+   *
+   * 只检测 ACP delegate 任务（claude-code/codex），不检测 plain shell 任务——
+   * shell 命令通常是只读查询或一次性脚本，语义上不像"另一个 agent 在改代码"
+   * 那样需要互斥；且 shell 任务量级大、并发跑的场景（构建、测试、lint 并行跑）
+   * 本身就是被期望支持的，误报会明显伤害正常工作流。
+   *
+   * 返回冲突任务本身（便于调用方在错误信息里展示 task id / 已运行时长），
+   * 无冲突则返回 undefined。
+   */
+  findConflictingTask(directory: string): BackgroundTask | undefined {
+    const normalize = (p: string) => path.resolve(p).replace(/[/\\]+$/, '');
+    const target = normalize(directory);
+
+    const overlaps = (a: string, b: string): boolean => {
+      if (a === b) return true;
+      const sep = path.sep;
+      return a.startsWith(b + sep) || b.startsWith(a + sep);
+    };
+
+    for (const task of this.tasks.values()) {
+      if (task.status !== 'running') continue;
+      if (task.kind !== 'claude-code' && task.kind !== 'codex') continue;
+      if (!task.directory) continue;
+      if (overlaps(target, normalize(task.directory))) {
+        return task;
+      }
+    }
+    return undefined;
+  }
+
   /** Maximum size of task.output in characters. Older content is pruned. */
   static readonly OUTPUT_CAP = 200_000;
 

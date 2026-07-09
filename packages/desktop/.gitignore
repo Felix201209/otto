@@ -10,3 +10,6 @@ dist/
 # 可视化自检的静态产物（webpack.preview.cjs / setup 预览 输出，可重生成）
 preview-dist/
 setup-preview-dist/
+
+# Windows 打包用的 ripgrep 二进制（fetch-win-ripgrep.mjs 下载，可重生成）
+vendor/

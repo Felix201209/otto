@@ -49,7 +49,7 @@ export interface CreateCoreConfigOptions {
  * （截图里的 EROFS）。这种情况退回用户主目录——可写，对个人助手也合理。
  * CLI（cwd = 真实项目目录）不受影响。
  */
-function resolveDefaultCwd(): string {
+export function resolveDefaultCwd(): string {
   const c = process.cwd();
   if (!c || c === '/' || c === '\\') return os.homedir();
   return c;

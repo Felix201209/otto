@@ -21,6 +21,9 @@ import type { ModelInfo } from 'otto-server';
 import {
   filterCommands,
   parseSlashQuery,
+  splitSlashInput,
+  mergeServerCommands,
+  buildHelpMarkdown,
   type SlashCommand,
 } from './SlashCommands.js';
 import { Composer } from './Composer.js';
@@ -182,5 +185,145 @@ describe('斜杠命令面板（Composer 集成）', () => {
       .find((o) => o.textContent?.includes('/clear'));
     fireEvent.click(clearOpt as HTMLElement);
     expect(onClearContext).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── P3：参数态解析 / server 命令合并 / help 总览（纯函数层）──────────────────
+
+describe('splitSlashInput', () => {
+  it('无空白 → 全串是 head，非参数态', () => {
+    expect(splitSlashInput('kb')).toEqual({
+      head: 'kb',
+      args: '',
+      argMode: false,
+    });
+  });
+
+  it('命令名后敲了空格即进入参数态（`/kb ` 面板不该消失）', () => {
+    expect(splitSlashInput('kb ')).toEqual({
+      head: 'kb',
+      args: '',
+      argMode: true,
+    });
+  });
+
+  it('空白后的文本原样作为 args（含内部空格）', () => {
+    expect(splitSlashInput('kb search 报销 流程')).toEqual({
+      head: 'kb',
+      args: 'search 报销 流程',
+      argMode: true,
+    });
+  });
+});
+
+describe('mergeServerCommands', () => {
+  const server = [
+    { name: 'kb', description: '知识库', usage: 'kb add|search|list|remove …' },
+    { name: 'new', description: 'server 版新建（应被本地遮蔽）' },
+  ];
+
+  it('server 独有命令以 action:server 追加，本地同名优先不覆盖', () => {
+    const merged = mergeServerCommands(CMDS, server);
+    const kb = merged.find((c) => c.id === 'kb');
+    expect(kb?.action).toBe('server');
+    expect(kb?.usage).toContain('kb add');
+    // 本地 'new' 保持原定义（无 action:'server'）。
+    const news = merged.filter((c) => c.id === 'new');
+    expect(news).toHaveLength(1);
+    expect(news[0].description).toBe('新建会话');
+  });
+
+  it('server 清单为空时返回本地原样', () => {
+    expect(mergeServerCommands(CMDS, [])).toHaveLength(CMDS.length);
+  });
+});
+
+describe('buildHelpMarkdown', () => {
+  it('列出全部命令名与描述', () => {
+    const md = buildHelpMarkdown(
+      mergeServerCommands(CMDS, [
+        { name: 'kb', description: '知识库', usage: 'kb add …' },
+      ]),
+    );
+    expect(md).toContain('`/new`');
+    expect(md).toContain('`/kb`');
+    expect(md).toContain('知识库');
+    expect(md).toContain('`/kb add …`');
+  });
+});
+
+// ── P3：Composer 集成——参数态锁定命令 + server 分派 ─────────────────────────
+
+describe('Composer server 命令分派', () => {
+  const SERVER_CMDS: SlashCommand[] = [
+    {
+      id: 'kb',
+      description: '知识库',
+      action: 'server',
+      usage: 'kb add|search|list|remove …',
+    },
+    {
+      id: 'memory',
+      description: '记忆（裸调开面板）',
+      action: 'server',
+      bareLocal: true,
+    },
+  ];
+
+  function renderComposer(overrides: Record<string, unknown> = {}) {
+    const onRunServerCommand = vi.fn();
+    const onOpenMemory = vi.fn();
+    const onSend = vi.fn();
+    render(
+      <Composer
+        models={[] as ModelInfo[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={() => {}}
+        commands={SERVER_CMDS}
+        onRunServerCommand={onRunServerCommand}
+        onOpenMemory={onOpenMemory}
+        {...overrides}
+      />,
+    );
+    return { onRunServerCommand, onOpenMemory, onSend };
+  }
+
+  it('`/kb search 报销` Enter → 发 run_server（name+args），不发消息', () => {
+    const { onRunServerCommand, onSend } = renderComposer();
+    const ta = screen.getByRole('textbox');
+    fireEvent.change(ta, { target: { value: '/kb search 报销' } });
+    // 参数态：面板锁定 kb 一条（textarea 文本也含 /kb，须用 option 角色定位）。
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0].textContent).toContain('/kb');
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(onRunServerCommand).toHaveBeenCalledWith('kb', 'search 报销');
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('`/kb `（带尾空格）仍锁定 kb，Enter 以空参执行', () => {
+    const { onRunServerCommand } = renderComposer();
+    const ta = screen.getByRole('textbox');
+    fireEvent.change(ta, { target: { value: '/kb ' } });
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0].textContent).toContain('/kb');
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(onRunServerCommand).toHaveBeenCalledWith('kb', '');
+  });
+
+  it('bareLocal：`/memory` 裸调走本地面板，`/memory add x` 走 server', () => {
+    const { onRunServerCommand, onOpenMemory } = renderComposer();
+    const ta = screen.getByRole('textbox');
+    fireEvent.change(ta, { target: { value: '/memory' } });
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(onOpenMemory).toHaveBeenCalledTimes(1);
+    expect(onRunServerCommand).not.toHaveBeenCalled();
+
+    fireEvent.change(ta, { target: { value: '/memory add 用 pnpm' } });
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(onRunServerCommand).toHaveBeenCalledWith('memory', 'add 用 pnpm');
   });
 });

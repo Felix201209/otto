@@ -23,6 +23,9 @@ import {
   type Server as HttpServer,
   type ServerResponse,
 } from 'node:http';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   DEFAULT_HOST,
@@ -33,10 +36,24 @@ import {
   validateClientPayload,
   type ApiResponse,
   type ClientToServer,
+  type FeishuConfigPublic,
+  type FeishuConfigSaveRequest,
+  type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
   type ModelInfo,
   type ServerToClient,
+  type SettingsSnapshot,
+  type McpServerInfo,
+  type StatsSnapshot,
+  type DoctorReportInfo,
+  type TodoItemInfo,
+  type MemoryFileInfo,
+  type SkillSummary,
+  type ToolSummary,
+  type WorkflowSummary,
+  type WorkflowAgentSummary,
+  type ExtensionSummary,
 } from './protocol.js';
 import {
   InMemorySessionStore,
@@ -44,8 +61,23 @@ import {
   type SessionStore,
   type Unsubscribe,
 } from './sessions.js';
-import { registerFeishu, type FeishuRegistration } from './feishu/register.js';
-import { createCoreConfig } from './coreConfig.js';
+import {
+  executeSlashCommand,
+  listSlashCommands,
+  type CommandHost,
+} from './commands/index.js';
+import {
+  registerFeishu,
+  type FeishuRegisterDeps,
+  type FeishuRegistration,
+} from './feishu/register.js';
+import {
+  loadCredentials,
+  saveCredentials,
+  clearCredentials,
+  type FeishuCredentials,
+} from './feishu/vendor/credentials.js';
+import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
   listModelInfos,
@@ -53,6 +85,30 @@ import {
   loadPreferredModel,
   saveCustomModel,
 } from './customModels.js';
+import {
+  loadUserSettingsSubset,
+  patchUserSettings,
+  loadMcpServers,
+  saveMcpServers,
+} from './userSettings.js';
+import {
+  ProjectSettingsManager,
+  DoctorService,
+  uiTelemetryService,
+  todoStore,
+  tokenLimit,
+  getCoreSystemPrompt,
+  MCPServerConfig,
+  getAllMCPServerStatuses,
+  MCPServerStatus,
+  MemoryTool,
+  OTTO_CONFIG_DIR,
+  DEFAULT_CONTEXT_FILENAME,
+  SkillsCompatAdapter,
+  WorkflowRegistry,
+  type WorkflowAgentRecord,
+  type Config as CoreConfig,
+} from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
 /** server 版本（实装时可从 package.json 注入）。 */
@@ -94,7 +150,31 @@ export interface OttoServerOptions {
    * 让无 key 的全新机器也能端到端验证收发链路。可被 env OTTO_SERVER_MOCK=1 置真。
    */
   mock?: boolean;
+  /**
+   * 飞书注入（测试用）：凭证与 gateway 工厂透传给 registerFeishu → adapter，
+   * 让 /feishu/start、/feishu/stop 端点行为可离线单测（不读真凭证、不连真飞书）。
+   */
+  feishuDeps?: Pick<FeishuRegisterDeps, 'credentials' | 'gatewayFactory'>;
+  /**
+   * 飞书凭证存取（/feishu/config 端点用）。缺省 = 真实读写
+   * ~/.otto-user/feishu-credentials.json。测试必须注入内存实现——
+   * 绝不允许测试碰用户真实凭证文件。
+   */
+  credentialsStore?: FeishuCredentialsStore;
 }
+
+/** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
+export interface FeishuCredentialsStore {
+  load(): Promise<FeishuCredentials | null>;
+  save(creds: FeishuCredentials): Promise<void>;
+  clear(): Promise<void>;
+}
+
+const defaultCredentialsStore: FeishuCredentialsStore = {
+  load: loadCredentials,
+  save: saveCredentials,
+  clear: clearCredentials,
+};
 
 /**
  * 单个 WS 连接的会话上下文：持有该连接对各会话的订阅取消句柄，
@@ -112,7 +192,8 @@ export class OttoServer {
   readonly store: SessionStore;
   private readonly host: string;
   private readonly port: number;
-  private readonly enableFeishu: boolean;
+  /** 飞书网关是否启用。非 readonly：/feishu/start、/feishu/stop 运行期可翻转。 */
+  private enableFeishu: boolean;
   private readonly startedAt = Date.now();
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
@@ -122,7 +203,15 @@ export class OttoServer {
   private http?: HttpServer;
   private wss?: WebSocketServer;
   private feishu?: FeishuRegistration;
+  /** 飞书测试注入（见 OttoServerOptions.feishuDeps）。 */
+  private readonly feishuDeps?: OttoServerOptions['feishuDeps'];
+  /** 飞书凭证存取（/feishu/config 端点用）。 */
+  private readonly credentialsStore: FeishuCredentialsStore;
+  /** 运行期飞书启停的单飞锁：并发 POST 复用同一次操作，防重复 register。 */
+  private feishuOpLock: Promise<unknown> = Promise.resolve();
   private readonly conns = new Set<ClientConn>();
+  /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
+  private workflowUnsub?: () => void;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -134,6 +223,8 @@ export class OttoServer {
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
+    this.feishuDeps = opts.feishuDeps;
+    this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
   }
 
   /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
@@ -184,12 +275,24 @@ export class OttoServer {
       this.feishu = await registerFeishu({
         store: this.store,
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+        ...this.feishuDeps,
       });
     }
+
+    // WorkflowRegistry 是进程级单例（与会话无关），订阅其变化并广播给所有连接，
+    // 让「Workflow 面板」实时看到进度（agent 开始/结束/token 更新），无需轮询。
+    this.workflowUnsub = WorkflowRegistry.subscribe(() => {
+      this.broadcastAll({
+        type: 'workflows_list',
+        payload: { workflows: this.workflowSummaries() },
+      });
+    });
   }
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    this.workflowUnsub?.();
+    this.workflowUnsub = undefined;
     // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。
     const flush = (this.store as { flush?: () => void }).flush;
     if (typeof flush === 'function') {
@@ -231,6 +334,9 @@ export class OttoServer {
       feishu: {
         enabled: this.enableFeishu,
         connected: this.feishu?.isConnected() ?? false,
+        // 守护详情（断线重连次数 / 下次重试 / 锁冲突持有者等）；registration
+        // 未就绪（未启用飞书）时不携带。桌面端徽标与 CLI status 都吃这份。
+        status: this.feishu?.getStatus(),
       },
     };
   }
@@ -425,6 +531,593 @@ export class OttoServer {
   }
 
   // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 用量统计 / 依赖体检 / Todo）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * 遍历所有存活会话的 runtime，取出其 CoreConfig（若已懒构建）。
+   * 用于把 agentStyle/healthyUse/preferredLanguage 等全局设置即时应用到
+   * 已经在跑的会话——不影响尚未构建 runtime 的会话（它们下次构建时
+   * 会读最新的落盘配置，自然生效）。
+   */
+  private liveConfigs(): CoreConfig[] {
+    const configs: CoreConfig[] = [];
+    for (const s of this.store.listSessions()) {
+      const runtime = this.store.getRuntime(s.sessionId);
+      const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+      if (cfg) configs.push(cfg);
+    }
+    return configs;
+  }
+
+  /** 全局偏好设置快照：agentStyle 读项目级 .otto/settings.json；其余读 ~/.otto-user/settings.json。 */
+  private settingsSnapshot(): SettingsSnapshot {
+    const userSubset = loadUserSettingsSubset();
+    const projectMgr = new ProjectSettingsManager(resolveDefaultCwd());
+    projectMgr.load();
+    return {
+      agentStyle: projectMgr.getAgentStyle(),
+      healthyUse: userSubset.healthyUse ?? true,
+      preferredLanguage: userSubset.preferredLanguage,
+    };
+  }
+
+  /**
+   * 修改一项全局偏好设置：持久化 + 即时应用到所有存活会话 + 广播最新快照。
+   */
+  private handleSetSetting(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_setting' }>,
+  ): void {
+    const { key, value } = msg.payload;
+    try {
+      if (key === 'agentStyle') {
+        if (typeof value !== 'string') {
+          throw new Error('agentStyle 的值必须是字符串');
+        }
+        const projectMgr = new ProjectSettingsManager(resolveDefaultCwd());
+        projectMgr.load();
+        projectMgr.setAgentStyle(value as Parameters<ProjectSettingsManager['setAgentStyle']>[0]);
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setAgentStyle(value as Parameters<CoreConfig['setAgentStyle']>[0]);
+            const client = cfg.getOttoClient();
+            const chat = client?.getChat();
+            if (chat) {
+              const updated = getCoreSystemPrompt(
+                cfg.getUserMemory(),
+                cfg.getVsCodePluginMode(),
+                undefined,
+                cfg.getAgentStyle(),
+                undefined,
+                cfg.getPreferredLanguage(),
+              );
+              chat.setSystemInstruction(updated);
+            }
+          } catch {
+            // 单个会话刷新失败不影响整体设置生效（下次新会话会读到最新落盘值）。
+          }
+        }
+      } else if (key === 'healthyUse') {
+        if (typeof value !== 'boolean') {
+          throw new Error('healthyUse 的值必须是布尔');
+        }
+        patchUserSettings({ healthyUse: value });
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setHealthyUseEnabled(value);
+          } catch {
+            // 忽略单个会话失败。
+          }
+        }
+      } else if (key === 'preferredLanguage') {
+        if (typeof value !== 'string') {
+          throw new Error('preferredLanguage 的值必须是字符串');
+        }
+        patchUserSettings({ preferredLanguage: value });
+        for (const cfg of this.liveConfigs()) {
+          try {
+            cfg.setPreferredLanguage(value);
+          } catch {
+            // 忽略单个会话失败。
+          }
+        }
+      }
+      this.broadcastAll({ type: 'settings', payload: this.settingsSnapshot() });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'set_setting_failed', message: `保存设置失败：${message}` },
+      });
+    }
+  }
+
+  /**
+   * MCP 服务器摘要：配置来自 ~/.otto-user/settings.json 的 mcpServers；
+   * 连接状态来自 core 的进程级 getAllMCPServerStatuses。
+   */
+  private mcpServerInfos(): McpServerInfo[] {
+    const servers = loadMcpServers();
+    const statuses = getAllMCPServerStatuses();
+    return Object.entries(servers).map(([name, cfg]) => {
+      const raw = statuses.get(name);
+      const status: McpServerInfo['status'] =
+        raw === MCPServerStatus.CONNECTED
+          ? 'connected'
+          : raw === MCPServerStatus.CONNECTING
+            ? 'connecting'
+            : 'disconnected';
+      return {
+        name,
+        status,
+        command: cfg.command,
+        url: cfg.url,
+        httpUrl: cfg.httpUrl,
+        description: cfg.description,
+      };
+    });
+  }
+
+  /** 添加/更新一个 MCP 服务器：写盘 + 即时应用到所有存活会话的 Config。 */
+  private handleMcpAdd(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'mcp_add' }>,
+  ): void {
+    const p = msg.payload;
+    try {
+      const servers = loadMcpServers();
+      const cfg = new MCPServerConfig(
+        p.command,
+        p.args,
+        p.env,
+        p.cwd,
+        p.url,
+        p.httpUrl,
+        p.headers,
+        undefined,
+        p.timeout,
+        p.trust,
+        p.description,
+      );
+      servers[p.name] = cfg;
+      saveMcpServers(servers);
+      for (const liveCfg of this.liveConfigs()) {
+        try {
+          liveCfg.addMcpServer(p.name, cfg);
+          void liveCfg
+            .getToolRegistry()
+            .then((registry) => registry.discoverToolsForServer(p.name))
+            .catch(() => undefined);
+        } catch {
+          // 忽略单个会话应用失败。
+        }
+      }
+      this.broadcastAll({
+        type: 'mcp_servers',
+        payload: { servers: this.mcpServerInfos() },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'mcp_add_failed', message: `添加 MCP 服务器失败：${message}` },
+      });
+    }
+  }
+
+  /** 移除一个 MCP 服务器：写盘 + 即时从所有存活会话的 Config 移除。 */
+  private handleMcpRemove(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'mcp_remove' }>,
+  ): void {
+    const { name } = msg.payload;
+    try {
+      const servers = loadMcpServers();
+      delete servers[name];
+      saveMcpServers(servers);
+      for (const cfg of this.liveConfigs()) {
+        try {
+          cfg.removeMcpServer(name);
+        } catch {
+          // 忽略单个会话失败。
+        }
+      }
+      this.broadcastAll({
+        type: 'mcp_servers',
+        payload: { servers: this.mcpServerInfos() },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'mcp_remove_failed', message: `移除 MCP 服务器失败：${message}` },
+      });
+    }
+  }
+
+  /** 某会话当前 context 用量分解（对齐 CLI /context 的口径）。 */
+  private handleGetContextBreakdown(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_context_breakdown' }>,
+  ): void {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    const modelId = cfg?.getModel?.() ?? session.model ?? this.currentModel() ?? 'auto';
+    const maxTokens = tokenLimit(modelId, cfg);
+    const memoryFilesTokens = cfg?.getMemoryTokenCount?.() ?? 0;
+    let systemPromptTokens = 0;
+    try {
+      const agentStyle = cfg?.getAgentStyle?.() ?? 'default';
+      const fullPrompt = getCoreSystemPrompt(
+        cfg?.getUserMemory?.() ?? '',
+        false,
+        undefined,
+        agentStyle,
+        undefined,
+        cfg?.getPreferredLanguage?.(),
+      );
+      const totalSystemTokens = Math.ceil(fullPrompt.length / 4);
+      systemPromptTokens =
+        memoryFilesTokens > 0 && totalSystemTokens > memoryFilesTokens
+          ? totalSystemTokens - memoryFilesTokens
+          : totalSystemTokens;
+    } catch {
+      systemPromptTokens = 0;
+    }
+    const modelMetrics = uiTelemetryService.getMetrics().models[modelId];
+    const systemToolsTokens = modelMetrics?.tokens.tool ?? 0;
+    const actualPromptTokens = uiTelemetryService.getLastPromptTokenCount();
+    const messagesTokens =
+      actualPromptTokens > 0
+        ? Math.max(
+            0,
+            actualPromptTokens - systemPromptTokens - memoryFilesTokens - systemToolsTokens,
+          )
+        : 0;
+    const totalInputTokens =
+      actualPromptTokens > 0
+        ? actualPromptTokens
+        : systemPromptTokens + memoryFilesTokens + systemToolsTokens;
+    const freeSpaceTokens = Math.max(0, maxTokens - totalInputTokens);
+    const displayName =
+      this.modelInfos().find((m) => m.id === modelId)?.displayName ?? modelId;
+    this.send(conn.socket, {
+      type: 'context_breakdown',
+      payload: {
+        sessionId,
+        modelDisplayName: displayName,
+        maxTokens,
+        systemPromptTokens,
+        systemToolsTokens,
+        memoryFilesTokens,
+        messagesTokens,
+        totalInputTokens,
+        freeSpaceTokens,
+      },
+    });
+  }
+
+  /** 用量统计快照（对齐 CLI /stats，进程级全部会话聚合）。 */
+  private statsSnapshot(): StatsSnapshot {
+    const metrics = uiTelemetryService.getMetrics();
+    const models: StatsSnapshot['models'] = {};
+    for (const [name, m] of Object.entries(metrics.models)) {
+      models[name] = {
+        requests: m.api.totalRequests,
+        inputTokens: m.tokens.prompt,
+        outputTokens: m.tokens.candidates,
+        totalTokens: m.tokens.total,
+      };
+    }
+    const byName: StatsSnapshot['tools']['byName'] = {};
+    for (const [name, t] of Object.entries(metrics.tools.byName)) {
+      byName[name] = { count: t.count, success: t.success, fail: t.fail };
+    }
+    return {
+      models,
+      tools: {
+        totalCalls: metrics.tools.totalCalls,
+        totalSuccess: metrics.tools.totalSuccess,
+        totalFail: metrics.tools.totalFail,
+        byName,
+      },
+    };
+  }
+
+  /** 触发一次外部依赖体检（异步，跑完再回帧，避免 UI 长时间无反馈）。 */
+  private async handleRunDoctor(conn: ClientConn): Promise<void> {
+    try {
+      const report = await new DoctorService().check();
+      const payload: DoctorReportInfo = {
+        platform: report.platform,
+        checks: report.checks.map((c) => ({
+          name: c.name,
+          category: c.category,
+          present: c.present,
+          version: c.version,
+          installHint: c.installHint,
+        })),
+        presentCount: report.presentCount,
+        missingCount: report.missingCount,
+        affectedCapabilities: report.affectedCapabilities,
+      };
+      this.send(conn.socket, { type: 'doctor_report', payload });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'doctor_failed', message: `依赖体检失败：${message}` },
+      });
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** 拉取层级记忆文件（项目 OTTO.md + 全局 ~/.otto-user/memory/OTTO.md）内容。 */
+  private async handleGetMemory(conn: ClientConn): Promise<void> {
+    try {
+      const cwd = resolveDefaultCwd();
+      const projectPath = path.join(cwd, 'OTTO.md');
+      const globalPath = path.join(homedir(), OTTO_CONFIG_DIR, 'memory', DEFAULT_CONTEXT_FILENAME);
+      const files: MemoryFileInfo[] = await Promise.all(
+        [
+          { scope: 'project' as const, filePath: projectPath },
+          { scope: 'global' as const, filePath: globalPath },
+        ].map(async ({ scope, filePath }) => {
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            return { scope, path: filePath, exists: true, content };
+          } catch {
+            return { scope, path: filePath, exists: false, content: '' };
+          }
+        }),
+      );
+      this.send(conn.socket, { type: 'memory_snapshot', payload: { files } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_memory_failed', message: `读取记忆文件失败：${message}` },
+      });
+    }
+  }
+
+  /** 追加一条记忆事实：写入项目级 OTTO.md（对齐 save_memory 工具的落点），成功后回推最新快照。 */
+  private async handleAddMemory(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'add_memory' }>,
+  ): Promise<void> {
+    const { fact } = msg.payload;
+    try {
+      const memoryFilePath = path.join(resolveDefaultCwd(), 'OTTO.md');
+      await MemoryTool.performAddMemoryEntry(fact, memoryFilePath, {
+        readFile: fs.readFile,
+        writeFile: fs.writeFile,
+        mkdir: fs.mkdir,
+      });
+      await this.handleGetMemory(conn);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'add_memory_failed', message: `保存记忆失败：${message}` },
+      });
+    }
+  }
+
+  /** 拉取已装技能列表（对齐 CLI /skill list，进程级、与会话无关）。 */
+  private async handleGetSkills(conn: ClientConn): Promise<void> {
+    try {
+      const adapter = new SkillsCompatAdapter(resolveDefaultCwd());
+      const skills = await adapter.listSkills();
+      const payload: SkillSummary[] = skills.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        marketplaceId: s.marketplaceId,
+        pluginId: s.pluginId,
+        enabled: s.enabled,
+      }));
+      this.send(conn.socket, { type: 'skills_list', payload: { skills: payload } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_skills_failed', message: `读取技能库失败：${message}` },
+      });
+    }
+  }
+
+  /** 拉取某会话当前可用工具清单（内置 + MCP，对齐 CLI /tools）。 */
+  private async handleGetTools(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_tools' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    if (!cfg) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话尚未初始化，暂无工具信息'),
+      );
+    }
+    try {
+      const registry = await cfg.getToolRegistry();
+      const tools: ToolSummary[] = registry.getAllTools().map((tool) => ({
+        name: tool.name,
+        displayName: tool.displayName,
+        description: tool.description,
+        serverName: (tool as { serverName?: string }).serverName,
+      }));
+      this.send(conn.socket, { type: 'tools_list', payload: { sessionId, tools } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { sessionId, code: 'get_tools_failed', message: `读取工具清单失败：${message}` },
+      });
+    }
+  }
+
+  /** 手动压缩某会话的上下文（对齐 CLI /compress）。 */
+  private async handleCompressContext(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'compress_context' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const runtime = this.store.getRuntime(sessionId);
+    const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
+    const client = cfg?.getOttoClient?.();
+    if (!client) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话尚未初始化，无法压缩'),
+      );
+    }
+    try {
+      if (client.isCompressionInProgress()) {
+        return this.send(conn.socket, {
+          type: 'compress_result',
+          payload: { sessionId, compressed: false, message: '已有压缩任务在进行中，请稍候。' },
+        });
+      }
+      const info = await client.tryCompressChat(
+        `${sessionId}-compress-${Date.now()}`,
+        new AbortController().signal,
+        true,
+      );
+      if (info) {
+        this.send(conn.socket, {
+          type: 'compress_result',
+          payload: {
+            sessionId,
+            compressed: true,
+            originalTokenCount: info.originalTokenCount,
+            newTokenCount: info.newTokenCount,
+            message: `已压缩：${info.originalTokenCount.toLocaleString()} → ${info.newTokenCount.toLocaleString()} tokens`,
+          },
+        });
+      } else {
+        this.send(conn.socket, {
+          type: 'compress_result',
+          payload: { sessionId, compressed: false, message: '当前上下文较小，无需压缩。' },
+        });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { sessionId, code: 'compress_failed', message: `压缩失败：${message}` },
+      });
+    }
+  }
+
+  /** 导出某会话为 Markdown 文本（对齐 CLI /export），落盘由 desktop 侧完成。 */
+  private handleExportConversation(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'export_conversation' }>,
+  ): void {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      return this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+    }
+    const messages = this.store.getHistory(sessionId);
+    const lines: string[] = [`# ${session.title || '未命名对话'}`, ''];
+    for (const m of messages) {
+      const speaker = m.role === 'user' ? '用户' : 'Otto';
+      const text = m.content
+        .map((p) => (p.type === 'text' ? p.value : ''))
+        .join('')
+        .trim();
+      if (!text) continue;
+      lines.push(`## ${speaker}`, '', text, '');
+    }
+    const safeTitle = (session.title || 'conversation').replace(/[\\/:*?"<>|]/g, '_');
+    this.send(conn.socket, {
+      type: 'export_result',
+      payload: {
+        sessionId,
+        suggestedFileName: `${safeTitle}.md`,
+        markdown: lines.join('\n'),
+      },
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // GUI 设置面板 handler（P2：Workflow 面板 / 扩展列表 / IDE 伴生状态）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** WorkflowRegistry（进程级单例）→ 协议 WorkflowSummary[]。 */
+  private workflowSummaries(): WorkflowSummary[] {
+    return WorkflowRegistry.getAll().map((wf) => ({
+      id: wf.id,
+      slug: wf.slug,
+      description: wf.description,
+      status: wf.status,
+      startTime: wf.startTime,
+      endTime: wf.endTime,
+      totalTokenUsage: wf.totalTokenUsage,
+      phases: wf.phases.map((p) => ({
+        index: p.index,
+        name: p.name,
+        description: p.description,
+        agents: p.agents.map(toWorkflowAgentSummary),
+      })),
+      agents: wf.agents.map(toWorkflowAgentSummary),
+    }));
+  }
+
+  /** 拉取 workflow 记录。 */
+  private handleGetWorkflows(conn: ClientConn): void {
+    this.send(conn.socket, {
+      type: 'workflows_list',
+      payload: { workflows: this.workflowSummaries() },
+    });
+  }
+
+  /** 拉取已安装扩展列表（项目级 + 全局 ~/.otto-user/extensions，去重）。 */
+  private async handleGetExtensions(conn: ClientConn): Promise<void> {
+    try {
+      const extensions = await discoverExtensionSummaries(resolveDefaultCwd());
+      this.send(conn.socket, { type: 'extensions_list', payload: { extensions } });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: { code: 'get_extensions_failed', message: `读取扩展列表失败：${message}` },
+      });
+    }
+  }
+
+  /**
+   * IDE 伴生连接状态。desktop 是独立 Electron 应用，不像 CLI 那样跑在 VS Code
+   * 终端内、天然带 OTTO_CODE_IDE_SERVER_PORT；因此恒回 not_applicable + 说明，
+   * 诚实告知而非谎报「未连接」（那会让用户误以为该去连接，其实这条能力不适用桌面端）。
+   */
+  private handleGetIdeStatus(conn: ClientConn): void {
+    this.send(conn.socket, {
+      type: 'ide_status',
+      payload: {
+        status: 'not_applicable',
+        details: 'IDE 伴生状态仅适用于终端内的 CLI（VS Code 集成终端），桌面端不适用。',
+      },
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
   // HTTP REST
   // ──────────────────────────────────────────────────────────────────────
 
@@ -484,8 +1177,216 @@ export class OttoServer {
     if (path === HTTP_ROUTES.models && req.method === 'GET') {
       return sendJson(res, 200, ok(this.modelInfos()));
     }
+    // 飞书运行期启停（desktop 一键开关走这里）。async handler：完成后再答复。
+    if (path === HTTP_ROUTES.feishuStart && req.method === 'POST') {
+      void this.runtimeFeishuStart()
+        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuStop && req.method === 'POST') {
+      void this.runtimeFeishuStop()
+        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    // 飞书凭证配置（desktop「飞书接入」面板走这里；appSecret 只进不出）。
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'GET') {
+      void this.feishuConfigView()
+        .then((view) => sendJson(res, 200, ok(view)))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'POST') {
+      void readJsonBody(req)
+        .then((body) => this.runtimeFeishuSaveConfig(body))
+        .then((r) => sendJson(res, r.ok ? 200 : 400, r))
+        .catch((e) =>
+          sendJson(res, 400, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
+    if (path === HTTP_ROUTES.feishuConfig && req.method === 'DELETE') {
+      void this.runtimeFeishuClearConfig()
+        .then((r) => sendJson(res, 200, r))
+        .catch((e) =>
+          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
+        );
+      return;
+    }
 
     sendJson(res, 404, err('not_found'));
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 飞书运行期启停（POST /feishu/start | /feishu/stop）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * 运行期启动/恢复飞书守护。幂等；经单飞锁串行化，并发请求不会重复注册。
+   * 覆盖三种入口场景：
+   *   - server 启动时未启用（无凭证/未开开关）→ 现在注册并启动。凭证在
+   *     adapter.start() 里重新读盘——用户运行期才配好凭证也能拉起；
+   *   - 已有 registration 但被 stop 过 → registration.start() 恢复守护
+   *     （断线自动重连随之恢复）；
+   *   - 已在跑 → adapter 幂等 no-op，返回当前状态。
+   * 无凭证时诚实失败（ok:false + 原因），enableFeishu 保持 false，不谎报已启用。
+   */
+  private runtimeFeishuStart(): Promise<ApiResponse<FeishuHealthStatus | null>> {
+    const run = this.feishuOpLock.then(async () => {
+      if (!this.feishu) {
+        this.feishu = await registerFeishu({
+          store: this.store,
+          broadcast: (sessionId, frame) =>
+            this.store.publish(sessionId, frame),
+          ...this.feishuDeps,
+        });
+      } else {
+        await this.feishu.start();
+      }
+      const status = this.feishu.getStatus();
+      if (!status.configured) {
+        this.enableFeishu = false;
+        return {
+          ok: false,
+          data: status,
+          error:
+            '未发现可用的飞书凭证（~/.otto-user/feishu-credentials.json），网关未启动。' +
+            '请先在终端运行 otto feishu setup 配置，再重试。',
+        } satisfies ApiResponse<FeishuHealthStatus | null>;
+      }
+      this.enableFeishu = true;
+      return ok<FeishuHealthStatus | null>(status);
+    });
+    // 锁链只关心「上一个操作结束了没」，吞掉错误防止断链拖死后续操作。
+    this.feishuOpLock = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * 运行期停止飞书守护（有意停止）：取消所有重连定时器，之后**不自动重连**，
+   * 直到再次 start。registration 句柄保留，供后续恢复。
+   */
+  private runtimeFeishuStop(): Promise<ApiResponse<FeishuHealthStatus | null>> {
+    const run = this.feishuOpLock.then(async () => {
+      if (!this.feishu) {
+        return {
+          ok: false,
+          data: null,
+          error: '飞书网关未在运行，无需停止。',
+        } satisfies ApiResponse<FeishuHealthStatus | null>;
+      }
+      await this.feishu.stop();
+      this.enableFeishu = false;
+      return ok<FeishuHealthStatus | null>(this.feishu.getStatus());
+    });
+    this.feishuOpLock = run.catch(() => undefined);
+    return run;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 飞书凭证配置（GET/POST/DELETE /feishu/config）
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** 凭证的脱敏视图：appSecret 永不出现在响应里。 */
+  private async feishuConfigView(): Promise<FeishuConfigPublic> {
+    let creds: FeishuCredentials | null;
+    try {
+      creds = await this.credentialsStore.load();
+    } catch {
+      // 文件存在但解密/解析失败：如实报 corrupted，客户端引导「清除后重配」。
+      return { configured: false, corrupted: true };
+    }
+    if (!creds) return { configured: false };
+    return {
+      configured: true,
+      appId: creds.appId,
+      domain: creds.domain,
+      botName: creds.botName,
+      tenantName: creds.tenantName,
+      ownerOpenId: creds.ownerOpenId,
+      allowlistCount: creds.allowlist?.length ?? 0,
+    };
+  }
+
+  /**
+   * 保存凭证并立即让守护用上新凭证（stop→start；adapter 只在拉起时读盘）。
+   * appSecret 可省略 = 沿用盘上已有 secret（仅限 App ID 未变时，防串号）。
+   */
+  private async runtimeFeishuSaveConfig(
+    body: unknown,
+  ): Promise<ApiResponse<FeishuConfigPublic>> {
+    const parsed = parseFeishuConfigSaveRequest(body);
+    if (typeof parsed === 'string') {
+      return { ok: false, data: await this.feishuConfigView(), error: parsed };
+    }
+
+    let existing: FeishuCredentials | null = null;
+    try {
+      existing = await this.credentialsStore.load();
+    } catch {
+      existing = null; // 损坏文件视为不存在，直接被本次保存覆盖。
+    }
+
+    const sameApp = existing?.appId === parsed.appId;
+    const secret = parsed.appSecret ?? (sameApp ? existing?.appSecret : undefined);
+    if (!secret) {
+      return {
+        ok: false,
+        data: await this.feishuConfigView(),
+        error: sameApp
+          ? '请填写 App Secret。'
+          : '更换 App ID 时必须重新填写 App Secret。',
+      };
+    }
+
+    // 换应用时旧 bot/租户/白名单信息全部作废；同应用则保留。
+    const next: FeishuCredentials = {
+      appId: parsed.appId,
+      appSecret: secret,
+      domain: parsed.domain,
+      ...(sameApp && existing
+        ? {
+            botName: existing.botName,
+            botOpenId: existing.botOpenId,
+            tenantName: existing.tenantName,
+            allowlist: existing.allowlist,
+          }
+        : {}),
+      ...(parsed.ownerOpenId
+        ? { ownerOpenId: parsed.ownerOpenId }
+        : sameApp && existing?.ownerOpenId
+          ? { ownerOpenId: existing.ownerOpenId }
+          : {}),
+    };
+    await this.credentialsStore.save(next);
+
+    // 守护若在跑，stop→start 强制重读凭证（start 对已运行守护是幂等 no-op）。
+    await this.runtimeFeishuStop().catch(() => undefined);
+    const started = await this.runtimeFeishuStart().catch(
+      (e): ApiResponse<FeishuHealthStatus | null> =>
+        err(e instanceof Error ? e.message : String(e)),
+    );
+    return {
+      ok: started.ok,
+      data: await this.feishuConfigView(),
+      error: started.ok
+        ? null
+        : `凭证已保存，但守护启动失败：${started.error ?? '未知原因'}`,
+    };
+  }
+
+  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
+  private async runtimeFeishuClearConfig(): Promise<ApiResponse<FeishuConfigPublic>> {
+    await this.runtimeFeishuStop().catch(() => undefined);
+    await this.credentialsStore.clear();
+    return ok(await this.feishuConfigView());
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -607,12 +1508,16 @@ export class OttoServer {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
         return;
       }
-      case 'tool_confirmation_response':
-        // 当前 runtime 走 executeToolCall（YOLO，不上抛确认），无待确认队列可路由。
-        // 带确认的工具调度（CoreToolScheduler.handleConfirmationResponse）是后续增强，
-        // 届时在此把 outcome 路由进 runtime 的 scheduler。
-        // TODO(tool-confirm): runtime 暴露 confirmTool(callId, outcome) 后接线。
+      case 'tool_confirmation_response': {
+        // 把用户对某待确认工具的应答（AskUserQuestion 的答案 / 危险命令确认等）
+        // 按 callId 路由回该会话 runtime，唤醒 runToolCalls 里挂起的等待。
+        // 会话 / runtime 不存在或 callId 无挂起时静默忽略（幂等）。
+        const { sessionId, callId, outcome, payload } = msg.payload;
+        this.store
+          .getRuntime(sessionId)
+          ?.resolveToolConfirmation(callId, outcome, payload);
         return;
+      }
       case 'get_models':
         return this.send(conn.socket, {
           type: 'models_list',
@@ -624,6 +1529,62 @@ export class OttoServer {
         return this.handleDeleteSession(conn, msg);
       case 'rename_session':
         return this.handleRenameSession(conn, msg);
+      case 'get_settings':
+        return this.send(conn.socket, {
+          type: 'settings',
+          payload: this.settingsSnapshot(),
+        });
+      case 'set_setting':
+        return this.handleSetSetting(conn, msg);
+      case 'mcp_list':
+        return this.send(conn.socket, {
+          type: 'mcp_servers',
+          payload: { servers: this.mcpServerInfos() },
+        });
+      case 'mcp_add':
+        return this.handleMcpAdd(conn, msg);
+      case 'mcp_remove':
+        return this.handleMcpRemove(conn, msg);
+      case 'get_context_breakdown':
+        return this.handleGetContextBreakdown(conn, msg);
+      case 'get_stats':
+        return this.send(conn.socket, {
+          type: 'stats_snapshot',
+          payload: this.statsSnapshot(),
+        });
+      case 'run_doctor':
+        return this.handleRunDoctor(conn);
+      case 'get_todos':
+        return this.send(conn.socket, {
+          type: 'todos_list',
+          payload: { todos: todoStore.getTodos() as TodoItemInfo[] },
+        });
+      case 'get_memory':
+        return this.handleGetMemory(conn);
+      case 'add_memory':
+        return this.handleAddMemory(conn, msg);
+      case 'get_skills':
+        return this.handleGetSkills(conn);
+      case 'get_tools':
+        return this.handleGetTools(conn, msg);
+      case 'compress_context':
+        return this.handleCompressContext(conn, msg);
+      case 'export_conversation':
+        return this.handleExportConversation(conn, msg);
+      case 'get_workflows':
+        return this.handleGetWorkflows(conn);
+      case 'get_extensions':
+        return this.handleGetExtensions(conn);
+      case 'get_ide_status':
+        return this.handleGetIdeStatus(conn);
+      case 'run_slash_command':
+        return this.handleRunSlashCommand(conn, msg);
+      case 'list_slash_commands':
+        // 命令清单的单一事实源：renderer 面板据此合并展示 server 侧命令。
+        return this.send(conn.socket, {
+          type: 'slash_commands_list',
+          payload: { commands: listSlashCommands() },
+        });
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -704,6 +1665,106 @@ export class OttoServer {
     }
     // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
+  }
+
+  /**
+   * 斜杠命令宿主（src/commands/ 的窄依赖面）：全部用闭包桥接到 server 既有
+   * 私有能力（statsSnapshot / mcpServerInfos / …），命令层不反向持有 OttoServer。
+   */
+  private commandHost(): CommandHost {
+    return {
+      store: this.store,
+      serverVersion: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      uptimeMs: () => Date.now() - this.startedAt,
+      cwd: () => resolveDefaultCwd(),
+      getConfig: (sessionId) =>
+        this.store.getRuntime(sessionId)?.getConfig?.() as
+          | CoreConfig
+          | undefined,
+      currentModel: () => this.currentModel(),
+      modelInfos: () => this.modelInfos(),
+      statsSnapshot: () => this.statsSnapshot(),
+      mcpServerInfos: () => this.mcpServerInfos(),
+      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
+    };
+  }
+
+  /**
+   * 斜杠命令入口（run_slash_command 帧）：路由到 src/commands/ 的注册表执行，
+   * 结果以 slash_command_result 回给**发起连接**（与 get_stats 等查询帧一致，
+   * 不广播——命令回执只属于发起者）。
+   *
+   * 命令结果**有意不落库**：它是「即时查询回执」而非会话内容，落库会污染
+   * 历史/导出与模型上下文。因此刷新或切换会话后气泡消失是设计行为，不是 bug
+   * （renderer 以 ephemeral 系统气泡渲染，见 useOttoStore 的 slash_command_result 分支）。
+   *
+   * submit_prompt 形态（如 /init）先查会话忙闲（忙则用回执通道诚实拒绝），
+   * 再回执行回执并把 prompt 当用户消息走 handleSendUserMessage——复用其
+   * busy 兜底闸门 / mock 降级 / runtime 懒构建，不另起炉灶。
+   */
+  private async handleRunSlashCommand(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'run_slash_command' }>,
+  ): Promise<void> {
+    const { sessionId, name, args } = msg.payload;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const outcome = await executeSlashCommand(
+      this.commandHost(),
+      sessionId,
+      name,
+      args ?? '',
+    );
+    if (outcome.kind === 'submit_prompt') {
+      // 先查忙闲再发「已提交」回执：否则会话 thinking/streaming 时用户先收到
+      // 成功回执、紧接着又收到 busy 错误帧，两条消息互相矛盾（实际任务被拒）。
+      // handleSendUserMessage 内部的 busy 闸门保留作兜底（覆盖此检查后的竞态窗口）。
+      const session = this.store.getSession(sessionId);
+      if (
+        session &&
+        (session.status === 'thinking' || session.status === 'streaming')
+      ) {
+        this.send(conn.socket, {
+          type: 'slash_command_result',
+          payload: {
+            sessionId,
+            name,
+            args,
+            ok: false,
+            markdown: `该会话正在生成回复，/${name} 未提交。请稍候或先取消，再重试。`,
+          },
+        });
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'slash_command_result',
+        payload: { sessionId, name, args, ok: true, markdown: outcome.note },
+      });
+      await this.handleSendUserMessage(conn, {
+        type: 'send_user_message',
+        payload: {
+          sessionId,
+          content: [{ type: 'text', value: outcome.content }],
+          source: 'local',
+        },
+      });
+      return;
+    }
+    this.send(conn.socket, {
+      type: 'slash_command_result',
+      payload: {
+        sessionId,
+        name,
+        args,
+        ok: outcome.ok,
+        markdown: outcome.markdown,
+      },
+    });
   }
 
   /**
@@ -819,14 +1880,15 @@ export class OttoServer {
     });
     this.store.publish(sessionId, {
       type: 'chat_complete',
-      payload: { sessionId, messageId: assistant.id },
+      payload: { sessionId, messageId: assistant.id, text },
     });
     this.store.setStatus(sessionId, 'idle');
   }
 
   private subscribeConn(conn: ClientConn, sessionId: string): void {
     if (conn.subscriptions.has(sessionId)) return;
-    if (!this.store.getSession(sessionId)) {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
@@ -840,6 +1902,13 @@ export class OttoServer {
     this.send(conn.socket, {
       type: 'history',
       payload: { sessionId, messages: this.store.getHistory(sessionId) },
+    });
+    // 再单发一帧当前会话状态：session_status 只在状态变化时广播，切走再切回的
+    // 客户端错过了那次广播，不告知就不知道该会话还在 thinking/streaming，
+    // 「正在生成」UI 恢复不出来（任务看起来像被切断了）。
+    this.send(conn.socket, {
+      type: 'session_status',
+      payload: { sessionId, status: session.status },
     });
   }
 
@@ -868,6 +1937,123 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(json);
 }
+
+/** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此，超限即恶意/误用）。 */
+function readJsonBody(
+  req: IncomingMessage,
+  maxBytes = 64 * 1024,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > maxBytes) {
+        reject(new Error('请求体过大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (chunks.length === 0) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        reject(new Error('请求体不是合法 JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+/** 校验 POST /feishu/config 请求体；通过返回规整后的请求，不通过返回错误文案。 */
+function parseFeishuConfigSaveRequest(
+  body: unknown,
+): FeishuConfigSaveRequest | string {
+  if (typeof body !== 'object' || body === null) return '请求体必须是 JSON 对象';
+  const b = body as Record<string, unknown>;
+  const appId = typeof b.appId === 'string' ? b.appId.trim() : '';
+  if (!appId) return '请填写 App ID（形如 cli_xxx）。';
+  const domain = b.domain;
+  if (domain !== 'feishu' && domain !== 'lark') {
+    return 'domain 必须是 feishu（飞书）或 lark（Lark 国际版）。';
+  }
+  const appSecret =
+    typeof b.appSecret === 'string' && b.appSecret.trim()
+      ? b.appSecret.trim()
+      : undefined;
+  const ownerOpenId =
+    typeof b.ownerOpenId === 'string' && b.ownerOpenId.trim()
+      ? b.ownerOpenId.trim()
+      : undefined;
+  return { appId, domain, ...(appSecret ? { appSecret } : {}), ...(ownerOpenId ? { ownerOpenId } : {}) };
+}
+/** core WorkflowAgentRecord → 协议 WorkflowAgentSummary（裁掉 prompt/recentToolCalls 等大字段）。 */
+function toWorkflowAgentSummary(a: WorkflowAgentRecord): WorkflowAgentSummary {
+  return {
+    agentId: a.agentId,
+    label: a.label,
+    status: a.status,
+    startTime: a.startTime,
+    endTime: a.endTime,
+    tokenUsage: a.tokenUsage,
+    toolCallCount: a.toolCallCount,
+    currentPhase: a.currentPhase,
+    outcome: a.outcome,
+  };
+}
+
+/** 扩展目录约定：<root>/.otto-user/extensions/<name>/gemini-extension.json（对齐 CLI loadExtensions）。 */
+const EXTENSIONS_DIR_SEGMENTS = ['.otto-user', 'extensions'] as const;
+const EXTENSION_CONFIG_FILENAME = 'gemini-extension.json';
+
+async function loadExtensionSummariesFromDir(
+  rootDir: string,
+): Promise<ExtensionSummary[]> {
+  const extensionsDir = path.join(rootDir, ...EXTENSIONS_DIR_SEGMENTS);
+  let subdirs: string[];
+  try {
+    subdirs = await fs.readdir(extensionsDir);
+  } catch {
+    return [];
+  }
+  const summaries: ExtensionSummary[] = [];
+  for (const subdir of subdirs) {
+    const extensionDir = path.join(extensionsDir, subdir);
+    const configPath = path.join(extensionDir, EXTENSION_CONFIG_FILENAME);
+    try {
+      const raw = await fs.readFile(configPath, 'utf-8');
+      const parsed = JSON.parse(raw) as { name?: string; version?: string };
+      if (typeof parsed.name === 'string') {
+        summaries.push({
+          name: parsed.name,
+          version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
+          path: extensionDir,
+        });
+      }
+    } catch {
+      // 单个扩展目录缺配置/解析失败：跳过，不影响其余扩展。
+    }
+  }
+  return summaries;
+}
+
+/** 项目级 + 全局扩展目录合并去重（同名保留项目级优先，对齐 CLI loadExtensions 的语义）。 */
+async function discoverExtensionSummaries(
+  workspaceDir: string,
+): Promise<ExtensionSummary[]> {
+  const [workspaceExt, globalExt] = await Promise.all([
+    loadExtensionSummariesFromDir(workspaceDir),
+    loadExtensionSummariesFromDir(homedir()),
+  ]);
+  const byName = new Map<string, ExtensionSummary>();
+  for (const ext of [...workspaceExt, ...globalExt]) {
+    if (!byName.has(ext.name)) byName.set(ext.name, ext);
+  }
+  return Array.from(byName.values());
+}
+
 function errorFrame(
   sessionId: string | undefined,
   code: string,

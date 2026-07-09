@@ -637,6 +637,9 @@ export async function loadCliConfig(
       process.env.HTTP_PROXY ||
       process.env.http_proxy,
     customProxyServerUrl: settings.customProxyServerUrl,
+    // web_search 搜索后端配置（settings.json 可配；不配默认 bing 免 key 可用）
+    searchProvider: settings.searchProvider,
+    searchApiKey: settings.searchApiKey,
     cwd: process.cwd(),
     fileDiscoveryService: fileService,
     bugCommand: settings.bugCommand,

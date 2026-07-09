@@ -25,9 +25,87 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ClientToServer,
+  FeishuConfigPublic,
+  FeishuConfigSaveRequest,
+  HealthInfo,
   ServerEndpoint,
   ServerToClient,
 } from 'otto-server';
+
+/**
+ * 飞书守护状态（main 从 server /health 透传；renderer 徽标据此渲染）。
+ * 即 HealthInfo 里的 feishu 字段：enabled/connected + 守护详情 status。
+ */
+export type FeishuStatusDetail = HealthInfo['feishu'];
+
+/** 飞书凭证配置操作的统一返回：config 为脱敏视图（绝无 appSecret）。 */
+export interface FeishuConfigResult {
+  ok: boolean;
+  config: FeishuConfigPublic | null;
+  error: string | null;
+}
+export type { FeishuConfigPublic, FeishuConfigSaveRequest };
+
+/**
+ * 园区服务插件的企业定制配置（~/.otto-user/park-services.json）。
+ * 全部可选：缺失字段用内置默认（宏创AI园区服务）。
+ */
+export interface ParkServicesConfig {
+  /** 品牌全称：入口悬浮钮 tooltip 与对话框标题（如「XX智慧园区服务」）。 */
+  brandName?: string;
+  /** 园区简称：注入请求模板里的园区称呼（如「XX园区」）。 */
+  parkName?: string;
+  /** 完全覆盖内置服务清单（图标由内置轮换分配）。 */
+  services?: Array<{ name: string; desc: string; prompt: string }>;
+}
+
+// ── 软件更新的跨进程形状 ──
+// 与 src/main/update-core.ts / update-service.ts 里的定义结构一致的副本。
+// main 的 tsconfig rootDir 限制两边不能互相 import（同 IPC 常量表的既有做法：
+// 两处各持一份、改动时同步）；renderer 一律从本文件 import type。
+
+/** 单个平台的安装包资产（latest.json 的 assets[platformKey]）。 */
+export interface UpdateAssetInfo {
+  name: string;
+  url: string;
+  size: number;
+  /** 64 位十六进制；下载后 main 强制校验，不匹配删文件报错。 */
+  sha256: string;
+}
+
+/** 检查更新三态：有新版 / 已是最新 / 检查失败——失败绝不冒充最新。 */
+export type UpdateCheckResult =
+  | {
+      status: 'update-available';
+      currentVersion: string;
+      version: string;
+      notes: string;
+      publishedAt: string | null;
+      /** 本平台资产；清单没有本平台包（或兜底源拿不到 sha256）时为 null。 */
+      asset: UpdateAssetInfo | null;
+      /** 资产缺失时引导用户浏览器手动下载的发布页。 */
+      releasePageUrl: string;
+    }
+  | { status: 'up-to-date'; currentVersion: string; latestVersion: string | null }
+  | { status: 'check-failed'; currentVersion: string; message: string };
+
+/** 下载进度（main 经 IPC.updateProgress 节流推送）。 */
+export interface UpdateProgressInfo {
+  percent: number;
+  transferred: number;
+  total: number;
+}
+
+/** 下载结果（结构化；reused=同名文件 sha256 已匹配、直接复用跳过下载）。 */
+export type UpdateDownloadResult =
+  | { ok: true; filePath: string; reused: boolean }
+  | { ok: false; cancelled?: boolean; error: string };
+
+/** 安装结果（message 为按平台给的下一步指引，如「装完请重启 Otto」）。 */
+export interface UpdateInstallResult {
+  ok: boolean;
+  message: string;
+}
 
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
@@ -35,8 +113,15 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
-  skillLeaderboard: 'otto:skill-leaderboard',
+  setLocalTestUrl: 'otto:set-local-test-url',
+  appVersion: 'otto:app-version',
+  updateCheck: 'otto:update-check',
+  updateDownload: 'otto:update-download',
+  updateCancel: 'otto:update-cancel',
+  updateInstall: 'otto:update-install',
+  updateProgress: 'otto:update-progress',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -69,25 +154,59 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  /**
+   * host-only 命令：原生保存对话框 + 写文本文件（导出会话用）。
+   * 返回实际写入路径；用户取消对话框时返回 null。
+   */
+  saveTextFile(suggestedFileName: string, content: string): Promise<string | null>;
   feishuStart(): Promise<{ text: string; pid?: number }>;
   feishuStop(): Promise<{ text: string }>;
-  feishuStatus(): Promise<{ text: string; running: boolean }>;
-  /** 获取小组 Skill 排行榜数据（排行榜+明星榜） */
-  skillLeaderboard(teamId?: string): Promise<{
-    leaderboard: string;
-    starBoard: string;
-    tabs: Array<{ id: string; label: string; icon: string }>;
+  /**
+   * 飞书守护状态查询（main 真查 server /health）。
+   * text 为人话说明；running=守护是否在跑；feishu 为结构化守护详情
+   * （connected / 重连第 N 次 / 下次重试时间 / 锁冲突持有者 pid），
+   * server 未就绪时缺省。
+   */
+  feishuStatus(): Promise<{
+    text: string;
+    running: boolean;
+    feishu?: FeishuStatusDetail;
   }>;
-  /** 获取今日工作日志汇总 */
-  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
-  /** 获取审计日志最近记录 */
-  auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }>;
-  /** 获取部门共享 Skill 列表 */
-  skillShareList(teamId?: string): Promise<{ text: string }>;
-  /** 获取公司 Skill 市场列表 */
-  skillMarketplace(): Promise<{ text: string }>;
-  /** 获取当前用户的部门/岗位 */
-  userDepartment(): Promise<{ department: string; role: string; name: string; openId: string }>;
+  /**
+   * 飞书凭证配置（「飞书接入」面板）。config 是脱敏视图：
+   * 只有 appId / domain / 授权人等元信息，appSecret 永不回传。
+   */
+  feishuGetConfig(): Promise<FeishuConfigResult>;
+  /** 保存凭证并让守护立即用上（server 侧 stop→start 重读凭证）。 */
+  feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult>;
+  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
+  feishuClearConfig(): Promise<FeishuConfigResult>;
+  /** 园区服务企业定制配置；无配置文件时 null（用内置默认）。 */
+  parkConfig(): Promise<ParkServicesConfig | null>;
+  /**
+   * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
+   * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
+   * 返回是否应用成功。
+   */
+  setLocalTestUrl?(url: string): Promise<void>;
+  /** 当前 app 版本号（main 的 app.getVersion()）。 */
+  appVersion(): Promise<string>;
+  /**
+   * 检查软件更新（main 拉 latest.json，兜底 GitHub API）。
+   * 三态结果：有新版 / 已是最新 / 检查失败——失败绝不冒充最新。
+   */
+  updateCheck(): Promise<UpdateCheckResult>;
+  /**
+   * 下载最近一次检查到的新版安装包（main 只信自己缓存的检查结果，
+   * renderer 不传 URL）。下载完成 main 已做 sha256 校验，失败会删文件报错。
+   */
+  updateDownload(): Promise<UpdateDownloadResult>;
+  /** 取消进行中的下载（无任务时安全空操作）。 */
+  updateCancel(): Promise<void>;
+  /** 打开已校验的安装包（win 拉起 NSIS / mac 打开 dmg），message 给下一步指引。 */
+  updateInstall(): Promise<UpdateInstallResult>;
+  /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
+  onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
 }
 
 // ── 退避参数 ──
@@ -285,40 +404,71 @@ const bridge: OttoBridge = {
   openPath(path: string): Promise<void> {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
   },
+
+  saveTextFile(suggestedFileName: string, content: string): Promise<string | null> {
+    return ipcRenderer.invoke(
+      IPC.saveTextFile,
+      suggestedFileName,
+      content,
+    ) as Promise<string | null>;
+  },
   feishuStart(): Promise<{ text: string; pid?: number }> {
     return ipcRenderer.invoke('otto:feishu-start') as Promise<{ text: string; pid?: number }>;
   },
   feishuStop(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:feishu-stop') as Promise<{ text: string }>;
   },
-  feishuStatus(): Promise<{ text: string; running: boolean }> {
-    return ipcRenderer.invoke('otto:feishu-status') as Promise<{ text: string; running: boolean }>;
-  },
-  skillLeaderboard(teamId?: string): Promise<{
-    leaderboard: string;
-    starBoard: string;
-    tabs: Array<{ id: string; label: string; icon: string }>;
+  feishuStatus(): Promise<{
+    text: string;
+    running: boolean;
+    feishu?: FeishuStatusDetail;
   }> {
-    return ipcRenderer.invoke(IPC.skillLeaderboard, teamId) as Promise<{
-      leaderboard: string;
-      starBoard: string;
-      tabs: Array<{ id: string; label: string; icon: string }>;
+    return ipcRenderer.invoke('otto:feishu-status') as Promise<{
+      text: string;
+      running: boolean;
+      feishu?: FeishuStatusDetail;
     }>;
   },
-  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }> {
-    return ipcRenderer.invoke('otto:worklog-today') as Promise<{ summary: string; date: string; totalActions: number }>;
+  feishuGetConfig(): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-get-config') as Promise<FeishuConfigResult>;
   },
-  auditLogRecent(days?: number, limit?: number): Promise<{ report: string; count: number }> {
-    return ipcRenderer.invoke('otto:auditlog-recent', days, limit) as Promise<{ report: string; count: number }>;
+  feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-save-config', body) as Promise<FeishuConfigResult>;
   },
-  skillShareList(teamId?: string): Promise<{ text: string }> {
-    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
+  feishuClearConfig(): Promise<FeishuConfigResult> {
+    return ipcRenderer.invoke('otto:feishu-clear-config') as Promise<FeishuConfigResult>;
   },
-  skillMarketplace(): Promise<{ text: string }> {
-    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+  parkConfig(): Promise<ParkServicesConfig | null> {
+    return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
   },
-  userDepartment(): Promise<{ department: string; role: string; name: string; openId: string }> {
-    return ipcRenderer.invoke('otto:user-department') as Promise<{ department: string; role: string; name: string; openId: string }>;
+  setLocalTestUrl(url: string): Promise<void> {
+    return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
+  },
+  appVersion(): Promise<string> {
+    return ipcRenderer.invoke(IPC.appVersion) as Promise<string>;
+  },
+  updateCheck(): Promise<UpdateCheckResult> {
+    return ipcRenderer.invoke(IPC.updateCheck) as Promise<UpdateCheckResult>;
+  },
+  updateDownload(): Promise<UpdateDownloadResult> {
+    return ipcRenderer.invoke(IPC.updateDownload) as Promise<UpdateDownloadResult>;
+  },
+  updateCancel(): Promise<void> {
+    return ipcRenderer.invoke(IPC.updateCancel) as Promise<void>;
+  },
+  updateInstall(): Promise<UpdateInstallResult> {
+    return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
+  },
+  onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void {
+    // 仿 onMenu 订阅：进度帧由 main 的 UpdateService 节流推送。
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      progress: UpdateProgressInfo,
+    ): void => handler(progress);
+    ipcRenderer.on(IPC.updateProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC.updateProgress, listener);
+    };
   },
 };
 
