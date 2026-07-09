@@ -105,7 +105,23 @@ function defaultServices(park: string): ParkService[] {
   ];
 }
 
-export function ParkServicesPlugin(): React.JSX.Element {
+/**
+ * 跨组件打开园区服务弹窗的事件通路（与 Composer 的 insertComposerDraft 同模式）：
+ * 右侧面板「园区服务」入口深居另一棵组件树，为一条打开通路穿透 props 不值当。
+ */
+const PARK_OPEN_EVENT = 'otto:open-park-services';
+
+/** 打开园区服务弹窗（右侧面板入口调用；ChatView 内挂载的 Plugin 监听并展开）。 */
+export function openParkServices(): void {
+  window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
+}
+
+export function ParkServicesPlugin({
+  showFab = true,
+}: {
+  /** 是否显示右下角悬浮小钮（无活跃会话时隐藏，但弹窗监听常驻——右侧面板入口仍可打开）。 */
+  showFab?: boolean;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   // 企业定制：品牌名 / 园区称呼 / 服务清单（~/.otto-user/park-services.json，
   // 经 preload parkConfig() 读取；无配置 = 内置宏创默认）。
@@ -150,6 +166,13 @@ export function ParkServicesPlugin(): React.JSX.Element {
     else fabRef.current?.focus();
   }, [open]);
 
+  // 右侧面板「园区服务」入口经自定义事件打开本弹窗。
+  useEffect(() => {
+    const onOpen = (): void => setOpen(true);
+    window.addEventListener(PARK_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(PARK_OPEN_EVENT, onOpen);
+  }, []);
+
   const pick = (prompt: string): void => {
     setOpen(false);
     insertComposerDraft(prompt);
@@ -165,6 +188,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
 
   return (
     <>
+      {showFab ? (
       <button
         ref={fabRef}
         type="button"
@@ -176,6 +200,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         <IconBuilding size={17} className="otto-park-fab__icon" />
         <span className="otto-park-fab__label">园区服务</span>
       </button>
+      ) : null}
 
       {open ? (
         <div

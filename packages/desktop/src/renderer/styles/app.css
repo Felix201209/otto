@@ -4546,3 +4546,35 @@ h6.otto-prose__h {
   font-size: 11.5px;
   color: var(--otto-text-secondary);
 }
+
+/* What's New 首启弹窗（复用 park 弹窗骨架，仅补列表与按钮排版）。 */
+.otto-whatsnew__list {
+  margin: 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.otto-whatsnew__item {
+  position: relative;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--otto-text);
+}
+.otto-whatsnew__item::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+}
+.otto-whatsnew__actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}

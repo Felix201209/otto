@@ -45,6 +45,7 @@ import * as transport from './transport.js';
 import { useSettingsData } from './state/useSettingsData.js';
 import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
+import { WhatsNewDialog } from './components/WhatsNewDialog.js';
 
 /** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
@@ -389,6 +390,9 @@ export function App(): React.JSX.Element {
           onClose={settingsData.actions.clearExportMessage}
         />
       ) : null}
+
+      {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}
+      <WhatsNewDialog />
     </div>
   );
 }
