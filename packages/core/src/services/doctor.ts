@@ -193,6 +193,16 @@ const BINARY_SPECS: BinarySpec[] = [
     },
   },
   {
+    name: 'yt-dlp',
+    category: '视频下载',
+    bins: ['yt-dlp'],
+    hints: {
+      darwin: 'brew install yt-dlp',
+      win32: 'winget install --id yt-dlp.yt-dlp',
+      linux: 'pip install -U yt-dlp',
+    },
+  },
+  {
     name: 'whisper',
     category: '语音转写',
     bins: ['whisper'],

@@ -16,6 +16,7 @@ import { getErrorMessage } from '../utils/errors.js';
 import { SceneType } from '../core/sceneManager.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
+import { preflightBinaries } from './analyze-data.js';
 
 const execAsync = promisify(exec);
 
@@ -123,6 +124,18 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
     }
 
     const { url, save_to_kb = false, lang = 'zh' } = params;
+
+    // Doctor preflight: fail loud (with install command) before spawning any
+    // external binary. Previously this tool would let execAsync throw a raw
+    // "command not found" error with no install guidance -- confusing and
+    // hard to distinguish from an actual tool bug.
+    const needsYtDlp = isURL(url) && (isYouTube(url) || platform(url) !== 'other');
+    const requiredBins = ['ffmpeg', ...(needsYtDlp ? ['yt-dlp'] : [])];
+    const missingBins = await preflightBinaries(requiredBins);
+    if (missingBins) {
+      const msg = 'analyze_video needs: ' + missingBins;
+      return { llmContent: 'Error: ' + msg, returnDisplay: msg };
+    }
 
     try {
       // ===== Step 1: Download =====
@@ -354,14 +367,14 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
 
       // ===== Output =====
       const output =
-        `📹 视频分析完成\n\n` +
+        `视频分析完成\n\n` +
         `标题：${videoTitle}\n` +
         `来源：${isURL(url) ? platform(url) : '本地文件'}\n` +
         `时长：${Math.round(videoDuration)}秒\n` +
         `关键帧：${frameBuffers.length}帧（场景检测）\n` +
         `字幕：${subtitleSource}\n\n` +
         `分析结果：\n${analysisResult}` +
-        (save_to_kb ? `\n\n✅ 已存入知识库（ID: ${kbId}）` : '');
+        (save_to_kb ? `\n\n已存入知识库（ID: ${kbId}）` : '');
 
       return {
         llmContent: output,
