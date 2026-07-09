@@ -3212,6 +3212,50 @@ h6.otto-prose__h {
 }
 
 /* —— 通用小标题 / 提示 / 空态 —— */
+/* 可折叠组头：标题 + 旋转 chevron，点击展开/缩回（Jeremy：交互栏过多时收起）。 */
+.otto-right-panel__grouphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 2px 8px;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+  transition: color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-right-panel__grouphead:hover {
+  color: var(--otto-text-secondary);
+}
+.otto-right-panel__grouphead:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+  border-radius: 6px;
+}
+.otto-right-panel__grouphead-chev {
+  transition: transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-right-panel__grouphead-chev.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+/* 腰线：企业专家与自主开发之间的分隔。 */
+.otto-right-panel__waist {
+  height: 1px;
+  background: var(--otto-border);
+  margin: 14px 2px;
+}
+
+/* 自主开发入口图标：accent 底 SVG（专家卡其余仍是 emoji）。 */
+.otto-expert-card__icon--dev {
+  color: var(--otto-accent-hover);
+}
+
 .otto-right-panel__head {
   padding: 0 2px 8px;
   font-size: 11px;
@@ -4305,4 +4349,200 @@ h6.otto-prose__h {
 .otto-hub__btn--danger:hover {
   background: color-mix(in srgb, #ef4444 10%, transparent);
   color: #ef4444;
+}
+
+/* ── 宏创AI园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
+/* 入口小钮：默认弱化只露图标，不抢聊天注意力；hover 提亮并横向展开标签。 */
+.otto-park-fab {
+  position: absolute;
+  right: 24px;
+  /* 高于单行态 Composer 顶缘，避免压住输入框右上角文字。 */
+  bottom: 132px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-xs);
+  color: var(--otto-text-secondary);
+  opacity: 0.72;
+  cursor: pointer;
+  transition:
+    opacity var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-fab:hover,
+.otto-park-fab:focus-visible {
+  opacity: 1;
+  border-color: var(--otto-accent);
+  box-shadow: var(--otto-shadow-card);
+  color: var(--otto-accent-hover);
+}
+.otto-park-fab:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-park-fab__icon {
+  flex-shrink: 0;
+}
+/* 标签默认收起（宽度 0），hover 丝滑展开——只动 max-width/opacity，无布局抖动。 */
+.otto-park-fab__label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    max-width var(--otto-dur) var(--otto-ease),
+    opacity var(--otto-dur) var(--otto-ease),
+    margin-left var(--otto-dur) var(--otto-ease);
+}
+.otto-park-fab:hover .otto-park-fab__label,
+.otto-park-fab:focus-visible .otto-park-fab__label {
+  max-width: 64px;
+  opacity: 1;
+  margin-left: 6px;
+}
+
+.otto-park-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(28, 25, 23, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-dialog {
+  width: min(560px, calc(100vw - 48px));
+  border-radius: var(--otto-radius-lg);
+  background: var(--otto-bg);
+  box-shadow: var(--otto-shadow-pop);
+  padding: 20px 22px 22px;
+  animation: otto-park-pop var(--otto-dur) var(--otto-ease);
+}
+@keyframes otto-park-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.otto-park-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 16px;
+}
+.otto-park-dialog__headicon {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+}
+.otto-park-dialog__headtext {
+  flex: 1;
+  min-width: 0;
+}
+.otto-park-dialog__title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 650;
+  color: var(--otto-text);
+  line-height: 1.3;
+}
+.otto-park-dialog__subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--otto-text-secondary);
+}
+.otto-park-dialog__close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+}
+.otto-park-dialog__close:hover {
+  color: var(--otto-text);
+  background: color-mix(in srgb, var(--otto-text) 7%, transparent);
+}
+.otto-park-dialog__close:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-park-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.otto-park-service {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'icon name'
+    'icon desc';
+  column-gap: 11px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-service:hover {
+  border-color: var(--otto-accent);
+  background: var(--otto-surface-raised);
+  box-shadow: var(--otto-shadow-xs);
+}
+.otto-park-service:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-park-service__icon {
+  grid-area: icon;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-service__name {
+  grid-area: name;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+.otto-park-service__desc {
+  grid-area: desc;
+  font-size: 11.5px;
+  color: var(--otto-text-secondary);
 }

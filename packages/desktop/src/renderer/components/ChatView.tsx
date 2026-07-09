@@ -26,6 +26,7 @@ import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
 import { OttoAvatar, IconArrowDown } from './icons.js';
+import { ParkServicesPlugin } from './ParkServicesPlugin.js';
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
 const NEAR_BOTTOM = 80;
@@ -285,6 +286,10 @@ export function ChatView({
           新消息
         </button>
       ) : null}
+
+      {/* 宏创AI园区服务插件：右下角悬浮入口 + 居中对话框。仅在有会话时挂载
+          （服务项点击注入输入框草稿，无会话时 Composer 禁用、注入无意义）。 */}
+      {session ? <ParkServicesPlugin /> : null}
 
       <Composer
         models={models}

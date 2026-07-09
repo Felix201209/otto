@@ -42,6 +42,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
   FeishuConfigPublic,
@@ -89,6 +90,7 @@ const IPC = {
   feishuGetConfig: 'otto:feishu-get-config',
   feishuSaveConfig: 'otto:feishu-save-config',
   feishuClearConfig: 'otto:feishu-clear-config',
+  parkConfig: 'otto:park-config',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -588,6 +590,37 @@ function registerIpc(): void {
     const r = await requestFeishuConfig('DELETE');
     if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
     return { ok: r.ok, config: r.data, error: r.error };
+  });
+  // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
+  // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  ipcMain.handle(IPC.parkConfig, async () => {
+    try {
+      const p = path.join(os.homedir(), '.otto-user', 'park-services.json');
+      const raw = await fs.promises.readFile(p, 'utf8');
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof cfg !== 'object' || cfg === null) return null;
+      // 宽松形状校验：只透传认识的字段，坏字段丢弃不炸。
+      const services = Array.isArray(cfg.services)
+        ? cfg.services
+            .filter(
+              (s): s is Record<string, unknown> =>
+                typeof s === 'object' && s !== null,
+            )
+            .map((s) => ({
+              name: typeof s.name === 'string' ? s.name : '',
+              desc: typeof s.desc === 'string' ? s.desc : '',
+              prompt: typeof s.prompt === 'string' ? s.prompt : '',
+            }))
+            .filter((s) => s.name && s.prompt)
+        : undefined;
+      return {
+        brandName: typeof cfg.brandName === 'string' ? cfg.brandName : undefined,
+        parkName: typeof cfg.parkName === 'string' ? cfg.parkName : undefined,
+        ...(services && services.length > 0 ? { services } : {}),
+      };
+    } catch {
+      return null;
+    }
   });
 
   // 本地测试模式：应用/清除 customProxyServerUrl。

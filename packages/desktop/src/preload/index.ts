@@ -46,6 +46,19 @@ export interface FeishuConfigResult {
 }
 export type { FeishuConfigPublic, FeishuConfigSaveRequest };
 
+/**
+ * 园区服务插件的企业定制配置（~/.otto-user/park-services.json）。
+ * 全部可选：缺失字段用内置默认（宏创AI园区服务）。
+ */
+export interface ParkServicesConfig {
+  /** 品牌全称：入口悬浮钮 tooltip 与对话框标题（如「XX智慧园区服务」）。 */
+  brandName?: string;
+  /** 园区简称：注入请求模板里的园区称呼（如「XX园区」）。 */
+  parkName?: string;
+  /** 完全覆盖内置服务清单（图标由内置轮换分配）。 */
+  services?: Array<{ name: string; desc: string; prompt: string }>;
+}
+
 // ── 软件更新的跨进程形状 ──
 // 与 src/main/update-core.ts / update-service.ts 里的定义结构一致的副本。
 // main 的 tsconfig rootDir 限制两边不能互相 import（同 IPC 常量表的既有做法：
@@ -168,6 +181,8 @@ export interface OttoBridge {
   feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult>;
   /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
   feishuClearConfig(): Promise<FeishuConfigResult>;
+  /** 园区服务企业定制配置；无配置文件时 null（用内置默认）。 */
+  parkConfig(): Promise<ParkServicesConfig | null>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -422,6 +437,9 @@ const bridge: OttoBridge = {
   },
   feishuClearConfig(): Promise<FeishuConfigResult> {
     return ipcRenderer.invoke('otto:feishu-clear-config') as Promise<FeishuConfigResult>;
+  },
+  parkConfig(): Promise<ParkServicesConfig | null> {
+    return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
