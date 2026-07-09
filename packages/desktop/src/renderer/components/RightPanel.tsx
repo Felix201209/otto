@@ -18,7 +18,23 @@
 import React, { useState } from 'react';
 import { EXPERTS, type Expert } from '../agents/experts.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
-import { IconChevron } from './icons.js';
+import { IconChevron, IconChevronDown, IconTerminal } from './icons.js';
+
+/**
+ * 「自主开发」入口（腰线下的 code 功能，Jeremy 需求）。不进 EXPERTS——
+ * 它不是企业专家人设，而是研发向的代码任务入口；单独常量避免影响
+ * AgentGallery 九宫格与既有测试。点击同样走 launchExpert 起新会话。
+ */
+const DEV_EXPERT: Expert = {
+  id: 'self-dev',
+  name: '自主开发',
+  tagline: '写代码 · 改项目 · 自动化任务',
+  emoji: '⌨️',
+  accent: '#38bdf8',
+  skills: [],
+  kickoff:
+    '我要进行代码开发任务。请先查看当前项目的结构和技术栈，然后问我本次要实现或修复的目标，给出实现计划，经我确认后动手完成；过程中的关键改动请逐步说明并在完成后运行必要的验证。',
+};
 
 type TabType = 'agents' | 'tools' | 'memory' | 'browser' | 'notes';
 
@@ -71,6 +87,9 @@ export function RightPanel({
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [noteText, setNoteText] = useState<string>('');
   const [browserUrl, setBrowserUrl] = useState<string>('about:blank');
+  // 分区折叠状态（点击组头展开/缩回）。默认全展开。
+  const [expertsOpen, setExpertsOpen] = useState<boolean>(true);
+  const [devOpen, setDevOpen] = useState<boolean>(true);
 
   return (
     <aside className="otto-right-panel">
@@ -98,46 +117,109 @@ export function RightPanel({
       <div className="otto-right-panel__body">
         {activeTab === 'agents' && (
           <div>
-            <div className="otto-right-panel__head">企业专家</div>
-            <div className="otto-expert-list">
-              {EXPERTS.map((expert) => (
+            {/* 企业专家组：组头可点击折叠/展开（交互栏过多时收起腾地方）。 */}
+            <button
+              type="button"
+              className="otto-right-panel__grouphead"
+              onClick={() => setExpertsOpen((v) => !v)}
+              aria-expanded={expertsOpen}
+            >
+              <span>企业专家</span>
+              <IconChevronDown
+                size={14}
+                className={
+                  'otto-right-panel__grouphead-chev' +
+                  (expertsOpen ? '' : ' is-collapsed')
+                }
+              />
+            </button>
+            {expertsOpen ? (
+              <>
+                <div className="otto-expert-list">
+                  {EXPERTS.map((expert) => (
+                    <button
+                      key={expert.id}
+                      type="button"
+                      className="otto-expert-card"
+                      onClick={() => onLaunchExpert(expert)}
+                      title={expert.tagline}
+                    >
+                      <span
+                        className="otto-expert-card__icon"
+                        style={{ color: expert.accent }}
+                        aria-hidden
+                      >
+                        {expert.emoji}
+                      </span>
+                      <span className="otto-expert-card__body">
+                        <span className="otto-expert-card__name">
+                          {expert.name}
+                        </span>
+                        <span className="otto-expert-card__desc">
+                          {expert.tagline}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
                 <button
-                  key={expert.id}
+                  type="button"
+                  className="otto-right-panel__moreagents"
+                  onClick={onOpenAgents}
+                  title="查看完整智能体画廊"
+                >
+                  全部智能体
+                  <IconChevron
+                    size={14}
+                    className="otto-right-panel__moreagents-chev"
+                  />
+                </button>
+              </>
+            ) : null}
+
+            {/* 腰线：企业专家与自主开发的视觉分隔（Jeremy 需求）。 */}
+            <div className="otto-right-panel__waist" role="separator" />
+
+            <button
+              type="button"
+              className="otto-right-panel__grouphead"
+              onClick={() => setDevOpen((v) => !v)}
+              aria-expanded={devOpen}
+            >
+              <span>自主开发</span>
+              <IconChevronDown
+                size={14}
+                className={
+                  'otto-right-panel__grouphead-chev' +
+                  (devOpen ? '' : ' is-collapsed')
+                }
+              />
+            </button>
+            {devOpen ? (
+              <div className="otto-expert-list">
+                <button
                   type="button"
                   className="otto-expert-card"
-                  onClick={() => onLaunchExpert(expert)}
-                  title={expert.tagline}
+                  onClick={() => onLaunchExpert(DEV_EXPERT)}
+                  title={DEV_EXPERT.tagline}
                 >
                   <span
-                    className="otto-expert-card__icon"
-                    style={{ color: expert.accent }}
+                    className="otto-expert-card__icon otto-expert-card__icon--dev"
                     aria-hidden
                   >
-                    {expert.emoji}
+                    <IconTerminal size={17} />
                   </span>
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">
-                      {expert.name}
+                      {DEV_EXPERT.name}
                     </span>
                     <span className="otto-expert-card__desc">
-                      {expert.tagline}
+                      {DEV_EXPERT.tagline}
                     </span>
                   </span>
                 </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="otto-right-panel__moreagents"
-              onClick={onOpenAgents}
-              title="查看完整智能体画廊"
-            >
-              全部智能体
-              <IconChevron
-                size={14}
-                className="otto-right-panel__moreagents-chev"
-              />
-            </button>
+              </div>
+            ) : null}
           </div>
         )}
 
