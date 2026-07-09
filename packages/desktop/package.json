@@ -31,7 +31,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
-    "electron": "^33.2.0",
+    "electron": "^43.1.0",
     "electron-builder": "^25.1.8",
     "html-webpack-plugin": "^5.6.3",
     "style-loader": "^4.0.0",
@@ -45,7 +45,7 @@
     "appId": "ai.otto.desktop",
     "productName": "Otto",
     "copyright": "Copyright © 2025 Otto",
-    "electronVersion": "33.4.11",
+    "electronVersion": "43.1.0",
     "directories": {
       "output": "release",
       "buildResources": "build"
