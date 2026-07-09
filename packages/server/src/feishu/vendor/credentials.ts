@@ -1,1 +1,2 @@
-../../../../cli/src/services/feishu/credentials.ts
+// Re-export from CLI package dist (Windows-compatible replacement for symlink)
+export * from 'otto-cli/dist/src/services/feishu/credentials.js';
