@@ -3125,6 +3125,7 @@ h6.otto-prose__h {
   gap: 8px;
 }
 .otto-topbar-export,
+.otto-topbar-theme,
 .otto-topbar-setup {
   display: inline-flex;
   align-items: center;
@@ -3139,6 +3140,7 @@ h6.otto-prose__h {
   -webkit-app-region: no-drag;
 }
 .otto-topbar-export:hover,
+.otto-topbar-theme:hover,
 .otto-topbar-setup:hover {
   color: var(--otto-text);
   border-color: var(--otto-border-strong);
@@ -4546,6 +4548,141 @@ h6.otto-prose__h {
   grid-area: desc;
   font-size: 11.5px;
   color: var(--otto-text-secondary);
+}
+
+/* ── 工作日志月历（有记录日期亮点，hover 弹当天条目）──────────────────── */
+.otto-wcal {
+  margin-bottom: 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  padding: 10px 10px 12px;
+}
+.otto-wcal__title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--otto-text-secondary);
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+.otto-wcal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.otto-wcal__weekday {
+  font-size: 9.5px;
+  color: var(--otto-text-tertiary);
+  text-align: center;
+  padding-bottom: 3px;
+}
+.otto-wcal__day {
+  position: relative;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  color: var(--otto-text-secondary);
+  border-radius: 6px;
+}
+.otto-wcal__day.is-today {
+  border: 1px solid var(--otto-accent);
+  color: var(--otto-accent-hover);
+  font-weight: 700;
+}
+.otto-wcal__day.has-log {
+  color: var(--otto-text);
+  font-weight: 600;
+  cursor: default;
+}
+.otto-wcal__day.has-log:hover {
+  background: var(--otto-accent-soft);
+}
+.otto-wcal__dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+}
+/* 悬浮明细：纯 CSS popover，靠右侧面板宽度内左对齐展开。 */
+.otto-wcal__pop {
+  display: none;
+  position: absolute;
+  top: 28px;
+  right: -4px;
+  z-index: 40;
+  width: 240px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: var(--otto-radius);
+  background: var(--otto-bg);
+  border: 1px solid var(--otto-border-strong);
+  box-shadow: var(--otto-shadow-pop);
+  text-align: left;
+}
+.otto-wcal__day.has-log:hover .otto-wcal__pop {
+  display: block;
+}
+.otto-wcal__pop-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--otto-text);
+  margin-bottom: 6px;
+}
+.otto-wcal__pop-item {
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 2px 0;
+}
+.otto-wcal__pop-time {
+  flex-shrink: 0;
+  font-family: var(--otto-font-mono);
+  color: var(--otto-accent-hover);
+}
+.otto-wcal__pop-action {
+  color: var(--otto-text-secondary);
+  word-break: break-all;
+}
+.otto-wcal__pop-more {
+  font-size: 10px;
+  color: var(--otto-text-tertiary);
+  padding-top: 4px;
+}
+
+/* ── 设置与诊断中心悬浮窗（对话保持底层，workbuddy 式大浮窗）─────────── */
+.otto-hubfloat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(28, 25, 23, 0.36);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-hubfloat {
+  width: min(1080px, calc(100vw - 64px));
+  height: min(720px, calc(100vh - 64px));
+  border-radius: var(--otto-radius-lg);
+  background: var(--otto-bg);
+  box-shadow: var(--otto-shadow-pop);
+  overflow: hidden;
+  display: flex;
+  animation: otto-park-pop var(--otto-dur) var(--otto-ease);
+}
+/* 浮窗内的中心页占满容器（原整页布局在窗内继续成立）。 */
+.otto-hubfloat > * {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
 }
 
 /* What's New 首启弹窗（复用 park 弹窗骨架，仅补列表与按钮排版）。 */

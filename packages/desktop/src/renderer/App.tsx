@@ -310,14 +310,6 @@ export function App(): React.JSX.Element {
           onLaunch={handleLaunchExpert}
           onBack={() => setMainView('chat')}
         />
-      ) : mainView === 'hub' ? (
-        <SettingsHubPage
-          data={settingsData}
-          update={softwareUpdate}
-          activeSession={activeSession}
-          onBack={() => setMainView('chat')}
-          initialTab={hubInitialTab}
-        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
           <ChatView
@@ -389,6 +381,30 @@ export function App(): React.JSX.Element {
           message={settingsData.state.exportMessage}
           onClose={settingsData.actions.clearExportMessage}
         />
+      ) : null}
+
+      {/* 设置与诊断中心：悬浮大窗（Jeremy：参考 workbuddy）——对话保持在底层，
+          遮罩点击 / Esc / 面板内「返回对话」均可关闭。 */}
+      {mainView === 'hub' ? (
+        <div
+          className="otto-hubfloat-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setMainView('chat');
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setMainView('chat');
+          }}
+        >
+          <div className="otto-hubfloat" role="dialog" aria-modal="true" aria-label="设置与诊断中心">
+            <SettingsHubPage
+              data={settingsData}
+              update={softwareUpdate}
+              activeSession={activeSession}
+              onBack={() => setMainView('chat')}
+              initialTab={hubInitialTab}
+            />
+          </div>
+        </div>
       ) : null}
 
       {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}

@@ -135,12 +135,7 @@ export function useParkBrand(): string {
   return brand;
 }
 
-export function ParkServicesPlugin({
-  showFab = true,
-}: {
-  /** 是否显示右下角悬浮小钮（无活跃会话时隐藏，但弹窗监听常驻——右侧面板入口仍可打开）。 */
-  showFab?: boolean;
-}): React.JSX.Element {
+export function ParkServicesPlugin(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   // 企业定制：品牌名 / 园区称呼 / 服务清单（~/.otto-user/park-services.json，
   // 经 preload parkConfig() 读取；无配置 = 内置宏创默认）。
@@ -148,7 +143,6 @@ export function ParkServicesPlugin({
   const [services, setServices] = useState<ParkService[]>(() =>
     defaultServices(DEFAULT_PARK),
   );
-  const fabRef = useRef<HTMLButtonElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const uid = useId();
   const titleId = `${uid}-title`;
@@ -179,10 +173,9 @@ export function ParkServicesPlugin({
     };
   }, []);
 
-  // 打开：焦点落第一个服务项；关闭：焦点还回触发小钮。
+  // 打开：焦点落第一个服务项。
   useEffect(() => {
     if (open) firstItemRef.current?.focus();
-    else fabRef.current?.focus();
   }, [open]);
 
   // 右侧面板「园区服务」入口经自定义事件打开本弹窗。
@@ -207,21 +200,8 @@ export function ParkServicesPlugin({
 
   return (
     <>
-      {showFab ? (
-      <button
-        ref={fabRef}
-        type="button"
-        className="otto-park-fab"
-        onClick={() => setOpen(true)}
-        title={brand}
-        aria-label={brand}
-      >
-        <IconBuilding size={17} className="otto-park-fab__icon" />
-        {/* 于总：右下角必须带企业品牌名（默认「宏创AI园区服务」，随 brandName 配置变）。 */}
-        <span className="otto-park-fab__label">{brand}</span>
-      </button>
-      ) : null}
-
+      {/* 悬浮小钮已按 Jeremy 要求移除（v1.6.0）：入口统一走右侧面板
+          「园区 AI 服务」卡片（openParkServices 事件）。弹窗监听常驻。 */}
       {open ? (
         <div
           className="otto-park-overlay"

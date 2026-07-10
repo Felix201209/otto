@@ -25,8 +25,45 @@ import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
-import { OttoAvatar, IconArrowDown } from './icons.js';
+import { OttoAvatar, IconArrowDown, IconMoon, IconSun } from './icons.js';
 import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+
+/**
+ * 顶栏黑/白底色一键切换（Jeremy）。点击在浅色/深色间切换（nativeTheme IPC，
+ * 立即生效并持久化）；初始若是「跟随系统」，按系统当前实际深浅决定切换方向。
+ * 图标显示「点击后会变成的模式」：浅色时显示月亮（点了变深色），反之太阳。
+ */
+function ThemeToggle(): React.JSX.Element {
+  // matchMedia 防御可选：jsdom（单测环境）没有该 API。
+  const [dark, setDark] = useState(
+    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  );
+
+  // 跟随实际渲染态（含在偏好面板里改主题、或跟随系统时 OS 切换的情况）。
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent): void => setDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const toggle = (): void => {
+    void window.otto?.themeSet?.(dark ? 'light' : 'dark');
+  };
+
+  return (
+    <button
+      type="button"
+      className="otto-topbar-theme"
+      onClick={toggle}
+      title={dark ? '切换到浅色' : '切换到深色'}
+      aria-label={dark ? '切换到浅色' : '切换到深色'}
+    >
+      {dark ? <IconSun size={15} /> : <IconMoon size={15} />}
+    </button>
+  );
+}
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
 const NEAR_BOTTOM = 80;
@@ -289,6 +326,7 @@ export function ChatView({
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
         <div className="otto-topbar__actions">
+          <ThemeToggle />
           {session && onExport ? (
             <button
               type="button"
@@ -354,9 +392,8 @@ export function ChatView({
         </button>
       ) : null}
 
-      {/* 园区服务插件：常驻挂载（右侧面板入口经事件打开弹窗，空态也要能开）；
-          右下角悬浮小钮仅在有会话时显示。 */}
-      <ParkServicesPlugin showFab={!!session} />
+      {/* 园区服务插件：常驻挂载（右侧面板「园区 AI 服务」入口经事件打开弹窗）。 */}
+      <ParkServicesPlugin />
 
       <Composer
         models={models}

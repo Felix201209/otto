@@ -31,8 +31,12 @@
 
 import { app, shell } from 'electron';
 import type { WebContents } from 'electron';
+import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileP = promisify(execFile);
 import {
   isAllowedAssetUrl,
   parseGithubRelease,
@@ -333,6 +337,40 @@ export class UpdateService {
       this.readyFile = null;
       return { ok: false, message: verdict.message };
     }
+    // ── 自动覆盖安装（v1.6.0）：优先全自动，任何一步失败降级为打开安装包手动装 ──
+
+    // Windows：NSIS 静默安装（/S）。--force-run 让装完自动拉起新版；
+    // 安装器自带「等待旧进程退出」逻辑（electron-builder 生成的 NSIS 脚本），
+    // 因此拉起后立刻退出本进程即可。此路径需 Windows 实机回归（本机为 mac）。
+    if (process.platform === 'win32' && ready.filePath.toLowerCase().endsWith('.exe')) {
+      try {
+        const child = spawn(ready.filePath, ['/S', '--force-run'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+        setTimeout(() => app.quit(), 400);
+        return { ok: true, message: '正在后台自动安装，安装完成后 Otto 将自动重新启动。' };
+      } catch {
+        /* 静默安装拉起失败 → 走下方手动兜底 */
+      }
+    }
+
+    // macOS：挂载 dmg → ditto 覆盖当前 .app → 卸载 → 自动重启。
+    // 运行中的 bundle 可被替换（进程握旧 inode），relaunch 后即新版。
+    if (process.platform === 'darwin' && ready.filePath.toLowerCase().endsWith('.dmg')) {
+      const auto = await this.autoInstallFromDmg(ready.filePath);
+      if (auto.ok) {
+        // relaunch 在返回后触发，给 renderer 一拍时间收到结果展示提示。
+        setTimeout(() => {
+          app.relaunch();
+          app.exit(0);
+        }, 600);
+        return { ok: true, message: '更新已安装，Otto 正在自动重启…' };
+      }
+      // 自动失败不终止：如实告知并降级手动路径。
+    }
+
     const openError = await shell.openPath(ready.filePath);
     if (openError) {
       return { ok: false, message: `打开安装包失败：${openError}` };
@@ -340,8 +378,54 @@ export class UpdateService {
     const message =
       process.platform === 'win32'
         ? '安装器已打开：请按向导完成安装，安装完成后手动重新启动 Otto。'
-        : '安装包已打开：请把 Otto 拖入「应用程序」替换旧版本，完成后重新启动 Otto。';
+        : '自动安装未成功，已打开安装包：请把 Otto 拖入「应用程序」替换旧版本后重新启动。';
     return { ok: true, message };
+  }
+
+  /**
+   * mac 全自动安装：hdiutil attach（只读、不弹 Finder）→ 定位卷内唯一 .app →
+   * ditto 覆盖当前运行的 bundle → detach。失败返回 ok:false（调用方降级手动）。
+   * 安全边界：仅当当前进程确实运行在 .app bundle 内才尝试覆盖（dev 模式直接放弃）。
+   */
+  private async autoInstallFromDmg(dmgPath: string): Promise<{ ok: boolean; reason?: string }> {
+    // 当前 bundle 路径：<X>.app/Contents/MacOS/<bin> → 上三级。
+    const bundlePath = path.resolve(app.getPath('exe'), '..', '..', '..');
+    if (!bundlePath.endsWith('.app')) {
+      return { ok: false, reason: '当前不在 .app bundle 内（开发模式），不做自动覆盖' };
+    }
+    let mountPoint: string | null = null;
+    try {
+      const { stdout } = await execFileP('hdiutil', [
+        'attach',
+        '-nobrowse',
+        '-readonly',
+        '-plist',
+        dmgPath,
+      ]);
+      // plist 输出里找 mount-point（避免解析空格路径出错，用最朴素的标签扫描）。
+      const m = stdout.match(/<key>mount-point<\/key>\s*<string>([^<]+)<\/string>/);
+      mountPoint = m ? m[1] : null;
+      if (!mountPoint) return { ok: false, reason: '无法定位 dmg 挂载点' };
+
+      const apps = fs.readdirSync(mountPoint).filter((f) => f.endsWith('.app'));
+      if (apps.length !== 1) {
+        return { ok: false, reason: `dmg 内应恰有一个 .app，实际 ${apps.length} 个` };
+      }
+      const srcApp = path.join(mountPoint, apps[0]);
+      // ditto 保留签名/权限/扩展属性；目标是正在运行的 bundle，覆盖是安全的。
+      await execFileP('ditto', [srcApp, bundlePath]);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : '自动安装失败' };
+    } finally {
+      if (mountPoint) {
+        try {
+          await execFileP('hdiutil', ['detach', mountPoint, '-quiet']);
+        } catch {
+          /* 卸载失败不影响结果（系统稍后自行回收）*/
+        }
+      }
+    }
   }
 
   /** 进度推送（窗口可能已销毁，静默跳过）。 */

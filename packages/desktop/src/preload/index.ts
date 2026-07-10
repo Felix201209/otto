@@ -195,6 +195,13 @@ export interface OttoBridge {
   }>;
   /** 今日工作日志汇总。 */
   workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
+  /** 近 N 天逐日日志明细（日历 hover 视图）。 */
+  workLogRecent(days?: number): Promise<
+    Array<{
+      date: string;
+      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+    }>
+  >;
   /** 部门共享 Skill 列表。 */
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 公司 Skill 市场。 */
@@ -480,6 +487,19 @@ const bridge: OttoBridge = {
       date: string;
       totalActions: number;
     }>;
+  },
+  workLogRecent(days?: number): Promise<
+    Array<{
+      date: string;
+      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+    }>
+  > {
+    return ipcRenderer.invoke('otto:worklog-recent', days) as Promise<
+      Array<{
+        date: string;
+        entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+      }>
+    >;
   },
   skillShareList(teamId?: string): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;

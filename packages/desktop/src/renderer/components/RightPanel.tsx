@@ -13,7 +13,7 @@
  *   - worklog：今日工作日志
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { EXPERTS, type Expert } from '../agents/experts.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
@@ -21,7 +21,7 @@ import { IconBuilding, IconChevron, IconChevronDown, IconTerminal } from './icon
 
 const DEV_EXPERT: Expert = {
   id: 'self-dev',
-  name: '自主开发',
+  name: '企业AI自主开发',
   tagline: '写代码 · 改项目 · 自动化任务',
   emoji: '⌨️',
   accent: '#38bdf8',
@@ -33,7 +33,7 @@ const DEV_EXPERT: Expert = {
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'leaderboard' | 'skillmarket' | 'worklog';
 
 const TAB_LABEL: Record<TabType, string> = {
-  agents: '智能体',
+  agents: '专家',
   tools: '工具',
   memory: '记忆',
   notes: '笔记',
@@ -124,8 +124,8 @@ export function RightPanel({
                     </button>
                   ))}
                 </div>
-                <button type="button" className="otto-right-panel__moreagents" onClick={onOpenAgents} title="查看完整智能体画廊">
-                  全部智能体
+                <button type="button" className="otto-right-panel__moreagents" onClick={onOpenAgents} title="查看完整专家画廊">
+                  全部专家
                   <IconChevron size={14} className="otto-right-panel__moreagents-chev" />
                 </button>
               </>
@@ -150,7 +150,7 @@ export function RightPanel({
             ) : null}
             <div className="otto-right-panel__waist" role="separator" />
             <button type="button" className="otto-right-panel__grouphead" onClick={() => setDevOpen((v) => !v)} aria-expanded={devOpen}>
-              <span>自主开发</span>
+              <span>企业AI自主开发</span>
               <IconChevronDown size={14} className={'otto-right-panel__grouphead-chev' + (devOpen ? '' : ' is-collapsed')} />
             </button>
             {devOpen ? (
@@ -226,10 +226,125 @@ export function RightPanel({
         {activeTab === 'worklog' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
             <button style={btnStyle} onClick={async () => { try { const d = await window.otto?.workLogToday(); setWorklogData(d.summary); } catch { /* server 未就绪，保留上次内容 */ } }}>刷新今日日志</button>
-            <div style={panelStyle}>{worklogData || '点击「刷新今日日志」加载。'}</div>
+            <button
+              style={btnStyle}
+              onClick={async () => {
+                // 「总结当下工作」：把今日日志喂给 Otto 生成正式工作报告
+                // （注入输入框，回车即发送——报告风格用户可自行补充要求）。
+                try {
+                  const recent = await window.otto?.workLogRecent(1);
+                  const today = recent?.[0];
+                  if (!today || today.entries.length === 0) {
+                    setWorklogData('今天还没有操作记录，暂无可总结的内容。');
+                    return;
+                  }
+                  const lines = today.entries
+                    .map((e) => `${e.time} [${e.category}] ${e.action}${e.success ? '' : '（失败）'}`)
+                    .join('\n');
+                  insertComposerDraft(
+                    `请把我今天的工作操作日志总结成一份简洁清晰的当日工作报告（按主题归并，突出产出与结论，结尾列待跟进事项）：\n\n${lines}`,
+                  );
+                } catch { /* server 未就绪 */ }
+              }}
+            >
+              总结当下工作 → 生成报告
+            </button>
+            <WorkLogCalendar />
+            <div style={{ ...panelStyle, flex: 'none', maxHeight: '160px' }}>{worklogData || '点击「刷新今日日志」查看今日汇总。'}</div>
           </div>
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * 工作日志月历（Jeremy：日历上体现，鼠标悬浮某天按时间点列出当天日志）。
+ * 数据：main 的 workLogRecent(31)（读 ~/.otto-user/memory/worklog/daily/*.jsonl）。
+ * 有记录的日期亮蓝点，hover 弹出当天条目（纯 CSS popover）。
+ */
+function WorkLogCalendar(): React.JSX.Element {
+  const [byDate, setByDate] = useState<
+    Record<string, Array<{ time: string; category: string; action: string; success: boolean }>>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto
+      ?.workLogRecent?.(31)
+      .then((days) => {
+        if (cancelled || !days) return;
+        const map: typeof byDate = {};
+        for (const d of days) map[d.date] = d.entries;
+        setByDate(map);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 当月网格：首日偏移 + 天数（周一为一周首日）。
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
+  const todayDate = now.getDate();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+
+  return (
+    <div className="otto-wcal">
+      <div className="otto-wcal__title">
+        {year} 年 {month + 1} 月
+      </div>
+      <div className="otto-wcal__grid">
+        {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+          <div key={w} className="otto-wcal__weekday">
+            {w}
+          </div>
+        ))}
+        {Array.from({ length: firstWeekday }, (_, i) => (
+          <div key={`pad-${i}`} />
+        ))}
+        {Array.from({ length: daysInMonth }, (_, i) => {
+          const day = i + 1;
+          const date = `${year}-${pad(month + 1)}-${pad(day)}`;
+          const entries = byDate[date];
+          return (
+            <div
+              key={date}
+              className={
+                'otto-wcal__day' +
+                (entries ? ' has-log' : '') +
+                (day === todayDate ? ' is-today' : '')
+              }
+            >
+              {day}
+              {entries ? <span className="otto-wcal__dot" aria-hidden /> : null}
+              {entries ? (
+                <div className="otto-wcal__pop" role="tooltip">
+                  <div className="otto-wcal__pop-title">
+                    {month + 1} 月 {day} 日 · {entries.length} 条
+                  </div>
+                  {entries.slice(0, 12).map((e, j) => (
+                    <div key={j} className="otto-wcal__pop-item">
+                      <span className="otto-wcal__pop-time">{e.time}</span>
+                      <span className="otto-wcal__pop-action">
+                        [{e.category}] {e.action}
+                        {e.success ? '' : '（失败）'}
+                      </span>
+                    </div>
+                  ))}
+                  {entries.length > 12 ? (
+                    <div className="otto-wcal__pop-more">…还有 {entries.length - 12} 条</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

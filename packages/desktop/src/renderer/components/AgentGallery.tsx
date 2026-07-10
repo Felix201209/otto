@@ -45,13 +45,13 @@ export function AgentGallery({
   return (
     <section
       className="otto-agents-page"
-      aria-label="智能体 · 企业专家"
+      aria-label="专家 · 企业专家"
       onKeyDown={onKeyDown}
     >
       <header className="otto-agents__head">
         <IconAgent size={20} className="otto-agents__headicon" />
         <div className="otto-agents__headtext">
-          <div className="otto-agents__title">智能体 · 企业专家</div>
+          <div className="otto-agents__title">专家 · 企业专家</div>
           <div className="otto-agents__subtitle">
             选一位专家开始 —— 它会加载对应技能并按方法协助你
           </div>

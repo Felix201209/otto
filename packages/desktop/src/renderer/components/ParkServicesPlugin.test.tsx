@@ -5,13 +5,14 @@
  */
 
 /**
- * ParkServicesPlugin 单测：入口卡片渲染、点击展开对话框、六项服务齐全、
- * 点服务 = 派发 composer 注入事件 + 关闭、Esc / 遮罩 / × 关闭、无障碍属性。
+ * ParkServicesPlugin 单测（v1.6.0 起无悬浮小钮，入口=openParkServices 事件）：
+ * 默认不渲染、事件打开、六项服务齐全、点服务=注入+关闭、三种关闭、
+ * 无障碍属性、企业定制覆盖。
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, fireEvent, screen, cleanup } from '@testing-library/react';
-import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+import { render, fireEvent, screen, cleanup, act } from '@testing-library/react';
+import { ParkServicesPlugin, openParkServices } from './ParkServicesPlugin.js';
 
 afterEach(cleanup);
 
@@ -25,22 +26,23 @@ function listenDraft(): { texts: string[]; stop: () => void } {
   return { texts, stop: () => window.removeEventListener('otto:composer-insert', handler) };
 }
 
+/** 经右侧面板同款事件通路打开弹窗。 */
+function openDialog(): void {
+  act(() => {
+    openParkServices();
+  });
+}
+
 describe('ParkServicesPlugin', () => {
-  it('默认只渲染入口卡片，不渲染对话框', () => {
-    render(<ParkServicesPlugin />);
-    expect(screen.getByTitle('宏创AI园区服务')).toBeTruthy();
+  it('默认不渲染任何可见节点（无悬浮小钮，弹窗关闭）', () => {
+    const { container } = render(<ParkServicesPlugin />);
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(container.querySelector('.otto-park-fab')).toBeNull();
   });
 
-  it('入口小钮可见标签显示完整品牌名（于总：必须带「宏创」）', () => {
+  it('openParkServices 事件打开居中对话框，六项服务齐全', () => {
     render(<ParkServicesPlugin />);
-    const label = document.querySelector('.otto-park-fab__label');
-    expect(label?.textContent).toBe('宏创AI园区服务');
-  });
-
-  it('点击卡片展开居中对话框，六项服务齐全', () => {
-    render(<ParkServicesPlugin />);
-    fireEvent.click(screen.getByTitle('宏创AI园区服务'));
+    openDialog();
     expect(screen.getByRole('dialog')).toBeTruthy();
     for (const name of ['访客邀约', '会议室预订', 'IT 报修', '行政后勤', '班车通勤', '餐饮服务']) {
       expect(screen.getByText(name)).toBeTruthy();
@@ -50,7 +52,7 @@ describe('ParkServicesPlugin', () => {
   it('点服务项：派发 composer 注入事件（含服务模板）并关闭对话框', () => {
     const l = listenDraft();
     render(<ParkServicesPlugin />);
-    fireEvent.click(screen.getByTitle('宏创AI园区服务'));
+    openDialog();
     fireEvent.click(screen.getByText('会议室预订'));
     expect(l.texts).toHaveLength(1);
     expect(l.texts[0]).toContain('宏创园区会议室');
@@ -60,27 +62,24 @@ describe('ParkServicesPlugin', () => {
 
   it('Esc / 点遮罩 / 右上 × 都能关闭', () => {
     render(<ParkServicesPlugin />);
-    const openCard = (): void => {
-      fireEvent.click(screen.getByTitle('宏创AI园区服务'));
-    };
 
-    openCard();
+    openDialog();
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    openCard();
+    openDialog();
     const overlay = document.querySelector('.otto-park-overlay')!;
     fireEvent.mouseDown(overlay);
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    openCard();
+    openDialog();
     fireEvent.click(screen.getByLabelText('关闭'));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('无障碍：dialog 具备 aria-modal 且由标题 labelledby', () => {
+  it('无障碍：dialog 具备 aria-modal 且由标题 labelledby（默认品牌名）', () => {
     render(<ParkServicesPlugin />);
-    fireEvent.click(screen.getByTitle('宏创AI园区服务'));
+    openDialog();
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     const labelledBy = dialog.getAttribute('aria-labelledby')!;
@@ -98,8 +97,8 @@ describe('ParkServicesPlugin', () => {
     (window as unknown as { otto: typeof otto }).otto = otto;
     try {
       render(<ParkServicesPlugin />);
-      // 配置异步生效：标题与服务清单都换成企业定制。
-      fireEvent.click(await screen.findByTitle('星火智慧园区服务'));
+      openDialog();
+      expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
       expect(screen.getByText('自定义服务A')).toBeTruthy();
       expect(screen.queryByText('访客邀约')).toBeNull();
     } finally {
@@ -115,11 +114,9 @@ describe('ParkServicesPlugin', () => {
     try {
       const l = listenDraft();
       render(<ParkServicesPlugin />);
-      fireEvent.click(screen.getByTitle('宏创AI园区服务'));
-      // 等配置生效后再点（模板已换名）。
+      openDialog();
       await screen.findByText('会议室预订');
       fireEvent.click(screen.getByText('会议室预订'));
-      // setState 是异步微任务，等注入事件到达。
       await new Promise((r) => setTimeout(r, 0));
       expect(l.texts[0]).toContain('星火园区会议室');
       l.stop();

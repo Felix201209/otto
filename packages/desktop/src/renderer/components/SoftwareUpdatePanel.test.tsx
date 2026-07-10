@@ -113,7 +113,7 @@ describe('SoftwareUpdatePanel：有新版 → 下载 → 完成', () => {
     expect(screen.getByText(/42% · 54\.6 \/ 130\.0 MB/)).toBeTruthy();
     expect(screen.getByText('取消下载')).toBeTruthy();
 
-    // 完成：sha256 校验通过 → 打开安装包 + mac 指引。
+    // 完成：sha256 校验通过 → 立即安装 + mac 指引。
     await act(async () => {
       download.resolve({
         ok: true,
@@ -122,9 +122,9 @@ describe('SoftwareUpdatePanel：有新版 → 下载 → 完成', () => {
       });
     });
     expect(await screen.findByText(/安装包已就绪（sha256 校验通过）/)).toBeTruthy();
-    expect(screen.getByText(/拖入「应用程序」/)).toBeTruthy();
+    expect(screen.getByText(/自动完成安装并重启/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText('打开安装包'));
+    fireEvent.click(screen.getByText('立即安装并重启'));
     expect(await screen.findByText(/完成后请重新启动 Otto/)).toBeTruthy();
   });
 
@@ -196,8 +196,8 @@ describe('SoftwareUpdatePanel：检查失败 ≠ 已是最新（诚实契约）'
 
 describe('installHintForFile：按安装包类型给平台指引', () => {
   it('.exe → NSIS 向导指引；.dmg → 拖入应用程序指引；未知 → 通用指引', () => {
-    expect(installHintForFile('C:\\Users\\f\\Downloads\\Otto-Setup.exe')).toContain('安装向导');
-    expect(installHintForFile('/Users/f/Downloads/Otto.dmg')).toContain('应用程序');
+    expect(installHintForFile('C:\\Users\\f\\Downloads\\Otto-Setup.exe')).toContain('静默安装');
+    expect(installHintForFile('/Users/f/Downloads/Otto.dmg')).toContain('自动完成安装');
     expect(installHintForFile(null)).toContain('重新启动 Otto');
   });
 });

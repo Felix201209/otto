@@ -45,7 +45,7 @@ describe('AgentGallery（页面）', () => {
 
   it('Esc → onBack', () => {
     const { onBack } = renderGallery();
-    fireEvent.keyDown(screen.getByRole('region', { name: '智能体 · 企业专家' }), {
+    fireEvent.keyDown(screen.getByRole('region', { name: '专家 · 企业专家' }), {
       key: 'Escape',
     });
     expect(onBack).toHaveBeenCalledTimes(1);

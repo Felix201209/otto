@@ -122,6 +122,7 @@ const IPC = {
   themeSet: 'otto:theme-set',
   skillLeaderboard: 'otto:skill-leaderboard',
   workLogToday: 'otto:worklog-today',
+  workLogRecent: 'otto:worklog-recent',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
   setLocalTestUrl: 'otto:set-local-test-url',
@@ -800,6 +801,40 @@ function registerIpc(): void {
     } catch {
       return { summary: '读取工作日志失败。', date: '', totalActions: 0 };
     }
+  });
+
+  // 工作日志·近 N 天逐日明细（日历视图数据源：hover 某天列出当天条目）。
+  ipcMain.handle(IPC.workLogRecent, async (_e, days?: number) => {
+    const dayCount = Math.min(Math.max(Number(days) || 31, 1), 92);
+    const worklogDir = path.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
+    const out: Array<{
+      date: string;
+      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+    }> = [];
+    const today = new Date();
+    for (let i = 0; i < dayCount; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const date = d.toISOString().split('T')[0];
+      try {
+        const raw = await fs.promises.readFile(path.join(worklogDir, `${date}.jsonl`), 'utf8');
+        const entries = raw
+          .trim()
+          .split('\n')
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as WorkLogEntry)
+          .map((e) => ({
+            time: (e.timestamp || '').substring(11, 16) || '--:--',
+            category: e.category || '未分类',
+            action: e.action || '操作',
+            success: e.success !== false,
+          }));
+        if (entries.length > 0) out.push({ date, entries });
+      } catch {
+        /* 当天无文件 = 无记录，跳过 */
+      }
+    }
+    return out;
   });
 
   // 部门共享 Skill 列表

@@ -78,7 +78,8 @@ const TAB_LABEL: Record<TabId, string> = {
  */
 const NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
   { label: '设置', tabs: ['prefs', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
-  { label: '诊断', tabs: ['doctor', 'context', 'stats', 'workflows'] },
+  // 'stats'（用量统计）按 Jeremy 要求下架（面向客户模糊成本细节）；代码保留无入口。
+  { label: '诊断', tabs: ['doctor', 'context', 'workflows'] },
   { label: '工作区', tabs: ['todos', 'memory', 'skills', 'tools'] },
 ];
 
