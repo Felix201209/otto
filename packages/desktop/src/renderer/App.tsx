@@ -142,6 +142,11 @@ export function App(): React.JSX.Element {
     transport.send({ type: 'save_custom_model', payload });
   };
 
+  // 删除自定义模型：server 成功后广播 models_list，列表自动刷新（多窗口同步）。
+  const handleDeleteModel = (id: string): void => {
+    transport.send({ type: 'delete_custom_model', payload: { id } });
+  };
+
   // —— 首启/新建自动引导 ——
   // 连上且会话列表已知晓（sessionsLoaded）后：
   //   · 若一个会话都没有且本次尚未引导过 → 建一个现成会话（首启即可直接打字，消除死路）；
@@ -304,6 +309,7 @@ export function App(): React.JSX.Element {
           saveError={saveError}
           onClose={closeSetup}
           onSave={handleSaveModel}
+          onDeleteModel={handleDeleteModel}
         />
       ) : mainView === 'agents' ? (
         <AgentGallery

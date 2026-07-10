@@ -358,6 +358,9 @@ export type RenameSessionMsg = Envelope<
  * server 收到后：校验 → 复用 CLI 同格式的原子写盘 → 成功广播最新 `models_list`；
  * 失败广播 `error`（code:'save_failed'）。
  */
+/** 删除自定义模型：id 为 models_list 里的 ModelInfo.id（generateCustomModelId 结果）。 */
+export type DeleteCustomModelMsg = Envelope<'delete_custom_model', { id: string }>;
+
 export type SaveCustomModelMsg = Envelope<
   'save_custom_model',
   {
@@ -501,6 +504,7 @@ export type ClientToServer =
   | SetModelMsg
   | GetModelsMsg
   | SaveCustomModelMsg
+  | DeleteCustomModelMsg
   | DeleteSessionMsg
   | RenameSessionMsg
   | GetSettingsMsg
@@ -632,6 +636,8 @@ export interface ModelInfo {
   id: string;
   displayName: string;
   provider: string;
+  /** 接入端点（可选）：UI 据域名识别真实厂商（provider 只是协议名）。 */
+  baseUrl?: string;
   enabled?: boolean;
 }
 
@@ -1221,6 +1227,11 @@ export function validateClientPayload(msg: {
       if (!isPlainObject(p)) return 'set_model payload 必须是对象';
       if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
+      return null;
+    }
+    case 'delete_custom_model': {
+      if (!isPlainObject(p)) return 'delete_custom_model payload 必须是对象';
+      if (!isNonEmptyString(p['id'])) return 'id 必须是非空字符串';
       return null;
     }
     case 'save_custom_model': {

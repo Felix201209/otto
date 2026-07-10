@@ -255,6 +255,23 @@ export function listModelInfos(): ModelInfo[] {
     id: generateCustomModelId(m),
     displayName: m.displayName,
     provider: m.provider,
+    // 带上 baseUrl 让 UI 能按接入域名识别真实厂商：provider 只是协议名，
+    // OpenAI 兼容接入的智谱/通义/DeepSeek 全叫 'openai'，直接展示会误导。
+    baseUrl: m.baseUrl,
     enabled: m.enabled !== false,
   }));
+}
+
+/**
+ * 删除一个自定义模型（按 ModelInfo id 匹配，即 generateCustomModelId 结果）。
+ * 命中则原子重写配置；若被删的正是当前生效模型（preferredModel），一并清除
+ * （下次解析回退默认顺序）。返回是否真的删掉了。
+ */
+export function deleteCustomModel(infoId: string): boolean {
+  const models = loadCustomModels();
+  const rest = models.filter((m) => generateCustomModelId(m) !== infoId);
+  if (rest.length === models.length) return false;
+  const preferred = loadPreferredModel();
+  saveCustomModels(rest, preferred === infoId ? undefined : preferred);
+  return true;
 }

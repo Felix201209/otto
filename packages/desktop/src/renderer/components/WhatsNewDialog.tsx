@@ -26,6 +26,14 @@ interface ChangelogEntry {
 /** 版本更新说明（最新在前；只有列在这里的版本会触发弹窗）。 */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.6.1',
+    date: '2026-07-10',
+    items: [
+      '模型管理修复：已配置模型现在可以删除（列表内两击确认），删除当前生效模型会自动回退',
+      '模型列表显示真实厂商（按接入域名识别：智谱 GLM / 阿里通义 / DeepSeek 等），不再一律显示 OpenAI',
+    ],
+  },
+  {
     version: '1.6.0',
     date: '2026-07-10',
     items: [

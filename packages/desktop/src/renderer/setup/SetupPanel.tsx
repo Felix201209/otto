@@ -44,6 +44,7 @@ import {
   type CustomModelProvider,
   type SetupFormState,
   type SaveCustomModelPayload,
+  vendorFromBaseUrl,
 } from './presets.js';
 
 export interface SetupPanelProps {
@@ -57,6 +58,8 @@ export interface SetupPanelProps {
   onClose: () => void;
   /** 提交一个自定义模型（发 `save_custom_model` 帧，由上层裁决成功/失败）。 */
   onSave: (payload: SaveCustomModelPayload) => void;
+  /** 删除一个已配置模型（发 `delete_custom_model` 帧；成功后 models_list 广播刷新列表）。 */
+  onDeleteModel?: (id: string) => void;
 }
 
 const DEFAULT_PRESET = PROVIDER_PRESETS[0];
@@ -79,8 +82,11 @@ export function SetupPanel({
   saveError = null,
   onClose,
   onSave,
+  onDeleteModel,
 }: SetupPanelProps): React.JSX.Element {
   const [form, setForm] = useState<SetupFormState>(initialForm);
+  // 删除二次确认：记录「已点过一次删除」的模型 id，再点同一个才真删。
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
@@ -314,15 +320,40 @@ export function SetupPanel({
         </header>
 
         {models.length > 0 ? (
-          <div className="otto-setup__existing">
-            <span className="otto-setup__existing-dot" aria-hidden />
-            已配置 {models.length} 个模型：
-            {models.slice(0, 3).map((m) => (
-              <code key={m.id} className="otto-setup__chip">
-                {m.displayName}
-              </code>
+          <div className="otto-setup__models">
+            <div className="otto-setup__models-head">
+              <span className="otto-setup__existing-dot" aria-hidden />
+              已配置 {models.length} 个模型
+            </div>
+            {models.map((m) => (
+              <div key={m.id} className="otto-setup__modelrow">
+                <span className="otto-setup__modelname">{m.displayName}</span>
+                {/* 厂商按接入域名识别；provider 只是协议名（全是 openai 的观感问题）。 */}
+                <span className="otto-setup__modelvendor">
+                  {vendorFromBaseUrl(m.baseUrl, m.provider)}
+                </span>
+                {onDeleteModel ? (
+                  <button
+                    type="button"
+                    className={
+                      'otto-setup__modeldel' +
+                      (confirmDeleteId === m.id ? ' is-confirm' : '')
+                    }
+                    onClick={() => {
+                      if (confirmDeleteId === m.id) {
+                        setConfirmDeleteId(null);
+                        onDeleteModel(m.id);
+                      } else {
+                        setConfirmDeleteId(m.id);
+                      }
+                    }}
+                    onBlur={() => setConfirmDeleteId(null)}
+                  >
+                    {confirmDeleteId === m.id ? '确认删除？' : '删除'}
+                  </button>
+                ) : null}
+              </div>
             ))}
-            {models.length > 3 ? <span>等</span> : null}
           </div>
         ) : null}
 

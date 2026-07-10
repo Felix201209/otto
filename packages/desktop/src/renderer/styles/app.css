@@ -4550,6 +4550,72 @@ h6.otto-prose__h {
   color: var(--otto-text-secondary);
 }
 
+/* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */
+.otto-setup__models {
+  margin: 0 0 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface);
+  padding: 10px 14px;
+}
+.otto-setup__models-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--otto-text-secondary);
+  padding-bottom: 6px;
+}
+.otto-setup__modelrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--otto-border);
+}
+.otto-setup__modelname {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-setup__modelvendor {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--otto-accent-hover);
+  background: var(--otto-accent-soft);
+  border-radius: var(--otto-radius-pill);
+  padding: 2px 9px;
+}
+.otto-setup__modeldel {
+  flex-shrink: 0;
+  margin-left: auto;
+  border: 1px solid var(--otto-border);
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: var(--otto-radius-pill);
+  cursor: pointer;
+  transition:
+    color var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__modeldel:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+.otto-setup__modeldel.is-confirm {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
 /* ── 工作日志月历（有记录日期亮点，hover 弹当天条目）──────────────────── */
 .otto-wcal {
   margin-bottom: 10px;

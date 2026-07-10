@@ -13,6 +13,7 @@ import {
   effectiveModelIds,
   buildModelsFileJson,
   buildCliCommand,
+  vendorFromBaseUrl,
   type SetupFormState,
 } from './presets.js';
 
@@ -97,5 +98,23 @@ describe('多选批量（填一次 key → 多模型）', () => {
     });
     expect(single.modelIds).toBeUndefined();
     expect(single.modelId).toBe('gpt-5.1');
+  });
+});
+
+describe('vendorFromBaseUrl：按接入域名识别真实厂商', () => {
+  it('已知域名 → 厂商名（provider 是协议名不可信）', () => {
+    expect(vendorFromBaseUrl('https://open.bigmodel.cn/api/paas/v4', 'openai')).toBe('智谱 GLM');
+    expect(vendorFromBaseUrl('https://chatgpt.com/backend-api/codex', 'openai-responses')).toBe('OpenAI');
+    expect(vendorFromBaseUrl('https://api.deepseek.com/v1', 'openai')).toBe('DeepSeek');
+    expect(vendorFromBaseUrl('https://dashscope.aliyuncs.com/api/v1', 'openai')).toBe('阿里通义');
+  });
+
+  it('未知域名 → 原样返回主机名，不冒充', () => {
+    expect(vendorFromBaseUrl('https://llm.mycorp.internal/v1', 'openai')).toBe('llm.mycorp.internal');
+  });
+
+  it('缺 baseUrl / 非法 URL → 回退 provider', () => {
+    expect(vendorFromBaseUrl(undefined, 'openai')).toBe('openai');
+    expect(vendorFromBaseUrl('not-a-url', 'anthropic')).toBe('anthropic');
   });
 });

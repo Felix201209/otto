@@ -340,3 +340,37 @@ function shellQuote(s: string): string {
   if (/^[\w./:@-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
+
+/**
+ * 按接入域名识别真实厂商（provider 只是协议名：OpenAI 兼容接入的
+ * 智谱/通义/DeepSeek 的 provider 全叫 'openai'，直接展示会全变 OpenAI）。
+ * 未识别的域名原样返回主机名，绝不冒充。
+ */
+export function vendorFromBaseUrl(baseUrl?: string, provider?: string): string {
+  if (!baseUrl) return provider ?? '未知来源';
+  let host = '';
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return provider ?? '未知来源';
+  }
+  const rules: Array<[RegExp, string]> = [
+    [/bigmodel\.cn$/i, '智谱 GLM'],
+    [/(chatgpt|openai)\.com$/i, 'OpenAI'],
+    [/anthropic\.com$/i, 'Anthropic'],
+    [/(dashscope|aliyuncs)\.com$/i, '阿里通义'],
+    [/deepseek\.com$/i, 'DeepSeek'],
+    [/moonshot\.cn$/i, '月之暗面 Kimi'],
+    [/siliconflow\.cn$/i, '硅基流动'],
+    [/volces\.com$/i, '火山方舟'],
+    [/baidubce\.com$/i, '百度千帆'],
+    [/googleapis\.com$/i, 'Google Gemini'],
+    [/openrouter\.ai$/i, 'OpenRouter'],
+    [/mistral\.ai$/i, 'Mistral'],
+    [/groq\.com$/i, 'Groq'],
+  ];
+  for (const [re, name] of rules) {
+    if (re.test(host)) return name;
+  }
+  return host;
+}

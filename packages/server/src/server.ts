@@ -80,6 +80,7 @@ import {
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
+  deleteCustomModel,
   listModelInfos,
   loadCustomModels,
   loadPreferredModel,
@@ -1525,6 +1526,31 @@ export class OttoServer {
         });
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
+      case 'delete_custom_model': {
+        // 删除自定义模型：成功广播最新 models_list（多窗口同步刷新）；
+        // 未命中（可能已被别的窗口删掉）或写盘失败回 error 帧。
+        try {
+          const removed = deleteCustomModel(msg.payload.id);
+          if (!removed) {
+            return this.send(conn.socket, {
+              type: 'error',
+              payload: { code: 'delete_failed', message: '该模型不存在（可能已被删除）' },
+            });
+          }
+          return this.broadcastAll({
+            type: 'models_list',
+            payload: { models: this.modelInfos(), current: this.currentModel() },
+          });
+        } catch (e) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'delete_failed',
+              message: `删除失败：${e instanceof Error ? e.message : '未知错误'}`,
+            },
+          });
+        }
+      }
       case 'delete_session':
         return this.handleDeleteSession(conn, msg);
       case 'rename_session':

@@ -20,6 +20,9 @@ import {
   loadCustomModels,
   listModelInfos,
   customModelsFilePath,
+  deleteCustomModel,
+  loadPreferredModel,
+  saveCustomModel,
 } from './customModels.js';
 
 let tmpHome: string;
@@ -134,5 +137,42 @@ describe('listModelInfos', () => {
 
   it('空文件 → []', () => {
     expect(listModelInfos()).toEqual([]);
+  });
+});
+
+describe('deleteCustomModel', () => {
+  it('按 ModelInfo id 删除命中的模型并重写文件', () => {
+    const idA = saveCustomModel({ ...VALID_MODEL, displayName: 'A' }, false);
+    const idB = saveCustomModel(
+      { ...VALID_MODEL, displayName: 'B', modelId: 'gpt-4o-mini' },
+      false,
+    );
+    expect(loadCustomModels()).toHaveLength(2);
+
+    expect(deleteCustomModel(idA)).toBe(true);
+    const rest = loadCustomModels();
+    expect(rest).toHaveLength(1);
+    expect(rest[0].displayName).toBe('B');
+    // 幂等：再删同一个返回 false，文件不变。
+    expect(deleteCustomModel(idA)).toBe(false);
+    expect(loadCustomModels()).toHaveLength(1);
+    void idB;
+  });
+
+  it('删除当前生效模型（preferredModel）时一并清除偏好', () => {
+    const id = saveCustomModel({ ...VALID_MODEL, displayName: 'P' }, true);
+    expect(loadPreferredModel()).toBe(id);
+    expect(deleteCustomModel(id)).toBe(true);
+    expect(loadPreferredModel()).toBeUndefined();
+  });
+
+  it('删除非生效模型时保留既有 preferredModel', () => {
+    const keep = saveCustomModel({ ...VALID_MODEL, displayName: 'Keep' }, true);
+    const drop = saveCustomModel(
+      { ...VALID_MODEL, displayName: 'Drop', modelId: 'gpt-4o-mini' },
+      false,
+    );
+    expect(deleteCustomModel(drop)).toBe(true);
+    expect(loadPreferredModel()).toBe(keep);
   });
 });
