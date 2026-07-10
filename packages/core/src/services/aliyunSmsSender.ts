@@ -75,11 +75,10 @@ export class AliyunSmsSender implements SmsNotifySender {
    * @param body 正文（会作为模板变量传入）
    */
   async send(phone: string, title: string, body: string): Promise<boolean> {
-    const result = await this.sendWithCode(phone, this.config.templateId, {
+    return this.sendWithCode(phone, this.config.templateId, {
       title: title.slice(0, 20),
       body: body.slice(0, 100),
     });
-    return result.success;
   }
 
   /**

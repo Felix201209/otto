@@ -33,7 +33,7 @@
 import { loadCredentials, isSenderAuthorized } from './vendor/credentials.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
 import { FeishuGateway, FeishuGatewayLockError } from './vendor/gateway.js';
-import type { FeishuMessage } from './vendor/gateway.js';
+import type { FeishuMessage, OnMeetingEndedCallback } from './vendor/gateway.js';
 import {
   bridgeSessionToFeishu,
   type FeishuStreamSink,
@@ -53,7 +53,7 @@ import type {
  */
 export interface FeishuGatewayLike extends FeishuStreamSink {
   onMessage: ((msg: FeishuMessage) => Promise<string | null>) | null;
-  onMeetingEnded: ((event: unknown) => Promise<void>) | null;
+  onMeetingEnded?: OnMeetingEndedCallback | null;
   onReady: (() => void) | null;
   onDisconnect: ((error?: Error) => void) | null;
   /** SDK 内部重连开始/成功（可选：老 fake / 精简实现可以不提供）。 */
