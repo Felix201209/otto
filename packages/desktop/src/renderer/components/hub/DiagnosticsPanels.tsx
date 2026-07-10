@@ -5,7 +5,7 @@
  */
 
 /**
- * 设置与诊断中心 ·「诊断」组面板：依赖体检 / Context 用量 / 用量统计 / Workflow。
+ * 设置与诊断中心 ·「诊断」组面板：依赖体检 / Context 用量 / Workflow。
  * 数据与动作全部来自 useSettingsData，本文件只负责排版。
  */
 
@@ -13,7 +13,7 @@ import React from 'react';
 import type { SessionSummary } from 'otto-server';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { IconCheck } from '../icons.js';
-import { Panel, Card, Caption, Badge, Empty } from './HubUI.js';
+import { Panel, Card, Badge, Empty } from './HubUI.js';
 
 // ── 依赖体检 ──────────────────────────────────────────────────────────────
 
@@ -194,87 +194,6 @@ function ContextUsageCard({
         <div className="otto-hub__field-hint">{data.state.compressMessage}</div>
       ) : null}
     </Card>
-  );
-}
-
-// ── 用量统计 ──────────────────────────────────────────────────────────────
-
-export function StatsPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
-  const { state, actions } = data;
-  const stats = state.stats;
-  const models = stats ? Object.entries(stats.models) : [];
-  const totals = models.reduce(
-    (acc, [, m]) => ({
-      requests: acc.requests + m.requests,
-      input: acc.input + m.inputTokens,
-      output: acc.output + m.outputTokens,
-      total: acc.total + m.totalTokens,
-    }),
-    { requests: 0, input: 0, output: 0, total: 0 },
-  );
-
-  return (
-    <Panel
-      title="用量统计"
-      desc="本次运行的模型请求与工具调用量。"
-      actions={
-        <button type="button" className="otto-hub__btn" onClick={actions.refreshStats}>
-          刷新
-        </button>
-      }
-    >
-      {!stats || models.length === 0 ? (
-        <Empty>本次运行暂无用量数据。</Empty>
-      ) : (
-        <>
-          <div className="otto-hub__statgrid">
-            <div className="otto-hub__stat">
-              <div className="otto-hub__stat-value">{totals.requests.toLocaleString()}</div>
-              <div className="otto-hub__stat-label">请求</div>
-            </div>
-            <div className="otto-hub__stat">
-              <div className="otto-hub__stat-value">{totals.input.toLocaleString()}</div>
-              <div className="otto-hub__stat-label">输入 tokens</div>
-            </div>
-            <div className="otto-hub__stat">
-              <div className="otto-hub__stat-value">{totals.output.toLocaleString()}</div>
-              <div className="otto-hub__stat-label">输出 tokens</div>
-            </div>
-            <div className="otto-hub__stat">
-              <div className="otto-hub__stat-value">{totals.total.toLocaleString()}</div>
-              <div className="otto-hub__stat-label">合计 tokens</div>
-            </div>
-          </div>
-
-          <Caption>按模型</Caption>
-          <Card>
-            {models.map(([name, m]) => (
-              <div key={name} className="otto-hub__item">
-                <span className="otto-hub__row-name">{name}</span>
-                <span className="otto-hub__item-numbers">
-                  请求 {m.requests.toLocaleString()} · 输入 {m.inputTokens.toLocaleString()} ·
-                  输出 {m.outputTokens.toLocaleString()} · 合计{' '}
-                  {m.totalTokens.toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </Card>
-
-          <Caption>按工具</Caption>
-          <Card>
-            {Object.entries(stats.tools.byName).map(([name, t]) => (
-              <div key={name} className="otto-hub__item">
-                <span className="otto-hub__row-name">{name}</span>
-                <span className="otto-hub__item-numbers">
-                  调用 {t.count.toLocaleString()} · 成功 {t.success.toLocaleString()} · 失败{' '}
-                  {t.fail.toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </Card>
-        </>
-      )}
-    </Panel>
   );
 }
 

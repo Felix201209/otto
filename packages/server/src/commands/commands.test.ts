@@ -7,7 +7,7 @@
 /**
  * server 侧斜杠命令层单测：命令路由（未知命令/子命令、bare 用法）、
  * /kb 全链路（add→list→search→remove，OTTO_USER_DIR 隔离到临时目录）、
- * /about、/memory add|show|list（临时 cwd，真实写盘）、/todo、/stats、
+ * /about、/memory add|show|list（临时 cwd，真实写盘）、/todo、
  * /mcp、/tools（runtime 未初始化的诚实报错）、/init（submit_prompt 形态）。
  */
 
@@ -59,10 +59,6 @@ function makeHost(overrides: Partial<CommandHost> = {}): CommandHost {
     getConfig: () => undefined,
     currentModel: () => undefined,
     modelInfos: () => [],
-    statsSnapshot: () => ({
-      models: {},
-      tools: { totalCalls: 0, totalSuccess: 0, totalFail: 0, byName: {} },
-    }),
     mcpServerInfos: () => [],
     extensionSummaries: async () => [],
     ...overrides,
@@ -126,7 +122,6 @@ describe('命令路由', () => {
     const names = listSlashCommands().map((c) => c.name);
     for (const expected of [
       'about',
-      'stats',
       'context',
       'tools',
       'mcp',
@@ -139,6 +134,7 @@ describe('命令路由', () => {
     ]) {
       expect(names).toContain(expected);
     }
+    expect(names).not.toContain('stats');
     // kb/memory 带 usage 提示（面板附注用）。
     const kb = listSlashCommands().find((c) => c.name === 'kb');
     expect(kb?.usage).toContain('kb add|search|list|remove');
@@ -242,32 +238,6 @@ describe('信息类命令', () => {
     expect(r.markdown).toContain('关于 Otto');
     expect(r.markdown).toContain('Otto Server: 0.0.0-test');
     expect(r.markdown).toContain('Platform');
-  });
-
-  it('/stats 无用量时如实说明，不编造数字', async () => {
-    const r = await runMd('stats');
-    expect(r.ok).toBe(true);
-    expect(r.markdown).toContain('尚无用量记录');
-  });
-
-  it('/stats 有数据时按真实快照渲染', async () => {
-    const host = makeHost({
-      statsSnapshot: () => ({
-        models: {
-          'gpt-x': { requests: 3, inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-        },
-        tools: {
-          totalCalls: 2,
-          totalSuccess: 1,
-          totalFail: 1,
-          byName: { read_file: { count: 2, success: 1, fail: 1 } },
-        },
-      }),
-    });
-    const r = await runMd('stats', '', host);
-    expect(r.markdown).toContain('gpt-x');
-    expect(r.markdown).toContain('read_file');
-    expect(r.markdown).toContain('共 2 次');
   });
 
   it('/mcp 未配置时给出面板指引', async () => {

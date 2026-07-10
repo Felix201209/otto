@@ -425,8 +425,6 @@ export type GetContextBreakdownMsg = Envelope<
   { sessionId: string }
 >;
 
-export type GetStatsMsg = Envelope<'get_stats', Record<string, never>>;
-
 export type RunDoctorMsg = Envelope<'run_doctor', Record<string, never>>;
 
 export type GetTodosMsg = Envelope<'get_todos', Record<string, never>>;
@@ -513,7 +511,6 @@ export type ClientToServer =
   | McpAddMsg
   | McpRemoveMsg
   | GetContextBreakdownMsg
-  | GetStatsMsg
   | RunDoctorMsg
   | GetTodosMsg
   | GetMemoryMsg
@@ -691,27 +688,6 @@ export interface ContextBreakdown {
 }
 
 export type ContextBreakdownMsg = Envelope<'context_breakdown', ContextBreakdown>;
-
-/** 用量统计快照（对齐 CLI /stats，按模型/工具聚合）。 */
-export interface StatsSnapshot {
-  models: Record<
-    string,
-    {
-      requests: number;
-      inputTokens: number;
-      outputTokens: number;
-      totalTokens: number;
-    }
-  >;
-  tools: {
-    totalCalls: number;
-    totalSuccess: number;
-    totalFail: number;
-    byName: Record<string, { count: number; success: number; fail: number }>;
-  };
-}
-
-export type StatsSnapshotMsg = Envelope<'stats_snapshot', StatsSnapshot>;
 
 /** 单项依赖体检结果（对齐 core DoctorCheck）。 */
 export interface DoctorCheckInfo {
@@ -919,7 +895,6 @@ export type ServerToClient =
   | SettingsMsg
   | McpServersMsg
   | ContextBreakdownMsg
-  | StatsSnapshotMsg
   | DoctorReportMsg
   | TodosListMsg
   | MemorySnapshotMsg
@@ -1261,7 +1236,6 @@ export function validateClientPayload(msg: {
     }
     case 'get_settings':
     case 'mcp_list':
-    case 'get_stats':
     case 'run_doctor':
     case 'get_todos':
     case 'get_memory':

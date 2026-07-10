@@ -5,7 +5,7 @@
  */
 
 /**
- * 设置与诊断中心（P0）。TUI /config、/context、/stats、/mcp、/doctor、/todo
+ * 设置与诊断中心（P0）。TUI /config、/context、/mcp、/doctor、/todo
  * 的 GUI 真实对应面板（不是发提示词代理，直连协议帧真实数据）。
  *
  * 结构：整页 + 左侧分组导航（设置 / 诊断 / 工作区三组，替代早期 13 个横排
@@ -27,7 +27,6 @@ import { FeishuPanel } from './hub/FeishuPanel.js';
 import {
   DoctorPanel,
   ContextPanel,
-  StatsPanel,
   WorkflowsPanel,
 } from './hub/DiagnosticsPanels.js';
 import {
@@ -43,7 +42,6 @@ export type TabId =
   | 'feishu'
   | 'mcp'
   | 'context'
-  | 'stats'
   | 'doctor'
   | 'update'
   | 'todos'
@@ -59,7 +57,6 @@ const TAB_LABEL: Record<TabId, string> = {
   feishu: '飞书接入',
   mcp: 'MCP 服务器',
   context: 'Context 用量',
-  stats: '用量统计',
   doctor: '依赖体检',
   update: '软件更新',
   todos: '任务清单',
@@ -78,7 +75,6 @@ const TAB_LABEL: Record<TabId, string> = {
  */
 const NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
   { label: '设置', tabs: ['prefs', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
-  // 'stats'（用量统计）按 Jeremy 要求下架（面向客户模糊成本细节）；代码保留无入口。
   { label: '诊断', tabs: ['doctor', 'context', 'workflows'] },
   { label: '工作区', tabs: ['todos', 'memory', 'skills', 'tools'] },
 ];
@@ -114,8 +110,7 @@ export function SettingsHubPage({
     if (tab === 'mcp') actions.refreshMcpServers();
     else if (tab === 'context' && activeSession) {
       actions.refreshContextBreakdown(activeSession.sessionId);
-    } else if (tab === 'stats') actions.refreshStats();
-    else if (tab === 'todos') actions.refreshTodos();
+    } else if (tab === 'todos') actions.refreshTodos();
     else if (tab === 'memory') actions.refreshMemory();
     else if (tab === 'skills') actions.refreshSkills();
     else if (tab === 'tools' && activeSession) {
@@ -192,7 +187,6 @@ export function SettingsHubPage({
             {tab === 'context' ? (
               <ContextPanel data={data} activeSession={activeSession} />
             ) : null}
-            {tab === 'stats' ? <StatsPanel data={data} /> : null}
             {tab === 'doctor' ? <DoctorPanel data={data} /> : null}
             {tab === 'update' ? (
               <Panel title="软件更新" desc="检查并下载 Otto 桌面版新版本。">

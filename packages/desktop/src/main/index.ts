@@ -53,6 +53,13 @@ import type {
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
+import {
+  generateAndSaveWorkReport,
+  localDateKey,
+  readRecentWorkLogs,
+  readWorkLogEntries,
+  summarizeWorkLog,
+} from './workLogData.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -65,6 +72,14 @@ const CSP_FALLBACK_PORT = 7637;
  * 也是 isLocalAppUrl 白名单的锚点。
  */
 const RENDERER_DIR = path.join(__dirname, '../renderer');
+
+function worklogRootDir(): string {
+  const explicit = process.env['OTTO_WORKLOG_DIR']?.trim();
+  if (explicit) return explicit;
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  if (userDir) return path.join(userDir, 'memory', 'worklog');
+  return path.join(os.homedir(), '.otto-user', 'memory', 'worklog');
+}
 
 /** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
 interface SkillShareRecord {
@@ -83,14 +98,6 @@ interface SkillShareRecord {
   usageCount?: number;
   successCount?: number;
   publishedToMarketplace?: boolean;
-}
-
-/** 工作日志条目（~/.otto-user/memory/worklog/daily/<date>.jsonl 行）。 */
-interface WorkLogEntry {
-  category?: string;
-  action?: string;
-  success?: boolean;
-  timestamp?: string;
 }
 
 /** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
@@ -123,6 +130,7 @@ const IPC = {
   skillLeaderboard: 'otto:skill-leaderboard',
   workLogToday: 'otto:worklog-today',
   workLogRecent: 'otto:worklog-recent',
+  workLogReport: 'otto:worklog-report',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
   setLocalTestUrl: 'otto:set-local-test-url',
@@ -739,102 +747,24 @@ function registerIpc(): void {
     }
   });
 
-  // 工作日志：读取今天的 JSONL 日志，生成汇总文本
+  // 工作日志：读取本地日历的今天，展示业务成果 + 支撑操作。
   ipcMain.handle(IPC.workLogToday, async () => {
-    try {
-      const worklogDir = path.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
-      const today = new Date().toISOString().split('T')[0];
-      const filePath = path.join(worklogDir, `${today}.jsonl`);
-
-      let entries: WorkLogEntry[] = [];
-      try {
-        const raw = await fs.promises.readFile(filePath, 'utf-8');
-        entries = raw
-          .trim()
-          .split('\n')
-          .filter((l) => l.length > 0)
-          .map((l) => JSON.parse(l) as WorkLogEntry);
-      } catch {
-        /* 文件不存在 */
-      }
-
-      if (entries.length === 0) {
-        return { summary: '今天还没有操作记录。', date: today, totalActions: 0 };
-      }
-
-      const byCategory: Record<string, number> = {};
-      let successCount = 0;
-      let failCount = 0;
-      const actionCounts: Record<string, number> = {};
-
-      for (const entry of entries) {
-        const cat = entry.category || '未分类';
-        byCategory[cat] = (byCategory[cat] || 0) + 1;
-        if (entry.success) successCount++;
-        else failCount++;
-        const action = entry.action || '未知操作';
-        actionCounts[action] = (actionCounts[action] || 0) + 1;
-      }
-
-      const topActions = Object.entries(actionCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-      const firstTime = entries[0]?.timestamp || '';
-      const lastTime = entries[entries.length - 1]?.timestamp || '';
-      const cats = Object.entries(byCategory)
-        .sort((a, b) => b[1] - a[1])
-        .map(([c, n]) => `${c}:${n}`)
-        .join(' | ');
-
-      let summary = `今日工作日志 (${today})\n\n`;
-      summary += `总操作：${entries.length} 次\n`;
-      summary += `成功：${successCount}  失败：${failCount}\n`;
-      summary += `首次：${firstTime.substring(11, 19) || '—'}\n`;
-      summary += `最后：${lastTime.substring(11, 19) || '—'}\n\n`;
-      summary += `分类：${cats}\n\n`;
-      summary += `高频操作：\n`;
-      for (const [action, count] of topActions) {
-        summary += `  ${action} (${count}次)\n`;
-      }
-
-      return { summary, date: today, totalActions: entries.length };
-    } catch {
-      return { summary: '读取工作日志失败。', date: '', totalActions: 0 };
-    }
+    const worklogRoot = worklogRootDir();
+    const today = localDateKey(new Date());
+    const entries = await readWorkLogEntries(worklogRoot, today);
+    return summarizeWorkLog(today, entries);
   });
 
   // 工作日志·近 N 天逐日明细（日历视图数据源：hover 某天列出当天条目）。
   ipcMain.handle(IPC.workLogRecent, async (_e, days?: number) => {
-    const dayCount = Math.min(Math.max(Number(days) || 31, 1), 92);
-    const worklogDir = path.join(os.homedir(), '.otto-user', 'memory', 'worklog', 'daily');
-    const out: Array<{
-      date: string;
-      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
-    }> = [];
-    const today = new Date();
-    for (let i = 0; i < dayCount; i++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const date = d.toISOString().split('T')[0];
-      try {
-        const raw = await fs.promises.readFile(path.join(worklogDir, `${date}.jsonl`), 'utf8');
-        const entries = raw
-          .trim()
-          .split('\n')
-          .filter((l) => l.length > 0)
-          .map((l) => JSON.parse(l) as WorkLogEntry)
-          .map((e) => ({
-            time: (e.timestamp || '').substring(11, 16) || '--:--',
-            category: e.category || '未分类',
-            action: e.action || '操作',
-            success: e.success !== false,
-          }));
-        if (entries.length > 0) out.push({ date, entries });
-      } catch {
-        /* 当天无文件 = 无记录，跳过 */
-      }
-    }
-    return out;
+    const worklogRoot = worklogRootDir();
+    return readRecentWorkLogs(worklogRoot, days, new Date());
+  });
+
+  // 一键生成真正的 Markdown 工作报告并保存到 summaries，返回完整路径供界面打开。
+  ipcMain.handle(IPC.workLogReport, async () => {
+    const worklogRoot = worklogRootDir();
+    return generateAndSaveWorkReport(worklogRoot, localDateKey(new Date()));
   });
 
   // 部门共享 Skill 列表

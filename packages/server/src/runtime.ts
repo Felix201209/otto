@@ -37,9 +37,11 @@ import {
   areAllFunctionCallsValid,
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
+  getWorkLogger,
   type ToolCallRequestInfo,
   type ToolRegistry,
   type ToolQuestionConfirmationDetails,
+  type LogCategory,
 } from 'otto-core';
 import type {
   Content,
@@ -119,6 +121,73 @@ function messageContentToParts(content: MessageContent): Part[] {
   return parts;
 }
 
+/** 把员工本轮输入规整成可落日志的纯文本。 */
+function messageContentToText(content: MessageContent): string {
+  return content
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.value;
+        case 'file_reference':
+          return `@${part.value.filePath}`;
+        case 'folder_reference':
+          return `@${part.value.folderPath}`;
+        case 'code_reference':
+          return part.value.code;
+        case 'text_file_content':
+          return `${part.value.fileName}: ${part.value.content}`;
+        case 'image_reference':
+          return '[图片]';
+        default:
+          return '';
+      }
+    })
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const GENERIC_SESSION_TITLES = new Set(['新会话', '新对话', '新会话…', '新对话…']);
+
+function deriveWorkTitle(sessionTitle: string | undefined, userInput: string): string {
+  const firstSentence = userInput.split(/[。！？!?\n]/)[0]?.trim() || '';
+  const isFollowUp = /^(继续|好的?|可以|确认|开始|按这个来|就这样|下一步)$/i.test(firstSentence);
+  if (firstSentence.length >= 4 && !isFollowUp) return firstSentence.slice(0, 60);
+  const cleanSessionTitle = sessionTitle?.trim();
+  if (cleanSessionTitle && !GENERIC_SESSION_TITLES.has(cleanSessionTitle)) {
+    return cleanSessionTitle.slice(0, 60);
+  }
+  return (firstSentence || '本轮工作').slice(0, 60);
+}
+
+function inferWorkResultCategory(text: string): LogCategory {
+  if (/调研|竞品|搜索|网页|网站|资料/.test(text)) return 'web';
+  if (/报告|文档|公文|方案|PPT|幻灯片/.test(text)) return 'document';
+  if (/表格|Excel|数据清洗|透视/.test(text)) return 'spreadsheet';
+  if (/代码|开发|修复|测试|重构|接口/.test(text)) return 'code';
+  if (/会议|日程|日历/.test(text)) return 'calendar';
+  if (/邮件/.test(text)) return 'email';
+  if (/任务|待办/.test(text)) return 'task';
+  return 'other';
+}
+
+/** Runtime 只依赖这一条窄接口，单测可验证真实落日志时机且不碰用户目录。 */
+export interface WorkResultLogEntry {
+  toolName: string;
+  action: string;
+  category: LogCategory;
+  success: boolean;
+  details?: string;
+  sessionId?: string;
+  entryType: 'work_result';
+  taskTitle: string;
+  userInput: string;
+}
+
+export interface WorkResultLogger {
+  log(entry: WorkResultLogEntry): Promise<void>;
+}
+
 /** 从一条流式响应里抽取可流式输出的文本（跳过 thought 片段）。 */
 /**
  * 把 core 的流式响应 usageMetadata 转成协议的 TokenUsage（chat_complete 帧用）。
@@ -185,6 +254,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     private readonly store: SessionStore,
     private readonly sessionId: string,
     private readonly config: Config,
+    private readonly workLogger: WorkResultLogger = getWorkLogger(),
   ) {}
 
   /**
@@ -414,6 +484,7 @@ export class CoreSessionRuntime implements SessionRuntime {
               text: assistantText,
             },
           });
+          await this.recordWorkResult(input, assistantText);
           this.store.setStatus(this.sessionId, 'idle');
           break;
         }
@@ -772,6 +843,32 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
     }
     this.store.setStatus(this.sessionId, 'idle');
+  }
+
+  /**
+   * 记录员工真正关心的一轮最终成果；工具流水仍由 core 记录，两者用途分离。
+   * 写盘失败不影响聊天收口，但这里 await，确保 run() 返回时成果已可被桌面日志读取。
+   */
+  private async recordWorkResult(input: MessageContent, assistantText: string): Promise<void> {
+    const result = assistantText.trim();
+    if (!result) return;
+    const userInput = messageContentToText(input);
+    const taskTitle = deriveWorkTitle(this.store.getSession(this.sessionId)?.title, userInput);
+    try {
+      await this.workLogger.log({
+        toolName: 'otto_work_result',
+        action: taskTitle,
+        category: inferWorkResultCategory(`${taskTitle} ${userInput} ${result}`),
+        success: true,
+        entryType: 'work_result',
+        taskTitle,
+        userInput: userInput.slice(0, 2_000),
+        details: result.slice(0, 8_000),
+        sessionId: this.sessionId,
+      });
+    } catch {
+      // 工作日志不可用不应让已完成的对话变成失败。
+    }
   }
 
   private fail(code: string, message: string): void {

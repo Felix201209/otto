@@ -6,7 +6,7 @@
 
 /**
  * 设置/诊断面板的状态管理（P0）。与 useOttoStore（会话/聊天）解耦成独立 hook，
- * 因为这块数据（settings/mcp/context/stats/doctor/todos）与消息流无关，
+ * 因为这块数据（settings/mcp/context/doctor/todos）与消息流无关，
  * 混进主 reducer 会让 App 的聊天路径多绕一层不相关状态更新。
  *
  * 协议帧对应关系（packages/server/src/protocol.ts）：
@@ -15,7 +15,6 @@
  *   mcp_list     -> mcp_servers
  *   mcp_add/mcp_remove -> mcp_servers（成功后广播）/ error
  *   get_context_breakdown -> context_breakdown
- *   get_stats    -> stats_snapshot
  *   run_doctor   -> doctor_report
  *   get_todos    -> todos_list
  *
@@ -31,7 +30,6 @@ import type {
   SettingsSnapshot,
   McpServerInfo,
   ContextBreakdown,
-  StatsSnapshot,
   DoctorReportInfo,
   TodoItemInfo,
   MemoryFileInfo,
@@ -47,7 +45,6 @@ export interface SettingsDataState {
   settings: SettingsSnapshot | null;
   mcpServers: McpServerInfo[];
   contextBreakdown: ContextBreakdown | null;
-  stats: StatsSnapshot | null;
   doctorReport: DoctorReportInfo | null;
   doctorRunning: boolean;
   todos: TodoItemInfo[];
@@ -68,7 +65,6 @@ const initialState: SettingsDataState = {
   settings: null,
   mcpServers: [],
   contextBreakdown: null,
-  stats: null,
   doctorReport: null,
   doctorRunning: false,
   todos: [],
@@ -110,8 +106,6 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
           return { ...state, mcpServers: frame.payload.servers };
         case 'context_breakdown':
           return { ...state, contextBreakdown: frame.payload };
-        case 'stats_snapshot':
-          return { ...state, stats: frame.payload };
         case 'doctor_report':
           return { ...state, doctorReport: frame.payload, doctorRunning: false };
         case 'todos_list':
@@ -188,7 +182,6 @@ export interface SettingsDataActions {
   }): void;
   removeMcpServer(name: string): void;
   refreshContextBreakdown(sessionId: string): void;
-  refreshStats(): void;
   runDoctor(): void;
   refreshTodos(): void;
   refreshMemory(): void;
@@ -272,10 +265,6 @@ export function useSettingsData(): UseSettingsData {
     transport.send({ type: 'get_context_breakdown', payload: { sessionId } });
   }, []);
 
-  const refreshStats = useCallback(() => {
-    transport.send({ type: 'get_stats', payload: {} });
-  }, []);
-
   const runDoctor = useCallback(() => {
     dispatch({ kind: 'doctor_running' });
     transport.send({ type: 'run_doctor', payload: {} });
@@ -342,7 +331,6 @@ export function useSettingsData(): UseSettingsData {
       addMcpServer,
       removeMcpServer,
       refreshContextBreakdown,
-      refreshStats,
       runDoctor,
       refreshTodos,
       refreshMemory,

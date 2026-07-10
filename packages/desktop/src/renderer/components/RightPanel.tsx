@@ -8,8 +8,6 @@
  *   - tools：常用 slash 命令
  *   - memory：组织/部门记忆
  *   - notes：本地笔记
- *   - leaderboard：Skill 排行榜 + 贡献明星榜
- *   - skillmarket：部门共享 + 公司市场
  *   - worklog：今日工作日志
  */
 
@@ -30,19 +28,18 @@ const DEV_EXPERT: Expert = {
     '我要进行代码开发任务。请先查看当前项目的结构和技术栈，然后问我本次要实现或修复的目标，给出实现计划，经我确认后动手完成；过程中的关键改动请逐步说明并在完成后运行必要的验证。',
 };
 
-type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'leaderboard' | 'skillmarket' | 'worklog';
+type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
 
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   tools: '工具',
   memory: '记忆',
   notes: '笔记',
-  leaderboard: '排行榜',
-  skillmarket: 'Skill',
   worklog: '工作日志',
 };
 
-const TABS: TabType[] = ['agents', 'tools', 'memory', 'notes', 'leaderboard', 'skillmarket', 'worklog'];
+// Skill/排行榜在企业共享、安装、评价数据闭环上线前暂不暴露空壳入口。
+const TABS: TabType[] = ['agents', 'tools', 'memory', 'notes', 'worklog'];
 
 const TOOL_COMMAND_IDS = new Set([
   'new', 'model', 'clear', 'settings', 'doctor', 'feishu-status',
@@ -67,11 +64,8 @@ export function RightPanel({
   // 企业品牌名（于总：入口要带园区名，随配置变化；默认「宏创AI园区服务」）。
   const parkBrand = useParkBrand();
 
-  // 企业面板状态
-  const [leaderboardTab, setLeaderboardTab] = useState<string>('leaderboard');
-  const [leaderboardData, setLeaderboardData] = useState<{ leaderboard: string; starBoard: string } | null>(null);
-  const [skillMarketData, setSkillMarketData] = useState<string>('');
   const [worklogData, setWorklogData] = useState<string>('');
+  const [workReportPath, setWorkReportPath] = useState<string>('');
 
   const panelStyle: React.CSSProperties = {
     flex: 1, overflowY: 'auto', padding: '12px',
@@ -200,55 +194,28 @@ export function RightPanel({
           </div>
         )}
 
-        {activeTab === 'leaderboard' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button style={{ ...btnStyle, flex: 1, fontWeight: leaderboardTab === 'leaderboard' ? 'bold' : 'normal', background: leaderboardTab === 'leaderboard' ? 'var(--otto-accent-soft)' : 'var(--otto-surface)', color: leaderboardTab === 'leaderboard' ? 'var(--otto-accent)' : 'var(--otto-text-secondary)' }} onClick={() => setLeaderboardTab('leaderboard')}>排行榜</button>
-              <button style={{ ...btnStyle, flex: 1, fontWeight: leaderboardTab === 'stars' ? 'bold' : 'normal', background: leaderboardTab === 'stars' ? 'var(--otto-accent-soft)' : 'var(--otto-surface)', color: leaderboardTab === 'stars' ? 'var(--otto-accent)' : 'var(--otto-text-secondary)' }} onClick={() => setLeaderboardTab('stars')}>明星榜</button>
-            </div>
-            <button style={btnStyle} onClick={async () => { try { const d = await window.otto?.skillLeaderboard(); setLeaderboardData(d); } catch { /* server 未就绪，保留上次内容 */ } }}>刷新</button>
-            <div style={panelStyle}>
-              {leaderboardData ? (leaderboardTab === 'leaderboard' ? leaderboardData.leaderboard : leaderboardData.starBoard) : '点击「刷新」加载排行榜数据。'}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'skillmarket' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await window.otto?.skillShareList(); setSkillMarketData(d.text); } catch { /* server 未就绪，保留上次内容 */ } }}>部门共享</button>
-              <button style={{ ...btnStyle, flex: 1 }} onClick={async () => { try { const d = await window.otto?.skillMarketplace(); setSkillMarketData(d.text); } catch { /* server 未就绪，保留上次内容 */ } }}>公司市场</button>
-            </div>
-            <div style={panelStyle}>{skillMarketData || '点击上方按钮加载 Skill 列表。'}</div>
-          </div>
-        )}
-
         {activeTab === 'worklog' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
             <button style={btnStyle} onClick={async () => { try { const d = await window.otto?.workLogToday(); setWorklogData(d.summary); } catch { /* server 未就绪，保留上次内容 */ } }}>刷新今日日志</button>
             <button
               style={btnStyle}
               onClick={async () => {
-                // 「总结当下工作」：把今日日志喂给 Otto 生成正式工作报告
-                // （注入输入框，回车即发送——报告风格用户可自行补充要求）。
+                // 「总结当下工作」：主进程直接生成并保存真实 Markdown 报告。
                 try {
-                  const recent = await window.otto?.workLogRecent(1);
-                  const today = recent?.[0];
-                  if (!today || today.entries.length === 0) {
-                    setWorklogData('今天还没有操作记录，暂无可总结的内容。');
-                    return;
-                  }
-                  const lines = today.entries
-                    .map((e) => `${e.time} [${e.category}] ${e.action}${e.success ? '' : '（失败）'}`)
-                    .join('\n');
-                  insertComposerDraft(
-                    `请把我今天的工作操作日志总结成一份简洁清晰的当日工作报告（按主题归并，突出产出与结论，结尾列待跟进事项）：\n\n${lines}`,
-                  );
+                  const report = await window.otto?.workLogReport();
+                  if (!report) return;
+                  setWorkReportPath(report.ok ? report.path : '');
+                  setWorklogData(report.ok ? `${report.message}\n\n${report.markdown}` : report.message);
                 } catch { /* server 未就绪 */ }
               }}
             >
               总结当下工作 → 生成报告
             </button>
+            {workReportPath ? (
+              <button style={btnStyle} onClick={() => { void window.otto.openPath(workReportPath); }}>
+                打开已生成报告
+              </button>
+            ) : null}
             <WorkLogCalendar />
             <div style={{ ...panelStyle, flex: 'none', maxHeight: '160px' }}>{worklogData || '点击「刷新今日日志」查看今日汇总。'}</div>
           </div>
@@ -265,7 +232,15 @@ export function RightPanel({
  */
 function WorkLogCalendar(): React.JSX.Element {
   const [byDate, setByDate] = useState<
-    Record<string, Array<{ time: string; category: string; action: string; success: boolean }>>
+    Record<string, Array<{
+      time: string;
+      category: string;
+      action: string;
+      success: boolean;
+      details?: string;
+      entryType: 'tool' | 'work_result';
+      taskTitle?: string;
+    }>>
   >({});
 
   useEffect(() => {
@@ -330,9 +305,16 @@ function WorkLogCalendar(): React.JSX.Element {
                   {entries.slice(0, 12).map((e, j) => (
                     <div key={j} className="otto-wcal__pop-item">
                       <span className="otto-wcal__pop-time">{e.time}</span>
-                      <span className="otto-wcal__pop-action">
-                        [{e.category}] {e.action}
-                        {e.success ? '' : '（失败）'}
+                      <span className="otto-wcal__pop-copy">
+                        <span className="otto-wcal__pop-action">
+                          {e.entryType === 'work_result' ? '成果' : `[${e.category}]`} {e.action}
+                          {e.success ? '' : '（失败）'}
+                        </span>
+                        {e.entryType === 'work_result' && e.details ? (
+                          <span className="otto-wcal__pop-detail">
+                            {e.details.replace(/\s+/g, ' ').slice(0, 140)}
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                   ))}

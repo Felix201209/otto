@@ -45,7 +45,6 @@ import {
   type ServerToClient,
   type SettingsSnapshot,
   type McpServerInfo,
-  type StatsSnapshot,
   type DoctorReportInfo,
   type TodoItemInfo,
   type MemoryFileInfo,
@@ -532,7 +531,7 @@ export class OttoServer {
   }
 
   // ──────────────────────────────────────────────────────────────────────
-  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 用量统计 / 依赖体检 / Todo）
+  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 依赖体检 / Todo）
   // ──────────────────────────────────────────────────────────────────────
 
   /**
@@ -805,33 +804,6 @@ export class OttoServer {
         freeSpaceTokens,
       },
     });
-  }
-
-  /** 用量统计快照（对齐 CLI /stats，进程级全部会话聚合）。 */
-  private statsSnapshot(): StatsSnapshot {
-    const metrics = uiTelemetryService.getMetrics();
-    const models: StatsSnapshot['models'] = {};
-    for (const [name, m] of Object.entries(metrics.models)) {
-      models[name] = {
-        requests: m.api.totalRequests,
-        inputTokens: m.tokens.prompt,
-        outputTokens: m.tokens.candidates,
-        totalTokens: m.tokens.total,
-      };
-    }
-    const byName: StatsSnapshot['tools']['byName'] = {};
-    for (const [name, t] of Object.entries(metrics.tools.byName)) {
-      byName[name] = { count: t.count, success: t.success, fail: t.fail };
-    }
-    return {
-      models,
-      tools: {
-        totalCalls: metrics.tools.totalCalls,
-        totalSuccess: metrics.tools.totalSuccess,
-        totalFail: metrics.tools.totalFail,
-        byName,
-      },
-    };
   }
 
   /** 触发一次外部依赖体检（异步，跑完再回帧，避免 UI 长时间无反馈）。 */
@@ -1573,11 +1545,6 @@ export class OttoServer {
         return this.handleMcpRemove(conn, msg);
       case 'get_context_breakdown':
         return this.handleGetContextBreakdown(conn, msg);
-      case 'get_stats':
-        return this.send(conn.socket, {
-          type: 'stats_snapshot',
-          payload: this.statsSnapshot(),
-        });
       case 'run_doctor':
         return this.handleRunDoctor(conn);
       case 'get_todos':
@@ -1695,7 +1662,7 @@ export class OttoServer {
 
   /**
    * 斜杠命令宿主（src/commands/ 的窄依赖面）：全部用闭包桥接到 server 既有
-   * 私有能力（statsSnapshot / mcpServerInfos / …），命令层不反向持有 OttoServer。
+   * 私有能力（mcpServerInfos / extensionSummaries / …），命令层不反向持有 OttoServer。
    */
   private commandHost(): CommandHost {
     return {
@@ -1710,7 +1677,6 @@ export class OttoServer {
           | undefined,
       currentModel: () => this.currentModel(),
       modelInfos: () => this.modelInfos(),
-      statsSnapshot: () => this.statsSnapshot(),
       mcpServerInfos: () => this.mcpServerInfos(),
       extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
     };
@@ -1718,7 +1684,7 @@ export class OttoServer {
 
   /**
    * 斜杠命令入口（run_slash_command 帧）：路由到 src/commands/ 的注册表执行，
-   * 结果以 slash_command_result 回给**发起连接**（与 get_stats 等查询帧一致，
+   * 结果以 slash_command_result 回给**发起连接**（与其它查询帧一致，
    * 不广播——命令回执只属于发起者）。
    *
    * 命令结果**有意不落库**：它是「即时查询回执」而非会话内容，落库会污染

@@ -55,7 +55,7 @@ type MainView = 'chat' | 'agents' | 'settings' | 'hub';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
-  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/stats/doctor/todos。
+  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
   const settingsData = useSettingsData();
   // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
   const softwareUpdate = useSoftwareUpdate();
@@ -83,6 +83,17 @@ export function App(): React.JSX.Element {
     setHubInitialTab(tab);
     setMainView('hub');
   };
+  // 悬浮设置窗打开时全局接管 Esc；焦点即使还留在底层按钮也必须能关闭。
+  useEffect(() => {
+    if (mainView !== 'hub') return;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setMainView('chat');
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [mainView]);
   // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
   const setupOpen = mainView === 'settings';
   // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。

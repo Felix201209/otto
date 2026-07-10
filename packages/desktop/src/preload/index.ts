@@ -194,14 +194,31 @@ export interface OttoBridge {
     tabs: Array<{ id: string; label: string; icon: string }>;
   }>;
   /** 今日工作日志汇总。 */
-  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }>;
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number; workResults: number }>;
   /** 近 N 天逐日日志明细（日历 hover 视图）。 */
   workLogRecent(days?: number): Promise<
     Array<{
       date: string;
-      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+      entries: Array<{
+        time: string;
+        category: string;
+        action: string;
+        success: boolean;
+        details?: string;
+        entryType: 'tool' | 'work_result';
+        taskTitle?: string;
+      }>;
     }>
   >;
+  /** 汇总今日成果、保存 Markdown 报告并返回实际路径。 */
+  workLogReport(): Promise<{
+    ok: boolean;
+    date: string;
+    title: string;
+    markdown: string;
+    path: string;
+    message: string;
+  }>;
   /** 部门共享 Skill 列表。 */
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 公司 Skill 市场。 */
@@ -481,25 +498,64 @@ const bridge: OttoBridge = {
       tabs: Array<{ id: string; label: string; icon: string }>;
     }>;
   },
-  workLogToday(): Promise<{ summary: string; date: string; totalActions: number }> {
+  workLogToday(): Promise<{
+    summary: string;
+    date: string;
+    totalActions: number;
+    workResults: number;
+  }> {
     return ipcRenderer.invoke('otto:worklog-today') as Promise<{
       summary: string;
       date: string;
       totalActions: number;
+      workResults: number;
     }>;
   },
   workLogRecent(days?: number): Promise<
     Array<{
       date: string;
-      entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+      entries: Array<{
+        time: string;
+        category: string;
+        action: string;
+        success: boolean;
+        details?: string;
+        entryType: 'tool' | 'work_result';
+        taskTitle?: string;
+      }>;
     }>
   > {
     return ipcRenderer.invoke('otto:worklog-recent', days) as Promise<
       Array<{
         date: string;
-        entries: Array<{ time: string; category: string; action: string; success: boolean }>;
+        entries: Array<{
+          time: string;
+          category: string;
+          action: string;
+          success: boolean;
+          details?: string;
+          entryType: 'tool' | 'work_result';
+          taskTitle?: string;
+        }>;
       }>
     >;
+  },
+  workLogReport(): Promise<{
+    ok: boolean;
+    date: string;
+    title: string;
+    markdown: string;
+    path: string;
+    message: string;
+  }> {
+    return ipcRenderer.invoke('otto:worklog-report') as Promise<{
+      ok: boolean;
+      date: string;
+      title: string;
+      markdown: string;
+      path: string;
+      message: string;
+    }>;
   },
   skillShareList(teamId?: string): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;

@@ -21,6 +21,8 @@ import { CoreSessionRuntime } from './runtime.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ToolCallStatus, type ServerToClient } from './protocol.js';
 
+const noOpWorkLogger = { log: async () => undefined };
+
 /** 构造一条只有文本的流式 chunk（结构对齐 GenerateContentResponse）。 */
 function chunk(text: string, finishReason?: string): unknown {
   return {
@@ -78,6 +80,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       store,
       session.sessionId,
       makeFakeConfig(stream),
+      noOpWorkLogger,
     );
     await runtime.initialize();
 
@@ -111,6 +114,42 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       { type: 'text', value: '你好，世界' },
     ]);
     expect(finalAssistant!.isStreaming).toBe(false);
+  });
+
+  it('终轮完成后记录用户任务与最终工作结果', async () => {
+    async function* stream(): AsyncGenerator<unknown> {
+      yield chunk('已完成三家竞品的价格与定位对比。', 'STOP');
+    }
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '新会话' });
+    const entries: Array<Record<string, unknown>> = [];
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      makeFakeConfig(stream),
+      {
+        log: async (entry) => {
+          entries.push(entry as unknown as Record<string, unknown>);
+        },
+      },
+    );
+    await runtime.initialize();
+
+    await runtime.run(
+      [{ type: 'text', value: '调研三家企业 AI 竞品并给出结论' }],
+      'local',
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      toolName: 'otto_work_result',
+      entryType: 'work_result',
+      taskTitle: '调研三家企业 AI 竞品并给出结论',
+      userInput: '调研三家企业 AI 竞品并给出结论',
+      details: '已完成三家竞品的价格与定位对比。',
+      sessionId: session.sessionId,
+      success: true,
+    });
   });
 });
 
@@ -187,7 +226,12 @@ function startAskSession(config: Config) {
     frames.push(f);
     if (f.type === 'tool_confirmation_request') onQuestion();
   });
-  const runtime = new CoreSessionRuntime(store, session.sessionId, config);
+  const runtime = new CoreSessionRuntime(
+    store,
+    session.sessionId,
+    config,
+    noOpWorkLogger,
+  );
   return { store, session, frames, questionAsked, runtime };
 }
 

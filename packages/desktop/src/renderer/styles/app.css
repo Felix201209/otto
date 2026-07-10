@@ -3952,7 +3952,7 @@ h6.otto-prose__h {
   width: 16px;
   justify-content: center;
 }
-/* 行内数字（用量统计）：等宽字体靠右，扫读时小数位对齐。 */
+/* 行内数字：等宽字体靠右，扫读时小数位对齐。 */
 .otto-hub__item-numbers {
   flex: 1;
   min-width: 0;
@@ -4000,7 +4000,7 @@ h6.otto-prose__h {
   gap: 3px;
 }
 
-/* 汇总数字卡（用量统计 / 依赖体检顶部）。 */
+/* 汇总数字卡（依赖体检等面板顶部）。 */
 .otto-hub__statgrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -4716,6 +4716,21 @@ h6.otto-prose__h {
 .otto-wcal__pop-action {
   color: var(--otto-text-secondary);
   word-break: break-all;
+}
+.otto-wcal__pop-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.otto-wcal__pop-detail {
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .otto-wcal__pop-more {
   font-size: 10px;
