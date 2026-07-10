@@ -22,6 +22,17 @@ export interface ProactiveFeishuSender {
   sendMessage(userId: string, message: string): Promise<void>;
 }
 
+/** 日历轮询检查器（用于检测最近结束的会议） */
+export interface CalendarMeetingResult {
+  meetingId: string;
+  topic: string;
+  endTime: string; // ISO 时间戳
+  hostUserId: string;
+  operatorId: string;
+}
+
+export type CalendarCheckerFn = () => Promise<CalendarMeetingResult[]>;
+
 /** 主动服务规则 */
 export interface ProactiveRule {
   id: string;
@@ -153,6 +164,10 @@ export class ProactiveService {
   private triggeredToday: Set<string> = new Set(); // 防止同一天重复触发
   private feishuSender: ProactiveFeishuSender | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** 日历轮询检查器（fallback：飞书 WebSocket 事件不可用时使用） */
+  private calendarChecker: CalendarCheckerFn | null = null;
+  /** 已处理的会议 ID 集合（防重复触发） */
+  private processedMeetings: Set<string> = new Set();
 
   /** 注入飞书发送器 */
   setFeishuSender(sender: ProactiveFeishuSender): void {
@@ -160,8 +175,14 @@ export class ProactiveService {
     console.log('[ProactiveService] Feishu sender injected');
   }
 
+  /** 注入日历轮询检查器（用于检测最近结束的会议） */
+  setCalendarChecker(checker: CalendarCheckerFn): void {
+    this.calendarChecker = checker;
+    console.log('[ProactiveService] Calendar checker injected');
+  }
+
   /**
-   * 启动定时驱动器（每5分钟检查一次 cron 规则）。
+   * 启动定时驱动器（每5分钟检查一次 cron 规则 + 日历轮询）。
    * 由 CLI gateway 或桌面端 main 进程调用。
    */
   startScheduler(getContext: () => ProactiveContext): void {
@@ -170,9 +191,37 @@ export class ProactiveService {
     this.timer = setInterval(async () => {
       try {
         const ctx = getContext();
+
+        // 1. 检查 cron/pattern 规则
         const triggered = await this.checkAndTrigger(ctx);
         for (const rule of triggered) {
           await this.executeAndLog(rule, ctx);
+        }
+
+        // 2. 日历轮询：检测最近结束的会议（WebSocket 事件的 fallback）
+        if (this.calendarChecker) {
+          try {
+            const meetings = await this.calendarChecker();
+            for (const m of meetings) {
+              if (this.processedMeetings.has(m.meetingId)) continue;
+              this.processedMeetings.add(m.meetingId);
+
+              // 构建带会议信息的上下文
+              const meetingCtx: ProactiveContext = {
+                ...ctx,
+                lastMeetingEnd: m.endTime,
+              };
+              await this.onEvent('meeting_ended', meetingCtx);
+            }
+
+            // 清理旧会议 ID（保留最近 200 个）
+            if (this.processedMeetings.size > 200) {
+              const entries = [...this.processedMeetings];
+              this.processedMeetings = new Set(entries.slice(-100));
+            }
+          } catch (err) {
+            console.warn(`[ProactiveService] Calendar polling error: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
       } catch (err) {
         // 定时器出错不能崩溃

@@ -201,6 +201,21 @@ export interface FeishuMessage {
 
 export type OnMessageCallback = (msg: FeishuMessage) => Promise<string | null>;
 
+/** 飞书会议结束事件数据 */
+export interface FeishuMeetingEndedEvent {
+  meetingId: string;
+  topic: string;
+  startTime: string;       // ISO 时间戳
+  endTime: string;         // ISO 时间戳
+  hostUserId: string;      // 主持人 user_id
+  hostUserType: number;    // 1=open_id, 2=user_id, 3=union_id
+  operatorId: string;      // 操作者（结束会议的人）
+  meetingUrl?: string;
+}
+
+/** 会议结束回调 */
+export type OnMeetingEndedCallback = (event: FeishuMeetingEndedEvent) => Promise<void>;
+
 /** 卡片按钮点击回调的数据 */
 export interface CardActionData {
   /** 用户点击的按钮 value */
@@ -1039,6 +1054,9 @@ export class FeishuGateway {
 
   /** 外部注入的卡片按钮点击回调 */
   onCardAction: OnCardActionCallback | null = null;
+
+  /** 外部注入的会议结束回调（vc.meeting.all_meeting_ended_v1） */
+  onMeetingEnded: OnMeetingEndedCallback | null = null;
 
   /**
    * 卡片回调授权判定（C1）。可由调用方注入：给定点击者 open_id，返回是否允许
@@ -2296,6 +2314,44 @@ export class FeishuGateway {
           }
         } catch (err) {
           derror('Feishu card callback handler error:', err);
+        }
+        return { code: 0 };
+      },
+    });
+
+    // 注册会议结束事件（vc.meeting.all_meeting_ended_v1）
+    dispatcher.register({
+      'vc.meeting.all_meeting_ended_v1': async (data: Record<string, unknown>) => {
+        try {
+          const event = data?.event as Record<string, unknown> | undefined;
+          if (!event) return { code: 0 };
+
+          const meeting = event.meeting as Record<string, unknown> | undefined;
+          const operator = event.operator as Record<string, unknown> | undefined;
+          if (!meeting) return { code: 0 };
+
+          const meetingEvent: FeishuMeetingEndedEvent = {
+            meetingId: String(meeting.id || ''),
+            topic: String(meeting.topic || '未命名会议'),
+            startTime: String(meeting.start_time || ''),
+            endTime: String(meeting.end_time || ''),
+            hostUserId: String(meeting.host_user && typeof meeting.host_user === 'object'
+              ? (meeting.host_user as Record<string, unknown>).id || '' : ''),
+            hostUserType: Number(meeting.host_user && typeof meeting.host_user === 'object'
+              ? (meeting.host_user as Record<string, unknown>).user_type || 1 : 1),
+            operatorId: String(operator?.id || ''),
+            meetingUrl: typeof meeting.meeting_url === 'string' ? meeting.meeting_url : undefined,
+          };
+
+          dlog(`[Feishu] Meeting ended: "${meetingEvent.topic}" (${meetingEvent.meetingId})`);
+
+          if (this.onMeetingEnded) {
+            await this.onMeetingEnded(meetingEvent).catch((err: unknown) => {
+              derror('[Feishu] onMeetingEnded handler error:', err);
+            });
+          }
+        } catch (err) {
+          derror('[Feishu] meeting event handler error:', err);
         }
         return { code: 0 };
       },

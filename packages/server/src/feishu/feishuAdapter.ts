@@ -53,6 +53,7 @@ import type {
  */
 export interface FeishuGatewayLike extends FeishuStreamSink {
   onMessage: ((msg: FeishuMessage) => Promise<string | null>) | null;
+  onMeetingEnded: ((event: unknown) => Promise<void>) | null;
   onReady: (() => void) | null;
   onDisconnect: ((error?: Error) => void) | null;
   /** SDK 内部重连开始/成功（可选：老 fake / 精简实现可以不提供）。 */

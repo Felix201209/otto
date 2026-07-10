@@ -4726,6 +4726,74 @@ async function handleStart(context?: CommandContext): Promise<string> {
           }
         },
       });
+
+      // 🎙️ 会议结束检测：WebSocket 事件（方案A，优先）
+      gateway.onMeetingEnded = async (event) => {
+        const ctx = {
+          userId: (gateway as any).getBotOpenId?.() || 'default',
+          userName: 'Otto User',
+          currentDay: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()],
+          currentTime: `${new Date().getHours()}:${new Date().getMinutes()}`,
+          recentActions: [],
+          pendingTasks: 0,
+          hasUpcomingMeeting: false,
+          lastMeetingEnd: event.endTime,
+        };
+        await proactive.onEvent('meeting_ended', ctx);
+        dlog(`[Feishu] Proactive meeting_ended triggered via WebSocket: "${event.topic}"`);
+      };
+
+      // 🎙️ 会议结束检测：日历轮询（方案B，fallback）
+      try {
+        const { spawn } = await import('node:child_process');
+        proactive.setCalendarChecker(async () => {
+          // 使用 lark-cli 查询最近 10 分钟内结束的会议
+          const now = new Date();
+          const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
+          const startStr = tenMinAgo.toISOString().replace(/\.\d{3}Z$/, '+08:00');
+          const endStr = now.toISOString().replace(/\.\d{3}Z$/, '+08:00');
+
+          return new Promise((resolve) => {
+            const child = spawn('npx', [
+              '--yes', 'lark-cli@1.0.53', 'calendar', '+list',
+              '--start', startStr,
+              '--end', endStr,
+              '--status', 'ended',
+            ], {
+              timeout: 15000,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let stdout = '';
+            child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+            child.on('close', () => {
+              try {
+                // 尝试解析 JSON 输出
+                const data = JSON.parse(stdout.trim() || '[]');
+                const meetings: Array<{
+                  meetingId: string; topic: string; endTime: string;
+                  hostUserId: string; operatorId: string;
+                }> = Array.isArray(data) ? data.filter((m: any) =>
+                  m?.status === 'ended' || m?.meeting_id
+                ).map((m: any) => ({
+                  meetingId: m.meeting_id || m.id || '',
+                  topic: m.topic || m.summary || '未知会议',
+                  endTime: m.end_time || '',
+                  hostUserId: m.host_user_id || '',
+                  operatorId: m.operator_id || '',
+                })) : [];
+                resolve(meetings);
+              } catch {
+                resolve([]); // 解析失败不报错
+              }
+            });
+            child.on('error', () => resolve([]));
+          });
+        });
+      } catch {
+        // lark-cli 不可用不影响主流程
+      }
+
       proactive.startScheduler(() => ({
         userId: (gateway as any).getBotOpenId?.() || 'default',
         userName: 'Otto User',

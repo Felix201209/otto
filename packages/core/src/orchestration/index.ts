@@ -38,7 +38,7 @@ export type { CollaborationRequest, CollaborationResponse, AgentRegistration, Fe
 
 // 主动服务
 export { ProactiveService, getProactiveService } from './proactiveService.js';
-export type { ProactiveRule, ProactiveContext, ProactiveFeishuSender } from './proactiveService.js';
+export type { ProactiveRule, ProactiveContext, ProactiveFeishuSender, CalendarMeetingResult, CalendarCheckerFn } from './proactiveService.js';
 
 // 离职交接
 export { exportMemoryPackage, importMemoryPackage } from './knowledgeTransfer.js';
