@@ -183,6 +183,10 @@ export interface OttoBridge {
   feishuClearConfig(): Promise<FeishuConfigResult>;
   /** 园区服务企业定制配置；无配置文件时 null（用内置默认）。 */
   parkConfig(): Promise<ParkServicesConfig | null>;
+  /** 当前外观主题（'system' 跟随系统 / 'light' / 'dark'）。 */
+  themeGet(): Promise<'system' | 'light' | 'dark'>;
+  /** 设置外观主题并持久化；返回生效值。 */
+  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'>;
   /** Skill 排行榜 + 贡献明星榜（krx 企业面板；数据读 .otto/org/skill-shares.json）。 */
   skillLeaderboard(teamId?: string): Promise<{
     leaderboard: string;
@@ -452,6 +456,12 @@ const bridge: OttoBridge = {
   },
   parkConfig(): Promise<ParkServicesConfig | null> {
     return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
+  },
+  themeGet(): Promise<'system' | 'light' | 'dark'> {
+    return ipcRenderer.invoke('otto:theme-get') as Promise<'system' | 'light' | 'dark'>;
+  },
+  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'> {
+    return ipcRenderer.invoke('otto:theme-set', v) as Promise<'system' | 'light' | 'dark'>;
   },
   skillLeaderboard(teamId?: string): Promise<{
     leaderboard: string;

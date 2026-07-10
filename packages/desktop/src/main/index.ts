@@ -118,6 +118,8 @@ const IPC = {
   feishuSaveConfig: 'otto:feishu-save-config',
   feishuClearConfig: 'otto:feishu-clear-config',
   parkConfig: 'otto:park-config',
+  themeGet: 'otto:theme-get',
+  themeSet: 'otto:theme-set',
   skillLeaderboard: 'otto:skill-leaderboard',
   workLogToday: 'otto:worklog-today',
   skillShareList: 'otto:skill-share-list',
@@ -355,6 +357,24 @@ function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
  * 加载窗口图标占位：dist/renderer/icon.png 存在则用，否则返回空 image
  * （Electron 在无图标时回退默认，不报错）。真正的品牌图标由 #8 打包时补。
  */
+/** 主题选择的持久化文件（userData/theme.json）。 */
+function themeFilePath(): string {
+  return path.join(app.getPath('userData'), 'theme.json');
+}
+
+/** 读上次保存的主题选择；无文件/内容非法 → 'system'。 */
+function loadSavedThemeSource(): 'system' | 'light' | 'dark' {
+  try {
+    const raw = JSON.parse(fs.readFileSync(themeFilePath(), 'utf8')) as {
+      themeSource?: unknown;
+    };
+    if (raw.themeSource === 'light' || raw.themeSource === 'dark') return raw.themeSource;
+  } catch {
+    /* 首次启动无文件，走默认 */
+  }
+  return 'system';
+}
+
 function loadIcon(): NativeImage {
   const iconPath = path.join(RENDERER_DIR, 'icon.png');
   if (fs.existsSync(iconPath)) {
@@ -624,6 +644,19 @@ function registerIpc(): void {
   });
   // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
   // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  // ── 外观主题（跟随系统/浅色/深色）：nativeTheme.themeSource + userData 持久化 ──
+  ipcMain.handle(IPC.themeGet, () => nativeTheme.themeSource);
+  ipcMain.handle(IPC.themeSet, (_e, v: unknown) => {
+    if (v !== 'system' && v !== 'light' && v !== 'dark') return nativeTheme.themeSource;
+    nativeTheme.themeSource = v;
+    try {
+      fs.writeFileSync(themeFilePath(), JSON.stringify({ themeSource: v }), 'utf8');
+    } catch {
+      /* 写盘失败只影响下次启动的记忆，本次已生效 */
+    }
+    return nativeTheme.themeSource;
+  });
+
   // ── krx 的企业面板 IPC（排行榜/工作日志/Skill 共享与市场）──
   // 这批 handler 在 a01198db 的 merge 解冲突时被误删（renderer 调用还在、
   // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
@@ -964,10 +997,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    // 让 Chromium 的 prefers-color-scheme 跟随 macOS 系统深浅色主题：这是
-    // renderer 里 @media (prefers-color-scheme: dark) 能被触发的关键。'system'
-    // 虽是默认值，但显式设定可确保不被别处改写，且 activate 重建窗口时同样生效。
-    nativeTheme.themeSource = 'system';
+    // 外观主题：默认跟随系统（'system' 让 renderer 的 prefers-color-scheme 生效）；
+    // 用户在偏好里手动选过浅色/深色则恢复上次选择（userData/theme.json）。
+    nativeTheme.themeSource = loadSavedThemeSource();
 
     registerIpc();
     installAppMenu(() => mainWindow);

@@ -26,14 +26,38 @@ const AGENT_STYLES: Array<{ id: string; label: string; icon: string }> = [
   { id: 'windsurf', label: 'Windsurf（AI Flow）', icon: '🌊' },
 ];
 
+/** 外观主题选项（nativeTheme.themeSource 三态）。 */
+const THEME_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string }> = [
+  { id: 'system', label: '跟随系统' },
+  { id: 'light', label: '浅色' },
+  { id: 'dark', label: '深色' },
+];
+
 export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
   const { state, actions } = data;
   const s = state.settings;
   const [langDraft, setLangDraft] = useState('');
+  // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
+  const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
   }, [s?.preferredLanguage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto?.themeGet?.().then((v) => {
+      if (!cancelled && v) setTheme(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pickTheme = (v: 'system' | 'light' | 'dark'): void => {
+    setTheme(v);
+    void window.otto?.themeSet?.(v);
+  };
 
   return (
     <Panel title="偏好设置" desc="Otto 的工作风格与全局偏好。">
@@ -41,6 +65,27 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
         <Empty>正在加载偏好设置…</Empty>
       ) : (
         <Card>
+          <div className="otto-hub__setting otto-hub__setting--stack">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">外观</div>
+              <div className="otto-hub__field-hint">
+                深浅色主题：跟随系统或手动固定，立即生效并记住选择。
+              </div>
+            </div>
+            <div className="otto-hub__chiprow">
+              {THEME_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={'otto-hub__chip' + (theme === opt.id ? ' is-active' : '')}
+                  onClick={() => pickTheme(opt.id)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
               <div className="otto-hub__field-label">Agent 风格</div>

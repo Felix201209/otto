@@ -79,6 +79,23 @@ type FetchJsonResult =
   | { ok: false; error: string; httpStatus?: number };
 
 /** 带超时的匿名 JSON GET（跟随重定向）。所有失败都折叠成结构化错误。 */
+/** fetchJson 带退避重试：attempts 次内成功即返回；全失败返回最后一次结果。 */
+async function fetchJsonWithRetry(
+  url: string,
+  timeoutMs: number,
+  attempts: number,
+): Promise<FetchJsonResult> {
+  let last: FetchJsonResult = { ok: false, error: 'no attempt' };
+  for (let i = 0; i < attempts; i++) {
+    last = await fetchJson(url, timeoutMs);
+    if (last.ok) return last;
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+    }
+  }
+  return last;
+}
+
 async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResult> {
   const controller = new AbortController();
   let timedOut = false;
@@ -146,8 +163,10 @@ export class UpdateService {
     const currentVersion = app.getVersion();
     const assetKey = platformAssetKey(process.platform, process.arch);
 
-    // 1) 主源：latest.json 直链。
-    const primary = await fetchJson(PRIMARY_MANIFEST_URL, CHECK_TIMEOUT_MS);
+    // 1) 主源：latest.json 直链。GitHub 偶发 5xx/超时（实测撞过 504），
+    // 带退避重试三次再降级——降级路径拿不到 sha256 时只能给「打开发布页」，
+    // 体验差一截，值得多试几次。
+    const primary = await fetchJsonWithRetry(PRIMARY_MANIFEST_URL, CHECK_TIMEOUT_MS, 3);
     if (primary.ok) {
       const parsed = parseManifest(primary.json);
       if (parsed.ok) {
@@ -175,7 +194,11 @@ export class UpdateService {
 
     // 2a) release 资产里带 latest.json → 再取一次完整清单（才有 sha256 可校验）。
     if (release.release.latestJsonUrl) {
-      const manifestRes = await fetchJson(release.release.latestJsonUrl, CHECK_TIMEOUT_MS);
+      const manifestRes = await fetchJsonWithRetry(
+        release.release.latestJsonUrl,
+        CHECK_TIMEOUT_MS,
+        2,
+      );
       if (manifestRes.ok) {
         const parsed = parseManifest(manifestRes.json);
         if (parsed.ok) {
