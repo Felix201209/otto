@@ -4831,6 +4831,57 @@ async function handleStart(context?: CommandContext): Promise<string> {
       });
 
       console.log('[Feishu] 主动服务/多Agent协作/Skill通知 已注入飞书通道');
+
+      // 🔔 多渠道通知服务：飞书 + 短信兜底
+      try {
+        const { getNotificationService } = await import('otto-core');
+        const { AliyunSmsSender, createAliyunSmsFromEnv } = await import('otto-core');
+
+        const notif = getNotificationService();
+
+        // 注册飞书通知通道
+        notif.registerSender({
+          channel: 'feishu',
+          send: async (recipientId: string, title: string, body: string) => {
+            if (!activeGateway) return false;
+            try {
+              await activeGateway.sendMessage(
+                recipientId,
+                `${title}\n\n${body}`
+              );
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        });
+
+        // 注册短信通知通道（阿里云）
+        const smsSender = createAliyunSmsFromEnv();
+        if (smsSender) {
+          notif.registerSender(smsSender);
+          console.log('[NotificationService] 短信通道已就绪');
+        } else {
+          console.log('[NotificationService] 短信通道未配置，仅使用飞书通知');
+        }
+
+        // 从环境变量加载服务人员手机号映射
+        // 格式: OTTO_STAFF_PHONES=openId1:13800138000,openId2:13900139000
+        const phonesEnv = process.env.OTTO_STAFF_PHONES || '';
+        if (phonesEnv) {
+          for (const pair of phonesEnv.split(',')) {
+            const [openId, phone] = pair.split(':');
+            if (openId && phone) {
+              notif.setPhoneMapping(openId.trim(), phone.trim());
+            }
+          }
+          console.log(`[NotificationService] 已加载 ${notif['phoneMap'].size} 个手机号映射`);
+        }
+
+        console.log('[NotificationService] 多渠道通知服务已启动');
+      } catch (err) {
+        console.warn(`[Feishu] 通知服务初始化失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } catch (err) {
       console.warn(`[Feishu] 注入编排通道失败（不影响核心功能）: ${err instanceof Error ? err.message : String(err)}`);
     }
