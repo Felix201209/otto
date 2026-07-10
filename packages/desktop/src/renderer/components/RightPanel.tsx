@@ -16,7 +16,7 @@
 import React, { useState } from 'react';
 import { EXPERTS, type Expert } from '../agents/experts.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
-import { openParkServices } from './ParkServicesPlugin.js';
+import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import { IconBuilding, IconChevron, IconChevronDown, IconTerminal } from './icons.js';
 
 const DEV_EXPERT: Expert = {
@@ -64,6 +64,8 @@ export function RightPanel({
   const [expertsOpen, setExpertsOpen] = useState<boolean>(true);
   const [parkOpen, setParkOpen] = useState<boolean>(true);
   const [devOpen, setDevOpen] = useState<boolean>(true);
+  // 企业品牌名（于总：入口要带园区名，随配置变化；默认「宏创AI园区服务」）。
+  const parkBrand = useParkBrand();
 
   // 企业面板状态
   const [leaderboardTab, setLeaderboardTab] = useState<string>('leaderboard');
@@ -140,7 +142,7 @@ export function RightPanel({
                 <button type="button" className="otto-expert-card" onClick={openParkServices} title="访客邀约 · 会议室 · IT 报修 · 班车 · 餐饮">
                   <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden><IconBuilding size={17} /></span>
                   <span className="otto-expert-card__body">
-                    <span className="otto-expert-card__name">园区服务</span>
+                    <span className="otto-expert-card__name">{parkBrand}</span>
                     <span className="otto-expert-card__desc">访客 · 会议室 · 报修 · 班车 · 餐饮</span>
                   </span>
                 </button>

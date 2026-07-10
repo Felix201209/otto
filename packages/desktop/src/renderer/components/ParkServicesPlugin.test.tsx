@@ -32,6 +32,12 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('入口小钮可见标签显示完整品牌名（于总：必须带「宏创」）', () => {
+    render(<ParkServicesPlugin />);
+    const label = document.querySelector('.otto-park-fab__label');
+    expect(label?.textContent).toBe('宏创AI园区服务');
+  });
+
   it('点击卡片展开居中对话框，六项服务齐全', () => {
     render(<ParkServicesPlugin />);
     fireEvent.click(screen.getByTitle('宏创AI园区服务'));

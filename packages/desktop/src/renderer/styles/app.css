@@ -4405,7 +4405,8 @@ h6.otto-prose__h {
 }
 .otto-park-fab:hover .otto-park-fab__label,
 .otto-park-fab:focus-visible .otto-park-fab__label {
-  max-width: 64px;
+  /* 装得下完整品牌名（默认「宏创AI园区服务」，企业配置可能更长）。 */
+  max-width: 180px;
   opacity: 1;
   margin-left: 6px;
 }

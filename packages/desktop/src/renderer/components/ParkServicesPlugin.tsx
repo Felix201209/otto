@@ -116,6 +116,25 @@ export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
 }
 
+/**
+ * 企业品牌名 hook（右侧面板入口卡片等处共用）：读 park-services.json 的
+ * brandName，无配置用默认「宏创AI园区服务」。与 Plugin 内部读取相互独立
+ * （幂等 IPC，读两次无副作用），避免为一个字符串穿 props。
+ */
+export function useParkBrand(): string {
+  const [brand, setBrand] = useState(DEFAULT_BRAND);
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto?.parkConfig?.().then((cfg) => {
+      if (!cancelled && cfg?.brandName) setBrand(cfg.brandName);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return brand;
+}
+
 export function ParkServicesPlugin({
   showFab = true,
 }: {
@@ -198,7 +217,8 @@ export function ParkServicesPlugin({
         aria-label={brand}
       >
         <IconBuilding size={17} className="otto-park-fab__icon" />
-        <span className="otto-park-fab__label">园区服务</span>
+        {/* 于总：右下角必须带企业品牌名（默认「宏创AI园区服务」，随 brandName 配置变）。 */}
+        <span className="otto-park-fab__label">{brand}</span>
       </button>
       ) : null}
 
