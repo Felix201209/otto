@@ -36,15 +36,14 @@ import {
   validateClientPayload,
   type ApiResponse,
   type ClientToServer,
-  type FeishuConfigPublic,
-  type FeishuConfigSaveRequest,
-  type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
   type ModelInfo,
   type ServerToClient,
   type SettingsSnapshot,
   type McpServerInfo,
+  type ContextBreakdown,
+  type StatsSnapshot,
   type DoctorReportInfo,
   type TodoItemInfo,
   type MemoryFileInfo,
@@ -60,26 +59,10 @@ import {
   type SessionStore,
   type Unsubscribe,
 } from './sessions.js';
-import {
-  executeSlashCommand,
-  listSlashCommands,
-  type CommandHost,
-} from './commands/index.js';
-import {
-  registerFeishu,
-  type FeishuRegisterDeps,
-  type FeishuRegistration,
-} from './feishu/register.js';
-import {
-  loadCredentials,
-  saveCredentials,
-  clearCredentials,
-  type FeishuCredentials,
-} from './feishu/vendor/credentials.js';
+import { registerFeishu, type FeishuRegistration } from './feishu/register.js';
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
 import {
-  deleteCustomModel,
   listModelInfos,
   loadCustomModels,
   loadPreferredModel,
@@ -108,6 +91,9 @@ import {
   WorkflowRegistry,
   type WorkflowAgentRecord,
   type Config as CoreConfig,
+  LocalKnowledgeStore,
+  type KnowledgeEntry,
+  getKnowledgeDir,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -150,31 +136,7 @@ export interface OttoServerOptions {
    * 让无 key 的全新机器也能端到端验证收发链路。可被 env OTTO_SERVER_MOCK=1 置真。
    */
   mock?: boolean;
-  /**
-   * 飞书注入（测试用）：凭证与 gateway 工厂透传给 registerFeishu → adapter，
-   * 让 /feishu/start、/feishu/stop 端点行为可离线单测（不读真凭证、不连真飞书）。
-   */
-  feishuDeps?: Pick<FeishuRegisterDeps, 'credentials' | 'gatewayFactory'>;
-  /**
-   * 飞书凭证存取（/feishu/config 端点用）。缺省 = 真实读写
-   * ~/.otto-user/feishu-credentials.json。测试必须注入内存实现——
-   * 绝不允许测试碰用户真实凭证文件。
-   */
-  credentialsStore?: FeishuCredentialsStore;
 }
-
-/** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
-export interface FeishuCredentialsStore {
-  load(): Promise<FeishuCredentials | null>;
-  save(creds: FeishuCredentials): Promise<void>;
-  clear(): Promise<void>;
-}
-
-const defaultCredentialsStore: FeishuCredentialsStore = {
-  load: loadCredentials,
-  save: saveCredentials,
-  clear: clearCredentials,
-};
 
 /**
  * 单个 WS 连接的会话上下文：持有该连接对各会话的订阅取消句柄，
@@ -192,8 +154,7 @@ export class OttoServer {
   readonly store: SessionStore;
   private readonly host: string;
   private readonly port: number;
-  /** 飞书网关是否启用。非 readonly：/feishu/start、/feishu/stop 运行期可翻转。 */
-  private enableFeishu: boolean;
+  private readonly enableFeishu: boolean;
   private readonly startedAt = Date.now();
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
@@ -203,12 +164,6 @@ export class OttoServer {
   private http?: HttpServer;
   private wss?: WebSocketServer;
   private feishu?: FeishuRegistration;
-  /** 飞书测试注入（见 OttoServerOptions.feishuDeps）。 */
-  private readonly feishuDeps?: OttoServerOptions['feishuDeps'];
-  /** 飞书凭证存取（/feishu/config 端点用）。 */
-  private readonly credentialsStore: FeishuCredentialsStore;
-  /** 运行期飞书启停的单飞锁：并发 POST 复用同一次操作，防重复 register。 */
-  private feishuOpLock: Promise<unknown> = Promise.resolve();
   private readonly conns = new Set<ClientConn>();
   /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
   private workflowUnsub?: () => void;
@@ -223,8 +178,6 @@ export class OttoServer {
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
-    this.feishuDeps = opts.feishuDeps;
-    this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
   }
 
   /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
@@ -275,9 +228,6 @@ export class OttoServer {
       this.feishu = await registerFeishu({
         store: this.store,
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
-        ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
-        mock: this.mock,
-        ...this.feishuDeps,
       });
     }
 
@@ -336,9 +286,6 @@ export class OttoServer {
       feishu: {
         enabled: this.enableFeishu,
         connected: this.feishu?.isConnected() ?? false,
-        // 守护详情（断线重连次数 / 下次重试 / 锁冲突持有者等）；registration
-        // 未就绪（未启用飞书）时不携带。桌面端徽标与 CLI status 都吃这份。
-        status: this.feishu?.getStatus(),
       },
     };
   }
@@ -533,7 +480,7 @@ export class OttoServer {
   }
 
   // ──────────────────────────────────────────────────────────────────────
-  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 依赖体检 / Todo）
+  // GUI 设置面板 handler（P0：统一设置 / MCP 管理 / context 用量 / 用量统计 / 依赖体检 / Todo）
   // ──────────────────────────────────────────────────────────────────────
 
   /**
@@ -806,6 +753,33 @@ export class OttoServer {
         freeSpaceTokens,
       },
     });
+  }
+
+  /** 用量统计快照（对齐 CLI /stats，进程级全部会话聚合）。 */
+  private statsSnapshot(): StatsSnapshot {
+    const metrics = uiTelemetryService.getMetrics();
+    const models: StatsSnapshot['models'] = {};
+    for (const [name, m] of Object.entries(metrics.models)) {
+      models[name] = {
+        requests: m.api.totalRequests,
+        inputTokens: m.tokens.prompt,
+        outputTokens: m.tokens.candidates,
+        totalTokens: m.tokens.total,
+      };
+    }
+    const byName: StatsSnapshot['tools']['byName'] = {};
+    for (const [name, t] of Object.entries(metrics.tools.byName)) {
+      byName[name] = { count: t.count, success: t.success, fail: t.fail };
+    }
+    return {
+      models,
+      tools: {
+        totalCalls: metrics.tools.totalCalls,
+        totalSuccess: metrics.tools.totalSuccess,
+        totalFail: metrics.tools.totalFail,
+        byName,
+      },
+    };
   }
 
   /** 触发一次外部依赖体检（异步，跑完再回帧，避免 UI 长时间无反馈）。 */
@@ -1152,218 +1126,8 @@ export class OttoServer {
     if (path === HTTP_ROUTES.models && req.method === 'GET') {
       return sendJson(res, 200, ok(this.modelInfos()));
     }
-    // 飞书运行期启停（desktop 一键开关走这里）。async handler：完成后再答复。
-    if (path === HTTP_ROUTES.feishuStart && req.method === 'POST') {
-      void this.runtimeFeishuStart()
-        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
-        .catch((e) =>
-          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
-        );
-      return;
-    }
-    if (path === HTTP_ROUTES.feishuStop && req.method === 'POST') {
-      void this.runtimeFeishuStop()
-        .then((r) => sendJson(res, r.ok ? 200 : 409, r))
-        .catch((e) =>
-          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
-        );
-      return;
-    }
-    // 飞书凭证配置（desktop「飞书接入」面板走这里；appSecret 只进不出）。
-    if (path === HTTP_ROUTES.feishuConfig && req.method === 'GET') {
-      void this.feishuConfigView()
-        .then((view) => sendJson(res, 200, ok(view)))
-        .catch((e) =>
-          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
-        );
-      return;
-    }
-    if (path === HTTP_ROUTES.feishuConfig && req.method === 'POST') {
-      void readJsonBody(req)
-        .then((body) => this.runtimeFeishuSaveConfig(body))
-        .then((r) => sendJson(res, r.ok ? 200 : 400, r))
-        .catch((e) =>
-          sendJson(res, 400, err(e instanceof Error ? e.message : String(e))),
-        );
-      return;
-    }
-    if (path === HTTP_ROUTES.feishuConfig && req.method === 'DELETE') {
-      void this.runtimeFeishuClearConfig()
-        .then((r) => sendJson(res, 200, r))
-        .catch((e) =>
-          sendJson(res, 500, err(e instanceof Error ? e.message : String(e))),
-        );
-      return;
-    }
 
     sendJson(res, 404, err('not_found'));
-  }
-
-  // ──────────────────────────────────────────────────────────────────────
-  // 飞书运行期启停（POST /feishu/start | /feishu/stop）
-  // ──────────────────────────────────────────────────────────────────────
-
-  /**
-   * 运行期启动/恢复飞书守护。幂等；经单飞锁串行化，并发请求不会重复注册。
-   * 覆盖三种入口场景：
-   *   - server 启动时未启用（无凭证/未开开关）→ 现在注册并启动。凭证在
-   *     adapter.start() 里重新读盘——用户运行期才配好凭证也能拉起；
-   *   - 已有 registration 但被 stop 过 → registration.start() 恢复守护
-   *     （断线自动重连随之恢复）；
-   *   - 已在跑 → adapter 幂等 no-op，返回当前状态。
-   * 无凭证时诚实失败（ok:false + 原因），enableFeishu 保持 false，不谎报已启用。
-   */
-  private runtimeFeishuStart(): Promise<ApiResponse<FeishuHealthStatus | null>> {
-    const run = this.feishuOpLock.then(async () => {
-      if (!this.feishu) {
-        this.feishu = await registerFeishu({
-          store: this.store,
-          broadcast: (sessionId, frame) =>
-            this.store.publish(sessionId, frame),
-          ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
-          mock: this.mock,
-          ...this.feishuDeps,
-        });
-      } else {
-        await this.feishu.start();
-      }
-      const status = this.feishu.getStatus();
-      if (!status.configured) {
-        this.enableFeishu = false;
-        return {
-          ok: false,
-          data: status,
-          error:
-            '未发现可用的飞书凭证（~/.otto-user/feishu-credentials.json），网关未启动。' +
-            '请先在终端运行 otto feishu setup 配置，再重试。',
-        } satisfies ApiResponse<FeishuHealthStatus | null>;
-      }
-      this.enableFeishu = true;
-      return ok<FeishuHealthStatus | null>(status);
-    });
-    // 锁链只关心「上一个操作结束了没」，吞掉错误防止断链拖死后续操作。
-    this.feishuOpLock = run.catch(() => undefined);
-    return run;
-  }
-
-  /**
-   * 运行期停止飞书守护（有意停止）：取消所有重连定时器，之后**不自动重连**，
-   * 直到再次 start。registration 句柄保留，供后续恢复。
-   */
-  private runtimeFeishuStop(): Promise<ApiResponse<FeishuHealthStatus | null>> {
-    const run = this.feishuOpLock.then(async () => {
-      if (!this.feishu) {
-        return {
-          ok: false,
-          data: null,
-          error: '飞书网关未在运行，无需停止。',
-        } satisfies ApiResponse<FeishuHealthStatus | null>;
-      }
-      await this.feishu.stop();
-      this.enableFeishu = false;
-      return ok<FeishuHealthStatus | null>(this.feishu.getStatus());
-    });
-    this.feishuOpLock = run.catch(() => undefined);
-    return run;
-  }
-
-  // ──────────────────────────────────────────────────────────────────────
-  // 飞书凭证配置（GET/POST/DELETE /feishu/config）
-  // ──────────────────────────────────────────────────────────────────────
-
-  /** 凭证的脱敏视图：appSecret 永不出现在响应里。 */
-  private async feishuConfigView(): Promise<FeishuConfigPublic> {
-    let creds: FeishuCredentials | null;
-    try {
-      creds = await this.credentialsStore.load();
-    } catch {
-      // 文件存在但解密/解析失败：如实报 corrupted，客户端引导「清除后重配」。
-      return { configured: false, corrupted: true };
-    }
-    if (!creds) return { configured: false };
-    return {
-      configured: true,
-      appId: creds.appId,
-      domain: creds.domain,
-      botName: creds.botName,
-      tenantName: creds.tenantName,
-      ownerOpenId: creds.ownerOpenId,
-      allowlistCount: creds.allowlist?.length ?? 0,
-    };
-  }
-
-  /**
-   * 保存凭证并立即让守护用上新凭证（stop→start；adapter 只在拉起时读盘）。
-   * appSecret 可省略 = 沿用盘上已有 secret（仅限 App ID 未变时，防串号）。
-   */
-  private async runtimeFeishuSaveConfig(
-    body: unknown,
-  ): Promise<ApiResponse<FeishuConfigPublic>> {
-    const parsed = parseFeishuConfigSaveRequest(body);
-    if (typeof parsed === 'string') {
-      return { ok: false, data: await this.feishuConfigView(), error: parsed };
-    }
-
-    let existing: FeishuCredentials | null = null;
-    try {
-      existing = await this.credentialsStore.load();
-    } catch {
-      existing = null; // 损坏文件视为不存在，直接被本次保存覆盖。
-    }
-
-    const sameApp = existing?.appId === parsed.appId;
-    const secret = parsed.appSecret ?? (sameApp ? existing?.appSecret : undefined);
-    if (!secret) {
-      return {
-        ok: false,
-        data: await this.feishuConfigView(),
-        error: sameApp
-          ? '请填写 App Secret。'
-          : '更换 App ID 时必须重新填写 App Secret。',
-      };
-    }
-
-    // 换应用时旧 bot/租户/白名单信息全部作废；同应用则保留。
-    const next: FeishuCredentials = {
-      appId: parsed.appId,
-      appSecret: secret,
-      domain: parsed.domain,
-      ...(sameApp && existing
-        ? {
-            botName: existing.botName,
-            botOpenId: existing.botOpenId,
-            tenantName: existing.tenantName,
-            allowlist: existing.allowlist,
-          }
-        : {}),
-      ...(parsed.ownerOpenId
-        ? { ownerOpenId: parsed.ownerOpenId }
-        : sameApp && existing?.ownerOpenId
-          ? { ownerOpenId: existing.ownerOpenId }
-          : {}),
-    };
-    await this.credentialsStore.save(next);
-
-    // 守护若在跑，stop→start 强制重读凭证（start 对已运行守护是幂等 no-op）。
-    await this.runtimeFeishuStop().catch(() => undefined);
-    const started = await this.runtimeFeishuStart().catch(
-      (e): ApiResponse<FeishuHealthStatus | null> =>
-        err(e instanceof Error ? e.message : String(e)),
-    );
-    return {
-      ok: started.ok,
-      data: await this.feishuConfigView(),
-      error: started.ok
-        ? null
-        : `凭证已保存，但守护启动失败：${started.error ?? '未知原因'}`,
-    };
-  }
-
-  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
-  private async runtimeFeishuClearConfig(): Promise<ApiResponse<FeishuConfigPublic>> {
-    await this.runtimeFeishuStop().catch(() => undefined);
-    await this.credentialsStore.clear();
-    return ok(await this.feishuConfigView());
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -1502,31 +1266,6 @@ export class OttoServer {
         });
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
-      case 'delete_custom_model': {
-        // 删除自定义模型：成功广播最新 models_list（多窗口同步刷新）；
-        // 未命中（可能已被别的窗口删掉）或写盘失败回 error 帧。
-        try {
-          const removed = deleteCustomModel(msg.payload.id);
-          if (!removed) {
-            return this.send(conn.socket, {
-              type: 'error',
-              payload: { code: 'delete_failed', message: '该模型不存在（可能已被删除）' },
-            });
-          }
-          return this.broadcastAll({
-            type: 'models_list',
-            payload: { models: this.modelInfos(), current: this.currentModel() },
-          });
-        } catch (e) {
-          return this.send(conn.socket, {
-            type: 'error',
-            payload: {
-              code: 'delete_failed',
-              message: `删除失败：${e instanceof Error ? e.message : '未知错误'}`,
-            },
-          });
-        }
-      }
       case 'delete_session':
         return this.handleDeleteSession(conn, msg);
       case 'rename_session':
@@ -1549,6 +1288,11 @@ export class OttoServer {
         return this.handleMcpRemove(conn, msg);
       case 'get_context_breakdown':
         return this.handleGetContextBreakdown(conn, msg);
+      case 'get_stats':
+        return this.send(conn.socket, {
+          type: 'stats_snapshot',
+          payload: this.statsSnapshot(),
+        });
       case 'run_doctor':
         return this.handleRunDoctor(conn);
       case 'get_todos':
@@ -1574,14 +1318,14 @@ export class OttoServer {
         return this.handleGetExtensions(conn);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
-      case 'run_slash_command':
-        return this.handleRunSlashCommand(conn, msg);
-      case 'list_slash_commands':
-        // 命令清单的单一事实源：renderer 面板据此合并展示 server 侧命令。
-        return this.send(conn.socket, {
-          type: 'slash_commands_list',
-          payload: { commands: listSlashCommands() },
-        });
+      case 'get_knowledge':
+        return this.handleGetKnowledge(conn, msg);
+      case 'search_knowledge':
+        return this.handleSearchKnowledge(conn, msg);
+      case 'add_knowledge':
+        return this.handleAddKnowledge(conn, msg);
+      case 'remove_knowledge':
+        return this.handleRemoveKnowledge(conn, msg);
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -1662,105 +1406,6 @@ export class OttoServer {
     }
     // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
-  }
-
-  /**
-   * 斜杠命令宿主（src/commands/ 的窄依赖面）：全部用闭包桥接到 server 既有
-   * 私有能力（mcpServerInfos / extensionSummaries / …），命令层不反向持有 OttoServer。
-   */
-  private commandHost(): CommandHost {
-    return {
-      store: this.store,
-      serverVersion: SERVER_VERSION,
-      protocolVersion: PROTOCOL_VERSION,
-      uptimeMs: () => Date.now() - this.startedAt,
-      cwd: () => resolveDefaultCwd(),
-      getConfig: (sessionId) =>
-        this.store.getRuntime(sessionId)?.getConfig?.() as
-          | CoreConfig
-          | undefined,
-      currentModel: () => this.currentModel(),
-      modelInfos: () => this.modelInfos(),
-      mcpServerInfos: () => this.mcpServerInfos(),
-      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
-    };
-  }
-
-  /**
-   * 斜杠命令入口（run_slash_command 帧）：路由到 src/commands/ 的注册表执行，
-   * 结果以 slash_command_result 回给**发起连接**（与其它查询帧一致，
-   * 不广播——命令回执只属于发起者）。
-   *
-   * 命令结果**有意不落库**：它是「即时查询回执」而非会话内容，落库会污染
-   * 历史/导出与模型上下文。因此刷新或切换会话后气泡消失是设计行为，不是 bug
-   * （renderer 以 ephemeral 系统气泡渲染，见 useOttoStore 的 slash_command_result 分支）。
-   *
-   * submit_prompt 形态（如 /init）先查会话忙闲（忙则用回执通道诚实拒绝），
-   * 再回执行回执并把 prompt 当用户消息走 handleSendUserMessage——复用其
-   * busy 兜底闸门 / mock 降级 / runtime 懒构建，不另起炉灶。
-   */
-  private async handleRunSlashCommand(
-    conn: ClientConn,
-    msg: Extract<ClientToServer, { type: 'run_slash_command' }>,
-  ): Promise<void> {
-    const { sessionId, name, args } = msg.payload;
-    if (!this.store.getSession(sessionId)) {
-      return this.send(
-        conn.socket,
-        errorFrame(sessionId, 'no_session', '会话不存在'),
-      );
-    }
-    const outcome = await executeSlashCommand(
-      this.commandHost(),
-      sessionId,
-      name,
-      args ?? '',
-    );
-    if (outcome.kind === 'submit_prompt') {
-      // 先查忙闲再发「已提交」回执：否则会话 thinking/streaming 时用户先收到
-      // 成功回执、紧接着又收到 busy 错误帧，两条消息互相矛盾（实际任务被拒）。
-      // handleSendUserMessage 内部的 busy 闸门保留作兜底（覆盖此检查后的竞态窗口）。
-      const session = this.store.getSession(sessionId);
-      if (
-        session &&
-        (session.status === 'thinking' || session.status === 'streaming')
-      ) {
-        this.send(conn.socket, {
-          type: 'slash_command_result',
-          payload: {
-            sessionId,
-            name,
-            args,
-            ok: false,
-            markdown: `该会话正在生成回复，/${name} 未提交。请稍候或先取消，再重试。`,
-          },
-        });
-        return;
-      }
-      this.send(conn.socket, {
-        type: 'slash_command_result',
-        payload: { sessionId, name, args, ok: true, markdown: outcome.note },
-      });
-      await this.handleSendUserMessage(conn, {
-        type: 'send_user_message',
-        payload: {
-          sessionId,
-          content: [{ type: 'text', value: outcome.content }],
-          source: 'local',
-        },
-      });
-      return;
-    }
-    this.send(conn.socket, {
-      type: 'slash_command_result',
-      payload: {
-        sessionId,
-        name,
-        args,
-        ok: outcome.ok,
-        markdown: outcome.markdown,
-      },
-    });
   }
 
   /**
@@ -1918,6 +1563,87 @@ export class OttoServer {
       socket.send(JSON.stringify(frame));
     }
   }
+  
+  // ── Personal Knowledge Base handlers ────────────────────────────────────────────────────
+
+  private knowledgeStore = new LocalKnowledgeStore();
+
+  private async handleGetKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.list(msg.payload.limit ?? 50);
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'list' },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge load failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleSearchKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'search_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.search(
+        msg.payload.query,
+        msg.payload.category,
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'search', query: msg.payload.query },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge search failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleAddKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'add_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entry = await this.knowledgeStore.add(
+        msg.payload.category ?? 'general',
+        msg.payload.content,
+        msg.payload.tags ?? [],
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_added',
+        payload: { entry },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge add failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleRemoveKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'remove_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const removed = await this.knowledgeStore.remove(msg.payload.id);
+      if (!removed) {
+        this.send(conn.socket, errorFrame('', 'knowledge_error',
+          `entry ${msg.payload.id} not found`));
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'knowledge_removed',
+        payload: { id: msg.payload.id },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge remove failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
 }
 
 // ── helpers ──
@@ -1932,58 +1658,6 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(json);
-}
-
-/** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此，超限即恶意/误用）。 */
-function readJsonBody(
-  req: IncomingMessage,
-  maxBytes = 64 * 1024,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > maxBytes) {
-        reject(new Error('请求体过大'));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on('end', () => {
-      if (chunks.length === 0) return resolve({});
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch {
-        reject(new Error('请求体不是合法 JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-/** 校验 POST /feishu/config 请求体；通过返回规整后的请求，不通过返回错误文案。 */
-function parseFeishuConfigSaveRequest(
-  body: unknown,
-): FeishuConfigSaveRequest | string {
-  if (typeof body !== 'object' || body === null) return '请求体必须是 JSON 对象';
-  const b = body as Record<string, unknown>;
-  const appId = typeof b.appId === 'string' ? b.appId.trim() : '';
-  if (!appId) return '请填写 App ID（形如 cli_xxx）。';
-  const domain = b.domain;
-  if (domain !== 'feishu' && domain !== 'lark') {
-    return 'domain 必须是 feishu（飞书）或 lark（Lark 国际版）。';
-  }
-  const appSecret =
-    typeof b.appSecret === 'string' && b.appSecret.trim()
-      ? b.appSecret.trim()
-      : undefined;
-  const ownerOpenId =
-    typeof b.ownerOpenId === 'string' && b.ownerOpenId.trim()
-      ? b.ownerOpenId.trim()
-      : undefined;
-  return { appId, domain, ...(appSecret ? { appSecret } : {}), ...(ownerOpenId ? { ownerOpenId } : {}) };
 }
 /** core WorkflowAgentRecord → 协议 WorkflowAgentSummary（裁掉 prompt/recentToolCalls 等大字段）。 */
 function toWorkflowAgentSummary(a: WorkflowAgentRecord): WorkflowAgentSummary {

@@ -30,47 +30,24 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { SLASH_COMMANDS } from './components/Composer.js';
-import {
-  mergeServerCommands,
-  buildHelpMarkdown,
-} from './components/SlashCommands.js';
 import { RightPanel } from './components/RightPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
+import { insertComposerDraft } from './components/Composer.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
 import { useSettingsData } from './state/useSettingsData.js';
-import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
-import { WhatsNewDialog } from './components/WhatsNewDialog.js';
-
-/** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
-const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
-  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
+  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/stats/doctor/todos。
   const settingsData = useSettingsData();
-  // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
-  const softwareUpdate = useSoftwareUpdate();
-
-  // 启动后延迟静默检查一次：发现新版只点亮设置入口小圆点（无弹窗），
-  // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户。
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => softwareUpdate.actions.silentCheck(),
-      SILENT_UPDATE_CHECK_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
-    // actions 引用稳定（hook 内 useMemo），只在挂载时安排一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // —— 「查看全部对话」检索面板（仍是浮层） ——
   const [allConvOpen, setAllConvOpen] = useState(false);
@@ -83,17 +60,6 @@ export function App(): React.JSX.Element {
     setHubInitialTab(tab);
     setMainView('hub');
   };
-  // 悬浮设置窗打开时全局接管 Esc；焦点即使还留在底层按钮也必须能关闭。
-  useEffect(() => {
-    if (mainView !== 'hub') return;
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setMainView('chat');
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [mainView]);
   // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
   const setupOpen = mainView === 'settings';
   // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。
@@ -151,11 +117,6 @@ export function App(): React.JSX.Element {
     setSaveError(null);
     setSaving(true);
     transport.send({ type: 'save_custom_model', payload });
-  };
-
-  // 删除自定义模型：server 成功后广播 models_list，列表自动刷新（多窗口同步）。
-  const handleDeleteModel = (id: string): void => {
-    transport.send({ type: 'delete_custom_model', payload: { id } });
   };
 
   // —— 首启/新建自动引导 ——
@@ -275,23 +236,15 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
-  // 启动一个专家：回到对话页 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
+  // 启动一个专家：回到对话页 → 起新会话 → 将原始提示词填入输入框（不自动发送），
+  // 让用户确认或修改后再发送。新会话标题以专家名开头。
   const handleLaunchExpert = (expert: Expert): void => {
     setMainView('chat');
-    actions.launchExpert(expert.name, expert.kickoff);
-  };
-
-  // —— 斜杠命令：本地 + server 合并清单 ——
-  // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命令
-  // 合并后传给命令面板；server 新增命令时面板自动出现，两处清单不漂移。
-  const slashCommands = useMemo(
-    () => mergeServerCommands(SLASH_COMMANDS, state.slashCommands ?? []),
-    [state.slashCommands],
-  );
-
-  // `/help`：由合并后的完整清单生成命令总览，插一条本地系统气泡（ephemeral）。
-  const handleShowHelp = (): void => {
-    actions.postSystemNote(buildHelpMarkdown(slashCommands));
+    actions.createSession(expert.name);
+    // 新会话就绪后把专家开场消息填入输入框
+    setTimeout(() => {
+      insertComposerDraft(expert.kickoff);
+    }, 300);
   };
 
   return (
@@ -300,7 +253,6 @@ export function App(): React.JSX.Element {
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
-        updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
           actions.selectSession(id);
@@ -320,12 +272,18 @@ export function App(): React.JSX.Element {
           saveError={saveError}
           onClose={closeSetup}
           onSave={handleSaveModel}
-          onDeleteModel={handleDeleteModel}
         />
       ) : mainView === 'agents' ? (
         <AgentGallery
           onLaunch={handleLaunchExpert}
           onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'hub' ? (
+        <SettingsHubPage
+          data={settingsData}
+          activeSession={activeSession}
+          onBack={() => setMainView('chat')}
+          initialTab={hubInitialTab}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
@@ -350,14 +308,8 @@ export function App(): React.JSX.Element {
                 : undefined
             }
             onOpenDoctor={() => openHub('doctor')}
-            onOpenFeishu={() => openHub('feishu')}
             onOpenMemory={() => openHub('memory')}
             onOpenSkills={() => openHub('skills')}
-            commands={slashCommands}
-            onRunServerCommand={actions.runSlashCommand}
-            onOpenPrefs={() => openHub('prefs')}
-            onOpenSessions={() => setAllConvOpen(true)}
-            onShowHelp={handleShowHelp}
           />
           <RightPanel
             onLaunchExpert={handleLaunchExpert}
@@ -399,33 +351,6 @@ export function App(): React.JSX.Element {
           onClose={settingsData.actions.clearExportMessage}
         />
       ) : null}
-
-      {/* 设置与诊断中心：悬浮大窗（Jeremy：参考 workbuddy）——对话保持在底层，
-          遮罩点击 / Esc / 面板内「返回对话」均可关闭。 */}
-      {mainView === 'hub' ? (
-        <div
-          className="otto-hubfloat-overlay"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setMainView('chat');
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setMainView('chat');
-          }}
-        >
-          <div className="otto-hubfloat" role="dialog" aria-modal="true" aria-label="设置与诊断中心">
-            <SettingsHubPage
-              data={settingsData}
-              update={softwareUpdate}
-              activeSession={activeSession}
-              onBack={() => setMainView('chat')}
-              initialTab={hubInitialTab}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}
-      <WhatsNewDialog />
     </div>
   );
 }
