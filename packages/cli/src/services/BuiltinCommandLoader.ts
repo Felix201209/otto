@@ -122,7 +122,6 @@ export class BuiltinCommandLoader implements ICommandLoader {
       // 注入 Session 增强子命令（merge/split/stats/archive/bridge/cleanup）
       injectSubCommands(sessionCommand, sessionEnhanceCommands),
       insertCommand,
-      sessionCommand,
       skillCommand,
       pluginCommand,
       statsCommand,
