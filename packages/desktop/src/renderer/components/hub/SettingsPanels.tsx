@@ -17,13 +17,13 @@ import { Panel, Card, Dot, Badge, Empty, type DotTone } from './HubUI.js';
 // ── 偏好设置 ──────────────────────────────────────────────────────────────
 
 const AGENT_STYLES: Array<{ id: string; label: string; icon?: string }> = [
-  { id: 'default', label: 'Default (Claude 风格)', icon: '𝓥' },
-  { id: 'codex', label: 'Codex（快速静默执行）', icon: '⚡' },
-  { id: 'cursor', label: 'Cursor（语义搜索优先）', icon: '↗️' },
-  { id: 'augment', label: 'Augment（任务列表驱动）', icon: '🚀' },
-  { id: 'claude-code', label: 'Claude Code（极简）', icon: '✳️' },
-  { id: 'antigravity', label: 'Antigravity（知识库优先）', icon: '🌈' },
-  { id: 'windsurf', label: 'Windsurf（AI Flow）', icon: '🌊' },
+  { id: 'default', label: 'Default (Claude 风格)' },
+  { id: 'codex', label: 'Codex（快速静默执行）' },
+  { id: 'cursor', label: 'Cursor（语义搜索优先）' },
+  { id: 'augment', label: 'Augment（任务列表驱动）' },
+  { id: 'claude-code', label: 'Claude Code（极简）' },
+  { id: 'antigravity', label: 'Antigravity（知识库优先）' },
+  { id: 'windsurf', label: 'Windsurf（AI Flow）' },
 ];
 
 /** 外观主题选项（nativeTheme.themeSource 三态）。 */
@@ -103,7 +103,7 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
                   }
                   onClick={() => actions.setSetting('agentStyle', style.id)}
                 >
-                  <span aria-hidden>{style.icon}</span> {style.label}
+                  {style.label}
                 </button>
               ))}
             </div>
