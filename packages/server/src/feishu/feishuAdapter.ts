@@ -14,7 +14,7 @@
  *     → 鉴权（复用 credentials.isSenderAuthorized）
  *     → store.getOrCreateFeishuSession(chatId) 映射成 source:'feishu' 会话
  *     → appendMessage + broadcast(message_start) 让 app（Electron）实时看到
- *     → 驱动 core 跑一轮（store.getRuntime().run()，Issue #1 接；未接走 mock）
+ *     → 首条消息经 ensureRuntime 懒建隔离 core runtime，再执行 run()
  *     → core 流式帧经 streamBridge 既广播给 app、又节流回推飞书卡片。
  *
  *   app → 飞书：pushToFeishu(chatId, text) → gateway.sendMarkdown
@@ -38,7 +38,11 @@ import {
   bridgeSessionToFeishu,
   type FeishuStreamSink,
 } from './streamBridge.js';
-import type { SessionStore, Unsubscribe } from '../sessions.js';
+import type {
+  SessionRuntime,
+  SessionStore,
+  Unsubscribe,
+} from '../sessions.js';
 import type {
   FeishuHealthStatus,
   MessageContent,
@@ -99,6 +103,17 @@ export interface FeishuAdapterDeps {
   store: SessionStore;
   /** 把一帧广播给某会话订阅者（= store.publish 的薄封装）。 */
   broadcast: (sessionId: string, frame: ServerToClient) => void;
+  /**
+   * 为飞书会话取得或懒创建真实 core runtime。
+   *
+   * 官方 EasyCode 会在每个 chat 首条消息到达时先初始化隔离 Config/LLM client；
+   * Otto 对应的单一入口是 server.ensureRuntime，必须由生产 registerFeishu 注入。
+   */
+  ensureRuntime?: (
+    sessionId: string,
+  ) => Promise<SessionRuntime | undefined>;
+  /** 仅供显式测试/开发模式使用；生产缺省 false，绝不把 mock 冒充 AI 回复。 */
+  mock?: boolean;
   /** 可选凭证注入（测试用）；缺省走 loadCredentials() 读盘。 */
   credentials?: FeishuCredentials | null;
   /** 可选 gateway 工厂（测试用）；缺省 new FeishuGateway。 */
@@ -111,6 +126,8 @@ export interface FeishuAdapterDeps {
 export class FeishuAdapter {
   private readonly store: SessionStore;
   private readonly broadcast: FeishuAdapterDeps['broadcast'];
+  private readonly ensureRuntime: FeishuAdapterDeps['ensureRuntime'];
+  private readonly mock: boolean;
   private gateway: FeishuGatewayLike | null = null;
   private creds: FeishuCredentials | null = null;
   private connected = false;
@@ -162,6 +179,8 @@ export class FeishuAdapter {
   constructor(deps: FeishuAdapterDeps) {
     this.store = deps.store;
     this.broadcast = deps.broadcast;
+    this.ensureRuntime = deps.ensureRuntime;
+    this.mock = deps.mock ?? false;
     this.injectedCreds = deps.credentials;
     this.gatewayFactory =
       deps.gatewayFactory ??
@@ -556,18 +575,50 @@ export class FeishuAdapter {
   }
 
   /**
-   * 跑一轮 agent turn（串行队列的执行单元）：接了 runtime 走 core，未接走 mock。
+   * 跑一轮 agent turn（串行队列的执行单元）：已有 runtime 直接复用，首条消息
+   * 经 ensureRuntime 懒初始化；初始化失败诚实报错。仅显式 mock 模式走占位回复。
    * 错误不抛出（经 error 帧广播，streamBridge 会把它回推飞书），保证队列不断链。
    */
   private async runTurn(
     sessionId: string,
     content: MessageContent,
   ): Promise<void> {
-    const runtime = this.store.getRuntime(sessionId);
+    let runtime = this.store.getRuntime(sessionId);
+    if (!runtime && this.ensureRuntime) {
+      try {
+        runtime = await this.ensureRuntime(sessionId);
+      } catch (e) {
+        this.store.publish(sessionId, {
+          type: 'error',
+          payload: {
+            sessionId,
+            code: 'runtime_init_failed',
+            message: `飞书会话运行时初始化失败：${errMsg(e)}`,
+          },
+        });
+        this.store.setStatus(sessionId, 'error');
+        return;
+      }
+    }
     if (!runtime) {
-      // mock 兜底：core 未接时，回一条占位流式回复（对齐 server.ts mockEcho 精神），
-      // 既广播给 app、又经 streamBridge 回推飞书 —— 双向链路可端到端验证。
-      await this.mockEcho(sessionId);
+      if (this.mock) {
+        // 只有显式测试/开发模式才能回 mock；生产链路永远不会静默伪装成功。
+        await this.mockEcho(sessionId);
+        return;
+      }
+      // server.ensureRuntime 初始化失败时已经发布过具体错误并把状态设为 error；
+      // 独立使用 adapter 且未注入初始化器时，补一条可行动的诚实错误。
+      if (this.store.getSession(sessionId)?.status !== 'error') {
+        this.store.publish(sessionId, {
+          type: 'error',
+          payload: {
+            sessionId,
+            code: 'runtime_unavailable',
+            message: '飞书会话的 AI 运行时未初始化，无法处理本条消息。',
+          },
+        });
+        this.store.setStatus(sessionId, 'error');
+      }
       return;
     }
     this.store.setStatus(sessionId, 'thinking');
@@ -672,7 +723,7 @@ export class FeishuAdapter {
     }
   }
 
-  /** mock：core 未接时回一条占位流式回复（与 server.ts mockEcho 对齐）。实装后删。 */
+  /** mock：仅供显式测试/开发模式验证飞书收发链路；生产模式禁止进入。 */
   private async mockEcho(sessionId: string): Promise<void> {
     this.store.setStatus(sessionId, 'streaming');
     const assistant = this.store.appendMessage(sessionId, {
@@ -685,8 +736,7 @@ export class FeishuAdapter {
       type: 'message_start',
       payload: { message: assistant },
     });
-    const text =
-      '（mock）飞书网关已接入 server，core 驱动尚未接入（Issue #1）。双向链路 OK。';
+    const text = '（mock）飞书显式测试模式：双向收发链路正常。';
     this.store.publish(sessionId, {
       type: 'chat_chunk',
       payload: { sessionId, messageId: assistant.id, delta: text },

@@ -17,14 +17,14 @@
  *     又节流回推飞书卡片。
  *   - app → 飞书：registration.pushToFeishu(chatId, text) → gateway.sendMarkdown。
  *
- * ⚠️ 签名保持与地基冻结的接口完全一致（FeishuRegisterDeps / FeishuRegistration），
- *    server.ts 无需任何改动。
+ * 生产注册必须显式注入 ensureRuntime：飞书 chat 的首条消息先懒创建与桌面会话
+ * 同款的真实 core runtime；这对应官方 EasyCode 的隔离 Config/LLM client 初始化。
  *
  * 真连不通的外部部分（无凭证 / 飞书不可达）：adapter.start() 内部 fail-soft，
  * 返回 isConnected()=false 的句柄，不抛错、不阻断 server 启动。
  */
 
-import type { SessionStore } from '../sessions.js';
+import type { SessionRuntime, SessionStore } from '../sessions.js';
 import type { FeishuHealthStatus, ServerToClient } from '../protocol.js';
 import { FeishuAdapter, type FeishuGatewayFactory } from './feishuAdapter.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
@@ -34,6 +34,12 @@ export interface FeishuRegisterDeps {
   store: SessionStore;
   /** 把一帧广播给某会话的所有订阅者（= store.publish 的薄封装）。 */
   broadcast: (sessionId: string, frame: ServerToClient) => void;
+  /** 飞书首条消息到达时，为对应隔离会话懒创建真实 core runtime。 */
+  ensureRuntime: (
+    sessionId: string,
+  ) => Promise<SessionRuntime | undefined>;
+  /** 仅显式测试/开发模式允许 mock；生产缺省 false。 */
+  mock?: boolean;
   /** 可选凭证注入（测试用）；缺省 adapter 内部 loadCredentials() 读盘。 */
   credentials?: FeishuCredentials | null;
   /** 可选 gateway 工厂（测试用）；缺省 new FeishuGateway。 */
@@ -73,6 +79,8 @@ export async function registerFeishu(
   const adapter = new FeishuAdapter({
     store: deps.store,
     broadcast: deps.broadcast,
+    ensureRuntime: deps.ensureRuntime,
+    mock: deps.mock,
     credentials: deps.credentials,
     gatewayFactory: deps.gatewayFactory,
   });

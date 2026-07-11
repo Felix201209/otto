@@ -26,6 +26,15 @@ interface ChangelogEntry {
 /** 版本更新说明（最新在前；只有列在这里的版本会触发弹窗）。 */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.6.3',
+    date: '2026-07-10',
+    items: [
+      '修复飞书首条消息错误返回 mock：每个飞书会话现在会先初始化隔离的真实 AI runtime 再处理消息',
+      '飞书连接失败时改为显示真实初始化错误，不再用占位回复伪装连接成功',
+      '对齐 EasyCode 的飞书会话隔离逻辑，并新增首消息与 server 端到端回归测试',
+    ],
+  },
+  {
     version: '1.6.2',
     date: '2026-07-10',
     items: [

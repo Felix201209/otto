@@ -9,10 +9,11 @@
  *
  * 注入 fake gateway + fake creds，绕开真飞书 SDK / 凭证读盘，验证：
  *   1. 飞书入站消息 → 落进会话源（source:'feishu'）+ 广播 message_start 给 app；
- *   2. 未接 core 时走 mock 回复，其流式帧经 streamBridge 回推飞书卡片；
- *   3. 接了 runtime 时，runtime.run 被调用、其 publish 的流式帧同样回推飞书；
- *   4. 鉴权 fail-closed：未授权 sender 不进会话源、只回一句拒绝；
- *   5. app→飞书回推 pushToFeishu 调 gateway.sendMarkdown。
+ *   2. 仅显式 mock 模式回占位回复，其流式帧经 streamBridge 回推飞书卡片；
+ *   3. 新飞书会话首条消息会懒初始化真实 runtime，不得回 mock；
+ *   4. 接了 runtime 时，runtime.run 被调用、其 publish 的流式帧同样回推飞书；
+ *   5. 鉴权 fail-closed：未授权 sender 不进会话源、只回一句拒绝；
+ *   6. app→飞书回推 pushToFeishu 调 gateway.sendMarkdown。
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -129,19 +130,26 @@ describe('FeishuAdapter 双向链路', () => {
   });
 
   /** 把 adapter 的 broadcast 接到一个全局 app 订阅者（模拟 Electron WS 连接）。 */
-  function newAdapter(opts: { fire: () => ReturnType<typeof makeFakeGateway> }) {
+  function newAdapter(opts: {
+    fire: () => ReturnType<typeof makeFakeGateway>;
+    mock?: boolean;
+  }) {
     const fake = opts.fire();
     const adapter = new FeishuAdapter({
       store,
       broadcast: (sessionId, frame) => store.publish(sessionId, frame),
       credentials: CREDS,
       gatewayFactory: () => fake.gw,
+      mock: opts.mock,
     });
     return { adapter, fake };
   }
 
   it('飞书消息（mock 回复）→ 落会话源 + 广播 app + 回推飞书卡片', async () => {
-    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    const { adapter, fake } = newAdapter({
+      fire: () => makeFakeGateway(log),
+      mock: true,
+    });
     await adapter.start();
     fake.fireReady();
     expect(adapter.isConnected()).toBe(true);
@@ -236,6 +244,70 @@ describe('FeishuAdapter 双向链路', () => {
     // core 流式经 streamBridge 回推飞书卡片。
     expect(log.cards).toHaveLength(1);
     expect(log.cards[0].finalized).toContain('core 真实回复');
+  });
+
+  it('新飞书会话 → 首条消息先懒初始化真实 runtime，不得回 mock', async () => {
+    const fake = makeFakeGateway(log);
+    let ensureCalls = 0;
+    let runCalls = 0;
+    const adapter = new FeishuAdapter({
+      store,
+      broadcast: (sessionId, frame) => store.publish(sessionId, frame),
+      credentials: CREDS,
+      gatewayFactory: () => fake.gw,
+      ensureRuntime: async (sessionId): Promise<SessionRuntime> => {
+        ensureCalls += 1;
+        return {
+          async run() {
+            runCalls += 1;
+            const assistant = store.appendMessage(sessionId, {
+              role: 'assistant',
+              content: [{ type: 'text', value: '' }],
+              source: 'local',
+              isStreaming: true,
+            });
+            store.publish(sessionId, {
+              type: 'message_start',
+              payload: { message: assistant },
+            });
+            store.publish(sessionId, {
+              type: 'chat_chunk',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                delta: '首条消息的真实回复',
+              },
+            });
+            store.publish(sessionId, {
+              type: 'chat_complete',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                text: '首条消息的真实回复',
+              },
+            });
+          },
+          cancel() {},
+          setModel() {},
+          getConfig() {
+            return undefined;
+          },
+          async dispose() {},
+        };
+      },
+    });
+    await adapter.start();
+
+    await fake.fireMessage(
+      makeMsg({ chatId: 'oc_chat_first', messageId: 'om_first' }),
+    );
+    await flush();
+
+    expect(ensureCalls).toBe(1);
+    expect(runCalls).toBe(1);
+    expect(log.cards).toHaveLength(1);
+    expect(log.cards[0].finalized).toContain('首条消息的真实回复');
+    expect(log.cards[0].finalized).not.toContain('mock');
   });
 
   it('app→飞书回推：pushToFeishu 调 sendMarkdown', async () => {

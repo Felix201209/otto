@@ -275,6 +275,8 @@ export class OttoServer {
       this.feishu = await registerFeishu({
         store: this.store,
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+        ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+        mock: this.mock,
         ...this.feishuDeps,
       });
     }
@@ -1218,6 +1220,8 @@ export class OttoServer {
           store: this.store,
           broadcast: (sessionId, frame) =>
             this.store.publish(sessionId, frame),
+          ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+          mock: this.mock,
           ...this.feishuDeps,
         });
       } else {

@@ -22,8 +22,9 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { OttoServer } from '../server.js';
-import { InMemorySessionStore } from '../sessions.js';
+import { InMemorySessionStore, type SessionRuntime } from '../sessions.js';
 import type { FeishuGatewayLike } from './feishuAdapter.js';
+import type { FeishuMessage } from './vendor/gateway.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
 import type { ApiResponse, FeishuHealthStatus, HealthInfo } from '../protocol.js';
 
@@ -39,11 +40,20 @@ const CREDS: FeishuCredentials = {
 function makeFakeGateway(): {
   gw: FeishuGatewayLike;
   connectCalls: () => number;
+  fireMessage: (msg: FeishuMessage) => Promise<string | null>;
+  finalized: string[];
 } {
   let onReady: (() => void) | null = null;
+  let onMessage: ((msg: FeishuMessage) => Promise<string | null>) | null = null;
   let connects = 0;
+  const finalized: string[] = [];
   const gw: FeishuGatewayLike = {
-    onMessage: null,
+    get onMessage() {
+      return onMessage;
+    },
+    set onMessage(fn) {
+      onMessage = fn;
+    },
     get onReady() {
       return onReady;
     },
@@ -62,14 +72,25 @@ function makeFakeGateway(): {
       return {
         messageId: 'om_x',
         pushContent: async () => true,
-        finalize: async () => true,
+        finalize: async (text) => {
+          finalized.push(text);
+          return true;
+        },
       };
     },
     async sendMarkdown() {
       return 'om_md';
     },
   };
-  return { gw, connectCalls: () => connects };
+  return {
+    gw,
+    connectCalls: () => connects,
+    fireMessage: (msg) => {
+      if (!onMessage) throw new Error('onMessage 未接');
+      return onMessage(msg);
+    },
+    finalized,
+  };
 }
 
 /** 起 server 监听随机端口，返回基础 URL（同 server.test.ts 的反射取端口法）。 */
@@ -169,6 +190,77 @@ describe('飞书运行期启停端点', () => {
     expect(second.body.ok).toBe(true);
     expect(second.body.data?.connected).toBe(true);
     expect(fake.connectCalls()).toBe(1);
+  });
+
+  it('飞书首条消息 → server 懒建真实 runtime，不回 mock', async () => {
+    const fake = makeFakeGateway();
+    let factoryCalls = 0;
+    let runCalls = 0;
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store: new InMemorySessionStore(),
+      enableFeishu: true,
+      runtimeFactory: async (store, sessionId): Promise<SessionRuntime> => {
+        factoryCalls += 1;
+        return {
+          async run() {
+            runCalls += 1;
+            const assistant = store.appendMessage(sessionId, {
+              role: 'assistant',
+              content: [{ type: 'text', value: '' }],
+              source: 'local',
+              isStreaming: true,
+            });
+            store.publish(sessionId, {
+              type: 'message_start',
+              payload: { message: assistant },
+            });
+            store.publish(sessionId, {
+              type: 'chat_chunk',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                delta: 'server 真实回复',
+              },
+            });
+            store.publish(sessionId, {
+              type: 'chat_complete',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                text: 'server 真实回复',
+              },
+            });
+          },
+          cancel() {},
+          setModel() {},
+          getConfig() {
+            return undefined;
+          },
+          async dispose() {},
+        };
+      },
+      feishuDeps: { credentials: CREDS, gatewayFactory: () => fake.gw },
+    });
+    baseUrl = await startServer(server);
+    await new Promise((r) => setTimeout(r, 20));
+
+    await fake.fireMessage({
+      text: '第一条真实飞书消息',
+      messageId: 'om_first_real',
+      chatId: 'oc_first_real',
+      chatType: 'p2p',
+      senderOpenId: 'ou_owner',
+      mentions: [],
+      messageType: 'text',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(factoryCalls).toBe(1);
+    expect(runCalls).toBe(1);
+    expect(fake.finalized).toContain('server 真实回复');
+    expect(fake.finalized.join('\n')).not.toContain('mock');
   });
 
   it('stop → 守护停止且 /health enabled=false；重复 stop 幂等；stop 后 start 恢复', async () => {
