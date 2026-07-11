@@ -385,7 +385,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
         content: [
           {
             type: 'text',
-            value: `${echo}\n\n${ok ? '' : '⚠️ '}${markdown}`,
+            value: `${echo}\n\n${ok ? '' : '(!) '}${markdown}`,
           },
         ],
         timestamp: Date.now(),

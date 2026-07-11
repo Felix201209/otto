@@ -288,7 +288,7 @@ export function FeishuPanel(): React.JSX.Element {
               className="otto-hub__btn"
               onClick={() => void window.otto?.openExternal('https://open.feishu.cn')}
             >
-              打开飞书开放平台 ↗
+              打开飞书开放平台
             </button>
           </div>
         </div>

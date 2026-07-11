@@ -700,8 +700,8 @@ function registerIpc(): void {
   // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
   ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
     const emptyTabs = [
-      { id: 'leaderboard', label: '排行榜', icon: '🏆' },
-      { id: 'stars', label: '明星榜', icon: '🌟' },
+      { id: 'leaderboard', label: '排行榜', icon: '#' },
+      { id: 'stars', label: '明星榜', icon: '*' },
     ];
     try {
       const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
@@ -717,11 +717,11 @@ function registerIpc(): void {
       );
       const teamName = activeShares[0]?.teamName || '本小组';
 
-      const medals = ['🥇', '🥈', '🥉'];
+      const medals = ['#1', '#2', '#3']; // rank labels
       const maxInstalls = Math.max(...activeShares.map((s) => s.installCount || 0), 1);
       const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
 
-      const lbLines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
       const scored = activeShares
         .map((s) => {
           const ratingScore = ((s.rating || 0) / 5) * 100;
@@ -738,7 +738,7 @@ function registerIpc(): void {
 
       scored.forEach((item, i) => {
         const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
+        const stars = '*'.repeat(Math.round(item.s.rating || 0));
         lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
         lbLines.push(`   ${item.s.featureDescription || ''}`);
         lbLines.push(
@@ -760,7 +760,7 @@ function registerIpc(): void {
         contributorMap[key].installs += s.installCount || 0;
         contributorMap[key].skills.push(s.skillName);
       }
-      const sbLines: string[] = [`🌟 ${teamName} 贡献明星榜`, ''];
+      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
       Object.values(contributorMap)
         .sort((a, b) => b.installs - a.installs)
         .forEach((c, i) => {
@@ -815,7 +815,7 @@ function registerIpc(): void {
 
       const lines: string[] = ['部门共享 Skill 列表', ''];
       for (const s of active) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        const stars = '*'.repeat(Math.round(s.rating || 0));
         lines.push(`${s.skillName} (v${s.version || 1})`);
         lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
         lines.push(`  分享者：${s.sharedByName}`);
@@ -854,7 +854,7 @@ function registerIpc(): void {
 
       const lines: string[] = ['公司 Skill 市场', ''];
       for (const s of market) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        const stars = '*'.repeat(Math.round(s.rating || 0));
         lines.push(`${s.skillName} (v${s.version || 1})`);
         lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
         lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);

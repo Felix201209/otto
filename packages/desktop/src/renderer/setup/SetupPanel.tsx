@@ -433,7 +433,7 @@ export function SetupPanel({
                 className="otto-setup__linkbtn"
                 onClick={openConsole}
               >
-                去获取 ↗
+                去获取
               </button>
             ) : null}
           </label>
@@ -626,7 +626,7 @@ export function SetupPanel({
               style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
               onClick={() => void window.otto?.openExternal('https://open.feishu.cn')}
             >
-              飞书开发者平台 ↗
+              飞书开发者平台
             </button>
           </div>
         </div>
@@ -713,7 +713,7 @@ export function SetupPanel({
               </div>
               {localTestApplied ? (
                 <p className="otto-setup__hint" style={{ marginTop: '8px', color: 'var(--otto-accent)' }}>
-                  ✅ 已应用本地测试地址：{localTestUrl}，下次对话请求将走本机 server。
+                  已应用本地测试地址：{localTestUrl}，下次对话请求将走本机 server。
                 </p>
               ) : (
                 <p className="otto-setup__hint" style={{ marginTop: '6px' }}>

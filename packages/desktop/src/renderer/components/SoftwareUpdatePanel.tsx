@@ -80,7 +80,7 @@ export function SoftwareUpdatePanel({
       {/* 已是最新：与「检查失败」是两种不同状态，绝不混用。 */}
       {state.phase === 'upToDate' ? (
         <div className="otto-hub__field">
-          <div className="otto-hub__field-label">✅ 已是最新版本</div>
+          <div className="otto-hub__field-label">已是最新版本</div>
           <div className="otto-hub__field-hint">
             {state.latestVersion
               ? `最新发布版本 v${state.latestVersion}，无需更新。`
@@ -110,7 +110,7 @@ export function SoftwareUpdatePanel({
       {state.phase === 'available' ? (
         <div className="otto-hub__field">
           <div className="otto-hub__field-label">
-            🆕 发现新版本 v{state.latestVersion}
+            发现新版本 v{state.latestVersion}
           </div>
           {state.notes ? (
             <div className="otto-update__notes">
@@ -181,7 +181,7 @@ export function SoftwareUpdatePanel({
       {state.phase === 'downloaded' ? (
         <div className="otto-hub__field">
           <div className="otto-hub__field-label">
-            ✅ v{state.latestVersion} 安装包已就绪（sha256 校验通过）
+            v{state.latestVersion} 安装包已就绪（sha256 校验通过）
           </div>
           <div className="otto-hub__field-hint">{state.filePath}</div>
           <div className="otto-hub__field-hint">

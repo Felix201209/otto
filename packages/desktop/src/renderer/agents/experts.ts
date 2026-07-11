@@ -28,8 +28,6 @@ export interface Expert {
   name: string;
   /** 一句话卖点，卡片副标题。 */
   tagline: string;
-  /** 卡片头像 emoji（各专家互不重复，便于一眼区分）。 */
-  emoji: string;
   /** 主题色 hex，作头像底色与技能徽章的低透明叠加。 */
   accent: string;
   /** 绑定的技能名（对应 .otto/skills/<name>/SKILL.md 的 name），可多个。 */
@@ -43,7 +41,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'meeting',
     name: '会议纪要转录',
     tagline: '录音/长文一键成规范纪要',
-    emoji: '🗣',
     accent: '#38bdf8',
     skills: ['meeting-notes'],
     kickoff:
@@ -53,7 +50,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'doc',
     name: 'Word 公文撰写',
     tagline: '商务报告、方案、公文的规范中文写作',
-    emoji: '🖹',
     accent: '#38bdf8',
     skills: ['doc-writer'],
     kickoff:
@@ -63,7 +59,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'sheet',
     name: 'Excel 数据表格',
     tagline: '建模、公式、透视与数据清洗',
-    emoji: '↗',
     accent: '#38bdf8',
     skills: ['spreadsheet-pro'],
     kickoff:
@@ -73,7 +68,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'pdf',
     name: 'PDF 文档处理',
     tagline: '合并拆分、提取、摘要与表单',
-    emoji: '🗎',
     accent: '#38bdf8',
     skills: ['pdf-toolkit'],
     kickoff:
@@ -83,7 +77,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'dataviz',
     name: '数据可视化',
     tagline: '从数据到图表选型与解读',
-    emoji: '↘',
     accent: '#38bdf8',
     skills: ['data-viz-pro'],
     kickoff:
@@ -93,7 +86,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'research',
     name: '市场竞品调研',
     tagline: '结构化调研、竞品对比与 SWOT',
-    emoji: '🛈',
     accent: '#38bdf8',
     skills: ['market-research'],
     kickoff:
@@ -103,7 +95,6 @@ export const EXPERTS: readonly Expert[] = [
     id: 'copy',
     name: '品牌营销文案',
     tagline: '落地页、slogan 与营销邮件',
-    emoji: '✎',
     accent: '#38bdf8',
     skills: ['copywriting'],
     kickoff:

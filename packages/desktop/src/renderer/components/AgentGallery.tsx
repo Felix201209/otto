@@ -79,9 +79,7 @@ export function AgentGallery({
               style={{ ['--card-accent' as string]: expert.accent }}
               onClick={() => onLaunch(expert)}
             >
-              <span className="otto-agent-card__avatar" aria-hidden>
-                {expert.emoji}
-              </span>
+              <span className="otto-agent-card__avatar" aria-hidden />
               <span className="otto-agent-card__body">
                 <span className="otto-agent-card__name">{expert.name}</span>
                 <span className="otto-agent-card__tag">{expert.tagline}</span>

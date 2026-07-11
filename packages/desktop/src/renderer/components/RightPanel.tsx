@@ -21,7 +21,7 @@ const DEV_EXPERT: Expert = {
   id: 'self-dev',
   name: '企业AI自主开发',
   tagline: '写代码 · 改项目 · 自动化任务',
-  emoji: '⌨️',
+  accent: '#38bdf8',
   accent: '#38bdf8',
   skills: [],
   kickoff:
@@ -110,7 +110,7 @@ export function RightPanel({
                 <div className="otto-expert-list">
                   {EXPERTS.map((expert) => (
                     <button key={expert.id} type="button" className="otto-expert-card" onClick={() => onLaunchExpert(expert)} title={expert.tagline}>
-                      <span className="otto-expert-card__icon" style={{ color: expert.accent }} aria-hidden>{expert.emoji}</span>
+                      <span className="otto-expert-card__icon" style={{ backgroundColor: expert.accent }} aria-hidden />
                       <span className="otto-expert-card__body">
                         <span className="otto-expert-card__name">{expert.name}</span>
                         <span className="otto-expert-card__desc">{expert.tagline}</span>

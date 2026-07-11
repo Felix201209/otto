@@ -58,12 +58,12 @@ export function deriveFeishuBadgeState(
     return { kind: 'unconfigured', label: '─ 未配置', dotColor: '#9ca3af' };
   }
   if (st.connected) {
-    return { kind: 'connected', label: '✅ 已连接', dotColor: '#34d399' };
+    return { kind: 'connected', label: '已连接', dotColor: '#34d399' };
   }
   if (st.lockHeldByOtherPid != null) {
     return {
       kind: 'lock',
-      label: `⚠️ 另一进程持有（pid ${st.lockHeldByOtherPid}）`,
+      label: `另一进程持有（pid ${st.lockHeldByOtherPid}）`,
       dotColor: '#fbbf24',
     };
   }
@@ -74,11 +74,11 @@ export function deriveFeishuBadgeState(
         : null;
     return {
       kind: 'reconnecting',
-      label: `🔄 重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，${eta}s 后重试` : ''}）`,
+      label: `重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，${eta}s 后重试` : ''}）`,
       dotColor: '#fbbf24',
     };
   }
-  return { kind: 'offline', label: '❌ 离线', dotColor: '#f87171' };
+  return { kind: 'offline', label: '离线', dotColor: '#f87171' };
 }
 
 export interface FeishuStatusBadgeProps {

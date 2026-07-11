@@ -16,7 +16,7 @@ import { Panel, Card, Dot, Badge, Empty, type DotTone } from './HubUI.js';
 
 // ── 偏好设置 ──────────────────────────────────────────────────────────────
 
-const AGENT_STYLES: Array<{ id: string; label: string; icon: string }> = [
+const AGENT_STYLES: Array<{ id: string; label: string; icon?: string }> = [
   { id: 'default', label: 'Default (Claude 风格)', icon: '𝓥' },
   { id: 'codex', label: 'Codex（快速静默执行）', icon: '⚡' },
   { id: 'cursor', label: 'Cursor（语义搜索优先）', icon: '↗️' },
