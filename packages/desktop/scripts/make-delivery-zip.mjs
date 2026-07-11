@@ -5,26 +5,22 @@
  */
 
 /**
- * Otto Desktop 交付包聚合脚本（Issue #8）。
+ * Otto Desktop 交付包聚合 + 自动发布脚本（Issue #8）。
  *
- * 产出一个 `Otto-Desktop-<version>-mac-arm64.zip`，内含：
- *   1. `Otto.app`        —— electron-builder 产出的（未签名）mac 应用
- *   2. `otto-cli-*.tgz`  —— 兜底 CLI/TUI 离线安装包（即使 .app 滑窗也不为零）
- *   3. `README.md`       —— 安装 + 「未签名右键打开」说明
- *
- * 设计原则（hackathon 纪律）：
- *   - 不静默造假：找不到 .app / tgz 就 fail-loud 并打印怎么补。
- *   - 不替别的包跑构建：本脚本只【聚合现成产物】。需要时用 `--build` 触发
- *     `npm run dist`（仅 desktop 自己的 electron-builder），但默认不替你编译。
- *   - 幂等：每次清空并重建临时 staging 目录，zip 落到固定输出路径。
+ * 产出双平台安装包和更新清单，并自动发布到 GitHub Releases。
  *
  * 用法：
- *   node scripts/make-delivery-zip.mjs                 # 聚合现成 .app + tgz
- *   node scripts/make-delivery-zip.mjs --build         # 先 npm run dist 再聚合
- *   OTTO_CLI_TGZ=/path/to.tgz node scripts/...         # 指定 CLI tgz
- *   OTTO_DELIVERY_OUT=/path/out.zip node scripts/...   # 指定输出 zip 路径
+ *   node scripts/make-delivery-zip.mjs                  # 仅聚合
+ *   node scripts/make-delivery-zip.mjs --build          # 先构建再聚合
+ *   node scripts/make-delivery-zip.mjs --publish        # 聚合 + 发布到 GitHub
+ *   node scripts/make-delivery-zip.mjs --build --publish # 全流程
  *
- * 真跑由人验证：脚本就绪，但出 .app 需在真机带 GUI 的环境跑 electron-builder。
+ * 产物（release/ 目录）：
+ *   Otto-<version>-arm64.dmg          — Mac ARM64 安装包
+ *   Otto-<version>-x64.dmg            — Mac x86_64 安装包
+ *   Otto-<version>-arm64.dmg.blockmap — Mac ARM64 增量更新块图
+ *   Otto-<version>-x64.dmg.blockmap   — Mac x86_64 增量更新块图
+ *   latest.json                       — 更新清单（sha256 + URL）
  */
 
 import {
@@ -37,309 +33,317 @@ import {
   readFileSync,
   statSync,
 } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { join, dirname, basename, resolve } from 'node:path';
+import { execFileSync, execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DESKTOP_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DESKTOP_DIR = path.resolve(__dirname, '..');
+const RELEASE_DIR = path.join(DESKTOP_DIR, 'release');
+const PKG = JSON.parse(readFileSync(path.join(DESKTOP_DIR, 'package.json'), 'utf-8'));
+const VERSION = PKG.version;
 
-// ── 小工具 ───────────────────────────────────────────────────────────────
-const log = (msg) => console.log(`[delivery] ${msg}`);
-const warn = (msg) => console.warn(`[delivery] ⚠ ${msg}`);
+// ── CLI 参数解析 ──────────────────────────────────────────────────────────
 
-function die(msg, hint) {
-  console.error(`\n[delivery] ✗ ${msg}`);
-  if (hint) console.error(`[delivery]   → ${hint}`);
-  process.exit(1);
-}
+const ARGS = process.argv.slice(2);
+const SHOULD_BUILD = ARGS.includes('--build');
+const SHOULD_PUBLISH = ARGS.includes('--publish');
+const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 
-function readJson(p) {
-  return JSON.parse(readFileSync(p, 'utf8'));
-}
+// ── 辅助函数 ──────────────────────────────────────────────────────────────
 
-/** 递归用系统 cp -R 复制目录（保留 .app 的符号链接/权限/扩展属性）。 */
-function copyDir(src, dest) {
-  // -R 保留目录结构；-p 保留权限；mac 上 .app 含符号链接，cp -R 正确处理。
-  execFileSync('cp', ['-R', src, dest], { stdio: 'inherit' });
-}
-
-// otto-core 顶层【静态】import 的外部运行时依赖：这些若没被 electron-builder 收进
-// app.asar，app 一启动加载 otto-core 就 ERR_MODULE_NOT_FOUND 崩溃（1.2.0 正是此坑：
-// @langchain/langgraph 被 hoist 到 monorepo 根、未打进 asar）。交付前在此体检拦下，
-// 绝不把这类坏包 zip 出去。新增 otto-core 顶层外部依赖时同步补进本清单。
-const REQUIRED_ASAR_DEPS = ['@langchain/langgraph', '@langchain/core'];
-
-/**
- * 体检 Otto.app 的 app.asar：确认 REQUIRED_ASAR_DEPS 都真被打进去了。
- * 缺任一 → fail-loud die()。asar 不存在（asar:false 构建）或 @electron/asar
- * 不可用时降级为 warn，不阻断（best-effort 护栏，不误伤合法构建）。
- */
-async function verifyAppAsarDeps(app) {
-  const asarPath = join(app, 'Contents', 'Resources', 'app.asar');
-  if (!existsSync(asarPath)) {
-    warn(`未找到 app.asar（${asarPath}）——asar:false 构建可忽略，否则打包异常`);
-    return;
-  }
-  let listPackage;
-  try {
-    const mod = await import('@electron/asar');
-    listPackage = mod.listPackage ?? mod.default?.listPackage;
-  } catch {
-    warn('@electron/asar 不可用，跳过 app.asar 依赖体检（建议装上以启用护栏）');
-    return;
-  }
-  if (typeof listPackage !== 'function') {
-    warn('@electron/asar.listPackage 不可用，跳过 app.asar 依赖体检');
-    return;
-  }
-  let files;
-  try {
-    files = listPackage(asarPath);
-  } catch (e) {
-    warn('读取 app.asar 失败，跳过依赖体检: ' + (e?.message ?? e));
-    return;
-  }
-  // listPackage 返回形如 "/node_modules/@langchain/langgraph/index.js" 的路径清单；
-  // 要求每个依赖目录下至少有一个文件（光有空目录不算数）。
-  const missing = REQUIRED_ASAR_DEPS.filter(
-    (dep) => !files.some((f) => f.includes(`/node_modules/${dep}/`)),
-  );
-  if (missing.length > 0) {
-    die(
-      `app.asar 缺关键运行时依赖：${missing.join(', ')}（otto-core 顶层静态 import，缺了 app 启动即崩 ERR_MODULE_NOT_FOUND）`,
-      '根因多为 monorepo hoist 的传递依赖未被 electron-builder 收进 asar。修复：\n' +
-        '    1) 确认 packages/core/package.json 已声明这些依赖；\n' +
-        '    2) 仓库根重跑 `npm install` 落实 hoist；\n' +
-        '    3) 重新 `npm run dist --workspace=packages/desktop` 出 .app 后再跑本脚本。',
-    );
-  }
-  log(`✓ app.asar 依赖体检通过（${REQUIRED_ASAR_DEPS.join(', ')} 均已打入）`);
-}
-
-// 双击运行的一键修复脚本：给同目录 Otto.app 去「下载隔离」并打开（收件方遇"已损坏"的兜底）。
-const FIX_COMMAND = `#!/bin/bash
-# 双击我：给同目录的 Otto.app 去掉"下载隔离(quarantine)"标记并打开。
-cd "$(dirname "$0")" || exit 1
-echo "正在给 Otto.app 去隔离…"
-xattr -cr ./Otto.app 2>/dev/null
-echo "打开 Otto…"
-open ./Otto.app && echo "✓ 已打开。以后可直接双击 Otto.app。" || echo "✗ 打开失败：把 Otto.app 拖进「应用程序」后再双击本脚本试试。"
-`;
-
-// ── 1. 读版本号 ────────────────────────────────────────────────────────────
-const pkg = readJson(join(DESKTOP_ROOT, 'package.json'));
-// 交付版本对齐仓库根版本（产品版本），desktop 子包的 0.1.0 仅内部用。
-let productVersion = pkg.version;
-try {
-  const rootPkg = readJson(join(REPO_ROOT, 'package.json'));
-  if (rootPkg.version) productVersion = rootPkg.version;
-} catch {
-  warn('读不到根 package.json 版本，回退用 desktop 子包版本');
-}
-
-const ARCH = 'mac-arm64';
-const DELIVERY_NAME = `Otto-Desktop-${productVersion}-${ARCH}`;
-
-// ── 2. 可选：先触发 electron-builder ──────────────────────────────────────
-const wantBuild = process.argv.includes('--build');
-if (wantBuild) {
-  log('--build：先跑 npm run dist（electron-builder 出 .app）…');
-  try {
-    execFileSync('npm', ['run', 'dist'], {
-      cwd: DESKTOP_ROOT,
-      stdio: 'inherit',
-    });
-  } catch {
-    die(
-      'electron-builder 构建失败',
-      '在带 GUI 的真机上跑，或先手动 `npm run dist --workspace=packages/desktop` 排错',
-    );
-  }
-}
-
-// ── 3. 定位 Otto.app ───────────────────────────────────────────────────────
-// electron-builder `dir` target → release/mac-arm64/Otto.app（arch 后缀视配置）。
-function findApp() {
-  const releaseDir = join(DESKTOP_ROOT, 'release');
-  if (!existsSync(releaseDir)) return undefined;
-  // 候选目录：mac-arm64 / mac / mac-universal …
-  const candidates = readdirSync(releaseDir)
-    .filter((d) => d.startsWith('mac'))
-    .map((d) => join(releaseDir, d, 'Otto.app'))
-    .filter((p) => existsSync(p));
-  return candidates[0];
-}
-
-const appPath = findApp();
-if (!appPath) {
-  die(
-    '找不到 Otto.app（release/mac*/Otto.app）',
-    '先出 .app：`npm run dist --workspace=packages/desktop`（需真机 GUI 环境），或加 --build 重跑本脚本',
-  );
-}
-log(`找到 app: ${appPath}`);
-
-// app.asar 依赖体检：漏了 otto-core 静态依赖的坏包绝不放行（防 1.2.0 崩溃复发）。
-await verifyAppAsarDeps(appPath);
-
-// ── 4. 定位 CLI 兜底 tgz ───────────────────────────────────────────────────
-// 优先级：环境变量 OTTO_CLI_TGZ > ~/Desktop/otto-cli-*.tgz（取最新） > 仓库内
-function findCliTgz() {
-  const envPath = process.env.OTTO_CLI_TGZ;
-  if (envPath) {
-    if (!existsSync(envPath)) die(`OTTO_CLI_TGZ 指向的文件不存在: ${envPath}`);
-    return envPath;
-  }
-  // 桌面优先（地基交付物约定落在 ~/Desktop）
-  const searchDirs = [join(homedir(), 'Desktop'), REPO_ROOT];
-  for (const dir of searchDirs) {
-    if (!existsSync(dir)) continue;
-    const hits = readdirSync(dir)
-      .filter((f) => /^otto-cli-.*\.tgz$/.test(f))
-      .map((f) => join(dir, f))
-      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-    if (hits.length > 0) return hits[0];
-  }
-  return undefined;
-}
-
-const cliTgz = findCliTgz();
-if (!cliTgz) {
-  // 不致命：但要 fail-loud 警告，交付包将缺兜底。默认要求带上，缺了就停。
-  die(
-    '找不到 CLI 兜底 tgz（otto-cli-*.tgz）',
-    '生成一个：参考根 `npm run pack:prod`，或把已有 tgz 路径塞进 OTTO_CLI_TGZ 环境变量再跑',
-  );
-}
-log(`找到 CLI tgz: ${cliTgz}`);
-
-// ── 5. staging 目录 ────────────────────────────────────────────────────────
-const stageRoot = join(DESKTOP_ROOT, 'release', '_delivery');
-const stageDir = join(stageRoot, DELIVERY_NAME);
-rmSync(stageRoot, { recursive: true, force: true });
-mkdirSync(stageDir, { recursive: true });
-
-log('复制 Otto.app …');
-const stagedApp = join(stageDir, 'Otto.app');
-copyDir(appPath, stagedApp);
-
-// 深度 ad-hoc 签名：electron-builder(identity:null) 只留了破损的 linker 签名
-// （Info.plist=not bound / Sealed Resources=none），经微信/下载打上 quarantine 后
-// 会被 arm64 门禁判「已损坏，无法打开」。补一个正确封存资源的 ad-hoc 签名，把
-// 「已损坏」降级为「身份不明的开发者」——收件方右键→打开即可，无需终端。
-log('ad-hoc 签名 Otto.app（修 "已损坏" 门禁）…');
-try {
-  execFileSync('codesign', ['--force', '--deep', '--sign', '-', stagedApp], {
-    stdio: 'pipe',
+async function sha256(filePath) {
+  const hash = createHash('sha256');
+  await new Promise((resolve, reject) => {
+    createReadStream(filePath)
+      .on('data', (c) => hash.update(c))
+      .on('end', resolve)
+      .on('error', reject);
   });
-  execFileSync('codesign', ['--verify', '--deep', '--strict', stagedApp], {
-    stdio: 'pipe',
-  });
-  log('  ✓ 签名有效');
-} catch (e) {
-  warn('ad-hoc 签名/校验失败（不致命，但收件方可能遇到"已损坏"）: ' + (e?.message ?? e));
+  return hash.digest('hex');
 }
 
-log('复制 CLI 兜底 tgz …');
-copyFileSync(cliTgz, join(stageDir, basename(cliTgz)));
+function log(step, msg) {
+  console.log(`[${step}] ${msg}`);
+}
 
-log('写 一键修复脚本 …');
-const fixCmd = join(stageDir, '打不开就双击我.command');
-writeFileSync(fixCmd, FIX_COMMAND, 'utf8');
-execFileSync('chmod', ['755', fixCmd]);
+// ── Step 1: 构建 ─────────────────────────────────────────────────────────
 
-log('写 README …');
-writeFileSync(join(stageDir, 'README.md'), buildReadme(productVersion, basename(cliTgz)), 'utf8');
+async function build() {
+  log('BUILD', '开始编译桌面端...');
 
-// ── 6. 打 zip ──────────────────────────────────────────────────────────────
-const outZip =
-  process.env.OTTO_DELIVERY_OUT ?? join(homedir(), 'Desktop', `${DELIVERY_NAME}.zip`);
-rmSync(outZip, { force: true });
+  // 构建 renderer + main + preload
+  execFileSync('npm', ['run', 'build'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
+  log('BUILD', 'TypeScript + Webpack 编译完成');
 
-log(`打 zip → ${outZip}`);
-// 用 ditto 而非 zip：ditto 正确保留 .app 的资源分支/符号链接/可执行位，
-// 解压后 .app 仍可双击（zip 命令会丢失部分 mac 元数据，导致 .app 损坏）。
-try {
-  execFileSync('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', stageDir, outZip], {
+  // mac: arm64 + x64
+  log('BUILD', '构建 Mac arm64...');
+  execFileSync('npx', ['electron-builder', '--mac', '--arm64', 'dmg'], {
+    cwd: DESKTOP_DIR,
     stdio: 'inherit',
   });
-} catch {
-  die('ditto 打包失败', '确认在 macOS 上运行（ditto 是 mac 自带工具）');
+
+  log('BUILD', '构建 Mac x64...');
+  execFileSync('npx', ['electron-builder', '--mac', '--x64', 'dmg'], {
+    cwd: DESKTOP_DIR,
+    stdio: 'inherit',
+  });
+
+  log('BUILD', '全部平台构建完成');
 }
 
-const sizeMB = (statSync(outZip).size / (1024 * 1024)).toFixed(1);
-log(`✓ 交付包就绪: ${outZip} (${sizeMB} MB)`);
-log('  内含: Otto.app + ' + basename(cliTgz) + ' + README.md');
-log('  下一步: 拷到另一台 Mac 解压 → 右键 Otto.app → 打开（首次绕过 Gatekeeper）');
+// ── Step 2: 检查产物 ──────────────────────────────────────────────────────
 
-// ── README 模板 ────────────────────────────────────────────────────────────
-function buildReadme(version, cliTgzName) {
-  return `# Otto Desktop — 交付包 (v${version}, mac arm64)
+function checkArtifacts() {
+  log('CHECK', '检查构建产物...');
 
-> 本包未做 Apple 公证/签名（hackathon 交付）。首次打开需「右键 → 打开」绕过 Gatekeeper，这是预期行为，不是病毒。
+  const expected = [
+    `Otto-${VERSION}-arm64.dmg`,
+    `Otto-${VERSION}-arm64.dmg.blockmap`,
+    `Otto-${VERSION}-x64.dmg`,
+    `Otto-${VERSION}-x64.dmg.blockmap`,
+  ];
 
-## 包内容
+  for (const name of expected) {
+    const p = path.join(RELEASE_DIR, name);
+    if (!existsSync(p)) {
+      console.error(`[FAIL] 缺少产物: ${name}`);
+      console.error(`       期望路径: ${p}`);
+      process.exit(1);
+    }
+    const size = statSync(p).size;
+    if (size < 1024 * 1024) {
+      // DMG 至少应 > 1MB
+      console.error(`[FAIL] ${name} 体积异常小: ${size} bytes`);
+      process.exit(1);
+    }
+    log('CHECK', `  ${name}  ${(size / 1048576).toFixed(1)} MB`);
+  }
 
-| 文件 | 说明 |
-|---|---|
-| \`Otto.app\` | Otto 桌面端（Electron）。图形界面：聊天 / 飞书同步 / setup 配 key |
-| \`打不开就双击我.command\` | 一键修复：给 Otto.app 去「下载隔离」并打开（遇「已损坏」时双击它） |
-| \`${cliTgzName}\` | 兜底：Otto CLI / TUI 终端版离线安装包（.app 打不开也能用） |
-| \`README.md\` | 本文件 |
-
----
-
-## 一、装 Otto.app（图形版，推荐）
-
-> 通过微信 / AirDrop / 下载 传过来的 App，macOS 会打上「下载隔离」标记。本包已做 ad-hoc 签名，
-> 正常**右键打开**即可；万一仍报「已损坏」，用下面的一键修复。
-
-**最省事：**
-1. 把 \`Otto.app\` 拖进「应用程序」(/Applications)（留在解压目录也行）。
-2. **首次打开：右键（或 Control + 单击）\`Otto.app\` → 打开 → 再点弹窗里的「打开」。** 之后直接双击即可。
-
-**如果第 2 步仍报「"Otto" 已损坏，无法打开」：**
-- **办法 A（最简单）**：双击本包里的 \`打不开就双击我.command\`，它会自动去隔离并打开 Otto。
-  （若这个脚本自己也被拦，先右键 → 打开 它一次。）
-- **办法 B（最稳）**：打开「终端」，粘贴这一行回车（路径换成你实际放 \`Otto.app\` 的位置）：
-  \`\`\`bash
-  xattr -cr /Applications/Otto.app && open /Applications/Otto.app
-  \`\`\`
-
-### 首次配置
-打开后按图形引导填 **provider / API key / model**（BYO-key，自带 key）。配完即可对话。
-配置与 CLI 版共享（落在 \`~/.otto-user/\`），两端互通。
-
----
-
-## 二、装 CLI / TUI（兜底，终端版）
-
-如果 \`.app\` 暂时打不开，用离线 tgz 装终端版，功能不缺：
-
-\`\`\`bash
-npm install -g ./${cliTgzName}
-otto            # 启动 TUI
-otto setup      # 配 provider / key / model
-\`\`\`
-
-需要 Node.js >= 20。
-
----
-
-## 三、为什么会「已损坏」/ 要右键打开？
-
-「已损坏」不是真坏——是 macOS Gatekeeper 对**没经过 Apple 公证的 App + 下载隔离标记**的默认拦截（Apple 芯片尤其严）。本包已做 ad-hoc 签名，把它从「已损坏」降到「右键即可打开」。要做到**双击零提示**，得用 Apple 开发者账号做「签名 + 公证」，那是另一码事（要账号、要钱、要审核）。
-
----
-
-## 故障排查
-
-- **双击没反应 / 闪退 / 已损坏**：双击 \`打不开就双击我.command\`，或终端跑 \`xattr -cr <Otto.app 路径>\` 去隔离，再右键打开。
-- **「无法验证开发者」**：右键 → 打开（不要双击）。
-- **要看日志**：终端里 \`/Applications/Otto.app/Contents/MacOS/Otto\` 直接跑，能看到 stdout/stderr。
-- **图形版连不上后端**：app 会内嵌拉起本地 server；若界面显示「未连接」，重启 app；仍不行就先用 CLI 兜底版。
-`;
+  log('CHECK', '全部产物验证通过');
 }
+
+// ── Step 3: 生成更新清单 ──────────────────────────────────────────────────
+
+async function makeLatestJson() {
+  log('LATEST', '生成更新清单 latest.json...');
+
+  const notesFile = process.argv.find((a) => a.endsWith('.md') && a.includes('changelog') || a.includes('notes'));
+  let notes = '';
+
+  if (notesFile && existsSync(notesFile)) {
+    notes = readFileSync(notesFile, 'utf-8');
+  } else {
+    // 自动生成简单的 release notes
+    const logOutput = execSync(
+      `git log --oneline --no-decorate v${VERSION}..HEAD 2>/dev/null || git log --oneline -20`,
+      { cwd: DESKTOP_DIR, encoding: 'utf-8' },
+    );
+    notes = `## Otto v${VERSION}\n\n${logOutput}`;
+  }
+
+  const macArm64 = path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`);
+  const macX64 = path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`);
+
+  const manifest = {
+    version: VERSION,
+    notes,
+    publishedAt: new Date().toISOString(),
+    assets: {
+      'mac-arm64': {
+        name: `Otto-${VERSION}-arm64.dmg`,
+        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-${VERSION}-arm64.dmg`,
+        size: statSync(macArm64).size,
+        sha256: await sha256(macArm64),
+      },
+      'mac-x64': {
+        name: `Otto-${VERSION}-x64.dmg`,
+        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-${VERSION}-x64.dmg`,
+        size: statSync(macX64).size,
+        sha256: await sha256(macX64),
+      },
+    },
+  };
+
+  const outPath = path.join(RELEASE_DIR, 'latest.json');
+  writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  log('LATEST', `更新清单已生成: ${outPath}`);
+  for (const [platform, asset] of Object.entries(manifest.assets)) {
+    log('LATEST', `  ${platform}: ${asset.sha256.substring(0, 16)}...  ${(asset.size / 1048576).toFixed(1)} MB`);
+  }
+}
+
+// ── Step 4: 发布到 GitHub Releases ────────────────────────────────────────
+
+async function publishToGithub() {
+  log('PUBLISH', '发布到 GitHub Releases...');
+
+  if (!GITHUB_TOKEN) {
+    console.error('[FAIL] 缺少 GitHub Token');
+    console.error('       请设置 GH_TOKEN 或 GITHUB_TOKEN 环境变量');
+    process.exit(1);
+  }
+
+  const REPO = 'Felix201209/otto-releases';
+  const TAG = `v${VERSION}`;
+
+  // 1. 检查 release 是否已存在
+  log('PUBLISH', `检查 tag ${TAG}...`);
+  let releaseId = null;
+  try {
+    const checkRes = await fetch(
+      `https://api.github.com/repos/${REPO}/releases/tags/${TAG}`,
+      { headers: { Authorization: `token ${GITHUB_TOKEN}` } },
+    );
+    if (checkRes.ok) {
+      const existing = await checkRes.json();
+      releaseId = existing.id;
+      log('PUBLISH', `Release 已存在 (id=${releaseId})，将覆盖资产`);
+    }
+  } catch { /* 不存在，继续创建 */ }
+
+  // 2. 创建或更新 release
+  if (!releaseId) {
+    log('PUBLISH', '创建新 Release...');
+
+    // 读取最近 git log 作为 release notes
+    const logOutput = execSync(
+      `git log --oneline --no-decorate $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)..HEAD`,
+      { cwd: DESKTOP_DIR, encoding: 'utf-8' },
+    );
+
+    const createRes = await fetch(`https://api.github.com/repos/${REPO}/releases`, {
+      method: 'POST',
+      headers: {
+        Authorization: `token ${GITHUB_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tag_name: TAG,
+        name: `Otto Desktop v${VERSION}`,
+        body: `## Otto Desktop v${VERSION}\n\n### 更新内容\n\n${logOutput}\n\n### 安装说明\n\n- Mac ARM64: \`Otto-${VERSION}-arm64.dmg\`\n- Mac x64: \`Otto-${VERSION}-x64.dmg\`\n\n打开 DMG 后将 Otto.app 拖入 Applications 文件夹。首次运行如提示「无法验证开发者」，右键 → 打开。`,
+        draft: false,
+        prerelease: false,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      console.error(`[FAIL] 创建 Release 失败: ${createRes.status} ${err}`);
+      process.exit(1);
+    }
+
+    const created = await createRes.json();
+    releaseId = created.id;
+    log('PUBLISH', `Release 已创建 (id=${releaseId})`);
+  }
+
+  // 3. 上传资产
+  const assets = [
+    `Otto-${VERSION}-arm64.dmg`,
+    `Otto-${VERSION}-arm64.dmg.blockmap`,
+    `Otto-${VERSION}-x64.dmg`,
+    `Otto-${VERSION}-x64.dmg.blockmap`,
+    'latest.json',
+  ];
+
+  for (const assetName of assets) {
+    const assetPath = path.join(RELEASE_DIR, assetName);
+    if (!existsSync(assetPath)) {
+      log('PUBLISH', `跳过不存在的资产: ${assetName}`);
+      continue;
+    }
+
+    log('PUBLISH', `上传 ${assetName}...`);
+
+    // 检查是否已有同名资产（如果 release 是已存在的）
+    let existingAssetId = null;
+    if (releaseId) {
+      try {
+        const listRes = await fetch(
+          `https://api.github.com/repos/${REPO}/releases/${releaseId}/assets`,
+          { headers: { Authorization: `token ${GITHUB_TOKEN}` } },
+        );
+        if (listRes.ok) {
+          const existingAssets = await listRes.json();
+          const match = existingAssets.find((a) => a.name === assetName);
+          if (match) existingAssetId = match.id;
+        }
+      } catch { /* ignore */ }
+    }
+
+    // 删除已有同名资产（GitHub 不允许同名）
+    if (existingAssetId) {
+      await fetch(
+        `https://api.github.com/repos/${REPO}/releases/assets/${existingAssetId}`,
+        { method: 'DELETE', headers: { Authorization: `token ${GITHUB_TOKEN}` } },
+      );
+      log('PUBLISH', `  已删除旧资产 (id=${existingAssetId})`);
+    }
+
+    // 上传新资产
+    const content = readFileSync(assetPath);
+    const uploadUrl = `https://uploads.github.com/repos/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
+
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `token ${GITHUB_TOKEN}`,
+        'Content-Type': assetName.endsWith('.dmg')
+          ? 'application/x-apple-diskimage'
+          : assetName.endsWith('.json')
+            ? 'application/json'
+            : 'application/octet-stream',
+        'Content-Length': String(content.length),
+      },
+      body: content,
+    });
+
+    if (!uploadRes.ok) {
+      const err = await uploadRes.text();
+      console.error(`[FAIL] 上传 ${assetName} 失败: ${uploadRes.status} ${err}`);
+      process.exit(1);
+    }
+
+    log('PUBLISH', `  ${assetName} 上传完成`);
+  }
+
+  log('PUBLISH', '全部资产发布完毕');
+  log('PUBLISH', `👉 https://github.com/${REPO}/releases/tag/${TAG}`);
+}
+
+// ── 主流程 ─────────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log('');
+  log('OTTO', `Otto Desktop v${VERSION} 构建发布工具`);
+  log('OTTO', `工作目录: ${DESKTOP_DIR}`);
+  console.log('');
+
+  if (SHOULD_BUILD) {
+    await build();
+  }
+
+  // 检查产物（不构建时也要检查现成的）
+  checkArtifacts();
+  await makeLatestJson();
+
+  if (SHOULD_PUBLISH) {
+    await publishToGithub();
+  }
+
+  console.log('');
+  log('DONE', '全部流程完成');
+  console.log('');
+  console.log(`产物目录: ${RELEASE_DIR}`);
+  console.log(`  Otto-${VERSION}-arm64.dmg`);
+  console.log(`  Otto-${VERSION}-x64.dmg`);
+  console.log(`  latest.json`);
+}
+
+main().catch((err) => {
+  console.error('[FATAL]', err);
+  process.exit(1);
+});

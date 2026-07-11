@@ -14,12 +14,14 @@
     "dev:renderer": "webpack --config webpack.config.cjs --mode development --watch",
     "start": "electron .",
     "dist": "npm run build && electron-builder --mac --dir",
-    "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "dist:dmg": "npm run build && electron-builder --mac --arm64 --x64 dmg",
     "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "dist:all": "npm run build && electron-builder --mac --arm64 --x64 dmg && electron-builder --win --x64",
+    "release": "node scripts/make-delivery-zip.mjs --build && node scripts/make-latest-json.mjs"
   },
   "dependencies": {
     "otto-server": "file:../server",
@@ -71,7 +73,8 @@
         {
           "target": "dir",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
