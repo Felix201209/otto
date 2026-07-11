@@ -106,6 +106,12 @@ const SERVER_VERSION = '0.1.0';
 /** WS 单帧上限（10MB）：防超大帧打爆内存（图片引用 base64 也远小于此）。 */
 const WS_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024;
 
+/** 自动压缩最小消息数：会话消息超过此阈值 + 处于 idle 状态时触发自动压缩。 */
+const AUTO_COMPRESS_MIN_MESSAGES = 30;
+
+/** 后台维护周期（ms）：记忆合并/压缩 + 上下文自动压缩。 */
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
+
 /**
  * 会话运行时工厂：为某会话建并初始化一个 SessionRuntime。
  * 默认实现 = 包 otto-core（createCoreSessionRuntime）。可注入替换（测试 / mock）。
@@ -233,8 +239,11 @@ export class OttoServer {
       console.warn('[Server] OttoSessionManager init failed (non-fatal):', e);
     }
 
-    // 启动记忆自动维护（每 10 分钟运行一次合并/压缩/清理）
-    const memInterval = setInterval(() => {
+    // 启动后台自动维护（每 10 分钟运行一次）
+    //   - 记忆自动合并/压缩/清理 (AutoMemoryEngine)
+    //   - 上下文自动压缩 (idle 会话的 LLM 上下文摘要)
+    const maintenanceTimer = setInterval(() => {
+      // 记忆引擎维护
       try {
         const engine = getAutoMemoryEngine();
         engine.runMaintenanceCycle().catch((e: unknown) =>
@@ -243,11 +252,16 @@ export class OttoServer {
       } catch {
         // engine 未初始化则跳过
       }
-    }, 10 * 60 * 1000);
+      // 上下文自动压缩
+      this.runAutoCompressionCycle().catch((e: unknown) =>
+        console.warn('[Server] Auto compression cycle failed:', e),
+      );
+    }, MAINTENANCE_INTERVAL_MS);
+
     // 确保 stop() 时清理定时器
     const origStop = this.stop.bind(this);
     this.stop = async () => {
-      clearInterval(memInterval);
+      clearInterval(maintenanceTimer);
       await origStop();
     };
 
@@ -1025,6 +1039,92 @@ export class OttoServer {
         type: 'error',
         payload: { sessionId, code: 'compress_failed', message: `压缩失败：${message}` },
       });
+    }
+  }
+
+  /**
+   * 自动上下文压缩 — 后台定时扫描 idle 会话，对消息数超阈值的会话
+   * 触发 LLM 摘要压缩。每轮最多压缩 3 个会话，避免并发 LLM 调用过多。
+   *
+   * 设计原则：
+   *   - 只压 idle 会话（不影响用户正在活跃对话的）
+   *   - 消息数 ≥ AUTO_COMPRESS_MIN_MESSAGES 才触发
+   *   - 每个会话在一次周期内最多压一次（isCompressionInProgress 防重入）
+   *   - 静默失败：压缩异常不影响其他会话和主对话流
+   */
+  private async runAutoCompressionCycle(): Promise<void> {
+    const sessions = this.store.listSessions();
+    const candidates = sessions.filter(
+      (s) =>
+        s.status === 'idle' &&
+        s.messageCount >= AUTO_COMPRESS_MIN_MESSAGES,
+    );
+
+    if (candidates.length === 0) return;
+
+    // 按消息数降序，优先压缩最臃肿的会话
+    candidates.sort((a, b) => b.messageCount - a.messageCount);
+
+    const MAX_PER_CYCLE = 3;
+    let compressed = 0;
+    let skipped = 0;
+
+    for (const session of candidates.slice(0, MAX_PER_CYCLE)) {
+      try {
+        const runtime = this.store.getRuntime(session.sessionId);
+        if (!runtime) {
+          skipped++;
+          continue; // 尚无 runtime（从未发起过对话），无需压缩
+        }
+
+        const cfg = runtime.getConfig?.() as CoreConfig | undefined;
+        const client = cfg?.getOttoClient?.();
+        if (!client) {
+          skipped++;
+          continue;
+        }
+
+        if (client.isCompressionInProgress()) {
+          skipped++;
+          continue; // 已有压缩任务
+        }
+
+        const info = await client.tryCompressChat(
+          `${session.sessionId}-auto-${Date.now()}`,
+          new AbortController().signal,
+          true,
+        );
+
+        if (info) {
+          compressed++;
+          this.store.publish(session.sessionId, {
+            type: 'compress_result',
+            payload: {
+              sessionId: session.sessionId,
+              compressed: true,
+              originalTokenCount: info.originalTokenCount,
+              newTokenCount: info.newTokenCount,
+              message: `[自动] 已压缩：${info.originalTokenCount.toLocaleString()} → ${info.newTokenCount.toLocaleString()} tokens`,
+            },
+          });
+          console.log(
+            `[Server] Auto-compressed session ${session.sessionId}: ` +
+            `${info.originalTokenCount} → ${info.newTokenCount} tokens`,
+          );
+        }
+      } catch (e) {
+        console.warn(
+          `[Server] Auto-compress session ${session.sessionId} failed:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+
+    if (compressed > 0 || skipped > 0) {
+      console.log(
+        `[Server] Auto-compression cycle: ${compressed} compressed, ${skipped} skipped ` +
+        `(out of ${candidates.length} candidates)`,
+      );
     }
   }
 
