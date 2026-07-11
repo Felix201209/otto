@@ -91,6 +91,9 @@ import {
   WorkflowRegistry,
   type WorkflowAgentRecord,
   type Config as CoreConfig,
+  LocalKnowledgeStore,
+  type KnowledgeEntry,
+  getKnowledgeDir,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -1315,6 +1318,14 @@ export class OttoServer {
         return this.handleGetExtensions(conn);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
+      case 'get_knowledge':
+        return this.handleGetKnowledge(conn, msg);
+      case 'search_knowledge':
+        return this.handleSearchKnowledge(conn, msg);
+      case 'add_knowledge':
+        return this.handleAddKnowledge(conn, msg);
+      case 'remove_knowledge':
+        return this.handleRemoveKnowledge(conn, msg);
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -1552,6 +1563,87 @@ export class OttoServer {
       socket.send(JSON.stringify(frame));
     }
   }
+  
+  // ── Personal Knowledge Base handlers ────────────────────────────────────────────────────
+
+  private knowledgeStore = new LocalKnowledgeStore();
+
+  private async handleGetKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.list(msg.payload.limit ?? 50);
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'list' },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge load failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleSearchKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'search_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.search(
+        msg.payload.query,
+        msg.payload.category,
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'search', query: msg.payload.query },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge search failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleAddKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'add_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entry = await this.knowledgeStore.add(
+        msg.payload.category ?? 'general',
+        msg.payload.content,
+        msg.payload.tags ?? [],
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_added',
+        payload: { entry },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge add failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
+  private async handleRemoveKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'remove_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const removed = await this.knowledgeStore.remove(msg.payload.id);
+      if (!removed) {
+        this.send(conn.socket, errorFrame('', 'knowledge_error',
+          `entry ${msg.payload.id} not found`));
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'knowledge_removed',
+        payload: { id: msg.payload.id },
+      });
+    } catch (e) {
+      this.send(conn.socket, errorFrame('', 'knowledge_error',
+        `knowledge remove failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+
 }
 
 // ── helpers ──

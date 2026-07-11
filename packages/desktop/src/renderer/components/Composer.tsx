@@ -66,12 +66,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'feishu-stop', description: '停止飞书控制网关', action: 'prompt', prompt: '请停止飞书/Lark 控制网关并确认进程已退出。' },
   { id: 'feishu-status', description: '检查飞书连接状态', action: 'prompt', prompt: '请检查飞书/Lark 网关、授权、消息同步和群绑定状态。' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
-  { id: 'ppt', description: 'PPT 创作专家', action: 'prompt', prompt: '我要做一份 PPT。请调用 PPT 创作专家流程，先询问主题、受众、页数、风格和素材。' },
-  { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
-  { id: 'pdf', description: 'PDF 处理', action: 'prompt', prompt: '我要处理 PDF。请调用 PDF 文档处理流程，先询问文件路径、操作类型和输出格式。' },
   { id: 'audio', description: '音视频转文本/纪要', action: 'prompt', prompt: '我要处理音视频或会议录音。请调用会议纪要/转录流程，先询问文件、参会人和输出格式。' },
-  { id: 'excel', description: 'Excel 分析可视化', action: 'prompt', prompt: '我要处理 Excel/CSV 数据。请调用表格分析与数据可视化流程，先询问数据字段、目标结果和输出形式。' },
-  { id: 'research', description: '市场/竞品调研', action: 'prompt', prompt: '我要做市场或竞品调研。请调用市场调研专家流程，先询问行业、对象、竞品和决策目标。' },
   { id: 'browser', description: '内置浏览器/网页自动化', action: 'prompt', prompt: '请打开或使用内置浏览器/网页自动化能力。先询问目标网址和要完成的操作。' },
   { id: 'ide', description: '内置 IDE / 代码任务', action: 'prompt', prompt: '请进入代码任务模式。先检查当前项目结构，询问要实现或修复的目标，然后给出计划。' },
   { id: 'workflow', description: '启动 workflow 任务', action: 'prompt', prompt: 'workflow 请根据我的目标创建并执行一个完整工作流。先问我目标、输入材料、输出格式和约束。' },
@@ -179,6 +174,55 @@ export function Composer({
   const [slashDismissed, setSlashDismissed] = useState(false);
   // 面板真正可见：有候选、未被 Esc 主动关闭。文本再变化（onChange）会复位 dismissed。
   const slashVisible = slashOpen && !slashDismissed;
+
+  // —— 语音输入 ——
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleMic = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setAttachError('当前环境不支持语音输入');
+      return;
+    }
+
+    const rec = new SpeechRecognition();
+    rec.lang = 'zh-CN';
+    rec.interimResults = true;
+    rec.continuous = true;
+
+    rec.onresult = (e: any) => {
+      let transcript = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        transcript += e.results[i][0].transcript;
+      }
+      setText((prev) => {
+        // replace last interim segment with final, or append
+        return prev + transcript;
+      });
+    };
+
+    rec.onerror = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    rec.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    rec.start();
+    recognitionRef.current = rec;
+    setListening(true);
+  };
 
   // —— 每会话草稿隔离 ——
   // Composer 是底部输入区的全局单例，切换会话时组件不卸载、text state 原样留存；
@@ -290,8 +334,8 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }, [sessionId, disabled]);
 
-  // 生成中（busy）不发送，但 textarea 仍可输入下一条；无会话（disabled）才整体锁死。
-  // 有文本或有图片附件即可发送。
+  // 无会话（disabled）才整体锁死。busy 时不阻止发送：用户可在 AI 流式输出期间
+  // 继续输入并发起新消息，新消息会使 server 自动取消当前生成并合并上下文。
   const canSend =
     (text.trim().length > 0 || attachments.length > 0) && !disabled && !busy;
 
@@ -301,7 +345,6 @@ export function Composer({
     setText('');
     setAttachments([]);
     setAttachError(null);
-    // 发送后清掉本会话草稿，避免切走再切回时又冒出已发送的内容。
     if (sessionId != null) draftsRef.current[sessionId] = '';
     if (taRef.current) taRef.current.style.height = 'auto';
   };
@@ -535,6 +578,30 @@ export function Composer({
             <IconPaperclip size={17} />
           </button>
 
+          <button
+            type="button"
+            className={`otto-attach${listening ? ' otto-attach--active' : ''}`}
+            title={listening ? '停止录音' : '语音输入'}
+            aria-label={listening ? '停止录音' : '语音输入'}
+            onClick={toggleMic}
+            disabled={disabled}
+            style={listening ? { color: '#e53935', animation: 'pulse 1.2s ease-in-out infinite' } : undefined}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {listening ? (
+                <rect x="9" y="1" width="6" height="12" rx="3" />
+              ) : (
+                <>
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </>
+              )}
+            </svg>
+          </button>
+
+          {/* busy 时：若用户有输入内容，同时显示停止与发送按钮（发送自动取消当前生成并合并）。 */}
           {busy && onCancel ? (
             <button
               type="button"

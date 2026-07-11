@@ -462,6 +462,18 @@ export type GetWorkflowsMsg = Envelope<'get_workflows', Record<string, never>>;
 /** 拉取已安装扩展列表（对齐 CLI /extensions list）。 */
 export type GetExtensionsMsg = Envelope<'get_extensions', Record<string, never>>;
 
+
+/** 拉取个人知识库全部条目（对齐 CLI knowledge_base list）。 */
+export type GetKnowledgeMsg = Envelope<'get_knowledge', { limit?: number }>;
+
+/** 在个人知识库中检索。 */
+export type SearchKnowledgeMsg = Envelope<'search_knowledge', { query: string; category?: string }>;
+
+/** 向个人知识库添加一条知识。 */
+export type AddKnowledgeMsg = Envelope<'add_knowledge', { content: string; category?: string; tags?: string[] }>;
+
+/** 从个人知识库删除一条知识。 */
+export type RemoveKnowledgeMsg = Envelope<'remove_knowledge', { id: string }>;
 /** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
 export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
 
@@ -497,12 +509,37 @@ export type ClientToServer =
   | ExportConversationMsg
   | GetWorkflowsMsg
   | GetExtensionsMsg
-  | GetIdeStatusMsg;
+  | GetIdeStatusMsg
+  | GetKnowledgeMsg
+  | SearchKnowledgeMsg
+  | AddKnowledgeMsg
+  | RemoveKnowledgeMsg;
 
 export type ClientToServerType = ClientToServer['type'];
 
 /** 会话标题最大长度（server 兜底截断，防超长标题撑爆列表 / 内存）。 */
 export const SESSION_TITLE_MAX_LEN = 120;
+
+
+/** 个人知识库条目（从 core LocalKnowledgeStore 透传）。 */
+export interface KnowledgeItem {
+  id: string;
+  category: string;
+  content: string;
+  tags: string[];
+  createdAt: string;
+}
+
+/** 知识库列表 / 检索结果（S→C）。 */
+export type KnowledgeDataMsg = Envelope<'knowledge_data', { entries: KnowledgeItem[]; action: 'list' | 'search'; query?: string }>;
+
+/** 单条知识添加成功（S→C）。 */
+export type KnowledgeAddedMsg = Envelope<'knowledge_added', { entry: KnowledgeItem }>;
+
+/** 单条知识删除成功（S→C）。 */
+export type KnowledgeRemovedMsg = Envelope<'knowledge_removed', { id: string }>;
+
+/** 知识操作错误（S→C）：统一走 error 帧，code='knowledge_error'。 */
 
 // ============================================================================
 // 4. Server → Client 帧（入站，server 广播）
@@ -869,7 +906,10 @@ export type ServerToClient =
   | ExportResultMsg
   | WorkflowsListMsg
   | ExtensionsListMsg
-  | IdeStatusMsg;
+  | IdeStatusMsg
+  | KnowledgeDataMsg
+  | KnowledgeAddedMsg
+  | KnowledgeRemovedMsg;
 
 export type ServerToClientType = ServerToClient['type'];
 
@@ -1129,6 +1169,10 @@ export function validateClientPayload(msg: {
     case 'get_workflows':
     case 'get_extensions':
     case 'get_ide_status':
+    case 'get_knowledge':
+    case 'search_knowledge':
+    case 'add_knowledge':
+    case 'remove_knowledge':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
     case 'set_setting': {
       if (!isPlainObject(p)) return 'set_setting payload 必须是对象';

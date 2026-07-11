@@ -35,6 +35,7 @@ import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
+import { insertComposerDraft } from './components/Composer.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
 import { useSettingsData } from './state/useSettingsData.js';
@@ -235,10 +236,15 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
-  // 启动一个专家：回到对话页 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
+  // 启动一个专家：回到对话页 → 起新会话 → 将原始提示词填入输入框（不自动发送），
+  // 让用户确认或修改后再发送。新会话标题以专家名开头。
   const handleLaunchExpert = (expert: Expert): void => {
     setMainView('chat');
-    actions.launchExpert(expert.name, expert.kickoff);
+    actions.createSession(expert.name);
+    // 新会话就绪后把专家开场消息填入输入框
+    setTimeout(() => {
+      insertComposerDraft(expert.kickoff);
+    }, 300);
   };
 
   return (

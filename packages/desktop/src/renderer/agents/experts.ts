@@ -40,16 +40,6 @@ export interface Expert {
 
 export const EXPERTS: readonly Expert[] = [
   {
-    id: 'ppt',
-    name: 'PPT 创作专家',
-    tagline: '从主题到成稿：结构化叙事幻灯片',
-    emoji: '🖾',
-    accent: '#38bdf8',
-    skills: ['ppt-creator'],
-    kickoff:
-      '我要做一份 PPT 演示。请先用 use_skill 加载 `ppt-creator` 技能，按它的方法帮我把内容组织成结构清晰、叙事有起伏的幻灯片（含每页要点与讲者备注）。开始前先问我：演示主题、目标受众、大致时长与风格偏好。',
-  },
-  {
     id: 'meeting',
     name: '会议纪要转录',
     tagline: '录音/长文一键成规范纪要',
