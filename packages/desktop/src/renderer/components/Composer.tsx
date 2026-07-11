@@ -178,6 +178,8 @@ export function Composer({
   // —— 语音输入 ——
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  // 每次语音启动时清零，resetTranscript 时用
+  const transcriptFinalRef = useRef('');
 
   const toggleMic = () => {
     if (listening) {
@@ -197,19 +199,30 @@ export function Composer({
     rec.lang = 'zh-CN';
     rec.interimResults = true;
     rec.continuous = true;
+    rec.maxAlternatives = 1;
+
+    // 开始新语音时清空上次结果
+    transcriptFinalRef.current = '';
 
     rec.onresult = (e: any) => {
-      let transcript = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        transcript += e.results[i][0].transcript;
+      // 取最后一条结果（最完整的那条），避免重复累计
+      const last = e.results[e.results.length - 1];
+      const transcript = last[0].transcript;
+      if (last.isFinal) {
+        // final 结果：替换掉前面所有内容
+        transcriptFinalRef.current = transcript;
+        setText(transcript);
+      } else {
+        // interim 结果：显示实时识别但不写入 final
+        setText(transcript);
       }
-      setText((prev) => {
-        // replace last interim segment with final, or append
-        return prev + transcript;
-      });
     };
 
-    rec.onerror = () => {
+    rec.onerror = (e: any) => {
+      console.warn('[Voice] error:', e.error);
+      if (e.error !== 'aborted') {
+        setAttachError(`语音识别错误: ${e.error}`);
+      }
       setListening(false);
       recognitionRef.current = null;
     };
@@ -217,6 +230,7 @@ export function Composer({
     rec.onend = () => {
       setListening(false);
       recognitionRef.current = null;
+      // onend 时如果已经有 final transcript，保持文本不动
     };
 
     rec.start();

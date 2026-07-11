@@ -12,4 +12,4 @@
 
 export * from './pptOutlineManager.js';
 export * from './pptOutlineTool.js';
-export * from './pptGenerateTool.js';
+// pptGenerateTool.ts 已移除云端生成能力（不再依赖外部服务）

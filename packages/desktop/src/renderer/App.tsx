@@ -237,14 +237,10 @@ export function App(): React.JSX.Element {
   };
 
   // 启动一个专家：回到对话页 → 起新会话 → 将原始提示词填入输入框（不自动发送），
-  // 让用户确认或修改后再发送。新会话标题以专家名开头。
+  // 点击专家 → 创建新会话并自动发送专家开场消息（不再填入输入框等待用户手动发送）。
   const handleLaunchExpert = (expert: Expert): void => {
     setMainView('chat');
-    actions.createSession(expert.name);
-    // 新会话就绪后把专家开场消息填入输入框
-    setTimeout(() => {
-      insertComposerDraft(expert.kickoff);
-    }, 300);
+    actions.launchExpert(expert.name, expert.kickoff);
   };
 
   return (
