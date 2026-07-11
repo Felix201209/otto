@@ -182,6 +182,23 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.messages['s1'].map((m) => m.id)).toEqual(['h1', 'h2']);
   });
 
+  it('history：server 返回截断历史时保留更完整的本地缓存并对账同 id 消息', () => {
+    const { view, push } = setup();
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h1', content: [{ type: 'text', value: 'local-old' }] }) } });
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h2' }) } });
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h3' }) } });
+    push({
+      type: 'history',
+      payload: {
+        sessionId: 's1',
+        messages: [makeMsg({ id: 'h1', content: [{ type: 'text', value: 'server-new' }] })],
+      },
+    });
+    const messages = view.result.current.state.messages['s1'];
+    expect(messages.map((message) => message.id)).toEqual(['h1', 'h2', 'h3']);
+    expect(messages[0].content[0]).toEqual({ type: 'text', value: 'server-new' });
+  });
+
   it('message_start：append + 相同 id 覆盖（流式占位→定稿对账）', () => {
     const { view, push } = setup();
     push({ type: 'message_start', payload: { message: makeMsg({ id: 'm1', content: [{ type: 'text', value: 'v1' }] }) } });

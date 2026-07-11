@@ -297,15 +297,24 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
 
     case 'history': {
       const { sessionId, messages } = frame.payload;
-      // 安全追加：优先保留本地已有缓存（更完整），仅在本地无缓存时才用 server 数据
-      // 避免切走后切回来时 server 返回的截断历史覆盖了本地完整记录。
       const existing = state.messages[sessionId];
-      if (existing && existing.length > 0) {
-        return state;
-      }
+      // server 返回的历史不少于本地时，把它视为权威快照；这样删除、重载和
+      // 首次订阅仍能正确替换。本地明显更长时则说明 server 回包被 limit 截断：
+      // 保留本地顺序与尾部消息，同时用 server 的同 id 内容完成定稿对账。
+      const nextMessages =
+        existing && existing.length > messages.length
+          ? (() => {
+              const serverById = new Map(messages.map((message) => [message.id, message]));
+              const existingIds = new Set(existing.map((message) => message.id));
+              return [
+                ...existing.map((message) => serverById.get(message.id) ?? message),
+                ...messages.filter((message) => !existingIds.has(message.id)),
+              ];
+            })()
+          : messages;
       return {
         ...state,
-        messages: { ...state.messages, [sessionId]: messages },
+        messages: { ...state.messages, [sessionId]: nextMessages },
       };
     }
 
