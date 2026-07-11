@@ -4,15 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * AgentGallery 页面单测：渲染全部专家卡片、点击卡片以对应专家回调 onLaunch、
- * 「返回对话」按钮 / Esc 均回调 onBack（页面化后不再有遮罩/关闭弹窗语义）。
- */
+/** AgentGallery v1.7：个人基础 Agent 与企业部门 Agent 分层展示。 */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/react';
 import { AgentGallery } from './AgentGallery.js';
-import { EXPERTS } from '../agents/experts.js';
+import {
+  BASE_AGENT_PROFILES,
+  DEPARTMENT_AGENT_PROFILES,
+  ENTERPRISE_CEO_PROFILE,
+  PERSONAL_OTTO_PROFILE,
+} from '../agents/departmentAgents.js';
 
 function renderGallery() {
   const onLaunch = vi.fn();
@@ -22,19 +24,39 @@ function renderGallery() {
 }
 
 describe('AgentGallery（页面）', () => {
-  it('渲染全部 8 张专家卡片（按名称）', () => {
+  it('个人版只渲染 Otto 与两个基础会议 Agent', () => {
     renderGallery();
-    for (const e of EXPERTS) {
-      expect(screen.getByText(e.name)).toBeTruthy();
+    for (const profile of BASE_AGENT_PROFILES) {
+      expect(screen.getByText(profile.name)).toBeTruthy();
     }
+    expect(screen.queryByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeNull();
+    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 个 Agent profile`)).toBeTruthy();
   });
 
-  it('点击某张卡片 → 以对应专家回调 onLaunch', () => {
+  it('点击会议 Agent 只回传 profile，不发送 kickoff', () => {
     const { onLaunch } = renderGallery();
-    const target = EXPERTS[1]; // 会议纪要转录
+    const target = BASE_AGENT_PROFILES[1];
     fireEvent.click(screen.getByText(target.name));
     expect(onLaunch).toHaveBeenCalledTimes(1);
     expect(onLaunch).toHaveBeenCalledWith(target);
+  });
+
+  it('企业版展示全部部门基础 Agent', () => {
+    render(
+      <AgentGallery
+        mode="enterprise"
+        onLaunch={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(ENTERPRISE_CEO_PROFILE.name)).toBeTruthy();
+    expect(screen.queryByText(PERSONAL_OTTO_PROFILE.name)).toBeNull();
+    expect(screen.getByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeTruthy();
+    expect(
+      screen.getByText(
+        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 个 Agent profile`,
+      ),
+    ).toBeTruthy();
   });
 
   it('点「返回对话」→ onBack', () => {
@@ -45,7 +67,7 @@ describe('AgentGallery（页面）', () => {
 
   it('Esc → onBack', () => {
     const { onBack } = renderGallery();
-    fireEvent.keyDown(screen.getByRole('region', { name: '专家 · 企业专家' }), {
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Agent 目录' }), {
       key: 'Escape',
     });
     expect(onBack).toHaveBeenCalledTimes(1);

@@ -485,6 +485,8 @@ export interface OttoActions {
    * 新会话由 server 回的 session_upsert 关联（首个「未见过的 id」即它），随后自动选中并发送。
    */
   launchExpert(title: string, kickoff: string): void;
+  /** v1.7：只提交白名单 profile id，由 server 注入 system prompt；不自动发用户消息。 */
+  launchAgentProfile(title: string, agentProfileId: string): void;
   sendMessage(
     text: string,
     source?: MessageSource,
@@ -540,6 +542,7 @@ export function useOttoStore(): UseOttoStore {
     kickoff: string;
     source: MessageSource;
   } | null>(null);
+  const profileLaunchRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -562,6 +565,14 @@ export function useOttoStore(): UseOttoStore {
           source: spec.source,
         };
         dispatch({ kind: 'select', sessionId: sid });
+      } else if (
+        profileLaunchRef.current &&
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === profileLaunchRef.current &&
+        !sessionIdsRef.current.includes(frame.payload.session.sessionId)
+      ) {
+        profileLaunchRef.current = null;
+        dispatch({ kind: 'select', sessionId: frame.payload.session.sessionId });
       }
     });
 
@@ -678,6 +689,19 @@ export function useOttoStore(): UseOttoStore {
     transport.send({ type: 'create_session', payload: { title } });
   }, []);
 
+  const launchAgentProfile = useCallback((title: string, agentProfileId: string) => {
+    if (!agentProfileId.trim()) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，无法启动 Agent' });
+      return;
+    }
+    profileLaunchRef.current = agentProfileId;
+    transport.send({
+      type: 'create_session',
+      payload: { title, agentProfileId },
+    });
+  }, []);
+
   const sendMessage = useCallback(
     (
       text: string,
@@ -779,6 +803,7 @@ export function useOttoStore(): UseOttoStore {
       deleteSession,
       renameSession,
       launchExpert,
+      launchAgentProfile,
       sendMessage,
       setModel,
       cancel,

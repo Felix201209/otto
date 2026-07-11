@@ -288,6 +288,8 @@ export function listModelInfos(): ModelInfo[] {
     // OpenAI 兼容接入的智谱/通义/DeepSeek 全叫 'openai'，直接展示会误导。
     baseUrl: m.baseUrl,
     modelId: m.modelId,
+    source: 'byok',
+    managed: false,
     ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
     enabled: m.enabled !== false,
   }));

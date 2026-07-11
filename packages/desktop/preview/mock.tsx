@@ -129,7 +129,7 @@ const mockBridge = {
     return () => {};
   },
   async appVersion(): Promise<string> {
-    return '1.6.4-preview';
+    return '1.7.0-preview';
   },
   onUpdateProgress(): () => void {
     return () => {};

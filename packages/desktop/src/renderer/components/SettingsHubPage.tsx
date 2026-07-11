@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import type { SessionSummary } from 'otto-server';
+import type { ModelInfo, SessionSummary } from 'otto-server';
 import type { UseSettingsData } from '../state/useSettingsData.js';
 import type { UseSoftwareUpdate } from '../state/useSoftwareUpdate.js';
 import { SoftwareUpdatePanel } from './SoftwareUpdatePanel.js';
@@ -36,9 +36,13 @@ import {
   ToolsPanel,
 } from './hub/WorkspacePanels.js';
 import { IconSettings, IconChevron, IconClose } from './icons.js';
+import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
+import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 
 export type TabId =
   | 'prefs'
+  | 'organization'
+  | 'models'
   | 'feishu'
   | 'mcp'
   | 'context'
@@ -54,6 +58,8 @@ export type TabId =
 
 const TAB_LABEL: Record<TabId, string> = {
   prefs: '偏好设置',
+  organization: '企业与身份',
+  models: '模型与积分',
   feishu: '飞书接入',
   mcp: 'MCP 服务器',
   context: 'Context 用量',
@@ -74,7 +80,7 @@ const TAB_LABEL: Record<TabId, string> = {
  * 后每组不超过 5 项，一眼可扫完。
  */
 const NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
-  { label: '设置', tabs: ['prefs', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
+  { label: '设置', tabs: ['prefs', 'organization', 'models', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
   { label: '诊断', tabs: ['doctor', 'context', 'workflows'] },
   { label: '工作区', tabs: ['todos', 'memory', 'skills', 'tools'] },
 ];
@@ -87,6 +93,8 @@ interface SettingsHubPageProps {
   onBack: () => void;
   /** 打开面板时默认停在哪个 tab（如从斜杠命令 /doctor /memory /skills 直达）。缺省「偏好设置」。 */
   initialTab?: TabId;
+  product: UseProductWorkspace;
+  models: ModelInfo[];
 }
 
 export function SettingsHubPage({
@@ -95,6 +103,8 @@ export function SettingsHubPage({
   activeSession,
   onBack,
   initialTab,
+  product,
+  models,
 }: SettingsHubPageProps): React.JSX.Element {
   const [tab, setTab] = useState<TabId>(initialTab ?? 'prefs');
   const { state, actions } = data;
@@ -182,6 +192,8 @@ export function SettingsHubPage({
 
           <div className="otto-hub__scroll">
             {tab === 'prefs' ? <PrefsPanel data={data} /> : null}
+            {tab === 'organization' ? <OrganizationPanel product={product} /> : null}
+            {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}
             {tab === 'mcp' ? <McpPanel data={data} /> : null}
             {tab === 'context' ? (

@@ -16,6 +16,7 @@ import path from 'path';
 import os from 'os';
 import { pathToFileURL } from 'node:url';
 import JSZip from 'jszip';
+import iconv from 'iconv-lite';
 
 function hasBin(name: string): boolean {
   try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
@@ -165,6 +166,72 @@ describe('GenerateDocumentTool', () => {
     expect(r.llmContent.toLowerCase()).toContain('pandoc');
     expect(r.llmContent).toContain('brew install pandoc');
   });
+
+  it('passes Marp, Typst, and Pandoc paths as structured argv', async () => {
+    const commandRunner = vi.fn(async (file: string, args: string[]) => {
+      const outputPath = file === 'typst'
+        ? args[2]
+        : args[args.indexOf('-o') + 1];
+      fs.writeFileSync(outputPath, `rendered by ${file}`);
+    });
+    const dependencyPreflight = vi.fn(async () => null);
+    const unusedHtmlRenderer: HtmlToImageRenderer = { render: vi.fn() };
+    const externalTool = new GenerateDocumentTool(
+      createMockConfig(),
+      unusedHtmlRenderer,
+      commandRunner,
+      dependencyPreflight,
+    );
+
+    const slidesOut = path.join(tmpDir, '季度 汇报.pdf');
+    const reportOut = path.join(tmpDir, '年度 报告.pdf');
+    const docxOut = path.join(tmpDir, '会议 纪要.docx');
+    const signal = new AbortController().signal;
+
+    const slides = await externalTool.execute(
+      { content: '# 第一页', format: 'slides', output_format: 'pdf', output_path: slidesOut },
+      signal,
+    );
+    const report = await externalTool.execute(
+      { content: '# 报告', format: 'report', output_format: 'pdf', output_path: reportOut },
+      signal,
+    );
+    const docx = await externalTool.execute(
+      { content: '# 纪要', format: 'article', output_format: 'docx', output_path: docxOut },
+      signal,
+    );
+
+    expect(slides.llmContent).toContain('generate_document OK');
+    expect(report.llmContent).toContain('generate_document OK');
+    expect(docx.llmContent).toContain('generate_document OK');
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      1,
+      'marp',
+      [expect.stringMatching(/slides\.md$/), '-o', slidesOut, '--allow-local-files'],
+      expect.objectContaining({ signal }),
+    );
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      2,
+      'typst',
+      ['compile', expect.stringMatching(/doc\.typ$/), reportOut],
+      expect.objectContaining({ signal }),
+    );
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      3,
+      'pandoc',
+      [
+        expect.stringMatching(/doc\.md$/),
+        '-o',
+        docxOut,
+        '-f',
+        'markdown',
+        '-t',
+        'docx',
+        '--standalone',
+      ],
+      expect.objectContaining({ signal }),
+    );
+  });
 });
 
 describe('normalizeSlidesMarkdown', () => {
@@ -252,4 +319,78 @@ describe('ChromeHtmlToImageRenderer', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('document external command runner', () => {
+  it('passes paths as argv and decodes GBK stderr on Windows', async () => {
+    const module = await import('./generate-document.js') as Record<string, unknown>;
+    expect(module.runDocumentCommand).toBeTypeOf('function');
+
+    const inputPath = 'C:\\Users\\张三\\OneDrive - 示例公司\\输入 文档.md';
+    const outputPath = 'C:\\Users\\张三\\桌面\\汇报 文件.pptx';
+    const args = [inputPath, '-o', outputPath];
+    const execFileImpl = vi.fn((
+      _file: string,
+      _args: readonly string[],
+      _options: Record<string, unknown>,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => {
+      callback(
+        Object.assign(new Error('Command failed'), { code: 1 }),
+        Buffer.alloc(0),
+        iconv.encode('系统找不到指定的路径', 'gbk'),
+      );
+    });
+
+    const runDocumentCommand = module.runDocumentCommand as (
+      file: string,
+      argv: string[],
+      options: Record<string, unknown>,
+    ) => Promise<void>;
+    await expect(runDocumentCommand('pandoc', args, {
+      platform: 'win32',
+      execFileImpl,
+    })).rejects.toThrow('系统找不到指定的路径');
+
+    expect(execFileImpl).toHaveBeenCalledWith(
+      'pandoc',
+      args,
+      expect.objectContaining({ encoding: 'buffer', windowsHide: true }),
+      expect.any(Function),
+    );
+  });
+
+  it('runs the Windows npm Marp shim through ComSpec without joining user paths', async () => {
+    const module = await import('./generate-document.js') as Record<string, unknown>;
+    const runDocumentCommand = module.runDocumentCommand as (
+      file: string,
+      argv: string[],
+      options: Record<string, unknown>,
+    ) => Promise<void>;
+    const args = [
+      'C:\\Users\\张三\\AppData\\Local\\Temp\\otto doc\\slides.md',
+      '-o',
+      'C:\\Users\\张三\\桌面\\季度 汇报.pdf',
+      '--allow-local-files',
+    ];
+    const execFileImpl = vi.fn((
+      _file: string,
+      _args: readonly string[],
+      _options: Record<string, unknown>,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => callback(null, Buffer.alloc(0), Buffer.alloc(0)));
+
+    await runDocumentCommand('marp', args, {
+      platform: 'win32',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+      execFileImpl,
+    });
+
+    expect(execFileImpl).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', 'marp', ...args],
+      expect.objectContaining({ encoding: 'buffer', windowsHide: true }),
+      expect.any(Function),
+    );
+  });
 });

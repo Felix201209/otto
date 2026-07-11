@@ -64,8 +64,28 @@ export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole
 export type { EnterpriseConfig, UserRole } from './enterpriseSync.js';
 
 // 自动 Skill 生成
-export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent, setAutoSkillFeishuNotifier, startAutoSkillScanner, stopAutoSkillScanner } from './autoSkillGenerator.js';
-export type { SkillCandidate, AutoSkillFeishuNotifier } from './autoSkillGenerator.js';
+export {
+  detectPatterns,
+  generateSkillCandidates,
+  confirmAndSaveSkill,
+  confirmPendingSkill,
+  rejectSkill,
+  rejectPendingSkill,
+  listPendingSkillCandidates,
+  generateSkillContent,
+  resolveAutoSkillUserDir,
+  resolveAutoSkillSkillsDir,
+  scanAndStageSkillCandidates,
+  setAutoSkillFeishuNotifier,
+  startAutoSkillScanner,
+  stopAutoSkillScanner,
+} from './autoSkillGenerator.js';
+export type {
+  SkillCandidate,
+  AutoSkillFeishuNotifier,
+  AutoSkillScannerOptions,
+  PatternDetectionOptions,
+} from './autoSkillGenerator.js';
 
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';

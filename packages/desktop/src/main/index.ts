@@ -547,7 +547,14 @@ function isExternalUrl(url: string): boolean {
 function applyCsp(): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const host = endpoint?.host ?? CSP_FALLBACK_HOST;
-    const port = endpoint?.port ?? CSP_FALLBACK_PORT;
+    // 首个 renderer 响应头通常早于 ensureEndpoint() 完成；若用户通过环境变量指定
+    // 内嵌 server 端口，CSP 也必须从第一帧就放行同一端口，否则 WS 会被浏览器拦截、
+    // UI 永久显示“正在重连”，即使 server 实际已健康监听。
+    const configuredPort = Number(process.env.OTTO_SERVER_PORT);
+    const port = endpoint?.port
+      ?? (Number.isFinite(configuredPort) && configuredPort > 0
+        ? configuredPort
+        : CSP_FALLBACK_PORT);
     const csp = [
       "default-src 'self'",
       // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。

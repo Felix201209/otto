@@ -35,6 +35,10 @@ export interface CreateCoreConfigOptions {
   cwd?: string;
   /** 覆盖自定义模型注入（测试用）；缺省从 ~/.otto-user/custom-models.json 读。 */
   customModels?: CustomModelConfig[];
+  /** 会话级 Agent profile，经 Config.userRules 进入 system prompt。 */
+  userRules?: string;
+  /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
+  excludeTools?: string[];
 }
 
 /**
@@ -70,6 +74,8 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const enabled = customModels.filter((m) => m.enabled !== false);
   const wantsCustom =
     typeof opts.model === 'string' && isCustomModel(opts.model);
+  const wantsManaged =
+    typeof opts.model === 'string' && opts.model.startsWith('otto:');
   // 会话未显式选模型时的兜底次序：
   //   1) makeActive 写入的「当前生效模型」preferredModel（前提：它仍在 enabled 列表里）；
   //   2) 退回第一个 enabled 自定义模型（历史行为）。
@@ -78,7 +84,7 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const preferred = opts.customModels ? undefined : loadPreferredModel();
   const preferredIfEnabled =
     preferred && enabledIds.has(preferred) ? preferred : undefined;
-  const resolvedModel = wantsCustom
+  const resolvedModel = wantsCustom || wantsManaged
     ? opts.model
     : (preferredIfEnabled ??
       (enabled.length > 0 ? generateCustomModelId(enabled[0]) : opts.model));
@@ -93,6 +99,8 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     approvalMode: ApprovalMode.YOLO,
     model: resolvedModel,
     customModels,
+    userRules: opts.userRules,
+    excludeTools: opts.excludeTools,
     // 关闭遥测与使用统计（与 CLI 一致的隐私基线）。
     telemetry: { enabled: false, logPrompts: false },
     usageStatisticsEnabled: false,

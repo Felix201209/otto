@@ -245,6 +245,25 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
       validateClientPayload({ type: 'get_history', payload: 'x' }),
     ).not.toBeNull();
   });
+
+  it('v1.7 企业关联和自动 Skill 操作只接受非空链接/候选 ID', () => {
+    expect(validateClientPayload({
+      type: 'accept_company_link',
+      payload: { link: 'otto://enterprise/join?token=abc' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'accept_company_link',
+      payload: { link: '' },
+    })).not.toBeNull();
+    expect(validateClientPayload({
+      type: 'get_pending_auto_skills',
+      payload: {},
+    })).toBeNull();
+    for (const type of ['confirm_pending_auto_skill', 'reject_pending_auto_skill']) {
+      expect(validateClientPayload({ type, payload: { candidateId: 'candidate-1' } })).toBeNull();
+      expect(validateClientPayload({ type, payload: { candidateId: '' } })).not.toBeNull();
+    }
+  });
 });
 
 describe('frame 构造器', () => {
@@ -338,5 +357,71 @@ describe('validateClientPayload：执行授权', () => {
       type: 'set_authorization_mode',
       payload: { sessionId: 's1', mode: 'manual', scope: 'forever' },
     })).toContain('scope');
+  });
+});
+
+describe('validateClientPayload：v1.7 产品工作区', () => {
+  it('create_session 只接受字符串 agentProfileId', () => {
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议', agentProfileId: 'meeting-initiator' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议', agentProfileId: { systemPrompt: 'evil' } },
+    })).toContain('agentProfileId');
+  });
+
+  it('管理者建档和加入企业严格校验必填字段', () => {
+    expect(validateClientPayload({
+      type: 'configure_enterprise',
+      payload: { managerName: '陈晨', companyName: '北辰科技', industry: '企业软件' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'configure_enterprise',
+      payload: { managerName: '', companyName: '北辰科技' },
+    })).toContain('managerName');
+    expect(validateClientPayload({
+      type: 'join_enterprise',
+      payload: { link: 'otto://enterprise/join?x=1', userId: 'u1', displayName: '林一' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'join_enterprise',
+      payload: { link: '', userId: 'u1', displayName: '林一' },
+    })).toContain('link');
+  });
+
+  it('企业邀请按 kind 校验职位或父子公司参数', () => {
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'position', departmentId: 'd1', positionId: 'p1' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'position', departmentId: 'd1' },
+    })).toContain('positionId');
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'company_link', direction: 'parent_invites_child' },
+    })).toBeNull();
+  });
+
+  it('本地日程帧校验 action 所需字段', () => {
+    expect(validateClientPayload({
+      type: 'create_schedule',
+      payload: { title: '复盘', startAt: '2026-07-12T09:00:00+08:00' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_schedule',
+      payload: { title: '', startAt: 'bad' },
+    })).toContain('title');
+    expect(validateClientPayload({
+      type: 'get_schedules',
+      payload: { date: '2026-07-12', timezone: 'Asia/Shanghai' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'delete_schedule',
+      payload: { id: '' },
+    })).toContain('id');
   });
 });

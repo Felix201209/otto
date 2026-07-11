@@ -74,26 +74,6 @@ const EXAMPLE_PROMPTS = [
   '给这个函数补一组单元测试',
 ];
 
-/** 岗位标准化枚举 → 中文显示 */
-const ROLE_DISPLAY: Record<string, string> = {
-  'dev.frontend': '前端', 'dev.backend': '后端', 'dev.fullstack': '全栈',
-  'dev.qa': '测试', 'dev.ops': '运维', 'dev.architect': '架构师', 'dev.lead': '技术主管',
-  'product.manager': '产品经理', 'product.design': '设计', 'product.research': '用户研究',
-  'marketing.brand': '品牌', 'marketing.content': '内容', 'marketing.ads': '投放', 'marketing.events': '活动',
-  'sales.account': '客户经理', 'sales.bd': '商务', 'sales.channel': '渠道',
-  'hr.recruit': '招聘', 'hr.compensation': '薪酬', 'hr.relations': '员工关系',
-  'finance.accountant': '会计', 'finance.cashier': '出纳', 'finance.analyst': '财务分析',
-  'ops.user': '用户运营', 'ops.content': '内容运营', 'ops.data': '数据运营',
-  'exec.ceo': 'CEO', 'exec.cto': 'CTO', 'exec.cfo': 'CFO', 'exec.coo': 'COO',
-  'exec.vp': 'VP', 'exec.director': '总监',
-  'general': '通用助手',
-};
-
-function formatRole(role: string): string {
-  return ROLE_DISPLAY[role] || role || '通用助手';
-}
-
-
 interface ChatViewProps {
   session: SessionSummary | null;
   messages: OttoMessage[];
@@ -101,6 +81,9 @@ interface ChatViewProps {
   currentModel: string | null;
   userInitial: string;
   busy: boolean;
+  /** 服务端权威身份；个人版不伪造部门，企业版显示真实角色。 */
+  identityLabel?: string;
+  modelManagementLabel?: string;
   onSend: (
     text: string,
     source: MessageSource,
@@ -151,6 +134,8 @@ export function ChatView({
   currentModel,
   userInitial,
   busy,
+  identityLabel = '个人版 · Otto',
+  modelManagementLabel = '模型与个人 API 设置',
   onSend,
   onCancel,
   onSetModel,
@@ -184,32 +169,6 @@ export function ChatView({
     text: '',
     n: 0,
   });
-  // 部门/岗位：从飞书同步数据读取，纯展示，不可修改
-  const [deptLabel, setDeptLabel] = useState<string>('通用 · 通用助手');
-
-  // 加载用户部门信息
-  const loadDept = React.useCallback(async () => {
-    try {
-      // userDepartment 的 main 侧实现尚未落地（krx 的企业分支超前 UI）；
-      // 可选调用 + catch 降级到默认标签，等后端补上即自动生效。
-      const otto = window.otto as unknown as {
-        userDepartment?: () => Promise<{ department?: string; role?: string } | null>;
-      };
-      const info = await otto.userDepartment?.();
-      if (info && info.department) {
-        const roleDisplay = formatRole(info.role ?? '');
-        setDeptLabel(`${info.department} · ${roleDisplay}`);
-      }
-    } catch { /* 降级用默认值 */ }
-  }, []);
-
-  // 启动时加载 + 每10分钟刷新（人事在飞书改了部门后自动更新）
-  useEffect(() => {
-    loadDept();
-    const timer = setInterval(loadDept, 10 * 60 * 1000);
-    return () => clearInterval(timer);
-  }, [loadDept]);
-
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
 
@@ -301,7 +260,7 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {/* 部门/岗位：纯展示，不可修改 */}
+        {/* 服务端权威身份：个人版不伪造部门，企业版来自签名加入/管理者建档。 */}
         <span
           style={{
             display: 'flex',
@@ -317,9 +276,9 @@ export function ChatView({
             whiteSpace: 'nowrap',
             opacity: 0.8,
           }}
-          title="部门/岗位由人事部分配"
+          title="当前产品身份"
         >
-          {deptLabel}
+          {identityLabel}
         </span>
 
         {session?.source === 'feishu' ? (
@@ -345,8 +304,8 @@ export function ChatView({
             type="button"
             className="otto-topbar-setup"
             onClick={onOpenSetup}
-            title="模型与 BYO-key 设置"
-            aria-label="模型与 BYO-key 设置"
+            title={modelManagementLabel}
+            aria-label={modelManagementLabel}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />

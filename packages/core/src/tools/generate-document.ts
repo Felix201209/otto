@@ -1,13 +1,14 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
-import { exec, execFile } from 'child_process';
+import { exec, execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { pathToFileURL } from 'url';
 import pptxgen from 'pptxgenjs';
+import iconv from 'iconv-lite';
 import {
   BaseTool, ToolResult, ToolCallConfirmationDetails,
   Icon, ToolLocation,
@@ -17,8 +18,142 @@ import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { DoctorService, CommandRunner } from '../services/doctor.js';
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+type ExecFileCallback = (
+  error: NodeJS.ErrnoException | null,
+  stdout: Buffer | string,
+  stderr: Buffer | string,
+) => void;
+
+export type ExecFileImplementation = (
+  file: string,
+  args: readonly string[],
+  options: Record<string, unknown>,
+  callback: ExecFileCallback,
+) => unknown;
+
+export interface RunDocumentCommandOptions {
+  platform?: NodeJS.Platform;
+  comspec?: string;
+  windowsEncoding?: string;
+  execFileImpl?: ExecFileImplementation;
+  signal?: AbortSignal;
+  timeout?: number;
+  maxBuffer?: number;
+}
+
+let cachedWindowsConsoleEncoding: string | undefined;
+
+function isUtf8(buffer: Buffer): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detectWindowsConsoleEncoding(): string {
+  if (cachedWindowsConsoleEncoding) return cachedWindowsConsoleEncoding;
+  try {
+    const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
+    const raw = execFileSync(comspec, ['/d', '/s', '/c', 'chcp'], {
+      encoding: 'buffer',
+      windowsHide: true,
+      timeout: 3_000,
+    });
+    const match = raw.toString('latin1').match(/\b(\d{3,5})\b/);
+    const codePage = match?.[1];
+    cachedWindowsConsoleEncoding = codePage === '65001'
+      ? 'utf8'
+      : codePage === '936'
+        ? 'gb18030'
+        : codePage === '950'
+          ? 'big5'
+          : codePage
+            ? `cp${codePage}`
+            : 'gb18030';
+  } catch {
+    // Otto 国内 Windows 用户以 CP936 为主；无法探测时优先避免中文错误乱码。
+    cachedWindowsConsoleEncoding = 'gb18030';
+  }
+  return cachedWindowsConsoleEncoding;
+}
+
+function decodeCommandOutput(
+  value: Buffer | string,
+  platform: NodeJS.Platform,
+  windowsEncoding?: string,
+): string {
+  if (typeof value === 'string') return value;
+  if (value.length === 0) return '';
+  if (isUtf8(value)) return value.toString('utf8');
+  if (platform !== 'win32') return value.toString('utf8');
+
+  const encoding = windowsEncoding || detectWindowsConsoleEncoding();
+  return iconv.encodingExists(encoding)
+    ? iconv.decode(value, encoding)
+    : value.toString('utf8');
+}
+
+const defaultExecFileImpl: ExecFileImplementation = (
+  file,
+  args,
+  options,
+  callback,
+) => execFile(file, [...args], options, callback as never);
+
+/**
+ * 以 argv 方式运行文档渲染器，避免把用户路径拼进 shell 命令字符串。
+ * stdout/stderr 以 Buffer 接收；Windows 非 UTF-8 控制台输出按当前代码页解码。
+ */
+export function runDocumentCommand(
+  file: string,
+  args: string[],
+  options: RunDocumentCommandOptions = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  const execFileImpl = options.execFileImpl ?? defaultExecFileImpl;
+  const usesWindowsNpmShim = platform === 'win32'
+    && /^(?:marp|marp-cli)(?:\.cmd)?$/i.test(path.basename(file));
+  const executable = usesWindowsNpmShim
+    ? (options.comspec || process.env.ComSpec || process.env.COMSPEC || 'cmd.exe')
+    : file;
+  const argv = usesWindowsNpmShim
+    ? ['/d', '/s', '/c', file, ...args]
+    : args;
+  return new Promise<void>((resolve, reject) => {
+    execFileImpl(
+      executable,
+      argv,
+      {
+        encoding: 'buffer',
+        windowsHide: true,
+        timeout: options.timeout ?? 30_000,
+        maxBuffer: options.maxBuffer ?? 50 * 1024 * 1024,
+        signal: options.signal,
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve();
+          return;
+        }
+        const detail = decodeCommandOutput(
+          (stderr && stderr.length > 0) ? stderr : stdout,
+          platform,
+          options.windowsEncoding,
+        ).trim();
+        const wrapped = new Error(detail || error.message);
+        Object.assign(wrapped, { code: error.code, cause: error });
+        reject(wrapped);
+      },
+    );
+  });
+}
+
+export type DocumentCommandRunner = typeof runDocumentCommand;
+export type DependencyPreflight = (names: string[]) => Promise<string | null>;
 
 export interface HtmlToImageRenderRequest {
   htmlPath: string;
@@ -221,6 +356,8 @@ export class GenerateDocumentTool extends BaseTool<GenerateDocumentToolParams, T
   constructor(
     private readonly config: Config,
     private readonly htmlRenderer: HtmlToImageRenderer = new ChromeHtmlToImageRenderer(),
+    private readonly commandRunner: DocumentCommandRunner = runDocumentCommand,
+    private readonly dependencyPreflight: DependencyPreflight = preflightBinaries,
   ) {
     const desc = `Generates polished documents from markdown content.
 
@@ -292,9 +429,9 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       } else if (output_format === 'markdown') {
         fs.writeFileSync(outPath, '# '+titleStr+'\n'+(authorStr?'**'+authorStr+'**\n':'')+'\n'+content);
       } else if (output_format === 'pdf' && ['report','article','letter','resume'].includes(format)) {
-        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr);
+        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr, signal);
       } else {
-        await this.genPandoc(content, outPath, tmpDir, titleStr, authorStr, output_format, format);
+        await this.genPandoc(content, outPath, tmpDir, titleStr, authorStr, output_format, format, signal);
       }
 
       const sz = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
@@ -331,11 +468,15 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     }
 
     // PDF/HTML slides render via Marp. Fail loud if missing.
-    const missing = await preflightBinaries(['marp']);
+    const missing = await this.dependencyPreflight(['marp']);
     if (missing) throw new Error('generate_document/slides needs marp: ' + missing);
     const mdFile = path.join(tmpDir, 'slides.md');
     fs.writeFileSync(mdFile, '---\nmarp: true\ntheme: default\npaginate: true\ntitle: '+title+'\n---\n\n'+slides);
-    await execAsync('marp "'+mdFile+'" -o "'+outPath+'" --allow-local-files', { maxBuffer:50*1024*1024 });
+    await this.commandRunner(
+      'marp',
+      [mdFile, '-o', outPath, '--allow-local-files'],
+      { signal },
+    );
   }
 
   private async genPptx(
@@ -574,22 +715,23 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       .replace(/`([^`]+)`/g, '$1')
       .trim();
   }
-  private async genTypst(content: string, format: string, outPath: string, tmpDir: string, title: string, author: string): Promise<void> {
+  private async genTypst(content: string, format: string, outPath: string, tmpDir: string, title: string, author: string, signal: AbortSignal): Promise<void> {
     // Doctor preflight: typst-rendered PDFs (report/article/letter/resume) need typst.
-    const missing = await preflightBinaries(['typst']);
+    const missing = await this.dependencyPreflight(['typst']);
     if (missing) throw new Error('generate_document (' + format + ' -> pdf) needs typst: ' + missing);
     const typFile = path.join(tmpDir, 'doc.typ');
     fs.writeFileSync(typFile, this.md2typst(content, format, title, author));
-    await execAsync('typst compile "'+typFile+'" "'+outPath+'"', { maxBuffer:50*1024*1024 });
+    await this.commandRunner('typst', ['compile', typFile, outPath], { signal });
   }
-  private async genPandoc(content: string, outPath: string, tmpDir: string, title: string, author: string, fmt: string, format: string): Promise<void> {
+  private async genPandoc(content: string, outPath: string, tmpDir: string, title: string, author: string, fmt: string, format: string, signal: AbortSignal): Promise<void> {
     // Doctor preflight: docx/html and table PDFs render via pandoc. Fail loud if missing.
-    const missing = await preflightBinaries(['pandoc']);
+    const missing = await this.dependencyPreflight(['pandoc']);
     if (missing) throw new Error('generate_document (' + format + ' -> ' + fmt + ') needs pandoc: ' + missing);
     const mdFile = path.join(tmpDir, 'doc.md');
     fs.writeFileSync(mdFile, '# '+title+'\n'+(author?'**'+author+'**\n':'')+'\n'+content);
-    const extra = format==='report' ? ' --toc --number-sections' : '';
-    await execAsync('pandoc "'+mdFile+'" -o "'+outPath+'" -f markdown -t '+fmt+' --standalone'+extra, { maxBuffer:50*1024*1024 });
+    const args = [mdFile, '-o', outPath, '-f', 'markdown', '-t', fmt, '--standalone'];
+    if (format === 'report') args.push('--toc', '--number-sections');
+    await this.commandRunner('pandoc', args, { signal });
   }
 
   private md2typst(md: string, format: string, title: string, author: string): string {

@@ -30,6 +30,8 @@
  *     app 内对 feishu 会话发言 → SendUserMessage(source:'local') → server 回推飞书。
  */
 
+import type { ProductWorkspaceSnapshot } from './productWorkspaceStore.js';
+
 // ============================================================================
 // 0. 版本 / 信封
 // ============================================================================
@@ -238,6 +240,10 @@ export interface SessionSummary {
   feishuChatId?: string;
   status: SessionStatus;
   model?: string;
+  /** 受服务端白名单验证的会话 Agent profile；不携带可注入 prompt。 */
+  agentProfileId?: string;
+  agentProfileName?: string;
+  productEdition?: 'personal' | 'enterprise';
   createdAt: number;
   updatedAt: number;
   lastMessagePreview?: string;
@@ -272,7 +278,7 @@ export type UnsubscribeMsg = Envelope<'unsubscribe', { sessionId: string }>;
 /** 新建会话。 */
 export type CreateSessionMsg = Envelope<
   'create_session',
-  { title?: string; model?: string }
+  { title?: string; model?: string; agentProfileId?: string }
 >;
 
 /**
@@ -328,6 +334,12 @@ export type SetModelMsg = Envelope<
   { sessionId: string; model: string }
 >;
 
+/** 设置执行授权。session 仅当前会话；all 同步所有会话并作为后续会话默认值。 */
+export type SetAuthorizationModeMsg = Envelope<
+  'set_authorization_mode',
+  { sessionId: string; mode: 'manual' | 'auto'; scope: 'session' | 'all' }
+>;
+
 /** 拉取可用模型列表（BYO-key 自定义模型）。 */
 export type GetModelsMsg = Envelope<'get_models', Record<string, never>>;
 
@@ -336,7 +348,10 @@ export type GetModelsMsg = Envelope<'get_models', Record<string, never>>;
  * feishuIndex）→ 广播最新 `sessions_list`（权威快照，客户端据此移除该会话）。
  * 删除当前选中会话时的善后（落到下一个 / 置空）由前端 reducer 处理。
  */
-export type DeleteSessionMsg = Envelope<'delete_session', { sessionId: string }>;
+export type DeleteSessionMsg = Envelope<
+  'delete_session',
+  { sessionId: string }
+>;
 
 /**
  * 重命名会话。server 收到后：改 title → 广播最新 `sessions_list`（权威快照）。
@@ -358,6 +373,12 @@ export type RenameSessionMsg = Envelope<
  * server 收到后：校验 → 复用 CLI 同格式的原子写盘 → 成功广播最新 `models_list`；
  * 失败广播 `error`（code:'save_failed'）。
  */
+/** 删除自定义模型：id 为 models_list 里的 ModelInfo.id（generateCustomModelId 结果）。 */
+export type DeleteCustomModelMsg = Envelope<
+  'delete_custom_model',
+  { id: string }
+>;
+
 export type SaveCustomModelMsg = Envelope<
   'save_custom_model',
   {
@@ -378,6 +399,8 @@ export type SaveCustomModelMsg = Envelope<
     maxTokens?: number;
     /** 是否启用（缺省 true）。 */
     enabled?: boolean;
+    /** 编辑模式：要被原子替换的旧 ModelInfo.id。 */
+    replaceId?: string;
     /** 写入成功后是否把该模型设为当前会话模型（保留给前端，server 仅写盘+广播）。 */
     makeActive?: boolean;
   }
@@ -460,8 +483,10 @@ export type ExportConversationMsg = Envelope<
 export type GetWorkflowsMsg = Envelope<'get_workflows', Record<string, never>>;
 
 /** 拉取已安装扩展列表（对齐 CLI /extensions list）。 */
-export type GetExtensionsMsg = Envelope<'get_extensions', Record<string, never>>;
-
+export type GetExtensionsMsg = Envelope<
+  'get_extensions',
+  Record<string, never>
+>;
 
 // ── P3：斜杠命令（桌面端命令面板 ↔ server 命令执行层）────────────────────
 
@@ -485,15 +510,128 @@ export type ListSlashCommandsMsg = Envelope<
 export type GetKnowledgeMsg = Envelope<'get_knowledge', { limit?: number }>;
 
 /** 在个人知识库中检索。 */
-export type SearchKnowledgeMsg = Envelope<'search_knowledge', { query: string; category?: string }>;
+export type SearchKnowledgeMsg = Envelope<
+  'search_knowledge',
+  { query: string; category?: string }
+>;
 
 /** 向个人知识库添加一条知识。 */
-export type AddKnowledgeMsg = Envelope<'add_knowledge', { content: string; category?: string; tags?: string[] }>;
+export type AddKnowledgeMsg = Envelope<
+  'add_knowledge',
+  { content: string; category?: string; tags?: string[] }
+>;
 
 /** 从个人知识库删除一条知识。 */
 export type RemoveKnowledgeMsg = Envelope<'remove_knowledge', { id: string }>;
 /** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
 export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
+
+// ── v1.7：个人版 / 企业版产品工作区与统一日程 ─────────────────────────────
+
+export type GetProductWorkspaceMsg = Envelope<
+  'get_product_workspace',
+  Record<string, never>
+>;
+export type ConfigureEnterpriseMsg = Envelope<
+  'configure_enterprise',
+  {
+    managerName: string;
+    companyName: string;
+    industry?: string;
+    employeeScale?: string;
+  }
+>;
+export type SwitchToPersonalMsg = Envelope<
+  'switch_to_personal',
+  Record<string, never>
+>;
+export type JoinEnterpriseMsg = Envelope<
+  'join_enterprise',
+  { link: string; userId: string; displayName: string }
+>;
+export type CreateEnterpriseInviteMsg = Envelope<
+  'create_enterprise_invite',
+  | {
+      kind: 'position';
+      departmentId: string;
+      positionId: string;
+      expiresInSeconds?: number;
+    }
+  | { kind: 'company'; expiresInSeconds?: number }
+  | {
+      kind: 'company_link';
+      direction: 'parent_invites_child' | 'child_requests_parent';
+      targetCompanyId?: string;
+      expiresInSeconds?: number;
+    }
+>;
+export type AddFriendMsg = Envelope<
+  'add_friend',
+  { displayName: string; note?: string }
+>;
+export type AcceptCompanyLinkMsg = Envelope<
+  'accept_company_link',
+  { link: string }
+>;
+
+export interface AutoSkillCandidateInfo {
+  id: string;
+  name: string;
+  description: string;
+  detectedPattern: string;
+  occurrenceCount: number;
+  reason: string;
+}
+export type GetPendingAutoSkillsMsg = Envelope<
+  'get_pending_auto_skills',
+  Record<string, never>
+>;
+export type ConfirmPendingAutoSkillMsg = Envelope<
+  'confirm_pending_auto_skill',
+  { candidateId: string }
+>;
+export type RejectPendingAutoSkillMsg = Envelope<
+  'reject_pending_auto_skill',
+  { candidateId: string }
+>;
+
+export interface ScheduleItemInfo {
+  id: string;
+  title: string;
+  startAt: string;
+  endAt?: string;
+  notes?: string;
+  source: 'user' | 'otto';
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export type GetSchedulesMsg = Envelope<
+  'get_schedules',
+  { date?: string; timezone?: string }
+>;
+export type CreateScheduleMsg = Envelope<
+  'create_schedule',
+  {
+    title: string;
+    startAt: string;
+    endAt?: string;
+    notes?: string;
+    reason?: string;
+  }
+>;
+export type UpdateScheduleMsg = Envelope<
+  'update_schedule',
+  {
+    id: string;
+    title?: string;
+    startAt?: string;
+    endAt?: string | null;
+    notes?: string | null;
+    reason?: string | null;
+  }
+>;
+export type DeleteScheduleMsg = Envelope<'delete_schedule', { id: string }>;
 
 export type ClientToServer =
   | HelloMsg
@@ -506,8 +644,10 @@ export type ClientToServer =
   | ToolConfirmationResponseMsg
   | CancelMsg
   | SetModelMsg
+  | SetAuthorizationModeMsg
   | GetModelsMsg
   | SaveCustomModelMsg
+  | DeleteCustomModelMsg
   | DeleteSessionMsg
   | RenameSessionMsg
   | GetSettingsMsg
@@ -533,13 +673,26 @@ export type ClientToServer =
   | AddKnowledgeMsg
   | RemoveKnowledgeMsg
   | RunSlashCommandMsg
-  | ListSlashCommandsMsg;
+  | ListSlashCommandsMsg
+  | GetProductWorkspaceMsg
+  | ConfigureEnterpriseMsg
+  | SwitchToPersonalMsg
+  | JoinEnterpriseMsg
+  | CreateEnterpriseInviteMsg
+  | AddFriendMsg
+  | AcceptCompanyLinkMsg
+  | GetPendingAutoSkillsMsg
+  | ConfirmPendingAutoSkillMsg
+  | RejectPendingAutoSkillMsg
+  | GetSchedulesMsg
+  | CreateScheduleMsg
+  | UpdateScheduleMsg
+  | DeleteScheduleMsg;
 
 export type ClientToServerType = ClientToServer['type'];
 
 /** 会话标题最大长度（server 兜底截断，防超长标题撑爆列表 / 内存）。 */
 export const SESSION_TITLE_MAX_LEN = 120;
-
 
 /** 个人知识库条目（从 core LocalKnowledgeStore 透传）。 */
 export interface KnowledgeItem {
@@ -551,10 +704,16 @@ export interface KnowledgeItem {
 }
 
 /** 知识库列表 / 检索结果（S→C）。 */
-export type KnowledgeDataMsg = Envelope<'knowledge_data', { entries: KnowledgeItem[]; action: 'list' | 'search'; query?: string }>;
+export type KnowledgeDataMsg = Envelope<
+  'knowledge_data',
+  { entries: KnowledgeItem[]; action: 'list' | 'search'; query?: string }
+>;
 
 /** 单条知识添加成功（S→C）。 */
-export type KnowledgeAddedMsg = Envelope<'knowledge_added', { entry: KnowledgeItem }>;
+export type KnowledgeAddedMsg = Envelope<
+  'knowledge_added',
+  { entry: KnowledgeItem }
+>;
 
 /** 单条知识删除成功（S→C）。 */
 export type KnowledgeRemovedMsg = Envelope<'knowledge_removed', { id: string }>;
@@ -694,7 +853,23 @@ export interface ModelInfo {
   id: string;
   displayName: string;
   provider: string;
+  /** 接入端点（可选）：UI 据域名识别真实厂商（provider 只是协议名）。 */
+  baseUrl?: string;
+  /** 上游实际模型 id（非敏感，用于编辑表单预填）。 */
+  modelId?: string;
+  /** 上下文窗口大小（非敏感，用于编辑表单预填）。 */
+  maxTokens?: number;
   enabled?: boolean;
+  /** personal=用户 BYOK；enterprise=Otto 托管。旧客户端可忽略。 */
+  source?: 'byok' | 'otto';
+  /** true 表示企业托管模型，不允许客户端编辑或删除。 */
+  managed?: boolean;
+  /** 展示倍率；真实账本仍按输入/输出 Credits/MTok 结算。 */
+  creditMultiplier?: number;
+  inputCreditsPerMTok?: number;
+  outputCreditsPerMTok?: number;
+  tier?: 'standard' | 'premium';
+  pricingStatus?: 'provisional' | 'active';
 }
 
 /**
@@ -731,7 +906,10 @@ export interface McpServerInfo {
   description?: string;
 }
 
-export type McpServersMsg = Envelope<'mcp_servers', { servers: McpServerInfo[] }>;
+export type McpServersMsg = Envelope<
+  'mcp_servers',
+  { servers: McpServerInfo[] }
+>;
 
 /** Context 用量分解（对齐 CLI /context 的口径）。 */
 export interface ContextBreakdown {
@@ -746,7 +924,10 @@ export interface ContextBreakdown {
   freeSpaceTokens: number;
 }
 
-export type ContextBreakdownMsg = Envelope<'context_breakdown', ContextBreakdown>;
+export type ContextBreakdownMsg = Envelope<
+  'context_breakdown',
+  ContextBreakdown
+>;
 
 /** 用量统计快照（对齐 CLI /stats，按模型/工具聚合）。 */
 export interface StatsSnapshot {
@@ -879,7 +1060,11 @@ export interface WorkflowAgentSummary {
   status: WorkflowStatusValue;
   startTime: number;
   endTime?: number;
-  tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   toolCallCount: number;
   currentPhase?: 'thinking' | 'executing_tools';
   outcome?: string;
@@ -899,7 +1084,11 @@ export interface WorkflowSummary {
   status: WorkflowStatusValue;
   startTime: number;
   endTime?: number;
-  totalTokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  totalTokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   phases: WorkflowPhaseSummary[];
   /** 无 phase 信息时的兜底扁平 agent 列表。 */
   agents: WorkflowAgentSummary[];
@@ -936,6 +1125,33 @@ export type IdeStatusMsg = Envelope<
   { status: IdeConnectionStatusValue; details?: string }
 >;
 
+export type ProductWorkspaceMsg = Envelope<
+  'product_workspace',
+  ProductWorkspaceSnapshot
+>;
+export type EnterpriseInviteCreatedMsg = Envelope<
+  'enterprise_invite_created',
+  {
+    kind: 'position' | 'company' | 'company_link';
+    link: string;
+    expiresAt: string;
+  }
+>;
+export type SchedulesListMsg = Envelope<
+  'schedules_list',
+  { date?: string; timezone?: string; schedules: ScheduleItemInfo[] }
+>;
+export type PendingAutoSkillsMsg = Envelope<
+  'pending_auto_skills',
+  {
+    candidates: AutoSkillCandidateInfo[];
+    lastAction?: {
+      kind: 'confirmed' | 'rejected';
+      candidateId: string;
+      savedPath?: string;
+    };
+  }
+>;
 export type ServerToClient =
   | WelcomeMsg
   | SessionsListMsg
@@ -969,7 +1185,11 @@ export type ServerToClient =
   | KnowledgeAddedMsg
   | KnowledgeRemovedMsg
   | SlashCommandsListMsg
-  | SlashCommandResultMsg;
+  | SlashCommandResultMsg
+  | ProductWorkspaceMsg
+  | EnterpriseInviteCreatedMsg
+  | SchedulesListMsg
+  | PendingAutoSkillsMsg;
 
 export type ServerToClientType = ServerToClient['type'];
 
@@ -1010,20 +1230,34 @@ export interface FeishuHealthStatus {
   reconnectAttempts: number;
 }
 
-/** 脱敏后的飞书配置视图（不含 secret）。 */
+/**
+ * 飞书凭证的对外脱敏视图（GET /feishu/config）。
+ * appSecret 永不出现在任何响应里——客户端只需要知道「配没配」。
+ */
 export interface FeishuConfigPublic {
-  appId: string;
-  appSecret: string;
-  verificationToken: string | null;
-  encryptKey: string | null;
+  /** 凭证文件存在且可解密。 */
+  configured: boolean;
+  appId?: string;
+  domain?: 'feishu' | 'lark';
+  botName?: string;
+  tenantName?: string;
+  /** Bot 拥有者（授权用户）的飞书 open_id。 */
+  ownerOpenId?: string;
+  /** 额外授权白名单人数（内容不透出，只报数量）。 */
+  allowlistCount?: number;
+  /** 凭证文件存在但解密/解析失败（需清除后重配）。 */
+  corrupted?: boolean;
 }
 
-/** 客户端保存飞书配置的请求体。 */
+/**
+ * 保存飞书凭证请求体（POST /feishu/config）。
+ * appSecret 可省略 = 保留盘上已有 secret 只改其他字段（改 App ID 时必须重填）。
+ */
 export interface FeishuConfigSaveRequest {
   appId: string;
-  appSecret: string;
-  verificationToken?: string | null;
-  encryptKey?: string | null;
+  appSecret?: string;
+  domain: 'feishu' | 'lark';
+  ownerOpenId?: string;
 }
 
 /**
@@ -1033,6 +1267,11 @@ export interface FeishuConfigSaveRequest {
  *   GET  /sessions/:id/history        → ApiResponse<OttoMessage[]>
  *   POST /sessions                    → ApiResponse<SessionSummary>
  *   GET  /models                      → ApiResponse<ModelInfo[]>
+ *   POST /feishu/start                → ApiResponse<FeishuHealthStatus>（运行期启动飞书守护）
+ *   POST /feishu/stop                 → ApiResponse<FeishuHealthStatus>（运行期停止，之后不自动重连）
+ *   GET  /feishu/config               → ApiResponse<FeishuConfigPublic>（脱敏凭证视图，绝不含 secret）
+ *   POST /feishu/config               → ApiResponse<FeishuConfigPublic>（保存凭证并立即尝试启动守护）
+ *   DELETE /feishu/config             → ApiResponse<FeishuConfigPublic>（停守护并清除凭证）
  *   WS   /ws                          → 双向 ClientToServer / ServerToClient
  */
 export const HTTP_ROUTES = {
@@ -1040,6 +1279,9 @@ export const HTTP_ROUTES = {
   sessions: '/sessions',
   sessionHistory: (id: string) => `/sessions/${id}/history`,
   models: '/models',
+  feishuStart: '/feishu/start',
+  feishuStop: '/feishu/stop',
+  feishuConfig: '/feishu/config',
   ws: '/ws',
 } as const;
 
@@ -1061,9 +1303,7 @@ export interface ServerEndpoint {
 }
 
 /** 判别 client 帧 type。 */
-export function isClientToServer(
-  msg: unknown,
-): msg is ClientToServer {
+export function isClientToServer(msg: unknown): msg is ClientToServer {
   return (
     typeof msg === 'object' &&
     msg !== null &&
@@ -1158,7 +1398,8 @@ export function validateClientPayload(msg: {
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
     case 'get_history': {
       if (!isPlainObject(p)) return 'get_history payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
       if (p['limit'] !== undefined && typeof p['limit'] !== 'number')
         return 'limit 必须是数字';
       if (p['before'] !== undefined && typeof p['before'] !== 'number')
@@ -1176,7 +1417,8 @@ export function validateClientPayload(msg: {
     }
     case 'rename_session': {
       if (!isPlainObject(p)) return 'rename_session payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
       if (typeof p['title'] !== 'string') return 'title 必须是字符串';
       // trim 后不能为空（纯空白标题无意义，server 也不会兜底成有效名）。
       if (p['title'].trim().length === 0) return 'title 不能为空白';
@@ -1188,11 +1430,17 @@ export function validateClientPayload(msg: {
         return 'title 必须是字符串';
       if (p['model'] !== undefined && typeof p['model'] !== 'string')
         return 'model 必须是字符串';
+      if (
+        p['agentProfileId'] !== undefined &&
+        !isNonEmptyString(p['agentProfileId'])
+      )
+        return 'agentProfileId 必须是非空字符串';
       return null;
     }
     case 'send_user_message': {
       if (!isPlainObject(p)) return 'send_user_message payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
       if (!isMessageContentValue(p['content']))
         return 'content 必须是 MessageContentPart 数组';
       if (!isMessageSourceValue(p['source']))
@@ -1205,8 +1453,10 @@ export function validateClientPayload(msg: {
       return null;
     }
     case 'tool_confirmation_response': {
-      if (!isPlainObject(p)) return 'tool_confirmation_response payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isPlainObject(p))
+        return 'tool_confirmation_response payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
       if (!isNonEmptyString(p['callId'])) return 'callId 必须是非空字符串';
       const o = p['outcome'];
       if (o !== 'approved' && o !== 'rejected' && o !== 'always_approve')
@@ -1222,9 +1472,24 @@ export function validateClientPayload(msg: {
     }
     case 'set_model': {
       if (!isPlainObject(p)) return 'set_model payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
       return null;
+    }
+    case 'set_authorization_mode': {
+      if (!isPlainObject(p)) return 'set_authorization_mode payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
+      if (p['mode'] !== 'manual' && p['mode'] !== 'auto')
+        return 'mode 必须是 manual | auto';
+      if (p['scope'] !== 'session' && p['scope'] !== 'all')
+        return 'scope 必须是 session | all';
+      return null;
+    }
+    case 'delete_custom_model': {
+      if (!isPlainObject(p)) return 'delete_custom_model payload 必须是对象';
+      return isNonEmptyString(p['id']) ? null : 'id 必须是非空字符串';
     }
     case 'save_custom_model': {
       if (!isPlainObject(p)) return 'save_custom_model payload 必须是对象';
@@ -1241,12 +1506,17 @@ export function validateClientPayload(msg: {
           return 'modelIds 必须是非空字符串数组';
         }
       }
-      if (p['displayName'] !== undefined && typeof p['displayName'] !== 'string')
+      if (
+        p['displayName'] !== undefined &&
+        typeof p['displayName'] !== 'string'
+      )
         return 'displayName 必须是字符串';
       if (p['maxTokens'] !== undefined && typeof p['maxTokens'] !== 'number')
         return 'maxTokens 必须是数字';
       if (p['enabled'] !== undefined && typeof p['enabled'] !== 'boolean')
         return 'enabled 必须是布尔';
+      if (p['replaceId'] !== undefined && !isNonEmptyString(p['replaceId']))
+        return 'replaceId 必须是非空字符串';
       if (p['makeActive'] !== undefined && typeof p['makeActive'] !== 'boolean')
         return 'makeActive 必须是布尔';
       return null;
@@ -1265,13 +1535,144 @@ export function validateClientPayload(msg: {
     case 'search_knowledge':
     case 'add_knowledge':
     case 'remove_knowledge':
-    case 'run_slash_command':
     case 'list_slash_commands':
+    case 'get_product_workspace':
+    case 'switch_to_personal':
+    case 'get_pending_auto_skills':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
+    case 'configure_enterprise': {
+      if (!isPlainObject(p)) return 'configure_enterprise payload 必须是对象';
+      if (!isNonEmptyString(p['managerName']))
+        return 'managerName 必须是非空字符串';
+      if (!isNonEmptyString(p['companyName']))
+        return 'companyName 必须是非空字符串';
+      if (p['industry'] !== undefined && typeof p['industry'] !== 'string')
+        return 'industry 必须是字符串';
+      if (
+        p['employeeScale'] !== undefined &&
+        typeof p['employeeScale'] !== 'string'
+      )
+        return 'employeeScale 必须是字符串';
+      return null;
+    }
+    case 'join_enterprise': {
+      if (!isPlainObject(p)) return 'join_enterprise payload 必须是对象';
+      if (!isNonEmptyString(p['link'])) return 'link 必须是非空字符串';
+      if (!isNonEmptyString(p['userId'])) return 'userId 必须是非空字符串';
+      if (!isNonEmptyString(p['displayName']))
+        return 'displayName 必须是非空字符串';
+      return null;
+    }
+    case 'create_enterprise_invite': {
+      if (!isPlainObject(p))
+        return 'create_enterprise_invite payload 必须是对象';
+      const kind = p['kind'];
+      if (
+        kind !== 'position' &&
+        kind !== 'company' &&
+        kind !== 'company_link'
+      ) {
+        return 'kind 必须是 position | company | company_link';
+      }
+      if (kind === 'position') {
+        if (!isNonEmptyString(p['departmentId']))
+          return 'departmentId 必须是非空字符串';
+        if (!isNonEmptyString(p['positionId']))
+          return 'positionId 必须是非空字符串';
+      }
+      if (
+        kind === 'company_link' &&
+        p['direction'] !== 'parent_invites_child' &&
+        p['direction'] !== 'child_requests_parent'
+      ) {
+        return 'direction 必须是 parent_invites_child | child_requests_parent';
+      }
+      if (
+        p['expiresInSeconds'] !== undefined &&
+        (!Number.isSafeInteger(p['expiresInSeconds']) ||
+          (p['expiresInSeconds'] as number) <= 0)
+      ) {
+        return 'expiresInSeconds 必须是正整数';
+      }
+      return null;
+    }
+    case 'add_friend': {
+      if (!isPlainObject(p)) return 'add_friend payload 必须是对象';
+      if (!isNonEmptyString(p['displayName']))
+        return 'displayName 必须是非空字符串';
+      if (p['note'] !== undefined && typeof p['note'] !== 'string')
+        return 'note 必须是字符串';
+      return null;
+    }
+    case 'accept_company_link': {
+      if (!isPlainObject(p)) return 'accept_company_link payload 必须是对象';
+      return isNonEmptyString(p['link']) ? null : 'link 必须是非空字符串';
+    }
+    case 'confirm_pending_auto_skill':
+    case 'reject_pending_auto_skill': {
+      if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
+      return isNonEmptyString(p['candidateId'])
+        ? null
+        : 'candidateId 必须是非空字符串';
+    }
+    case 'get_schedules': {
+      if (!isPlainObject(p)) return 'get_schedules payload 必须是对象';
+      if (
+        p['date'] !== undefined &&
+        (typeof p['date'] !== 'string' ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(p['date']))
+      ) {
+        return 'date 必须是 YYYY-MM-DD';
+      }
+      if (p['timezone'] !== undefined && typeof p['timezone'] !== 'string')
+        return 'timezone 必须是字符串';
+      return null;
+    }
+    case 'create_schedule': {
+      if (!isPlainObject(p)) return 'create_schedule payload 必须是对象';
+      if (!isNonEmptyString(p['title'])) return 'title 必须是非空字符串';
+      if (!isNonEmptyString(p['startAt'])) return 'startAt 必须是非空字符串';
+      if (Number.isNaN(new Date(p['startAt'] as string).getTime()))
+        return 'startAt 必须是合法日期时间';
+      if (
+        p['endAt'] !== undefined &&
+        (typeof p['endAt'] !== 'string' ||
+          Number.isNaN(new Date(p['endAt']).getTime()))
+      ) {
+        return 'endAt 必须是合法日期时间';
+      }
+      return null;
+    }
+    case 'update_schedule': {
+      if (!isPlainObject(p)) return 'update_schedule payload 必须是对象';
+      if (!isNonEmptyString(p['id'])) return 'id 必须是非空字符串';
+      if (p['title'] !== undefined && typeof p['title'] !== 'string')
+        return 'title 必须是字符串';
+      if (p['startAt'] !== undefined && typeof p['startAt'] !== 'string')
+        return 'startAt 必须是字符串';
+      return null;
+    }
+    case 'delete_schedule': {
+      if (!isPlainObject(p)) return 'delete_schedule payload 必须是对象';
+      return isNonEmptyString(p['id']) ? null : 'id 必须是非空字符串';
+    }
+    case 'run_slash_command': {
+      if (!isPlainObject(p)) return 'run_slash_command payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['name'])) return 'name 必须是非空字符串';
+      if (p['args'] !== undefined && typeof p['args'] !== 'string')
+        return 'args 必须是字符串';
+      return null;
+    }
     case 'set_setting': {
       if (!isPlainObject(p)) return 'set_setting payload 必须是对象';
       const key = p['key'];
-      if (key !== 'agentStyle' && key !== 'healthyUse' && key !== 'preferredLanguage')
+      if (
+        key !== 'agentStyle' &&
+        key !== 'healthyUse' &&
+        key !== 'preferredLanguage'
+      )
         return 'key 必须是 agentStyle | healthyUse | preferredLanguage';
       const value = p['value'];
       if (typeof value !== 'string' && typeof value !== 'boolean')

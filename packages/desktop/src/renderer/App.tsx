@@ -38,7 +38,6 @@ import {
 import { RightPanel } from './components/RightPanel.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
-import type { Expert } from './agents/experts.js';
 import { SetupPanel } from './setup/SetupPanel.js';
 import type { SaveCustomModelPayload } from './setup/presets.js';
 import * as transport from './transport.js';
@@ -46,12 +45,22 @@ import { useSettingsData } from './state/useSettingsData.js';
 import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 import { WhatsNewDialog } from './components/WhatsNewDialog.js';
+import { useProductWorkspace } from './state/useProductWorkspace.js';
+import { DayAgenda } from './components/DayAgenda.js';
+import { SkillZonePage } from './components/SkillZonePage.js';
+import {
+  DEPARTMENT_LABELS,
+  getEnterpriseAgentProfiles,
+  getPersonalAgentProfiles,
+  type AgentProfile,
+  type DepartmentId,
+} from './agents/departmentAgents.js';
 
 /** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub';
+type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone';
 
 export function App(): React.JSX.Element {
   const { state, actions } = useOttoStore();
@@ -59,6 +68,8 @@ export function App(): React.JSX.Element {
   const settingsData = useSettingsData();
   // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
   const softwareUpdate = useSoftwareUpdate();
+  const product = useProductWorkspace();
+  const edition = product.state.workspace?.context.edition ?? 'personal';
 
   // 启动后延迟静默检查一次：发现新版只点亮设置入口小圆点（无弹窗），
   // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户。
@@ -109,11 +120,24 @@ export function App(): React.JSX.Element {
       state.connection === 'connected' &&
       state.modelsLoaded &&
       state.models.length === 0
+      && product.state.workspace?.context.edition === 'personal'
     ) {
       autoFloated.current = true;
       setMainView('settings');
     }
-  }, [state.connection, state.modelsLoaded, state.models.length]);
+  }, [state.connection, state.modelsLoaded, state.models.length, product.state.workspace?.context.edition]);
+
+  // 模式切换后不允许停留在另一版本独占的页面：企业模型由积分中心管理，个人版
+  // 也不能继续看到上一次企业会话留下的 Skill 专区。
+  useEffect(() => {
+    if (!product.state.workspace) return;
+    if (edition === 'enterprise' && mainView === 'settings') {
+      setHubInitialTab('models');
+      setMainView('hub');
+    } else if (edition === 'personal' && mainView === 'skillzone') {
+      setMainView('chat');
+    }
+  }, [edition, mainView, product.state.workspace]);
 
   // setup 落盘闭环：仅当面板打开且**本次保存进行中（saving）**时，才让裁决帧驱动面板开合。
   //   models_list  → 本次落盘成功（server 写盘后广播最新列表）→ 关面板。
@@ -148,6 +172,7 @@ export function App(): React.JSX.Element {
 
   // 提交一个自定义模型：发结构化帧，进入「保存中」，由上面的帧监听裁决结果。
   const handleSaveModel = (payload: SaveCustomModelPayload): void => {
+    if (product.state.workspace?.context.edition === 'enterprise') return;
     setSaveError(null);
     setSaving(true);
     transport.send({ type: 'save_custom_model', payload });
@@ -155,6 +180,7 @@ export function App(): React.JSX.Element {
 
   // 删除自定义模型：server 成功后广播 models_list，列表自动刷新（多窗口同步）。
   const handleDeleteModel = (id: string): void => {
+    if (product.state.workspace?.context.edition === 'enterprise') return;
     transport.send({ type: 'delete_custom_model', payload: { id } });
   };
 
@@ -194,10 +220,17 @@ export function App(): React.JSX.Element {
       if (action === 'new-chat') {
         setMainView('chat');
         actions.createSession();
-      } else if (action === 'open-settings') setMainView('settings');
+      } else if (action === 'open-settings') {
+        if (edition === 'enterprise') {
+          setHubInitialTab('models');
+          setMainView('hub');
+        } else {
+          setMainView('settings');
+        }
+      }
     });
     return off;
-  }, [actions]);
+  }, [actions, edition]);
 
   const groups = useMemo(() => groupSessions(state), [state]);
 
@@ -279,10 +312,55 @@ export function App(): React.JSX.Element {
   };
 
   // 启动一个专家：回到对话页 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
-  const handleLaunchExpert = (expert: Expert): void => {
+  const handleLaunchProfile = (profile: AgentProfile): void => {
     setMainView('chat');
-    actions.launchExpert(expert.name, expert.kickoff);
+    actions.launchAgentProfile(profile.name, profile.id);
   };
+
+  const identityLabel = useMemo(() => {
+    const workspace = product.state.workspace;
+    if (!workspace || workspace.context.edition === 'personal') return '个人版 · Otto';
+    const company = workspace.managerWorkspace?.profile.companyName ?? '企业版';
+    if (workspace.context.role === 'company_owner') return `${company} · CEO`;
+    const organization = workspace.managerWorkspace?.organization;
+    const department = organization?.departments.find((item) => item.id === workspace.context.departmentId)?.name;
+    const position = organization?.positions.find((item) => item.id === workspace.context.positionId)?.title;
+    return [company, department, position].filter(Boolean).join(' · ') || `${company} · 企业成员`;
+  }, [product.state.workspace]);
+
+  const galleryProfiles = useMemo(() => {
+    const workspace = product.state.workspace;
+    if (!workspace || workspace.context.edition === 'personal') return getPersonalAgentProfiles();
+    const role = workspace.context.role;
+    const departmentName = workspace.managerWorkspace?.organization.departments.find(
+      (item) => item.id === workspace.context.departmentId,
+    )?.name;
+    const departmentId = Object.entries(DEPARTMENT_LABELS).find(
+      ([, name]) => name === departmentName,
+    )?.[0] as DepartmentId | undefined;
+    return getEnterpriseAgentProfiles(
+      role === 'company_owner' || role === 'company_admin' || role === 'manager' || role === 'member'
+        ? role
+        : 'member',
+      departmentId ?? null,
+    );
+  }, [product.state.workspace]);
+
+  const openModelSettings = (): void => {
+    if (edition === 'enterprise') openHub('models');
+    else setMainView('settings');
+  };
+
+  const selectedDate = product.state.selectedDate ?? new Date().toISOString().slice(0, 10);
+  const selectedSchedules = useMemo(
+    () => product.state.schedules.filter((item) => {
+      const date = new Date(item.startAt);
+      if (Number.isNaN(date.getTime())) return false;
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      return key === selectedDate;
+    }),
+    [product.state.schedules, selectedDate],
+  );
 
   // —— 斜杠命令：本地 + server 合并清单 ——
   // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命令
@@ -313,10 +391,11 @@ export function App(): React.JSX.Element {
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
+        productWorkspace={product.state.workspace}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
-      {mainView === 'settings' ? (
+      {mainView === 'settings' && edition === 'personal' ? (
         <SetupPanel
           models={state.models}
           saving={saving}
@@ -327,45 +406,78 @@ export function App(): React.JSX.Element {
         />
       ) : mainView === 'agents' ? (
         <AgentGallery
-          onLaunch={handleLaunchExpert}
+          mode={edition}
+          profiles={galleryProfiles}
+          onLaunch={handleLaunchProfile}
           onBack={() => setMainView('chat')}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
-          <ChatView
-            session={activeSession}
-            messages={activeMessages}
-            models={state.models}
-            currentModel={state.currentModel}
-            userInitial="F"
-            busy={busy}
-            onSend={handleSend}
-            onCancel={actions.cancel}
-            onSetModel={actions.setModel}
-            onRegenerate={handleRegenerate}
-            onRespondQuestion={actions.respondToolConfirmation}
-            onOpenSetup={() => setMainView('settings')}
-            onNewChat={handleNewChat}
-            onClearContext={handleClearContext}
-            onExport={
-              activeSession
-                ? () => settingsData.actions.exportConversation(activeSession.sessionId)
-                : undefined
-            }
-            onOpenDoctor={() => openHub('doctor')}
-            onOpenFeishu={() => openHub('feishu')}
-            onOpenMemory={() => openHub('memory')}
-            onOpenSkills={() => openHub('skills')}
-            commands={slashCommands}
-            onRunServerCommand={actions.runSlashCommand}
-            onOpenPrefs={() => openHub('prefs')}
-            onOpenSessions={() => setAllConvOpen(true)}
-            onShowHelp={handleShowHelp}
-          />
+          {mainView === 'agenda' ? (
+            <DayAgenda
+              date={selectedDate}
+              schedules={selectedSchedules}
+              onCreate={product.actions.createSchedule}
+              onDelete={product.actions.deleteSchedule}
+              onBack={() => setMainView('chat')}
+            />
+          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
+            <SkillZonePage onBack={() => setMainView('chat')} />
+          ) : (
+            <ChatView
+              session={activeSession}
+              messages={activeMessages}
+              models={state.models}
+              currentModel={state.currentModel}
+              userInitial="F"
+              identityLabel={identityLabel}
+              modelManagementLabel={edition === 'enterprise' ? 'Otto 模型与积分' : '模型与个人 API 设置'}
+              busy={busy}
+              onSend={handleSend}
+              onCancel={actions.cancel}
+              onSetModel={actions.setModel}
+              onRegenerate={handleRegenerate}
+              onRespondQuestion={actions.respondToolConfirmation}
+              onOpenSetup={openModelSettings}
+              onNewChat={handleNewChat}
+              onClearContext={handleClearContext}
+              onExport={
+                activeSession
+                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                  : undefined
+              }
+              onOpenDoctor={() => openHub('doctor')}
+              onOpenFeishu={() => openHub('feishu')}
+              onOpenMemory={() => openHub('memory')}
+              onOpenSkills={() => openHub('skills')}
+              commands={slashCommands}
+              onRunServerCommand={actions.runSlashCommand}
+              onOpenPrefs={() => openHub('prefs')}
+              onOpenSessions={() => setAllConvOpen(true)}
+              onShowHelp={handleShowHelp}
+            />
+          )}
           <RightPanel
             busy={busy}
-            onLaunchExpert={handleLaunchExpert}
+            mode={edition}
+            workspace={product.state.workspace}
+            onLaunchAgentProfile={handleLaunchProfile}
             onOpenAgents={() => setMainView('agents')}
+            onOpenSkillZone={() => setMainView('skillzone')}
+            onSelectDate={(date) => {
+              product.actions.selectDate(
+                date,
+                Intl.DateTimeFormat().resolvedOptions().timeZone,
+              );
+              setMainView('agenda');
+            }}
+            onOpenOrganization={() => openHub('organization')}
+            onAddFriend={product.actions.addFriend}
+            autoSkillCandidates={product.state.pendingAutoSkills}
+            autoSkillLastAction={product.state.lastAutoSkillAction}
+            onRefreshAutoSkills={product.actions.refreshPendingAutoSkills}
+            onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
+            onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
           />
         </div>
       )}
@@ -404,6 +516,13 @@ export function App(): React.JSX.Element {
         />
       ) : null}
 
+      {product.state.error ? (
+        <ErrorToast
+          message={product.state.error}
+          onClose={product.actions.clearError}
+        />
+      ) : null}
+
       {/* 设置与诊断中心：悬浮大窗（Jeremy：参考 workbuddy）——对话保持在底层，
           遮罩点击 / Esc / 面板内「返回对话」均可关闭。 */}
       {mainView === 'hub' ? (
@@ -423,6 +542,8 @@ export function App(): React.JSX.Element {
               activeSession={activeSession}
               onBack={() => setMainView('chat')}
               initialTab={hubInitialTab}
+              product={product}
+              models={state.models}
             />
           </div>
         </div>

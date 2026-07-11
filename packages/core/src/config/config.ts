@@ -51,6 +51,7 @@ import { PatchTool } from '../tools/patch.js';
 import { BatchTool } from '../tools/batch.js';
 import { AskUserQuestionTool } from '../tools/ask-user-question.js';
 import { LocalTimeTool } from '../tools/local-time.js';
+import { LocalScheduleTool } from '../tools/local-schedule.js';
 import { LarkCliTool } from '../tools/lark-cli.js';
 // —— Otto Enterprise 能力工具（桌面/文档/数据/诊断/浏览器/知识沉淀）——
 import { DesktopAutomationTool } from '../tools/desktop-automation.js';
@@ -1233,6 +1234,7 @@ export class Config {
     }
 
     registerCoreTool(LocalTimeTool, this);
+    registerCoreTool(LocalScheduleTool, this);
     registerCoreTool(LarkCliTool, this);
 
     // —— Otto Enterprise 九大能力：把「AI 办公同事」落到实处 ——

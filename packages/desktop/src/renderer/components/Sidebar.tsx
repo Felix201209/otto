@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type { SessionSummary } from 'otto-server';
+import type { ProductWorkspaceSnapshot, SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
@@ -29,6 +29,7 @@ import {
   IconSparkle,
   IconSettings,
 } from './icons.js';
+import { OrganizationTree } from './OrganizationTree.js';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -44,6 +45,7 @@ interface SidebarProps {
   hubActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
+  productWorkspace?: ProductWorkspaceSnapshot | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -57,6 +59,7 @@ export function Sidebar({
   activeSessionId,
   hubActive = false,
   updateBadge = false,
+  productWorkspace = null,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -88,6 +91,8 @@ export function Sidebar({
         <IconPlus size={15} />
         新建对话
       </button>
+
+      {productWorkspace ? <OrganizationTree workspace={productWorkspace} /> : null}
 
       <div className="otto-sessions">
         {groups.length === 0 ? (
