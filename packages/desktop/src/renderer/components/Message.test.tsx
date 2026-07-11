@@ -56,6 +56,40 @@ function userMessageWithImage(): OttoMessage {
 }
 
 describe('Message 动作行', () => {
+  it('bot 消息使用独立刺猬刺球标记，不再把完整吉祥物当作消息头像', () => {
+    const { container } = render(
+      <Message message={botMessage()} onCopy={vi.fn()} onRegenerate={vi.fn()} />,
+    );
+    const mark = screen.getByLabelText('Otto 回复');
+    expect(mark.querySelector('.otto-response-mark__ball')).toBeTruthy();
+    expect(mark.querySelector('.otto-response-mark__spines')).toBeTruthy();
+    expect(container.querySelector('img[alt="Otto"]')).toBeNull();
+  });
+
+  it('流式、推理或工具处理中，刺球进入弹性跳跃活动态', () => {
+    const { rerender } = render(
+      <Message
+        message={botMessage({ isStreaming: true, content: [] })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole('status', { name: 'Otto 正在回答' }).classList.contains('is-active'),
+    ).toBe(true);
+
+    rerender(
+      <Message
+        message={botMessage({ isStreaming: false, isProcessingTools: true })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole('status', { name: 'Otto 正在回答' }).classList.contains('is-active'),
+    ).toBe(true);
+  });
+
   it('bot 消息只渲染复制与重新生成，不再有赞 / 踩', () => {
     render(
       <Message message={botMessage()} onCopy={vi.fn()} onRegenerate={vi.fn()} />,

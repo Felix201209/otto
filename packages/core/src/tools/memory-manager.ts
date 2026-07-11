@@ -211,12 +211,17 @@ FILES CREATED:
         const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
         const sync = getEnterpriseSync(this.config.getProjectRoot());
         const userId = (this.config as any).getFeishuUser?.() || 'local';
-        const hasPermission = await sync.checkPermission(userId, requiredPermission as any).catch(() => true);
-        if (!hasPermission) {
-          return {
-            llmContent: `权限不足：需要 ${requiredPermission} 权限`,
-            returnDisplay: `权限不足：需要 ${requiredPermission} 权限`,
-          };
+        // 本地桌面/CLI 用户是其本机数据的所有者；企业 License 只约束已识别的
+        // 飞书成员。否则本机存在 enterprise.json、但当前请求没有飞书 open_id 时，
+        // 会把所有本地记忆操作误判为无权限，并让测试受真实机器配置污染。
+        if (userId !== 'local') {
+          const hasPermission = await sync.checkPermission(userId, requiredPermission as any).catch(() => true);
+          if (!hasPermission) {
+            return {
+              llmContent: `权限不足：需要 ${requiredPermission} 权限`,
+              returnDisplay: `权限不足：需要 ${requiredPermission} 权限`,
+            };
+          }
         }
       } catch { /* 企业未绑定降级放行 */ }
     }

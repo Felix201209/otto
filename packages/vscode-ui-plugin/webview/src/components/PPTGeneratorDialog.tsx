@@ -2,7 +2,7 @@
  * PPT Generator Dialog
  * PPT生成对话框 - 独立的PPT生成界面
  *
- * 简化流程：提交任务后直接打开浏览器编辑页面，无需轮询状态
+ * 文件在本机渲染，完成后用系统默认演示软件打开
  *
  * @license Apache-2.0
  * Copyright 2025 Easy Code
@@ -48,7 +48,8 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
 
   // 对话框状态
   const [dialogState, setDialogState] = useState<DialogState>('form');
-  const [editUrl, setEditUrl] = useState<string | null>(null);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [filePath, setFilePath] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isGenerationCancelled, setIsGenerationCancelled] = useState(false);
@@ -108,7 +109,8 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
     // 设置生成中状态
     setDialogState('generating');
     setErrorMessage(null);
-    setEditUrl(null);
+    setFileUrl(null);
+    setFilePath(null);
     generationAbortRef.current = false;
     setIsGenerationCancelled(false);
 
@@ -127,10 +129,10 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
       });
 
       // 等待生成响应
-      const response = await new Promise<{ success: boolean; taskId?: string; editUrl?: string; error?: string }>((resolve, reject) => {
+      const response = await new Promise<{ success: boolean; filePath?: string; fileUrl?: string; error?: string }>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Generation request timeout')), 60000);
 
-        const handleGenerateResponse = (data: { success: boolean; taskId?: string; editUrl?: string; error?: string }) => {
+        const handleGenerateResponse = (data: { success: boolean; filePath?: string; fileUrl?: string; error?: string }) => {
           clearTimeout(timeout);
           resolve(data);
         };
@@ -147,13 +149,13 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
         return;
       }
 
-      if (response.success && response.editUrl) {
-        // 成功 - 自动打开编辑页面
-        setEditUrl(response.editUrl);
+      if (response.success && response.fileUrl && response.filePath) {
+        // 成功 - 自动打开本地文件
+        setFileUrl(response.fileUrl);
+        setFilePath(response.filePath);
         setDialogState('success');
 
-        // 自动打开浏览器
-        messageService.openExternalUrl(response.editUrl);
+        messageService.openExternalUrl(response.fileUrl);
       } else {
         // 失败
         setErrorMessage(response.error || t('pptGenerator.error.generateFailed', {}, 'Generation failed'));
@@ -171,8 +173,8 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
     }
   }, [topic, pageCount, style, colorScheme, customStyleText, customColorText, outline, t]);
 
-  // 打开编辑页面
-  const openEditPage = useCallback((url: string) => {
+  // 用系统默认演示软件打开本地文件
+  const openLocalFile = useCallback((url: string) => {
     const messageService = getGlobalMessageService();
     messageService.openExternalUrl(url);
   }, []);
@@ -196,7 +198,8 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
     setCustomStyleText('');
     setCustomColorText('');
     setOutline('');
-    setEditUrl(null);
+    setFileUrl(null);
+    setFilePath(null);
     setErrorMessage(null);
     setTimeout(() => topicInputRef.current?.focus(), 100);
   }, []);
@@ -459,10 +462,10 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
                 <PPTGeneratorIcon size={80} />
               </div>
               <div className="ppt-generator-dialog__generating-text">
-                {t('pptGenerator.generating', {}, '正在提交 PPT 生成任务...')}
+                {t('pptGenerator.generating', {}, '正在本地生成 PPT 文件...')}
               </div>
               <div className="ppt-generator-dialog__generating-hint">
-                {t('pptGenerator.generatingHint', {}, '任务提交后将自动打开浏览器查看进度')}
+                {t('pptGenerator.generatingHint', {}, '内容只在本机渲染，完成后将打开本地文件')}
               </div>
             </div>
           )}
@@ -472,21 +475,25 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
             <div className="ppt-generator-dialog__results">
               <div className="ppt-generator-dialog__results-header">
                 <CheckCircle size={20} />
-                {t('pptGenerator.success.generated', {}, 'PPT 任务已提交！')}
+                {t('pptGenerator.success.generated', {}, 'PPT 已在本地生成！')}
               </div>
 
               <p className="ppt-generator-dialog__results-hint">
-                {t('pptGenerator.success.hint', {}, '已自动打开浏览器，请在网页中查看生成进度和编辑PPT')}
+                {t('pptGenerator.success.hint', {}, '文件未上传，已用系统默认演示软件打开')}
               </p>
 
+              {filePath && (
+                <code className="ppt-generator-dialog__local-path">{filePath}</code>
+              )}
+
               <div className="ppt-generator-dialog__results-actions">
-                {editUrl && (
+                {fileUrl && (
                   <button
                     className="ppt-generator-dialog__action-btn ppt-generator-dialog__action-btn--primary"
-                    onClick={() => openEditPage(editUrl)}
+                    onClick={() => openLocalFile(fileUrl)}
                   >
                     <ExternalLink size={16} />
-                    {t('pptGenerator.openEdit', {}, '再次打开编辑页面')}
+                    {t('pptGenerator.openEdit', {}, '再次打开本地文件')}
                   </button>
                 )}
               </div>

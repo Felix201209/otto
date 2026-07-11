@@ -35,6 +35,8 @@ export interface UserSettingsSubset {
   healthyUse?: boolean;
   preferredLanguage?: string;
   mcpServers?: Record<string, MCPServerConfig>;
+  /** 桌面端全局自动授权；仅放行非高危操作。 */
+  authorizationMode?: "manual" | "auto";
 }
 
 /** 极简 JSON 注释剥离（与 customModels.ts 同一套宽容策略）。 */
@@ -78,6 +80,7 @@ export function loadUserSettingsSubset(): UserSettingsSubset {
       raw["mcpServers"] && typeof raw["mcpServers"] === "object"
         ? (raw["mcpServers"] as Record<string, MCPServerConfig>)
         : undefined,
+    authorizationMode: raw["authorizationMode"] === "auto" ? "auto" : "manual",
   };
 }
 

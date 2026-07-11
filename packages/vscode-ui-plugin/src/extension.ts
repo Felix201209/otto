@@ -31,12 +31,14 @@ import { SlashCommandService } from './services/slashCommandService';
 import { TerminalOutputService } from './services/terminalOutputService';
 import { McpEnabledStateService } from './services/mcpEnabledStateService';
 import { AIService } from './services/aiService';
+import { generateLocalPpt } from './services/localPptGeneration';
 import { CustomModelsStorageService } from './services/customModelsStorageService';
 import {
   getAllMCPServerToolCounts,
   getAllMCPServerToolNames,
   MCPServerStatus,
   isOurAuthError,
+  SceneType,
   EASY_ROUTER_BASE_URL,
   EASY_CLAW_METADATA_URL,
   filterEasyRouterModels,
@@ -3902,119 +3904,30 @@ function setupMultiSessionHandlers() {
   });
 
   // =============================================================================
-  // 🎯 PPT 生成处理
+  // 🎯 PPT 本地生成处理
   // =============================================================================
 
-  // 服务端配置
-  const PPT_SERVER_URL = process.env.OTTO_SERVER_URL || process.env.OTTO_SERVER_URL || '';
-  const PPT_WEB_URL = process.env.OTTO_WEB_URL || process.env.OTTO_WEB_URL || '';
-
-  // 🎯 处理PPT生成请求
-  // 注意：后端没有 status 轮询接口，任务提交后直接打开浏览器让用户在网页查看进度
   communicationService.onPPTGenerate(async (payload) => {
     try {
       logger.info('Received ppt_generate request', { topic: payload.topic, pageCount: payload.pageCount });
+      const aiService = await sessionManager.getCurrentInitializedAIService();
+      const coreConfig = aiService.getConfig();
+      if (!coreConfig) throw new Error('Current Otto session is not initialized');
 
-      // 获取 access token
-      const { ProxyAuthManager } = require('otto-core');
-      const authManager = ProxyAuthManager.getInstance();
-      const accessToken = await authManager.getAccessToken();
-
-      if (!accessToken) {
-        await communicationService.sendPPTGenerateResponse({
-          success: false,
-          error: 'Authentication required. Please login first.'
-        });
-        return;
-      }
-
-      // 步骤1: 提交大纲创建任务
-      // 将风格和色系提示词嵌入到 outline 最前面
-      const enrichedOutline = payload.style
-        ? `${payload.style}\n\n${payload.outline}`
-        : payload.outline;
-
-      const outlineResponse = await fetch(`${PPT_SERVER_URL}/web-api/ppt/outline`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({
-          topic: payload.topic,
-          page_count: payload.pageCount,
-          outline: enrichedOutline
-        })
-      });
-
-      if (!outlineResponse.ok) {
-        if (await handleHttpAuthError(outlineResponse)) return;
-        const errorText = await outlineResponse.text();
-        throw new Error(`Outline submission failed: ${outlineResponse.status} - ${errorText}`);
-      }
-
-      const outlineResult = await outlineResponse.json() as { id?: string | number; task_id?: string | number };
-      const taskId = outlineResult.id?.toString() || outlineResult.task_id?.toString();
-
-      if (!taskId) {
-        throw new Error('No task ID returned from server');
-      }
-
-      // 步骤2: 启动PPT生成任务
-      const generateResponse = await fetch(`${PPT_SERVER_URL}/web-api/ppt/generate/${taskId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
-
-      if (!generateResponse.ok) {
-        if (await handleHttpAuthError(generateResponse)) return;
-        const errorText = await generateResponse.text();
-        throw new Error(`Generation start failed: ${generateResponse.status} - ${errorText}`);
-      }
-
-      logger.info('PPT generation task created', { taskId });
-
-      // 步骤3: 获取临时登录码并构建编辑页面URL
-      let editUrl = `${PPT_WEB_URL}/ppt/edit/${taskId}`;
-
-      try {
-        const tempCodeResponse = await fetch(`${PPT_SERVER_URL}/auth/temp-code/generate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`
-          },
-          body: JSON.stringify({
-            expiresIn: 600 // 10分钟有效期
-          })
-        });
-
-        if (tempCodeResponse.ok) {
-          const tempCodeResult = await tempCodeResponse.json() as { success?: boolean; code?: string };
-          if (tempCodeResult.success && tempCodeResult.code) {
-            const redirectPath = encodeURIComponent(`/ppt/edit/${taskId}`);
-            editUrl = `${PPT_WEB_URL}/token-login?code=${tempCodeResult.code}&redirect=${redirectPath}`;
-          }
-        } else {
-          await handleHttpAuthError(tempCodeResponse);
-        }
-      } catch (tempCodeError) {
-        logger.warn('Failed to get temp code for PPT edit URL', tempCodeError instanceof Error ? tempCodeError : undefined);
-      }
-
-      // 直接返回成功，附带编辑页面URL
-      // 后端没有 status 轮询接口，用户在网页上查看生成进度
+      const result = await generateLocalPpt(
+        payload,
+        coreConfig,
+        new AbortController().signal,
+      );
+      const fileUrl = vscode.Uri.file(result.outputPath).toString();
+      logger.info('PPT generated locally', { outputPath: result.outputPath, size: result.size });
       await communicationService.sendPPTGenerateResponse({
         success: true,
-        taskId: taskId,
-        editUrl: editUrl
+        filePath: result.outputPath,
+        fileUrl,
       });
-
     } catch (error) {
-      logger.error('Failed to start PPT generation', error instanceof Error ? error : undefined);
+      logger.error('Failed to generate PPT locally', error instanceof Error ? error : undefined);
       await communicationService.sendPPTGenerateResponse({
         success: false,
         error: error instanceof Error ? error.message : 'Generation failed'
@@ -4026,19 +3939,6 @@ function setupMultiSessionHandlers() {
   communicationService.onPPTOptimizeOutline(async (payload) => {
     try {
       logger.info('Received ppt_optimize_outline request', { topic: payload.topic, pageCount: payload.pageCount });
-
-      // 获取 access token
-      const { ProxyAuthManager } = require('otto-core');
-      const authManager = ProxyAuthManager.getInstance();
-      const accessToken = await authManager.getAccessToken();
-
-      if (!accessToken) {
-        await communicationService.sendPPTOptimizeOutlineResponse({
-          success: false,
-          error: 'Authentication required. Please login first.'
-        });
-        return;
-      }
 
       // 构建优化提示词
       const optimizePrompt = `你是一位专业的PPT内容策划师。请根据以下信息优化PPT大纲：
@@ -4064,30 +3964,30 @@ ${payload.outline}
    - 逻辑递进、层次分明
    - 每页重点突出
 
+3. 输出必须是可直接交给本机 Marp 渲染的 Markdown：
+   - 每页以 # 标题开始
+   - 每页之间使用独占一行的 --- 分隔
+   - 不要输出代码围栏
+
 请直接输出优化后的大纲内容，不要添加额外说明。使用中文输出。`;
 
-      // 调用 Otto 服务端 AI API
-      const response = await fetch(`${PPT_SERVER_URL}/v1/chat/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'X-Scene-Type': 'json_generation'
+      // 复用当前会话已选择的模型/自定义供应商，不再调用固定的 Otto PPT 服务。
+      const aiService = await sessionManager.getCurrentInitializedAIService();
+      const client = aiService.getOttoClient();
+      const coreConfig = aiService.getConfig();
+      if (!client || !coreConfig) throw new Error('Current Otto session is not initialized');
+      const response = await client.getContentGenerator().generateContent(
+        {
+          model: coreConfig.getModel(),
+          contents: [{ role: 'user', parts: [{ text: optimizePrompt }] }],
+          config: { abortSignal: new AbortController().signal },
         },
-        body: JSON.stringify({
-          model: 'gemini-2.5-flash',
-          contents: [{ role: 'user', parts: [{ text: optimizePrompt }] }]
-        })
-      });
-
-      if (!response.ok) {
-        if (await handleHttpAuthError(response)) return;
-        const errorText = await response.text();
-        throw new Error(`AI optimization failed: ${response.status} - ${errorText}`);
-      }
-
-      const result = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-      const optimizedOutline = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        SceneType.CHAT_CONVERSATION,
+      );
+      const optimizedOutline = response.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text || '')
+        .join('')
+        .trim();
 
       if (!optimizedOutline) {
         throw new Error('No optimized content returned from AI');

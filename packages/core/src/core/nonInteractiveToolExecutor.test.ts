@@ -105,6 +105,27 @@ describe('executeToolCall', () => {
     });
   });
 
+  it('executes a dangerous tool only after the GUI supplied explicit approval', async () => {
+    const request: ToolCallRequestInfo = {
+      callId: 'danger-1', name: 'testTool', args: { param1: 'rm' },
+      isClientInitiated: false, prompt_id: 'prompt-danger',
+    };
+    vi.mocked(mockToolRegistry.getTool).mockReturnValue(mockTool);
+    vi.mocked(mockTool.shouldConfirmExecute).mockResolvedValue({
+      type: 'exec', command: 'rm -rf target', warning: '危险操作',
+      onConfirm: vi.fn(),
+    } as ToolCallConfirmationDetails);
+    vi.mocked(mockTool.execute).mockResolvedValue({ llmContent: 'done', returnDisplay: 'done' });
+
+    const response = await executeToolCall(
+      mockConfig, request, mockToolRegistry, abortController.signal,
+      { explicitlyApproved: true },
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(mockTool.execute).toHaveBeenCalled();
+  });
+
   it('should return an error if tool is not found', async () => {
     const request: ToolCallRequestInfo = {
       callId: 'call2',

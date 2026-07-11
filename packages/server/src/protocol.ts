@@ -328,6 +328,12 @@ export type SetModelMsg = Envelope<
   { sessionId: string; model: string }
 >;
 
+/** 设置执行授权。session 仅当前会话；all 同步所有会话并作为后续会话默认值。 */
+export type SetAuthorizationModeMsg = Envelope<
+  'set_authorization_mode',
+  { sessionId: string; mode: 'manual' | 'auto'; scope: 'session' | 'all' }
+>;
+
 /** 拉取可用模型列表（BYO-key 自定义模型）。 */
 export type GetModelsMsg = Envelope<'get_models', Record<string, never>>;
 
@@ -381,6 +387,8 @@ export type SaveCustomModelMsg = Envelope<
     maxTokens?: number;
     /** 是否启用（缺省 true）。 */
     enabled?: boolean;
+    /** 编辑模式：要被原子替换的旧 ModelInfo.id。 */
+    replaceId?: string;
     /** 写入成功后是否把该模型设为当前会话模型（保留给前端，server 仅写盘+广播）。 */
     makeActive?: boolean;
   }
@@ -500,6 +508,7 @@ export type ClientToServer =
   | ToolConfirmationResponseMsg
   | CancelMsg
   | SetModelMsg
+  | SetAuthorizationModeMsg
   | GetModelsMsg
   | SaveCustomModelMsg
   | DeleteCustomModelMsg
@@ -635,6 +644,10 @@ export interface ModelInfo {
   provider: string;
   /** 接入端点（可选）：UI 据域名识别真实厂商（provider 只是协议名）。 */
   baseUrl?: string;
+  /** 上游实际模型 id（非敏感，用于编辑表单预填）。 */
+  modelId?: string;
+  /** 上下文窗口大小（非敏感，用于编辑表单预填）。 */
+  maxTokens?: number;
   enabled?: boolean;
 }
 
@@ -1204,6 +1217,13 @@ export function validateClientPayload(msg: {
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
       return null;
     }
+    case 'set_authorization_mode': {
+      if (!isPlainObject(p)) return 'set_authorization_mode payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
+      if (p['mode'] !== 'manual' && p['mode'] !== 'auto') return 'mode 必须是 manual | auto';
+      if (p['scope'] !== 'session' && p['scope'] !== 'all') return 'scope 必须是 session | all';
+      return null;
+    }
     case 'delete_custom_model': {
       if (!isPlainObject(p)) return 'delete_custom_model payload 必须是对象';
       if (!isNonEmptyString(p['id'])) return 'id 必须是非空字符串';
@@ -1230,6 +1250,8 @@ export function validateClientPayload(msg: {
         return 'maxTokens 必须是数字';
       if (p['enabled'] !== undefined && typeof p['enabled'] !== 'boolean')
         return 'enabled 必须是布尔';
+      if (p['replaceId'] !== undefined && !isNonEmptyString(p['replaceId']))
+        return 'replaceId 必须是非空字符串';
       if (p['makeActive'] !== undefined && typeof p['makeActive'] !== 'boolean')
         return 'makeActive 必须是布尔';
       return null;

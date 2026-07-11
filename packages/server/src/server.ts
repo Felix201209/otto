@@ -83,6 +83,7 @@ import {
   listModelInfos,
   loadCustomModels,
   loadPreferredModel,
+  replaceCustomModel,
   saveCustomModel,
 } from './customModels.js';
 import {
@@ -199,6 +200,8 @@ export class OttoServer {
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
   private readonly runtimeInit = new Map<string, Promise<SessionRuntime | undefined>>();
+  private globalAuthorizationMode: 'manual' | 'auto';
+  private readonly sessionAuthorizationModes = new Map<string, 'manual' | 'auto'>();
 
   private http?: HttpServer;
   private wss?: WebSocketServer;
@@ -225,6 +228,7 @@ export class OttoServer {
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
     this.feishuDeps = opts.feishuDeps;
     this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
+    this.globalAuthorizationMode = loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
 
   /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
@@ -428,9 +432,13 @@ export class OttoServer {
       // 批量时只把列表第一个设为当前生效模型。
       const makeActive = p.makeActive !== false;
       let firstId: string | undefined;
+      if (p.replaceId) {
+        firstId = replaceCustomModel(p.replaceId, buildModel(p.modelId), makeActive);
+      } else {
       for (let i = 0; i < ids.length; i++) {
         const savedId = saveCustomModel(buildModel(ids[i]), makeActive && i === 0);
         if (i === 0) firstId = savedId;
+      }
       }
       // 写成功 → 广播最新模型列表（modelInfos 每次实时 loadCustomModels）。
       // makeActive 时带 current=首个模型，让 renderer 立刻把药丸切到它。
@@ -1481,6 +1489,21 @@ export class OttoServer {
         return this.handleSendUserMessage(conn, msg);
       case 'set_model':
         return this.handleSetModel(conn, msg);
+      case 'set_authorization_mode': {
+        const { sessionId, mode, scope } = msg.payload;
+        if (scope === 'all') {
+          this.globalAuthorizationMode = mode;
+          this.sessionAuthorizationModes.clear();
+          patchUserSettings({ authorizationMode: mode });
+          for (const session of this.store.listSessions()) {
+            this.store.getRuntime(session.sessionId)?.setAuthorizationMode?.(mode);
+          }
+        } else {
+          this.sessionAuthorizationModes.set(sessionId, mode);
+          this.store.getRuntime(sessionId)?.setAuthorizationMode?.(mode);
+        }
+        return;
+      }
       case 'cancel': {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
         return;
@@ -1829,6 +1852,9 @@ export class OttoServer {
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(this.store, sessionId, model);
+        runtime.setAuthorizationMode?.(
+          this.sessionAuthorizationModes.get(sessionId) ?? this.globalAuthorizationMode,
+        );
         this.store.attachRuntime(sessionId, runtime);
         return runtime;
       } catch (e) {

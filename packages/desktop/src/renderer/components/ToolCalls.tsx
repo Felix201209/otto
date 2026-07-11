@@ -163,7 +163,7 @@ function statusInfo(status: ToolCallStatus): {
 
 /**
  * 状态图标：按语义位选图标，让每种终态/进行态都有对齐的图标。
- *   done → 绿勾；error → ✕；running → 转圈；queued/pending → 静态圆点。
+ *   done → 完成；error → 错误；running → 转圈；queued/pending → 静态圆点。
  */
 function StatusIcon({
   kind,
@@ -224,12 +224,54 @@ export function ToolCallsCard({
                   tool={tc}
                   onRespond={onRespondQuestion}
                 />
+              ) : isPendingConfirmation(tc) ? (
+                <ConfirmationCard key={tc.id} tool={tc} onRespond={onRespondQuestion} />
               ) : (
                 <ToolItem key={tc.id} tool={tc} />
               ),
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function isPendingConfirmation(tc: ToolCall): boolean {
+  return tc.status === 'awaiting_approval' && tc.confirmationDetails?.type !== 'question';
+}
+
+function ConfirmationCard({
+  tool,
+  onRespond,
+}: {
+  tool: ToolCall;
+  onRespond?: RespondQuestionFn;
+}): React.JSX.Element {
+  const [sent, setSent] = useState(false);
+  const details = tool.confirmationDetails ?? {};
+  const target = details.command ?? details.filePath ?? details.fileName ??
+    str(tool.parameters.command) ?? str(tool.parameters.path) ?? tool.toolName;
+  const highRisk = details.riskLevel === 'high' || details.type === 'delete';
+  const respond = (outcome: 'approved' | 'rejected'): void => {
+    if (!onRespond || sent) return;
+    setSent(true);
+    onRespond(tool.id, outcome);
+  };
+  return (
+    <div className="otto-tool otto-ask otto-confirm">
+      <div className="otto-ask__head">
+        <span className={`otto-ask__badge${highRisk ? ' otto-confirm__badge--danger' : ''}`}>
+          {highRisk ? '高风险操作' : '需要你确认'}
+        </span>
+        <span className="otto-ask__title">{details.title ?? '允许 Otto 执行此操作？'}</span>
+      </div>
+      <div className="otto-confirm__target">{target}</div>
+      <div className="otto-ask__actions">
+        <button type="button" className="otto-ask__skip" disabled={sent || !onRespond} onClick={() => respond('rejected')}>拒绝</button>
+        <button type="button" className="otto-ask__submit" disabled={sent || !onRespond} onClick={() => respond('approved')}>
+          {sent ? '已提交' : '允许执行'}
+        </button>
       </div>
     </div>
   );

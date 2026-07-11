@@ -107,6 +107,29 @@ export interface UpdateInstallResult {
   message: string;
 }
 
+export type AsrProvider = 'volcengine' | 'openai';
+export interface VoicePublicConfig {
+  enabled: boolean;
+  asrProvider: AsrProvider;
+  asrEndpoint: string;
+  asrModel: string;
+  volcResourceId: string;
+  polishEnabled: boolean;
+  polishEndpoint: string;
+  polishModel: string;
+  polishPrompt: string;
+  hasAsrApiKey: boolean;
+  hasVolcCredentials: boolean;
+  hasPolishApiKey: boolean;
+}
+export interface VoiceConfigInput extends Omit<VoicePublicConfig, 'hasAsrApiKey' | 'hasVolcCredentials' | 'hasPolishApiKey'> {
+  asrApiKey?: string;
+  volcAppKey?: string;
+  volcAccessKey?: string;
+  polishApiKey?: string;
+}
+export interface VoiceResult { text: string; rawText: string; polished: boolean }
+
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
@@ -122,6 +145,9 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  voiceGetConfig: 'otto:voice-get-config',
+  voiceSaveConfig: 'otto:voice-save-config',
+  voiceTranscribe: 'otto:voice-transcribe',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -247,6 +273,9 @@ export interface OttoBridge {
   updateInstall(): Promise<UpdateInstallResult>;
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
+  voiceGetConfig(): Promise<VoicePublicConfig>;
+  voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
+  voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
 }
 
 // ── 退避参数 ──
@@ -591,6 +620,15 @@ const bridge: OttoBridge = {
     return () => {
       ipcRenderer.removeListener(IPC.updateProgress, listener);
     };
+  },
+  voiceGetConfig(): Promise<VoicePublicConfig> {
+    return ipcRenderer.invoke(IPC.voiceGetConfig) as Promise<VoicePublicConfig>;
+  },
+  voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig> {
+    return ipcRenderer.invoke(IPC.voiceSaveConfig, config) as Promise<VoicePublicConfig>;
+  },
+  voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult> {
+    return ipcRenderer.invoke(IPC.voiceTranscribe, bytes, mimeType) as Promise<VoiceResult>;
   },
 };
 

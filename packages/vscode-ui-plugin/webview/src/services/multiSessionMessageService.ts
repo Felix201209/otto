@@ -1244,7 +1244,7 @@ export class MultiSessionMessageService {
   }
 
   // =============================================================================
-  // 🎯 PPT 生成相关方法 (无状态轮询，任务提交后直接返回编辑页面URL)
+  // 🎯 PPT 本地生成相关方法
   // =============================================================================
 
   /**
@@ -1260,7 +1260,7 @@ export class MultiSessionMessageService {
   /**
    * 🎯 监听PPT生成响应
    */
-  onPPTGenerateResponse(callback: (data: { success: boolean; taskId?: string; editUrl?: string; error?: string }) => void) {
+  onPPTGenerateResponse(callback: (data: { success: boolean; filePath?: string; fileUrl?: string; error?: string }) => void) {
     return this.addMessageHandler('ppt_generate_response', callback);
   }
 

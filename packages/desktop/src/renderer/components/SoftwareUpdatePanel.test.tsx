@@ -171,7 +171,7 @@ describe('SoftwareUpdatePanel：检查失败 ≠ 已是最新（诚实契约）'
     });
     render(<Harness />);
     fireEvent.click(await screen.findByText('检查更新'));
-    expect(await screen.findByText('✅ 已是最新版本')).toBeTruthy();
+    expect(await screen.findByText('已是最新版本')).toBeTruthy();
     expect(screen.getByText(/最新发布版本 v1\.4\.0/)).toBeTruthy();
     expect(screen.queryByText(/检查更新失败/)).toBeNull();
   });

@@ -25,6 +25,8 @@ const form: SetupFormState = {
   modelId: 'gpt-5.1',
   selectedModels: [],
   displayName: '',
+  maxTokens: '',
+  enabled: true,
 };
 
 describe('buildModelsFileJson', () => {
@@ -116,5 +118,31 @@ describe('vendorFromBaseUrl：按接入域名识别真实厂商', () => {
   it('缺 baseUrl / 非法 URL → 回退 provider', () => {
     expect(vendorFromBaseUrl(undefined, 'openai')).toBe('openai');
     expect(vendorFromBaseUrl('not-a-url', 'anthropic')).toBe('anthropic');
+  });
+});
+
+describe('编辑模型 payload', () => {
+  it('携带 replaceId、全部可编辑字段，并允许 key 留空', () => {
+    const editing: SetupFormState = {
+      ...form,
+      replaceId: 'custom:openai:old@abc',
+      provider: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: '',
+      modelId: 'claude-sonnet-4',
+      displayName: 'Claude 工作模型',
+      maxTokens: '200000',
+      enabled: false,
+    };
+    expect(buildSavePayload(editing)).toMatchObject({
+      replaceId: editing.replaceId,
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-sonnet-4',
+      displayName: 'Claude 工作模型',
+      maxTokens: 200000,
+      enabled: false,
+      makeActive: false,
+    });
   });
 });

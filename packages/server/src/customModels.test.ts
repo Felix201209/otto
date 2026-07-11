@@ -22,6 +22,7 @@ import {
   customModelsFilePath,
   deleteCustomModel,
   loadPreferredModel,
+  replaceCustomModel,
   saveCustomModel,
 } from './customModels.js';
 
@@ -174,5 +175,53 @@ describe('deleteCustomModel', () => {
     );
     expect(deleteCustomModel(drop)).toBe(true);
     expect(loadPreferredModel()).toBe(keep);
+  });
+});
+
+describe('replaceCustomModel', () => {
+  it('按旧 id 原位替换全部字段，空 key 保留旧 secret 引用', () => {
+    const oldId = saveCustomModel({ ...VALID_MODEL, maxTokens: 128000 }, true);
+    const oldKey = loadCustomModels()[0].apiKey;
+
+    const newId = replaceCustomModel(
+      oldId,
+      {
+        displayName: 'Renamed GLM',
+        provider: 'openai-responses',
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        apiKey: '',
+        modelId: 'glm-5',
+        maxTokens: 200000,
+        enabled: false,
+      },
+      false,
+    );
+
+    const models = loadCustomModels();
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({
+      displayName: 'Renamed GLM',
+      provider: 'openai-responses',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: oldKey,
+      modelId: 'glm-5',
+      maxTokens: 200000,
+      enabled: false,
+    });
+    expect(newId).not.toBe(oldId);
+    expect(loadPreferredModel()).toBe(newId);
+  });
+
+  it('提供新 key 时替换 secret，未知旧 id 不写盘', () => {
+    const oldId = saveCustomModel(VALID_MODEL, false);
+    const oldKey = loadCustomModels()[0].apiKey;
+    replaceCustomModel(oldId, { ...VALID_MODEL, apiKey: 'sk-new' }, false);
+    expect(loadCustomModels()[0].apiKey).toBe(oldKey);
+    const secretPath = oldKey.match(/^\{file:(.+)\}$/)?.[1];
+    expect(secretPath && fs.readFileSync(secretPath, 'utf-8').trim()).toBe('sk-new');
+    expect(() =>
+      replaceCustomModel('custom:missing', { ...VALID_MODEL, apiKey: '' }, false),
+    ).toThrow(/不存在/);
+    expect(loadCustomModels()).toHaveLength(1);
   });
 });

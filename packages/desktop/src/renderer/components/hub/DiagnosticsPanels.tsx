@@ -12,7 +12,7 @@
 import React from 'react';
 import type { SessionSummary } from 'otto-server';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
-import { IconCheck } from '../icons.js';
+import { IconCheck, IconClose } from '../icons.js';
 import { Panel, Card, Badge, Empty } from './HubUI.js';
 
 // ── 依赖体检 ──────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ export function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Elem
                   {c.present ? (
                     <IconCheck size={13} className="otto-hub__doctor-ok" />
                   ) : (
-                    <span className="otto-hub__doctor-missing">✕</span>
+                    <IconClose size={13} className="otto-hub__doctor-missing" />
                   )}
                 </span>
                 <span className="otto-hub__row-name">{c.name}</span>

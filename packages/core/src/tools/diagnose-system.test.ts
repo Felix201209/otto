@@ -74,6 +74,9 @@ describe('DiagnoseSystemTool', () => {
             });
             return child;
           }),
+          execFile: vi.fn((_file: string, _args: string[], _opts: any, cb: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+            setImmediate(() => cb(null, 'mock output', ''));
+          }),
         };
       });
     });

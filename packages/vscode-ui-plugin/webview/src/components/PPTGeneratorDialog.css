@@ -572,6 +572,17 @@
   line-height: 1.5;
 }
 
+.ppt-generator-dialog__local-path {
+  display: block;
+  max-width: 100%;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 .ppt-generator-dialog__results-actions {
   display: flex;
   flex-direction: column;

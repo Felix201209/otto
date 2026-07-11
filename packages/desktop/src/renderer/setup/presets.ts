@@ -189,6 +189,11 @@ export interface SetupFormState {
   selectedModels: string[];
   /** 仅当最终恰好 1 个模型时用作显示名；批量（多个）时忽略，每条取其 modelId。 */
   displayName: string;
+  /** 编辑模式下的旧 ModelInfo.id；存在时保存执行原子替换。 */
+  replaceId?: string;
+  /** 可选上下文窗口，表单用字符串承接空值。 */
+  maxTokens: string;
+  enabled: boolean;
 }
 
 /**
@@ -234,13 +239,15 @@ export function buildConfig(form: SetupFormState): CustomModelConfig {
   const displayName =
     (ids.length <= 1 ? form.displayName.trim() : '') ||
     `${findPreset(form.presetId)?.label ?? form.provider} ${modelId}`;
+  const maxTokens = Number.parseInt(form.maxTokens, 10);
   return {
     displayName,
     provider: form.provider,
     baseUrl,
     apiKey: form.apiKey.trim(),
     modelId,
-    enabled: true,
+    ...(Number.isFinite(maxTokens) && maxTokens > 0 ? { maxTokens } : {}),
+    enabled: form.enabled,
   };
 }
 
@@ -262,8 +269,10 @@ export function buildSavePayload(form: SetupFormState): SaveCustomModelPayload {
     ...(ids.length > 1 ? { modelIds: ids } : {}),
     // 显示名仅在恰好 1 个模型时有意义；批量每条取其 modelId。
     ...(ids.length === 1 && userNamed ? { displayName: userNamed } : {}),
-    enabled: true,
-    makeActive: true,
+    ...(cfg.maxTokens !== undefined ? { maxTokens: cfg.maxTokens } : {}),
+    enabled: cfg.enabled !== false,
+    ...(form.replaceId ? { replaceId: form.replaceId } : {}),
+    makeActive: !form.replaceId,
   };
 }
 
@@ -291,7 +300,7 @@ export function validateForm(form: SetupFormState): Record<string, string> {
       errors.baseUrl = 'base URL 格式不合法';
     }
   }
-  if (!cfg.apiKey) {
+  if (!cfg.apiKey && !form.replaceId) {
     // 大多数端点必填；custom 代理可能不需要，但 core 校验把 apiKey 列为必填，
     // 这里与之对齐（用户用本地代理时可随便填一个占位）。
     errors.apiKey = '请粘贴 API key（本地代理可填任意占位）';

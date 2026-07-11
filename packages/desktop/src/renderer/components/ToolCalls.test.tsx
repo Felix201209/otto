@@ -167,3 +167,21 @@ describe('ToolCalls · AskUserQuestion 问答卡', () => {
     expect(onRespond).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ToolCalls · 敏感操作确认卡', () => {
+  it('展示风险与操作内容，并可允许或拒绝', () => {
+    const onRespond = vi.fn();
+    const tool: ToolCall = {
+      id: 'danger-1', toolName: 'run_shell_command', parameters: {},
+      status: 'awaiting_approval' as ToolCall['status'],
+      confirmationDetails: {
+        type: 'exec', title: '危险命令 - 必须确认', command: 'rm -rf build', riskLevel: 'high',
+      },
+    };
+    render(<ToolCallsCard toolCalls={[tool]} onRespondQuestion={onRespond} />);
+    expect(screen.getByText('高风险操作')).toBeTruthy();
+    expect(screen.getByText('rm -rf build')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '允许执行' }));
+    expect(onRespond).toHaveBeenCalledWith('danger-1', 'approved');
+  });
+});

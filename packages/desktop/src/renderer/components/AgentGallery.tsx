@@ -16,6 +16,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { Expert } from '../agents/experts.js';
 import { getAllExperts } from '../agents/experts.js';
+import { GeneratedIcon } from './GeneratedIcon.js';
 import { IconAgent, IconChevron } from './icons.js';
 
 interface AgentGalleryProps {
@@ -80,7 +81,7 @@ export function AgentGallery({
               onClick={() => onLaunch(expert)}
             >
               <span className="otto-agent-card__avatar" aria-hidden>
-                {expert.emoji}
+                <GeneratedIcon name={expert.icon} size={36} />
               </span>
               <span className="otto-agent-card__body">
                 <span className="otto-agent-card__name">{expert.name}</span>

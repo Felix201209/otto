@@ -1226,13 +1226,13 @@ export class MultiSessionCommunicationService {
   }
 
   // =============================================================================
-  // 🎯 PPT 生成相关方法 (无状态轮询，任务提交后直接返回编辑页面URL)
+  // 🎯 PPT 本地生成相关方法
   // =============================================================================
 
   /**
    * 发送PPT生成响应
    */
-  async sendPPTGenerateResponse(data: { success: boolean; taskId?: string; editUrl?: string; error?: string }) {
+  async sendPPTGenerateResponse(data: { success: boolean; filePath?: string; fileUrl?: string; error?: string }) {
     await this.sendMessage({
       type: 'ppt_generate_response',
       payload: data

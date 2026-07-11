@@ -57,3 +57,37 @@ describe('SetupPanel 复制路径', () => {
     expect(getByText('已用占位符代替 API Key，粘贴后请自行填入。')).toBeTruthy();
   });
 });
+
+describe('SetupPanel 编辑模型', () => {
+  it('编辑时预填全部非敏感字段，key 留空，并发 replaceId', () => {
+    const onSave = vi.fn();
+    const { getByRole, getByDisplayValue, getByPlaceholderText, getByText } = render(
+      <SetupPanel
+        models={[{
+          id: 'custom:openai:deepseek-chat@abc',
+          displayName: '工作模型',
+          provider: 'openai',
+          baseUrl: 'https://api.deepseek.com/v1',
+          modelId: 'deepseek-chat',
+          maxTokens: 64000,
+          enabled: false,
+        }]}
+        onClose={() => {}}
+        onSave={onSave}
+      />,
+    );
+    fireEvent.click(getByRole('button', { name: '编辑 工作模型' }));
+    expect(getByDisplayValue('https://api.deepseek.com/v1')).toBeTruthy();
+    expect(getByDisplayValue('deepseek-chat')).toBeTruthy();
+    expect(getByDisplayValue('工作模型')).toBeTruthy();
+    expect(getByDisplayValue('64000')).toBeTruthy();
+    expect((getByPlaceholderText('留空则保留当前 API Key') as HTMLInputElement).value).toBe('');
+    fireEvent.click(getByText('保存修改'));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      replaceId: 'custom:openai:deepseek-chat@abc',
+      apiKey: '',
+      enabled: false,
+      maxTokens: 64000,
+    }));
+  });
+});

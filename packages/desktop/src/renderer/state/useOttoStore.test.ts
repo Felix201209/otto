@@ -256,6 +256,45 @@ describe('applyFrame 各帧分支', () => {
     expect(m.tokenUsage).toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
   });
 
+  it('chat_complete(cancelled)：工具执行阶段取消也清掉 isProcessingTools，停止按钮不再卡住', () => {
+    const { view, push } = setup();
+    push({
+      type: 'message_start',
+      payload: {
+        message: makeMsg({
+          id: 'm1',
+          isStreaming: false,
+          isProcessingTools: true,
+          associatedToolCalls: [
+            {
+              id: 't1',
+              toolName: 'edit',
+              parameters: {},
+              status: 'executing' as never,
+              startTime: Date.now() - 20,
+            },
+          ],
+        }),
+      },
+    });
+
+    push({
+      type: 'chat_complete',
+      payload: {
+        sessionId: 's1',
+        messageId: 'm1',
+        finishReason: 'cancelled',
+        text: '已生成的部分',
+      },
+    });
+
+    const m = view.result.current.state.messages['s1'][0];
+    expect(m.isStreaming).toBe(false);
+    expect(m.isReasoning).toBe(false);
+    expect(m.isProcessingTools).toBe(false);
+    expect(m.associatedToolCalls?.[0]?.status).toBe('cancelled');
+  });
+
   it('chat_complete：无 tokenUsage 则保留旧值', () => {
     const { view, push } = setup();
     push({
@@ -360,6 +399,34 @@ describe('applyFrame 各帧分支', () => {
     push({ type: 'session_status', payload: { sessionId: 's1', status: 'thinking' } });
     expect(view.result.current.state.sessions['s1'].status).toBe('thinking');
   });
+
+  it.each(['idle', 'error'] as const)(
+    'session_status(%s)：权威终态清理历史里残留的工具处理中标记',
+    (status) => {
+      const { view, push } = setup();
+      push({
+        type: 'session_upsert',
+        payload: { session: makeSession({ sessionId: 's1', status: 'streaming' }) },
+      });
+      push({
+        type: 'message_start',
+        payload: {
+          message: makeMsg({
+            id: 'm1',
+            isStreaming: true,
+            isProcessingTools: true,
+          }),
+        },
+      });
+
+      push({ type: 'session_status', payload: { sessionId: 's1', status } });
+
+      const message = view.result.current.state.messages['s1'][0];
+      expect(message.isStreaming).toBe(false);
+      expect(message.isProcessingTools).toBe(false);
+      expect(view.result.current.state.sessions['s1'].status).toBe(status);
+    },
+  );
 
   it('session_status：session 不存在时原样返回', () => {
     const { view, push } = setup();

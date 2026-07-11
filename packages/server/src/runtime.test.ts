@@ -158,14 +158,14 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
 // 的 execute() 拿不到答案会永远返回 "User declined to answer questions."。这里验证
 // 闸门把用户答案注入回工具、结果不再是 declined；以及跳过/取消时如实回落 declined。
 
-/** 一次调用 ask_user_question 的 functionCalls chunk。 */
-function askChunk(callId: string): unknown {
+/** 一次调用 ask_user_question 的 functionCalls chunk；省略 id 可模拟 Gemini 原生工具调用。 */
+function askChunk(callId?: string): unknown {
   return {
     candidates: [{ content: { parts: [] } }],
     functionCalls: [
       {
         name: 'ask_user_question',
-        id: callId,
+        ...(callId ? { id: callId } : {}),
         args: {
           questions: [
             {
@@ -222,9 +222,17 @@ function startAskSession(config: Config) {
   const frames: ServerToClient[] = [];
   let onQuestion!: () => void;
   const questionAsked = new Promise<void>((r) => (onQuestion = r));
+  let onToolStarted!: () => void;
+  const toolStarted = new Promise<void>((r) => (onToolStarted = r));
   store.subscribe(session.sessionId, (f) => {
     frames.push(f);
     if (f.type === 'tool_confirmation_request') onQuestion();
+    if (
+      f.type === 'tool_calls_update' &&
+      f.payload.toolCalls.some((toolCall) => toolCall.status === ToolCallStatus.Executing)
+    ) {
+      onToolStarted();
+    }
   });
   const runtime = new CoreSessionRuntime(
     store,
@@ -232,7 +240,53 @@ function startAskSession(config: Config) {
     config,
     noOpWorkLogger,
   );
-  return { store, session, frames, questionAsked, runtime };
+  return { store, session, frames, questionAsked, toolStarted, runtime };
+}
+
+/** 普通工具调用 chunk（可省略 id），用于覆盖稳定 ID 与不配合取消的工具。 */
+function toolChunk(name: string, callId?: string): unknown {
+  return {
+    candidates: [{ content: { parts: [] } }],
+    functionCalls: [
+      {
+        name,
+        ...(callId ? { id: callId } : {}),
+        args: {},
+      },
+    ],
+  };
+}
+
+/** 注册一个最小真实执行工具；execute 可由测试注入门闩，模拟忽略 AbortSignal。 */
+function makeFakeConfigWithTool(
+  turns: Array<() => AsyncGenerator<unknown>>,
+  execute: () => Promise<{ llmContent: string; returnDisplay: string }>,
+): Config {
+  const tool = {
+    name: 'test_tool',
+    shouldConfirmExecute: async () => false,
+    execute,
+  };
+  const registry = {
+    discoverMcpTools: async () => undefined,
+    getFunctionDeclarations: () => [],
+    getTool: (name: string) => (name === tool.name ? tool : undefined),
+    getAllTools: () => [tool],
+  };
+  let call = 0;
+  return {
+    initialize: async () => undefined,
+    refreshAuth: async () => undefined,
+    getToolRegistry: async () => registry,
+    getOttoClient: () => ({
+      getChat: async () => ({
+        sendMessageStream: async () =>
+          turns[Math.min(call++, turns.length - 1)](),
+      }),
+    }),
+    getModel: () => 'test-model',
+    getMaxSessionTurns: () => 10,
+  } as unknown as Config;
 }
 
 /** 取某 callId 的 ask 工具卡最终结果显示文本（末次 tool_calls_update 快照）。 */
@@ -331,5 +385,143 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
     const result = askCardResult(frames, 'call-2');
     // rejected → onConfirm 标记 cancelled → execute() 回落 declined（如实，不假装作答）。
     expect(String(result?.data)).toContain('declined');
+  });
+
+  it('工具阶段取消后持久消息清掉 isProcessingTools，重新拉历史不会恢复卡死停止态', async () => {
+    const config = makeFakeConfigWithAsk([
+      () =>
+        (async function* () {
+          yield askChunk('call-cancel');
+        })(),
+    ]);
+    const { store, session, questionAsked, runtime } = startAskSession(config);
+    await runtime.initialize();
+
+    const running = runtime.run([{ type: 'text', value: '帮我选' }], 'local');
+    await questionAsked;
+    runtime.cancel();
+    await running;
+
+    const assistant = store
+      .getHistory(session.sessionId)
+      .find((message) => message.role === 'assistant');
+    expect(assistant).toBeDefined();
+    expect(assistant?.isStreaming).toBe(false);
+    expect(assistant?.isProcessingTools).toBe(false);
+  });
+
+  it('模型未提供 functionCall.id 时，同一次调用仍沿用唯一稳定 id', async () => {
+    const config = makeFakeConfigWithAsk([
+      () =>
+        (async function* () {
+          yield askChunk();
+        })(),
+    ]);
+    const { frames, toolStarted, runtime } = startAskSession(config);
+    await runtime.initialize();
+
+    const running = runtime.run([{ type: 'text', value: '帮我选' }], 'local');
+    await toolStarted;
+    // 让 gateAskUserQuestion 有机会发布确认帧；旧实现会因二次生成随机 id 而找不到卡。
+    await Promise.resolve();
+    runtime.cancel();
+    await running;
+
+    const initial = frames.find((frame) => frame.type === 'tool_calls_update');
+    const request = frames.find((frame) => frame.type === 'tool_confirmation_request');
+    expect(initial?.type).toBe('tool_calls_update');
+    expect(request?.type).toBe('tool_confirmation_request');
+    if (initial?.type === 'tool_calls_update' && request?.type === 'tool_confirmation_request') {
+      expect(request.payload.callId).toBe(initial.payload.toolCalls[0]?.id);
+    }
+  });
+});
+
+describe('CoreSessionRuntime · 工具状态收口', () => {
+  it('普通工具成功并进入下一轮后，历史消息不残留 isProcessingTools=true', async () => {
+    const config = makeFakeConfigWithTool(
+      [
+        () =>
+          (async function* () {
+            yield toolChunk('test_tool', 'stable-ok');
+          })(),
+        () =>
+          (async function* () {
+            yield chunk('done', 'STOP');
+          })(),
+      ],
+      async () => ({ llmContent: 'tool done', returnDisplay: 'tool done' }),
+    );
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: 't' });
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: 'run tool' }], 'local');
+
+    const assistants = store
+      .getHistory(session.sessionId)
+      .filter((message) => message.role === 'assistant');
+    expect(assistants).toHaveLength(2);
+    expect(assistants.every((message) => message.isProcessingTools !== true)).toBe(true);
+    expect(assistants[0]?.isProcessingTools).toBe(false);
+    expect(assistants[0]?.associatedToolCalls?.[0]?.status).toBe(ToolCallStatus.Success);
+  });
+
+  it('工具忽略 AbortSignal 时，cancel 也立即发布取消终态，不等待工具返回', async () => {
+    let releaseTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => (releaseTool = resolve));
+    let markToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => (markToolStarted = resolve));
+    const config = makeFakeConfigWithTool(
+      [
+        () =>
+          (async function* () {
+            yield toolChunk('test_tool', 'blocking');
+          })(),
+      ],
+      async () => {
+        markToolStarted();
+        await toolGate; // 刻意不读取 signal，模拟不配合取消的长耗时工具。
+        return { llmContent: 'late result', returnDisplay: 'late result' };
+      },
+    );
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: 't' });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    const running = runtime.run([{ type: 'text', value: 'run tool' }], 'local');
+    await toolStarted;
+    runtime.cancel();
+    await Promise.resolve();
+    const cancelledBeforeToolReturned = frames.some(
+      (frame) =>
+        frame.type === 'chat_complete' &&
+        frame.payload.finishReason === 'cancelled',
+    );
+    const cardCancelledBeforeToolReturned = frames.some(
+      (frame) =>
+        frame.type === 'tool_calls_update' &&
+        frame.payload.toolCalls.some((toolCall) => toolCall.status === ToolCallStatus.Canceled),
+    );
+
+    releaseTool();
+    await running;
+
+    expect(cancelledBeforeToolReturned).toBe(true);
+    expect(cardCancelledBeforeToolReturned).toBe(true);
   });
 });

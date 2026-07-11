@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -46,6 +46,7 @@
     "productName": "Otto",
     "copyright": "Copyright © 2025 Otto",
     "electronVersion": "43.1.0",
+    "afterPack": "scripts/after-pack.cjs",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -79,6 +80,9 @@
       "icon": "build/icon.icns",
       "darkModeSupport": true,
       "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Otto 使用麦克风将语音转换为聊天输入文字。"
+      },
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extraResources": [

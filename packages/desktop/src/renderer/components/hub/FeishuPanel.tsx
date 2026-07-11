@@ -26,6 +26,8 @@ import {
   deriveFeishuBadgeState,
   type FeishuStatusResult,
 } from '../FeishuStatusBadge.js';
+import { GeneratedIcon } from '../GeneratedIcon.js';
+import { IconExternalLink } from '../icons.js';
 import { Panel, Card, Badge, Empty } from './HubUI.js';
 
 /** 状态轮询周期：面板打开时用户正在等连接结果，比常驻徽标（5s）稍勤。 */
@@ -181,11 +183,19 @@ export function FeishuPanel(): React.JSX.Element {
       {/* 连接状态：与徽标同一套推导（诚实：重连中/锁冲突/离线各是各）。 */}
       <Card className="otto-hub__card--pad">
         <div className="otto-hub__feishu-status">
-          <span
-            className="otto-hub__dot"
-            style={{ background: view.dotColor }}
-            aria-hidden
-          />
+          {view.icon ? (
+            <GeneratedIcon
+              name={view.icon}
+              size={20}
+              className={view.kind === 'reconnecting' ? 'otto-generated-icon--spin' : undefined}
+            />
+          ) : (
+            <span
+              className="otto-hub__dot"
+              style={{ background: view.dotColor }}
+              aria-hidden
+            />
+          )}
           <span className="otto-hub__row-name">{view.label}</span>
           {cfg?.botName ? <Badge>Bot · {cfg.botName}</Badge> : null}
           {cfg?.tenantName ? <Badge>{cfg.tenantName}</Badge> : null}
@@ -288,7 +298,8 @@ export function FeishuPanel(): React.JSX.Element {
               className="otto-hub__btn"
               onClick={() => void window.otto?.openExternal('https://open.feishu.cn')}
             >
-              打开飞书开放平台 ↗
+              <span>打开飞书开放平台</span>
+              <IconExternalLink size={12} />
             </button>
           </div>
         </div>

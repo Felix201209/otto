@@ -10,7 +10,7 @@
  *
  * UI 状态一一对应状态机 phase：
  *   idle/checking      当前版本 + 检查按钮
- *   upToDate           ✅ 已是最新（与「检查失败」严格是两种状态）
+ *   upToDate           已是最新（与「检查失败」严格是两种状态）
  *   checkFailed        诚实显示失败原因 + 重试
  *   available          新版本号 + 更新日志（Prose 渲染 markdown）+ 下载
  *   downloading        进度条（percent + MB/total）+ 取消
@@ -20,6 +20,7 @@
 
 import React from 'react';
 import type { UseSoftwareUpdate } from '../state/useSoftwareUpdate.js';
+import { GeneratedIcon } from './GeneratedIcon.js';
 import { Prose } from './Prose.js';
 
 /** 字节 → MB 显示（一位小数，进度与体积统一口径）。 */
@@ -80,7 +81,10 @@ export function SoftwareUpdatePanel({
       {/* 已是最新：与「检查失败」是两种不同状态，绝不混用。 */}
       {state.phase === 'upToDate' ? (
         <div className="otto-hub__field">
-          <div className="otto-hub__field-label">✅ 已是最新版本</div>
+          <div className="otto-hub__field-label otto-generated-icon-label">
+            <GeneratedIcon name="status-success" size={20} />
+            <span>已是最新版本</span>
+          </div>
           <div className="otto-hub__field-hint">
             {state.latestVersion
               ? `最新发布版本 v${state.latestVersion}，无需更新。`
@@ -109,8 +113,9 @@ export function SoftwareUpdatePanel({
       {/* 有新版：版本号 + 更新日志 + 下载（或发布页兜底）。 */}
       {state.phase === 'available' ? (
         <div className="otto-hub__field">
-          <div className="otto-hub__field-label">
-            🆕 发现新版本 v{state.latestVersion}
+          <div className="otto-hub__field-label otto-generated-icon-label">
+            <GeneratedIcon name="status-update" size={20} />
+            <span>发现新版本 v{state.latestVersion}</span>
           </div>
           {state.notes ? (
             <div className="otto-update__notes">
@@ -180,8 +185,9 @@ export function SoftwareUpdatePanel({
       {/* 下载完成（sha256 已校验通过）：打开安装包 + 平台指引。 */}
       {state.phase === 'downloaded' ? (
         <div className="otto-hub__field">
-          <div className="otto-hub__field-label">
-            ✅ v{state.latestVersion} 安装包已就绪（sha256 校验通过）
+          <div className="otto-hub__field-label otto-generated-icon-label">
+            <GeneratedIcon name="status-success" size={20} />
+            <span>v{state.latestVersion} 安装包已就绪（sha256 校验通过）</span>
           </div>
           <div className="otto-hub__field-hint">{state.filePath}</div>
           <div className="otto-hub__field-hint">

@@ -25,7 +25,7 @@ import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
-import { OttoAvatar, IconArrowDown, IconMoon, IconSun } from './icons.js';
+import { IconArrowDown, IconMoon, IconSun } from './icons.js';
 import { ParkServicesPlugin } from './ParkServicesPlugin.js';
 
 /**
@@ -432,7 +432,6 @@ export function ChatView({
 function EmptyState(): React.JSX.Element {
   return (
     <div className="otto-empty">
-      <OttoAvatar size={56} />
       <div className="otto-empty__title">选择左侧对话，或新建一个</div>
       <div>飞书与本地会话都会实时出现在这里</div>
     </div>
@@ -446,7 +445,6 @@ function EmptyConversation({
 }): React.JSX.Element {
   return (
     <div className="otto-empty">
-      <OttoAvatar size={48} />
       <div className="otto-empty__title">给 Otto 发送第一条消息</div>
       <div>试试这些开头，或直接输入你的问题</div>
       <div className="otto-empty__prompts">

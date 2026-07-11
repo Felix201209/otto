@@ -43,9 +43,22 @@ function installBridge() {
 }
 
 describe('RightPanel 企业工作入口', () => {
+  it('吉祥物活动区固定在 tab 外，切换面板后仍保持唯一实例', () => {
+    installBridge();
+    render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
+    expect(
+      screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }),
+    ).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
+    expect(
+      screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }),
+    ).toHaveLength(1);
+  });
+
   it('隐藏尚未形成数据闭环的 Skill/排行榜入口', () => {
     installBridge();
-    render(<RightPanel onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
+    render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
       '工具',
@@ -57,7 +70,7 @@ describe('RightPanel 企业工作入口', () => {
 
   it('一键生成报告后显示真实保存结果并可打开文件', async () => {
     const { openPath, workLogReport } = installBridge();
-    render(<RightPanel onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
+    render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
     fireEvent.click(
       screen.getByRole('button', { name: '总结当下工作 → 生成报告' }),

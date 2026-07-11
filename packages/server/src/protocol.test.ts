@@ -168,6 +168,30 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
         },
       }),
     ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: {
+          provider: 'openai',
+          baseUrl: 'https://x',
+          apiKey: '',
+          modelId: 'm',
+          replaceId: 'custom:openai:old@abc',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: {
+          provider: 'openai',
+          baseUrl: 'https://x',
+          apiKey: '',
+          modelId: 'm',
+          replaceId: 123,
+        },
+      }),
+    ).not.toBeNull();
   });
 
   it('delete_session：sessionId 缺失 → 拒绝；齐全 → 通过', () => {
@@ -297,5 +321,22 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
     expect(
       validateClientPayload({ type: 'list_slash_commands', payload: null }),
     ).not.toBeNull();
+  });
+});
+
+describe('validateClientPayload：执行授权', () => {
+  it('只接受合法 mode 与 scope', () => {
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'session' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'yolo', scope: 'all' },
+    })).toContain('mode');
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'forever' },
+    })).toContain('scope');
   });
 });

@@ -66,6 +66,8 @@ export interface SessionRuntime {
    * 调用方（server.ts）按需 cast。
    */
   getConfig(): unknown;
+  /** 桌面授权策略；旧 runtime / 测试替身可不实现。 */
+  setAuthorizationMode?(mode: 'manual' | 'auto'): void;
 }
 
 /** 单个会话的内部状态。 */

@@ -208,8 +208,11 @@ export function App(): React.JSX.Element {
     ? state.messages[state.activeSessionId] ?? []
     : [];
 
-  // 忙碌态：有消息在流式输出或正在跑工具时禁用输入。
-  const busy = activeMessages.some((m) => m.isStreaming || m.isProcessingTools);
+  // session.status 是全局运行态的权威源：工具段结束→下一轮开始的帧间隙里，旧消息会
+  // 短暂不 busy，但会话始终 streaming/thinking。以 status 驱动可避免停止按钮被卸载，
+  // 也不会让历史里偶发残留的 isProcessingTools 把已 idle 的会话重新锁死。
+  const busy =
+    activeSession?.status === 'thinking' || activeSession?.status === 'streaming';
 
   // 重新生成：重发**被点 bot 消息所对应的那一轮用户提问**（保持其来源），而非
   // 永远重发全会话最后一轮。据 messageId 在列表里定位该 bot 消息，往前找最近的
@@ -360,6 +363,7 @@ export function App(): React.JSX.Element {
             onShowHelp={handleShowHelp}
           />
           <RightPanel
+            busy={busy}
             onLaunchExpert={handleLaunchExpert}
             onOpenAgents={() => setMainView('agents')}
           />

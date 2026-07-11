@@ -235,6 +235,28 @@
   background: var(--otto-local-bg);
 }
 
+/* imagegen 生成的 Otto 刺绣图标：透明 PNG，保持原始比例与清晰边缘。 */
+.otto-generated-icon {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+.otto-generated-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.otto-generated-icon--spin {
+  animation: otto-generated-icon-spin 1.8s linear infinite;
+}
+@keyframes otto-generated-icon-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otto-generated-icon--spin { animation: none; }
+}
+
 .otto-sidebar__footer {
   flex: 0 0 auto;
   border-top: 1px solid var(--otto-border);
@@ -410,9 +432,72 @@
   gap: 11px;
   margin: 18px 0;
 }
-.otto-msg-bot__avatar {
+.otto-response-mark {
   flex: 0 0 auto;
-  margin-top: 2px;
+  width: 30px;
+  height: 30px;
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.otto-response-mark svg {
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+.otto-response-mark__ball {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.otto-response-mark__spines {
+  fill: #8b4a13;
+}
+.otto-response-mark__belly,
+.otto-response-mark__ear {
+  fill: #ffe2a6;
+}
+.otto-response-mark__ear {
+  stroke: #6f390f;
+  stroke-width: 0.75;
+}
+.otto-response-mark__curl {
+  fill: none;
+  stroke: #6f390f;
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.otto-response-mark__accent {
+  fill: none;
+  stroke: #0b8b92;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+}
+.otto-response-mark__eye,
+.otto-response-mark__nose {
+  fill: #4b2a12;
+}
+.otto-response-mark.is-active {
+  transform-origin: 50% 100%;
+  animation: otto-spineball-bounce 820ms linear infinite;
+}
+.otto-response-mark.is-active .otto-response-mark__ball {
+  animation: otto-spineball-roll 820ms cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+@keyframes otto-spineball-bounce {
+  0%, 100% { transform: translateY(0) scaleX(1.12) scaleY(0.88); }
+  11% { transform: translateY(0.5px) scaleX(1.18) scaleY(0.82); }
+  22% { transform: translateY(-2px) scaleX(0.91) scaleY(1.09); }
+  48% { transform: translateY(-8px) scaleX(0.97) scaleY(1.03); }
+  66% { transform: translateY(-5px) scaleX(1) scaleY(1); }
+  81% { transform: translateY(-1px) scaleX(0.96) scaleY(1.04); }
+  90% { transform: translateY(0) scaleX(1.2) scaleY(0.8); }
+  95% { transform: translateY(-1px) scaleX(1.01) scaleY(0.99); }
+}
+@keyframes otto-spineball-roll {
+  0%, 100% { transform: rotate(-8deg); }
+  48% { transform: rotate(14deg); }
 }
 .otto-msg-bot__body {
   flex: 1 1 auto;
@@ -635,38 +720,14 @@ h6.otto-prose__h {
   color: inherit;
 }
 
-/* 思考中 typing indicator（流式但正文尚空时显示）。三点依次跳动。 */
+/* 首个 chunk 尚未到达时的克制提示；实际活动动效由回答标记承担。 */
 .otto-typing {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   height: 22px;
   padding: 0 2px;
-}
-.otto-typing__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--otto-text-tertiary);
-  animation: otto-typing 1.3s var(--otto-ease) infinite;
-}
-.otto-typing__dot:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.otto-typing__dot:nth-child(3) {
-  animation-delay: 0.36s;
-}
-@keyframes otto-typing {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.45;
-  }
-  30% {
-    transform: translateY(-4px);
-    opacity: 1;
-  }
+  color: var(--otto-text-tertiary);
+  font-size: 12px;
 }
 
 /* —— reasoning（思考过程，可折叠）—— */
@@ -1059,6 +1120,13 @@ h6.otto-prose__h {
 .otto-ask__submit:hover:not(:disabled) {
   background: var(--otto-accent-hover);
 }
+.otto-confirm__badge--danger { color: #dc2626; background: color-mix(in srgb, #ef4444 12%, transparent); }
+.otto-confirm__target {
+  margin: 12px 0 4px; padding: 11px 12px; border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm); background: var(--otto-sidebar-bg); color: var(--otto-text);
+  font: 12.5px/1.55 var(--otto-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .otto-ask__skip:disabled,
 .otto-ask__submit:disabled {
   cursor: default;
@@ -1300,11 +1368,64 @@ h6.otto-prose__h {
   color: var(--otto-text-tertiary);
   cursor: not-allowed;
 }
+
+.otto-voice-btn.is-recording { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); animation: otto-voice-pulse 1.2s ease-in-out infinite; }
+.otto-composer__voice-error { padding: 0 14px 8px; color: #ef4444; font-size: 11px; }
+@keyframes otto-voice-pulse { 50% { opacity: .55; } }
+.otto-voice-recorder { min-height: 76px; padding: 12px 14px 12px 24px; display: flex; align-items: center; gap: 12px; }
+.otto-voice-recorder__wave { position: relative; height: 42px; flex: 1 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 3px; overflow: hidden; }
+.otto-voice-recorder__baseline { position: absolute; inset: 50% 0 auto; border-top: 1px dashed var(--otto-border-strong); }
+.otto-voice-recorder__bar { position: relative; width: 3px; min-height: 4px; border-radius: 999px; background: var(--otto-text); transition: height 80ms linear; }
+.otto-voice-recorder__time { min-width: 44px; color: var(--otto-text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; }
+.otto-voice-recorder__stop { width: 40px; height: 40px; border: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--otto-sidebar-bg); color: var(--otto-text); cursor: pointer; }
+.otto-voice-recorder__stop svg { fill: currentColor; }
+.otto-voice-settings { margin-top: 16px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); overflow: hidden; }
+.otto-voice-settings__body { padding: 14px; display: grid; gap: 8px; }
+.otto-voice-settings__on { margin-left: 6px; color: var(--otto-accent); font-size: 11px; font-weight: 700; }
+.otto-voice-settings__prompt { min-height: 86px; resize: vertical; font-family: inherit; }
+.otto-setup__modeledit { margin-left: auto; border: 0; background: transparent; color: var(--otto-accent); cursor: pointer; font-size: 12px; }
+.otto-setup__toggleline { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--otto-text-secondary); font-size: 12px; }
 .otto-composer__bar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 10px 9px;
+}
+
+/* 执行授权：贴近发送按钮，菜单向上展开，沿用 Otto 的表面/边框/阴影 token。 */
+.otto-authorization { position: relative; margin-left: auto; }
+.otto-authorization + .otto-send { margin-left: 0; }
+.otto-authorization__trigger {
+  height: 32px; padding: 0 9px; border: 0; border-radius: var(--otto-radius-pill);
+  display: inline-flex; align-items: center; gap: 6px; background: transparent;
+  color: var(--otto-text-secondary); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.otto-authorization__trigger:hover { background: var(--otto-accent-soft); color: var(--otto-text); }
+.otto-authorization__trigger:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
+.otto-authorization__menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); width: 330px; padding: 6px;
+  border: 1px solid var(--otto-border-strong); border-radius: 15px;
+  background: var(--otto-surface); box-shadow: var(--otto-shadow-pop); z-index: 40;
+  animation: otto-menu-in 140ms var(--otto-ease); transform-origin: bottom right;
+}
+.otto-authorization__option {
+  width: 100%; min-height: 62px; padding: 9px 9px; border: 0; border-radius: 10px;
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) 20px; align-items: start;
+  gap: 8px; background: transparent; color: var(--otto-text); text-align: left; cursor: pointer;
+}
+.otto-authorization__option:hover, .otto-authorization__option.is-active { background: var(--otto-accent-soft); }
+.otto-authorization__option-icon { padding-top: 1px; color: var(--otto-text-secondary); }
+.otto-authorization__option-icon--manual { color: var(--otto-text); }
+.otto-authorization__option-icon--session { color: var(--otto-accent); }
+.otto-authorization__option-icon--global { color: var(--otto-text-secondary); }
+.otto-authorization__copy { display: grid; gap: 5px; }
+.otto-authorization__title { font-size: 13.5px; line-height: 1.3; font-weight: 650; }
+.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11.5px; line-height: 1.35; }
+.otto-authorization__selected { color: var(--otto-accent); margin-top: 2px; }
+
+@media (max-width: 760px) {
+  .otto-authorization__trigger span { display: none; }
+  .otto-authorization__menu { width: min(390px, calc(100vw - 36px)); right: -42px; }
 }
 
 /* model pill */
@@ -1554,7 +1675,7 @@ h6.otto-prose__h {
   justify-content: center;
   width: 34px;
   height: 34px;
-  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心↔实心切换时 border-color 可平滑插值。 */
+  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心/实心切换时 border-color 可平滑插值。 */
   border: 1px solid transparent;
   border-radius: 50%;
   background: var(--otto-accent-gradient);
@@ -2296,6 +2417,9 @@ h6.otto-prose__h {
 .otto-setup__linkbtn {
   margin-left: auto;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: none;
   background: transparent;
   color: var(--otto-accent);
@@ -2416,6 +2540,9 @@ h6.otto-prose__h {
   margin-top: 7px;
 }
 .otto-setup__example {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 9px;
   border: 1px dashed var(--otto-border-strong);
   border-radius: var(--otto-radius-pill);
@@ -2532,6 +2659,10 @@ h6.otto-prose__h {
 .otto-setup__copybtn {
   flex: 1;
   min-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 8px 10px;
   border: 1px solid var(--otto-border-strong);
   border-radius: var(--otto-radius-sm);
@@ -3166,6 +3297,89 @@ h6.otto-prose__h {
   flex-direction: column;
 }
 
+/* —— 右下吉祥物舞台：位置独立；busy 时切跑步，空闲时按自己的节奏活动。 —— */
+.otto-pet-stage {
+  flex: 0 0 182px;
+  min-height: 182px;
+  padding: 10px 14px 8px;
+  background: var(--otto-surface);
+  border-top: 1px solid var(--otto-border);
+  overflow: hidden;
+  user-select: none;
+}
+.otto-pet-stage__head {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.otto-pet-stage__state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--otto-text-tertiary);
+  font-weight: 500;
+}
+.otto-pet-stage__scene {
+  position: relative;
+  height: 140px;
+  overflow: hidden;
+}
+.otto-pet-stage__floor {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 9px;
+  height: 1px;
+  background: var(--otto-border-strong);
+  opacity: 0.72;
+}
+.otto-pet-stage__floor::before,
+.otto-pet-stage__floor::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e69a22;
+}
+.otto-pet-stage__floor::before { left: -1px; }
+.otto-pet-stage__floor::after { right: -1px; }
+.otto-pet-stage__motion {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 119.04px;
+  height: 128.96px;
+  transform: translateX(-50%);
+  will-change: left;
+}
+.otto-pet-stage__motion.is-running-right {
+  animation: otto-pet-travel-right var(--otto-pet-state-duration) linear both;
+}
+.otto-pet-stage__motion.is-running-left {
+  animation: otto-pet-travel-left var(--otto-pet-state-duration) linear both;
+}
+.otto-pet-stage__sprite {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+@keyframes otto-pet-travel-right {
+  from { left: 24%; }
+  to { left: 76%; }
+}
+@keyframes otto-pet-travel-left {
+  from { left: 76%; }
+  to { left: 24%; }
+}
+
 /* —— 顶部 tab 条 —— */
 .otto-right-panel__tabs {
   display: flex;
@@ -3531,6 +3745,14 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-focus);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .otto-response-mark.is-active,
+  .otto-response-mark.is-active .otto-response-mark__ball,
+  .otto-pet-stage__motion {
+    animation: none !important;
+  }
+}
+
 
 
 
@@ -3761,6 +3983,9 @@ h6.otto-prose__h {
   gap: 7px;
 }
 .otto-hub__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 12px;
   border: 1px solid var(--otto-border-strong);
   border-radius: var(--otto-radius-pill);

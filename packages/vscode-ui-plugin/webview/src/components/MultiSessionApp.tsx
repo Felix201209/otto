@@ -2720,17 +2720,15 @@ User question: ${contentStr}`;
         </div>
 
         <div className="multi-session-app__header-right">
-          {/* 🎯 PPT 生成入口 —— 自定义模型下隐藏（依赖 DeepV 云服务） */}
-          {!isCustomModelOnlyMode && !selectedModelId?.startsWith('custom:') && (
-            <button
-              className="multi-session-app__manage-btn multi-session-app__ppt-btn"
-              onClick={() => setIsPPTGeneratorOpen(true)}
-              title={t('pptGenerator.buttonTooltip', {}, 'Generate PPT with AI')}
-              style={{ marginRight: '8px' }}
-            >
-              <PPTGeneratorIcon size={18} />
-            </button>
-          )}
+          {/* 🎯 PPT 生成入口：内容使用当前会话模型，文件始终在本地渲染 */}
+          <button
+            className="multi-session-app__manage-btn multi-session-app__ppt-btn"
+            onClick={() => setIsPPTGeneratorOpen(true)}
+            title={t('pptGenerator.buttonTooltip', {}, 'Generate PPT locally')}
+            style={{ marginRight: '8px' }}
+          >
+            <PPTGeneratorIcon size={18} />
+          </button>
           {/* 🎯 目标驱动模式入口 */}
           <button
             className="multi-session-app__manage-btn multi-session-app__goal-btn"
@@ -3129,4 +3127,3 @@ User question: ${contentStr}`;
     </div>
   );
 };
-

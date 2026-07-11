@@ -7,7 +7,7 @@
 /**
  * 单条消息渲染。spec §主聊天区：
  *   - 用户消息：右对齐 peach 气泡 + 时间 + amber 双勾已读回执；图片缩略图可点开放大。
- *   - Otto 回复：头像 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制 / 重新生成）。
+ *   - Otto 回复：副图标 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制 / 重新生成）。
  *
  * 动作行只保留复制与重新生成——这两个是真的落地功能；原先的赞/踩仅本地高亮、
  * 不落库不发帧、切会话即丢，是误导用户的假按钮，已移除。
@@ -18,8 +18,8 @@ import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { attachmentToDataUrl } from '../lib/image.js';
 import { ToolCallsCard, type RespondQuestionFn } from './ToolCalls.js';
+import { OttoSecondaryMark } from './OttoSecondaryMark.js';
 import {
-  OttoAvatar,
   IconCheckCheck,
   IconCheck,
   IconCopy,
@@ -200,12 +200,13 @@ function BotMessage({
 }: MessageProps): React.JSX.Element {
   const text = contentToText(message.content);
   const tools = message.associatedToolCalls ?? [];
+  const responding = Boolean(
+    message.isStreaming || message.isReasoning || message.isProcessingTools,
+  );
 
   return (
     <div className="otto-msg-bot">
-      <div className="otto-msg-bot__avatar">
-        <OttoAvatar size={30} />
-      </div>
+      <OttoSecondaryMark active={responding} />
       <div className="otto-msg-bot__body">
         <div className="otto-msg-bot__head">
           <span className="otto-msg-bot__name">Otto</span>
@@ -245,13 +246,11 @@ function BotMessage({
   );
 }
 
-/** 思考中指示：流式开始但首个 chunk 未到时显示三点跳动，替代空白正文。 */
+/** 首个 chunk 未到时只显示克制文案；动效由左侧回答标记承担。 */
 function TypingIndicator(): React.JSX.Element {
   return (
     <div className="otto-typing" role="status" aria-label="Otto 正在输入">
-      <span className="otto-typing__dot" />
-      <span className="otto-typing__dot" />
-      <span className="otto-typing__dot" />
+      正在组织回答…
     </div>
   );
 }

@@ -22,7 +22,7 @@
  * 且 import.meta.url 在 CJS 输出下会被 tsc 直接拒绝/TS1470）。__dirname 用 CJS 原生
  * 全局变量，不需要（也不能用）ESM 的 fileURLToPath(import.meta.url) 重建。
  *
- * ⚠️ otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
+ * 注意：otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
  * （会被编译成 require()，真机运行时抛 ERR_REQUIRE_ESM 崩溃）。DEFAULT_HOST/DEFAULT_PORT
  * 只是 CSP 兜底默认值的字面量，这里直接内联同样的值，避免为两个常量单独走一次
  * import()（server-manager.ts 已经承担了对 otto-server 真正需要的值的动态加载）。
@@ -60,6 +60,8 @@ import {
   readWorkLogEntries,
   summarizeWorkLog,
 } from './workLogData.js';
+import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voiceConfig.js';
+import { transcribeAudio } from './voiceService.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -140,6 +142,9 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  voiceGetConfig: 'otto:voice-get-config',
+  voiceSaveConfig: 'otto:voice-save-config',
+  voiceTranscribe: 'otto:voice-transcribe',
 } as const;
 
 /**
@@ -535,10 +540,14 @@ function applyCsp(): void {
     });
   });
 
-  // 一律拒绝 renderer 的权限请求（摄像头/麦克风/地理位置等都用不到）。
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) =>
-    cb(false),
-  );
+  // 仅放行本地 renderer 的音频录制；摄像头/地理位置等继续拒绝。
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+    const trusted = wc === mainWindow?.webContents;
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : [];
+    const wantsAudio = perm === 'media' && mediaTypes?.includes('audio');
+    const wantsVideo = perm === 'media' && mediaTypes?.includes('video');
+    cb(Boolean(trusted && wantsAudio && !wantsVideo));
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -571,6 +580,14 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
+  ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));
+  ipcMain.handle(IPC.voiceTranscribe, async (_e, bytes: unknown, mimeType: unknown) => {
+    if (!(bytes instanceof Uint8Array) || typeof mimeType !== 'string') {
+      throw new Error('语音数据格式不合法');
+    }
+    return transcribeAudio(bytes, mimeType, loadVoiceConfig());
+  });
   // renderer 经 preload 拉当前端点（连接前 / 重连时）。
   ipcMain.handle(IPC.getEndpoint, () => endpoint ?? null);
 
@@ -671,8 +688,8 @@ function registerIpc(): void {
   // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
   ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
     const emptyTabs = [
-      { id: 'leaderboard', label: '排行榜', icon: '🏆' },
-      { id: 'stars', label: '明星榜', icon: '🌟' },
+      { id: 'leaderboard', label: '排行榜', icon: '' },
+      { id: 'stars', label: '明星榜', icon: '' },
     ];
     try {
       const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
@@ -688,11 +705,11 @@ function registerIpc(): void {
       );
       const teamName = activeShares[0]?.teamName || '本小组';
 
-      const medals = ['🥇', '🥈', '🥉'];
+      const medals = ['1.', '2.', '3.'];
       const maxInstalls = Math.max(...activeShares.map((s) => s.installCount || 0), 1);
       const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
 
-      const lbLines: string[] = [`🏆 ${teamName} Skill 排行榜`, ''];
+      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
       const scored = activeShares
         .map((s) => {
           const ratingScore = ((s.rating || 0) / 5) * 100;
@@ -709,11 +726,11 @@ function registerIpc(): void {
 
       scored.forEach((item, i) => {
         const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const stars = '⭐'.repeat(Math.round(item.s.rating || 0));
+        const rating = item.s.rating ? `${item.s.rating.toFixed(1)}/5` : '暂无';
         lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
         lbLines.push(`   ${item.s.featureDescription || ''}`);
         lbLines.push(
-          `   ${item.s.sharedByName} | ${stars || '暂无'}(${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
+          `   ${item.s.sharedByName} | ${rating} (${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
         );
         lbLines.push('');
       });
@@ -731,7 +748,7 @@ function registerIpc(): void {
         contributorMap[key].installs += s.installCount || 0;
         contributorMap[key].skills.push(s.skillName);
       }
-      const sbLines: string[] = [`🌟 ${teamName} 贡献明星榜`, ''];
+      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
       Object.values(contributorMap)
         .sort((a, b) => b.installs - a.installs)
         .forEach((c, i) => {
@@ -786,12 +803,12 @@ function registerIpc(): void {
 
       const lines: string[] = ['部门共享 Skill 列表', ''];
       for (const s of active) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
         lines.push(`${s.skillName} (v${s.version || 1})`);
         lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
         lines.push(`  分享者：${s.sharedByName}`);
         lines.push(
-          `  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
         );
         if (s.note) lines.push(`  备注：${s.note}`);
         lines.push('');
@@ -825,12 +842,12 @@ function registerIpc(): void {
 
       const lines: string[] = ['公司 Skill 市场', ''];
       for (const s of market) {
-        const stars = '⭐'.repeat(Math.round(s.rating || 0));
+        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
         lines.push(`${s.skillName} (v${s.version || 1})`);
         lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
         lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
         lines.push(
-          `  评分：${stars || '暂无'} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
         );
         lines.push('');
       }

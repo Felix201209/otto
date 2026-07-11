@@ -17,11 +17,11 @@ describe('企业专家目录', () => {
     expect(EXPERTS).toHaveLength(8);
   });
 
-  it('id 唯一、emoji 唯一', () => {
+  it('id 唯一、生成图标唯一', () => {
     const ids = EXPERTS.map((e) => e.id);
-    const emojis = EXPERTS.map((e) => e.emoji);
+    const icons = EXPERTS.map((e) => e.icon);
     expect(new Set(ids).size).toBe(EXPERTS.length);
-    expect(new Set(emojis).size).toBe(EXPERTS.length);
+    expect(new Set(icons).size).toBe(EXPERTS.length);
   });
 
   it('每位专家必填字段齐备（名称/卖点/头像/主题色/技能/开场）', () => {
@@ -29,7 +29,7 @@ describe('企业专家目录', () => {
       expect(e.id).toMatch(/^[a-z0-9-]+$/);
       expect(e.name.trim().length).toBeGreaterThan(0);
       expect(e.tagline.trim().length).toBeGreaterThan(0);
-      expect(e.emoji.trim().length).toBeGreaterThan(0);
+      expect(e.icon).toMatch(/^expert-/);
       expect(e.accent).toMatch(/^#[0-9a-fA-F]{6}$/);
       expect(e.skills.length).toBeGreaterThanOrEqual(1);
       expect(e.kickoff.trim().length).toBeGreaterThan(0);

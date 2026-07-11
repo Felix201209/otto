@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import * as transport from '../transport.js';
 import type {
+  ToolCallStatus,
   OttoMessage,
   SessionSummary,
   ServerToClient,
@@ -213,6 +214,34 @@ function settleInFlight(state: OttoState, sessionId?: string): OttoState {
   return changed ? { ...state, messages } : state;
 }
 
+function isToolCallInFlight(status: ToolCallStatus): boolean {
+  return !['success', 'error', 'cancelled', 'background_running'].includes(
+    status as string,
+  );
+}
+
+/** 取消终态把仍在执行/等待的卡片一并收口，避免按钮恢复后卡片继续永久转圈。 */
+function cancelInFlightToolCalls(
+  toolCalls: OttoMessage['associatedToolCalls'],
+): OttoMessage['associatedToolCalls'] {
+  return toolCalls?.map((toolCall) => {
+    if (!isToolCallInFlight(toolCall.status)) return toolCall;
+    return {
+      ...toolCall,
+      status: 'cancelled' as ToolCallStatus,
+      result: {
+        success: false,
+        error: '用户已停止生成',
+        executionTime: toolCall.startTime
+          ? Math.max(0, Date.now() - toolCall.startTime)
+          : 0,
+        toolName: toolCall.toolName,
+      },
+      endTime: Date.now(),
+    };
+  });
+}
+
 function reducer(state: OttoState, action: Action): OttoState {
   switch (action.kind) {
     case 'connection':
@@ -296,7 +325,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     }
 
     case 'chat_complete': {
-      const { sessionId, messageId, tokenUsage, text } = frame.payload;
+      const { sessionId, messageId, tokenUsage, text, finishReason } = frame.payload;
       return patchMessage(state, sessionId, messageId, (m) => ({
         ...m,
         // 帧带定稿全文时用它覆盖本地 content 对账：切走（退订）期间丢失的
@@ -307,6 +336,16 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
             : m.content,
         isStreaming: false,
         isReasoning: false,
+        // 工具阶段取消时，上一轮 chat_complete 已留下 isProcessingTools=true；
+        // 取消终态必须一并清掉，否则 busy 会让停止按钮永久卡住。
+        isProcessingTools:
+          finishReason === 'cancelled' ? false : m.isProcessingTools,
+        toolsCompleted:
+          finishReason === 'cancelled' ? true : m.toolsCompleted,
+        associatedToolCalls:
+          finishReason === 'cancelled'
+            ? cancelInFlightToolCalls(m.associatedToolCalls)
+            : m.associatedToolCalls,
         tokenUsage: tokenUsage ?? m.tokenUsage,
       }));
     }
@@ -323,17 +362,26 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return patchMessage(state, sessionId, targetId, (m) => ({
         ...m,
         associatedToolCalls: toolCalls,
-        isProcessingTools: toolCalls.some(
-          (t) => t.status === 'executing' || t.status === 'scheduled',
+        isProcessingTools: toolCalls.some((toolCall) =>
+          isToolCallInFlight(toolCall.status),
+        ),
+        toolsCompleted: !toolCalls.some((toolCall) =>
+          isToolCallInFlight(toolCall.status),
         ),
       }));
     }
 
     case 'session_status': {
       const { sessionId, status } = frame.payload;
-      const s = state.sessions[sessionId];
-      if (!s) return state;
-      return upsertSession(state, { ...s, status });
+      // session_status 是全局运行态的权威源。idle/error 到达后即使 history 带着
+      // 旧 transient 标记，也必须收口，否则无任务可取消时停止键仍会复活。
+      const nextState =
+        status === 'idle' || status === 'error'
+          ? settleInFlight(state, sessionId)
+          : state;
+      const s = nextState.sessions[sessionId];
+      if (!s) return nextState;
+      return upsertSession(nextState, { ...s, status });
     }
 
     case 'models_list':
@@ -379,7 +427,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
         content: [
           {
             type: 'text',
-            value: `${echo}\n\n${ok ? '' : '⚠️ '}${markdown}`,
+            value: `${echo}\n\n${ok ? '' : '**警告：** '}${markdown}`,
           },
         ],
         timestamp: Date.now(),

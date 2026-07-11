@@ -26,6 +26,7 @@ export async function executeToolCall(
   toolCallRequest: ToolCallRequestInfo,
   toolRegistry: ToolRegistry,
   abortSignal?: AbortSignal,
+  options?: { explicitlyApproved?: boolean },
 ): Promise<ToolCallResponseInfo> {
   const tool = toolRegistry.getTool(toolCallRequest.name);
 
@@ -79,7 +80,11 @@ export async function executeToolCall(
     if (confirmationDetails) {
 
       // For 'exec' type with warning = dangerous command
-      if (confirmationDetails.type === 'exec' && (confirmationDetails as any).warning) {
+      if (
+        confirmationDetails.type === 'exec' &&
+        (confirmationDetails as any).warning &&
+        !options?.explicitlyApproved
+      ) {
         const rootCmd = (confirmationDetails as any).rootCommand;
         const warningMsg = (confirmationDetails as any).warning;
         const error = new Error(
