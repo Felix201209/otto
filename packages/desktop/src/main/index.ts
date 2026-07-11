@@ -45,11 +45,40 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
-  FeishuConfigPublic,
-  FeishuConfigSaveRequest,
   HealthInfo,
   ServerEndpoint,
 } from 'otto-server';
+
+/** 脱敏后的飞书配置视图（不含 secret）。 */
+interface FeishuConfigPublic {
+  appId: string;
+  appSecret: string;
+  verificationToken: string | null;
+  encryptKey: string | null;
+}
+
+/** 客户端保存飞书配置的请求体。 */
+interface FeishuConfigSaveRequest {
+  appId: string;
+  appSecret: string;
+  verificationToken?: string | null;
+  encryptKey?: string | null;
+}
+
+interface FeishuHealthStatusLocal {
+  running: boolean;
+  forwarding: boolean;
+  configured: boolean;
+  lastEventAt: number | null;
+  reconnectAttempts: number;
+}
+
+interface FeishuStatusInfo {
+  enabled: boolean;
+  connected: boolean;
+  status?: FeishuHealthStatusLocal;
+}
+
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
@@ -179,7 +208,7 @@ const FEISHU_OP_TIMEOUT_MS = 5000;
  */
 function postServerEndpoint(
   routePath: string,
-): Promise<{ ok: boolean; data: HealthInfo['feishu']['status'] | null; error: string | null } | null> {
+): Promise<{ ok: boolean; data: any; error: string | null } | null> {
   const ep = endpoint;
   if (!ep) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -202,7 +231,7 @@ function postServerEndpoint(
             resolve(
               JSON.parse(body) as {
                 ok: boolean;
-                data: HealthInfo['feishu']['status'] | null;
+                data: any;
                 error: string | null;
               },
             );
@@ -323,8 +352,8 @@ function fetchServerHealth(): Promise<HealthInfo | null> {
 }
 
 /** 把 /health 的飞书守护状态渲染成给用户看的一句人话（状态必须诚实）。 */
-function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
-  const st = feishu.status;
+function renderFeishuStatusText(feishu: any): string {
+  const st = (feishu as any).status || feishu;
   if (!feishu.enabled || !st) {
     return (
       '本地 server 未启用飞书网关（未检测到飞书凭证）。\n' +

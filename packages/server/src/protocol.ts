@@ -931,7 +931,32 @@ export interface HealthInfo {
   protocolVersion: string;
   uptimeMs: number;
   sessionCount: number;
-  feishu: { enabled: boolean; connected: boolean };
+  feishu: { enabled: boolean; connected: boolean; status?: FeishuHealthStatus };
+}
+
+/** 飞书网关健康状况（供桌面端渲染状态徽章）。 */
+export interface FeishuHealthStatus {
+  running: boolean;
+  forwarding: boolean;
+  configured: boolean;
+  lastEventAt: number | null;
+  reconnectAttempts: number;
+}
+
+/** 脱敏后的飞书配置视图（不含 secret）。 */
+export interface FeishuConfigPublic {
+  appId: string;
+  appSecret: string;
+  verificationToken: string | null;
+  encryptKey: string | null;
+}
+
+/** 客户端保存飞书配置的请求体。 */
+export interface FeishuConfigSaveRequest {
+  appId: string;
+  appSecret: string;
+  verificationToken?: string | null;
+  encryptKey?: string | null;
 }
 
 /**

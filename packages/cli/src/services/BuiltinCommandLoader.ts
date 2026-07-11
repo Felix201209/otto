@@ -45,6 +45,8 @@ import { agentStyleCommand } from '../ui/commands/agentStyleCommand.js';
 import { thinkingCommand } from '../ui/commands/thinkingCommand.js';
 import { trimSpacesCommand } from '../ui/commands/trimSpacesCommand.js';
 import { sessionCommand } from '../ui/commands/sessionCommand.js';
+import { sessionEnhanceCommands } from '../ui/commands/sessionEnhance.js';
+import { insertCommand } from '../ui/commands/insertCommand.js';
 import { mcpCommand } from '../ui/commands/mcpCommand.js';
 import { planCommand } from '../ui/commands/planCommand.js';
 import { accountCommand } from '../ui/commands/accountCommand.js';
@@ -117,6 +119,9 @@ export class BuiltinCommandLoader implements ICommandLoader {
       quitCommand,
       refineCommand,
       restoreCommand(this.config),
+      // 注入 Session 增强子命令（merge/split/stats/archive/bridge/cleanup）
+      injectSubCommands(sessionCommand, sessionEnhanceCommands),
+      insertCommand,
       sessionCommand,
       skillCommand,
       pluginCommand,
@@ -144,4 +149,18 @@ export class BuiltinCommandLoader implements ICommandLoader {
 
     return allDefinitions.filter((cmd): cmd is SlashCommand => cmd !== null);
   }
+}
+
+/**
+ * 将一组子命令注入到母命令中。
+ * 用于在 sessionCommand 等已有命令中动态添加子命令。
+ */
+function injectSubCommands(
+  parent: SlashCommand,
+  subCommands: SlashCommand[],
+): SlashCommand {
+  return {
+    ...parent,
+    subCommands: [...(parent.subCommands || []), ...subCommands],
+  };
 }
