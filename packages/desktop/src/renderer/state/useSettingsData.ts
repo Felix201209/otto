@@ -39,6 +39,8 @@ import type {
   ExtensionSummary,
   IdeConnectionStatusValue,
   ServerToClient,
+  StatsSnapshot,
+  KnowledgeItem,
 } from 'otto-server';
 
 export interface SettingsDataState {
@@ -58,6 +60,8 @@ export interface SettingsDataState {
   workflows: WorkflowSummary[];
   extensions: ExtensionSummary[];
   ideStatus: { status: IdeConnectionStatusValue; details?: string } | null;
+  statsSnapshot: StatsSnapshot | null;
+  knowledgeEntries: KnowledgeItem[];
   lastError: string | null;
 }
 
@@ -77,6 +81,8 @@ const initialState: SettingsDataState = {
   workflows: [],
   extensions: [],
   ideStatus: null,
+  statsSnapshot: null,
+  knowledgeEntries: [],
   lastError: null,
 };
 
@@ -131,6 +137,22 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
           return { ...state, extensions: frame.payload.extensions };
         case 'ide_status':
           return { ...state, ideStatus: frame.payload };
+        case 'stats_snapshot':
+          return { ...state, statsSnapshot: frame.payload };
+        case 'knowledge_data':
+          return { ...state, knowledgeEntries: frame.payload.entries };
+        case 'knowledge_added':
+          return {
+            ...state,
+            knowledgeEntries: [...state.knowledgeEntries, frame.payload.entry],
+          };
+        case 'knowledge_removed':
+          return {
+            ...state,
+            knowledgeEntries: state.knowledgeEntries.filter(
+              (e) => e.id !== frame.payload.id,
+            ),
+          };
         case 'error':
           // 仅拦截本面板相关的错误码，避免抢主聊天 toast 的错误展示。
           if (
@@ -193,6 +215,11 @@ export interface SettingsDataActions {
   clearExportMessage(): void;
   refreshWorkflows(): void;
   refreshExtensions(): void;
+  refreshStats(): void;
+  refreshKnowledge(): void;
+  searchKnowledge(query: string, category?: string): void;
+  addKnowledge(content: string, category?: string, tags?: string[]): void;
+  removeKnowledge(id: string): void;
   refreshIdeStatus(): void;
   clearError(): void;
 }
@@ -318,6 +345,26 @@ export function useSettingsData(): UseSettingsData {
     transport.send({ type: 'get_ide_status', payload: {} });
   }, []);
 
+  const refreshStats = useCallback(() => {
+    transport.send({ type: 'get_stats', payload: {} });
+  }, []);
+
+  const refreshKnowledge = useCallback(() => {
+    transport.send({ type: 'get_knowledge', payload: {} });
+  }, []);
+
+  const searchKnowledge = useCallback((query: string, category?: string) => {
+    transport.send({ type: 'search_knowledge', payload: { query, category } });
+  }, []);
+
+  const addKnowledge = useCallback((content: string, category?: string, tags?: string[]) => {
+    transport.send({ type: 'add_knowledge', payload: { content, category, tags } });
+  }, []);
+
+  const removeKnowledge = useCallback((id: string) => {
+    transport.send({ type: 'remove_knowledge', payload: { id } });
+  }, []);
+
   const clearError = useCallback(() => {
     dispatch({ kind: 'clear_error' });
   }, []);
@@ -343,6 +390,11 @@ export function useSettingsData(): UseSettingsData {
       refreshWorkflows,
       refreshExtensions,
       refreshIdeStatus,
+      refreshStats,
+      refreshKnowledge,
+      searchKnowledge,
+      addKnowledge,
+      removeKnowledge,
       clearError,
     },
   };

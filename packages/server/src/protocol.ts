@@ -328,12 +328,6 @@ export type SetModelMsg = Envelope<
   { sessionId: string; model: string }
 >;
 
-/** 设置执行授权。session 仅当前会话；all 同步所有会话并作为后续会话默认值。 */
-export type SetAuthorizationModeMsg = Envelope<
-  'set_authorization_mode',
-  { sessionId: string; mode: 'manual' | 'auto'; scope: 'session' | 'all' }
->;
-
 /** 拉取可用模型列表（BYO-key 自定义模型）。 */
 export type GetModelsMsg = Envelope<'get_models', Record<string, never>>;
 
@@ -364,9 +358,6 @@ export type RenameSessionMsg = Envelope<
  * server 收到后：校验 → 复用 CLI 同格式的原子写盘 → 成功广播最新 `models_list`；
  * 失败广播 `error`（code:'save_failed'）。
  */
-/** 删除自定义模型：id 为 models_list 里的 ModelInfo.id（generateCustomModelId 结果）。 */
-export type DeleteCustomModelMsg = Envelope<'delete_custom_model', { id: string }>;
-
 export type SaveCustomModelMsg = Envelope<
   'save_custom_model',
   {
@@ -387,8 +378,6 @@ export type SaveCustomModelMsg = Envelope<
     maxTokens?: number;
     /** 是否启用（缺省 true）。 */
     enabled?: boolean;
-    /** 编辑模式：要被原子替换的旧 ModelInfo.id。 */
-    replaceId?: string;
     /** 写入成功后是否把该模型设为当前会话模型（保留给前端，server 仅写盘+广播）。 */
     makeActive?: boolean;
   }
@@ -433,6 +422,8 @@ export type GetContextBreakdownMsg = Envelope<
   { sessionId: string }
 >;
 
+export type GetStatsMsg = Envelope<'get_stats', Record<string, never>>;
+
 export type RunDoctorMsg = Envelope<'run_doctor', Record<string, never>>;
 
 export type GetTodosMsg = Envelope<'get_todos', Record<string, never>>;
@@ -471,15 +462,8 @@ export type GetWorkflowsMsg = Envelope<'get_workflows', Record<string, never>>;
 /** 拉取已安装扩展列表（对齐 CLI /extensions list）。 */
 export type GetExtensionsMsg = Envelope<'get_extensions', Record<string, never>>;
 
-/** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
-export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
 
 // ── P3：斜杠命令（桌面端命令面板 ↔ server 命令执行层）────────────────────
-//
-// 桌面端命令面板把「server 可执行」的命令经 run_slash_command 交给 server 的
-// 命令注册表（src/commands/）执行，结果以 slash_command_result 的 markdown 回来，
-// 渲染成聊天区的一条系统气泡。命令清单由 list_slash_commands / slash_commands_list
-// 下发（单一事实源在 server，renderer 只维护本地面板类命令，避免两处清单漂移）。
 
 /**
  * 执行一条 server 侧斜杠命令。
@@ -491,11 +475,25 @@ export type RunSlashCommandMsg = Envelope<
   { sessionId: string; name: string; args?: string }
 >;
 
-/** 拉取 server 侧可执行的斜杠命令清单（renderer 面板据此合并展示）。 */
+/** 拉取 server 侧可执行的斜杠命令清单。 */
 export type ListSlashCommandsMsg = Envelope<
   'list_slash_commands',
   Record<string, never>
 >;
+
+/** 拉取个人知识库全部条目（对齐 CLI knowledge_base list）。 */
+export type GetKnowledgeMsg = Envelope<'get_knowledge', { limit?: number }>;
+
+/** 在个人知识库中检索。 */
+export type SearchKnowledgeMsg = Envelope<'search_knowledge', { query: string; category?: string }>;
+
+/** 向个人知识库添加一条知识。 */
+export type AddKnowledgeMsg = Envelope<'add_knowledge', { content: string; category?: string; tags?: string[] }>;
+
+/** 从个人知识库删除一条知识。 */
+export type RemoveKnowledgeMsg = Envelope<'remove_knowledge', { id: string }>;
+/** 拉取 IDE 伴生（VS Code companion）连接状态（对齐 CLI /ide status）。 */
+export type GetIdeStatusMsg = Envelope<'get_ide_status', Record<string, never>>;
 
 export type ClientToServer =
   | HelloMsg
@@ -508,10 +506,8 @@ export type ClientToServer =
   | ToolConfirmationResponseMsg
   | CancelMsg
   | SetModelMsg
-  | SetAuthorizationModeMsg
   | GetModelsMsg
   | SaveCustomModelMsg
-  | DeleteCustomModelMsg
   | DeleteSessionMsg
   | RenameSessionMsg
   | GetSettingsMsg
@@ -520,6 +516,7 @@ export type ClientToServer =
   | McpAddMsg
   | McpRemoveMsg
   | GetContextBreakdownMsg
+  | GetStatsMsg
   | RunDoctorMsg
   | GetTodosMsg
   | GetMemoryMsg
@@ -531,6 +528,10 @@ export type ClientToServer =
   | GetWorkflowsMsg
   | GetExtensionsMsg
   | GetIdeStatusMsg
+  | GetKnowledgeMsg
+  | SearchKnowledgeMsg
+  | AddKnowledgeMsg
+  | RemoveKnowledgeMsg
   | RunSlashCommandMsg
   | ListSlashCommandsMsg;
 
@@ -538,6 +539,57 @@ export type ClientToServerType = ClientToServer['type'];
 
 /** 会话标题最大长度（server 兜底截断，防超长标题撑爆列表 / 内存）。 */
 export const SESSION_TITLE_MAX_LEN = 120;
+
+
+/** 个人知识库条目（从 core LocalKnowledgeStore 透传）。 */
+export interface KnowledgeItem {
+  id: string;
+  category: string;
+  content: string;
+  tags: string[];
+  createdAt: string;
+}
+
+/** 知识库列表 / 检索结果（S→C）。 */
+export type KnowledgeDataMsg = Envelope<'knowledge_data', { entries: KnowledgeItem[]; action: 'list' | 'search'; query?: string }>;
+
+/** 单条知识添加成功（S→C）。 */
+export type KnowledgeAddedMsg = Envelope<'knowledge_added', { entry: KnowledgeItem }>;
+
+/** 单条知识删除成功（S→C）。 */
+export type KnowledgeRemovedMsg = Envelope<'knowledge_removed', { id: string }>;
+
+/** 知识操作错误（S→C）：统一走 error 帧，code='knowledge_error'。 */
+
+// ── 斜杠命令 ────────────────────────────────────────────
+
+export interface SlashCommandInfo {
+  name: string;
+  description: string;
+  /** 用法提示（含子命令/参数形态），如 'kb add|search|list|remove …'。 */
+  usage?: string;
+}
+
+/** server 侧可执行命令清单（list_slash_commands 回包）。 */
+export type SlashCommandsListMsg = Envelope<
+  'slash_commands_list',
+  { commands: SlashCommandInfo[] }
+>;
+
+/**
+ * 一条 server 侧命令的执行结果（S→C）。
+ * 注意：命令结果**不落库**——它是即时查询回执，不属于会话内容。
+ */
+export type SlashCommandResultMsg = Envelope<
+  'slash_command_result',
+  {
+    sessionId: string;
+    name: string;
+    args: string;
+    ok: boolean;
+    markdown: string;
+  }
+>;
 
 // ============================================================================
 // 4. Server → Client 帧（入站，server 广播）
@@ -642,12 +694,6 @@ export interface ModelInfo {
   id: string;
   displayName: string;
   provider: string;
-  /** 接入端点（可选）：UI 据域名识别真实厂商（provider 只是协议名）。 */
-  baseUrl?: string;
-  /** 上游实际模型 id（非敏感，用于编辑表单预填）。 */
-  modelId?: string;
-  /** 上下文窗口大小（非敏感，用于编辑表单预填）。 */
-  maxTokens?: number;
   enabled?: boolean;
 }
 
@@ -701,6 +747,35 @@ export interface ContextBreakdown {
 }
 
 export type ContextBreakdownMsg = Envelope<'context_breakdown', ContextBreakdown>;
+
+/** 用量统计快照（对齐 CLI /stats，按模型/工具聚合）。 */
+export interface StatsSnapshot {
+  models: Record<
+    string,
+    {
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }
+  >;
+  tools: {
+    totalCalls: number;
+    totalSuccess: number;
+    totalFail: number;
+    byName: Record<string, { count: number; success: number; fail: number }>;
+  };
+  /** 会话管理器概览（可选——session 管理器未初始化时缺省）。 */
+  sessions?: {
+    total: number;
+    active: number;
+    idle: number;
+    archived: number;
+    frozen: number;
+  };
+}
+
+export type StatsSnapshotMsg = Envelope<'stats_snapshot', StatsSnapshot>;
 
 /** 单项依赖体检结果（对齐 core DoctorCheck）。 */
 export interface DoctorCheckInfo {
@@ -861,35 +936,6 @@ export type IdeStatusMsg = Envelope<
   { status: IdeConnectionStatusValue; details?: string }
 >;
 
-// ── P3：斜杠命令 回包 ──────────────────────────────────────────────────────
-
-/** 单条 server 侧斜杠命令的元信息（面板展示用）。 */
-export interface SlashCommandInfo {
-  /** 命令名（不含前导 `/`）。 */
-  name: string;
-  /** 一句话说明（面板右侧灰字）。 */
-  description: string;
-  /** 用法提示（含子命令/参数形态），如 'kb add|search|list|remove …'。 */
-  usage?: string;
-}
-
-/** server 侧可执行命令清单（list_slash_commands 回包）。 */
-export type SlashCommandsListMsg = Envelope<
-  'slash_commands_list',
-  { commands: SlashCommandInfo[] }
->;
-
-/**
- * 斜杠命令执行结果。markdown 渲染成聊天区的一条系统气泡；
- * ok=false 时 markdown 即人类可读的失败原因（渲染层可加警示样式）。
- * args 回显用户输入的参数（气泡标题里还原完整命令）。
- * 注意：命令结果**不落库**（详见 server handleRunSlashCommand 注释）。
- */
-export type SlashCommandResultMsg = Envelope<
-  'slash_command_result',
-  { sessionId: string; name: string; args?: string; ok: boolean; markdown: string }
->;
-
 export type ServerToClient =
   | WelcomeMsg
   | SessionsListMsg
@@ -908,6 +954,7 @@ export type ServerToClient =
   | SettingsMsg
   | McpServersMsg
   | ContextBreakdownMsg
+  | StatsSnapshotMsg
   | DoctorReportMsg
   | TodosListMsg
   | MemorySnapshotMsg
@@ -918,6 +965,9 @@ export type ServerToClient =
   | WorkflowsListMsg
   | ExtensionsListMsg
   | IdeStatusMsg
+  | KnowledgeDataMsg
+  | KnowledgeAddedMsg
+  | KnowledgeRemovedMsg
   | SlashCommandsListMsg
   | SlashCommandResultMsg;
 
@@ -934,66 +984,6 @@ export interface ApiResponse<T> {
   error: string | null;
 }
 
-/**
- * 飞书网关守护状态（/health 携带，桌面端徽标/CLI status 共用）。
- *
- * 为什么单独建结构而不只给 connected：断线守护（无限重连）意味着「未连接」
- * 细分为多种可对用户解释的状态——重连排程中 / 锁被别的进程拿着 / 未配置凭证。
- * 状态必须诚实：锁冲突时绝不谎报已连接，而是给出持有者 pid。
- */
-export interface FeishuHealthStatus {
-  /** 凭证已配置（未配置时网关不会启动，属用户未 setup 场景）。 */
-  configured: boolean;
-  /** 守护是否在运行（start 过且未被用户主动 stop）。 */
-  running: boolean;
-  /** WS 长连接当前是否就绪。 */
-  connected: boolean;
-  /** 正在建连/重连中（含 SDK 内部重连与 adapter 层退避排程）。 */
-  reconnecting: boolean;
-  /** 最近一次连接成功时间戳（ms）；从未成功为 null。 */
-  lastConnectedAt: number | null;
-  /** 最近一次断开时间戳（ms）；从未断开为 null。 */
-  lastDisconnectAt: number | null;
-  /** 最近一次断开原因（人话）；无为 null。 */
-  lastDisconnectReason: string | null;
-  /** 自上次成功以来 adapter 层已发起的重连尝试次数（成功归零）。 */
-  reconnectAttempts: number;
-  /** 下次重试时间戳（ms）；无排程为 null。 */
-  nextRetryAt: number | null;
-  /** 连接锁被另一进程持有时的持有者 pid；无冲突为 null。 */
-  lockHeldByOtherPid: number | null;
-}
-
-/**
- * 飞书凭证的对外脱敏视图（GET /feishu/config）。
- * appSecret 永不出现在任何响应里——客户端只需要知道「配没配」。
- */
-export interface FeishuConfigPublic {
-  /** 凭证文件存在且可解密。 */
-  configured: boolean;
-  appId?: string;
-  domain?: 'feishu' | 'lark';
-  botName?: string;
-  tenantName?: string;
-  /** Bot 拥有者（授权用户）的飞书 open_id。 */
-  ownerOpenId?: string;
-  /** 额外授权白名单人数（内容不透出，只报数量）。 */
-  allowlistCount?: number;
-  /** 凭证文件存在但解密/解析失败（需清除后重配）。 */
-  corrupted?: boolean;
-}
-
-/**
- * 保存飞书凭证请求体（POST /feishu/config）。
- * appSecret 可省略 = 保留盘上已有 secret 只改其他字段（改 App ID 时必须重填）。
- */
-export interface FeishuConfigSaveRequest {
-  appId: string;
-  appSecret?: string;
-  domain: 'feishu' | 'lark';
-  ownerOpenId?: string;
-}
-
 /** GET /health */
 export interface HealthInfo {
   status: 'ok';
@@ -1001,12 +991,39 @@ export interface HealthInfo {
   protocolVersion: string;
   uptimeMs: number;
   sessionCount: number;
-  feishu: {
-    enabled: boolean;
-    connected: boolean;
-    /** 守护详情（enableFeishu 且 registration 就绪时携带）。 */
-    status?: FeishuHealthStatus;
-  };
+  feishu: { enabled: boolean; connected: boolean; status?: FeishuHealthStatus };
+}
+
+/** 飞书网关健康状况（供桌面端渲染状态徽章）。 */
+export interface FeishuHealthStatus {
+  running: boolean;
+  forwarding?: boolean;
+  configured: boolean;
+  connected?: boolean;
+  reconnecting?: boolean;
+  nextRetryAt?: number | null;
+  lockHeldByOtherPid?: number | null;
+  lastEventAt?: number | null;
+  lastConnectedAt?: number | null;
+  lastDisconnectAt?: number | null;
+  lastDisconnectReason?: string | null;
+  reconnectAttempts: number;
+}
+
+/** 脱敏后的飞书配置视图（不含 secret）。 */
+export interface FeishuConfigPublic {
+  appId: string;
+  appSecret: string;
+  verificationToken: string | null;
+  encryptKey: string | null;
+}
+
+/** 客户端保存飞书配置的请求体。 */
+export interface FeishuConfigSaveRequest {
+  appId: string;
+  appSecret: string;
+  verificationToken?: string | null;
+  encryptKey?: string | null;
 }
 
 /**
@@ -1016,11 +1033,6 @@ export interface HealthInfo {
  *   GET  /sessions/:id/history        → ApiResponse<OttoMessage[]>
  *   POST /sessions                    → ApiResponse<SessionSummary>
  *   GET  /models                      → ApiResponse<ModelInfo[]>
- *   POST /feishu/start                → ApiResponse<FeishuHealthStatus>（运行期启动飞书守护）
- *   POST /feishu/stop                 → ApiResponse<FeishuHealthStatus>（运行期停止，之后不自动重连）
- *   GET  /feishu/config               → ApiResponse<FeishuConfigPublic>（脱敏凭证视图，绝不含 secret）
- *   POST /feishu/config               → ApiResponse<FeishuConfigPublic>（保存凭证并立即尝试启动守护）
- *   DELETE /feishu/config             → ApiResponse<FeishuConfigPublic>（停守护并清除凭证）
  *   WS   /ws                          → 双向 ClientToServer / ServerToClient
  */
 export const HTTP_ROUTES = {
@@ -1028,9 +1040,6 @@ export const HTTP_ROUTES = {
   sessions: '/sessions',
   sessionHistory: (id: string) => `/sessions/${id}/history`,
   models: '/models',
-  feishuStart: '/feishu/start',
-  feishuStop: '/feishu/stop',
-  feishuConfig: '/feishu/config',
   ws: '/ws',
 } as const;
 
@@ -1217,18 +1226,6 @@ export function validateClientPayload(msg: {
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
       return null;
     }
-    case 'set_authorization_mode': {
-      if (!isPlainObject(p)) return 'set_authorization_mode payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
-      if (p['mode'] !== 'manual' && p['mode'] !== 'auto') return 'mode 必须是 manual | auto';
-      if (p['scope'] !== 'session' && p['scope'] !== 'all') return 'scope 必须是 session | all';
-      return null;
-    }
-    case 'delete_custom_model': {
-      if (!isPlainObject(p)) return 'delete_custom_model payload 必须是对象';
-      if (!isNonEmptyString(p['id'])) return 'id 必须是非空字符串';
-      return null;
-    }
     case 'save_custom_model': {
       if (!isPlainObject(p)) return 'save_custom_model payload 必须是对象';
       if (!isNonEmptyString(p['provider'])) return 'provider 必须是非空字符串';
@@ -1250,14 +1247,13 @@ export function validateClientPayload(msg: {
         return 'maxTokens 必须是数字';
       if (p['enabled'] !== undefined && typeof p['enabled'] !== 'boolean')
         return 'enabled 必须是布尔';
-      if (p['replaceId'] !== undefined && !isNonEmptyString(p['replaceId']))
-        return 'replaceId 必须是非空字符串';
       if (p['makeActive'] !== undefined && typeof p['makeActive'] !== 'boolean')
         return 'makeActive 必须是布尔';
       return null;
     }
     case 'get_settings':
     case 'mcp_list':
+    case 'get_stats':
     case 'run_doctor':
     case 'get_todos':
     case 'get_memory':
@@ -1265,16 +1261,13 @@ export function validateClientPayload(msg: {
     case 'get_workflows':
     case 'get_extensions':
     case 'get_ide_status':
+    case 'get_knowledge':
+    case 'search_knowledge':
+    case 'add_knowledge':
+    case 'remove_knowledge':
+    case 'run_slash_command':
     case 'list_slash_commands':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
-    case 'run_slash_command': {
-      if (!isPlainObject(p)) return 'run_slash_command payload 必须是对象';
-      if (!isNonEmptyString(p['sessionId'])) return 'sessionId 必须是非空字符串';
-      if (!isNonEmptyString(p['name'])) return 'name 必须是非空字符串';
-      if (p['args'] !== undefined && typeof p['args'] !== 'string')
-        return 'args 必须是字符串';
-      return null;
-    }
     case 'set_setting': {
       if (!isPlainObject(p)) return 'set_setting payload 必须是对象';
       const key = p['key'];
