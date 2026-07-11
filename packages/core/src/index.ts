@@ -189,6 +189,38 @@ export * from './tools/todo-store.js';
 // PPT tools
 export * from './tools/ppt/index.js';
 
+// Session 处理
+export {
+  OttoSessionManager,
+  getSessionManager,
+} from './sessions/index.js';
+export type {
+  SessionMeta,
+  SessionStatus,
+  SplitStrategy,
+  MergeStrategy as MergeSessionStrategy,
+  SessionRoutingRule,
+  ContextBridge,
+  SessionManagerConfig,
+} from './sessions/index.js';
+
+// 任务插入引擎
+export * from './insertion/index.js';
+
+// 记忆自动合并分割
+export type {
+  MemoryEntry,
+  MergeSuggestion,
+  SplitSuggestion,
+  MemoryCompressionResult,
+  MemoryStats,
+  AutoMemoryEngineConfig,
+} from './memory/autoMerge.js';
+export {
+  AutoMemoryEngine,
+  getAutoMemoryEngine,
+} from './memory/autoMerge.js';
+
 // Otto Enterprise 能力工具
 export * from './tools/desktop-automation.js';
 export * from './tools/convert-document.js';
