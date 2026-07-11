@@ -7,7 +7,7 @@
 /**
  * Otto Desktop 交付包聚合 + 自动发布脚本（Issue #8）。
  *
- * 产出双平台安装包和更新清单，并自动发布到 GitHub Releases。
+ * 产出 macOS 双架构与 Windows x64 安装包和更新清单，并可发布到 GitHub Releases。
  *
  * 用法：
  *   node scripts/make-delivery-zip.mjs                  # 仅聚合
@@ -18,6 +18,7 @@
  * 产物（release/ 目录）：
  *   Otto-<version>-arm64.dmg          — Mac ARM64 安装包
  *   Otto-<version>-x64.dmg            — Mac x86_64 安装包
+ *   Otto-Setup-<version>-win-x64.exe  — Windows x64 安装包
  *   Otto-<version>-arm64.dmg.blockmap — Mac ARM64 增量更新块图
  *   Otto-<version>-x64.dmg.blockmap   — Mac x86_64 增量更新块图
  *   latest.json                       — 更新清单（sha256 + URL）
@@ -80,16 +81,19 @@ async function build() {
 
   // mac: arm64 + x64
   log('BUILD', '构建 Mac arm64...');
-  execFileSync('npx', ['electron-builder', '--mac', '--arm64', 'dmg'], {
+  execFileSync('npx', ['electron-builder', '--mac', 'dmg', '--arm64'], {
     cwd: DESKTOP_DIR,
     stdio: 'inherit',
   });
 
   log('BUILD', '构建 Mac x64...');
-  execFileSync('npx', ['electron-builder', '--mac', '--x64', 'dmg'], {
+  execFileSync('npx', ['electron-builder', '--mac', 'dmg', '--x64'], {
     cwd: DESKTOP_DIR,
     stdio: 'inherit',
   });
+
+  log('BUILD', '构建 Windows x64...');
+  execFileSync('npm', ['run', 'dist:win'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
 
   log('BUILD', '全部平台构建完成');
 }
@@ -104,6 +108,7 @@ function checkArtifacts() {
     `Otto-${VERSION}-arm64.dmg.blockmap`,
     `Otto-${VERSION}-x64.dmg`,
     `Otto-${VERSION}-x64.dmg.blockmap`,
+    `Otto-Setup-${VERSION}-win-x64.exe`,
   ];
 
   for (const name of expected) {
@@ -114,8 +119,8 @@ function checkArtifacts() {
       process.exit(1);
     }
     const size = statSync(p).size;
-    if (size < 1024 * 1024) {
-      // DMG 至少应 > 1MB
+    const minimumSize = name.endsWith('.blockmap') ? 1024 : 1024 * 1024;
+    if (size < minimumSize) {
       console.error(`[FAIL] ${name} 体积异常小: ${size} bytes`);
       process.exit(1);
     }
@@ -146,6 +151,7 @@ async function makeLatestJson() {
 
   const macArm64 = path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`);
   const macX64 = path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`);
+  const winX64 = path.join(RELEASE_DIR, `Otto-Setup-${VERSION}-win-x64.exe`);
 
   const manifest = {
     version: VERSION,
@@ -163,6 +169,12 @@ async function makeLatestJson() {
         url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-${VERSION}-x64.dmg`,
         size: statSync(macX64).size,
         sha256: await sha256(macX64),
+      },
+      'win-x64': {
+        name: `Otto-Setup-${VERSION}-win-x64.exe`,
+        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-Setup-${VERSION}-win-x64.exe`,
+        size: statSync(winX64).size,
+        sha256: await sha256(winX64),
       },
     },
   };
@@ -223,7 +235,7 @@ async function publishToGithub() {
       body: JSON.stringify({
         tag_name: TAG,
         name: `Otto Desktop v${VERSION}`,
-        body: `## Otto Desktop v${VERSION}\n\n### 更新内容\n\n${logOutput}\n\n### 安装说明\n\n- Mac ARM64: \`Otto-${VERSION}-arm64.dmg\`\n- Mac x64: \`Otto-${VERSION}-x64.dmg\`\n\n打开 DMG 后将 Otto.app 拖入 Applications 文件夹。首次运行如提示「无法验证开发者」，右键 → 打开。`,
+        body: `## Otto Desktop v${VERSION}\n\n### 更新内容\n\n${logOutput}\n\n### 安装说明\n\n- Mac ARM64: \`Otto-${VERSION}-arm64.dmg\`\n- Mac x64: \`Otto-${VERSION}-x64.dmg\`\n- Windows x64: \`Otto-Setup-${VERSION}-win-x64.exe\`\n\nMac 打开 DMG 后将 Otto.app 拖入 Applications 文件夹；首次运行如提示「无法验证开发者」，右键 → 打开。Windows 运行安装器并按向导完成安装。`,
         draft: false,
         prerelease: false,
       }),
@@ -246,6 +258,8 @@ async function publishToGithub() {
     `Otto-${VERSION}-arm64.dmg.blockmap`,
     `Otto-${VERSION}-x64.dmg`,
     `Otto-${VERSION}-x64.dmg.blockmap`,
+    `Otto-Setup-${VERSION}-win-x64.exe`,
+    `Otto-Setup-${VERSION}-win-x64.exe.blockmap`,
     'latest.json',
   ];
 
@@ -340,6 +354,7 @@ async function main() {
   console.log(`产物目录: ${RELEASE_DIR}`);
   console.log(`  Otto-${VERSION}-arm64.dmg`);
   console.log(`  Otto-${VERSION}-x64.dmg`);
+  console.log(`  Otto-Setup-${VERSION}-win-x64.exe`);
   console.log(`  latest.json`);
 }
 
