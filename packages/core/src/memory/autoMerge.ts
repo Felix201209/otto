@@ -11,6 +11,16 @@
  *   3. 记忆压缩: 对老旧记忆进行摘要压缩
  *   4. 记忆生命周期: 自动过期清理与归档
  *
+ * 数据源（v2 — 方案 B）：
+ *   本引擎不再依赖独立的 memory-index.json 作为唯一输入，而是直接扫描用户
+ *   已有的记忆存储文件：
+ *     - ~/.otto-user/memory/global.md   (save_memory 写入，## Otto Added Memories)
+ *     - ~/.otto-user/knowledge/entries.jsonl (knowledge_base 写入，JSONL)
+ *
+ *   每个维护周期重新扫描这些源文件，构建内存索引，检测跨源重复和相似条目，
+ *   执行合并/压缩/清理。源文件本身只读——合并结果写入 memory-index.json
+ *   并通过 global.md 的原地去重来保持数据源清洁。
+ *
  * 与现有 memoryProvider.ts 的关系:
  *   - memoryProvider.ts 是三层 CRUD 抽象
  *   - 本模块是在其之上的智能调度层，负责合并/分割/压缩决策
@@ -37,6 +47,8 @@ export interface MemoryEntry {
   sourceSessionId?: string;
   /** 来源 scope */
   scope: MemoryScope;
+  /** 来源文件类型 */
+  sourceType: 'global_md' | 'knowledge_jsonl' | 'merged';
   /** 访问次数 */
   accessCount: number;
   /** 最后访问时间 */
@@ -97,6 +109,8 @@ export interface MemoryStats {
 export interface AutoMemoryEngineConfig {
   /** 存储路径 */
   storageDir: string;
+  /** 知识库路径 */
+  knowledgeDir: string;
   /** 单个 scope 最大条目数（超过触发压缩） */
   maxEntriesPerScope: number;
   /** 相似度阈值（0-1），高于此值自动合并 */
@@ -111,6 +125,10 @@ export interface AutoMemoryEngineConfig {
   llmAssistedMerge: boolean;
   /** 压缩时间阈值（超过 N 天的条目被压缩） */
   compressAfterDays: number;
+  /** global.md 文件路径 */
+  globalMdPath: string;
+  /** knowledge entries.jsonl 路径 */
+  knowledgeJsonlPath: string;
 }
 
 /** 分词接口（用于 token 估算，可注入） */
@@ -122,8 +140,12 @@ export interface TokenEstimator {
 // 默认配置
 // ============================================================
 
+const MEMORY_ROOT = path.join(homedir(), '.otto-user', 'memory');
+const KNOWLEDGE_ROOT = path.join(homedir(), '.otto-user', 'knowledge');
+
 const DEFAULT_CONFIG: AutoMemoryEngineConfig = {
-  storageDir: path.join(homedir(), '.otto-user', 'memory'),
+  storageDir: MEMORY_ROOT,
+  knowledgeDir: KNOWLEDGE_ROOT,
   maxEntriesPerScope: 500,
   similarityThreshold: 0.75,
   autoMerge: true,
@@ -131,6 +153,8 @@ const DEFAULT_CONFIG: AutoMemoryEngineConfig = {
   maxAgeDays: 90,
   llmAssistedMerge: true,
   compressAfterDays: 30,
+  globalMdPath: path.join(MEMORY_ROOT, 'global.md'),
+  knowledgeJsonlPath: path.join(KNOWLEDGE_ROOT, 'entries.jsonl'),
 };
 
 // 简单 token 估算（中文约 1.5 chars/token，英文约 4 chars/token）
@@ -142,6 +166,8 @@ const DEFAULT_TOKEN_ESTIMATOR: TokenEstimator = {
   },
 };
 
+const MEMORY_SECTION_HEADER = '## Otto Added Memories';
+
 // ============================================================
 // 自动记忆合并/分割引擎
 // ============================================================
@@ -151,6 +177,8 @@ export class AutoMemoryEngine {
   private config: AutoMemoryEngineConfig;
   private tokenEstimator: TokenEstimator;
   private initialized = false;
+  /** 上次扫描时源文件的快照指纹（用于检测增量变更） */
+  private lastSourceFingerprints: Map<string, string> = new Map();
 
   constructor(
     config?: Partial<AutoMemoryEngineConfig>,
@@ -163,25 +191,235 @@ export class AutoMemoryEngine {
   // ── 初始化 ─────────────────────────────────────────────
 
   /**
-   * 从磁盘加载记忆条目。
+   * 扫描所有源文件，构建内存条目索引。
+   * 数据源：global.md (## Otto Added Memories) + entries.jsonl (JSONL)
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    try {
-      await fs.mkdir(this.config.storageDir, { recursive: true });
-      const indexPath = path.join(this.config.storageDir, 'memory-index.json');
-      const raw = await fs.readFile(indexPath, 'utf-8');
-      this.entries = JSON.parse(raw) as MemoryEntry[];
-      console.log(`[AutoMemory] Loaded ${this.entries.length} memory entries`);
-    } catch {
-      console.log('[AutoMemory] No existing memory index, starting fresh');
-    }
+    this.entries = await this.scanAllSources();
+    await this.persistIndex();
     this.initialized = true;
+    console.log(`[AutoMemory] Loaded ${this.entries.length} memory entries from source files`);
+  }
+
+  // ── 源文件扫描 ────────────────────────────────────────
+
+  /**
+   * 扫描所有数据源，解析为 MemoryEntry 数组。
+   */
+  private async scanAllSources(): Promise<MemoryEntry[]> {
+    const entries: MemoryEntry[] = [];
+
+    // 1. 扫描 global.md（save_memory 写入）
+    try {
+      const globalEntries = await this.parseGlobalMd();
+      entries.push(...globalEntries);
+      console.log(`[AutoMemory] Parsed ${globalEntries.length} entries from global.md`);
+    } catch (e) {
+      console.warn('[AutoMemory] Failed to parse global.md:', e);
+    }
+
+    // 2. 扫描 knowledge/entries.jsonl（knowledge_base 写入）
+    try {
+      const knowledgeEntries = await this.parseKnowledgeJsonl();
+      entries.push(...knowledgeEntries);
+      console.log(`[AutoMemory] Parsed ${knowledgeEntries.length} entries from entries.jsonl`);
+    } catch (e) {
+      console.warn('[AutoMemory] Failed to parse entries.jsonl:', e);
+    }
+
+    // 去重：同一文本可能同时出现在两个源中（取时间较新的）
+    const deduped = this.deduplicateCrossSource(entries);
+    if (deduped.length < entries.length) {
+      console.log(
+        `[AutoMemory] Cross-source dedup: ${entries.length - deduped.length} duplicates removed`,
+      );
+    }
+    return deduped;
+  }
+
+  /**
+   * 解析 global.md 中的记忆条目。
+   * 格式：
+   *   ## Otto Added Memories
+   *   - fact 1
+   *   - fact 2
+   */
+  private async parseGlobalMd(): Promise<MemoryEntry[]> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.config.globalMdPath, 'utf-8');
+    } catch {
+      return []; // 文件不存在
+    }
+
+    const entries: MemoryEntry[] = [];
+    const headerIdx = raw.indexOf(MEMORY_SECTION_HEADER);
+    if (headerIdx < 0) return entries;
+
+    // 取出 header 之后、下一个 ## section 之前的所有内容
+    const afterHeader = raw.substring(headerIdx + MEMORY_SECTION_HEADER.length);
+    const nextSection = afterHeader.indexOf('\n## ');
+    const sectionBody =
+      nextSection >= 0 ? afterHeader.substring(0, nextSection) : afterHeader;
+
+    // 解析每一行 "- fact" 条目
+    const lines = sectionBody.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('-')) continue;
+      const fact = trimmed.replace(/^-\s*/, '').trim();
+      if (!fact) continue;
+
+      // 去重：已有相同文本的条目则跳过
+      const dup = entries.find(e => e.text === fact);
+      if (dup) continue;
+
+      const topics = this.inferTopicsFromText(fact);
+      entries.push({
+        id: `md_${this.hashText(fact)}`,
+        text: fact,
+        timestamp: new Date().toISOString(), // global.md 无独立时间戳
+        topics,
+        scope: 'global',
+        sourceType: 'global_md',
+        accessCount: 0,
+        lastAccessedAt: new Date().toISOString(),
+        compressed: false,
+      });
+    }
+
+    return entries;
+  }
+
+  /**
+   * 解析 knowledge/entries.jsonl 中的知识条目。
+   */
+  private async parseKnowledgeJsonl(): Promise<MemoryEntry[]> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.config.knowledgeJsonlPath, 'utf-8');
+    } catch {
+      return []; // 文件不存在
+    }
+
+    const entries: MemoryEntry[] = [];
+    const lines = raw.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!parsed.id || !parsed.content) continue;
+        const topics = this.inferTopicsFromText(parsed.content);
+        if (parsed.category && !topics.includes(parsed.category)) {
+          topics.push(parsed.category);
+        }
+        entries.push({
+          id: `kb_${parsed.id}`,
+          text: parsed.content,
+          timestamp: parsed.createdAt || new Date().toISOString(),
+          topics,
+          scope: 'global',
+          sourceType: 'knowledge_jsonl',
+          accessCount: 0,
+          lastAccessedAt: parsed.createdAt || new Date().toISOString(),
+          compressed: false,
+        });
+      } catch {
+        // 坏行跳过
+      }
+    }
+    return entries;
+  }
+
+  /**
+   * 跨源去重：同一文本或高度相似的文本只保留一个。
+   */
+  private deduplicateCrossSource(entries: MemoryEntry[]): MemoryEntry[] {
+    const result: MemoryEntry[] = [];
+    for (const entry of entries) {
+      // 检查是否与已有条目高度相似
+      const similar = result.find(
+        r => this.computeSimilarity(r.text, entry.text) >= 0.85,
+      );
+      if (similar) {
+        // 保留时间较新的
+        if (new Date(entry.timestamp) > new Date(similar.timestamp)) {
+          result[result.indexOf(similar)] = entry;
+        }
+        continue;
+      }
+      result.push(entry);
+    }
+    return result;
+  }
+
+  // ── global.md 原地去重 ─────────────────────────────────
+
+  /**
+   * 对 global.md 执行原地去重：重写文件，移除重复记忆行。
+   * 这保证了源文件本身保持清洁，不无限膨胀。
+   */
+  async deduplicateGlobalMd(): Promise<{
+    before: number;
+    after: number;
+    removed: number;
+  }> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.config.globalMdPath, 'utf-8');
+    } catch {
+      return { before: 0, after: 0, removed: 0 };
+    }
+
+    const headerIdx = raw.indexOf(MEMORY_SECTION_HEADER);
+    if (headerIdx < 0) return { before: 0, after: 0, removed: 0 };
+
+    const before = raw.substring(0, headerIdx + MEMORY_SECTION_HEADER.length);
+    const afterHeader = raw.substring(headerIdx + MEMORY_SECTION_HEADER.length);
+    const nextSection = afterHeader.indexOf('\n## ');
+    const after = nextSection >= 0 ? afterHeader.substring(nextSection) : '';
+
+    // 提取所有 fact 行
+    const sectionBody =
+      nextSection >= 0 ? afterHeader.substring(0, nextSection) : afterHeader;
+    const lines = sectionBody.split('\n');
+    const facts: string[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('-')) continue;
+      const fact = trimmed.replace(/^-\s*/, '').trim();
+      if (!fact) continue;
+      if (!facts.includes(fact)) {
+        facts.push(fact);
+      }
+    }
+
+    const beforeCount = sectionBody.split('\n').filter(l => l.trim().startsWith('-')).length;
+    const afterCount = facts.length;
+
+    if (beforeCount === afterCount) {
+      return { before: beforeCount, after: afterCount, removed: 0 };
+    }
+
+    // 重写文件
+    const factLines = facts.map(f => `- ${f}\n`).join('');
+    const newContent = `${before}\n${factLines}${after}`;
+    await fs.writeFile(this.config.globalMdPath, newContent, 'utf-8');
+
+    console.log(
+      `[AutoMemory] Deduplicated global.md: ${beforeCount} → ${afterCount} facts (${beforeCount - afterCount} removed)`,
+    );
+    return { before: beforeCount, after: afterCount, removed: beforeCount - afterCount };
   }
 
   // ── 持久化 ─────────────────────────────────────────────
 
-  private async persist(): Promise<void> {
+  /**
+   * 持久化当前内存索引到 memory-index.json（归一化缓存）。
+   */
+  private async persistIndex(): Promise<void> {
     try {
       await fs.mkdir(this.config.storageDir, { recursive: true });
       const indexPath = path.join(this.config.storageDir, 'memory-index.json');
@@ -213,13 +451,14 @@ export class AutoMemoryEngine {
       timestamp: new Date().toISOString(),
       topics: opts.topics || [],
       scope: opts.scope,
+      sourceType: 'merged',
       sourceSessionId: opts.sourceSessionId,
       accessCount: 0,
       lastAccessedAt: new Date().toISOString(),
       compressed: false,
     };
     this.entries.push(entry);
-    await this.persist();
+    await this.persistIndex();
 
     // 自动合并检测
     if (this.config.autoMerge) {
@@ -230,19 +469,6 @@ export class AutoMemoryEngine {
         );
         for (const s of suggestions.slice(0, 3)) {
           await this.applyMerge(s);
-        }
-      }
-    }
-
-    // 自动分割检测
-    if (this.config.autoSplit) {
-      const splits = await this.detectSplitCandidates();
-      if (splits.length > 0) {
-        console.log(
-          `[AutoMemory] ${splits.length} split candidate(s) detected`,
-        );
-        for (const s of splits.slice(0, 2)) {
-          await this.applySplit(s);
         }
       }
     }
@@ -273,7 +499,6 @@ export class AutoMemoryEngine {
         filter!.keywords!.some(kw => e.text.includes(kw)),
       );
     }
-    // 按最后访问时间降序
     result.sort(
       (a, b) =>
         new Date(b.lastAccessedAt).getTime() -
@@ -287,18 +512,9 @@ export class AutoMemoryEngine {
 
   // ── 自动合并 ─────────────────────────────────────────
 
-  /**
-   * 检测可合并的记忆条目。
-   *
-   * 策略:
-   *   - 同一 scope、相同主题、文本相似度高
-   *   - 同一来源 session 的条目
-   *   - 时间上连续的同类条目
-   */
   async detectMergeCandidates(): Promise<MergeSuggestion[]> {
     const suggestions: MergeSuggestion[] = [];
 
-    // 按 scope + topics 分组
     const groups = new Map<string, MemoryEntry[]>();
     for (const entry of this.entries) {
       if (entry.compressed) continue;
@@ -312,8 +528,6 @@ export class AutoMemoryEngine {
 
     for (const [, group] of groups) {
       if (group.length < 2) continue;
-
-      // 在同主题组内计算两两相似度
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
           const a = group[i];
@@ -321,9 +535,7 @@ export class AutoMemoryEngine {
           const similarity = this.computeSimilarity(a.text, b.text);
 
           if (similarity >= this.config.similarityThreshold) {
-            // 检查是否已经建议合并过
             if (this.wasRecentlyMerged(a.id, b.id)) continue;
-
             const mergedText = this.mergeTexts(a.text, b.text);
             suggestions.push({
               entryIds: [a.id, b.id],
@@ -337,14 +549,10 @@ export class AutoMemoryEngine {
       }
     }
 
-    // 按置信度降序
     suggestions.sort((a, b) => b.confidence - a.confidence);
     return suggestions;
   }
 
-  /**
-   * 执行一次合并。
-   */
   async applyMerge(suggestion: MergeSuggestion): Promise<MemoryEntry | null> {
     if (suggestion.entryIds.length < 2) return null;
 
@@ -353,15 +561,13 @@ export class AutoMemoryEngine {
     );
     if (sourceEntries.length < 2) return null;
 
-    // 创建合并后的新条目
     const mergedEntry: MemoryEntry = {
       id: `mem_merged_${Date.now()}`,
       text: suggestion.mergedText,
       timestamp: new Date().toISOString(),
-      topics: [
-        ...new Set(sourceEntries.flatMap(e => e.topics)),
-      ],
+      topics: [...new Set(sourceEntries.flatMap(e => e.topics))],
       scope: sourceEntries[0].scope,
+      sourceType: 'merged',
       sourceSessionId: sourceEntries[0].sourceSessionId,
       accessCount: sourceEntries.reduce((sum, e) => sum + e.accessCount, 0),
       lastAccessedAt: new Date().toISOString(),
@@ -369,20 +575,15 @@ export class AutoMemoryEngine {
       compressedFrom: suggestion.entryIds,
     };
 
-    // 从源条目记录压缩来源
     for (const src of sourceEntries) {
       src.compressed = true;
       src.compressedFrom = [mergedEntry.id];
     }
 
     this.entries.push(mergedEntry);
-    await this.persist();
+    await this.persistIndex();
 
-    // 记录合并操作
-    const logPath = path.join(
-      this.config.storageDir,
-      'merge-history.jsonl',
-    );
+    const logPath = path.join(this.config.storageDir, 'merge-history.jsonl');
     const logEntry = JSON.stringify({
       type: 'merge',
       timestamp: mergedEntry.timestamp,
@@ -400,14 +601,6 @@ export class AutoMemoryEngine {
 
   // ── 自动分割 ─────────────────────────────────────────
 
-  /**
-   * 检测需要分割的记忆条目。
-   *
-   * 策略:
-   *   - 单条文本包含过多不同主题
-   *   - 单条文本 token 数超过阈值
-   *   - 用户合并过的记忆可能太宽泛
-   */
   async detectSplitCandidates(): Promise<SplitSuggestion[]> {
     const suggestions: SplitSuggestion[] = [];
     const MAX_TOKENS_PER_ENTRY = 2000;
@@ -415,9 +608,7 @@ export class AutoMemoryEngine {
     for (const entry of this.entries) {
       if (entry.compressed) continue;
       const tokens = this.tokenEstimator.estimate(entry.text);
-
       if (tokens > MAX_TOKENS_PER_ENTRY && entry.topics.length > 1) {
-        // 按主题分割
         const children = this.splitByTopics(entry.text, entry.topics);
         if (children.length > 1) {
           suggestions.push({
@@ -432,9 +623,6 @@ export class AutoMemoryEngine {
     return suggestions;
   }
 
-  /**
-   * 执行一次分割。
-   */
   async applySplit(suggestion: SplitSuggestion): Promise<MemoryEntry[]> {
     const sourceEntry = this.entries.find(
       e => e.id === suggestion.sourceEntryId,
@@ -449,6 +637,7 @@ export class AutoMemoryEngine {
         timestamp: sourceEntry.timestamp,
         topics: [child.topic],
         scope: sourceEntry.scope,
+        sourceType: 'merged',
         sourceSessionId: sourceEntry.sourceSessionId,
         accessCount: sourceEntry.accessCount,
         lastAccessedAt: new Date().toISOString(),
@@ -458,18 +647,13 @@ export class AutoMemoryEngine {
       children.push(childEntry);
     }
 
-    // 标记源条目为已压缩
     sourceEntry.compressed = true;
     sourceEntry.compressedFrom = children.map(c => c.id);
 
     this.entries.push(...children);
-    await this.persist();
+    await this.persistIndex();
 
-    // 记录分割操作
-    const logPath = path.join(
-      this.config.storageDir,
-      'split-history.jsonl',
-    );
+    const logPath = path.join(this.config.storageDir, 'split-history.jsonl');
     const logEntry = JSON.stringify({
       type: 'split',
       timestamp: new Date().toISOString(),
@@ -487,15 +671,10 @@ export class AutoMemoryEngine {
 
   // ── 记忆压缩 ─────────────────────────────────────────
 
-  /**
-   * 压缩老旧记忆。
-   * 对超过 compressAfterDays 的条目，按主题生成摘要。
-   */
   async compressOldMemories(): Promise<MemoryCompressionResult[]> {
     const results: MemoryCompressionResult[] = [];
     const cutoff = Date.now() - this.config.compressAfterDays * 24 * 60 * 60 * 1000;
 
-    // 按 scope+主题 分组
     const groups = new Map<string, MemoryEntry[]>();
     for (const entry of this.entries) {
       if (entry.compressed) continue;
@@ -509,7 +688,7 @@ export class AutoMemoryEngine {
     }
 
     for (const [, group] of groups) {
-      if (group.length < 3) continue; // 少于三条不压缩
+      if (group.length < 3) continue;
 
       const keywords = this.extractKeywords(group.map(e => e.text));
       const summary = this.generateSummary(group.map(e => e.text));
@@ -522,18 +701,17 @@ export class AutoMemoryEngine {
         compressedAt: new Date().toISOString(),
       };
 
-      // 标记原条目为已压缩
       for (const entry of group) {
         entry.compressed = true;
       }
 
-      // 创建压缩摘要条目
       const summaryEntry: MemoryEntry = {
         id: `mem_compressed_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         text: `[COMPRESSED] ${summary}`,
         timestamp: new Date().toISOString(),
         topics: [...new Set(group.flatMap(e => e.topics))],
         scope: group[0].scope,
+        sourceType: 'merged',
         accessCount: group.reduce((s, e) => s + e.accessCount, 0),
         lastAccessedAt: new Date().toISOString(),
         compressed: true,
@@ -545,29 +723,24 @@ export class AutoMemoryEngine {
     }
 
     if (results.length > 0) {
-      await this.persist();
+      await this.persistIndex();
       console.log(`[AutoMemory] Compressed ${results.length} memory group(s)`);
     }
 
     return results;
   }
 
-  /**
-   * 清理过期记忆。
-   */
   async cleanExpiredMemories(): Promise<number> {
     const cutoff = Date.now() - this.config.maxAgeDays * 24 * 60 * 60 * 1000;
     const before = this.entries.length;
     this.entries = this.entries.filter(e => {
-      // 保留未压缩的活跃条目
       if (!e.compressed) return true;
-      // 已压缩的条目超过 maxAgeDays 可以删除
       return new Date(e.timestamp).getTime() >= cutoff;
     });
     const after = this.entries.length;
     const removed = before - after;
     if (removed > 0) {
-      await this.persist();
+      await this.persistIndex();
       console.log(`[AutoMemory] Cleaned ${removed} expired entries`);
     }
     return removed;
@@ -577,14 +750,44 @@ export class AutoMemoryEngine {
 
   /**
    * 执行完整的记忆维护周期。
-   * 可由定时器或 idle 时调用。
+   * 1. 重新扫描源文件，增量合并新条目
+   * 2. 对 global.md 执行原地去重
+   * 3. 检测并合并相似条目
+   * 4. 压缩老旧记忆
+   * 5. 清理过期条目
    */
   async runMaintenanceCycle(): Promise<{
     merges: number;
     splits: number;
     compressions: number;
     cleanups: number;
+    globalMdDeduped: number;
+    newEntries: number;
   }> {
+    // 1. 重新扫描源文件，合并增量
+    const freshEntries = await this.scanAllSources();
+    let newEntries = 0;
+    const existingTexts = new Set(this.entries.map(e => e.text));
+    for (const entry of freshEntries) {
+      if (!existingTexts.has(entry.text)) {
+        this.entries.push(entry);
+        newEntries++;
+      }
+    }
+    if (newEntries > 0) {
+      console.log(`[AutoMemory] ${newEntries} new entries from source rescan`);
+    }
+
+    // 2. 原地去重 global.md
+    let globalMdDeduped = 0;
+    try {
+      const dedupResult = await this.deduplicateGlobalMd();
+      globalMdDeduped = dedupResult.removed;
+    } catch (e) {
+      console.warn('[AutoMemory] global.md dedup failed:', e);
+    }
+
+    // 3. 合并检测
     const mergeSuggestions = await this.detectMergeCandidates();
     let merges = 0;
     if (this.config.autoMerge) {
@@ -594,6 +797,7 @@ export class AutoMemoryEngine {
       }
     }
 
+    // 4. 分割检测
     const splitSuggestions = await this.detectSplitCandidates();
     let splits = 0;
     if (this.config.autoSplit) {
@@ -603,10 +807,12 @@ export class AutoMemoryEngine {
       }
     }
 
+    // 5. 压缩 + 清理
     const compressions = (await this.compressOldMemories()).length;
     const cleanups = await this.cleanExpiredMemories();
+    await this.persistIndex();
 
-    return { merges, splits, compressions, cleanups };
+    return { merges, splits, compressions, cleanups, globalMdDeduped, newEntries };
   }
 
   // ── 统计 ─────────────────────────────────────────────
@@ -640,10 +846,6 @@ export class AutoMemoryEngine {
 
   // ── 内部算法 ─────────────────────────────────────────
 
-  /**
-   * 计算两条文本的相似度（0-1）。
-   * 使用基于 Jaccard 和 TF 的轻量相似度。
-   */
   private computeSimilarity(a: string, b: string): number {
     if (!a || !b) return 0;
     const tokensA = this.tokenize(a);
@@ -652,50 +854,33 @@ export class AutoMemoryEngine {
 
     const intersection = new Set([...tokensA].filter(t => tokensB.has(t)));
     const union = new Set([...tokensA, ...tokensB]);
-
-    // Jaccard similarity
     const jaccard = intersection.size / union.size;
-
-    // 长度相近加分
     const lenRatio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
 
     return jaccard * 0.7 + lenRatio * 0.3;
   }
 
-  /**
-   * 简单分词。
-   */
   private tokenize(text: string): Set<string> {
     const tokens = new Set<string>();
-    // 中文二元组
     for (let i = 0; i < text.length - 1; i++) {
       const char = text[i];
       if (/[\u4e00-\u9fff]/.test(char)) {
         tokens.add(text.substring(i, i + 2));
       }
     }
-    // 英文单词
     const words = text.match(/[a-zA-Z_]\w{2,}/g) || [];
     for (const w of words) tokens.add(w.toLowerCase());
     return tokens;
   }
 
-  /**
-   * 合并两条文本（保留完整信息）。
-   */
   private mergeTexts(a: string, b: string): string {
-    // 如果包含关系，直接返回长的
     if (a.includes(b) || b.includes(a)) {
       return a.length >= b.length ? a : b;
     }
     return `${a}\n${b}`;
   }
 
-  /**
-   * 检查两条条目是否最近已被合并（避免重复操作）。
-   */
   private wasRecentlyMerged(idA: string, idB: string): boolean {
-    // 简单检查：是否互为 compressedFrom
     const entryA = this.entries.find(e => e.id === idA);
     const entryB = this.entries.find(e => e.id === idB);
     if (!entryA || !entryB) return false;
@@ -704,19 +889,14 @@ export class AutoMemoryEngine {
       false;
   }
 
-  /**
-   * 按主题分割文本。
-   */
   private splitByTopics(
     text: string,
     topics: string[],
   ): Array<{ text: string; topic: string }> {
-    // 简单的启发式分割：为每个主题分配部分文本
     if (topics.length === 0) return [{ text, topic: 'general' }];
     const lines = text.split('\n').filter(l => l.trim());
     if (lines.length <= 1) return [{ text, topic: topics[0] }];
 
-    // 按行均分到各主题
     const perTopic = Math.ceil(lines.length / topics.length);
     const children: Array<{ text: string; topic: string }> = [];
     for (let i = 0; i < topics.length; i++) {
@@ -731,9 +911,6 @@ export class AutoMemoryEngine {
     return children;
   }
 
-  /**
-   * 提取关键词。
-   */
   private extractKeywords(texts: string[]): string[] {
     const wordFreq = new Map<string, number>();
     for (const t of texts) {
@@ -748,12 +925,8 @@ export class AutoMemoryEngine {
       .map(([word]) => word);
   }
 
-  /**
-   * 生成摘要（基于提取式的简单摘要）。
-   */
   private generateSummary(texts: string[]): string {
     if (texts.length === 0) return '';
-    // 取第一条 + 最后一条 + 关键词
     const first = texts[0].substring(0, 100);
     const keywords = this.extractKeywords(texts);
     const kwStr = keywords.slice(0, 5).join(', ');
@@ -761,8 +934,42 @@ export class AutoMemoryEngine {
   }
 
   /**
-   * 获取未压缩的原始条目（用于 LLM assisted merge）。
+   * 从文本推断主题标签。
    */
+  private inferTopicsFromText(text: string): string[] {
+    const topics: string[] = [];
+    const hints: Array<[RegExp, string]> = [
+      [/代码|编程|函数|bug|debug|error|ts|js|py|rust/i, 'coding'],
+      [/项目|架构|设计|重构|monorepo/i, 'architecture'],
+      [/飞书|日历|文档|会议|feishu|lark/i, 'feishu'],
+      [/部署|上线|发布|ci|cd|docker/i, 'devops'],
+      [/需求|PRD|产品|功能/i, 'product'],
+      [/数据|分析|报表|统计/i, 'analytics'],
+      [/学习|教程|文档|知识/i, 'learning'],
+      [/Otto|桌面|Electron|desktop/i, 'otto'],
+      [/VS Code|vscode|插件|扩展/i, 'vscode'],
+      [/记忆|memory|存储|持久化/i, 'memory'],
+    ];
+    for (const [pattern, topic] of hints) {
+      if (pattern.test(text) && !topics.includes(topic)) {
+        topics.push(topic);
+      }
+    }
+    return topics.length > 0 ? topics : ['general'];
+  }
+
+  /**
+   * 简单文本哈希（用于生成稳定 id）。
+   */
+  private hashText(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      hash = ((hash << 5) - hash + c) | 0;
+    }
+    return Math.abs(hash).toString(36);
+  }
+
   getUncompressedEntries(scope?: MemoryScope): MemoryEntry[] {
     return this.entries.filter(e => {
       if (scope && e.scope !== scope) return false;
