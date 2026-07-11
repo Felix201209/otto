@@ -297,6 +297,12 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
 
     case 'history': {
       const { sessionId, messages } = frame.payload;
+      // 安全追加：优先保留本地已有缓存（更完整），仅在本地无缓存时才用 server 数据
+      // 避免切走后切回来时 server 返回的截断历史覆盖了本地完整记录。
+      const existing = state.messages[sessionId];
+      if (existing && existing.length > 0) {
+        return state;
+      }
       return {
         ...state,
         messages: { ...state.messages, [sessionId]: messages },
