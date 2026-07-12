@@ -145,6 +145,8 @@ interface ComposerProps {
   sessionId?: string | null;
   /** 整体禁用（无选中会话）：textarea 与发送按钮都禁用。 */
   disabled?: boolean;
+  /** 禁用原因，显示在输入框与按钮提示中。 */
+  disabledReason?: string;
   /**
    * 流式生成中。busy 时 textarea 仍可输入下一条，发送按钮变「停止」按钮调 onCancel。
    * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
@@ -198,6 +200,7 @@ export function Composer({
   currentModel,
   sessionId,
   disabled,
+  disabledReason,
   busy = false,
   onSend,
   onCancel,
@@ -680,16 +683,21 @@ export function Composer({
   // 反映真实生效模型：优先 currentModel（来自 models_list/currentModel 帧）对应的 displayName，
   // 否则回退到首个可用模型的名字，最后才用「选择模型」占位。
   // 不再硬编码具体模型名（如 'claude-opus-4'）——BYO-key 用户可能根本没配 Claude。
-  const modelLabel =
-    models.find((m) => m.id === currentModel)?.displayName ??
-    currentModel ??
-    models[0]?.displayName ??
-    '选择模型';
+  const managedModelsUnavailable =
+    models.length > 0 &&
+    models.every((model) => model.managed === true && model.enabled === false);
+  const modelLabel = managedModelsUnavailable
+    ? '企业模型服务未配置'
+    : models.find((m) => m.id === currentModel && m.enabled !== false)
+        ?.displayName ??
+      currentModel ??
+      models.find((m) => m.enabled !== false)?.displayName ??
+      '选择模型';
 
   // 发送按钮的悬浮提示：禁用时说明原因，让用户知道为何点不了（而非恒为「发送」）。
   //   无会话 → 先选/建会话；有会话但内容为空 → 先输入内容；否则正常「发送」。
   const sendTitle = disabled
-    ? '请先选择或新建会话'
+    ? disabledReason ?? '请先选择或新建会话'
     : canSend
       ? '发送'
       : '请先输入内容';
@@ -770,7 +778,7 @@ export function Composer({
         <textarea
           ref={taRef}
           className="otto-composer__textarea"
-          placeholder="给 Otto 发送消息..."
+          placeholder={disabledReason ?? '给 Otto 发送消息...'}
           rows={1}
           value={text}
           onChange={autoGrow}
@@ -793,7 +801,7 @@ export function Composer({
               aria-expanded={menuOpen}
               // 与 textarea 一致：无会话（disabled）时也锁模型菜单，避免「输入锁了菜单还能开」的不一致。
               disabled={disabled}
-              title={disabled ? '请先选择或新建会话' : '切换模型'}
+              title={disabled ? disabledReason ?? '请先选择或新建会话' : '切换模型'}
             >
               {modelLabel}
               <IconChevronDown size={14} className="otto-modelpill__chev" />
@@ -1020,6 +1028,7 @@ function ModelMenu({
   // 单个模型选项按钮（平铺与分组共用，保留勾选 + 当前高亮逻辑）。
   const renderItem = (m: ModelInfo): React.JSX.Element => {
     const active = m.id === current;
+    const unavailable = m.enabled === false;
     return (
       <button
         key={m.id}
@@ -1029,6 +1038,7 @@ function ModelMenu({
         className={`otto-modelmenu__item${
           active ? ' otto-modelmenu__item--active' : ''
         }`}
+        disabled={unavailable}
         onClick={() => onPick(m.id)}
       >
         <span className="otto-modelmenu__check">
@@ -1037,7 +1047,9 @@ function ModelMenu({
         <span className="otto-modelmenu__text">
           <span className="otto-modelmenu__name">{m.displayName}</span>
           {m.provider ? (
-            <span className="otto-modelmenu__provider">{m.provider}</span>
+            <span className="otto-modelmenu__provider">
+              {unavailable ? '暂不可用' : m.provider}
+            </span>
           ) : null}
         </span>
       </button>

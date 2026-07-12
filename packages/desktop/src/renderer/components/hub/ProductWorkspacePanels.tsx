@@ -244,7 +244,11 @@ export function EnterpriseModelsPanel({
               <div key={model.id} className="otto-enterprise-model">
                 <div>
                   <strong>{model.displayName}</strong>
-                  <span>{model.tier === 'premium' ? '高端模型' : '标准模型'} · Otto 托管</span>
+                  <span>
+                    {model.enabled === false
+                      ? '企业模型服务未配置 · 暂不可用'
+                      : `${model.tier === 'premium' ? '高端模型' : '标准模型'} · Otto 托管`}
+                  </span>
                 </div>
                 <b>{model.creditMultiplier ?? 1}×</b>
                 <small>输入 {model.inputCreditsPerMTok ?? '待定'} / 输出 {model.outputCreditsPerMTok ?? '待定'} Credits / MTok</small>

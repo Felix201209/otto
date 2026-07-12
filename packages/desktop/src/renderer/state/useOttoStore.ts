@@ -399,13 +399,22 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return upsertSession(nextState, { ...s, status });
     }
 
-    case 'models_list':
+    case 'models_list': {
+      const retainedCurrent = state.currentModel
+        ? frame.payload.models.some(
+            (model) =>
+              model.id === state.currentModel && model.enabled !== false,
+          )
+          ? state.currentModel
+          : null
+        : null;
       return {
         ...state,
         models: frame.payload.models,
         modelsLoaded: true,
-        currentModel: frame.payload.current ?? state.currentModel,
+        currentModel: frame.payload.current ?? retainedCurrent,
       };
+    }
 
     case 'error':
       // 收口在途消息再落错误：否则流式中途报错时那条 assistant 占位永远 isStreaming=true，

@@ -39,6 +39,7 @@ import {
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
   getWorkLogger,
+  MANAGED_MODEL_SERVICE_UNAVAILABLE,
   type ToolCallRequestInfo,
   type ToolRegistry,
   type ToolQuestionConfirmationDetails,
@@ -67,6 +68,16 @@ import {
   shouldRequestConfirmation,
   type RuntimeAuthorizationMode,
 } from './authorizationPolicy.js';
+
+function userFacingRuntimeError(message: string): string {
+  if (
+    message.includes('Failed to parse URL from /v1/') ||
+    (message.includes('Invalid URL') && message.includes('/v1/'))
+  ) {
+    return MANAGED_MODEL_SERVICE_UNAVAILABLE;
+  }
+  return message;
+}
 
 /** 创建并初始化一个绑定到指定 core Config 的会话运行时。 */
 export async function createCoreSessionRuntime(
@@ -603,13 +614,24 @@ export class CoreSessionRuntime implements SessionRuntime {
       if (signal.aborted) {
         publishCancellation();
       } else {
-        const message = e instanceof Error ? e.message : String(e);
+        const rawMessage = e instanceof Error ? e.message : String(e);
+        const message = userFacingRuntimeError(rawMessage);
         if (assistantId !== null) {
+          const finalText = assistantText.trim() ? assistantText : message;
           this.store.patchMessage(this.sessionId, assistantId, {
-            content: [{ type: 'text', value: assistantText }],
+            content: [{ type: 'text', value: finalText }],
             isStreaming: false,
             isProcessingTools: false,
             toolsCompleted: true,
+          });
+          this.store.publish(this.sessionId, {
+            type: 'chat_complete',
+            payload: {
+              sessionId: this.sessionId,
+              messageId: assistantId,
+              finishReason: 'error',
+              text: finalText,
+            },
           });
         }
         this.fail('core_error', message);

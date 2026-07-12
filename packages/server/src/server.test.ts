@@ -139,6 +139,7 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
   });
 
   it('默认个人版；建档后切企业版并只返回 Otto 托管模型', async () => {
+    vi.stubEnv('OTTO_SERVER_URL', '');
     const client = await connectWs(baseUrl);
     client.send({ type: 'get_product_workspace', payload: {} });
     let workspace = await client.waitFor((f) => f.type === 'product_workspace');
@@ -162,6 +163,16 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     if (models.type !== 'models_list') throw new Error('unreachable');
     expect(models.payload.models.length).toBeGreaterThanOrEqual(5);
     expect(models.payload.models.every((model) => model.source === 'otto' && model.managed)).toBe(true);
+    expect(models.payload.models.every((model) => model.enabled === false)).toBe(true);
+    expect(models.payload.current).toBeUndefined();
+
+    vi.stubEnv('OTTO_SERVER_URL', 'https://enterprise.otto.example');
+    client.send({ type: 'get_models', payload: {} });
+    const configured = await client.waitFor(
+      (f) => f.type === 'models_list' && f.payload.models.every((model) => model.enabled === true),
+    );
+    if (configured.type !== 'models_list') throw new Error('unreachable');
+    expect(configured.payload.current).toBe('otto:deepseek');
     client.close();
   });
 
@@ -188,6 +199,51 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
       (f) => f.type === 'error' && f.payload.code === 'forbidden_by_edition',
     );
     expect(deleteError.type).toBe('error');
+    client.close();
+  });
+
+  it('企业模型服务未配置时发送立即报可读错误，不创建空白 assistant 或回退 mock', async () => {
+    vi.stubEnv('OTTO_SERVER_URL', '');
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+    product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const created = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    if (created.type !== 'session_upsert') throw new Error('unreachable');
+    const sessionId = created.payload.session.sessionId;
+    client.send({ type: 'subscribe', payload: { sessionId } });
+    await client.waitFor(
+      (f) => f.type === 'history' && f.payload.sessionId === sessionId,
+    );
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId,
+        content: [{ type: 'text', value: '你能做什么' }],
+        source: 'local',
+      },
+    });
+    const error = await client.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'managed_model_service_unavailable',
+    );
+    if (error.type !== 'error') throw new Error('unreachable');
+    expect(error.payload.message).toBe('企业模型服务尚未配置，请联系企业管理员。');
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'message_start' && frame.payload.message.role === 'assistant',
+      ),
+    ).toBe(false);
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'chat_chunk' && frame.payload.delta.includes('mock'),
+      ),
+    ).toBe(false);
     client.close();
   });
 

@@ -13,6 +13,7 @@ export * from './confirmation-bus/message-bus.js';
 export * from './config/projectSettings.js';
 export * from './config/messageRoles.js';
 export * from './config/serverConfig.js';
+export * from './config/proxyConfig.js';
 export * from './config/modelCapabilities.js';
 
 // Export extended types

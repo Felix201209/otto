@@ -46,6 +46,28 @@ function openMenu() {
 }
 
 describe('模型菜单搜索框显隐（阈值 8）', () => {
+  it('企业托管服务未配置时明确标记模型不可用，不能继续选择', () => {
+    renderComposer(
+      [
+        {
+          id: 'otto:deepseek',
+          displayName: 'DeepSeek 通用',
+          provider: 'otto',
+          managed: true,
+          enabled: false,
+        },
+      ],
+      null,
+    );
+    expect(
+      document.querySelector('.otto-modelpill')?.textContent,
+    ).toContain('企业模型服务未配置');
+    openMenu();
+    const option = screen.getByRole('option', { name: /DeepSeek 通用/ });
+    expect((option as HTMLButtonElement).disabled).toBe(true);
+    expect(option.textContent).toContain('暂不可用');
+  });
+
   it('模型数 ≤ 8：不显示搜索框，平铺全部', () => {
     renderComposer(makeModels(8), 'm0');
     openMenu();

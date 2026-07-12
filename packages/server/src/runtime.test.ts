@@ -112,6 +112,43 @@ function makeFakeConfig(stream: () => AsyncGenerator<unknown>): Config {
 }
 
 describe('CoreSessionRuntime 流式落库与收口对账', () => {
+  it('模型请求在首个 token 前失败时返回可读错误，不残留空白 assistant', async () => {
+    async function* stream(): AsyncGenerator<unknown> {
+      throw new TypeError('Failed to parse URL from /v1/chat/stream');
+    }
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '企业模型' });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      makeFakeConfig(stream),
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: '你能做什么' }], 'local');
+
+    const assistant = store
+      .getHistory(session.sessionId)
+      .find((message) => message.role === 'assistant');
+    expect(assistant?.content).toEqual([
+      {
+        type: 'text',
+        value: '企业模型服务尚未配置，请联系企业管理员。',
+      },
+    ]);
+    const complete = frames.find((frame) => frame.type === 'chat_complete');
+    expect(complete?.type === 'chat_complete' && complete.payload.text).toBe(
+      '企业模型服务尚未配置，请联系企业管理员。',
+    );
+    const error = frames.find((frame) => frame.type === 'error');
+    expect(error?.type === 'error' && error.payload.message).toBe(
+      '企业模型服务尚未配置，请联系企业管理员。',
+    );
+  });
+
   it('流式中途增量落库（getHistory 有已累积文本）+ chat_complete 带定稿全文', async () => {
     const store = new InMemorySessionStore();
     const session = store.createSession({ title: 't' });

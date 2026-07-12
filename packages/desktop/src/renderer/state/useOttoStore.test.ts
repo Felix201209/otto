@@ -465,6 +465,32 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.currentModel).toBe('m');
   });
 
+  it('models_list：当前模型被服务端标记不可用时清除旧选择', () => {
+    const { view, push } = setup();
+    push({
+      type: 'models_list',
+      payload: {
+        models: [{ id: 'm', displayName: 'M', provider: 'otto' }],
+        current: 'm',
+      },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          {
+            id: 'm',
+            displayName: 'M',
+            provider: 'otto',
+            managed: true,
+            enabled: false,
+          },
+        ],
+      },
+    });
+    expect(view.result.current.state.currentModel).toBeNull();
+  });
+
   it('error：写 lastError', () => {
     const { view, push } = setup();
     push({ type: 'error', payload: { code: 'x', message: '出错了' } });

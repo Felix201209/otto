@@ -124,6 +124,8 @@ import {
   LocalKnowledgeStore,
   getSessionManager,
   getAutoMemoryEngine,
+  isProxyServerConfigured,
+  MANAGED_MODEL_SERVICE_UNAVAILABLE,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -525,9 +527,13 @@ export class OttoServer {
   /** 个人版只列 BYOK；企业版只列 Otto 托管模型。 */
   private modelInfos(): ModelInfo[] {
     if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
+      const serviceConfigured = isProxyServerConfigured(
+        process.env.OTTO_SERVER_URL,
+      );
       return loadEnterpriseModelCatalog().map((model) => ({
         ...model,
         provider: 'otto',
+        enabled: serviceConfigured,
       }));
     }
     try {
@@ -2517,6 +2523,25 @@ export class OttoServer {
         userMsg.id,
         content,
       );
+    }
+
+    // 企业托管模型必须有真实的中转站绝对地址。目录可用于产品预览，但未配置
+    // 服务时不能把空字符串与 /v1/chat/stream 拼成相对 URL，更不能回退 mock
+    // 或个人 BYOK 假装成功。
+    if (
+      this.productWorkspace.snapshot().context.edition === 'enterprise' &&
+      !isProxyServerConfigured(process.env.OTTO_SERVER_URL)
+    ) {
+      this.store.publish(sessionId, {
+        type: 'error',
+        payload: {
+          sessionId,
+          code: 'managed_model_service_unavailable',
+          message: MANAGED_MODEL_SERVICE_UNAVAILABLE,
+        },
+      });
+      this.store.setStatus(sessionId, 'error');
+      return;
     }
 
     // mock 模式（无 core / 无 key）：占位回声，验证收发链路。
