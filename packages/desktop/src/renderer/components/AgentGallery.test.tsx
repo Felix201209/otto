@@ -26,6 +26,7 @@ function renderGallery() {
 describe('AgentGallery（页面）', () => {
   it('个人版渲染 Otto、会议 Agent 与 8 位通用专家', () => {
     renderGallery();
+    expect(screen.getByText('选择一位专家开始，它会在独立会话中按对应方法协助你')).toBeTruthy();
     expect(screen.queryByText(/不会自动发送长消息/)).toBeNull();
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
@@ -35,7 +36,7 @@ describe('AgentGallery（页面）', () => {
     expect(screen.getByText('Word 公文撰写')).toBeTruthy();
     expect(screen.getByText('Excel 数据表格')).toBeTruthy();
     expect(screen.getByText('市场竞品调研')).toBeTruthy();
-    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家`)).toBeTruthy();
+    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`)).toBeTruthy();
   });
 
   it('点击会议 Agent 只回传 profile，不发送 kickoff', () => {
@@ -59,7 +60,7 @@ describe('AgentGallery（页面）', () => {
     expect(screen.getByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeTruthy();
     expect(
       screen.getByText(
-        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 位专家`,
+        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`,
       ),
     ).toBeTruthy();
   });

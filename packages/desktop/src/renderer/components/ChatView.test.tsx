@@ -77,6 +77,29 @@ function renderChat(onRegenerate = vi.fn()) {
 }
 
 describe('ChatView 重新生成携带消息 id', () => {
+  it('空会话与未选择会话时恢复 v1.6 的 Otto 形象', () => {
+    const props = {
+      models: MODELS,
+      currentModel: 'm1',
+      userInitial: 'F',
+      busy: false,
+      onSend: vi.fn(),
+      onCancel: vi.fn(),
+      onSetModel: vi.fn(),
+      onRegenerate: vi.fn(),
+      onOpenSetup: vi.fn(),
+      onNewChat: vi.fn(),
+      onClearContext: vi.fn(),
+    };
+    const { rerender } = render(
+      <ChatView session={null} messages={[]} {...props} />,
+    );
+    expect(screen.getByRole('img', { name: 'Otto' })).toBeTruthy();
+
+    rerender(<ChatView session={SESSION} messages={[]} {...props} />);
+    expect(screen.getByRole('img', { name: 'Otto' })).toBeTruthy();
+  });
+
   it('点旧回复（第一轮 bot）的重新生成 → 传出该条 bot 的 id，而非最新一轮', () => {
     const { onRegenerate } = renderChat();
     // 每条 bot 消息各有一个「重新生成」按钮，取第一个（第一轮 bot-A）。

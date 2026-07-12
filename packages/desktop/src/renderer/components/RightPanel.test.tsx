@@ -26,6 +26,8 @@ function installBridge(recent: Array<{
     action: string;
     success: boolean;
     entryType: 'tool' | 'work_result';
+    details?: string;
+    taskTitle?: string;
   }>;
 }> = []) {
   const openPath = vi.fn(async () => undefined);
@@ -95,6 +97,37 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel v1.7 工作入口', () => {
+  it('两种版本都恢复 v1.6 的园区服务与企业 AI 自主开发入口', async () => {
+    installBridge();
+    const launch = vi.fn();
+    const parkOpen = vi.fn();
+    window.addEventListener('otto:open-park-services', parkOpen, { once: true });
+
+    render(<RightPanel busy={false} onLaunchAgentProfile={launch} />);
+
+    const parkCard = (await screen.findByText('宏创AI园区服务')).closest('button');
+    expect(parkCard).toBeTruthy();
+    fireEvent.click(parkCard!);
+    expect(parkOpen).toHaveBeenCalledTimes(1);
+
+    const devCard = screen.getByTitle('写代码 · 改项目 · 自动化任务');
+    expect(devCard).toBeTruthy();
+    fireEvent.click(devCard!);
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'self-development',
+      name: '企业AI自主开发',
+    }));
+  });
+
+  it('工具面板恢复 v1.6 的飞书状态与多渠道快捷项', () => {
+    installBridge();
+    render(<RightPanel busy={false} />);
+    fireEvent.click(screen.getByRole('tab', { name: '工具' }));
+    expect(screen.getByText('/feishu-status')).toBeTruthy();
+    expect(screen.getByText('/multi-channel')).toBeTruthy();
+    expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
+  });
+
   it('吉祥物活动区固定在 tab 外，切换面板后仍保持唯一实例', () => {
     installBridge();
     render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
@@ -207,8 +240,15 @@ describe('RightPanel v1.7 工作入口', () => {
     installBridge([{
       date,
       entries: [
-        { time: '09:30', category: 'document', action: '生成调研报告', success: true, entryType: 'work_result' },
-        { time: '14:20', category: 'calendar', action: '安排复盘日程', success: true, entryType: 'tool' },
+        {
+          time: '09:30',
+          category: 'document',
+          action: '生成调研报告',
+          success: true,
+          entryType: 'work_result',
+          details: '完成宏创园区竞品数据对比与结论。',
+        },
+        { time: '14:20', category: 'calendar', action: '安排复盘日程', success: false, entryType: 'tool' },
       ],
     }]);
     render(<RightPanel busy={false} />);
@@ -217,5 +257,9 @@ describe('RightPanel v1.7 工作入口', () => {
     await waitFor(() => expect(day.getAttribute('title')).toBe(
       '• 09:30 生成调研报告\n• 14:20 安排复盘日程',
     ));
+    const tooltipText = screen.getByRole('tooltip').textContent ?? '';
+    expect(tooltipText).toContain('成果 生成调研报告');
+    expect(tooltipText).toContain('完成宏创园区竞品数据对比与结论。');
+    expect(tooltipText).toContain('[calendar] 安排复盘日程（失败）');
   });
 });

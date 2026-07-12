@@ -38,6 +38,7 @@ export function AgentGallery({
         <IconAgent size={20} className="otto-agents__headicon" />
         <div className="otto-agents__headtext">
           <div className="otto-agents__title">{mode === 'personal' ? '个人专家' : '企业专家目录'}</div>
+          <div className="otto-agents__subtitle">选择一位专家开始，它会在独立会话中按对应方法协助你</div>
         </div>
         <button type="button" className="otto-agents__back" onClick={onBack} aria-label="返回对话">
           <IconChevron size={14} /> 返回对话
@@ -65,7 +66,7 @@ export function AgentGallery({
             </button>
           ))}
         </div>
-        <div className="otto-agents__foot">共 {profiles.length} 位专家</div>
+        <div className="otto-agents__foot">共 {profiles.length} 位专家 · 点击即可开始新对话</div>
       </div>
     </section>
   );

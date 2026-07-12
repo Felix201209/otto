@@ -4970,7 +4970,7 @@ h6.otto-prose__h {
 .otto-wcal__day.has-log {
   color: var(--otto-text);
   font-weight: 600;
-  cursor: default;
+  cursor: pointer;
 }
 .otto-wcal__day.has-log:hover {
   background: var(--otto-accent-soft);

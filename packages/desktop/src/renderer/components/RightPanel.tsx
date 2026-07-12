@@ -13,7 +13,13 @@ import {
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
-import { IconChevron, IconChevronDown } from './icons.js';
+import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
+import {
+  IconBuilding,
+  IconChevron,
+  IconChevronDown,
+  IconTerminal,
+} from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
 
@@ -26,10 +32,23 @@ const TAB_LABEL: Record<TabType, string> = {
 };
 
 const TOOL_COMMAND_IDS = new Set([
-  'new', 'model', 'clear', 'settings', 'doctor', 'memory', 'skills',
+  'new', 'model', 'clear', 'settings', 'doctor', 'feishu-status',
+  'multi-channel', 'memory', 'skills',
   'audio', 'browser', 'ide', 'export', 'workflow',
 ]);
 const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(command.id));
+
+/** v1.6 的自主开发入口迁移为 v1.7 system profile，避免再发送伪用户 kickoff。 */
+const SELF_DEVELOPMENT_PROFILE: AgentProfile = {
+  id: 'self-development',
+  name: '企业AI自主开发',
+  tagline: '写代码 · 改项目 · 自动化任务',
+  scope: 'base',
+  department: null,
+  skills: [],
+  systemPrompt:
+    '你是企业 AI 自主开发专家。先阅读当前项目结构、技术栈和项目规则，再确认要实现或修复的目标；在用户授权范围内完成真实代码改动，运行必要测试、类型检查和界面验收。不要编造执行结果，失败时附真实错误。',
+};
 
 export interface RightPanelProps {
   busy: boolean;
@@ -99,6 +118,8 @@ export function RightPanel({
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [parkOpen, setParkOpen] = useState(true);
+  const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [collabOpen, setCollabOpen] = useState(false);
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
@@ -106,6 +127,7 @@ export function RightPanel({
   const [worklogData, setWorklogData] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
   const profiles = useMemo(() => visibleProfiles(mode, workspace), [mode, workspace]);
+  const parkBrand = useParkBrand();
 
   useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab('agents');
@@ -141,6 +163,73 @@ export function RightPanel({
         {activeTab === 'agents' ? (
           <div>
             <div className="otto-right-panel__head">
+              常用入口
+            </div>
+            <button
+              type="button"
+              className="otto-right-panel__grouphead"
+              onClick={() => setParkOpen((value) => !value)}
+              aria-expanded={parkOpen}
+            >
+              <span>园区 AI 服务</span>
+              <IconChevronDown
+                size={14}
+                className={`otto-right-panel__grouphead-chev${parkOpen ? '' : ' is-collapsed'}`}
+              />
+            </button>
+            {parkOpen ? (
+              <div className="otto-expert-list">
+                <button
+                  type="button"
+                  className="otto-expert-card"
+                  onClick={openParkServices}
+                  title="访客邀约 · 会议室 · IT 报修 · 行政后勤 · 班车 · 餐饮"
+                >
+                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
+                    <IconBuilding size={17} />
+                  </span>
+                  <span className="otto-expert-card__body">
+                    <span className="otto-expert-card__name">{parkBrand}</span>
+                    <span className="otto-expert-card__desc">访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+
+            <div className="otto-right-panel__waist" role="separator" />
+            <button
+              type="button"
+              className="otto-right-panel__grouphead"
+              onClick={() => setDevelopmentOpen((value) => !value)}
+              aria-expanded={developmentOpen}
+            >
+              <span>企业AI自主开发</span>
+              <IconChevronDown
+                size={14}
+                className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
+              />
+            </button>
+            {developmentOpen ? (
+              <div className="otto-expert-list">
+                <button
+                  type="button"
+                  className="otto-expert-card"
+                  onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
+                  title={SELF_DEVELOPMENT_PROFILE.tagline}
+                >
+                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
+                    <IconTerminal size={17} />
+                  </span>
+                  <span className="otto-expert-card__body">
+                    <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
+                    <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+
+            <div className="otto-right-panel__waist" role="separator" />
+            <div className="otto-right-panel__head">
               {mode === 'personal' ? '基础 Otto 与通用专家' : '企业专家'}
             </div>
             <div className="otto-profile-list">
@@ -161,6 +250,7 @@ export function RightPanel({
                 全部 {profiles.length} 位专家 <IconChevron size={13} />
               </button>
             ) : null}
+
             <div className="otto-auto-skill">
               <div className="otto-auto-skill__head">
                 <div><strong>自动 Skill 候选</strong><span>重复流程先由你确认，再生成</span></div>
@@ -191,6 +281,7 @@ export function RightPanel({
         {activeTab === 'tools' ? (
           <div>
             <div className="otto-right-panel__head">常用命令</div>
+            <div className="otto-right-panel__hint">点击把命令填入输入框，回车执行</div>
             <div className="otto-tool-list">
               {TOOL_COMMANDS.map((command) => (
                 <button key={command.id} type="button" className="otto-tool-item" onClick={() => insertComposerDraft(`/${command.id}`)}>
@@ -212,7 +303,8 @@ export function RightPanel({
         {activeTab === 'notes' ? (
           <div className="otto-right-panel__notes">
             <div className="otto-right-panel__head">本地笔记</div>
-            <textarea className="otto-right-panel__textarea" value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="随手记点什么…" aria-label="本地笔记" />
+            <div className="otto-right-panel__hint">临时草稿：仅当前应用运行期间保留。</div>
+            <textarea className="otto-right-panel__textarea" value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="随手记点什么…（临时草稿）" aria-label="本地笔记" />
           </div>
         ) : null}
 
@@ -279,21 +371,28 @@ function dateKey(year: number, month: number, day: number): string {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+interface WorkLogEntry {
+  time: string;
+  category: string;
+  action: string;
+  success: boolean;
+  details?: string;
+  entryType: 'tool' | 'work_result';
+  taskTitle?: string;
+}
+
 function WorkLogCalendar({ onSelectDate }: { onSelectDate: (date: string) => void }): React.JSX.Element {
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-  const [byDate, setByDate] = useState<Record<string, Array<{ time: string; action: string }>>>({});
+  const [byDate, setByDate] = useState<Record<string, WorkLogEntry[]>>({});
 
   useEffect(() => {
     let cancelled = false;
     void window.otto.workLogRecent(92).then((days) => {
       if (!cancelled) {
-        setByDate(Object.fromEntries(days.map((day) => [
-          day.date,
-          day.entries.map((entry) => ({ time: entry.time, action: entry.action })),
-        ])));
+        setByDate(Object.fromEntries(days.map((day) => [day.date, day.entries])));
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };
@@ -330,6 +429,32 @@ function WorkLogCalendar({ onSelectDate }: { onSelectDate: (date: string) => voi
                 : '点击查看/新增当日日程'}
             >
               {day}{entries.length ? <span className="otto-wcal__dot" /> : null}
+              {entries.length ? (
+                <span className="otto-wcal__pop" role="tooltip">
+                  <span className="otto-wcal__pop-title">
+                    {month + 1} 月 {day} 日 · {entries.length} 条
+                  </span>
+                  {entries.slice(0, 12).map((entry, entryIndex) => (
+                    <span className="otto-wcal__pop-item" key={`${entry.time}-${entryIndex}`}>
+                      <span className="otto-wcal__pop-time">{entry.time}</span>
+                      <span className="otto-wcal__pop-copy">
+                        <span className="otto-wcal__pop-action">
+                          {entry.entryType === 'work_result' ? '成果' : `[${entry.category}]`} {entry.action}
+                          {entry.success ? '' : '（失败）'}
+                        </span>
+                        {entry.details ? (
+                          <span className="otto-wcal__pop-detail">
+                            {entry.details.replace(/\s+/g, ' ').slice(0, 140)}
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                  ))}
+                  {entries.length > 12 ? (
+                    <span className="otto-wcal__pop-more">…还有 {entries.length - 12} 条</span>
+                  ) : null}
+                </span>
+              ) : null}
             </button>
           );
         })}
