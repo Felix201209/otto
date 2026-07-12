@@ -278,7 +278,7 @@ export type UnsubscribeMsg = Envelope<'unsubscribe', { sessionId: string }>;
 /** 新建会话。 */
 export type CreateSessionMsg = Envelope<
   'create_session',
-  { title?: string; model?: string; agentProfileId?: string }
+  { title?: string; model?: string; agentProfileId?: string; clientRequestId?: string }
 >;
 
 /**
@@ -293,6 +293,13 @@ export type SendUserMessageMsg = Envelope<
     source: MessageSource;
     /** 客户端临时 id，用于乐观渲染对账。 */
     clientMessageId?: string;
+    /**
+     * 会话 busy 时消息的排队策略：
+     * - 'merge'：注入到当前轮（安全边界如工具结果返回后合并）
+     * - 'next_turn'：等当前轮完成后下一轮处理（默认）
+     * - 'new_session'：另开话题，创建新会话路由消息
+     */
+    queueAction?: 'merge' | 'next_turn' | 'new_session';
   }
 >;
 
@@ -325,8 +332,11 @@ export type ToolConfirmationResponseMsg = Envelope<
   }
 >;
 
-/** 取消当前轮（中止流式 / 工具）。 */
-export type CancelMsg = Envelope<'cancel', { sessionId: string }>;
+/** 取消当前轮（中止流式 / 工具），可选清除排队消息队列。 */
+export type CancelMsg = Envelope<
+  'cancel',
+  { sessionId: string; clearQueue?: boolean }
+>;
 
 /** 设置当前模型。 */
 export type SetModelMsg = Envelope<
@@ -718,6 +728,27 @@ export type KnowledgeAddedMsg = Envelope<
 /** 单条知识删除成功（S→C）。 */
 export type KnowledgeRemovedMsg = Envelope<'knowledge_removed', { id: string }>;
 
+/** 知识库自动沉淀活动通知（S→C）。每次自动 capture/merge 后广播。 */
+export type KnowledgeActivityMsg = Envelope<
+  'knowledge_activity',
+  {
+    /** 活动类型 */
+    action: 'auto_capture' | 'merge';
+    /** 来源会话（auto_capture 时有值） */
+    sessionId?: string;
+    /** 写入条目数 */
+    written?: number;
+    /** 去重跳过的条目数 */
+    skippedDuplicate?: number;
+    /** 脱敏后跳过数 */
+    skippedSanitized?: number;
+    /** 低置信度跳过数 */
+    skippedLowConfidence?: number;
+    /** 最近条目（最多 5 条，供 UI 展示） */
+    recent?: KnowledgeItem[];
+  }
+>;
+
 /** 知识操作错误（S→C）：统一走 error 帧，code='knowledge_error'。 */
 
 // ── 斜杠命令 ────────────────────────────────────────────
@@ -770,6 +801,38 @@ export type SessionsListMsg = Envelope<
 export type SessionUpsertMsg = Envelope<
   'session_upsert',
   { session: SessionSummary }
+>;
+
+/**
+ * 本端创建的会话已落库（含 clientRequestId 对账）。
+ * 携带 create_session 时传入的 clientRequestId，让发起方精确选出自己新建的会话，
+ * 避免飞书同步 / 其他窗口创建的 session_upsert 抢焦点。
+ */
+export type SessionCreatedMsg = Envelope<
+  'session_created',
+  { session: SessionSummary; clientRequestId: string }
+>;
+
+/**
+ * 消息已排队通知：会话 busy 时用户消息未立即处理，
+ * 而是入队等待。客户端据此显示排队位置。
+ */
+export type MessageQueuedMsg = Envelope<
+  'message_queued',
+  {
+    sessionId: string;
+    queuePosition: number;
+    clientMessageId?: string;
+  }
+>;
+
+/**
+ * 排队已清空通知：客户端取消排队（cancel with clearQueue）或
+ * 队列被 drain 后发送。
+ */
+export type QueueDrainedMsg = Envelope<
+  'queue_drained',
+  { sessionId: string }
 >;
 
 /** 历史回包（恢复 UI）。 */
@@ -1156,6 +1219,7 @@ export type ServerToClient =
   | WelcomeMsg
   | SessionsListMsg
   | SessionUpsertMsg
+  | SessionCreatedMsg
   | HistoryMsg
   | MessageStartMsg
   | ChatChunkMsg
@@ -1184,12 +1248,18 @@ export type ServerToClient =
   | KnowledgeDataMsg
   | KnowledgeAddedMsg
   | KnowledgeRemovedMsg
+  | KnowledgeActivityMsg
   | SlashCommandsListMsg
   | SlashCommandResultMsg
+
   | ProductWorkspaceMsg
   | EnterpriseInviteCreatedMsg
   | SchedulesListMsg
   | PendingAutoSkillsMsg;
+
+  | MessageQueuedMsg
+  | QueueDrainedMsg;
+
 
 export type ServerToClientType = ServerToClient['type'];
 

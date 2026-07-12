@@ -17,6 +17,8 @@ import { OttoClient } from '../core/client.js';
 import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { retryWithBackoff } from '../utils/retry.js';
+import { estimateHistoryTokens, computeHistoryHash } from '../utils/tokenEstimator.js';
+import { SemanticRetention, RetentionContext, extractRetentionContext } from './semanticRetention.js';
 
 /**
  * 对话历史压缩服务配置
@@ -116,6 +118,25 @@ export class CompressionService {
 
   /** 连续自动压缩失败计数（熔断器） */
   private consecutiveAutoCompressFailures: number = 0;
+
+  /** L2 摘要缓存 */
+  private summaryCache: Map<string, { summary: string; history: Content[]; timestamp: number }> = new Map();
+
+  /** 累计节省 token */
+  private cumulativeTokenSaved: number = 0;
+
+  /** L3 调度集合 */
+  private scheduledCompressions: Set<string> = new Set();
+
+  /** 压缩统计 */
+  private compressionStats: Array<{
+    timestamp: number;
+    level: 'L1' | 'L2' | 'L3';
+    beforeTokens: number;
+    afterTokens: number;
+    summaryCost?: number;
+    savedTokens: number;
+  }> = [];
 
   /**
    * 受保护的工具列表
@@ -1062,6 +1083,10 @@ IMPORTANT POST-COMPRESSION RULES:
       // 压缩成功，重置熔断器
       if (result && result.success) {
         this.consecutiveAutoCompressFailures = 0;
+        // 记录 L3 强制压缩统计
+        if (result.compressionInfo) {
+          this.recordCompressionStat('L3', result.compressionInfo.originalTokenCount, result.compressionInfo.newTokenCount);
+        }
       }
 
       return result;
@@ -1215,4 +1240,251 @@ IMPORTANT POST-COMPRESSION RULES:
       maxConsecutiveFailures: this.maxConsecutiveFailures,
     };
   }
+  // ──────────────────────────────────────────────────────────────
+  // L1 轻量清理 (每轮结束)
+  // ──────────────────────────────────────────────────────────────
+
+  /**
+   * L1 轻量清理：在每轮对话结束后执行纯规则清洗
+   *
+   * 清理策略：
+   *  - 重复的环境信息（相同的多条系统上下文）
+   *  - 旧工具输出（>5轮前的 tool_result）
+   *  - 超长预览文本（>5000 字符的文本截断）
+   *
+   * 不需要模型调用，纯规则清洗。
+   */
+  lightweightCleanup(history: Content[]): Content[] {
+    if (!history || history.length === 0) return history;
+
+    const result: Content[] = [];
+    const seenEnvTexts = new Set<string>();
+    const toolResultIndices: number[] = [];
+
+    for (let i = 0; i < history.length; i++) {
+      const msg = history[i];
+      if (!msg.parts) continue;
+      for (const part of msg.parts) {
+        const p = part as any;
+        if (p.functionResponse || p.toolResult) {
+          toolResultIndices.push(i);
+          break;
+        }
+      }
+    }
+
+    const recentThreshold = Math.max(0, toolResultIndices.length - 5);
+    const recentToolIndices = new Set(toolResultIndices.slice(recentThreshold));
+
+    for (let i = 0; i < history.length; i++) {
+      const msg = history[i];
+      const cleanParts: any[] = [];
+
+      if (!msg.parts) {
+        result.push(msg);
+        continue;
+      }
+
+      for (const part of msg.parts) {
+        const p = part as any;
+
+        if (p.text && msg.role === MESSAGE_ROLES.USER) {
+          const text = p.text as string;
+          const isEnv = text.includes('CRITICAL SYSTEM CONTEXT') ||
+            text.includes('Working Directory') ||
+            text.includes('PROJECT STRUCTURE');
+
+          if (isEnv) {
+            const fp = text.substring(0, 100).trim();
+            if (seenEnvTexts.has(fp)) {
+              continue;
+            }
+            seenEnvTexts.add(fp);
+          }
+
+          if (text.length > 5000) {
+            cleanParts.push({
+              text: text.substring(0, 5000) +
+                '\n...[truncated by L1 cleanup]',
+            });
+          } else {
+            cleanParts.push(p);
+          }
+        } else if (p.functionResponse || p.toolResult) {
+          if (!recentToolIndices.has(i)) {
+            const toolName = p.functionResponse?.name || p.toolResult?.toolName || 'unknown';
+            cleanParts.push({
+              functionResponse: {
+                name: toolName,
+                response: { output: '[L1 cleaned] ' + toolName },
+              },
+            });
+          } else {
+            cleanParts.push(p);
+          }
+        } else {
+          cleanParts.push(p);
+        }
+      }
+
+      if (cleanParts.length > 0) {
+        result.push({ ...msg, parts: cleanParts });
+      }
+    }
+
+    const beforeT = estimateHistoryTokens(history);
+    const afterT = estimateHistoryTokens(result);
+    this.recordCompressionStat('L1', beforeT, afterT);
+
+    console.log('[L1] Before: ~' + beforeT + ' est. tokens, After: ~' + afterT + ', Saved: ~' + Math.max(0, beforeT - afterT));
+    return result;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // L2 预防性摘要 (~60% 上下文)
+  // ──────────────────────────────────────────────────────────────
+
+  /**
+   * L2 预防性压缩判断：当 token 数超过 60% 上限且在安全边界时触发
+   */
+  shouldPreventiveCompress(
+    history: Content[],
+    tokenCount: number,
+    tLimit: number,
+  ): boolean {
+    if (tokenCount < tLimit * 0.6) return false;
+
+    const lastMsg = history[history.length - 1];
+    if (!lastMsg || !lastMsg.parts) return false;
+
+    const hasToolResp = lastMsg.parts.some((p: any) =>
+      p.functionResponse || p.toolResult
+    );
+
+    let hasPending = false;
+    for (let i = history.length - 2; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === MESSAGE_ROLES.MODEL && msg.parts) {
+        const hasFC = msg.parts.some((p: any) => p.functionCall);
+        if (hasFC) {
+          const next = history[i + 1];
+          if (!next || !next.parts || !next.parts.some((p: any) => p.functionResponse || p.toolResult)) {
+            hasPending = true;
+          }
+        }
+        break;
+      }
+    }
+
+    if (!hasToolResp || hasPending) return false;
+
+    const estCost = 500;
+    const estSave = tokenCount * 0.3;
+    if (estSave <= estCost) {
+      console.log('[L2] Skip: expected saving ' + estSave + ' <= cost ' + estCost);
+      return false;
+    }
+
+    console.log('[L2] TRIGGERED: tokens=' + tokenCount + '/' + tLimit + ', saving=' + estSave);
+    return true;
+  }
+
+  /**
+   * L2 摘要缓存查询
+   */
+  getCachedSummary(history: Content[]): { summary: string; history: Content[] } | undefined {
+    const hash = computeHistoryHash(history);
+    const cached = this.summaryCache.get(hash);
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+      if (age < 5 * 60 * 1000) {
+        console.log('[L2 cache] HIT (' + (age / 1000).toFixed(0) + 's)');
+        return { summary: cached.summary, history: cached.history };
+      }
+      this.summaryCache.delete(hash);
+    }
+    console.log('[L2 cache] MISS');
+    return undefined;
+  }
+
+  /**
+   * L2 摘要缓存存储
+   */
+  setCachedSummary(originalHistory: Content[], summary: string, compressedHistory: Content[]): void {
+    const hash = computeHistoryHash(originalHistory);
+    this.summaryCache.set(hash, {
+      summary,
+      history: compressedHistory,
+      timestamp: Date.now(),
+    });
+    console.log('[L2 cache] Stored (hash=' + hash.substring(0, 12) + '...)');
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // L3 强制压缩 (~80% 上下文)
+  // ──────────────────────────────────────────────────────────────
+
+  /**
+   * L3 调度压缩：在下一次请求前主动触发压缩
+   */
+  scheduleCompression(sessionId: string): void {
+    this.scheduledCompressions.add(sessionId);
+    console.log('[L3] Scheduled for session ' + sessionId);
+  }
+
+  /**
+   * 检查是否有待执行的调度压缩
+   */
+  isCompressionScheduled(sessionId: string): boolean {
+    return this.scheduledCompressions.has(sessionId);
+  }
+
+  /**
+   * 清除调度压缩标记
+   */
+  clearScheduledCompression(sessionId: string): void {
+    this.scheduledCompressions.delete(sessionId);
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // 统计
+  // ──────────────────────────────────────────────────────────────
+
+  /**
+   * 记录压缩统计
+   */
+  private recordCompressionStat(
+    level: 'L1' | 'L2' | 'L3',
+    beforeTokens: number,
+    afterTokens: number,
+    summaryCost: number = 0,
+  ): void {
+    const saved = Math.max(0, beforeTokens - afterTokens - summaryCost);
+    this.cumulativeTokenSaved += saved;
+    this.compressionStats.push({
+      timestamp: Date.now(),
+      level,
+      beforeTokens,
+      afterTokens,
+      summaryCost,
+      savedTokens: saved,
+    });
+    console.log(
+      '[CompressionStat] ' + level + ' | Before: ' + beforeTokens +
+      ' | After: ' + afterTokens + ' | Cost: ' + summaryCost +
+      ' | Saved: ' + saved + ' | Cumulative: ' + this.cumulativeTokenSaved
+    );
+  }
+
+  /**
+   * 获取压缩统计信息
+   */
+  getCompressionStats() {
+    return {
+      stats: [...this.compressionStats],
+      cumulativeTokenSaved: this.cumulativeTokenSaved,
+      totalCompressions: this.compressionStats.length,
+    };
+  }
+
 }
