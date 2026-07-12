@@ -115,7 +115,7 @@ export function OrganizationPanel({
             <div className="otto-product-identity">
               <div><span>当前身份</span><strong>{isOwner ? 'CEO · 企业管理者' : '企业成员'}</strong></div>
               <div><span>企业</span><strong>{workspace.managerWorkspace?.profile.companyName ?? workspace.context.companyId}</strong></div>
-              <div><span>模型策略</span><strong>仅 Otto 托管模型</strong></div>
+              <div><span>模型策略</span><strong>内部测试 · 成员个人 API</strong></div>
             </div>
           </Card>
 
@@ -219,7 +219,7 @@ export function OrganizationPanel({
 
 export function EnterpriseModelsPanel({
   product,
-  models,
+  models: _models,
 }: {
   product: UseProductWorkspace;
   models: ModelInfo[];
@@ -228,34 +228,13 @@ export function EnterpriseModelsPanel({
   const enterprise = workspace?.context.edition === 'enterprise';
 
   return (
-    <Panel title="模型与积分" desc="企业版模型由 Otto 托管；显示倍率只用于横向比较，实际扣费按输入/输出 Credits 结算。">
+    <Panel title="企业模型（未启用）" desc="当前为内部测试阶段，企业中转站、积分和充值均不参与真实运行。">
       {!enterprise ? (
         <Empty>个人版使用你绑定的个人 API；请从对话右上角进入模型管理。</Empty>
       ) : (
-        <>
-          <div className="otto-credit-summary">
-            <div><span>可用积分</span><strong>{workspace.credits.balance.toLocaleString('zh-CN')} Credits</strong></div>
-            <div><span>首期换算设计</span><strong>¥100 = 10,000 Credits</strong></div>
-            <div><span>成本基准</span><strong>≈ ¥90 DeepSeek token</strong></div>
-          </div>
-          <div className="otto-credit-warning">当前为计费设计预览，尚未接支付和真实余额账本，界面不会伪造充值成功。</div>
-          <div className="otto-enterprise-models">
-            {models.map((model) => (
-              <div key={model.id} className="otto-enterprise-model">
-                <div>
-                  <strong>{model.displayName}</strong>
-                  <span>
-                    {model.enabled === false
-                      ? '企业模型服务未配置 · 暂不可用'
-                      : `${model.tier === 'premium' ? '高端模型' : '标准模型'} · Otto 托管`}
-                  </span>
-                </div>
-                <b>{model.creditMultiplier ?? 1}×</b>
-                <small>输入 {model.inputCreditsPerMTok ?? '待定'} / 输出 {model.outputCreditsPerMTok ?? '待定'} Credits / MTok</small>
-              </div>
-            ))}
-          </div>
-        </>
+        <Empty>
+          内部成员统一使用自己绑定的 API。企业中转站、托管模型、积分与充值暂不启用，也不会影响聊天请求。
+        </Empty>
       )}
     </Panel>
   );

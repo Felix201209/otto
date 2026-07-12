@@ -248,12 +248,6 @@ export function ChatView({
   // 飞书会话内发言：source 仍是 'local'（app 内本地输入），
   // server 据会话归属（feishuChatId）决定回推飞书。
   const sendSource: MessageSource = 'local';
-  const managedModelsUnavailable =
-    models.length > 0 &&
-    models.every(
-      (model) => model.managed === true && model.enabled === false,
-    );
-
   return (
     <section className="otto-main">
       <header
@@ -365,12 +359,7 @@ export function ChatView({
         // 切换/新建会话后据此自动聚焦输入框。
         sessionId={session?.sessionId ?? null}
         // 无会话才整体禁用；生成中（busy）由 Composer 把发送按钮换成停止，textarea 仍可输入。
-        disabled={!session || managedModelsUnavailable}
-        disabledReason={
-          managedModelsUnavailable
-            ? '企业模型服务尚未配置，请联系企业管理员'
-            : undefined
-        }
+        disabled={!session}
         busy={busy}
         draft={draft.text}
         draftNonce={draft.n}

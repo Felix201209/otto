@@ -35,7 +35,7 @@ describe('product context', () => {
     expect(context.capabilities).not.toContain('organization:read');
   });
 
-  it('enterprise context uses Otto models and derives role capabilities without BYOK', () => {
+  it('enterprise UI context still uses BYOK during internal testing', () => {
     const owner = createEnterpriseContext({
       userId: 'u-owner',
       displayName: '王总',
@@ -52,9 +52,9 @@ describe('product context', () => {
     });
 
     expect(owner.capabilities).toEqual(
-      expect.arrayContaining(['model:otto', 'organization:read', 'organization:manage', 'invite:issue']),
+      expect.arrayContaining(['model:byok', 'organization:read', 'organization:manage', 'invite:issue']),
     );
-    expect(owner.capabilities).not.toContain('model:byok');
+    expect(owner.capabilities).not.toContain('model:otto');
     expect(member).toMatchObject({
       edition: 'enterprise',
       companyId: 'company-a',

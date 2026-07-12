@@ -15,14 +15,14 @@ const PERSONAL_MODEL = {
 };
 
 describe('createCoreConfig v1.7 模式隔离', () => {
-  it('Otto 托管模型不会被本地 BYOK preferred/首模型覆盖', () => {
+  it('内部测试阶段遇到旧 Otto 托管模型 id 时回退个人 BYOK', () => {
     const config = createCoreConfig({
       sessionId: 'enterprise-session',
       model: 'otto:deepseek',
       customModels: [PERSONAL_MODEL],
     });
 
-    expect(config.getModel()).toBe('otto:deepseek');
+    expect(config.getModel()).toMatch(/^custom:/);
   });
 
   it('会话 Agent profile 进入 system userRules，个人版可排除企业工具', () => {

@@ -138,13 +138,28 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     await server.stop();
   });
 
-  it('默认个人版；建档后切企业版并只返回 Otto 托管模型', async () => {
-    vi.stubEnv('OTTO_SERVER_URL', '');
+  it('内部测试阶段切到企业视图后仍返回成员自己的 BYOK 模型', async () => {
     const client = await connectWs(baseUrl);
     client.send({ type: 'get_product_workspace', payload: {} });
     let workspace = await client.waitFor((f) => f.type === 'product_workspace');
     if (workspace.type !== 'product_workspace') throw new Error('unreachable');
     expect(workspace.payload.context.edition).toBe('personal');
+
+    client.send({
+      type: 'save_custom_model',
+      payload: {
+        provider: 'openai',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'secret',
+        modelId: 'private-model',
+        displayName: '内部个人模型',
+      },
+    });
+    await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
+    );
 
     client.send({
       type: 'configure_enterprise',
@@ -158,25 +173,23 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
 
     client.send({ type: 'get_models', payload: {} });
     const models = await client.waitFor(
-      (f) => f.type === 'models_list' && f.payload.models.some((model) => model.source === 'otto'),
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
     );
     if (models.type !== 'models_list') throw new Error('unreachable');
-    expect(models.payload.models.length).toBeGreaterThanOrEqual(5);
-    expect(models.payload.models.every((model) => model.source === 'otto' && model.managed)).toBe(true);
-    expect(models.payload.models.every((model) => model.enabled === false)).toBe(true);
-    expect(models.payload.current).toBeUndefined();
-
-    vi.stubEnv('OTTO_SERVER_URL', 'https://enterprise.otto.example');
-    client.send({ type: 'get_models', payload: {} });
-    const configured = await client.waitFor(
-      (f) => f.type === 'models_list' && f.payload.models.every((model) => model.enabled === true),
-    );
-    if (configured.type !== 'models_list') throw new Error('unreachable');
-    expect(configured.payload.current).toBe('otto:deepseek');
+    expect(models.payload.models).toHaveLength(1);
+    expect(models.payload.models[0]).toMatchObject({
+      modelId: 'private-model',
+      source: 'byok',
+      enabled: true,
+    });
+    expect(models.payload.models[0].managed).not.toBe(true);
+    expect(models.payload.current).toBe(models.payload.models[0].id);
     client.close();
   });
 
-  it('企业版在协议层拒绝保存和删除个人 BYOK 模型', async () => {
+  it('企业视图下仍允许内部成员保存和删除个人 BYOK 模型', async () => {
     const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
     product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
     const client = await connectWs(baseUrl);
@@ -189,21 +202,29 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
         modelId: 'private-model',
       },
     });
-    const saveError = await client.waitFor(
-      (f) => f.type === 'error' && f.payload.code === 'forbidden_by_edition',
+    const saved = await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
     );
-    expect(saveError.type).toBe('error');
+    if (saved.type !== 'models_list') throw new Error('unreachable');
+    const savedId = saved.payload.models.find(
+      (model) => model.modelId === 'private-model',
+    )!.id;
 
-    client.send({ type: 'delete_custom_model', payload: { id: 'custom:any' } });
-    const deleteError = await client.waitFor(
-      (f) => f.type === 'error' && f.payload.code === 'forbidden_by_edition',
+    client.send({ type: 'delete_custom_model', payload: { id: savedId } });
+    const deleted = await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        !f.payload.models.some((model) => model.id === savedId),
     );
-    expect(deleteError.type).toBe('error');
+    expect(deleted.type).toBe('models_list');
     client.close();
   });
 
-  it('企业模型服务未配置时发送立即报可读错误，不创建空白 assistant 或回退 mock', async () => {
-    vi.stubEnv('OTTO_SERVER_URL', '');
+  it('未绑定个人 API 时明确报错，不创建空白 assistant 或回退 mock', async () => {
+    // 该用例验证真实内部测试运行态；describe 默认 mock 仅用于其余传输层用例。
+    (server as unknown as { mock: boolean }).mock = false;
     const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
     product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
     const client = await connectWs(baseUrl);
@@ -230,10 +251,10 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
       },
     });
     const error = await client.waitFor(
-      (f) => f.type === 'error' && f.payload.code === 'managed_model_service_unavailable',
+      (f) => f.type === 'error' && f.payload.code === 'model_not_configured',
     );
     if (error.type !== 'error') throw new Error('unreachable');
-    expect(error.payload.message).toBe('企业模型服务尚未配置，请联系企业管理员。');
+    expect(error.payload.message).toBe('请先在设置中绑定个人 API，再开始对话。');
     expect(
       client.frames.some(
         (frame) => frame.type === 'message_start' && frame.payload.message.role === 'assistant',

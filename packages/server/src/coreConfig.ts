@@ -76,7 +76,7 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const enabled = customModels.filter((m) => m.enabled !== false);
   const wantsCustom =
     typeof opts.model === 'string' && isCustomModel(opts.model);
-  const wantsManaged =
+  const legacyManagedModel =
     typeof opts.model === 'string' && opts.model.startsWith('otto:');
   // 会话未显式选模型时的兜底次序：
   //   1) makeActive 写入的「当前生效模型」preferredModel（前提：它仍在 enabled 列表里）；
@@ -86,10 +86,14 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const preferred = opts.customModels ? undefined : loadPreferredModel();
   const preferredIfEnabled =
     preferred && enabledIds.has(preferred) ? preferred : undefined;
-  const resolvedModel = wantsCustom || wantsManaged
+  const resolvedModel = wantsCustom
     ? opts.model
     : (preferredIfEnabled ??
-      (enabled.length > 0 ? generateCustomModelId(enabled[0]) : opts.model));
+      (enabled.length > 0
+        ? generateCustomModelId(enabled[0])
+        : legacyManagedModel
+          ? undefined
+          : opts.model));
 
   return new Config({
     sessionId: opts.sessionId,

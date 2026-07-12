@@ -117,7 +117,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       throw new TypeError('Failed to parse URL from /v1/chat/stream');
     }
     const store = new InMemorySessionStore();
-    const session = store.createSession({ title: '企业模型' });
+    const session = store.createSession({ title: '个人模型' });
     const frames: ServerToClient[] = [];
     store.subscribe(session.sessionId, (frame) => frames.push(frame));
     const runtime = new CoreSessionRuntime(
@@ -136,16 +136,16 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
     expect(assistant?.content).toEqual([
       {
         type: 'text',
-        value: '企业模型服务尚未配置，请联系企业管理员。',
+        value: '模型服务地址尚未配置，请先绑定个人 API。',
       },
     ]);
     const complete = frames.find((frame) => frame.type === 'chat_complete');
     expect(complete?.type === 'chat_complete' && complete.payload.text).toBe(
-      '企业模型服务尚未配置，请联系企业管理员。',
+      '模型服务地址尚未配置，请先绑定个人 API。',
     );
     const error = frames.find((frame) => frame.type === 'error');
     expect(error?.type === 'error' && error.payload.message).toBe(
-      '企业模型服务尚未配置，请联系企业管理员。',
+      '模型服务地址尚未配置，请先绑定个人 API。',
     );
   });
 

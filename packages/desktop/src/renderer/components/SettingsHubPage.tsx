@@ -59,7 +59,7 @@ export type TabId =
 const TAB_LABEL: Record<TabId, string> = {
   prefs: '偏好设置',
   organization: '企业与身份',
-  models: '模型与积分',
+  models: '企业模型（未启用）',
   feishu: '飞书接入',
   mcp: 'MCP 服务器',
   context: 'Context 用量',

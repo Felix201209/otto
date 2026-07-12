@@ -26,6 +26,18 @@ interface ChangelogEntry {
 /** 版本更新说明（最新在前；只有列在这里的版本会触发弹窗）。 */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.7.2',
+    date: '2026-07-11',
+    items: [
+      '内部测试阶段所有身份统一使用成员自己的 API，不再进入尚未上线的企业中转站路径',
+      '旧企业会话如果保存过 Otto 托管模型，会自动回退到当前个人模型',
+      '未绑定个人 API 时明确引导设置，不再返回 mock 内容',
+      '模型请求失败后不再留下空白 Otto 消息，错误会正确收口并显示可读原因',
+      '聊天、图片生成与 token 计数增加绝对地址校验，防止 /v1/chat/stream 相对 URL 再次出现',
+      '补齐 CEO、会议与六个部门共 27 个独立 Imagegen 专家头像',
+    ],
+  },
+  {
     version: '1.7.1',
     date: '2026-07-11',
     items: [

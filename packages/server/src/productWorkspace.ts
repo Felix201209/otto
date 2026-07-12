@@ -79,7 +79,8 @@ const PERSONAL_CAPABILITIES: ProductCapability[] = [
 
 const ENTERPRISE_BASE_CAPABILITIES: ProductCapability[] = [
   'agent:base',
-  'model:otto',
+  // 内部测试阶段企业视图也使用成员自己的 API；中转站上线前不启用 model:otto。
+  'model:byok',
   'skill:built-in',
   'skill:auto-create',
   'skill:market',

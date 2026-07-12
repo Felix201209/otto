@@ -39,7 +39,7 @@ import {
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
   getWorkLogger,
-  MANAGED_MODEL_SERVICE_UNAVAILABLE,
+  MODEL_SERVICE_URL_UNAVAILABLE,
   type ToolCallRequestInfo,
   type ToolRegistry,
   type ToolQuestionConfirmationDetails,
@@ -74,7 +74,7 @@ function userFacingRuntimeError(message: string): string {
     message.includes('Failed to parse URL from /v1/') ||
     (message.includes('Invalid URL') && message.includes('/v1/'))
   ) {
-    return MANAGED_MODEL_SERVICE_UNAVAILABLE;
+    return MODEL_SERVICE_URL_UNAVAILABLE;
   }
   return message;
 }

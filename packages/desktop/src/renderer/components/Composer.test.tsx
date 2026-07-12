@@ -46,28 +46,6 @@ function openMenu() {
 }
 
 describe('模型菜单搜索框显隐（阈值 8）', () => {
-  it('企业托管服务未配置时明确标记模型不可用，不能继续选择', () => {
-    renderComposer(
-      [
-        {
-          id: 'otto:deepseek',
-          displayName: 'DeepSeek 通用',
-          provider: 'otto',
-          managed: true,
-          enabled: false,
-        },
-      ],
-      null,
-    );
-    expect(
-      document.querySelector('.otto-modelpill')?.textContent,
-    ).toContain('企业模型服务未配置');
-    openMenu();
-    const option = screen.getByRole('option', { name: /DeepSeek 通用/ });
-    expect((option as HTMLButtonElement).disabled).toBe(true);
-    expect(option.textContent).toContain('暂不可用');
-  });
-
   it('模型数 ≤ 8：不显示搜索框，平铺全部', () => {
     renderComposer(makeModels(8), 'm0');
     openMenu();
@@ -80,6 +58,14 @@ describe('模型菜单搜索框显隐（阈值 8）', () => {
     openMenu();
     expect(screen.getByLabelText('搜索模型')).toBeTruthy();
     expect(screen.getAllByRole('option')).toHaveLength(9);
+  });
+});
+
+describe('旧企业模型显示迁移', () => {
+  it('会话残留的 otto 模型不存在时，显示首个可用的个人 API 模型', () => {
+    renderComposer(makeModels(2), 'otto:deepseek');
+    expect(document.querySelector('.otto-modelpill')?.textContent).toContain('模型-01');
+    expect(document.querySelector('.otto-modelpill')?.textContent).not.toContain('otto:deepseek');
   });
 });
 

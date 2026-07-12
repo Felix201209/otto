@@ -120,21 +120,17 @@ export function App(): React.JSX.Element {
       state.connection === 'connected' &&
       state.modelsLoaded &&
       state.models.length === 0
-      && product.state.workspace?.context.edition === 'personal'
     ) {
       autoFloated.current = true;
       setMainView('settings');
     }
   }, [state.connection, state.modelsLoaded, state.models.length, product.state.workspace?.context.edition]);
 
-  // 模式切换后不允许停留在另一版本独占的页面：企业模型由积分中心管理，个人版
-  // 也不能继续看到上一次企业会话留下的 Skill 专区。
+  // 个人视图不能继续看到上一次企业会话留下的 Skill 专区。
+  // 内部测试阶段所有身份都从个人 API 设置管理模型，不再把企业视图重定向到积分页。
   useEffect(() => {
     if (!product.state.workspace) return;
-    if (edition === 'enterprise' && mainView === 'settings') {
-      setHubInitialTab('models');
-      setMainView('hub');
-    } else if (edition === 'personal' && mainView === 'skillzone') {
+    if (edition === 'personal' && mainView === 'skillzone') {
       setMainView('chat');
     }
   }, [edition, mainView, product.state.workspace]);
@@ -172,7 +168,6 @@ export function App(): React.JSX.Element {
 
   // 提交一个自定义模型：发结构化帧，进入「保存中」，由上面的帧监听裁决结果。
   const handleSaveModel = (payload: SaveCustomModelPayload): void => {
-    if (product.state.workspace?.context.edition === 'enterprise') return;
     setSaveError(null);
     setSaving(true);
     transport.send({ type: 'save_custom_model', payload });
@@ -180,7 +175,6 @@ export function App(): React.JSX.Element {
 
   // 删除自定义模型：server 成功后广播 models_list，列表自动刷新（多窗口同步）。
   const handleDeleteModel = (id: string): void => {
-    if (product.state.workspace?.context.edition === 'enterprise') return;
     transport.send({ type: 'delete_custom_model', payload: { id } });
   };
 
@@ -221,12 +215,7 @@ export function App(): React.JSX.Element {
         setMainView('chat');
         actions.createSession();
       } else if (action === 'open-settings') {
-        if (edition === 'enterprise') {
-          setHubInitialTab('models');
-          setMainView('hub');
-        } else {
-          setMainView('settings');
-        }
+        setMainView('settings');
       }
     });
     return off;
@@ -347,8 +336,7 @@ export function App(): React.JSX.Element {
   }, [product.state.workspace]);
 
   const openModelSettings = (): void => {
-    if (edition === 'enterprise') openHub('models');
-    else setMainView('settings');
+    setMainView('settings');
   };
 
   const selectedDate = product.state.selectedDate ?? new Date().toISOString().slice(0, 10);
@@ -395,7 +383,7 @@ export function App(): React.JSX.Element {
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
-      {mainView === 'settings' && edition === 'personal' ? (
+      {mainView === 'settings' ? (
         <SetupPanel
           models={state.models}
           saving={saving}
@@ -431,7 +419,7 @@ export function App(): React.JSX.Element {
               currentModel={activeSession?.model ?? state.currentModel}
               userInitial="F"
               identityLabel={identityLabel}
-              modelManagementLabel={edition === 'enterprise' ? 'Otto 模型与积分' : '模型与个人 API 设置'}
+              modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}
               onCancel={actions.cancel}

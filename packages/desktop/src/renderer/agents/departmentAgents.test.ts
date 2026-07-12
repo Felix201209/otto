@@ -62,6 +62,13 @@ describe('v1.7 Agent profile 目录', () => {
     }
   });
 
+  it('CEO 内测目录的 35 位专家全部使用独立 imagegen 头像', () => {
+    const owner = getEnterpriseAgentProfiles('company_owner');
+    expect(owner).toHaveLength(35);
+    expect(owner.every((profile) => profile.icon?.startsWith('agent-') || profile.icon?.startsWith('expert-'))).toBe(true);
+    expect(new Set(owner.map((profile) => profile.icon)).size).toBe(35);
+  });
+
   it.each(DEPARTMENT_IDS)('%s 部门恰好有 4 个基础 Agent', (department) => {
     const profiles = getDepartmentAgentProfiles(department);
 

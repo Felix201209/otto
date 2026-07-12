@@ -57,7 +57,6 @@ import {
   type AutoSkillCandidateInfo,
 } from './protocol.js';
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
-import { loadEnterpriseModelCatalog } from './modelCatalog.js';
 import { resolveAgentProfile } from './agentProfiles.js';
 import {
   InMemorySessionStore,
@@ -124,8 +123,6 @@ import {
   LocalKnowledgeStore,
   getSessionManager,
   getAutoMemoryEngine,
-  isProxyServerConfigured,
-  MANAGED_MODEL_SERVICE_UNAVAILABLE,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -172,14 +169,14 @@ const defaultRuntimeFactory: RuntimeFactory = async (
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
-  const personal = summary?.productEdition !== 'enterprise';
   const config = createCoreConfig({
     sessionId,
-    model,
+    // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
+    // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
+    model: model?.startsWith('otto:') ? undefined : model,
     feishuMode: Boolean(summary?.feishuChatId),
-    ...(summary?.productEdition === 'enterprise' ? { customModels: [] } : {}),
     ...(profile ? { userRules: profile.systemPrompt } : {}),
-    ...(personal
+    ...(summary?.productEdition !== 'enterprise'
       ? {
           excludeTools: [
             'multi_channel',
@@ -309,21 +306,9 @@ export class OttoServer {
       loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
 
-  /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
+  /** mock 只允许测试显式开启；真实用户没有个人 API 时必须明确报错。 */
   private shouldMock(): boolean {
-    if (this.mock) return true;
-    // 企业版模型走 Otto 中转站；无本地 BYOK 不代表应回退 mock。
-    if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
-      return loadEnterpriseModelCatalog().length === 0;
-    }
-    // 无任何自定义模型（且无 env auth）时降级 mock，让无 key 机器也能验证收发链路。
-    try {
-      // 与 coreConfig 的 enabled 过滤口径一致：全部 enabled:false 也视为「无可用模型」走 mock，
-      // 避免真实 runtime 以 model=undefined 初始化（code review HIGH）。
-      return loadCustomModels().filter((m) => m.enabled !== false).length === 0;
-    } catch {
-      return true;
-    }
+    return this.mock;
   }
 
   /** 启动 HTTP + WS，并按需注册飞书网关。 */
@@ -394,11 +379,8 @@ export class OttoServer {
     // 自动 Skill 只分析本地工作日志并暂存“待确认候选”，不会直接写 SKILL.md。
     // 延迟首扫 15 秒，避免与桌面首屏初始化争抢磁盘；定时器 unref，不阻塞进程退出。
     try {
-      const enterprise =
-        this.productWorkspace.snapshot().context.edition === 'enterprise';
       const scannerConfig = createCoreConfig({
         sessionId: 'auto-skill-scanner',
-        ...(enterprise ? { customModels: [] } : {}),
       });
       this.autoSkillScannerStarted = startAutoSkillScanner(
         scannerConfig,
@@ -524,18 +506,8 @@ export class OttoServer {
     };
   }
 
-  /** 个人版只列 BYOK；企业版只列 Otto 托管模型。 */
+  /** 内部测试阶段所有身份都只列成员自己的 BYOK 模型。 */
   private modelInfos(): ModelInfo[] {
-    if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
-      const serviceConfigured = isProxyServerConfigured(
-        process.env.OTTO_SERVER_URL,
-      );
-      return loadEnterpriseModelCatalog().map((model) => ({
-        ...model,
-        provider: 'otto',
-        enabled: serviceConfigured,
-      }));
-    }
     try {
       return listModelInfos();
     } catch {
@@ -552,9 +524,6 @@ export class OttoServer {
   private currentModel(): string | undefined {
     const enabled = this.modelInfos().filter((m) => m.enabled);
     if (enabled.length === 0) return undefined;
-    if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
-      return enabled[0].id;
-    }
     let preferred: string | undefined;
     try {
       preferred = loadPreferredModel();
@@ -581,16 +550,6 @@ export class OttoServer {
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'save_custom_model' }>,
   ): void {
-    if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
-      this.send(conn.socket, {
-        type: 'error',
-        payload: {
-          code: 'forbidden_by_edition',
-          message: '企业版只允许使用 Otto 托管模型，不能绑定或修改个人 API。',
-        },
-      });
-      return;
-    }
     const p = msg.payload;
     // 服务端二次校验 baseUrl 格式（客户端校验不可信；防止 file:// 等非 http(s) scheme
     // 被写入用户配置 ~/.otto-user/custom-models.json，code review HIGH）。
@@ -2260,16 +2219,6 @@ export class OttoServer {
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
       case 'delete_custom_model': {
-        if (this.productWorkspace.snapshot().context.edition === 'enterprise') {
-          return this.send(conn.socket, {
-            type: 'error',
-            payload: {
-              code: 'forbidden_by_edition',
-              message:
-                '企业版只允许使用 Otto 托管模型，不能删除个人 API 模型。',
-            },
-          });
-        }
         // 删除自定义模型：成功广播最新 models_list（多窗口同步刷新）；
         // 未命中（可能已被别的窗口删掉）或写盘失败回 error 帧。
         try {
@@ -2525,19 +2474,15 @@ export class OttoServer {
       );
     }
 
-    // 企业托管模型必须有真实的中转站绝对地址。目录可用于产品预览，但未配置
-    // 服务时不能把空字符串与 /v1/chat/stream 拼成相对 URL，更不能回退 mock
-    // 或个人 BYOK 假装成功。
-    if (
-      this.productWorkspace.snapshot().context.edition === 'enterprise' &&
-      !isProxyServerConfigured(process.env.OTTO_SERVER_URL)
-    ) {
+    // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock，
+    // 也不进入尚未上线的企业中转站路径。
+    if (!this.shouldMock() && this.modelInfos().every((model) => !model.enabled)) {
       this.store.publish(sessionId, {
         type: 'error',
         payload: {
           sessionId,
-          code: 'managed_model_service_unavailable',
-          message: MANAGED_MODEL_SERVICE_UNAVAILABLE,
+          code: 'model_not_configured',
+          message: '请先在设置中绑定个人 API，再开始对话。',
         },
       });
       this.store.setStatus(sessionId, 'error');

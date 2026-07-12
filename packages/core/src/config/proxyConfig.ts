@@ -17,10 +17,10 @@ export interface ProxyServerConfig {
   status: 'active' | 'maintenance' | 'deprecated';
 }
 
-export const MANAGED_MODEL_SERVICE_UNAVAILABLE =
-  '企业模型服务尚未配置，请联系企业管理员。';
-export const MANAGED_MODEL_SERVICE_INVALID =
-  '企业模型服务地址无效，请联系企业管理员。';
+export const MODEL_SERVICE_URL_UNAVAILABLE =
+  '模型服务地址尚未配置，请先绑定个人 API。';
+export const MODEL_SERVICE_URL_INVALID =
+  '模型服务地址无效，请检查个人 API 配置。';
 
 /** 只有完整的 http(s) 地址才算已配置，空串和相对路径都不可交给 Node fetch。 */
 export function isProxyServerConfigured(value: string | undefined): boolean {
@@ -38,17 +38,17 @@ export function isProxyServerConfigured(value: string | undefined): boolean {
 }
 
 /**
- * 构造 Otto 托管服务的绝对请求地址，并在 fetch 前把配置错误转成用户可读信息。
- * 所有托管聊天/图片/计数请求共用这一道闸门，避免再次出现 `/v1/...` 相对 URL。
+ * 构造模型服务的绝对请求地址，并在 fetch 前把配置错误转成用户可读信息。
+ * 聊天/图片/计数的旧代理路径共用这一道闸门，避免再次出现 `/v1/...` 相对 URL。
  */
 export function buildProxyRequestUrl(
   baseUrl: string | undefined,
   endpoint: string,
 ): string {
   const base = baseUrl?.trim();
-  if (!base) throw new Error(MANAGED_MODEL_SERVICE_UNAVAILABLE);
+  if (!base) throw new Error(MODEL_SERVICE_URL_UNAVAILABLE);
   if (!isProxyServerConfigured(base)) {
-    throw new Error(MANAGED_MODEL_SERVICE_INVALID);
+    throw new Error(MODEL_SERVICE_URL_INVALID);
   }
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   return `${base.replace(/\/+$/, '')}${path}`;

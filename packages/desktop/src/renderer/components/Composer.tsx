@@ -683,14 +683,9 @@ export function Composer({
   // 反映真实生效模型：优先 currentModel（来自 models_list/currentModel 帧）对应的 displayName，
   // 否则回退到首个可用模型的名字，最后才用「选择模型」占位。
   // 不再硬编码具体模型名（如 'claude-opus-4'）——BYO-key 用户可能根本没配 Claude。
-  const managedModelsUnavailable =
-    models.length > 0 &&
-    models.every((model) => model.managed === true && model.enabled === false);
-  const modelLabel = managedModelsUnavailable
-    ? '企业模型服务未配置'
-    : models.find((m) => m.id === currentModel && m.enabled !== false)
+  const modelLabel =
+    models.find((m) => m.id === currentModel && m.enabled !== false)
         ?.displayName ??
-      currentModel ??
       models.find((m) => m.enabled !== false)?.displayName ??
       '选择模型';
 
