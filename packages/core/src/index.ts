@@ -244,6 +244,7 @@ export type { AliyunSmsConfig, SmsSendResult } from './services/aliyunSmsSender.
 // 个人知识库（本地，无企业授权可用）
 export * from './tools/knowledge-base.js';
 export * from './knowledge/localKnowledgeStore.js';
+export * from './knowledge/knowledgeCapture.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';

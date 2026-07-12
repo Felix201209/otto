@@ -70,6 +70,10 @@ export interface OttoState {
   slashCommands?: SlashCommandInfo[];
   /** 末次错误（toast 用）。 */
   lastError: string | null;
+  /** 各会话当前排队消息数（message_queued/queue_drained 帧更新）。 */
+  queuedCounts: Record<string, number>;
+  /** 待关联的 clientRequestId（create_session 后等 session_created 回包用）。 */
+  pendingCreateRequestId: string | null;
 }
 
 const initialState: OttoState = {
@@ -84,6 +88,8 @@ const initialState: OttoState = {
   currentModel: null,
   slashCommands: [],
   lastError: null,
+  queuedCounts: {},
+  pendingCreateRequestId: null,
 };
 
 // ── reducer action ────────────────────────────────────────────────────────
@@ -95,7 +101,8 @@ type Action =
   | { kind: 'optimistic_user'; message: OttoMessage }
   | { kind: 'system_note'; markdown: string }
   | { kind: 'local_error'; message: string }
-  | { kind: 'clear_error' };
+  | { kind: 'clear_error' }
+  | { kind: 'pending_create'; clientRequestId: string };
 
 function upsertSession(
   state: OttoState,
@@ -267,11 +274,13 @@ function reducer(state: OttoState, action: Action): OttoState {
     }
 
     case 'local_error':
-      // 本地产生的错误（如断连时拦截发送）——复用 lastError 的 toast 通道。
       return { ...state, lastError: action.message };
 
     case 'clear_error':
       return state.lastError === null ? state : { ...state, lastError: null };
+
+    case 'pending_create':
+      return { ...state, pendingCreateRequestId: action.clientRequestId };
 
     case 'frame':
       return applyFrame(state, action.frame);
@@ -294,6 +303,27 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
 
     case 'session_upsert':
       return upsertSession(state, frame.payload.session);
+
+    case 'session_created': {
+      // PR 1: 本端创建的新会话——比对 clientRequestId 精确选中
+      const updated = upsertSession(state, frame.payload.session);
+      if (state.pendingCreateRequestId === frame.payload.clientRequestId) {
+        return { ...updated, activeSessionId: frame.payload.session.sessionId, pendingCreateRequestId: null };
+      }
+      return { ...updated, pendingCreateRequestId: null };
+    }
+
+    case 'message_queued': {
+      const qc = { ...state.queuedCounts };
+      qc[frame.payload.sessionId] = frame.payload.queuePosition;
+      return { ...state, queuedCounts: qc };
+    }
+
+    case 'queue_drained': {
+      const qc = { ...state.queuedCounts };
+      delete qc[frame.payload.sessionId];
+      return { ...state, queuedCounts: qc };
+    }
 
     case 'history': {
       const { sessionId, messages } = frame.payload;
@@ -500,6 +530,7 @@ export interface OttoActions {
     text: string,
     source?: MessageSource,
     attachments?: ImageAttachment[],
+    queueAction?: 'merge' | 'next_turn' | 'new_session',
   ): void;
   setModel(model: string): void;
   cancel(): void;
@@ -668,7 +699,9 @@ export function useOttoStore(): UseOttoStore {
   }, []);
 
   const createSession = useCallback((title?: string) => {
-    transport.send({ type: 'create_session', payload: { title } });
+    const clientRequestId = crypto.randomUUID();
+    dispatch({ kind: 'pending_create', clientRequestId });
+    transport.send({ type: 'create_session', payload: { title, clientRequestId } });
   }, []);
 
   const deleteSession = useCallback((sessionId: string) => {
@@ -695,7 +728,9 @@ export function useOttoStore(): UseOttoStore {
     }
     // 记下待发的开场消息，随后由 onFrame 关联新会话、kickoff effect 择机发送。
     launchRef.current = { kickoff: clean, source: 'local' };
-    transport.send({ type: 'create_session', payload: { title } });
+    const clientRequestId = crypto.randomUUID();
+    dispatch({ kind: 'pending_create', clientRequestId });
+    transport.send({ type: 'create_session', payload: { title, clientRequestId } });
   }, []);
 
   const launchAgentProfile = useCallback((title: string, agentProfileId: string) => {
@@ -716,13 +751,11 @@ export function useOttoStore(): UseOttoStore {
       text: string,
       source: MessageSource = 'local',
       attachments: ImageAttachment[] = [],
+      queueAction?: 'merge' | 'next_turn' | 'new_session',
     ) => {
       const sessionId = activeRef.current;
       const trimmed = text.trim();
-      // 纯文本或纯图片都可发；两者皆空才拦截。
       if (!sessionId || (!trimmed && attachments.length === 0)) return;
-      // 断连校验：WS 未连上时消息发不出去，不做乐观渲染（否则会留一条永远不会有回复的
-      // 用户气泡），改为走 toast 明确告知「未连接，消息未送达」。
       if (connectionRef.current !== 'connected') {
         dispatch({ kind: 'local_error', message: '未连接，消息未送达' });
         return;
@@ -733,7 +766,6 @@ export function useOttoStore(): UseOttoStore {
       for (const value of attachments) {
         content.push({ type: 'image_reference', value });
       }
-      // 乐观渲染：先把用户消息塞进列表，server 回的 message_start 会按 id 对账覆盖。
       dispatch({
         kind: 'optimistic_user',
         message: {
@@ -747,7 +779,7 @@ export function useOttoStore(): UseOttoStore {
       });
       transport.send({
         type: 'send_user_message',
-        payload: { sessionId, content, source, clientMessageId },
+        payload: { sessionId, content, source, clientMessageId, ...(queueAction ? { queueAction } : {}) },
       });
     },
     [],
@@ -762,7 +794,7 @@ export function useOttoStore(): UseOttoStore {
   const cancel = useCallback(() => {
     const sessionId = activeRef.current;
     if (!sessionId) return;
-    transport.send({ type: 'cancel', payload: { sessionId } });
+    transport.send({ type: 'cancel', payload: { sessionId, clearQueue: true } });
   }, []);
 
   const respondToolConfirmation = useCallback(

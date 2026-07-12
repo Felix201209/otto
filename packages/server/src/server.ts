@@ -121,6 +121,10 @@ import {
   type SkillCandidate,
   type Config as CoreConfig,
   LocalKnowledgeStore,
+  type KnowledgeEntry,
+  KnowledgeCapture,
+  type SimpleMessage,
+  getKnowledgeDir,
   getSessionManager,
   getAutoMemoryEngine,
 } from 'otto-core';
@@ -245,6 +249,14 @@ const defaultCredentialsStore: FeishuCredentialsStore = {
 interface ClientConn {
   socket: WebSocket;
   subscriptions: Map<string, Unsubscribe>;
+}
+
+/** 排队消息（PR 2：busy 时入队等待 drain） */
+interface QueuedMessage {
+  content: MessageContent;
+  source: MessageSource;
+  clientMessageId?: string;
+  queueAction: 'merge' | 'next_turn';
 }
 
 /**
@@ -1938,6 +1950,10 @@ export class OttoServer {
       }
       case 'cancel': {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
+        // 清除排队消息队列（可选，默认清）
+        if (msg.payload.clearQueue !== false) {
+          this.messageQueues.delete(msg.payload.sessionId);
+        }
         return;
       }
       case 'tool_confirmation_response': {
@@ -2414,16 +2430,58 @@ export class OttoServer {
       );
     }
 
-    // 会话正忙（thinking/streaming）：直接回 busy 错误帧，不落库不广播。
-    // 否则消息落了库、runtime.run 又拒绝这一轮，留下一条永远没有回复的消息。
+    // 会话正忙（thinking/streaming）：走消息队列而非直接拒绝。
     if (session.status === 'thinking' || session.status === 'streaming') {
+      const queueAction: 'merge' | 'next_turn' | 'new_session' =
+        msg.payload.queueAction ?? 'next_turn';
+
+      // new_session: 创建新会话并路由消息
+      if (queueAction === 'new_session') {
+        const newSummary = this.store.createSession();
+        this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
+        return this.handleSendUserMessageRaw(
+          newSummary.sessionId, conn, content, source, clientMessageId);
+      }
+
+      // merge / next_turn: 入队等待
+      const queue = this.getOrCreateQueue(sessionId);
+      const queued: QueuedMessage = {
+        content,
+        source,
+        clientMessageId,
+        queueAction,
+      };
+      queue.push(queued);
+      return this.send(conn.socket, {
+        type: 'message_queued',
+        payload: { sessionId, queuePosition: queue.length, clientMessageId },
+      });
+    }
+
+    return this.handleSendUserMessageRaw(sessionId, conn, content, source, clientMessageId);
+  }
+
+  /**
+   * Raw message ingestion (after busy/new-session routing).
+   * De-duplicated from handleSendUserMessage: session optional checks
+   * and OttoSessionManager touches are done in the caller.
+   */
+  private async handleSendUserMessageRaw(
+    sessionId: string,
+    conn: ClientConn,
+    content: MessageContent,
+    source: MessageSource,
+    clientMessageId?: string,
+  ): Promise<void> {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
       return this.send(
         conn.socket,
-        errorFrame(sessionId, 'busy', '该会话正在生成回复，请稍候或先取消。'),
+        errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
 
-    // ── OttoSessionManager: 更新会话活跃状态 + 自动话题推断 ──
+    // ── OttoSessionManager ──
     try {
       const sessionMgr = getSessionManager();
       sessionMgr.touchSession(sessionId);
@@ -2434,7 +2492,6 @@ export class OttoServer {
           sessionMgr.addTopic(sessionId, t).catch(() => undefined);
         }
       }
-      // 自动分割检查：如果消息数超阈值，异步分割（不阻塞本轮对话）
       if (sessionMgr.shouldSplit(sessionId)) {
         sessionMgr
           .splitSession(sessionId, 'by_topic')
@@ -2446,8 +2503,6 @@ export class OttoServer {
       // session manager 非关键路径，静默降级
     }
 
-    // 透传 clientMessageId 作为消息 id：让 message_start 回声的 id 与 renderer
-    // 乐观渲染的临时 id 一致，store 按 id 覆盖去重，避免用户气泡重复显示两条。
     const userMsg = this.store.appendMessage(sessionId, {
       role: 'user',
       content,
@@ -2459,8 +2514,6 @@ export class OttoServer {
       payload: { message: userMsg },
     });
 
-    // app→飞书 回推：用户在 app 里对一个飞书会话手敲的这句话，回推飞书侧。
-    // 只推用户输入这一句；AI 回复仍由 streamBridge 自动回推，勿在此重复。
     if (
       source === 'local' &&
       session.source === 'feishu' &&
@@ -2474,8 +2527,7 @@ export class OttoServer {
       );
     }
 
-    // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock，
-    // 也不进入尚未上线的企业中转站路径。
+    // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock
     if (!this.shouldMock() && this.modelInfos().every((model) => !model.enabled)) {
       this.store.publish(sessionId, {
         type: 'error',
@@ -2489,21 +2541,20 @@ export class OttoServer {
       return;
     }
 
-    // mock 模式（无 core / 无 key）：占位回声，验证收发链路。
     if (this.shouldMock()) {
       await this.mockEcho(sessionId);
       return;
     }
 
-    // 实装路径：首次 send 时懒构建并 attach runtime（包 otto-core）。
     const runtime = await this.ensureRuntime(sessionId);
     if (!runtime) {
-      // 初始化失败（如鉴权未配）：已在 ensureRuntime 内发过 error 帧，这里收口。
       this.store.setStatus(sessionId, 'idle');
       return;
     }
-    // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
+
+    this.captureKnowledgeAsync(sessionId);
+    this.drainQueuedMessages(sessionId, conn);
   }
 
   /**
@@ -2596,6 +2647,76 @@ export class OttoServer {
     })();
     this.runtimeInit.set(sessionId, task);
     return task;
+  }
+
+  /**
+   * 异步自动沉淀知识库（fire-and-forget，不使用 await 避免阻塞主流程）。
+   * 从会话历史构建 SimpleMessage[]，喂给 KnowledgeCapture 做判断和提取。
+   * 沉淀失败静默忽略——知识库是增值功能，不能拖慢/阻断对话。
+   */
+  private captureKnowledgeAsync(sessionId: string): void {
+    setTimeout(async () => {
+      try {
+        const history = this.store.getHistory(sessionId);
+        if (!history || history.length === 0) return;
+
+        const messages: SimpleMessage[] = history.map((msg) => {
+          const text = plainTextOf(msg.content);
+          const role =
+            msg.role === 'user'
+              ? 'user'
+              : msg.role === 'assistant'
+                ? 'assistant'
+                : 'tool';
+          // tool 结果：判断是否有成功标志（非 error 开头的文本）
+          const toolSuccess =
+            role === 'tool' && !/^(error|fail|exception)/i.test(text);
+          return {
+            role: role as 'user' | 'assistant' | 'tool',
+            text,
+            ...(role === 'tool' ? { toolSuccess } : {}),
+          };
+        });
+
+        // 用同一个 knowledgeStore 实例，确保去重跨会话生效
+        const capture = new KnowledgeCapture(this.knowledgeStore);
+        if (!capture.shouldCapture(messages)) return;
+
+        const candidates = capture.extractCandidates(messages, sessionId);
+        if (candidates.length === 0) return;
+
+        const result = await capture.ingestCandidates(candidates);
+
+        // 广播 knowledge_activity 帧通知桌面端
+        if (result.written > 0) {
+          const entries = await this.knowledgeStore.list(5);
+          this.broadcastAll({
+            type: 'knowledge_activity',
+            payload: {
+              action: 'auto_capture',
+              sessionId,
+              written: result.written,
+              skippedDuplicate: result.skippedDuplicate,
+              skippedSanitized: result.skippedSanitized,
+              skippedLowConfidence: result.skippedLowConfidence,
+              recent: entries,
+            },
+          });
+        }
+
+        console.log(
+          `[Server] Knowledge capture for ${sessionId}: written=${result.written} ` +
+            `dup=${result.skippedDuplicate} sanitized=${result.skippedSanitized} ` +
+            `lowConf=${result.skippedLowConfidence}`,
+        );
+      } catch (e) {
+        // 沉淀失败静默忽略，不阻断对话
+        console.warn(
+          '[Server] Knowledge capture failed (non-fatal):',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }, 100);
   }
 
   /** mock：core 未接时回一条占位流式回复，验证收发链路。实装后删。 */
@@ -2775,6 +2896,29 @@ export class OttoServer {
       );
     }
   }
+
+  // ── Message queue (PR 2: busy 时排队，turn 完成后 drain) ──
+
+  private readonly messageQueues = new Map<string, QueuedMessage[]>();
+
+  private getOrCreateQueue(sessionId: string): QueuedMessage[] {
+    let q = this.messageQueues.get(sessionId);
+    if (!q) { q = []; this.messageQueues.set(sessionId, q); }
+    return q;
+  }
+
+  private drainQueuedMessages(sessionId: string, conn: ClientConn): void {
+    const queue = this.messageQueues.get(sessionId);
+    if (!queue || queue.length === 0) return;
+    const next = queue.shift()!;
+    if (queue.length === 0) this.messageQueues.delete(sessionId);
+    // fire-and-forget: 下一轮不阻塞当前返回
+    setImmediate(() => {
+      this.handleSendUserMessageRaw(
+        sessionId, conn, next.content, next.source, next.clientMessageId);
+    });
+  }
+
 }
 
 // ── helpers ──

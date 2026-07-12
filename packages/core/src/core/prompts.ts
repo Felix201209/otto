@@ -18,6 +18,7 @@ import { WriteFileTool } from '../tools/write-file.js';
 import process from 'node:process';
 import { isGitRepository } from '../utils/gitUtils.js';
 import { MemoryTool, OTTO_CONFIG_DIR } from '../tools/memoryTool.js';
+import { KnowledgeBaseTool } from '../tools/knowledge-base.js';
 import { TaskTool } from '../tools/task.js';
 import { WorkflowTool } from '../tools/workflow.js';
 import { TodoWriteTool } from '../tools/todo-write.js';
@@ -667,6 +668,9 @@ When you call a tool, the name is the bare identifier only — letters, numbers,
 
 # Memory
 Use '${MemoryTool.Name}' to remember user-specific facts or preferences when explicitly asked or when the information would help personalize future interactions.
+
+# Knowledge Base
+You have access to a local knowledge base ('${KnowledgeBaseTool.Name}' tool) that persists structured knowledge across sessions. When you discover user preferences, project conventions, troubleshooting conclusions, or reusable solutions, proactively call \`${KnowledgeBaseTool.Name}\` add to persist them. This helps you become smarter and more helpful over time — the next session will start with this knowledge already available.
 
 # Code References
 When referencing specific code locations, use the format: \`file_path:line_number\`
