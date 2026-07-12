@@ -37,4 +37,15 @@ describe('createCoreConfig v1.7 模式隔离', () => {
     expect(config.getUserRules()).toContain('会议发起 Agent');
     expect(config.getExcludeTools()).toEqual(['multi_channel', 'feishu_project_collab']);
   });
+
+  it('飞书会话把 channel context 注入 core 配置', () => {
+    const config = createCoreConfig({
+      sessionId: 'feishu-session',
+      model: 'otto:deepseek',
+      customModels: [],
+      feishuMode: true,
+    });
+
+    expect(config.getFeishuMode()).toBe(true);
+  });
 });

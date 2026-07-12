@@ -24,13 +24,18 @@ function renderGallery() {
 }
 
 describe('AgentGallery（页面）', () => {
-  it('个人版只渲染 Otto 与两个基础会议 Agent', () => {
+  it('个人版渲染 Otto、会议 Agent 与 8 位通用专家', () => {
     renderGallery();
+    expect(screen.queryByText(/不会自动发送长消息/)).toBeNull();
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
     expect(screen.queryByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeNull();
-    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 个 Agent profile`)).toBeTruthy();
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(screen.getByText('Word 公文撰写')).toBeTruthy();
+    expect(screen.getByText('Excel 数据表格')).toBeTruthy();
+    expect(screen.getByText('市场竞品调研')).toBeTruthy();
+    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家`)).toBeTruthy();
   });
 
   it('点击会议 Agent 只回传 profile，不发送 kickoff', () => {
@@ -54,7 +59,7 @@ describe('AgentGallery（页面）', () => {
     expect(screen.getByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeTruthy();
     expect(
       screen.getByText(
-        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 个 Agent profile`,
+        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 位专家`,
       ),
     ).toBeTruthy();
   });
@@ -67,7 +72,7 @@ describe('AgentGallery（页面）', () => {
 
   it('Esc → onBack', () => {
     const { onBack } = renderGallery();
-    fireEvent.keyDown(screen.getByRole('region', { name: 'Agent 目录' }), {
+    fireEvent.keyDown(screen.getByRole('region', { name: '专家目录' }), {
       key: 'Escape',
     });
     expect(onBack).toHaveBeenCalledTimes(1);

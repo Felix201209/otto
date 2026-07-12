@@ -33,14 +33,76 @@ const LARK_CLI_PINNED_VERSION = '1.0.53';
  */
 const FALLBACK_TIMEOUT_MS = 15 * 60 * 1000;
 
+const AUTH_URL_CANDIDATE_REGEX = /https:\/\/[^\s<>"'`]+/gi;
+const AUTH_ACCOUNTS_HOSTS = new Set([
+  'accounts.feishu.cn',
+  'accounts.larksuite.com',
+]);
+const AUTH_OPEN_HOSTS = new Set([
+  'open.feishu.cn',
+  'open.larksuite.com',
+]);
+const AUTH_USER_CODE_RE = /^[a-z0-9][a-z0-9_-]{3,63}$/i;
+const AUTH_APP_ID_RE = /^[a-z0-9_-]{3,128}$/i;
+const ANSI_ESCAPE = String.fromCharCode(27);
+
 /**
- * Matches the interactive authorization links emitted by lark-cli. Covers both
- * the modern device-flow page (`/page/cli?user_code=...`) and the legacy
- * `/open-apis/authen` endpoint, across the Feishu (open.feishu.cn) and Lark
- * (open.larksuite.com) brands.
+ * Extract an official lark-cli authorization URL. Core/TUI must enforce the
+ * same boundary as Desktop; otherwise a compromised tool output could turn an
+ * attacker-controlled lookalike URL into an `auth_required` link.
  */
-const AUTH_URL_REGEX =
-  /https?:\/\/[^\s'"]*?(?:page\/cli\?user_code=|open-apis\/authen)[^\s'"]*/;
+function extractAuthorizationUrl(output: string): string | undefined {
+  const candidates =
+    output
+      .split(ANSI_ESCAPE)
+      .join('\n')
+      .match(AUTH_URL_CANDIDATE_REGEX) ?? [];
+
+  for (const candidate of candidates) {
+    const clean = candidate.replace(/[\])},.;，。；]+$/u, '');
+    if (clean.length > 4096) continue;
+    try {
+      const url = new URL(clean);
+      if (
+        url.protocol !== 'https:' ||
+        url.port !== '' ||
+        url.username !== '' ||
+        url.password !== '' ||
+        url.hash !== ''
+      ) {
+        continue;
+      }
+
+      const userCode = url.searchParams.get('user_code') ?? '';
+      if (AUTH_ACCOUNTS_HOSTS.has(url.hostname)) {
+        if (
+          url.pathname === '/oauth/v1/device/verify' &&
+          AUTH_USER_CODE_RE.test(userCode)
+        ) {
+          return clean;
+        }
+        continue;
+      }
+
+      if (!AUTH_OPEN_HOSTS.has(url.hostname)) continue;
+      if (
+        (url.pathname === '/page/cli' || url.pathname === '/page/launcher') &&
+        AUTH_USER_CODE_RE.test(userCode)
+      ) {
+        return clean;
+      }
+      if (
+        url.pathname === '/open-apis/authen/v1/index' &&
+        AUTH_APP_ID_RE.test(url.searchParams.get('app_id') ?? '')
+      ) {
+        return clean;
+      }
+    } catch {
+      // Ignore truncated or malformed candidates and inspect the next URL.
+    }
+  }
+  return undefined;
+}
 
 /**
  * Commands that themselves perform authorization. We must never trigger the
@@ -733,9 +795,9 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         // Capture the authorization URL the instant it is printed and push it
         // to the user immediately (force flush, bypassing throttle).
         if (!authUrl) {
-          const match = combined.match(AUTH_URL_REGEX);
-          if (match) {
-            authUrl = match[0];
+          const captured = extractAuthorizationUrl(combined);
+          if (captured) {
+            authUrl = captured;
             flush(true);
             return;
           }

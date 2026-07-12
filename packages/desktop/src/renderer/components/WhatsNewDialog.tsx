@@ -29,7 +29,7 @@ const CHANGELOG: ChangelogEntry[] = [
     version: '1.7.0',
     date: '2026-07-11',
     items: [
-      '新增个人版与企业版：个人版使用自己的 API，只保留基础 Otto、会议 Agent 和自动 Skill；企业版只使用 Otto 托管模型',
+      '新增个人版与企业版：个人版使用自己的 API，保留基础 Otto、8 位通用专家、会议助手和自动 Skill；企业版只使用 Otto 托管模型',
       '重复工作会先进入自动 Skill 候选区，只有用户确认后才写入个人 Skill，拒绝后不会反复推荐',
       '企业管理者可构建六部门组织框架；通用助手切换为 CEO Agent，并可生成职位、总公司和子公司签名链接',
       '新增六个部门共 24 个基础 Agent、会议发起 Agent，以及会议纪要与跟进 Agent',

@@ -17,7 +17,7 @@ import {
 } from './departmentAgents.js';
 
 describe('v1.7 Agent profile 目录', () => {
-  it('个人版基础目录包含基础 Otto、会议发起、会议纪要与跟进', () => {
+  it('个人版基础目录包含 Otto、两个会议 Agent 与 8 位通用专家', () => {
     expect(PERSONAL_OTTO_PROFILE).toMatchObject({
       id: 'otto-personal',
       scope: 'personal',
@@ -27,6 +27,14 @@ describe('v1.7 Agent profile 目录', () => {
       'otto-personal',
       'meeting-initiator',
       'meeting-notes-followup',
+      'ppt',
+      'meeting',
+      'doc',
+      'sheet',
+      'pdf',
+      'dataviz',
+      'research',
+      'copy',
     ]);
   });
 
@@ -48,6 +56,10 @@ describe('v1.7 Agent profile 目录', () => {
     expect(member.filter((profile) => profile.scope === 'department').every(
       (profile) => profile.department === 'marketing',
     )).toBe(true);
+    for (const expertId of ['ppt', 'meeting', 'doc', 'sheet', 'pdf', 'dataviz', 'research', 'copy']) {
+      expect(owner.some((profile) => profile.id === expertId)).toBe(true);
+      expect(member.some((profile) => profile.id === expertId)).toBe(true);
+    }
   });
 
   it.each(DEPARTMENT_IDS)('%s 部门恰好有 4 个基础 Agent', (department) => {
@@ -63,7 +75,7 @@ describe('v1.7 Agent profile 目录', () => {
 
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id).toMatch(/^[a-z0-9-]+$/);
-    expect(ids).toHaveLength(29);
+    expect(ids).toHaveLength(37);
   });
 
   it('所有 profile 都有明确 skills 与 systemPrompt，且不含自动发送 kickoff', () => {

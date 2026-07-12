@@ -174,6 +174,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   const config = createCoreConfig({
     sessionId,
     model,
+    feishuMode: Boolean(summary?.feishuChatId),
     ...(summary?.productEdition === 'enterprise' ? { customModels: [] } : {}),
     ...(profile ? { userRules: profile.systemPrompt } : {}),
     ...(personal
@@ -663,10 +664,10 @@ export class OttoServer {
    *   → 回发一帧 models_list（带 current），让 renderer 的模型药丸反映真实生效模型。
    * 非法模型（不存在 / 被禁用）→ 回 error(code:'unknown_model')，不污染会话摘要与 runtime。
    */
-  private handleSetModel(
+  private async handleSetModel(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_model' }>,
-  ): void {
+  ): Promise<void> {
     const { sessionId, model } = msg.payload;
     const known = this.modelInfos().find((m) => m.id === model && m.enabled);
     if (!known) {
@@ -675,9 +676,28 @@ export class OttoServer {
         errorFrame(sessionId, 'unknown_model', `未知或未启用的模型：${model}`),
       );
     }
-    // 既更新会话摘要（让懒构建的 runtime 用对模型），也即时切换已存在的 runtime。
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    // live runtime 必须先完成真实切换，成功后才能更新摘要和 UI；否则会出现
+    // 「界面显示 GPT、实际请求仍走 GLM」的假成功状态。
+    try {
+      await this.store.getRuntime(sessionId)?.setModel(model);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'model_switch_failed',
+          `模型切换失败：${message}`,
+        ),
+      );
+    }
     this.store.patchSessionModel(sessionId, model);
-    this.store.getRuntime(sessionId)?.setModel(model);
     // 回发带 current 的 models_list，让 renderer 模型药丸/菜单勾号反映真实生效模型。
     this.send(conn.socket, {
       type: 'models_list',
@@ -774,10 +794,10 @@ export class OttoServer {
   /**
    * 修改一项全局偏好设置：持久化 + 即时应用到所有存活会话 + 广播最新快照。
    */
-  private handleSetSetting(
+  private async handleSetSetting(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_setting' }>,
-  ): void {
+  ): Promise<void> {
     const { key, value } = msg.payload;
     try {
       if (key === 'agentStyle') {
@@ -795,18 +815,7 @@ export class OttoServer {
               value as Parameters<CoreConfig['setAgentStyle']>[0],
             );
             const client = cfg.getOttoClient();
-            const chat = client?.getChat();
-            if (chat) {
-              const updated = getCoreSystemPrompt(
-                cfg.getUserMemory(),
-                cfg.getVsCodePluginMode(),
-                undefined,
-                cfg.getAgentStyle(),
-                undefined,
-                cfg.getPreferredLanguage(),
-              );
-              chat.setSystemInstruction(updated);
-            }
+            await client?.updateSystemPromptWithMcpPrompts();
           } catch {
             // 单个会话刷新失败不影响整体设置生效（下次新会话会读到最新落盘值）。
           }
@@ -1875,7 +1884,7 @@ export class OttoServer {
               code: 'forbidden_agent_profile',
               message:
                 workspace.context.edition === 'personal'
-                  ? '个人版只能使用基础 Otto 与基础会议 Agent。'
+                  ? '个人版只能使用 Otto、会议助手与通用专家。'
                   : '企业版不能使用个人版 Otto profile。',
             },
           });
@@ -1902,7 +1911,7 @@ export class OttoServer {
             type: 'error',
             payload: {
               code: 'forbidden_agent_profile',
-              message: '个人版只能使用基础 Otto 与基础会议 Agent。',
+              message: '个人版不能使用企业部门专家。',
             },
           });
         }

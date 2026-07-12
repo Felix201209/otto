@@ -15,6 +15,7 @@
  */
 
 import React, { useState } from 'react';
+import * as qrcodeTerminal from 'qrcode-terminal';
 import type {
   ToolCallStatus,
   ToolCall,
@@ -71,6 +72,131 @@ const EXEC_TOOLS = new Set([
   'run_command',
   'execute',
 ]);
+
+/**
+ * lark-cli 目前会输出三类授权入口：设备码页、CLI 配置页、旧版 authen 页。
+ * 这里只接受飞书/Lark 官方 HTTPS 主机上的已知路径，避免把工具输出中的任意
+ * 链接制作成二维码或交给系统浏览器。
+ */
+const FEISHU_AUTH_TOOL_NAMES = new Set(['lark_cli', 'lark-cli']);
+const FEISHU_ACCOUNTS_HOSTS = new Set([
+  'accounts.feishu.cn',
+  'accounts.larksuite.com',
+]);
+const FEISHU_OPEN_HOSTS = new Set([
+  'open.feishu.cn',
+  'open.larksuite.com',
+]);
+const USER_CODE_RE = /^[a-z0-9][a-z0-9_-]{3,63}$/i;
+const APP_ID_RE = /^[a-z0-9_-]{3,128}$/i;
+const ANSI_ESCAPE = String.fromCharCode(27);
+
+interface FeishuAuthorization {
+  url: string;
+  userCode?: string;
+}
+
+function isAllowedFeishuAuthorizationUrl(url: URL): boolean {
+  if (
+    url.protocol !== 'https:' ||
+    url.port !== '' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.hash !== ''
+  ) {
+    return false;
+  }
+
+  const userCode = url.searchParams.get('user_code') ?? '';
+  if (FEISHU_ACCOUNTS_HOSTS.has(url.hostname)) {
+    return (
+      url.pathname === '/oauth/v1/device/verify' &&
+      USER_CODE_RE.test(userCode)
+    );
+  }
+
+  if (!FEISHU_OPEN_HOSTS.has(url.hostname)) return false;
+  if (url.pathname === '/page/cli' || url.pathname === '/page/launcher') {
+    return USER_CODE_RE.test(userCode);
+  }
+  if (url.pathname === '/open-apis/authen/v1/index') {
+    return APP_ID_RE.test(url.searchParams.get('app_id') ?? '');
+  }
+  return false;
+}
+
+function extractFeishuAuthorization(
+  tool: ToolCall,
+  output?: string,
+): FeishuAuthorization | null {
+  if (
+    !output ||
+    !FEISHU_AUTH_TOOL_NAMES.has((tool.toolName ?? '').trim().toLowerCase())
+  ) {
+    return null;
+  }
+
+  // ESC 也作为终止符，兼容 lark-cli 的彩色终端输出。
+  const candidates =
+    output
+      .split(ANSI_ESCAPE)
+      .join('\n')
+      .match(/https:\/\/[^\s<>"'`]+/gi) ?? [];
+  for (const candidate of candidates) {
+    const clean = candidate.replace(/[\])},.;，。；]+$/u, '');
+    if (clean.length > 4096) continue;
+    try {
+      const parsed = new URL(clean);
+      if (!isAllowedFeishuAuthorizationUrl(parsed)) continue;
+      const userCode = parsed.searchParams.get('user_code') ?? undefined;
+      return { url: clean, userCode };
+    } catch {
+      // 工具输出可能包含截断中的 URL；继续寻找下一条完整候选。
+    }
+  }
+  return null;
+}
+
+/** 使用项目已有的本地 QR 编码器生成矩阵，不把授权 URL 发给第三方服务。 */
+function createQrMatrix(value: string): boolean[][] | null {
+  try {
+    let ansi: string | undefined;
+    qrcodeTerminal.generate(value, { small: false }, (result) => {
+      ansi = result;
+    });
+    if (!ansi) return null;
+
+    const blackCell = `${ANSI_ESCAPE}[40m  ${ANSI_ESCAPE}[0m`;
+    const whiteCell = `${ANSI_ESCAPE}[47m  ${ANSI_ESCAPE}[0m`;
+    const rows = ansi
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const cells: boolean[] = [];
+        let offset = 0;
+        while (offset < line.length) {
+          if (line.startsWith(blackCell, offset)) {
+            cells.push(true);
+            offset += blackCell.length;
+          } else if (line.startsWith(whiteCell, offset)) {
+            cells.push(false);
+            offset += whiteCell.length;
+          } else {
+            offset += 1;
+          }
+        }
+        return cells;
+      })
+      .filter((row) => row.length > 0);
+    const width = rows[0]?.length ?? 0;
+    if (width < 21 || rows.length !== width || rows.some((row) => row.length !== width)) {
+      return null;
+    }
+    return rows;
+  } catch {
+    return null;
+  }
+}
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
@@ -289,12 +415,14 @@ function isPendingQuestion(tc: ToolCall): boolean {
 function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   const resolved = resolveTool(tool);
   const st = statusInfo(tool.status);
+  const feishuAuthorization = extractFeishuAuthorization(tool, resolved.output);
   // 编辑文件卡默认展开看 diff（spec 截图）；exec/generic 运行中默认展开露实时输出，
   // 否则默认折叠。
   const [open, setOpen] = useState(resolved.kind === 'edit' || st.running);
 
   const Icon = resolved.kind === 'exec' ? IconTerminal : IconFile;
   const hasBody =
+    Boolean(feishuAuthorization) ||
     (resolved.kind === 'edit' && Boolean(resolved.diff)) ||
     (resolved.kind !== 'edit' && Boolean(resolved.output));
 
@@ -343,13 +471,74 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
       {hasBody ? (
         <div className={`otto-collapse${open ? ' otto-collapse--open' : ''}`}>
           <div className="otto-collapse__inner">
-            {resolved.kind === 'edit' && resolved.diff ? (
+            {feishuAuthorization ? (
+              <FeishuAuthorizationCard authorization={feishuAuthorization} />
+            ) : resolved.kind === 'edit' && resolved.diff ? (
               <DiffView diff={resolved.diff} path={resolved.target} />
             ) : resolved.output ? (
               <pre className="otto-tool__output">{resolved.output}</pre>
             ) : null}
           </div>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FeishuAuthorizationCard({
+  authorization,
+}: {
+  authorization: FeishuAuthorization;
+}): React.JSX.Element {
+  const matrix = createQrMatrix(authorization.url);
+  const size = matrix?.length ?? 0;
+  const pathParts: string[] = [];
+  matrix?.forEach((row, y) => {
+    let start = -1;
+    for (let x = 0; x <= row.length; x += 1) {
+      if (row[x] && start < 0) start = x;
+      if ((!row[x] || x === row.length) && start >= 0) {
+        const width = x - start;
+        pathParts.push(`M${start} ${y}h${width}v1H${start}z`);
+        start = -1;
+      }
+    }
+  });
+
+  return (
+    <div className="otto-feishu-auth">
+      <div className="otto-feishu-auth__copy">
+        <span className="otto-feishu-auth__eyebrow">飞书授权</span>
+        <strong className="otto-feishu-auth__title">用飞书扫码继续</strong>
+        <span className="otto-feishu-auth__hint">
+          扫码并确认后，Otto 会自动继续当前工作。
+        </span>
+        {authorization.userCode ? (
+          <code className="otto-feishu-auth__code">
+            授权码：{authorization.userCode}
+          </code>
+        ) : null}
+        <button
+          type="button"
+          className="otto-feishu-auth__open"
+          onClick={() => {
+            void window.otto.openExternal(authorization.url).catch(() => undefined);
+          }}
+        >
+          在浏览器中打开授权页面
+        </button>
+      </div>
+      {matrix ? (
+        <svg
+          className="otto-feishu-auth__qr"
+          role="img"
+          aria-label="飞书授权二维码"
+          viewBox={`-3 -3 ${size + 6} ${size + 6}`}
+          shapeRendering="crispEdges"
+        >
+          <rect x={-3} y={-3} width={size + 6} height={size + 6} fill="#fff" />
+          <path d={pathParts.join('')} fill="#111" />
+        </svg>
       ) : null}
     </div>
   );

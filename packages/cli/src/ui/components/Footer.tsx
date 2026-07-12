@@ -11,7 +11,7 @@ import { Config,IDEConnectionStatus,shortenPath,tildeifyPath } from 'otto-core';
 import React from 'react';
 import { Colors } from '../colors.js';
 import { getFooterDisplayConfig,getShortVersion } from '../utils/footerUtils.js';
-import { t } from '../utils/i18n.js';
+import { getAgentStyleShortLabel, t } from '../utils/i18n.js';
 import { ConsoleSummaryDisplay } from './ConsoleSummaryDisplay.js';
 import { MemoryUsageDisplay } from './MemoryUsageDisplay.js';
 
@@ -99,12 +99,11 @@ export const Footer: React.FC<FooterProps> = ({
       <Box alignItems="center">
         {vimMode ? <Text color={Colors.Gray}>[{vimMode}] </Text> : null}
 
-        {/* Agent Style Indicator — a short text label in the single accent
-            color, no emoji badge. The style name (e.g. "codex"/"cursor") is
-            self-explanatory and keeps column width stable. */}
+        {/* Work-mode indicator — persisted ids stay internal; users see a
+            short everyday label such as "Work code" or "Enterprise office". */}
         {agentStyle !== 'default' ? (
           <Box>
-            <Text color={Colors.AccentCyan}>{agentStyle}</Text>
+            <Text color={Colors.AccentCyan}>{getAgentStyleShortLabel(agentStyle)}</Text>
             <Separator />
           </Box>
         ) : null}

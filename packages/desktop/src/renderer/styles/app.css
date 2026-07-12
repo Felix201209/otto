@@ -1276,6 +1276,91 @@ h6.otto-prose__h {
   overflow-y: auto;
 }
 
+/* lark-cli 输出官方设备授权链接时，以本地生成的二维码替代终端原文。 */
+.otto-feishu-auth {
+  border-top: 1px solid var(--otto-border);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background:
+    radial-gradient(circle at 85% 15%, var(--otto-accent-soft), transparent 42%),
+    var(--otto-surface);
+}
+.otto-feishu-auth__copy {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.otto-feishu-auth__eyebrow {
+  color: var(--otto-accent-hover);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.otto-feishu-auth__title {
+  color: var(--otto-text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.otto-feishu-auth__hint {
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.otto-feishu-auth__code {
+  color: var(--otto-text);
+  background: var(--otto-sidebar-bg);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  padding: 5px 8px;
+  font: 600 12px/1.3 var(--otto-font-mono);
+  user-select: all;
+}
+.otto-feishu-auth__open {
+  margin-top: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--otto-radius-sm);
+  padding: 7px 11px;
+  background: var(--otto-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-feishu-auth__open:hover {
+  background: var(--otto-accent-hover);
+}
+.otto-feishu-auth__qr {
+  flex: 0 0 auto;
+  width: 168px;
+  height: 168px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 640px) {
+  .otto-feishu-auth {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .otto-feishu-auth__copy {
+    flex-basis: auto;
+    max-width: none;
+  }
+  .otto-feishu-auth__qr {
+    align-self: center;
+  }
+}
+
 /* —— 动作行 —— */
 .otto-actions {
   display: flex;

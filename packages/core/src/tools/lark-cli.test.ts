@@ -281,6 +281,47 @@ describe('LarkCliTool', () => {
       expect(result.authUrl).toBe(url);
     });
 
+    it('should capture the accounts.feishu.cn device verification URL used by current lark-cli', async () => {
+      const updates: string[] = [];
+      const child = nextChild();
+      const promise = tool.execute(
+        { command: 'auth login' },
+        new AbortController().signal,
+        (out) => updates.push(out),
+      );
+      const url =
+        'https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=flow-123&user_code=9NVZ-JH8A';
+
+      child.emitStdout(`请打开以下链接完成授权：\n${url}\n等待扫码...`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      child.close(1);
+      const result = await promise;
+
+      expect(result.authUrl).toBe(url);
+      expect(updates.join('')).toContain(url);
+    });
+
+    it.each([
+      'https://evil.example/oauth/v1/device/verify?user_code=STEAL-ME',
+      'https://open.feishu.cn.evil.example/page/cli?user_code=STEAL-ME',
+      'http://accounts.feishu.cn/oauth/v1/device/verify?user_code=STEAL-ME',
+      'https://accounts.feishu.cn/unrelated?user_code=STEAL-ME',
+      'https://open.feishu.cn:444/page/cli?user_code=STEAL-ME',
+    ])('should reject untrusted authorization URL %s', async (url) => {
+      const child = nextChild();
+      const promise = tool.execute(
+        { command: 'auth login' },
+        new AbortController().signal,
+      );
+
+      child.emitStdout(`Please authorize:\n${url}\nwaiting...`);
+      child.close(1);
+      const result = await promise;
+
+      expect(result.authUrl).toBeUndefined();
+      expect(result.status).not.toBe('auth_required');
+    });
+
     it('should output localized guide and format when getFeishuMode() is true', async () => {
       // Mock feishuMode to true
       mockConfig.getFeishuMode = () => true;

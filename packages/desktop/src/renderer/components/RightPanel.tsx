@@ -11,13 +11,14 @@ import {
   type AgentProfile,
 } from '../agents/departmentAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
+import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { IconChevron, IconChevronDown } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
 
 const TAB_LABEL: Record<TabType, string> = {
-  agents: 'Agent',
+  agents: '专家',
   tools: '工具',
   memory: '企业记忆',
   notes: '笔记',
@@ -140,22 +141,24 @@ export function RightPanel({
         {activeTab === 'agents' ? (
           <div>
             <div className="otto-right-panel__head">
-              {mode === 'personal' ? '基础 Otto 与会议 Agent' : '企业 Agent'}
-            </div>
-            <div className="otto-right-panel__hint">
-              点击只切换会话 system profile，不会自动发送长消息。
+              {mode === 'personal' ? '基础 Otto 与通用专家' : '企业专家'}
             </div>
             <div className="otto-profile-list">
               {profiles.slice(0, 12).map((profile) => (
                 <button key={profile.id} type="button" className="otto-profile-card" onClick={() => onLaunchAgentProfile(profile)}>
-                  <span className="otto-profile-card__mark">{profile.name.slice(0, 1)}</span>
+                  <span
+                    className="otto-profile-card__mark"
+                    style={profile.accent ? { backgroundColor: `${profile.accent}24` } : undefined}
+                  >
+                    {profile.icon ? <GeneratedIcon name={profile.icon} size={20} /> : profile.name.slice(0, 1)}
+                  </span>
                   <span><strong>{profile.name}</strong><small>{profile.tagline}</small></span>
                 </button>
               ))}
             </div>
             {profiles.length > 12 ? (
               <button type="button" className="otto-right-panel__moreagents" onClick={onOpenAgents}>
-                全部 {profiles.length} 个 Agent <IconChevron size={13} />
+                全部 {profiles.length} 位专家 <IconChevron size={13} />
               </button>
             ) : null}
             <div className="otto-auto-skill">

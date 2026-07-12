@@ -428,7 +428,7 @@ export function App(): React.JSX.Element {
               session={activeSession}
               messages={activeMessages}
               models={state.models}
-              currentModel={state.currentModel}
+              currentModel={activeSession?.model ?? state.currentModel}
               userInitial="F"
               identityLabel={identityLabel}
               modelManagementLabel={edition === 'enterprise' ? 'Otto 模型与积分' : '模型与个人 API 设置'}

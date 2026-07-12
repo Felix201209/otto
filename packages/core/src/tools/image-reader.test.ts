@@ -82,6 +82,19 @@ describe('ImageReaderTool', () => {
       expect(params.properties).toHaveProperty('prompt');
       expect(params.properties).toHaveProperty('allow_external_access');
     });
+
+    it('keeps model-visible guidance provider-neutral and separates recognition from delivery', () => {
+      const tool = new ImageReaderTool(mockConfig);
+      const modelVisibleSchema = JSON.stringify(tool.schema);
+
+      expect(modelVisibleSchema).not.toMatch(/gemini|google/i);
+      expect(tool.schema.description).toContain(
+        'display, open, attach, or send an existing image',
+      );
+      expect(tool.schema.description).toContain(
+        'do not require visual recognition',
+      );
+    });
   });
 
   describe('validateToolParams', () => {
@@ -140,7 +153,7 @@ describe('ImageReaderTool', () => {
   });
 
   describe('execute', () => {
-    it('returns a description by delegating to a temporary Gemini Flash chat', async () => {
+    it('returns a provider-neutral description through the image recognition helper', async () => {
       const tool = new ImageReaderTool(mockConfig);
       const filePath = path.join(tempRootDir, 'pic.png');
       await fsp.writeFile(filePath, ONE_PIXEL_PNG);
@@ -167,6 +180,7 @@ describe('ImageReaderTool', () => {
       });
 
       expect(result.llmContent).toContain('A 1x1 transparent PNG.');
+      expect(JSON.stringify(result)).not.toMatch(/gemini|google/i);
       expect(typeof result.returnDisplay).toBe('string');
       expect(result.returnDisplay as string).toMatch(/Described image/);
     });
@@ -232,8 +246,10 @@ describe('ImageReaderTool', () => {
       expect(result.llmContent).toMatch(/empty description/);
     });
 
-    it('surfaces errors from the vision model gracefully', async () => {
-      sendMessageMock.mockRejectedValueOnce(new Error('upstream boom'));
+    it('keeps upstream helper errors provider-neutral for the model and UI', async () => {
+      sendMessageMock.mockRejectedValueOnce(
+        new Error('Gemini error from Google upstream'),
+      );
       const tool = new ImageReaderTool(mockConfig);
       const filePath = path.join(tempRootDir, 'pic.png');
       await fsp.writeFile(filePath, ONE_PIXEL_PNG);
@@ -243,7 +259,8 @@ describe('ImageReaderTool', () => {
         abortSignal,
       );
 
-      expect(result.llmContent).toMatch(/Error describing image.*upstream boom/);
+      expect(result.llmContent).toMatch(/image recognition helper failed/i);
+      expect(JSON.stringify(result)).not.toMatch(/gemini|google/i);
     });
 
     it('selects custom Gemini Flash model when custom models are used', async () => {
@@ -289,10 +306,11 @@ describe('ImageReaderTool', () => {
         expect.any(Object),
         expect.any(Object)
       );
-      expect(result.llmContent).toContain('via custom model');
+      expect(result.llmContent).toContain('via image recognition helper');
+      expect(JSON.stringify(result)).not.toMatch(/gemini|google/i);
     });
 
-    it('returns tool unavailable when custom models are used but no custom Gemini Flash is found', async () => {
+    it('returns provider-neutral guidance when no image recognition helper is configured', async () => {
       const getModelMock = vi.fn().mockReturnValue('custom:openai:gpt-4o@hash');
       const getCustomModelsMock = vi.fn().mockReturnValue([
         {
@@ -320,8 +338,16 @@ describe('ImageReaderTool', () => {
         abortSignal,
       );
 
-      expect(result.llmContent).toContain('is currently unavailable because you are using custom models');
-      expect(result.returnDisplay).toBe('Tool unavailable: Gemini Flash required');
+      expect(result.llmContent).toContain(
+        'Image recognition helper is not configured',
+      );
+      expect(result.llmContent).toContain(
+        'Displaying or sending an existing image does not require visual recognition',
+      );
+      expect(JSON.stringify(result)).not.toMatch(/gemini|google/i);
+      expect(result.returnDisplay).toBe(
+        'Tool unavailable: image recognition helper not configured',
+      );
     });
   });
 });

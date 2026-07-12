@@ -26,8 +26,8 @@ import type { MessageContent, ServerToClient } from '../protocol.js';
 
 /** 记录所有回推飞书的动作，供断言。 */
 interface PushLog {
-  cards: Array<{ chatId: string; pushed: string[]; finalized: string | null }>;
-  markdowns: Array<{ chatId: string; text: string }>;
+  cards: Array<{ chatId: string; pushed: string[]; finalized: string | null; replyTo?: string }>;
+  markdowns: Array<{ chatId: string; text: string; replyTo?: string }>;
 }
 
 /** 构造一个 fake gateway：捕获回推、可手动触发 onMessage / onReady。 */
@@ -59,8 +59,8 @@ function makeFakeGateway(log: PushLog): {
     async disconnect() {
       /* fake */
     },
-    async sendStreamingCardWithFooter(chatId, initialContent) {
-      const card = { chatId, pushed: [initialContent], finalized: null as string | null };
+    async sendStreamingCardWithFooter(chatId, initialContent, _metrics, replyToMessageId) {
+      const card = { chatId, pushed: [initialContent], finalized: null as string | null, replyTo: replyToMessageId };
       log.cards.push(card);
       return {
         messageId: 'om_card_1',
@@ -74,8 +74,8 @@ function makeFakeGateway(log: PushLog): {
         },
       };
     },
-    async sendMarkdown(chatId, markdown) {
-      log.markdowns.push({ chatId, text: markdown });
+    async sendMarkdown(chatId, markdown, replyToMessageId) {
+      log.markdowns.push({ chatId, text: markdown, replyTo: replyToMessageId });
       return 'om_md_1';
     },
   };
@@ -318,6 +318,7 @@ describe('FeishuAdapter 双向链路', () => {
     expect(log.markdowns).toContainEqual({
       chatId: 'oc_chat_C',
       text: 'app 内发的话',
+      replyTo: undefined,
     });
   });
 
@@ -385,6 +386,151 @@ describe('FeishuAdapter 双向链路', () => {
     releaseFirst();
     await flush();
     expect(events).toEqual(['start1:第一条', 'end1', 'start2:第二条', 'end2']);
+  });
+
+  it('同一飞书会话的每轮回复引用各自触发消息，而不是永远引用第一条', async () => {
+    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    await adapter.start();
+    const pre = store.getOrCreateFeishuSession('oc_chat_reply');
+    let turn = 0;
+    store.attachRuntime(pre.sessionId, {
+      async run() {
+        turn += 1;
+        const assistant = store.appendMessage(pre.sessionId, {
+          role: 'assistant',
+          content: [{ type: 'text', value: '' }],
+          source: 'local',
+          isStreaming: true,
+        });
+        store.publish(pre.sessionId, {
+          type: 'message_start',
+          payload: { message: assistant },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_chunk',
+          payload: {
+            sessionId: pre.sessionId,
+            messageId: assistant.id,
+            delta: `第 ${turn} 轮回复`,
+          },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_complete',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id },
+        });
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    } as SessionRuntime);
+
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_reply',
+      messageId: 'om_reply_1',
+      text: '第一问',
+    }));
+    await flush();
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_reply',
+      messageId: 'om_reply_2',
+      text: '第二问',
+    }));
+    await flush();
+
+    expect(log.cards.map((card) => card.replyTo)).toEqual([
+      'om_reply_1',
+      'om_reply_2',
+    ]);
+  });
+
+  it('上一轮飞书定稿未完成时，下一轮不能绕过会话回推队列先起卡', async () => {
+    const fake = makeFakeGateway(log);
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstFinalizing!: () => void;
+    const firstFinalizing = new Promise<void>((resolve) => {
+      markFirstFinalizing = resolve;
+    });
+    fake.gw.sendStreamingCardWithFooter = async (
+      _chatId,
+      initialContent,
+    ) => {
+      events.push(`card:${initialContent}`);
+      return {
+        messageId: `om_${initialContent}`,
+        pushContent: async () => true,
+        finalize: async () => {
+          events.push(`finalize:${initialContent}:start`);
+          if (initialContent === '第一轮') {
+            markFirstFinalizing();
+            await firstGate;
+          }
+          events.push(`finalize:${initialContent}:end`);
+          return true;
+        },
+      };
+    };
+    const adapter = new FeishuAdapter({
+      store,
+      broadcast: (sessionId, frame) => store.publish(sessionId, frame),
+      credentials: CREDS,
+      gatewayFactory: () => fake.gw,
+    });
+    await adapter.start();
+    const pre = store.getOrCreateFeishuSession('oc_chat_order');
+    let turn = 0;
+    store.attachRuntime(pre.sessionId, {
+      async run() {
+        turn += 1;
+        const text = turn === 1 ? '第一轮' : '第二轮';
+        const assistant = store.appendMessage(pre.sessionId, {
+          role: 'assistant',
+          content: [{ type: 'text', value: '' }],
+          source: 'local',
+          isStreaming: true,
+        });
+        store.publish(pre.sessionId, {
+          type: 'message_start',
+          payload: { message: assistant },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_chunk',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id, delta: text },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_complete',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id },
+        });
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    } as SessionRuntime);
+
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_order',
+      messageId: 'om_order_1',
+      text: '第一问',
+    }));
+    await firstFinalizing;
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_order',
+      messageId: 'om_order_2',
+      text: '第二问',
+    }));
+    await flush();
+    expect(events).not.toContain('card:第二轮');
+
+    releaseFirst();
+    await flush();
+    expect(events.indexOf('finalize:第一轮:end')).toBeLessThan(
+      events.indexOf('card:第二轮'),
+    );
   });
 
   // appFrames 仅作占位说明：broadcast 直接走 store.publish，

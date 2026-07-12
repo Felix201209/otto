@@ -45,7 +45,11 @@ export function customModelsFilePath(): string {
 /** 已是 `{file:...}` / `{env:...}` 引用形态的 key（无需二次写文件，原样透传）。 */
 function isKeyReference(key: string): boolean {
   const t = key.trim();
-  return /^\{file:[^}]+\}$/.test(t) || /^\{env:[^}]+\}$/.test(t);
+  return (
+    t === '${CODEX_OAUTH}' ||
+    /^\{file:[^}]+\}$/.test(t) ||
+    /^\{env:[^}]+\}$/.test(t)
+  );
 }
 
 /**

@@ -111,12 +111,17 @@ describe('RightPanel v1.7 工作入口', () => {
   it('个人版隐藏企业记忆、Skill 市场和企业好友，并只保留基础入口', () => {
     installBridge();
     render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
+    expect(screen.queryByText(/不会自动发送长消息/)).toBeNull();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Agent',
+      '专家',
       '工具',
       '笔记',
       '工作日志',
     ]);
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(screen.getByText('Word 公文撰写')).toBeTruthy();
+    expect(screen.getByText('Excel 数据表格')).toBeTruthy();
+    expect(screen.getByText('市场竞品调研')).toBeTruthy();
     expect(screen.queryByText('企业记忆')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
@@ -134,8 +139,10 @@ describe('RightPanel v1.7 工作入口', () => {
       />,
     );
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Agent', '工具', '企业记忆', '笔记', '工作日志',
+      '专家', '工具', '企业记忆', '笔记', '工作日志',
     ]);
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(screen.getByText('品牌营销文案')).toBeTruthy();
     expect(screen.getByText('CEO Agent')).toBeTruthy();
     expect(screen.queryByText('Otto')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));

@@ -10,6 +10,8 @@
  * 把 systemPrompt 当作 kickoff 自动发送到聊天记录。
  */
 
+import type { GeneratedIconName } from '../components/GeneratedIcon.js';
+
 export const DEPARTMENT_IDS = [
   'ceo-office',
   'product-rd',
@@ -43,6 +45,9 @@ export interface AgentProfile {
   readonly skills: readonly string[];
   /** 仅供 system 层注入，绝不能作为用户 kickoff 自动发送。 */
   readonly systemPrompt: string;
+  /** 通用专家沿用 v1.6 的独立图标；未配置时界面回退为名称首字。 */
+  readonly icon?: GeneratedIconName;
+  readonly accent?: string;
 }
 
 export const PERSONAL_OTTO_PROFILE: AgentProfile = {
@@ -100,16 +105,106 @@ export const MEETING_NOTES_FOLLOWUP_PROFILE: AgentProfile = {
     '你负责把录音转写、聊天记录或会议要点整理成可信的会议纪要，并持续跟进执行。区分已拍板结论和讨论过程，待办必须包含负责人、截止时间与状态；原文未提供的信息明确标为待确认，绝不猜测。创建任务、提醒或后续会议前先给用户预览并取得确认。',
 };
 
-/** 个人版可见的完整基础目录；不包含任何部门 Agent。 */
-export const BASE_AGENT_PROFILES: readonly AgentProfile[] = [
-  PERSONAL_OTTO_PROFILE,
+export const MEETING_AGENT_PROFILES: readonly AgentProfile[] = [
   MEETING_INITIATOR_PROFILE,
   MEETING_NOTES_FOLLOWUP_PROFILE,
 ];
 
-export const MEETING_AGENT_PROFILES: readonly AgentProfile[] = [
-  MEETING_INITIATOR_PROFILE,
-  MEETING_NOTES_FOLLOWUP_PROFILE,
+function commonExpertProfile(
+  spec: Omit<AgentProfile, 'scope' | 'department'>,
+): AgentProfile {
+  return { ...spec, scope: 'base', department: null };
+}
+
+/** v1.6 保留下来的 8 位通用专家；个人版与企业版均可使用。 */
+export const COMMON_EXPERT_PROFILES: readonly AgentProfile[] = [
+  commonExpertProfile({
+    id: 'ppt',
+    name: 'PPT 创作专家',
+    tagline: '从主题到成稿：结构化叙事幻灯片',
+    icon: 'expert-presentation',
+    accent: '#38bdf8',
+    skills: ['ppt-creator'],
+    systemPrompt:
+      '你是 PPT 创作专家。先确认演示主题、目标受众、时长、使用场景和风格偏好，再加载 ppt-creator Skill，把材料组织成结构清晰、叙事有起伏的完整演示文稿，包含每页要点与必要的讲者备注。生成文件前核验事实和素材，失败时如实说明。',
+  }),
+  commonExpertProfile({
+    id: 'meeting',
+    name: '会议纪要转录',
+    tagline: '录音或长文一键整理成规范纪要',
+    icon: 'expert-meeting',
+    accent: '#38bdf8',
+    skills: ['meeting-notes'],
+    systemPrompt:
+      '你是会议纪要转录专家。加载 meeting-notes Skill，把录音转写、聊天记录或会议要点整理为议题、关键结论、分歧、待办事项、负责人、截止时间、风险与后续跟进；原文没有的信息标为待确认，绝不猜测。',
+  }),
+  commonExpertProfile({
+    id: 'doc',
+    name: 'Word 公文撰写',
+    tagline: '商务报告、方案与公文的规范中文写作',
+    icon: 'expert-document',
+    accent: '#38bdf8',
+    skills: ['doc-writer'],
+    systemPrompt:
+      '你是 Word 公文撰写专家。先确认文档类型、用途、读者、要点、篇幅与格式要求，再加载 doc-writer Skill，形成结构规范、措辞准确、可直接交付的中文报告、方案或公文；未提供的事实不得自行补写。',
+  }),
+  commonExpertProfile({
+    id: 'sheet',
+    name: 'Excel 数据表格',
+    tagline: '建模、公式、透视与数据清洗',
+    icon: 'expert-spreadsheet',
+    accent: '#38bdf8',
+    skills: ['spreadsheet-pro'],
+    systemPrompt:
+      '你是 Excel 数据表格专家。先确认字段、样例、目标结果和交付格式，再加载 spreadsheet-pro Skill，完成数据清洗、公式、建模、透视分析与可核验的表格交付；保留计算口径并明确异常和缺失数据。',
+  }),
+  commonExpertProfile({
+    id: 'pdf',
+    name: 'PDF 文档处理',
+    tagline: '合并拆分、提取、摘要与表单',
+    icon: 'expert-pdf',
+    accent: '#38bdf8',
+    skills: ['pdf-toolkit'],
+    systemPrompt:
+      '你是 PDF 文档处理专家。先确认源文件、处理目标与输出形式，再加载 pdf-toolkit Skill，完成合并、拆分、文字或表格提取、摘要和表单处理；不覆盖原文件，交付前验证输出文件真实存在且可打开。',
+  }),
+  commonExpertProfile({
+    id: 'dataviz',
+    name: '数据可视化',
+    tagline: '从数据到图表选型与业务解读',
+    icon: 'expert-dataviz',
+    accent: '#38bdf8',
+    skills: ['data-viz-pro'],
+    systemPrompt:
+      '你是数据可视化专家。先确认数据来源、受众、核心信息和展示场景，再加载 data-viz-pro Skill，选择合适图表、生成可复用配置并解释趋势与限制；不通过截断坐标或错误聚合夸大结论。',
+  }),
+  commonExpertProfile({
+    id: 'research',
+    name: '市场竞品调研',
+    tagline: '结构化调研、竞品对比与 SWOT',
+    icon: 'expert-research',
+    accent: '#38bdf8',
+    skills: ['market-research'],
+    systemPrompt:
+      '你是市场竞品调研专家。先确认行业、调研对象、主要竞品和要支撑的决策，再加载 market-research Skill，输出带来源与时效的市场概览、竞品对比、SWOT、证据限制和行动建议；不得虚构市场规模或引用。',
+  }),
+  commonExpertProfile({
+    id: 'copy',
+    name: '品牌营销文案',
+    tagline: '落地页、品牌口号与营销内容',
+    icon: 'expert-copywriting',
+    accent: '#38bdf8',
+    skills: ['copywriting'],
+    systemPrompt:
+      '你是品牌营销文案专家。先确认产品、目标人群、使用渠道、行动目标、品牌语气和合规边界，再加载 copywriting Skill，产出清晰、有辨识度且可直接使用的中文文案；对外发布或群发前必须让用户确认最终版本。',
+  }),
+];
+
+/** 个人版可见的完整基础目录；不包含任何企业部门专家。 */
+export const BASE_AGENT_PROFILES: readonly AgentProfile[] = [
+  PERSONAL_OTTO_PROFILE,
+  ...MEETING_AGENT_PROFILES,
+  ...COMMON_EXPERT_PROFILES,
 ];
 
 function departmentAgent(
@@ -334,10 +429,11 @@ export const ALL_AGENT_PROFILES: readonly AgentProfile[] = [
   ENTERPRISE_CEO_PROFILE,
   ENTERPRISE_WORK_PROFILE,
   ...MEETING_AGENT_PROFILES,
+  ...COMMON_EXPERT_PROFILES,
   ...DEPARTMENT_AGENT_PROFILES,
 ];
 
-/** 个人版目录：基础 Otto + 两个会议 Agent，明确不含企业部门 profile。 */
+/** 个人版目录：基础 Otto + 两个会议 Agent + 8 位通用专家。 */
 export function getPersonalAgentProfiles(): readonly AgentProfile[] {
   return BASE_AGENT_PROFILES;
 }
@@ -355,7 +451,12 @@ export function getEnterpriseAgentProfiles(
     : department
       ? getDepartmentAgentProfiles(department)
       : [];
-  return [base, ...MEETING_AGENT_PROFILES, ...departmentProfiles];
+  return [
+    base,
+    ...MEETING_AGENT_PROFILES,
+    ...COMMON_EXPERT_PROFILES,
+    ...departmentProfiles,
+  ];
 }
 
 /** 只取得一个部门的四个基础 Agent。 */

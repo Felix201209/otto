@@ -37,6 +37,8 @@ export interface CreateCoreConfigOptions {
   customModels?: CustomModelConfig[];
   /** 会话级 Agent profile，经 Config.userRules 进入 system prompt。 */
   userRules?: string;
+  /** 当前 runtime 是否服务于飞书会话；注入移动端/聊天渠道环境提示。 */
+  feishuMode?: boolean;
   /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
   excludeTools?: string[];
 }
@@ -100,6 +102,7 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     model: resolvedModel,
     customModels,
     userRules: opts.userRules,
+    feishuMode: opts.feishuMode,
     excludeTools: opts.excludeTools,
     // 关闭遥测与使用统计（与 CLI 一致的隐私基线）。
     telemetry: { enabled: false, logPrompts: false },

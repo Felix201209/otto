@@ -46,7 +46,7 @@ export interface SessionRuntime {
   /** 中止当前轮。 */
   cancel(): void;
   /** 设置模型。 */
-  setModel(model: string): void;
+  setModel(model: string): void | Promise<void>;
   /**
    * 回传一个待确认工具调用的应答（AskUserQuestion 的答案 / 危险命令确认等）。
    * server 收到客户端 tool_confirmation_response 后按 callId 路由进来，唤醒

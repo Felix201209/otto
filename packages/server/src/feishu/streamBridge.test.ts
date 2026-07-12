@@ -78,7 +78,7 @@ describe('bridgeSessionToFeishu', () => {
       makeNoCardSink(),
       sess.sessionId,
       'oc_bridge_1',
-      'om_origin_1',
+      () => 'om_origin_1',
     );
 
     const messageId = startAssistantStream(sess.sessionId, '第一段');
@@ -138,7 +138,7 @@ describe('bridgeSessionToFeishu', () => {
       cardSink,
       sess.sessionId,
       'oc_bridge_2',
-      undefined,
+      () => undefined,
     );
 
     const messageId = startAssistantStream(sess.sessionId, '流式正文');
@@ -153,5 +153,97 @@ describe('bridgeSessionToFeishu', () => {
     expect(pushed.length).toBeGreaterThanOrEqual(1);
     expect(finalized).toBe('流式正文');
     expect(markdowns).toHaveLength(0);
+  });
+
+  it('纯工具轮的空 assistant complete 不向飞书发送“空回复”', async () => {
+    const sess = store.getOrCreateFeishuSession('oc_bridge_empty');
+    bridgeSessionToFeishu(
+      store,
+      makeNoCardSink(),
+      sess.sessionId,
+      'oc_bridge_empty',
+      () => 'om_origin_empty',
+    );
+    const assistant = store.appendMessage(sess.sessionId, {
+      role: 'assistant',
+      content: [{ type: 'text', value: '' }],
+      source: 'local',
+      isStreaming: true,
+    });
+    store.publish(sess.sessionId, {
+      type: 'message_start',
+      payload: { message: assistant },
+    });
+    store.publish(sess.sessionId, {
+      type: 'chat_complete',
+      payload: { sessionId: sess.sessionId, messageId: assistant.id, text: '' },
+    });
+    await flush();
+
+    expect(markdowns).toHaveLength(0);
+  });
+
+  it('不同 assistant 流共用回推队列，后一条不能越过前一条定稿', async () => {
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstFinalizing!: () => void;
+    const firstFinalizing = new Promise<void>((resolve) => {
+      markFirstFinalizing = resolve;
+    });
+    const sink: FeishuStreamSink = {
+      async sendStreamingCardWithFooter(_chatId, initialContent) {
+        events.push(`card:${initialContent}`);
+        return {
+          messageId: `om_${initialContent}`,
+          pushContent: async () => true,
+          finalize: async () => {
+            events.push(`finalize:${initialContent}:start`);
+            if (initialContent === '第一条') {
+              markFirstFinalizing();
+              await firstGate;
+            }
+            events.push(`finalize:${initialContent}:end`);
+            return true;
+          },
+        };
+      },
+      async sendMarkdown() {
+        return 'om_sent';
+      },
+    };
+    const sess = store.getOrCreateFeishuSession('oc_bridge_order');
+    bridgeSessionToFeishu(
+      store,
+      sink,
+      sess.sessionId,
+      'oc_bridge_order',
+      () => 'om_origin_order',
+    );
+
+    const firstId = startAssistantStream(sess.sessionId, '第一条');
+    await flush();
+    store.publish(sess.sessionId, {
+      type: 'chat_complete',
+      payload: { sessionId: sess.sessionId, messageId: firstId },
+    });
+    await firstFinalizing;
+
+    const secondId = startAssistantStream(sess.sessionId, '第二条');
+    await flush();
+    expect(events).not.toContain('card:第二条');
+
+    releaseFirst();
+    await flush();
+    store.publish(sess.sessionId, {
+      type: 'chat_complete',
+      payload: { sessionId: sess.sessionId, messageId: secondId },
+    });
+    await flush();
+    expect(events.indexOf('finalize:第一条:end')).toBeLessThan(
+      events.indexOf('card:第二条'),
+    );
   });
 });

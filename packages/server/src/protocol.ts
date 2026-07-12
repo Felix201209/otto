@@ -1445,6 +1445,10 @@ export function validateClientPayload(msg: {
         return 'content 必须是 MessageContentPart 数组';
       if (!isMessageSourceValue(p['source']))
         return 'source 必须是 local | feishu | tui';
+      // 飞书入站消息由 FeishuAdapter 直接注入 SessionRuntime，不经过客户端 WS。
+      // 禁止客户端伪造 source=feishu，否则会借飞书免确认策略绕过桌面操作确认。
+      if (p['source'] === 'feishu')
+        return '客户端不得声明 source=feishu；飞书消息仅由服务端适配器注入';
       if (
         p['clientMessageId'] !== undefined &&
         typeof p['clientMessageId'] !== 'string'

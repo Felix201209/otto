@@ -160,6 +160,8 @@ export class FeishuAdapter {
 
   /** 已挂回推桥的飞书会话（sessionId → 取消订阅），避免重复订阅导致重复回推。 */
   private readonly bridged = new Map<string, Unsubscribe>();
+  /** 当前真正执行轮的飞书消息 id；bridge 在 assistant message_start 时快照。 */
+  private readonly replyTargets = new Map<string, string>();
   /**
    * 每会话串行队列（sessionId → promise 链尾 + 在跑/排队轮数）。
    * 同一飞书会话同一时刻只跑一轮 agent turn：streamBridge 一次只跟踪一条
@@ -267,6 +269,7 @@ export class FeishuAdapter {
         }
         this.bridged.delete(sessionId);
       }
+      this.replyTargets.delete(sessionId);
     });
 
     // 3) 建网关并接线（缺省 new FeishuGateway；测试可注入 fake）。
@@ -524,8 +527,9 @@ export class FeishuAdapter {
       });
     }
 
-    // 挂回推桥（每会话一次，长期存活）：core 流式 → 飞书卡片。
-    this.ensureBridge(session.sessionId, msg.chatId, msg.messageId);
+    // 每个飞书会话只挂一个长期 bridge，保证跨轮回推也共用同一条网络队列。
+    // reply target 由 runTurn 在真正开跑时更新，bridge 会在 assistant 起始时快照。
+    this.ensureBridge(session.sessionId, msg.chatId);
 
     // 落库飞书用户消息 + 广播 message_start（app 实时看到飞书来的消息）。
     const content: MessageContent = [{ type: 'text', value: text }];
@@ -550,7 +554,7 @@ export class FeishuAdapter {
     const wasBusy = queue.depth > 0;
     queue.depth += 1;
     queue.tail = queue.tail
-      .then(() => this.runTurn(session.sessionId, content))
+      .then(() => this.runTurn(session.sessionId, content, msg.messageId))
       .finally(() => {
         queue.depth -= 1;
         // 链上最后一轮跑完即摘除队列项，避免 Map 无界增长。
@@ -582,7 +586,12 @@ export class FeishuAdapter {
   private async runTurn(
     sessionId: string,
     content: MessageContent,
+    replyToMessageId: string | undefined,
   ): Promise<void> {
+    // 排队轮真正开跑时才更新目标；bridge 会在每条 assistant message_start
+    // 时把它快照进流状态，后续排队消息不会串改已开始的回复。
+    if (replyToMessageId) this.replyTargets.set(sessionId, replyToMessageId);
+    else this.replyTargets.delete(sessionId);
     let runtime = this.store.getRuntime(sessionId);
     if (!runtime && this.ensureRuntime) {
       try {
@@ -649,11 +658,10 @@ export class FeishuAdapter {
     return hit?.sessionId ?? '';
   }
 
-  /** 给飞书会话挂一次回推桥（幂等）。 */
+  /** 给飞书会话挂一个长期回推桥（幂等），跨轮共享回推顺序。 */
   private ensureBridge(
     sessionId: string,
     feishuChatId: string,
-    replyToMessageId: string | undefined,
   ): void {
     if (this.bridged.has(sessionId)) return;
     const gateway = this.gateway;
@@ -663,7 +671,7 @@ export class FeishuAdapter {
       gateway,
       sessionId,
       feishuChatId,
-      replyToMessageId,
+      () => this.replyTargets.get(sessionId),
     );
     this.bridged.set(sessionId, unsub);
   }
@@ -678,6 +686,15 @@ export class FeishuAdapter {
   async pushToFeishu(feishuChatId: string, text: string): Promise<void> {
     if (!this.gateway) {
       throw new Error('飞书网关未启动，无法回推。');
+    }
+    // app 本地发言不是对上一条飞书消息的“回复”；清掉动态引用目标，随后同一轮
+    // AI 输出也会以普通消息回推。桥保持不变，跨轮网络顺序不会因此被打断。
+    const session = this.store
+      .listSessions()
+      .find((item) => item.feishuChatId === feishuChatId);
+    if (session) {
+      this.replyTargets.delete(session.sessionId);
+      this.ensureBridge(session.sessionId, feishuChatId);
     }
     await this.gateway.sendMarkdown(feishuChatId, text);
   }
@@ -716,6 +733,7 @@ export class FeishuAdapter {
       }
     }
     this.bridged.clear();
+    this.replyTargets.clear();
     this.connected = false;
     if (this.gateway) {
       await this.gateway.disconnect().catch(() => undefined);

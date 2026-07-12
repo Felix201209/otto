@@ -84,8 +84,11 @@ export class ImageReaderTool extends BaseTool<ImageReaderToolParams, ToolResult>
       ImageReaderTool.Name,
       'ImageReader',
       'Fallback tool for text-only models that cannot natively view images. ' +
-        'It offloads the vision work to a cheap model (gemini-2.5-flash) and ' +
-        'returns a textual description. Do NOT call this tool proactively: ' +
+        'It uses a configured image recognition helper and returns a textual ' +
+        'description. This tool only extracts information from image pixels; ' +
+        'display, open, attach, or send an existing image are media-delivery ' +
+        'actions that do not require visual recognition. ' +
+        'Do NOT call this tool proactively: ' +
         'only use it when the server has replaced an image with a filter ' +
         'marker explicitly instructing you to (e.g. "[Image Content was ' +
         'filtered. ... Try using image_reader tool to assist.]"). If you can ' +
@@ -248,8 +251,13 @@ export class ImageReaderTool extends BaseTool<ImageReaderToolParams, ToolResult>
 
       if (!geminiFlashModel) {
         return {
-          llmContent: `This tool (${ImageReaderTool.Name}) is currently unavailable because you are using custom models, but no custom Gemini Flash model (e.g., gemini-2.5-flash) was found in your custom models list to execute this tool. Please configure a custom Gemini Flash model to use this feature.`,
-          returnDisplay: `Tool unavailable: Gemini Flash required`
+          llmContent:
+            'Image recognition helper is not configured for the current model setup. ' +
+            'Configure an image-capable helper to analyze image contents. ' +
+            'Displaying or sending an existing image does not require visual recognition ' +
+            'and should use the appropriate media-delivery action instead.',
+          returnDisplay:
+            'Tool unavailable: image recognition helper not configured',
         };
       }
       resolvedModel = generateCustomModelId(geminiFlashModel);
@@ -383,21 +391,22 @@ export class ImageReaderTool extends BaseTool<ImageReaderToolParams, ToolResult>
       }
 
       const relative = makeRelative(filePath, this.config.getTargetDir());
-      const header = `Image description for ${shortenPath(relative)} (via ${isUsingCustomModel ? 'custom model' : 'gemini-2.5-flash'}):`;
+      const header = `Image description for ${shortenPath(relative)} (via image recognition helper):`;
 
       return {
         llmContent: `${header}\n\n${description}`,
         returnDisplay: `Described image: ${shortenPath(relative)}${truncated ? ' (truncated)' : ''}`,
       };
     } catch (error) {
-      const errorMessage = getErrorMessage(error);
       console.error(
         `[ImageReaderTool] Failed to describe image "${filePath}":`,
         error,
       );
       return {
-        llmContent: `Error describing image "${filePath}": ${errorMessage}`,
-        returnDisplay: `Error describing image: ${errorMessage}`,
+        llmContent:
+          `Error: image recognition helper failed for "${filePath}". ` +
+          'Check the helper configuration and try again.',
+        returnDisplay: 'Image recognition helper failed',
       };
     }
   }

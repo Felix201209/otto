@@ -315,9 +315,15 @@ export class CoreSessionRuntime implements SessionRuntime {
     this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
   }
 
-  setModel(model: string): void {
-    // core 的 setModel 接受 'custom:...' 形态；选中自定义模型即在此切换。
-    this.config.setModel(model);
+  async setModel(model: string): Promise<void> {
+    // 不能只改 Config：OttoChat 会缓存 specifiedModel，真实出网请求仍会走旧模型。
+    // 统一走 core 的 switchModel，让 Config、live chat、工具与系统提示词一起切换。
+    const result = await this.config
+      .getOttoClient()
+      .switchModel(model, new AbortController().signal);
+    if (!result.success) {
+      throw new Error(result.error || `无法切换到模型 ${model}`);
+    }
   }
 
   /** 供 server.ts 的 GUI 面板 handler 只读查询/即时应用设置（context 分解/mcp/healthyUse 等）。 */
@@ -357,7 +363,7 @@ export class CoreSessionRuntime implements SessionRuntime {
    * 跑一整轮对话（可能多回合工具往返）。
    * 期间所有流式/工具事件经 store.publish 广播；不写 stdout。
    */
-  async run(input: MessageContent, _source: MessageSource): Promise<void> {
+  async run(input: MessageContent, source: MessageSource): Promise<void> {
     if (this.running) {
       // 同一会话已有一轮在跑：拒绝并行（保护 core chat 历史一致性）。
       this.store.publish(this.sessionId, {
@@ -370,8 +376,6 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
       return;
     }
-    void _source; // source 用于飞书回推判定，运行层不需要。
-
     this.running = true;
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -579,6 +583,7 @@ export class CoreSessionRuntime implements SessionRuntime {
           caps.maxConcurrentTools,
           signal,
           toolMessageId,
+          source,
         );
 
         if (signal.aborted) {
@@ -627,6 +632,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     maxConcurrent: number,
     signal: AbortSignal,
     messageId: string,
+    source: MessageSource,
   ): Promise<Part[]> {
     const responseParts: Part[] = [];
 
@@ -714,6 +720,7 @@ export class CoreSessionRuntime implements SessionRuntime {
                   callId,
                   signal,
                   messageId,
+                  source,
                 );
               }
 
@@ -722,7 +729,16 @@ export class CoreSessionRuntime implements SessionRuntime {
                 requestInfo,
                 toolRegistry,
                 signal,
-                { explicitlyApproved },
+                {
+                  explicitlyApproved,
+                  onOutput: (output) => {
+                    if (signal.aborted) return;
+                    const currentCard = cards.get(callId);
+                    if (!currentCard) return;
+                    cards.set(callId, { ...currentCard, liveOutput: output });
+                    this.publishToolCards(cards, messageId);
+                  },
+                },
               );
 
               if (signal.aborted) {
@@ -813,11 +829,23 @@ export class CoreSessionRuntime implements SessionRuntime {
     callId: string,
     signal: AbortSignal,
     messageId: string,
+    source: MessageSource,
   ): Promise<boolean> {
     const tool = toolRegistry.getTool(requestInfo.name);
     if (!tool) return false;
     const details = await tool.shouldConfirmExecute(requestInfo.args, signal);
-    if (!details || !shouldRequestConfirmation(this.authorizationMode, details)) return false;
+    if (!details) return false;
+
+    // 飞书没有桌面确认入口：授权用户从 FeishuAdapter 发起的普通操作直接按
+    // ProceedOnce 执行，否则会永远挂在只有 Otto 桌面能看到的确认卡上。
+    // ask_user_question 走独立闸门，不会落到这里；客户端 WS 又禁止伪造
+    // source=feishu，因此桌面里的本地操作仍保持原确认边界。
+    if (source === 'feishu') {
+      await details.onConfirm(ToolConfirmationOutcome.ProceedOnce);
+      return true;
+    }
+
+    if (!shouldRequestConfirmation(this.authorizationMode, details)) return false;
 
     const base = cards.get(callId);
     if (base) {

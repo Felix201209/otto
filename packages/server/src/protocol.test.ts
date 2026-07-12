@@ -70,6 +70,19 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     ).toBeNull();
   });
 
+  it('客户端不得伪造 feishu 来源（飞书消息只允许由服务端适配器注入）', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'feishu',
+        },
+      }),
+    ).toContain('feishu');
+  });
+
   it('send_user_message：content 传字符串 / null / 对象 → 拒绝', () => {
     for (const content of ['不是数组', null, { type: 'text', value: 'x' }]) {
       expect(

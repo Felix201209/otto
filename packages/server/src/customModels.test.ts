@@ -141,6 +141,23 @@ describe('listModelInfos', () => {
   });
 });
 
+describe('saveCustomModel Codex OAuth', () => {
+  it('OAuth 哨兵不是密钥，保存时原样保留而不包装成 secret 文件引用', () => {
+    saveCustomModel({
+      displayName: 'Codex (ChatGPT OAuth)',
+      provider: 'openai-responses',
+      baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiKey: '${CODEX_OAUTH}',
+      modelId: 'gpt-5.6-sol',
+    });
+
+    expect(loadCustomModels()[0].apiKey).toBe('${CODEX_OAUTH}');
+    expect(
+      fs.existsSync(path.join(tmpHome, '.otto-user', 'secrets', 'Codex__ChatGPT_OAuth_')),
+    ).toBe(false);
+  });
+});
+
 describe('deleteCustomModel', () => {
   it('按 ModelInfo id 删除命中的模型并重写文件', () => {
     const idA = saveCustomModel({ ...VALID_MODEL, displayName: 'A' }, false);

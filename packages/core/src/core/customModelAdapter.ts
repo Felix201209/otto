@@ -150,8 +150,14 @@ function resolveEnvVar(value: string): string {
  */
 export const CODEX_OAUTH_SENTINEL = '${CODEX_OAUTH}';
 
-function isCodexAuth(modelConfig: CustomModelConfig): boolean {
-  return (modelConfig.apiKey || '').trim() === CODEX_OAUTH_SENTINEL;
+function isCodexAuth(
+  modelConfig: CustomModelConfig,
+  resolvedApiKey = resolveEnvVar(modelConfig.apiKey || ''),
+): boolean {
+  return (
+    (modelConfig.apiKey || '').trim() === CODEX_OAUTH_SENTINEL ||
+    resolvedApiKey.trim() === CODEX_OAUTH_SENTINEL
+  );
 }
 
 /**
@@ -163,7 +169,7 @@ async function resolveAuthHeaders(
   modelConfig: CustomModelConfig,
   resolvedApiKey: string,
 ): Promise<Record<string, string>> {
-  if (isCodexAuth(modelConfig)) {
+  if (isCodexAuth(modelConfig, resolvedApiKey)) {
     const { CodexAuthManager } = await import('./codexAuth.js');
     const h = await CodexAuthManager.getInstance().getAuthHeaders();
     const out: Record<string, string> = { Authorization: h.Authorization };
@@ -1077,9 +1083,14 @@ export async function callOpenAICompatibleModel(
   const url = `${baseUrl}/chat/completions`;
 
   const thinkingConfig = resolveThinkingConfig(modelConfig);
+  const messages = OpenAIConverter.contentsToMessages(request.contents);
+  const systemText = extractSystemText(request);
+  if (systemText) {
+    messages.unshift({ role: 'system', content: systemText });
+  }
   const requestBody: any = {
     model: modelConfig.modelId,
-    messages: OpenAIConverter.contentsToMessages(request.contents),
+    messages,
     tools: OpenAIConverter.toolsToOpenAITools(request.config?.tools),
     stream: false,
     // 🟢 max_tokens：output cap，32K 统一兜底；EasyClaw 元数据填充时会更精确。
@@ -1435,13 +1446,27 @@ export async function callOpenAIResponsesModel(
     requestBody.reasoning = { effort: openaiEffort, summary: 'detailed' };
   }
 
+  const systemText = extractSystemText(request);
+  if (systemText) {
+    requestBody.instructions = systemText;
+  }
+
+  // GUI 会把凭证安全保存成 {file:...}。Codex OAuth 的判定必须基于解析后的
+  // 值，否则会把字面量 ${CODEX_OAUTH} 当 Bearer key 发出去。
+  if (isCodexAuth(modelConfig, apiKey)) {
+    requestBody.instructions =
+      extractSystemText(request) || 'You are a helpful assistant.';
+    delete requestBody.max_output_tokens;
+  }
+
   return retryWithBackoff(
     async () => {
+      const authHeaders = await resolveAuthHeaders(modelConfig, apiKey);
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          ...authHeaders,
           ...modelConfig.headers,
         },
         body: JSON.stringify(requestBody),
@@ -1517,8 +1542,13 @@ export async function* callOpenAIResponsesModelStream(
     requestBody.reasoning = { effort: openaiEffort, summary: 'detailed' };
   }
 
+  const systemText = extractSystemText(request);
+  if (systemText) {
+    requestBody.instructions = systemText;
+  }
+
   // Codex(ChatGPT 后端 /responses)强制要求 instructions 字段非空。
-  if (isCodexAuth(modelConfig)) {
+  if (isCodexAuth(modelConfig, apiKey)) {
     requestBody.instructions =
       extractSystemText(request) || 'You are a helpful assistant.';
     // Codex(ChatGPT 后端)不支持 max_output_tokens,带上会 400 Unsupported parameter。
@@ -1736,6 +1766,15 @@ export async function callAnthropicModel(
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
   const apiKey = resolveEnvVar(modelConfig.apiKey);
   const { messages, system } = AnthropicConverter.contentsToAnthropic(request.contents);
+  const systemText = extractSystemText(request);
+  const systemBlocks = system ? [...system] : [];
+  if (systemText && !systemBlocks.some((block) => block.text === systemText)) {
+    systemBlocks.unshift({
+      type: 'text',
+      text: systemText,
+      cache_control: { type: 'ephemeral' },
+    });
+  }
 
   // ⚠️ 注意：max_tokens 走 resolveOutputTokens()（output cap），不是
   // modelConfig.maxTokens（context window）。详见 resolveOutputTokens 文档。
@@ -1747,8 +1786,8 @@ export async function callAnthropicModel(
   };
 
   // 添加 system（数组格式，带 cache_control 支持）
-  if (system && system.length > 0) {
-    requestBody.system = system;
+  if (systemBlocks.length > 0) {
+    requestBody.system = systemBlocks;
   }
 
   // 🆕 Extended Thinking 智能启用与力度调控策略：
@@ -1868,9 +1907,14 @@ export async function* callOpenAICompatibleModelStream(
   const apiKey = resolveEnvVar(modelConfig.apiKey);
 
   const thinkingConfig = resolveThinkingConfig(modelConfig);
+  const messages = OpenAIConverter.contentsToMessages(request.contents);
+  const systemText = extractSystemText(request);
+  if (systemText) {
+    messages.unshift({ role: 'system', content: systemText });
+  }
   const requestBody: any = {
     model: modelConfig.modelId,
-    messages: OpenAIConverter.contentsToMessages(request.contents),
+    messages,
     tools: OpenAIConverter.toolsToOpenAITools(request.config?.tools),
     stream: true,
     stream_options: { include_usage: true }, // 请求包含 usage 信息
@@ -2059,6 +2103,15 @@ export async function* callAnthropicModelStream(
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
   const apiKey = resolveEnvVar(modelConfig.apiKey);
   const { messages, system } = AnthropicConverter.contentsToAnthropic(request.contents);
+  const systemText = extractSystemText(request);
+  const systemBlocks = system ? [...system] : [];
+  if (systemText && !systemBlocks.some((block) => block.text === systemText)) {
+    systemBlocks.unshift({
+      type: 'text',
+      text: systemText,
+      cache_control: { type: 'ephemeral' },
+    });
+  }
 
   const requestBody: any = {
     model: modelConfig.modelId,
@@ -2070,8 +2123,8 @@ export async function* callAnthropicModelStream(
   };
 
   // 添加 system（数组格式，带 cache_control 支持）
-  if (system && system.length > 0) {
-    requestBody.system = system;
+  if (systemBlocks.length > 0) {
+    requestBody.system = systemBlocks;
   }
 
   // 🆕 Extended Thinking 智能启用与力度调控策略（流式调用）：

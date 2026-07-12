@@ -185,3 +185,108 @@ describe('ToolCalls · 敏感操作确认卡', () => {
     expect(onRespond).toHaveBeenCalledWith('danger-1', 'approved');
   });
 });
+
+describe('ToolCalls · 飞书授权二维码', () => {
+  it('从 lark_cli 实时输出渲染可扫码二维码，并保留浏览器授权入口', () => {
+    const openExternal = vi.fn(async () => undefined);
+    (window as unknown as { otto: { openExternal: typeof openExternal } }).otto = {
+      openExternal,
+    };
+    const authUrl =
+      'https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=flow-1&user_code=9NVZ-JH8A';
+    const tool: ToolCall = {
+      id: 'lark-auth',
+      toolName: 'lark_cli',
+      parameters: { command: 'auth login' },
+      status: 'executing' as ToolCall['status'],
+      liveOutput: `请扫码授权：\n${authUrl}\n等待授权完成...`,
+    };
+
+    render(<ToolCallsCard toolCalls={[tool]} />);
+
+    expect(screen.getByRole('img', { name: '飞书授权二维码' })).toBeTruthy();
+    expect(screen.getByText('授权码：9NVZ-JH8A')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '在浏览器中打开授权页面' }));
+    expect(openExternal).toHaveBeenCalledWith(authUrl);
+  });
+
+  it('拒绝把非飞书域名伪装成授权二维码', () => {
+    const tool: ToolCall = {
+      id: 'fake-auth',
+      toolName: 'lark_cli',
+      parameters: { command: 'auth login' },
+      status: 'executing' as ToolCall['status'],
+      liveOutput:
+        'https://evil.example/oauth/v1/device/verify?user_code=STEAL-ME',
+    };
+
+    render(<ToolCallsCard toolCalls={[tool]} />);
+
+    expect(screen.queryByRole('img', { name: '飞书授权二维码' })).toBeNull();
+  });
+
+  it('同时校验 HTTPS、官方主机和已知授权路径', () => {
+    const invalidCases = [
+      'http://accounts.feishu.cn/oauth/v1/device/verify?user_code=NOPE-1',
+      'https://accounts.feishu.cn/unrelated?user_code=NOPE-2',
+      'https://accounts.feishu.cn.evil.example/oauth/v1/device/verify?user_code=NOPE-3',
+    ];
+
+    for (const [index, url] of invalidCases.entries()) {
+      const { unmount } = render(
+        <ToolCallsCard
+          toolCalls={[{
+            id: `invalid-auth-${index}`,
+            toolName: 'lark_cli',
+            parameters: {},
+            status: 'executing' as ToolCall['status'],
+            liveOutput: url,
+          }]}
+        />,
+      );
+      expect(screen.queryByRole('img', { name: '飞书授权二维码' })).toBeNull();
+      unmount();
+    }
+  });
+
+  it('支持 Lark 官方 CLI 授权页，但不信任其它工具输出的同一链接', () => {
+    const authUrl =
+      'https://open.larksuite.com/page/cli?user_code=LARK-1234&from=cli';
+    const validTool: ToolCall = {
+      id: 'lark-global-auth',
+      toolName: 'lark_cli',
+      parameters: {},
+      status: 'executing' as ToolCall['status'],
+      liveOutput: authUrl,
+    };
+    const { unmount } = render(<ToolCallsCard toolCalls={[validTool]} />);
+    expect(screen.getByRole('img', { name: '飞书授权二维码' })).toBeTruthy();
+    expect(screen.getByText('授权码：LARK-1234')).toBeTruthy();
+    unmount();
+
+    render(
+      <ToolCallsCard
+        toolCalls={[{ ...validTool, id: 'other-tool', toolName: 'web_fetch' }]}
+      />,
+    );
+    expect(screen.queryByRole('img', { name: '飞书授权二维码' })).toBeNull();
+  });
+
+  it('从彩色终端输出中提取官方授权链接', () => {
+    const escape = String.fromCharCode(27);
+    const authUrl =
+      'https://accounts.feishu.cn/oauth/v1/device/verify?user_code=COLOR-1234';
+    const tool: ToolCall = {
+      id: 'colored-lark-auth',
+      toolName: 'lark_cli',
+      parameters: {},
+      status: 'executing' as ToolCall['status'],
+      liveOutput: `${escape}[36m${authUrl}${escape}[0m`,
+    };
+
+    render(<ToolCallsCard toolCalls={[tool]} />);
+
+    expect(screen.getByRole('img', { name: '飞书授权二维码' })).toBeTruthy();
+    expect(screen.getByText('授权码：COLOR-1234')).toBeTruthy();
+  });
+});

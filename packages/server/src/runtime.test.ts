@@ -14,14 +14,70 @@
  *   ③ 定稿后 store 里正文完整、isStreaming=false。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Config } from 'otto-core';
-import { AskUserQuestionTool } from 'otto-core';
+import { AskUserQuestionTool, ToolConfirmationOutcome } from 'otto-core';
 import { CoreSessionRuntime } from './runtime.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ToolCallStatus, type ServerToClient } from './protocol.js';
 
 const noOpWorkLogger = { log: async () => undefined };
+
+describe('CoreSessionRuntime 模型切换', () => {
+  it('通过 OttoClient.switchModel 切换正在使用的 live chat，而不只改 Config 标签', async () => {
+    const switchModel = vi.fn(async (model: string) => ({
+      success: true,
+      modelName: model,
+    }));
+    const setModel = vi.fn();
+    const config = {
+      getOttoClient: () => ({ switchModel }),
+      setModel,
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '模型切换' });
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+
+    await runtime.setModel('custom:openai-responses:gpt-5.6-sol@test');
+
+    expect(switchModel).toHaveBeenCalledTimes(1);
+    expect(switchModel).toHaveBeenCalledWith(
+      'custom:openai-responses:gpt-5.6-sol@test',
+      expect.any(AbortSignal),
+    );
+    expect(setModel).not.toHaveBeenCalled();
+  });
+
+  it('live chat 拒绝切换时如实失败，不能伪装成已生效', async () => {
+    const config = {
+      getOttoClient: () => ({
+        switchModel: vi.fn(async () => ({
+          success: false,
+          modelName: 'target',
+          error: '上下文无法适配目标模型',
+        })),
+      }),
+      setModel: vi.fn(),
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '模型切换失败' });
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+
+    await expect(runtime.setModel('target')).rejects.toThrow(
+      '上下文无法适配目标模型',
+    );
+  });
+});
 
 /** 构造一条只有文本的流式 chunk（结构对齐 GenerateContentResponse）。 */
 function chunk(text: string, finishReason?: string): unknown {
@@ -260,11 +316,19 @@ function toolChunk(name: string, callId?: string): unknown {
 /** 注册一个最小真实执行工具；execute 可由测试注入门闩，模拟忽略 AbortSignal。 */
 function makeFakeConfigWithTool(
   turns: Array<() => AsyncGenerator<unknown>>,
-  execute: () => Promise<{ llmContent: string; returnDisplay: string }>,
+  execute: (
+    args?: unknown,
+    signal?: AbortSignal,
+    updateOutput?: (output: string) => void,
+  ) => Promise<{ llmContent: string; returnDisplay: string }>,
+  shouldConfirmExecute: (
+    args?: unknown,
+    signal?: AbortSignal,
+  ) => Promise<unknown> = async () => false,
 ): Config {
   const tool = {
     name: 'test_tool',
-    shouldConfirmExecute: async () => false,
+    shouldConfirmExecute,
     execute,
   };
   const registry = {
@@ -438,6 +502,182 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
 });
 
 describe('CoreSessionRuntime · 工具状态收口', () => {
+  it('飞书适配器发起的普通工具无需桌面确认即可执行', async () => {
+    let markProgress!: () => void;
+    const progress = new Promise<void>((resolve) => {
+      markProgress = resolve;
+    });
+    const onConfirm = vi.fn(async () => {
+      markProgress();
+    });
+    const execute = vi.fn(async () => {
+      markProgress();
+      return { llmContent: 'tool done', returnDisplay: 'tool done' };
+    });
+    const config = makeFakeConfigWithTool(
+      [
+        () =>
+          (async function* () {
+            yield toolChunk('test_tool', 'feishu-auto');
+          })(),
+        () =>
+          (async function* () {
+            yield chunk('已完成', 'STOP');
+          })(),
+      ],
+      execute,
+      async () => ({
+        type: 'exec',
+        title: '执行测试工具',
+        command: 'test_tool',
+        warning: '测试高风险操作',
+        onConfirm,
+      }),
+    );
+    const store = new InMemorySessionStore();
+    const session = store.getOrCreateFeishuSession('oc_confirm');
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => {
+      frames.push(frame);
+      if (frame.type === 'tool_confirmation_request') markProgress();
+    });
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    const running = runtime.run(
+      [{ type: 'text', value: '执行操作' }],
+      'feishu',
+    );
+    await progress;
+    const requested = frames.some(
+      (frame) => frame.type === 'tool_confirmation_request',
+    );
+    if (requested) {
+      runtime.resolveToolConfirmation('feishu-auto', 'approved');
+    }
+    await running;
+
+    expect(requested).toBe(false);
+    expect(onConfirm).toHaveBeenCalledWith(
+      ToolConfirmationOutcome.ProceedOnce,
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('桌面在飞书绑定会话里发起工具时仍保留确认', async () => {
+    const onConfirm = vi.fn(async () => undefined);
+    const execute = vi.fn(async () => ({
+      llmContent: 'tool done',
+      returnDisplay: 'tool done',
+    }));
+    const config = makeFakeConfigWithTool(
+      [
+        () =>
+          (async function* () {
+            yield toolChunk('test_tool', 'local-confirm');
+          })(),
+        () =>
+          (async function* () {
+            yield chunk('已完成', 'STOP');
+          })(),
+      ],
+      execute,
+      async () => ({
+        type: 'exec',
+        title: '执行测试工具',
+        command: 'test_tool',
+        onConfirm,
+      }),
+    );
+    const store = new InMemorySessionStore();
+    const session = store.getOrCreateFeishuSession('oc_local_confirm');
+    let confirmRequested!: () => void;
+    const confirmation = new Promise<void>((resolve) => {
+      confirmRequested = resolve;
+    });
+    store.subscribe(session.sessionId, (frame) => {
+      if (frame.type === 'tool_confirmation_request') confirmRequested();
+    });
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    const running = runtime.run(
+      [{ type: 'text', value: '从桌面执行操作' }],
+      'local',
+    );
+    await confirmation;
+    expect(execute).not.toHaveBeenCalled();
+    runtime.resolveToolConfirmation('local-confirm', 'approved');
+    await running;
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('工具尚未结束时就把实时授权 URL 写入 liveOutput 并发布给桌面端', async () => {
+    const authUrl =
+      'https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=flow-1&user_code=ABCD';
+    let releaseTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    let markToolInvoked!: () => void;
+    const toolInvoked = new Promise<void>((resolve) => {
+      markToolInvoked = resolve;
+    });
+    const config = makeFakeConfigWithTool(
+      [
+        () =>
+          (async function* () {
+            yield toolChunk('test_tool', 'auth-live');
+          })(),
+        () =>
+          (async function* () {
+            yield chunk('授权完成', 'STOP');
+          })(),
+      ],
+      async (_args, _signal, updateOutput) => {
+        updateOutput?.(`请扫码授权：\n${authUrl}`);
+        markToolInvoked();
+        await toolGate;
+        return { llmContent: 'done', returnDisplay: 'done' };
+      },
+    );
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '授权' });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    const running = runtime.run([{ type: 'text', value: '连接飞书' }], 'local');
+    await toolInvoked;
+    const liveFrame = frames.find(
+      (frame) =>
+        frame.type === 'tool_calls_update' &&
+        frame.payload.toolCalls.some((toolCall) =>
+          toolCall.liveOutput?.includes(authUrl),
+        ),
+    );
+
+    releaseTool();
+    await running;
+    expect(liveFrame).toBeDefined();
+  });
+
   it('普通工具成功并进入下一轮后，历史消息不残留 isProcessingTools=true', async () => {
     const config = makeFakeConfigWithTool(
       [

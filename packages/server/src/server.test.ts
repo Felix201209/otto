@@ -302,6 +302,19 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
 
     client.send({
       type: 'create_session',
+      payload: { title: '做一份演示', agentProfileId: 'ppt' },
+    });
+    const personalExpert = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'ppt',
+    );
+    if (personalExpert.type !== 'session_upsert') throw new Error('unreachable');
+    expect(personalExpert.payload.session).toMatchObject({
+      agentProfileName: 'PPT 创作专家',
+      productEdition: 'personal',
+    });
+
+    client.send({
+      type: 'create_session',
       payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
     });
     const personalDenied = await client.waitFor(
@@ -333,6 +346,19 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     );
     if (ceo.type !== 'session_upsert') throw new Error('unreachable');
     expect(ceo.payload.session.agentProfileName).toBe('CEO Agent');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '写品牌文案', agentProfileId: 'copy' },
+    });
+    const enterpriseExpert = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'copy',
+    );
+    if (enterpriseExpert.type !== 'session_upsert') throw new Error('unreachable');
+    expect(enterpriseExpert.payload.session).toMatchObject({
+      agentProfileName: '品牌营销文案',
+      productEdition: 'enterprise',
+    });
 
     client.send({
       type: 'create_session',
@@ -982,6 +1008,186 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(calls.run).toBe(1);
     expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
     c.close();
+  });
+});
+
+describe('OttoServer set_model 真实生效语义', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+  let store: InMemorySessionStore;
+
+  beforeEach(async () => {
+    const dir = path.join(tmpHome, '.otto-user');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'custom-models.json'),
+      JSON.stringify({
+        models: [
+          {
+            displayName: '旧 GLM',
+            provider: 'openai',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'sk-old',
+            modelId: 'glm-old',
+            enabled: true,
+          },
+          {
+            displayName: 'GPT-5.6 sol',
+            provider: 'openai-responses',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            apiKey: '${CODEX_OAUTH}',
+            modelId: 'gpt-5.6-sol',
+            enabled: true,
+          },
+        ],
+      }),
+      'utf8',
+    );
+    store = new InMemorySessionStore();
+    server = new OttoServer({ port: 0, mock: true, store });
+    baseUrl = await startServer(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  async function modelIds(client: WsClient): Promise<{ oldId: string; targetId: string }> {
+    client.send({ type: 'get_models', payload: {} });
+    const frame = await client.waitFor((item) => item.type === 'models_list');
+    if (frame.type !== 'models_list') throw new Error('unreachable');
+    const oldId = frame.payload.models.find((item) => item.displayName === '旧 GLM')?.id;
+    const targetId = frame.payload.models.find(
+      (item) => item.displayName === 'GPT-5.6 sol',
+    )?.id;
+    if (!oldId || !targetId) throw new Error('测试模型未加载');
+    return { oldId, targetId };
+  }
+
+  function fakeRuntime(setModel: SessionRuntime['setModel']): SessionRuntime {
+    return {
+      async run() {},
+      cancel() {},
+      setModel,
+      resolveToolConfirmation() {},
+      getConfig() {
+        return undefined;
+      },
+      async dispose() {},
+    };
+  }
+
+  it('等待 live runtime 切换成功后，才更新会话模型并回报 current', async () => {
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    const { oldId, targetId } = await modelIds(client);
+    const session = store.createSession({ title: '切换模型', model: oldId });
+    let release!: () => void;
+    const setModel = vi.fn(
+      () => new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    store.attachRuntime(session.sessionId, fakeRuntime(setModel));
+
+    client.send({
+      type: 'set_model',
+      payload: { sessionId: session.sessionId, model: targetId },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(setModel).toHaveBeenCalledWith(targetId);
+    expect(store.getSession(session.sessionId)?.model).toBe(oldId);
+    expect(
+      client.frames.some(
+        (frame) =>
+          frame.type === 'models_list' && frame.payload.current === targetId,
+      ),
+    ).toBe(false);
+
+    release();
+    await client.waitFor(
+      (frame) =>
+        frame.type === 'models_list' && frame.payload.current === targetId,
+    );
+    expect(store.getSession(session.sessionId)?.model).toBe(targetId);
+    client.close();
+  });
+
+  it('live runtime 切换失败时保留旧模型，并返回明确错误', async () => {
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    const { oldId, targetId } = await modelIds(client);
+    const session = store.createSession({ title: '切换失败', model: oldId });
+    store.attachRuntime(
+      session.sessionId,
+      fakeRuntime(async () => {
+        throw new Error('OAuth 鉴权失败');
+      }),
+    );
+
+    client.send({
+      type: 'set_model',
+      payload: { sessionId: session.sessionId, model: targetId },
+    });
+    const error = await client.waitFor(
+      (frame) => frame.type === 'error' && frame.payload.code === 'model_switch_failed',
+    );
+
+    expect(error.type).toBe('error');
+    expect(store.getSession(session.sessionId)?.model).toBe(oldId);
+    expect(
+      client.frames.some(
+        (frame) =>
+          frame.type === 'models_list' && frame.payload.current === targetId,
+      ),
+    ).toBe(false);
+    client.close();
+  });
+});
+
+describe('OttoServer set_setting 实时提示词刷新', () => {
+  it('切换工作方式时调用客户端的完整提示词重建', async () => {
+    const store = new InMemorySessionStore();
+    const server = new OttoServer({ port: 0, mock: true, store });
+    const session = store.createSession({ title: '提示词刷新' });
+    const refreshSystemPrompt = vi.fn(async () => undefined);
+    const setAgentStyle = vi.fn();
+    const config = {
+      setAgentStyle,
+      getOttoClient: () => ({
+        updateSystemPromptWithMcpPrompts: refreshSystemPrompt,
+      }),
+    };
+    store.attachRuntime(session.sessionId, {
+      async run() {},
+      cancel() {},
+      async setModel() {},
+      resolveToolConfirmation() {},
+      getConfig: () => config as never,
+      async dispose() {},
+    });
+
+    const previousCwd = process.cwd();
+    process.chdir(tmpHome);
+    try {
+      await (
+        server as unknown as {
+          handleSetSetting: (
+            conn: never,
+            msg: { type: 'set_setting'; payload: { key: 'agentStyle'; value: string } },
+          ) => Promise<void>;
+        }
+      ).handleSetSetting(undefined as never, {
+        type: 'set_setting',
+        payload: { key: 'agentStyle', value: 'antigravity' },
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    expect(setAgentStyle).toHaveBeenCalledWith('antigravity');
+    expect(refreshSystemPrompt).toHaveBeenCalledTimes(1);
   });
 });
 
