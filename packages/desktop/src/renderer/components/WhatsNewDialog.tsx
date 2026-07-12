@@ -26,6 +26,14 @@ interface ChangelogEntry {
 /** 版本更新说明（最新在前；只有列在这里的版本会触发弹窗）。 */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.7.3',
+    date: '2026-07-12',
+    items: [
+      'Lark CLI 复用已校验的固定版本原生缓存，热启动实测由 2.51 秒降到 0.38 秒',
+      '保留首次零安装能力；首次下载完成后，后续飞书命令不再重复承担 npx 启动开销',
+    ],
+  },
+  {
     version: '1.7.2',
     date: '2026-07-11',
     items: [
