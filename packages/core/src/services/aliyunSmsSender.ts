@@ -48,6 +48,11 @@ function buildAliyunSignature(
   return Buffer.from(hmac.digest()).toString('base64');
 }
 
+/** 阿里云 RPC 要求 ISO 8601 UTC，保留日期与时间分隔符并去掉毫秒。 */
+function aliyunTimestamp(date = new Date()): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 /** 阿里云短信发送结果 */
 export interface SmsSendResult {
   success: boolean;
@@ -82,6 +87,14 @@ export class AliyunSmsSender implements SmsNotifySender {
   }
 
   /**
+   * 发送登录验证码。验证码模板只接收 `code`，避免把账号、姓名等信息带入短信。
+   */
+  async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+    if (!/^\d{4,6}$/.test(code)) throw new Error('verification code must contain 4-6 digits');
+    return this.sendWithCode(phone, this.config.templateId, { code });
+  }
+
+  /**
    * 使用模板发送短信（支持模板变量）。
    *
    * @param phone 目标手机号
@@ -94,7 +107,7 @@ export class AliyunSmsSender implements SmsNotifySender {
     params: Record<string, string>,
   ): Promise<boolean> {
     try {
-      const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+      const timestamp = aliyunTimestamp();
       const nonce = crypto.randomUUID().replace(/-/g, '');
 
       const queryParams: Record<string, string> = {
@@ -138,6 +151,64 @@ export class AliyunSmsSender implements SmsNotifySender {
 }
 
 /**
+ * 阿里云号码认证（PNVS）的短信认证发送器。
+ * 适用于个人开发者免资质的系统赠送签名 + 模板，只承担登录验证码发送。
+ */
+export class AliyunSmsAuthenticationSender {
+  private readonly endpoint: string;
+
+  constructor(private readonly config: AliyunSmsConfig) {
+    this.endpoint = config.endpoint || 'https://dypnsapi.aliyuncs.com';
+  }
+
+  async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+    if (!/^\d{4,6}$/.test(code)) throw new Error('verification code must contain 4-6 digits');
+    try {
+      const timestamp = aliyunTimestamp();
+      const queryParams: Record<string, string> = {
+        AccessKeyId: this.config.accessKeyId,
+        Action: 'SendSmsVerifyCode',
+        Format: 'JSON',
+        SignatureMethod: 'HMAC-SHA1',
+        SignatureVersion: '1.0',
+        SignatureNonce: crypto.randomUUID().replace(/-/g, ''),
+        Timestamp: timestamp,
+        Version: '2017-05-25',
+        CountryCode: '86',
+        PhoneNumber: phone,
+        SignName: this.config.signName,
+        TemplateCode: this.config.templateId,
+        TemplateParam: JSON.stringify({ code, min: '5' }),
+        ValidTime: '300',
+        Interval: '60',
+        ReturnVerifyCode: 'false',
+      };
+      queryParams.Signature = buildAliyunSignature(queryParams, this.config.accessKeySecret);
+      const qs = Object.entries(queryParams)
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+        .join('&');
+      const response = await fetch(`${this.endpoint}/?${qs}`, { method: 'POST' });
+      const data = await response.json() as {
+        Code?: string;
+        Message?: string;
+        Success?: boolean;
+        Model?: { BizId?: string };
+      };
+      const masked = phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2');
+      if (data.Code === 'OK' && data.Success !== false) {
+        console.log(`[AliyunSmsAuth] 发送成功: ${masked}, BizId=${data.Model?.BizId || '-'}`);
+        return true;
+      }
+      console.warn(`[AliyunSmsAuth] 发送失败: ${masked}, Code=${data.Code || '-'}, Message=${data.Message || '-'}`);
+      return false;
+    } catch (error) {
+      console.error(`[AliyunSmsAuth] 发送异常: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+}
+
+/**
  * 从环境变量创建默认的阿里云短信发送器。
  * 必须在 .env 中设置 ALIYUN_SMS_* 系列变量。
  */
@@ -158,4 +229,17 @@ export function createAliyunSmsFromEnv(): AliyunSmsSender | null {
     signName,
     templateId,
   });
+}
+
+/** 登录验证码通道：`pnvs` 使用个人开发者免资质短信认证，否则兼容传统短信服务。 */
+export function createAliyunLoginSmsFromEnv(): AliyunSmsAuthenticationSender | AliyunSmsSender | null {
+  const accessKeyId = process.env.ALIYUN_SMS_ACCESS_KEY_ID;
+  const accessKeySecret = process.env.ALIYUN_SMS_ACCESS_KEY_SECRET;
+  const signName = process.env.ALIYUN_SMS_SIGN_NAME;
+  const templateId = process.env.ALIYUN_SMS_TEMPLATE_ID;
+  if (!accessKeyId || !accessKeySecret || !signName || !templateId) return null;
+  const config = { accessKeyId, accessKeySecret, signName, templateId };
+  return process.env.ALIYUN_SMS_PROVIDER?.trim().toLowerCase() === 'pnvs'
+    ? new AliyunSmsAuthenticationSender(config)
+    : new AliyunSmsSender(config);
 }

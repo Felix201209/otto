@@ -94,6 +94,25 @@ describe('预设账号与密码', () => {
     expect(db.authenticateAccount('employee01', 'before-password')).toBeNull();
     expect(db.authenticateAccount('employee01', 'after-password')?.id).toBe(account.id);
   });
+
+  it('手机号统一规范成中国大陆 E.164，且不能绑定给两个账号', async () => {
+    const db = await freshDb();
+    const first = db.createAccount({
+      username: 'phone01',
+      password: 'phone-password-1',
+      name: '手机用户一',
+      phone: '138 0013 8000',
+    });
+
+    expect(first.phone).toBe('+8613800138000');
+    expect(db.findActiveAccountByPhone('86-138-0013-8000')?.id).toBe(first.id);
+    expect(() => db.createAccount({
+      username: 'phone02',
+      password: 'phone-password-2',
+      name: '手机用户二',
+      phone: '+86 13800138000',
+    })).toThrow(/手机号/);
+  });
 });
 
 describe('会话', () => {
@@ -113,6 +132,68 @@ describe('会话', () => {
 
     db.revokeAuthSession(session.token);
     expect(db.getAccountBySession(session.token)).toBeNull();
+  });
+});
+
+describe('短信验证码登录挑战', () => {
+  it('验证码只存哈希；正确验证码仅能使用一次', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'sms01', password: 'sms-password-1', name: '短信用户', phone: '13800138000',
+    });
+    const issued = db.createSmsLoginChallenge(account.id, '042731', { now: 1_000_000 });
+    expect(issued.ok).toBe(true);
+    if (!issued.ok) throw new Error('challenge should be issued');
+
+    const stored = db.getDB().prepare('SELECT * FROM sms_login_challenges').get() as Record<string, unknown>;
+    expect(JSON.stringify(stored)).not.toContain('042731');
+    expect(db.verifySmsLoginChallenge(issued.challengeId, '042731', 1_001_000)).toMatchObject({
+      ok: true,
+      account: { id: account.id },
+    });
+    expect(db.verifySmsLoginChallenge(issued.challengeId, '042731', 1_002_000)).toMatchObject({
+      ok: false,
+      reason: 'used',
+    });
+  });
+
+  it('5 分钟过期、连续输错 5 次锁定，并执行 60 秒/每小时 5 次发送限流', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'sms02', password: 'sms-password-2', name: '短信用户二', phone: '13900139000',
+    });
+    const expired = db.createSmsLoginChallenge(account.id, '111111', { now: 2_000_000 });
+    expect(expired.ok).toBe(true);
+    if (!expired.ok) throw new Error('challenge should be issued');
+    expect(db.verifySmsLoginChallenge(expired.challengeId, '111111', 2_300_001)).toMatchObject({
+      ok: false,
+      reason: 'expired',
+    });
+
+    const challenge = db.createSmsLoginChallenge(account.id, '222222', { now: 2_360_001 });
+    expect(challenge.ok).toBe(true);
+    if (!challenge.ok) throw new Error('challenge should be issued');
+    for (let attempt = 4; attempt >= 0; attempt -= 1) {
+      expect(db.verifySmsLoginChallenge(challenge.challengeId, '000000', 2_361_000)).toMatchObject({
+        ok: false,
+        reason: attempt === 0 ? 'locked' : 'invalid',
+        attemptsRemaining: attempt,
+      });
+    }
+    expect(db.verifySmsLoginChallenge(challenge.challengeId, '222222', 2_362_000)).toMatchObject({
+      ok: false,
+      reason: 'locked',
+    });
+
+    const cooldown = db.createSmsLoginChallenge(account.id, '333333', { now: 2_370_000 });
+    expect(cooldown).toMatchObject({ ok: false, reason: 'cooldown' });
+    for (const now of [2_421_000, 2_482_000, 2_543_000]) {
+      expect(db.createSmsLoginChallenge(account.id, '333333', { now }).ok).toBe(true);
+    }
+    expect(db.createSmsLoginChallenge(account.id, '444444', { now: 2_604_000 })).toMatchObject({
+      ok: false,
+      reason: 'hourly_limit',
+    });
   });
 });
 

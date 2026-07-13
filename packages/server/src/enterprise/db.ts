@@ -149,6 +149,7 @@ function initSchema(d: Database): void {
       id TEXT PRIMARY KEY,
       employee_id TEXT UNIQUE,
       username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      phone TEXT,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT,
@@ -176,6 +177,17 @@ function initSchema(d: Database): void {
       revoked_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_used_at TEXT,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_login_challenges (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      attempts_remaining INTEGER NOT NULL DEFAULT 5,
+      consumed_at_ms INTEGER,
+      created_at_ms INTEGER NOT NULL,
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     );
 
@@ -208,7 +220,19 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
     CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON account_tags(tag, account_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_sms_challenges_account_created
+      ON sms_login_challenges(account_id, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
+  `);
+
+  // v1.8 以前的线上库没有手机号列。先探测再做幂等迁移，保留既有账号和会话。
+  const accountColumns = d.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>;
+  if (!accountColumns.some((column) => column.name === 'phone')) {
+    d.exec('ALTER TABLE accounts ADD COLUMN phone TEXT');
+  }
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_phone_unique
+      ON accounts(phone) WHERE phone IS NOT NULL;
   `);
 }
 
@@ -220,6 +244,7 @@ export interface AccountView {
   id: string;
   employeeId: string | null;
   username: string;
+  phone: string | null;
   name: string;
   role: string | null;
   department: string | null;
@@ -234,6 +259,7 @@ interface AccountRow {
   id: string;
   employee_id: string | null;
   username: string;
+  phone: string | null;
   password_hash: string;
   name: string;
   role: string | null;
@@ -246,6 +272,20 @@ interface AccountRow {
 
 function normalizeUsername(username: string): string {
   return username.trim().toLocaleLowerCase('en-US');
+}
+
+/** 中国大陆手机号统一保存为 E.164；展示和下发短信时再去掉 +86。 */
+export function normalizePhone(phone: string): string {
+  let digits = phone.trim().replace(/[^\d]/g, '');
+  if (digits.startsWith('0086')) digits = digits.slice(4);
+  else if (digits.startsWith('86') && digits.length === 13) digits = digits.slice(2);
+  if (!/^1[3-9]\d{9}$/.test(digits)) throw new Error('手机号格式不正确');
+  return `+86${digits}`;
+}
+
+function normalizeOptionalPhone(phone: string | null | undefined): string | null {
+  if (phone == null || !phone.trim()) return null;
+  return normalizePhone(phone);
 }
 
 function normalizeTags(tags: string[] | undefined): string[] {
@@ -287,6 +327,7 @@ function toAccountView(row: AccountRow): AccountView {
     id: row.id,
     employeeId: row.employee_id,
     username: row.username,
+    phone: row.phone,
     name: row.name,
     role: row.role,
     department: row.department,
@@ -309,6 +350,7 @@ export function createAccount(input: {
   username: string;
   password: string;
   name: string;
+  phone?: string | null;
   employeeId?: string | null;
   role?: string | null;
   department?: string | null;
@@ -319,20 +361,28 @@ export function createAccount(input: {
   const name = input.name.trim();
   if (!username || !name || !input.password) throw new Error('username, password and name required');
   const id = `acc_${randomUUID()}`;
-  getDB().prepare(
+  try {
+    getDB().prepare(
     `INSERT INTO accounts
-       (id, employee_id, username, password_hash, name, role, department, is_admin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.employeeId || null,
-    username,
-    passwordHash(input.password),
-    name,
-    input.role?.trim() || null,
-    input.department?.trim() || null,
-    input.isAdmin ? 1 : 0,
-  );
+       (id, employee_id, username, phone, password_hash, name, role, department, is_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.employeeId || null,
+      username,
+      normalizeOptionalPhone(input.phone),
+      passwordHash(input.password),
+      name,
+      input.role?.trim() || null,
+      input.department?.trim() || null,
+      input.isAdmin ? 1 : 0,
+    );
+  } catch (error) {
+    if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
+      throw new Error('手机号已绑定其他账号');
+    }
+    throw error;
+  }
   replaceAccountTags(id, input.tags ?? []);
   logAudit('account_create', input.employeeId || null, `Preset account ${username} created`);
   return getAccount(id)!;
@@ -357,10 +407,19 @@ export function authenticateAccount(username: string, password: string): Account
   return toAccountView(row);
 }
 
+export function findActiveAccountByPhone(phone: string): AccountView | null {
+  const normalized = normalizePhone(phone);
+  const row = getDB().prepare(
+    "SELECT * FROM accounts WHERE phone = ? AND status = 'active'",
+  ).get(normalized) as AccountRow | undefined;
+  return row ? toAccountView(row) : null;
+}
+
 export function updateAccount(id: string, patch: {
   username?: string;
   password?: string;
   name?: string;
+  phone?: string | null;
   role?: string | null;
   department?: string | null;
   tags?: string[];
@@ -381,6 +440,7 @@ export function updateAccount(id: string, patch: {
     if (!username) throw new Error('username required');
     set('username', username);
   }
+  if (patch.phone !== undefined) set('phone', normalizeOptionalPhone(patch.phone));
   if (patch.password !== undefined) {
     if (!patch.password) throw new Error('password required');
     set('password_hash', passwordHash(patch.password));
@@ -396,7 +456,14 @@ export function updateAccount(id: string, patch: {
   if (patch.status !== undefined) set('status', patch.status);
   if (assignments.length > 0) {
     assignments.push("updated_at = datetime('now')");
-    getDB().prepare(`UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`).run(...values, id);
+    try {
+      getDB().prepare(`UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`).run(...values, id);
+    } catch (error) {
+      if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
+        throw new Error('手机号已绑定其他账号');
+      }
+      throw error;
+    }
   }
   if (patch.tags !== undefined) replaceAccountTags(id, patch.tags);
   logAudit('account_update', current.employeeId, `Preset account ${current.username} updated`);
@@ -439,6 +506,136 @@ export function revokeAuthSession(token: string): void {
   getDB().prepare(
     "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE token_hash = ?",
   ).run(tokenHash(token));
+}
+
+const SMS_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const SMS_CHALLENGE_COOLDOWN_MS = 60 * 1000;
+const SMS_CHALLENGE_HOURLY_LIMIT = 5;
+const SMS_CHALLENGE_MAX_ATTEMPTS = 5;
+
+export type SmsChallengeIssueResult =
+  | { ok: true; challengeId: string; expiresAt: string; retryAfterSeconds: number }
+  | { ok: false; reason: 'cooldown' | 'hourly_limit'; retryAfterSeconds: number };
+
+export function createSmsLoginChallenge(
+  accountId: string,
+  code: string,
+  options: { now?: number } = {},
+): SmsChallengeIssueResult {
+  if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
+  const account = getAccount(accountId);
+  if (!account || account.status !== 'active' || !account.phone) throw new Error('Account not available for SMS login');
+
+  const now = options.now ?? Date.now();
+  const recent = getDB().prepare(
+    `SELECT created_at_ms FROM sms_login_challenges
+     WHERE account_id = ? AND created_at_ms > ?
+     ORDER BY created_at_ms DESC`,
+  ).all(accountId, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
+  const latest = recent[0]?.created_at_ms;
+  if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
+    return {
+      ok: false,
+      reason: 'cooldown',
+      retryAfterSeconds: Math.ceil((latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000),
+    };
+  }
+  if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
+    const oldest = recent[recent.length - 1]!.created_at_ms;
+    return {
+      ok: false,
+      reason: 'hourly_limit',
+      retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000)),
+    };
+  }
+
+  const challengeId = `sms_${randomUUID()}`;
+  const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
+  getDB().prepare(
+    `INSERT INTO sms_login_challenges
+       (id, account_id, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(challengeId, accountId, passwordHash(code), expiresAtMs, SMS_CHALLENGE_MAX_ATTEMPTS, now);
+  logAudit('sms_login_code_requested', account.employeeId, 'SMS login code requested');
+  return {
+    ok: true,
+    challengeId,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    retryAfterSeconds: SMS_CHALLENGE_COOLDOWN_MS / 1000,
+  };
+}
+
+/** 供应商未接收短信时撤销刚创建的挑战，避免失败请求占用冷却/小时额度。 */
+export function discardSmsLoginChallenge(challengeId: string): void {
+  if (!challengeId) return;
+  getDB().prepare(
+    'DELETE FROM sms_login_challenges WHERE id = ? AND consumed_at_ms IS NULL',
+  ).run(challengeId);
+}
+
+export type SmsChallengeVerifyResult =
+  | { ok: true; account: AccountView }
+  | {
+      ok: false;
+      reason: 'invalid' | 'expired' | 'locked' | 'used';
+      attemptsRemaining: number;
+    };
+
+export function verifySmsLoginChallenge(
+  challengeId: string,
+  code: string,
+  now = Date.now(),
+): SmsChallengeVerifyResult {
+  const row = getDB().prepare(
+    `SELECT c.account_id, c.code_hash, c.expires_at_ms, c.attempts_remaining, c.consumed_at_ms,
+            a.status AS account_status
+     FROM sms_login_challenges c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ?`,
+  ).get(challengeId) as {
+    account_id: string;
+    code_hash: string;
+    expires_at_ms: number;
+    attempts_remaining: number;
+    consumed_at_ms: number | null;
+    account_status: 'active' | 'disabled';
+  } | undefined;
+
+  if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
+  if (row.consumed_at_ms != null) {
+    return {
+      ok: false,
+      reason: row.attempts_remaining <= 0 ? 'locked' : 'used',
+      attemptsRemaining: Math.max(0, row.attempts_remaining),
+    };
+  }
+  if (row.account_status !== 'active') {
+    getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
+    return { ok: false, reason: 'used', attemptsRemaining: 0 };
+  }
+  if (now > row.expires_at_ms) {
+    getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
+    return { ok: false, reason: 'expired', attemptsRemaining: row.attempts_remaining };
+  }
+  if (!passwordMatches(code, row.code_hash)) {
+    const remaining = Math.max(0, row.attempts_remaining - 1);
+    getDB().prepare(
+      `UPDATE sms_login_challenges
+       SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
+       WHERE id = ?`,
+    ).run(remaining, remaining, now, challengeId);
+    return {
+      ok: false,
+      reason: remaining === 0 ? 'locked' : 'invalid',
+      attemptsRemaining: remaining,
+    };
+  }
+
+  getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
+  const account = getAccount(row.account_id);
+  if (!account) return { ok: false, reason: 'used', attemptsRemaining: 0 };
+  logAudit('sms_login_verified', account.employeeId, 'SMS login verified');
+  return { ok: true, account };
 }
 
 export interface TicketView {

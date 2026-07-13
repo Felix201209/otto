@@ -31,6 +31,7 @@ import {
   IconSettings,
 } from './icons.js';
 import { OrganizationTree } from './OrganizationTree.js';
+import type { EnterpriseAccount } from '../../preload/index.js';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -77,12 +78,16 @@ interface SidebarProps {
   activeSessionId: string | null;
   /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
   hubActive?: boolean;
+  accountManagementActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
   productWorkspace?: ProductWorkspaceSnapshot | null;
+  enterpriseAccount?: EnterpriseAccount;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
+  onOpenAccounts?: () => void;
+  onLogout?: () => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -92,11 +97,15 @@ export function Sidebar({
   groups,
   activeSessionId,
   hubActive = false,
+  accountManagementActive = false,
   updateBadge = false,
   productWorkspace = null,
+  enterpriseAccount,
   onSelect,
   onNewChat,
   onOpenHub,
+  onOpenAccounts,
+  onLogout,
   onViewAll,
   onRename,
   onDelete,
@@ -175,6 +184,19 @@ export function Sidebar({
       </div>
 
       <div className="otto-sidebar__footer">
+        {enterpriseAccount?.isAdmin && onOpenAccounts ? (
+          <button
+            type="button"
+            className={'otto-viewall otto-viewall--accounts' + (accountManagementActive ? ' is-active' : '')}
+            onClick={onOpenAccounts}
+            aria-current={accountManagementActive ? 'page' : undefined}
+            title="企业身份控制台"
+          >
+            <span className="otto-viewall__accounticon" aria-hidden>◎</span>
+            身份与权限
+            <IconChevron size={15} className="otto-viewall__chev" />
+          </button>
+        ) : null}
         <button type="button" className="otto-viewall" onClick={onViewAll}>
           <IconList size={16} />
           查看全部对话
@@ -200,6 +222,16 @@ export function Sidebar({
           ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
+        {enterpriseAccount ? (
+          <div className="otto-sidebar-account">
+            <span className="otto-sidebar-account__avatar">{enterpriseAccount.name.slice(0, 1).toUpperCase()}</span>
+            <span className="otto-sidebar-account__copy">
+              <strong>{enterpriseAccount.name}</strong>
+              <small>{enterpriseAccount.department || `@${enterpriseAccount.username}`}</small>
+            </span>
+            {onLogout ? <button type="button" onClick={onLogout} aria-label="退出登录" title="退出登录">↗</button> : null}
+          </div>
+        ) : null}
       </div>
     </aside>
   );
