@@ -736,7 +736,7 @@ export function Composer({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.xml,.md,.zip"
           multiple
           hidden
           onChange={onFilesChosen}
