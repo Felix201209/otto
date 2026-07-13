@@ -30,6 +30,10 @@ const BING_SEARCH_ENDPOINT = 'https://cn.bing.com/search';
 // 博查 Web Search API（需 key，可选 provider）
 const BOCHA_SEARCH_ENDPOINT = 'https://api.bochaai.com/v1/web-search';
 
+// 火山方舟 Responses API；可由设置页覆盖为其它地域或兼容网关。
+const VOLCENGINE_SEARCH_ENDPOINT =
+  'https://ark.cn-beijing.volces.com/api/v3/responses';
+
 // 不带常规桌面 UA 时 Bing 可能直接拒绝或返回验证页，这里固定一个主流桌面 UA
 const DESKTOP_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -481,6 +485,142 @@ export class WebSearchTool extends BaseTool<
   }
 
   /**
+   * 火山方舟 provider：通过 Responses API 调用平台内置 web_search。
+   * API Key、完整请求地址、豆包模型/推理接入点均由配置模块提供。
+   */
+  private async executeVolcengineSearch(
+    params: WebSearchToolParams,
+    signal: AbortSignal,
+  ): Promise<WebSearchToolResult> {
+    const apiKey =
+      typeof this.config.getSearchApiKey === 'function'
+        ? this.config.getSearchApiKey()
+        : undefined;
+    if (!apiKey) {
+      return this.errorResult(
+        `searchProvider is set to 'volcengine' but no API key is configured. Configure the Ark API Key in Otto settings or export ARK_API_KEY.`,
+      );
+    }
+
+    const model =
+      typeof this.config.getSearchModel === 'function'
+        ? this.config.getSearchModel()?.trim()
+        : undefined;
+    if (!model) {
+      return this.errorResult(
+        `searchProvider is set to 'volcengine' but no search model or endpoint ID is configured. Configure a Doubao model ID in Otto settings.`,
+      );
+    }
+
+    const apiUrl =
+      (typeof this.config.getSearchApiUrl === 'function'
+        ? this.config.getSearchApiUrl()?.trim()
+        : undefined) || VOLCENGINE_SEARCH_ENDPOINT;
+
+    let data: unknown;
+    try {
+      const response = await this.fetchWithSearchTimeout(
+        apiUrl,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            input: params.query,
+            tools: [{ type: 'web_search' }],
+          }),
+        },
+        signal,
+      );
+      if (!response.ok) {
+        const bodyExcerpt = (await response.text().catch(() => '')).slice(0, 300);
+        return this.errorResult(
+          `Volcengine Ark search failed with HTTP ${response.status} ${response.statusText} for query "${params.query}". ${bodyExcerpt}`,
+        );
+      }
+      data = await response.json();
+    } catch (error) {
+      return this.errorResult(
+        `Volcengine Ark search request failed for query "${params.query}": ${getErrorMessage(error)}`,
+      );
+    }
+
+    const output = (data as { output?: unknown })?.output;
+    if (!Array.isArray(output)) {
+      return this.errorResult(
+        `Volcengine Ark returned an unexpected response shape for query "${params.query}" (missing output[]). The Responses API contract may have changed.`,
+      );
+    }
+
+    const answers: string[] = [];
+    const citations: GroundingChunkItem[] = [];
+    const seenUrls = new Set<string>();
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue;
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue;
+        const typedPart = part as {
+          type?: unknown;
+          text?: unknown;
+          annotations?: unknown;
+        };
+        if (typedPart.type === 'output_text' && typeof typedPart.text === 'string') {
+          answers.push(typedPart.text);
+        }
+        if (!Array.isArray(typedPart.annotations)) continue;
+        for (const annotation of typedPart.annotations) {
+          if (!annotation || typeof annotation !== 'object') continue;
+          const citation = annotation as { url?: unknown; title?: unknown };
+          if (typeof citation.url !== 'string' || !citation.url || seenUrls.has(citation.url)) {
+            continue;
+          }
+          seenUrls.add(citation.url);
+          citations.push({
+            web: {
+              uri: citation.url,
+              title:
+                typeof citation.title === 'string' && citation.title
+                  ? citation.title
+                  : citation.url,
+            },
+          });
+        }
+      }
+    }
+
+    const answer = answers.join('\n').trim();
+    if (!answer) {
+      return this.errorResult(
+        `Volcengine Ark completed the request but returned no output_text for query "${params.query}".`,
+      );
+    }
+
+    const sourceLines = citations.map(
+      (source, index) =>
+        `[${index + 1}] ${source.web?.title ?? 'Untitled'} (${source.web?.uri ?? ''})`,
+    );
+    let content = `Web search results for "${params.query}" (provider: volcengine):\n\n${answer}`;
+    if (sourceLines.length > 0) content += `\n\nSources:\n${sourceLines.join('\n')}`;
+    if (content.length > MAX_CONTENT_LENGTH) {
+      content = `${content.slice(0, MAX_CONTENT_LENGTH)}\n\n[Note: Content truncated to ${MAX_CONTENT_LENGTH} characters to prevent context overflow]`;
+    }
+
+    return {
+      llmContent: content,
+      returnDisplay: t('websearch.results.returned', {
+        query: params.query,
+        truncated: '',
+      }),
+      sources: citations,
+    };
+  }
+
+  /**
    * gemini provider（保留原有逻辑）：Gemini API googleSearch grounding。
    * 依赖 Otto 账号 / Gemini 访问，海外用户可用。
    */
@@ -692,11 +832,13 @@ export class WebSearchTool extends BaseTool<
       };
     }
 
-    // 严格按显式配置分发（默认 bing）：配了 bocha 没 key 也不自动降级，fail-loud
+    // 严格按显式配置分发（默认 bing）：需 key 的 provider 配置不完整时不自动降级。
     const provider = this.getProvider();
     switch (provider) {
       case 'bocha':
         return this.executeBochaSearch(params, signal);
+      case 'volcengine':
+        return this.executeVolcengineSearch(params, signal);
       case 'gemini':
         return this.executeGeminiSearch(params, signal);
       case 'bing':

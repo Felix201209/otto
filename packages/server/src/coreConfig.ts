@@ -26,6 +26,10 @@ import {
 } from 'otto-core';
 import os from 'node:os';
 import { loadCustomModels, loadPreferredModel } from './customModels.js';
+import {
+  loadSearchRuntimeConfig,
+  type SearchRuntimeConfig,
+} from './searchConfig.js';
 
 export interface CreateCoreConfigOptions {
   sessionId: string;
@@ -41,6 +45,8 @@ export interface CreateCoreConfigOptions {
   feishuMode?: boolean;
   /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
   excludeTools?: string[];
+  /** 覆盖搜索 API 配置（测试用）；缺省从 ~/.otto-user 读取脱敏配置与 secret。 */
+  searchConfig?: SearchRuntimeConfig;
 }
 
 /**
@@ -64,6 +70,7 @@ export function resolveDefaultCwd(): string {
 export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const cwd = opts.cwd ?? resolveDefaultCwd();
   const customModels = opts.customModels ?? loadCustomModels();
+  const searchConfig = opts.searchConfig ?? loadSearchRuntimeConfig();
 
   // ── LLM-URL 崩溃根因兜底（BYO-key 化后必备）──
   // OttoServerAdapter.generateContent 只有在 getModel() 返回 `custom:...` 时才走
@@ -108,6 +115,10 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     userRules: opts.userRules,
     feishuMode: opts.feishuMode,
     excludeTools: opts.excludeTools,
+    searchProvider: searchConfig.provider,
+    searchApiKey: searchConfig.apiKey,
+    searchApiUrl: searchConfig.apiUrl,
+    searchModel: searchConfig.model,
     // 关闭遥测与使用统计（与 CLI 一致的隐私基线）。
     telemetry: { enabled: false, logPrompts: false },
     usageStatisticsEnabled: false,

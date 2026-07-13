@@ -33,6 +33,25 @@ describe('服务端 Agent profile 白名单', () => {
     expect(resolveAgentProfile('evil-client-prompt')).toBeUndefined();
   });
 
+  it('PPT 专家强制使用 HTML 视觉渲染而不是 Python 脚本', () => {
+    const prompt = resolveAgentProfile('ppt')?.systemPrompt ?? '';
+
+    expect(prompt).toContain('HTML');
+    expect(prompt).toContain('浏览器');
+    expect(prompt).toContain('PptxGenJS');
+    expect(prompt).toContain('禁止使用 Python');
+    expect(prompt).toContain('审美');
+  });
+
+  it('每个专家都有对应身份的简短欢迎语', () => {
+    for (const profile of BUILTIN_AGENT_PROFILES) {
+      expect(profile.welcomeMessage).toContain('Hello，我是');
+      expect(profile.welcomeMessage).toContain(profile.name);
+      expect(profile.welcomeMessage).toContain('我可以帮你');
+    }
+    expect(resolveAgentProfile('ppt')?.welcomeMessage).toContain('高审美演示');
+  });
+
   it('所有专家的系统提示都锁定当前身份及「你是谁」回答', () => {
     for (const profile of BUILTIN_AGENT_PROFILES) {
       expect(profile.systemPrompt).toContain(`你的当前身份是「${profile.name}」`);

@@ -14,6 +14,8 @@ export interface ServerAgentProfile {
   department?: string;
   skills: string[];
   systemPrompt: string;
+  /** 新建该专家会话时由服务端持久化的首条 assistant 欢迎语。 */
+  welcomeMessage?: string;
 }
 
 const baseProfiles: ServerAgentProfile[] = [
@@ -84,7 +86,7 @@ const commonExpertSpecs: Array<[
   [
     'ppt',
     'PPT 创作专家',
-    '确认主题、受众、时长和风格后，把材料组织成结构清晰、叙事完整的演示文稿，并验证真实输出文件',
+    '以审美总监标准完成演示：先加载 ppt-creator Skill，把 HTML/CSS/SVG 当作视觉画布，用 Playwright 或本机 Chromium 浏览器渲染逐页图片，再用 Node.js + PptxGenJS 组装并验证 PPTX。禁止使用 Python、python-pptx、matplotlib 或 Pillow；不要复刻通用模板、网页后台和重复卡片阵列。先建立叙事与单一视觉方向，主动使用留白、强字号、图片、图表和多种页面类型，并通过缩略图总览与逐页检查返工不够好看的页面',
     ['ppt-creator'],
   ],
   [
@@ -220,10 +222,35 @@ const rawBuiltinAgentProfiles: readonly ServerAgentProfile[] = [
   ...departmentProfiles,
 ];
 
+const welcomeCapabilities: Readonly<Record<string, string>> = {
+  'otto-personal': '处理文档、调研、分析和自动化工作',
+  'otto-enterprise-ceo': '梳理经营问题、辅助决策并推进跨部门事项',
+  'otto-enterprise-work': '结合你的部门和职位完成日常工作',
+  'meeting-initiator': '找时间、定议程并整理可确认的会议安排',
+  'meeting-notes-followup': '提炼会议结论、待办、负责人和截止时间',
+  'self-development': '写代码、修改项目并完成可验证的自动化任务',
+  ppt: '制作有叙事、有视觉品质的高审美演示文稿',
+  meeting: '把录音或长文整理成清晰可信的会议纪要',
+  doc: '撰写结构规范、措辞准确的报告、方案和公文',
+  sheet: '完成表格清洗、公式、建模和数据分析',
+  pdf: '处理 PDF 的合并、拆分、提取、摘要和表单',
+  dataviz: '把数据变成清晰有说服力的图表和业务洞察',
+  research: '完成带来源的市场调研、竞品对比和行动建议',
+  copy: '创作符合品牌语气和转化目标的营销文案',
+};
+
+function buildWelcomeMessage(profile: ServerAgentProfile): string {
+  const fallbackName = profile.name.replace(/\s*Agent$/u, '').trim();
+  const capability = welcomeCapabilities[profile.id]
+    ?? `完成${fallbackName}相关工作`;
+  return `Hello，我是 ${profile.name}，我可以帮你${capability}。`;
+}
+
 /** 服务端统一加上身份回答契约，避免 core 的基础 Otto 自我介绍覆盖专家人设。 */
 export const BUILTIN_AGENT_PROFILES: readonly ServerAgentProfile[] =
   rawBuiltinAgentProfiles.map((profile) => ({
     ...profile,
+    welcomeMessage: buildWelcomeMessage(profile),
     systemPrompt: `${profile.systemPrompt}\n\n身份规则：你的当前身份是「${profile.name}」。如果用户问“你是谁”或询问你的能力，用一句话回答你是「${profile.name}」并概括上文定义的职责；不得自称为其他专家。`,
   }));
 

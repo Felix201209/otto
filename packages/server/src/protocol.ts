@@ -421,6 +421,26 @@ export type SaveCustomModelMsg = Envelope<
  */
 export type GetSettingsMsg = Envelope<'get_settings', Record<string, never>>;
 
+export type SearchProvider = 'bing' | 'bocha' | 'gemini' | 'volcengine';
+
+/** 读取联网搜索配置；密钥只返回 hasApiKey，绝不回传原文。 */
+export type GetSearchConfigMsg = Envelope<
+  'get_search_config',
+  Record<string, never>
+>;
+
+/** 原子保存搜索 provider / API / 模型与可选密钥。空 apiKey 表示保留旧值。 */
+export type SaveSearchConfigMsg = Envelope<
+  'save_search_config',
+  {
+    provider: SearchProvider;
+    apiUrl?: string;
+    model?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+  }
+>;
+
 export type SetSettingMsg = Envelope<
   'set_setting',
   {
@@ -662,6 +682,8 @@ export type ClientToServer =
   | RenameSessionMsg
   | GetSettingsMsg
   | SetSettingMsg
+  | GetSearchConfigMsg
+  | SaveSearchConfigMsg
   | McpListMsg
   | McpAddMsg
   | McpRemoveMsg
@@ -959,6 +981,15 @@ export interface SettingsSnapshot {
 
 export type SettingsMsg = Envelope<'settings', SettingsSnapshot>;
 
+export interface SearchConfigSnapshot {
+  provider: SearchProvider;
+  apiUrl: string;
+  model: string;
+  hasApiKey: boolean;
+}
+
+export type SearchConfigMsg = Envelope<'search_config', SearchConfigSnapshot>;
+
 /** MCP 服务器摘要（配置 + 实时连接状态）。 */
 export interface McpServerInfo {
   name: string;
@@ -1232,6 +1263,7 @@ export type ServerToClient =
   | ModelsListMsg
   | FeishuPushResultMsg
   | SettingsMsg
+  | SearchConfigMsg
   | McpServersMsg
   | ContextBreakdownMsg
   | StatsSnapshotMsg
@@ -1595,6 +1627,7 @@ export function validateClientPayload(msg: {
       return null;
     }
     case 'get_settings':
+    case 'get_search_config':
     case 'mcp_list':
     case 'get_stats':
     case 'run_doctor':
@@ -1750,6 +1783,38 @@ export function validateClientPayload(msg: {
       const value = p['value'];
       if (typeof value !== 'string' && typeof value !== 'boolean')
         return 'value 必须是字符串或布尔';
+      return null;
+    }
+    case 'save_search_config': {
+      if (!isPlainObject(p)) return 'save_search_config payload 必须是对象';
+      const provider = p['provider'];
+      if (
+        provider !== 'bing' &&
+        provider !== 'bocha' &&
+        provider !== 'gemini' &&
+        provider !== 'volcengine'
+      ) {
+        return 'provider 必须是 bing | bocha | gemini | volcengine';
+      }
+      if (p['apiUrl'] !== undefined) {
+        if (typeof p['apiUrl'] !== 'string') return 'apiUrl 必须是字符串';
+        const apiUrl = p['apiUrl'].trim();
+        if (apiUrl && !apiUrl.startsWith('https://')) {
+          return 'apiUrl 必须使用 HTTPS';
+        }
+      }
+      if (p['model'] !== undefined && typeof p['model'] !== 'string') {
+        return 'model 必须是字符串';
+      }
+      if (p['apiKey'] !== undefined && typeof p['apiKey'] !== 'string') {
+        return 'apiKey 必须是字符串';
+      }
+      if (
+        p['clearApiKey'] !== undefined &&
+        typeof p['clearApiKey'] !== 'boolean'
+      ) {
+        return 'clearApiKey 必须是布尔';
+      }
       return null;
     }
     case 'mcp_add': {

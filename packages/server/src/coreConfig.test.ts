@@ -48,4 +48,24 @@ describe('createCoreConfig v1.7 模式隔离', () => {
 
     expect(config.getFeishuMode()).toBe(true);
   });
+
+  it('把桌面搜索 API 配置装配进 Core，并支持运行时读取', () => {
+    const config = createCoreConfig({
+      sessionId: 'search-config-session',
+      customModels: [],
+      searchConfig: {
+        provider: 'volcengine',
+        apiKey: 'ark-key',
+        apiUrl: 'https://ark.example.com/api/v3/responses',
+        model: 'doubao-search-model',
+      },
+    });
+
+    expect(config.getSearchProvider()).toBe('volcengine');
+    expect(config.getSearchApiKey()).toBe('ark-key');
+    expect(config.getSearchApiUrl()).toBe(
+      'https://ark.example.com/api/v3/responses',
+    );
+    expect(config.getSearchModel()).toBe('doubao-search-model');
+  });
 });

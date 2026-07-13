@@ -28,6 +28,8 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import * as transport from '../transport.js';
 import type {
   SettingsSnapshot,
+  SearchConfigSnapshot,
+  SearchProvider,
   McpServerInfo,
   ContextBreakdown,
   DoctorReportInfo,
@@ -45,6 +47,7 @@ import type {
 
 export interface SettingsDataState {
   settings: SettingsSnapshot | null;
+  searchConfig: SearchConfigSnapshot | null;
   mcpServers: McpServerInfo[];
   contextBreakdown: ContextBreakdown | null;
   doctorReport: DoctorReportInfo | null;
@@ -67,6 +70,7 @@ export interface SettingsDataState {
 
 const initialState: SettingsDataState = {
   settings: null,
+  searchConfig: null,
   mcpServers: [],
   contextBreakdown: null,
   doctorReport: null,
@@ -108,6 +112,8 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
       switch (frame.type) {
         case 'settings':
           return { ...state, settings: frame.payload };
+        case 'search_config':
+          return { ...state, searchConfig: frame.payload };
         case 'mcp_servers':
           return { ...state, mcpServers: frame.payload.servers };
         case 'context_breakdown':
@@ -157,6 +163,7 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
           // 仅拦截本面板相关的错误码，避免抢主聊天 toast 的错误展示。
           if (
             frame.payload.code === 'set_setting_failed' ||
+            frame.payload.code === 'save_search_config_failed' ||
             frame.payload.code === 'mcp_add_failed' ||
             frame.payload.code === 'mcp_remove_failed' ||
             frame.payload.code === 'doctor_failed' ||
@@ -188,6 +195,14 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
 export interface SettingsDataActions {
   refreshSettings(): void;
   setSetting(key: 'agentStyle' | 'healthyUse' | 'preferredLanguage', value: string | boolean): void;
+  refreshSearchConfig(): void;
+  saveSearchConfig(payload: {
+    provider: SearchProvider;
+    apiUrl?: string;
+    model?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+  }): void;
   refreshMcpServers(): void;
   addMcpServer(payload: {
     name: string;
@@ -274,6 +289,14 @@ export function useSettingsData(): UseSettingsData {
     },
     [],
   );
+
+  const refreshSearchConfig = useCallback(() => {
+    transport.send({ type: 'get_search_config', payload: {} });
+  }, []);
+
+  const saveSearchConfig = useCallback<SettingsDataActions['saveSearchConfig']>((payload) => {
+    transport.send({ type: 'save_search_config', payload });
+  }, []);
 
   const refreshMcpServers = useCallback(() => {
     transport.send({ type: 'mcp_list', payload: {} });
@@ -374,6 +397,8 @@ export function useSettingsData(): UseSettingsData {
     actions: {
       refreshSettings,
       setSetting,
+      refreshSearchConfig,
+      saveSearchConfig,
       refreshMcpServers,
       addMcpServer,
       removeMcpServer,

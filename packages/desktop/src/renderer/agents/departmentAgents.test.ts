@@ -94,4 +94,14 @@ describe('v1.7 Agent profile 目录', () => {
     }
   });
 
+  it('PPT 专家把 HTML 当视觉画布并明确禁止 Python 脚本', () => {
+    const prompt = ALL_AGENT_PROFILES.find((profile) => profile.id === 'ppt')?.systemPrompt ?? '';
+
+    expect(prompt).toContain('HTML');
+    expect(prompt).toContain('浏览器');
+    expect(prompt).toContain('PptxGenJS');
+    expect(prompt).toContain('禁止使用 Python');
+    expect(prompt).toContain('审美');
+  });
+
 });

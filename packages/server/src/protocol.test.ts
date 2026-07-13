@@ -354,7 +354,36 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
       validateClientPayload({ type: 'list_slash_commands', payload: null }),
     ).not.toBeNull();
   });
-});
+
+  it('搜索配置接口只接受受支持 provider、HTTPS API 地址和字符串模型', () => {
+    expect(
+      validateClientPayload({ type: 'get_search_config', payload: {} }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: {
+          provider: 'volcengine',
+          apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+          model: 'doubao-seed-2-0-lite-260215',
+          apiKey: 'secret',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'unknown' },
+      }),
+    ).toContain('provider');
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'volcengine', apiUrl: 'http://insecure.example.com' },
+      }),
+    ).toContain('HTTPS');
+  });
+  });
 
 describe('validateClientPayload：执行授权', () => {
   it('只接受合法 mode 与 scope', () => {

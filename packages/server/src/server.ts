@@ -45,6 +45,7 @@ import {
   type ModelInfo,
   type ServerToClient,
   type SettingsSnapshot,
+  type SearchConfigSnapshot,
   type McpServerInfo,
   type StatsSnapshot,
   type DoctorReportInfo,
@@ -93,6 +94,11 @@ import {
   loadMcpServers,
   saveMcpServers,
 } from './userSettings.js';
+import {
+  loadSearchConfigView,
+  loadSearchRuntimeConfig,
+  saveSearchConfig,
+} from './searchConfig.js';
 import {
   ProjectSettingsManager,
   DoctorService,
@@ -831,6 +837,34 @@ export class OttoServer {
         payload: {
           code: 'set_setting_failed',
           message: `保存设置失败：${message}`,
+        },
+      });
+    }
+  }
+
+  private searchConfigSnapshot(): SearchConfigSnapshot {
+    return loadSearchConfigView();
+  }
+
+  /** 保存搜索 API 配置、热更新存活会话，并仅广播脱敏视图。 */
+  private handleSaveSearchConfig(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'save_search_config' }>,
+  ): void {
+    try {
+      const view = saveSearchConfig(msg.payload);
+      const runtimeConfig = loadSearchRuntimeConfig();
+      for (const cfg of this.liveConfigs()) {
+        cfg.setSearchConfig(runtimeConfig);
+      }
+      this.broadcastAll({ type: 'search_config', payload: view });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: {
+          code: 'save_search_config_failed',
+          message: `保存联网搜索配置失败：${message}`,
         },
       });
     }
@@ -1922,9 +1956,22 @@ export class OttoServer {
           agentProfileName: profile?.name,
           productEdition: workspace.context.edition,
         });
+        if (profile) {
+          this.store.appendMessage(summary.sessionId, {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              value: profile.welcomeMessage
+                ?? `Hello，我是 ${profile.name}，我可以帮你完成相关工作。`,
+            }],
+            source: 'local',
+            isStreaming: false,
+          });
+        }
+        const createdSummary = this.store.getSession(summary.sessionId) ?? summary;
         this.broadcastAll({
           type: 'session_upsert',
-          payload: { session: summary },
+          payload: { session: createdSummary },
         });
         return;
       }
@@ -2277,6 +2324,13 @@ export class OttoServer {
         });
       case 'set_setting':
         return this.handleSetSetting(conn, msg);
+      case 'get_search_config':
+        return this.send(conn.socket, {
+          type: 'search_config',
+          payload: this.searchConfigSnapshot(),
+        });
+      case 'save_search_config':
+        return this.handleSaveSearchConfig(conn, msg);
       case 'mcp_list':
         return this.send(conn.socket, {
           type: 'mcp_servers',

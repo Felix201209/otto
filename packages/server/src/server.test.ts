@@ -388,6 +388,28 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(personalExpert.payload.session).toMatchObject({
       agentProfileName: 'PPT 创作专家',
       productEdition: 'personal',
+      messageCount: 1,
+    });
+    client.send({
+      type: 'get_history',
+      payload: { sessionId: personalExpert.payload.session.sessionId },
+    });
+    const expertGreeting = await client.waitFor(
+      (f) => f.type === 'history'
+        && f.payload.sessionId === personalExpert.payload.session.sessionId,
+    );
+    if (expertGreeting.type !== 'history') throw new Error('unreachable');
+    expect(expertGreeting.payload.messages).toHaveLength(1);
+    expect(expertGreeting.payload.messages[0]).toMatchObject({
+      role: 'assistant',
+      source: 'local',
+      content: [{
+        type: 'text',
+        value: expect.stringContaining('Hello，我是 PPT 创作专家'),
+      }],
+    });
+    expect(expertGreeting.payload.messages[0].content[0]).toMatchObject({
+      value: expect.stringContaining('我可以帮你'),
     });
 
     client.send({
@@ -1268,6 +1290,53 @@ describe('OttoServer set_setting 实时提示词刷新', () => {
 
     expect(setAgentStyle).toHaveBeenCalledWith('antigravity');
     expect(refreshSystemPrompt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OttoServer 搜索 API 配置接口', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    server = new OttoServer({
+      port: 0,
+      mock: true,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  it('保存火山方舟配置后只返回 hasApiKey，不回传密钥原文', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'save_search_config',
+      payload: {
+        provider: 'volcengine',
+        apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+        model: 'doubao-seed-2-0-lite-260215',
+        apiKey: 'ark-secret',
+      },
+    });
+    const saved = await client.waitFor((f) => f.type === 'search_config');
+    if (saved.type !== 'search_config') throw new Error('unreachable');
+    expect(saved.payload).toEqual({
+      provider: 'volcengine',
+      apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+      model: 'doubao-seed-2-0-lite-260215',
+      hasApiKey: true,
+    });
+    expect(JSON.stringify(saved)).not.toContain('ark-secret');
+
+    client.send({ type: 'get_search_config', payload: {} });
+    const fetched = await client.waitFor(
+      (f) => f.type === 'search_config' && f !== saved,
+    );
+    expect(JSON.stringify(fetched)).not.toContain('ark-secret');
+    client.close();
   });
 });
 

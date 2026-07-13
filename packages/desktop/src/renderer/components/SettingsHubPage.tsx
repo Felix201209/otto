@@ -38,11 +38,13 @@ import {
 import { IconSettings, IconChevron, IconClose } from './icons.js';
 import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
+import { SearchPanel } from './hub/SearchPanel.js';
 
 export type TabId =
   | 'prefs'
   | 'organization'
   | 'models'
+  | 'search'
   | 'feishu'
   | 'mcp'
   | 'context'
@@ -60,6 +62,7 @@ const TAB_LABEL: Record<TabId, string> = {
   prefs: '偏好设置',
   organization: '企业与身份',
   models: '企业模型（未启用）',
+  search: '联网搜索',
   feishu: '飞书接入',
   mcp: 'MCP 服务器',
   context: 'Context 用量',
@@ -80,7 +83,7 @@ const TAB_LABEL: Record<TabId, string> = {
  * 后每组不超过 5 项，一眼可扫完。
  */
 const NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
-  { label: '设置', tabs: ['prefs', 'organization', 'models', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
+  { label: '设置', tabs: ['prefs', 'organization', 'models', 'search', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
   { label: '诊断', tabs: ['doctor', 'context', 'workflows'] },
   { label: '工作区', tabs: ['todos', 'memory', 'skills', 'tools'] },
 ];
@@ -118,6 +121,7 @@ export function SettingsHubPage({
   // 切 tab 时按需拉取对应数据（首次进入该 tab 才拉，避免每次切换都打一遍所有请求）。
   useEffect(() => {
     if (tab === 'mcp') actions.refreshMcpServers();
+    else if (tab === 'search') actions.refreshSearchConfig();
     else if (tab === 'context' && activeSession) {
       actions.refreshContextBreakdown(activeSession.sessionId);
     } else if (tab === 'todos') actions.refreshTodos();
@@ -194,6 +198,7 @@ export function SettingsHubPage({
             {tab === 'prefs' ? <PrefsPanel data={data} /> : null}
             {tab === 'organization' ? <OrganizationPanel product={product} /> : null}
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
+            {tab === 'search' ? <SearchPanel data={data} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}
             {tab === 'mcp' ? <McpPanel data={data} /> : null}
             {tab === 'context' ? (
