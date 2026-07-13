@@ -114,6 +114,8 @@ export function App(): React.JSX.Element {
   const [saveError, setSaveError] = useState<string | null>(null);
   // 首启无模型时自动浮出一次（用 ref 防止反复弹）。
   const autoFloated = useRef(false);
+  // 当前用户所属部门 teamId 数组。null = 尚未加载；undefined/[] = 个人版。
+  const [userTeamIds, setUserTeamIds] = useState<string[] | null>(null);
   useEffect(() => {
     if (
       !autoFloated.current &&
@@ -398,6 +400,7 @@ export function App(): React.JSX.Element {
           profiles={galleryProfiles}
           onLaunch={handleLaunchProfile}
           onBack={() => setMainView('chat')}
+          userTeamIds={userTeamIds ?? undefined}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
