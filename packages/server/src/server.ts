@@ -41,6 +41,7 @@ import {
   type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
+  type MessageSource,
   type ModelInfo,
   type ServerToClient,
   type SettingsSnapshot,

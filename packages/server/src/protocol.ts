@@ -1255,8 +1255,7 @@ export type ServerToClient =
   | ProductWorkspaceMsg
   | EnterpriseInviteCreatedMsg
   | SchedulesListMsg
-  | PendingAutoSkillsMsg;
-
+  | PendingAutoSkillsMsg
   | MessageQueuedMsg
   | QueueDrainedMsg;
 

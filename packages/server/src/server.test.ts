@@ -913,7 +913,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     c.close();
   });
 
-  // ── P0-1（断开/停机取消）与 P0-4（busy 不落库）────────────────────────────
+  // ── P0-1（断开/停机取消）与 busy 消息排队 ────────────────────────────────
 
   /** 挂起式 fake runtime：run 设 thinking 后一直挂到 cancel/dispose，模拟长跑轮次。 */
   function makeHangingRuntime(): {
@@ -1048,7 +1048,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(calls.dispose).toBe(1);
   });
 
-  it('会话正忙（thinking）再来一条 → error{busy}，不落库不广播', async () => {
+  it('会话正忙（thinking）再来一条 → 入队等待，不立即落库或重复运行', async () => {
     const { factory, calls } = makeHangingRuntime();
     server = new OttoServer({
       port: 0,
@@ -1076,11 +1076,14 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
       type: 'send_user_message',
       payload: { sessionId: s.sessionId, content: [{ type: 'text', value: '第二条' }], source: 'local' },
     });
-    const errFrame = await c.waitFor(
-      (f) => f.type === 'error' && f.payload.code === 'busy',
+    const queuedFrame = await c.waitFor(
+      (f) => f.type === 'message_queued',
     );
-    expect(errFrame.type).toBe('error');
-    // 第二条没有落库：历史里只有第一条 user 消息；run 也只被驱动一次。
+    expect(queuedFrame).toMatchObject({
+      type: 'message_queued',
+      payload: { sessionId: s.sessionId, queuePosition: 1 },
+    });
+    // 第二条只进入内存队列，当前轮结束前不落库、不重复驱动 runtime。
     expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
     expect(calls.run).toBe(1);
     expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
