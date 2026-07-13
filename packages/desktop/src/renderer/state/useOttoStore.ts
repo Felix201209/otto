@@ -39,6 +39,15 @@ export type ImageAttachment = Extract<
   { type: 'image_reference' }
 >['value'];
 
+/** 普通文件附件（file_reference part 的 value）。 */
+export type FileAttachment = Extract<
+  OttoMessage['content'][number],
+  { type: 'file_reference' }
+>['value'];
+
+/** 附件统一类型（图片或文件）。 */
+export type Attachment = ImageAttachment | FileAttachment;
+
 export interface OttoState {
   connection: ConnectionState;
   sessions: Record<string, SessionSummary>;
@@ -750,7 +759,7 @@ export function useOttoStore(): UseOttoStore {
     (
       text: string,
       source: MessageSource = 'local',
-      attachments: ImageAttachment[] = [],
+      attachments: Attachment[] = [],
       queueAction?: 'merge' | 'next_turn' | 'new_session',
     ) => {
       const sessionId = activeRef.current;
@@ -764,7 +773,11 @@ export function useOttoStore(): UseOttoStore {
       const content: OttoMessage['content'] = [];
       if (trimmed) content.push({ type: 'text', value: trimmed });
       for (const value of attachments) {
-        content.push({ type: 'image_reference', value });
+        if ('data' in value) {
+          content.push({ type: 'image_reference', value: value as ImageAttachment });
+        } else {
+          content.push({ type: 'file_reference', value: value as FileAttachment });
+        }
       }
       dispatch({
         kind: 'optimistic_user',

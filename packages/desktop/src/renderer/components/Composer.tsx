@@ -21,9 +21,10 @@
 import React, { useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import * as transport from '../transport.js';
-import type { ImageAttachment } from '../state/useOttoStore.js';
+import type { Attachment } from '../state/useOttoStore.js';
 import {
-  fileToImageAttachment,
+  fileToAttachment,
+  isImageAttachment,
   attachmentToDataUrl,
   MAX_ATTACHMENTS,
 } from '../lib/image.js';
@@ -152,7 +153,7 @@ interface ComposerProps {
    * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
    */
   busy?: boolean;
-  onSend: (text: string, attachments: ImageAttachment[]) => void;
+  onSend: (text: string, attachments: Attachment[]) => void;
   /** 中止当前流式生成（busy 时停止按钮调用）。 */
   onCancel?: () => void;
   onSetModel: (model: string) => void;
@@ -230,7 +231,7 @@ export function Composer({
     () => localStorage.getItem('otto.authorization.global-auto') === '1',
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
-  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -437,8 +438,8 @@ export function Composer({
     fileInputRef.current?.click();
   };
 
-  // 选中图片 → 逐张压缩成 image_reference。超出张数上限的截断并提示；
-  // 单张失败（类型/过大/解码）记录首个错误但不阻断其余成功项。
+  // 选中附件 → 图片走压缩 pipeline，文件走直传 pipeline。
+  // 超出张数上限的截断并提示；单张失败记录首个错误但不阻断其余成功项。
   const onFilesChosen = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ): Promise<void> => {
@@ -447,25 +448,25 @@ export function Composer({
     if (files.length === 0) return;
     const room = MAX_ATTACHMENTS - attachments.length;
     if (room <= 0) {
-      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 张图片`);
+      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
       return;
     }
     setAttaching(true);
     let firstError: string | null = null;
-    const added: ImageAttachment[] = [];
+    const added: Attachment[] = [];
     for (const file of files.slice(0, room)) {
       try {
-        added.push(await fileToImageAttachment(file));
+        added.push(await fileToAttachment(file));
       } catch (err) {
         if (!firstError) {
-          firstError = err instanceof Error ? err.message : '图片处理失败';
+          firstError = err instanceof Error ? err.message : '附件处理失败';
         }
       }
     }
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
     setAttachError(
       firstError ??
-        (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 张图片` : null),
+        (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null),
     );
     setAttaching(false);
   };
@@ -703,18 +704,25 @@ export function Composer({
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">
             {attachments.map((a) => (
-              <div key={a.id} className="otto-attachment">
-                <img
-                  className="otto-attachment__img"
-                  src={attachmentToDataUrl(a)}
-                  alt={a.fileName}
-                />
+              <div key={'id' in a ? a.id : `file-${a.fileName}`} className="otto-attachment">
+                {isImageAttachment(a) ? (
+                  <img
+                    className="otto-attachment__img"
+                    src={attachmentToDataUrl(a)}
+                    alt={a.fileName}
+                  />
+                ) : (
+                  <div className="otto-attachment__file" title={a.fileName}>
+                    <span className="otto-attachment__file-icon">📄</span>
+                    <span className="otto-attachment__file-name">{a.fileName}</span>
+                  </div>
+                )}
                 <button
                   type="button"
                   className="otto-attachment__remove"
                   title="移除"
                   aria-label={`移除 ${a.fileName}`}
-                  onClick={() => removeAttachment(a.id)}
+                  onClick={() => removeAttachment('id' in a ? a.id : `file-${a.fileName}`)}
                 >
                   <IconClose size={11} />
                 </button>

@@ -27,7 +27,7 @@ import {
   groupSessions,
   selectSortedSessions,
 } from './state/useOttoStore.js';
-import type { ImageAttachment } from './state/useOttoStore.js';
+import type { Attachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
 import { SLASH_COMMANDS } from './components/Composer.js';
@@ -270,7 +270,7 @@ export function App(): React.JSX.Element {
   const handleSend = (
     text: string,
     source: MessageSource,
-    attachments?: ImageAttachment[],
+    attachments?: Attachment[],
   ): void => {
     actions.sendMessage(text, source, attachments);
   };
