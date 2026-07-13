@@ -11,7 +11,6 @@ import {
   ENTERPRISE_CEO_PROFILE,
   ENTERPRISE_WORK_PROFILE,
   PERSONAL_OTTO_PROFILE,
-  getAgentComposerPrompt,
   getDepartmentAgentProfiles,
   getPersonalAgentProfiles,
   getEnterpriseAgentProfiles,
@@ -95,16 +94,4 @@ describe('v1.7 Agent profile 目录', () => {
     }
   });
 
-  it('每位专家都有可编辑且互不相同的聊天框功能提示词', () => {
-    const prompts = ALL_AGENT_PROFILES.map((profile) =>
-      getAgentComposerPrompt(profile),
-    );
-
-    expect(new Set(prompts).size).toBe(ALL_AGENT_PROFILES.length);
-    for (const [index, profile] of ALL_AGENT_PROFILES.entries()) {
-      expect(prompts[index]).toContain(profile.name);
-      expect(prompts[index]).toContain(profile.tagline);
-      expect(prompts[index]).not.toBe(profile.systemPrompt);
-    }
-  });
 });

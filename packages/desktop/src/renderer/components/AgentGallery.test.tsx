@@ -14,7 +14,6 @@ import {
   DEPARTMENT_AGENT_PROFILES,
   ENTERPRISE_CEO_PROFILE,
   PERSONAL_OTTO_PROFILE,
-  getAgentComposerPrompt,
 } from '../agents/departmentAgents.js';
 
 function renderGallery() {
@@ -40,25 +39,22 @@ describe('AgentGallery（页面）', () => {
     expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`)).toBeTruthy();
   });
 
-  it('点击会议 Agent 回传 profile 和对应的可编辑提示词', () => {
+  it('点击会议 Agent 只回传 profile，不向聊天框暴露后台提示词', () => {
     const { onLaunch } = renderGallery();
     const target = BASE_AGENT_PROFILES[1];
     fireEvent.click(screen.getByText(target.name));
     expect(onLaunch).toHaveBeenCalledTimes(1);
-    expect(onLaunch).toHaveBeenCalledWith(
-      target,
-      getAgentComposerPrompt(target),
-    );
+    expect(onLaunch).toHaveBeenCalledWith(target);
+    expect(onLaunch.mock.calls[0]).toHaveLength(1);
   });
 
-  it('切换不同专家时回传不同功能提示词', () => {
+  it('切换不同专家时只回传对应 profile', () => {
     const { onLaunch } = renderGallery();
     fireEvent.click(screen.getByText('PPT 创作专家'));
     fireEvent.click(screen.getByText('Excel 数据表格'));
 
-    expect(onLaunch.mock.calls[0][1]).not.toBe(onLaunch.mock.calls[1][1]);
-    expect(onLaunch.mock.calls[0][1]).toContain('PPT 创作专家');
-    expect(onLaunch.mock.calls[1][1]).toContain('Excel 数据表格');
+    expect(onLaunch.mock.calls.map(([profile]) => profile.id)).toEqual(['ppt', 'sheet']);
+    expect(onLaunch.mock.calls.every((call) => call.length === 1)).toBe(true);
   });
 
   it('企业版展示全部部门基础 Agent', () => {

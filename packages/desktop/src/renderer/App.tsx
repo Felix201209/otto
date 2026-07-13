@@ -30,7 +30,7 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { insertComposerDraft, SLASH_COMMANDS } from './components/Composer.js';
+import { SLASH_COMMANDS } from './components/Composer.js';
 import {
   mergeServerCommands,
   buildHelpMarkdown,
@@ -50,7 +50,6 @@ import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
 import {
   DEPARTMENT_LABELS,
-  getAgentComposerPrompt,
   getEnterpriseAgentProfiles,
   getPersonalAgentProfiles,
   type AgentProfile,
@@ -231,22 +230,6 @@ export function App(): React.JSX.Element {
     ? state.messages[state.activeSessionId] ?? []
     : [];
 
-  const [pendingExpertDraft, setPendingExpertDraft] = useState<{
-    profileId: string;
-    text: string;
-    previousSessionId: string | null;
-  } | null>(null);
-
-  // create_session 是异步的：必须等新专家会话真正落地、Composer 已挂载后再填草稿。
-  // 用 previousSessionId 防止连续点同一专家时，误把新提示词填到旧会话。
-  useEffect(() => {
-    if (!pendingExpertDraft || !activeSession) return;
-    if (activeSession.sessionId === pendingExpertDraft.previousSessionId) return;
-    if (activeSession.agentProfileId !== pendingExpertDraft.profileId) return;
-    insertComposerDraft(pendingExpertDraft.text);
-    setPendingExpertDraft(null);
-  }, [activeSession, pendingExpertDraft]);
-
   // session.status 是全局运行态的权威源：工具段结束→下一轮开始的帧间隙里，旧消息会
   // 短暂不 busy，但会话始终 streaming/thinking。以 status 驱动可避免停止按钮被卸载，
   // 也不会让历史里偶发残留的 isProcessingTools 把已 idle 的会话重新锁死。
@@ -317,17 +300,9 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
-  // 启动专家：新会话在服务端绑定 profile system prompt，同时只向输入框填可编辑任务模板，不自动发送。
-  const handleLaunchProfile = (
-    profile: AgentProfile,
-    composerPrompt = getAgentComposerPrompt(profile),
-  ): void => {
+  // 启动专家：新会话只在服务端绑定 profile system prompt，不向聊天框暴露或填入模板。
+  const handleLaunchProfile = (profile: AgentProfile): void => {
     setMainView('chat');
-    setPendingExpertDraft({
-      profileId: profile.id,
-      text: composerPrompt,
-      previousSessionId: activeSession?.sessionId ?? null,
-    });
     actions.launchAgentProfile(profile.name, profile.id);
   };
 

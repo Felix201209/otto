@@ -118,8 +118,8 @@ describe('RightPanel v1.7 工作入口', () => {
         id: 'self-development',
         name: '企业AI自主开发',
       }),
-      expect.stringContaining('企业AI自主开发'),
     );
+    expect(launch.mock.calls[0]).toHaveLength(1);
   });
 
   it('工具面板恢复 v1.6 的飞书状态与多渠道快捷项', () => {
