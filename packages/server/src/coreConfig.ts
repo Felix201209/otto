@@ -26,6 +26,10 @@ import {
 } from 'otto-core';
 import os from 'node:os';
 import { loadCustomModels, loadPreferredModel } from './customModels.js';
+import {
+  loadSearchRuntimeConfig,
+  type SearchRuntimeConfig,
+} from './searchConfig.js';
 
 export interface CreateCoreConfigOptions {
   sessionId: string;
@@ -35,6 +39,14 @@ export interface CreateCoreConfigOptions {
   cwd?: string;
   /** 覆盖自定义模型注入（测试用）；缺省从 ~/.otto-user/custom-models.json 读。 */
   customModels?: CustomModelConfig[];
+  /** 会话级 Agent profile，经 Config.userRules 进入 system prompt。 */
+  userRules?: string;
+  /** 当前 runtime 是否服务于飞书会话；注入移动端/聊天渠道环境提示。 */
+  feishuMode?: boolean;
+  /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
+  excludeTools?: string[];
+  /** 覆盖搜索 API 配置（测试用）；缺省从 ~/.otto-user 读取脱敏配置与 secret。 */
+  searchConfig?: SearchRuntimeConfig;
 }
 
 /**
@@ -58,6 +70,7 @@ export function resolveDefaultCwd(): string {
 export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const cwd = opts.cwd ?? resolveDefaultCwd();
   const customModels = opts.customModels ?? loadCustomModels();
+  const searchConfig = opts.searchConfig ?? loadSearchRuntimeConfig();
 
   // ── LLM-URL 崩溃根因兜底（BYO-key 化后必备）──
   // OttoServerAdapter.generateContent 只有在 getModel() 返回 `custom:...` 时才走
@@ -70,6 +83,8 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const enabled = customModels.filter((m) => m.enabled !== false);
   const wantsCustom =
     typeof opts.model === 'string' && isCustomModel(opts.model);
+  const legacyManagedModel =
+    typeof opts.model === 'string' && opts.model.startsWith('otto:');
   // 会话未显式选模型时的兜底次序：
   //   1) makeActive 写入的「当前生效模型」preferredModel（前提：它仍在 enabled 列表里）；
   //   2) 退回第一个 enabled 自定义模型（历史行为）。
@@ -81,7 +96,11 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
   const resolvedModel = wantsCustom
     ? opts.model
     : (preferredIfEnabled ??
-      (enabled.length > 0 ? generateCustomModelId(enabled[0]) : opts.model));
+      (enabled.length > 0
+        ? generateCustomModelId(enabled[0])
+        : legacyManagedModel
+          ? undefined
+          : opts.model));
 
   return new Config({
     sessionId: opts.sessionId,
@@ -93,6 +112,13 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     approvalMode: ApprovalMode.YOLO,
     model: resolvedModel,
     customModels,
+    userRules: opts.userRules,
+    feishuMode: opts.feishuMode,
+    excludeTools: opts.excludeTools,
+    searchProvider: searchConfig.provider,
+    searchApiKey: searchConfig.apiKey,
+    searchApiUrl: searchConfig.apiUrl,
+    searchModel: searchConfig.model,
     // 关闭遥测与使用统计（与 CLI 一致的隐私基线）。
     telemetry: { enabled: false, logPrompts: false },
     usageStatisticsEnabled: false,

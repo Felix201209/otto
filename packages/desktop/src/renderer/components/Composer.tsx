@@ -39,10 +39,39 @@ import {
   IconPaperclip,
   IconArrowUp,
   IconCheck,
+  IconCheckCheck,
+  IconWarning,
   IconSettings,
   IconStop,
   IconClose,
+  IconMicrophone,
 } from './icons.js';
+
+async function blobToWav(blob: Blob): Promise<Uint8Array> {
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const context = new AudioCtx();
+  try {
+    const decoded = await context.decodeAudioData(await blob.arrayBuffer());
+    const frames = decoded.length;
+    const mono = new Float32Array(frames);
+    for (let c = 0; c < decoded.numberOfChannels; c++) {
+      const channel = decoded.getChannelData(c);
+      for (let i = 0; i < frames; i++) mono[i] += channel[i] / decoded.numberOfChannels;
+    }
+    const out = new ArrayBuffer(44 + frames * 2);
+    const view = new DataView(out);
+    const text = (offset: number, value: string) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+    text(0, 'RIFF'); view.setUint32(4, 36 + frames * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, decoded.sampleRate, true); view.setUint32(28, decoded.sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, frames * 2, true);
+    for (let i = 0; i < frames; i++) {
+      const sample = Math.max(-1, Math.min(1, mono[i]));
+      view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Uint8Array(out);
+  } finally { void context.close(); }
+}
 
 /**
  * 模型菜单超过此数量才显示搜索框 + 按 provider 分组。BYO-key 用户接多个
@@ -116,6 +145,8 @@ interface ComposerProps {
   sessionId?: string | null;
   /** 整体禁用（无选中会话）：textarea 与发送按钮都禁用。 */
   disabled?: boolean;
+  /** 禁用原因，显示在输入框与按钮提示中。 */
+  disabledReason?: string;
   /**
    * 流式生成中。busy 时 textarea 仍可输入下一条，发送按钮变「停止」按钮调 onCancel。
    * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
@@ -169,6 +200,7 @@ export function Composer({
   currentModel,
   sessionId,
   disabled,
+  disabledReason,
   busy = false,
   onSend,
   onCancel,
@@ -193,13 +225,159 @@ export function Composer({
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [authorizationOpen, setAuthorizationOpen] = useState(false);
+  const [globalAuto, setGlobalAuto] = useState(
+    () => localStorage.getItem('otto.authorization.global-auto') === '1',
+  );
+  const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [voiceWave, setVoiceWave] = useState<number[]>(() => Array.from({ length: 34 }, (_, i) => 8 + (i % 5) * 3));
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceTimerRef = useRef<number | null>(null);
+  const voiceMeterFrameRef = useRef<number | null>(null);
+  const voiceMeterContextRef = useRef<AudioContext | null>(null);
   // 斜杠命令面板：当前高亮项下标。面板是否可见由 slashCommands.length>0 && !disabled 决定。
   const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    void window.otto?.voiceGetConfig?.().then((c) => setVoiceEnabled(c.enabled)).catch(() => setVoiceEnabled(false));
+  }, []);
+
+  const stopVoiceMeter = (): void => {
+    if (voiceTimerRef.current !== null) window.clearInterval(voiceTimerRef.current);
+    voiceTimerRef.current = null;
+    if (voiceMeterFrameRef.current !== null) cancelAnimationFrame(voiceMeterFrameRef.current);
+    voiceMeterFrameRef.current = null;
+    if (voiceMeterContextRef.current) void voiceMeterContextRef.current.close();
+    voiceMeterContextRef.current = null;
+  };
+
+  React.useEffect(() => () => stopVoiceMeter(), []);
+
+  const startVoiceMeter = (stream: MediaStream): void => {
+    setVoiceSeconds(0);
+    voiceTimerRef.current = window.setInterval(() => setVoiceSeconds((v) => v + 1), 1000);
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    try {
+      const context = new AudioCtx();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 128;
+      analyser.smoothingTimeConstant = 0.72;
+      context.createMediaStreamSource(stream).connect(analyser);
+      voiceMeterContextRef.current = context;
+      const samples = new Uint8Array(analyser.frequencyBinCount);
+      const draw = (): void => {
+        analyser.getByteTimeDomainData(samples);
+        const next = Array.from({ length: 34 }, (_, i) => {
+          const index = Math.floor((i / 34) * samples.length);
+          return Math.max(4, Math.min(36, Math.abs(samples[index] - 128) * 1.8 + 4));
+        });
+        setVoiceWave(next);
+        voiceMeterFrameRef.current = requestAnimationFrame(draw);
+      };
+      draw();
+    } catch {
+      // 计时仍可用；极少数系统不支持 WebAudio 时只展示轻微动画波形。
+    }
+  };
+
+  const insertVoiceText = (value: string): void => {
+    const el = taRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? start;
+    const spacer = start > 0 && !/\s$/.test(text.slice(0, start)) ? ' ' : '';
+    const next = text.slice(0, start) + spacer + value + text.slice(end);
+    setText(next);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + spacer.length + value.length;
+      el.focus(); el.setSelectionRange(pos, pos);
+      el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    });
+  };
+
+  const startVoice = async (): Promise<void> => {
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      voiceChunksRef.current = [];
+      recorder.ondataavailable = (event) => { if (event.data.size > 0) voiceChunksRef.current.push(event.data); };
+      recorder.onstop = () => {
+        stopVoiceMeter(); setRecording(false); setVoiceProcessing(true);
+        const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        stream.getTracks().forEach((track) => track.stop());
+        void blobToWav(blob)
+          .then((wav) => window.otto.voiceTranscribe(wav, 'audio/wav'))
+          .then((result) => insertVoiceText(result.text))
+          .catch((e) => setVoiceError(e instanceof Error ? e.message : String(e)))
+          .finally(() => setVoiceProcessing(false));
+      };
+      recorder.start(120); startVoiceMeter(stream); setRecording(true);
+    } catch (e) { setVoiceError(e instanceof Error ? e.message : '无法使用麦克风'); }
+  };
+
+  const toggleVoice = (): void => {
+    if (recording) recorderRef.current?.stop();
+    else void startVoice();
+  };
+
+  const formattedVoiceTime = `${Math.floor(voiceSeconds / 60)}:${String(voiceSeconds % 60).padStart(2, '0')}`;
+
+  const authorizationKind = globalAuto
+    ? 'global'
+    : sessionId && sessionAuthorization[sessionId] === 'auto'
+      ? 'session'
+      : 'manual';
+  const authorizationLabel = authorizationKind === 'global'
+    ? '所有会话自动'
+    : authorizationKind === 'session'
+      ? '当前会话自动'
+      : '手动授权';
+
+  React.useEffect(() => {
+    if (globalAuto && sessionId) {
+      transport.send({
+        type: 'set_authorization_mode',
+        payload: { sessionId, mode: 'auto', scope: 'all' },
+      });
+    }
+  }, [globalAuto, sessionId]);
+
+  const pickAuthorization = (kind: 'manual' | 'session' | 'global'): void => {
+    if (!sessionId) return;
+    if (kind === 'global') {
+      localStorage.setItem('otto.authorization.global-auto', '1');
+      setGlobalAuto(true);
+      setSessionAuthorization({});
+      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'all' } });
+    } else if (kind === 'session') {
+      setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'auto' }));
+      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'session' } });
+    } else {
+      const wasGlobal = globalAuto;
+      localStorage.removeItem('otto.authorization.global-auto');
+      setGlobalAuto(false);
+      setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'manual' }));
+      transport.send({
+        type: 'set_authorization_mode',
+        payload: { sessionId, mode: 'manual', scope: wasGlobal ? 'all' : 'session' },
+      });
+    }
+    setAuthorizationOpen(false);
+  };
 
   // 由当前文本解析斜杠命令 query，再过滤出候选。无会话（disabled）时不弹面板。
   // parseSlashQuery=null → 非命令输入态；候选为空 → 无匹配（如 `/xyz`），也不显示面板。
@@ -506,15 +684,15 @@ export function Composer({
   // 否则回退到首个可用模型的名字，最后才用「选择模型」占位。
   // 不再硬编码具体模型名（如 'claude-opus-4'）——BYO-key 用户可能根本没配 Claude。
   const modelLabel =
-    models.find((m) => m.id === currentModel)?.displayName ??
-    currentModel ??
-    models[0]?.displayName ??
-    '选择模型';
+    models.find((m) => m.id === currentModel && m.enabled !== false)
+        ?.displayName ??
+      models.find((m) => m.enabled !== false)?.displayName ??
+      '选择模型';
 
   // 发送按钮的悬浮提示：禁用时说明原因，让用户知道为何点不了（而非恒为「发送」）。
   //   无会话 → 先选/建会话；有会话但内容为空 → 先输入内容；否则正常「发送」。
   const sendTitle = disabled
-    ? '请先选择或新建会话'
+    ? disabledReason ?? '请先选择或新建会话'
     : canSend
       ? '发送'
       : '请先输入内容';
@@ -575,10 +753,27 @@ export function Composer({
           />
         ) : null}
 
+        {recording ? (
+          <div className="otto-voice-recorder" role="group" aria-label="语音录音中">
+            <div className="otto-voice-recorder__wave" aria-hidden>
+              <span className="otto-voice-recorder__baseline" />
+              {voiceWave.map((height, index) => (
+                <span key={index} className="otto-voice-recorder__bar" style={{ height: `${height}px` }} />
+              ))}
+            </div>
+            <span className="otto-voice-recorder__time" aria-label="录音时长">{formattedVoiceTime}</span>
+            <button type="button" className="otto-voice-recorder__stop" aria-label="停止录音" title="停止并转成文字" onClick={toggleVoice}>
+              <IconStop size={14} />
+            </button>
+            <button type="button" className="otto-send" aria-label="完成录音" title="完成录音并转成文字" onClick={toggleVoice}>
+              <IconArrowUp size={17} />
+            </button>
+          </div>
+        ) : (<>
         <textarea
           ref={taRef}
           className="otto-composer__textarea"
-          placeholder="给 Otto 发送消息..."
+          placeholder={disabledReason ?? '给 Otto 发送消息...'}
           rows={1}
           value={text}
           onChange={autoGrow}
@@ -601,7 +796,7 @@ export function Composer({
               aria-expanded={menuOpen}
               // 与 textarea 一致：无会话（disabled）时也锁模型菜单，避免「输入锁了菜单还能开」的不一致。
               disabled={disabled}
-              title={disabled ? '请先选择或新建会话' : '切换模型'}
+              title={disabled ? disabledReason ?? '请先选择或新建会话' : '切换模型'}
             >
               {modelLabel}
               <IconChevronDown size={14} className="otto-modelpill__chev" />
@@ -631,6 +826,36 @@ export function Composer({
             <IconPaperclip size={17} />
           </button>
 
+          <button
+            type="button"
+            className={`otto-attach otto-voice-btn${recording ? ' is-recording' : ''}`}
+            title={!voiceEnabled ? '语音输入（可直接录音，停止后如缺配置会提示）' : voiceProcessing ? '正在识别…' : '语音输入'}
+            aria-label="语音输入"
+            onClick={toggleVoice}
+            disabled={disabled || voiceProcessing}
+          >
+            <IconMicrophone size={17} />
+          </button>
+
+          <div className="otto-authorization">
+            <button
+              type="button"
+              className="otto-authorization__trigger"
+              aria-label={`执行授权：${authorizationLabel}`}
+              aria-haspopup="menu"
+              aria-expanded={authorizationOpen}
+              disabled={disabled}
+              onClick={() => setAuthorizationOpen((v) => !v)}
+            >
+              <AuthorizationModeIcon kind={authorizationKind} size={16} />
+              <span>{authorizationLabel}</span>
+              <IconChevronDown size={14} />
+            </button>
+            {authorizationOpen && !disabled ? (
+              <AuthorizationMenu current={authorizationKind} onPick={pickAuthorization} />
+            ) : null}
+          </div>
+
           {busy && onCancel ? (
             <button
               type="button"
@@ -654,6 +879,8 @@ export function Composer({
             </button>
           )}
         </div>
+        </>)}
+        {voiceError ? <div className="otto-composer__voice-error" role="alert">{voiceError}</div> : null}
       </div>
 
       {/* 极简键位提示：让首次使用者知道 Enter/Shift+Enter 的分工。无会话时不显示（避免噪声）。 */}
@@ -664,6 +891,55 @@ export function Composer({
       ) : null}
     </div>
   );
+}
+
+function AuthorizationMenu({
+  current,
+  onPick,
+}: {
+  current: 'manual' | 'session' | 'global';
+  onPick: (kind: 'manual' | 'session' | 'global') => void;
+}): React.JSX.Element {
+  const options = [
+    { id: 'manual' as const, title: '手动授权', desc: 'Otto 执行操作前，需要你在弹窗中确认' },
+    { id: 'session' as const, title: '自动授权（仅当前会话）', desc: '非高危操作无需确认，高危操作仍会询问' },
+    { id: 'global' as const, title: '自动授权（所有会话）', desc: '所有会话放行非高危操作，高危操作仍会询问' },
+  ];
+  return (
+    <div className="otto-authorization__menu" role="menu" aria-label="选择执行授权方式">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          role="menuitemradio"
+          aria-checked={current === option.id}
+          className={`otto-authorization__option${current === option.id ? ' is-active' : ''}`}
+          onClick={() => onPick(option.id)}
+        >
+          <span className={`otto-authorization__option-icon otto-authorization__option-icon--${option.id}`}>
+            <AuthorizationModeIcon kind={option.id} size={18} />
+          </span>
+          <span className="otto-authorization__copy">
+            <span className="otto-authorization__title">{option.title}</span>
+            <span className="otto-authorization__desc">{option.desc}</span>
+          </span>
+          {current === option.id ? <IconCheck size={19} className="otto-authorization__selected" /> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AuthorizationModeIcon({
+  kind,
+  size,
+}: {
+  kind: 'manual' | 'session' | 'global';
+  size: number;
+}): React.JSX.Element {
+  if (kind === 'manual') return <IconWarning size={size} />;
+  if (kind === 'session') return <IconCheck size={size} />;
+  return <IconCheckCheck size={size} />;
 }
 
 function ModelMenu({
@@ -747,6 +1023,7 @@ function ModelMenu({
   // 单个模型选项按钮（平铺与分组共用，保留勾选 + 当前高亮逻辑）。
   const renderItem = (m: ModelInfo): React.JSX.Element => {
     const active = m.id === current;
+    const unavailable = m.enabled === false;
     return (
       <button
         key={m.id}
@@ -756,6 +1033,7 @@ function ModelMenu({
         className={`otto-modelmenu__item${
           active ? ' otto-modelmenu__item--active' : ''
         }`}
+        disabled={unavailable}
         onClick={() => onPick(m.id)}
       >
         <span className="otto-modelmenu__check">
@@ -764,7 +1042,9 @@ function ModelMenu({
         <span className="otto-modelmenu__text">
           <span className="otto-modelmenu__name">{m.displayName}</span>
           {m.provider ? (
-            <span className="otto-modelmenu__provider">{m.provider}</span>
+            <span className="otto-modelmenu__provider">
+              {unavailable ? '暂不可用' : m.provider}
+            </span>
           ) : null}
         </span>
       </button>

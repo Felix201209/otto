@@ -70,6 +70,19 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     ).toBeNull();
   });
 
+  it('客户端不得伪造 feishu 来源（飞书消息只允许由服务端适配器注入）', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'feishu',
+        },
+      }),
+    ).toContain('feishu');
+  });
+
   it('send_user_message：content 传字符串 / null / 对象 → 拒绝', () => {
     for (const content of ['不是数组', null, { type: 'text', value: 'x' }]) {
       expect(
@@ -168,6 +181,30 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
         },
       }),
     ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: {
+          provider: 'openai',
+          baseUrl: 'https://x',
+          apiKey: '',
+          modelId: 'm',
+          replaceId: 'custom:openai:old@abc',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_custom_model',
+        payload: {
+          provider: 'openai',
+          baseUrl: 'https://x',
+          apiKey: '',
+          modelId: 'm',
+          replaceId: 123,
+        },
+      }),
+    ).not.toBeNull();
   });
 
   it('delete_session：sessionId 缺失 → 拒绝；齐全 → 通过', () => {
@@ -220,6 +257,25 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     expect(
       validateClientPayload({ type: 'get_history', payload: 'x' }),
     ).not.toBeNull();
+  });
+
+  it('v1.7 企业关联和自动 Skill 操作只接受非空链接/候选 ID', () => {
+    expect(validateClientPayload({
+      type: 'accept_company_link',
+      payload: { link: 'otto://enterprise/join?token=abc' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'accept_company_link',
+      payload: { link: '' },
+    })).not.toBeNull();
+    expect(validateClientPayload({
+      type: 'get_pending_auto_skills',
+      payload: {},
+    })).toBeNull();
+    for (const type of ['confirm_pending_auto_skill', 'reject_pending_auto_skill']) {
+      expect(validateClientPayload({ type, payload: { candidateId: 'candidate-1' } })).toBeNull();
+      expect(validateClientPayload({ type, payload: { candidateId: '' } })).not.toBeNull();
+    }
   });
 });
 
@@ -297,5 +353,117 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
     expect(
       validateClientPayload({ type: 'list_slash_commands', payload: null }),
     ).not.toBeNull();
+  });
+
+  it('搜索配置接口只接受受支持 provider、HTTPS API 地址和字符串模型', () => {
+    expect(
+      validateClientPayload({ type: 'get_search_config', payload: {} }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: {
+          provider: 'volcengine',
+          apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+          model: 'doubao-seed-2-0-lite-260215',
+          apiKey: 'secret',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'unknown' },
+      }),
+    ).toContain('provider');
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'volcengine', apiUrl: 'http://insecure.example.com' },
+      }),
+    ).toContain('HTTPS');
+  });
+  });
+
+describe('validateClientPayload：执行授权', () => {
+  it('只接受合法 mode 与 scope', () => {
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'session' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'yolo', scope: 'all' },
+    })).toContain('mode');
+    expect(validateClientPayload({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'forever' },
+    })).toContain('scope');
+  });
+});
+
+describe('validateClientPayload：v1.7 产品工作区', () => {
+  it('create_session 只接受字符串 agentProfileId', () => {
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议', agentProfileId: 'meeting-initiator' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议', agentProfileId: { systemPrompt: 'evil' } },
+    })).toContain('agentProfileId');
+  });
+
+  it('管理者建档和加入企业严格校验必填字段', () => {
+    expect(validateClientPayload({
+      type: 'configure_enterprise',
+      payload: { managerName: '陈晨', companyName: '北辰科技', industry: '企业软件' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'configure_enterprise',
+      payload: { managerName: '', companyName: '北辰科技' },
+    })).toContain('managerName');
+    expect(validateClientPayload({
+      type: 'join_enterprise',
+      payload: { link: 'otto://enterprise/join?x=1', userId: 'u1', displayName: '林一' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'join_enterprise',
+      payload: { link: '', userId: 'u1', displayName: '林一' },
+    })).toContain('link');
+  });
+
+  it('企业邀请按 kind 校验职位或父子公司参数', () => {
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'position', departmentId: 'd1', positionId: 'p1' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'position', departmentId: 'd1' },
+    })).toContain('positionId');
+    expect(validateClientPayload({
+      type: 'create_enterprise_invite',
+      payload: { kind: 'company_link', direction: 'parent_invites_child' },
+    })).toBeNull();
+  });
+
+  it('本地日程帧校验 action 所需字段', () => {
+    expect(validateClientPayload({
+      type: 'create_schedule',
+      payload: { title: '复盘', startAt: '2026-07-12T09:00:00+08:00' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_schedule',
+      payload: { title: '', startAt: 'bad' },
+    })).toContain('title');
+    expect(validateClientPayload({
+      type: 'get_schedules',
+      payload: { date: '2026-07-12', timezone: 'Asia/Shanghai' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'delete_schedule',
+      payload: { id: '' },
+    })).toContain('id');
   });
 });

@@ -105,6 +105,70 @@ describe('executeToolCall', () => {
     });
   });
 
+  it('forwards live tool output before the tool finishes', async () => {
+    const request: ToolCallRequestInfo = {
+      callId: 'auth-live',
+      name: 'testTool',
+      args: { param1: 'value1' },
+      isClientInitiated: false,
+      prompt_id: 'prompt-live',
+    };
+    const outputs: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let outputPublished!: () => void;
+    const published = new Promise<void>((resolve) => {
+      outputPublished = resolve;
+    });
+    vi.mocked(mockToolRegistry.getTool).mockReturnValue(mockTool);
+    vi.mocked(mockTool.execute).mockImplementation(
+      async (_args, _signal, updateOutput) => {
+        updateOutput?.('https://accounts.feishu.cn/oauth/v1/device/verify?user_code=ABCD');
+        outputPublished();
+        await gate;
+        return { llmContent: 'done', returnDisplay: 'done' };
+      },
+    );
+
+    const execution = executeToolCall(
+      mockConfig,
+      request,
+      mockToolRegistry,
+      abortController.signal,
+      { onOutput: (output) => outputs.push(output) },
+    );
+    await published;
+
+    expect(outputs).toEqual([
+      'https://accounts.feishu.cn/oauth/v1/device/verify?user_code=ABCD',
+    ]);
+    release();
+    await execution;
+  });
+
+  it('executes a dangerous tool only after the GUI supplied explicit approval', async () => {
+    const request: ToolCallRequestInfo = {
+      callId: 'danger-1', name: 'testTool', args: { param1: 'rm' },
+      isClientInitiated: false, prompt_id: 'prompt-danger',
+    };
+    vi.mocked(mockToolRegistry.getTool).mockReturnValue(mockTool);
+    vi.mocked(mockTool.shouldConfirmExecute).mockResolvedValue({
+      type: 'exec', command: 'rm -rf target', warning: '危险操作',
+      onConfirm: vi.fn(),
+    } as ToolCallConfirmationDetails);
+    vi.mocked(mockTool.execute).mockResolvedValue({ llmContent: 'done', returnDisplay: 'done' });
+
+    const response = await executeToolCall(
+      mockConfig, request, mockToolRegistry, abortController.signal,
+      { explicitlyApproved: true },
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(mockTool.execute).toHaveBeenCalled();
+  });
+
   it('should return an error if tool is not found', async () => {
     const request: ToolCallRequestInfo = {
       callId: 'call2',

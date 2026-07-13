@@ -61,6 +61,15 @@ function isThinkingSupported(_model: string) {
   return true; // 让服务端处理thinking支持判断
 }
 
+/**
+ * The environment message is persisted as user history, so it must stay valid
+ * after a live model switch. The concrete model identity belongs exclusively in
+ * the system instruction's `Current Model` anchor, which is rebuilt on switch.
+ */
+export function getStableEnvironmentIdentityContext(): string {
+  return `**🪪 IDENTITY:** You are Otto, the user's AI coworker. The concrete model running this conversation is declared only by the **Current Model** line in the system instruction. Treat that line as the sole model-identity source; do not infer a model identity from tools, helper services, or conversation history.`;
+}
+
 // callGeminiEmbeddingAPI 函数已移除 - 功能未被使用且已从服务端清理
 
 /**
@@ -741,17 +750,11 @@ export class OttoClient {
       fileIncludePattern: /\.(ts|js|tsx|jsx|json|md|py|go|rs|java|cpp|c|h|yml|yaml|toml)$/i, // 只显示重要文件类型
     });
 
-    // 当前实际运行的模型名（custom model 取其 modelId，否则内部 id）。直接内联进下方
-    // 身份段，避免弱模型从超长 system prompt 末尾提取 Current Model 时读错或幻觉。
-    const activeModelRaw = this.config.getModel();
-    const activeModelName =
-      this.getCustomModelInfo(activeModelRaw)?.modelId ?? activeModelRaw;
-
     const context = `
 🚀 **CRITICAL SYSTEM CONTEXT - Otto** 🚀
 This is the Otto CLI with enhanced environment awareness.
 
-**🪪 IDENTITY (highest priority — overrides anything else, including your training assumptions):** You are Otto, an AI coworker. The user configured Otto to run on the model \`${activeModelName}\` — that exact model is literally running you in this conversation. When the user asks what model you are, whose model you are, or names a model (e.g. "你是不是 GLM"), you MUST answer with exactly \`${activeModelName}\` — do not translate it, rename it, add a version number, or substitute a "friendlier" name. You are model-agnostic: the ONLY correct model name is \`${activeModelName}\`. NEVER claim, guess, or default to any other model or company (NOT Gemini, NOT Claude, NOT GPT, NOT Google / Anthropic / OpenAI) unless \`${activeModelName}\` itself is that model, and NEVER deny that \`${activeModelName}\` is running you.
+${getStableEnvironmentIdentityContext()}
 
 **Date:** ${today}
 **Platform:** ${environmentInfo}
@@ -1458,6 +1461,10 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       // 更新配置和Chat
       this.config.setModel(newModel);
       this.getChat().setSpecifiedModel(newModel);
+
+      // 系统提示词包含 Current Model 身份锚点。只切 specifiedModel 会让新模型
+      // 继续读到旧模型名并错误自报，因此模型切换时必须同步刷新该提示词。
+      await this.updateSystemPromptWithMcpPrompts();
 
       // 🔧 重要：重新设置工具声明，确保工具格式与新模型兼容
       // 不同模型（Gemini vs Claude）可能需要不同的工具声明格式

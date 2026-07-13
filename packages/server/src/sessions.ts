@@ -46,7 +46,7 @@ export interface SessionRuntime {
   /** 中止当前轮。 */
   cancel(): void;
   /** 设置模型。 */
-  setModel(model: string): void;
+  setModel(model: string): void | Promise<void>;
   /**
    * 回传一个待确认工具调用的应答（AskUserQuestion 的答案 / 危险命令确认等）。
    * server 收到客户端 tool_confirmation_response 后按 callId 路由进来，唤醒
@@ -66,6 +66,8 @@ export interface SessionRuntime {
    * 调用方（server.ts）按需 cast。
    */
   getConfig(): unknown;
+  /** 桌面授权策略；旧 runtime / 测试替身可不实现。 */
+  setAuthorizationMode?(mode: 'manual' | 'auto'): void;
 }
 
 /** 单个会话的内部状态。 */
@@ -221,6 +223,9 @@ export class InMemorySessionStore implements SessionStore {
       feishuChatId: init.feishuChatId,
       status: 'idle',
       model: init.model,
+      agentProfileId: init.agentProfileId,
+      agentProfileName: init.agentProfileName,
+      productEdition: init.productEdition,
       createdAt: now,
       updatedAt: now,
       lastMessagePreview: undefined,

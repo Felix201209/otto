@@ -640,6 +640,8 @@ export async function loadCliConfig(
     // web_search 搜索后端配置（settings.json 可配；不配默认 bing 免 key 可用）
     searchProvider: settings.searchProvider,
     searchApiKey: settings.searchApiKey,
+    searchApiUrl: settings.searchApiUrl,
+    searchModel: settings.searchModel,
     cwd: process.cwd(),
     fileDiscoveryService: fileService,
     bugCommand: settings.bugCommand,

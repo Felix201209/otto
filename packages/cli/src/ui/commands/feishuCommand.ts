@@ -4726,6 +4726,74 @@ async function handleStart(context?: CommandContext): Promise<string> {
           }
         },
       });
+
+      // 🎙️ 会议结束检测：WebSocket 事件（方案A，优先）
+      gateway.onMeetingEnded = async (event) => {
+        const ctx = {
+          userId: (gateway as any).getBotOpenId?.() || 'default',
+          userName: 'Otto User',
+          currentDay: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()],
+          currentTime: `${new Date().getHours()}:${new Date().getMinutes()}`,
+          recentActions: [],
+          pendingTasks: 0,
+          hasUpcomingMeeting: false,
+          lastMeetingEnd: event.endTime,
+        };
+        await proactive.onEvent('meeting_ended', ctx);
+        dlog(`[Feishu] Proactive meeting_ended triggered via WebSocket: "${event.topic}"`);
+      };
+
+      // 🎙️ 会议结束检测：日历轮询（方案B，fallback）
+      try {
+        const { spawn } = await import('node:child_process');
+        proactive.setCalendarChecker(async () => {
+          // 使用 lark-cli 查询最近 10 分钟内结束的会议
+          const now = new Date();
+          const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
+          const startStr = tenMinAgo.toISOString().replace(/\.\d{3}Z$/, '+08:00');
+          const endStr = now.toISOString().replace(/\.\d{3}Z$/, '+08:00');
+
+          return new Promise((resolve) => {
+            const child = spawn('npx', [
+              '--yes', 'lark-cli@1.0.53', 'calendar', '+list',
+              '--start', startStr,
+              '--end', endStr,
+              '--status', 'ended',
+            ], {
+              timeout: 15000,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let stdout = '';
+            child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+            child.on('close', () => {
+              try {
+                // 尝试解析 JSON 输出
+                const data = JSON.parse(stdout.trim() || '[]');
+                const meetings: Array<{
+                  meetingId: string; topic: string; endTime: string;
+                  hostUserId: string; operatorId: string;
+                }> = Array.isArray(data) ? data.filter((m: any) =>
+                  m?.status === 'ended' || m?.meeting_id
+                ).map((m: any) => ({
+                  meetingId: m.meeting_id || m.id || '',
+                  topic: m.topic || m.summary || '未知会议',
+                  endTime: m.end_time || '',
+                  hostUserId: m.host_user_id || '',
+                  operatorId: m.operator_id || '',
+                })) : [];
+                resolve(meetings);
+              } catch {
+                resolve([]); // 解析失败不报错
+              }
+            });
+            child.on('error', () => resolve([]));
+          });
+        });
+      } catch {
+        // lark-cli 不可用不影响主流程
+      }
+
       proactive.startScheduler(() => ({
         userId: (gateway as any).getBotOpenId?.() || 'default',
         userName: 'Otto User',
@@ -4763,6 +4831,57 @@ async function handleStart(context?: CommandContext): Promise<string> {
       });
 
       console.log('[Feishu] 主动服务/多Agent协作/Skill通知 已注入飞书通道');
+
+      // 🔔 多渠道通知服务：飞书 + 短信兜底
+      try {
+        const { getNotificationService } = await import('otto-core');
+        const { AliyunSmsSender, createAliyunSmsFromEnv } = await import('otto-core');
+
+        const notif = getNotificationService();
+
+        // 注册飞书通知通道
+        notif.registerSender({
+          channel: 'feishu',
+          send: async (recipientId: string, title: string, body: string) => {
+            if (!activeGateway) return false;
+            try {
+              await activeGateway.sendMessage(
+                recipientId,
+                `${title}\n\n${body}`
+              );
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        });
+
+        // 注册短信通知通道（阿里云）
+        const smsSender = createAliyunSmsFromEnv();
+        if (smsSender) {
+          notif.registerSender(smsSender);
+          console.log('[NotificationService] 短信通道已就绪');
+        } else {
+          console.log('[NotificationService] 短信通道未配置，仅使用飞书通知');
+        }
+
+        // 从环境变量加载服务人员手机号映射
+        // 格式: OTTO_STAFF_PHONES=openId1:13800138000,openId2:13900139000
+        const phonesEnv = process.env.OTTO_STAFF_PHONES || '';
+        if (phonesEnv) {
+          for (const pair of phonesEnv.split(',')) {
+            const [openId, phone] = pair.split(':');
+            if (openId && phone) {
+              notif.setPhoneMapping(openId.trim(), phone.trim());
+            }
+          }
+          console.log(`[NotificationService] 已加载 ${notif['phoneMap'].size} 个手机号映射`);
+        }
+
+        console.log('[NotificationService] 多渠道通知服务已启动');
+      } catch (err) {
+        console.warn(`[Feishu] 通知服务初始化失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } catch (err) {
       console.warn(`[Feishu] 注入编排通道失败（不影响核心功能）: ${err instanceof Error ? err.message : String(err)}`);
     }

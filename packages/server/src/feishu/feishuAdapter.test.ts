@@ -9,10 +9,11 @@
  *
  * 注入 fake gateway + fake creds，绕开真飞书 SDK / 凭证读盘，验证：
  *   1. 飞书入站消息 → 落进会话源（source:'feishu'）+ 广播 message_start 给 app；
- *   2. 未接 core 时走 mock 回复，其流式帧经 streamBridge 回推飞书卡片；
- *   3. 接了 runtime 时，runtime.run 被调用、其 publish 的流式帧同样回推飞书；
- *   4. 鉴权 fail-closed：未授权 sender 不进会话源、只回一句拒绝；
- *   5. app→飞书回推 pushToFeishu 调 gateway.sendMarkdown。
+ *   2. 仅显式 mock 模式回占位回复，其流式帧经 streamBridge 回推飞书卡片；
+ *   3. 新飞书会话首条消息会懒初始化真实 runtime，不得回 mock；
+ *   4. 接了 runtime 时，runtime.run 被调用、其 publish 的流式帧同样回推飞书；
+ *   5. 鉴权 fail-closed：未授权 sender 不进会话源、只回一句拒绝；
+ *   6. app→飞书回推 pushToFeishu 调 gateway.sendMarkdown。
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -25,8 +26,8 @@ import type { MessageContent, ServerToClient } from '../protocol.js';
 
 /** 记录所有回推飞书的动作，供断言。 */
 interface PushLog {
-  cards: Array<{ chatId: string; pushed: string[]; finalized: string | null }>;
-  markdowns: Array<{ chatId: string; text: string }>;
+  cards: Array<{ chatId: string; pushed: string[]; finalized: string | null; replyTo?: string }>;
+  markdowns: Array<{ chatId: string; text: string; replyTo?: string }>;
 }
 
 /** 构造一个 fake gateway：捕获回推、可手动触发 onMessage / onReady。 */
@@ -58,8 +59,8 @@ function makeFakeGateway(log: PushLog): {
     async disconnect() {
       /* fake */
     },
-    async sendStreamingCardWithFooter(chatId, initialContent) {
-      const card = { chatId, pushed: [initialContent], finalized: null as string | null };
+    async sendStreamingCardWithFooter(chatId, initialContent, _metrics, replyToMessageId) {
+      const card = { chatId, pushed: [initialContent], finalized: null as string | null, replyTo: replyToMessageId };
       log.cards.push(card);
       return {
         messageId: 'om_card_1',
@@ -73,8 +74,8 @@ function makeFakeGateway(log: PushLog): {
         },
       };
     },
-    async sendMarkdown(chatId, markdown) {
-      log.markdowns.push({ chatId, text: markdown });
+    async sendMarkdown(chatId, markdown, replyToMessageId) {
+      log.markdowns.push({ chatId, text: markdown, replyTo: replyToMessageId });
       return 'om_md_1';
     },
   };
@@ -129,19 +130,26 @@ describe('FeishuAdapter 双向链路', () => {
   });
 
   /** 把 adapter 的 broadcast 接到一个全局 app 订阅者（模拟 Electron WS 连接）。 */
-  function newAdapter(opts: { fire: () => ReturnType<typeof makeFakeGateway> }) {
+  function newAdapter(opts: {
+    fire: () => ReturnType<typeof makeFakeGateway>;
+    mock?: boolean;
+  }) {
     const fake = opts.fire();
     const adapter = new FeishuAdapter({
       store,
       broadcast: (sessionId, frame) => store.publish(sessionId, frame),
       credentials: CREDS,
       gatewayFactory: () => fake.gw,
+      mock: opts.mock,
     });
     return { adapter, fake };
   }
 
   it('飞书消息（mock 回复）→ 落会话源 + 广播 app + 回推飞书卡片', async () => {
-    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    const { adapter, fake } = newAdapter({
+      fire: () => makeFakeGateway(log),
+      mock: true,
+    });
     await adapter.start();
     fake.fireReady();
     expect(adapter.isConnected()).toBe(true);
@@ -238,6 +246,70 @@ describe('FeishuAdapter 双向链路', () => {
     expect(log.cards[0].finalized).toContain('core 真实回复');
   });
 
+  it('新飞书会话 → 首条消息先懒初始化真实 runtime，不得回 mock', async () => {
+    const fake = makeFakeGateway(log);
+    let ensureCalls = 0;
+    let runCalls = 0;
+    const adapter = new FeishuAdapter({
+      store,
+      broadcast: (sessionId, frame) => store.publish(sessionId, frame),
+      credentials: CREDS,
+      gatewayFactory: () => fake.gw,
+      ensureRuntime: async (sessionId): Promise<SessionRuntime> => {
+        ensureCalls += 1;
+        return {
+          async run() {
+            runCalls += 1;
+            const assistant = store.appendMessage(sessionId, {
+              role: 'assistant',
+              content: [{ type: 'text', value: '' }],
+              source: 'local',
+              isStreaming: true,
+            });
+            store.publish(sessionId, {
+              type: 'message_start',
+              payload: { message: assistant },
+            });
+            store.publish(sessionId, {
+              type: 'chat_chunk',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                delta: '首条消息的真实回复',
+              },
+            });
+            store.publish(sessionId, {
+              type: 'chat_complete',
+              payload: {
+                sessionId,
+                messageId: assistant.id,
+                text: '首条消息的真实回复',
+              },
+            });
+          },
+          cancel() {},
+          setModel() {},
+          getConfig() {
+            return undefined;
+          },
+          async dispose() {},
+        };
+      },
+    });
+    await adapter.start();
+
+    await fake.fireMessage(
+      makeMsg({ chatId: 'oc_chat_first', messageId: 'om_first' }),
+    );
+    await flush();
+
+    expect(ensureCalls).toBe(1);
+    expect(runCalls).toBe(1);
+    expect(log.cards).toHaveLength(1);
+    expect(log.cards[0].finalized).toContain('首条消息的真实回复');
+    expect(log.cards[0].finalized).not.toContain('mock');
+  });
+
   it('app→飞书回推：pushToFeishu 调 sendMarkdown', async () => {
     const { adapter } = newAdapter({ fire: () => makeFakeGateway(log) });
     await adapter.start();
@@ -246,6 +318,7 @@ describe('FeishuAdapter 双向链路', () => {
     expect(log.markdowns).toContainEqual({
       chatId: 'oc_chat_C',
       text: 'app 内发的话',
+      replyTo: undefined,
     });
   });
 
@@ -313,6 +386,151 @@ describe('FeishuAdapter 双向链路', () => {
     releaseFirst();
     await flush();
     expect(events).toEqual(['start1:第一条', 'end1', 'start2:第二条', 'end2']);
+  });
+
+  it('同一飞书会话的每轮回复引用各自触发消息，而不是永远引用第一条', async () => {
+    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    await adapter.start();
+    const pre = store.getOrCreateFeishuSession('oc_chat_reply');
+    let turn = 0;
+    store.attachRuntime(pre.sessionId, {
+      async run() {
+        turn += 1;
+        const assistant = store.appendMessage(pre.sessionId, {
+          role: 'assistant',
+          content: [{ type: 'text', value: '' }],
+          source: 'local',
+          isStreaming: true,
+        });
+        store.publish(pre.sessionId, {
+          type: 'message_start',
+          payload: { message: assistant },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_chunk',
+          payload: {
+            sessionId: pre.sessionId,
+            messageId: assistant.id,
+            delta: `第 ${turn} 轮回复`,
+          },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_complete',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id },
+        });
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    } as SessionRuntime);
+
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_reply',
+      messageId: 'om_reply_1',
+      text: '第一问',
+    }));
+    await flush();
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_reply',
+      messageId: 'om_reply_2',
+      text: '第二问',
+    }));
+    await flush();
+
+    expect(log.cards.map((card) => card.replyTo)).toEqual([
+      'om_reply_1',
+      'om_reply_2',
+    ]);
+  });
+
+  it('上一轮飞书定稿未完成时，下一轮不能绕过会话回推队列先起卡', async () => {
+    const fake = makeFakeGateway(log);
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstFinalizing!: () => void;
+    const firstFinalizing = new Promise<void>((resolve) => {
+      markFirstFinalizing = resolve;
+    });
+    fake.gw.sendStreamingCardWithFooter = async (
+      _chatId,
+      initialContent,
+    ) => {
+      events.push(`card:${initialContent}`);
+      return {
+        messageId: `om_${initialContent}`,
+        pushContent: async () => true,
+        finalize: async () => {
+          events.push(`finalize:${initialContent}:start`);
+          if (initialContent === '第一轮') {
+            markFirstFinalizing();
+            await firstGate;
+          }
+          events.push(`finalize:${initialContent}:end`);
+          return true;
+        },
+      };
+    };
+    const adapter = new FeishuAdapter({
+      store,
+      broadcast: (sessionId, frame) => store.publish(sessionId, frame),
+      credentials: CREDS,
+      gatewayFactory: () => fake.gw,
+    });
+    await adapter.start();
+    const pre = store.getOrCreateFeishuSession('oc_chat_order');
+    let turn = 0;
+    store.attachRuntime(pre.sessionId, {
+      async run() {
+        turn += 1;
+        const text = turn === 1 ? '第一轮' : '第二轮';
+        const assistant = store.appendMessage(pre.sessionId, {
+          role: 'assistant',
+          content: [{ type: 'text', value: '' }],
+          source: 'local',
+          isStreaming: true,
+        });
+        store.publish(pre.sessionId, {
+          type: 'message_start',
+          payload: { message: assistant },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_chunk',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id, delta: text },
+        });
+        store.publish(pre.sessionId, {
+          type: 'chat_complete',
+          payload: { sessionId: pre.sessionId, messageId: assistant.id },
+        });
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    } as SessionRuntime);
+
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_order',
+      messageId: 'om_order_1',
+      text: '第一问',
+    }));
+    await firstFinalizing;
+    await fake.fireMessage(makeMsg({
+      chatId: 'oc_chat_order',
+      messageId: 'om_order_2',
+      text: '第二问',
+    }));
+    await flush();
+    expect(events).not.toContain('card:第二轮');
+
+    releaseFirst();
+    await flush();
+    expect(events.indexOf('finalize:第一轮:end')).toBeLessThan(
+      events.indexOf('card:第二轮'),
+    );
   });
 
   // appFrames 仅作占位说明：broadcast 直接走 store.publish，

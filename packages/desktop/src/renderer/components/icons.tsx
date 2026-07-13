@@ -46,6 +46,15 @@ export function IconPlus({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+export function IconMicrophone({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6" />
+    </svg>
+  );
+}
+
 /** 智能体/机器人：带天线的方脑袋 + 双眼 + 两侧耳，作「智能体」入口图标。 */
 export function IconAgent({ size, className }: IconProps): React.JSX.Element {
   return (
@@ -79,6 +88,16 @@ export function IconChevronDown({ size, className }: IconProps): React.JSX.Eleme
   return (
     <svg {...base(size)} className={className}>
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+/** 外部链接：方框右上箭头。 */
+export function IconExternalLink({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M14 4h6v6M20 4l-9 9" />
+      <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
     </svg>
   );
 }
@@ -236,7 +255,7 @@ export function IconSettings({ size, className }: IconProps): React.JSX.Element 
   );
 }
 
-/** 关闭 ✕（toast 关闭等）。 */
+/** 关闭图标（toast 关闭等）。 */
 export function IconClose({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className} strokeWidth={2}>
@@ -399,6 +418,25 @@ export function IconUtensils({ size, className }: IconProps): React.JSX.Element 
       <path d="M7 2v20" />
       <path d="M19 15V2a4 4 0 0 0-4 5v6a2 2 0 0 0 2 2h2Z" />
       <path d="M19 15v7" />
+    </svg>
+  );
+}
+
+/** 太阳（浅色模式指示，顶栏主题切换钮）。 */
+export function IconSun({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </svg>
+  );
+}
+
+/** 月亮（深色模式指示，顶栏主题切换钮）。 */
+export function IconMoon({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
     </svg>
   );
 }

@@ -663,10 +663,10 @@ Corner Accent (bottom left): Small Beijing icons (palace corner, candied haws) w
     customStylePlaceholder: 'Describe your desired PPT style, e.g.: tech, futuristic, cyberpunk, minimalist, vintage...',
     customColorPlaceholder: 'Describe your desired color style, e.g.: gradient blue-purple, vintage retro, candy colors, Morandi palette...',
     generateButton: 'Generate PPT',
-    generating: 'Submitting PPT generation task...',
-    generatingHint: 'Browser will open automatically to view progress',
+    generating: 'Generating the PPT locally...',
+    generatingHint: 'Content stays on this device; the local file will open when ready',
     generateAnother: 'Generate Another',
-    openEdit: 'Open Editor Again',
+    openEdit: 'Open Local File Again',
     tryAgain: 'Try Again',
     style: {
       auto: 'Auto',
@@ -697,8 +697,8 @@ Corner Accent (bottom left): Small Beijing icons (palace corner, candied haws) w
       generateFailed: 'Generation failed, please try again',
     },
     success: {
-      generated: 'PPT task submitted!',
-      hint: 'Browser opened automatically. Please view the progress and edit your PPT in the web page.',
+      generated: 'PPT generated locally!',
+      hint: 'The file was not uploaded and has opened in your default presentation app.',
     },
   },
 

@@ -1,11 +1,11 @@
 {
   "name": "otto-desktop",
-  "version": "1.4.3",
+  "version": "1.7.7",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
   "private": true,
-  "main": "dist/main/index.cjs",
+  "main": "dist/main/index.js",
   "scripts": {
     "build:main": "tsc -p tsconfig.main.json",
     "build:preload": "tsc -p tsconfig.preload.json",
@@ -14,20 +14,24 @@
     "dev:renderer": "webpack --config webpack.config.cjs --mode development --watch",
     "start": "electron .",
     "dist": "npm run build && electron-builder --mac --dir",
-    "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "dist:dmg": "npm run build && electron-builder --mac dmg --arm64 --x64",
     "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
+    "release": "node scripts/make-delivery-zip.mjs --build"
   },
   "dependencies": {
     "otto-server": "file:../server",
+    "qrcode-terminal": "^0.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.9",
+    "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
@@ -46,6 +50,7 @@
     "productName": "Otto",
     "copyright": "Copyright © 2025 Otto",
     "electronVersion": "43.1.0",
+    "afterPack": "scripts/after-pack.cjs",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -67,11 +72,13 @@
     "asar": true,
     "npmRebuild": false,
     "mac": {
+      "artifactName": "Otto-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "dir",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
@@ -79,6 +86,9 @@
       "icon": "build/icon.icns",
       "darkModeSupport": true,
       "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Otto 使用麦克风将语音转换为聊天输入文字。"
+      },
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extraResources": [
@@ -89,7 +99,19 @@
       ]
     },
     "dmg": {
-      "sign": false
+      "sign": false,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "win": {
       "target": [

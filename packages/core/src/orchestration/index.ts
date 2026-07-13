@@ -38,14 +38,21 @@ export type { CollaborationRequest, CollaborationResponse, AgentRegistration, Fe
 
 // 主动服务
 export { ProactiveService, getProactiveService } from './proactiveService.js';
-export type { ProactiveRule, ProactiveContext, ProactiveFeishuSender } from './proactiveService.js';
+export type { ProactiveRule, ProactiveContext, ProactiveFeishuSender, CalendarMeetingResult, CalendarCheckerFn } from './proactiveService.js';
 
 // 离职交接
 export { exportMemoryPackage, importMemoryPackage } from './knowledgeTransfer.js';
 export type { MemoryPackage } from './knowledgeTransfer.js';
 
 // 工作日志
-export { WorkLogger, getWorkLogger, inferCategory, describeAction } from './workLog.js';
+export {
+  WorkLogger,
+  getWorkLogger,
+  inferCategory,
+  describeAction,
+  formatLocalDate,
+  resolveDefaultWorklogDir,
+} from './workLog.js';
 export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './workLog.js';
 
 // 审计日志
@@ -57,8 +64,28 @@ export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole
 export type { EnterpriseConfig, UserRole } from './enterpriseSync.js';
 
 // 自动 Skill 生成
-export { detectPatterns, generateSkillCandidates, confirmAndSaveSkill, rejectSkill, generateSkillContent, setAutoSkillFeishuNotifier, startAutoSkillScanner, stopAutoSkillScanner } from './autoSkillGenerator.js';
-export type { SkillCandidate, AutoSkillFeishuNotifier } from './autoSkillGenerator.js';
+export {
+  detectPatterns,
+  generateSkillCandidates,
+  confirmAndSaveSkill,
+  confirmPendingSkill,
+  rejectSkill,
+  rejectPendingSkill,
+  listPendingSkillCandidates,
+  generateSkillContent,
+  resolveAutoSkillUserDir,
+  resolveAutoSkillSkillsDir,
+  scanAndStageSkillCandidates,
+  setAutoSkillFeishuNotifier,
+  startAutoSkillScanner,
+  stopAutoSkillScanner,
+} from './autoSkillGenerator.js';
+export type {
+  SkillCandidate,
+  AutoSkillFeishuNotifier,
+  AutoSkillScannerOptions,
+  PatternDetectionOptions,
+} from './autoSkillGenerator.js';
 
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';

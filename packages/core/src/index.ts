@@ -13,6 +13,7 @@ export * from './confirmation-bus/message-bus.js';
 export * from './config/projectSettings.js';
 export * from './config/messageRoles.js';
 export * from './config/serverConfig.js';
+export * from './config/proxyConfig.js';
 export * from './config/modelCapabilities.js';
 
 // Export extended types
@@ -148,6 +149,7 @@ export * from './hooks/types.js';
 // Export base tool definitions
 export * from './tools/tools.js';
 export * from './tools/tool-registry.js';
+export * from './tools/local-schedule.js';
 export * from './resources/resource-registry.js';
 
 // Export prompt logic
@@ -189,6 +191,38 @@ export * from './tools/todo-store.js';
 // PPT tools
 export * from './tools/ppt/index.js';
 
+// Session 处理
+export {
+  OttoSessionManager,
+  getSessionManager,
+} from './sessions/index.js';
+export type {
+  SessionMeta,
+  SessionStatus,
+  SplitStrategy,
+  MergeStrategy as MergeSessionStrategy,
+  SessionRoutingRule,
+  ContextBridge,
+  SessionManagerConfig,
+} from './sessions/index.js';
+
+// 任务插入引擎
+export * from './insertion/index.js';
+
+// 记忆自动合并分割
+export type {
+  MemoryEntry,
+  MergeSuggestion,
+  SplitSuggestion,
+  MemoryCompressionResult,
+  MemoryStats,
+  AutoMemoryEngineConfig,
+} from './memory/autoMerge.js';
+export {
+  AutoMemoryEngine,
+  getAutoMemoryEngine,
+} from './memory/autoMerge.js';
+
 // Otto Enterprise 能力工具
 export * from './tools/desktop-automation.js';
 export * from './tools/convert-document.js';
@@ -201,9 +235,16 @@ export * from './orchestration/index.js';
 export * from './tools/voice-bridge.js';
 export * from './tools/doctor.js';
 
+// 多渠道通知服务
+export { NotificationService, getNotificationService } from './services/notificationService.js';
+export type { NotificationRecord, NotificationPriority, NotificationChannel, EscalationPolicy, FeishuNotifySender, SmsNotifySender } from './services/notificationService.js';
+export { AliyunSmsSender, createAliyunSmsFromEnv } from './services/aliyunSmsSender.js';
+export type { AliyunSmsConfig, SmsSendResult } from './services/aliyunSmsSender.js';
+
 // 个人知识库（本地，无企业授权可用）
 export * from './tools/knowledge-base.js';
 export * from './knowledge/localKnowledgeStore.js';
+export * from './knowledge/knowledgeCapture.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';

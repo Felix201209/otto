@@ -50,5 +50,27 @@ function seedDemoData(): void {
 }
 
 const args = new Set(process.argv.slice(2));
-if (args.has('--seed')) seedDemoData();
-startEnterpriseServer();
+if (args.has('--bootstrap-admin')) {
+  const username = process.env.OTTO_BOOTSTRAP_USERNAME?.trim() || 'admin';
+  const password = process.env.OTTO_BOOTSTRAP_PASSWORD || '';
+  const name = process.env.OTTO_BOOTSTRAP_NAME?.trim() || '系统管理员';
+  if (password.length < 8) {
+    throw new Error('OTTO_BOOTSTRAP_PASSWORD must contain at least 8 characters');
+  }
+  if (db.listAccounts().length > 0) {
+    throw new Error('Bootstrap refused: preset accounts already exist');
+  }
+  db.createAccount({
+    username,
+    password,
+    name,
+    role: '系统管理员',
+    department: 'IT',
+    tags: ['IT', '报修'],
+    isAdmin: true,
+  });
+  console.log(`[bootstrap] 管理员账号已创建：${username}`);
+} else {
+  if (args.has('--seed')) seedDemoData();
+  startEnterpriseServer();
+}

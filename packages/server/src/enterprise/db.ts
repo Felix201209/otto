@@ -10,6 +10,13 @@ import { Database } from '../sqlite-compat.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual,
+} from 'node:crypto';
 
 const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
@@ -138,10 +145,400 @@ function initSchema(d: Database): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      employee_id TEXT UNIQUE,
+      username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT,
+      department TEXT,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (employee_id) REFERENCES employees(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS account_tags (
+      account_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (account_id, tag),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS it_tickets (
+      id TEXT PRIMARY KEY,
+      created_by_account_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      target_tags TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ticket_deliveries (
+      ticket_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'delivered',
+      delivered_at TEXT NOT NULL DEFAULT (datetime('now')),
+      read_at TEXT,
+      PRIMARY KEY (ticket_id, account_id),
+      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tasks_emp ON task_logs(employee_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_type ON task_logs(task_type);
     CREATE INDEX IF NOT EXISTS idx_knowledge_dept ON knowledge(department);
+    CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
+    CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON account_tags(tag, account_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
   `);
+}
+
+// ============================================================
+// Preset accounts, tags and sessions
+// ============================================================
+
+export interface AccountView {
+  id: string;
+  employeeId: string | null;
+  username: string;
+  name: string;
+  role: string | null;
+  department: string | null;
+  isAdmin: boolean;
+  status: 'active' | 'disabled';
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AccountRow {
+  id: string;
+  employee_id: string | null;
+  username: string;
+  password_hash: string;
+  name: string;
+  role: string | null;
+  department: string | null;
+  is_admin: number;
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLocaleLowerCase('en-US');
+}
+
+function normalizeTags(tags: string[] | undefined): string[] {
+  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'zh-CN'),
+  );
+}
+
+function passwordHash(password: string): string {
+  const salt = randomBytes(16).toString('hex');
+  const digest = scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${digest}`;
+}
+
+function passwordMatches(password: string, stored: string): boolean {
+  const [salt, expectedHex] = stored.split(':');
+  if (!salt || !expectedHex) return false;
+  try {
+    const actual = scryptSync(password, salt, 64);
+    const expected = Buffer.from(expectedHex, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+function tokenHash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function tagsForAccount(accountId: string): string[] {
+  return (getDB().prepare(
+    'SELECT tag FROM account_tags WHERE account_id = ? ORDER BY tag',
+  ).all(accountId) as Array<{ tag: string }>).map((row) => row.tag);
+}
+
+function toAccountView(row: AccountRow): AccountView {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    username: row.username,
+    name: row.name,
+    role: row.role,
+    department: row.department,
+    isAdmin: row.is_admin === 1,
+    status: row.status,
+    tags: tagsForAccount(row.id),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function replaceAccountTags(accountId: string, tags: string[]): void {
+  const database = getDB();
+  database.prepare('DELETE FROM account_tags WHERE account_id = ?').run(accountId);
+  const insert = database.prepare('INSERT INTO account_tags (account_id, tag) VALUES (?, ?)');
+  for (const tag of normalizeTags(tags)) insert.run(accountId, tag);
+}
+
+export function createAccount(input: {
+  username: string;
+  password: string;
+  name: string;
+  employeeId?: string | null;
+  role?: string | null;
+  department?: string | null;
+  tags?: string[];
+  isAdmin?: boolean;
+}): AccountView {
+  const username = normalizeUsername(input.username);
+  const name = input.name.trim();
+  if (!username || !name || !input.password) throw new Error('username, password and name required');
+  const id = `acc_${randomUUID()}`;
+  getDB().prepare(
+    `INSERT INTO accounts
+       (id, employee_id, username, password_hash, name, role, department, is_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.employeeId || null,
+    username,
+    passwordHash(input.password),
+    name,
+    input.role?.trim() || null,
+    input.department?.trim() || null,
+    input.isAdmin ? 1 : 0,
+  );
+  replaceAccountTags(id, input.tags ?? []);
+  logAudit('account_create', input.employeeId || null, `Preset account ${username} created`);
+  return getAccount(id)!;
+}
+
+export function getAccount(id: string): AccountView | null {
+  const row = getDB().prepare('SELECT * FROM accounts WHERE id = ?').get(id) as AccountRow | undefined;
+  return row ? toAccountView(row) : null;
+}
+
+export function listAccounts(): AccountView[] {
+  return (getDB().prepare('SELECT * FROM accounts ORDER BY name, username').all() as AccountRow[])
+    .map(toAccountView);
+}
+
+export function authenticateAccount(username: string, password: string): AccountView | null {
+  const normalized = normalizeUsername(username);
+  const row = getDB().prepare(
+    'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE',
+  ).get(normalized) as AccountRow | undefined;
+  if (!row || row.status !== 'active' || !passwordMatches(password, row.password_hash)) return null;
+  return toAccountView(row);
+}
+
+export function updateAccount(id: string, patch: {
+  username?: string;
+  password?: string;
+  name?: string;
+  role?: string | null;
+  department?: string | null;
+  tags?: string[];
+  isAdmin?: boolean;
+  status?: 'active' | 'disabled';
+}): AccountView {
+  const current = getAccount(id);
+  if (!current) throw new Error('Account not found');
+
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  const set = (column: string, value: unknown): void => {
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+  if (patch.username !== undefined) {
+    const username = normalizeUsername(patch.username);
+    if (!username) throw new Error('username required');
+    set('username', username);
+  }
+  if (patch.password !== undefined) {
+    if (!patch.password) throw new Error('password required');
+    set('password_hash', passwordHash(patch.password));
+  }
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new Error('name required');
+    set('name', name);
+  }
+  if (patch.role !== undefined) set('role', patch.role?.trim() || null);
+  if (patch.department !== undefined) set('department', patch.department?.trim() || null);
+  if (patch.isAdmin !== undefined) set('is_admin', patch.isAdmin ? 1 : 0);
+  if (patch.status !== undefined) set('status', patch.status);
+  if (assignments.length > 0) {
+    assignments.push("updated_at = datetime('now')");
+    getDB().prepare(`UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+  if (patch.tags !== undefined) replaceAccountTags(id, patch.tags);
+  logAudit('account_update', current.employeeId, `Preset account ${current.username} updated`);
+  return getAccount(id)!;
+}
+
+export function createAuthSession(accountId: string, ttlMs = 7 * 24 * 60 * 60 * 1000): {
+  token: string;
+  expiresAt: string;
+} {
+  if (!getAccount(accountId)) throw new Error('Account not found');
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+  getDB().prepare(
+    'INSERT INTO auth_sessions (id, account_id, token_hash, expires_at) VALUES (?, ?, ?, ?)',
+  ).run(`session_${randomUUID()}`, accountId, tokenHash(token), expiresAt);
+  return { token, expiresAt };
+}
+
+export function getAccountBySession(token: string): AccountView | null {
+  if (!token) return null;
+  const row = getDB().prepare(
+    `SELECT a.* FROM auth_sessions s
+     JOIN accounts a ON a.id = s.account_id
+     WHERE s.token_hash = ? AND s.revoked_at IS NULL AND a.status = 'active'`,
+  ).get(tokenHash(token)) as AccountRow | undefined;
+  if (!row) return null;
+  const session = getDB().prepare(
+    'SELECT expires_at FROM auth_sessions WHERE token_hash = ?',
+  ).get(tokenHash(token)) as { expires_at: string } | undefined;
+  if (!session || new Date(session.expires_at).getTime() <= Date.now()) return null;
+  getDB().prepare(
+    "UPDATE auth_sessions SET last_used_at = datetime('now') WHERE token_hash = ?",
+  ).run(tokenHash(token));
+  return toAccountView(row);
+}
+
+export function revokeAuthSession(token: string): void {
+  if (!token) return;
+  getDB().prepare(
+    "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE token_hash = ?",
+  ).run(tokenHash(token));
+}
+
+export interface TicketView {
+  id: string;
+  title: string;
+  description: string;
+  targetTags: string[];
+  status: string;
+  createdAt: string;
+  recipientCount: number;
+  recipients: AccountView[];
+}
+
+export function createTicket(input: {
+  createdByAccountId: string;
+  title: string;
+  description: string;
+  targetTags?: string[];
+}): TicketView {
+  const creator = getAccount(input.createdByAccountId);
+  if (!creator) throw new Error('Account not found');
+  const title = input.title.trim();
+  const description = input.description.trim();
+  const targetTags = normalizeTags(input.targetTags?.length ? input.targetTags : ['IT', '报修']);
+  if (!title || !description || targetTags.length === 0) {
+    throw new Error('title, description and targetTags required');
+  }
+
+  const placeholders = targetTags.map(() => '?').join(', ');
+  const recipients = (getDB().prepare(
+    `SELECT a.* FROM accounts a
+     JOIN account_tags t ON t.account_id = a.id
+     WHERE a.status = 'active' AND t.tag IN (${placeholders})
+     GROUP BY a.id
+     HAVING COUNT(DISTINCT t.tag) = ?
+     ORDER BY a.name, a.username`,
+  ).all(...targetTags, targetTags.length) as AccountRow[]).map(toAccountView);
+
+  const id = `ticket_${randomUUID()}`;
+  getDB().prepare(
+    `INSERT INTO it_tickets
+       (id, created_by_account_id, title, description, target_tags)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, creator.id, title, description, JSON.stringify(targetTags));
+  const deliver = getDB().prepare(
+    'INSERT INTO ticket_deliveries (ticket_id, account_id) VALUES (?, ?)',
+  );
+  for (const recipient of recipients) deliver.run(id, recipient.id);
+  logAudit('ticket_create', creator.employeeId, `Ticket ${id} delivered to ${recipients.length} account(s)`);
+  const row = getDB().prepare('SELECT created_at, status FROM it_tickets WHERE id = ?').get(id) as {
+    created_at: string;
+    status: string;
+  };
+  return {
+    id,
+    title,
+    description,
+    targetTags,
+    status: row.status,
+    createdAt: row.created_at,
+    recipientCount: recipients.length,
+    recipients,
+  };
+}
+
+export function listTicketInbox(accountId: string): Array<{
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  deliveryStatus: string;
+  createdAt: string;
+  creatorName: string;
+}> {
+  const rows = getDB().prepare(
+    `SELECT t.id, t.title, t.description, t.status,
+            d.status AS delivery_status, t.created_at, a.name AS creator_name
+     FROM ticket_deliveries d
+     JOIN it_tickets t ON t.id = d.ticket_id
+     JOIN accounts a ON a.id = t.created_by_account_id
+     WHERE d.account_id = ?
+     ORDER BY t.created_at DESC`,
+  ).all(accountId) as Array<{
+    id: string;
+    title: string;
+    description: string;
+    status: string;
+    delivery_status: string;
+    created_at: string;
+    creator_name: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    deliveryStatus: row.delivery_status,
+    createdAt: row.created_at,
+    creatorName: row.creator_name,
+  }));
 }
 
 // ============================================================
@@ -222,9 +619,6 @@ export function listEmployees(department?: string): any[] {
  * 用于统一两套企业系统的员工数据。
  */
 function loadOrgMemoryStore(): any {
-  const fs = require('fs');
-  const path = require('path');
-  const os = require('os');
   // 尝试几个可能的路径
   const candidates = [
     path.join(process.cwd(), '.otto', 'org', 'memory-store.json'),
@@ -502,5 +896,11 @@ export function exportAll(): any {
     knowledge: getKnowledge(),
     inviteCodes: getDB().prepare('SELECT * FROM invite_codes').all(),
     auditLogs: getAuditLogs(200),
+    // 账号导出不包含 password_hash / session token 摘要；备份可迁移组织信息，
+    // 但不能把登录凭证扩散到普通数据导出文件。
+    accounts: listAccounts(),
+    accountTags: getDB().prepare('SELECT account_id, tag, created_at FROM account_tags').all(),
+    tickets: getDB().prepare('SELECT * FROM it_tickets ORDER BY created_at DESC').all(),
+    ticketDeliveries: getDB().prepare('SELECT * FROM ticket_deliveries ORDER BY delivered_at DESC').all(),
   };
 }

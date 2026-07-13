@@ -129,10 +129,42 @@
 
 
 .otto-sessions {
-  flex: 1 1 auto;
-  overflow-y: auto;
   padding: 4px 10px 8px;
 }
+
+.otto-sidebar__workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.otto-conversations {
+  margin: 0 12px 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-surface);
+  overflow: hidden;
+}
+.otto-conversations__toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--otto-text);
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+}
+.otto-conversations__toggle:hover { background: rgba(0, 0, 0, 0.025); }
+.otto-conversations__toggle:focus-visible { outline: none; box-shadow: inset var(--otto-shadow-focus); }
+.otto-conversations__chevron { transition: transform .16s ease; }
+.otto-conversations__chevron.is-collapsed { transform: rotate(-90deg); }
+.otto-conversations .otto-sessions { border-top: 1px solid var(--otto-border); }
 
 .otto-group__label {
   padding: 12px 8px 6px;
@@ -233,6 +265,28 @@
 .otto-badge--local {
   color: var(--otto-local-fg);
   background: var(--otto-local-bg);
+}
+
+/* imagegen 生成的 Otto 刺绣图标：透明 PNG，保持原始比例与清晰边缘。 */
+.otto-generated-icon {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+.otto-generated-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.otto-generated-icon--spin {
+  animation: otto-generated-icon-spin 1.8s linear infinite;
+}
+@keyframes otto-generated-icon-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otto-generated-icon--spin { animation: none; }
 }
 
 .otto-sidebar__footer {
@@ -410,9 +464,72 @@
   gap: 11px;
   margin: 18px 0;
 }
-.otto-msg-bot__avatar {
+.otto-response-mark {
   flex: 0 0 auto;
-  margin-top: 2px;
+  width: 30px;
+  height: 30px;
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.otto-response-mark svg {
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+.otto-response-mark__ball {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.otto-response-mark__spines {
+  fill: #8b4a13;
+}
+.otto-response-mark__belly,
+.otto-response-mark__ear {
+  fill: #ffe2a6;
+}
+.otto-response-mark__ear {
+  stroke: #6f390f;
+  stroke-width: 0.75;
+}
+.otto-response-mark__curl {
+  fill: none;
+  stroke: #6f390f;
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.otto-response-mark__accent {
+  fill: none;
+  stroke: #0b8b92;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+}
+.otto-response-mark__eye,
+.otto-response-mark__nose {
+  fill: #4b2a12;
+}
+.otto-response-mark.is-active {
+  transform-origin: 50% 100%;
+  animation: otto-spineball-bounce 820ms linear infinite;
+}
+.otto-response-mark.is-active .otto-response-mark__ball {
+  animation: otto-spineball-roll 820ms cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+@keyframes otto-spineball-bounce {
+  0%, 100% { transform: translateY(0) scaleX(1.12) scaleY(0.88); }
+  11% { transform: translateY(0.5px) scaleX(1.18) scaleY(0.82); }
+  22% { transform: translateY(-2px) scaleX(0.91) scaleY(1.09); }
+  48% { transform: translateY(-8px) scaleX(0.97) scaleY(1.03); }
+  66% { transform: translateY(-5px) scaleX(1) scaleY(1); }
+  81% { transform: translateY(-1px) scaleX(0.96) scaleY(1.04); }
+  90% { transform: translateY(0) scaleX(1.2) scaleY(0.8); }
+  95% { transform: translateY(-1px) scaleX(1.01) scaleY(0.99); }
+}
+@keyframes otto-spineball-roll {
+  0%, 100% { transform: rotate(-8deg); }
+  48% { transform: rotate(14deg); }
 }
 .otto-msg-bot__body {
   flex: 1 1 auto;
@@ -635,38 +752,14 @@ h6.otto-prose__h {
   color: inherit;
 }
 
-/* 思考中 typing indicator（流式但正文尚空时显示）。三点依次跳动。 */
+/* 首个 chunk 尚未到达时的克制提示；实际活动动效由回答标记承担。 */
 .otto-typing {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   height: 22px;
   padding: 0 2px;
-}
-.otto-typing__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--otto-text-tertiary);
-  animation: otto-typing 1.3s var(--otto-ease) infinite;
-}
-.otto-typing__dot:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.otto-typing__dot:nth-child(3) {
-  animation-delay: 0.36s;
-}
-@keyframes otto-typing {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.45;
-  }
-  30% {
-    transform: translateY(-4px);
-    opacity: 1;
-  }
+  color: var(--otto-text-tertiary);
+  font-size: 12px;
 }
 
 /* —— reasoning（思考过程，可折叠）—— */
@@ -694,6 +787,11 @@ h6.otto-prose__h {
 .otto-reasoning__head:hover {
   color: var(--otto-text);
 }
+.otto-process-trace__count {
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
 .otto-reasoning__chev {
   margin-left: auto;
   display: inline-flex;
@@ -705,6 +803,11 @@ h6.otto-prose__h {
 .otto-reasoning__body {
   padding: 2px 12px 8px;
   white-space: pre-wrap;
+}
+.otto-process-trace__body > .otto-tools {
+  margin: 3px 10px 10px;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* ══════════════ 工具调用折叠卡 ══════════════ */
@@ -1059,6 +1162,13 @@ h6.otto-prose__h {
 .otto-ask__submit:hover:not(:disabled) {
   background: var(--otto-accent-hover);
 }
+.otto-confirm__badge--danger { color: #dc2626; background: color-mix(in srgb, #ef4444 12%, transparent); }
+.otto-confirm__target {
+  margin: 12px 0 4px; padding: 11px 12px; border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm); background: var(--otto-sidebar-bg); color: var(--otto-text);
+  font: 12.5px/1.55 var(--otto-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .otto-ask__skip:disabled,
 .otto-ask__submit:disabled {
   cursor: default;
@@ -1208,6 +1318,91 @@ h6.otto-prose__h {
   overflow-y: auto;
 }
 
+/* lark-cli 输出官方设备授权链接时，以本地生成的二维码替代终端原文。 */
+.otto-feishu-auth {
+  border-top: 1px solid var(--otto-border);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background:
+    radial-gradient(circle at 85% 15%, var(--otto-accent-soft), transparent 42%),
+    var(--otto-surface);
+}
+.otto-feishu-auth__copy {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.otto-feishu-auth__eyebrow {
+  color: var(--otto-accent-hover);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.otto-feishu-auth__title {
+  color: var(--otto-text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.otto-feishu-auth__hint {
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.otto-feishu-auth__code {
+  color: var(--otto-text);
+  background: var(--otto-sidebar-bg);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  padding: 5px 8px;
+  font: 600 12px/1.3 var(--otto-font-mono);
+  user-select: all;
+}
+.otto-feishu-auth__open {
+  margin-top: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--otto-radius-sm);
+  padding: 7px 11px;
+  background: var(--otto-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-feishu-auth__open:hover {
+  background: var(--otto-accent-hover);
+}
+.otto-feishu-auth__qr {
+  flex: 0 0 auto;
+  width: 168px;
+  height: 168px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 640px) {
+  .otto-feishu-auth {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .otto-feishu-auth__copy {
+    flex-basis: auto;
+    max-width: none;
+  }
+  .otto-feishu-auth__qr {
+    align-self: center;
+  }
+}
+
 /* —— 动作行 —— */
 .otto-actions {
   display: flex;
@@ -1300,11 +1495,64 @@ h6.otto-prose__h {
   color: var(--otto-text-tertiary);
   cursor: not-allowed;
 }
+
+.otto-voice-btn.is-recording { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); animation: otto-voice-pulse 1.2s ease-in-out infinite; }
+.otto-composer__voice-error { padding: 0 14px 8px; color: #ef4444; font-size: 11px; }
+@keyframes otto-voice-pulse { 50% { opacity: .55; } }
+.otto-voice-recorder { min-height: 76px; padding: 12px 14px 12px 24px; display: flex; align-items: center; gap: 12px; }
+.otto-voice-recorder__wave { position: relative; height: 42px; flex: 1 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 3px; overflow: hidden; }
+.otto-voice-recorder__baseline { position: absolute; inset: 50% 0 auto; border-top: 1px dashed var(--otto-border-strong); }
+.otto-voice-recorder__bar { position: relative; width: 3px; min-height: 4px; border-radius: 999px; background: var(--otto-text); transition: height 80ms linear; }
+.otto-voice-recorder__time { min-width: 44px; color: var(--otto-text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; }
+.otto-voice-recorder__stop { width: 40px; height: 40px; border: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--otto-sidebar-bg); color: var(--otto-text); cursor: pointer; }
+.otto-voice-recorder__stop svg { fill: currentColor; }
+.otto-voice-settings { margin-top: 16px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); overflow: hidden; }
+.otto-voice-settings__body { padding: 14px; display: grid; gap: 8px; }
+.otto-voice-settings__on { margin-left: 6px; color: var(--otto-accent); font-size: 11px; font-weight: 700; }
+.otto-voice-settings__prompt { min-height: 86px; resize: vertical; font-family: inherit; }
+.otto-setup__modeledit { margin-left: auto; border: 0; background: transparent; color: var(--otto-accent); cursor: pointer; font-size: 12px; }
+.otto-setup__toggleline { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--otto-text-secondary); font-size: 12px; }
 .otto-composer__bar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 10px 9px;
+}
+
+/* 执行授权：贴近发送按钮，菜单向上展开，沿用 Otto 的表面/边框/阴影 token。 */
+.otto-authorization { position: relative; margin-left: auto; }
+.otto-authorization + .otto-send { margin-left: 0; }
+.otto-authorization__trigger {
+  height: 32px; padding: 0 9px; border: 0; border-radius: var(--otto-radius-pill);
+  display: inline-flex; align-items: center; gap: 6px; background: transparent;
+  color: var(--otto-text-secondary); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.otto-authorization__trigger:hover { background: var(--otto-accent-soft); color: var(--otto-text); }
+.otto-authorization__trigger:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
+.otto-authorization__menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); width: 330px; padding: 6px;
+  border: 1px solid var(--otto-border-strong); border-radius: 15px;
+  background: var(--otto-surface); box-shadow: var(--otto-shadow-pop); z-index: 40;
+  animation: otto-menu-in 140ms var(--otto-ease); transform-origin: bottom right;
+}
+.otto-authorization__option {
+  width: 100%; min-height: 62px; padding: 9px 9px; border: 0; border-radius: 10px;
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) 20px; align-items: start;
+  gap: 8px; background: transparent; color: var(--otto-text); text-align: left; cursor: pointer;
+}
+.otto-authorization__option:hover, .otto-authorization__option.is-active { background: var(--otto-accent-soft); }
+.otto-authorization__option-icon { padding-top: 1px; color: var(--otto-text-secondary); }
+.otto-authorization__option-icon--manual { color: var(--otto-text); }
+.otto-authorization__option-icon--session { color: var(--otto-accent); }
+.otto-authorization__option-icon--global { color: var(--otto-text-secondary); }
+.otto-authorization__copy { display: grid; gap: 5px; }
+.otto-authorization__title { font-size: 13.5px; line-height: 1.3; font-weight: 650; }
+.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11.5px; line-height: 1.35; }
+.otto-authorization__selected { color: var(--otto-accent); margin-top: 2px; }
+
+@media (max-width: 760px) {
+  .otto-authorization__trigger span { display: none; }
+  .otto-authorization__menu { width: min(390px, calc(100vw - 36px)); right: -42px; }
 }
 
 /* model pill */
@@ -1554,7 +1802,7 @@ h6.otto-prose__h {
   justify-content: center;
   width: 34px;
   height: 34px;
-  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心↔实心切换时 border-color 可平滑插值。 */
+  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心/实心切换时 border-color 可平滑插值。 */
   border: 1px solid transparent;
   border-radius: 50%;
   background: var(--otto-accent-gradient);
@@ -2296,6 +2544,9 @@ h6.otto-prose__h {
 .otto-setup__linkbtn {
   margin-left: auto;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: none;
   background: transparent;
   color: var(--otto-accent);
@@ -2416,6 +2667,9 @@ h6.otto-prose__h {
   margin-top: 7px;
 }
 .otto-setup__example {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 9px;
   border: 1px dashed var(--otto-border-strong);
   border-radius: var(--otto-radius-pill);
@@ -2532,6 +2786,10 @@ h6.otto-prose__h {
 .otto-setup__copybtn {
   flex: 1;
   min-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 8px 10px;
   border: 1px solid var(--otto-border-strong);
   border-radius: var(--otto-radius-sm);
@@ -3125,6 +3383,7 @@ h6.otto-prose__h {
   gap: 8px;
 }
 .otto-topbar-export,
+.otto-topbar-theme,
 .otto-topbar-setup {
   display: inline-flex;
   align-items: center;
@@ -3139,6 +3398,7 @@ h6.otto-prose__h {
   -webkit-app-region: no-drag;
 }
 .otto-topbar-export:hover,
+.otto-topbar-theme:hover,
 .otto-topbar-setup:hover {
   color: var(--otto-text);
   border-color: var(--otto-border-strong);
@@ -3162,6 +3422,89 @@ h6.otto-prose__h {
   border-left: 1px solid var(--otto-border);
   display: flex;
   flex-direction: column;
+}
+
+/* —— 右下吉祥物舞台：位置独立；busy 时切跑步，空闲时按自己的节奏活动。 —— */
+.otto-pet-stage {
+  flex: 0 0 182px;
+  min-height: 182px;
+  padding: 10px 14px 8px;
+  background: var(--otto-surface);
+  border-top: 1px solid var(--otto-border);
+  overflow: hidden;
+  user-select: none;
+}
+.otto-pet-stage__head {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.otto-pet-stage__state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--otto-text-tertiary);
+  font-weight: 500;
+}
+.otto-pet-stage__scene {
+  position: relative;
+  height: 140px;
+  overflow: hidden;
+}
+.otto-pet-stage__floor {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 9px;
+  height: 1px;
+  background: var(--otto-border-strong);
+  opacity: 0.72;
+}
+.otto-pet-stage__floor::before,
+.otto-pet-stage__floor::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e69a22;
+}
+.otto-pet-stage__floor::before { left: -1px; }
+.otto-pet-stage__floor::after { right: -1px; }
+.otto-pet-stage__motion {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 119.04px;
+  height: 128.96px;
+  transform: translateX(-50%);
+  will-change: left;
+}
+.otto-pet-stage__motion.is-running-right {
+  animation: otto-pet-travel-right var(--otto-pet-state-duration) linear both;
+}
+.otto-pet-stage__motion.is-running-left {
+  animation: otto-pet-travel-left var(--otto-pet-state-duration) linear both;
+}
+.otto-pet-stage__sprite {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+@keyframes otto-pet-travel-right {
+  from { left: 24%; }
+  to { left: 76%; }
+}
+@keyframes otto-pet-travel-left {
+  from { left: 76%; }
+  to { left: 24%; }
 }
 
 /* —— 顶部 tab 条 —— */
@@ -3529,6 +3872,14 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-focus);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .otto-response-mark.is-active,
+  .otto-response-mark.is-active .otto-response-mark__ball,
+  .otto-pet-stage__motion {
+    animation: none !important;
+  }
+}
+
 
 
 
@@ -3759,6 +4110,9 @@ h6.otto-prose__h {
   gap: 7px;
 }
 .otto-hub__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 12px;
   border: 1px solid var(--otto-border-strong);
   border-radius: var(--otto-radius-pill);
@@ -3950,7 +4304,7 @@ h6.otto-prose__h {
   width: 16px;
   justify-content: center;
 }
-/* 行内数字（用量统计）：等宽字体靠右，扫读时小数位对齐。 */
+/* 行内数字：等宽字体靠右，扫读时小数位对齐。 */
 .otto-hub__item-numbers {
   flex: 1;
   min-width: 0;
@@ -3998,7 +4352,7 @@ h6.otto-prose__h {
   gap: 3px;
 }
 
-/* 汇总数字卡（用量统计 / 依赖体检顶部）。 */
+/* 汇总数字卡（依赖体检等面板顶部）。 */
 .otto-hub__statgrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -4405,7 +4759,8 @@ h6.otto-prose__h {
 }
 .otto-park-fab:hover .otto-park-fab__label,
 .otto-park-fab:focus-visible .otto-park-fab__label {
-  max-width: 64px;
+  /* 装得下完整品牌名（默认「宏创AI园区服务」，企业配置可能更长）。 */
+  max-width: 180px;
   opacity: 1;
   margin-left: 6px;
 }
@@ -4545,4 +4900,406 @@ h6.otto-prose__h {
   grid-area: desc;
   font-size: 11.5px;
   color: var(--otto-text-secondary);
+}
+
+/* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */
+.otto-setup__models {
+  margin: 0 0 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface);
+  padding: 10px 14px;
+}
+.otto-setup__models-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--otto-text-secondary);
+  padding-bottom: 6px;
+}
+.otto-setup__modelrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--otto-border);
+}
+.otto-setup__modelname {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--otto-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-setup__modelvendor {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--otto-accent-hover);
+  background: var(--otto-accent-soft);
+  border-radius: var(--otto-radius-pill);
+  padding: 2px 9px;
+}
+.otto-setup__modeldel {
+  flex-shrink: 0;
+  margin-left: auto;
+  border: 1px solid var(--otto-border);
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: var(--otto-radius-pill);
+  cursor: pointer;
+  transition:
+    color var(--otto-dur-fast) var(--otto-ease),
+    border-color var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-setup__modeldel:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+.otto-setup__modeldel.is-confirm {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+/* ── 工作日志月历（有记录日期亮点，hover 弹当天条目）──────────────────── */
+.otto-wcal {
+  margin-bottom: 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  padding: 10px 10px 12px;
+}
+.otto-wcal__title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--otto-text-secondary);
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+.otto-wcal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.otto-wcal__weekday {
+  font-size: 9.5px;
+  color: var(--otto-text-tertiary);
+  text-align: center;
+  padding-bottom: 3px;
+}
+.otto-wcal__day {
+  position: relative;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  color: var(--otto-text-secondary);
+  border-radius: 6px;
+}
+.otto-wcal__day.is-today {
+  border: 1px solid var(--otto-accent);
+  color: var(--otto-accent-hover);
+  font-weight: 700;
+}
+.otto-wcal__day.has-log {
+  color: var(--otto-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.otto-wcal__day.has-log:hover {
+  background: var(--otto-accent-soft);
+}
+.otto-wcal__dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+}
+/* 悬浮明细：纯 CSS popover，靠右侧面板宽度内左对齐展开。 */
+.otto-wcal__pop {
+  display: none;
+  position: absolute;
+  top: 28px;
+  right: -4px;
+  z-index: 40;
+  width: 240px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: var(--otto-radius);
+  background: var(--otto-bg);
+  border: 1px solid var(--otto-border-strong);
+  box-shadow: var(--otto-shadow-pop);
+  text-align: left;
+}
+.otto-wcal__day.has-log:hover .otto-wcal__pop {
+  display: block;
+}
+.otto-wcal__pop-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--otto-text);
+  margin-bottom: 6px;
+}
+.otto-wcal__pop-item {
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 2px 0;
+}
+.otto-wcal__pop-time {
+  flex-shrink: 0;
+  font-family: var(--otto-font-mono);
+  color: var(--otto-accent-hover);
+}
+.otto-wcal__pop-action {
+  color: var(--otto-text-secondary);
+  word-break: break-all;
+}
+.otto-wcal__pop-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.otto-wcal__pop-detail {
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.otto-wcal__pop-more {
+  font-size: 10px;
+  color: var(--otto-text-tertiary);
+  padding-top: 4px;
+}
+
+/* ── 设置与诊断中心悬浮窗（对话保持底层，workbuddy 式大浮窗）─────────── */
+.otto-hubfloat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(28, 25, 23, 0.36);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-hubfloat {
+  width: min(1080px, calc(100vw - 64px));
+  height: min(720px, calc(100vh - 64px));
+  border-radius: var(--otto-radius-lg);
+  background: var(--otto-bg);
+  box-shadow: var(--otto-shadow-pop);
+  overflow: hidden;
+  display: flex;
+  animation: otto-park-pop var(--otto-dur) var(--otto-ease);
+}
+/* 浮窗内的中心页占满容器（原整页布局在窗内继续成立）。 */
+.otto-hubfloat > * {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* What's New 首启弹窗（复用 park 弹窗骨架，仅补列表与按钮排版）。 */
+.otto-whatsnew__list {
+  margin: 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.otto-whatsnew__item {
+  position: relative;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--otto-text);
+}
+.otto-whatsnew__item::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+}
+.otto-whatsnew__actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ══════════════ v1.7 个人/企业双模式工作区 ══════════════ */
+.otto-orgtree {
+  margin: 0 12px 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-surface);
+  overflow: hidden;
+}
+.otto-orgtree__toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--otto-text);
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.otto-orgtree__company { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-orgtree__chevron { transition: transform .16s ease; }
+.otto-orgtree__chevron.is-collapsed { transform: rotate(-90deg); }
+.otto-orgtree__body { border-top: 1px solid var(--otto-border); padding: 7px 9px 9px 15px; }
+.otto-orgtree__company-branch { position: relative; }
+.otto-orgtree__company-branch + .otto-orgtree__company-branch { margin-top: 7px; }
+.otto-orgtree__company-node { color: var(--otto-text-primary); font-size: 11px; font-weight: 750; padding: 4px 7px; border-left: 2px solid var(--otto-accent); }
+.otto-orgtree__company-content { margin-left: 9px; padding-left: 8px; border-left: 1px solid var(--otto-border); }
+.otto-orgtree__department { position: relative; padding: 5px 0 5px 12px; border-left: 1px solid var(--otto-border-strong); }
+.otto-orgtree__department::before { content: ''; position: absolute; width: 8px; border-top: 1px solid var(--otto-border-strong); left: 0; top: 13px; }
+.otto-orgtree__department-name { font-size: 10.5px; color: var(--otto-text-secondary); font-weight: 700; }
+.otto-orgtree__member { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 10px; }
+.otto-orgtree__member span:last-child, .otto-orgtree__vacant { color: var(--otto-text-tertiary); font-size: 9px; }
+
+.otto-right-panel { position: relative; width: 304px; min-width: 304px; transition: width .18s ease, min-width .18s ease; }
+.otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }
+.otto-right-panel__edge { position: absolute; left: -13px; top: 56px; z-index: 5; width: 26px; height: 34px; border-radius: 12px; border: 1px solid var(--otto-border); background: var(--otto-surface); color: var(--otto-text-secondary); box-shadow: var(--otto-shadow-sm); cursor: pointer; }
+.otto-right-panel--collapsed .otto-right-panel__edge { left: 6px; top: 8px; }
+.otto-right-panel__railitem { width: 28px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--otto-text-secondary); cursor: pointer; }
+.otto-right-panel__railitem:hover { background: var(--otto-accent-soft); color: var(--otto-accent); }
+.otto-profile-list { display: flex; flex-direction: column; gap: 7px; }
+.otto-profile-card { width: 100%; border: 1px solid var(--otto-border); border-radius: 10px; background: var(--otto-surface); color: var(--otto-text); padding: 8px; display: flex; gap: 9px; text-align: left; cursor: pointer; }
+.otto-profile-card:hover { border-color: var(--otto-accent); transform: translateY(-1px); }
+.otto-profile-card__mark { flex: 0 0 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--otto-accent-soft); color: var(--otto-accent); font-weight: 800; }
+.otto-profile-card > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.otto-profile-card strong { font-size: 11px; }
+.otto-profile-card small { color: var(--otto-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; margin-top: 2px; }
+.otto-auto-skill { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--otto-border); display: grid; gap: 7px; }
+.otto-auto-skill__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.otto-auto-skill__head > div { display: flex; flex-direction: column; gap: 2px; }
+.otto-auto-skill__head strong { font-size: 10.5px; }
+.otto-auto-skill__head span, .otto-auto-skill__empty { color: var(--otto-text-tertiary); font-size: 9px; line-height: 1.45; }
+.otto-auto-skill__head button, .otto-auto-skill__candidate button { border: 1px solid var(--otto-border); border-radius: 7px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 4px 7px; font-size: 9px; cursor: pointer; }
+.otto-auto-skill__candidate { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--otto-border); border-radius: 9px; background: var(--otto-surface); }
+.otto-auto-skill__candidate > strong { font-size: 10px; }
+.otto-auto-skill__candidate > span { color: var(--otto-text-secondary); font-size: 9.5px; }
+.otto-auto-skill__candidate > small { color: var(--otto-text-tertiary); font-size: 8.5px; line-height: 1.4; }
+.otto-auto-skill__candidate > div { display: flex; gap: 5px; }
+.otto-auto-skill__candidate button:first-child { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-auto-skill__success { color: var(--otto-accent); background: var(--otto-accent-soft); padding: 6px; border-radius: 7px; font-size: 8.5px; word-break: break-all; }
+.otto-right-panel__bottom-actions { position: relative; padding: 8px 10px; display: grid; grid-template-columns: 1fr 1.25fr; gap: 6px; border-top: 1px solid var(--otto-border); background: var(--otto-surface); }
+.otto-right-panel__skillzone, .otto-right-panel__collab-toggle { min-height: 32px; border: 1px solid var(--otto-border); border-radius: 9px; background: var(--otto-bg); color: var(--otto-text); font-size: 10px; font-weight: 700; cursor: pointer; }
+.otto-right-panel__skillzone { border-color: color-mix(in srgb, var(--otto-accent) 55%, var(--otto-border)); color: var(--otto-accent); }
+.otto-right-panel__collab-toggle { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.otto-collab-drawer { position: absolute; z-index: 20; right: 10px; bottom: 48px; width: 270px; padding: 10px; border: 1px solid var(--otto-border); border-radius: 13px; background: var(--otto-bg); box-shadow: var(--otto-shadow-pop); }
+.otto-collab-drawer__tabs { display: flex; gap: 4px; margin-bottom: 9px; }
+.otto-collab-drawer__tabs button { flex: 1; border: 0; padding: 5px; border-radius: 7px; color: var(--otto-text-secondary); background: transparent; cursor: pointer; }
+.otto-collab-drawer__tabs button.is-active { background: var(--otto-accent-soft); color: var(--otto-accent); }
+.otto-collab-drawer__content { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
+.otto-collab-drawer__content span, .otto-collab-drawer__content small { color: var(--otto-text-tertiary); }
+.otto-collab-drawer__content input, .otto-collab-drawer__content button { border: 1px solid var(--otto-border); border-radius: 7px; padding: 6px 8px; background: var(--otto-surface); color: var(--otto-text); }
+.otto-worklog-panel { display: flex; flex-direction: column; gap: 8px; }
+.otto-worklog-panel__actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.otto-worklog-panel__actions button { border: 1px solid var(--otto-border); border-radius: 7px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 5px 7px; font-size: 9px; cursor: pointer; }
+.otto-worklog-panel__summary { margin: 0; max-height: 150px; overflow: auto; white-space: pre-wrap; font: 10px/1.55 var(--otto-font-mono); color: var(--otto-text-secondary); }
+.otto-wcal__title { display: flex; align-items: center; justify-content: space-between; padding: 0; }
+.otto-wcal__title button { border: 0; background: transparent; color: var(--otto-text-secondary); cursor: pointer; font-size: 17px; }
+.otto-wcal__day { border: 0; background: transparent; cursor: pointer; padding: 0; }
+.otto-wcal__day:hover { background: var(--otto-accent-soft); }
+
+.otto-agenda-page, .otto-skillzone { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 34px clamp(24px, 5vw, 68px); background: var(--otto-bg); color: var(--otto-text); }
+.otto-agenda__head, .otto-skillzone__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; max-width: 920px; margin: 0 auto 26px; }
+.otto-agenda__head h1, .otto-skillzone__head h1 { margin: 5px 0 7px; font-size: 26px; letter-spacing: -.03em; }
+.otto-agenda__head p, .otto-skillzone__head p { margin: 0; color: var(--otto-text-secondary); font-size: 12px; }
+.otto-agenda__eyebrow, .otto-skillzone__eyebrow { color: var(--otto-accent); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }
+.otto-agenda__actions { display: flex; gap: 7px; white-space: nowrap; }
+.otto-agenda__form { max-width: 920px; margin: 0 auto 24px; padding: 12px; border: 1px solid var(--otto-border); border-radius: 13px; background: var(--otto-surface); display: grid; grid-template-columns: minmax(160px, 1fr) auto auto minmax(140px, .8fr) auto; gap: 8px; align-items: end; }
+.otto-agenda__form input, .otto-agenda__form button { border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-bg); color: var(--otto-text); padding: 8px; }
+.otto-agenda__form label { display: flex; flex-direction: column; gap: 3px; color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-agenda__form button { background: var(--otto-accent); color: white; cursor: pointer; }
+.otto-agenda__timeline { max-width: 920px; margin: auto; }
+.otto-agenda__item { display: grid; grid-template-columns: 80px 1fr; gap: 18px; position: relative; padding-bottom: 16px; }
+.otto-agenda__item::after { content: ''; position: absolute; left: 91px; top: 28px; bottom: -4px; width: 1px; background: var(--otto-border); }
+.otto-agenda__time { padding-top: 16px; display: flex; flex-direction: column; color: var(--otto-text-secondary); font-size: 12px; text-align: right; }
+.otto-agenda__time span { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-agenda__card { position: relative; padding: 15px 17px; border: 1px solid var(--otto-border); border-radius: 14px; background: var(--otto-surface); box-shadow: var(--otto-shadow-sm); }
+.otto-agenda__card::before { content: ''; position: absolute; left: -12px; top: 19px; width: 9px; height: 9px; border-radius: 50%; background: var(--otto-accent); box-shadow: 0 0 0 4px var(--otto-bg); }
+.otto-agenda__card-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.otto-agenda__source { font-size: 9px; border-radius: 999px; padding: 3px 7px; color: var(--otto-text-tertiary); background: var(--otto-code-bg); }
+.otto-agenda__source.is-otto { background: var(--otto-accent-soft); color: var(--otto-accent); }
+.otto-agenda__card p, .otto-agenda__reason { color: var(--otto-text-secondary); font-size: 11px; margin: 8px 0 0; }
+.otto-agenda__reason { color: var(--otto-accent); }
+.otto-agenda__delete { margin-top: 9px; border: 0; background: transparent; color: var(--otto-danger, #ef4444); font-size: 9px; cursor: pointer; padding: 0; }
+.otto-agenda__empty { padding: 70px 20px; border: 1px dashed var(--otto-border-strong); border-radius: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--otto-text-secondary); }
+
+.otto-skillzone__primary-tabs, .otto-skillzone__scope-tabs { max-width: 920px; margin: 0 auto 10px; display: flex; gap: 7px; }
+.otto-skillzone__primary-tabs button, .otto-skillzone__scope-tabs button { border: 1px solid var(--otto-border); border-radius: 9px; padding: 8px 14px; background: var(--otto-surface); color: var(--otto-text-secondary); cursor: pointer; }
+.otto-skillzone__primary-tabs button.is-active, .otto-skillzone__scope-tabs button.is-active { background: var(--otto-accent); border-color: var(--otto-accent); color: white; }
+.otto-skillzone__scope-tabs button { padding: 5px 11px; font-size: 10px; }
+.otto-skillzone__content { max-width: 920px; min-height: 340px; margin: 18px auto 0; padding: 22px; border: 1px solid var(--otto-border); border-radius: 16px; background: var(--otto-surface); }
+.otto-skillzone__content pre { margin: 0; white-space: pre-wrap; color: var(--otto-text); font: 12px/1.65 var(--otto-font-mono); }
+.otto-skillzone__truthnote { max-width: 920px; margin: 10px auto; color: var(--otto-text-tertiary); font-size: 10px; }
+
+.otto-product-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.otto-product-choice > button { border: 1px solid var(--otto-border); border-radius: 13px; padding: 14px; background: var(--otto-surface); color: var(--otto-text); text-align: left; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
+.otto-product-choice > button.is-active { border-color: var(--otto-accent); background: var(--otto-accent-soft); }
+.otto-product-choice span { color: var(--otto-text-secondary); font-size: 10px; }
+.otto-product-form { display: grid; gap: 10px; }
+.otto-product-form label { display: grid; gap: 4px; color: var(--otto-text-secondary); font-size: 10px; }
+.otto-product-form input, .otto-product-form select, .otto-product-form textarea { width: 100%; border: 1px solid var(--otto-border); border-radius: 8px; padding: 8px 10px; background: var(--otto-bg); color: var(--otto-text); }
+.otto-product-form textarea { min-height: 90px; resize: vertical; }
+.otto-product-identity, .otto-credit-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.otto-product-identity > div, .otto-credit-summary > div { display: flex; flex-direction: column; gap: 4px; }
+.otto-product-identity span, .otto-credit-summary span { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-product-framework { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.otto-product-framework > div { padding: 9px; border: 1px solid var(--otto-border); border-radius: 9px; display: flex; justify-content: space-between; gap: 8px; font-size: 10px; }
+.otto-product-framework span { color: var(--otto-text-tertiary); }
+.otto-product-link-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.otto-product-company-accept { display: grid; gap: 7px; margin-top: 3px; padding-top: 10px; border-top: 1px solid var(--otto-border); }
+.otto-product-invite-result { display: grid; gap: 8px; }
+.otto-product-invite-result textarea { min-height: 84px; border: 1px solid var(--otto-border); background: var(--otto-code-bg); color: var(--otto-text-secondary); border-radius: 8px; padding: 8px; font: 9px var(--otto-font-mono); }
+.otto-product-invite-result span, .otto-credit-warning { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-credit-warning { margin: 10px 0; padding: 8px; border-radius: 8px; background: var(--otto-warning-soft, #fff7ed); }
+.otto-enterprise-models { display: grid; gap: 7px; }
+.otto-enterprise-model { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; padding: 10px; border: 1px solid var(--otto-border); border-radius: 10px; }
+.otto-enterprise-model > div { display: flex; flex-direction: column; }
+.otto-enterprise-model span, .otto-enterprise-model small { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-enterprise-model b { color: var(--otto-accent); }
+.otto-enterprise-model small { grid-column: 1 / -1; }
+
+@media (max-width: 1100px) {
+  .otto-right-panel { width: 270px; min-width: 270px; }
+  .otto-agenda__form { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 860px) {
+  .otto-right-panel { width: 38px; min-width: 38px; }
+  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__tabs,
+  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__body,
+  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__bottom-actions,
+  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-pet-stage { display: none; }
+  .otto-product-choice, .otto-product-identity, .otto-credit-summary { grid-template-columns: 1fr; }
 }

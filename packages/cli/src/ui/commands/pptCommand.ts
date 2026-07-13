@@ -61,7 +61,7 @@ export const pptCommand: SlashCommand = {
 
 **主题**: ${topic}${pageCountHint}
 
-请帮我规划这个PPT的详细大纲。包括:
+请帮我规划这个PPT，并把确认后的内容整理成可直接本地渲染的逐页 Markdown。包括:
 1. 演示的整体结构和逻辑
 2. 建议的页数和每一页的内容概要
 3. 关键要点和建议的呈现方式
@@ -71,7 +71,7 @@ export const pptCommand: SlashCommand = {
 - action=update: 更新大纲内容
 - action=view: 查看当前大纲
 
-我会逐步与你讨论并优化大纲内容，直到满意后再生成PPT。`;
+请在最终逐页内容中用独占一行的 --- 分隔每一页。我确认后，调用 ppt_generate 在本机生成 .pptx；不要使用任何 Otto 云端 PPT 服务、网页登录或上传。`;
 
     // 返回特殊的提示词提交类型，让AI处理PPT相关任务
     return {

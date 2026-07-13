@@ -16,7 +16,8 @@ import { convertToFunctionResponse } from './coreToolScheduler.js';
 
 /**
  * Executes a single tool call non-interactively.
- * It does not handle confirmations, multiple calls, or live updates.
+ * It does not handle confirmations or multiple calls. Callers may opt into
+ * forwarding a tool's live output through `options.onOutput`.
  *
  * Note: Dangerous commands (detected by tool.shouldConfirmExecute) will
  * NOT be executed in YOLO mode - they are blocked regardless of approval mode.
@@ -26,6 +27,10 @@ export async function executeToolCall(
   toolCallRequest: ToolCallRequestInfo,
   toolRegistry: ToolRegistry,
   abortSignal?: AbortSignal,
+  options?: {
+    explicitlyApproved?: boolean;
+    onOutput?: (output: string) => void;
+  },
 ): Promise<ToolCallResponseInfo> {
   const tool = toolRegistry.getTool(toolCallRequest.name);
 
@@ -79,7 +84,11 @@ export async function executeToolCall(
     if (confirmationDetails) {
 
       // For 'exec' type with warning = dangerous command
-      if (confirmationDetails.type === 'exec' && (confirmationDetails as any).warning) {
+      if (
+        confirmationDetails.type === 'exec' &&
+        (confirmationDetails as any).warning &&
+        !options?.explicitlyApproved
+      ) {
         const rootCmd = (confirmationDetails as any).rootCommand;
         const warningMsg = (confirmationDetails as any).warning;
         const error = new Error(
@@ -121,12 +130,15 @@ export async function executeToolCall(
       }
     }
 
-    // Directly execute without confirmation or live output handling
-    const toolResult: ToolResult = await tool.execute(
-      toolCallRequest.args,
-      effectiveAbortSignal,
-      // No live output callback for non-interactive mode
-    );
+    // Directly execute without confirmation; preserve the legacy two-argument
+    // call when no live-output subscriber was supplied.
+    const toolResult: ToolResult = options?.onOutput
+      ? await tool.execute(
+          toolCallRequest.args,
+          effectiveAbortSignal,
+          options.onOutput,
+        )
+      : await tool.execute(toolCallRequest.args, effectiveAbortSignal);
 
     const tool_output = toolResult.llmContent;
 

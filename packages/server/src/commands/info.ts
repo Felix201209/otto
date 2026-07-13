@@ -5,8 +5,8 @@
  */
 
 /**
- * 信息类命令：/about /stats /context /tools /mcp /extensions。
- * 全部只读、无副作用；数据源与既有能力帧（get_stats / mcp_list / get_tools /
+ * 信息类命令：/about /context /tools /mcp /extensions。
+ * 全部只读、无副作用；数据源与既有能力帧（mcp_list / get_tools /
  * get_extensions / get_context_breakdown）完全同源——报真实数据，没有的字段不编造。
  */
 
@@ -32,49 +32,6 @@ export const aboutCommand: ServerSlashCommand = {
       `- Otto Server: ${host.serverVersion}（协议 v${host.protocolVersion}）`,
       `- 运行时长: ${uptimeMin} 分钟 · 会话数: ${host.store.listSessions().length}`,
     ];
-    return md(lines.join('\n'));
-  },
-};
-
-/** `/stats`：进程级用量统计（按模型/工具聚合，与 get_stats 帧同源）。 */
-export const statsCommand: ServerSlashCommand = {
-  name: 'stats',
-  description: '本次运行的模型与工具用量统计',
-  action: ({ host }) => {
-    const s = host.statsSnapshot();
-    const modelNames = Object.keys(s.models);
-    const toolNames = Object.keys(s.tools.byName);
-    if (modelNames.length === 0 && s.tools.totalCalls === 0) {
-      return md('本进程尚无用量记录——发起一轮对话后再运行 `/stats`。');
-    }
-    const lines: string[] = ['### 用量统计（本次 server 运行期）', ''];
-    if (modelNames.length > 0) {
-      lines.push(
-        '| 模型 | 请求数 | 输入 tokens | 输出 tokens | 合计 |',
-        '| --- | ---: | ---: | ---: | ---: |',
-      );
-      for (const name of modelNames) {
-        const m = s.models[name];
-        lines.push(
-          `| ${name} | ${m.requests} | ${m.inputTokens.toLocaleString()} | ${m.outputTokens.toLocaleString()} | ${m.totalTokens.toLocaleString()} |`,
-        );
-      }
-      lines.push('');
-    }
-    lines.push(
-      `工具调用：共 ${s.tools.totalCalls} 次（成功 ${s.tools.totalSuccess} / 失败 ${s.tools.totalFail}）`,
-    );
-    if (toolNames.length > 0) {
-      lines.push(
-        '',
-        '| 工具 | 调用 | 成功 | 失败 |',
-        '| --- | ---: | ---: | ---: |',
-      );
-      for (const name of toolNames) {
-        const t = s.tools.byName[name];
-        lines.push(`| ${name} | ${t.count} | ${t.success} | ${t.fail} |`);
-      }
-    }
     return md(lines.join('\n'));
   },
 };
@@ -249,7 +206,6 @@ export const extensionsCommand: ServerSlashCommand = {
 
 export const infoCommands: ServerSlashCommand[] = [
   aboutCommand,
-  statsCommand,
   contextCommand,
   toolsCommand,
   mcpCommand,

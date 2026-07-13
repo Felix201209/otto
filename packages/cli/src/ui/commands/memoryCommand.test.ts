@@ -44,6 +44,25 @@ describe('memoryCommand', () => {
     return subCommand;
   };
 
+  it('keeps legacy commands while exposing automatic maintenance commands', () => {
+    const names = memoryCommand.subCommands?.map((command) => command.name) ?? [];
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'show',
+        'add',
+        'project',
+        'refresh',
+        'stats',
+        'merge',
+        'split',
+        'compress',
+        'maintain',
+        'list',
+        'clean',
+      ]),
+    );
+  });
+
   describe('/memory show', () => {
     let showCommand: SlashCommand;
     let mockGetUserMemory: Mock;

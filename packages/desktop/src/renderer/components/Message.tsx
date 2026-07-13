@@ -7,7 +7,7 @@
 /**
  * 单条消息渲染。spec §主聊天区：
  *   - 用户消息：右对齐 peach 气泡 + 时间 + amber 双勾已读回执；图片缩略图可点开放大。
- *   - Otto 回复：头像 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制 / 重新生成）。
+ *   - Otto 回复：副图标 + 名 + 时间 + 正文 + 工具卡 + 动作行（复制 / 重新生成）。
  *
  * 动作行只保留复制与重新生成——这两个是真的落地功能；原先的赞/踩仅本地高亮、
  * 不落库不发帧、切会话即丢，是误导用户的假按钮，已移除。
@@ -18,8 +18,8 @@ import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { attachmentToDataUrl } from '../lib/image.js';
 import { ToolCallsCard, type RespondQuestionFn } from './ToolCalls.js';
+import { OttoSecondaryMark } from './OttoSecondaryMark.js';
 import {
-  OttoAvatar,
   IconCheckCheck,
   IconCheck,
   IconCopy,
@@ -200,12 +200,13 @@ function BotMessage({
 }: MessageProps): React.JSX.Element {
   const text = contentToText(message.content);
   const tools = message.associatedToolCalls ?? [];
+  const responding = Boolean(
+    message.isStreaming || message.isReasoning || message.isProcessingTools,
+  );
 
   return (
     <div className="otto-msg-bot">
-      <div className="otto-msg-bot__avatar">
-        <OttoAvatar size={30} />
-      </div>
+      <OttoSecondaryMark active={responding} />
       <div className="otto-msg-bot__body">
         <div className="otto-msg-bot__head">
           <span className="otto-msg-bot__name">Otto</span>
@@ -214,10 +215,13 @@ function BotMessage({
           </span>
         </div>
 
-        {message.reasoning ? (
-          <Reasoning
-            text={message.reasoning}
-            active={Boolean(message.isReasoning)}
+        {message.reasoning || tools.length > 0 ? (
+          <ProcessTrace
+            reasoning={message.reasoning}
+            reasoningActive={Boolean(message.isReasoning)}
+            tools={tools}
+            toolsActive={Boolean(message.isProcessingTools)}
+            onRespondQuestion={onRespondQuestion}
           />
         ) : null}
 
@@ -225,13 +229,6 @@ function BotMessage({
           <Prose text={text} streaming={message.isStreaming} />
         ) : message.isStreaming && tools.length === 0 ? (
           <TypingIndicator />
-        ) : null}
-
-        {tools.length > 0 ? (
-          <ToolCallsCard
-            toolCalls={tools}
-            onRespondQuestion={onRespondQuestion}
-          />
         ) : null}
 
         {!message.isStreaming ? (
@@ -245,40 +242,54 @@ function BotMessage({
   );
 }
 
-/** 思考中指示：流式开始但首个 chunk 未到时显示三点跳动，替代空白正文。 */
+/** 首个 chunk 未到时只显示克制文案；动效由左侧回答标记承担。 */
 function TypingIndicator(): React.JSX.Element {
   return (
     <div className="otto-typing" role="status" aria-label="Otto 正在输入">
-      <span className="otto-typing__dot" />
-      <span className="otto-typing__dot" />
-      <span className="otto-typing__dot" />
+      正在组织回答…
     </div>
   );
 }
 
 /**
- * 思考过程折叠块。流式推理期间（active）默认展开，标注「思考中」；
- * 推理结束（active: true→false）自动折叠成一行标题。用户可随时手动展开/收起。
+ * 将模型推理、Skill 与工具调用统一收进一个「深度思考」过程区：
+ *   - 推理/工具运行时自动展开，让当前 Skill 短暂可见；
+ *   - 整个过程结束后自动收起，不让 Skill 名称持续占据对话主线；
+ *   - 待确认卡保持展开，避免把必须由用户处理的交互藏起来；
+ *   - 完成后仍可点箭头查看完整过程。
  */
-function Reasoning({
-  text,
-  active,
+function ProcessTrace({
+  reasoning,
+  reasoningActive,
+  tools,
+  toolsActive,
+  onRespondQuestion,
 }: {
-  text: string;
-  active: boolean;
+  reasoning?: string;
+  reasoningActive: boolean;
+  tools: NonNullable<OttoMessage['associatedToolCalls']>;
+  toolsActive: boolean;
+  onRespondQuestion?: RespondQuestionFn;
 }): React.JSX.Element {
-  const [open, setOpen] = useState(active);
-  const prevActiveRef = useRef(active);
+  const requiresAttention = tools.some(
+    (tool) => tool.status === 'awaiting_approval',
+  );
+  const active = reasoningActive || toolsActive;
+  const automaticOpen = active || requiresAttention;
+  const [open, setOpen] = useState(automaticOpen);
+  const prevAutomaticOpenRef = useRef(automaticOpen);
+
   useEffect(() => {
-    // 推理结束的那一帧（true→false）自动收起，避免长思考顶下正文。
-    if (prevActiveRef.current && !active) {
-      setOpen(false);
+    // 阶段开始时自动露出当前过程；最后一个阶段结束时自动隐藏。
+    // 同一阶段里用户手动收起后不反复抢开，尊重用户的即时选择。
+    if (prevAutomaticOpenRef.current !== automaticOpen) {
+      setOpen(automaticOpen);
     }
-    prevActiveRef.current = active;
-  }, [active]);
+    prevAutomaticOpenRef.current = automaticOpen;
+  }, [automaticOpen]);
 
   return (
-    <div className="otto-reasoning">
+    <div className="otto-reasoning otto-process-trace">
       <button
         type="button"
         className="otto-reasoning__head"
@@ -286,8 +297,13 @@ function Reasoning({
         aria-expanded={open}
       >
         <span className="otto-reasoning__title">
-          {active ? '思考中…' : '思考过程'}
+          {active ? '深度思考中…' : requiresAttention ? '等待确认' : '深度思考'}
         </span>
+        {tools.length > 0 ? (
+          <span className="otto-process-trace__count">
+            {tools.length} 项过程
+          </span>
+        ) : null}
         <IconChevron
           size={14}
           className={`otto-reasoning__chev${
@@ -297,7 +313,17 @@ function Reasoning({
       </button>
       <div className={`otto-collapse${open ? ' otto-collapse--open' : ''}`}>
         <div className="otto-collapse__inner">
-          <div className="otto-reasoning__body">{text}</div>
+          <div className="otto-process-trace__body">
+            {reasoning ? (
+              <div className="otto-reasoning__body">{reasoning}</div>
+            ) : null}
+            {tools.length > 0 ? (
+              <ToolCallsCard
+                toolCalls={tools}
+                onRespondQuestion={onRespondQuestion}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

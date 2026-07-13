@@ -41,9 +41,11 @@ import {
   type FeishuHealthStatus,
   type HealthInfo,
   type MessageContent,
+  type MessageSource,
   type ModelInfo,
   type ServerToClient,
   type SettingsSnapshot,
+  type SearchConfigSnapshot,
   type McpServerInfo,
   type StatsSnapshot,
   type DoctorReportInfo,
@@ -54,18 +56,16 @@ import {
   type WorkflowSummary,
   type WorkflowAgentSummary,
   type ExtensionSummary,
+  type AutoSkillCandidateInfo,
 } from './protocol.js';
+import { ProductWorkspaceStore } from './productWorkspaceStore.js';
+import { resolveAgentProfile } from './agentProfiles.js';
 import {
   InMemorySessionStore,
   type SessionRuntime,
   type SessionStore,
   type Unsubscribe,
 } from './sessions.js';
-import {
-  executeSlashCommand,
-  listSlashCommands,
-  type CommandHost,
-} from './commands/index.js';
 import {
   registerFeishu,
   type FeishuRegisterDeps,
@@ -79,10 +79,13 @@ import {
 } from './feishu/vendor/credentials.js';
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
+import { executeSlashCommand, listSlashCommands } from './commands/index.js';
 import {
+  deleteCustomModel,
   listModelInfos,
   loadCustomModels,
   loadPreferredModel,
+  replaceCustomModel,
   saveCustomModel,
 } from './customModels.js';
 import {
@@ -91,6 +94,11 @@ import {
   loadMcpServers,
   saveMcpServers,
 } from './userSettings.js';
+import {
+  loadSearchConfigView,
+  loadSearchRuntimeConfig,
+  saveSearchConfig,
+} from './searchConfig.js';
 import {
   ProjectSettingsManager,
   DoctorService,
@@ -106,8 +114,26 @@ import {
   DEFAULT_CONTEXT_FILENAME,
   SkillsCompatAdapter,
   WorkflowRegistry,
+  createLocalSchedule,
+  updateLocalSchedule,
+  deleteLocalSchedule,
+  listLocalSchedules,
+  subscribeLocalSchedules,
+  listPendingSkillCandidates,
+  confirmPendingSkill,
+  rejectPendingSkill,
+  startAutoSkillScanner,
+  stopAutoSkillScanner,
   type WorkflowAgentRecord,
+  type SkillCandidate,
   type Config as CoreConfig,
+  LocalKnowledgeStore,
+  type KnowledgeEntry,
+  KnowledgeCapture,
+  type SimpleMessage,
+  getKnowledgeDir,
+  getSessionManager,
+  getAutoMemoryEngine,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -116,6 +142,25 @@ const SERVER_VERSION = '0.1.0';
 
 /** WS 单帧上限（10MB）：防超大帧打爆内存（图片引用 base64 也远小于此）。 */
 const WS_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024;
+
+/** 自动压缩最小消息数：会话消息超过此阈值 + 处于 idle 状态时触发自动压缩。 */
+const AUTO_COMPRESS_MIN_MESSAGES = 30;
+
+/** 后台维护周期（ms）：记忆合并/压缩 + 上下文自动压缩。 */
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
+
+function publicAutoSkillCandidate(
+  candidate: SkillCandidate,
+): AutoSkillCandidateInfo {
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    description: candidate.description,
+    detectedPattern: candidate.detectedPattern,
+    occurrenceCount: candidate.occurrenceCount,
+    reason: candidate.reason,
+  };
+}
 
 /**
  * 会话运行时工厂：为某会话建并初始化一个 SessionRuntime。
@@ -128,8 +173,34 @@ export type RuntimeFactory = (
 ) => Promise<SessionRuntime>;
 
 /** 默认运行时工厂：构造 headless core Config 并包进 CoreSessionRuntime。 */
-const defaultRuntimeFactory: RuntimeFactory = async (store, sessionId, model) => {
-  const config = createCoreConfig({ sessionId, model });
+const defaultRuntimeFactory: RuntimeFactory = async (
+  store,
+  sessionId,
+  model,
+) => {
+  const summary = store.getSession(sessionId);
+  const profile = resolveAgentProfile(summary?.agentProfileId);
+  const config = createCoreConfig({
+    sessionId,
+    // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
+    // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
+    model: model?.startsWith('otto:') ? undefined : model,
+    feishuMode: Boolean(summary?.feishuChatId),
+    ...(profile ? { userRules: profile.systemPrompt } : {}),
+    ...(summary?.productEdition !== 'enterprise'
+      ? {
+          excludeTools: [
+            'multi_channel',
+            'memory_manager',
+            'feishu_project_collab',
+            'delegate_to_agent',
+            'check_delegate_status',
+            'task',
+            'workflow',
+          ],
+        }
+      : {}),
+  });
   return createCoreSessionRuntime(store, sessionId, config);
 };
 
@@ -161,6 +232,8 @@ export interface OttoServerOptions {
    * 绝不允许测试碰用户真实凭证文件。
    */
   credentialsStore?: FeishuCredentialsStore;
+  /** v1.7 个人/企业模式权威存储；测试可注入临时目录实例。 */
+  productWorkspaceStore?: ProductWorkspaceStore;
 }
 
 /** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
@@ -185,6 +258,14 @@ interface ClientConn {
   subscriptions: Map<string, Unsubscribe>;
 }
 
+/** 排队消息（PR 2：busy 时入队等待 drain） */
+interface QueuedMessage {
+  content: MessageContent;
+  source: MessageSource;
+  clientMessageId?: string;
+  queueAction: 'merge' | 'next_turn';
+}
+
 /**
  * OttoServer：可被 bin（start/stop/status）或 Electron 主进程内嵌拉起。
  */
@@ -198,7 +279,15 @@ export class OttoServer {
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
-  private readonly runtimeInit = new Map<string, Promise<SessionRuntime | undefined>>();
+  private readonly runtimeInit = new Map<
+    string,
+    Promise<SessionRuntime | undefined>
+  >();
+  private globalAuthorizationMode: 'manual' | 'auto';
+  private readonly sessionAuthorizationModes = new Map<
+    string,
+    'manual' | 'auto'
+  >();
 
   private http?: HttpServer;
   private wss?: WebSocketServer;
@@ -212,6 +301,11 @@ export class OttoServer {
   private readonly conns = new Set<ClientConn>();
   /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
   private workflowUnsub?: () => void;
+  /** Agent 通过 local_schedule 改动后，实时推送桌面日历。 */
+  private scheduleUnsub?: () => void;
+  /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
+  private autoSkillScannerStarted = false;
+  private readonly productWorkspace: ProductWorkspaceStore;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -225,19 +319,15 @@ export class OttoServer {
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
     this.feishuDeps = opts.feishuDeps;
     this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
+    this.productWorkspace =
+      opts.productWorkspaceStore ?? new ProductWorkspaceStore();
+    this.globalAuthorizationMode =
+      loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
 
-  /** 是否应走 mock（无 core）：显式 mock，或机器上没有任何 BYO-key 模型。 */
+  /** mock 只允许测试显式开启；真实用户没有个人 API 时必须明确报错。 */
   private shouldMock(): boolean {
-    if (this.mock) return true;
-    // 无任何自定义模型（且无 env auth）时降级 mock，让无 key 机器也能验证收发链路。
-    try {
-      // 与 coreConfig 的 enabled 过滤口径一致：全部 enabled:false 也视为「无可用模型」走 mock，
-      // 避免真实 runtime 以 model=undefined 初始化（code review HIGH）。
-      return loadCustomModels().filter((m) => m.enabled !== false).length === 0;
-    } catch {
-      return true;
-    }
+    return this.mock;
   }
 
   /** 启动 HTTP + WS，并按需注册飞书网关。 */
@@ -268,6 +358,67 @@ export class OttoServer {
       // skills 系统可选。
     }
 
+    // 初始化 session 管理器（自动路由 / 分割 / 话题推断）
+    try {
+      const sessionMgr = getSessionManager();
+      await sessionMgr.initialize();
+      console.log('[Server] OttoSessionManager initialized');
+    } catch (e) {
+      console.warn('[Server] OttoSessionManager init failed (non-fatal):', e);
+    }
+
+    // 启动后台自动维护（每 10 分钟运行一次）
+    //   - 记忆自动合并/压缩/清理 (AutoMemoryEngine)
+    //   - 上下文自动压缩 (idle 会话的 LLM 上下文摘要)
+    const maintenanceTimer = setInterval(() => {
+      // 记忆引擎维护
+      try {
+        const engine = getAutoMemoryEngine();
+        engine
+          .runMaintenanceCycle()
+          .catch((e: unknown) =>
+            console.warn('[Server] AutoMemory maintenance failed:', e),
+          );
+      } catch {
+        // engine 未初始化则跳过
+      }
+      // 上下文自动压缩
+      this.runAutoCompressionCycle().catch((e: unknown) =>
+        console.warn('[Server] Auto compression cycle failed:', e),
+      );
+    }, MAINTENANCE_INTERVAL_MS);
+
+    // 确保 stop() 时清理定时器
+    const origStop = this.stop.bind(this);
+    this.stop = async () => {
+      clearInterval(maintenanceTimer);
+      await origStop();
+    };
+
+    // 自动 Skill 只分析本地工作日志并暂存“待确认候选”，不会直接写 SKILL.md。
+    // 延迟首扫 15 秒，避免与桌面首屏初始化争抢磁盘；定时器 unref，不阻塞进程退出。
+    try {
+      const scannerConfig = createCoreConfig({
+        sessionId: 'auto-skill-scanner',
+      });
+      this.autoSkillScannerStarted = startAutoSkillScanner(
+        scannerConfig,
+        () => this.productWorkspace.snapshot().context.userId,
+        {
+          onCandidatesStaged: (candidates) => {
+            this.broadcastAll({
+              type: 'pending_auto_skills',
+              payload: { candidates: candidates.map(publicAutoSkillCandidate) },
+            });
+          },
+        },
+      );
+    } catch (error) {
+      console.warn(
+        `[AutoSkill] Scanner startup skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
     if (this.enableFeishu) {
       // ── registerFeishu 接缝（Issue #3）──
       // 飞书网关迁入 server：gateway.onMessage → store.getOrCreateFeishuSession +
@@ -275,6 +426,8 @@ export class OttoServer {
       this.feishu = await registerFeishu({
         store: this.store,
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+        ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+        mock: this.mock,
         ...this.feishuDeps,
       });
     }
@@ -287,12 +440,24 @@ export class OttoServer {
         payload: { workflows: this.workflowSummaries() },
       });
     });
+    this.scheduleUnsub = subscribeLocalSchedules((schedules) => {
+      this.broadcastAll({
+        type: 'schedules_list',
+        payload: { schedules },
+      });
+    });
   }
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    if (this.autoSkillScannerStarted) {
+      stopAutoSkillScanner();
+      this.autoSkillScannerStarted = false;
+    }
     this.workflowUnsub?.();
     this.workflowUnsub = undefined;
+    this.scheduleUnsub?.();
+    this.scheduleUnsub = undefined;
     // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。
     const flush = (this.store as { flush?: () => void }).flush;
     if (typeof flush === 'function') {
@@ -334,8 +499,6 @@ export class OttoServer {
       feishu: {
         enabled: this.enableFeishu,
         connected: this.feishu?.isConnected() ?? false,
-        // 守护详情（断线重连次数 / 下次重试 / 锁冲突持有者等）；registration
-        // 未就绪（未启用飞书）时不携带。桌面端徽标与 CLI status 都吃这份。
         status: this.feishu?.getStatus(),
       },
     };
@@ -345,7 +508,24 @@ export class OttoServer {
     return { host: this.host, port: this.port };
   }
 
-  /** 可用模型列表（BYO-key 自定义模型）。/models 与 get_models 共用。 */
+  /** 构建斜杠命令宿主（窄接口，注入给命令注册表使用）。 */
+  private buildCommandHost(): import('./commands/types.js').CommandHost {
+    return {
+      store: this.store,
+      serverVersion: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      uptimeMs: () => Date.now() - this.startedAt,
+      cwd: () => resolveDefaultCwd(),
+      getConfig: (sid) =>
+        this.store.getRuntime(sid)?.getConfig?.() as CoreConfig | undefined,
+      currentModel: () => this.currentModel(),
+      modelInfos: () => this.modelInfos(),
+      mcpServerInfos: () => this.mcpServerInfos(),
+      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
+    };
+  }
+
+  /** 内部测试阶段所有身份都只列成员自己的 BYOK 模型。 */
   private modelInfos(): ModelInfo[] {
     try {
       return listModelInfos();
@@ -426,9 +606,20 @@ export class OttoServer {
       // 批量时只把列表第一个设为当前生效模型。
       const makeActive = p.makeActive !== false;
       let firstId: string | undefined;
-      for (let i = 0; i < ids.length; i++) {
-        const savedId = saveCustomModel(buildModel(ids[i]), makeActive && i === 0);
-        if (i === 0) firstId = savedId;
+      if (p.replaceId) {
+        firstId = replaceCustomModel(
+          p.replaceId,
+          buildModel(p.modelId),
+          makeActive,
+        );
+      } else {
+        for (let i = 0; i < ids.length; i++) {
+          const savedId = saveCustomModel(
+            buildModel(ids[i]),
+            makeActive && i === 0,
+          );
+          if (i === 0) firstId = savedId;
+        }
       }
       // 写成功 → 广播最新模型列表（modelInfos 每次实时 loadCustomModels）。
       // makeActive 时带 current=首个模型，让 renderer 立刻把药丸切到它。
@@ -443,7 +634,10 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'save_failed', message: `保存自定义模型失败：${message}` },
+        payload: {
+          code: 'save_failed',
+          message: `保存自定义模型失败：${message}`,
+        },
       });
     }
   }
@@ -454,10 +648,10 @@ export class OttoServer {
    *   → 回发一帧 models_list（带 current），让 renderer 的模型药丸反映真实生效模型。
    * 非法模型（不存在 / 被禁用）→ 回 error(code:'unknown_model')，不污染会话摘要与 runtime。
    */
-  private handleSetModel(
+  private async handleSetModel(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_model' }>,
-  ): void {
+  ): Promise<void> {
     const { sessionId, model } = msg.payload;
     const known = this.modelInfos().find((m) => m.id === model && m.enabled);
     if (!known) {
@@ -466,9 +660,28 @@ export class OttoServer {
         errorFrame(sessionId, 'unknown_model', `未知或未启用的模型：${model}`),
       );
     }
-    // 既更新会话摘要（让懒构建的 runtime 用对模型），也即时切换已存在的 runtime。
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    // live runtime 必须先完成真实切换，成功后才能更新摘要和 UI；否则会出现
+    // 「界面显示 GPT、实际请求仍走 GLM」的假成功状态。
+    try {
+      await this.store.getRuntime(sessionId)?.setModel(model);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'model_switch_failed',
+          `模型切换失败：${message}`,
+        ),
+      );
+    }
     this.store.patchSessionModel(sessionId, model);
-    this.store.getRuntime(sessionId)?.setModel(model);
     // 回发带 current 的 models_list，让 renderer 模型药丸/菜单勾号反映真实生效模型。
     this.send(conn.socket, {
       type: 'models_list',
@@ -565,10 +778,10 @@ export class OttoServer {
   /**
    * 修改一项全局偏好设置：持久化 + 即时应用到所有存活会话 + 广播最新快照。
    */
-  private handleSetSetting(
+  private async handleSetSetting(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_setting' }>,
-  ): void {
+  ): Promise<void> {
     const { key, value } = msg.payload;
     try {
       if (key === 'agentStyle') {
@@ -577,23 +790,16 @@ export class OttoServer {
         }
         const projectMgr = new ProjectSettingsManager(resolveDefaultCwd());
         projectMgr.load();
-        projectMgr.setAgentStyle(value as Parameters<ProjectSettingsManager['setAgentStyle']>[0]);
+        projectMgr.setAgentStyle(
+          value as Parameters<ProjectSettingsManager['setAgentStyle']>[0],
+        );
         for (const cfg of this.liveConfigs()) {
           try {
-            cfg.setAgentStyle(value as Parameters<CoreConfig['setAgentStyle']>[0]);
+            cfg.setAgentStyle(
+              value as Parameters<CoreConfig['setAgentStyle']>[0],
+            );
             const client = cfg.getOttoClient();
-            const chat = client?.getChat();
-            if (chat) {
-              const updated = getCoreSystemPrompt(
-                cfg.getUserMemory(),
-                cfg.getVsCodePluginMode(),
-                undefined,
-                cfg.getAgentStyle(),
-                undefined,
-                cfg.getPreferredLanguage(),
-              );
-              chat.setSystemInstruction(updated);
-            }
+            await client?.updateSystemPromptWithMcpPrompts();
           } catch {
             // 单个会话刷新失败不影响整体设置生效（下次新会话会读到最新落盘值）。
           }
@@ -628,7 +834,38 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'set_setting_failed', message: `保存设置失败：${message}` },
+        payload: {
+          code: 'set_setting_failed',
+          message: `保存设置失败：${message}`,
+        },
+      });
+    }
+  }
+
+  private searchConfigSnapshot(): SearchConfigSnapshot {
+    return loadSearchConfigView();
+  }
+
+  /** 保存搜索 API 配置、热更新存活会话，并仅广播脱敏视图。 */
+  private handleSaveSearchConfig(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'save_search_config' }>,
+  ): void {
+    try {
+      const view = saveSearchConfig(msg.payload);
+      const runtimeConfig = loadSearchRuntimeConfig();
+      for (const cfg of this.liveConfigs()) {
+        cfg.setSearchConfig(runtimeConfig);
+      }
+      this.broadcastAll({ type: 'search_config', payload: view });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.send(conn.socket, {
+        type: 'error',
+        payload: {
+          code: 'save_search_config_failed',
+          message: `保存联网搜索配置失败：${message}`,
+        },
       });
     }
   }
@@ -701,7 +938,10 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'mcp_add_failed', message: `添加 MCP 服务器失败：${message}` },
+        payload: {
+          code: 'mcp_add_failed',
+          message: `添加 MCP 服务器失败：${message}`,
+        },
       });
     }
   }
@@ -731,7 +971,10 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'mcp_remove_failed', message: `移除 MCP 服务器失败：${message}` },
+        payload: {
+          code: 'mcp_remove_failed',
+          message: `移除 MCP 服务器失败：${message}`,
+        },
       });
     }
   }
@@ -751,7 +994,8 @@ export class OttoServer {
     }
     const runtime = this.store.getRuntime(sessionId);
     const cfg = runtime?.getConfig?.() as CoreConfig | undefined;
-    const modelId = cfg?.getModel?.() ?? session.model ?? this.currentModel() ?? 'auto';
+    const modelId =
+      cfg?.getModel?.() ?? session.model ?? this.currentModel() ?? 'auto';
     const maxTokens = tokenLimit(modelId, cfg);
     const memoryFilesTokens = cfg?.getMemoryTokenCount?.() ?? 0;
     let systemPromptTokens = 0;
@@ -780,7 +1024,10 @@ export class OttoServer {
       actualPromptTokens > 0
         ? Math.max(
             0,
-            actualPromptTokens - systemPromptTokens - memoryFilesTokens - systemToolsTokens,
+            actualPromptTokens -
+              systemPromptTokens -
+              memoryFilesTokens -
+              systemToolsTokens,
           )
         : 0;
     const totalInputTokens =
@@ -822,6 +1069,15 @@ export class OttoServer {
     for (const [name, t] of Object.entries(metrics.tools.byName)) {
       byName[name] = { count: t.count, success: t.success, fail: t.fail };
     }
+    // 合并 session 管理器统计
+    let sessionStats = { total: 0, active: 0, idle: 0, archived: 0, frozen: 0 };
+    try {
+      const sessionMgr = getSessionManager();
+      sessionStats = sessionMgr.getStats();
+    } catch {
+      /* 非关键 */
+    }
+
     return {
       models,
       tools: {
@@ -830,6 +1086,7 @@ export class OttoServer {
         totalFail: metrics.tools.totalFail,
         byName,
       },
+      sessions: sessionStats,
     };
   }
 
@@ -869,7 +1126,12 @@ export class OttoServer {
     try {
       const cwd = resolveDefaultCwd();
       const projectPath = path.join(cwd, 'OTTO.md');
-      const globalPath = path.join(homedir(), OTTO_CONFIG_DIR, 'memory', DEFAULT_CONTEXT_FILENAME);
+      const globalPath = path.join(
+        homedir(),
+        OTTO_CONFIG_DIR,
+        'memory',
+        DEFAULT_CONTEXT_FILENAME,
+      );
       const files: MemoryFileInfo[] = await Promise.all(
         [
           { scope: 'project' as const, filePath: projectPath },
@@ -888,7 +1150,10 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'get_memory_failed', message: `读取记忆文件失败：${message}` },
+        payload: {
+          code: 'get_memory_failed',
+          message: `读取记忆文件失败：${message}`,
+        },
       });
     }
   }
@@ -911,7 +1176,10 @@ export class OttoServer {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'add_memory_failed', message: `保存记忆失败：${message}` },
+        payload: {
+          code: 'add_memory_failed',
+          message: `保存记忆失败：${message}`,
+        },
       });
     }
   }
@@ -929,12 +1197,18 @@ export class OttoServer {
         pluginId: s.pluginId,
         enabled: s.enabled,
       }));
-      this.send(conn.socket, { type: 'skills_list', payload: { skills: payload } });
+      this.send(conn.socket, {
+        type: 'skills_list',
+        payload: { skills: payload },
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'get_skills_failed', message: `读取技能库失败：${message}` },
+        payload: {
+          code: 'get_skills_failed',
+          message: `读取技能库失败：${message}`,
+        },
       });
     }
   }
@@ -961,12 +1235,19 @@ export class OttoServer {
         description: tool.description,
         serverName: (tool as { serverName?: string }).serverName,
       }));
-      this.send(conn.socket, { type: 'tools_list', payload: { sessionId, tools } });
+      this.send(conn.socket, {
+        type: 'tools_list',
+        payload: { sessionId, tools },
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { sessionId, code: 'get_tools_failed', message: `读取工具清单失败：${message}` },
+        payload: {
+          sessionId,
+          code: 'get_tools_failed',
+          message: `读取工具清单失败：${message}`,
+        },
       });
     }
   }
@@ -990,7 +1271,11 @@ export class OttoServer {
       if (client.isCompressionInProgress()) {
         return this.send(conn.socket, {
           type: 'compress_result',
-          payload: { sessionId, compressed: false, message: '已有压缩任务在进行中，请稍候。' },
+          payload: {
+            sessionId,
+            compressed: false,
+            message: '已有压缩任务在进行中，请稍候。',
+          },
         });
       }
       const info = await client.tryCompressChat(
@@ -1012,15 +1297,108 @@ export class OttoServer {
       } else {
         this.send(conn.socket, {
           type: 'compress_result',
-          payload: { sessionId, compressed: false, message: '当前上下文较小，无需压缩。' },
+          payload: {
+            sessionId,
+            compressed: false,
+            message: '当前上下文较小，无需压缩。',
+          },
         });
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { sessionId, code: 'compress_failed', message: `压缩失败：${message}` },
+        payload: {
+          sessionId,
+          code: 'compress_failed',
+          message: `压缩失败：${message}`,
+        },
       });
+    }
+  }
+
+  /**
+   * 自动上下文压缩 — 后台定时扫描 idle 会话，对消息数超阈值的会话
+   * 触发 LLM 摘要压缩。每轮最多压缩 3 个会话，避免并发 LLM 调用过多。
+   *
+   * 设计原则：
+   *   - 只压 idle 会话（不影响用户正在活跃对话的）
+   *   - 消息数 ≥ AUTO_COMPRESS_MIN_MESSAGES 才触发
+   *   - 每个会话在一次周期内最多压一次（isCompressionInProgress 防重入）
+   *   - 静默失败：压缩异常不影响其他会话和主对话流
+   */
+  private async runAutoCompressionCycle(): Promise<void> {
+    const sessions = this.store.listSessions();
+    const candidates = sessions.filter(
+      (s) =>
+        s.status === 'idle' && s.messageCount >= AUTO_COMPRESS_MIN_MESSAGES,
+    );
+
+    if (candidates.length === 0) return;
+
+    // 按消息数降序，优先压缩最臃肿的会话
+    candidates.sort((a, b) => b.messageCount - a.messageCount);
+
+    const MAX_PER_CYCLE = 3;
+    let compressed = 0;
+    let skipped = 0;
+
+    for (const session of candidates.slice(0, MAX_PER_CYCLE)) {
+      try {
+        const runtime = this.store.getRuntime(session.sessionId);
+        if (!runtime) {
+          skipped++;
+          continue; // 尚无 runtime（从未发起过对话），无需压缩
+        }
+
+        const cfg = runtime.getConfig?.() as CoreConfig | undefined;
+        const client = cfg?.getOttoClient?.();
+        if (!client) {
+          skipped++;
+          continue;
+        }
+
+        if (client.isCompressionInProgress()) {
+          skipped++;
+          continue; // 已有压缩任务
+        }
+
+        const info = await client.tryCompressChat(
+          `${session.sessionId}-auto-${Date.now()}`,
+          new AbortController().signal,
+          true,
+        );
+
+        if (info) {
+          compressed++;
+          this.store.publish(session.sessionId, {
+            type: 'compress_result',
+            payload: {
+              sessionId: session.sessionId,
+              compressed: true,
+              originalTokenCount: info.originalTokenCount,
+              newTokenCount: info.newTokenCount,
+              message: `[自动] 已压缩：${info.originalTokenCount.toLocaleString()} → ${info.newTokenCount.toLocaleString()} tokens`,
+            },
+          });
+          console.log(
+            `[Server] Auto-compressed session ${session.sessionId}: ` +
+              `${info.originalTokenCount} → ${info.newTokenCount} tokens`,
+          );
+        }
+      } catch (e) {
+        console.warn(
+          `[Server] Auto-compress session ${session.sessionId} failed:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+
+    if (compressed > 0 || skipped > 0) {
+      console.log(
+        `[Server] Auto-compression cycle: ${compressed} compressed, ${skipped} skipped ` +
+          `(out of ${candidates.length} candidates)`,
+      );
     }
   }
 
@@ -1032,7 +1410,10 @@ export class OttoServer {
     const { sessionId } = msg.payload;
     const session = this.store.getSession(sessionId);
     if (!session) {
-      return this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
     }
     const messages = this.store.getHistory(sessionId);
     const lines: string[] = [`# ${session.title || '未命名对话'}`, ''];
@@ -1045,7 +1426,10 @@ export class OttoServer {
       if (!text) continue;
       lines.push(`## ${speaker}`, '', text, '');
     }
-    const safeTitle = (session.title || 'conversation').replace(/[\\/:*?"<>|]/g, '_');
+    const safeTitle = (session.title || 'conversation').replace(
+      /[\\/:*?"<>|]/g,
+      '_',
+    );
     this.send(conn.socket, {
       type: 'export_result',
       payload: {
@@ -1092,12 +1476,18 @@ export class OttoServer {
   private async handleGetExtensions(conn: ClientConn): Promise<void> {
     try {
       const extensions = await discoverExtensionSummaries(resolveDefaultCwd());
-      this.send(conn.socket, { type: 'extensions_list', payload: { extensions } });
+      this.send(conn.socket, {
+        type: 'extensions_list',
+        payload: { extensions },
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
         type: 'error',
-        payload: { code: 'get_extensions_failed', message: `读取扩展列表失败：${message}` },
+        payload: {
+          code: 'get_extensions_failed',
+          message: `读取扩展列表失败：${message}`,
+        },
       });
     }
   }
@@ -1112,7 +1502,8 @@ export class OttoServer {
       type: 'ide_status',
       payload: {
         status: 'not_applicable',
-        details: 'IDE 伴生状态仅适用于终端内的 CLI（VS Code 集成终端），桌面端不适用。',
+        details:
+          'IDE 伴生状态仅适用于终端内的 CLI（VS Code 集成终端），桌面端不适用。',
       },
     });
   }
@@ -1164,7 +1555,10 @@ export class OttoServer {
     }
     if (path === HTTP_ROUTES.sessions && req.method === 'POST') {
       const summary = this.store.createSession();
-      this.broadcastAll({ type: 'session_upsert', payload: { session: summary } });
+      this.broadcastAll({
+        type: 'session_upsert',
+        payload: { session: summary },
+      });
       return sendJson(res, 201, ok(summary));
     }
     const histMatch = path.match(/^\/sessions\/([^/]+)\/history$/);
@@ -1228,23 +1622,17 @@ export class OttoServer {
   // 飞书运行期启停（POST /feishu/start | /feishu/stop）
   // ──────────────────────────────────────────────────────────────────────
 
-  /**
-   * 运行期启动/恢复飞书守护。幂等；经单飞锁串行化，并发请求不会重复注册。
-   * 覆盖三种入口场景：
-   *   - server 启动时未启用（无凭证/未开开关）→ 现在注册并启动。凭证在
-   *     adapter.start() 里重新读盘——用户运行期才配好凭证也能拉起；
-   *   - 已有 registration 但被 stop 过 → registration.start() 恢复守护
-   *     （断线自动重连随之恢复）；
-   *   - 已在跑 → adapter 幂等 no-op，返回当前状态。
-   * 无凭证时诚实失败（ok:false + 原因），enableFeishu 保持 false，不谎报已启用。
-   */
-  private runtimeFeishuStart(): Promise<ApiResponse<FeishuHealthStatus | null>> {
+  /** 运行期启动/恢复飞书守护。幂等；经单飞锁串行化，并发请求不会重复注册。 */
+  private runtimeFeishuStart(): Promise<
+    ApiResponse<FeishuHealthStatus | null>
+  > {
     const run = this.feishuOpLock.then(async () => {
       if (!this.feishu) {
         this.feishu = await registerFeishu({
           store: this.store,
-          broadcast: (sessionId, frame) =>
-            this.store.publish(sessionId, frame),
+          broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
+          ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+          mock: this.mock,
           ...this.feishuDeps,
         });
       } else {
@@ -1258,21 +1646,17 @@ export class OttoServer {
           data: status,
           error:
             '未发现可用的飞书凭证（~/.otto-user/feishu-credentials.json），网关未启动。' +
-            '请先在终端运行 otto feishu setup 配置，再重试。',
+            '请先配置飞书凭证，再重试。',
         } satisfies ApiResponse<FeishuHealthStatus | null>;
       }
       this.enableFeishu = true;
       return ok<FeishuHealthStatus | null>(status);
     });
-    // 锁链只关心「上一个操作结束了没」，吞掉错误防止断链拖死后续操作。
     this.feishuOpLock = run.catch(() => undefined);
     return run;
   }
 
-  /**
-   * 运行期停止飞书守护（有意停止）：取消所有重连定时器，之后**不自动重连**，
-   * 直到再次 start。registration 句柄保留，供后续恢复。
-   */
+  /** 运行期停止飞书守护；取消重连，直到再次 start。 */
   private runtimeFeishuStop(): Promise<ApiResponse<FeishuHealthStatus | null>> {
     const run = this.feishuOpLock.then(async () => {
       if (!this.feishu) {
@@ -1290,17 +1674,12 @@ export class OttoServer {
     return run;
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // 飞书凭证配置（GET/POST/DELETE /feishu/config）
-  // ──────────────────────────────────────────────────────────────────────
-
   /** 凭证的脱敏视图：appSecret 永不出现在响应里。 */
   private async feishuConfigView(): Promise<FeishuConfigPublic> {
     let creds: FeishuCredentials | null;
     try {
       creds = await this.credentialsStore.load();
     } catch {
-      // 文件存在但解密/解析失败：如实报 corrupted，客户端引导「清除后重配」。
       return { configured: false, corrupted: true };
     }
     if (!creds) return { configured: false };
@@ -1315,10 +1694,7 @@ export class OttoServer {
     };
   }
 
-  /**
-   * 保存凭证并立即让守护用上新凭证（stop→start；adapter 只在拉起时读盘）。
-   * appSecret 可省略 = 沿用盘上已有 secret（仅限 App ID 未变时，防串号）。
-   */
+  /** 保存凭证并立即让守护用上新凭证。 */
   private async runtimeFeishuSaveConfig(
     body: unknown,
   ): Promise<ApiResponse<FeishuConfigPublic>> {
@@ -1331,11 +1707,12 @@ export class OttoServer {
     try {
       existing = await this.credentialsStore.load();
     } catch {
-      existing = null; // 损坏文件视为不存在，直接被本次保存覆盖。
+      existing = null;
     }
 
     const sameApp = existing?.appId === parsed.appId;
-    const secret = parsed.appSecret ?? (sameApp ? existing?.appSecret : undefined);
+    const secret =
+      parsed.appSecret ?? (sameApp ? existing?.appSecret : undefined);
     if (!secret) {
       return {
         ok: false,
@@ -1346,7 +1723,6 @@ export class OttoServer {
       };
     }
 
-    // 换应用时旧 bot/租户/白名单信息全部作废；同应用则保留。
     const next: FeishuCredentials = {
       appId: parsed.appId,
       appSecret: secret,
@@ -1367,7 +1743,6 @@ export class OttoServer {
     };
     await this.credentialsStore.save(next);
 
-    // 守护若在跑，stop→start 强制重读凭证（start 对已运行守护是幂等 no-op）。
     await this.runtimeFeishuStop().catch(() => undefined);
     const started = await this.runtimeFeishuStart().catch(
       (e): ApiResponse<FeishuHealthStatus | null> =>
@@ -1382,8 +1757,10 @@ export class OttoServer {
     };
   }
 
-  /** 停守护 + 清除凭证（对应 CLI /feishu logout）。 */
-  private async runtimeFeishuClearConfig(): Promise<ApiResponse<FeishuConfigPublic>> {
+  /** 停守护 + 清除凭证。 */
+  private async runtimeFeishuClearConfig(): Promise<
+    ApiResponse<FeishuConfigPublic>
+  > {
     await this.runtimeFeishuStop().catch(() => undefined);
     await this.credentialsStore.clear();
     return ok(await this.feishuConfigView());
@@ -1410,7 +1787,10 @@ export class OttoServer {
       try {
         msg = JSON.parse(raw.toString());
       } catch {
-        return this.send(socket, errorFrame(undefined, 'bad_json', '无法解析的帧'));
+        return this.send(
+          socket,
+          errorFrame(undefined, 'bad_json', '无法解析的帧'),
+        );
       }
       if (!isClientToServer(msg)) {
         return this.send(
@@ -1427,7 +1807,11 @@ export class OttoServer {
       this.dispatch(conn, msg).catch((e) => {
         this.send(
           socket,
-          errorFrame(undefined, 'internal', String(e instanceof Error ? e.message : e)),
+          errorFrame(
+            undefined,
+            'internal',
+            String(e instanceof Error ? e.message : e),
+          ),
         );
       });
     });
@@ -1490,13 +1874,104 @@ export class OttoServer {
         return;
       }
       case 'create_session': {
+        const workspace = this.productWorkspace.snapshot();
+        const profile = resolveAgentProfile(msg.payload.agentProfileId);
+        if (msg.payload.agentProfileId && !profile) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'unknown_agent_profile',
+              message: '未知 Agent profile',
+            },
+          });
+        }
+        if (
+          profile &&
+          profile.edition !== 'both' &&
+          profile.edition !== workspace.context.edition
+        ) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'forbidden_agent_profile',
+              message:
+                workspace.context.edition === 'personal'
+                  ? '个人版只能使用 Otto、会议助手与通用专家。'
+                  : '企业版不能使用个人版 Otto profile。',
+            },
+          });
+        }
+        if (
+          profile?.roles &&
+          !profile.roles.includes(
+            workspace.context.role as (typeof profile.roles)[number],
+          )
+        ) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'forbidden_agent_profile',
+              message: '当前企业角色不能使用这个 Agent profile。',
+            },
+          });
+        }
+        if (
+          profile?.scope === 'department' &&
+          workspace.context.edition !== 'enterprise'
+        ) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'forbidden_agent_profile',
+              message: '个人版不能使用企业部门专家。',
+            },
+          });
+        }
+        if (
+          profile?.scope === 'department' &&
+          workspace.context.role !== 'company_owner' &&
+          workspace.context.role !== 'company_admin'
+        ) {
+          const currentDepartment =
+            workspace.managerWorkspace?.organization.departments.find(
+              (item) => item.id === workspace.context.departmentId,
+            );
+          if (
+            currentDepartment &&
+            profile.department !== currentDepartment.name
+          ) {
+            return this.send(conn.socket, {
+              type: 'error',
+              payload: {
+                code: 'forbidden_agent_profile',
+                message: '当前成员只能使用本部门 Agent。',
+              },
+            });
+          }
+        }
         const summary = this.store.createSession({
           title: msg.payload.title,
-          model: msg.payload.model,
+          model: msg.payload.model ?? this.currentModel(),
+          agentProfileId: profile?.id,
+          agentProfileName: profile?.name,
+          productEdition: workspace.context.edition,
         });
+        if (profile) {
+          this.store.appendMessage(summary.sessionId, {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              value: profile.welcomeMessage
+                ?? `Hello，我是 ${profile.name}，我可以帮你完成相关工作。`,
+            }],
+            source: 'local',
+            isStreaming: false,
+          });
+        }
+        const createdSummary = this.store.getSession(summary.sessionId) ?? summary;
         this.broadcastAll({
           type: 'session_upsert',
-          payload: { session: summary },
+          payload: { session: createdSummary },
         });
         return;
       }
@@ -1504,8 +1979,29 @@ export class OttoServer {
         return this.handleSendUserMessage(conn, msg);
       case 'set_model':
         return this.handleSetModel(conn, msg);
+      case 'set_authorization_mode': {
+        const { sessionId, mode, scope } = msg.payload;
+        if (scope === 'all') {
+          this.globalAuthorizationMode = mode;
+          this.sessionAuthorizationModes.clear();
+          patchUserSettings({ authorizationMode: mode });
+          for (const session of this.store.listSessions()) {
+            this.store
+              .getRuntime(session.sessionId)
+              ?.setAuthorizationMode?.(mode);
+          }
+        } else {
+          this.sessionAuthorizationModes.set(sessionId, mode);
+          this.store.getRuntime(sessionId)?.setAuthorizationMode?.(mode);
+        }
+        return;
+      }
       case 'cancel': {
         this.store.getRuntime(msg.payload.sessionId)?.cancel();
+        // 清除排队消息队列（可选，默认清）
+        if (msg.payload.clearQueue !== false) {
+          this.messageQueues.delete(msg.payload.sessionId);
+        }
         return;
       }
       case 'tool_confirmation_response': {
@@ -1518,6 +2014,267 @@ export class OttoServer {
           ?.resolveToolConfirmation(callId, outcome, payload);
         return;
       }
+      case 'get_product_workspace':
+        return this.send(conn.socket, {
+          type: 'product_workspace',
+          payload: this.productWorkspace.snapshot(),
+        });
+      case 'configure_enterprise': {
+        try {
+          const workspace = this.productWorkspace.configureManager(msg.payload);
+          this.broadcastAll({ type: 'product_workspace', payload: workspace });
+          this.broadcastAll({
+            type: 'models_list',
+            payload: {
+              models: this.modelInfos(),
+              current: this.currentModel(),
+            },
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'switch_to_personal': {
+        const workspace = this.productWorkspace.switchToPersonal();
+        this.broadcastAll({ type: 'product_workspace', payload: workspace });
+        this.broadcastAll({
+          type: 'models_list',
+          payload: { models: this.modelInfos(), current: this.currentModel() },
+        });
+        return;
+      }
+      case 'join_enterprise': {
+        try {
+          const workspace = this.productWorkspace.acceptInvite(
+            msg.payload.link,
+            {
+              userId: msg.payload.userId,
+              displayName: msg.payload.displayName,
+            },
+          );
+          this.broadcastAll({ type: 'product_workspace', payload: workspace });
+          this.broadcastAll({
+            type: 'models_list',
+            payload: {
+              models: this.modelInfos(),
+              current: this.currentModel(),
+            },
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'create_enterprise_invite': {
+        try {
+          const invite = this.productWorkspace.issueInvite(msg.payload);
+          this.send(conn.socket, {
+            type: 'enterprise_invite_created',
+            payload: invite,
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'add_friend': {
+        try {
+          const workspace = this.productWorkspace.addFriend(
+            msg.payload.displayName,
+            msg.payload.note,
+          );
+          this.broadcastAll({ type: 'product_workspace', payload: workspace });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'accept_company_link': {
+        try {
+          const workspace = this.productWorkspace.acceptCompanyLink(
+            msg.payload.link,
+          );
+          this.broadcastAll({ type: 'product_workspace', payload: workspace });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'get_pending_auto_skills': {
+        try {
+          const candidates = (await listPendingSkillCandidates()).map(
+            publicAutoSkillCandidate,
+          );
+          return this.send(conn.socket, {
+            type: 'pending_auto_skills',
+            payload: { candidates },
+          });
+        } catch (error) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'auto_skill_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      }
+      case 'confirm_pending_auto_skill': {
+        try {
+          const savedPath = await confirmPendingSkill(msg.payload.candidateId);
+          const candidates = (await listPendingSkillCandidates()).map(
+            publicAutoSkillCandidate,
+          );
+          return this.send(conn.socket, {
+            type: 'pending_auto_skills',
+            payload: {
+              candidates,
+              lastAction: {
+                kind: 'confirmed',
+                candidateId: msg.payload.candidateId,
+                savedPath,
+              },
+            },
+          });
+        } catch (error) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'auto_skill_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      }
+      case 'reject_pending_auto_skill': {
+        try {
+          await rejectPendingSkill(msg.payload.candidateId);
+          const candidates = (await listPendingSkillCandidates()).map(
+            publicAutoSkillCandidate,
+          );
+          return this.send(conn.socket, {
+            type: 'pending_auto_skills',
+            payload: {
+              candidates,
+              lastAction: {
+                kind: 'rejected',
+                candidateId: msg.payload.candidateId,
+              },
+            },
+          });
+        } catch (error) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'auto_skill_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      }
+      case 'get_schedules': {
+        try {
+          const schedules = listLocalSchedules(
+            msg.payload.date,
+            msg.payload.timezone,
+          );
+          this.send(conn.socket, {
+            type: 'schedules_list',
+            payload: { ...msg.payload, schedules },
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'schedule_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'create_schedule': {
+        try {
+          createLocalSchedule({ ...msg.payload, source: 'user' });
+          // createLocalSchedule 的订阅会广播一次；这里给发起连接回一份确定的权威快照。
+          this.send(conn.socket, {
+            type: 'schedules_list',
+            payload: { schedules: listLocalSchedules() },
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'schedule_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'update_schedule': {
+        try {
+          const { id, ...patch } = msg.payload;
+          updateLocalSchedule(id, patch);
+          this.send(conn.socket, {
+            type: 'schedules_list',
+            payload: { schedules: listLocalSchedules() },
+          });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'schedule_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
+      case 'delete_schedule': {
+        const deleted = deleteLocalSchedule(msg.payload.id);
+        if (!deleted) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: { code: 'schedule_failed', message: '未找到要删除的日程' },
+          });
+        }
+        return this.send(conn.socket, {
+          type: 'schedules_list',
+          payload: { schedules: listLocalSchedules() },
+        });
+      }
       case 'get_models':
         return this.send(conn.socket, {
           type: 'models_list',
@@ -1525,6 +2282,37 @@ export class OttoServer {
         });
       case 'save_custom_model':
         return this.handleSaveCustomModel(conn, msg);
+      case 'delete_custom_model': {
+        // 删除自定义模型：成功广播最新 models_list（多窗口同步刷新）；
+        // 未命中（可能已被别的窗口删掉）或写盘失败回 error 帧。
+        try {
+          const removed = deleteCustomModel(msg.payload.id);
+          if (!removed) {
+            return this.send(conn.socket, {
+              type: 'error',
+              payload: {
+                code: 'delete_failed',
+                message: '该模型不存在（可能已被删除）',
+              },
+            });
+          }
+          return this.broadcastAll({
+            type: 'models_list',
+            payload: {
+              models: this.modelInfos(),
+              current: this.currentModel(),
+            },
+          });
+        } catch (e) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'delete_failed',
+              message: `删除失败：${e instanceof Error ? e.message : '未知错误'}`,
+            },
+          });
+        }
+      }
       case 'delete_session':
         return this.handleDeleteSession(conn, msg);
       case 'rename_session':
@@ -1536,6 +2324,13 @@ export class OttoServer {
         });
       case 'set_setting':
         return this.handleSetSetting(conn, msg);
+      case 'get_search_config':
+        return this.send(conn.socket, {
+          type: 'search_config',
+          payload: this.searchConfigSnapshot(),
+        });
+      case 'save_search_config':
+        return this.handleSaveSearchConfig(conn, msg);
       case 'mcp_list':
         return this.send(conn.socket, {
           type: 'mcp_servers',
@@ -1577,14 +2372,23 @@ export class OttoServer {
         return this.handleGetExtensions(conn);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
-      case 'run_slash_command':
-        return this.handleRunSlashCommand(conn, msg);
-      case 'list_slash_commands':
-        // 命令清单的单一事实源：renderer 面板据此合并展示 server 侧命令。
+      case 'get_knowledge':
+        return this.handleGetKnowledge(conn, msg);
+      case 'search_knowledge':
+        return this.handleSearchKnowledge(conn, msg);
+      case 'add_knowledge':
+        return this.handleAddKnowledge(conn, msg);
+      case 'remove_knowledge':
+        return this.handleRemoveKnowledge(conn, msg);
+      case 'list_slash_commands': {
+        const cmds = listSlashCommands();
         return this.send(conn.socket, {
           type: 'slash_commands_list',
-          payload: { commands: listSlashCommands() },
+          payload: { commands: cmds },
         });
+      }
+      case 'run_slash_command':
+        return this.handleRunSlashCommand(conn, msg);
       default: {
         // 穷尽检查：新增 ClientToServer 分支时编译会在这里提示。
         const _exhaustive: never = msg;
@@ -1592,6 +2396,74 @@ export class OttoServer {
         return;
       }
     }
+  }
+
+  /** 执行斜杠命令；查询回执不落会话库，submit_prompt 复用普通消息入口。 */
+  private async handleRunSlashCommand(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'run_slash_command' }>,
+  ): Promise<void> {
+    const { sessionId, name, args } = msg.payload;
+    if (!this.store.getSession(sessionId)) {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const outcome = await executeSlashCommand(
+      this.buildCommandHost(),
+      sessionId,
+      name,
+      args ?? '',
+    );
+    if (outcome.kind === 'submit_prompt') {
+      const session = this.store.getSession(sessionId);
+      if (
+        session &&
+        (session.status === 'thinking' || session.status === 'streaming')
+      ) {
+        this.send(conn.socket, {
+          type: 'slash_command_result',
+          payload: {
+            sessionId,
+            name,
+            args: args ?? '',
+            ok: false,
+            markdown: `该会话正在生成回复，/${name} 未提交。请稍候或先取消，再重试。`,
+          },
+        });
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'slash_command_result',
+        payload: {
+          sessionId,
+          name,
+          args: args ?? '',
+          ok: true,
+          markdown: outcome.note,
+        },
+      });
+      await this.handleSendUserMessage(conn, {
+        type: 'send_user_message',
+        payload: {
+          sessionId,
+          content: [{ type: 'text', value: outcome.content }],
+          source: 'local',
+        },
+      });
+      return;
+    }
+    this.send(conn.socket, {
+      type: 'slash_command_result',
+      payload: {
+        sessionId,
+        name,
+        args: args ?? '',
+        ok: outcome.ok,
+        markdown: outcome.markdown,
+      },
+    });
   }
 
   /**
@@ -1613,17 +2485,79 @@ export class OttoServer {
       );
     }
 
-    // 会话正忙（thinking/streaming）：直接回 busy 错误帧，不落库不广播。
-    // 否则消息落了库、runtime.run 又拒绝这一轮，留下一条永远没有回复的消息。
+    // 会话正忙（thinking/streaming）：走消息队列而非直接拒绝。
     if (session.status === 'thinking' || session.status === 'streaming') {
+      const queueAction: 'merge' | 'next_turn' | 'new_session' =
+        msg.payload.queueAction ?? 'next_turn';
+
+      // new_session: 创建新会话并路由消息
+      if (queueAction === 'new_session') {
+        const newSummary = this.store.createSession();
+        this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
+        return this.handleSendUserMessageRaw(
+          newSummary.sessionId, conn, content, source, clientMessageId);
+      }
+
+      // merge / next_turn: 入队等待
+      const queue = this.getOrCreateQueue(sessionId);
+      const queued: QueuedMessage = {
+        content,
+        source,
+        clientMessageId,
+        queueAction,
+      };
+      queue.push(queued);
+      return this.send(conn.socket, {
+        type: 'message_queued',
+        payload: { sessionId, queuePosition: queue.length, clientMessageId },
+      });
+    }
+
+    return this.handleSendUserMessageRaw(sessionId, conn, content, source, clientMessageId);
+  }
+
+  /**
+   * Raw message ingestion (after busy/new-session routing).
+   * De-duplicated from handleSendUserMessage: session optional checks
+   * and OttoSessionManager touches are done in the caller.
+   */
+  private async handleSendUserMessageRaw(
+    sessionId: string,
+    conn: ClientConn,
+    content: MessageContent,
+    source: MessageSource,
+    clientMessageId?: string,
+  ): Promise<void> {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
       return this.send(
         conn.socket,
-        errorFrame(sessionId, 'busy', '该会话正在生成回复，请稍候或先取消。'),
+        errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
 
-    // 透传 clientMessageId 作为消息 id：让 message_start 回声的 id 与 renderer
-    // 乐观渲染的临时 id 一致，store 按 id 覆盖去重，避免用户气泡重复显示两条。
+    // ── OttoSessionManager ──
+    try {
+      const sessionMgr = getSessionManager();
+      sessionMgr.touchSession(sessionId);
+      const text = plainTextOf(content);
+      if (text) {
+        const topics = sessionMgr.inferTopics(text);
+        for (const t of topics) {
+          sessionMgr.addTopic(sessionId, t).catch(() => undefined);
+        }
+      }
+      if (sessionMgr.shouldSplit(sessionId)) {
+        sessionMgr
+          .splitSession(sessionId, 'by_topic')
+          .catch((e: unknown) =>
+            console.warn('[Server] Auto-split session failed:', e),
+          );
+      }
+    } catch {
+      // session manager 非关键路径，静默降级
+    }
+
     const userMsg = this.store.appendMessage(sessionId, {
       role: 'user',
       content,
@@ -1635,8 +2569,6 @@ export class OttoServer {
       payload: { message: userMsg },
     });
 
-    // app→飞书 回推：用户在 app 里对一个飞书会话手敲的这句话，回推飞书侧。
-    // 只推用户输入这一句；AI 回复仍由 streamBridge 自动回推，勿在此重复。
     if (
       source === 'local' &&
       session.source === 'feishu' &&
@@ -1650,121 +2582,34 @@ export class OttoServer {
       );
     }
 
-    // mock 模式（无 core / 无 key）：占位回声，验证收发链路。
+    // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock
+    if (!this.shouldMock() && this.modelInfos().every((model) => !model.enabled)) {
+      this.store.publish(sessionId, {
+        type: 'error',
+        payload: {
+          sessionId,
+          code: 'model_not_configured',
+          message: '请先在设置中绑定个人 API，再开始对话。',
+        },
+      });
+      this.store.setStatus(sessionId, 'error');
+      return;
+    }
+
     if (this.shouldMock()) {
       await this.mockEcho(sessionId);
       return;
     }
 
-    // 实装路径：首次 send 时懒构建并 attach runtime（包 otto-core）。
     const runtime = await this.ensureRuntime(sessionId);
     if (!runtime) {
-      // 初始化失败（如鉴权未配）：已在 ensureRuntime 内发过 error 帧，这里收口。
       this.store.setStatus(sessionId, 'idle');
       return;
     }
-    // core 驱动一轮，流式事件由 runtime 内部 publish 广播。
     await runtime.run(content, source);
-  }
 
-  /**
-   * 斜杠命令宿主（src/commands/ 的窄依赖面）：全部用闭包桥接到 server 既有
-   * 私有能力（statsSnapshot / mcpServerInfos / …），命令层不反向持有 OttoServer。
-   */
-  private commandHost(): CommandHost {
-    return {
-      store: this.store,
-      serverVersion: SERVER_VERSION,
-      protocolVersion: PROTOCOL_VERSION,
-      uptimeMs: () => Date.now() - this.startedAt,
-      cwd: () => resolveDefaultCwd(),
-      getConfig: (sessionId) =>
-        this.store.getRuntime(sessionId)?.getConfig?.() as
-          | CoreConfig
-          | undefined,
-      currentModel: () => this.currentModel(),
-      modelInfos: () => this.modelInfos(),
-      statsSnapshot: () => this.statsSnapshot(),
-      mcpServerInfos: () => this.mcpServerInfos(),
-      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
-    };
-  }
-
-  /**
-   * 斜杠命令入口（run_slash_command 帧）：路由到 src/commands/ 的注册表执行，
-   * 结果以 slash_command_result 回给**发起连接**（与 get_stats 等查询帧一致，
-   * 不广播——命令回执只属于发起者）。
-   *
-   * 命令结果**有意不落库**：它是「即时查询回执」而非会话内容，落库会污染
-   * 历史/导出与模型上下文。因此刷新或切换会话后气泡消失是设计行为，不是 bug
-   * （renderer 以 ephemeral 系统气泡渲染，见 useOttoStore 的 slash_command_result 分支）。
-   *
-   * submit_prompt 形态（如 /init）先查会话忙闲（忙则用回执通道诚实拒绝），
-   * 再回执行回执并把 prompt 当用户消息走 handleSendUserMessage——复用其
-   * busy 兜底闸门 / mock 降级 / runtime 懒构建，不另起炉灶。
-   */
-  private async handleRunSlashCommand(
-    conn: ClientConn,
-    msg: Extract<ClientToServer, { type: 'run_slash_command' }>,
-  ): Promise<void> {
-    const { sessionId, name, args } = msg.payload;
-    if (!this.store.getSession(sessionId)) {
-      return this.send(
-        conn.socket,
-        errorFrame(sessionId, 'no_session', '会话不存在'),
-      );
-    }
-    const outcome = await executeSlashCommand(
-      this.commandHost(),
-      sessionId,
-      name,
-      args ?? '',
-    );
-    if (outcome.kind === 'submit_prompt') {
-      // 先查忙闲再发「已提交」回执：否则会话 thinking/streaming 时用户先收到
-      // 成功回执、紧接着又收到 busy 错误帧，两条消息互相矛盾（实际任务被拒）。
-      // handleSendUserMessage 内部的 busy 闸门保留作兜底（覆盖此检查后的竞态窗口）。
-      const session = this.store.getSession(sessionId);
-      if (
-        session &&
-        (session.status === 'thinking' || session.status === 'streaming')
-      ) {
-        this.send(conn.socket, {
-          type: 'slash_command_result',
-          payload: {
-            sessionId,
-            name,
-            args,
-            ok: false,
-            markdown: `该会话正在生成回复，/${name} 未提交。请稍候或先取消，再重试。`,
-          },
-        });
-        return;
-      }
-      this.send(conn.socket, {
-        type: 'slash_command_result',
-        payload: { sessionId, name, args, ok: true, markdown: outcome.note },
-      });
-      await this.handleSendUserMessage(conn, {
-        type: 'send_user_message',
-        payload: {
-          sessionId,
-          content: [{ type: 'text', value: outcome.content }],
-          source: 'local',
-        },
-      });
-      return;
-    }
-    this.send(conn.socket, {
-      type: 'slash_command_result',
-      payload: {
-        sessionId,
-        name,
-        args,
-        ok: outcome.ok,
-        markdown: outcome.markdown,
-      },
-    });
+    this.captureKnowledgeAsync(sessionId);
+    this.drainQueuedMessages(sessionId, conn);
   }
 
   /**
@@ -1833,6 +2678,10 @@ export class OttoServer {
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(this.store, sessionId, model);
+        runtime.setAuthorizationMode?.(
+          this.sessionAuthorizationModes.get(sessionId) ??
+            this.globalAuthorizationMode,
+        );
         this.store.attachRuntime(sessionId, runtime);
         return runtime;
       } catch (e) {
@@ -1853,6 +2702,76 @@ export class OttoServer {
     })();
     this.runtimeInit.set(sessionId, task);
     return task;
+  }
+
+  /**
+   * 异步自动沉淀知识库（fire-and-forget，不使用 await 避免阻塞主流程）。
+   * 从会话历史构建 SimpleMessage[]，喂给 KnowledgeCapture 做判断和提取。
+   * 沉淀失败静默忽略——知识库是增值功能，不能拖慢/阻断对话。
+   */
+  private captureKnowledgeAsync(sessionId: string): void {
+    setTimeout(async () => {
+      try {
+        const history = this.store.getHistory(sessionId);
+        if (!history || history.length === 0) return;
+
+        const messages: SimpleMessage[] = history.map((msg) => {
+          const text = plainTextOf(msg.content);
+          const role =
+            msg.role === 'user'
+              ? 'user'
+              : msg.role === 'assistant'
+                ? 'assistant'
+                : 'tool';
+          // tool 结果：判断是否有成功标志（非 error 开头的文本）
+          const toolSuccess =
+            role === 'tool' && !/^(error|fail|exception)/i.test(text);
+          return {
+            role: role as 'user' | 'assistant' | 'tool',
+            text,
+            ...(role === 'tool' ? { toolSuccess } : {}),
+          };
+        });
+
+        // 用同一个 knowledgeStore 实例，确保去重跨会话生效
+        const capture = new KnowledgeCapture(this.knowledgeStore);
+        if (!capture.shouldCapture(messages)) return;
+
+        const candidates = capture.extractCandidates(messages, sessionId);
+        if (candidates.length === 0) return;
+
+        const result = await capture.ingestCandidates(candidates);
+
+        // 广播 knowledge_activity 帧通知桌面端
+        if (result.written > 0) {
+          const entries = await this.knowledgeStore.list(5);
+          this.broadcastAll({
+            type: 'knowledge_activity',
+            payload: {
+              action: 'auto_capture',
+              sessionId,
+              written: result.written,
+              skippedDuplicate: result.skippedDuplicate,
+              skippedSanitized: result.skippedSanitized,
+              skippedLowConfidence: result.skippedLowConfidence,
+              recent: entries,
+            },
+          });
+        }
+
+        console.log(
+          `[Server] Knowledge capture for ${sessionId}: written=${result.written} ` +
+            `dup=${result.skippedDuplicate} sanitized=${result.skippedSanitized} ` +
+            `lowConf=${result.skippedLowConfidence}`,
+        );
+      } catch (e) {
+        // 沉淀失败静默忽略，不阻断对话
+        console.warn(
+          '[Server] Knowledge capture failed (non-fatal):',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }, 100);
   }
 
   /** mock：core 未接时回一条占位流式回复，验证收发链路。实装后删。 */
@@ -1922,6 +2841,139 @@ export class OttoServer {
       socket.send(JSON.stringify(frame));
     }
   }
+
+  // ── Personal Knowledge Base handlers ────────────────────────────────────────────────────
+
+  private knowledgeStore = new LocalKnowledgeStore();
+
+  private async handleGetKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.list(msg.payload.limit ?? 50);
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'list' },
+      });
+    } catch (e) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          '',
+          'knowledge_error',
+          `knowledge load failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+  }
+
+  private async handleSearchKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'search_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entries = await this.knowledgeStore.search(
+        msg.payload.query,
+        msg.payload.category,
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_data',
+        payload: { entries, action: 'search', query: msg.payload.query },
+      });
+    } catch (e) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          '',
+          'knowledge_error',
+          `knowledge search failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+  }
+
+  private async handleAddKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'add_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const entry = await this.knowledgeStore.add(
+        msg.payload.category ?? 'general',
+        msg.payload.content,
+        msg.payload.tags ?? [],
+      );
+      this.send(conn.socket, {
+        type: 'knowledge_added',
+        payload: { entry },
+      });
+    } catch (e) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          '',
+          'knowledge_error',
+          `knowledge add failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+  }
+
+  private async handleRemoveKnowledge(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'remove_knowledge' }>,
+  ): Promise<void> {
+    try {
+      const removed = await this.knowledgeStore.remove(msg.payload.id);
+      if (!removed) {
+        this.send(
+          conn.socket,
+          errorFrame(
+            '',
+            'knowledge_error',
+            `entry ${msg.payload.id} not found`,
+          ),
+        );
+        return;
+      }
+      this.send(conn.socket, {
+        type: 'knowledge_removed',
+        payload: { id: msg.payload.id },
+      });
+    } catch (e) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          '',
+          'knowledge_error',
+          `knowledge remove failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+  }
+
+  // ── Message queue (PR 2: busy 时排队，turn 完成后 drain) ──
+
+  private readonly messageQueues = new Map<string, QueuedMessage[]>();
+
+  private getOrCreateQueue(sessionId: string): QueuedMessage[] {
+    let q = this.messageQueues.get(sessionId);
+    if (!q) { q = []; this.messageQueues.set(sessionId, q); }
+    return q;
+  }
+
+  private drainQueuedMessages(sessionId: string, conn: ClientConn): void {
+    const queue = this.messageQueues.get(sessionId);
+    if (!queue || queue.length === 0) return;
+    const next = queue.shift()!;
+    if (queue.length === 0) this.messageQueues.delete(sessionId);
+    // fire-and-forget: 下一轮不阻塞当前返回
+    setImmediate(() => {
+      this.handleSendUserMessageRaw(
+        sessionId, conn, next.content, next.source, next.clientMessageId);
+    });
+  }
+
 }
 
 // ── helpers ──
@@ -1938,7 +2990,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
-/** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此，超限即恶意/误用）。 */
+/** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此）。 */
 function readJsonBody(
   req: IncomingMessage,
   maxBytes = 64 * 1024,
@@ -1946,14 +2998,14 @@ function readJsonBody(
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => {
-      size += c.length;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
       if (size > maxBytes) {
         reject(new Error('请求体过大'));
         req.destroy();
         return;
       }
-      chunks.push(c);
+      chunks.push(chunk);
     });
     req.on('end', () => {
       if (chunks.length === 0) return resolve({});
@@ -1971,23 +3023,29 @@ function readJsonBody(
 function parseFeishuConfigSaveRequest(
   body: unknown,
 ): FeishuConfigSaveRequest | string {
-  if (typeof body !== 'object' || body === null) return '请求体必须是 JSON 对象';
-  const b = body as Record<string, unknown>;
-  const appId = typeof b.appId === 'string' ? b.appId.trim() : '';
+  if (typeof body !== 'object' || body === null)
+    return '请求体必须是 JSON 对象';
+  const input = body as Record<string, unknown>;
+  const appId = typeof input.appId === 'string' ? input.appId.trim() : '';
   if (!appId) return '请填写 App ID（形如 cli_xxx）。';
-  const domain = b.domain;
+  const domain = input.domain;
   if (domain !== 'feishu' && domain !== 'lark') {
     return 'domain 必须是 feishu（飞书）或 lark（Lark 国际版）。';
   }
   const appSecret =
-    typeof b.appSecret === 'string' && b.appSecret.trim()
-      ? b.appSecret.trim()
+    typeof input.appSecret === 'string' && input.appSecret.trim()
+      ? input.appSecret.trim()
       : undefined;
   const ownerOpenId =
-    typeof b.ownerOpenId === 'string' && b.ownerOpenId.trim()
-      ? b.ownerOpenId.trim()
+    typeof input.ownerOpenId === 'string' && input.ownerOpenId.trim()
+      ? input.ownerOpenId.trim()
       : undefined;
-  return { appId, domain, ...(appSecret ? { appSecret } : {}), ...(ownerOpenId ? { ownerOpenId } : {}) };
+  return {
+    appId,
+    domain,
+    ...(appSecret ? { appSecret } : {}),
+    ...(ownerOpenId ? { ownerOpenId } : {}),
+  };
 }
 /** core WorkflowAgentRecord → 协议 WorkflowAgentSummary（裁掉 prompt/recentToolCalls 等大字段）。 */
 function toWorkflowAgentSummary(a: WorkflowAgentRecord): WorkflowAgentSummary {
@@ -2028,7 +3086,8 @@ async function loadExtensionSummariesFromDir(
       if (typeof parsed.name === 'string') {
         summaries.push({
           name: parsed.name,
-          version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
+          version:
+            typeof parsed.version === 'string' ? parsed.version : '0.0.0',
           path: extensionDir,
         });
       }

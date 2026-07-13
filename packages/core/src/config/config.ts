@@ -51,6 +51,7 @@ import { PatchTool } from '../tools/patch.js';
 import { BatchTool } from '../tools/batch.js';
 import { AskUserQuestionTool } from '../tools/ask-user-question.js';
 import { LocalTimeTool } from '../tools/local-time.js';
+import { LocalScheduleTool } from '../tools/local-schedule.js';
 import { LarkCliTool } from '../tools/lark-cli.js';
 // —— Otto Enterprise 能力工具（桌面/文档/数据/诊断/浏览器/知识沉淀）——
 import { DesktopAutomationTool } from '../tools/desktop-automation.js';
@@ -203,8 +204,9 @@ export type FlashFallbackHandler = (
  * - bing：抓取 cn.bing.com 结果页，免 key、国内开箱可用（默认）
  * - bocha：博查 Web Search API，需要 API key
  * - gemini：Gemini API googleSearch grounding（海外可用）
+ * - volcengine：火山方舟 Responses API 的内置 Web Search（需 API key + 豆包模型/接入点）
  */
-export type WebSearchProvider = 'bing' | 'bocha' | 'gemini';
+export type WebSearchProvider = 'bing' | 'bocha' | 'gemini' | 'volcengine';
 
 export interface ConfigParameters {
   sessionId: string;
@@ -244,6 +246,10 @@ export interface ConfigParameters {
   searchProvider?: WebSearchProvider;
   /** bocha 等需要 key 的搜索后端的 API key；未配置时环境变量 OTTO_BOCHA_API_KEY 兜底 */
   searchApiKey?: string;
+  /** 搜索 API 完整地址；火山方舟默认 https://ark.cn-beijing.volces.com/api/v3/responses */
+  searchApiUrl?: string;
+  /** 负责执行搜索的模型 ID / 推理接入点 ID（火山方舟必填）。 */
+  searchModel?: string;
   cwd: string;
   fileDiscoveryService?: FileDiscoveryService;
   bugCommand?: BugCommandSettings;
@@ -325,8 +331,10 @@ export class Config {
   private readonly checkpointing: boolean;
   private readonly proxy: string | undefined;
   private readonly customProxyServerUrl: string | undefined;
-  private readonly searchProvider: WebSearchProvider | undefined;
-  private readonly searchApiKey: string | undefined;
+  private searchProvider: WebSearchProvider | undefined;
+  private searchApiKey: string | undefined;
+  private searchApiUrl: string | undefined;
+  private searchModel: string | undefined;
   private readonly cwd: string;
   private readonly bugCommand: BugCommandSettings | undefined;
   //private readonly model: string;
@@ -418,6 +426,8 @@ export class Config {
     this.customProxyServerUrl = params.customProxyServerUrl;
     this.searchProvider = params.searchProvider;
     this.searchApiKey = params.searchApiKey;
+    this.searchApiUrl = params.searchApiUrl;
+    this.searchModel = params.searchModel;
     this.fileDiscoveryService = params.fileDiscoveryService ?? null;
     this.bugCommand = params.bugCommand;
     //this.model = params.model;
@@ -1035,9 +1045,33 @@ export class Config {
     return this.searchProvider ?? 'bing';
   }
 
-  /** 搜索 API key（bocha 用）；settings 未配置时读环境变量 OTTO_BOCHA_API_KEY 兜底。 */
+  /** 搜索 API key；按 provider 分别支持 ARK_API_KEY / OTTO_BOCHA_API_KEY 环境变量。 */
   getSearchApiKey(): string | undefined {
-    return this.searchApiKey ?? process.env.OTTO_BOCHA_API_KEY ?? undefined;
+    if (this.searchApiKey) return this.searchApiKey;
+    return this.getSearchProvider() === 'volcengine'
+      ? process.env.ARK_API_KEY ?? undefined
+      : process.env.OTTO_BOCHA_API_KEY ?? undefined;
+  }
+
+  getSearchApiUrl(): string | undefined {
+    return this.searchApiUrl ?? process.env.OTTO_SEARCH_API_URL ?? undefined;
+  }
+
+  getSearchModel(): string | undefined {
+    return this.searchModel ?? process.env.OTTO_SEARCH_MODEL ?? undefined;
+  }
+
+  /** 桌面设置保存后热更新存活会话；WebSearchTool 每次执行都从 Config 读取。 */
+  setSearchConfig(config: {
+    provider: WebSearchProvider;
+    apiKey?: string;
+    apiUrl?: string;
+    model?: string;
+  }): void {
+    this.searchProvider = config.provider;
+    this.searchApiKey = config.apiKey;
+    this.searchApiUrl = config.apiUrl;
+    this.searchModel = config.model;
   }
 
   getWorkingDir(): string {
@@ -1233,6 +1267,7 @@ export class Config {
     }
 
     registerCoreTool(LocalTimeTool, this);
+    registerCoreTool(LocalScheduleTool, this);
     registerCoreTool(LarkCliTool, this);
 
     // —— Otto Enterprise 九大能力：把「AI 办公同事」落到实处 ——

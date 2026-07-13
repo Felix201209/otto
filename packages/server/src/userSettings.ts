@@ -21,13 +21,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { MCPServerConfig } from "otto-core";
+import type { MCPServerConfig, WebSearchProvider } from "otto-core";
 
 const SETTINGS_DIR_NAME = ".otto-user";
 const SETTINGS_FILE = "settings.json";
 
-export function userSettingsFilePath(): string {
-  return path.join(os.homedir(), SETTINGS_DIR_NAME, SETTINGS_FILE);
+export function userSettingsFilePath(homeDir = os.homedir()): string {
+  return path.join(homeDir, SETTINGS_DIR_NAME, SETTINGS_FILE);
 }
 
 /** 本文件关心的字段子集（其余字段读时原样保留在 raw 里，写回不丢）。 */
@@ -35,6 +35,13 @@ export interface UserSettingsSubset {
   healthyUse?: boolean;
   preferredLanguage?: string;
   mcpServers?: Record<string, MCPServerConfig>;
+  /** 桌面端全局自动授权；仅放行非高危操作。 */
+  authorizationMode?: "manual" | "auto";
+  searchProvider?: WebSearchProvider;
+  searchApiUrl?: string;
+  searchModel?: string;
+  /** 仅用于读取历史 CLI 明文配置；桌面端新保存的密钥不会写入这里。 */
+  searchApiKey?: string;
 }
 
 /** 极简 JSON 注释剥离（与 customModels.ts 同一套宽容策略）。 */
@@ -47,8 +54,8 @@ function stripJsonCommentsLoose(input: string): string {
   return out;
 }
 
-function readRaw(): Record<string, unknown> {
-  const filePath = userSettingsFilePath();
+function readRaw(homeDir = os.homedir()): Record<string, unknown> {
+  const filePath = userSettingsFilePath(homeDir);
   try {
     if (!fs.existsSync(filePath)) return {};
     const text = fs.readFileSync(filePath, "utf-8");
@@ -66,8 +73,9 @@ function readRaw(): Record<string, unknown> {
 }
 
 /** 读取本文件关心的字段子集（缺省安全值：healthyUse 默认 true，与 CLI 一致）。 */
-export function loadUserSettingsSubset(): UserSettingsSubset {
-  const raw = readRaw();
+export function loadUserSettingsSubset(homeDir = os.homedir()): UserSettingsSubset {
+  const raw = readRaw(homeDir);
+  const searchProvider = raw["searchProvider"];
   return {
     healthyUse: typeof raw["healthyUse"] === "boolean" ? raw["healthyUse"] as boolean : true,
     preferredLanguage:
@@ -78,17 +86,40 @@ export function loadUserSettingsSubset(): UserSettingsSubset {
       raw["mcpServers"] && typeof raw["mcpServers"] === "object"
         ? (raw["mcpServers"] as Record<string, MCPServerConfig>)
         : undefined,
+    authorizationMode: raw["authorizationMode"] === "auto" ? "auto" : "manual",
+    searchProvider:
+      searchProvider === "bing" ||
+      searchProvider === "bocha" ||
+      searchProvider === "gemini" ||
+      searchProvider === "volcengine"
+        ? searchProvider
+        : undefined,
+    searchApiUrl:
+      typeof raw["searchApiUrl"] === "string"
+        ? raw["searchApiUrl"] as string
+        : undefined,
+    searchModel:
+      typeof raw["searchModel"] === "string"
+        ? raw["searchModel"] as string
+        : undefined,
+    searchApiKey:
+      typeof raw["searchApiKey"] === "string"
+        ? raw["searchApiKey"] as string
+        : undefined,
   };
 }
 
 /**
  * 合并写回一个字段（保留文件里其余字段不动）。原子写：.tmp -> rename。
  */
-export function patchUserSettings(patch: Partial<UserSettingsSubset>): void {
-  const filePath = userSettingsFilePath();
+export function patchUserSettings(
+  patch: Partial<UserSettingsSubset>,
+  homeDir = os.homedir(),
+): void {
+  const filePath = userSettingsFilePath(homeDir);
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const raw = readRaw();
+  const raw = readRaw(homeDir);
   const next = { ...raw, ...patch };
   const tmp = filePath + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf-8");

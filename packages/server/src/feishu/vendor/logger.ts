@@ -1,2 +1,1 @@
-// Re-export from CLI package dist (Windows-compatible replacement for symlink)
-export * from 'otto-cli/dist/src/services/feishu/logger.js';
+../../../../cli/src/services/feishu/logger.ts

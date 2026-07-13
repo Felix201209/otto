@@ -182,6 +182,23 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.messages['s1'].map((m) => m.id)).toEqual(['h1', 'h2']);
   });
 
+  it('history：server 返回截断历史时保留更完整的本地缓存并对账同 id 消息', () => {
+    const { view, push } = setup();
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h1', content: [{ type: 'text', value: 'local-old' }] }) } });
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h2' }) } });
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'h3' }) } });
+    push({
+      type: 'history',
+      payload: {
+        sessionId: 's1',
+        messages: [makeMsg({ id: 'h1', content: [{ type: 'text', value: 'server-new' }] })],
+      },
+    });
+    const messages = view.result.current.state.messages['s1'];
+    expect(messages.map((message) => message.id)).toEqual(['h1', 'h2', 'h3']);
+    expect(messages[0].content[0]).toEqual({ type: 'text', value: 'server-new' });
+  });
+
   it('message_start：append + 相同 id 覆盖（流式占位→定稿对账）', () => {
     const { view, push } = setup();
     push({ type: 'message_start', payload: { message: makeMsg({ id: 'm1', content: [{ type: 'text', value: 'v1' }] }) } });
@@ -254,6 +271,45 @@ describe('applyFrame 各帧分支', () => {
     expect(m.isStreaming).toBe(false);
     expect(m.isReasoning).toBe(false);
     expect(m.tokenUsage).toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
+  });
+
+  it('chat_complete(cancelled)：工具执行阶段取消也清掉 isProcessingTools，停止按钮不再卡住', () => {
+    const { view, push } = setup();
+    push({
+      type: 'message_start',
+      payload: {
+        message: makeMsg({
+          id: 'm1',
+          isStreaming: false,
+          isProcessingTools: true,
+          associatedToolCalls: [
+            {
+              id: 't1',
+              toolName: 'edit',
+              parameters: {},
+              status: 'executing' as never,
+              startTime: Date.now() - 20,
+            },
+          ],
+        }),
+      },
+    });
+
+    push({
+      type: 'chat_complete',
+      payload: {
+        sessionId: 's1',
+        messageId: 'm1',
+        finishReason: 'cancelled',
+        text: '已生成的部分',
+      },
+    });
+
+    const m = view.result.current.state.messages['s1'][0];
+    expect(m.isStreaming).toBe(false);
+    expect(m.isReasoning).toBe(false);
+    expect(m.isProcessingTools).toBe(false);
+    expect(m.associatedToolCalls?.[0]?.status).toBe('cancelled');
   });
 
   it('chat_complete：无 tokenUsage 则保留旧值', () => {
@@ -361,6 +417,34 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.sessions['s1'].status).toBe('thinking');
   });
 
+  it.each(['idle', 'error'] as const)(
+    'session_status(%s)：权威终态清理历史里残留的工具处理中标记',
+    (status) => {
+      const { view, push } = setup();
+      push({
+        type: 'session_upsert',
+        payload: { session: makeSession({ sessionId: 's1', status: 'streaming' }) },
+      });
+      push({
+        type: 'message_start',
+        payload: {
+          message: makeMsg({
+            id: 'm1',
+            isStreaming: true,
+            isProcessingTools: true,
+          }),
+        },
+      });
+
+      push({ type: 'session_status', payload: { sessionId: 's1', status } });
+
+      const message = view.result.current.state.messages['s1'][0];
+      expect(message.isStreaming).toBe(false);
+      expect(message.isProcessingTools).toBe(false);
+      expect(view.result.current.state.sessions['s1'].status).toBe(status);
+    },
+  );
+
   it('session_status：session 不存在时原样返回', () => {
     const { view, push } = setup();
     const before = view.result.current.state;
@@ -379,6 +463,32 @@ describe('applyFrame 各帧分支', () => {
     });
     expect(view.result.current.state.models).toHaveLength(1);
     expect(view.result.current.state.currentModel).toBe('m');
+  });
+
+  it('models_list：当前模型被服务端标记不可用时清除旧选择', () => {
+    const { view, push } = setup();
+    push({
+      type: 'models_list',
+      payload: {
+        models: [{ id: 'm', displayName: 'M', provider: 'otto' }],
+        current: 'm',
+      },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          {
+            id: 'm',
+            displayName: 'M',
+            provider: 'otto',
+            managed: true,
+            enabled: false,
+          },
+        ],
+      },
+    });
+    expect(view.result.current.state.currentModel).toBeNull();
   });
 
   it('error：写 lastError', () => {

@@ -41,7 +41,8 @@ export class PptOutlineTool extends BaseTool<PptOutlineToolParams, ToolResult> {
 - clear: 清除当前大纲并退出PPT模式
 
 在用户与AI交互过程中，通过此工具不断迭代优化大纲内容。
-当用户确认大纲后，使用 ppt_generate 工具提交并生成PPT。`,
+outline 应包含可直接渲染的逐页 Markdown 内容，每页之间使用独占一行的 --- 分隔。
+当用户确认内容后，使用 ppt_generate 工具在本地生成 .pptx 文件。`,
       Icon.Pencil,
       {
         type: Type.OBJECT,
@@ -61,7 +62,7 @@ export class PptOutlineTool extends BaseTool<PptOutlineToolParams, ToolResult> {
           },
           outline: {
             type: Type.STRING,
-            description: '完整的大纲内容文本，包含每一页的详细内容描述',
+            description: '可直接渲染的完整逐页 Markdown 内容；每页之间用独占一行的 --- 分隔',
           },
         },
         required: ['action'],
@@ -132,7 +133,8 @@ ${preview}
 💡 提示：
 - 使用 ppt_outline action=update 来迭代修改大纲
 - 使用 ppt_outline action=view 来查看当前大纲
-- 确认后使用 ppt_generate 提交并生成PPT`;
+- 每页之间使用独占一行的 --- 分隔
+- 确认后使用 ppt_generate 在本地生成 PPTX 文件`;
 
         return {
           llmContent: fullOutput,

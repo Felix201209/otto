@@ -12,9 +12,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor, act } from '@testing-library/react';
 import type { ModelInfo } from 'otto-server';
-import { Composer } from './Composer.js';
+import { Composer, insertComposerDraft } from './Composer.js';
+import * as transport from '../transport.js';
 
 /** 造 n 个模型（跨两个 provider），displayName 形如「模型-01」。 */
 function makeModels(n: number): ModelInfo[] {
@@ -44,6 +45,30 @@ function openMenu() {
   return screen.getByRole('listbox', { name: '选择模型' });
 }
 
+describe('专家提示词草稿', () => {
+  it('填入后不自动发送，用户可修改再发送', () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="expert-session"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+
+    act(() => insertComposerDraft('请作为「PPT 创作专家」协助我'));
+    expect(textarea.value).toContain('PPT 创作专家');
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.change(textarea, { target: { value: '帮我做一份产品发布会 PPT' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledWith('帮我做一份产品发布会 PPT', []);
+  });
+});
+
 describe('模型菜单搜索框显隐（阈值 8）', () => {
   it('模型数 ≤ 8：不显示搜索框，平铺全部', () => {
     renderComposer(makeModels(8), 'm0');
@@ -57,6 +82,40 @@ describe('模型菜单搜索框显隐（阈值 8）', () => {
     openMenu();
     expect(screen.getByLabelText('搜索模型')).toBeTruthy();
     expect(screen.getAllByRole('option')).toHaveLength(9);
+  });
+});
+
+describe('旧企业模型显示迁移', () => {
+  it('会话残留的 otto 模型不存在时，显示首个可用的个人 API 模型', () => {
+    renderComposer(makeModels(2), 'otto:deepseek');
+    expect(document.querySelector('.otto-modelpill')?.textContent).toContain('模型-01');
+    expect(document.querySelector('.otto-modelpill')?.textContent).not.toContain('otto:deepseek');
+  });
+});
+
+describe('执行授权菜单', () => {
+  it('可在手动、当前会话自动、所有会话自动之间切换并发送真实策略帧', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.clear();
+    renderComposer([], null);
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
+    expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }));
+    expect(send).toHaveBeenLastCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'session' },
+    });
+    expect(screen.getByRole('button', { name: '执行授权：当前会话自动' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：当前会话自动' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（所有会话）/ }));
+    expect(localStorage.getItem('otto.authorization.global-auto')).toBe('1');
+    expect(send).toHaveBeenLastCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
+    });
   });
 });
 
@@ -183,6 +242,28 @@ describe('每会话草稿隔离', () => {
   });
 });
 
+describe('停止生成按钮', () => {
+  it('busy 时保持可点击并触发 onCancel', () => {
+    const onCancel = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        busy
+        onSend={vi.fn()}
+        onCancel={onCancel}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    const stop = screen.getByRole('button', { name: '停止生成' });
+    expect((stop as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(stop);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('模型菜单 provider 分组与勾选', () => {
   it('多 provider 时出现分组标题', () => {
     renderComposer(makeModels(10), 'm0');
@@ -202,5 +283,38 @@ describe('模型菜单 provider 分组与勾选', () => {
     expect(active).toBeTruthy();
     expect(active?.getAttribute('aria-selected')).toBe('true');
     expect(active?.textContent).toContain('模型-04'); // m3 → 第 4 个
+  });
+});
+
+describe('语音录音配件', () => {
+  it('未启用语音配置时按钮仍可点击，并立即进入波形计时录音条', async () => {
+    const start = vi.fn();
+    class FakeMediaRecorder {
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(_stream: MediaStream) {}
+      start = start;
+      stop = vi.fn();
+    }
+    Object.defineProperty(window, 'MediaRecorder', { value: FakeMediaRecorder, configurable: true });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })) },
+      configurable: true,
+    });
+    (window as unknown as { otto: unknown }).otto = {
+      voiceGetConfig: async () => ({ enabled: false }),
+      voiceTranscribe: vi.fn(),
+    };
+    render(
+      <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
+    );
+    const button = await screen.findByRole('button', { name: '语音输入' });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('group', { name: '语音录音中' })).toBeTruthy();
+    expect(screen.getByLabelText('录音时长').textContent).toBe('0:00');
+    expect(screen.getByRole('button', { name: '停止录音' })).toBeTruthy();
   });
 });

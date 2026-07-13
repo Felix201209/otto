@@ -23,6 +23,7 @@ import * as path from 'node:path';
 import { WebSocket } from 'ws';
 import { OttoServer, type RuntimeFactory } from './server.js';
 import { InMemorySessionStore } from './sessions.js';
+import { ProductWorkspaceStore } from './productWorkspaceStore.js';
 import type { SessionRuntime } from './sessions.js';
 import type {
   ApiResponse,
@@ -112,6 +113,364 @@ beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-server-'));
   vi.stubEnv('HOME', tmpHome);
   vi.stubEnv('USERPROFILE', tmpHome);
+  vi.stubEnv('OTTO_USER_DIR', path.join(tmpHome, 'user'));
+});
+
+describe('OttoServer WS（v1.7 产品工作区）', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    const productWorkspaceStore = new ProductWorkspaceStore({
+      rootDir: path.join(tmpHome, 'workspace'),
+    });
+    vi.stubEnv('OTTO_SCHEDULE_FILE', path.join(tmpHome, 'schedules.json'));
+    server = new OttoServer({
+      port: 0,
+      mock: true,
+      store: new InMemorySessionStore(),
+      productWorkspaceStore,
+    });
+    baseUrl = await startServer(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  it('内部测试阶段切到企业视图后仍返回成员自己的 BYOK 模型', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({ type: 'get_product_workspace', payload: {} });
+    let workspace = await client.waitFor((f) => f.type === 'product_workspace');
+    if (workspace.type !== 'product_workspace') throw new Error('unreachable');
+    expect(workspace.payload.context.edition).toBe('personal');
+
+    client.send({
+      type: 'save_custom_model',
+      payload: {
+        provider: 'openai',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'secret',
+        modelId: 'private-model',
+        displayName: '内部个人模型',
+      },
+    });
+    await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
+    );
+
+    client.send({
+      type: 'configure_enterprise',
+      payload: { managerName: '陈晨', companyName: '北辰科技', industry: '企业软件' },
+    });
+    workspace = await client.waitFor(
+      (f) => f.type === 'product_workspace' && f.payload.context.edition === 'enterprise',
+    );
+    if (workspace.type !== 'product_workspace') throw new Error('unreachable');
+    expect(workspace.payload.context.role).toBe('company_owner');
+
+    client.send({ type: 'get_models', payload: {} });
+    const models = await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
+    );
+    if (models.type !== 'models_list') throw new Error('unreachable');
+    expect(models.payload.models).toHaveLength(1);
+    expect(models.payload.models[0]).toMatchObject({
+      modelId: 'private-model',
+      source: 'byok',
+      enabled: true,
+    });
+    expect(models.payload.models[0].managed).not.toBe(true);
+    expect(models.payload.current).toBe(models.payload.models[0].id);
+    client.close();
+  });
+
+  it('企业视图下仍允许内部成员保存和删除个人 BYOK 模型', async () => {
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+    product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'save_custom_model',
+      payload: {
+        provider: 'openai',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'secret',
+        modelId: 'private-model',
+      },
+    });
+    const saved = await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        f.payload.models.some((model) => model.modelId === 'private-model'),
+    );
+    if (saved.type !== 'models_list') throw new Error('unreachable');
+    const savedId = saved.payload.models.find(
+      (model) => model.modelId === 'private-model',
+    )!.id;
+
+    client.send({ type: 'delete_custom_model', payload: { id: savedId } });
+    const deleted = await client.waitFor(
+      (f) =>
+        f.type === 'models_list' &&
+        !f.payload.models.some((model) => model.id === savedId),
+    );
+    expect(deleted.type).toBe('models_list');
+    client.close();
+  });
+
+  it('未绑定个人 API 时明确报错，不创建空白 assistant 或回退 mock', async () => {
+    // 该用例验证真实内部测试运行态；describe 默认 mock 仅用于其余传输层用例。
+    (server as unknown as { mock: boolean }).mock = false;
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+    product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const created = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    if (created.type !== 'session_upsert') throw new Error('unreachable');
+    const sessionId = created.payload.session.sessionId;
+    client.send({ type: 'subscribe', payload: { sessionId } });
+    await client.waitFor(
+      (f) => f.type === 'history' && f.payload.sessionId === sessionId,
+    );
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId,
+        content: [{ type: 'text', value: '你能做什么' }],
+        source: 'local',
+      },
+    });
+    const error = await client.waitFor(
+      (f) => f.type === 'error' && f.payload.code === 'model_not_configured',
+    );
+    if (error.type !== 'error') throw new Error('unreachable');
+    expect(error.payload.message).toBe('请先在设置中绑定个人 API，再开始对话。');
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'message_start' && frame.payload.message.role === 'assistant',
+      ),
+    ).toBe(false);
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'chat_chunk' && frame.payload.delta.includes('mock'),
+      ),
+    ).toBe(false);
+    client.close();
+  });
+
+  it('用户和 Otto 共用同一份日程仓库，创建后可按日期读取', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_schedule',
+      payload: {
+        title: '竞品调研复盘',
+        startAt: '2026-07-12T09:30:00+08:00',
+        reason: '报告完成后复盘',
+      },
+    });
+    const created = await client.waitFor(
+      (f) => f.type === 'schedules_list' && f.payload.schedules.length === 1,
+    );
+    if (created.type !== 'schedules_list') throw new Error('unreachable');
+    expect(created.payload.schedules[0]).toMatchObject({
+      title: '竞品调研复盘',
+      source: 'user',
+    });
+
+    client.send({
+      type: 'get_schedules',
+      payload: { date: '2026-07-12', timezone: 'Asia/Shanghai' },
+    });
+    const day = await client.waitFor(
+      (f) => f.type === 'schedules_list' && f.payload.date === '2026-07-12',
+    );
+    if (day.type !== 'schedules_list') throw new Error('unreachable');
+    expect(day.payload.schedules).toHaveLength(1);
+    client.close();
+  });
+
+  it('CEO 可输入另一企业签发的总分公司链接并刷新组织树', async () => {
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+    const child = product.configureManager({ managerName: '子公司 CEO', companyName: '星海科技' });
+    const parent = new ProductWorkspaceStore({ rootDir: path.join(tmpHome, 'parent-workspace') });
+    const parentState = parent.configureManager({ managerName: '总公司 CEO', companyName: '北辰集团' });
+    const invite = parent.issueInvite({
+      kind: 'company_link',
+      direction: 'parent_invites_child',
+      targetCompanyId: child.context.companyId,
+    });
+
+    const client = await connectWs(baseUrl);
+    client.send({ type: 'accept_company_link', payload: { link: invite.link } });
+    const updated = await client.waitFor(
+      (frame) => frame.type === 'product_workspace'
+        && frame.payload.managerWorkspace?.organization.rootCompanyId === parentState.context.companyId,
+    );
+    if (updated.type !== 'product_workspace') throw new Error('unreachable');
+    expect(updated.payload.context).toMatchObject({ role: 'company_owner', companyId: child.context.companyId });
+    expect(updated.payload.managerWorkspace?.organization.companies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: child.context.companyId, parentCompanyId: parentState.context.companyId }),
+    ]));
+    client.close();
+  });
+
+  it('自动 Skill 候选可读取并仅在明确确认后写入用户 Skill 目录', async () => {
+    const userDir = path.join(tmpHome, 'user');
+    const pendingPath = path.join(userDir, 'memory', 'worklog', 'pending_skills.json');
+    const savedPath = path.join(userDir, 'skills', 'auto-report', 'SKILL.md');
+    fs.mkdirSync(path.dirname(pendingPath), { recursive: true });
+    fs.writeFileSync(pendingPath, JSON.stringify([{
+      id: 'candidate-1',
+      name: 'auto-report',
+      description: '重复报告流程',
+      triggerPatterns: ['整理数据'],
+      detectedPattern: '整理数据 → 生成报告',
+      occurrenceCount: 3,
+      sampleEntries: [],
+      skillContent: '---\nname: auto-report\ndescription: 重复报告流程\n---\n',
+      reason: '过去三天重复执行',
+      filePath: savedPath,
+    }]), 'utf8');
+
+    const client = await connectWs(baseUrl);
+    client.send({ type: 'get_pending_auto_skills', payload: {} });
+    const listed = await client.waitFor(
+      (frame) => frame.type === 'pending_auto_skills' && frame.payload.candidates.length === 1,
+    );
+    if (listed.type !== 'pending_auto_skills') throw new Error('unreachable');
+    expect(listed.payload.candidates[0]).toMatchObject({ id: 'candidate-1', occurrenceCount: 3 });
+    expect(listed.payload.candidates[0]).not.toHaveProperty('skillContent');
+    expect(fs.existsSync(savedPath)).toBe(false);
+
+    client.send({ type: 'confirm_pending_auto_skill', payload: { candidateId: 'candidate-1' } });
+    const confirmed = await client.waitFor(
+      (frame) => frame.type === 'pending_auto_skills'
+        && frame.payload.lastAction?.kind === 'confirmed',
+    );
+    if (confirmed.type !== 'pending_auto_skills') throw new Error('unreachable');
+    expect(confirmed.payload.candidates).toHaveLength(0);
+    expect(fs.readFileSync(savedPath, 'utf8')).toContain('name: auto-report');
+    client.close();
+  });
+
+  it('Agent profile 只传 id，并按个人/CEO/部门身份隔离', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: '发起会议', agentProfileId: 'meeting-initiator' },
+    });
+    const created = await client.waitFor((f) => f.type === 'session_upsert');
+    if (created.type !== 'session_upsert') throw new Error('unreachable');
+    expect(created.payload.session).toMatchObject({
+      agentProfileId: 'meeting-initiator',
+      agentProfileName: '会议发起 Agent',
+      productEdition: 'personal',
+    });
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '做一份演示', agentProfileId: 'ppt' },
+    });
+    const personalExpert = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'ppt',
+    );
+    if (personalExpert.type !== 'session_upsert') throw new Error('unreachable');
+    expect(personalExpert.payload.session).toMatchObject({
+      agentProfileName: 'PPT 创作专家',
+      productEdition: 'personal',
+      messageCount: 1,
+    });
+    client.send({
+      type: 'get_history',
+      payload: { sessionId: personalExpert.payload.session.sessionId },
+    });
+    const expertGreeting = await client.waitFor(
+      (f) => f.type === 'history'
+        && f.payload.sessionId === personalExpert.payload.session.sessionId,
+    );
+    if (expertGreeting.type !== 'history') throw new Error('unreachable');
+    expect(expertGreeting.payload.messages).toHaveLength(1);
+    expect(expertGreeting.payload.messages[0]).toMatchObject({
+      role: 'assistant',
+      source: 'local',
+      content: [{
+        type: 'text',
+        value: expect.stringContaining('Hello，我是 PPT 创作专家'),
+      }],
+    });
+    expect(expertGreeting.payload.messages[0].content[0]).toMatchObject({
+      value: expect.stringContaining('我可以帮你'),
+    });
+
+    client.send({
+      type: 'create_session',
+      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const personalDenied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('个人版'),
+    );
+    expect(personalDenied.type).toBe('error');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '战略', agentProfileId: 'ceo-strategy' },
+    });
+    const denied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('个人版'),
+    );
+    expect(denied.type).toBe('error');
+
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+    product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
+    client.send({
+      type: 'create_session',
+      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const ceo = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    if (ceo.type !== 'session_upsert') throw new Error('unreachable');
+    expect(ceo.payload.session.agentProfileName).toBe('CEO Agent');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '写品牌文案', agentProfileId: 'copy' },
+    });
+    const enterpriseExpert = await client.waitFor(
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'copy',
+    );
+    if (enterpriseExpert.type !== 'session_upsert') throw new Error('unreachable');
+    expect(enterpriseExpert.payload.session).toMatchObject({
+      agentProfileName: '品牌营销文案',
+      productEdition: 'enterprise',
+    });
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '个人 Otto', agentProfileId: 'otto-personal' },
+    });
+    const enterpriseDenied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('企业版'),
+    );
+    expect(enterpriseDenied.type).toBe('error');
+    client.close();
+  });
 });
 
 afterEach(() => {
@@ -576,7 +935,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     c.close();
   });
 
-  // ── P0-1（断开/停机取消）与 P0-4（busy 不落库）────────────────────────────
+  // ── P0-1（断开/停机取消）与 busy 消息排队 ────────────────────────────────
 
   /** 挂起式 fake runtime：run 设 thinking 后一直挂到 cancel/dispose，模拟长跑轮次。 */
   function makeHangingRuntime(): {
@@ -711,7 +1070,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(calls.dispose).toBe(1);
   });
 
-  it('会话正忙（thinking）再来一条 → error{busy}，不落库不广播', async () => {
+  it('会话正忙（thinking）再来一条 → 入队等待，不立即落库或重复运行', async () => {
     const { factory, calls } = makeHangingRuntime();
     server = new OttoServer({
       port: 0,
@@ -739,15 +1098,245 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
       type: 'send_user_message',
       payload: { sessionId: s.sessionId, content: [{ type: 'text', value: '第二条' }], source: 'local' },
     });
-    const errFrame = await c.waitFor(
-      (f) => f.type === 'error' && f.payload.code === 'busy',
+    const queuedFrame = await c.waitFor(
+      (f) => f.type === 'message_queued',
     );
-    expect(errFrame.type).toBe('error');
-    // 第二条没有落库：历史里只有第一条 user 消息；run 也只被驱动一次。
+    expect(queuedFrame).toMatchObject({
+      type: 'message_queued',
+      payload: { sessionId: s.sessionId, queuePosition: 1 },
+    });
+    // 第二条只进入内存队列，当前轮结束前不落库、不重复驱动 runtime。
     expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
     expect(calls.run).toBe(1);
     expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
     c.close();
+  });
+});
+
+describe('OttoServer set_model 真实生效语义', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+  let store: InMemorySessionStore;
+
+  beforeEach(async () => {
+    const dir = path.join(tmpHome, '.otto-user');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'custom-models.json'),
+      JSON.stringify({
+        models: [
+          {
+            displayName: '旧 GLM',
+            provider: 'openai',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'sk-old',
+            modelId: 'glm-old',
+            enabled: true,
+          },
+          {
+            displayName: 'GPT-5.6 sol',
+            provider: 'openai-responses',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            apiKey: '${CODEX_OAUTH}',
+            modelId: 'gpt-5.6-sol',
+            enabled: true,
+          },
+        ],
+      }),
+      'utf8',
+    );
+    store = new InMemorySessionStore();
+    server = new OttoServer({ port: 0, mock: true, store });
+    baseUrl = await startServer(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  async function modelIds(client: WsClient): Promise<{ oldId: string; targetId: string }> {
+    client.send({ type: 'get_models', payload: {} });
+    const frame = await client.waitFor((item) => item.type === 'models_list');
+    if (frame.type !== 'models_list') throw new Error('unreachable');
+    const oldId = frame.payload.models.find((item) => item.displayName === '旧 GLM')?.id;
+    const targetId = frame.payload.models.find(
+      (item) => item.displayName === 'GPT-5.6 sol',
+    )?.id;
+    if (!oldId || !targetId) throw new Error('测试模型未加载');
+    return { oldId, targetId };
+  }
+
+  function fakeRuntime(setModel: SessionRuntime['setModel']): SessionRuntime {
+    return {
+      async run() {},
+      cancel() {},
+      setModel,
+      resolveToolConfirmation() {},
+      getConfig() {
+        return undefined;
+      },
+      async dispose() {},
+    };
+  }
+
+  it('等待 live runtime 切换成功后，才更新会话模型并回报 current', async () => {
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    const { oldId, targetId } = await modelIds(client);
+    const session = store.createSession({ title: '切换模型', model: oldId });
+    let release!: () => void;
+    const setModel = vi.fn(
+      () => new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    store.attachRuntime(session.sessionId, fakeRuntime(setModel));
+
+    client.send({
+      type: 'set_model',
+      payload: { sessionId: session.sessionId, model: targetId },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(setModel).toHaveBeenCalledWith(targetId);
+    expect(store.getSession(session.sessionId)?.model).toBe(oldId);
+    expect(
+      client.frames.some(
+        (frame) =>
+          frame.type === 'models_list' && frame.payload.current === targetId,
+      ),
+    ).toBe(false);
+
+    release();
+    await client.waitFor(
+      (frame) =>
+        frame.type === 'models_list' && frame.payload.current === targetId,
+    );
+    expect(store.getSession(session.sessionId)?.model).toBe(targetId);
+    client.close();
+  });
+
+  it('live runtime 切换失败时保留旧模型，并返回明确错误', async () => {
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    const { oldId, targetId } = await modelIds(client);
+    const session = store.createSession({ title: '切换失败', model: oldId });
+    store.attachRuntime(
+      session.sessionId,
+      fakeRuntime(async () => {
+        throw new Error('OAuth 鉴权失败');
+      }),
+    );
+
+    client.send({
+      type: 'set_model',
+      payload: { sessionId: session.sessionId, model: targetId },
+    });
+    const error = await client.waitFor(
+      (frame) => frame.type === 'error' && frame.payload.code === 'model_switch_failed',
+    );
+
+    expect(error.type).toBe('error');
+    expect(store.getSession(session.sessionId)?.model).toBe(oldId);
+    expect(
+      client.frames.some(
+        (frame) =>
+          frame.type === 'models_list' && frame.payload.current === targetId,
+      ),
+    ).toBe(false);
+    client.close();
+  });
+});
+
+describe('OttoServer set_setting 实时提示词刷新', () => {
+  it('切换工作方式时调用客户端的完整提示词重建', async () => {
+    const store = new InMemorySessionStore();
+    const server = new OttoServer({ port: 0, mock: true, store });
+    const session = store.createSession({ title: '提示词刷新' });
+    const refreshSystemPrompt = vi.fn(async () => undefined);
+    const setAgentStyle = vi.fn();
+    const config = {
+      setAgentStyle,
+      getOttoClient: () => ({
+        updateSystemPromptWithMcpPrompts: refreshSystemPrompt,
+      }),
+    };
+    store.attachRuntime(session.sessionId, {
+      async run() {},
+      cancel() {},
+      async setModel() {},
+      resolveToolConfirmation() {},
+      getConfig: () => config as never,
+      async dispose() {},
+    });
+
+    const previousCwd = process.cwd();
+    process.chdir(tmpHome);
+    try {
+      await (
+        server as unknown as {
+          handleSetSetting: (
+            conn: never,
+            msg: { type: 'set_setting'; payload: { key: 'agentStyle'; value: string } },
+          ) => Promise<void>;
+        }
+      ).handleSetSetting(undefined as never, {
+        type: 'set_setting',
+        payload: { key: 'agentStyle', value: 'antigravity' },
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    expect(setAgentStyle).toHaveBeenCalledWith('antigravity');
+    expect(refreshSystemPrompt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OttoServer 搜索 API 配置接口', () => {
+  let server: OttoServer;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    server = new OttoServer({
+      port: 0,
+      mock: true,
+      store: new InMemorySessionStore(),
+    });
+    baseUrl = await startServer(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  it('保存火山方舟配置后只返回 hasApiKey，不回传密钥原文', async () => {
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'save_search_config',
+      payload: {
+        provider: 'volcengine',
+        apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+        model: 'doubao-seed-2-0-lite-260215',
+        apiKey: 'ark-secret',
+      },
+    });
+    const saved = await client.waitFor((f) => f.type === 'search_config');
+    if (saved.type !== 'search_config') throw new Error('unreachable');
+    expect(saved.payload).toEqual({
+      provider: 'volcengine',
+      apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
+      model: 'doubao-seed-2-0-lite-260215',
+      hasApiKey: true,
+    });
+    expect(JSON.stringify(saved)).not.toContain('ark-secret');
+
+    client.send({ type: 'get_search_config', payload: {} });
+    const fetched = await client.waitFor(
+      (f) => f.type === 'search_config' && f !== saved,
+    );
+    expect(JSON.stringify(fetched)).not.toContain('ark-secret');
+    client.close();
   });
 });
 

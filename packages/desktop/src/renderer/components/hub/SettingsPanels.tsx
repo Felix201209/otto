@@ -11,29 +11,54 @@
 
 import React, { useEffect, useState } from 'react';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
+import { GeneratedIcon, type GeneratedIconName } from '../GeneratedIcon.js';
 import { IconClose } from '../icons.js';
 import { Panel, Card, Dot, Badge, Empty, type DotTone } from './HubUI.js';
 
 // ── 偏好设置 ──────────────────────────────────────────────────────────────
 
-const AGENT_STYLES: Array<{ id: string; label: string; icon: string }> = [
-  { id: 'default', label: 'Default (Claude 风格)', icon: '𝓥' },
-  { id: 'codex', label: 'Codex（快速静默执行）', icon: '⚡' },
-  { id: 'cursor', label: 'Cursor（语义搜索优先）', icon: '↗️' },
-  { id: 'augment', label: 'Augment（任务列表驱动）', icon: '🚀' },
-  { id: 'claude-code', label: 'Claude Code（极简）', icon: '✳️' },
-  { id: 'antigravity', label: 'Antigravity（知识库优先）', icon: '🌈' },
-  { id: 'windsurf', label: 'Windsurf（AI Flow）', icon: '🌊' },
+const AGENT_STYLES: Array<{ id: string; label: string; icon: GeneratedIconName }> = [
+  { id: 'default', label: '日常对话（自然清晰）', icon: 'style-default' },
+  { id: 'codex', label: '快速执行（少说多做）', icon: 'style-codex' },
+  { id: 'cursor', label: '工作代码（协作开发）', icon: 'style-cursor' },
+  { id: 'augment', label: '工程交付（任务与验证）', icon: 'style-augment' },
+  { id: 'claude-code', label: '简洁开发（直接精炼）', icon: 'style-claude-code' },
+  { id: 'antigravity', label: '企业办公（资料与会议）', icon: 'style-antigravity' },
+  { id: 'windsurf', label: '协作推进（边讲边做）', icon: 'style-windsurf' },
+];
+
+/** 外观主题选项（nativeTheme.themeSource 三态）。 */
+const THEME_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string }> = [
+  { id: 'system', label: '跟随系统' },
+  { id: 'light', label: '浅色' },
+  { id: 'dark', label: '深色' },
 ];
 
 export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
   const { state, actions } = data;
   const s = state.settings;
   const [langDraft, setLangDraft] = useState('');
+  // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
+  const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
   }, [s?.preferredLanguage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto?.themeGet?.().then((v) => {
+      if (!cancelled && v) setTheme(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pickTheme = (v: 'system' | 'light' | 'dark'): void => {
+    setTheme(v);
+    void window.otto?.themeSet?.(v);
+  };
 
   return (
     <Panel title="偏好设置" desc="Otto 的工作风格与全局偏好。">
@@ -43,9 +68,30 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
         <Card>
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
-              <div className="otto-hub__field-label">Agent 风格</div>
+              <div className="otto-hub__field-label">外观</div>
               <div className="otto-hub__field-hint">
-                决定 Otto 的工作方式：计划详略、确认频率、输出风格。
+                深浅色主题：跟随系统或手动固定，立即生效并记住选择。
+              </div>
+            </div>
+            <div className="otto-hub__chiprow">
+              {THEME_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={'otto-hub__chip' + (theme === opt.id ? ' is-active' : '')}
+                  onClick={() => pickTheme(opt.id)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="otto-hub__setting otto-hub__setting--stack">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">Otto 工作方式</div>
+              <div className="otto-hub__field-hint">
+                选择适合日常对话、企业办公、代码处理或工程交付的方式。
               </div>
             </div>
             <div className="otto-hub__chiprow">
@@ -58,7 +104,8 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
                   }
                   onClick={() => actions.setSetting('agentStyle', style.id)}
                 >
-                  <span aria-hidden>{style.icon}</span> {style.label}
+                  <GeneratedIcon name={style.icon} size={18} />
+                  <span>{style.label}</span>
                 </button>
               ))}
             </div>

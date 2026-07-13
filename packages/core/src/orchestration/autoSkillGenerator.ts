@@ -7,14 +7,15 @@
  * 1. 分析工作日志，发现重复模式（高频操作序列）
  * 2. 用 LLM 将模式提炼为 Skill 指令（SKILL.md 格式）
  * 3. 推送给用户确认（个人决定是否生成）
- * 4. 确认后写入 .otto/skills/<auto-skill-name>/SKILL.md
+ * 4. 确认后写入 ~/.otto-user/skills/<auto-skill-name>/SKILL.md
  * 5. 自动被 Skills 系统加载，成为个人 Agent 工具
  */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { homedir } from 'os';
-import { getWorkLogger, type WorkLogEntry, type DailySummary } from './workLog.js';
+import { createHash } from 'node:crypto';
+import { homedir, tmpdir } from 'os';
+import { getWorkLogger, type WorkLogEntry } from './workLog.js';
 import type { Config } from '../config/config.js';
 
 /** 飞书通知接口（用于检测到候选时推送给用户） */
@@ -44,7 +45,7 @@ export interface SkillCandidate {
 }
 
 /** 模式检测参数 */
-interface PatternDetectionOptions {
+export interface PatternDetectionOptions {
   /** 最小出现次数（低于此数不生成候选） */
   minOccurrences?: number;
   /** 分析的天数范围 */
@@ -58,6 +59,56 @@ const DEFAULT_OPTIONS: PatternDetectionOptions = {
   daysToAnalyze: 14,
   minSequenceLength: 2,
 };
+
+/**
+ * 自动 Skill 的用户数据根目录。测试/企业隔离可通过 OTTO_USER_DIR 重定向，
+ * 绝不再默认写入当前项目。
+ */
+export function resolveAutoSkillUserDir(): string {
+  const configured = process.env['OTTO_USER_DIR']?.trim();
+  if (configured) return configured;
+  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) {
+    return path.join(tmpdir(), 'otto-auto-skill-tests', String(process.pid));
+  }
+  return path.join(homedir(), '.otto-user');
+}
+
+/** 用户级 Skill 安装目录（与 SkillLoader 的 USER_GLOBAL 来源一致）。 */
+export function resolveAutoSkillSkillsDir(): string {
+  return path.join(resolveAutoSkillUserDir(), 'skills');
+}
+
+function pendingCandidatesPath(): string {
+  return path.join(
+    resolveAutoSkillUserDir(),
+    'memory',
+    'worklog',
+    'pending_skills.json',
+  );
+}
+
+function rejectedSkillsDir(): string {
+  return path.join(
+    resolveAutoSkillUserDir(),
+    'memory',
+    'worklog',
+    'rejected_skills',
+  );
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await fs.rename(tempPath, filePath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
 
 /**
  * 从工作日志中检测重复模式。
@@ -211,6 +262,7 @@ export async function generateSkillCandidates(
 ): Promise<SkillCandidate[]> {
   const patterns = await detectPatterns(options);
   const candidates: SkillCandidate[] = [];
+  const rejected = await getRejectedSkills();
 
   for (const { pattern, entries, count } of patterns.slice(0, 5)) { // 最多5个候选
     const skillContent = generateSkillContent(pattern, entries, count);
@@ -218,9 +270,12 @@ export async function generateSkillCandidates(
     const skillName = generateSkillName(steps);
 
     const skillsDir = getSkillsDir(config);
+    const filePath = path.join(skillsDir, skillName, 'SKILL.md');
+    if (rejected.has(skillName) || await fileExists(filePath)) continue;
 
     candidates.push({
-      id: `auto_skill_${Date.now()}_${candidates.length}`,
+      // 稳定 ID：同一模式跨天扫描不会在待确认区堆出重复条目。
+      id: `auto_skill_${createHash('sha256').update(pattern).digest('hex').slice(0, 16)}`,
       name: skillName,
       description: generateDescription(steps, count),
       triggerPatterns: [steps[0]],
@@ -229,7 +284,7 @@ export async function generateSkillCandidates(
       sampleEntries: entries,
       skillContent,
       reason: `检测到你在过去 ${count} 天中重复执行"${pattern}"，出现 ${count} 次。生成此 Skill 后，Otto 会在你说"${steps[0]}"时自动按此流程执行。`,
-      filePath: path.join(skillsDir, skillName, 'SKILL.md'),
+      filePath,
     });
   }
 
@@ -242,11 +297,27 @@ export async function generateSkillCandidates(
  * 写入后 Skills 系统会在下次加载时自动发现它。
  */
 export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<string> {
-  const skillDir = path.dirname(candidate.filePath);
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(candidate.filePath, candidate.skillContent, 'utf-8');
+  const skillsRoot = path.resolve(resolveAutoSkillSkillsDir());
+  const safePath = path.resolve(candidate.filePath);
+  const relative = path.relative(skillsRoot, safePath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('自动 Skill 只能写入用户级 skills 目录');
+  }
 
-  console.log(`[AutoSkill] Saved: ${candidate.filePath}`);
+  const skillDir = path.dirname(safePath);
+  await fs.mkdir(skillDir, { recursive: true, mode: 0o700 });
+  const tempPath = `${safePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, candidate.skillContent, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await fs.rename(tempPath, safePath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+
+  console.log(`[AutoSkill] Saved: ${safePath}`);
 
   // 记工作日志（标注自动 Skill，与普通操作区分）
   try {
@@ -256,11 +327,57 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
       action: `[自动Skill] 用户确认生成 Skill "${candidate.name}"（检测到 ${candidate.occurrenceCount} 次重复模式）`,
       category: 'other',
       success: true,
-      details: `模式：${candidate.detectedPattern} | 路径：${candidate.filePath}`,
+      details: `模式：${candidate.detectedPattern} | 路径：${safePath}`,
     });
   } catch { /* 不影响主流程 */ }
 
-  return candidate.filePath;
+  return safePath;
+}
+
+/** 读取等待用户确认的候选。损坏/不存在时按空列表处理，不影响 Otto 启动。 */
+export async function listPendingSkillCandidates(): Promise<SkillCandidate[]> {
+  try {
+    const raw = await fs.readFile(pendingCandidatesPath(), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isSkillCandidate);
+  } catch {
+    return [];
+  }
+}
+
+async function savePendingSkillCandidates(candidates: SkillCandidate[]): Promise<void> {
+  await writeJsonAtomic(pendingCandidatesPath(), candidates);
+}
+
+async function removePendingSkill(candidateId: string): Promise<void> {
+  const candidates = await listPendingSkillCandidates();
+  await savePendingSkillCandidates(
+    candidates.filter((candidate) => candidate.id !== candidateId),
+  );
+}
+
+/**
+ * 用户从待确认区明确点下确认后才调用；成功后移出待确认区。
+ */
+export async function confirmPendingSkill(candidateId: string): Promise<string> {
+  const candidate = (await listPendingSkillCandidates()).find(
+    (item) => item.id === candidateId,
+  );
+  if (!candidate) throw new Error('自动 Skill 候选不存在或已处理');
+  const savedPath = await confirmAndSaveSkill(candidate);
+  await removePendingSkill(candidateId);
+  return savedPath;
+}
+
+/** 用户从待确认区明确拒绝；记录抑制规则后移出待确认区。 */
+export async function rejectPendingSkill(candidateId: string): Promise<void> {
+  const candidate = (await listPendingSkillCandidates()).find(
+    (item) => item.id === candidateId,
+  );
+  if (!candidate) throw new Error('自动 Skill 候选不存在或已处理');
+  await rejectSkill(candidate);
+  await removePendingSkill(candidateId);
 }
 
 /**
@@ -268,14 +385,14 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
  */
 export async function rejectSkill(candidate: SkillCandidate): Promise<void> {
   // 记录到拒绝列表，避免短期内重复推荐
-  const rejectDir = path.join(homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
+  const rejectDir = rejectedSkillsDir();
   await fs.mkdir(rejectDir, { recursive: true });
   const rejectFile = path.join(rejectDir, `${candidate.name}.json`);
-  await fs.writeFile(rejectFile, JSON.stringify({
+  await writeJsonAtomic(rejectFile, {
     name: candidate.name,
     pattern: candidate.detectedPattern,
     rejectedAt: new Date().toISOString(),
-  }), 'utf-8');
+  });
 
   // 记工作日志（标注自动 Skill 拒绝）
   try {
@@ -294,7 +411,7 @@ export async function rejectSkill(candidate: SkillCandidate): Promise<void> {
  * 获取已拒绝的 Skill 列表（避免重复推荐）。
  */
 async function getRejectedSkills(): Promise<Set<string>> {
-  const rejectDir = path.join(homedir(), '.otto-user', 'memory', 'worklog', 'rejected_skills');
+  const rejectDir = rejectedSkillsDir();
   try {
     const files = await fs.readdir(rejectDir);
     const rejected: string[] = [];
@@ -316,9 +433,33 @@ async function getRejectedSkills(): Promise<Set<string>> {
 // ============================================================
 
 function getSkillsDir(config: Config): string {
-  // 项目级 skills 目录
-  const projectRoot = config.getProjectRoot?.() || process.cwd();
-  return path.join(projectRoot, '.otto', 'skills');
+  // 保留 Config 参数以兼容既有调用方；个人自动 Skill 始终属于用户级能力。
+  void config;
+  return resolveAutoSkillSkillsDir();
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSkillCandidate(value: unknown): value is SkillCandidate {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<SkillCandidate>;
+  return typeof item.id === 'string'
+    && typeof item.name === 'string'
+    && typeof item.description === 'string'
+    && Array.isArray(item.triggerPatterns)
+    && typeof item.detectedPattern === 'string'
+    && typeof item.occurrenceCount === 'number'
+    && Array.isArray(item.sampleEntries)
+    && typeof item.skillContent === 'string'
+    && typeof item.reason === 'string'
+    && typeof item.filePath === 'string';
 }
 
 function generateSkillName(steps: string[]): string {
@@ -326,7 +467,7 @@ function generateSkillName(steps: string[]): string {
   const firstStep = steps[0] || 'workflow';
   // 提取关键词
   const keywords = firstStep
-    .replace(/[：:（）()【】\[\]""'']/g, '')
+    .replace(/[：:（）()【】[\]""'']/g, '')
     .replace(/^(创建|操作|执行|发送|读取|写入|编辑|搜索|查看|查找|操作)\s*/, '')
     .split(/[\s,，、/]+/)
     .filter((s) => s.length > 0)
@@ -353,11 +494,54 @@ function formatTitle(steps: string[]): string {
 
 let globalFeishuNotifier: AutoSkillFeishuNotifier | null = null;
 let scanTimer: ReturnType<typeof setInterval> | null = null;
+let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
+let scanInFlight = false;
+
+export interface AutoSkillScannerOptions {
+  /** 首次扫描延迟；避免与桌面首屏初始化争抢磁盘。 */
+  initialDelayMs?: number;
+  /** 周期，生产默认 24 小时；测试可缩短。 */
+  intervalMs?: number;
+  /** 每轮候选原子落盘后通知桌面/飞书刷新；不代表安装。 */
+  onCandidatesStaged?: (candidates: SkillCandidate[]) => void | Promise<void>;
+}
 
 /** 注入飞书通知器 */
 export function setAutoSkillFeishuNotifier(notifier: AutoSkillFeishuNotifier): void {
   globalFeishuNotifier = notifier;
   console.log('[AutoSkill] Feishu notifier injected');
+}
+
+/**
+ * 执行一次扫描并把结果放进待确认区。这里只保存候选 JSON，绝不会写 SKILL.md；
+ * 真正安装必须走 confirmPendingSkill / confirmAndSaveSkill。
+ */
+export async function scanAndStageSkillCandidates(
+  config: Config,
+  getUserId: () => string,
+): Promise<SkillCandidate[]> {
+  const candidates = await generateSkillCandidates(config);
+  await savePendingSkillCandidates(candidates);
+
+  if (candidates.length === 0) return candidates;
+
+  if (globalFeishuNotifier) {
+    await globalFeishuNotifier.notifyCandidate(getUserId(), candidates);
+  }
+
+  // 记工作日志（候选态，不代表已生成 Skill）。
+  try {
+    const logger = getWorkLogger();
+    await logger.log({
+      toolName: 'auto_skill_scan',
+      action: `[自动Skill] 检测到 ${candidates.length} 个候选模式，等待用户确认`,
+      category: 'other',
+      success: true,
+      details: candidates.map((c) => `${c.name}(${c.occurrenceCount}次)`).join(', '),
+    });
+  } catch { /* 不影响候选暂存 */ }
+
+  return candidates;
 }
 
 /**
@@ -367,38 +551,48 @@ export function setAutoSkillFeishuNotifier(notifier: AutoSkillFeishuNotifier): v
 export function startAutoSkillScanner(
   config: Config,
   getUserId: () => string,
-): void {
-  if (scanTimer) return;
-  // 每24小时扫描一次
-  scanTimer = setInterval(async () => {
-    try {
-      const candidates = await generateSkillCandidates(config);
-      if (candidates.length > 0 && globalFeishuNotifier) {
-        const userId = getUserId();
-        await globalFeishuNotifier.notifyCandidate(userId, candidates);
+  options: AutoSkillScannerOptions = {},
+): boolean {
+  if (scanTimer || initialScanTimer) return false;
+  const intervalMs = options.intervalMs ?? 24 * 60 * 60 * 1000;
+  const initialDelayMs = options.initialDelayMs ?? 15_000;
 
-        // 记工作日志（标注自动 Skill）
-        const logger = getWorkLogger();
-        await logger.log({
-          toolName: 'auto_skill_scan',
-          action: `[自动Skill] 检测到 ${candidates.length} 个候选模式，已推送飞书通知`,
-          category: 'other',
-          success: true,
-          details: candidates.map((c) => `${c.name}(${c.occurrenceCount}次)`).join(', '),
-        });
-      }
+  const scan = async (): Promise<void> => {
+    // 慢磁盘/大量日志时不叠加第二轮扫描。
+    if (scanInFlight) return;
+    scanInFlight = true;
+    try {
+      const candidates = await scanAndStageSkillCandidates(config, getUserId);
+      await options.onCandidatesStaged?.(candidates);
     } catch (err) {
       console.warn(`[AutoSkill] Scanner error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      scanInFlight = false;
     }
-  }, 24 * 60 * 60 * 1000); // 24小时
+  };
+
+  initialScanTimer = setTimeout(async () => {
+    initialScanTimer = null;
+    await scan();
+  }, initialDelayMs);
+  initialScanTimer.unref?.();
+
+  scanTimer = setInterval(() => void scan(), intervalMs);
+  scanTimer.unref?.();
   console.log('[AutoSkill] Scanner started (24h interval)');
+  return true;
 }
 
 /** 停止定时扫描 */
 export function stopAutoSkillScanner(): void {
+  if (initialScanTimer) {
+    clearTimeout(initialScanTimer);
+    initialScanTimer = null;
+  }
   if (scanTimer) {
     clearInterval(scanTimer);
     scanTimer = null;
-    console.log('[AutoSkill] Scanner stopped');
   }
+  scanInFlight = false;
+  console.log('[AutoSkill] Scanner stopped');
 }

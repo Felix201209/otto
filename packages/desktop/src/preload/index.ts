@@ -107,6 +107,29 @@ export interface UpdateInstallResult {
   message: string;
 }
 
+export type AsrProvider = 'volcengine' | 'openai';
+export interface VoicePublicConfig {
+  enabled: boolean;
+  asrProvider: AsrProvider;
+  asrEndpoint: string;
+  asrModel: string;
+  volcResourceId: string;
+  polishEnabled: boolean;
+  polishEndpoint: string;
+  polishModel: string;
+  polishPrompt: string;
+  hasAsrApiKey: boolean;
+  hasVolcCredentials: boolean;
+  hasPolishApiKey: boolean;
+}
+export interface VoiceConfigInput extends Omit<VoicePublicConfig, 'hasAsrApiKey' | 'hasVolcCredentials' | 'hasPolishApiKey'> {
+  asrApiKey?: string;
+  volcAppKey?: string;
+  volcAccessKey?: string;
+  polishApiKey?: string;
+}
+export interface VoiceResult { text: string; rawText: string; polished: boolean }
+
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
@@ -122,6 +145,9 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  voiceGetConfig: 'otto:voice-get-config',
+  voiceSaveConfig: 'otto:voice-save-config',
+  voiceTranscribe: 'otto:voice-transcribe',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -183,6 +209,46 @@ export interface OttoBridge {
   feishuClearConfig(): Promise<FeishuConfigResult>;
   /** 园区服务企业定制配置；无配置文件时 null（用内置默认）。 */
   parkConfig(): Promise<ParkServicesConfig | null>;
+  /** 当前外观主题（'system' 跟随系统 / 'light' / 'dark'）。 */
+  themeGet(): Promise<'system' | 'light' | 'dark'>;
+  /** 设置外观主题并持久化；返回生效值。 */
+  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'>;
+  /** Skill 排行榜 + 贡献明星榜（krx 企业面板；数据读 .otto/org/skill-shares.json）。 */
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }>;
+  /** 今日工作日志汇总。 */
+  workLogToday(): Promise<{ summary: string; date: string; totalActions: number; workResults: number }>;
+  /** 近 N 天逐日日志明细（日历 hover 视图）。 */
+  workLogRecent(days?: number): Promise<
+    Array<{
+      date: string;
+      entries: Array<{
+        time: string;
+        category: string;
+        action: string;
+        success: boolean;
+        details?: string;
+        entryType: 'tool' | 'work_result';
+        taskTitle?: string;
+      }>;
+    }>
+  >;
+  /** 汇总今日成果、保存 Markdown 报告并返回实际路径。 */
+  workLogReport(): Promise<{
+    ok: boolean;
+    date: string;
+    title: string;
+    markdown: string;
+    path: string;
+    message: string;
+  }>;
+  /** 部门共享 Skill 列表。 */
+  skillShareList(teamId?: string): Promise<{ text: string }>;
+  /** 公司 Skill 市场。 */
+  skillMarketplace(): Promise<{ text: string }>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -207,6 +273,9 @@ export interface OttoBridge {
   updateInstall(): Promise<UpdateInstallResult>;
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
+  voiceGetConfig(): Promise<VoicePublicConfig>;
+  voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
+  voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
 }
 
 // ── 退避参数 ──
@@ -441,6 +510,88 @@ const bridge: OttoBridge = {
   parkConfig(): Promise<ParkServicesConfig | null> {
     return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
   },
+  themeGet(): Promise<'system' | 'light' | 'dark'> {
+    return ipcRenderer.invoke('otto:theme-get') as Promise<'system' | 'light' | 'dark'>;
+  },
+  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'> {
+    return ipcRenderer.invoke('otto:theme-set', v) as Promise<'system' | 'light' | 'dark'>;
+  },
+  skillLeaderboard(teamId?: string): Promise<{
+    leaderboard: string;
+    starBoard: string;
+    tabs: Array<{ id: string; label: string; icon: string }>;
+  }> {
+    return ipcRenderer.invoke('otto:skill-leaderboard', teamId) as Promise<{
+      leaderboard: string;
+      starBoard: string;
+      tabs: Array<{ id: string; label: string; icon: string }>;
+    }>;
+  },
+  workLogToday(): Promise<{
+    summary: string;
+    date: string;
+    totalActions: number;
+    workResults: number;
+  }> {
+    return ipcRenderer.invoke('otto:worklog-today') as Promise<{
+      summary: string;
+      date: string;
+      totalActions: number;
+      workResults: number;
+    }>;
+  },
+  workLogRecent(days?: number): Promise<
+    Array<{
+      date: string;
+      entries: Array<{
+        time: string;
+        category: string;
+        action: string;
+        success: boolean;
+        details?: string;
+        entryType: 'tool' | 'work_result';
+        taskTitle?: string;
+      }>;
+    }>
+  > {
+    return ipcRenderer.invoke('otto:worklog-recent', days) as Promise<
+      Array<{
+        date: string;
+        entries: Array<{
+          time: string;
+          category: string;
+          action: string;
+          success: boolean;
+          details?: string;
+          entryType: 'tool' | 'work_result';
+          taskTitle?: string;
+        }>;
+      }>
+    >;
+  },
+  workLogReport(): Promise<{
+    ok: boolean;
+    date: string;
+    title: string;
+    markdown: string;
+    path: string;
+    message: string;
+  }> {
+    return ipcRenderer.invoke('otto:worklog-report') as Promise<{
+      ok: boolean;
+      date: string;
+      title: string;
+      markdown: string;
+      path: string;
+      message: string;
+    }>;
+  },
+  skillShareList(teamId?: string): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
+  },
+  skillMarketplace(): Promise<{ text: string }> {
+    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+  },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
   },
@@ -469,6 +620,15 @@ const bridge: OttoBridge = {
     return () => {
       ipcRenderer.removeListener(IPC.updateProgress, listener);
     };
+  },
+  voiceGetConfig(): Promise<VoicePublicConfig> {
+    return ipcRenderer.invoke(IPC.voiceGetConfig) as Promise<VoicePublicConfig>;
+  },
+  voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig> {
+    return ipcRenderer.invoke(IPC.voiceSaveConfig, config) as Promise<VoicePublicConfig>;
+  },
+  voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult> {
+    return ipcRenderer.invoke(IPC.voiceTranscribe, bytes, mimeType) as Promise<VoiceResult>;
   },
 };
 

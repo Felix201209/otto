@@ -22,7 +22,7 @@
  * 且 import.meta.url 在 CJS 输出下会被 tsc 直接拒绝/TS1470）。__dirname 用 CJS 原生
  * 全局变量，不需要（也不能用）ESM 的 fileURLToPath(import.meta.url) 重建。
  *
- * ⚠️ otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
+ * 注意：otto-server 是纯 ESM 包，本文件是 CJS：不能静态 `import {...} from 'otto-server'`
  * （会被编译成 require()，真机运行时抛 ERR_REQUIRE_ESM 崩溃）。DEFAULT_HOST/DEFAULT_PORT
  * 只是 CSP 兜底默认值的字面量，这里直接内联同样的值，避免为两个常量单独走一次
  * import()（server-manager.ts 已经承担了对 otto-server 真正需要的值的动态加载）。
@@ -45,14 +45,52 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
-  FeishuConfigPublic,
-  FeishuConfigSaveRequest,
   HealthInfo,
   ServerEndpoint,
 } from 'otto-server';
+
+/** 脱敏后的飞书配置视图（不含 secret）。 */
+interface FeishuConfigPublic {
+  appId: string;
+  appSecret: string;
+  verificationToken: string | null;
+  encryptKey: string | null;
+}
+
+/** 客户端保存飞书配置的请求体。 */
+interface FeishuConfigSaveRequest {
+  appId: string;
+  appSecret: string;
+  verificationToken?: string | null;
+  encryptKey?: string | null;
+}
+
+interface FeishuHealthStatusLocal {
+  running: boolean;
+  forwarding: boolean;
+  configured: boolean;
+  lastEventAt: number | null;
+  reconnectAttempts: number;
+}
+
+interface FeishuStatusInfo {
+  enabled: boolean;
+  connected: boolean;
+  status?: FeishuHealthStatusLocal;
+}
+
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
+import {
+  generateAndSaveWorkReport,
+  localDateKey,
+  readRecentWorkLogs,
+  readWorkLogEntries,
+  summarizeWorkLog,
+} from './workLogData.js';
+import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voiceConfig.js';
+import { transcribeAudio } from './voiceService.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -65,6 +103,33 @@ const CSP_FALLBACK_PORT = 7637;
  * 也是 isLocalAppUrl 白名单的锚点。
  */
 const RENDERER_DIR = path.join(__dirname, '../renderer');
+
+function worklogRootDir(): string {
+  const explicit = process.env['OTTO_WORKLOG_DIR']?.trim();
+  if (explicit) return explicit;
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  if (userDir) return path.join(userDir, 'memory', 'worklog');
+  return path.join(os.homedir(), '.otto-user', 'memory', 'worklog');
+}
+
+/** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
+interface SkillShareRecord {
+  skillName?: string;
+  version?: number;
+  featureDescription?: string;
+  sharedBy?: string;
+  sharedByName?: string;
+  teamId?: string;
+  teamName?: string;
+  status?: string;
+  note?: string;
+  rating?: number;
+  ratingCount?: number;
+  installCount?: number;
+  usageCount?: number;
+  successCount?: number;
+  publishedToMarketplace?: boolean;
+}
 
 /** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
 const CRASH_RELOAD_WINDOW_MS = 60_000;
@@ -91,6 +156,14 @@ const IPC = {
   feishuSaveConfig: 'otto:feishu-save-config',
   feishuClearConfig: 'otto:feishu-clear-config',
   parkConfig: 'otto:park-config',
+  themeGet: 'otto:theme-get',
+  themeSet: 'otto:theme-set',
+  skillLeaderboard: 'otto:skill-leaderboard',
+  workLogToday: 'otto:worklog-today',
+  workLogRecent: 'otto:worklog-recent',
+  workLogReport: 'otto:worklog-report',
+  skillShareList: 'otto:skill-share-list',
+  skillMarketplace: 'otto:skill-marketplace',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -98,6 +171,9 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  voiceGetConfig: 'otto:voice-get-config',
+  voiceSaveConfig: 'otto:voice-save-config',
+  voiceTranscribe: 'otto:voice-transcribe',
 } as const;
 
 /**
@@ -137,7 +213,7 @@ const FEISHU_OP_TIMEOUT_MS = 5000;
  */
 function postServerEndpoint(
   routePath: string,
-): Promise<{ ok: boolean; data: HealthInfo['feishu']['status'] | null; error: string | null } | null> {
+): Promise<{ ok: boolean; data: any; error: string | null } | null> {
   const ep = endpoint;
   if (!ep) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -160,7 +236,7 @@ function postServerEndpoint(
             resolve(
               JSON.parse(body) as {
                 ok: boolean;
-                data: HealthInfo['feishu']['status'] | null;
+                data: any;
                 error: string | null;
               },
             );
@@ -281,8 +357,8 @@ function fetchServerHealth(): Promise<HealthInfo | null> {
 }
 
 /** 把 /health 的飞书守护状态渲染成给用户看的一句人话（状态必须诚实）。 */
-function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
-  const st = feishu.status;
+function renderFeishuStatusText(feishu: any): string {
+  const st = (feishu as any).status || feishu;
   if (!feishu.enabled || !st) {
     return (
       '本地 server 未启用飞书网关（未检测到飞书凭证）。\n' +
@@ -324,6 +400,24 @@ function renderFeishuStatusText(feishu: HealthInfo['feishu']): string {
  * 加载窗口图标占位：dist/renderer/icon.png 存在则用，否则返回空 image
  * （Electron 在无图标时回退默认，不报错）。真正的品牌图标由 #8 打包时补。
  */
+/** 主题选择的持久化文件（userData/theme.json）。 */
+function themeFilePath(): string {
+  return path.join(app.getPath('userData'), 'theme.json');
+}
+
+/** 读上次保存的主题选择；无文件/内容非法 → 'system'。 */
+function loadSavedThemeSource(): 'system' | 'light' | 'dark' {
+  try {
+    const raw = JSON.parse(fs.readFileSync(themeFilePath(), 'utf8')) as {
+      themeSource?: unknown;
+    };
+    if (raw.themeSource === 'light' || raw.themeSource === 'dark') return raw.themeSource;
+  } catch {
+    /* 首次启动无文件，走默认 */
+  }
+  return 'system';
+}
+
 function loadIcon(): NativeImage {
   const iconPath = path.join(RENDERER_DIR, 'icon.png');
   if (fs.existsSync(iconPath)) {
@@ -453,7 +547,14 @@ function isExternalUrl(url: string): boolean {
 function applyCsp(): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const host = endpoint?.host ?? CSP_FALLBACK_HOST;
-    const port = endpoint?.port ?? CSP_FALLBACK_PORT;
+    // 首个 renderer 响应头通常早于 ensureEndpoint() 完成；若用户通过环境变量指定
+    // 内嵌 server 端口，CSP 也必须从第一帧就放行同一端口，否则 WS 会被浏览器拦截、
+    // UI 永久显示“正在重连”，即使 server 实际已健康监听。
+    const configuredPort = Number(process.env.OTTO_SERVER_PORT);
+    const port = endpoint?.port
+      ?? (Number.isFinite(configuredPort) && configuredPort > 0
+        ? configuredPort
+        : CSP_FALLBACK_PORT);
     const csp = [
       "default-src 'self'",
       // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。
@@ -475,10 +576,14 @@ function applyCsp(): void {
     });
   });
 
-  // 一律拒绝 renderer 的权限请求（摄像头/麦克风/地理位置等都用不到）。
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) =>
-    cb(false),
-  );
+  // 仅放行本地 renderer 的音频录制；摄像头/地理位置等继续拒绝。
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+    const trusted = wc === mainWindow?.webContents;
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : [];
+    const wantsAudio = perm === 'media' && mediaTypes?.includes('audio');
+    const wantsVideo = perm === 'media' && mediaTypes?.includes('video');
+    cb(Boolean(trusted && wantsAudio && !wantsVideo));
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -511,6 +616,14 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
+  ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));
+  ipcMain.handle(IPC.voiceTranscribe, async (_e, bytes: unknown, mimeType: unknown) => {
+    if (!(bytes instanceof Uint8Array) || typeof mimeType !== 'string') {
+      throw new Error('语音数据格式不合法');
+    }
+    return transcribeAudio(bytes, mimeType, loadVoiceConfig());
+  });
   // renderer 经 preload 拉当前端点（连接前 / 重连时）。
   ipcMain.handle(IPC.getEndpoint, () => endpoint ?? null);
 
@@ -593,6 +706,193 @@ function registerIpc(): void {
   });
   // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
   // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  // ── 外观主题（跟随系统/浅色/深色）：nativeTheme.themeSource + userData 持久化 ──
+  ipcMain.handle(IPC.themeGet, () => nativeTheme.themeSource);
+  ipcMain.handle(IPC.themeSet, (_e, v: unknown) => {
+    if (v !== 'system' && v !== 'light' && v !== 'dark') return nativeTheme.themeSource;
+    nativeTheme.themeSource = v;
+    try {
+      fs.writeFileSync(themeFilePath(), JSON.stringify({ themeSource: v }), 'utf8');
+    } catch {
+      /* 写盘失败只影响下次启动的记忆，本次已生效 */
+    }
+    return nativeTheme.themeSource;
+  });
+
+  // ── krx 的企业面板 IPC（排行榜/工作日志/Skill 共享与市场）──
+  // 这批 handler 在 a01198db 的 merge 解冲突时被误删（renderer 调用还在、
+  // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
+  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
+    const emptyTabs = [
+      { id: 'leaderboard', label: '排行榜', icon: '' },
+      { id: 'stars', label: '明星榜', icon: '' },
+    ];
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 文件不存在，返回空 */
+      }
+
+      const activeShares = shares.filter(
+        (s) => (!teamId || s.teamId === teamId) && s.status === 'active',
+      );
+      const teamName = activeShares[0]?.teamName || '本小组';
+
+      const medals = ['1.', '2.', '3.'];
+      const maxInstalls = Math.max(...activeShares.map((s) => s.installCount || 0), 1);
+      const maxUsage = Math.max(...activeShares.map((s) => s.usageCount || 0), 1);
+
+      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
+      const scored = activeShares
+        .map((s) => {
+          const ratingScore = ((s.rating || 0) / 5) * 100;
+          const installScore = ((s.installCount || 0) / maxInstalls) * 100;
+          const successRate =
+            (s.usageCount || 0) > 0 ? ((s.successCount || 0) / (s.usageCount || 1)) * 100 : 50;
+          const usageScore = ((s.usageCount || 0) / maxUsage) * 100;
+          return {
+            s,
+            score: ratingScore * 0.35 + installScore * 0.25 + successRate * 0.25 + usageScore * 0.15,
+          };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      scored.forEach((item, i) => {
+        const rank = i < 3 ? medals[i] : `${i + 1}.`;
+        const rating = item.s.rating ? `${item.s.rating.toFixed(1)}/5` : '暂无';
+        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
+        lbLines.push(`   ${item.s.featureDescription || ''}`);
+        lbLines.push(
+          `   ${item.s.sharedByName} | ${rating} (${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
+        );
+        lbLines.push('');
+      });
+
+      const contributorMap: Record<
+        string,
+        { name?: string; count: number; installs: number; skills: Array<string | undefined> }
+      > = {};
+      for (const s of activeShares) {
+        const key = s.sharedBy || 'unknown';
+        if (!contributorMap[key]) {
+          contributorMap[key] = { name: s.sharedByName, count: 0, installs: 0, skills: [] };
+        }
+        contributorMap[key].count++;
+        contributorMap[key].installs += s.installCount || 0;
+        contributorMap[key].skills.push(s.skillName);
+      }
+      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
+      Object.values(contributorMap)
+        .sort((a, b) => b.installs - a.installs)
+        .forEach((c, i) => {
+          const rank = i < 3 ? medals[i] : `${i + 1}.`;
+          sbLines.push(`${rank} ${c.name}`);
+          sbLines.push(`   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`);
+          sbLines.push('');
+        });
+
+      return { leaderboard: lbLines.join('\n'), starBoard: sbLines.join('\n'), tabs: emptyTabs };
+    } catch {
+      return { leaderboard: '暂无排行榜数据', starBoard: '暂无明星榜数据', tabs: emptyTabs };
+    }
+  });
+
+  // 工作日志：读取本地日历的今天，展示业务成果 + 支撑操作。
+  ipcMain.handle(IPC.workLogToday, async () => {
+    const worklogRoot = worklogRootDir();
+    const today = localDateKey(new Date());
+    const entries = await readWorkLogEntries(worklogRoot, today);
+    return summarizeWorkLog(today, entries);
+  });
+
+  // 工作日志·近 N 天逐日明细（日历视图数据源：hover 某天列出当天条目）。
+  ipcMain.handle(IPC.workLogRecent, async (_e, days?: number) => {
+    const worklogRoot = worklogRootDir();
+    return readRecentWorkLogs(worklogRoot, days, new Date());
+  });
+
+  // 一键生成真正的 Markdown 工作报告并保存到 summaries，返回完整路径供界面打开。
+  ipcMain.handle(IPC.workLogReport, async () => {
+    const worklogRoot = worklogRootDir();
+    return generateAndSaveWorkReport(worklogRoot, localDateKey(new Date()));
+  });
+
+  // 部门共享 Skill 列表
+  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 无文件 */
+      }
+
+      const active = shares.filter((s) => s.status === 'active' && (!teamId || s.teamId === teamId));
+
+      if (active.length === 0) {
+        return { text: '本部门暂无共享 Skill。' };
+      }
+
+      const lines: string[] = ['部门共享 Skill 列表', ''];
+      for (const s of active) {
+        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName}`);
+        lines.push(
+          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+        );
+        if (s.note) lines.push(`  备注：${s.note}`);
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 列表失败。' };
+    }
+  });
+
+  // 公司 Skill 市场
+  ipcMain.handle(IPC.skillMarketplace, async () => {
+    try {
+      const sharesPath = path.join(process.cwd(), '.otto', 'org', 'skill-shares.json');
+      let shares: SkillShareRecord[] = [];
+      try {
+        shares = JSON.parse(await fs.promises.readFile(sharesPath, 'utf-8')) as SkillShareRecord[];
+      } catch {
+        /* 无文件 */
+      }
+
+      const market = shares.filter((s) => s.publishedToMarketplace === true && s.status === 'active');
+
+      if (market.length === 0) {
+        return {
+          text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。',
+        };
+      }
+
+      market.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+
+      const lines: string[] = ['公司 Skill 市场', ''];
+      for (const s of market) {
+        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
+        lines.push(`${s.skillName} (v${s.version || 1})`);
+        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
+        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
+        lines.push(
+          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
+        );
+        lines.push('');
+      }
+      return { text: lines.join('\n') };
+    } catch {
+      return { text: '读取 Skill 市场失败。' };
+    }
+  });
+
   ipcMain.handle(IPC.parkConfig, async () => {
     try {
       const p = path.join(os.homedir(), '.otto-user', 'park-services.json');
@@ -715,10 +1015,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    // 让 Chromium 的 prefers-color-scheme 跟随 macOS 系统深浅色主题：这是
-    // renderer 里 @media (prefers-color-scheme: dark) 能被触发的关键。'system'
-    // 虽是默认值，但显式设定可确保不被别处改写，且 activate 重建窗口时同样生效。
-    nativeTheme.themeSource = 'system';
+    // 外观主题：默认跟随系统（'system' 让 renderer 的 prefers-color-scheme 生效）；
+    // 用户在偏好里手动选过浅色/深色则恢复上次选择（userData/theme.json）。
+    nativeTheme.themeSource = loadSavedThemeSource();
 
     registerIpc();
     installAppMenu(() => mainWindow);

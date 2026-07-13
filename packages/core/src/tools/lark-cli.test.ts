@@ -6,9 +6,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { LarkCliTool, LarkCliParams } from './lark-cli.js';
 import { Config } from '../config/config.js';
 import { spawn } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 
 // Mock child_process. We stream output through spawn, and probe the global
 // binary via spawnSync (synchronous --version check).
@@ -73,8 +82,11 @@ function expectChildKilled(child: FakeChildProcess) {
 describe('LarkCliTool', () => {
   let mockConfig: Config;
   let tool: LarkCliTool;
+  let tempHome: string;
 
   beforeEach(async () => {
+    tempHome = mkdtempSync(path.join(os.tmpdir(), 'otto-lark-cli-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     mockConfig = {
       getFeishuMode: () => false,
     } as unknown as Config;
@@ -89,6 +101,8 @@ describe('LarkCliTool', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    rmSync(tempHome, { recursive: true, force: true });
   });
 
   describe('Initialization', () => {
@@ -183,6 +197,62 @@ describe('LarkCliTool', () => {
       expect(cmdStr).toContain('task list');
     });
 
+    it('should reuse the exact pinned native binary from the npx cache', async () => {
+      const packageDir = path.join(
+        tempHome,
+        '.npm',
+        '_npx',
+        'cached-install',
+        'node_modules',
+        '@larksuite',
+        'cli',
+      );
+      const binDir = path.join(packageDir, 'bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({ name: '@larksuite/cli', version: '1.0.53' }),
+      );
+      const nativeBinary = path.join(
+        binDir,
+        process.platform === 'win32' ? 'lark-cli.exe' : 'lark-cli',
+      );
+      writeFileSync(nativeBinary, 'test binary');
+      chmodSync(nativeBinary, 0o755);
+
+      const firstChild = nextChild();
+      const firstRun = tool.execute(
+        { command: 'calendar +agenda' },
+        new AbortController().signal,
+      );
+      firstChild.close(0);
+      await firstRun;
+
+      const secondChild = nextChild();
+      const secondRun = tool.execute(
+        { command: 'task +get-my-tasks' },
+        new AbortController().signal,
+      );
+      secondChild.close(0);
+      await secondRun;
+
+      const businessCommands = mockSpawn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((command) => !command.startsWith('taskkill'));
+      expect(businessCommands).toHaveLength(2);
+      expect(
+        businessCommands.every((command) => command.includes(nativeBinary)),
+      ).toBe(true);
+      expect(
+        businessCommands.every((command) => !command.includes('npx ')),
+      ).toBe(true);
+
+      const { spawnSync } = (await import('node:child_process')) as unknown as {
+        spawnSync: ReturnType<typeof vi.fn>;
+      };
+      expect(spawnSync).not.toHaveBeenCalled();
+    });
+
     it('should NOT append --format json by default (flag is command-specific)', async () => {
       const child = nextChild();
       const promise = tool.execute(
@@ -243,7 +313,9 @@ describe('LarkCliTool', () => {
 
       const url =
         'https://open.feishu.cn/page/cli?user_code=CJMV-5FQZ&lpv=1.0.44&ocv=1.0.44&from=cli';
-      child.emitStdout(`打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`);
+      child.emitStdout(
+        `打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`,
+      );
       await new Promise((r) => setTimeout(r, 5));
       child.close(0);
       const result = await promise;
@@ -281,6 +353,47 @@ describe('LarkCliTool', () => {
       expect(result.authUrl).toBe(url);
     });
 
+    it('should capture the accounts.feishu.cn device verification URL used by current lark-cli', async () => {
+      const updates: string[] = [];
+      const child = nextChild();
+      const promise = tool.execute(
+        { command: 'auth login' },
+        new AbortController().signal,
+        (out) => updates.push(out),
+      );
+      const url =
+        'https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=flow-123&user_code=9NVZ-JH8A';
+
+      child.emitStdout(`请打开以下链接完成授权：\n${url}\n等待扫码...`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      child.close(1);
+      const result = await promise;
+
+      expect(result.authUrl).toBe(url);
+      expect(updates.join('')).toContain(url);
+    });
+
+    it.each([
+      'https://evil.example/oauth/v1/device/verify?user_code=STEAL-ME',
+      'https://open.feishu.cn.evil.example/page/cli?user_code=STEAL-ME',
+      'http://accounts.feishu.cn/oauth/v1/device/verify?user_code=STEAL-ME',
+      'https://accounts.feishu.cn/unrelated?user_code=STEAL-ME',
+      'https://open.feishu.cn:444/page/cli?user_code=STEAL-ME',
+    ])('should reject untrusted authorization URL %s', async (url) => {
+      const child = nextChild();
+      const promise = tool.execute(
+        { command: 'auth login' },
+        new AbortController().signal,
+      );
+
+      child.emitStdout(`Please authorize:\n${url}\nwaiting...`);
+      child.close(1);
+      const result = await promise;
+
+      expect(result.authUrl).toBeUndefined();
+      expect(result.status).not.toBe('auth_required');
+    });
+
     it('should output localized guide and format when getFeishuMode() is true', async () => {
       // Mock feishuMode to true
       mockConfig.getFeishuMode = () => true;
@@ -295,7 +408,9 @@ describe('LarkCliTool', () => {
 
       const url =
         'https://open.feishu.cn/page/cli?user_code=CJMV-5FQZ&lpv=1.0.44&ocv=1.0.44&from=cli';
-      child.emitStdout(`打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`);
+      child.emitStdout(
+        `打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`,
+      );
       await new Promise((r) => setTimeout(r, 5));
       child.close(1); // non-zero exit to trigger buildResult returnDisplay
       const result = await promise;
@@ -309,8 +424,12 @@ describe('LarkCliTool', () => {
       expect(updateText).toContain('选择 “已有应用”，选择本机器人即可');
 
       // The final result returnDisplay should also contain the Feishu Gateway localized tip
-      expect(result.returnDisplay).toContain('飞书网关模式：需要登录认证，请点击以下链接进行授权');
-      expect(result.returnDisplay).toContain('选择 “已有应用”，选择本机器人即可');
+      expect(result.returnDisplay).toContain(
+        '飞书网关模式：需要登录认证，请点击以下链接进行授权',
+      );
+      expect(result.returnDisplay).toContain(
+        '选择 “已有应用”，选择本机器人即可',
+      );
     });
   });
 
@@ -368,7 +487,10 @@ describe('LarkCliTool', () => {
     it('should kill the process when the abort signal fires', async () => {
       const controller = new AbortController();
       const child = nextChild();
-      const promise = tool.execute({ command: 'auth login' }, controller.signal);
+      const promise = tool.execute(
+        { command: 'auth login' },
+        controller.signal,
+      );
 
       controller.abort();
       await new Promise((r) => setTimeout(r, 5));
@@ -421,7 +543,9 @@ describe('LarkCliTool', () => {
       // Device flow prints its verification URL.
       const url =
         'https://open.feishu.cn/page/cli?user_code=WXYZ-7788&from=cli';
-      authChild.emitStdout(`打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`);
+      authChild.emitStdout(
+        `打开以下链接配置应用:\n\n  ${url}\n\n等待配置应用...\n`,
+      );
       await new Promise((r) => setTimeout(r, 5));
 
       // The URL must reach the user through live output, all in one tool call.
@@ -602,8 +726,7 @@ describe('LarkCliTool', () => {
     it('should fallback to domain inference from command when hint has no auth login command', async () => {
       // Simulates need_user_authorization without a usable hint line.
       // e.g. just the marker with no domain or scope info.
-      const NEED_AUTH_NO_HINT =
-        'need_user_authorization (user: )';
+      const NEED_AUTH_NO_HINT = 'need_user_authorization (user: )';
 
       const bizChild = nextChild();
       const authChild = nextChild();
@@ -679,9 +802,17 @@ describe('LarkCliTool', () => {
           hint: 'available subcommands: +agenda, +create, +freebusy, +room-find, +rsvp, +suggestion, +update, calendars, event.attendees, events, freebusys',
           detail: {
             available: [
-              '+agenda', '+create', '+freebusy', '+room-find',
-              '+rsvp', '+suggestion', '+update', 'calendars',
-              'event.attendees', 'events', 'freebusys',
+              '+agenda',
+              '+create',
+              '+freebusy',
+              '+room-find',
+              '+rsvp',
+              '+suggestion',
+              '+update',
+              'calendars',
+              'event.attendees',
+              'events',
+              'freebusys',
             ],
             command_path: 'lark-cli calendar',
             unknown: 'list',
@@ -756,7 +887,9 @@ describe('LarkCliTool', () => {
         new AbortController().signal,
       );
 
-      child.emitStderr('authorization failed: Unable to authorize. The app is pending approval.');
+      child.emitStderr(
+        'authorization failed: Unable to authorize. The app is pending approval.',
+      );
       child.close(1);
       await new Promise((r) => setTimeout(r, 10));
 
@@ -851,7 +984,10 @@ describe('LarkCliTool', () => {
       const mockProjectSettings = {
         feishu: {
           recommend: true,
-          excludeScopes: ['im:message.send_as_user', 'mail:user_mailbox.message.body:read'],
+          excludeScopes: [
+            'im:message.send_as_user',
+            'mail:user_mailbox.message.body:read',
+          ],
         },
       };
       tool['config'].getProjectSettingsManager = vi.fn().mockReturnValue({
@@ -874,7 +1010,9 @@ describe('LarkCliTool', () => {
       expect(authCmd).toContain('auth login');
       expect(authCmd).toContain('--domain mail');
       expect(authCmd).toContain('--recommend');
-      expect(authCmd).toContain('--exclude "im:message.send_as_user,mail:user_mailbox.message.body:read"');
+      expect(authCmd).toContain(
+        '--exclude "im:message.send_as_user,mail:user_mailbox.message.body:read"',
+      );
 
       authChild.close(0);
       await promise;

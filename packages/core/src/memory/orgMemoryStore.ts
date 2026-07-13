@@ -5,6 +5,9 @@ import type { CompanyRecord, LicenseRecord, OrgMemoryRecord, ProjectRecord, Skil
 
 /** 简易文件锁：用 .lock 文件 + 原子写入实现互斥 */
 async function acquireLock(lockPath: string, timeoutMs: number = 5000): Promise<void> {
+  // 首次写入时 .otto/org 尚不存在；锁文件本身也在该目录内，所以必须先建目录，
+  // 否则 fs.open(..., 'wx') 会以 ENOENT 失败，原子锁根本没有机会生效。
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {

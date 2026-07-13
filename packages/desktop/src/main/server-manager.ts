@@ -17,7 +17,7 @@
  * 脚本跑，且 single-instance lock 让第二实例立即 quit；bin.js 又在 asar 内），结果永远 15s
  * 超时后静默回退内嵌。既然内嵌才是实际生产路径，这里直接走内嵌，消掉那段必然超时的卡顿。
  *
- * ⚠️ 模块加载方式（打包崩溃根因修复）：otto-server 是纯 ESM 包（package.json
+ * 注意：模块加载方式（打包崩溃根因修复）：otto-server 是纯 ESM 包（package.json
  * "type":"module"），而本文件编译目标是 CJS（tsconfig.main.json 无 "type":"module"，
  * Electron 主进程标准做法）。CJS 对 ESM 只能用**动态** `import()`，静态
  * `import {...} from 'otto-server'` 会被 tsc 编译成 `require('otto-server')`，

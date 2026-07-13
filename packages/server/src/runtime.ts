@@ -28,6 +28,7 @@
 
 import {
   AuthType,
+  ApprovalMode,
   Config,
   MESSAGE_ROLES,
   SceneType,
@@ -37,9 +38,12 @@ import {
   areAllFunctionCallsValid,
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
+  getWorkLogger,
+  MODEL_SERVICE_URL_UNAVAILABLE,
   type ToolCallRequestInfo,
   type ToolRegistry,
   type ToolQuestionConfirmationDetails,
+  type LogCategory,
 } from 'otto-core';
 import type {
   Content,
@@ -60,6 +64,20 @@ import {
   type AskUserQuestion,
   type ToolConfirmationResponsePayload,
 } from './protocol.js';
+import {
+  shouldRequestConfirmation,
+  type RuntimeAuthorizationMode,
+} from './authorizationPolicy.js';
+
+function userFacingRuntimeError(message: string): string {
+  if (
+    message.includes('Failed to parse URL from /v1/') ||
+    (message.includes('Invalid URL') && message.includes('/v1/'))
+  ) {
+    return MODEL_SERVICE_URL_UNAVAILABLE;
+  }
+  return message;
+}
 
 /** 创建并初始化一个绑定到指定 core Config 的会话运行时。 */
 export async function createCoreSessionRuntime(
@@ -119,6 +137,73 @@ function messageContentToParts(content: MessageContent): Part[] {
   return parts;
 }
 
+/** 把员工本轮输入规整成可落日志的纯文本。 */
+function messageContentToText(content: MessageContent): string {
+  return content
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.value;
+        case 'file_reference':
+          return `@${part.value.filePath}`;
+        case 'folder_reference':
+          return `@${part.value.folderPath}`;
+        case 'code_reference':
+          return part.value.code;
+        case 'text_file_content':
+          return `${part.value.fileName}: ${part.value.content}`;
+        case 'image_reference':
+          return '[图片]';
+        default:
+          return '';
+      }
+    })
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const GENERIC_SESSION_TITLES = new Set(['新会话', '新对话', '新会话…', '新对话…']);
+
+function deriveWorkTitle(sessionTitle: string | undefined, userInput: string): string {
+  const firstSentence = userInput.split(/[。！？!?\n]/)[0]?.trim() || '';
+  const isFollowUp = /^(继续|好的?|可以|确认|开始|按这个来|就这样|下一步)$/i.test(firstSentence);
+  if (firstSentence.length >= 4 && !isFollowUp) return firstSentence.slice(0, 60);
+  const cleanSessionTitle = sessionTitle?.trim();
+  if (cleanSessionTitle && !GENERIC_SESSION_TITLES.has(cleanSessionTitle)) {
+    return cleanSessionTitle.slice(0, 60);
+  }
+  return (firstSentence || '本轮工作').slice(0, 60);
+}
+
+function inferWorkResultCategory(text: string): LogCategory {
+  if (/调研|竞品|搜索|网页|网站|资料/.test(text)) return 'web';
+  if (/报告|文档|公文|方案|PPT|幻灯片/.test(text)) return 'document';
+  if (/表格|Excel|数据清洗|透视/.test(text)) return 'spreadsheet';
+  if (/代码|开发|修复|测试|重构|接口/.test(text)) return 'code';
+  if (/会议|日程|日历/.test(text)) return 'calendar';
+  if (/邮件/.test(text)) return 'email';
+  if (/任务|待办/.test(text)) return 'task';
+  return 'other';
+}
+
+/** Runtime 只依赖这一条窄接口，单测可验证真实落日志时机且不碰用户目录。 */
+export interface WorkResultLogEntry {
+  toolName: string;
+  action: string;
+  category: LogCategory;
+  success: boolean;
+  details?: string;
+  sessionId?: string;
+  entryType: 'work_result';
+  taskTitle: string;
+  userInput: string;
+}
+
+export interface WorkResultLogger {
+  log(entry: WorkResultLogEntry): Promise<void>;
+}
+
 /** 从一条流式响应里抽取可流式输出的文本（跳过 thought 片段）。 */
 /**
  * 把 core 的流式响应 usageMetadata 转成协议的 TokenUsage（chat_complete 帧用）。
@@ -162,6 +247,34 @@ function resultDisplayToString(display: unknown): string {
   }
 }
 
+/** 当前轮仍未收口的工具状态；background 已脱离本轮，不阻塞会话。 */
+function isToolCallInFlight(status: ToolCallStatus): boolean {
+  return (
+    status !== ToolCallStatus.Success &&
+    status !== ToolCallStatus.Error &&
+    status !== ToolCallStatus.Canceled &&
+    status !== ToolCallStatus.BackgroundRunning
+  );
+}
+
+/** 把尚未收口的工具卡转为明确的取消终态，已完成卡保持原样。 */
+function cancelToolCall(card: ToolCall): ToolCall {
+  if (!isToolCallInFlight(card.status)) return card;
+  return {
+    ...card,
+    status: ToolCallStatus.Canceled,
+    result: {
+      success: false,
+      error: '用户已停止生成',
+      executionTime: card.startTime
+        ? Math.max(0, Date.now() - card.startTime)
+        : 0,
+      toolName: card.toolName,
+    },
+    endTime: Date.now(),
+  };
+}
+
 /** 一次工具确认应答（answers 等经 payload 回传）。 */
 interface ConfirmationResult {
   outcome: 'approved' | 'rejected' | 'always_approve';
@@ -172,6 +285,7 @@ export class CoreSessionRuntime implements SessionRuntime {
   private toolRegistry?: ToolRegistry;
   private abort?: AbortController;
   private running = false;
+  private authorizationMode: RuntimeAuthorizationMode = 'manual';
   /**
    * 挂起中的工具确认：callId → resolver。AskUserQuestion 弹卡后在此登记，
    * server 收到 tool_confirmation_response 调 resolveToolConfirmation 唤醒。
@@ -185,6 +299,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     private readonly store: SessionStore,
     private readonly sessionId: string,
     private readonly config: Config,
+    private readonly workLogger: WorkResultLogger = getWorkLogger(),
   ) {}
 
   /**
@@ -196,6 +311,8 @@ export class CoreSessionRuntime implements SessionRuntime {
     // 自定义模型（BYO-key）经 USE_PROXY_AUTH 鉴权，对齐 validateNonInteractiveAuth。
     await this.config.refreshAuth(AuthType.USE_PROXY_AUTH);
     this.toolRegistry = await this.config.getToolRegistry();
+    // GUI 自己处理确认；不要沿用 headless 的 YOLO 默认值绕过普通确认。
+    this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
     // 同步 MCP 工具（若已配置）。失败仅告警，不阻塞。
     try {
       await this.toolRegistry.discoverMcpTools();
@@ -204,9 +321,20 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
   }
 
-  setModel(model: string): void {
-    // core 的 setModel 接受 'custom:...' 形态；选中自定义模型即在此切换。
-    this.config.setModel(model);
+  setAuthorizationMode(mode: RuntimeAuthorizationMode): void {
+    this.authorizationMode = mode;
+    this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
+  }
+
+  async setModel(model: string): Promise<void> {
+    // 不能只改 Config：OttoChat 会缓存 specifiedModel，真实出网请求仍会走旧模型。
+    // 统一走 core 的 switchModel，让 Config、live chat、工具与系统提示词一起切换。
+    const result = await this.config
+      .getOttoClient()
+      .switchModel(model, new AbortController().signal);
+    if (!result.success) {
+      throw new Error(result.error || `无法切换到模型 ${model}`);
+    }
   }
 
   /** 供 server.ts 的 GUI 面板 handler 只读查询/即时应用设置（context 分解/mcp/healthyUse 等）。 */
@@ -246,7 +374,7 @@ export class CoreSessionRuntime implements SessionRuntime {
    * 跑一整轮对话（可能多回合工具往返）。
    * 期间所有流式/工具事件经 store.publish 广播；不写 stdout。
    */
-  async run(input: MessageContent, _source: MessageSource): Promise<void> {
+  async run(input: MessageContent, source: MessageSource): Promise<void> {
     if (this.running) {
       // 同一会话已有一轮在跑：拒绝并行（保护 core chat 历史一致性）。
       this.store.publish(this.sessionId, {
@@ -259,8 +387,6 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
       return;
     }
-    void _source; // source 用于飞书回推判定，运行层不需要。
-
     this.running = true;
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -289,6 +415,16 @@ export class CoreSessionRuntime implements SessionRuntime {
     // 本轮 assistant 消息：先落一条占位（isStreaming），后续 chunk 增量填充。
     let assistantId: string | null = null;
     let assistantText = '';
+    // cancel() 必须立即让 UI 收口，不能等一个忽略 AbortSignal 的工具自行返回。
+    // 后续循环仍会检查 signal；此闸门保证 chat_complete(cancelled) 只发布一次。
+    let cancellationPublished = false;
+    const publishCancellation = (): void => {
+      if (cancellationPublished) return;
+      cancellationPublished = true;
+      this.onCancelled(assistantId, assistantText);
+    };
+    const onAbort = (): void => publishCancellation();
+    signal.addEventListener('abort', onAbort, { once: true });
 
     const startAssistant = (): string => {
       const msg = this.store.appendMessage(this.sessionId, {
@@ -319,7 +455,7 @@ export class CoreSessionRuntime implements SessionRuntime {
           break;
         }
         if (signal.aborted) {
-          this.onCancelled(assistantId, assistantText);
+          publishCancellation();
           break;
         }
 
@@ -387,7 +523,7 @@ export class CoreSessionRuntime implements SessionRuntime {
         }
 
         if (signal.aborted) {
-          this.onCancelled(assistantId, assistantText);
+          publishCancellation();
           break;
         }
 
@@ -414,6 +550,7 @@ export class CoreSessionRuntime implements SessionRuntime {
               text: assistantText,
             },
           });
+          await this.recordWorkResult(input, assistantText);
           this.store.setStatus(this.sessionId, 'idle');
           break;
         }
@@ -448,16 +585,20 @@ export class CoreSessionRuntime implements SessionRuntime {
           }
         }
 
+        const toolMessageId = assistantId ?? startAssistant();
+        assistantId = toolMessageId;
         const toolResponseParts = await this.runToolCalls(
           processed,
           promptId,
           toolRegistry,
           caps.maxConcurrentTools,
           signal,
+          toolMessageId,
+          source,
         );
 
         if (signal.aborted) {
-          this.onCancelled(assistantId, assistantText);
+          publishCancellation();
           break;
         }
 
@@ -471,18 +612,32 @@ export class CoreSessionRuntime implements SessionRuntime {
       }
     } catch (e) {
       if (signal.aborted) {
-        this.onCancelled(assistantId, assistantText);
+        publishCancellation();
       } else {
-        const message = e instanceof Error ? e.message : String(e);
+        const rawMessage = e instanceof Error ? e.message : String(e);
+        const message = userFacingRuntimeError(rawMessage);
         if (assistantId !== null) {
+          const finalText = assistantText.trim() ? assistantText : message;
           this.store.patchMessage(this.sessionId, assistantId, {
-            content: [{ type: 'text', value: assistantText }],
+            content: [{ type: 'text', value: finalText }],
             isStreaming: false,
+            isProcessingTools: false,
+            toolsCompleted: true,
+          });
+          this.store.publish(this.sessionId, {
+            type: 'chat_complete',
+            payload: {
+              sessionId: this.sessionId,
+              messageId: assistantId,
+              finishReason: 'error',
+              text: finalText,
+            },
           });
         }
         this.fail('core_error', message);
       }
     } finally {
+      signal.removeEventListener('abort', onAbort);
       this.running = false;
       this.abort = undefined;
     }
@@ -498,13 +653,21 @@ export class CoreSessionRuntime implements SessionRuntime {
     toolRegistry: ToolRegistry,
     maxConcurrent: number,
     signal: AbortSignal,
+    messageId: string,
+    source: MessageSource,
   ): Promise<Part[]> {
     const responseParts: Part[] = [];
 
+    // 某些 provider（尤其 Gemini 原生 functionCall）不提供 id。一次绑定后全程复用，
+    // 避免建卡与执行各生成一个随机 id，导致 cards.get() 永远取不到同一张卡。
+    const callsWithIds = calls.map((fc) => ({
+      fc,
+      callId: this.callIdOf(fc),
+    }));
+
     // 先把所有工具卡以 Executing 状态广播一遍，让 UI 立即出现工具调用卡。
     const cards = new Map<string, ToolCall>();
-    for (const fc of calls) {
-      const callId = this.callIdOf(fc);
+    for (const { fc, callId } of callsWithIds) {
       const card: ToolCall = {
         id: callId,
         toolName: (fc.name as string) ?? 'unknown',
@@ -515,123 +678,250 @@ export class CoreSessionRuntime implements SessionRuntime {
       cards.set(callId, card);
     }
     if (cards.size > 0) {
-      this.publishToolCards(cards);
+      this.publishToolCards(cards, messageId);
     }
+
+    // AbortSignal 只保证通知，不保证工具实现会配合退出。先把卡片与持久消息立即收口；
+    // 若底层工具稍后才返回，下方 signal 检查仍保持 cancelled，不让迟到结果复活转圈。
+    const cancelActiveCards = (): void => {
+      let changed = false;
+      for (const [callId, card] of cards) {
+        const cancelled = cancelToolCall(card);
+        if (cancelled !== card) {
+          cards.set(callId, cancelled);
+          changed = true;
+        }
+      }
+      if (changed) this.publishToolCards(cards, messageId);
+    };
+    signal.addEventListener('abort', cancelActiveCards, { once: true });
+    if (signal.aborted) cancelActiveCards();
 
     // 分块并发执行（对齐 nonInteractiveCli 的并发上限）。
-    const chunks: FunctionCall[][] = [];
+    const chunks: Array<typeof callsWithIds> = [];
     const limit = Math.max(1, maxConcurrent || 1);
-    for (let i = 0; i < calls.length; i += limit) {
-      chunks.push(calls.slice(i, i + limit));
+    for (let i = 0; i < callsWithIds.length; i += limit) {
+      chunks.push(callsWithIds.slice(i, i + limit));
     }
 
-    for (const chunk of chunks) {
-      if (signal.aborted) break;
-      await Promise.all(
-        chunk.map(async (fc) => {
-          const callId = this.callIdOf(fc);
-          const card = cards.get(callId)!;
-          const requestInfo: ToolCallRequestInfo = {
-            callId,
-            name: (fc.name as string) ?? '',
-            args: (fc.args ?? {}) as Record<string, unknown>,
-            isClientInitiated: false,
-            prompt_id: promptId,
-          };
+    try {
+      for (const chunk of chunks) {
+        if (signal.aborted) break;
+        await Promise.all(
+          chunk.map(async ({ fc, callId }) => {
+            const card = cards.get(callId)!;
+            const requestInfo: ToolCallRequestInfo = {
+              callId,
+              name: (fc.name as string) ?? '',
+              args: (fc.args ?? {}) as Record<string, unknown>,
+              isClientInitiated: false,
+              prompt_id: promptId,
+            };
 
-          try {
-            // AskUserQuestion 交互闸门：headless 的 executeToolCall 不会弹确认框，
-            // 所以在此先弹问答卡、等用户答案写进工具的 pendingAnswers，再落入下面
-            // 统一的 executeToolCall —— 它内部 execute() 会读到答案并格式化结果。
-            // 用户跳过 / 会话取消时 answers 为空，execute() 自然回落到 "declined"。
-            if ((fc.name as string) === 'ask_user_question') {
-              await this.gateAskUserQuestion(
+            try {
+              // AskUserQuestion 交互闸门：headless 的 executeToolCall 不会弹确认框，
+              // 所以在此先弹问答卡、等用户答案写进工具的 pendingAnswers，再落入下面
+              // 统一的 executeToolCall —— 它内部 execute() 会读到答案并格式化结果。
+              // 用户跳过 / 会话取消时 answers 为空，execute() 自然回落到 "declined"。
+              let explicitlyApproved = false;
+              if ((fc.name as string) === 'ask_user_question') {
+                await this.gateAskUserQuestion(
+                  requestInfo,
+                  toolRegistry,
+                  cards,
+                  callId,
+                  signal,
+                  messageId,
+                );
+                explicitlyApproved = true;
+              } else {
+                explicitlyApproved = await this.gateToolConfirmation(
+                  requestInfo,
+                  toolRegistry,
+                  cards,
+                  callId,
+                  signal,
+                  messageId,
+                  source,
+                );
+              }
+
+              const toolResponse = await executeToolCall(
+                this.config,
                 requestInfo,
                 toolRegistry,
-                cards,
-                callId,
                 signal,
+                {
+                  explicitlyApproved,
+                  onOutput: (output) => {
+                    if (signal.aborted) return;
+                    const currentCard = cards.get(callId);
+                    if (!currentCard) return;
+                    cards.set(callId, { ...currentCard, liveOutput: output });
+                    this.publishToolCards(cards, messageId);
+                  },
+                },
               );
-            }
 
-            const toolResponse = await executeToolCall(
-              this.config,
-              requestInfo,
-              toolRegistry,
-              signal,
-            );
-
-            const display = resultDisplayToString(toolResponse.resultDisplay);
-            const execResult: ToolExecutionResult = {
-              success: !toolResponse.error,
-              data: display || undefined,
-              error: toolResponse.error
-                ? toolResponse.error.message
-                : undefined,
-              executionTime: card.startTime
-                ? Date.now() - card.startTime
-                : 0,
-              toolName: card.toolName,
-            };
-            cards.set(callId, {
-              ...card,
-              status: toolResponse.error
-                ? ToolCallStatus.Error
-                : ToolCallStatus.Success,
-              result: execResult,
-              endTime: Date.now(),
-            });
-
-            // 工具响应 Part[] 回灌（executeToolCall 已构造 functionResponse）。
-            const parts = Array.isArray(toolResponse.responseParts)
-              ? toolResponse.responseParts
-              : [toolResponse.responseParts];
-            for (const p of parts) {
-              if (typeof p === 'string') {
-                responseParts.push({ text: p });
-              } else if (p) {
-                responseParts.push(p as Part);
+              if (signal.aborted) {
+                cards.set(callId, cancelToolCall(cards.get(callId) ?? card));
+                return;
               }
-            }
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            cards.set(callId, {
-              ...card,
-              status: ToolCallStatus.Error,
-              result: {
-                success: false,
-                error: message,
-                executionTime: card.startTime
-                  ? Date.now() - card.startTime
+
+              const display = resultDisplayToString(toolResponse.resultDisplay);
+              const currentCard = cards.get(callId) ?? card;
+              const execResult: ToolExecutionResult = {
+                success: !toolResponse.error,
+                data: display || undefined,
+                error: toolResponse.error
+                  ? toolResponse.error.message
+                  : undefined,
+                executionTime: currentCard.startTime
+                  ? Date.now() - currentCard.startTime
                   : 0,
-                toolName: card.toolName,
-              },
-              endTime: Date.now(),
-            });
-            // 把错误作为 functionResponse 回灌，让模型可见并自我纠正。
-            responseParts.push({
-              functionResponse: {
-                id: callId,
-                name: (fc.name as string) ?? '',
-                response: { error: message },
-              },
-            });
-          }
-        }),
-      );
-      // 每块执行完广播一次最新状态。
-      this.publishToolCards(cards);
+                toolName: currentCard.toolName,
+              };
+              cards.set(callId, {
+                ...currentCard,
+                status: toolResponse.error
+                  ? ToolCallStatus.Error
+                  : ToolCallStatus.Success,
+                result: execResult,
+                endTime: Date.now(),
+              });
+
+              // 工具响应 Part[] 回灌（executeToolCall 已构造 functionResponse）。
+              const parts = Array.isArray(toolResponse.responseParts)
+                ? toolResponse.responseParts
+                : [toolResponse.responseParts];
+              for (const p of parts) {
+                if (typeof p === 'string') {
+                  responseParts.push({ text: p });
+                } else if (p) {
+                  responseParts.push(p as Part);
+                }
+              }
+            } catch (e) {
+              const message = e instanceof Error ? e.message : String(e);
+              const currentCard = cards.get(callId) ?? card;
+              if (signal.aborted) {
+                cards.set(callId, cancelToolCall(currentCard));
+                return;
+              }
+              cards.set(callId, {
+                ...currentCard,
+                status: ToolCallStatus.Error,
+                result: {
+                  success: false,
+                  error: message,
+                  executionTime: currentCard.startTime
+                    ? Date.now() - currentCard.startTime
+                    : 0,
+                  toolName: currentCard.toolName,
+                },
+                endTime: Date.now(),
+              });
+              // 把错误作为 functionResponse 回灌，让模型可见并自我纠正。
+              responseParts.push({
+                functionResponse: {
+                  id: callId,
+                  name: (fc.name as string) ?? '',
+                  response: { error: message },
+                },
+              });
+            }
+          }),
+        );
+        // 每块执行完广播一次最新状态，同时写回消息持久态。
+        this.publishToolCards(cards, messageId);
+      }
+    } finally {
+      signal.removeEventListener('abort', cancelActiveCards);
+      if (signal.aborted) cancelActiveCards();
     }
 
     return responseParts;
   }
 
-  private publishToolCards(cards: Map<string, ToolCall>): void {
+  /** 普通工具确认：手动模式全问；自动模式只问高危/删除。 */
+  private async gateToolConfirmation(
+    requestInfo: ToolCallRequestInfo,
+    toolRegistry: ToolRegistry,
+    cards: Map<string, ToolCall>,
+    callId: string,
+    signal: AbortSignal,
+    messageId: string,
+    source: MessageSource,
+  ): Promise<boolean> {
+    const tool = toolRegistry.getTool(requestInfo.name);
+    if (!tool) return false;
+    const details = await tool.shouldConfirmExecute(requestInfo.args, signal);
+    if (!details) return false;
+
+    // 飞书没有桌面确认入口：授权用户从 FeishuAdapter 发起的普通操作直接按
+    // ProceedOnce 执行，否则会永远挂在只有 Otto 桌面能看到的确认卡上。
+    // ask_user_question 走独立闸门，不会落到这里；客户端 WS 又禁止伪造
+    // source=feishu，因此桌面里的本地操作仍保持原确认边界。
+    if (source === 'feishu') {
+      await details.onConfirm(ToolConfirmationOutcome.ProceedOnce);
+      return true;
+    }
+
+    if (!shouldRequestConfirmation(this.authorizationMode, details)) return false;
+
+    const base = cards.get(callId);
+    if (base) {
+      const awaiting: ToolCall = {
+        ...base,
+        status: ToolCallStatus.WaitingForConfirmation,
+        confirmationDetails: {
+          ...(details as unknown as ToolCall['confirmationDetails']),
+          riskLevel: (details as { warning?: string }).warning ? 'high' :
+            (details as unknown as ToolCall['confirmationDetails'])?.riskLevel,
+        },
+      };
+      cards.set(callId, awaiting);
+      this.publishToolCards(cards, messageId);
+      this.store.publish(this.sessionId, {
+        type: 'tool_confirmation_request',
+        payload: { sessionId: this.sessionId, callId, toolCall: awaiting },
+      });
+    }
+
+    const result = await this.waitForConfirmation(callId, signal);
+    if (result.outcome === 'rejected') throw new Error('用户已取消此操作');
+    await details.onConfirm(
+      result.outcome === 'always_approve'
+        ? ToolConfirmationOutcome.ProceedAlways
+        : ToolConfirmationOutcome.ProceedOnce,
+      result.payload,
+    );
+    const approved = cards.get(callId);
+    if (approved) {
+      cards.set(callId, { ...approved, status: ToolCallStatus.Executing, confirmationDetails: undefined });
+      this.publishToolCards(cards, messageId);
+    }
+    return true;
+  }
+
+  private publishToolCards(cards: Map<string, ToolCall>, messageId: string): void {
+    const toolCalls = Array.from(cards.values());
+    const isProcessingTools = toolCalls.some((card) =>
+      isToolCallInFlight(card.status),
+    );
+    // 工具卡状态与消息 busy 标记必须同源持久化；否则实时 UI 虽已成功，切换会话后
+    // history 会把旧的 isProcessingTools=true 重新灌回，停止键永久复活。
+    this.store.patchMessage(this.sessionId, messageId, {
+      associatedToolCalls: toolCalls,
+      isProcessingTools,
+      toolsCompleted: !isProcessingTools,
+    });
     this.store.publish(this.sessionId, {
       type: 'tool_calls_update',
       payload: {
         sessionId: this.sessionId,
-        toolCalls: Array.from(cards.values()),
+        messageId,
+        toolCalls,
       },
     });
   }
@@ -650,6 +940,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     cards: Map<string, ToolCall>,
     callId: string,
     signal: AbortSignal,
+    messageId: string,
   ): Promise<void> {
     const tool = toolRegistry.getTool('ask_user_question');
     if (!tool) return;
@@ -684,7 +975,7 @@ export class CoreSessionRuntime implements SessionRuntime {
         },
       };
       cards.set(callId, awaitingCard);
-      this.publishToolCards(cards);
+      this.publishToolCards(cards, messageId);
       this.store.publish(this.sessionId, {
         type: 'tool_confirmation_request',
         payload: {
@@ -716,7 +1007,7 @@ export class CoreSessionRuntime implements SessionRuntime {
         status: ToolCallStatus.Executing,
         confirmationDetails: undefined,
       });
-      this.publishToolCards(cards);
+      this.publishToolCards(cards, messageId);
     }
   }
 
@@ -759,6 +1050,10 @@ export class CoreSessionRuntime implements SessionRuntime {
       this.store.patchMessage(this.sessionId, assistantId, {
         content: [{ type: 'text', value: assistantText }],
         isStreaming: false,
+        // 取消可能发生在工具执行阶段；若只清流式标记，持久历史仍会带
+        // isProcessingTools=true，客户端重拉历史后又回到卡死的停止态。
+        isProcessingTools: false,
+        toolsCompleted: true,
       });
       this.store.publish(this.sessionId, {
         type: 'chat_complete',
@@ -772,6 +1067,32 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
     }
     this.store.setStatus(this.sessionId, 'idle');
+  }
+
+  /**
+   * 记录员工真正关心的一轮最终成果；工具流水仍由 core 记录，两者用途分离。
+   * 写盘失败不影响聊天收口，但这里 await，确保 run() 返回时成果已可被桌面日志读取。
+   */
+  private async recordWorkResult(input: MessageContent, assistantText: string): Promise<void> {
+    const result = assistantText.trim();
+    if (!result) return;
+    const userInput = messageContentToText(input);
+    const taskTitle = deriveWorkTitle(this.store.getSession(this.sessionId)?.title, userInput);
+    try {
+      await this.workLogger.log({
+        toolName: 'otto_work_result',
+        action: taskTitle,
+        category: inferWorkResultCategory(`${taskTitle} ${userInput} ${result}`),
+        success: true,
+        entryType: 'work_result',
+        taskTitle,
+        userInput: userInput.slice(0, 2_000),
+        details: result.slice(0, 8_000),
+        sessionId: this.sessionId,
+      });
+    } catch {
+      // 工作日志不可用不应让已完成的对话变成失败。
+    }
   }
 
   private fail(code: string, message: string): void {

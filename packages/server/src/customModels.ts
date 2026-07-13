@@ -45,7 +45,11 @@ export function customModelsFilePath(): string {
 /** 已是 `{file:...}` / `{env:...}` 引用形态的 key（无需二次写文件，原样透传）。 */
 function isKeyReference(key: string): boolean {
   const t = key.trim();
-  return /^\{file:[^}]+\}$/.test(t) || /^\{env:[^}]+\}$/.test(t);
+  return (
+    t === '${CODEX_OAUTH}' ||
+    /^\{file:[^}]+\}$/.test(t) ||
+    /^\{env:[^}]+\}$/.test(t)
+  );
 }
 
 /**
@@ -245,6 +249,35 @@ export function saveCustomModel(
   return id;
 }
 
+/** 按旧 ModelInfo.id 原子替换；编辑态空 key 表示沿用旧 secret 引用。 */
+export function replaceCustomModel(
+  replaceId: string,
+  nextModel: CustomModelConfig,
+  makeActive = false,
+): string {
+  const models = loadCustomModels();
+  const index = models.findIndex((m) => generateCustomModelId(m) === replaceId);
+  if (index < 0) throw new Error('要编辑的模型不存在（可能已被删除）');
+
+  const previous = models[index];
+  const merged: CustomModelConfig = {
+    ...nextModel,
+    apiKey: nextModel.apiKey.trim() ? nextModel.apiKey : previous.apiKey,
+  };
+  const errors = validateCustomModelConfig(merged);
+  if (errors.length > 0) throw new Error(errors.join('; '));
+  const toSave: CustomModelConfig = isKeyReference(merged.apiKey)
+    ? merged
+    : { ...merged, apiKey: writeApiKeySecret(merged.displayName, merged.apiKey) };
+  const newId = generateCustomModelId(toSave);
+  const preferred = loadPreferredModel();
+  saveCustomModels(
+    models.map((m, i) => (i === index ? toSave : m)),
+    makeActive || preferred === replaceId ? newId : preferred,
+  );
+  return newId;
+}
+
 /**
  * 把自定义模型映射成协议的 ModelInfo[]（供 /models 与 get_models 回包）。
  * `id` 用与 core 一致的 `generateCustomModelId`，desktop 选中后回传 set_model
@@ -255,6 +288,27 @@ export function listModelInfos(): ModelInfo[] {
     id: generateCustomModelId(m),
     displayName: m.displayName,
     provider: m.provider,
+    // 带上 baseUrl 让 UI 能按接入域名识别真实厂商：provider 只是协议名，
+    // OpenAI 兼容接入的智谱/通义/DeepSeek 全叫 'openai'，直接展示会误导。
+    baseUrl: m.baseUrl,
+    modelId: m.modelId,
+    source: 'byok',
+    managed: false,
+    ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
     enabled: m.enabled !== false,
   }));
+}
+
+/**
+ * 删除一个自定义模型（按 ModelInfo id 匹配，即 generateCustomModelId 结果）。
+ * 命中则原子重写配置；若被删的正是当前生效模型（preferredModel），一并清除
+ * （下次解析回退默认顺序）。返回是否真的删掉了。
+ */
+export function deleteCustomModel(infoId: string): boolean {
+  const models = loadCustomModels();
+  const rest = models.filter((m) => generateCustomModelId(m) !== infoId);
+  if (rest.length === models.length) return false;
+  const preferred = loadPreferredModel();
+  saveCustomModels(rest, preferred === infoId ? undefined : preferred);
+  return true;
 }

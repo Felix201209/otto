@@ -13,11 +13,11 @@
  *     → server 侧 FeishuAdapter.getStatus()（断线守护的第一手状态）。
  *
  * 状态语义（与守护循环一一对应）：
- *   ✅ 已连接        —— WS 长连接就绪；
- *   🔄 重连中        —— 断线后守护在退避重试（显示第 N 次、约几秒后重试）；
- *   ⚠️ 另一进程持有  —— 连接锁被别的进程（如 CLI daemon）拿着，本进程如实
+ *   已连接        —— WS 长连接就绪；
+ *   重连中        —— 断线后守护在退避重试（显示第 N 次、约几秒后重试）；
+ *   另一进程持有  —— 连接锁被别的进程（如 CLI daemon）拿着，本进程如实
  *                      不连（避免消息被处理两遍），对方退出后自动接管；
- *   ❌ 离线          —— 启用了但当前既没连上也没在抢救（罕见，心跳会拉回）；
+ *   离线          —— 启用了但当前既没连上也没在抢救（罕见，心跳会拉回）；
  *   ─  未配置        —— 没有飞书凭证 / server 未启用飞书网关。
  *
  * 状态推导抽成纯函数 deriveFeishuBadgeState 导出，单测直接测映射逻辑。
@@ -25,6 +25,7 @@
 
 import React, { useEffect, useState } from 'react';
 import type { FeishuStatusDetail } from '../../preload/index.js';
+import { GeneratedIcon, type GeneratedIconName } from './GeneratedIcon.js';
 
 /** 轮询周期：状态展示不追求实时，5s 足够跟上重连节奏且不扰动 server。 */
 const POLL_INTERVAL_MS = 5_000;
@@ -38,8 +39,10 @@ export interface FeishuStatusResult {
 
 export interface FeishuBadgeView {
   kind: 'connected' | 'reconnecting' | 'lock' | 'offline' | 'unconfigured' | 'unknown';
-  /** 徽标短文案（含状态符号）。 */
+  /** 徽标短文案。 */
   label: string;
+  /** imagegen 生成的状态图标；未知/未配置只保留中性圆点。 */
+  icon: GeneratedIconName | null;
   /** 状态点颜色（语义色，独立于主题弱化灰）。 */
   dotColor: string;
 }
@@ -50,20 +53,21 @@ export function deriveFeishuBadgeState(
   now: number = Date.now(),
 ): FeishuBadgeView {
   if (!res) {
-    return { kind: 'unknown', label: '─ 状态未知', dotColor: '#9ca3af' };
+    return { kind: 'unknown', label: '状态未知', icon: null, dotColor: '#9ca3af' };
   }
   const feishu = res.feishu;
   const st = feishu?.status;
   if (!feishu || !feishu.enabled || !st || !st.configured) {
-    return { kind: 'unconfigured', label: '─ 未配置', dotColor: '#9ca3af' };
+    return { kind: 'unconfigured', label: '未配置', icon: null, dotColor: '#9ca3af' };
   }
   if (st.connected) {
-    return { kind: 'connected', label: '✅ 已连接', dotColor: '#34d399' };
+    return { kind: 'connected', label: '已连接', icon: 'status-success', dotColor: '#34d399' };
   }
   if (st.lockHeldByOtherPid != null) {
     return {
       kind: 'lock',
-      label: `⚠️ 另一进程持有（pid ${st.lockHeldByOtherPid}）`,
+      label: `另一进程持有（pid ${st.lockHeldByOtherPid}）`,
+      icon: 'status-warning',
       dotColor: '#fbbf24',
     };
   }
@@ -74,11 +78,12 @@ export function deriveFeishuBadgeState(
         : null;
     return {
       kind: 'reconnecting',
-      label: `🔄 重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，${eta}s 后重试` : ''}）`,
+      label: `重连中（第 ${st.reconnectAttempts} 次${eta !== null ? `，${eta}s 后重试` : ''}）`,
+      icon: 'status-sync',
       dotColor: '#fbbf24',
     };
   }
-  return { kind: 'offline', label: '❌ 离线', dotColor: '#f87171' };
+  return { kind: 'offline', label: '离线', icon: 'status-error', dotColor: '#f87171' };
 }
 
 export interface FeishuStatusBadgeProps {
@@ -124,16 +129,24 @@ export function FeishuStatusBadge({
       title={result?.text ?? '正在查询飞书连接状态…'}
       data-feishu-state={view.kind}
     >
-      <span
-        aria-hidden
-        style={{
-          width: '7px',
-          height: '7px',
-          borderRadius: '50%',
-          background: view.dotColor,
-          display: 'inline-block',
-        }}
-      />
+      {view.icon ? (
+        <GeneratedIcon
+          name={view.icon}
+          size={16}
+          className={view.kind === 'reconnecting' ? 'otto-generated-icon--spin' : undefined}
+        />
+      ) : (
+        <span
+          aria-hidden
+          style={{
+            width: '7px',
+            height: '7px',
+            borderRadius: '50%',
+            background: view.dotColor,
+            display: 'inline-block',
+          }}
+        />
+      )}
       {view.label}
     </span>
   );

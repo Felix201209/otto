@@ -6,7 +6,7 @@
 
 /**
  * 设置/诊断面板的状态管理（P0）。与 useOttoStore（会话/聊天）解耦成独立 hook，
- * 因为这块数据（settings/mcp/context/stats/doctor/todos）与消息流无关，
+ * 因为这块数据（settings/mcp/context/doctor/todos）与消息流无关，
  * 混进主 reducer 会让 App 的聊天路径多绕一层不相关状态更新。
  *
  * 协议帧对应关系（packages/server/src/protocol.ts）：
@@ -15,7 +15,6 @@
  *   mcp_list     -> mcp_servers
  *   mcp_add/mcp_remove -> mcp_servers（成功后广播）/ error
  *   get_context_breakdown -> context_breakdown
- *   get_stats    -> stats_snapshot
  *   run_doctor   -> doctor_report
  *   get_todos    -> todos_list
  *
@@ -29,9 +28,10 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import * as transport from '../transport.js';
 import type {
   SettingsSnapshot,
+  SearchConfigSnapshot,
+  SearchProvider,
   McpServerInfo,
   ContextBreakdown,
-  StatsSnapshot,
   DoctorReportInfo,
   TodoItemInfo,
   MemoryFileInfo,
@@ -41,13 +41,15 @@ import type {
   ExtensionSummary,
   IdeConnectionStatusValue,
   ServerToClient,
+  StatsSnapshot,
+  KnowledgeItem,
 } from 'otto-server';
 
 export interface SettingsDataState {
   settings: SettingsSnapshot | null;
+  searchConfig: SearchConfigSnapshot | null;
   mcpServers: McpServerInfo[];
   contextBreakdown: ContextBreakdown | null;
-  stats: StatsSnapshot | null;
   doctorReport: DoctorReportInfo | null;
   doctorRunning: boolean;
   todos: TodoItemInfo[];
@@ -61,14 +63,16 @@ export interface SettingsDataState {
   workflows: WorkflowSummary[];
   extensions: ExtensionSummary[];
   ideStatus: { status: IdeConnectionStatusValue; details?: string } | null;
+  statsSnapshot: StatsSnapshot | null;
+  knowledgeEntries: KnowledgeItem[];
   lastError: string | null;
 }
 
 const initialState: SettingsDataState = {
   settings: null,
+  searchConfig: null,
   mcpServers: [],
   contextBreakdown: null,
-  stats: null,
   doctorReport: null,
   doctorRunning: false,
   todos: [],
@@ -81,6 +85,8 @@ const initialState: SettingsDataState = {
   workflows: [],
   extensions: [],
   ideStatus: null,
+  statsSnapshot: null,
+  knowledgeEntries: [],
   lastError: null,
 };
 
@@ -106,12 +112,12 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
       switch (frame.type) {
         case 'settings':
           return { ...state, settings: frame.payload };
+        case 'search_config':
+          return { ...state, searchConfig: frame.payload };
         case 'mcp_servers':
           return { ...state, mcpServers: frame.payload.servers };
         case 'context_breakdown':
           return { ...state, contextBreakdown: frame.payload };
-        case 'stats_snapshot':
-          return { ...state, stats: frame.payload };
         case 'doctor_report':
           return { ...state, doctorReport: frame.payload, doctorRunning: false };
         case 'todos_list':
@@ -137,10 +143,27 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
           return { ...state, extensions: frame.payload.extensions };
         case 'ide_status':
           return { ...state, ideStatus: frame.payload };
+        case 'stats_snapshot':
+          return { ...state, statsSnapshot: frame.payload };
+        case 'knowledge_data':
+          return { ...state, knowledgeEntries: frame.payload.entries };
+        case 'knowledge_added':
+          return {
+            ...state,
+            knowledgeEntries: [...state.knowledgeEntries, frame.payload.entry],
+          };
+        case 'knowledge_removed':
+          return {
+            ...state,
+            knowledgeEntries: state.knowledgeEntries.filter(
+              (e) => e.id !== frame.payload.id,
+            ),
+          };
         case 'error':
           // 仅拦截本面板相关的错误码，避免抢主聊天 toast 的错误展示。
           if (
             frame.payload.code === 'set_setting_failed' ||
+            frame.payload.code === 'save_search_config_failed' ||
             frame.payload.code === 'mcp_add_failed' ||
             frame.payload.code === 'mcp_remove_failed' ||
             frame.payload.code === 'doctor_failed' ||
@@ -172,6 +195,14 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
 export interface SettingsDataActions {
   refreshSettings(): void;
   setSetting(key: 'agentStyle' | 'healthyUse' | 'preferredLanguage', value: string | boolean): void;
+  refreshSearchConfig(): void;
+  saveSearchConfig(payload: {
+    provider: SearchProvider;
+    apiUrl?: string;
+    model?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+  }): void;
   refreshMcpServers(): void;
   addMcpServer(payload: {
     name: string;
@@ -188,7 +219,6 @@ export interface SettingsDataActions {
   }): void;
   removeMcpServer(name: string): void;
   refreshContextBreakdown(sessionId: string): void;
-  refreshStats(): void;
   runDoctor(): void;
   refreshTodos(): void;
   refreshMemory(): void;
@@ -200,6 +230,11 @@ export interface SettingsDataActions {
   clearExportMessage(): void;
   refreshWorkflows(): void;
   refreshExtensions(): void;
+  refreshStats(): void;
+  refreshKnowledge(): void;
+  searchKnowledge(query: string, category?: string): void;
+  addKnowledge(content: string, category?: string, tags?: string[]): void;
+  removeKnowledge(id: string): void;
   refreshIdeStatus(): void;
   clearError(): void;
 }
@@ -255,6 +290,14 @@ export function useSettingsData(): UseSettingsData {
     [],
   );
 
+  const refreshSearchConfig = useCallback(() => {
+    transport.send({ type: 'get_search_config', payload: {} });
+  }, []);
+
+  const saveSearchConfig = useCallback<SettingsDataActions['saveSearchConfig']>((payload) => {
+    transport.send({ type: 'save_search_config', payload });
+  }, []);
+
   const refreshMcpServers = useCallback(() => {
     transport.send({ type: 'mcp_list', payload: {} });
   }, []);
@@ -270,10 +313,6 @@ export function useSettingsData(): UseSettingsData {
   const refreshContextBreakdown = useCallback((sessionId: string) => {
     if (!sessionId) return;
     transport.send({ type: 'get_context_breakdown', payload: { sessionId } });
-  }, []);
-
-  const refreshStats = useCallback(() => {
-    transport.send({ type: 'get_stats', payload: {} });
   }, []);
 
   const runDoctor = useCallback(() => {
@@ -329,6 +368,26 @@ export function useSettingsData(): UseSettingsData {
     transport.send({ type: 'get_ide_status', payload: {} });
   }, []);
 
+  const refreshStats = useCallback(() => {
+    transport.send({ type: 'get_stats', payload: {} });
+  }, []);
+
+  const refreshKnowledge = useCallback(() => {
+    transport.send({ type: 'get_knowledge', payload: {} });
+  }, []);
+
+  const searchKnowledge = useCallback((query: string, category?: string) => {
+    transport.send({ type: 'search_knowledge', payload: { query, category } });
+  }, []);
+
+  const addKnowledge = useCallback((content: string, category?: string, tags?: string[]) => {
+    transport.send({ type: 'add_knowledge', payload: { content, category, tags } });
+  }, []);
+
+  const removeKnowledge = useCallback((id: string) => {
+    transport.send({ type: 'remove_knowledge', payload: { id } });
+  }, []);
+
   const clearError = useCallback(() => {
     dispatch({ kind: 'clear_error' });
   }, []);
@@ -338,11 +397,12 @@ export function useSettingsData(): UseSettingsData {
     actions: {
       refreshSettings,
       setSetting,
+      refreshSearchConfig,
+      saveSearchConfig,
       refreshMcpServers,
       addMcpServer,
       removeMcpServer,
       refreshContextBreakdown,
-      refreshStats,
       runDoctor,
       refreshTodos,
       refreshMemory,
@@ -355,6 +415,11 @@ export function useSettingsData(): UseSettingsData {
       refreshWorkflows,
       refreshExtensions,
       refreshIdeStatus,
+      refreshStats,
+      refreshKnowledge,
+      searchKnowledge,
+      addKnowledge,
+      removeKnowledge,
       clearError,
     },
   };

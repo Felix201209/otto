@@ -53,6 +53,7 @@ const manifest = {
   assets: {
     'win-x64': await assetEntry(`Otto-Setup-${version}-win-x64.exe`),
     'mac-arm64': await assetEntry(`Otto-${version}-arm64.dmg`),
+    'mac-x64': await assetEntry(`Otto-${version}-x64.dmg`),
   },
 };
 
@@ -61,3 +62,4 @@ await writeFile(out, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`已生成 ${out}`);
 console.log(`  win-x64:   ${manifest.assets['win-x64'].size} bytes  sha256=${manifest.assets['win-x64'].sha256}`);
 console.log(`  mac-arm64: ${manifest.assets['mac-arm64'].size} bytes  sha256=${manifest.assets['mac-arm64'].sha256}`);
+console.log(`  mac-x64:   ${manifest.assets['mac-x64'].size} bytes  sha256=${manifest.assets['mac-x64'].sha256}`);

@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 项目简介
+
+本项目是 **Otto**（旧名 EasyCode，目录名沿用旧名）：飞书数字同事 & AI 编程助手，v1.6.1，活跃开发中。既是终端 CLI Agent，也是飞书 bot，能理解整个项目上下文并通过 MCP 协议调用工具完成编程、重构、调试等任务。技术栈：Node.js 20+ + TypeScript，跨 CLI / Electron / 飞书三形态，支持 Claude / Deepseek 等多模型。桌面上的 Otto.app、dmg、exe 等是本项目的发布产物。
+
 本文档定义 AI Agent 在本项目中工作时必须遵守的规则。
 
 ## 规则

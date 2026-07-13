@@ -170,4 +170,12 @@ describe('configCommand', () => {
     expect(result.type).toBe('message');
     expect(mockConfig.setAgentStyle).toHaveBeenCalledWith('cursor');
   });
+
+  it('should accept plain-language work mode aliases', async () => {
+    await configCommand.action!(mockContext, 'agent-style office');
+    expect(mockConfig.setAgentStyle).toHaveBeenCalledWith('antigravity');
+
+    await configCommand.action!(mockContext, 'agent-style engineering');
+    expect(mockConfig.setAgentStyle).toHaveBeenCalledWith('augment');
+  });
 });

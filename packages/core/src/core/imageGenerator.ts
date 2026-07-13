@@ -8,6 +8,7 @@
 import { proxyAuthManager } from './proxyAuth.js';
 import { logger } from '../utils/enhancedLogger.js';
 import { UnauthorizedError } from '../utils/errors.js';
+import { buildProxyRequestUrl } from '../config/proxyConfig.js';
 
 export interface ImageGenerationTask {
   id: number;
@@ -95,7 +96,7 @@ export class ImageGeneratorAdapter {
     expires_in: number;
   }> {
     const endpoint = '/web-api/images/upload-url';
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(proxyAuthManager.getProxyServerUrl(), endpoint);
 
     logger.debug('[ImageGenerator] Getting upload URL', { filename, contentType });
 
@@ -140,7 +141,7 @@ export class ImageGeneratorAdapter {
     }>;
   }> {
     const endpoint = '/web-api/images/upload-urls';
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(proxyAuthManager.getProxyServerUrl(), endpoint);
 
     logger.debug('[ImageGenerator] Getting batch upload URLs', { fileCount: files.length });
 
@@ -198,7 +199,7 @@ export class ImageGeneratorAdapter {
    */
   async submitImageGenerationTask(prompt: string, size: string, fromImgUrl?: string, imageSize?: string, imageUrls?: string[]): Promise<ImageGenerationTask> {
     const endpoint = '/web-api/images/generations';
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(proxyAuthManager.getProxyServerUrl(), endpoint);
 
     logger.debug('[ImageGenerator] Submitting task', { prompt, size, fromImgUrl, imageSize, imageUrlsCount: imageUrls?.length });
 
@@ -249,7 +250,7 @@ export class ImageGeneratorAdapter {
    */
   async getImageTaskStatus(taskId: string): Promise<ImageGenerationTask> {
     const endpoint = `/web-api/images/tasks/${taskId}`;
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(proxyAuthManager.getProxyServerUrl(), endpoint);
 
     try {
       const response = await this.fetchWithRetry(proxyUrl, {

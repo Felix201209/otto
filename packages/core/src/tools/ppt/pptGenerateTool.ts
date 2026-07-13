@@ -4,60 +4,51 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
-import { BaseTool, Icon, ToolResult, ToolLocation, ToolCallConfirmationDetails, ToolConfirmationOutcome } from '../tools.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Type } from '@google/genai';
 import { Config } from '../../config/config.js';
-import { PPTOutlineManager } from './pptOutlineManager.js';
-import { ProxyAuthManager } from '../../core/proxyAuth.js';
-import open from 'open';
-import { logger } from '../../utils/enhancedLogger.js';
 import { t } from '../../utils/simpleI18n.js';
-import { getUserAgent } from '../../utils/userAgent.js';
+import { GenerateDocumentTool } from '../generate-document.js';
+import {
+  BaseTool,
+  Icon,
+  ToolResult,
+  ToolLocation,
+  ToolCallConfirmationDetails,
+  ToolConfirmationOutcome,
+} from '../tools.js';
+import { PPTOutlineManager } from './pptOutlineManager.js';
 
 export interface PptGenerateToolParams {
-  /** 确认提交（默认true） */
+  /** 确认生成（默认 true） */
   confirm?: boolean;
+  /** 本地 PPTX 输出路径；省略时保存到用户桌面 */
+  output_path?: string;
 }
 
-interface PPTOutlineResponse {
-  id: number;
-  user_uuid: string;
-  topic: string;
-  outline: string;
-  page_count: number;
-  status: string;
-  image_task_info: unknown;
-  result_data: unknown;
-  error_message: string | null;
-  pre_deducted_points: number;
-  actual_deducted_points: number;
-  created_at: string;
-  updated_at: string;
-}
-
-interface TempCodeResponse {
-  success: boolean;
-  code?: string;
-  expiresAt?: number;
-  expiresIn?: number;
-  error?: string;
-}
-
+/**
+ * 兼容旧 ppt_outline -> ppt_generate 流程的本地适配器。
+ *
+ * PPT 内容由当前会话中的模型整理；文件渲染统一复用 GenerateDocumentTool，
+ * 全程不访问 Otto 服务端、不登录、不上传，也不依赖网页编辑器。
+ */
 export class PptGenerateTool extends BaseTool<PptGenerateToolParams, ToolResult> {
   static readonly Name = 'ppt_generate';
 
-  /** 服务端API地址 */
-  private readonly serverUrl: string;
-  /** Web前端地址 */
-  private readonly webUrl: string;
+  private readonly documentGenerator: GenerateDocumentTool;
+  private pendingDefaultOutputPath?: string;
 
-  constructor(private readonly config: Config) {
+  constructor(
+    private readonly config: Config,
+    documentGenerator?: GenerateDocumentTool,
+  ) {
     super(
       PptGenerateTool.Name,
       t('tool.ppt_generate'),
       t('tool.ppt_generate.description'),
-      Icon.Globe,
+      Icon.Pencil,
       {
         type: Type.OBJECT,
         properties: {
@@ -65,84 +56,76 @@ export class PptGenerateTool extends BaseTool<PptGenerateToolParams, ToolResult>
             type: Type.BOOLEAN,
             description: t('ppt_generate.param.confirm'),
           },
+          output_path: {
+            type: Type.STRING,
+            description: '本地 .pptx 输出路径；省略时保存到用户桌面',
+          },
         },
         required: [],
       },
-      true, // isOutputMarkdown
-      true, // forceMarkdown
+      true,
+      true,
     );
-
-    // 使用统一的服务端地址配置
-    // BYO-key: 不再硬编码 otto 后端；未配置时为空字符串，execute 时会优雅跳过。
-    this.serverUrl = process.env.OTTO_SERVER_URL || '';
-    this.webUrl = process.env.OTTO_WEB_URL || '';
+    this.documentGenerator = documentGenerator ?? new GenerateDocumentTool(config);
   }
 
-  validateToolParams(_params: PptGenerateToolParams): string | null {
-    const manager = PPTOutlineManager.getInstance();
-    return manager.validateForSubmission();
+  validateToolParams(params: PptGenerateToolParams): string | null {
+    const outlineError = PPTOutlineManager.getInstance().validateForSubmission();
+    if (outlineError) return outlineError;
+    if (params.output_path && path.extname(params.output_path).toLowerCase() !== '.pptx') {
+      return 'PPT 本地输出路径必须以 .pptx 结尾';
+    }
+    return null;
   }
 
-  getDescription(_params: PptGenerateToolParams): string {
-    const manager = PPTOutlineManager.getInstance();
-    const state = manager.getState();
-    return `提交PPT大纲并生成: ${state.topic || '(未设置主题)'}`;
+  getDescription(params: PptGenerateToolParams): string {
+    const state = PPTOutlineManager.getInstance().getState();
+    const outputPath = this.resolveOutputPath(params, state.topic);
+    return `在本地生成 PPT: ${state.topic || '(未设置主题)'} -> ${outputPath}`;
   }
 
-  toolLocations(_params: PptGenerateToolParams): ToolLocation[] {
-    return [];
+  toolLocations(params: PptGenerateToolParams): ToolLocation[] {
+    if (!params.output_path) return [];
+    return [{ path: this.resolveProvidedPath(params.output_path) }];
   }
 
-  /**
-   * 需要用户确认才能执行
-   */
   async shouldConfirmExecute(
-    _params: PptGenerateToolParams,
+    params: PptGenerateToolParams,
     _abortSignal: AbortSignal,
   ): Promise<ToolCallConfirmationDetails | false> {
     const manager = PPTOutlineManager.getInstance();
     const state = manager.getState();
+    const validationError = this.validateToolParams(params);
+    if (validationError) return false;
 
-    // 先验证参数
-    const validationError = manager.validateForSubmission();
-    if (validationError) {
-      return false; // 参数无效时不弹确认框，让 execute 返回错误
-    }
-
-    // 截取大纲预览（最多显示500字符）
+    const outputPath = this.resolveOutputPath(params, state.topic);
     const outlinePreview = state.outline.length > 500
       ? state.outline.substring(0, 500) + '...'
       : state.outline;
 
-    const confirmationDetails: ToolCallConfirmationDetails = {
+    return {
       type: 'info',
-      title: 'Confirm PPT Generation',
-      prompt: `即将提交PPT大纲并生成
+      title: 'Confirm Local PPT Generation',
+      prompt: `即将在本地生成 PPT 文件
 
 📝 主题: ${state.topic}
-📄 页数: ${state.pageCount}
+📄 预计页数: ${state.pageCount}
+💾 本地路径: ${outputPath}
 
-📋 大纲预览:
+📋 内容预览:
 ${outlinePreview}
 
-确认后将：
-1. 提交大纲到服务端
-2. 启动PPT生成任务
-3. 打开浏览器预览页面`,
+确认后将逐页生成本地 HTML，由本机浏览器转成图片，再封装为 PPTX；不调用 Python，不上传内容，也不打开云端网页。`,
       onConfirm: async (_outcome: ToolConfirmationOutcome) => {
-        // No special handling needed on confirm
+        // 无额外确认副作用。
       },
     };
-
-    return confirmationDetails;
   }
 
   async execute(params: PptGenerateToolParams, signal: AbortSignal): Promise<ToolResult> {
     const manager = PPTOutlineManager.getInstance();
     const state = manager.getState();
-
-    // 再次验证
-    const validationError = manager.validateForSubmission();
+    const validationError = this.validateToolParams(params);
     if (validationError) {
       return {
         llmContent: `❌ ${validationError}`,
@@ -150,194 +133,73 @@ ${outlinePreview}
       };
     }
 
-    // BYO-key: 未配置服务端/Web 地址时，PPT 生成功能不可用，优雅返回而非访问空 URL。
-    if (!this.serverUrl || !this.webUrl) {
-      const msg = '❌ PPT 生成功能不可用：未配置服务端地址（请设置 OTTO_SERVER_URL 与 OTTO_WEB_URL）';
-      return {
-        llmContent: msg,
-        returnDisplay: msg,
-      };
-    }
+    const outputPath = this.resolveOutputPath(params, state.topic);
 
     try {
-      // 1. 获取认证token
-      logger.info('[PptGenerateTool] Getting access token...');
-      const proxyAuthManager = ProxyAuthManager.getInstance();
-      const accessToken = await proxyAuthManager.getAccessToken();
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      const renderResult = await this.documentGenerator.execute(
+        {
+          content: state.outline,
+          format: 'slides',
+          output_format: 'pptx',
+          output_path: outputPath,
+          title: state.topic,
+        },
+        signal,
+      );
 
-      if (!accessToken) {
+      const renderSucceeded = typeof renderResult.llmContent === 'string'
+        && renderResult.llmContent.startsWith('generate_document OK');
+      const generated = renderSucceeded
+        && fs.existsSync(outputPath)
+        && fs.statSync(outputPath).size > 0;
+      if (!generated) {
         return {
-          llmContent: `❌ 未登录，请先执行 /auth 命令进行身份认证
-
-💡 提示：在命令行中输入 /auth 进行登录`,
-          returnDisplay: '❌ 未登录，请先执行 /auth 命令',
+          llmContent: `❌ 本地 PPT 生成失败，大纲已保留，可修复本机依赖后重试。\n\n${renderResult.llmContent}`,
+          returnDisplay: `❌ 本地 PPT 生成失败：${renderResult.returnDisplay}`,
         };
       }
 
-      // 2. 提交大纲到 API
-      logger.info('[PptGenerateTool] Submitting outline to API...');
-      const outlineResponse = await this.submitOutline(state, accessToken, signal);
-      const taskId = outlineResponse.id;
-      manager.setTaskId(taskId);
-      logger.info(`[PptGenerateTool] Outline submitted, task ID: ${taskId}`);
-
-      // 3. 启动生成任务
-      logger.info('[PptGenerateTool] Starting generate task...');
-      await this.startGenerateTask(taskId, accessToken, signal);
-      logger.info('[PptGenerateTool] Generate task started');
-
-      // 4. 获取临时登录代码
-      logger.info('[PptGenerateTool] Getting temp code for browser login...');
-      const tempCode = await this.getTempCode(accessToken, signal);
-      logger.info('[PptGenerateTool] Temp code obtained');
-
-      // 5. 构建登录跳转URL
-      const redirectPath = `/ppt/edit/${taskId}`;
-      const loginUrl = `${this.webUrl}/token-login?code=${tempCode}&redirect=${encodeURIComponent(redirectPath)}`;
-
-      // 6. 打开浏览器
-      logger.info(`[PptGenerateTool] Opening browser: ${loginUrl}`);
-      try {
-        await open(loginUrl);
-        logger.info('[PptGenerateTool] Browser opened successfully');
-      } catch (openError) {
-        // 浏览器打开失败时，提供URL让用户手动打开
-        logger.warn('[PptGenerateTool] Failed to open browser:', openError);
-        manager.clear();
-        return {
-          llmContent: `✅ PPT生成任务已提交成功！
-
-📊 任务信息:
-- 任务ID: ${taskId}
-- 主题: ${state.topic}
-- 页数: ${state.pageCount}
-
-⚠️ 无法自动打开浏览器，请手动访问以下链接查看PPT：
-${loginUrl}
-
-PPT模式已退出。`,
-          returnDisplay: `✅ PPT任务 #${taskId} 已提交（请手动打开链接）`,
-        };
-      }
-
-      // 7. 清理PPT模式
+      const size = fs.statSync(outputPath).size;
       manager.clear();
-
+      this.pendingDefaultOutputPath = undefined;
       return {
-        llmContent: `✅ PPT生成任务已提交成功！
-
-📊 任务信息:
-- 任务ID: ${taskId}
-- 主题: ${state.topic}
-- 页数: ${state.pageCount}
-
-🌐 已打开浏览器跳转到预览页面: ${redirectPath}
-
-PPT模式已退出。`,
-        returnDisplay: `✅ PPT任务 #${taskId} 已提交，浏览器已打开`,
+        llmContent: `✅ PPT 已在本地生成\n\n- 主题: ${state.topic}\n- 页数: ${state.pageCount}\n- 文件: ${outputPath}\n- 大小: ${size} bytes\n\n内容未上传，PPT 模式已退出。`,
+        returnDisplay: `✅ PPT 已在本地生成：${outputPath}`,
       };
-
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('[PptGenerateTool] Error:', errorMessage);
-
+      const message = error instanceof Error ? error.message : String(error);
       return {
-        llmContent: `❌ PPT生成失败: ${errorMessage}
-
-💡 可能的解决方案：
-1. 检查网络连接
-2. 确认已正确登录 (/auth)
-3. 检查服务端是否正常运行`,
-        returnDisplay: `❌ 生成失败: ${errorMessage}`,
+        llmContent: `❌ 本地 PPT 生成失败，大纲已保留，可重试：${message}`,
+        returnDisplay: `❌ 本地 PPT 生成失败：${message}`,
       };
     }
   }
 
-  /**
-   * 提交大纲到API
-   */
-  private async submitOutline(
-    state: { topic: string; pageCount: number; outline: string },
-    accessToken: string,
-    signal: AbortSignal,
-  ): Promise<PPTOutlineResponse> {
-    const url = `${this.serverUrl}/web-api/ppt/outline`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'User-Agent': getUserAgent(),
-      },
-      body: JSON.stringify({
-        topic: state.topic,
-        page_count: state.pageCount,
-        outline: state.outline,
-      }),
-      signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`提交大纲失败 (${response.status}): ${errorText}`);
+  private resolveOutputPath(params: PptGenerateToolParams, topic: string): string {
+    if (params.output_path) return this.resolveProvidedPath(params.output_path);
+    if (!this.pendingDefaultOutputPath) {
+      const safeTopic = Array.from(topic.trim())
+        .map((character) => character.codePointAt(0)! < 32 ? '-' : character)
+        .join('')
+        .replace(/[<>:"/\\|?*]/g, '-')
+        .replace(/\s+/g, ' ')
+        .slice(0, 80) || 'Presentation';
+      this.pendingDefaultOutputPath = path.join(
+        os.homedir(),
+        'Desktop',
+        `${safeTopic}-${Date.now()}.pptx`,
+      );
     }
-
-    return response.json();
+    return this.pendingDefaultOutputPath;
   }
 
-  /**
-   * 启动生成任务
-   */
-  private async startGenerateTask(taskId: number, accessToken: string, signal: AbortSignal): Promise<void> {
-    const url = `${this.serverUrl}/web-api/ppt/generate/${taskId}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'User-Agent': getUserAgent(),
-      },
-      signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`启动生成任务失败 (${response.status}): ${errorText}`);
+  private resolveProvidedPath(outputPath: string): string {
+    if (outputPath === '~') return os.homedir();
+    if (outputPath.startsWith(`~${path.sep}`)) {
+      return path.join(os.homedir(), outputPath.slice(2));
     }
-  }
-
-  /**
-   * 获取临时登录代码
-   */
-  private async getTempCode(accessToken: string, signal: AbortSignal): Promise<string> {
-    const url = `${this.serverUrl}/auth/temp-code/generate`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'User-Agent': getUserAgent(),
-      },
-      body: JSON.stringify({
-        expiresIn: 600, // 10分钟有效期
-      }),
-      signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`获取登录代码失败 (${response.status}): ${errorText}`);
-    }
-
-    const result: TempCodeResponse = await response.json();
-
-    if (!result.success || !result.code) {
-      throw new Error(`获取登录代码失败: ${result.error || '未知错误'}`);
-    }
-
-    return result.code;
+    if (path.isAbsolute(outputPath)) return path.normalize(outputPath);
+    return path.resolve(this.config.getTargetDir(), outputPath);
   }
 }

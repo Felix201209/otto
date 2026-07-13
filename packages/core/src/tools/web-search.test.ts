@@ -262,6 +262,97 @@ describe('WebSearchTool', () => {
     });
   });
 
+  describe('volcengine provider（火山方舟 Responses API）', () => {
+    it('用用户配置的 API、模型和密钥调用内置 web_search，并返回回答与引用', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'resp_ark_search',
+            status: 'completed',
+            output: [
+              { type: 'web_search_call', status: 'completed' },
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: '火山方舟搜索后的回答。',
+                    annotations: [
+                      {
+                        type: 'url_citation',
+                        title: '官方资料',
+                        url: 'https://example.com/ark-source',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tool = new WebSearchTool(
+        makeConfig({
+          getSearchProvider: vi.fn().mockReturnValue('volcengine'),
+          getSearchApiKey: vi.fn().mockReturnValue('ark-key'),
+          getSearchApiUrl: vi
+            .fn()
+            .mockReturnValue('https://ark.example.com/api/v3/responses'),
+          getSearchModel: vi.fn().mockReturnValue('doubao-search-model'),
+        }),
+      );
+      const result = await tool.execute(
+        { query: '火山方舟最新搜索能力' },
+        new AbortController().signal,
+      );
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://ark.example.com/api/v3/responses');
+      expect(init.method).toBe('POST');
+      expect((init.headers as Record<string, string>)['Authorization']).toBe(
+        'Bearer ark-key',
+      );
+      expect(JSON.parse(init.body as string)).toEqual({
+        model: 'doubao-search-model',
+        input: '火山方舟最新搜索能力',
+        tools: [{ type: 'web_search' }],
+      });
+      expect(String(result.llmContent)).toContain('provider: volcengine');
+      expect(String(result.llmContent)).toContain('火山方舟搜索后的回答。');
+      expect(result.sources?.[0]?.web).toEqual({
+        title: '官方资料',
+        uri: 'https://example.com/ark-source',
+      });
+    });
+
+    it('缺少 API Key 或模型时 fail-loud，且不发请求', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const tool = new WebSearchTool(
+        makeConfig({
+          getSearchProvider: vi.fn().mockReturnValue('volcengine'),
+          getSearchApiKey: vi.fn().mockReturnValue(undefined),
+          getSearchApiUrl: vi
+            .fn()
+            .mockReturnValue('https://ark.cn-beijing.volces.com/api/v3/responses'),
+          getSearchModel: vi.fn().mockReturnValue(''),
+        }),
+      );
+
+      const result = await tool.execute(
+        { query: 'x' },
+        new AbortController().signal,
+      );
+      expect(String(result.llmContent)).toContain('Error');
+      expect(String(result.llmContent)).toContain('ARK_API_KEY');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('gemini provider（保留的 grounding 分支）', () => {
     it('走 createTemporaryChat + googleSearch grounding', async () => {
       const setTools = vi.fn();

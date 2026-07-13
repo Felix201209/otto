@@ -11,17 +11,17 @@ import { getCoreSystemPrompt, ApprovalMode } from 'otto-core';
 import type { AgentStyle } from 'otto-core';
 
 /**
- * Agent 风格切换命令
+ * Otto 工作方式切换命令。
  *
  * 功能：
  * - /agent-style: 显示当前风格及帮助
- * - /agent-style default: 切换到 Claude-style（默认，强调计划、解释）
- * - /agent-style codex: 切换到 Codex-style（快速确认后静默执行）
- * - /agent-style cursor: 切换到 Cursor-style（语义搜索优先）
- * - /agent-style augment: 切换到 Augment-style（任务列表驱动）
- * - /agent-style claude-code: 切换到 Claude Code-style（极致极简）
- * - /agent-style antigravity: 切换到 Antigravity-style（知识库优先）
- * - /agent-style windsurf: 切换到 Windsurf-style（AI Flow 范式）
+ * - /agent-style chat: 日常对话
+ * - /agent-style fast: 快速执行
+ * - /agent-style code: 工作代码
+ * - /agent-style engineering: 工程交付
+ * - /agent-style direct: 简洁开发
+ * - /agent-style office: 企业办公
+ * - /agent-style collab: 协作推进
  * - /agent-style status: 查看当前风格状态
  *
  * 切换后会：
@@ -74,19 +74,19 @@ export const agentStyleCommand: SlashCommand = {
 ` +
           `${t('agentStyle.usage.title')}
 ` +
-          `  /agent-style default      - ${t('agentStyle.usage.default')}
+          `  /agent-style chat         - ${t('agentStyle.usage.default')}
 ` +
-          `  /agent-style codex        - ${t('agentStyle.usage.codex')}
+          `  /agent-style fast         - ${t('agentStyle.usage.codex')}
 ` +
-          `  /agent-style cursor       - ${t('agentStyle.usage.cursor')}
+          `  /agent-style code         - ${t('agentStyle.usage.cursor')}
 ` +
-          `  /agent-style augment      - ${t('agentStyle.usage.augment')}
+          `  /agent-style engineering  - ${t('agentStyle.usage.augment')}
 ` +
-          `  /agent-style claude-code  - ${t('agentStyle.usage.claudeCode')}
+          `  /agent-style direct       - ${t('agentStyle.usage.claudeCode')}
 ` +
-          `  /agent-style antigravity  - ${t('agentStyle.usage.antigravity')}
+          `  /agent-style office       - ${t('agentStyle.usage.antigravity')}
 ` +
-          `  /agent-style windsurf     - ${t('agentStyle.usage.windsurf')}
+          `  /agent-style collab       - ${t('agentStyle.usage.windsurf')}
 ` +
           `  /agent-style status       - ${t('agentStyle.usage.status')}`,
       };
@@ -149,14 +149,20 @@ export const agentStyleCommand: SlashCommand = {
 
     // 映射子命令到 AgentStyle
     const styleMap: Record<string, AgentStyle> = {
+      'chat': 'default',
       'default': 'default',
       'claude': 'default',
       'codex': 'codex',
       'fast': 'codex',
+      'code': 'cursor',
       'cursor': 'cursor',
+      'engineering': 'augment',
       'augment': 'augment',
+      'direct': 'claude-code',
       'claude-code': 'claude-code',
+      'office': 'antigravity',
       'antigravity': 'antigravity',
+      'collab': 'windsurf',
       'windsurf': 'windsurf',
       'wave': 'windsurf',
     };
@@ -183,7 +189,7 @@ export const agentStyleCommand: SlashCommand = {
   },
 
   completion: async (_context, partialArg) => {
-    const commands = ['default', 'codex', 'cursor', 'augment', 'claude-code', 'antigravity', 'windsurf', 'status'];
+    const commands = ['chat', 'fast', 'code', 'engineering', 'direct', 'office', 'collab', 'status'];
     return commands.filter((cmd) => cmd.startsWith(partialArg.toLowerCase()));
   },
 };

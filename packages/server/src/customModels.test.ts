@@ -20,6 +20,10 @@ import {
   loadCustomModels,
   listModelInfos,
   customModelsFilePath,
+  deleteCustomModel,
+  loadPreferredModel,
+  replaceCustomModel,
+  saveCustomModel,
 } from './customModels.js';
 
 let tmpHome: string;
@@ -134,5 +138,107 @@ describe('listModelInfos', () => {
 
   it('空文件 → []', () => {
     expect(listModelInfos()).toEqual([]);
+  });
+});
+
+describe('saveCustomModel Codex OAuth', () => {
+  it('OAuth 哨兵不是密钥，保存时原样保留而不包装成 secret 文件引用', () => {
+    saveCustomModel({
+      displayName: 'Codex (ChatGPT OAuth)',
+      provider: 'openai-responses',
+      baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiKey: '${CODEX_OAUTH}',
+      modelId: 'gpt-5.6-sol',
+    });
+
+    expect(loadCustomModels()[0].apiKey).toBe('${CODEX_OAUTH}');
+    expect(
+      fs.existsSync(path.join(tmpHome, '.otto-user', 'secrets', 'Codex__ChatGPT_OAuth_')),
+    ).toBe(false);
+  });
+});
+
+describe('deleteCustomModel', () => {
+  it('按 ModelInfo id 删除命中的模型并重写文件', () => {
+    const idA = saveCustomModel({ ...VALID_MODEL, displayName: 'A' }, false);
+    const idB = saveCustomModel(
+      { ...VALID_MODEL, displayName: 'B', modelId: 'gpt-4o-mini' },
+      false,
+    );
+    expect(loadCustomModels()).toHaveLength(2);
+
+    expect(deleteCustomModel(idA)).toBe(true);
+    const rest = loadCustomModels();
+    expect(rest).toHaveLength(1);
+    expect(rest[0].displayName).toBe('B');
+    // 幂等：再删同一个返回 false，文件不变。
+    expect(deleteCustomModel(idA)).toBe(false);
+    expect(loadCustomModels()).toHaveLength(1);
+    void idB;
+  });
+
+  it('删除当前生效模型（preferredModel）时一并清除偏好', () => {
+    const id = saveCustomModel({ ...VALID_MODEL, displayName: 'P' }, true);
+    expect(loadPreferredModel()).toBe(id);
+    expect(deleteCustomModel(id)).toBe(true);
+    expect(loadPreferredModel()).toBeUndefined();
+  });
+
+  it('删除非生效模型时保留既有 preferredModel', () => {
+    const keep = saveCustomModel({ ...VALID_MODEL, displayName: 'Keep' }, true);
+    const drop = saveCustomModel(
+      { ...VALID_MODEL, displayName: 'Drop', modelId: 'gpt-4o-mini' },
+      false,
+    );
+    expect(deleteCustomModel(drop)).toBe(true);
+    expect(loadPreferredModel()).toBe(keep);
+  });
+});
+
+describe('replaceCustomModel', () => {
+  it('按旧 id 原位替换全部字段，空 key 保留旧 secret 引用', () => {
+    const oldId = saveCustomModel({ ...VALID_MODEL, maxTokens: 128000 }, true);
+    const oldKey = loadCustomModels()[0].apiKey;
+
+    const newId = replaceCustomModel(
+      oldId,
+      {
+        displayName: 'Renamed GLM',
+        provider: 'openai-responses',
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        apiKey: '',
+        modelId: 'glm-5',
+        maxTokens: 200000,
+        enabled: false,
+      },
+      false,
+    );
+
+    const models = loadCustomModels();
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({
+      displayName: 'Renamed GLM',
+      provider: 'openai-responses',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: oldKey,
+      modelId: 'glm-5',
+      maxTokens: 200000,
+      enabled: false,
+    });
+    expect(newId).not.toBe(oldId);
+    expect(loadPreferredModel()).toBe(newId);
+  });
+
+  it('提供新 key 时替换 secret，未知旧 id 不写盘', () => {
+    const oldId = saveCustomModel(VALID_MODEL, false);
+    const oldKey = loadCustomModels()[0].apiKey;
+    replaceCustomModel(oldId, { ...VALID_MODEL, apiKey: 'sk-new' }, false);
+    expect(loadCustomModels()[0].apiKey).toBe(oldKey);
+    const secretPath = oldKey.match(/^\{file:(.+)\}$/)?.[1];
+    expect(secretPath && fs.readFileSync(secretPath, 'utf-8').trim()).toBe('sk-new');
+    expect(() =>
+      replaceCustomModel('custom:missing', { ...VALID_MODEL, apiKey: '' }, false),
+    ).toThrow(/不存在/);
+    expect(loadCustomModels()).toHaveLength(1);
   });
 });

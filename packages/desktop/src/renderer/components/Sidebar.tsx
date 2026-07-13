@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type { SessionSummary } from 'otto-server';
+import type { ProductWorkspaceSnapshot, SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
@@ -26,15 +26,50 @@ import {
   IconPlus,
   IconList,
   IconChevron,
+  IconChevronDown,
   IconSparkle,
   IconSettings,
 } from './icons.js';
+import { OrganizationTree } from './OrganizationTree.js';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
+}
+
+/** 按用户本地自然日计算相对日期，避免跨时区或夏令时把“昨天”算成同一天。 */
+function formatRelativeDay(ts: number, now = Date.now()): string {
+  const current = new Date(now);
+  const target = new Date(ts);
+  const currentDay = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
+  const targetDay = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate());
+  const days = Math.max(0, Math.round((currentDay - targetDay) / 86_400_000));
+  if (days === 0) return '今天';
+  if (days === 1) return '昨天';
+  return `${days}天前`;
+}
+
+function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
+  const result: SessionGroup[] = [];
+  const byLabel = new Map<string, SessionSummary[]>();
+  const now = Date.now();
+  const sessions = groups
+    .flatMap((group) => group.sessions)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
+  for (const session of sessions) {
+    const label = formatRelativeDay(session.updatedAt, now);
+    const bucket = byLabel.get(label);
+    if (bucket) bucket.push(session);
+    else {
+      const first = [session];
+      byLabel.set(label, first);
+      result.push({ label, sessions: first });
+    }
+  }
+  return result;
 }
 
 interface SidebarProps {
@@ -44,6 +79,7 @@ interface SidebarProps {
   hubActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
+  productWorkspace?: ProductWorkspaceSnapshot | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -57,6 +93,7 @@ export function Sidebar({
   activeSessionId,
   hubActive = false,
   updateBadge = false,
+  productWorkspace = null,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -64,6 +101,10 @@ export function Sidebar({
   onRename,
   onDelete,
 }: SidebarProps): React.JSX.Element {
+  const [sessionsOpen, setSessionsOpen] = useState(true);
+  const sessionGroups = relativeSessionGroups(groups);
+  const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
+
   return (
     <aside className="otto-sidebar">
       <div className="otto-sidebar__traffic" />
@@ -89,26 +130,48 @@ export function Sidebar({
         新建对话
       </button>
 
-      <div className="otto-sessions">
-        {groups.length === 0 ? (
-          <div className="otto-group__label">暂无对话</div>
-        ) : (
-          groups.map((g) => (
-            <div key={g.label}>
-              <div className="otto-group__label">{g.label}</div>
-              {g.sessions.map((s) => (
-                <SessionItem
-                  key={s.sessionId}
-                  session={s}
-                  active={s.sessionId === activeSessionId}
-                  onSelect={onSelect}
-                  onRename={onRename}
-                  onDelete={onDelete}
-                />
-              ))}
+      <div className="otto-sidebar__workspace">
+        {productWorkspace ? <OrganizationTree workspace={productWorkspace} /> : null}
+
+        <section className="otto-conversations" aria-label="对话任务">
+          <button
+            type="button"
+            className="otto-conversations__toggle"
+            onClick={() => setSessionsOpen((value) => !value)}
+            aria-expanded={sessionsOpen}
+            aria-label={`对话任务（${sessionCount}）`}
+          >
+            <span>对话任务（{sessionCount}）</span>
+            <IconChevronDown
+              size={13}
+              className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
+            />
+          </button>
+
+          {sessionsOpen ? (
+            <div className="otto-sessions">
+              {sessionGroups.length === 0 ? (
+                <div className="otto-group__label">暂无对话</div>
+              ) : (
+                sessionGroups.map((g) => (
+                  <div key={g.label}>
+                    <div className="otto-group__label">{g.label}</div>
+                    {g.sessions.map((s) => (
+                      <SessionItem
+                        key={s.sessionId}
+                        session={s}
+                        active={s.sessionId === activeSessionId}
+                        onSelect={onSelect}
+                        onRename={onRename}
+                        onDelete={onDelete}
+                      />
+                    ))}
+                  </div>
+                ))
+              )}
             </div>
-          ))
-        )}
+          ) : null}
+        </section>
       </div>
 
       <div className="otto-sidebar__footer">

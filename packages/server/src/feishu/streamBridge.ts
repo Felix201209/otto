@@ -64,6 +64,8 @@ const MIN_PUSH_INTERVAL_MS = 1500;
 interface OutboundStream {
   /** assistant 消息 id（chat_chunk/chat_complete 用它对账）。 */
   messageId: string;
+  /** 本条 assistant 启动时快照的触发消息；后续轮次更新不会串改它。 */
+  replyToMessageId?: string;
   /** 累积到目前为止的完整正文（飞书 pushContent 收的是累计全文，非 delta）。 */
   text: string;
   /** 上次推送时间，用于节流。 */
@@ -77,8 +79,6 @@ interface OutboundStream {
     | null;
   /** 标记是否已尝试过起卡，避免对空增量反复建卡。 */
   cardStarted: boolean;
-  /** 串行化 push，避免并发 RPC 乱序（飞书 sequence 必须单调）。 */
-  pending: Promise<void>;
 }
 
 /**
@@ -86,7 +86,8 @@ interface OutboundStream {
  *
  * @param sessionId  飞书会话 id（store 内部 id）
  * @param feishuChatId 对应的飞书 chatId（回推目标）
- * @param replyToMessageId 触发本轮的飞书原始消息 id（回复式起卡，可空）
+ * @param getReplyToMessageId 读取当前执行轮的飞书原始消息 id；每条 assistant
+ *   在 message_start 时快照一次，后续排队轮次更新不会串改已开始的回复。
  * @returns Unsubscribe 句柄；会话结束/网关停止时调用以摘除订阅。
  */
 export function bridgeSessionToFeishu(
@@ -94,10 +95,13 @@ export function bridgeSessionToFeishu(
   gateway: FeishuStreamSink,
   sessionId: string,
   feishuChatId: string,
-  replyToMessageId: string | undefined,
+  getReplyToMessageId: () => string | undefined,
 ): Unsubscribe {
   // 同一会话同一时刻只跟踪「当前正在流的那条 assistant 消息」。
   let active: OutboundStream | null = null;
+  // 整个会话共用一条回推队列：工具多轮会产生多条 assistant 流，如果每条流
+  // 各排各的，上一条尚未定稿时下一条就可能先起卡，导致旧结果晚于新话题出现。
+  let outboundTail: Promise<void> = Promise.resolve();
 
   /**
    * 回推失败上报：向会话订阅者广播一帧 feishu_push_result(ok:false)，
@@ -110,14 +114,17 @@ export function bridgeSessionToFeishu(
     });
   };
 
-  const startStream = (messageId: string): OutboundStream => {
+  const startStream = (
+    messageId: string,
+    replyToMessageId: string | undefined,
+  ): OutboundStream => {
     const s: OutboundStream = {
       messageId,
+      replyToMessageId,
       text: '',
       lastPushAt: 0,
       streaming: null,
       cardStarted: false,
-      pending: Promise.resolve(),
     };
     return s;
   };
@@ -126,10 +133,17 @@ export function bridgeSessionToFeishu(
    * 串行排队一个回推动作：单次失败不阻断后续，但抛错时上报 feishu_push_result。
    * fn 内部对「返回 false（未抛但失败）」的情形也应自行调 reportPushFailure。
    */
-  const enqueue = (s: OutboundStream, fn: () => Promise<void>): void => {
-    s.pending = s.pending.then(fn).catch((e) => {
-      reportPushFailure(s.messageId, e instanceof Error ? e.message : String(e));
+  const enqueueOutbound = (
+    messageId: string,
+    fn: () => Promise<void>,
+  ): void => {
+    outboundTail = outboundTail.then(fn).catch((e) => {
+      reportPushFailure(messageId, e instanceof Error ? e.message : String(e));
     });
+  };
+
+  const enqueue = (s: OutboundStream, fn: () => Promise<void>): void => {
+    enqueueOutbound(s.messageId, fn);
   };
 
   const handleFrame = (frame: ServerToClient): void => {
@@ -139,7 +153,7 @@ export function bridgeSessionToFeishu(
         // 只接管本会话的 assistant 流；用户消息（飞书来的那条）不回推。
         if (m.sessionId !== sessionId) return;
         if (m.role !== 'assistant') return;
-        active = startStream(m.id);
+        active = startStream(m.id, getReplyToMessageId());
         return;
       }
 
@@ -160,7 +174,7 @@ export function bridgeSessionToFeishu(
               feishuChatId,
               initial || ' ',
               undefined,
-              replyToMessageId,
+              s.replyToMessageId,
             );
             if (handle.messageId) {
               s.streaming = {
@@ -178,7 +192,7 @@ export function bridgeSessionToFeishu(
                 .sendMarkdown(
                   feishuChatId,
                   '⏳ 正在处理，完成后回复完整结果…',
-                  replyToMessageId,
+                  s.replyToMessageId,
                 )
                 .catch(() => null);
             }
@@ -207,7 +221,18 @@ export function bridgeSessionToFeishu(
         if (sid !== sessionId) return;
         const s = active && active.messageId === messageId ? active : null;
         if (!s) return;
-        const finalText = s.text.trim() || '（空回复）';
+        const finalText = s.text.trim();
+        // 纯工具轮会产生没有正文的 assistant complete。它只是内部轮次边界，
+        // 不是用户可见回复；绝不能伪造成“（空回复）”刷进飞书。
+        if (!finalText) {
+          enqueue(s, async () => {
+            // 极端情况下曾收到全空白 chunk 并已起卡，只做无内容定稿收口；
+            // markdown 兜底则完全静默，不再发送占位文字。
+            if (s.streaming) await s.streaming.finalize(' ');
+          });
+          if (active === s) active = null;
+          return;
+        }
         enqueue(s, async () => {
           if (s.streaming) {
             // finalize 返回 false = 定稿失败（未抛）；显式上报。
@@ -221,7 +246,7 @@ export function bridgeSessionToFeishu(
             const sent = await gateway.sendMarkdown(
               feishuChatId,
               finalText,
-              replyToMessageId,
+              s.replyToMessageId,
             );
             if (sent === null) {
               reportPushFailure(s.messageId, '飞书消息发送失败');
@@ -239,9 +264,16 @@ export function bridgeSessionToFeishu(
           return;
         }
         const text = `⚠️ 处理出错：${frame.payload.message}`;
-        void gateway
-          .sendMarkdown(feishuChatId, text, replyToMessageId)
-          .catch(() => undefined);
+        const messageId = active?.messageId ?? `error-${Date.now()}`;
+        const replyToMessageId = active?.replyToMessageId ?? getReplyToMessageId();
+        enqueueOutbound(messageId, async () => {
+          const sent = await gateway.sendMarkdown(
+            feishuChatId,
+            text,
+            replyToMessageId,
+          );
+          if (sent === null) reportPushFailure(messageId, '飞书错误消息发送失败');
+        });
         return;
       }
 

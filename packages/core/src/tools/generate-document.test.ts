@@ -3,11 +3,20 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'child_process';
-import { GenerateDocumentTool } from './generate-document.js';
+import {
+  ChromeHtmlToImageRenderer,
+  findLocalBrowserExecutable,
+  GenerateDocumentTool,
+  type HtmlToImageRenderer,
+  normalizeSlidesMarkdown,
+} from './generate-document.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { pathToFileURL } from 'node:url';
+import JSZip from 'jszip';
+import iconv from 'iconv-lite';
 
 function hasBin(name: string): boolean {
   try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
@@ -24,7 +33,11 @@ describe('GenerateDocumentTool', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // 临时目录清理是尽力而为。
+    }
   });
 
   // --- Metadata ---
@@ -94,10 +107,48 @@ describe('GenerateDocumentTool', () => {
     expect(r.llmContent).toContain('brew install typst');
   });
 
-  it.runIf(!marpAvailable)('slides->pptx fails loud with marp install command when marp is missing', async () => {
+  it('slides->pptx renders local HTML to images before packaging OOXML', async () => {
     const out = path.join(tmpDir, 's.pptx');
+    const renderedHtml: string[] = [];
+    const onePixelPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const htmlRenderer: HtmlToImageRenderer = {
+      render: vi.fn(async ({ htmlPath, outputPath }) => {
+        renderedHtml.push(fs.readFileSync(htmlPath, 'utf8'));
+        fs.writeFileSync(outputPath, onePixelPng);
+      }),
+    };
+    const htmlTool = new GenerateDocumentTool(createMockConfig(), htmlRenderer);
+    const r = await htmlTool.execute(
+      { content: '# Slide 1\n\n- Point A\n\n---\n\n# Slide 2\n\nPoint B', format: 'slides', output_format: 'pptx', title: 'S', output_path: out },
+      new AbortController().signal,
+    );
+
+    expect(r.llmContent).toContain('generate_document OK');
+    expect(htmlRenderer.render).toHaveBeenCalledTimes(2);
+    expect(renderedHtml[0]).toContain('<!doctype html>');
+    expect(renderedHtml[0]).toContain('data-slide-index="1"');
+    expect(renderedHtml[0]).toContain('<li>Point A</li>');
+    expect(renderedHtml[1]).toContain('Slide 2');
+
+    const zip = await JSZip.loadAsync(fs.readFileSync(out));
+    expect(zip.file('[Content_Types].xml')).not.toBeNull();
+    const mediaFiles = Object.keys(zip.files).filter((name) => name.startsWith('ppt/media/'));
+    expect(mediaFiles.length).toBeGreaterThanOrEqual(1);
+    const firstSlideXml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+    const secondSlideXml = await zip.file('ppt/slides/slide2.xml')!.async('string');
+    expect(firstSlideXml).toContain('<p:pic>');
+    expect(secondSlideXml).toContain('<p:pic>');
+    expect(firstSlideXml).not.toContain('<a:t>Slide 1</a:t>');
+    expect(firstSlideXml).not.toContain('<p:sp>');
+  });
+
+  it.runIf(!marpAvailable)('slides->pdf fails loud with marp install command when marp is missing', async () => {
+    const out = path.join(tmpDir, 's.pdf');
     const r = await tool.execute(
-      { content: '# Slide 1\n---\n# Slide 2', format: 'slides', output_format: 'pptx', title: 'S', output_path: out },
+      { content: '# Slide 1\n---\n# Slide 2', format: 'slides', output_format: 'pdf', title: 'S', output_path: out },
       new AbortController().signal,
     );
     expect(r.llmContent).toContain('FAIL');
@@ -114,5 +165,232 @@ describe('GenerateDocumentTool', () => {
     expect(r.llmContent).toContain('FAIL');
     expect(r.llmContent.toLowerCase()).toContain('pandoc');
     expect(r.llmContent).toContain('brew install pandoc');
+  });
+
+  it('passes Marp, Typst, and Pandoc paths as structured argv', async () => {
+    const commandRunner = vi.fn(async (file: string, args: string[]) => {
+      const outputPath = file === 'typst'
+        ? args[2]
+        : args[args.indexOf('-o') + 1];
+      fs.writeFileSync(outputPath, `rendered by ${file}`);
+    });
+    const dependencyPreflight = vi.fn(async () => null);
+    const unusedHtmlRenderer: HtmlToImageRenderer = { render: vi.fn() };
+    const externalTool = new GenerateDocumentTool(
+      createMockConfig(),
+      unusedHtmlRenderer,
+      commandRunner,
+      dependencyPreflight,
+    );
+
+    const slidesOut = path.join(tmpDir, '季度 汇报.pdf');
+    const reportOut = path.join(tmpDir, '年度 报告.pdf');
+    const docxOut = path.join(tmpDir, '会议 纪要.docx');
+    const signal = new AbortController().signal;
+
+    const slides = await externalTool.execute(
+      { content: '# 第一页', format: 'slides', output_format: 'pdf', output_path: slidesOut },
+      signal,
+    );
+    const report = await externalTool.execute(
+      { content: '# 报告', format: 'report', output_format: 'pdf', output_path: reportOut },
+      signal,
+    );
+    const docx = await externalTool.execute(
+      { content: '# 纪要', format: 'article', output_format: 'docx', output_path: docxOut },
+      signal,
+    );
+
+    expect(slides.llmContent).toContain('generate_document OK');
+    expect(report.llmContent).toContain('generate_document OK');
+    expect(docx.llmContent).toContain('generate_document OK');
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      1,
+      'marp',
+      [expect.stringMatching(/slides\.md$/), '-o', slidesOut, '--allow-local-files'],
+      expect.objectContaining({ signal }),
+    );
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      2,
+      'typst',
+      ['compile', expect.stringMatching(/doc\.typ$/), reportOut],
+      expect.objectContaining({ signal }),
+    );
+    expect(commandRunner).toHaveBeenNthCalledWith(
+      3,
+      'pandoc',
+      [
+        expect.stringMatching(/doc\.md$/),
+        '-o',
+        docxOut,
+        '-f',
+        'markdown',
+        '-t',
+        'docx',
+        '--standalone',
+      ],
+      expect.objectContaining({ signal }),
+    );
+  });
+});
+
+describe('normalizeSlidesMarkdown', () => {
+  it('keeps explicit Marp slide separators unchanged', () => {
+    const markdown = '# One\n\n---\n\n# Two';
+    expect(normalizeSlidesMarkdown(markdown)).toBe(markdown);
+  });
+
+  it('drops a redundant leading separator because the tool adds front matter', () => {
+    expect(normalizeSlidesMarkdown('---\n# One\n\n---\n\n# Two'))
+      .toBe('# One\n\n---\n\n# Two');
+  });
+
+  it('turns Chinese page headings into separate local slides', () => {
+    expect(normalizeSlidesMarkdown(
+      '第一页：开场\n要点 A\n\n第二页：结论\n要点 B',
+    )).toBe('# 开场\n要点 A\n\n---\n\n# 结论\n要点 B');
+  });
+
+  it('turns English slide headings into separate local slides', () => {
+    expect(normalizeSlidesMarkdown(
+      'Slide 1: Opening\nPoint A\n\nSlide 2: Close\nPoint B',
+    )).toBe('# Opening\nPoint A\n\n---\n\n# Close\nPoint B');
+  });
+});
+
+describe('ChromeHtmlToImageRenderer', () => {
+  it('calls the local browser executable directly without Python', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-html-shot-'));
+    const htmlPath = path.join(tempDir, 'slide.html');
+    const outputPath = path.join(tempDir, 'slide.png');
+    fs.writeFileSync(htmlPath, '<!doctype html><h1>Local</h1>');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const runner = vi.fn(async (_executable: string, args: string[]) => {
+      const screenshotArg = args.find((arg) => arg.startsWith('--screenshot='));
+      fs.writeFileSync(screenshotArg!.slice('--screenshot='.length), png);
+    });
+
+    try {
+      const renderer = new ChromeHtmlToImageRenderer('/local/chrome', runner);
+      await renderer.render({
+        htmlPath,
+        outputPath,
+        width: 1600,
+        height: 900,
+        signal: new AbortController().signal,
+      });
+
+      expect(runner).toHaveBeenCalledTimes(1);
+      expect(runner.mock.calls[0][0]).toBe('/local/chrome');
+      expect(runner.mock.calls[0][1]).toContain('--window-size=1600,900');
+      expect(runner.mock.calls[0][1].at(-1)).toBe(pathToFileURL(htmlPath).href);
+      expect(runner.mock.calls[0][1].join(' ')).not.toMatch(/python/i);
+      expect(runner.mock.calls[0][1].join(' ')).not.toContain('--user-data-dir=');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  const localBrowser = findLocalBrowserExecutable();
+  it.runIf(Boolean(localBrowser))('renders a real 1600x900 PNG with the installed local browser', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-html-shot-real-'));
+    const htmlPath = path.join(tempDir, 'slide.html');
+    const outputPath = path.join(tempDir, 'slide.png');
+    fs.writeFileSync(
+      htmlPath,
+      '<!doctype html><style>html,body{margin:0;width:1600px;height:900px;background:#123456}</style>',
+    );
+
+    try {
+      await new ChromeHtmlToImageRenderer(localBrowser).render({
+        htmlPath,
+        outputPath,
+        width: 1600,
+        height: 900,
+        signal: new AbortController().signal,
+      });
+      const png = fs.readFileSync(outputPath);
+      expect(png.readUInt32BE(16)).toBe(1600);
+      expect(png.readUInt32BE(20)).toBe(900);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+describe('document external command runner', () => {
+  it('passes paths as argv and decodes GBK stderr on Windows', async () => {
+    const module = await import('./generate-document.js') as Record<string, unknown>;
+    expect(module.runDocumentCommand).toBeTypeOf('function');
+
+    const inputPath = 'C:\\Users\\张三\\OneDrive - 示例公司\\输入 文档.md';
+    const outputPath = 'C:\\Users\\张三\\桌面\\汇报 文件.pptx';
+    const args = [inputPath, '-o', outputPath];
+    const execFileImpl = vi.fn((
+      _file: string,
+      _args: readonly string[],
+      _options: Record<string, unknown>,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => {
+      callback(
+        Object.assign(new Error('Command failed'), { code: 1 }),
+        Buffer.alloc(0),
+        iconv.encode('系统找不到指定的路径', 'gbk'),
+      );
+    });
+
+    const runDocumentCommand = module.runDocumentCommand as (
+      file: string,
+      argv: string[],
+      options: Record<string, unknown>,
+    ) => Promise<void>;
+    await expect(runDocumentCommand('pandoc', args, {
+      platform: 'win32',
+      execFileImpl,
+    })).rejects.toThrow('系统找不到指定的路径');
+
+    expect(execFileImpl).toHaveBeenCalledWith(
+      'pandoc',
+      args,
+      expect.objectContaining({ encoding: 'buffer', windowsHide: true }),
+      expect.any(Function),
+    );
+  });
+
+  it('runs the Windows npm Marp shim through ComSpec without joining user paths', async () => {
+    const module = await import('./generate-document.js') as Record<string, unknown>;
+    const runDocumentCommand = module.runDocumentCommand as (
+      file: string,
+      argv: string[],
+      options: Record<string, unknown>,
+    ) => Promise<void>;
+    const args = [
+      'C:\\Users\\张三\\AppData\\Local\\Temp\\otto doc\\slides.md',
+      '-o',
+      'C:\\Users\\张三\\桌面\\季度 汇报.pdf',
+      '--allow-local-files',
+    ];
+    const execFileImpl = vi.fn((
+      _file: string,
+      _args: readonly string[],
+      _options: Record<string, unknown>,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => callback(null, Buffer.alloc(0), Buffer.alloc(0)));
+
+    await runDocumentCommand('marp', args, {
+      platform: 'win32',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+      execFileImpl,
+    });
+
+    expect(execFileImpl).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', 'marp', ...args],
+      expect.objectContaining({ encoding: 'buffer', windowsHide: true }),
+      expect.any(Function),
+    );
   });
 });

@@ -27,6 +27,10 @@ export {
   listModelInfos,
   customModelsFilePath,
 } from './customModels.js';
+export * from './modelCatalog.js';
+export * from './productWorkspace.js';
+export * from './productWorkspaceStore.js';
+export * from './agentProfiles.js';
 export type {
   FeishuRegistration,
   FeishuRegisterDeps,

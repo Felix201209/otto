@@ -25,7 +25,6 @@ import type {
   ExtensionSummary,
   McpServerInfo,
   ModelInfo,
-  StatsSnapshot,
 } from '../protocol.js';
 
 /**
@@ -46,8 +45,6 @@ export interface CommandHost {
   currentModel(): string | undefined;
   /** 可用模型列表（BYO-key）。 */
   modelInfos(): ModelInfo[];
-  /** 进程级用量统计（与 get_stats 帧同源）。 */
-  statsSnapshot(): StatsSnapshot;
   /** MCP 服务器配置 + 实时连接状态（与 mcp_list 帧同源）。 */
   mcpServerInfos(): McpServerInfo[];
   /** 已安装扩展（项目级 + 全局，与 get_extensions 帧同源）。 */

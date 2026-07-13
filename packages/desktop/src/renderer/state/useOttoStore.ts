@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import * as transport from '../transport.js';
 import type {
+  ToolCallStatus,
   OttoMessage,
   SessionSummary,
   ServerToClient,
@@ -69,6 +70,10 @@ export interface OttoState {
   slashCommands?: SlashCommandInfo[];
   /** 末次错误（toast 用）。 */
   lastError: string | null;
+  /** 各会话当前排队消息数（message_queued/queue_drained 帧更新）。 */
+  queuedCounts: Record<string, number>;
+  /** 待关联的 clientRequestId（create_session 后等 session_created 回包用）。 */
+  pendingCreateRequestId: string | null;
 }
 
 const initialState: OttoState = {
@@ -83,6 +88,8 @@ const initialState: OttoState = {
   currentModel: null,
   slashCommands: [],
   lastError: null,
+  queuedCounts: {},
+  pendingCreateRequestId: null,
 };
 
 // ── reducer action ────────────────────────────────────────────────────────
@@ -94,7 +101,8 @@ type Action =
   | { kind: 'optimistic_user'; message: OttoMessage }
   | { kind: 'system_note'; markdown: string }
   | { kind: 'local_error'; message: string }
-  | { kind: 'clear_error' };
+  | { kind: 'clear_error' }
+  | { kind: 'pending_create'; clientRequestId: string };
 
 function upsertSession(
   state: OttoState,
@@ -213,6 +221,34 @@ function settleInFlight(state: OttoState, sessionId?: string): OttoState {
   return changed ? { ...state, messages } : state;
 }
 
+function isToolCallInFlight(status: ToolCallStatus): boolean {
+  return !['success', 'error', 'cancelled', 'background_running'].includes(
+    status as string,
+  );
+}
+
+/** 取消终态把仍在执行/等待的卡片一并收口，避免按钮恢复后卡片继续永久转圈。 */
+function cancelInFlightToolCalls(
+  toolCalls: OttoMessage['associatedToolCalls'],
+): OttoMessage['associatedToolCalls'] {
+  return toolCalls?.map((toolCall) => {
+    if (!isToolCallInFlight(toolCall.status)) return toolCall;
+    return {
+      ...toolCall,
+      status: 'cancelled' as ToolCallStatus,
+      result: {
+        success: false,
+        error: '用户已停止生成',
+        executionTime: toolCall.startTime
+          ? Math.max(0, Date.now() - toolCall.startTime)
+          : 0,
+        toolName: toolCall.toolName,
+      },
+      endTime: Date.now(),
+    };
+  });
+}
+
 function reducer(state: OttoState, action: Action): OttoState {
   switch (action.kind) {
     case 'connection':
@@ -238,11 +274,13 @@ function reducer(state: OttoState, action: Action): OttoState {
     }
 
     case 'local_error':
-      // 本地产生的错误（如断连时拦截发送）——复用 lastError 的 toast 通道。
       return { ...state, lastError: action.message };
 
     case 'clear_error':
       return state.lastError === null ? state : { ...state, lastError: null };
+
+    case 'pending_create':
+      return { ...state, pendingCreateRequestId: action.clientRequestId };
 
     case 'frame':
       return applyFrame(state, action.frame);
@@ -266,11 +304,47 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     case 'session_upsert':
       return upsertSession(state, frame.payload.session);
 
+    case 'session_created': {
+      // PR 1: 本端创建的新会话——比对 clientRequestId 精确选中
+      const updated = upsertSession(state, frame.payload.session);
+      if (state.pendingCreateRequestId === frame.payload.clientRequestId) {
+        return { ...updated, activeSessionId: frame.payload.session.sessionId, pendingCreateRequestId: null };
+      }
+      return { ...updated, pendingCreateRequestId: null };
+    }
+
+    case 'message_queued': {
+      const qc = { ...state.queuedCounts };
+      qc[frame.payload.sessionId] = frame.payload.queuePosition;
+      return { ...state, queuedCounts: qc };
+    }
+
+    case 'queue_drained': {
+      const qc = { ...state.queuedCounts };
+      delete qc[frame.payload.sessionId];
+      return { ...state, queuedCounts: qc };
+    }
+
     case 'history': {
       const { sessionId, messages } = frame.payload;
+      const existing = state.messages[sessionId];
+      // server 返回的历史不少于本地时，把它视为权威快照；这样删除、重载和
+      // 首次订阅仍能正确替换。本地明显更长时则说明 server 回包被 limit 截断：
+      // 保留本地顺序与尾部消息，同时用 server 的同 id 内容完成定稿对账。
+      const nextMessages =
+        existing && existing.length > messages.length
+          ? (() => {
+              const serverById = new Map(messages.map((message) => [message.id, message]));
+              const existingIds = new Set(existing.map((message) => message.id));
+              return [
+                ...existing.map((message) => serverById.get(message.id) ?? message),
+                ...messages.filter((message) => !existingIds.has(message.id)),
+              ];
+            })()
+          : messages;
       return {
         ...state,
-        messages: { ...state.messages, [sessionId]: messages },
+        messages: { ...state.messages, [sessionId]: nextMessages },
       };
     }
 
@@ -296,7 +370,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     }
 
     case 'chat_complete': {
-      const { sessionId, messageId, tokenUsage, text } = frame.payload;
+      const { sessionId, messageId, tokenUsage, text, finishReason } = frame.payload;
       return patchMessage(state, sessionId, messageId, (m) => ({
         ...m,
         // 帧带定稿全文时用它覆盖本地 content 对账：切走（退订）期间丢失的
@@ -307,6 +381,16 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
             : m.content,
         isStreaming: false,
         isReasoning: false,
+        // 工具阶段取消时，上一轮 chat_complete 已留下 isProcessingTools=true；
+        // 取消终态必须一并清掉，否则 busy 会让停止按钮永久卡住。
+        isProcessingTools:
+          finishReason === 'cancelled' ? false : m.isProcessingTools,
+        toolsCompleted:
+          finishReason === 'cancelled' ? true : m.toolsCompleted,
+        associatedToolCalls:
+          finishReason === 'cancelled'
+            ? cancelInFlightToolCalls(m.associatedToolCalls)
+            : m.associatedToolCalls,
         tokenUsage: tokenUsage ?? m.tokenUsage,
       }));
     }
@@ -323,26 +407,44 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return patchMessage(state, sessionId, targetId, (m) => ({
         ...m,
         associatedToolCalls: toolCalls,
-        isProcessingTools: toolCalls.some(
-          (t) => t.status === 'executing' || t.status === 'scheduled',
+        isProcessingTools: toolCalls.some((toolCall) =>
+          isToolCallInFlight(toolCall.status),
+        ),
+        toolsCompleted: !toolCalls.some((toolCall) =>
+          isToolCallInFlight(toolCall.status),
         ),
       }));
     }
 
     case 'session_status': {
       const { sessionId, status } = frame.payload;
-      const s = state.sessions[sessionId];
-      if (!s) return state;
-      return upsertSession(state, { ...s, status });
+      // session_status 是全局运行态的权威源。idle/error 到达后即使 history 带着
+      // 旧 transient 标记，也必须收口，否则无任务可取消时停止键仍会复活。
+      const nextState =
+        status === 'idle' || status === 'error'
+          ? settleInFlight(state, sessionId)
+          : state;
+      const s = nextState.sessions[sessionId];
+      if (!s) return nextState;
+      return upsertSession(nextState, { ...s, status });
     }
 
-    case 'models_list':
+    case 'models_list': {
+      const retainedCurrent = state.currentModel
+        ? frame.payload.models.some(
+            (model) =>
+              model.id === state.currentModel && model.enabled !== false,
+          )
+          ? state.currentModel
+          : null
+        : null;
       return {
         ...state,
         models: frame.payload.models,
         modelsLoaded: true,
-        currentModel: frame.payload.current ?? state.currentModel,
+        currentModel: frame.payload.current ?? retainedCurrent,
       };
+    }
 
     case 'error':
       // 收口在途消息再落错误：否则流式中途报错时那条 assistant 占位永远 isStreaming=true，
@@ -379,7 +481,7 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
         content: [
           {
             type: 'text',
-            value: `${echo}\n\n${ok ? '' : '⚠️ '}${markdown}`,
+            value: `${echo}\n\n${ok ? '' : '**警告：** '}${markdown}`,
           },
         ],
         timestamp: Date.now(),
@@ -422,10 +524,13 @@ export interface OttoActions {
    * 新会话由 server 回的 session_upsert 关联（首个「未见过的 id」即它），随后自动选中并发送。
    */
   launchExpert(title: string, kickoff: string): void;
+  /** v1.7：只提交白名单 profile id，由 server 注入 system prompt；不自动发用户消息。 */
+  launchAgentProfile(title: string, agentProfileId: string): void;
   sendMessage(
     text: string,
     source?: MessageSource,
     attachments?: ImageAttachment[],
+    queueAction?: 'merge' | 'next_turn' | 'new_session',
   ): void;
   setModel(model: string): void;
   cancel(): void;
@@ -477,6 +582,7 @@ export function useOttoStore(): UseOttoStore {
     kickoff: string;
     source: MessageSource;
   } | null>(null);
+  const profileLaunchRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -499,6 +605,14 @@ export function useOttoStore(): UseOttoStore {
           source: spec.source,
         };
         dispatch({ kind: 'select', sessionId: sid });
+      } else if (
+        profileLaunchRef.current &&
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === profileLaunchRef.current &&
+        !sessionIdsRef.current.includes(frame.payload.session.sessionId)
+      ) {
+        profileLaunchRef.current = null;
+        dispatch({ kind: 'select', sessionId: frame.payload.session.sessionId });
       }
     });
 
@@ -585,7 +699,9 @@ export function useOttoStore(): UseOttoStore {
   }, []);
 
   const createSession = useCallback((title?: string) => {
-    transport.send({ type: 'create_session', payload: { title } });
+    const clientRequestId = crypto.randomUUID();
+    dispatch({ kind: 'pending_create', clientRequestId });
+    transport.send({ type: 'create_session', payload: { title, clientRequestId } });
   }, []);
 
   const deleteSession = useCallback((sessionId: string) => {
@@ -612,7 +728,22 @@ export function useOttoStore(): UseOttoStore {
     }
     // 记下待发的开场消息，随后由 onFrame 关联新会话、kickoff effect 择机发送。
     launchRef.current = { kickoff: clean, source: 'local' };
-    transport.send({ type: 'create_session', payload: { title } });
+    const clientRequestId = crypto.randomUUID();
+    dispatch({ kind: 'pending_create', clientRequestId });
+    transport.send({ type: 'create_session', payload: { title, clientRequestId } });
+  }, []);
+
+  const launchAgentProfile = useCallback((title: string, agentProfileId: string) => {
+    if (!agentProfileId.trim()) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，无法启动 Agent' });
+      return;
+    }
+    profileLaunchRef.current = agentProfileId;
+    transport.send({
+      type: 'create_session',
+      payload: { title, agentProfileId },
+    });
   }, []);
 
   const sendMessage = useCallback(
@@ -620,13 +751,11 @@ export function useOttoStore(): UseOttoStore {
       text: string,
       source: MessageSource = 'local',
       attachments: ImageAttachment[] = [],
+      queueAction?: 'merge' | 'next_turn' | 'new_session',
     ) => {
       const sessionId = activeRef.current;
       const trimmed = text.trim();
-      // 纯文本或纯图片都可发；两者皆空才拦截。
       if (!sessionId || (!trimmed && attachments.length === 0)) return;
-      // 断连校验：WS 未连上时消息发不出去，不做乐观渲染（否则会留一条永远不会有回复的
-      // 用户气泡），改为走 toast 明确告知「未连接，消息未送达」。
       if (connectionRef.current !== 'connected') {
         dispatch({ kind: 'local_error', message: '未连接，消息未送达' });
         return;
@@ -637,7 +766,6 @@ export function useOttoStore(): UseOttoStore {
       for (const value of attachments) {
         content.push({ type: 'image_reference', value });
       }
-      // 乐观渲染：先把用户消息塞进列表，server 回的 message_start 会按 id 对账覆盖。
       dispatch({
         kind: 'optimistic_user',
         message: {
@@ -651,7 +779,7 @@ export function useOttoStore(): UseOttoStore {
       });
       transport.send({
         type: 'send_user_message',
-        payload: { sessionId, content, source, clientMessageId },
+        payload: { sessionId, content, source, clientMessageId, ...(queueAction ? { queueAction } : {}) },
       });
     },
     [],
@@ -666,7 +794,7 @@ export function useOttoStore(): UseOttoStore {
   const cancel = useCallback(() => {
     const sessionId = activeRef.current;
     if (!sessionId) return;
-    transport.send({ type: 'cancel', payload: { sessionId } });
+    transport.send({ type: 'cancel', payload: { sessionId, clearQueue: true } });
   }, []);
 
   const respondToolConfirmation = useCallback(
@@ -716,6 +844,7 @@ export function useOttoStore(): UseOttoStore {
       deleteSession,
       renameSession,
       launchExpert,
+      launchAgentProfile,
       sendMessage,
       setModel,
       cancel,

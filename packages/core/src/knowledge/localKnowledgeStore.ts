@@ -27,6 +27,8 @@ export interface KnowledgeEntry {
   tags: string[];
   /** ISO 时间戳 */
   createdAt: string;
+  /** 内容指纹（sha256 前 16 hex），供去重；可选，旧条目无此字段时为 undefined */
+  fingerprint?: string;
 }
 
 /** 检索结果：条目 + 相关度分（越大越相关） */
@@ -164,6 +166,7 @@ export class LocalKnowledgeStore {
     category: string,
     content: string,
     tags: string[] = [],
+    fingerprint?: string,
   ): Promise<KnowledgeEntry> {
     const trimmedContent = (content ?? '').trim();
     if (!trimmedContent) {
@@ -175,6 +178,7 @@ export class LocalKnowledgeStore {
       content: trimmedContent,
       tags: (tags ?? []).map((tag) => String(tag).trim()).filter(Boolean),
       createdAt: new Date().toISOString(),
+      ...(fingerprint ? { fingerprint } : {}),
     };
 
     await this.enqueue(async () => {
@@ -244,5 +248,144 @@ export class LocalKnowledgeStore {
       await fs.rename(tmpPath, this.filePath);
       return true;
     });
+  }
+
+  /**
+   * 按指纹查找条目。返回命中的第一条，否则 null。
+   * 供自动沉淀前去重：内容变了但结构与之前相同 → 避免重复写入。
+   */
+  async findByFingerprint(fingerprint: string): Promise<KnowledgeEntry | null> {
+    if (!fingerprint) return null;
+    const entries = await this.loadAll();
+    return entries.find((e) => e.fingerprint === fingerprint) ?? null;
+  }
+
+  /**
+   * Upsert：按指纹查找，存在则更新内容/标签/时间，不存在则新增。
+   * 新增走 JSONL 追加；更新需要重写文件。
+   * 返回最终条目（新增或更新后）。
+   */
+  async upsert(
+    category: string,
+    content: string,
+    tags: string[] = [],
+    fingerprint?: string,
+  ): Promise<KnowledgeEntry> {
+    const trimmedContent = (content ?? '').trim();
+    if (!trimmedContent) {
+      throw new Error('knowledge content cannot be empty');
+    }
+
+    // 无指纹走新增
+    if (!fingerprint) {
+      return this.add(category, trimmedContent, tags);
+    }
+
+    const existing = await this.findByFingerprint(fingerprint);
+    if (!existing) {
+      return this.add(category, trimmedContent, tags, fingerprint);
+    }
+
+    // 存在则更新
+    const updated: KnowledgeEntry = {
+      ...existing,
+      category: (category ?? '').trim() || existing.category,
+      content: trimmedContent,
+      tags: (tags ?? []).map((t) => String(t).trim()).filter(Boolean).length > 0
+        ? (tags ?? []).map((t) => String(t).trim()).filter(Boolean)
+        : existing.tags,
+      createdAt: new Date().toISOString(),
+    };
+
+    await this.enqueue(async () => {
+      const entries = await this.loadAll();
+      const idx = entries.findIndex((e) => e.id === existing.id);
+      if (idx === -1) return;
+      entries[idx] = updated;
+      const tmpPath = `${this.filePath}.tmp`;
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      const body =
+        entries.map((entry) => JSON.stringify(entry)).join('\n') +
+        (entries.length > 0 ? '\n' : '');
+      await fs.writeFile(tmpPath, body, 'utf-8');
+      await fs.rename(tmpPath, this.filePath);
+    });
+
+    return updated;
+  }
+
+  /**
+   * 合并高度相似条目。
+   *
+   * 用简单的 Jaccard 字符 3-gram 相似度：两条内容的 n-gram 交集 / 并集。
+   * 对达到 threshold 的条目对，保留较新的一条，删除旧的一条。
+   * 返回合并掉的条目数。
+   */
+  async mergeSimilar(threshold: number = 0.85): Promise<number> {
+    const entries = await this.loadAll();
+    if (entries.length <= 1) return 0;
+
+    const removed = new Set<string>();
+    // 按时间倒序：优先保留新的
+    const sorted = [...entries].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt),
+    );
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (removed.has(sorted[i].id)) continue;
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (removed.has(sorted[j].id)) continue;
+        const sim = this.textSimilarity(sorted[i].content, sorted[j].content);
+        if (sim >= threshold) {
+          // 标记较旧（j，因为 sorted 已按时间倒序）的删除
+          removed.add(sorted[j].id);
+        }
+      }
+    }
+
+    if (removed.size === 0) return 0;
+
+    // 重写文件：去掉被标记的条目
+    await this.enqueue(async () => {
+      const current = await this.loadAll();
+      const remaining = current.filter((e) => !removed.has(e.id));
+      const tmpPath = `${this.filePath}.tmp`;
+      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+      const body =
+        remaining.map((entry) => JSON.stringify(entry)).join('\n') +
+        (remaining.length > 0 ? '\n' : '');
+      await fs.writeFile(tmpPath, body, 'utf-8');
+      await fs.rename(tmpPath, this.filePath);
+    });
+
+    return removed.size;
+  }
+
+  /**
+   * 简易文本相似度（Jaccard on character 3-grams）。
+   * 返回 0-1 之间的值，越大越相似。
+   */
+  private textSimilarity(a: string, b: string): number {
+    const getGrams = (s: string): Set<string> => {
+      const grams = new Set<string>();
+      const t = s.toLowerCase().replace(/\s+/g, ' ').trim();
+      for (let i = 0; i < t.length - 2; i++) {
+        grams.add(t.slice(i, i + 3));
+      }
+      return grams;
+    };
+
+    const ga = getGrams(a);
+    const gb = getGrams(b);
+
+    if (ga.size === 0 && gb.size === 0) return 1;
+    if (ga.size === 0 || gb.size === 0) return 0;
+
+    let intersection = 0;
+    for (const g of ga) {
+      if (gb.has(g)) intersection++;
+    }
+    const union = ga.size + gb.size - intersection;
+    return union === 0 ? 0 : intersection / union;
   }
 }

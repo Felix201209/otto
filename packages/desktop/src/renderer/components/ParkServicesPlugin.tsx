@@ -105,6 +105,36 @@ function defaultServices(park: string): ParkService[] {
   ];
 }
 
+/**
+ * 跨组件打开园区服务弹窗的事件通路（与 Composer 的 insertComposerDraft 同模式）：
+ * 右侧面板「园区服务」入口深居另一棵组件树，为一条打开通路穿透 props 不值当。
+ */
+const PARK_OPEN_EVENT = 'otto:open-park-services';
+
+/** 打开园区服务弹窗（右侧面板入口调用；ChatView 内挂载的 Plugin 监听并展开）。 */
+export function openParkServices(): void {
+  window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
+}
+
+/**
+ * 企业品牌名 hook（右侧面板入口卡片等处共用）：读 park-services.json 的
+ * brandName，无配置用默认「宏创AI园区服务」。与 Plugin 内部读取相互独立
+ * （幂等 IPC，读两次无副作用），避免为一个字符串穿 props。
+ */
+export function useParkBrand(): string {
+  const [brand, setBrand] = useState(DEFAULT_BRAND);
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto?.parkConfig?.().then((cfg) => {
+      if (!cancelled && cfg?.brandName) setBrand(cfg.brandName);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return brand;
+}
+
 export function ParkServicesPlugin(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   // 企业定制：品牌名 / 园区称呼 / 服务清单（~/.otto-user/park-services.json，
@@ -113,7 +143,6 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [services, setServices] = useState<ParkService[]>(() =>
     defaultServices(DEFAULT_PARK),
   );
-  const fabRef = useRef<HTMLButtonElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const uid = useId();
   const titleId = `${uid}-title`;
@@ -144,11 +173,17 @@ export function ParkServicesPlugin(): React.JSX.Element {
     };
   }, []);
 
-  // 打开：焦点落第一个服务项；关闭：焦点还回触发小钮。
+  // 打开：焦点落第一个服务项。
   useEffect(() => {
     if (open) firstItemRef.current?.focus();
-    else fabRef.current?.focus();
   }, [open]);
+
+  // 右侧面板「园区服务」入口经自定义事件打开本弹窗。
+  useEffect(() => {
+    const onOpen = (): void => setOpen(true);
+    window.addEventListener(PARK_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(PARK_OPEN_EVENT, onOpen);
+  }, []);
 
   const pick = (prompt: string): void => {
     setOpen(false);
@@ -165,18 +200,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
 
   return (
     <>
-      <button
-        ref={fabRef}
-        type="button"
-        className="otto-park-fab"
-        onClick={() => setOpen(true)}
-        title={brand}
-        aria-label={brand}
-      >
-        <IconBuilding size={17} className="otto-park-fab__icon" />
-        <span className="otto-park-fab__label">园区服务</span>
-      </button>
-
+      {/* 悬浮小钮已按 Jeremy 要求移除（v1.6.0）：入口统一走右侧面板
+          「园区 AI 服务」卡片（openParkServices 事件）。弹窗监听常驻。 */}
       {open ? (
         <div
           className="otto-park-overlay"

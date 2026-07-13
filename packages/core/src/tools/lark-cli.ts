@@ -9,7 +9,9 @@ import { BaseTool, Icon, ToolResult } from './tools.js';
 import { Config } from '../config/config.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 /**
  * Throttle interval for pushing live output to the UI.
@@ -33,14 +35,70 @@ const LARK_CLI_PINNED_VERSION = '1.0.53';
  */
 const FALLBACK_TIMEOUT_MS = 15 * 60 * 1000;
 
+const AUTH_URL_CANDIDATE_REGEX = /https:\/\/[^\s<>"'`]+/gi;
+const AUTH_ACCOUNTS_HOSTS = new Set([
+  'accounts.feishu.cn',
+  'accounts.larksuite.com',
+]);
+const AUTH_OPEN_HOSTS = new Set(['open.feishu.cn', 'open.larksuite.com']);
+const AUTH_USER_CODE_RE = /^[a-z0-9][a-z0-9_-]{3,63}$/i;
+const AUTH_APP_ID_RE = /^[a-z0-9_-]{3,128}$/i;
+const ANSI_ESCAPE = String.fromCharCode(27);
+
 /**
- * Matches the interactive authorization links emitted by lark-cli. Covers both
- * the modern device-flow page (`/page/cli?user_code=...`) and the legacy
- * `/open-apis/authen` endpoint, across the Feishu (open.feishu.cn) and Lark
- * (open.larksuite.com) brands.
+ * Extract an official lark-cli authorization URL. Core/TUI must enforce the
+ * same boundary as Desktop; otherwise a compromised tool output could turn an
+ * attacker-controlled lookalike URL into an `auth_required` link.
  */
-const AUTH_URL_REGEX =
-  /https?:\/\/[^\s'"]*?(?:page\/cli\?user_code=|open-apis\/authen)[^\s'"]*/;
+function extractAuthorizationUrl(output: string): string | undefined {
+  const candidates =
+    output.split(ANSI_ESCAPE).join('\n').match(AUTH_URL_CANDIDATE_REGEX) ?? [];
+
+  for (const candidate of candidates) {
+    const clean = candidate.replace(/[\])},.;，。；]+$/u, '');
+    if (clean.length > 4096) continue;
+    try {
+      const url = new URL(clean);
+      if (
+        url.protocol !== 'https:' ||
+        url.port !== '' ||
+        url.username !== '' ||
+        url.password !== '' ||
+        url.hash !== ''
+      ) {
+        continue;
+      }
+
+      const userCode = url.searchParams.get('user_code') ?? '';
+      if (AUTH_ACCOUNTS_HOSTS.has(url.hostname)) {
+        if (
+          url.pathname === '/oauth/v1/device/verify' &&
+          AUTH_USER_CODE_RE.test(userCode)
+        ) {
+          return clean;
+        }
+        continue;
+      }
+
+      if (!AUTH_OPEN_HOSTS.has(url.hostname)) continue;
+      if (
+        (url.pathname === '/page/cli' || url.pathname === '/page/launcher') &&
+        AUTH_USER_CODE_RE.test(userCode)
+      ) {
+        return clean;
+      }
+      if (
+        url.pathname === '/open-apis/authen/v1/index' &&
+        AUTH_APP_ID_RE.test(url.searchParams.get('app_id') ?? '')
+      ) {
+        return clean;
+      }
+    } catch {
+      // Ignore truncated or malformed candidates and inspect the next URL.
+    }
+  }
+  return undefined;
+}
 
 /**
  * Commands that themselves perform authorization. We must never trigger the
@@ -72,10 +130,30 @@ function isPlainStructuredData(value: unknown): boolean {
  */
 function buildChildEnv(): NodeJS.ProcessEnv {
   const allowExact = new Set([
-    'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE',
-    'TERM', 'TMPDIR', 'TEMP', 'TMP', 'TZ', 'PWD', 'COLUMNS', 'LINES',
-    'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT',
-    'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+    'PATH',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'SHELL',
+    'LANG',
+    'LANGUAGE',
+    'TERM',
+    'TMPDIR',
+    'TEMP',
+    'TMP',
+    'TZ',
+    'PWD',
+    'COLUMNS',
+    'LINES',
+    'SYSTEMROOT',
+    'WINDIR',
+    'COMSPEC',
+    'PATHEXT',
+    'APPDATA',
+    'LOCALAPPDATA',
+    'USERPROFILE',
+    'HOMEDRIVE',
+    'HOMEPATH',
   ]);
   // 安全:刻意不透传 NPM_*(如 NPM_CONFIG_REGISTRY / NPM_TOKEN / NPM_CONFIG_*)。
   // npx 兜底执行第三方 CLI 时,这些变量可被用于劫持 registry(供应链投毒/RCE)
@@ -150,6 +228,9 @@ export interface LarkCliResult extends ToolResult {
  */
 export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
   static readonly Name: string = 'lark_cli';
+
+  /** Reuse a verified executable instead of probing/spawning npm every call. */
+  private detectedBinary?: string;
 
   constructor(private readonly config: Config) {
     super(
@@ -282,7 +363,8 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
           as: {
             type: Type.STRING,
             enum: ['user', 'bot'],
-            description: 'Optional identity under which the command will be run.',
+            description:
+              'Optional identity under which the command will be run.',
           },
         },
         required: ['command'],
@@ -306,7 +388,11 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
       return errors;
     }
 
-    if (!params.command || typeof params.command !== 'string' || params.command.trim() === '') {
+    if (
+      !params.command ||
+      typeof params.command !== 'string' ||
+      params.command.trim() === ''
+    ) {
       return 'Parameter "command" must be a non-empty string.';
     }
 
@@ -348,6 +434,19 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
    * otherwise falls back to a zero-installation npx on-demand execution.
    */
   private detectBinary(): string {
+    if (this.detectedBinary) return this.detectedBinary;
+
+    // `npx @larksuite/cli` resolves npm and starts a Node wrapper on every
+    // invocation (roughly two seconds even after the package is warm). Once
+    // npm has installed our exact pinned version, call its platform-native
+    // binary directly. This keeps the first-run zero-install experience while
+    // making every later Feishu operation pay only the CLI/API cost.
+    const cachedNativeBinary = this.findPinnedNpxNativeBinary();
+    if (cachedNativeBinary) {
+      this.detectedBinary = this.sanitizeArg(cachedNativeBinary);
+      return this.detectedBinary;
+    }
+
     try {
       // Probing local environment for globally-installed binary. Use a
       // synchronous probe with a short timeout so it never blocks the flow.
@@ -357,7 +456,8 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         env: buildChildEnv(),
       });
       if (probe.status === 0) {
-        return 'lark-cli';
+        this.detectedBinary = 'lark-cli';
+        return this.detectedBinary;
       }
     } catch {
       // ignore and fall through to npx
@@ -367,6 +467,60 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
     // 被篡改的新版本(@latest 每次解析为注册表当下返回的内容)。升级 lark-cli
     // 时显式 bump 此处版本号即可。
     return `npx @larksuite/cli@${LARK_CLI_PINNED_VERSION}`;
+  }
+
+  /**
+   * Finds the native executable installed by npx for the exact pinned package.
+   * We deliberately inspect only npm's standard per-user cache and verify the
+   * package name/version before using it; arbitrary similarly named binaries
+   * elsewhere on disk are ignored.
+   */
+  private findPinnedNpxNativeBinary(): string | undefined {
+    const npmCacheRoots = [path.join(os.homedir(), '.npm')];
+    if (os.platform() === 'win32' && process.env.LOCALAPPDATA) {
+      npmCacheRoots.unshift(path.join(process.env.LOCALAPPDATA, 'npm-cache'));
+    }
+
+    for (const npmCacheRoot of npmCacheRoots) {
+      const npxRoot = path.join(npmCacheRoot, '_npx');
+      let installs: string[];
+      try {
+        installs = readdirSync(npxRoot);
+      } catch {
+        continue;
+      }
+
+      for (const install of installs) {
+        const packageDir = path.join(
+          npxRoot,
+          install,
+          'node_modules',
+          '@larksuite',
+          'cli',
+        );
+        try {
+          const manifest = JSON.parse(
+            readFileSync(path.join(packageDir, 'package.json'), 'utf8'),
+          ) as { name?: string; version?: string };
+          if (
+            manifest.name !== '@larksuite/cli' ||
+            manifest.version !== LARK_CLI_PINNED_VERSION
+          ) {
+            continue;
+          }
+
+          const nativeBinary = path.join(
+            packageDir,
+            'bin',
+            os.platform() === 'win32' ? 'lark-cli.exe' : 'lark-cli',
+          );
+          if (existsSync(nativeBinary)) return nativeBinary;
+        } catch {
+          // Ignore incomplete/invalid npm cache entries and inspect the next.
+        }
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -418,7 +572,10 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
       return {
         status: 'failed',
         error: validationError,
-        llmContent: JSON.stringify({ status: 'failed', error: validationError }),
+        llmContent: JSON.stringify({
+          status: 'failed',
+          error: validationError,
+        }),
         returnDisplay: `Parameter validation failed: ${validationError}`,
       };
     }
@@ -435,10 +592,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
     // lark-cli's hints (which would tempt the agent to fall back to a raw
     // shell command, hiding the URL from the user). We skip this for auth
     // commands themselves to avoid infinite recursion.
-    if (
-      !isAuthCommand(params.command) &&
-      this.needsAuthorization(raw)
-    ) {
+    if (!isAuthCommand(params.command) && this.needsAuthorization(raw)) {
       const failureType = this.classifyAuthFailure(raw);
       let authCmd: string;
 
@@ -448,10 +602,14 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         authCmd = this.extractAuthLoginCommand(raw, params.command, binary);
 
         // Apply project-level Feishu/Lark authorization scope minimization rules
-        let feishuSettings: { recommend?: boolean; excludeScopes?: string[] } | undefined;
+        let feishuSettings:
+          | { recommend?: boolean; excludeScopes?: string[] }
+          | undefined;
         if (typeof this.config.getProjectSettingsManager === 'function') {
           try {
-            const projectSettings = this.config.getProjectSettingsManager().load();
+            const projectSettings = this.config
+              .getProjectSettingsManager()
+              .load();
             feishuSettings = projectSettings?.feishu;
           } catch {
             // ignore
@@ -465,7 +623,9 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         // settings.json 的 feishu.excludeScopes 显式配置。
         const defaultExcludes: string[] = [];
         const configuredExcludes = feishuSettings?.excludeScopes || [];
-        const uniqueExcludes = Array.from(new Set([...defaultExcludes, ...configuredExcludes]));
+        const uniqueExcludes = Array.from(
+          new Set([...defaultExcludes, ...configuredExcludes]),
+        );
 
         if (feishuSettings?.recommend && !authCmd.includes('--recommend')) {
           authCmd += ' --recommend';
@@ -615,7 +775,9 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         // Extract raw scope string inside quotes or unquoted.
         // 安全:非引号分支同样改用单一字符类 `[^`\n]+`(线性,无嵌套量词),
         // 避免 ReDoS;语义不变,仍可含空格、停在反引号/行尾。
-        const scopeContentMatch = matchStr.match(/--scope\s+"([^"]*)"/) || matchStr.match(/--scope\s+([^`\n]+)/);
+        const scopeContentMatch =
+          matchStr.match(/--scope\s+"([^"]*)"/) ||
+          matchStr.match(/--scope\s+([^`\n]+)/);
         if (scopeContentMatch) {
           // Strip literal backslashes and quotes (e.g. from escaped \" in JSON errors)
           const rawScopes = scopeContentMatch[1].replace(/[\\'"]+/g, '');
@@ -624,8 +786,10 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
           // Extract unique domain prefixes (before the first colon, e.g. "mail" from "mail:user_mailbox.message")
           const domains = Array.from(
             new Set(
-              scopes.map((s) => s.split(':')[0]).filter((d) => d && d.length > 0)
-            )
+              scopes
+                .map((s) => s.split(':')[0])
+                .filter((d) => d && d.length > 0),
+            ),
           );
           // 安全:domain 来自 lark-cli 输出(供应链/MITM 可控),仅接受安全字符防注入。
           const safeDomains = domains.filter((d) => /^[a-z_]+$/i.test(d));
@@ -640,7 +804,9 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
       // raw matched text — it could carry shell metacharacters from upstream output.
       const domainOnly = matchStr.match(/--domain\s+([^\s`]+)/);
       if (domainOnly) {
-        const safe = domainOnly[1].split(',').filter((d) => /^[a-z_]+$/i.test(d));
+        const safe = domainOnly[1]
+          .split(',')
+          .filter((d) => /^[a-z_]+$/i.test(d));
         if (safe.length > 0) {
           return `${binary} auth login --domain ${safe.join(',')}`;
         }
@@ -654,7 +820,10 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
     );
     if (scopeMatch) {
       // Use the first scope listed; strip trailing punctuation/backticks.
-      const scope = scopeMatch[1].split(',')[0].trim().replace(/[`'"]+$/, '');
+      const scope = scopeMatch[1]
+        .split(',')[0]
+        .trim()
+        .replace(/[`'"]+$/, '');
       const domain = scope.split(':')[0];
       // 安全:scope/domain 来自 lark-cli 输出,白名单校验后再拼,杜绝命令注入。
       if (/^[a-z_]+$/i.test(domain)) {
@@ -733,9 +902,9 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         // Capture the authorization URL the instant it is printed and push it
         // to the user immediately (force flush, bypassing throttle).
         if (!authUrl) {
-          const match = combined.match(AUTH_URL_REGEX);
-          if (match) {
-            authUrl = match[0];
+          const captured = extractAuthorizationUrl(combined);
+          if (captured) {
+            authUrl = captured;
             flush(true);
             return;
           }

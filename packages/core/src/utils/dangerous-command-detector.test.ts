@@ -298,6 +298,13 @@ describe('DangerousCommandDetector', () => {
       expect(shouldAlwaysConfirmCommand('git commit -m "test"')).toBe(false);
     });
 
+    it('forces confirmation for global npm installs but keeps local installs non-dangerous', () => {
+      expect(shouldAlwaysConfirmCommand('npm install -g @marp-team/marp-cli')).toBe(true);
+      expect(shouldAlwaysConfirmCommand('npm i --global @marp-team/marp-cli')).toBe(true);
+      expect(shouldAlwaysConfirmCommand('npm --global install @marp-team/marp-cli')).toBe(true);
+      expect(shouldAlwaysConfirmCommand('npm install @marp-team/marp-cli')).toBe(false);
+    });
+
     it('should return false for empty command', () => {
       expect(shouldAlwaysConfirmCommand('')).toBe(false);
       expect(shouldAlwaysConfirmCommand('   ')).toBe(false);

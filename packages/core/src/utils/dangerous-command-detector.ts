@@ -154,6 +154,17 @@ const DANGEROUS_COMMAND_RULES: DangerousCommandRule[] = [
       '⚠️ 这是一个attrib命令，会修改文件的系统属性。必须确认。',
   },
 
+  {
+    id: 'npm-global-install',
+    description: 'npm 全局安装命令',
+    // 全局安装会修改用户/系统级命令环境；本地 npm install 仍按普通命令处理。
+    pattern:
+      /(?:^|(?:;|&&|\|\||\||&)\s*)npm\b(?=[^;&|]*\s(?:-g|--global)(?=\s|$))(?=[^;&|]*\b(?:i|install)\b)/i,
+    crossPlatform: true,
+    warningMessage:
+      '⚠️ 这是一个npm全局安装命令，会修改电脑的全局命令环境。必须确认。',
+  },
+
   // ============== 规则2: git 危险操作 ==============
   {
     id: 'git-checkout-without-stash',

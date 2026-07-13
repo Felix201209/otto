@@ -254,7 +254,7 @@ ${t('command.config.available.options')}:
     /config vim
 
   ${getStyleIcon(agentStyle)} ${t('command.config.agent.style')}
-    /config agent-style [default|codex|cursor|augment|...]
+    /config agent-style [chat|fast|code|engineering|direct|office|collab]
 
   ${approvalMode === ApprovalMode.YOLO ? '🚀' : '🛡️'} ${t('command.config.yolo')}
     /config yolo [on|off]
@@ -269,7 +269,7 @@ ${t('command.config.examples')}:
   /config theme           # ${t('command.config.open.theme')}
   /config model claude    # ${t('command.config.switch.model')}
   /config vim             # ${t('command.config.toggle.vim')}
-  /config agent-style codex  # ${t('command.config.switch.style')}
+  /config agent-style fast   # ${t('command.config.switch.style')}
   /config yolo on         # ${t('command.config.enable.yolo')}
 `;
 
@@ -464,13 +464,13 @@ async function handleAgentStyleConfig(
 ${desc}
 
 ${t('agentStyle.usage.title')}
-  /config agent-style default      - ${t('agentStyle.usage.default')}
-  /config agent-style codex        - ${t('agentStyle.usage.codex')}
-  /config agent-style cursor       - ${t('agentStyle.usage.cursor')}
-  /config agent-style augment      - ${t('agentStyle.usage.augment')}
-  /config agent-style claude-code  - ${t('agentStyle.usage.claudeCode')}
-  /config agent-style antigravity  - ${t('agentStyle.usage.antigravity')}
-  /config agent-style windsurf     - ${t('agentStyle.usage.windsurf')}`,
+  /config agent-style chat         - ${t('agentStyle.usage.default')}
+  /config agent-style fast         - ${t('agentStyle.usage.codex')}
+  /config agent-style code         - ${t('agentStyle.usage.cursor')}
+  /config agent-style engineering  - ${t('agentStyle.usage.augment')}
+  /config agent-style direct       - ${t('agentStyle.usage.claudeCode')}
+  /config agent-style office       - ${t('agentStyle.usage.antigravity')}
+  /config agent-style collab       - ${t('agentStyle.usage.windsurf')}`,
     };
   }
 
@@ -527,14 +527,20 @@ ${t('agentStyle.usage.title')}
   };
 
   const styleMap: Record<string, AgentStyle> = {
+    'chat': 'default',
     'default': 'default',
     'claude': 'default',
     'codex': 'codex',
     'fast': 'codex',
+    'code': 'cursor',
     'cursor': 'cursor',
+    'engineering': 'augment',
     'augment': 'augment',
+    'direct': 'claude-code',
     'claude-code': 'claude-code',
+    'office': 'antigravity',
     'antigravity': 'antigravity',
+    'collab': 'windsurf',
     'windsurf': 'windsurf',
     'wave': 'windsurf',
   };
@@ -893,7 +899,7 @@ function getConfigHelp(): string {
   /config editor             - Open editor settings
   /config model [name]       - Set AI model
   /config vim                - Toggle Vim mode
-  /config agent-style [style] - Set agent style (default|codex|cursor|augment|...)
+  /config agent-style [mode] - Set work mode (chat|fast|code|engineering|direct|office|collab)
   /config yolo [on|off]      - Toggle YOLO mode
   /config healthy-use [on|off] - Toggle healthy use mode
   /config language [name]    - Set preferred response language

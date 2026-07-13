@@ -23,8 +23,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import { FeishuStatusBadge } from '../components/FeishuStatusBadge.js';
+import { GeneratedIcon } from '../components/GeneratedIcon.js';
+import { VoiceSettings } from '../components/VoiceSettings.js';
 import {
+  IconCheck,
   IconClose,
+  IconExternalLink,
   IconEye,
   IconEyeOff,
   IconSparkle,
@@ -44,6 +48,7 @@ import {
   type CustomModelProvider,
   type SetupFormState,
   type SaveCustomModelPayload,
+  vendorFromBaseUrl,
 } from './presets.js';
 
 export interface SetupPanelProps {
@@ -57,6 +62,8 @@ export interface SetupPanelProps {
   onClose: () => void;
   /** 提交一个自定义模型（发 `save_custom_model` 帧，由上层裁决成功/失败）。 */
   onSave: (payload: SaveCustomModelPayload) => void;
+  /** 删除一个已配置模型（发 `delete_custom_model` 帧；成功后 models_list 广播刷新列表）。 */
+  onDeleteModel?: (id: string) => void;
 }
 
 const DEFAULT_PRESET = PROVIDER_PRESETS[0];
@@ -70,6 +77,8 @@ function initialForm(): SetupFormState {
     modelId: '',
     selectedModels: [],
     displayName: '',
+    maxTokens: '',
+    enabled: true,
   };
 }
 
@@ -79,8 +88,11 @@ export function SetupPanel({
   saveError = null,
   onClose,
   onSave,
+  onDeleteModel,
 }: SetupPanelProps): React.JSX.Element {
   const [form, setForm] = useState<SetupFormState>(initialForm);
+  // 删除二次确认：记录「已点过一次删除」的模型 id，再点同一个才真删。
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
@@ -180,6 +192,31 @@ export function SetupPanel({
       selectedModels: [],
       modelId: '',
     });
+  };
+
+  const startEdit = (model: ModelInfo): void => {
+    const matched = PROVIDER_PRESETS.find(
+      (p) => p.baseUrl && p.baseUrl.replace(/\/+$/, '') === (model.baseUrl ?? '').replace(/\/+$/, ''),
+    );
+    setForm({
+      presetId: matched?.id ?? 'custom',
+      provider: model.provider as CustomModelProvider,
+      baseUrl: model.baseUrl ?? '',
+      apiKey: '',
+      modelId: model.modelId ?? '',
+      selectedModels: [],
+      displayName: model.displayName,
+      replaceId: model.id,
+      maxTokens: model.maxTokens ? String(model.maxTokens) : '',
+      enabled: model.enabled !== false,
+    });
+    setTouched({});
+    setRevealKey(false);
+  };
+
+  const cancelEdit = (): void => {
+    setForm(initialForm());
+    setTouched({});
   };
 
   /** 勾选 / 取消一个示例模型（进出 selectedModels）。 */
@@ -314,15 +351,48 @@ export function SetupPanel({
         </header>
 
         {models.length > 0 ? (
-          <div className="otto-setup__existing">
-            <span className="otto-setup__existing-dot" aria-hidden />
-            已配置 {models.length} 个模型：
-            {models.slice(0, 3).map((m) => (
-              <code key={m.id} className="otto-setup__chip">
-                {m.displayName}
-              </code>
+          <div className="otto-setup__models">
+            <div className="otto-setup__models-head">
+              <span className="otto-setup__existing-dot" aria-hidden />
+              已配置 {models.length} 个模型
+            </div>
+            {models.map((m) => (
+              <div key={m.id} className="otto-setup__modelrow">
+                <span className="otto-setup__modelname">{m.displayName}</span>
+                {/* 厂商按接入域名识别；provider 只是协议名（全是 openai 的观感问题）。 */}
+                <span className="otto-setup__modelvendor">
+                  {vendorFromBaseUrl(m.baseUrl, m.provider)}
+                </span>
+                <button
+                  type="button"
+                  className="otto-setup__modeledit"
+                  aria-label={`编辑 ${m.displayName}`}
+                  onClick={() => startEdit(m)}
+                >
+                  编辑
+                </button>
+                {onDeleteModel ? (
+                  <button
+                    type="button"
+                    className={
+                      'otto-setup__modeldel' +
+                      (confirmDeleteId === m.id ? ' is-confirm' : '')
+                    }
+                    onClick={() => {
+                      if (confirmDeleteId === m.id) {
+                        setConfirmDeleteId(null);
+                        onDeleteModel(m.id);
+                      } else {
+                        setConfirmDeleteId(m.id);
+                      }
+                    }}
+                    onBlur={() => setConfirmDeleteId(null)}
+                  >
+                    {confirmDeleteId === m.id ? '确认删除？' : '删除'}
+                  </button>
+                ) : null}
+              </div>
             ))}
-            {models.length > 3 ? <span>等</span> : null}
           </div>
         ) : null}
 
@@ -349,7 +419,7 @@ export function SetupPanel({
           ) : null}
 
           {/* —— 协议（仅 custom 暴露）—— */}
-          {!preset.baseUrlLocked ? (
+          {!preset.baseUrlLocked || Boolean(form.replaceId) ? (
             <>
               <label className="otto-setup__label">协议</label>
               <select
@@ -382,7 +452,7 @@ export function SetupPanel({
             type="text"
             value={form.baseUrl}
             placeholder="https://api.example.com/v1"
-            readOnly={preset.baseUrlLocked}
+            readOnly={preset.baseUrlLocked && !form.replaceId}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
@@ -402,7 +472,8 @@ export function SetupPanel({
                 className="otto-setup__linkbtn"
                 onClick={openConsole}
               >
-                去获取 ↗
+                <span>去获取</span>
+                <IconExternalLink size={11} />
               </button>
             ) : null}
           </label>
@@ -415,7 +486,7 @@ export function SetupPanel({
               }
               type={revealKey ? 'text' : 'password'}
               value={form.apiKey}
-              placeholder={preset.keyHint}
+              placeholder={form.replaceId ? '留空则保留当前 API Key' : preset.keyHint}
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -445,7 +516,7 @@ export function SetupPanel({
             <p className="otto-setup__err">{showErr('apiKey')}</p>
           ) : (
             <p className="otto-setup__hint">
-              key 仅写入本机 `~/.otto-user`，不上传任何服务器。
+              {form.replaceId ? '留空会保留当前 API Key；输入新值才替换。' : 'key 仅写入本机 `~/.otto-user`，不上传任何服务器。'}
             </p>
           )}
 
@@ -471,8 +542,8 @@ export function SetupPanel({
                     }
                     onClick={() => toggleModel(m)}
                   >
-                    {on ? '✓ ' : '+ '}
-                    {m}
+                    {on ? <IconCheck size={11} /> : <span aria-hidden>+</span>}
+                    <span>{m}</span>
                   </button>
                 );
               })}
@@ -551,6 +622,24 @@ export function SetupPanel({
               命名、共用这一个 key 一次性加入。
             </p>
           )}
+
+          <label className="otto-setup__label">上下文窗口（tokens，可选）</label>
+          <input
+            className="otto-setup__input"
+            type="number"
+            min="1"
+            value={form.maxTokens}
+            placeholder="例如 128000"
+            onChange={(e) => patch({ maxTokens: e.target.value })}
+          />
+          <label className="otto-setup__toggleline">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) => patch({ enabled: e.target.checked })}
+            />
+            启用这个模型
+          </label>
         </div>
 
         {/* —— 落盘失败提示（save_failed）—— */}
@@ -562,6 +651,8 @@ export function SetupPanel({
             <span>{saveError}</span>
           </div>
         ) : null}
+
+        <VoiceSettings />
 
 
         {/* —— 飞书连接状态与常驻守护（状态真实：徽标轮询 server /health）—— */}
@@ -595,7 +686,8 @@ export function SetupPanel({
               style={{ flex: 1, padding: '10px', height: '38px', borderRadius: 'var(--otto-radius-sm)', fontWeight: 600, fontSize: '12px' }}
               onClick={() => void window.otto?.openExternal('https://open.feishu.cn')}
             >
-              飞书开发者平台 ↗
+              <span>飞书开发者平台</span>
+              <IconExternalLink size={12} />
             </button>
           </div>
         </div>
@@ -681,8 +773,9 @@ export function SetupPanel({
                 ) : null}
               </div>
               {localTestApplied ? (
-                <p className="otto-setup__hint" style={{ marginTop: '8px', color: 'var(--otto-accent)' }}>
-                  ✅ 已应用本地测试地址：{localTestUrl}，下次对话请求将走本机 server。
+                <p className="otto-setup__hint otto-generated-icon-label" style={{ marginTop: '8px', color: 'var(--otto-accent)' }}>
+                  <GeneratedIcon name="status-success" size={15} />
+                  <span>已应用本地测试地址：{localTestUrl}，下次对话请求将走本机 server。</span>
                 </p>
               ) : (
                 <p className="otto-setup__hint" style={{ marginTop: '6px' }}>
@@ -723,9 +816,9 @@ export function SetupPanel({
                   disabled={!valid}
                   onClick={() => void copy('json')}
                 >
-                  {copied === 'json'
-                    ? '已复制 JSON ✓'
-                    : '复制 custom-models.json'}
+                  {copied === 'json' ? (
+                    <><span>已复制 JSON</span><IconCheck size={12} /></>
+                  ) : '复制 custom-models.json'}
                 </button>
                 <button
                   type="button"
@@ -733,7 +826,9 @@ export function SetupPanel({
                   disabled={!valid}
                   onClick={() => void copy('cli')}
                 >
-                  {copied === 'cli' ? '已复制命令 ✓' : '复制 otto setup 命令'}
+                  {copied === 'cli' ? (
+                    <><span>已复制命令</span><IconCheck size={12} /></>
+                  ) : '复制 otto setup 命令'}
                 </button>
               </div>
               <p className="otto-setup__hint">
@@ -747,9 +842,9 @@ export function SetupPanel({
           <button
             type="button"
             className="otto-setup__btn otto-setup__btn--ghost"
-            onClick={onClose}
+            onClick={form.replaceId ? cancelEdit : onClose}
           >
-            稍后
+            {form.replaceId ? '取消编辑' : '稍后'}
           </button>
           <button
             type="button"
@@ -757,7 +852,7 @@ export function SetupPanel({
             disabled={!valid || saving}
             onClick={submit}
             title={
-              valid ? '保存并启用该模型' : '请先补全必填项'
+              valid ? (form.replaceId ? '保存全部修改' : '保存并启用该模型') : '请先补全必填项'
             }
           >
             {saving ? (
@@ -766,7 +861,7 @@ export function SetupPanel({
                 保存中…
               </>
             ) : (
-              '完成配置'
+              form.replaceId ? '保存修改' : '完成配置'
             )}
           </button>
         </footer>

@@ -19,7 +19,7 @@ import { ContentGenerator } from './contentGenerator.js';
 import { Config } from '../config/config.js';
 import { UserTierId } from '../code_assist/types.js';
 import { proxyAuthManager } from './proxyAuth.js';
-import { getActiveProxyServerUrl } from '../config/proxyConfig.js';
+import { buildProxyRequestUrl, getActiveProxyServerUrl } from '../config/proxyConfig.js';
 import { logger } from '../utils/enhancedLogger.js';
 import { getDefaultAuthHandler } from '../auth/authNavigator.js';
 import { UnauthorizedError, isOurAuthError } from '../utils/errors.js';
@@ -767,7 +767,10 @@ export class OttoServerAdapter implements ContentGenerator {
    */
   private async executeUnifiedChatAPICall(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(
+      proxyAuthManager.getProxyServerUrl(),
+      endpoint,
+    );
 
     const controller = new AbortController();
     let abortListener: (() => void) | null = null;
@@ -1223,7 +1226,10 @@ export class OttoServerAdapter implements ContentGenerator {
    */
   private async executeStreamAPICall(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}${endpoint}`;
+    const proxyUrl = buildProxyRequestUrl(
+      proxyAuthManager.getProxyServerUrl(),
+      endpoint,
+    );
 
     // 🔍 调试：打印代理相关信息（流式调用）- 仅在调试模式下显示
     if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
@@ -2062,7 +2068,10 @@ export class OttoServerAdapter implements ContentGenerator {
    */
   private async callUnifiedTokenCountAPI(requestBody: any): Promise<CountTokensResponse> {
     const userHeaders = await proxyAuthManager.getUserHeaders();
-    const proxyUrl = `${proxyAuthManager.getProxyServerUrl()}/v1/chat/count-tokens`;
+    const proxyUrl = buildProxyRequestUrl(
+      proxyAuthManager.getProxyServerUrl(),
+      '/v1/chat/count-tokens',
+    );
 
     try {
       const response = await fetch(proxyUrl, {

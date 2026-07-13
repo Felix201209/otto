@@ -25,8 +25,45 @@ import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
-import { OttoAvatar, IconArrowDown } from './icons.js';
+import { IconArrowDown, IconMoon, IconSun, OttoAvatar } from './icons.js';
 import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+
+/**
+ * 顶栏黑/白底色一键切换（Jeremy）。点击在浅色/深色间切换（nativeTheme IPC，
+ * 立即生效并持久化）；初始若是「跟随系统」，按系统当前实际深浅决定切换方向。
+ * 图标显示「点击后会变成的模式」：浅色时显示月亮（点了变深色），反之太阳。
+ */
+function ThemeToggle(): React.JSX.Element {
+  // matchMedia 防御可选：jsdom（单测环境）没有该 API。
+  const [dark, setDark] = useState(
+    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  );
+
+  // 跟随实际渲染态（含在偏好面板里改主题、或跟随系统时 OS 切换的情况）。
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent): void => setDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const toggle = (): void => {
+    void window.otto?.themeSet?.(dark ? 'light' : 'dark');
+  };
+
+  return (
+    <button
+      type="button"
+      className="otto-topbar-theme"
+      onClick={toggle}
+      title={dark ? '切换到浅色' : '切换到深色'}
+      aria-label={dark ? '切换到浅色' : '切换到深色'}
+    >
+      {dark ? <IconSun size={15} /> : <IconMoon size={15} />}
+    </button>
+  );
+}
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
 const NEAR_BOTTOM = 80;
@@ -37,37 +74,6 @@ const EXAMPLE_PROMPTS = [
   '给这个函数补一组单元测试',
 ];
 
-/** 岗位标准化枚举 → 中文显示 */
-const ROLE_DISPLAY: Record<string, string> = {
-  'dev.frontend': '前端', 'dev.backend': '后端', 'dev.fullstack': '全栈',
-  'dev.qa': '测试', 'dev.ops': '运维', 'dev.architect': '架构师', 'dev.lead': '技术主管',
-  'product.manager': '产品经理', 'product.design': '设计', 'product.research': '用户研究',
-  'marketing.brand': '品牌', 'marketing.content': '内容', 'marketing.ads': '投放', 'marketing.events': '活动',
-  'sales.account': '客户经理', 'sales.bd': '商务', 'sales.channel': '渠道',
-  'hr.recruit': '招聘', 'hr.compensation': '薪酬', 'hr.relations': '员工关系',
-  'finance.accountant': '会计', 'finance.cashier': '出纳', 'finance.analyst': '财务分析',
-  'ops.user': '用户运营', 'ops.content': '内容运营', 'ops.data': '数据运营',
-  'exec.ceo': 'CEO', 'exec.cto': 'CTO', 'exec.cfo': 'CFO', 'exec.coo': 'COO',
-  'exec.vp': 'VP', 'exec.director': '总监',
-  'general': '通用助手',
-};
-
-function formatRole(role: string): string {
-  return ROLE_DISPLAY[role] || role || '通用助手';
-}
-
-/** 岗位/部门定义 */
-const DEPARTMENTS = [
-  { id: 'general', name: '通用', roles: ['通用助手'] },
-  { id: 'dev', name: '研发部', roles: ['前端', '后端', '全栈', '测试', '运维'] },
-  { id: 'product', name: '产品部', roles: ['产品经理', '交互设计', '用户研究'] },
-  { id: 'marketing', name: '市场部', roles: ['品牌', '内容', '投放', '活动'] },
-  { id: 'sales', name: '销售部', roles: ['客户经理', '商务', '渠道'] },
-  { id: 'hr', name: '人事部', roles: ['招聘', '薪酬', '员工关系'] },
-  { id: 'finance', name: '财务部', roles: ['会计', '出纳', '分析'] },
-  { id: 'ops', name: '运营部', roles: ['用户运营', '内容运营', '数据运营'] },
-] as const;
-
 interface ChatViewProps {
   session: SessionSummary | null;
   messages: OttoMessage[];
@@ -75,6 +81,9 @@ interface ChatViewProps {
   currentModel: string | null;
   userInitial: string;
   busy: boolean;
+  /** 服务端权威身份；个人版不伪造部门，企业版显示真实角色。 */
+  identityLabel?: string;
+  modelManagementLabel?: string;
   onSend: (
     text: string,
     source: MessageSource,
@@ -125,6 +134,8 @@ export function ChatView({
   currentModel,
   userInitial,
   busy,
+  identityLabel = '个人版 · Otto',
+  modelManagementLabel = '模型与个人 API 设置',
   onSend,
   onCancel,
   onSetModel,
@@ -158,27 +169,6 @@ export function ChatView({
     text: '',
     n: 0,
   });
-  // 部门/岗位：从飞书同步数据读取，纯展示，不可修改
-  const [deptLabel, setDeptLabel] = useState<string>('通用 · 通用助手');
-
-  // 加载用户部门信息
-  const loadDept = React.useCallback(async () => {
-    try {
-      const info = await (window as any).otto.userDepartment();
-      if (info && info.department) {
-        const roleDisplay = formatRole(info.role);
-        setDeptLabel(`${info.department} · ${roleDisplay}`);
-      }
-    } catch { /* 降级用默认值 */ }
-  }, []);
-
-  // 启动时加载 + 每10分钟刷新（人事在飞书改了部门后自动更新）
-  useEffect(() => {
-    loadDept();
-    const timer = setInterval(loadDept, 10 * 60 * 1000);
-    return () => clearInterval(timer);
-  }, [loadDept]);
-
   const isNearBottom = (el: HTMLDivElement): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
 
@@ -258,7 +248,6 @@ export function ChatView({
   // 飞书会话内发言：source 仍是 'local'（app 内本地输入），
   // server 据会话归属（feishuChatId）决定回推飞书。
   const sendSource: MessageSource = 'local';
-
   return (
     <section className="otto-main">
       <header
@@ -270,7 +259,7 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {/* 部门/岗位：纯展示，不可修改 */}
+        {/* 服务端权威身份：个人版不伪造部门，企业版来自签名加入/管理者建档。 */}
         <span
           style={{
             display: 'flex',
@@ -286,15 +275,16 @@ export function ChatView({
             whiteSpace: 'nowrap',
             opacity: 0.8,
           }}
-          title="部门/岗位由人事部分配"
+          title="当前产品身份"
         >
-          {deptLabel}
+          {identityLabel}
         </span>
 
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
         <div className="otto-topbar__actions">
+          <ThemeToggle />
           {session && onExport ? (
             <button
               type="button"
@@ -313,8 +303,8 @@ export function ChatView({
             type="button"
             className="otto-topbar-setup"
             onClick={onOpenSetup}
-            title="模型与 BYO-key 设置"
-            aria-label="模型与 BYO-key 设置"
+            title={modelManagementLabel}
+            aria-label={modelManagementLabel}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
@@ -360,9 +350,8 @@ export function ChatView({
         </button>
       ) : null}
 
-      {/* 宏创AI园区服务插件：右下角悬浮入口 + 居中对话框。仅在有会话时挂载
-          （服务项点击注入输入框草稿，无会话时 Composer 禁用、注入无意义）。 */}
-      {session ? <ParkServicesPlugin /> : null}
+      {/* 园区服务插件：常驻挂载（右侧面板「园区 AI 服务」入口经事件打开弹窗）。 */}
+      <ParkServicesPlugin />
 
       <Composer
         models={models}

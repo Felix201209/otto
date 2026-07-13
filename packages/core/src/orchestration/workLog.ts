@@ -16,13 +16,28 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 
 /** 工作日志根目录 */
-const WORKLOG_DIR = path.join(homedir(), '.otto-user', 'memory', 'worklog');
-const DAILY_DIR = path.join(WORKLOG_DIR, 'daily');
-const SUMMARIES_DIR = path.join(WORKLOG_DIR, 'summaries');
-const WEEKLY_DIR = path.join(WORKLOG_DIR, 'weekly');
+/** 运行时解析，尊重企业/测试隔离目录；不要在模块加载时冻结 HOME。 */
+export function resolveDefaultWorklogDir(): string {
+  const explicit = process.env['OTTO_WORKLOG_DIR']?.trim();
+  if (explicit) return explicit;
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  if (userDir) return path.join(userDir, 'memory', 'worklog');
+  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) {
+    return path.join(tmpdir(), 'otto-worklog-tests', String(process.pid));
+  }
+  return path.join(homedir(), '.otto-user', 'memory', 'worklog');
+}
+
+/** 与员工本地日历一致的日期键；避免夜间工作被 UTC 划到第二天。 */
+export function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 /** 单条日志记录 */
 export interface WorkLogEntry {
@@ -35,6 +50,12 @@ export interface WorkLogEntry {
   details?: string;        // 操作详情摘要
   userId?: string;
   sessionId?: string;
+  /** tool = 底层操作流水；work_result = 一轮对话最终形成的业务成果。 */
+  entryType?: 'tool' | 'work_result';
+  /** 业务成果标题，供日报与日历直接展示。 */
+  taskTitle?: string;
+  /** 触发该成果的员工原始任务。 */
+  userInput?: string;
 }
 
 /** 日志分类 */
@@ -73,7 +94,7 @@ export interface WeeklyReport {
   weekStart: string;
   weekEnd: string;
   totalActions: number;
-  dailyAverages: { date: string; count: number }[];
+  dailyAverages: Array<{ date: string; count: number }>;
   byCategory: Record<string, number>;
   topActions: Array<{ action: string; count: number }>;
   comparisonToLastWeek: {
@@ -90,11 +111,23 @@ export interface WeeklyReport {
  */
 export class WorkLogger {
   private initialized = false;
+  private readonly dailyDir: string;
+  private readonly summariesDir: string;
+  private readonly weeklyDir: string;
+
+  constructor(
+    private readonly worklogDir = resolveDefaultWorklogDir(),
+    private readonly now: () => Date = () => new Date(),
+  ) {
+    this.dailyDir = path.join(worklogDir, 'daily');
+    this.summariesDir = path.join(worklogDir, 'summaries');
+    this.weeklyDir = path.join(worklogDir, 'weekly');
+  }
 
   /** 确保目录存在 */
   private async ensureDirs(): Promise<void> {
     if (this.initialized) return;
-    for (const dir of [WORKLOG_DIR, DAILY_DIR, SUMMARIES_DIR, WEEKLY_DIR]) {
+    for (const dir of [this.worklogDir, this.dailyDir, this.summariesDir, this.weeklyDir]) {
       await fs.mkdir(dir, { recursive: true }).catch(() => {});
     }
     this.initialized = true;
@@ -107,13 +140,15 @@ export class WorkLogger {
   async log(entry: Omit<WorkLogEntry, 'timestamp'>): Promise<void> {
     await this.ensureDirs();
 
+    const createdAt = this.now();
     const fullEntry: WorkLogEntry = {
       ...entry,
-      timestamp: new Date().toISOString(),
+      timestamp: createdAt.toISOString(),
+      entryType: entry.entryType ?? 'tool',
     };
 
-    const date = fullEntry.timestamp.split('T')[0];
-    const filePath = path.join(DAILY_DIR, `${date}.jsonl`);
+    const date = formatLocalDate(createdAt);
+    const filePath = path.join(this.dailyDir, `${date}.jsonl`);
     const line = JSON.stringify(fullEntry) + '\n';
 
     await fs.appendFile(filePath, line, 'utf-8').catch((err) => {
@@ -125,7 +160,7 @@ export class WorkLogger {
    * 读取某天的所有日志。
    */
   async readDay(date: string): Promise<WorkLogEntry[]> {
-    const filePath = path.join(DAILY_DIR, `${date}.jsonl`);
+    const filePath = path.join(this.dailyDir, `${date}.jsonl`);
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return content
@@ -231,7 +266,7 @@ export class WorkLogger {
     };
 
     // 保存汇总
-    const summaryPath = path.join(SUMMARIES_DIR, `${date}.md`);
+    const summaryPath = path.join(this.summariesDir, `${date}.md`);
     const summaryText = this.formatDailySummary(summary);
     await fs.writeFile(summaryPath, summaryText, 'utf-8').catch(() => {});
 
@@ -264,7 +299,7 @@ export class WorkLogger {
     // 统计
     const byCategory: Record<string, number> = {};
     const actionCounts: Record<string, number> = {};
-    const dailyAverages: { date: string; count: number }[] = [];
+    const dailyAverages: Array<{ date: string; count: number }> = [];
     let busiestDay = { date: '', count: 0 };
     let quietestDay = { date: '', count: Infinity };
 
@@ -325,7 +360,7 @@ export class WorkLogger {
 
     // 保存周报
     const weekKey = weekStart.replace(/-/g, '');
-    const reportPath = path.join(WEEKLY_DIR, `week_${weekKey}.md`);
+    const reportPath = path.join(this.weeklyDir, `week_${weekKey}.md`);
     const reportText = this.formatWeeklyReport(report);
     await fs.writeFile(reportPath, reportText, 'utf-8').catch(() => {});
 
@@ -479,7 +514,7 @@ export function inferCategory(toolName: string, toolInput: Record<string, unknow
  */
 export function describeAction(toolName: string, toolInput: Record<string, unknown>): string {
   const name = toolName.toLowerCase();
-  const input = toolInput as Record<string, any>;
+  const input = toolInput as Record<string, string | undefined>;
 
   // 飞书操作
   if (name.includes('calendar')) {

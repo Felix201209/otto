@@ -27,8 +27,8 @@ const translations = {
     'websearch.error.not.logged.in': 'Not logged in to Otto',
     'websearch.error.quota.exceeded': 'Insufficient credits',
     'tool.ppt_generate': 'PPT Generate',
-    'tool.ppt_generate.description': 'Submit PPT outline and start generation task.\n\nThis tool will perform the following operations:\n1. Submit the current outline to the server\n2. Start the PPT generation task\n3. Automatically open browser to the PPT editing preview page\n4. Exit PPT editing mode\n\nMake sure to set the outline content (topic, page count, outline text) via ppt_outline tool before calling.',
-    'ppt_generate.param.confirm': 'Confirm submission (default true)',
+    'tool.ppt_generate.description': 'Render the confirmed PPT outline through local HTML pages, turn each page into an image with local Chrome/Edge/Chromium, then package the images into a .pptx. No Python, Otto server, login, upload, or web editor is used. Separate slides with --- lines.',
+    'ppt_generate.param.confirm': 'Confirm local generation (default true)',
   },
   zh: {
     'task.timeout.warning': '⚠️ 任务执行超时：已执行{turns}轮对话但任务仍未完成',
@@ -45,8 +45,8 @@ const translations = {
     'websearch.error.not.logged.in': '未登录 Otto',
     'websearch.error.quota.exceeded': '积分不足',
     'tool.ppt_generate': 'PPT生成',
-    'tool.ppt_generate.description': '提交PPT大纲并启动生成任务。\n\n此工具会执行以下操作：\n1. 将当前大纲提交到服务端\n2. 启动PPT生成任务\n3. 自动打开浏览器跳转到PPT编辑预览页面\n4. 退出PPT编辑模式\n\n调用前请确保已通过 ppt_outline 工具设置好大纲内容（主题、页数、大纲文本）。',
-    'ppt_generate.param.confirm': '确认提交（默认true）',
+    'tool.ppt_generate.description': '把已确认的内容逐页生成本地 HTML，用本机 Chrome/Edge/Chromium 转成图片，再封装为本地 .pptx。全程不调用 Python，也不经过 Otto 服务端、登录、上传或网页编辑器；页面用独占一行的 --- 分隔。',
+    'ppt_generate.param.confirm': '确认本地生成（默认 true）',
   }
 } as const;
 

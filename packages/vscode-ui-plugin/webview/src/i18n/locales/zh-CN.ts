@@ -663,10 +663,10 @@ PPT组件布局
     customStylePlaceholder: '请描述你想要的PPT风格，例如：科技感、未来主义、赛博朋克、中国风、ins风...',
     customColorPlaceholder: '请描述你想要的配色风格，例如：渐变蓝紫色、复古怀旧、糖果色、莫兰迪色系...',
     generateButton: '生成 PPT',
-    generating: '正在提交 PPT 生成任务...',
-    generatingHint: '任务提交后将自动打开浏览器查看进度',
+    generating: '正在本地生成 PPT 文件...',
+    generatingHint: '内容只在本机渲染，完成后将打开本地文件',
     generateAnother: '再生成一个',
-    openEdit: '再次打开编辑页面',
+    openEdit: '再次打开本地文件',
     tryAgain: '重试',
     style: {
       auto: '默认',
@@ -697,8 +697,8 @@ PPT组件布局
       generateFailed: '生成失败，请重试',
     },
     success: {
-      generated: 'PPT 任务已提交！',
-      hint: '已自动打开浏览器，请在网页中查看生成进度和编辑PPT',
+      generated: 'PPT 已在本地生成！',
+      hint: '文件未上传，已用系统默认演示软件打开',
     },
   },
 

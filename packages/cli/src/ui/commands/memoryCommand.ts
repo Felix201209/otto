@@ -10,6 +10,7 @@ import {
   MemoryTool,
   MemoryManagerTool,
   getCoreSystemPrompt,
+  getAutoMemoryEngine,
 } from 'otto-core';
 import { getEncoding } from 'js-tiktoken';
 import { MessageType } from '../types.js';
@@ -98,11 +99,184 @@ async function runProjectMemoryAction(
   );
 }
 
+/**
+ * 新版自动记忆维护命令。
+ *
+ * 这些能力是对原 `/memory show|add|project|refresh` 的扩展，不能替换旧命令；
+ * 企业用户和既有脚本仍依赖原子命令名。集中在这里追加可以让两套入口共存。
+ */
+const autoMemoryCommands: SlashCommand[] = [
+  {
+    name: 'stats',
+    description: '查看记忆引擎统计信息',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const stats = engine.getStats();
+        const scopes = Object.entries(stats.byScope)
+          .map(([scope, count]) => `  - ${scope}: ${count}`)
+          .join('\n');
+        return {
+          type: 'message',
+          messageType: 'info',
+          content:
+            `记忆引擎统计\n\n总条目数: ${stats.totalEntries}\n` +
+            `按作用域:\n${scopes || '  无'}\n` +
+            `估算 Token: ${stats.totalEstimatedTokens.toLocaleString()}\n` +
+            `压缩率: ${(stats.compressionRatio * 100).toFixed(1)}%`,
+        };
+      } catch (error) {
+        return {
+          type: 'message',
+          messageType: 'error',
+          content: `获取记忆统计失败: ${getErrorMessage(error)}`,
+        };
+      }
+    },
+  },
+  {
+    name: 'merge',
+    description: '检测并执行记忆合并',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const candidates = await engine.detectMergeCandidates();
+        let merged = 0;
+        for (const candidate of candidates.slice(0, 10)) {
+          if (await engine.applyMerge(candidate)) merged += 1;
+        }
+        return {
+          type: 'message',
+          messageType: 'info',
+          content:
+            candidates.length === 0
+              ? '未检测到可合并的记忆条目。'
+              : `记忆合并完成：检测到 ${candidates.length} 组，已合并 ${merged} 组。`,
+        };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `合并失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+  {
+    name: 'split',
+    description: '检测并执行记忆分割',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const candidates = await engine.detectSplitCandidates();
+        let split = 0;
+        for (const candidate of candidates.slice(0, 5)) {
+          if ((await engine.applySplit(candidate)).length > 0) split += 1;
+        }
+        return {
+          type: 'message',
+          messageType: 'info',
+          content:
+            candidates.length === 0
+              ? '未检测到需要分割的记忆条目。'
+              : `记忆分割完成：检测到 ${candidates.length} 条，已分割 ${split} 条。`,
+        };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `分割失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+  {
+    name: 'compress',
+    description: '压缩老旧记忆条目',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const results = await engine.compressOldMemories();
+        return {
+          type: 'message',
+          messageType: 'info',
+          content: results.length === 0 ? '当前没有需要压缩的记忆。' : `已压缩 ${results.length} 组老旧记忆。`,
+        };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `压缩失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+  {
+    name: 'maintain',
+    description: '执行完整记忆维护周期',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const result = await engine.runMaintenanceCycle();
+        return {
+          type: 'message',
+          messageType: 'info',
+          content: `记忆维护完成：合并 ${result.merges}，分割 ${result.splits}，压缩 ${result.compressions}，清理 ${result.cleanups}。`,
+        };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `维护失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+  {
+    name: 'list',
+    description: '列出自动记忆条目',
+    kind: CommandKind.BUILT_IN,
+    action: async (_context, args): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const parts = args.trim().split(/\s+/).filter(Boolean);
+        const requestedScope = parts.find((part) => ['global', 'project', 'session'].includes(part));
+        const scope = requestedScope as 'global' | 'project' | 'session' | undefined;
+        const limitIndex = parts.indexOf('--limit');
+        const limit = limitIndex >= 0 ? Number.parseInt(parts[limitIndex + 1] ?? '', 10) || 20 : 20;
+        const entries = engine.queryEntries({ scope, limit });
+        const content = entries.length
+          ? entries
+              .map((entry) => {
+                const preview = entry.text.length > 80 ? `${entry.text.slice(0, 80)}...` : entry.text;
+                return `- ${entry.id.slice(0, 16)} | ${entry.topics.join(', ') || '无主题'}\n  ${preview}`;
+              })
+              .join('\n')
+          : '没有找到自动记忆条目。';
+        return { type: 'message', messageType: 'info', content };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `列出失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+  {
+    name: 'clean',
+    description: '清理过期自动记忆条目',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const engine = getAutoMemoryEngine();
+        await engine.initialize();
+        const count = await engine.cleanExpiredMemories();
+        return { type: 'message', messageType: 'info', content: `已清理 ${count} 条过期记忆。` };
+      } catch (error) {
+        return { type: 'message', messageType: 'error', content: `清理失败: ${getErrorMessage(error)}` };
+      }
+    },
+  },
+];
+
 export const memoryCommand: SlashCommand = {
   name: 'memory',
   description: t('command.memory.description'),
   kind: CommandKind.BUILT_IN,
   subCommands: [
+    ...autoMemoryCommands,
     {
       name: 'paths',
       description: 'Show memory file paths',

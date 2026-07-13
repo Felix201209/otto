@@ -125,6 +125,15 @@ const mockBridge = {
   isConnected(): boolean {
     return true;
   },
+  onMenu(): () => void {
+    return () => {};
+  },
+  async appVersion(): Promise<string> {
+    return '1.7.0-preview';
+  },
+  onUpdateProgress(): () => void {
+    return () => {};
+  },
   async openExternal(): Promise<void> {},
   async openPath(): Promise<void> {},
 };
