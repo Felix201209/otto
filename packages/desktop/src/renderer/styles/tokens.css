@@ -27,10 +27,6 @@
   --otto-accent-hover: #0ea5e9;
   --otto-accent-soft: #e0f2fe; /* 选中态 cream 底 */
   --otto-accent-gradient: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
-  --otto-enterprise-field: #0b2230;
-  --otto-enterprise-field-soft: #123547;
-  --otto-enterprise-field-text: #f3fbff;
-  --otto-enterprise-field-muted: #9bb7c5;
 
   /* —— 语义来源徽章 —— */
   --otto-feishu-fg: #0284c7;
@@ -109,10 +105,6 @@
  */
 @media (prefers-color-scheme: dark) {
   :root {
-    --otto-enterprise-field: #081a24;
-    --otto-enterprise-field-soft: #102d3b;
-    --otto-enterprise-field-text: #f3fbff;
-    --otto-enterprise-field-muted: #91abba;
     /* —— 表面 / 文字 —— */
     --otto-bg: #1a1918; /* 主背景：暖中性深灰，非纯黑 */
     --otto-sidebar-bg: #171615; /* 侧栏比主区再压深半档 */

@@ -48,10 +48,6 @@ import { WhatsNewDialog } from './components/WhatsNewDialog.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
-import { EnterpriseLoginPage } from './components/EnterpriseLoginPage.js';
-import { AccountManagementPage } from './components/AccountManagementPage.js';
-import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
-import type { EnterpriseAccount } from '../preload/index.js';
 import {
   DEPARTMENT_LABELS,
   getAgentComposerPrompt,
@@ -65,39 +61,9 @@ import {
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone';
 
 export function App(): React.JSX.Element {
-  const auth = useEnterpriseAuth();
-  if (auth.state.status === 'loading') {
-    return (
-      <div className="otto-enterprise-boot" role="status">
-        <span className="otto-enterprise-boot__brand">otto✦</span>
-        <span className="otto-enterprise-boot__pulse" />
-        正在验证企业登录…
-      </div>
-    );
-  }
-  if (auth.state.status === 'signed-out' || !auth.state.account) {
-    return (
-      <EnterpriseLoginPage
-        initialServerUrl={auth.state.serverUrl}
-        busy={auth.state.busy}
-        error={auth.state.error}
-        onLogin={auth.actions.login}
-      />
-    );
-  }
-  return <OttoWorkspaceApp account={auth.state.account} onLogout={auth.actions.logout} />;
-}
-
-function OttoWorkspaceApp({
-  account,
-  onLogout,
-}: {
-  account: EnterpriseAccount;
-  onLogout: () => Promise<void>;
-}): React.JSX.Element {
   const { state, actions } = useOttoStore();
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
   const settingsData = useSettingsData();
@@ -428,7 +394,6 @@ function OttoWorkspaceApp({
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
-        accountManagementActive={mainView === 'accounts'}
         updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
@@ -436,13 +401,10 @@ function OttoWorkspaceApp({
         }}
         onNewChat={handleNewChat}
         onOpenHub={() => openHub('prefs')}
-        onOpenAccounts={() => setMainView('accounts')}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
         productWorkspace={product.state.workspace}
-        enterpriseAccount={account}
-        onLogout={() => void onLogout()}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
@@ -455,8 +417,6 @@ function OttoWorkspaceApp({
           onSave={handleSaveModel}
           onDeleteModel={handleDeleteModel}
         />
-      ) : mainView === 'accounts' && account.isAdmin ? (
-        <AccountManagementPage currentAccount={account} onBack={() => setMainView('chat')} />
       ) : mainView === 'agents' ? (
         <AgentGallery
           mode={edition}
@@ -482,8 +442,8 @@ function OttoWorkspaceApp({
               messages={activeMessages}
               models={state.models}
               currentModel={activeSession?.model ?? state.currentModel}
-              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
-              identityLabel={`${account.name} · ${account.tags.join(' / ') || identityLabel}`}
+              userInitial="F"
+              identityLabel={identityLabel}
               modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}

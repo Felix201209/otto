@@ -130,41 +130,6 @@ export interface VoiceConfigInput extends Omit<VoicePublicConfig, 'hasAsrApiKey'
 }
 export interface VoiceResult { text: string; rawText: string; polished: boolean }
 
-export interface EnterpriseAccount {
-  id: string;
-  employeeId: string | null;
-  username: string;
-  name: string;
-  role: string | null;
-  department: string | null;
-  isAdmin: boolean;
-  status: 'active' | 'disabled';
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface EnterpriseAccountCreateInput {
-  username: string;
-  password: string;
-  name: string;
-  role?: string | null;
-  department?: string | null;
-  tags?: string[];
-  isAdmin?: boolean;
-}
-
-export interface EnterpriseAccountUpdateInput {
-  username?: string;
-  password?: string;
-  name?: string;
-  role?: string | null;
-  department?: string | null;
-  tags?: string[];
-  isAdmin?: boolean;
-  status?: 'active' | 'disabled';
-}
-
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
@@ -183,14 +148,6 @@ const IPC = {
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
-  enterpriseSession: 'otto:enterprise-session',
-  enterpriseLogin: 'otto:enterprise-login',
-  enterpriseLogout: 'otto:enterprise-logout',
-  enterpriseAccounts: 'otto:enterprise-accounts',
-  enterpriseAccountCreate: 'otto:enterprise-account-create',
-  enterpriseAccountUpdate: 'otto:enterprise-account-update',
-  enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
-  enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -319,22 +276,6 @@ export interface OttoBridge {
   voiceGetConfig(): Promise<VoicePublicConfig>;
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
-  enterpriseSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }>;
-  enterpriseLogin(input: {
-    serverUrl: string;
-    username: string;
-    password: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
-  enterpriseLogout(): Promise<void>;
-  enterpriseAccounts(): Promise<EnterpriseAccount[]>;
-  enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
-  enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
-  enterpriseTicketInbox(): Promise<unknown[]>;
-  enterpriseTicketSubmit(input: {
-    title: string;
-    description: string;
-    targetTags?: string[];
-  }): Promise<unknown>;
 }
 
 // ── 退避参数 ──
@@ -688,48 +629,6 @@ const bridge: OttoBridge = {
   },
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult> {
     return ipcRenderer.invoke(IPC.voiceTranscribe, bytes, mimeType) as Promise<VoiceResult>;
-  },
-  enterpriseSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }> {
-    return ipcRenderer.invoke(IPC.enterpriseSession) as Promise<{
-      serverUrl: string;
-      account: EnterpriseAccount | null;
-    }>;
-  },
-  enterpriseLogin(input: {
-    serverUrl: string;
-    username: string;
-    password: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
-    return ipcRenderer.invoke(IPC.enterpriseLogin, input) as Promise<{
-      serverUrl: string;
-      account: EnterpriseAccount;
-      expiresAt: string;
-    }>;
-  },
-  enterpriseLogout(): Promise<void> {
-    return ipcRenderer.invoke(IPC.enterpriseLogout) as Promise<void>;
-  },
-  enterpriseAccounts(): Promise<EnterpriseAccount[]> {
-    return ipcRenderer.invoke(IPC.enterpriseAccounts) as Promise<EnterpriseAccount[]>;
-  },
-  enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount> {
-    return ipcRenderer.invoke(IPC.enterpriseAccountCreate, input) as Promise<EnterpriseAccount>;
-  },
-  enterpriseAccountUpdate(
-    id: string,
-    input: EnterpriseAccountUpdateInput,
-  ): Promise<EnterpriseAccount> {
-    return ipcRenderer.invoke(IPC.enterpriseAccountUpdate, id, input) as Promise<EnterpriseAccount>;
-  },
-  enterpriseTicketInbox(): Promise<unknown[]> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketInbox) as Promise<unknown[]>;
-  },
-  enterpriseTicketSubmit(input: {
-    title: string;
-    description: string;
-    targetTags?: string[];
-  }): Promise<unknown> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketSubmit, input) as Promise<unknown>;
   },
 };
 

@@ -35,7 +35,6 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
-  safeStorage,
   session,
   shell,
   type NativeImage,
@@ -92,11 +91,6 @@ import {
 } from './workLogData.js';
 import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voiceConfig.js';
 import { transcribeAudio } from './voiceService.js';
-import {
-  EnterpriseClient,
-  type AccountCreateInput,
-  type AccountUpdateInput,
-} from './enterprise-client.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -180,57 +174,7 @@ const IPC = {
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
-  enterpriseSession: 'otto:enterprise-session',
-  enterpriseLogin: 'otto:enterprise-login',
-  enterpriseLogout: 'otto:enterprise-logout',
-  enterpriseAccounts: 'otto:enterprise-accounts',
-  enterpriseAccountCreate: 'otto:enterprise-account-create',
-  enterpriseAccountUpdate: 'otto:enterprise-account-update',
-  enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
-  enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
-
-/** Ubuntu-wysn 当前公开地址；登录成功后会写入 userData 配置并以该值为准。 */
-const DEFAULT_ENTERPRISE_SERVER_URL = 'http://59.110.154.44:7777';
-const enterpriseClient = new EnterpriseClient();
-let enterpriseSessionLoaded = false;
-
-function enterpriseSessionPath(): string {
-  return path.join(app.getPath('userData'), 'enterprise-auth.json');
-}
-
-function loadEnterpriseSession(): void {
-  if (enterpriseSessionLoaded) return;
-  enterpriseSessionLoaded = true;
-  let serverUrl = DEFAULT_ENTERPRISE_SERVER_URL;
-  let token: string | null = null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(enterpriseSessionPath(), 'utf8')) as {
-      serverUrl?: string;
-      encryptedToken?: string;
-    };
-    if (typeof parsed.serverUrl === 'string' && parsed.serverUrl) serverUrl = parsed.serverUrl;
-    if (parsed.encryptedToken && safeStorage.isEncryptionAvailable()) {
-      token = safeStorage.decryptString(Buffer.from(parsed.encryptedToken, 'base64'));
-    }
-  } catch {
-    // 首次启动 / 文件损坏：使用 Ubuntu-wysn 默认地址并保持未登录。
-  }
-  enterpriseClient.restore({ serverUrl, token });
-}
-
-function saveEnterpriseSession(): void {
-  const snapshot = enterpriseClient.snapshot();
-  const encryptedToken = snapshot.token && safeStorage.isEncryptionAvailable()
-    ? safeStorage.encryptString(snapshot.token).toString('base64')
-    : undefined;
-  fs.mkdirSync(path.dirname(enterpriseSessionPath()), { recursive: true });
-  fs.writeFileSync(
-    enterpriseSessionPath(),
-    JSON.stringify({ serverUrl: snapshot.serverUrl, encryptedToken }, null, 2),
-    { encoding: 'utf8', mode: 0o600 },
-  );
-}
 
 /**
  * 软件更新服务（检查 / 下载 / 安装，逻辑见 update-service.ts）。
@@ -672,64 +616,6 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
-  ipcMain.handle(IPC.enterpriseSession, async () => {
-    loadEnterpriseSession();
-    const before = enterpriseClient.snapshot().token;
-    const result = await enterpriseClient.getSession();
-    if (before && !enterpriseClient.snapshot().token) saveEnterpriseSession();
-    return result;
-  });
-  ipcMain.handle(IPC.enterpriseLogin, async (_e, input: unknown) => {
-    loadEnterpriseSession();
-    if (!input || typeof input !== 'object') throw new Error('登录信息格式不正确');
-    const body = input as Record<string, unknown>;
-    if (typeof body.serverUrl !== 'string' || typeof body.username !== 'string' || typeof body.password !== 'string') {
-      throw new Error('服务器地址、账号和密码均为必填项');
-    }
-    const result = await enterpriseClient.login(body.serverUrl, body.username, body.password);
-    saveEnterpriseSession();
-    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
-  });
-  ipcMain.handle(IPC.enterpriseLogout, async () => {
-    loadEnterpriseSession();
-    await enterpriseClient.logout();
-    saveEnterpriseSession();
-  });
-  ipcMain.handle(IPC.enterpriseAccounts, async () => {
-    loadEnterpriseSession();
-    return enterpriseClient.listAccounts();
-  });
-  ipcMain.handle(IPC.enterpriseAccountCreate, async (_e, input: AccountCreateInput) => {
-    loadEnterpriseSession();
-    return enterpriseClient.createAccount(input);
-  });
-  ipcMain.handle(
-    IPC.enterpriseAccountUpdate,
-    async (_e, id: unknown, input: AccountUpdateInput) => {
-      loadEnterpriseSession();
-      if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
-      return enterpriseClient.updateAccount(id, input);
-    },
-  );
-  ipcMain.handle(IPC.enterpriseTicketInbox, async () => {
-    loadEnterpriseSession();
-    return enterpriseClient.ticketInbox();
-  });
-  ipcMain.handle(IPC.enterpriseTicketSubmit, async (_e, input: unknown) => {
-    loadEnterpriseSession();
-    if (!input || typeof input !== 'object') throw new Error('工单信息格式不正确');
-    const body = input as Record<string, unknown>;
-    if (typeof body.title !== 'string' || typeof body.description !== 'string') {
-      throw new Error('工单标题和描述均为必填项');
-    }
-    return enterpriseClient.submitTicket({
-      title: body.title,
-      description: body.description,
-      targetTags: Array.isArray(body.targetTags)
-        ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
-        : undefined,
-    });
-  });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
   ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));
   ipcMain.handle(IPC.voiceTranscribe, async (_e, bytes: unknown, mimeType: unknown) => {
