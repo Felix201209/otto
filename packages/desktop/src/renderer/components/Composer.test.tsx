@@ -12,9 +12,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen, waitFor } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor, act } from '@testing-library/react';
 import type { ModelInfo } from 'otto-server';
-import { Composer } from './Composer.js';
+import { Composer, insertComposerDraft } from './Composer.js';
 import * as transport from '../transport.js';
 
 /** 造 n 个模型（跨两个 provider），displayName 形如「模型-01」。 */
@@ -44,6 +44,30 @@ function openMenu() {
   fireEvent.click(pill as Element);
   return screen.getByRole('listbox', { name: '选择模型' });
 }
+
+describe('专家提示词草稿', () => {
+  it('填入后不自动发送，用户可修改再发送', () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="expert-session"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+
+    act(() => insertComposerDraft('请作为「PPT 创作专家」协助我'));
+    expect(textarea.value).toContain('PPT 创作专家');
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.change(textarea, { target: { value: '帮我做一份产品发布会 PPT' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledWith('帮我做一份产品发布会 PPT', []);
+  });
+});
 
 describe('模型菜单搜索框显隐（阈值 8）', () => {
   it('模型数 ≤ 8：不显示搜索框，平铺全部', () => {

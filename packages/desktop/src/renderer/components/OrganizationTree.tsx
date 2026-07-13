@@ -13,9 +13,6 @@ export function OrganizationTree({
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const organization = workspace.managerWorkspace?.organization;
-  const company = organization?.companies.find(
-    (item) => item.id === organization.rootCompanyId,
-  );
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
     [organization?.positions],
@@ -39,12 +36,7 @@ export function OrganizationTree({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
-        <span className="otto-orgtree__company">
-          {company?.name ?? workspace.managerWorkspace?.profile.companyName ?? '已加入企业'}
-        </span>
-        <span className="otto-orgtree__role">
-          {workspace.context.role === 'company_owner' ? 'CEO' : '企业成员'}
-        </span>
+        <span className="otto-orgtree__company">企业组织</span>
         <IconChevronDown
           size={13}
           className={'otto-orgtree__chevron' + (open ? '' : ' is-collapsed')}

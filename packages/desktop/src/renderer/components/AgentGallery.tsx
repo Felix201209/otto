@@ -7,6 +7,7 @@ import {
   BASE_AGENT_PROFILES,
   DEPARTMENT_LABELS,
   getEnterpriseAgentProfiles,
+  getAgentComposerPrompt,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
@@ -15,7 +16,7 @@ import { IconAgent, IconChevron } from './icons.js';
 export interface AgentGalleryProps {
   mode?: 'personal' | 'enterprise';
   profiles?: readonly AgentProfile[];
-  onLaunch: (profile: AgentProfile) => void;
+  onLaunch: (profile: AgentProfile, composerPrompt: string) => void;
   onBack: () => void;
 }
 
@@ -47,7 +48,7 @@ export function AgentGallery({
       <div className="otto-agents__scroll">
         <div className="otto-agents__grid">
           {profiles.map((profile, index) => (
-            <button key={profile.id} ref={index === 0 ? firstCardRef : undefined} type="button" className="otto-agent-card" onClick={() => onLaunch(profile)}>
+            <button key={profile.id} ref={index === 0 ? firstCardRef : undefined} type="button" className="otto-agent-card" onClick={() => onLaunch(profile, getAgentComposerPrompt(profile))}>
               <span
                 className="otto-agent-card__avatar"
                 aria-hidden

@@ -8,6 +8,7 @@ import {
   BASE_AGENT_PROFILES,
   DEPARTMENT_LABELS,
   getEnterpriseAgentProfiles,
+  getAgentComposerPrompt,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
@@ -54,7 +55,7 @@ export interface RightPanelProps {
   busy: boolean;
   mode?: 'personal' | 'enterprise';
   workspace?: ProductWorkspaceSnapshot | null;
-  onLaunchAgentProfile?: (profile: AgentProfile) => void;
+  onLaunchAgentProfile?: (profile: AgentProfile, composerPrompt: string) => void;
   onOpenAgents?: () => void;
   onOpenSkillZone?: () => void;
   onSelectDate?: (date: string) => void;
@@ -214,7 +215,10 @@ export function RightPanel({
                 <button
                   type="button"
                   className="otto-expert-card"
-                  onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
+                  onClick={() => onLaunchAgentProfile(
+                    SELF_DEVELOPMENT_PROFILE,
+                    getAgentComposerPrompt(SELF_DEVELOPMENT_PROFILE),
+                  )}
                   title={SELF_DEVELOPMENT_PROFILE.tagline}
                 >
                   <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
@@ -234,7 +238,7 @@ export function RightPanel({
             </div>
             <div className="otto-profile-list">
               {profiles.slice(0, 12).map((profile) => (
-                <button key={profile.id} type="button" className="otto-profile-card" onClick={() => onLaunchAgentProfile(profile)}>
+                <button key={profile.id} type="button" className="otto-profile-card" onClick={() => onLaunchAgentProfile(profile, getAgentComposerPrompt(profile))}>
                   <span
                     className="otto-profile-card__mark"
                     style={profile.accent ? { backgroundColor: `${profile.accent}24` } : undefined}

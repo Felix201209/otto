@@ -40,14 +40,16 @@ const workspace: ProductWorkspaceSnapshot = {
 };
 
 describe('OrganizationTree', () => {
-  it('默认只显示一行，点击后展开公司、部门、姓名和职位', () => {
+  it('收起时只显示“企业组织”，点击后完整展开公司、部门、姓名和职位', () => {
     render(<OrganizationTree workspace={workspace} />);
-    const toggle = screen.getByRole('button', { name: /北辰科技/ });
+    const toggle = screen.getByRole('button', { name: '企业组织' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('北辰科技')).toBeNull();
     expect(screen.queryByText('CEO 办公室')).toBeNull();
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('北辰科技')).toBeTruthy();
     expect(screen.getByText('CEO 办公室')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
     expect(screen.getAllByText('CEO').length).toBeGreaterThan(0);

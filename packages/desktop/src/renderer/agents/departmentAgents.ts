@@ -50,6 +50,19 @@ export interface AgentProfile {
   readonly accent?: string;
 }
 
+/**
+ * 专家卡点击后放进聊天框的可编辑任务模板。
+ *
+ * systemPrompt 属于服务端身份边界，不能暴露成用户消息；这里只用公开的
+ * 专家名称、能力摘要和 Skill 生成一条可编辑的首轮任务提示。
+ */
+export function getAgentComposerPrompt(profile: AgentProfile): string {
+  const skillHint = profile.skills.length > 0
+    ? `可优先使用 ${profile.skills.join('、')} Skill。`
+    : '请根据任务选择合适的工具和方法。';
+  return `请作为「${profile.name}」协助我完成与“${profile.tagline}”相关的任务。我的具体目标是：[请在这里填写]。${skillHint}请先确认必要输入、交付格式和限制条件，再开始执行。`;
+}
+
 export const PERSONAL_OTTO_PROFILE: AgentProfile = {
   id: 'otto-personal',
   name: 'Otto',

@@ -40,6 +40,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/employees',
   '/enterprise/report',
   '/enterprise/dashboard',
+  '/enterprise/accounts',
 ]);
 
 interface RouteBody {
@@ -100,6 +101,10 @@ function tokensMatch(a: string, b: string): boolean {
   }
 }
 
+function isAdminRoute(path: string): boolean {
+  return ADMIN_ROUTES.has(path) || path.startsWith('/enterprise/accounts/');
+}
+
 function makeHandler(adminToken: string) {
   return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
@@ -112,11 +117,21 @@ function makeHandler(adminToken: string) {
       return;
     }
 
-    // 管理端鉴权：配置了 token 时，管理路由必须带上正确 token。
-    if (adminToken && ADMIN_ROUTES.has(path)) {
-      if (!tokensMatch(extractToken(req, url), adminToken)) {
-        sendJSON(res, 401, { error: 'unauthorized: admin token required' });
-        return;
+    // 管理端鉴权：兼容原有静态 admin token，同时允许预设管理员账号的登录会话。
+    // 本机模式未配置 adminToken 时维持旧行为（仅 loopback 使用）；对外监听时 start
+    // 会自动生成 admin token，因此不会出现公网裸管理接口。
+    if (adminToken && isAdminRoute(path)) {
+      const token = extractToken(req, url);
+      if (!tokensMatch(token, adminToken)) {
+        const account = db.getAccountBySession(token);
+        if (!account) {
+          sendJSON(res, 401, { error: 'unauthorized: admin login required' });
+          return;
+        }
+        if (!account.isAdmin) {
+          sendJSON(res, 403, { error: 'forbidden: admin account required' });
+          return;
+        }
       }
     }
 
@@ -124,6 +139,141 @@ function makeHandler(adminToken: string) {
       // ===== Health =====
       if (path === '/enterprise/health' && method === 'GET') {
         sendJSON(res, 200, { status: 'ok', uptime: process.uptime(), db: 'connected' });
+        return;
+      }
+
+      // ===== Preset account authentication (no email flow) =====
+      if (path === '/enterprise/auth/login' && method === 'POST') {
+        const body = await readBody(req);
+        const username = typeof body.username === 'string' ? body.username : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        const account = db.authenticateAccount(username, password);
+        if (!account) {
+          // 不区分「账号不存在」与「密码错误」，避免泄露预设账号清单。
+          sendJSON(res, 401, { error: '账号或密码错误' });
+          return;
+        }
+        const session = db.createAuthSession(account.id);
+        sendJSON(res, 200, { account, token: session.token, expiresAt: session.expiresAt });
+        return;
+      }
+
+      if (path === '/enterprise/auth/me' && method === 'GET') {
+        const account = db.getAccountBySession(extractToken(req, url));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        sendJSON(res, 200, { account });
+        return;
+      }
+
+      if (path === '/enterprise/auth/logout' && method === 'POST') {
+        const token = extractToken(req, url);
+        const account = db.getAccountBySession(token);
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        db.revokeAuthSession(token);
+        sendJSON(res, 200, { status: 'logged_out' });
+        return;
+      }
+
+      // ===== Complete account management entry =====
+      if (path === '/enterprise/accounts' && method === 'GET') {
+        sendJSON(res, 200, { accounts: db.listAccounts() });
+        return;
+      }
+
+      if (path === '/enterprise/accounts' && method === 'POST') {
+        const body = await readBody(req);
+        const username = typeof body.username === 'string' ? body.username : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        const name = typeof body.name === 'string' ? body.name : '';
+        if (!username || password.length < 8 || !name) {
+          sendJSON(res, 400, { error: 'username, name and password (at least 8 characters) required' });
+          return;
+        }
+        try {
+          const account = db.createAccount({
+            username,
+            password,
+            name,
+            role: typeof body.role === 'string' ? body.role : null,
+            department: typeof body.department === 'string' ? body.department : null,
+            tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+            isAdmin: body.isAdmin === true,
+          });
+          sendJSON(res, 201, { account });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/unique constraint/i.test(message)) sendJSON(res, 409, { error: '账号名已存在' });
+          else throw error;
+        }
+        return;
+      }
+
+      if (path.startsWith('/enterprise/accounts/') && method === 'PATCH') {
+        const accountId = decodeURIComponent(path.slice('/enterprise/accounts/'.length));
+        if (!accountId || !db.getAccount(accountId)) {
+          sendJSON(res, 404, { error: 'Account not found' });
+          return;
+        }
+        const body = await readBody(req);
+        const status = body.status === 'active' || body.status === 'disabled' ? body.status : undefined;
+        const account = db.updateAccount(accountId, {
+          username: typeof body.username === 'string' ? body.username : undefined,
+          password: typeof body.password === 'string' && body.password ? body.password : undefined,
+          name: typeof body.name === 'string' ? body.name : undefined,
+          role: typeof body.role === 'string' || body.role === null ? body.role : undefined,
+          department: typeof body.department === 'string' || body.department === null
+            ? body.department
+            : undefined,
+          tags: Array.isArray(body.tags)
+            ? body.tags.filter((tag): tag is string => typeof tag === 'string')
+            : undefined,
+          isAdmin: typeof body.isAdmin === 'boolean' ? body.isAdmin : undefined,
+          status,
+        });
+        sendJSON(res, 200, { account });
+        return;
+      }
+
+      // ===== IT ticket routing: persist one delivery for every matching account =====
+      if (path === '/enterprise/tickets' && method === 'POST') {
+        const account = db.getAccountBySession(extractToken(req, url));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        const body = await readBody(req);
+        const title = typeof body.title === 'string' ? body.title : '';
+        const description = typeof body.description === 'string' ? body.description : '';
+        if (!title.trim() || !description.trim()) {
+          sendJSON(res, 400, { error: 'title and description required' });
+          return;
+        }
+        const targetTags = Array.isArray(body.targetTags)
+          ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
+          : ['IT', '报修'];
+        const ticket = db.createTicket({
+          createdByAccountId: account.id,
+          title,
+          description,
+          targetTags,
+        });
+        sendJSON(res, 201, { ticket });
+        return;
+      }
+
+      if (path === '/enterprise/tickets/inbox' && method === 'GET') {
+        const account = db.getAccountBySession(extractToken(req, url));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        sendJSON(res, 200, { tickets: db.listTicketInbox(account.id) });
         return;
       }
 
@@ -341,6 +491,22 @@ function makeHandler(adminToken: string) {
         return;
       }
 
+      // ===== Preset account admin web app =====
+      // 页面本身公开可达，但不包含任何静态管理 token；所有账号数据请求仍必须使用
+      // 管理员预设账号登录后拿到的短期会话。
+      if (path === '/enterprise/admin' && method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+        });
+        res.end(adminAccountsHTML());
+        return;
+      }
+
       // ===== Admin Dashboard HTML =====
       if (path === '/enterprise/dashboard' && method === 'GET') {
         res.writeHead(200, {
@@ -357,6 +523,49 @@ function makeHandler(adminToken: string) {
       sendJSON(res, 500, { error: m });
     }
   };
+}
+
+function adminAccountsHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Otto 账号管理</title>
+<style>
+:root{--ink:#18201d;--muted:#6d7772;--line:#dfe4e1;--paper:#f7f8f6;--panel:#fff;--accent:#176b50;--accent-soft:#e5f0eb;--warn:#a74c32;--shadow:0 22px 60px rgba(29,45,38,.12)}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px}button,input,select{font:inherit}
+button{cursor:pointer}.hidden{display:none!important}.brand{font-size:22px;font-weight:760;letter-spacing:-.04em}.brand i{font-style:normal;color:var(--accent)}
+.login{min-height:100vh;display:grid;grid-template-columns:minmax(320px,1.05fr) minmax(360px,.95fr)}.login-story{padding:64px clamp(36px,7vw,96px);background:#17251f;color:#f4f7f5;display:flex;flex-direction:column;justify-content:space-between}.login-story .brand{font-size:27px}.login-story h1{font-size:clamp(38px,5vw,68px);line-height:1.04;letter-spacing:-.055em;max-width:680px;margin:80px 0 20px}.login-story p{color:#aab9b2;font-size:16px;line-height:1.8;max-width:560px}.signal{display:flex;gap:8px;align-items:center;color:#aab9b2}.signal b{width:8px;height:8px;border-radius:50%;background:#57d3a6;box-shadow:0 0 0 5px rgba(87,211,166,.12)}
+.login-side{display:grid;place-items:center;padding:34px}.login-card{width:min(430px,100%)}.eyebrow{font-size:11px;letter-spacing:.14em;color:var(--accent);font-weight:750}.login-card h2{font-size:32px;letter-spacing:-.04em;margin:12px 0 8px}.login-card>p{color:var(--muted);line-height:1.7;margin:0 0 30px}.field{display:grid;gap:8px;margin:16px 0}.field label{font-size:12px;font-weight:650;color:#4c5852}.field input,.field select{width:100%;height:46px;border:1px solid var(--line);border-radius:9px;padding:0 13px;background:#fff;color:var(--ink);outline:none}.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,107,80,.1)}.primary{border:0;background:var(--accent);color:white;border-radius:9px;padding:12px 18px;font-weight:700}.primary:disabled{opacity:.5;cursor:default}.login-card .primary{width:100%;height:48px;margin-top:10px}.error{color:var(--warn);background:#f8ebe7;border:1px solid #efd4ca;padding:10px 12px;border-radius:8px;margin-top:14px;line-height:1.5}
+.admin{min-height:100vh;display:grid;grid-template-columns:236px 1fr}.rail{background:#17251f;color:#eef4f1;padding:28px 22px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.rail .brand{margin-bottom:48px}.nav-label{font-size:11px;color:#7f948a;letter-spacing:.12em;margin:8px 10px}.nav-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:8px;background:#243a31;color:#f1f6f3;font-weight:650}.nav-item span{width:7px;height:7px;background:#65d6ad;border-radius:50%}.rail-foot{margin-top:auto;border-top:1px solid #30453c;padding-top:18px}.rail-user{font-weight:650}.rail-meta{color:#8fa198;font-size:12px;margin-top:4px}.ghost-dark{border:1px solid #43584f;background:transparent;color:#cbd7d1;border-radius:8px;padding:8px 11px;margin-top:14px}
+.workspace{padding:34px clamp(28px,4vw,64px) 60px;min-width:0}.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:30px}.topbar h1{font-size:34px;letter-spacing:-.045em;margin:0 0 7px}.topbar p{color:var(--muted);margin:0}.stats{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin-bottom:22px}.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}.stat strong{font-size:25px;display:block;letter-spacing:-.03em}.stat span{color:var(--muted);font-size:12px}.toolbar{display:flex;gap:10px;margin-bottom:12px}.search{flex:1;height:42px;border:1px solid var(--line);background:#fff;border-radius:9px;padding:0 13px;outline:none}.table-wrap{background:#fff;border:1px solid var(--line);border-radius:13px;overflow:auto}.accounts{width:100%;border-collapse:collapse;min-width:800px}.accounts th{text-align:left;font-size:11px;letter-spacing:.05em;color:#7a847f;background:#f1f4f2;padding:12px 14px}.accounts td{padding:13px 14px;border-top:1px solid #edf0ee;vertical-align:middle}.accounts tr:hover td{background:#fbfcfb}.name{font-weight:700}.sub{font-size:12px;color:var(--muted);margin-top:3px}.tag{display:inline-block;background:var(--accent-soft);color:#245e49;border-radius:99px;padding:3px 8px;font-size:11px;margin:2px 3px 2px 0}.badge{font-size:11px;border-radius:99px;padding:4px 8px;background:#edf0ee}.badge.off{background:#f6e9e5;color:var(--warn)}.edit{border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 10px;color:var(--ink)}.empty{text-align:center;color:var(--muted);padding:40px!important}
+.drawer-backdrop{position:fixed;inset:0;background:rgba(17,28,23,.28);display:flex;justify-content:flex-end;z-index:5}.drawer{width:min(520px,100%);height:100%;background:#fff;box-shadow:var(--shadow);padding:28px;overflow:auto}.drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}.drawer h2{margin:0;font-size:25px;letter-spacing:-.035em}.close{border:0;background:#eef1ef;width:34px;height:34px;border-radius:50%;font-size:18px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.wide{grid-column:1/-1}.checkline{display:flex;gap:16px;margin:18px 0}.checkline label{display:flex;align-items:center;gap:7px}.drawer-actions{display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);padding-top:18px;margin-top:24px}.secondary{border:1px solid var(--line);background:white;border-radius:9px;padding:11px 16px}
+@media(max-width:820px){.login{grid-template-columns:1fr}.login-story{display:none}.admin{grid-template-columns:1fr}.rail{height:auto;position:static;padding:18px 22px;flex-direction:row;align-items:center}.rail .brand{margin:0}.nav-label,.nav-item,.rail-meta{display:none}.rail-foot{margin:0 0 0 auto;border:0;padding:0;display:flex;align-items:center;gap:10px}.ghost-dark{margin:0}.workspace{padding:24px 16px 44px}.topbar{align-items:flex-start;flex-direction:column}.stats{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+</style></head><body>
+<main id="loginView" class="login">
+  <section class="login-story"><div class="brand">otto<i>✦</i></div><div><div class="eyebrow" style="color:#65d6ad">ENTERPRISE CONTROL</div><h1>账号有边界，协作才清晰。</h1><p>管理员在这里维护预设账号、部门、角色与标签。没有公开注册，也没有邮箱验证流程。</p></div><div class="signal"><b></b> Ubuntu-wysn · 管理服务在线</div></section>
+  <section class="login-side"><form id="loginForm" class="login-card"><div class="eyebrow">SECURE ADMIN ACCESS</div><h2>管理员登录</h2><p>请输入管理员账号的用户名与强密码。普通员工账号无法进入此页面。</p><div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required autofocus></div><div class="field"><label for="password">强密码</label><input id="password" name="password" type="password" autocomplete="current-password" minlength="8" required></div><button id="loginButton" class="primary" type="submit">进入账号管理</button><div id="loginError" class="error hidden" role="alert"></div></form></section>
+</main>
+<main id="adminView" class="admin hidden">
+  <aside class="rail"><div class="brand">otto<i>✦</i></div><div class="nav-label">管理</div><div class="nav-item"><span></span>全部账号</div><div class="rail-foot"><div><div id="railUser" class="rail-user"></div><div class="rail-meta">系统管理员</div></div><button id="logoutButton" class="ghost-dark">退出</button></div></aside>
+  <section class="workspace"><header class="topbar"><div><h1>账号目录</h1><p>查看并维护所有预设账号、权限和工单标签。</p></div><button id="createButton" class="primary">＋ 新增账号</button></header><div class="stats"><div class="stat"><strong id="allCount">0</strong><span>全部账号</span></div><div class="stat"><strong id="activeCount">0</strong><span>可登录</span></div><div class="stat"><strong id="itCount">0</strong><span>IT 报修接收人</span></div></div><div class="toolbar"><input id="searchInput" class="search" placeholder="搜索姓名、账号、部门、标签"></div><div class="table-wrap"><table class="accounts"><thead><tr><th>账号</th><th>角色 / 部门</th><th>标签</th><th>权限</th><th>状态</th><th></th></tr></thead><tbody id="accountRows"></tbody></table></div><div id="pageError" class="error hidden" role="alert"></div></section>
+</main>
+<div id="drawerWrap" class="drawer-backdrop hidden"><form id="accountForm" class="drawer"><div class="drawer-head"><div><div class="eyebrow">PRESET ACCOUNT</div><h2 id="drawerTitle">新增账号</h2></div><button id="closeDrawer" class="close" type="button" aria-label="关闭">×</button></div><input id="accountId" type="hidden"><div class="form-grid"><div class="field"><label for="editUsername">用户名</label><input id="editUsername" required></div><div class="field"><label for="editName">姓名</label><input id="editName" required></div><div class="field"><label for="editRole">角色</label><input id="editRole"></div><div class="field"><label for="editDepartment">部门</label><input id="editDepartment"></div><div class="field wide"><label for="editTags">标签（用逗号分隔）</label><input id="editTags" placeholder="普通员工, IT, 报修"></div><div class="field wide"><label for="editPassword">密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editAdmin" type="checkbox"> 管理员权限</label></div><div id="formError" class="error hidden" role="alert"></div><div class="drawer-actions"><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div></form></div>
+<script>
+const KEY='otto.enterprise.admin.session';let token=sessionStorage.getItem(KEY)||'';let currentAdmin=null;let accounts=[];
+const $=id=>document.getElementById(id);const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function showError(id,message){const el=$(id);el.textContent=message||'';el.classList.toggle('hidden',!message)}
+async function api(path,options){const o=options||{};o.headers=Object.assign({'content-type':'application/json'},o.headers||{},token?{authorization:'Bearer '+token}:{});const r=await fetch(path,o);const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||('请求失败 '+r.status));return data}
+function showLogin(message){$('adminView').classList.add('hidden');$('loginView').classList.remove('hidden');if(message)showError('loginError',message)}
+function showAdmin(){showError('loginError','');$('loginView').classList.add('hidden');$('adminView').classList.remove('hidden');$('railUser').textContent=currentAdmin.name+' · '+currentAdmin.username}
+function tags(value){return String(value||'').split(/[,，]/).map(s=>s.trim()).filter(Boolean)}
+function render(){const q=$('searchInput').value.trim().toLowerCase();const rows=accounts.filter(a=>!q||[a.name,a.username,a.role,a.department].concat(a.tags||[]).some(v=>String(v||'').toLowerCase().includes(q)));$('allCount').textContent=String(accounts.length);$('activeCount').textContent=String(accounts.filter(a=>a.status==='active').length);$('itCount').textContent=String(accounts.filter(a=>a.tags.includes('IT')&&a.tags.includes('报修')).length);$('accountRows').innerHTML=rows.length?rows.map(a=>'<tr><td><div class="name">'+esc(a.name)+'</div><div class="sub">'+esc(a.username)+'</div></td><td>'+esc(a.role||'—')+'<div class="sub">'+esc(a.department||'未分配部门')+'</div></td><td>'+((a.tags||[]).map(t=>'<span class="tag">'+esc(t)+'</span>').join('')||'<span class="sub">无标签</span>')+'</td><td>'+(a.isAdmin?'<span class="badge">管理员</span>':'<span class="sub">员工</span>')+'</td><td><span class="badge '+(a.status==='active'?'':'off')+'">'+(a.status==='active'?'可登录':'已停用')+'</span></td><td><button class="edit" data-id="'+esc(a.id)+'">编辑</button></td></tr>').join(''):'<tr><td class="empty" colspan="6">没有匹配账号</td></tr>';document.querySelectorAll('button[data-id]').forEach(b=>b.addEventListener('click',()=>openEditor(accounts.find(a=>a.id===b.dataset.id))))}
+async function loadAccounts(){const data=await api('/enterprise/accounts');accounts=data.accounts||[];render()}
+function openEditor(a){const editing=!!a;$('drawerTitle').textContent=editing?'编辑账号':'新增账号';$('accountId').value=editing?a.id:'';$('editUsername').value=editing?a.username:'';$('editName').value=editing?a.name:'';$('editRole').value=editing?(a.role||''):'';$('editDepartment').value=editing?(a.department||''):'';$('editTags').value=editing?(a.tags||[]).join(', '):'';$('editPassword').value='';$('editPassword').required=!editing;$('passwordHint').textContent=editing?'留空表示不修改密码':'至少 8 位，建议使用大小写字母、数字和符号';$('editStatus').value=editing?a.status:'active';$('editAdmin').checked=editing&&a.isAdmin;showError('formError','');$('drawerWrap').classList.remove('hidden');$('editUsername').focus()}
+function closeEditor(){$('drawerWrap').classList.add('hidden')}
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();showError('loginError','');$('loginButton').disabled=true;try{const data=await api('/enterprise/auth/login',{method:'POST',body:JSON.stringify({username:$('username').value,password:$('password').value})});if(!data.account||!data.account.isAdmin)throw new Error('该账号没有管理员权限');token=data.token;currentAdmin=data.account;sessionStorage.setItem(KEY,token);$('password').value='';showAdmin();await loadAccounts()}catch(err){token='';sessionStorage.removeItem(KEY);showLogin(err.message)}finally{$('loginButton').disabled=false}});
+$('logoutButton').addEventListener('click',async()=>{try{await api('/enterprise/auth/logout',{method:'POST'})}catch{}token='';currentAdmin=null;sessionStorage.removeItem(KEY);showLogin('')});$('searchInput').addEventListener('input',render);$('createButton').addEventListener('click',()=>openEditor(null));$('closeDrawer').addEventListener('click',closeEditor);$('cancelEdit').addEventListener('click',closeEditor);$('drawerWrap').addEventListener('click',e=>{if(e.target===$('drawerWrap'))closeEditor()});
+$('accountForm').addEventListener('submit',async e=>{e.preventDefault();showError('formError','');const id=$('accountId').value;const password=$('editPassword').value;const body={username:$('editUsername').value.trim(),name:$('editName').value.trim(),role:$('editRole').value.trim(),department:$('editDepartment').value.trim(),tags:tags($('editTags').value),status:$('editStatus').value,isAdmin:$('editAdmin').checked};if(password)body.password=password;if(!id&&!password){showError('formError','新增账号必须设置密码');return}$('saveAccount').disabled=true;try{await api(id?'/enterprise/accounts/'+encodeURIComponent(id):'/enterprise/accounts',{method:id?'PATCH':'POST',body:JSON.stringify(body)});closeEditor();await loadAccounts()}catch(err){showError('formError',err.message)}finally{$('saveAccount').disabled=false}});
+(async()=>{if(!token)return showLogin('');try{const data=await api('/enterprise/auth/me');if(!data.account.isAdmin)throw new Error('该账号没有管理员权限');currentAdmin=data.account;showAdmin();await loadAccounts()}catch{token='';sessionStorage.removeItem(KEY);showLogin('登录已失效，请重新登录')}})();
+</script></body></html>`;
 }
 
 function adminDashboardHTML(token: string): string {
@@ -429,7 +638,7 @@ function barChartSVG(rows){
     const w=Math.max(Math.round(barMax*r.minutes/maxMin),2);
     const label=r.minutes+'分 · '+r.count+'次';
     // 估算标签像素宽（数字/点/空格约 0.55em、中文约 1em），用于判断外侧是否放得下。
-    const labelW=[...label].reduce((n,ch)=>n+(/[0-9.\s·]/.test(ch)?fontSize*0.55:fontSize),0);
+    const labelW=[...label].reduce((n,ch)=>n+(/[0-9.\\s·]/.test(ch)?fontSize*0.55:fontSize),0);
     const ty=y+barH-5;
     s+='<text x="'+(padL-8)+'" y="'+ty+'" text-anchor="end" fill="#94a3b8" font-size="12">'+esc(r.taskType)+'</text>';
     s+='<rect x="'+padL+'" y="'+y+'" width="'+w+'" height="'+barH+'" rx="4" fill="#60a5fa"/>';
@@ -533,6 +742,7 @@ export function startEnterpriseServer(opts: EnterpriseServerOptions = {}): Serve
   server.listen(port, host, () => {
     const tokenQuery = adminToken ? `?token=${adminToken}` : '';
     console.log(`[Otto Enterprise] 服务端运行于 http://${host}:${port}`);
+    console.log(`[Otto Enterprise] 账号管理: http://localhost:${port}/enterprise/admin`);
     console.log(`[Otto Enterprise] 老板看板: http://localhost:${port}/enterprise/dashboard${tokenQuery}`);
     console.log(`[Otto Enterprise] 数据: ~/.otto-enterprise/data.db（本地，零云端）`);
     if (adminToken) {

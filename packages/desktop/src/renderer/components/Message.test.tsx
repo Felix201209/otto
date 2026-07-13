@@ -125,6 +125,105 @@ describe('Message 动作行', () => {
     );
     expect(screen.queryByLabelText('重新生成')).toBeNull();
   });
+
+  it('完成后的思考、Skill 与工具过程默认收进「深度思考」折叠区', () => {
+    render(
+      <Message
+        message={botMessage({
+          reasoning: '先定位可用的 PPT Skill。',
+          associatedToolCalls: [{
+            id: 'skill-1',
+            toolName: 'find-skills',
+            displayName: 'find-skills',
+            description: '搜索 PPT 美化 Skill',
+            parameters: {},
+            status: 'success' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+          }],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole('button', { name: /深度思考/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('先定位可用的 PPT Skill。')).toBeTruthy();
+    expect(screen.getByText('find-skills')).toBeTruthy();
+  });
+
+  it('Skill 执行时展开显示，执行完成后自动隐藏且仍可手动展开', () => {
+    const tool = {
+      id: 'skill-1',
+      toolName: 'find-skills',
+      displayName: 'find-skills',
+      description: '搜索 PPT 美化 Skill',
+      parameters: {},
+      status: 'executing' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+    };
+    const { rerender } = render(
+      <Message
+        message={botMessage({
+          isProcessingTools: true,
+          associatedToolCalls: [tool],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+
+    const activeToggle = screen.getByRole('button', { name: /深度思考中/ });
+    expect(activeToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('find-skills')).toBeTruthy();
+
+    rerender(
+      <Message
+        message={botMessage({
+          isProcessingTools: false,
+          associatedToolCalls: [{
+            ...tool,
+            status: 'success' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+          }],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+
+    const completeToggle = screen.getByRole('button', { name: /深度思考/ });
+    expect(completeToggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(completeToggle);
+    expect(completeToggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('等待用户确认的工具不会被自动隐藏', () => {
+    render(
+      <Message
+        message={botMessage({
+          associatedToolCalls: [{
+            id: 'approval-1',
+            toolName: 'run_shell_command',
+            parameters: {},
+            status: 'awaiting_approval' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+            confirmationDetails: {
+              type: 'exec',
+              title: '允许执行？',
+              command: 'npm test',
+            },
+          }],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+        onRespondQuestion={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole('button', { name: /等待确认/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: '允许执行' })).toBeTruthy();
+  });
 });
 
 describe('User 图片 lightbox', () => {

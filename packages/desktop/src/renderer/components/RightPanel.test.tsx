@@ -113,10 +113,13 @@ describe('RightPanel v1.7 工作入口', () => {
     const devCard = screen.getByTitle('写代码 · 改项目 · 自动化任务');
     expect(devCard).toBeTruthy();
     fireEvent.click(devCard!);
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'self-development',
-      name: '企业AI自主开发',
-    }));
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'self-development',
+        name: '企业AI自主开发',
+      }),
+      expect.stringContaining('企业AI自主开发'),
+    );
   });
 
   it('工具面板恢复 v1.6 的飞书状态与多渠道快捷项', () => {

@@ -10,7 +10,7 @@
  */
 
 import type React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
 import { Sidebar } from './Sidebar.js';
@@ -58,6 +58,56 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.queryByText('常见任务')).toBeNull();
     expect(screen.queryByText('PPT 创作专家')).toBeNull();
     expect(screen.queryByText('全部智能体')).toBeNull();
+  });
+
+  it('对话任务标题只用一个数字表示总数，并支持整体展开收起', () => {
+    renderSidebar({
+      groups: [{
+        label: '今天',
+        sessions: [
+          makeSession({ sessionId: 's1' }),
+          makeSession({ sessionId: 's2', title: '第二个任务' }),
+        ],
+      }],
+    });
+
+    const toggle = screen.getByRole('button', { name: '对话任务（2）' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('第二个任务')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('第二个任务')).toBeNull();
+  });
+});
+
+describe('Sidebar：对话任务日期', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 12, 12));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('按自然日标注今天、昨天和 N 天前', () => {
+    const day = 86_400_000;
+    const today = new Date(2026, 6, 12).getTime();
+    renderSidebar({
+      groups: [{
+        label: '任意旧分组名',
+        sessions: [
+          makeSession({ sessionId: 'today', title: '今天任务', updatedAt: today + 1_000 }),
+          makeSession({ sessionId: 'yesterday', title: '昨天任务', updatedAt: today - day + 1_000 }),
+          makeSession({ sessionId: 'old', title: '旧任务', updatedAt: today - 4 * day + 1_000 }),
+        ],
+      }],
+    });
+
+    expect(screen.getByText('今天')).toBeTruthy();
+    expect(screen.getByText('昨天')).toBeTruthy();
+    expect(screen.getByText('4天前')).toBeTruthy();
   });
 });
 

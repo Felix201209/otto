@@ -161,6 +161,24 @@ describe('受保护 vs 公开路由边界', () => {
 });
 
 describe('report/dashboard 路由基本可达', () => {
+  it('admin 网页无需静态 token 即可打开，并提供管理员账号登录与完整账号编辑入口', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const res = await fetch(`${base}/enterprise/admin`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+
+    const html = await res.text();
+    expect(html).toContain('管理员登录');
+    expect(html).toContain('用户名');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('/enterprise/auth/login');
+    expect(html).toContain('/enterprise/accounts');
+    expect(html).toContain('sessionStorage');
+    expect(html).not.toContain(ADMIN_TOKEN);
+  });
+
   it('dashboard（带 token）返回 HTML 且含估算披露文案', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const res = await fetch(`${base}/enterprise/dashboard?token=${ADMIN_TOKEN}`);
@@ -203,5 +221,163 @@ describe('report/dashboard 路由基本可达', () => {
       body: JSON.stringify({ employee_id: 'e1' }), // 缺 task_type
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('预设账号登录、管理与标签工单投递 API', () => {
+  async function seedAccount(
+    adminToken: string,
+    input: {
+      username: string;
+      password: string;
+      name: string;
+      tags?: string[];
+      isAdmin?: boolean;
+    },
+  ): Promise<{ base: string; account: any }> {
+    const { base } = await startIsolated(adminToken);
+    const db = await import('./db.js');
+    return { base, account: db.createAccount(input) };
+  }
+
+  it('无需邮箱：预设账号密码正确即可登录，并可用会话读取本人信息和注销', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'staff01',
+      password: 'staff-password',
+      name: '普通员工',
+      tags: ['普通员工'],
+    });
+
+    const login = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'staff01', password: 'staff-password' }),
+    });
+    expect(login.status).toBe(200);
+    const loginBody = await login.json();
+    expect(loginBody.account.tags).toEqual(['普通员工']);
+    expect(loginBody.token).toEqual(expect.any(String));
+    expect(loginBody.account).not.toHaveProperty('password_hash');
+
+    const me = await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${loginBody.token}` },
+    });
+    expect(me.status).toBe(200);
+    expect((await me.json()).account.username).toBe('staff01');
+
+    const logout = await fetch(`${base}/enterprise/auth/logout`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${loginBody.token}` },
+    });
+    expect(logout.status).toBe(200);
+    expect((await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${loginBody.token}` },
+    })).status).toBe(401);
+  });
+
+  it('账号不存在和密码错误都返回同一 401，不泄露预设账号清单', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'staff01', password: 'staff-password', name: '普通员工',
+    });
+    for (const body of [
+      { username: 'staff01', password: 'wrong-password' },
+      { username: 'missing', password: 'staff-password' },
+    ]) {
+      const res = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: '账号或密码错误' });
+    }
+  });
+
+  it('管理员会话可查看、新增、修改全部账号；普通账号不可访问', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+    });
+    const db = await import('./db.js');
+    db.createAccount({ username: 'staff', password: 'staff-password', name: '员工' });
+
+    async function login(username: string, password: string): Promise<string> {
+      const res = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      return (await res.json()).token;
+    }
+    const adminSession = await login('admin', 'admin-password');
+    const staffSession = await login('staff', 'staff-password');
+    expect((await fetch(`${base}/enterprise/accounts`, {
+      headers: { authorization: `Bearer ${staffSession}` },
+    })).status).toBe(403);
+
+    const created = await fetch(`${base}/enterprise/accounts`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username: 'it01', password: 'it-password-1', name: 'IT 一号',
+        role: '桌面支持', department: 'IT', tags: ['IT', '报修'],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = await created.json();
+    expect(createdBody.account.tags).toEqual(['IT', '报修']);
+
+    const updated = await fetch(`${base}/enterprise/accounts/${createdBody.account.id}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'IT 值班', tags: ['IT', '报修', '夜班'] }),
+    });
+    expect(updated.status).toBe(200);
+    expect((await updated.json()).account.tags).toEqual(['IT', '夜班', '报修']);
+
+    const list = await fetch(`${base}/enterprise/accounts`, {
+      headers: { authorization: `Bearer ${adminSession}` },
+    });
+    expect(list.status).toBe(200);
+    expect((await list.json()).accounts).toHaveLength(3);
+  });
+
+  it('提交 IT 报修后，只有对应标签账号能在收件箱真实收到工单', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'staff', password: 'staff-password', name: '员工', tags: ['普通员工'],
+    });
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'it01', password: 'it-password-1', name: 'IT 一号', tags: ['IT', '报修'],
+    });
+    db.createAccount({
+      username: 'it02', password: 'it-password-2', name: 'IT 二号', tags: ['IT'],
+    });
+
+    async function login(username: string, password: string): Promise<string> {
+      const res = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      return (await res.json()).token;
+    }
+    const staffToken = await login('staff', 'staff-password');
+    const itOneToken = await login('it01', 'it-password-1');
+    const itTwoToken = await login('it02', 'it-password-2');
+
+    const submitted = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${staffToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '电脑无法联网', description: 'Wi-Fi 一直掉线' }),
+    });
+    expect(submitted.status).toBe(201);
+    expect((await submitted.json()).ticket.recipientCount).toBe(1);
+
+    const inboxOne = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${itOneToken}` },
+    });
+    expect((await inboxOne.json()).tickets).toHaveLength(1);
+    const inboxTwo = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${itTwoToken}` },
+    });
+    expect((await inboxTwo.json()).tickets).toHaveLength(0);
   });
 });

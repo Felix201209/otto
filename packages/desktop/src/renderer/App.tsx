@@ -30,7 +30,7 @@ import {
 import type { ImageAttachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { SLASH_COMMANDS } from './components/Composer.js';
+import { insertComposerDraft, SLASH_COMMANDS } from './components/Composer.js';
 import {
   mergeServerCommands,
   buildHelpMarkdown,
@@ -48,8 +48,13 @@ import { WhatsNewDialog } from './components/WhatsNewDialog.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
+import { EnterpriseLoginPage } from './components/EnterpriseLoginPage.js';
+import { AccountManagementPage } from './components/AccountManagementPage.js';
+import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
+import type { EnterpriseAccount } from '../preload/index.js';
 import {
   DEPARTMENT_LABELS,
+  getAgentComposerPrompt,
   getEnterpriseAgentProfiles,
   getPersonalAgentProfiles,
   type AgentProfile,
@@ -60,9 +65,39 @@ import {
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone';
+type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 export function App(): React.JSX.Element {
+  const auth = useEnterpriseAuth();
+  if (auth.state.status === 'loading') {
+    return (
+      <div className="otto-enterprise-boot" role="status">
+        <span className="otto-enterprise-boot__brand">otto✦</span>
+        <span className="otto-enterprise-boot__pulse" />
+        正在验证企业登录…
+      </div>
+    );
+  }
+  if (auth.state.status === 'signed-out' || !auth.state.account) {
+    return (
+      <EnterpriseLoginPage
+        initialServerUrl={auth.state.serverUrl}
+        busy={auth.state.busy}
+        error={auth.state.error}
+        onLogin={auth.actions.login}
+      />
+    );
+  }
+  return <OttoWorkspaceApp account={auth.state.account} onLogout={auth.actions.logout} />;
+}
+
+function OttoWorkspaceApp({
+  account,
+  onLogout,
+}: {
+  account: EnterpriseAccount;
+  onLogout: () => Promise<void>;
+}): React.JSX.Element {
   const { state, actions } = useOttoStore();
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
   const settingsData = useSettingsData();
@@ -230,6 +265,22 @@ export function App(): React.JSX.Element {
     ? state.messages[state.activeSessionId] ?? []
     : [];
 
+  const [pendingExpertDraft, setPendingExpertDraft] = useState<{
+    profileId: string;
+    text: string;
+    previousSessionId: string | null;
+  } | null>(null);
+
+  // create_session 是异步的：必须等新专家会话真正落地、Composer 已挂载后再填草稿。
+  // 用 previousSessionId 防止连续点同一专家时，误把新提示词填到旧会话。
+  useEffect(() => {
+    if (!pendingExpertDraft || !activeSession) return;
+    if (activeSession.sessionId === pendingExpertDraft.previousSessionId) return;
+    if (activeSession.agentProfileId !== pendingExpertDraft.profileId) return;
+    insertComposerDraft(pendingExpertDraft.text);
+    setPendingExpertDraft(null);
+  }, [activeSession, pendingExpertDraft]);
+
   // session.status 是全局运行态的权威源：工具段结束→下一轮开始的帧间隙里，旧消息会
   // 短暂不 busy，但会话始终 streaming/thinking。以 status 驱动可避免停止按钮被卸载，
   // 也不会让历史里偶发残留的 isProcessingTools 把已 idle 的会话重新锁死。
@@ -300,9 +351,17 @@ export function App(): React.JSX.Element {
     actions.createSession();
   };
 
-  // 启动一个专家：回到对话页 → 起新会话并注入专家开场消息（由 store 关联新会话后自动发送）。
-  const handleLaunchProfile = (profile: AgentProfile): void => {
+  // 启动专家：新会话在服务端绑定 profile system prompt，同时只向输入框填可编辑任务模板，不自动发送。
+  const handleLaunchProfile = (
+    profile: AgentProfile,
+    composerPrompt = getAgentComposerPrompt(profile),
+  ): void => {
     setMainView('chat');
+    setPendingExpertDraft({
+      profileId: profile.id,
+      text: composerPrompt,
+      previousSessionId: activeSession?.sessionId ?? null,
+    });
     actions.launchAgentProfile(profile.name, profile.id);
   };
 
@@ -369,6 +428,7 @@ export function App(): React.JSX.Element {
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
+        accountManagementActive={mainView === 'accounts'}
         updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
@@ -376,10 +436,13 @@ export function App(): React.JSX.Element {
         }}
         onNewChat={handleNewChat}
         onOpenHub={() => openHub('prefs')}
+        onOpenAccounts={() => setMainView('accounts')}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
         productWorkspace={product.state.workspace}
+        enterpriseAccount={account}
+        onLogout={() => void onLogout()}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
@@ -392,6 +455,8 @@ export function App(): React.JSX.Element {
           onSave={handleSaveModel}
           onDeleteModel={handleDeleteModel}
         />
+      ) : mainView === 'accounts' && account.isAdmin ? (
+        <AccountManagementPage currentAccount={account} onBack={() => setMainView('chat')} />
       ) : mainView === 'agents' ? (
         <AgentGallery
           mode={edition}
@@ -417,8 +482,8 @@ export function App(): React.JSX.Element {
               messages={activeMessages}
               models={state.models}
               currentModel={activeSession?.model ?? state.currentModel}
-              userInitial="F"
-              identityLabel={identityLabel}
+              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              identityLabel={`${account.name} · ${account.tags.join(' / ') || identityLabel}`}
               modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}
