@@ -61,17 +61,19 @@ export const pptCommand: SlashCommand = {
 
 **主题**: ${topic}${pageCountHint}
 
-请帮我规划这个PPT，并把确认后的内容整理成可直接本地渲染的逐页 Markdown。包括:
-1. 演示的整体结构和逻辑
-2. 建议的页数和每一页的内容概要
-3. 关键要点和建议的呈现方式
+请先用 use_skill 完整加载 ppt-creator 技能，并按高审美路径直接完成真实 PPTX：
+1. 为这个主题创造独有视觉母题；默认炫酷、高冲击、像发布会主视觉
+2. 一页只表达一个观点，标题必须是结论句，不能编造数据、案例或引用
+3. 使用自定义 HTML/CSS/SVG 逐页构图，先做封面、最复杂数据页和结尾页三张标杆页并截图检查
+4. 禁止固定页眉、重复卡片、网页后台感和整套复用同一个标题加三栏模板
+5. 用本机浏览器输出 1920×1080 逐页 PNG，再用 Node/PptxGenJS 组装并真实打开 PPTX
 
 你可以使用 ppt_outline 工具来:
 - action=init: 初始化PPT编辑模式
 - action=update: 更新大纲内容
 - action=view: 查看当前大纲
 
-请在最终逐页内容中用独占一行的 --- 分隔每一页。我确认后，调用 ppt_generate 在本机生成 .pptx；不要使用任何 Otto 云端 PPT 服务、网页登录或上传。`;
+你可以用 ppt_outline 管理内部故事板，但不要把大纲当最终交付。generate_document / ppt_generate 只能在我明确优先速度时作为兜底；不得把兜底模板冒充高审美成品。不要使用任何 Otto 云端 PPT 服务、网页登录或上传。`;
 
     // 返回特殊的提示词提交类型，让AI处理PPT相关任务
     return {

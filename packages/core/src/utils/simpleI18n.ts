@@ -27,7 +27,7 @@ const translations = {
     'websearch.error.not.logged.in': 'Not logged in to Otto',
     'websearch.error.quota.exceeded': 'Insufficient credits',
     'tool.ppt_generate': 'PPT Generate',
-    'tool.ppt_generate.description': 'Render the confirmed PPT outline through local HTML pages, turn each page into an image with local Chrome/Edge/Chromium, then package the images into a .pptx. No Python, Otto server, login, upload, or web editor is used. Separate slides with --- lines.',
+    'tool.ppt_generate.description': 'Fast local PPTX fallback for a confirmed outline. High-aesthetic decks must use the ppt-creator custom HTML/CSS/SVG workflow instead. No Python, Otto server, login, upload, or web editor is used.',
     'ppt_generate.param.confirm': 'Confirm local generation (default true)',
   },
   zh: {
@@ -45,7 +45,7 @@ const translations = {
     'websearch.error.not.logged.in': '未登录 Otto',
     'websearch.error.quota.exceeded': '积分不足',
     'tool.ppt_generate': 'PPT生成',
-    'tool.ppt_generate.description': '把已确认的内容逐页生成本地 HTML，用本机 Chrome/Edge/Chromium 转成图片，再封装为本地 .pptx。全程不调用 Python，也不经过 Otto 服务端、登录、上传或网页编辑器；页面用独占一行的 --- 分隔。',
+    'tool.ppt_generate.description': '已确认大纲的本地快速兜底生成器；高审美演示必须改用 ppt-creator 的自定义 HTML/CSS/SVG 工作流。全程不调用 Python，也不经过 Otto 服务端、登录、上传或网页编辑器。',
     'ppt_generate.param.confirm': '确认本地生成（默认 true）',
   }
 } as const;

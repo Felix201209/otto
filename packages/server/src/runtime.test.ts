@@ -15,8 +15,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type { Config } from 'otto-core';
-import { AskUserQuestionTool, ToolConfirmationOutcome } from 'otto-core';
+import type { Config, CustomModelConfig } from 'otto-core';
+import {
+  AskUserQuestionTool,
+  ToolConfirmationOutcome,
+  generateCustomModelId,
+} from 'otto-core';
 import { CoreSessionRuntime } from './runtime.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ToolCallStatus, type ServerToClient } from './protocol.js';
@@ -146,6 +150,120 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
     const error = frames.find((frame) => frame.type === 'error');
     expect(error?.type === 'error' && error.payload.message).toBe(
       '模型服务地址尚未配置，请先绑定个人 API。',
+    );
+  });
+
+  it('模型网络失败且没有备用模型时返回可操作提示，不暴露 fetch failed', async () => {
+    async function* stream(): AsyncGenerator<unknown> {
+      throw new TypeError('fetch failed');
+    }
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: 'DeepSeek 连接失败' });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      makeFakeConfig(stream),
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: '你好' }], 'local');
+
+    const assistant = store
+      .getHistory(session.sessionId)
+      .find((message) => message.role === 'assistant');
+    const error = frames.find((frame) => frame.type === 'error');
+    const expected =
+      '当前模型连接失败，已重试但仍无法访问其 API。请在模型菜单切换到其他模型，或在设置中检查 Base URL、API Key 和网络代理。';
+    expect(assistant?.content).toEqual([{ type: 'text', value: expected }]);
+    expect(error?.type === 'error' && error.payload.message).toBe(expected);
+    expect(JSON.stringify(frames)).not.toContain('fetch failed');
+  });
+
+  it('首个 token 前网络失败时自动切到不同接口的备用模型并完成回复', async () => {
+    const brokenModel: CustomModelConfig = {
+      displayName: 'DeepSeek',
+      provider: 'openai',
+      baseUrl: 'https://broken.example/v1',
+      apiKey: 'broken-key',
+      modelId: 'deepseek-v4-pro',
+      enabled: true,
+    };
+    const fallbackModel: CustomModelConfig = {
+      displayName: 'GPT',
+      provider: 'openai-responses',
+      baseUrl: 'https://working.example/v1',
+      apiKey: 'working-key',
+      modelId: 'gpt-5',
+      enabled: true,
+    };
+    const brokenId = generateCustomModelId(brokenModel);
+    const fallbackId = generateCustomModelId(fallbackModel);
+    let currentModel = brokenId;
+    const switchModel = vi.fn(async (model: string) => {
+      currentModel = model;
+      return { success: true, modelName: model };
+    });
+    async function* brokenStream(): AsyncGenerator<unknown> {
+      throw new TypeError('fetch failed');
+    }
+    async function* fallbackStream(): AsyncGenerator<unknown> {
+      yield chunk('FALLBACK_OK', 'STOP');
+    }
+    const config = {
+      initialize: async () => undefined,
+      refreshAuth: async () => undefined,
+      getToolRegistry: async () => ({
+        discoverMcpTools: async () => undefined,
+        getFunctionDeclarations: () => [],
+      }),
+      getOttoClient: () => ({
+        getChat: async () => ({
+          sendMessageStream: async () =>
+            currentModel === brokenId ? brokenStream() : fallbackStream(),
+        }),
+        switchModel,
+      }),
+      getModel: () => currentModel,
+      getMaxSessionTurns: () => 10,
+      getCustomModels: () => [brokenModel, fallbackModel],
+      getCustomModelConfig: (model: string) =>
+        model === brokenId ? brokenModel : fallbackModel,
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession({
+      title: '自动备用',
+      model: brokenId,
+    });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: '你好' }], 'local');
+
+    expect(switchModel).toHaveBeenCalledWith(
+      fallbackId,
+      expect.any(AbortSignal),
+    );
+    expect(store.getSession(session.sessionId)?.model).toBe(fallbackId);
+    const assistant = store
+      .getHistory(session.sessionId)
+      .find((message) => message.role === 'assistant');
+    expect(assistant?.content).toEqual([
+      { type: 'text', value: 'FALLBACK_OK' },
+    ]);
+    expect(frames.some((frame) => frame.type === 'error')).toBe(false);
+    const complete = frames.find((frame) => frame.type === 'chat_complete');
+    expect(complete?.type === 'chat_complete' && complete.payload.text).toBe(
+      'FALLBACK_OK',
     );
   });
 
@@ -322,7 +440,9 @@ function startAskSession(config: Config) {
     if (f.type === 'tool_confirmation_request') onQuestion();
     if (
       f.type === 'tool_calls_update' &&
-      f.payload.toolCalls.some((toolCall) => toolCall.status === ToolCallStatus.Executing)
+      f.payload.toolCalls.some(
+        (toolCall) => toolCall.status === ToolCallStatus.Executing,
+      )
     ) {
       onToolStarted();
     }
@@ -420,8 +540,7 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
           };
         })(),
     ]);
-    const { frames, session, questionAsked, runtime } =
-      startAskSession(config);
+    const { frames, session, questionAsked, runtime } = startAskSession(config);
     await runtime.initialize();
 
     const running = runtime.run([{ type: 'text', value: '帮我选' }], 'local');
@@ -469,7 +588,10 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
         (async function* () {
           yield {
             candidates: [
-              { content: { parts: [{ text: '知道了' }] }, finishReason: 'STOP' },
+              {
+                content: { parts: [{ text: '知道了' }] },
+                finishReason: 'STOP',
+              },
             ],
           };
         })(),
@@ -529,10 +651,15 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
     await running;
 
     const initial = frames.find((frame) => frame.type === 'tool_calls_update');
-    const request = frames.find((frame) => frame.type === 'tool_confirmation_request');
+    const request = frames.find(
+      (frame) => frame.type === 'tool_confirmation_request',
+    );
     expect(initial?.type).toBe('tool_calls_update');
     expect(request?.type).toBe('tool_confirmation_request');
-    if (initial?.type === 'tool_calls_update' && request?.type === 'tool_confirmation_request') {
+    if (
+      initial?.type === 'tool_calls_update' &&
+      request?.type === 'tool_confirmation_request'
+    ) {
       expect(request.payload.callId).toBe(initial.payload.toolCalls[0]?.id);
     }
   });
@@ -600,9 +727,7 @@ describe('CoreSessionRuntime · 工具状态收口', () => {
     await running;
 
     expect(requested).toBe(false);
-    expect(onConfirm).toHaveBeenCalledWith(
-      ToolConfirmationOutcome.ProceedOnce,
-    );
+    expect(onConfirm).toHaveBeenCalledWith(ToolConfirmationOutcome.ProceedOnce);
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
@@ -745,16 +870,22 @@ describe('CoreSessionRuntime · 工具状态收口', () => {
       .getHistory(session.sessionId)
       .filter((message) => message.role === 'assistant');
     expect(assistants).toHaveLength(2);
-    expect(assistants.every((message) => message.isProcessingTools !== true)).toBe(true);
+    expect(
+      assistants.every((message) => message.isProcessingTools !== true),
+    ).toBe(true);
     expect(assistants[0]?.isProcessingTools).toBe(false);
-    expect(assistants[0]?.associatedToolCalls?.[0]?.status).toBe(ToolCallStatus.Success);
+    expect(assistants[0]?.associatedToolCalls?.[0]?.status).toBe(
+      ToolCallStatus.Success,
+    );
   });
 
   it('工具忽略 AbortSignal 时，cancel 也立即发布取消终态，不等待工具返回', async () => {
     let releaseTool!: () => void;
     const toolGate = new Promise<void>((resolve) => (releaseTool = resolve));
     let markToolStarted!: () => void;
-    const toolStarted = new Promise<void>((resolve) => (markToolStarted = resolve));
+    const toolStarted = new Promise<void>(
+      (resolve) => (markToolStarted = resolve),
+    );
     const config = makeFakeConfigWithTool(
       [
         () =>
@@ -792,7 +923,9 @@ describe('CoreSessionRuntime · 工具状态收口', () => {
     const cardCancelledBeforeToolReturned = frames.some(
       (frame) =>
         frame.type === 'tool_calls_update' &&
-        frame.payload.toolCalls.some((toolCall) => toolCall.status === ToolCallStatus.Canceled),
+        frame.payload.toolCalls.some(
+          (toolCall) => toolCall.status === ToolCallStatus.Canceled,
+        ),
     );
 
     releaseTool();

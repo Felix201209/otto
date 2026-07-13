@@ -39,7 +39,9 @@ import {
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
   getWorkLogger,
+  generateCustomModelId,
   MODEL_SERVICE_URL_UNAVAILABLE,
+  type CustomModelConfig,
   type ToolCallRequestInfo,
   type ToolRegistry,
   type ToolQuestionConfirmationDetails,
@@ -69,13 +71,43 @@ import {
   type RuntimeAuthorizationMode,
 } from './authorizationPolicy.js';
 
-function userFacingRuntimeError(message: string): string {
+const MODEL_CONNECTION_ERROR =
+  '当前模型连接失败，已重试但仍无法访问其 API。请在模型菜单切换到其他模型，或在设置中检查 Base URL、API Key 和网络代理。';
+
+/** 把带 cause 的 Node/undici 网络错误链摊平成可匹配文本，但不暴露给最终用户。 */
+function runtimeErrorText(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current != null && !seen.has(current) && messages.length < 6) {
+    seen.add(current);
+    if (current instanceof Error) {
+      messages.push(`${current.name}: ${current.message}`);
+      current = (current as Error & { cause?: unknown }).cause;
+    } else {
+      messages.push(String(current));
+      break;
+    }
+  }
+  return messages.join(' | ');
+}
+
+/** 只对连接层故障自动换模型；鉴权、配额、参数错误仍交给当前模型如实报错。 */
+function isRetryableModelConnectionError(error: unknown): boolean {
+  return /(?:fetch failed|network\s*error|socket(?:\s+hang\s+up)?|connection\s+(?:reset|refused|closed)|\bECONN(?:RESET|REFUSED|ABORTED)\b|\bEPIPE\b|\bETIMEDOUT\b|\bENOTFOUND\b|\bEAI_AGAIN\b|\bUND_ERR_[A-Z_]+\b|\b(?:502|503|504)\b)/i.test(
+    runtimeErrorText(error),
+  );
+}
+
+function userFacingRuntimeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
   if (
     message.includes('Failed to parse URL from /v1/') ||
     (message.includes('Invalid URL') && message.includes('/v1/'))
   ) {
     return MODEL_SERVICE_URL_UNAVAILABLE;
   }
+  if (isRetryableModelConnectionError(error)) return MODEL_CONNECTION_ERROR;
   return message;
 }
 
@@ -163,12 +195,22 @@ function messageContentToText(content: MessageContent): string {
     .trim();
 }
 
-const GENERIC_SESSION_TITLES = new Set(['新会话', '新对话', '新会话…', '新对话…']);
+const GENERIC_SESSION_TITLES = new Set([
+  '新会话',
+  '新对话',
+  '新会话…',
+  '新对话…',
+]);
 
-function deriveWorkTitle(sessionTitle: string | undefined, userInput: string): string {
+function deriveWorkTitle(
+  sessionTitle: string | undefined,
+  userInput: string,
+): string {
   const firstSentence = userInput.split(/[。！？!?\n]/)[0]?.trim() || '';
-  const isFollowUp = /^(继续|好的?|可以|确认|开始|按这个来|就这样|下一步)$/i.test(firstSentence);
-  if (firstSentence.length >= 4 && !isFollowUp) return firstSentence.slice(0, 60);
+  const isFollowUp =
+    /^(继续|好的?|可以|确认|开始|按这个来|就这样|下一步)$/i.test(firstSentence);
+  if (firstSentence.length >= 4 && !isFollowUp)
+    return firstSentence.slice(0, 60);
   const cleanSessionTitle = sessionTitle?.trim();
   if (cleanSessionTitle && !GENERIC_SESSION_TITLES.has(cleanSessionTitle)) {
     return cleanSessionTitle.slice(0, 60);
@@ -337,6 +379,48 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
   }
 
+  /**
+   * 首 token 前遇到连接故障时，按“不同 API 地址优先”尝试其他已启用自定义模型。
+   * API Key 不参与日志或排序；切换成功后同步会话模型，保证 UI 下拉框与真实出网一致。
+   */
+  private async tryFailoverModel(
+    currentModel: string,
+    attemptedModels: Set<string>,
+  ): Promise<string | null> {
+    const currentConfig = this.config.getCustomModelConfig?.(currentModel);
+    const candidates = (this.config.getCustomModels?.() ?? [])
+      .filter((model) => model.enabled !== false)
+      .map((model) => ({ model, id: generateCustomModelId(model) }))
+      .filter(({ model, id }) => {
+        if (attemptedModels.has(id) || id === currentModel) return false;
+        if (!currentConfig) return true;
+        return !(
+          model.provider === currentConfig.provider &&
+          model.baseUrl === currentConfig.baseUrl &&
+          model.modelId === currentConfig.modelId
+        );
+      })
+      .sort((a, b) => {
+        const aSameEndpoint =
+          a.model.baseUrl === currentConfig?.baseUrl ? 1 : 0;
+        const bSameEndpoint =
+          b.model.baseUrl === currentConfig?.baseUrl ? 1 : 0;
+        return aSameEndpoint - bSameEndpoint;
+      });
+
+    for (const candidate of candidates) {
+      attemptedModels.add(candidate.id);
+      try {
+        await this.setModel(candidate.id);
+        this.store.patchSessionModel(this.sessionId, candidate.id);
+        return candidate.id;
+      } catch {
+        // 单个备用模型无法切换时继续尝试下一个，不让一次坏配置阻断整个兜底链。
+      }
+    }
+    return null;
+  }
+
   /** 供 server.ts 的 GUI 面板 handler 只读查询/即时应用设置（context 分解/mcp/healthyUse 等）。 */
   getConfig(): Config {
     return this.config;
@@ -401,8 +485,9 @@ export class CoreSessionRuntime implements SessionRuntime {
     const toolRegistry = this.toolRegistry;
 
     const chat = await this.config.getOttoClient().getChat();
-    const modelName = this.config.getModel();
-    const caps = getModelCapabilities(modelName);
+    let modelName = this.config.getModel();
+    let caps = getModelCapabilities(modelName);
+    const attemptedModels = new Set<string>([modelName]);
 
     // 首轮 user message：把协议 content 构造成 core Part[]（文本 + 图片 inlineData）。
     let currentMessages: Content[] = [
@@ -470,55 +555,86 @@ export class CoreSessionRuntime implements SessionRuntime {
         let lastFinishReason: FinishReason | undefined;
         let lastUsage: GenerateContentResponse['usageMetadata'] | undefined;
 
-        const responseStream = await chat.sendMessageStream(
-          {
-            message: currentMessages[0]?.parts ?? [],
-            config: {
-              abortSignal: signal,
-              tools: [
-                { functionDeclarations: toolRegistry.getFunctionDeclarations() },
-              ],
-            },
-          },
-          promptId,
-          SceneType.CHAT_CONVERSATION,
-        );
-
-        // 流式：第一段文本到来时才起占位 assistant 消息，避免空泡。
-        this.store.setStatus(this.sessionId, 'streaming');
-        for await (const resp of responseStream) {
-          if (signal.aborted) break;
-          if (resp.candidates?.[0]?.finishReason) {
-            lastFinishReason = resp.candidates[0].finishReason;
-          }
-          if (resp.usageMetadata) {
-            lastUsage = resp.usageMetadata;
-          }
-          const delta = extractStreamText(resp);
-          if (delta) {
-            if (assistantId === null) {
-              assistantId = startAssistant();
-            }
-            assistantText += delta;
-            // 每个 delta 都同步把累积文本落进 store：客户端切走（退订）再切回时
-            // get_history 才能拿到已生成的部分，而不是空占位（否则切走期间的
-            // delta 全部丢失、回复缺头）。不改 isStreaming——收口仍由 patch 定稿。
-            // 持久层对高频 patch 已做去抖合并写盘（WRITE_DEBOUNCE_MS），不会写爆；
-            // patchMessage 不广播，不会产生重复帧。
-            this.store.patchMessage(this.sessionId, assistantId, {
-              content: [{ type: 'text', value: assistantText }],
-            });
-            this.store.publish(this.sessionId, {
-              type: 'chat_chunk',
-              payload: {
-                sessionId: this.sessionId,
-                messageId: assistantId,
-                delta,
+        let receivedMeaningfulOutput = false;
+        while (true) {
+          try {
+            const responseStream = await chat.sendMessageStream(
+              {
+                message: currentMessages[0]?.parts ?? [],
+                config: {
+                  abortSignal: signal,
+                  tools: [
+                    {
+                      functionDeclarations:
+                        toolRegistry.getFunctionDeclarations(),
+                    },
+                  ],
+                },
               },
-            });
-          }
-          if (resp.functionCalls) {
-            functionCalls.push(...resp.functionCalls);
+              promptId,
+              SceneType.CHAT_CONVERSATION,
+            );
+
+            this.store.setStatus(this.sessionId, 'streaming');
+            for await (const resp of responseStream) {
+              if (signal.aborted) break;
+              if (resp.candidates?.[0]?.finishReason) {
+                lastFinishReason = resp.candidates[0].finishReason;
+              }
+              if (resp.usageMetadata) {
+                lastUsage = resp.usageMetadata;
+              }
+              const delta = extractStreamText(resp);
+              if (delta) {
+                receivedMeaningfulOutput = true;
+                if (assistantId === null) {
+                  assistantId = startAssistant();
+                }
+                assistantText += delta;
+                // 每个 delta 都同步把累积文本落进 store：客户端切走（退订）再切回时
+                // get_history 才能拿到已生成的部分，而不是空占位（否则切走期间的
+                // delta 全部丢失、回复缺头）。不改 isStreaming——收口仍由 patch 定稿。
+                // 持久层对高频 patch 已做去抖合并写盘（WRITE_DEBOUNCE_MS），不会写爆；
+                // patchMessage 不广播，不会产生重复帧。
+                this.store.patchMessage(this.sessionId, assistantId, {
+                  content: [{ type: 'text', value: assistantText }],
+                });
+                this.store.publish(this.sessionId, {
+                  type: 'chat_chunk',
+                  payload: {
+                    sessionId: this.sessionId,
+                    messageId: assistantId,
+                    delta,
+                  },
+                });
+              }
+              if (resp.functionCalls) {
+                receivedMeaningfulOutput = true;
+                functionCalls.push(...resp.functionCalls);
+              }
+            }
+            break;
+          } catch (error) {
+            if (
+              signal.aborted ||
+              receivedMeaningfulOutput ||
+              !isRetryableModelConnectionError(error)
+            ) {
+              throw error;
+            }
+            const fallbackModel = await this.tryFailoverModel(
+              modelName,
+              attemptedModels,
+            );
+            if (!fallbackModel) throw error;
+            modelName = fallbackModel;
+            caps = getModelCapabilities(modelName);
+            if (assistantId !== null) {
+              this.store.patchMessage(this.sessionId, assistantId, {
+                modelName,
+              });
+            }
+            this.store.setStatus(this.sessionId, 'thinking');
           }
         }
 
@@ -580,7 +696,10 @@ export class CoreSessionRuntime implements SessionRuntime {
           const incomplete =
             caps.proneToIncompleteStream &&
             appearIncompleteFromStreaming(functionCalls, modelName);
-          if (!areAllFunctionCallsValid(functionCalls, modelName) || incomplete) {
+          if (
+            !areAllFunctionCallsValid(functionCalls, modelName) ||
+            incomplete
+          ) {
             processed = fixAllFunctionCalls(functionCalls, modelName);
           }
         }
@@ -614,8 +733,7 @@ export class CoreSessionRuntime implements SessionRuntime {
       if (signal.aborted) {
         publishCancellation();
       } else {
-        const rawMessage = e instanceof Error ? e.message : String(e);
-        const message = userFacingRuntimeError(rawMessage);
+        const message = userFacingRuntimeError(e);
         if (assistantId !== null) {
           const finalText = assistantText.trim() ? assistantText : message;
           this.store.patchMessage(this.sessionId, assistantId, {
@@ -867,7 +985,8 @@ export class CoreSessionRuntime implements SessionRuntime {
       return true;
     }
 
-    if (!shouldRequestConfirmation(this.authorizationMode, details)) return false;
+    if (!shouldRequestConfirmation(this.authorizationMode, details))
+      return false;
 
     const base = cards.get(callId);
     if (base) {
@@ -876,8 +995,10 @@ export class CoreSessionRuntime implements SessionRuntime {
         status: ToolCallStatus.WaitingForConfirmation,
         confirmationDetails: {
           ...(details as unknown as ToolCall['confirmationDetails']),
-          riskLevel: (details as { warning?: string }).warning ? 'high' :
-            (details as unknown as ToolCall['confirmationDetails'])?.riskLevel,
+          riskLevel: (details as { warning?: string }).warning
+            ? 'high'
+            : (details as unknown as ToolCall['confirmationDetails'])
+                ?.riskLevel,
         },
       };
       cards.set(callId, awaiting);
@@ -898,13 +1019,20 @@ export class CoreSessionRuntime implements SessionRuntime {
     );
     const approved = cards.get(callId);
     if (approved) {
-      cards.set(callId, { ...approved, status: ToolCallStatus.Executing, confirmationDetails: undefined });
+      cards.set(callId, {
+        ...approved,
+        status: ToolCallStatus.Executing,
+        confirmationDetails: undefined,
+      });
       this.publishToolCards(cards, messageId);
     }
     return true;
   }
 
-  private publishToolCards(cards: Map<string, ToolCall>, messageId: string): void {
+  private publishToolCards(
+    cards: Map<string, ToolCall>,
+    messageId: string,
+  ): void {
     const toolCalls = Array.from(cards.values());
     const isProcessingTools = toolCalls.some((card) =>
       isToolCallInFlight(card.status),
@@ -1073,16 +1201,24 @@ export class CoreSessionRuntime implements SessionRuntime {
    * 记录员工真正关心的一轮最终成果；工具流水仍由 core 记录，两者用途分离。
    * 写盘失败不影响聊天收口，但这里 await，确保 run() 返回时成果已可被桌面日志读取。
    */
-  private async recordWorkResult(input: MessageContent, assistantText: string): Promise<void> {
+  private async recordWorkResult(
+    input: MessageContent,
+    assistantText: string,
+  ): Promise<void> {
     const result = assistantText.trim();
     if (!result) return;
     const userInput = messageContentToText(input);
-    const taskTitle = deriveWorkTitle(this.store.getSession(this.sessionId)?.title, userInput);
+    const taskTitle = deriveWorkTitle(
+      this.store.getSession(this.sessionId)?.title,
+      userInput,
+    );
     try {
       await this.workLogger.log({
         toolName: 'otto_work_result',
         action: taskTitle,
-        category: inferWorkResultCategory(`${taskTitle} ${userInput} ${result}`),
+        category: inferWorkResultCategory(
+          `${taskTitle} ${userInput} ${result}`,
+        ),
         success: true,
         entryType: 'work_result',
         taskTitle,

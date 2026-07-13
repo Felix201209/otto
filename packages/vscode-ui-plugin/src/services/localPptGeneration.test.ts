@@ -6,7 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from 'otto-core';
-import { generateLocalPpt } from './localPptGeneration';
+import {
+  buildPptStoryboardPrompt,
+  generateLocalPpt,
+} from './localPptGeneration';
 
 describe('generateLocalPpt', () => {
   let tempDir: string;
@@ -45,13 +48,36 @@ describe('generateLocalPpt', () => {
     expect(result.size).toBeGreaterThan(0);
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
+        content: '第一页：进展\n内容\n\n第二页：计划\n内容',
         format: 'slides',
         output_format: 'pptx',
         output_path: result.outputPath,
+        template_options: '商务简洁',
         title: '季度 / 汇报',
       }),
       expect.any(AbortSignal),
     );
+  });
+
+  it('builds a strict storyboard contract that weaker models can follow', () => {
+    const prompt = buildPptStoryboardPrompt({
+      topic: '季度复盘',
+      pageCount: 8,
+      style: '商务克制，蓝色系',
+      outline: '收入增长，退款率下降，下一季度继续优化留存。',
+    });
+
+    expect(prompt).toContain('恰好 8 页');
+    expect(prompt).toContain('一页只表达一个观点');
+    expect(prompt).toContain('结论句');
+    expect(prompt).toContain('<!-- layout: cover -->');
+    expect(prompt).toContain('statement | split | timeline | quote | list | section');
+    expect(prompt).toContain('不要输出“布局建议”');
+    expect(prompt).toContain('不得编造');
+    expect(prompt).toContain('炫酷、高冲击');
+    expect(prompt).toContain('独有视觉母题');
+    expect(prompt).toContain('商务克制，蓝色系');
+    expect(prompt).toContain('收入增长');
   });
 
   it('fails loudly when the renderer does not produce a file', async () => {

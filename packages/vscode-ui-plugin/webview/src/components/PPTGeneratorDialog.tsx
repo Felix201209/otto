@@ -37,7 +37,7 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
 
   // 表单状态
   const [topic, setTopic] = useState('');
-  const [pageCount, setPageCount] = useState(1);
+  const [pageCount, setPageCount] = useState(8);
   const [isCustomPageCount, setIsCustomPageCount] = useState(false);
   const [customPageCount, setCustomPageCount] = useState('');
   const [style, setStyle] = useState<PPTStyle>('auto');
@@ -130,7 +130,7 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
 
       // 等待生成响应
       const response = await new Promise<{ success: boolean; filePath?: string; fileUrl?: string; error?: string }>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Generation request timeout')), 60000);
+        const timeout = setTimeout(() => reject(new Error('Generation request timeout')), 180000);
 
         const handleGenerateResponse = (data: { success: boolean; filePath?: string; fileUrl?: string; error?: string }) => {
           clearTimeout(timeout);
@@ -190,7 +190,7 @@ export const PPTGeneratorDialog: React.FC<PPTGeneratorDialogProps> = ({
   const handleNewGeneration = useCallback(() => {
     setDialogState('form');
     setTopic('');
-    setPageCount(1);
+    setPageCount(8);
     setIsCustomPageCount(false);
     setCustomPageCount('');
     setStyle('auto');

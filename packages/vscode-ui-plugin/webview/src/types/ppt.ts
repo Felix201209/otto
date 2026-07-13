@@ -45,7 +45,7 @@ export const PPT_STYLES: PPTStyleConfig[] = [
     value: 'auto',
     labelKey: 'pptGenerator.style.auto',
     icon: '',
-    prompt: '根据PPT主题和内容自动选择最合适的演示风格，分析主题内容后选择恰当的视觉元素、布局方式和设计美学。'
+    prompt: '根据主题创造独有视觉母题。除非内容明确要求克制或正式，默认采用炫酷、高冲击、发布会级视觉：有明确动势、景深、主视觉焦点与明暗节奏；禁止固定页眉、重复卡片和通用商务模板。'
   },
   {
     value: 'business',

@@ -41,6 +41,9 @@ describe('服务端 Agent profile 白名单', () => {
     expect(prompt).toContain('PptxGenJS');
     expect(prompt).toContain('禁止使用 Python');
     expect(prompt).toContain('审美');
+    expect(prompt).toContain('炫酷');
+    expect(prompt).toContain('自定义 HTML/CSS/SVG');
+    expect(prompt).toContain('固定模板');
   });
 
   it('每个专家都有对应身份的简短欢迎语', () => {

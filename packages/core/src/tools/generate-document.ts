@@ -167,6 +167,37 @@ export interface HtmlToImageRenderer {
   render(request: HtmlToImageRenderRequest): Promise<void>;
 }
 
+type SlideLayout =
+  | 'cover'
+  | 'section'
+  | 'statement'
+  | 'list'
+  | 'editorial'
+  | 'split'
+  | 'timeline'
+  | 'quote'
+  | 'visual';
+
+interface ParsedSlideSection {
+  title: string;
+  body: string[];
+  notes: string[];
+  requestedLayout?: SlideLayout;
+}
+
+interface SlideTheme {
+  style: 'editorial' | 'business' | 'flat' | 'travel' | 'advertising' | 'anime';
+  primary: string;
+  secondary: string;
+  accent: string;
+  background: string;
+  text: string;
+  surface: string;
+  muted: string;
+  coverBackground: string;
+  coverText: string;
+}
+
 export type BrowserRunner = (
   executable: string,
   args: string[],
@@ -363,25 +394,29 @@ export class GenerateDocumentTool extends BaseTool<GenerateDocumentToolParams, T
 
 EXAMPLES:
   Report: {format:"report", output_format:"pdf", title:"Q3 Report", author:"Me", content:"# Summary\\n\\nContent here..."}
-  Slides: {format:"slides", output_format:"pptx", title:"Presentation", content:"# Slide 1\\n\\n---\\n\\n# Slide 2"}
+  Slides: {format:"slides", output_format:"pptx", title:"Presentation", template_options:"editorial, navy and coral", content:"<!-- layout: cover -->\\n# Slide 1\\n\\n---\\n\\n<!-- layout: statement -->\\n# Slide 2\\n**42%** growth"}
   Letter: {format:"letter", output_format:"pdf", title:"Regarding...", author:"Me", content:"Body text..."}
   Resume: {format:"resume", output_format:"pdf", title:"My Resume", content:"## Experience\\n\\n- Job 1..."}
   Simple: {format:"article", output_format:"markdown", content:"# Hello World"}
 
-ENGINES: PPTX -> local HTML -> local browser PNG screenshots -> bundled PptxGenJS packaging. Slide PDF/HTML -> Marp. Other PDF -> Typst or Pandoc. docx/html -> Pandoc.
+PPTX VISUAL GRAMMAR: Start each slide with <!-- layout: cover|statement|split|timeline|quote|list|section|visual -->. Use ## headings for split, numbered lists for timeline, > for quote, and local Markdown images for visual. Put the deck art direction and colors in template_options. If omitted, Otto infers a varied layout from content.
+
+PPTX QUALITY BOUNDARY: This deterministic renderer is a speed fallback. For a high-aesthetic or flashy deck, load ppt-creator and build a topic-specific custom HTML/CSS/SVG canvas instead of presenting this fallback as premium work.
+
+ENGINES: PPTX -> deterministic 1920x1080 local HTML -> local browser PNG screenshots -> bundled PptxGenJS packaging. Slide PDF/HTML -> Marp. Other PDF -> Typst or Pandoc. docx/html -> Pandoc.
 
 DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Python. Markdown needs none. Slide PDF/HTML need marp-cli; other formats may need typst or pandoc. External engines run a doctor preflight and fail loud with an install command if missing (never faking output). macOS: brew install typst pandoc; npm i -g @marp-team/marp-cli. Windows: winget install typst pandoc; npm i -g @marp-team/marp-cli.`;
     super(GenerateDocumentTool.Name, 'GenerateDocument', desc, Icon.Pencil,
       {
         type: Type.OBJECT,
         properties: {
-          content: { type: Type.STRING, description: 'Markdown content. Use # ## ### for headings, --- for slide breaks, - for lists, **bold**, *italic*' },
+          content: { type: Type.STRING, description: 'Markdown content. Slides: use # for a conclusion title, --- for page breaks, and an HTML comment layout directive per page: cover, statement, split, timeline, quote, list, section, or visual.' },
           format: { type: Type.STRING, enum: ['report','slides','letter','resume','article','table'], description: 'Document layout style' },
           output_format: { type: Type.STRING, enum: ['pdf','docx','html','markdown','pptx'], description: 'Output file format. Slides only: pdf, html, pptx.' },
           output_path: { type: Type.STRING, description: 'Output file path. Default: Desktop/generated_<ts>.<ext>' },
           title: { type: Type.STRING, description: 'Document title (appears in header/metadata)' },
           author: { type: Type.STRING, description: 'Author name (appears in metadata)' },
-          template_options: { type: Type.STRING, description: 'Extra flags for the rendering engine' },
+          template_options: { type: Type.STRING, description: 'Slides: art direction and palette (hex colors are honored). Other formats: extra rendering-engine options.' },
         },
         required: ['content','format','output_format'],
       },
@@ -415,7 +450,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
 
-    const { content, format, output_format, title, author } = p;
+    const { content, format, output_format, title, author, template_options } = p;
     const titleStr = title || 'Untitled';
     const authorStr = author || '';
     const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'generated_'+Date.now()+'.'+output_format);
@@ -425,7 +460,15 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
     try {
       if (format === 'slides') {
-        await this.genSlides(content, output_format, outPath, tmpDir, titleStr, signal);
+        await this.genSlides(
+          content,
+          output_format,
+          outPath,
+          tmpDir,
+          titleStr,
+          template_options || '',
+          signal,
+        );
       } else if (output_format === 'markdown') {
         fs.writeFileSync(outPath, '# '+titleStr+'\n'+(authorStr?'**'+authorStr+'**\n':'')+'\n'+content);
       } else if (output_format === 'pdf' && ['report','article','letter','resume'].includes(format)) {
@@ -459,11 +502,12 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     outPath: string,
     tmpDir: string,
     title: string,
+    templateOptions: string,
     signal: AbortSignal,
   ): Promise<void> {
     const slides = normalizeSlidesMarkdown(content);
     if (fmt === 'pptx') {
-      await this.genPptx(slides, outPath, title, tmpDir, signal);
+      await this.genPptx(slides, outPath, title, tmpDir, templateOptions, signal);
       return;
     }
 
@@ -484,6 +528,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     outPath: string,
     documentTitle: string,
     tmpDir: string,
+    templateOptions: string,
     signal: AbortSignal,
   ): Promise<void> {
     // pptxgenjs 4.0.1 的 NodeNext 类型导出会被 TS 误判为模块命名空间；
@@ -511,14 +556,19 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       const imagePath = path.join(tmpDir, `slide-${index + 1}.png`);
       fs.writeFileSync(
         htmlPath,
-        this.buildSlideHtml(section, index, parsedSlides.length),
+        this.buildSlideHtml(
+          section,
+          index,
+          parsedSlides.length,
+          this.resolveSlideTheme(templateOptions, documentTitle),
+        ),
         'utf8',
       );
       await this.htmlRenderer.render({
         htmlPath,
         outputPath: imagePath,
-        width: 1600,
-        height: 900,
+        width: 1920,
+        height: 1080,
         signal,
       });
 
@@ -538,89 +588,210 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
   }
 
   private buildSlideHtml(
-    section: { title: string; body: string[]; notes: string[] },
+    section: ParsedSlideSection,
     index: number,
     total: number,
+    theme: SlideTheme,
   ): string {
-    const isCover = index === 0;
+    const layout = this.inferSlideLayout(section, index);
+    const density = this.getSlideDensity(section.body);
     const title = this.escapeHtml(section.title);
-    const body = this.renderSlideBodyHtml(section.body);
+    const body = this.renderSlideBodyHtml(section.body, layout);
+    const pageNumber = String(index + 1).padStart(2, '0');
     return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=1600,height=900,initial-scale=1">
+  <meta name="viewport" content="width=1920,height=1080,initial-scale=1">
   <style>
-    :root { color-scheme: light; }
     * { box-sizing: border-box; }
-    html, body { width: 1600px; height: 900px; margin: 0; overflow: hidden; }
+    html, body { width: 1920px; height: 1080px; margin: 0; overflow: hidden; }
     body {
-      background: #f8fafc;
-      color: #0f172a;
-      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif;
+      position: relative;
+      background: var(--background);
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Inter, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    body.cover { background: #0f172a; color: #f8fafc; }
-    .accent { position: absolute; inset: 0 auto 0 0; width: 18px; background: #2563eb; }
-    body:not(.cover) .accent { inset: 0 0 auto 0; width: 100%; height: 12px; }
-    .deck { position: relative; width: 100%; height: 100%; padding: 82px 96px 64px; }
-    body.cover .deck { padding: 132px 110px 72px; }
+    body::before, body::after { content: ""; position: absolute; pointer-events: none; }
+    .deck { position: relative; width: 100%; height: 100%; padding: 76px 112px 66px; z-index: 1; }
+    .composition { height: 100%; padding-top: 68px; }
+    .eyebrow { display: block; margin-bottom: 24px; color: var(--primary); font-size: 18px; font-weight: 800; letter-spacing: .13em; }
     h1 {
-      max-width: 1320px;
-      margin: 0;
-      font-size: 54px;
-      line-height: 1.15;
-      letter-spacing: -0.02em;
-      font-weight: 750;
+      max-width: 1510px; margin: 0; font-size: 66px; line-height: 1.08;
+      letter-spacing: -0.035em; font-weight: 760;
       text-wrap: balance;
     }
-    body.cover h1 { max-width: 1220px; font-size: 68px; }
     .content {
-      max-width: 1320px;
-      margin-top: 54px;
-      font-size: 30px;
-      line-height: 1.45;
-      color: #334155;
+      max-width: 1540px; margin-top: 54px; color: var(--text);
+      font-size: 34px; line-height: 1.42;
     }
-    body.cover .content { max-width: 1180px; margin-top: 72px; color: #cbd5e1; }
-    .content p { margin: 0 0 20px; }
-    .content h2 { margin: 28px 0 14px; font-size: 34px; line-height: 1.25; color: #1d4ed8; }
-    body.cover .content h2 { color: #93c5fd; }
-    .content ul, .content ol { margin: 0 0 22px; padding-left: 1.25em; }
-    .content li { margin: 0 0 13px; padding-left: 0.2em; }
+    .content p { max-width: 1260px; margin: 0 0 24px; }
+    .content h2 { margin: 0 0 20px; color: var(--primary); font-size: 32px; line-height: 1.2; }
+    .content ul, .content ol { margin: 0; padding: 0; list-style: none; }
+    .content li { margin: 0; }
+    .content strong { color: var(--primary); font-weight: 820; }
     .content blockquote {
-      margin: 24px 0;
-      padding: 14px 20px;
-      border-left: 5px solid #2563eb;
-      color: #475569;
-      background: #eff6ff;
+      position: relative; margin: 0; padding: 0 0 0 72px; max-width: 1450px;
+      border-left: 12px solid var(--accent); color: var(--text); font-weight: 650;
     }
-    body.cover .content blockquote { color: #dbeafe; background: #172554; }
-    code { padding: 0.08em 0.28em; border-radius: 5px; background: #e2e8f0; font-family: ui-monospace, monospace; font-size: 0.86em; }
-    body.cover code { background: #1e293b; }
-    footer {
-      position: absolute;
-      right: 72px;
-      bottom: 38px;
-      color: #94a3b8;
-      font-size: 16px;
-      letter-spacing: 0.04em;
+    code { padding: .08em .28em; background: var(--surface); font-family: ui-monospace, monospace; font-size: .84em; }
+    .visual-frame { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--surface); }
+    .visual-image { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .visual-frame figcaption { position: absolute; left: 24px; bottom: 18px; color: var(--muted); font-size: 17px; }
+    .footer {
+      position: absolute; right: 112px; bottom: 52px; color: var(--muted);
+      font-size: 17px; font-weight: 750; letter-spacing: .12em;
     }
-    body.cover footer { color: #64748b; }
+
+    body[data-layout="cover"], body[data-layout="section"] { background: var(--cover-background); color: var(--cover-text); }
+    body[data-layout="cover"] .deck { padding: 86px 118px 80px; }
+    body[data-layout="cover"] .composition { display: flex; flex-direction: column; justify-content: flex-end; padding-bottom: 90px; }
+    body[data-layout="cover"] .eyebrow { color: var(--accent); }
+    body[data-layout="cover"] h1 { max-width: 1530px; font-size: 108px; line-height: 1.02; color: var(--cover-text); }
+    body[data-layout="cover"] .content { max-width: 1180px; margin-top: 42px; color: var(--cover-muted); font-size: 34px; }
+    body[data-layout="cover"]::before {
+      width: 980px; height: 980px; right: -230px; top: -410px; border-radius: 50%;
+      background: radial-gradient(circle at center, var(--accent) 0, transparent 68%); opacity: .42;
+    }
+    body[data-layout="cover"]::after {
+      width: 760px; height: 1200px; left: 190px; top: -180px;
+      border-left: 3px solid var(--accent); transform: rotate(23deg); opacity: .42;
+    }
+
+    body[data-layout="section"] .composition { display: flex; align-items: center; padding: 0 120px 20px; }
+    body[data-layout="section"] h1 { max-width: 1320px; color: var(--cover-text); font-size: 92px; }
+    body[data-layout="section"] .content { display: none; }
+    body[data-layout="section"]::before {
+      width: 1160px; height: 480px; left: -210px; bottom: -250px;
+      background: var(--accent); transform: skewX(-28deg); opacity: .24;
+    }
+
+    body[data-layout="statement"] .composition {
+      display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
+      gap: 110px; align-items: center; padding-top: 10px;
+    }
+    body[data-layout="statement"] h1 { font-size: 58px; }
+    body[data-layout="statement"] .content { margin: 0; font-size: 52px; line-height: 1.16; }
+    body[data-layout="statement"] .content strong { display: block; margin-bottom: 18px; font-size: 148px; line-height: .88; letter-spacing: -.055em; }
+    body[data-layout="statement"]::before {
+      width: 720px; height: 720px; right: 80px; bottom: -430px; border-radius: 50%;
+      border: 76px solid var(--accent); opacity: .14;
+    }
+
+    body[data-layout="list"] .content ul,
+    body[data-layout="editorial"] .content ul {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 72px; counter-reset: item;
+    }
+    body[data-layout="list"] .content li,
+    body[data-layout="editorial"] .content li {
+      min-height: 112px; padding: 24px 10px 24px 72px; border-top: 2px solid var(--surface);
+      position: relative; counter-increment: item;
+    }
+    body[data-layout="list"] .content li::before,
+    body[data-layout="editorial"] .content li::before {
+      content: "0" counter(item); position: absolute; left: 0; top: 27px;
+      color: var(--accent); font-size: 18px; font-weight: 850; letter-spacing: .08em;
+    }
+    body[data-layout="editorial"] .composition { padding-left: 160px; }
+    body[data-layout="editorial"] h1 { max-width: 1320px; }
+
+    body[data-layout="timeline"] .content { max-width: none; margin-top: 78px; }
+    body[data-layout="timeline"]::before {
+      width: calc(100% - 224px); height: 2px; left: 112px; bottom: 150px;
+      background: linear-gradient(90deg, var(--primary), var(--accent), transparent); opacity: .36;
+    }
+    body[data-layout="timeline"] .content ol {
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 34px; counter-reset: step;
+    }
+    body[data-layout="timeline"] .content li {
+      min-height: 250px; padding: 90px 24px 24px 0; border-top: 8px solid var(--primary);
+      position: relative; counter-increment: step; font-size: 29px;
+    }
+    body[data-layout="timeline"] .content li::before {
+      content: counter(step); position: absolute; top: 22px; left: 0; color: var(--accent);
+      font-size: 42px; line-height: 1; font-weight: 850;
+    }
+
+    body[data-layout="split"] .content { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 54px; max-width: none; }
+    body[data-layout="split"]::before {
+      width: 620px; height: 620px; right: -330px; top: 230px; border-radius: 50%;
+      background: var(--secondary); opacity: .12;
+    }
+    body[data-layout="split"] .panel { min-height: 330px; padding: 32px 10px 0; border-top: 8px solid var(--primary); }
+    body[data-layout="split"] .panel:nth-child(2) { border-color: var(--accent); }
+    body[data-layout="split"] .panel:nth-child(3) { border-color: var(--secondary); }
+    body[data-layout="split"] .panel h2 { font-size: 34px; }
+    body[data-layout="split"] .panel .panel-body { margin-top: 26px; font-size: 28px; color: var(--muted); }
+    body[data-layout="split"] .panel .panel-body p { margin-bottom: 16px; }
+
+    body[data-layout="quote"] .composition { padding: 108px 90px 0 170px; }
+    body[data-layout="quote"] h1 { color: var(--muted); font-size: 34px; letter-spacing: 0; }
+    body[data-layout="quote"] .content { margin-top: 62px; font-size: 64px; line-height: 1.22; }
+    body[data-layout="quote"]::before {
+      content: "“"; left: 92px; top: 120px; color: var(--accent); opacity: .16;
+      font-family: Georgia, serif; font-size: 560px; line-height: 1;
+    }
+
+    body[data-layout="visual"] .composition {
+      display: grid; grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr);
+      gap: 88px; align-items: stretch; padding-top: 54px; padding-bottom: 64px;
+    }
+    body[data-layout="visual"] h1 { font-size: 58px; align-self: center; }
+    body[data-layout="visual"] .content { height: 700px; margin: 0; }
+    body[data-layout="visual"] .visual-frame { position: relative; }
+
+    body[data-density="compact"] .content { font-size: 29px; line-height: 1.34; }
+    body[data-density="dense"] .content { font-size: 25px; line-height: 1.28; }
+    body[data-density="dense"] .content li { min-height: 86px; padding-top: 16px; padding-bottom: 16px; }
+
+    body[data-style="advertising"] h1 { font-weight: 900; letter-spacing: -.05em; }
   </style>
 </head>
-<body class="${isCover ? 'cover' : 'content-slide'}" data-slide-index="${index + 1}">
-  <div class="accent" aria-hidden="true"></div>
+<body
+  data-slide-index="${index + 1}"
+  data-layout="${layout}"
+  data-density="${density}"
+  data-style="${theme.style}"
+  style="--primary: ${theme.primary}; --secondary: ${theme.secondary}; --accent: ${theme.accent}; --background: ${theme.background}; --text: ${theme.text}; --surface: ${theme.surface}; --muted: ${theme.muted}; --cover-background: ${theme.coverBackground}; --cover-text: ${theme.coverText}; --cover-muted: ${this.mixHexColors(theme.coverText, theme.coverBackground, 0.34)}"
+>
   <main class="deck">
-    <h1>${title}</h1>
-    <section class="content">${body}</section>
+    <div class="composition">
+      <div class="title-block">
+        <span class="eyebrow">${pageNumber} / ${String(total).padStart(2, '0')}</span>
+        <h1>${title}</h1>
+      </div>
+      <section class="content">${body}</section>
+    </div>
   </main>
-  <footer>${index + 1} / ${total}</footer>
+  <footer class="footer">${pageNumber}</footer>
 </body>
 </html>`;
   }
 
-  private renderSlideBodyHtml(lines: string[]): string {
+  private renderSlideBodyHtml(lines: string[], layout: SlideLayout): string {
+    if (layout === 'split') {
+      const panels: Array<{ title: string; lines: string[] }> = [];
+      let current: { title: string; lines: string[] } | undefined;
+      for (const rawLine of lines) {
+        const heading = rawLine.trim().match(/^#{2,6}\s+(.+)$/);
+        if (heading) {
+          current = { title: heading[1], lines: [] };
+          panels.push(current);
+        } else if (rawLine.trim()) {
+          if (!current) {
+            current = { title: '重点', lines: [] };
+            panels.push(current);
+          }
+          current.lines.push(rawLine);
+        }
+      }
+      return panels.slice(0, 3).map((panel) => (
+        `<article class="panel"><h2>${this.renderInlineMarkdown(panel.title)}</h2>`
+        + `<div class="panel-body">${this.renderSlideBodyHtml(panel.lines, 'editorial')}</div></article>`
+      )).join('');
+    }
+
     const output: string[] = [];
     let listType: 'ul' | 'ol' | null = null;
     const closeList = () => {
@@ -632,6 +803,19 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       const line = rawLine.trim();
       if (!line) {
         closeList();
+        continue;
+      }
+
+      const image = line.match(/^!\[([^\]]*)\]\((.+)\)$/);
+      if (image) {
+        closeList();
+        const source = this.escapeHtml(this.resolveImageSource(image[2].trim()));
+        const alt = this.escapeHtml(image[1].trim() || 'PPT visual');
+        output.push(
+          `<figure class="visual-frame"><img class="visual-image" src="${source}" alt="${alt}">`
+          + (image[1].trim() ? `<figcaption>${alt}</figcaption>` : '')
+          + '</figure>',
+        );
         continue;
       }
 
@@ -665,6 +849,12 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     return output.join('');
   }
 
+  private resolveImageSource(source: string): string {
+    if (/^(?:https?:|file:|data:)/i.test(source)) return source;
+    const resolved = path.isAbsolute(source) ? source : path.resolve(source);
+    return pathToFileURL(resolved).href;
+  }
+
   private renderInlineMarkdown(value: string): string {
     return this.escapeHtml(value)
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -686,7 +876,11 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
   private parseSlideSection(
     section: string,
     fallbackTitle: string,
-  ): { title: string; body: string[]; notes: string[] } {
+  ): ParsedSlideSection {
+    const layoutMatch = section.match(
+      /<!--\s*(?:layout|版式)\s*:\s*(cover|section|statement|list|editorial|split|timeline|quote|visual)\s*-->/i,
+    );
+    const requestedLayout = layoutMatch?.[1].toLowerCase() as SlideLayout | undefined;
     const withoutComments = section.replace(/<!--[\s\S]*?-->/g, '').trim();
     const lines = withoutComments.split('\n');
     const titleIndex = lines.findIndex((line) => /^#{1,6}\s+/.test(line.trim()));
@@ -703,7 +897,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       }
       return true;
     });
-    return { title, body, notes };
+    return { title, body, notes, requestedLayout };
   }
 
   private cleanInlineMarkdown(value: string): string {
@@ -714,6 +908,140 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1')
       .replace(/`([^`]+)`/g, '$1')
       .trim();
+  }
+
+  private inferSlideLayout(section: ParsedSlideSection, index: number): SlideLayout {
+    if (section.requestedLayout) return section.requestedLayout;
+    if (index === 0) return 'cover';
+
+    const body = section.body.map((line) => line.trim()).filter(Boolean);
+    if (body.length === 0) return 'section';
+    if (body.some((line) => /^!\[[^\]]*\]\(.+\)$/.test(line))) return 'visual';
+    if (body.some((line) => /^>\s+/.test(line))) return 'quote';
+
+    const orderedItems = body.filter((line) => /^\d+[.)]\s+/.test(line)).length;
+    if (orderedItems >= 3 && orderedItems <= 5) return 'timeline';
+
+    const subheadings = body.filter((line) => /^#{2,6}\s+/.test(line)).length;
+    if (subheadings >= 2 && subheadings <= 3) return 'split';
+
+    const visibleText = this.cleanInlineMarkdown(body.join(' '))
+      .replace(/^[-*+>]\s+/gm, '')
+      .trim();
+    if (body.length <= 2 && visibleText.length <= 90) return 'statement';
+
+    const bulletItems = body.filter((line) => /^[-*+]\s+/.test(line)).length;
+    if (bulletItems >= 2) return index % 2 === 0 ? 'editorial' : 'list';
+    return 'editorial';
+  }
+
+  private getSlideDensity(lines: string[]): 'airy' | 'compact' | 'dense' {
+    const visibleLength = this.cleanInlineMarkdown(lines.join(' ')).length;
+    if (visibleLength > 320 || lines.filter((line) => line.trim()).length > 10) return 'dense';
+    if (visibleLength > 190 || lines.filter((line) => line.trim()).length > 6) return 'compact';
+    return 'airy';
+  }
+
+  private resolveSlideTheme(templateOptions: string, documentTitle: string): SlideTheme {
+    const descriptor = `${templateOptions} ${documentTitle}`.toLowerCase();
+    const style: SlideTheme['style'] = /商务|business|corporate/.test(descriptor)
+      ? 'business'
+      : /扁平|flat/.test(descriptor)
+        ? 'flat'
+        : /旅游|travel/.test(descriptor)
+          ? 'travel'
+          : /广告|advertising|marketing/.test(descriptor)
+            ? 'advertising'
+            : /动漫|anime|漫画/.test(descriptor)
+              ? 'anime'
+              : 'editorial';
+
+    const explicitColors = Array.from(
+      new Set((templateOptions.match(/#[0-9a-f]{6}\b/gi) || []).map((color) => color.toUpperCase())),
+    );
+    const palettes = [
+      ['#183153', '#6E88A6', '#E4572E', '#F4F1EA', '#15202B'],
+      ['#174C3C', '#6D927F', '#E08A5B', '#F3F0E8', '#17322A'],
+      ['#4A3267', '#9B83B5', '#D85C41', '#F5F0E8', '#241C2D'],
+      ['#8A3A2B', '#C98572', '#276C73', '#F7F1E8', '#2C211D'],
+    ];
+    const keywordPalette = /深色|dark|黑色/.test(descriptor)
+      ? ['#1E1E1E', '#3D3D3D', '#00D9FF', '#121212', '#E0E0E0']
+      : /绿色|green/.test(descriptor)
+        ? ['#2E7D32', '#81C784', '#FFC107', '#F1F8E9', '#1B4332']
+        : /红色|red/.test(descriptor)
+          ? ['#C62828', '#EF5350', '#FFD54F', '#FFF5F5', '#7F1D1D']
+          : /紫色|purple/.test(descriptor)
+            ? ['#6A1B9A', '#BA68C8', '#26C6DA', '#FAF5FF', '#4A1259']
+            : /橙色|orange/.test(descriptor)
+              ? ['#E65100', '#FFB74D', '#00ACC1', '#FFF8E1', '#7C2D12']
+              : /蓝色|blue/.test(descriptor)
+                ? ['#1565C0', '#42A5F5', '#FF6B35', '#F5F9FF', '#1A365D']
+                : undefined;
+    const titleHash = Array.from(documentTitle).reduce(
+      (hash, character) => ((hash * 31) + character.codePointAt(0)!) >>> 0,
+      7,
+    );
+    const palette = explicitColors.length >= 5
+      ? explicitColors.slice(0, 5)
+      : keywordPalette || palettes[titleHash % palettes.length];
+    const [primary, secondary, accent, background, text] = palette;
+    const coverBackground = this.contrastRatio(primary, '#FFFFFF') >= 4.5
+      ? primary
+      : text;
+    const coverText = this.contrastText(coverBackground);
+
+    return {
+      style,
+      primary,
+      secondary,
+      accent,
+      background,
+      text,
+      surface: this.mixHexColors(background, text, 0.10),
+      muted: this.mixHexColors(text, background, 0.40),
+      coverBackground,
+      coverText,
+    };
+  }
+
+  private mixHexColors(first: string, second: string, secondWeight: number): string {
+    const a = this.hexToRgb(first);
+    const b = this.hexToRgb(second);
+    const weight = Math.max(0, Math.min(1, secondWeight));
+    return '#' + [0, 1, 2].map((channel) => (
+      Math.round(a[channel] * (1 - weight) + b[channel] * weight)
+        .toString(16)
+        .padStart(2, '0')
+    )).join('').toUpperCase();
+  }
+
+  private contrastText(background: string): string {
+    return this.contrastRatio(background, '#FFFFFF') >= 4.5 ? '#FFFFFF' : '#111827';
+  }
+
+  private contrastRatio(first: string, second: string): number {
+    const luminance = (color: string) => {
+      const channels = this.hexToRgb(color).map((value) => {
+        const normalized = value / 255;
+        return normalized <= 0.03928
+          ? normalized / 12.92
+          : Math.pow((normalized + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const a = luminance(first);
+    const b = luminance(second);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  private hexToRgb(color: string): [number, number, number] {
+    const normalized = color.replace('#', '').padEnd(6, '0').slice(0, 6);
+    return [
+      Number.parseInt(normalized.slice(0, 2), 16),
+      Number.parseInt(normalized.slice(2, 4), 16),
+      Number.parseInt(normalized.slice(4, 6), 16),
+    ];
   }
   private async genTypst(content: string, format: string, outPath: string, tmpDir: string, title: string, author: string, signal: AbortSignal): Promise<void> {
     // Doctor preflight: typst-rendered PDFs (report/article/letter/resume) need typst.
