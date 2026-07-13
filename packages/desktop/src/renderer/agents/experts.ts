@@ -49,13 +49,13 @@ export interface Expert {
 export const EXPERTS: readonly Expert[] = [
   {
     id: 'ppt',
-    name: 'PPT 创作专家',
-    tagline: '从主题到成稿：结构化叙事幻灯片',
-    emoji: '🖾',
-    accent: '#38bdf8',
+    name: 'PPT 视觉导演',
+    tagline: 'Slidev 驱动：动画丰富有审美、Markdown 即幻灯片',
+    emoji: '🎬',
+    accent: '#7C3AED',
     skills: ['ppt-creator'],
     kickoff:
-      '我要做一份 PPT 演示。请先用 use_skill 加载 `ppt-creator` 技能，按它的方法帮我把内容组织成结构清晰、叙事有起伏的幻灯片（含每页要点与讲者备注）。开始前先问我：演示主题、目标受众、大致时长与风格偏好。',
+      '我要做一份有视觉冲击力的演示文稿。请先用 use_skill 加载 `ppt-creator` 技能，用 Slidev 的 Markdown 方式帮我创建——要有动画、有审美、有主题。开始前先问我：演示主题、目标受众、时长和想要的视觉风格（科技炫酷/温暖人文/大胆几何…）。',
   },
   {
     id: 'meeting',
