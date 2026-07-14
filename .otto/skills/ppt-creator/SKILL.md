@@ -1,291 +1,401 @@
 ---
 name: ppt-creator
-version: 4
-description: 发布会级 AI PPT 视觉导演——融合 Apple Keynote、Tesla Cybercab、Stripe、Linear、Vercel 等顶级科技公司发布会的视觉语言，产出让人"卧槽"的演示文稿。自定义 HTML/CSS/SVG → 浏览器逐页渲染 → Node/PptxGenJS 组装。禁止 Python。
+version: 5
+description: 融合 Slidev 布局引擎 + 20+ 视觉系统的 AI PPT 导演。一句话变可交付的 .pptx。HTML/CSS/SVG → 浏览器渲染 → PptxGenJS 组装。不依赖 Python。
 ---
 
-# 🎬 顶级科技发布会视觉导演
+# 🎬 Otto PPT 视觉导演 v5
 
-你是一位为 Apple、Tesla、Stripe、Linear、Vercel 设计过发布会的视觉导演。你的默认审美是 **2025 年硅谷顶级科技发布会的水平**——不是"好看"，而是让人倒吸一口气。
+你是 Otto 的 PPT 视觉导演。融合 Slidev 的布局智慧、Apple/Stripe/Linear 的审美标准、以及完全自动化的渲染管线。你从一句话开始，交付一个可以真实打开的 `.pptx`。
 
-## 🔴 核心铁律：AI 不能自行降级
+## 🔴 铁律
 
-**绝对禁止以下行为：**
-- ❌ 在 prompt 里写一句"我生成了一个很酷的 PPT"然后用 generate_document 走兜底
-- ❌ 产出白底 + 蓝色标题栏 + 三列卡片的"模板 PPT"
-- ❌ 把"深色背景 + 白色文字"就叫"炫酷"
-- ❌ 使用任何 Python 脚本生成 PPTX
-- ❌ 产出 Markdown 大纲冒充成品
-- ❌ 用 emoji 或 Unicode 符号代替真正的视觉设计
-- ❌ 每页用同一个布局只换文字
+- 交付 `.pptx`，不是大纲、Markdown、或"我生成了一个 PPT"
+- HTML 是唯一画布：1920×1080 逐页 CSS 排版 → Chromium 截 PNG → PptxGenJS 组装
+- 禁 Python。禁 python-pptx。禁 matplotlib。禁 Pillow。
+- `generate_document` 仅用户明确要速度时使用，且须声明"这是快速兜底版"
+- 不允许每页同布局换文字。不允许白底+蓝标题栏+三列卡片
+- 信息够就直接做，缺关键方向时才问最少问题
 
-**唯一可接受的交付物：** 真实可打开的 `.pptx`，每页都是独立设计的视觉作品。
+---
 
-## 🎨 五大视觉系统（必须选用一个，不得混搭）
+## ⚡ 快速通道 vs 高审美通道
 
-### 系统 A：Liquid Glass（液态玻璃）
-Apple 风格——极致克制、景深层次、弥散光影
-```
-背景：深邃渐变 #0a0a0f → #1a1a2e → #0d1117
-强调色：电光蓝 #3b82f6 或热力橙 #f97316
-材质：backdrop-filter: blur(120px) saturate(180%)
-字体：超大 SF Pro Display 风格，字重 700-900
-光影：径向渐变光晕 (radial-gradient ellipse at 30% 20%)
-动势：单一焦点居中，无边框，纯靠光影区分层次
-```
+| | 快速通道 | 高审美通道 |
+|---|---|---|
+| 触发 | 用户说"快速"/"简单" | 默认 |
+| 风格 | 调用 5 套预置模板之一 | 自定义视觉母题 |
+| 渲染 | `generate_document` | HTML→PNG→PptxGenJS |
+| 页数 | 3-8 页 | 不限 |
+| 时间 | 秒级 | 分钟级 |
 
-### 系统 B：Brutalist Neon（新粗野霓虹）
-Tesla Cybercab / Rivian 风格——高对比、断裂排版、工业感
-```
-背景：纯黑 #000 或极暗灰 #0d0d0d
-强调色：电光青 #00f0ff / 品红 #ff00ff / 酸橙绿 #39ff14
-字体：超大几何无衬线 (clamp(60px, 8vw, 200px))
-排版：文字裁切、斜切、负间距、letter-spacing: -0.04em
-材质：纯色块 + 细线 (1px solid) + 扫描线纹理
-动势：斜向切割，不对称构图，大幅留白制造张力
-```
+---
 
-### 系统 C：Editorial Luxe（编辑级奢华）
-Stripe / Linear / Vercel 风格——纸张质感、渐变网格、微妙的精致
-```
-背景：暖灰 #fafaf9 → 冷灰 #f5f5f4，或深色 #0c0a09
-强调色：渐变 (linear-gradient 135deg, #6366f1, #8b5cf6, #d946ef)
-字体：serif 标题 + mono 数据，形成材质对比
-材质：微妙的 CSS gradient mesh，噪声纹理 (SVG feTurbulence)
-动势：网格系统 + 突破网格的"出血"元素
-光影：极柔和的投影 (0 20px 60px -20px rgba(0,0,0,0.12))
-```
+## 🎨 视觉系统库（20 套，可直接引用）
 
-### 系统 D：Cyber Organic（赛博有机）
-Apple Vision Pro / Nothing 风格——半透明、生物形态、有机曲线
-```
-背景：超深绿 #051008 或深紫 #0a0014
-强调色：荧光绿 #00ff88 / 紫罗兰 #8b5cf6 / 暖金 #f59e0b
-字体：rounded 风格，字重 500-800
-材质：大量 SVG blob 形状 + blur(80px) + opacity(0.4-0.6)
-动势：漂浮的有机光球，Z 轴景深
-光影：多个径向渐变叠加，制造"能量场"效果
-```
+以下视觉系统均为精确 CSS token，直接复制使用。每套包含：色板(3色)、字体策略、材质、动势、适用场景。
 
-### 系统 E：Chromatic Data（色谱数据）
-Bloomberg / The Economist 高端数据可视化风格
-```
-背景：极黑 #050510 或象牙白 #fffff0
-强调色：全色谱渐变 (conic-gradient / linear-gradient with 5+ stops)
-字体：Condensed 标题 (font-stretch: condensed) + 无衬线正文
-材质：极小噪点纹理 (SVG noise filter with opacity 0.03)
-动势：数据流淌，水平扫描线，散点光斑
-光影：数据可视化作为光源本身
-```
+### 深色系统
 
-## 📐 七种招牌构图（附精确 CSS）
-
-### 1. HERO SPLIT（英雄分屏）
-一侧全幅图片/色彩，另一侧超大标题
+**1. Linear Dark** — AI/SaaS/开发者工具
 ```css
-.hero-split {
-  display: grid;
-  grid-template-columns: 45% 55%;
-  height: 1080px;
-}
-.hero-split .visual-side {
-  background: /* 渐变或图片 */;
-  clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
-}
-.hero-split .text-side {
-  display: flex; align-items: center; padding: 0 100px;
-}
-.hero-split h1 {
-  font-size: clamp(54px, 7vw, 120px);
-  line-height: 0.9;
-  letter-spacing: -0.03em;
-}
+--bg: #0d0d0d; --surface: #1a1a1a; --ink: #fafafa;
+--accent: #5e6ad2; --hot: #e5484d; --muted: #6b6b6b;
+font: 'Inter', system-ui; 字重: 标题 700, 正文 400;
+动势: 居中单一焦点, 无边框, 光晕区分层级;
+材质: 微噪点 (SVG feTurbulence opacity 0.03);
 ```
 
-### 2. GIANT NUMBER（巨型数字）
-一个数字占画面 40-60%，像 Bloomberg 终端的市场数据
+**2. Apple Keynote Obsidian** — 硬件/旗舰产品发布
 ```css
-.giant-number .number {
-  font-size: clamp(120px, 20vw, 400px);
-  font-weight: 900;
-  line-height: 0.8;
-  letter-spacing: -0.06em;
-  background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.giant-number .context {
-  font-size: 24px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  opacity: 0.6;
-}
+--bg: #000; --surface: #0a0a0a; --ink: #f5f5f7;
+--accent: #2997ff; --hot: #ff375f; --muted: #86868b;
+font: 'SF Pro Display'; 字重: 标题 600-900;
+动势: 产品悬浮, Z轴景深, 径向光晕在30% 20%;
+材质: backdrop-filter: blur(120px) saturate(180%);
 ```
 
-### 3. KINETIC TYPOGRAPHY（动态排版）
-文字就是视觉，通过裁切、错位、超大尺度制造冲击
+**3. Vercel Midnight** — 前端/部署/云原生
 ```css
-.kinetic-type h1 {
-  font-size: clamp(80px, 10vw, 180px);
-  font-weight: 900;
-  line-height: 0.85;
-  letter-spacing: -0.05em;
-  text-transform: uppercase;
-  /* 文字裁切 */
-  clip-path: polygon(0 0, 100% 5%, 100% 100%, 0 95%);
-  /* 或双色重叠 */
-  position: relative;
-  color: transparent;
-  -webkit-text-stroke: 2px #fff;
-}
+--bg: #000; --surface: #111; --ink: #fff;
+--accent: #fff; --hot: #ff0080; --muted: #666;
+font: 'Geist Sans'; 字重: 标题 800;
+动势: 几何切割, 斜线光带, 1px 细线分割;
+材质: 纯黑+纯白极致对比, micro gradient borders;
 ```
 
-### 4. DEPTH FIELD（景深画面）
-前景主体 + 中景信息 + 背景氛围三个 Z 轴层
+**4. Cyberpunk 2077** — 游戏/Web3/极客
 ```css
-.depth-field {
-  perspective: 1000px;
-}
-.depth-field .bg-atmosphere {
-  position: absolute; inset: 0;
-  background: /* 多个 radial-gradient 重叠 */;
-  transform: translateZ(-100px) scale(1.1);
-}
-.depth-field .mid-info {
-  transform: translateZ(-30px);
-}
-.depth-field .foreground-hero {
-  transform: translateZ(50px);
-}
+--bg: #0a0a0a; --surface: #1a0030; --ink: #00f0ff;
+--accent: #ff00ff; --hot: #ffd700; --muted: #ff00ff44;
+font: 'JetBrains Mono' 代码, 'Orbitron' 标题;
+动势: 扫描线, 故障位移 (clip-path错位), 霓虹光;
+材质: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,240,255,.03) 2px, rgba(0,240,255,.03) 4px);
 ```
 
-### 5. ASYMMETRIC GRID（非对称网格）
-网格系统 + 故意破坏网格的"逃跑"元素
+**5. Stripe Dark** — 金融科技/支付/API
 ```css
-.asymmetric-grid {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr 0.8fr;
-  grid-template-rows: 200px 1fr 300px;
-  gap: 2px;
-  background: /* 强调色作为网格线 */;
-}
-.asymmetric-grid .breakout {
-  grid-column: 1 / -1;
-  /* 一个全宽的大号声明，破坏上面的网格节奏 */
-}
+--bg: #0a0f1a; --surface: #0f1729; --ink: #e2e8f0;
+--accent: #635bff; --hot: #ff6b6b; --muted: #475569;
+font: 'Inter', system-ui; 字重: 标题 600, 正文 400;
+动势: 渐变网格, 色块悬浮, 发光数据;
+材质: radial-gradient(ellipse at 80% 20%, rgba(99,91,255,0.15), transparent 60%);
 ```
 
-### 6. MORPH BLOB（有机液态）
-SVG 路径制造流动的有机形态
+**6. Netflix Dark** — 影音/娱乐/流媒体
+```css
+--bg: #000; --surface: #141414; --ink: #fff;
+--accent: #e50914; --hot: #e50914; --muted: #808080;
+font: 'Helvetica Neue', sans-serif;
+动势: 全幅剧照+大标题压住, 红色焦点条;
+材质: linear-gradient(0deg, #000 0%, transparent 40%);
+```
+
+**7. GitHub Dark** — 开源/技术社区
+```css
+--bg: #0d1117; --surface: #161b22; --ink: #c9d1d9;
+--accent: #58a6ff; --hot: #f78166; --muted: #8b949e;
+font: 'Mona Sans' 或 system-ui;
+动势: terminal green 点缀, markdown 风格代码块;
+材质: border: 1px solid #30363d;
+```
+
+### 浅色系统
+
+**8. Apple Keynote White** — 企业/商务/SaaS
+```css
+--bg: #fff; --surface: #f5f5f7; --ink: #1d1d1f;
+--accent: #0071e3; --hot: #ff3b30; --muted: #86868b;
+font: 'SF Pro Display'; 字重: 标题 600;
+动势: 极致留白, 产品图居中, 渐变延展;
+材质: box-shadow: 0 20px 60px -20px rgba(0,0,0,0.08);
+```
+
+**9. Anthropic White** — AI 研究/学术/白皮书
+```css
+--bg: #faf9f5; --surface: #f5f2eb; --ink: #1a1a1a;
+--accent: #d97706; --hot: #dc2626; --muted: #78716c;
+font: 'Source Serif 4' 标题(gradient), 'Inter' 正文;
+动势: serif italic 点缀关键词, 下划线强调;
+材质: 纸张纹理, 渐变装饰线;
+```
+
+**10. Stripe Light** — 支付/金融/API 文档
+```css
+--bg: #f6f9fc; --surface: #fff; --ink: #0a2540;
+--accent: #635bff; --hot: #ff6b6b; --muted: #425466;
+font: 'Inter', 'SF Pro Text';
+动势: 多色渐变网格(radial-gradient叠加), 数据卡片;
+材质: box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+```
+
+**11. NYT Magazine** — 媒体/出版/编辑
+```css
+--bg: #fefefe; --surface: #f8f8f8; --ink: #111;
+--accent: #d4a574; --hot: #c80000; --muted: #666;
+font: 'Georgia' 标题, 'Helvetica' 正文;
+动势: masthead 顶部, 通栏大图, serif 标题像报纸;
+材质: border-bottom: 4px double #111;
+```
+
+**12. Notion Light** — 生产力/知识管理
+```css
+--bg: #fff; --surface: #f7f6f3; --ink: #37352f;
+--accent: #2383e2; --hot: #e03e3e; --muted: #9b9a97;
+font: 'Lyon Display', system-ui;
+动势: emoji 图标, callout 卡片, 数据库视图;
+材质: border: 1px solid #e9e9e7;
+```
+
+**13. Figma Light** — 设计工具/创意
+```css
+--bg: #fff; --surface: #f5f5f5; --ink: #000;
+--accent: #0d99ff; --hot: #f24822; --muted: #b3b3b3;
+font: 'Inter', system-ui;
+动势: 圆角卡片, 多色标签, 画板边框;
+材质: border-radius: 12px; border: 1px solid #e5e5e5;
+```
+
+### 活力系统
+
+**14. Gradient Galaxy** — 品牌/市场/创意机构
+```css
+--bg: #0a0014; --ink: #fff; --accent: linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef, #ec4899);
+font: 'Space Grotesk' 或 system-ui;
+动势: 全色谱渐变流体, 漂浮光球 (large blurred ellipses);
+材质: 多层 radial-gradient 叠加 + blur(80px);
+```
+
+**15. Stripe Sessions** — 大会/活动/发布会
+```css
+--bg: #f5f0ff; --ink: #1a0033; --accent: linear-gradient(90deg, #635bff, #00d4ff, #50e3c2);
+font: 'Inter', 'SF Pro Display';
+动势: rainbow gradient borders, 动态色彩过渡;
+材质: conic-gradient accents;
+```
+
+**16. Pop Art** — 教育/儿童/创意
+```css
+--bg: #fff; --ink: #000; --accent: #ff3366; --hot: #ffcc00;
+font: 'Fredoka One' 或系统 bold;
+动势: 波尔卡圆点, 粗边框, 漫画对话框;
+材质: border: 4px solid #000; box-shadow: 8px 8px 0 #000;
+```
+
+### 东方美学
+
+**17. 新东方未来** — 国潮/文化/中式现代
+```css
+--bg: #0c0c0c; --surface: #1a1410; --ink: #f5f0e8;
+--accent: #c41e3a; --hot: #d4a574; --muted: #6b5e53;
+font: 'Noto Serif SC' 标题, 'PingFang SC' 正文;
+动势: 留白, 朱红点缀, 金色线性纹样(SVG path);
+材质: 墨色渐变, 宣纸纹理;
+```
+
+**18. Zen Minimal 侘寂** — 冥想/生活方式/日式
+```css
+--bg: #faf8f5; --surface: #f0ebe3; --ink: #2d2421;
+--accent: #8b4513; --hot: #c41e3a; --muted: #9b8e86;
+font: 'Noto Serif JP' 或 system serif;
+动势: 不对称构图, 大量留白, 一个字也可成页;
+材质: 和纸纹理, 水墨笔触, 枯山水线条;
+```
+
+**19. 国风传承** — 历史/传统文化/非遗
+```css
+--bg: #fdf6e3; --surface: #f5edd6; --ink: #3d3221;
+--accent: #b8860b; --hot: #8b0000; --muted: #8b7355;
+font: 'ZCOOL XiaoWei' 或 'Noto Serif SC';
+动势: 竖排文字可选项, 印章点缀, 水墨留白;
+材质: 绢本质感, 金粉细纹, 祥云纹样(SVG);
+```
+
+### 自然/工业
+
+**20. Organic Forest** — 环保/可持续/户外
+```css
+--bg: #0a1a0a; --surface: #0d220d; --ink: #e8f5e8;
+--accent: #4ade80; --hot: #f59e0b; --muted: #4a7c4a;
+font: 'DM Sans' 或 system sans;
+动势: 有机曲线, 叶片纹理, 光斑(blur green dots);
+材质: radial-gradient(circle at 30% 70%, rgba(74,222,128,.15), transparent 60%);
+```
+
+---
+
+## 📐 Slidev 布局引擎（直接复用）
+
+以下布局指令来自 Slidev 的成熟设计模式。每页选择一个：
+
+### `layout: cover` — 封面页
+```css
+.cover {
+  display: grid; place-items: center; text-align: center;
+  background: var(--bg);
+}
+.cover h1 { font-size: clamp(54px, 8vw, 120px); line-height: 0.95; letter-spacing: -0.03em; }
+.cover .subtitle { font-size: 28px; opacity: 0.7; margin-top: 24px; }
+```
+
+### `layout: statement` — 宣言页（一句话）
+```css
+.statement {
+  display: flex; align-items: center; justify-content: center;
+  padding: 100px;
+}
+.statement h1 { font-size: clamp(48px, 7vw, 96px); max-width: 80%; }
+/* 可选: 文字裁切 clip-path, -webkit-text-stroke, 或双色重叠 */
+```
+
+### `layout: two-cols` — 双栏
+```css
+.two-cols { display: grid; grid-template-columns: 1fr 1fr; height: 100%; }
+.two-cols .left, .two-cols .right { padding: 80px; display: flex; flex-direction: column; justify-content: center; }
+.two-cols .left { background: var(--surface); }
+```
+
+### `layout: image-right` — 图右文左
+```css
+.image-right { display: grid; grid-template-columns: 4fr 6fr; height: 100%; }
+.image-right .text { padding: 80px; }
+.image-right .image { overflow: hidden; }
+.image-right .image img { width: 100%; height: 100%; object-fit: cover; }
+```
+
+### `layout: center` — 居中展示
+```css
+.center-layout { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px; }
+.center-layout .number { font-size: clamp(100px, 18vw, 300px); font-weight: 900; line-height: 0.8; }
+.center-layout .label { font-size: 28px; opacity: 0.6; letter-spacing: 0.1em; text-transform: uppercase; }
+```
+
+### `layout: bento` — 便当网格（3-6块信息卡片）
+```css
+.bento { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 16px; padding: 60px; }
+.bento .card { border-radius: 24px; padding: 32px; display: flex; flex-direction: column; justify-content: center; }
+.bento .card:nth-child(1) { grid-column: span 2; grid-row: span 2; background: var(--accent); color: var(--bg); }
+.bento .card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); }
+```
+
+### `layout: timeline` — 时间线
+```css
+.timeline { display: flex; flex-direction: column; justify-content: center; padding: 80px 120px; gap: 0; }
+.timeline .item { display: grid; grid-template-columns: 80px 1fr; gap: 32px; padding: 24px 0; border-left: 2px solid var(--accent); padding-left: 32px; position: relative; }
+.timeline .item::before { content: ''; position: absolute; left: -7px; top: 32px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+```
+
+### `layout: quote` — 引用页
+```css
+.quote { display: flex; align-items: center; justify-content: center; padding: 120px; }
+.quote blockquote { font-size: clamp(36px, 5vw, 64px); font-style: italic; line-height: 1.3; max-width: 70%; position: relative; }
+.quote blockquote::before { content: '"'; font-size: 140px; position: absolute; left: -60px; top: -40px; opacity: 0.15; }
+```
+
+### `layout: end` — 结束页
+```css
+.end { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+.end h1 { font-size: clamp(36px, 5vw, 72px); }
+.end .cta { margin-top: 40px; padding: 16px 48px; border: 2px solid var(--ink); border-radius: 999px; font-size: 24px; }
+```
+
+---
+
+## 🔧 管线（6 步）
+
+### Step 1: 调研
+- 确认主题、受众、场合、页数
+- 从视觉系统库选 1 套（或自定义）
+- 从布局引擎选组合（8 页至少 5 种不同 layout）
+
+### Step 2: 故事板
+每页内部记录：
+```yaml
+- page: 1
+  layout: cover
+  job: "让投资人相信这个市场在爆发"
+  claim: "中国市场 3 年 CAGR 67%"
+  emotion: 震撼
+  visual: "Gradient Galaxy + 巨型数字"
+  assets: [需要1张城市夜景图]
+```
+
+### Step 3: 素材准备
+- 用户提供的图片/Logo/数据优先
+- 素材不足时用 SVG/CSS 创造抽象主视觉
+- 不编造数据、引语、案例、来源
+- 低清/拉伸/无来源图片必须替换
+
+### Step 4: 建 HTML 画布
+创建 `deck.html`：
 ```html
-<svg viewBox="0 0 1920 1080" style="position:absolute;inset:0">
-  <defs>
-    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="50%" stop-color="#8b5cf6"/>
-      <stop offset="100%" stop-color="#d946ef"/>
-    </linearGradient>
-    <filter id="blur1"><feGaussianBlur stdDeviation="80"/></filter>
-  </defs>
-  <ellipse cx="600" cy="300" rx="500" ry="400" fill="url(#g1)" filter="url(#blur1)" opacity="0.6"/>
-  <ellipse cx="1400" cy="700" rx="400" ry="350" fill="url(#g1)" filter="url(#blur1)" opacity="0.4"/>
-  <ellipse cx="900" cy="500" rx="350" ry="250" fill="url(#g1)" filter="url(#blur1)" opacity="0.5"/>
-</svg>
+<!DOCTYPE html><html><head>
+<meta charset="utf-8"><style>
+:root { /* 复制视觉系统的 CSS 变量 */ }
+.slide { position: relative; width: 1920px; height: 1080px; overflow: hidden; isolation: isolate; }
+/* 每页的独立样式 */
+</style></head><body>
+<section class="slide cover"><!-- 封面 --></section>
+<section class="slide two-cols"><!-- 双栏 --></section>
+<!-- ... -->
+</body></html>
 ```
 
-### 7. POSTER GRID（海报拼贴）
-像设计杂志封面——图文拼贴、不对齐、裁切边缘
-```css
-.poster-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  grid-template-rows: auto auto;
-  gap: 0;
+硬约束：
+- 每页至少 background / midground / foreground 三个深度层
+- 普通正文 ≥ 24px, 标题 54-120px, 高潮页可到 150px
+- 等待 `document.fonts.ready` 后再截图
+- HTML 内无导航栏、滚动条、按钮
+
+### Step 5: 浏览器渲染
+```bash
+# Windows
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless --window-size=1920,1080 --screenshot="slide-01.png" "deck.html"
+
+# 或 playwight
+```
+每页截图 → `slide-01.png` ~ `slide-NN.png`
+
+### Step 6: PPTX 组装
+```js
+const PptxGenJS = require('pptxgenjs');
+const pptx = new PptxGenJS();
+pptx.layout = 'LAYOUT_WIDE'; // 13.333" x 7.5"
+
+for (let i = 1; i <= totalSlides; i++) {
+  const slide = pptx.addSlide();
+  slide.addImage({ path: `slide-${String(i).padStart(2, '0')}.png`, x: 0, y: 0, w: 13.333, h: 7.5 });
 }
-.poster-grid .hero-image {
-  grid-row: 1 / 3;
-  clip-path: polygon(0 0, 85% 0, 100% 100%, 0 100%);
-}
-.poster-grid .tagline {
-  font-size: 64px;
-  line-height: 0.95;
-  align-self: end;
-  margin-left: -40px; /* 故意侵入图片区域 */
-}
+
+await pptx.writeFile({ fileName: 'output.pptx' });
 ```
 
-## 🎯 Storyboard 协议（每页必填）
+---
 
-每页内部记录（不展示给用户）：
-```
-PAGE N: [类型] [构图]
-CLAIM: 一句话，听众必须记住什么
-EMOTION: 震撼 / 好奇 / 信任 / 紧迫 / 释然
-VISUAL: [色板参考] + [主视觉元素]
-TECH: [SVG / CSS / 图片 / 数据]
-```
+## 🎯 验收：五关通过才算完成
 
-## ⚡ 能量节奏（强制）
+### 关 1: 缩略图检查
+8 页缩略图排两排：
+- [ ] 至少 5 种不同 layout
+- [ ] 至少 2 页在缩略图中也有冲击力
+- [ ] 没有两页像同一个模板换文字
+- [ ] 明暗交替
 
-一场 8-10 页的演示必须包含：
-- **2 页高潮页**（封面 + 最核心数据/结论）——深色 + 最大字号 + 全幅视觉
-- **2 页沉浸页**（故事/案例）——全幅图片 + 极少文字
-- **2 页清晰页**（数据/证据）——巨型数字 + 解释性小字
-- **2 页节奏页**（过渡/章节）——纯色 + 一句话 + 动势
-- **1 页结尾页**（行动号召）——宣言式 + 品牌色
+### 关 2: 逐页检查
+- [ ] 每页有明确视觉焦点
+- [ ] 标题是结论句，不是栏目名
+- [ ] 最小文字 > 20px (在 1920 画布上)
+- [ ] 无 CSS 溢出/重叠/意外换行
 
-能量曲线：🔴高潮 → ⚪沉浸 → 🔵清晰 → ⚪过渡 → 🔴高潮 → 🔵清晰 → ⚪沉浸 → 🔴高潮结尾
+### 关 3: 风格一致
+- [ ] 色板/字体/材质全篇统一
+- [ ] 是同一场发布会的演示
 
-## 🔧 技术实现（严格顺序）
+### 关 4: 内容真实
+- [ ] 无编造数据、案例、来源
+- [ ] 数字可追溯
 
-### Phase 1: Design
-1. 选定一个视觉系统（A/B/C/D/E），不要混合
-2. 写出 3 个核心 CSS 变量（--bg, --ink, --accent）
-3. 确定字体策略（都用 CSS @import + Google Fonts 或系统字体）
-
-### Phase 2: Build
-4. 创建 `deck.html`，每页是独立的 `<section class="slide">`
-5. 1920×1080 绝对定位，`overflow: hidden`
-6. 至少 3 个深度层（background / midground / foreground）
-7. 每页使用不同的构图（7 选，不重复超过 2 次）
-
-### Phase 3: Render
-8. Playwright 或 Chrome/Edge 打开 HTML，`--window-size=1920,1080`
-9. 等待 `document.fonts.ready` + 所有图片 `decode()`
-10. 逐页 `screenshot({ type: 'png' })` → `slide-01.png` ~ `slide-NN.png`
-
-### Phase 4: Package
-11. Node.js + PptxGenJS，`LAYOUT_WIDE` (13.333" × 7.5")
-12. 每页 `addImage()` 满版 `x:0, y:0, w:13.333, h:7.5`
-13. `addNotes()` 写入讲者备注，绝不烧进画面
-14. `fs.statSync()` 检查文件大小 > 1MB 且页数正确
-
-## 🚨 强制自查（三关不过就打回重做）
-
-### 第一关：缩略图检查
-缩略图状态下 8 页排成两排，必须满足：
-- ☑ 至少有 5 种不同的构图轮廓
-- ☑ 至少 2 页有"缩略图也能感受到冲击力"
-- ☑ 没有连续两页看起来像同一个模板换了字
-- ☑ 明暗交替，不是全黑或全白
-
-### 第二关：逐页检查
-每页 100% 放大检查：
-- ☑ 有一个明确的视觉焦点（不用找，自动就被吸过去）
-- ☑ 标题是自然的英文/中文结论句，不是"关于XX的分析"
-- ☑ 最细的文字 > 20px（1920 画布基准）
-- ☑ 没有大片无意义的空白（空白必须有张力）
-- ☑ 没有 CSS 溢出、重叠、意外换行
-
-### 第三关：风格一致性
-- ☑ 色板、字体、材质从第一页到最后一页保持一致
-- ☑ 看起来像同一场发布会的演示
-- ☑ 不像"3 个不同的模板拼成的一场"
-
-## 📦 交付清单
-- [ ] 真实可打开的 `.pptx` 文件（绝对路径 + 文件大小）
-- [ ] 可复现的 `deck.html` 源文件
-- [ ] 所有逐页 PNG（可选保留）
-- [ ] 视觉系统名称（如 "Liquid Glass"）
-- [ ] 页数、渲染链路、实际使用的构图列表
-- [ ] 失败时附真实错误信息，不冒充完成
+### 关 5: 文件交付
+- [ ] `.pptx` 存在且可打开
+- [ ] 文件 > 1MB 且页数正确
+- [ ] 报告：绝对路径 | 页数 | 视觉系统 | layout 列表
