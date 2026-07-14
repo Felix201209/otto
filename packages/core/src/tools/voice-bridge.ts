@@ -26,7 +26,7 @@ import { ProcessGuard } from '../utils/process-guard.js';
 import { DoctorService, DoctorReport } from '../services/doctor.js';
 
 const execAsync = promisify(exec);
-const moduleDir = __dirname;
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface VoiceBridgeToolParams {
   action: 'listen' | 'listen_raw' | 'listen_long';

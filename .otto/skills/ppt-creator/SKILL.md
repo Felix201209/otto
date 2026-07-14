@@ -1,209 +1,291 @@
 ---
 name: ppt-creator
-version: 3
-description: 用自定义 HTML/CSS/SVG、真实视觉素材、浏览器逐页渲染与 Node/PptxGenJS 制作炫酷高冲击 PPTX。适用于发布会、路演、汇报、课件与任何拒绝通用模板感的演示；禁止 Python 排版。
+version: 4
+description: 发布会级 AI PPT 视觉导演——融合 Apple Keynote、Tesla Cybercab、Stripe、Linear、Vercel 等顶级科技公司发布会的视觉语言，产出让人"卧槽"的演示文稿。自定义 HTML/CSS/SVG → 浏览器逐页渲染 → Node/PptxGenJS 组装。禁止 Python。
 ---
 
-# 发布会级 PPT 视觉导演
+# 🎬 顶级科技发布会视觉导演
 
-默认视觉目标：炫酷、高冲击、像发布会主视觉。成品要让人第一眼感到“这是为这个主题专门设计的”，而不是“AI 找了一个模板把字塞进去”。
+你是一位为 Apple、Tesla、Stripe、Linear、Vercel 设计过发布会的视觉导演。你的默认审美是 **2025 年硅谷顶级科技发布会的水平**——不是"好看"，而是让人倒吸一口气。
 
-用户明确要求克制、学术、政府、极简或指定品牌风格时，以用户要求为准；否则不要自动退回白底商务模板。
+## 🔴 核心铁律：AI 不能自行降级
 
-## 不可妥协的结果
+**绝对禁止以下行为：**
+- ❌ 在 prompt 里写一句"我生成了一个很酷的 PPT"然后用 generate_document 走兜底
+- ❌ 产出白底 + 蓝色标题栏 + 三列卡片的"模板 PPT"
+- ❌ 把"深色背景 + 白色文字"就叫"炫酷"
+- ❌ 使用任何 Python 脚本生成 PPTX
+- ❌ 产出 Markdown 大纲冒充成品
+- ❌ 用 emoji 或 Unicode 符号代替真正的视觉设计
+- ❌ 每页用同一个布局只换文字
 
-- 交付真实可打开的 `.pptx`，不是大纲、Markdown、HTML 代码或几张预览图。
-- HTML 是视觉画布：高审美任务使用自定义 HTML/CSS/SVG → Playwright 或本机 Chromium 逐页渲染 → 逐页 PNG → Node.js + PptxGenJS 组装。
-- 禁止使用 Python、python-pptx、matplotlib、Pillow 或任何 Python 脚本生成、排版、画图或写入 PPTX。
-- `generate_document` 仅作为快速兜底：只有用户明确优先速度，或自定义画布链路确实不可用时才使用；不得把兜底结果冒充高审美成品。
-- 不上传普通 PPT，不依赖 Otto 私有云端 PPT 服务、网页登录或在线编辑器。
-- 信息足够就直接完成；缺少会改变方向的关键信息时只问最少问题。
+**唯一可接受的交付物：** 真实可打开的 `.pptx`，每页都是独立设计的视觉作品。
 
-## 先定义传播任务
+## 🎨 五大视觉系统（必须选用一个，不得混搭）
 
-动手前在内部用一句话锁定：
-
-> 演示结束时，谁应该因为什么核心结论而理解、相信、决定或行动什么？
-
-同时确认或合理推断：
-
-- 受众与场合；
-- 核心结论和必要证据；
-- 页数与讲述时长；
-- 品牌资产、禁改内容、数据和图片来源；
-- 用户要“炫”时，炫的目的是什么：震撼、科技、年轻、奢华、速度、未来感或情绪感染。
-
-不要把议程当故事。根据任务选择“张力 → 证据 → 洞察 → 方案 → 行动”“问题 → 原因 → 答案”或“现在 → 转折 → 未来”等叙事弧，让每页产生下一页的必要性。
-
-## 每套演示都必须创造自己的视觉母题
-
-视觉母题是贯穿整套演示的一种独有视觉语言，不是固定模板。根据主题只选一个方向，并给它起一个具体名字，例如：
-
-- 数据觉醒：黑曜石底色 + 电光青轨迹 + 发光数据粒子；
-- 轨道跃迁：深空景深 + 环形动势 + 金属高光；
-- 信号撕裂：超大动势文字 + 斜切色块 + 扫描噪点；
-- 液态能量：高饱和流体形态 + 镜面高光 + 透明层叠；
-- 数字档案：巨幅摄影 + 编辑排版 + 红色标记系统；
-- 新东方未来：深色留白 + 朱红光晕 + 金属线性纹样。
-
-每套演示都必须创造自己的视觉母题，并在以下方面保持一致：
-
-- 2 个基础色、1 个高能强调色和必要的中性色；
-- 一套标题字体逻辑和一套正文逻辑；
-- 一种主导的动势：斜向、轨道、放射、纵深或切割，只选一种；
-- 一种材质：金属、玻璃、颗粒、纸张、光带或纯色几何，只选一到两种；
-- 一种图片处理方式：全幅、局部超裁切、单色化、遮罩融合或拼贴。
-
-禁止固定页眉、固定顶栏、每页相同装饰条、重复的右上角方块和无意义页码框。视觉身份来自母题，不来自复制一套 chrome。
-
-## 故事板先行
-
-每页先写清四项内部信息，再开始排版：
-
-1. `job`：本页在故事中的唯一任务；
-2. `claim`：听众应该记住的结论句；
-3. `evidence`：支持结论的数字、图片、例子或关系；
-4. `composition`：最适合这个证据的构图轮廓。
-
-硬规则：
-
-- 一页只表达一个主要观点；
-- 标题必须是自然的结论句，不用“市场分析”“解决方案”等空栏目名；
-- 正文通常不超过 3 个短块；能用一个数字、一张图或一句话说清楚时不要凑 bullet；
-- 讲者解释放备注，不塞进画面；
-- 不得编造数据、人物、案例、引语、图片路径或来源；
-- 连续三页不能使用同一种构图；8 页演示至少出现 5 种不同轮廓。
-
-## 炫酷不是堆特效，而是控制能量
-
-每页必须先确定一个视觉焦点。缩略图状态下也要一眼看出主次。
-
-优先使用：
-
-- 动势排版：超大标题裁切、斜向基线、错位层叠、纵深缩放；
-- 景深：前景遮挡、中景信息、背景光场三个层次；
-- 高质量全幅图片或局部超裁切，而不是一排小图标；
-- 一个主数字、一张主图表、一句主张或一个视觉隐喻；
-- 遮罩、`clip-path`、混合模式、局部模糊、颗粒和光晕；
-- SVG 路径、轨道、波形、能量线和数据图形；
-- 强对比的明暗节奏：深色高潮页、明亮解释页、沉浸式图片页交替出现。
-
-允许渐变、玻璃、发光、3D、金属和粒子，但每个效果必须服务母题。不要把所有效果同时堆在每页，也不要用紫色渐变自动代替“高级”。
-
-### 六种高能构图
-
-根据内容选择，不要机械轮播：
-
-- 电影封面：全幅主视觉 + 大标题压住画面 + 极少副文案；
-- 巨型数字：数字占画面 35%–60%，解释围绕数字建立层级；
-- 动态对照：两侧不是两个卡片，而是通过色彩、尺度、方向或撕裂边界制造张力；
-- 纵深路径：阶段沿一条有方向的轨迹推进，节点大小体现权重；
-- 编辑拼贴：一张主图 + 一到两张局部细节 + 强排版连接，不做九宫格；
-- 宣言页：一句话占据画面，靠文字尺度、裁切、节奏和背景材质制造冲击。
-
-封面、章节页、最关键的数据页和结尾页必须是高潮页；不要让它们只是普通内容页换了标题。
-
-## 素材先于装饰
-
-先列出每页需要的真实素材，再开始写 HTML：
-
-- 用户已有图片、Logo、截图和数据优先；
-- 有权限且工具可用时，为关键页使用 imagegen 或合规图片搜索；
-- 素材不足时，可用 CSS/SVG 创造抽象主视觉，但必须与主题有明确语义关系；
-- 不重复使用同一张图充数；
-- 选图时提前考虑文字放左还是放右、裁切重心和 16:9 构图；
-- 低清图片、拉伸图片和无来源的“装饰照片”必须替换。
-
-## 自定义 HTML/CSS/SVG 画布
-
-使用一个 `deck.html` 承载全部页面，或使用共享视觉系统的逐页 HTML。每页根节点：
-
-```html
-<section class="slide slide--cover" data-slide="1">...</section>
+### 系统 A：Liquid Glass（液态玻璃）
+Apple 风格——极致克制、景深层次、弥散光影
+```
+背景：深邃渐变 #0a0a0f → #1a1a2e → #0d1117
+强调色：电光蓝 #3b82f6 或热力橙 #f97316
+材质：backdrop-filter: blur(120px) saturate(180%)
+字体：超大 SF Pro Display 风格，字重 700-900
+光影：径向渐变光晕 (radial-gradient ellipse at 30% 20%)
+动势：单一焦点居中，无边框，纯靠光影区分层次
 ```
 
-基础约束：
+### 系统 B：Brutalist Neon（新粗野霓虹）
+Tesla Cybercab / Rivian 风格——高对比、断裂排版、工业感
+```
+背景：纯黑 #000 或极暗灰 #0d0d0d
+强调色：电光青 #00f0ff / 品红 #ff00ff / 酸橙绿 #39ff14
+字体：超大几何无衬线 (clamp(60px, 8vw, 200px))
+排版：文字裁切、斜切、负间距、letter-spacing: -0.04em
+材质：纯色块 + 细线 (1px solid) + 扫描线纹理
+动势：斜向切割，不对称构图，大幅留白制造张力
+```
 
+### 系统 C：Editorial Luxe（编辑级奢华）
+Stripe / Linear / Vercel 风格——纸张质感、渐变网格、微妙的精致
+```
+背景：暖灰 #fafaf9 → 冷灰 #f5f5f4，或深色 #0c0a09
+强调色：渐变 (linear-gradient 135deg, #6366f1, #8b5cf6, #d946ef)
+字体：serif 标题 + mono 数据，形成材质对比
+材质：微妙的 CSS gradient mesh，噪声纹理 (SVG feTurbulence)
+动势：网格系统 + 突破网格的"出血"元素
+光影：极柔和的投影 (0 20px 60px -20px rgba(0,0,0,0.12))
+```
+
+### 系统 D：Cyber Organic（赛博有机）
+Apple Vision Pro / Nothing 风格——半透明、生物形态、有机曲线
+```
+背景：超深绿 #051008 或深紫 #0a0014
+强调色：荧光绿 #00ff88 / 紫罗兰 #8b5cf6 / 暖金 #f59e0b
+字体：rounded 风格，字重 500-800
+材质：大量 SVG blob 形状 + blur(80px) + opacity(0.4-0.6)
+动势：漂浮的有机光球，Z 轴景深
+光影：多个径向渐变叠加，制造"能量场"效果
+```
+
+### 系统 E：Chromatic Data（色谱数据）
+Bloomberg / The Economist 高端数据可视化风格
+```
+背景：极黑 #050510 或象牙白 #fffff0
+强调色：全色谱渐变 (conic-gradient / linear-gradient with 5+ stops)
+字体：Condensed 标题 (font-stretch: condensed) + 无衬线正文
+材质：极小噪点纹理 (SVG noise filter with opacity 0.03)
+动势：数据流淌，水平扫描线，散点光斑
+光影：数据可视化作为光源本身
+```
+
+## 📐 七种招牌构图（附精确 CSS）
+
+### 1. HERO SPLIT（英雄分屏）
+一侧全幅图片/色彩，另一侧超大标题
 ```css
-:root {
-  --ink: #f8fbff;
-  --bg: #070a12;
-  --energy: #51e6ff;
-  --hot: #ff4d7d;
-}
-.slide {
-  position: relative;
-  width: 1920px;
+.hero-split {
+  display: grid;
+  grid-template-columns: 45% 55%;
   height: 1080px;
-  overflow: hidden;
-  isolation: isolate;
+}
+.hero-split .visual-side {
+  background: /* 渐变或图片 */;
+  clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
+}
+.hero-split .text-side {
+  display: flex; align-items: center; padding: 0 100px;
+}
+.hero-split h1 {
+  font-size: clamp(54px, 7vw, 120px);
+  line-height: 0.9;
+  letter-spacing: -0.03em;
 }
 ```
 
-实现要求：
+### 2. GIANT NUMBER（巨型数字）
+一个数字占画面 40-60%，像 Bloomberg 终端的市场数据
+```css
+.giant-number .number {
+  font-size: clamp(120px, 20vw, 400px);
+  font-weight: 900;
+  line-height: 0.8;
+  letter-spacing: -0.06em;
+  background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.giant-number .context {
+  font-size: 24px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+```
 
-- 用 CSS Grid/Flex 建立主结构，用绝对定位完成必要的艺术化叠放；
-- 至少建立背景、中景、前景三个深度层；不要把所有元素放在一个平面；
-- 用 CSS 变量统一颜色、字体、间距、光晕强度和材质；
-- 动效只用于辅助构图；截图前冻结在最有表现力的一帧；
-- 等待 `document.fonts.ready`、图片 `decode()` 和 SVG 渲染完成后截图；
-- HTML 不出现导航栏、按钮、滚动条、网页容器或后台组件；
-- 非脚注文字不得小于 24px，普通标题通常 54–76px，高潮页标题可达 96–150px；
-- 标题不能因为偷懒而意外折成三四行；先改文案或构图，不要先缩字号。
+### 3. KINETIC TYPOGRAPHY（动态排版）
+文字就是视觉，通过裁切、错位、超大尺度制造冲击
+```css
+.kinetic-type h1 {
+  font-size: clamp(80px, 10vw, 180px);
+  font-weight: 900;
+  line-height: 0.85;
+  letter-spacing: -0.05em;
+  text-transform: uppercase;
+  /* 文字裁切 */
+  clip-path: polygon(0 0, 100% 5%, 100% 100%, 0 95%);
+  /* 或双色重叠 */
+  position: relative;
+  color: transparent;
+  -webkit-text-stroke: 2px #fff;
+}
+```
 
-不要先写一个“万能 slide 模板”再给所有页面换文字。共享的只能是视觉 token、字体和材质；构图必须按本页内容重新组织。
+### 4. DEPTH FIELD（景深画面）
+前景主体 + 中景信息 + 背景氛围三个 Z 轴层
+```css
+.depth-field {
+  perspective: 1000px;
+}
+.depth-field .bg-atmosphere {
+  position: absolute; inset: 0;
+  background: /* 多个 radial-gradient 重叠 */;
+  transform: translateZ(-100px) scale(1.1);
+}
+.depth-field .mid-info {
+  transform: translateZ(-30px);
+}
+.depth-field .foreground-hero {
+  transform: translateZ(50px);
+}
+```
 
-## 给 DeepSeek 的执行顺序
+### 5. ASYMMETRIC GRID（非对称网格）
+网格系统 + 故意破坏网格的"逃跑"元素
+```css
+.asymmetric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 0.8fr;
+  grid-template-rows: 200px 1fr 300px;
+  gap: 2px;
+  background: /* 强调色作为网格线 */;
+}
+.asymmetric-grid .breakout {
+  grid-column: 1 / -1;
+  /* 一个全宽的大号声明，破坏上面的网格节奏 */
+}
+```
 
-指令遵循较弱的模型必须严格按顺序执行，不得跳步：
+### 6. MORPH BLOB（有机液态）
+SVG 路径制造流动的有机形态
+```html
+<svg viewBox="0 0 1920 1080" style="position:absolute;inset:0">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#d946ef"/>
+    </linearGradient>
+    <filter id="blur1"><feGaussianBlur stdDeviation="80"/></filter>
+  </defs>
+  <ellipse cx="600" cy="300" rx="500" ry="400" fill="url(#g1)" filter="url(#blur1)" opacity="0.6"/>
+  <ellipse cx="1400" cy="700" rx="400" ry="350" fill="url(#g1)" filter="url(#blur1)" opacity="0.4"/>
+  <ellipse cx="900" cy="500" rx="350" ry="250" fill="url(#g1)" filter="url(#blur1)" opacity="0.5"/>
+</svg>
+```
 
-1. 先生成内部 `deck-spec`：传播任务、叙事弧、视觉母题、色板、字体、每页 job/claim/evidence/composition/asset；
-2. 做素材清单，确认所有路径真实存在；
-3. 先实现封面、最复杂的数据页和结尾页三张“标杆页”；
-4. 截图检查这三页；如果仍像模板、网页或卡片阵列，先推翻视觉方向，不要继续批量生产；
-5. 标杆页通过后，再实现其余页面；每页从内容选择构图；
-6. 生成全部逐页 PNG 和缩略图总览；
-7. 逐页 100% 检查并返工；
-8. 最后才用 PptxGenJS 组装 `.pptx` 并真实打开。
+### 7. POSTER GRID（海报拼贴）
+像设计杂志封面——图文拼贴、不对齐、裁切边缘
+```css
+.poster-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 0;
+}
+.poster-grid .hero-image {
+  grid-row: 1 / 3;
+  clip-path: polygon(0 0, 85% 0, 100% 100%, 0 100%);
+}
+.poster-grid .tagline {
+  font-size: 64px;
+  line-height: 0.95;
+  align-self: end;
+  margin-left: -40px; /* 故意侵入图片区域 */
+}
+```
 
-不要在最终回复里展示内部 deck-spec、生产说明或自我评价；它们只用于执行。
+## 🎯 Storyboard 协议（每页必填）
 
-## 浏览器渲染与 PPTX 组装
+每页内部记录（不展示给用户）：
+```
+PAGE N: [类型] [构图]
+CLAIM: 一句话，听众必须记住什么
+EMOTION: 震撼 / 好奇 / 信任 / 紧迫 / 释然
+VISUAL: [色板参考] + [主视觉元素]
+TECH: [SVG / CSS / 图片 / 数据]
+```
 
-1. 用 Playwright 或本机 Chrome/Edge/Chromium 打开本地 HTML；
-2. 以精确 1920×1080 视口逐页截图，命名为 `slide-01.png` 等；
-3. 使用 Node.js + PptxGenJS 创建 `LAYOUT_WIDE`；
-4. 每页图片满版放入 `x=0, y=0, w=13.333, h=7.5`，不得变形或留白边；
-5. 讲者备注用 `addNotes()` 写入，不烧进画面；
-6. 写出后检查文件存在、大小合理、页数正确，并用系统演示软件真实打开。
+## ⚡ 能量节奏（强制）
 
-## 反偷懒验收
+一场 8-10 页的演示必须包含：
+- **2 页高潮页**（封面 + 最核心数据/结论）——深色 + 最大字号 + 全幅视觉
+- **2 页沉浸页**（故事/案例）——全幅图片 + 极少文字
+- **2 页清晰页**（数据/证据）——巨型数字 + 解释性小字
+- **2 页节奏页**（过渡/章节）——纯色 + 一句话 + 动势
+- **1 页结尾页**（行动号召）——宣言式 + 品牌色
 
-不要把幻灯片做成网页后台，也不要用重复卡片阵列假装视觉设计。
+能量曲线：🔴高潮 → ⚪沉浸 → 🔵清晰 → ⚪过渡 → 🔴高潮 → 🔵清晰 → ⚪沉浸 → 🔴高潮结尾
 
-以下任一项出现，都不算完成：
+## 🔧 技术实现（严格顺序）
 
-- 白底 + 彩色顶栏 + 等宽卡片；
-- 每页都是“标题在上、三栏在下”；
-- 大片空白没有形成张力，只是内容太少；
-- 固定页眉、固定装饰条、重复右上角方块；
-- 页面像网站、后台、SaaS 落地页或组件库；
-- 全套只有文字和几何框，没有真实视觉焦点；
-- 全套只用一种深浅、同一种密度或同一种对齐方式；
-- 炫酷仅靠紫色渐变、玻璃卡片和发光描边；
-- 用小字号塞文字，或标题出现意外断行；
-- 连续页面缩略图像复制粘贴。
+### Phase 1: Design
+1. 选定一个视觉系统（A/B/C/D/E），不要混合
+2. 写出 3 个核心 CSS 变量（--bg, --ink, --accent）
+3. 确定字体策略（都用 CSS @import + Google Fonts 或系统字体）
 
-强制完成两轮检查：
+### Phase 2: Build
+4. 创建 `deck.html`，每页是独立的 `<section class="slide">`
+5. 1920×1080 绝对定位，`overflow: hidden`
+6. 至少 3 个深度层（background / midground / foreground）
+7. 每页使用不同的构图（7 选，不重复超过 2 次）
 
-1. 缩略图总览：看节奏、轮廓、明暗、焦点和重复度；8 页中至少应有 5 种轮廓，至少 2 张沉浸式高潮页；
-2. 逐页 100%：看溢出、裁切、重叠、低清图片、错别字、对比度、错误数据和意外换行。
+### Phase 3: Render
+8. Playwright 或 Chrome/Edge 打开 HTML，`--window-size=1920,1080`
+9. 等待 `document.fonts.ready` + 所有图片 `decode()`
+10. 逐页 `screenshot({ type: 'png' })` → `slide-01.png` ~ `slide-NN.png`
 
-任何一页在缩略图里没有焦点，或任意两张非连续页面只换文字就能互换，都必须返工。
+### Phase 4: Package
+11. Node.js + PptxGenJS，`LAYOUT_WIDE` (13.333" × 7.5")
+12. 每页 `addImage()` 满版 `x:0, y:0, w:13.333, h:7.5`
+13. `addNotes()` 写入讲者备注，绝不烧进画面
+14. `fs.statSync()` 检查文件大小 > 1MB 且页数正确
 
-## 交付
+## 🚨 强制自查（三关不过就打回重做）
 
-- 交付真实 `.pptx`，并保留 HTML 源文件和逐页 PNG 供复核；
-- 报告绝对路径、页数、画布尺寸、视觉母题和实际渲染链路；
-- 数字、引用和图片来源必须可追溯；
-- 失败要附真实错误，不得用占位图、假截图或空壳文件冒充完成。
+### 第一关：缩略图检查
+缩略图状态下 8 页排成两排，必须满足：
+- ☑ 至少有 5 种不同的构图轮廓
+- ☑ 至少 2 页有"缩略图也能感受到冲击力"
+- ☑ 没有连续两页看起来像同一个模板换了字
+- ☑ 明暗交替，不是全黑或全白
+
+### 第二关：逐页检查
+每页 100% 放大检查：
+- ☑ 有一个明确的视觉焦点（不用找，自动就被吸过去）
+- ☑ 标题是自然的英文/中文结论句，不是"关于XX的分析"
+- ☑ 最细的文字 > 20px（1920 画布基准）
+- ☑ 没有大片无意义的空白（空白必须有张力）
+- ☑ 没有 CSS 溢出、重叠、意外换行
+
+### 第三关：风格一致性
+- ☑ 色板、字体、材质从第一页到最后一页保持一致
+- ☑ 看起来像同一场发布会的演示
+- ☑ 不像"3 个不同的模板拼成的一场"
+
+## 📦 交付清单
+- [ ] 真实可打开的 `.pptx` 文件（绝对路径 + 文件大小）
+- [ ] 可复现的 `deck.html` 源文件
+- [ ] 所有逐页 PNG（可选保留）
+- [ ] 视觉系统名称（如 "Liquid Glass"）
+- [ ] 页数、渲染链路、实际使用的构图列表
+- [ ] 失败时附真实错误信息，不冒充完成

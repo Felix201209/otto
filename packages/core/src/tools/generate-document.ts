@@ -531,9 +531,9 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     templateOptions: string,
     signal: AbortSignal,
   ): Promise<void> {
-    // pptxgenjs 4.0.1 的 NodeNext 类型导出会被 TS 误判为模块命名空间；
-    // 实际 ESM default export 是可构造类（官方 Node/Electron 用法亦如此）。
-    // @ts-expect-error upstream NodeNext default-export typing mismatch
+    // pptxgenjs ESM default export has no construct signature in strict TypeScript
+    // but is constructable at runtime per official documentation.
+    // @ts-expect-error TS2351: upstream NodeNext default-export typing mismatch
     const presentation = new pptxgen();
     presentation.layout = 'LAYOUT_WIDE';
     presentation.author = 'Otto';
