@@ -164,6 +164,7 @@ export async function fileToFileAttachment(
   const filePath = (file as File & { path?: string }).path || file.name;
 
   return {
+    id: `file-${Date.now()}-${seq++}`,
     fileName: file.name,
     filePath,
   };

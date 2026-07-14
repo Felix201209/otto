@@ -422,11 +422,17 @@ export function Composer({
   const [draftSessionId, setDraftSessionId] = useState<
     string | null | undefined
   >(sessionId);
+  // 附件草稿隔离：同文本草稿，sessionId→attachments 表，切换会话时存旧取新。
+  const attachmentsRef = useRef<Record<string, Attachment[]>>({});
   if (sessionId !== draftSessionId) {
     // 存下上一个会话此刻的草稿（无会话 id 时不存，避免以 '' 之类的键污染表）。
-    if (draftSessionId != null) draftsRef.current[draftSessionId] = text;
+    if (draftSessionId != null) {
+      draftsRef.current[draftSessionId] = text;
+      attachmentsRef.current[draftSessionId] = attachments;
+    }
     // 恢复目标会话的草稿；从未输入过则为空。切走再切回可原样复现。
     setText(sessionId != null ? draftsRef.current[sessionId] ?? '' : '');
+    setAttachments(sessionId != null ? attachmentsRef.current[sessionId] ?? [] : []);
     // 会话变了，斜杠命令面板的高亮 / 关闭态一并复位，别把上个会话的命令态带进来。
     setSlashIndex(0);
     setSlashDismissed(false);

@@ -1986,12 +1986,18 @@ h6.otto-prose__h {
 }
 .otto-attachment {
   position: relative;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--otto-radius-sm);
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--otto-border-strong);
   background: var(--otto-surface-raised);
+  transition: border-color var(--otto-dur-fast) var(--otto-ease),
+    box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-attachment:hover {
+  border-color: var(--otto-accent);
+  box-shadow: 0 0 0 1px var(--otto-accent);
 }
 .otto-attachment__img {
   width: 100%;
@@ -1999,25 +2005,57 @@ h6.otto-prose__h {
   object-fit: cover;
   display: block;
 }
+/* 普通文件附件缩略图 */
+.otto-attachment__file {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  gap: 2px;
+}
+.otto-attachment__file-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.otto-attachment__file-name {
+  font-size: 9px;
+  color: var(--otto-text-secondary);
+  line-height: 1.1;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+  max-width: 56px;
+}
 .otto-attachment__remove {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.60);
   color: #fff;
   cursor: pointer;
-  transition: background var(--otto-dur-fast) var(--otto-ease);
+  opacity: 0;
+  transition: opacity var(--otto-dur-fast) var(--otto-ease),
+    background var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-attachment:hover .otto-attachment__remove {
+  opacity: 1;
 }
 .otto-attachment__remove:hover {
-  background: rgba(0, 0, 0, 0.78);
+  background: rgba(220, 38, 38, 0.85);
 }
 .otto-attachment--loading {
   display: inline-flex;
@@ -4167,7 +4205,6 @@ h6.otto-prose__h {
     animation: none !important;
   }
 }
-
 
 
 
