@@ -55,7 +55,7 @@ export const EXPERTS: readonly Expert[] = [
     accent: '#7C3AED',
     skills: ['ppt-creator'],
     kickoff:
-      '我要做一份炫酷、高冲击的 PPT 演示。请先用 use_skill 加载 `ppt-creator` 技能，为这次主题创造独有视觉母题，使用自定义 HTML/CSS/SVG 逐页设计并真实生成 PPTX；不要套通用模板，不要只给大纲或代码。若我尚未提供，再一次性问我：演示主题、目标受众、大致时长、素材与风格偏好。',
+      '我要做一份炫酷、高冲击的 PPT。请先用 use_skill 加载 `ppt-creator`，然后问我：主题、受众、时长和风格偏好。',
   },
   {
     id: 'meeting-scheduler',
