@@ -87,22 +87,22 @@ export function FileUploadButton({
 
   return (
     <>
-      {/* 隐藏的图片输入框 */}
+      {/* 隐藏的文件输入框 */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*"
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.xml,.md,.zip"
         onChange={handleFileSelect}
         style={{ display: 'none' }}
       />
 
-      {/* 图片上传按钮 */}
+      {/* 文件上传按钮 */}
       <button
         className="file-upload-button image-upload-button"
         onClick={handleButtonClick}
         disabled={disabled || isProcessing}
-        title={isProcessing ? '正在处理图片...' : '上传图片'}
+        title={isProcessing ? '正在处理文件...' : '上传文件'}
       >
         {isProcessing ? (
           <Loader2 size={16} className="animate-spin" stroke="currentColor" />

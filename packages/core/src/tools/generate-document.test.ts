@@ -145,6 +145,95 @@ describe('GenerateDocumentTool', () => {
     expect(firstSlideXml).not.toContain('<p:sp>');
   });
 
+  it('honors visual layout directives, selected colors, and 1920x1080 rendering', async () => {
+    const out = path.join(tmpDir, 'visual.pptx');
+    const rendered: Array<{ html: string; width: number; height: number }> = [];
+    const onePixelPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const htmlRenderer: HtmlToImageRenderer = {
+      render: vi.fn(async ({ htmlPath, outputPath, width, height }) => {
+        rendered.push({ html: fs.readFileSync(htmlPath, 'utf8'), width, height });
+        fs.writeFileSync(outputPath, onePixelPng);
+      }),
+    };
+    const htmlTool = new GenerateDocumentTool(createMockConfig(), htmlRenderer);
+    const content = [
+      '<!-- layout: cover -->\n# 增长不是偶然\n把正确动作变成复利',
+      '<!-- layout: statement -->\n# 留存决定增长上限\n**42%** 的新增收入来自老用户',
+      '<!-- layout: timeline -->\n# 三步完成转化\n1. 找到高意向人群\n2. 缩短决策路径\n3. 建立复购机制',
+      '<!-- layout: split -->\n# 两条路径必须同时推进\n## 获客\n降低首次尝试门槛\n## 留存\n把价值交付提前',
+      '<!-- layout: quote -->\n# 用户真正购买的是确定性\n> 让每一次使用都更接近结果',
+    ].join('\n\n---\n\n');
+
+    const result = await htmlTool.execute(
+      {
+        content,
+        format: 'slides',
+        output_format: 'pptx',
+        output_path: out,
+        title: '视觉叙事',
+        template_options: [
+          'PPT设计风格（商务）：克制、编辑感。',
+          '主色 #1565C0 辅色 #42A5F5 强调色 #FF6B35 背景色 #F5F9FF 文字色 #1A365D',
+        ].join('\n'),
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.llmContent).toContain('generate_document OK');
+    expect(rendered).toHaveLength(5);
+    expect(rendered.every(({ width, height }) => width === 1920 && height === 1080)).toBe(true);
+    expect(rendered.map(({ html }) => html.match(/<body[^>]*data-layout="([^"]+)"/)?.[1]))
+      .toEqual(['cover', 'statement', 'timeline', 'split', 'quote']);
+    expect(rendered[0].html).toContain('--primary: #1565C0');
+    expect(rendered[0].html).toContain('--accent: #FF6B35');
+    expect(rendered[0].html).toContain('data-style="business"');
+    expect(rendered[3].html).toContain('class="panel"');
+    expect(rendered.every(({ html }) => !html.includes('OTTO PRESENTATION'))).toBe(true);
+    expect(rendered.every(({ html }) => !html.includes('class="shape-a"'))).toBe(true);
+  });
+
+  it('infers varied layouts and keeps local images as visual material', async () => {
+    const out = path.join(tmpDir, 'inferred.pptx');
+    const renderedHtml: string[] = [];
+    const onePixelPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const htmlRenderer: HtmlToImageRenderer = {
+      render: vi.fn(async ({ htmlPath, outputPath }) => {
+        renderedHtml.push(fs.readFileSync(htmlPath, 'utf8'));
+        fs.writeFileSync(outputPath, onePixelPng);
+      }),
+    };
+    const htmlTool = new GenerateDocumentTool(createMockConfig(), htmlRenderer);
+    const imagePath = path.join(tmpDir, 'evidence.png');
+    fs.writeFileSync(imagePath, onePixelPng);
+
+    await htmlTool.execute(
+      {
+        content: [
+          '# 封面\n一句副标题',
+          '# 关键数字\n**68%**',
+          '# 执行路径\n1. 研究\n2. 原型\n3. 验证',
+          `# 现场证据\n![真实截图](${imagePath})`,
+        ].join('\n\n---\n\n'),
+        format: 'slides',
+        output_format: 'pptx',
+        output_path: out,
+        title: '自动版式',
+      },
+      new AbortController().signal,
+    );
+
+    expect(renderedHtml.map((html) => html.match(/<body[^>]*data-layout="([^"]+)"/)?.[1]))
+      .toEqual(['cover', 'statement', 'timeline', 'visual']);
+    expect(renderedHtml[3]).toContain('class="visual-image"');
+    expect(renderedHtml[3]).toContain(pathToFileURL(imagePath).href);
+  });
+
   it.runIf(!marpAvailable)('slides->pdf fails loud with marp install command when marp is missing', async () => {
     const out = path.join(tmpDir, 's.pdf');
     const r = await tool.execute(

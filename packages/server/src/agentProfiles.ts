@@ -86,7 +86,7 @@ const commonExpertSpecs: Array<[
   [
     'ppt',
     'PPT 创作专家',
-    '以审美总监标准完成演示：先加载 ppt-creator Skill，把 HTML/CSS/SVG 当作视觉画布，用 Playwright 或本机 Chromium 浏览器渲染逐页图片，再用 Node.js + PptxGenJS 组装并验证 PPTX。禁止使用 Python、python-pptx、matplotlib 或 Pillow；不要复刻通用模板、网页后台和重复卡片阵列。先建立叙事与单一视觉方向，主动使用留白、强字号、图片、图表和多种页面类型，并通过缩略图总览与逐页检查返工不够好看的页面',
+    '以发布会视觉总监标准完成炫酷、高冲击演示。先完整加载 ppt-creator Skill，为本次主题创造独有视觉母题和叙事弧；高审美任务必须使用自定义 HTML/CSS/SVG 逐页构图，经本机浏览器渲染 1920×1080 图片，再由 Node.js + PptxGenJS 组装真实 PPTX。禁止使用 Python，禁止固定模板、固定页眉、重复卡片、网页后台感、编造素材或只交付代码；通用 generate_document 只能作为明确的快速兜底。先做封面、最复杂数据页和结尾页三张标杆页并截图自检，不够炫就推翻视觉方向，完成后必须真实打开检查',
     ['ppt-creator'],
   ],
   [

@@ -35,6 +35,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  safeStorage,
   session,
   shell,
   type NativeImage,
@@ -91,6 +92,11 @@ import {
 } from './workLogData.js';
 import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voiceConfig.js';
 import { transcribeAudio } from './voiceService.js';
+import {
+  EnterpriseClient,
+  type AccountCreateInput,
+  type AccountUpdateInput,
+} from './enterprise-client.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -174,7 +180,65 @@ const IPC = {
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
+  enterpriseSession: 'otto:enterprise-session',
+  enterprisePasswordLogin: 'otto:enterprise-password-login',
+  enterpriseSmsRequest: 'otto:enterprise-sms-request',
+  enterpriseSmsLogin: 'otto:enterprise-sms-login',
+  enterpriseLogout: 'otto:enterprise-logout',
+  enterpriseAccounts: 'otto:enterprise-accounts',
+  enterpriseAccountCreate: 'otto:enterprise-account-create',
+  enterpriseAccountUpdate: 'otto:enterprise-account-update',
+  enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
+  enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
+
+const DEFAULT_ENTERPRISE_SERVER_URL =
+  process.env.OTTO_ENTERPRISE_SERVER_URL?.trim() || 'https://59-110-154-44.sslip.io';
+const enterpriseClient = new EnterpriseClient();
+let enterpriseSessionLoaded = false;
+
+function enterpriseSessionPath(): string {
+  return path.join(app.getPath('userData'), 'enterprise-auth.json');
+}
+
+function loadEnterpriseSession(): void {
+  if (enterpriseSessionLoaded) return;
+  enterpriseSessionLoaded = true;
+  let serverUrl = DEFAULT_ENTERPRISE_SERVER_URL;
+  let token: string | null = null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(enterpriseSessionPath(), 'utf8')) as {
+      serverUrl?: string;
+      encryptedToken?: string;
+    };
+    if (typeof parsed.serverUrl === 'string' && parsed.serverUrl) serverUrl = parsed.serverUrl;
+    if (parsed.encryptedToken && safeStorage.isEncryptionAvailable()) {
+      token = safeStorage.decryptString(Buffer.from(parsed.encryptedToken, 'base64'));
+    }
+  } catch {
+    // 首次启动、存储损坏或系统密钥链不可用时安全地保持未登录。
+  }
+  try {
+    enterpriseClient.restore({ serverUrl, token });
+  } catch {
+    // v1.7.x 可能保存过公网 HTTP 地址。v1.8 起拒绝明文认证并清掉旧会话，
+    // 回落到内置 HTTPS 入口，避免升级后启动失败或继续发送明文口令。
+    enterpriseClient.restore({ serverUrl: DEFAULT_ENTERPRISE_SERVER_URL, token: null });
+  }
+}
+
+function saveEnterpriseSession(): void {
+  const snapshot = enterpriseClient.snapshot();
+  const encryptedToken = snapshot.token && safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(snapshot.token).toString('base64')
+    : undefined;
+  fs.mkdirSync(path.dirname(enterpriseSessionPath()), { recursive: true });
+  fs.writeFileSync(
+    enterpriseSessionPath(),
+    JSON.stringify({ serverUrl: snapshot.serverUrl, encryptedToken }, null, 2),
+    { encoding: 'utf8', mode: 0o600 },
+  );
+}
 
 /**
  * 软件更新服务（检查 / 下载 / 安装，逻辑见 update-service.ts）。
@@ -616,6 +680,86 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.enterpriseSession, async () => {
+    loadEnterpriseSession();
+    const before = enterpriseClient.snapshot().token;
+    const result = await enterpriseClient.getSession();
+    if (before && !enterpriseClient.snapshot().token) saveEnterpriseSession();
+    return result;
+  });
+  ipcMain.handle(IPC.enterprisePasswordLogin, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('登录信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.serverUrl !== 'string' || typeof body.username !== 'string' || typeof body.password !== 'string') {
+      throw new Error('服务器地址、账号和密码均为必填项');
+    }
+    const result = await enterpriseClient.loginWithPassword(body.serverUrl, body.username, body.password);
+    saveEnterpriseSession();
+    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+  });
+  ipcMain.handle(IPC.enterpriseSmsRequest, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('短信登录信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.serverUrl !== 'string' || typeof body.phone !== 'string') {
+      throw new Error('服务器地址和手机号均为必填项');
+    }
+    const result = await enterpriseClient.requestSmsCode(body.serverUrl, body.phone);
+    saveEnterpriseSession();
+    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+  });
+  ipcMain.handle(IPC.enterpriseSmsLogin, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('验证码信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.challengeId !== 'string' || typeof body.code !== 'string') {
+      throw new Error('验证码信息不完整');
+    }
+    const result = await enterpriseClient.loginWithSms(body.challengeId, body.code);
+    saveEnterpriseSession();
+    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+  });
+  ipcMain.handle(IPC.enterpriseLogout, async () => {
+    loadEnterpriseSession();
+    await enterpriseClient.logout();
+    saveEnterpriseSession();
+  });
+  ipcMain.handle(IPC.enterpriseAccounts, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listAccounts();
+  });
+  ipcMain.handle(IPC.enterpriseAccountCreate, async (_e, input: AccountCreateInput) => {
+    loadEnterpriseSession();
+    return enterpriseClient.createAccount(input);
+  });
+  ipcMain.handle(
+    IPC.enterpriseAccountUpdate,
+    async (_e, id: unknown, input: AccountUpdateInput) => {
+      loadEnterpriseSession();
+      if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
+      return enterpriseClient.updateAccount(id, input);
+    },
+  );
+  ipcMain.handle(IPC.enterpriseTicketInbox, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.ticketInbox();
+  });
+  ipcMain.handle(IPC.enterpriseTicketSubmit, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('工单信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.title !== 'string' || typeof body.description !== 'string') {
+      throw new Error('工单标题和描述均为必填项');
+    }
+    return enterpriseClient.submitTicket({
+      title: body.title,
+      description: body.description,
+      targetTags: Array.isArray(body.targetTags)
+        ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
+        : undefined,
+    });
+  });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
   ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));
   ipcMain.handle(IPC.voiceTranscribe, async (_e, bytes: unknown, mimeType: unknown) => {
@@ -1001,6 +1145,10 @@ function registerIpc(): void {
 // ────────────────────────────────────────────────────────────────────────
 // 生命周期
 // ────────────────────────────────────────────────────────────────────────
+
+// 自动化验收与受管部署可使用隔离配置目录，避免与用户正在运行的 Otto 实例争抢单实例锁。
+const isolatedUserDataDir = process.env.OTTO_USER_DATA_DIR?.trim();
+if (isolatedUserDataDir) app.setPath('userData', isolatedUserDataDir);
 
 // 单实例锁：第二次启动直接聚焦已开窗口，避免多开多个 server 抢端口。
 const gotLock = app.requestSingleInstanceLock();

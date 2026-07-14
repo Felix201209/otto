@@ -62,4 +62,16 @@ describe('OttoPetStage', () => {
       container.querySelector<HTMLElement>('[data-state="running-right"]'),
     ).toBeTruthy();
   });
+
+  it('登录页模式放大官方图集，并移除右栏标题和地面装饰', () => {
+    const { container } = render(<OttoPetStage running={false} variant="login" />);
+    const stage = container.querySelector<HTMLElement>('[data-testid="otto-pet-stage"]');
+    const sprite = container.querySelector<HTMLElement>('.otto-pet-stage__sprite');
+
+    expect(stage?.classList.contains('otto-pet-stage--login')).toBe(true);
+    expect(container.querySelector('.otto-pet-stage__head')).toBeNull();
+    expect(container.querySelector('.otto-pet-stage__floor')).toBeNull();
+    expect(sprite?.style.width).toBe('316.8px');
+    expect(sprite?.style.height).toBe('343.2px');
+  });
 });

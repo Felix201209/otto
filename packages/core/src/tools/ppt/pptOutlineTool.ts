@@ -41,8 +41,8 @@ export class PptOutlineTool extends BaseTool<PptOutlineToolParams, ToolResult> {
 - clear: 清除当前大纲并退出PPT模式
 
 在用户与AI交互过程中，通过此工具不断迭代优化大纲内容。
-outline 应包含可直接渲染的逐页 Markdown 内容，每页之间使用独占一行的 --- 分隔。
-当用户确认内容后，使用 ppt_generate 工具在本地生成 .pptx 文件。`,
+outline 可用于保存故事板；若用户明确优先速度，快速兜底内容应使用逐页 Markdown，每页用 <!-- layout: cover|statement|split|timeline|quote|list|section|visual --> 指定版式，并使用独占一行的 --- 分隔。
+高审美任务必须先加载 ppt-creator 并走自定义 HTML/CSS/SVG 画布；ppt_generate 只用于用户明确接受模板化快速兜底时。`,
       Icon.Pencil,
       {
         type: Type.OBJECT,
@@ -62,7 +62,7 @@ outline 应包含可直接渲染的逐页 Markdown 内容，每页之间使用�
           },
           outline: {
             type: Type.STRING,
-            description: '可直接渲染的完整逐页 Markdown 内容；每页之间用独占一行的 --- 分隔',
+            description: '故事板或快速兜底用的逐页 Markdown；高审美任务应按 ppt-creator 生成自定义视觉画布',
           },
         },
         required: ['action'],
@@ -134,7 +134,8 @@ ${preview}
 - 使用 ppt_outline action=update 来迭代修改大纲
 - 使用 ppt_outline action=view 来查看当前大纲
 - 每页之间使用独占一行的 --- 分隔
-- 确认后使用 ppt_generate 在本地生成 PPTX 文件`;
+- 高审美任务加载 ppt-creator 并走自定义视觉画布
+- 只有用户明确优先速度时，才使用 ppt_generate 快速兜底`;
 
         return {
           llmContent: fullOutput,

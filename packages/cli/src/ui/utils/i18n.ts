@@ -356,7 +356,7 @@ export const translations = {
     // Tool Names
     'tool.edit': 'Edit',
     'tool.ppt_generate': 'PPT Generate',
-    'tool.ppt_generate.description': 'Render the confirmed PPT outline through local HTML pages, turn each page into an image with local Chrome/Edge/Chromium, then package the images into a .pptx. No Python, Otto server, login, upload, or web editor is used. Separate slides with --- lines.',
+    'tool.ppt_generate.description': 'Fast local PPTX fallback for a confirmed outline. High-aesthetic decks must use the ppt-creator custom HTML/CSS/SVG workflow instead. No Python, Otto server, login, upload, or web editor is used.',
     'ppt_generate.param.confirm': 'Confirm local generation (default true)',
     'tool.ppt_outline': 'PPT Outline',
     'tool.ppt_outline.description': 'Manage PPT outline content. Supports the following actions:\n- init: Initialize PPT editing mode, start creating new PPT\n- update: Update outline content (topic, page count, outline text)\n- view: View current outline state\n- clear: Clear current outline and exit PPT mode',
@@ -2031,7 +2031,7 @@ export const translations = {
     // Tool Names
     'tool.edit': '编辑',
     'tool.ppt_generate': 'PPT生成',
-    'tool.ppt_generate.description': '把已确认的内容逐页生成本地 HTML，用本机 Chrome/Edge/Chromium 转成图片，再封装为本地 .pptx。全程不调用 Python，也不经过 Otto 服务端、登录、上传或网页编辑器；页面用独占一行的 --- 分隔。',
+    'tool.ppt_generate.description': '已确认大纲的本地快速兜底生成器；高审美演示必须改用 ppt-creator 的自定义 HTML/CSS/SVG 工作流。全程不调用 Python，也不经过 Otto 服务端、登录、上传或网页编辑器。',
     'ppt_generate.param.confirm': '确认本地生成（默认 true）',
     'tool.ppt_outline': 'PPT大纲',
     'tool.ppt_outline.description': '管理PPT大纲内容。支持以下操作：\n- init: 初始化PPT编辑模式，开始创建新PPT\n- update: 更新大纲内容（主题、页数、大纲文本）\n- view: 查看当前大纲状态\n- clear: 清除当前大纲并退出PPT模式',

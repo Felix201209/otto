@@ -238,7 +238,12 @@ export * from './tools/doctor.js';
 // 多渠道通知服务
 export { NotificationService, getNotificationService } from './services/notificationService.js';
 export type { NotificationRecord, NotificationPriority, NotificationChannel, EscalationPolicy, FeishuNotifySender, SmsNotifySender } from './services/notificationService.js';
-export { AliyunSmsSender, createAliyunSmsFromEnv } from './services/aliyunSmsSender.js';
+export {
+  AliyunSmsAuthenticationSender,
+  AliyunSmsSender,
+  createAliyunLoginSmsFromEnv,
+  createAliyunSmsFromEnv,
+} from './services/aliyunSmsSender.js';
 export type { AliyunSmsConfig, SmsSendResult } from './services/aliyunSmsSender.js';
 
 // 个人知识库（本地，无企业授权可用）

@@ -12,7 +12,7 @@
  * vision 模型对超大图无收益。缩到最长边 1568px、JPEG 0.85 兼顾清晰与体积。
  */
 
-import type { ImageAttachment } from '../state/useOttoStore.js';
+import type { ImageAttachment, FileAttachment, Attachment } from '../state/useOttoStore.js';
 
 /** 最长边上限（px）。对齐 Anthropic vision 推荐尺寸，兼顾清晰与体积。 */
 const MAX_EDGE = 1568;
@@ -20,16 +20,34 @@ const MAX_EDGE = 1568;
 const JPEG_QUALITY = 0.85;
 /** 单张原图大小上限（字节）。超过直接拒绝，避免读入超大文件卡住渲染进程。 */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-/** 单条消息最多附带的图片数。 */
+/** 单文件上传上限（字节）。 */
+export const MAX_FILE_BYTES = 50 * 1024 * 1024;
+/** 单条消息最多附带的附件数。 */
 export const MAX_ATTACHMENTS = 6;
 
 let seq = 0;
 
-const SUPPORTED = /^image\/(png|jpe?g|gif|webp|bmp)$/i;
+const SUPPORTED_IMAGE = /^image\/(png|jpe?g|gif|webp|bmp)$/i;
+/** 允许上传的文档类型 */
+const SUPPORTED_FILE_EXTS = new Set([
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.txt', '.csv', '.json', '.xml', '.md', '.zip', '.log',
+]);
 
 /** 是否是本工具支持的图片类型。 */
 export function isSupportedImage(file: File): boolean {
-  return SUPPORTED.test(file.type);
+  return SUPPORTED_IMAGE.test(file.type);
+}
+
+/** 是否是允许的文档类型。 */
+export function isSupportedFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return [...SUPPORTED_FILE_EXTS].some((ext) => name.endsWith(ext));
+}
+
+/** 判断附件是否为图片类型 */
+export function isImageAttachment(att: Attachment): att is ImageAttachment {
+  return 'data' in att;
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -120,4 +138,45 @@ export async function fileToImageAttachment(
 /** 从 image_reference value 还原可用于 <img src> 的 data URL。 */
 export function attachmentToDataUrl(att: ImageAttachment): string {
   return `data:${att.mimeType};base64,${att.data}`;
+}
+
+/**
+ * 把一个普通文件转为 file_reference value。
+ * 不压缩、不转码——原样保留文件名和本地路径。
+ */
+export async function fileToFileAttachment(
+  file: File,
+): Promise<FileAttachment> {
+  if (!isSupportedFile(file)) {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    throw new Error(
+      `不支持的文件类型：${ext ? '.' + ext : file.name}。` +
+      `支持的格式：${[...SUPPORTED_FILE_EXTS].join(' ')}`,
+    );
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error(
+      `文件过大（${Math.round(file.size / 1024 / 1024)}MB），上限 ${MAX_FILE_BYTES / 1024 / 1024}MB`,
+    );
+  }
+
+  // 对于 Electron 桌面端：file 对象可能带有 path 属性
+  const filePath = (file as File & { path?: string }).path || file.name;
+
+  return {
+    fileName: file.name,
+    filePath,
+  };
+}
+
+/**
+ * 通用附件处理：图片走压缩 pipeline，文件走直传 pipeline。
+ */
+export async function fileToAttachment(
+  file: File,
+): Promise<Attachment> {
+  if (isSupportedImage(file)) {
+    return fileToImageAttachment(file);
+  }
+  return fileToFileAttachment(file);
 }

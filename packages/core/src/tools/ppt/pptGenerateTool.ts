@@ -29,10 +29,11 @@ export interface PptGenerateToolParams {
 }
 
 /**
- * 兼容旧 ppt_outline -> ppt_generate 流程的本地适配器。
+ * 兼容旧 ppt_outline -> ppt_generate 流程的本地快速兜底适配器。
  *
  * PPT 内容由当前会话中的模型整理；文件渲染统一复用 GenerateDocumentTool，
- * 全程不访问 Otto 服务端、不登录、不上传，也不依赖网页编辑器。
+ * 全程不访问 Otto 服务端、不登录、不上传，也不依赖网页编辑器；高审美任务
+ * 应由 ppt-creator 走自定义 HTML/CSS/SVG 画布，不应默认调用此工具。
  */
 export class PptGenerateTool extends BaseTool<PptGenerateToolParams, ToolResult> {
   static readonly Name = 'ppt_generate';

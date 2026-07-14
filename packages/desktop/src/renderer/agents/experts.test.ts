@@ -13,13 +13,13 @@ import { describe, it, expect } from 'vitest';
 import { EXPERTS } from './experts.js';
 
 describe('企业专家目录', () => {
-  it('恰好 8 位专家', () => {
-    expect(EXPERTS).toHaveLength(8);
+  it('恰好 9 位专家', () => {
+    expect(EXPERTS).toHaveLength(9);
   });
 
-  it('id 唯一、生成图标唯一', () => {
+  it('id 唯一、头像 emoji 唯一', () => {
     const ids = EXPERTS.map((e) => e.id);
-    const icons = EXPERTS.map((e) => e.icon);
+    const icons = EXPERTS.map((e) => e.emoji);
     expect(new Set(ids).size).toBe(EXPERTS.length);
     expect(new Set(icons).size).toBe(EXPERTS.length);
   });
@@ -29,7 +29,7 @@ describe('企业专家目录', () => {
       expect(e.id).toMatch(/^[a-z0-9-]+$/);
       expect(e.name.trim().length).toBeGreaterThan(0);
       expect(e.tagline.trim().length).toBeGreaterThan(0);
-      expect(e.icon).toMatch(/^expert-/);
+      expect(e.emoji.trim().length).toBeGreaterThan(0);
       expect(e.accent).toMatch(/^#[0-9a-fA-F]{6}$/);
       expect(e.skills.length).toBeGreaterThanOrEqual(1);
       expect(e.kickoff.trim().length).toBeGreaterThan(0);
@@ -52,5 +52,12 @@ describe('企业专家目录', () => {
       // 开场消息应显式要求加载技能。
       expect(e.kickoff).toContain('use_skill');
     }
+  });
+
+  it('PPT 专家的开场契约明确要求炫酷而不是通用模板', () => {
+    const ppt = EXPERTS.find((expert) => expert.id === 'ppt');
+    expect(ppt?.tagline).toContain('炫酷');
+    expect(ppt?.kickoff).toContain('高冲击');
+    expect(ppt?.kickoff).toContain('不要套通用模板');
   });
 });

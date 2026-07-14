@@ -23,11 +23,14 @@ const ENV_KEYS = ['OTTO_ENTERPRISE_DIR', 'OTTO_ENTERPRISE_ADMIN_TOKEN'] as const
 const ADMIN_TOKEN = 'test-admin-token-abc123';
 
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
-async function startIsolated(adminToken?: string): Promise<{ base: string; server: Server }> {
+async function startIsolated(
+  adminToken?: string,
+  smsSender?: { sendVerificationCode(phone: string, code: string): Promise<boolean> },
+): Promise<{ base: string; server: Server }> {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   vi.resetModules();
   const mod: ServerModule = await import('./server.js');
-  const { server } = mod.createEnterpriseServer({ host: '127.0.0.1', adminToken });
+  const { server } = mod.createEnterpriseServer({ host: '127.0.0.1', adminToken, smsSender });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   servers.push(server);
   const port = (server.address() as AddressInfo).port;
@@ -175,6 +178,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('type="password"');
     expect(html).toContain('/enterprise/auth/login');
     expect(html).toContain('/enterprise/accounts');
+    expect(html).toContain('editPhone');
     expect(html).toContain('sessionStorage');
     expect(html).not.toContain(ADMIN_TOKEN);
   });
@@ -293,6 +297,90 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     }
   });
 
+  it('短信验证码请求不泄露手机号是否存在，正确验证码可换取登录会话', async () => {
+    process.env.OTTO_ENTERPRISE_DIR = tmpDir;
+    vi.resetModules();
+    const db = await import('./db.js');
+    const account = db.createAccount({
+      username: 'sms01', password: 'sms-password-1', name: '短信用户', phone: '13800138000',
+    });
+    const sent: Array<{ phone: string; code: string }> = [];
+    const sender = {
+      async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+        sent.push({ phone, code });
+        return true;
+      },
+    };
+    const { base } = await startIsolated(ADMIN_TOKEN, sender);
+
+    const request = await fetch(`${base}/enterprise/auth/sms/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '138 0013 8000' }),
+    });
+    expect(request.status).toBe(200);
+    const requested = await request.json();
+    expect(requested.challengeId).toEqual(expect.any(String));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.phone).toBe('13800138000');
+
+    const missing = await fetch(`${base}/enterprise/auth/sms/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13700137000' }),
+    });
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ message: requested.message });
+    expect(sent).toHaveLength(1);
+
+    const verify = await fetch(`${base}/enterprise/auth/sms/verify`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ challengeId: requested.challengeId, code: sent[0]?.code }),
+    });
+    expect(verify.status).toBe(200);
+    const verified = await verify.json();
+    expect(verified.account.id).toBe(account.id);
+    expect(verified.token).toEqual(expect.any(String));
+  });
+
+  it('短信服务未配置时统一返回 503，验证码错误不会创建会话', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'sms02', password: 'sms-password-2', name: '短信用户二',
+    });
+    const unavailable = await fetch(`${base}/enterprise/auth/sms/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13900139000' }),
+    });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ error: '短信登录暂不可用，请使用账号密码登录' });
+  });
+
+  it('短信供应商发送失败会释放挑战，用户可立刻重试而不会被冷却时间误伤', async () => {
+    process.env.OTTO_ENTERPRISE_DIR = tmpDir;
+    vi.resetModules();
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'sms-retry', password: 'sms-retry-password', name: '重试用户', phone: '13600136000',
+    });
+    let succeeds = false;
+    const sender = {
+      async sendVerificationCode(): Promise<boolean> { return succeeds; },
+    };
+    const { base } = await startIsolated(ADMIN_TOKEN, sender);
+
+    const first = await fetch(`${base}/enterprise/auth/sms/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13600136000' }),
+    });
+    expect(first.status).toBe(502);
+
+    succeeds = true;
+    const second = await fetch(`${base}/enterprise/auth/sms/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13600136000' }),
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toHaveProperty('challengeId');
+  });
+
   it('管理员会话可查看、新增、修改全部账号；普通账号不可访问', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
       username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
@@ -338,6 +426,43 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(list.status).toBe(200);
     expect((await list.json()).accounts).toHaveLength(3);
+  });
+
+  it('新增或编辑账号时重复绑定手机号 → 409，不把数据约束错误暴露成 500', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+    });
+    const db = await import('./db.js');
+    const first = db.createAccount({
+      username: 'first', password: 'first-password', name: '一号', phone: '13800138000',
+    });
+    const second = db.createAccount({
+      username: 'second', password: 'second-password', name: '二号', phone: '13900139000',
+    });
+    const login = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
+    });
+    const token = (await login.json()).token;
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+    const create = await fetch(`${base}/enterprise/accounts`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        username: 'third', password: 'third-password', name: '三号', phone: '13800138000',
+      }),
+    });
+    expect(create.status).toBe(409);
+    expect(await create.json()).toEqual({ error: '手机号已绑定其他账号' });
+
+    const update = await fetch(`${base}/enterprise/accounts/${second.id}`, {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ phone: '+86 138 0013 8000' }),
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toEqual({ error: '手机号已绑定其他账号' });
+    expect(db.getAccount(first.id)?.phone).toBe('+8613800138000');
+    expect(db.getAccount(second.id)?.phone).toBe('+8613900139000');
   });
 
   it('提交 IT 报修后，只有对应标签账号能在收件箱真实收到工单', async () => {

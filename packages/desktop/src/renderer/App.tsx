@@ -27,7 +27,7 @@ import {
   groupSessions,
   selectSortedSessions,
 } from './state/useOttoStore.js';
-import type { ImageAttachment } from './state/useOttoStore.js';
+import type { Attachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
 import { SLASH_COMMANDS } from './components/Composer.js';
@@ -48,6 +48,10 @@ import { WhatsNewDialog } from './components/WhatsNewDialog.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
+import { EnterpriseLoginPage } from './components/EnterpriseLoginPage.js';
+import { AccountManagementPage } from './components/AccountManagementPage.js';
+import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
+import type { EnterpriseAccount } from '../preload/index.js';
 import {
   DEPARTMENT_LABELS,
   getEnterpriseAgentProfiles,
@@ -60,9 +64,40 @@ import {
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone';
+type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 export function App(): React.JSX.Element {
+  const auth = useEnterpriseAuth();
+  if (auth.state.status === 'loading') {
+    return (
+      <div className="otto-auth-boot" role="status">
+        <span>O</span>
+        <div><strong>OTTO</strong><small>正在验证企业身份…</small></div>
+      </div>
+    );
+  }
+  if (auth.state.status === 'signed-out' || !auth.state.account) {
+    return (
+      <EnterpriseLoginPage
+        initialServerUrl={auth.state.serverUrl}
+        busy={auth.state.busy}
+        error={auth.state.error}
+        onPasswordLogin={auth.actions.loginWithPassword}
+        onRequestSms={auth.actions.requestSmsCode}
+        onSmsLogin={auth.actions.loginWithSms}
+      />
+    );
+  }
+  return <OttoWorkspaceApp account={auth.state.account} onLogout={auth.actions.logout} />;
+}
+
+function OttoWorkspaceApp({
+  account,
+  onLogout,
+}: {
+  account: EnterpriseAccount;
+  onLogout: () => Promise<void>;
+}): React.JSX.Element {
   const { state, actions } = useOttoStore();
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
   const settingsData = useSettingsData();
@@ -270,7 +305,7 @@ export function App(): React.JSX.Element {
   const handleSend = (
     text: string,
     source: MessageSource,
-    attachments?: ImageAttachment[],
+    attachments?: Attachment[],
   ): void => {
     actions.sendMessage(text, source, attachments);
   };
@@ -371,6 +406,7 @@ export function App(): React.JSX.Element {
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
+        accountManagementActive={mainView === 'accounts'}
         updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
           setMainView('chat');
@@ -378,10 +414,13 @@ export function App(): React.JSX.Element {
         }}
         onNewChat={handleNewChat}
         onOpenHub={() => openHub('prefs')}
+        onOpenAccounts={() => setMainView('accounts')}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
         productWorkspace={product.state.workspace}
+        enterpriseAccount={account}
+        onLogout={() => void onLogout()}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
@@ -394,6 +433,8 @@ export function App(): React.JSX.Element {
           onSave={handleSaveModel}
           onDeleteModel={handleDeleteModel}
         />
+      ) : mainView === 'accounts' && account.isAdmin ? (
+        <AccountManagementPage currentAccount={account} onBack={() => setMainView('chat')} />
       ) : mainView === 'agents' ? (
         <AgentGallery
           mode={edition}
@@ -420,8 +461,8 @@ export function App(): React.JSX.Element {
               messages={activeMessages}
               models={state.models}
               currentModel={activeSession?.model ?? state.currentModel}
-              userInitial="F"
-              identityLabel={identityLabel}
+              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              identityLabel={`${account.name} · ${account.department || account.tags.join(' / ') || identityLabel}`}
               modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}

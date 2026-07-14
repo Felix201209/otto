@@ -284,6 +284,19 @@ describe('SkillsCompatAdapter', () => {
       expect(result.summary).toContain('read_file');
     });
 
+    it('teaches the high-aesthetic PPT workflow instead of defaulting to markdown templates', async () => {
+      mockLoader.loadEnabledSkills.mockResolvedValue([
+        createMockSkill('ppt-creator', 'user-global'),
+      ]);
+
+      const result = await adapter.buildContext();
+
+      expect(result.summary).toContain('unique visual motif');
+      expect(result.summary).toContain('custom HTML/CSS/SVG');
+      expect(result.summary).toContain('generate_document is only a clearly disclosed speed fallback');
+      expect(result.summary).toContain('fixed template');
+    });
+
     it('should return unavailable context when listSkills fails', async () => {
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       mockLoader.loadEnabledSkills.mockRejectedValue(new Error('Build failed'));

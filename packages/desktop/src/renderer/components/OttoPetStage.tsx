@@ -11,7 +11,8 @@ const CELL_WIDTH = 192;
 const CELL_HEIGHT = 208;
 const ATLAS_COLUMNS = 8;
 const ATLAS_ROWS = 9;
-const DISPLAY_SCALE = 0.62;
+const PANEL_DISPLAY_SCALE = 0.62;
+const LOGIN_DISPLAY_SCALE = 1.65;
 
 type PetStateId =
   | 'idle'
@@ -129,7 +130,13 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-export function OttoPetStage({ running }: { running: boolean }): React.JSX.Element {
+export function OttoPetStage({
+  running,
+  variant = 'panel',
+}: {
+  running: boolean;
+  variant?: 'panel' | 'login';
+}): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const [stepIndex, setStepIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -179,17 +186,20 @@ export function OttoPetStage({ running }: { running: boolean }): React.JSX.Eleme
       step.loops,
     [animation, step.loops],
   );
+  const displayScale = variant === 'login' ? LOGIN_DISPLAY_SCALE : PANEL_DISPLAY_SCALE;
+  const displayWidth = Number((CELL_WIDTH * displayScale).toFixed(2));
+  const displayHeight = Number((CELL_HEIGHT * displayScale).toFixed(2));
 
   const spriteStyle: React.CSSProperties = {
-    width: CELL_WIDTH * DISPLAY_SCALE,
-    height: CELL_HEIGHT * DISPLAY_SCALE,
+    width: displayWidth,
+    height: displayHeight,
     backgroundImage: `url(${ottoPetAtlasUrl})`,
     backgroundRepeat: 'no-repeat',
-    backgroundSize: `${CELL_WIDTH * ATLAS_COLUMNS * DISPLAY_SCALE}px ${
-      CELL_HEIGHT * ATLAS_ROWS * DISPLAY_SCALE
+    backgroundSize: `${CELL_WIDTH * ATLAS_COLUMNS * displayScale}px ${
+      CELL_HEIGHT * ATLAS_ROWS * displayScale
     }px`,
-    backgroundPosition: `${-frameIndex * CELL_WIDTH * DISPLAY_SCALE}px ${
-      -animation.row * CELL_HEIGHT * DISPLAY_SCALE
+    backgroundPosition: `${-frameIndex * CELL_WIDTH * displayScale}px ${
+      -animation.row * CELL_HEIGHT * displayScale
     }px`,
   };
 
@@ -202,18 +212,20 @@ export function OttoPetStage({ running }: { running: boolean }): React.JSX.Eleme
 
   return (
     <section
-      className="otto-pet-stage"
-      aria-label="Otto 吉祥物活动区"
+      className={`otto-pet-stage${variant === 'login' ? ' otto-pet-stage--login' : ''}`}
+      aria-label={variant === 'login' ? 'Otto 像素吉祥物动画' : 'Otto 吉祥物活动区'}
       data-testid="otto-pet-stage"
       data-current-state={animation.id}
       data-running={running ? 'true' : 'false'}
     >
-      <div className="otto-pet-stage__head">
-        <span>Otto 的小角落</span>
-        <span className="otto-pet-stage__state">{animation.label}</span>
-      </div>
+      {variant === 'panel' ? (
+        <div className="otto-pet-stage__head">
+          <span>Otto 的小角落</span>
+          <span className="otto-pet-stage__state">{animation.label}</span>
+        </div>
+      ) : null}
       <div className="otto-pet-stage__scene">
-        <div className="otto-pet-stage__floor" aria-hidden="true" />
+        {variant === 'panel' ? <div className="otto-pet-stage__floor" aria-hidden="true" /> : null}
         <div
           key={`${animation.id}-${stepIndex}`}
           className={`otto-pet-stage__motion${
