@@ -656,95 +656,68 @@ h6.otto-prose__h {
 .otto-auth-mascot-stage::before { content: ''; position: absolute; width: min(72%, 500px); aspect-ratio: 1; border: 1px solid rgba(96,165,250,.12); border-radius: 50%; box-shadow: 0 0 0 36px rgba(96,165,250,.025), 0 0 0 74px rgba(96,165,250,.018); }
 .otto-auth-mascot-stage__label { position: absolute; right: 1%; top: 18%; padding: 7px 10px; border: 1px solid rgba(168,255,208,.22); border-radius: 999px; color: var(--auth-electric); background: rgba(7,17,31,.56); backdrop-filter: blur(10px); font: 700 8px/1 var(--otto-font-mono); letter-spacing: .16em; }
 .otto-auth-mascot-stage__label::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: #51e99b; box-shadow: 0 0 14px #51e99b; }
-.otto-auth-mascot { position: relative; width: min(100%, 640px); height: min(43vh, 390px); min-height: 285px; overflow: visible; filter: drop-shadow(0 28px 45px rgba(0,0,0,.34)); animation: otto-auth-mascot-float 4.2s ease-in-out infinite; }
-.otto-auth-mascot__shadow { fill: rgba(0,0,0,.28); filter: blur(8px); }
-.otto-auth-mascot__signals path { fill: none; stroke: rgba(96,165,250,.36); stroke-width: 2; stroke-linecap: round; }
-.otto-auth-mascot__signals circle { fill: var(--auth-blue-bright); }
-.otto-auth-mascot__spines { fill: url(#otto-spines); stroke: #ffbf67; stroke-width: 2; stroke-linejoin: round; }
-.otto-auth-mascot__face { fill: #ffc982; stroke: #8b4527; stroke-width: 3; }
-.otto-auth-mascot__muzzle { fill: #ffe4b8; }
-.otto-auth-mascot__eye, .otto-auth-mascot__nose { fill: #191b25; }
-.otto-auth-mascot__eye-glint { fill: #fff; }
-.otto-auth-mascot__brow, .otto-auth-mascot__smile { fill: none; stroke: #673823; stroke-width: 5; stroke-linecap: round; }
-.otto-auth-mascot__ear { fill: #f4a85c; stroke: #8b4527; stroke-width: 3; }
-.otto-auth-mascot__headphones { fill: none; stroke: #92f2be; stroke-width: 12; stroke-linecap: round; }
-.otto-auth-mascot__headphone { fill: #0f2835; stroke: #a8ffd0; stroke-width: 3; }
-.otto-auth-mascot__paper { fill: #f7fbff; stroke: #a7c0dc; stroke-width: 2; }
-.otto-auth-mascot__paper-line { fill: none; stroke: #97aac0; stroke-width: 5; stroke-linecap: round; opacity: .55; }
-.otto-auth-mascot__paper-line.is-strong { stroke: #33577a; stroke-width: 8; opacity: .9; }
-.otto-auth-mascot__paper-line.is-live { stroke: #45d88f; opacity: 1; stroke-dasharray: 68; animation: otto-auth-paper-type 1.35s ease-in-out infinite; }
-.otto-auth-mascot__roller { fill: none; stroke: #9fb7ca; stroke-width: 16; stroke-linecap: round; }
-.otto-auth-mascot__body { fill: url(#otto-typewriter); stroke: #163f42; stroke-width: 4; stroke-linejoin: round; }
-.otto-auth-mascot__keyboard { fill: #102b39; stroke: #b8ffd7; stroke-width: 3; }
-.otto-auth-mascot__keys path, .otto-auth-mascot__keys { fill: none; stroke: #d6ffea; stroke-width: 8; stroke-linecap: round; opacity: .82; }
-.otto-auth-mascot__power, .otto-auth-mascot__spark { fill: #b8ffd7; }
-.otto-auth-mascot__paw { fill: #ffc982; stroke: #8b4527; stroke-width: 3; transform-box: fill-box; transform-origin: center; }
-.otto-auth-mascot__paw--left { animation: otto-auth-key-left .54s ease-in-out infinite alternate; }
-.otto-auth-mascot__paw--right { animation: otto-auth-key-right .54s ease-in-out -.27s infinite alternate; }
-.otto-auth-mascot__spark { opacity: .82; animation: otto-auth-spark 1.8s ease-in-out infinite alternate; }
-@keyframes otto-auth-mascot-float { 50% { transform: translateY(-5px); } }
-@keyframes otto-auth-key-left { to { transform: translate3d(5px, 8px, 0) rotate(3deg); } }
-@keyframes otto-auth-key-right { to { transform: translate3d(-4px, 7px, 0) rotate(-3deg); } }
-@keyframes otto-auth-paper-type { 50% { opacity: .35; transform: scaleX(.72); transform-origin: left; } }
-@keyframes otto-auth-spark { to { opacity: .35; transform: translateY(-4px) scale(.9); } }
-
 .otto-auth-visual__copy { position: relative; z-index: 2; max-width: 650px; }
 .otto-auth-kicker { color: var(--auth-electric); font: 750 9px/1 var(--otto-font-mono); letter-spacing: .23em; }
-.otto-auth-visual__copy h1 { margin: 12px 0 13px; max-width: 610px; font-size: clamp(36px, 4vw, 58px); line-height: 1.02; letter-spacing: -.055em; font-weight: 760; }
-.otto-auth-visual__copy h1 em { color: #9fc5ff; font-style: normal; }
-.otto-auth-capability { width: min(100%, 520px); min-height: 48px; display: flex; align-items: center; gap: 11px; margin: 0 0 12px; padding: 0 15px; border: 1px solid rgba(96,165,250,.22); border-radius: 13px; color: #e9f4ff; background: rgba(9,25,45,.78); box-shadow: inset 0 1px rgba(255,255,255,.04), 0 16px 40px rgba(0,0,0,.12); backdrop-filter: blur(18px); font: 650 13px/1.4 var(--otto-font-mono); }
-.otto-auth-capability__prompt { color: var(--auth-electric); font-size: 22px; font-weight: 400; }
-.otto-auth-typewriter { display: inline-flex; align-items: center; min-width: 0; }
-.otto-auth-typewriter__cursor { width: 2px; height: 18px; margin-left: 3px; border-radius: 2px; background: var(--auth-electric); animation: otto-auth-cursor .72s steps(1,end) infinite; }
+.otto-auth-visual__copy h1 { margin: 11px 0 12px; max-width: 640px; min-height: 2.03em; font-size: clamp(45px, 4.4vw, 66px); line-height: .98; letter-spacing: -.057em; font-weight: 800; }
+.otto-auth-visual__copy h1 > span:first-child { display: block; margin-bottom: 7px; color: #f7fbff; font-size: .55em; line-height: 1.05; letter-spacing: -.035em; }
+.otto-auth-visual__copy h1 .otto-auth-typewriter { display: flex; align-items: center; min-height: 1.02em; color: #8eb9ff; white-space: nowrap; }
+.otto-auth-visual__copy h1 .otto-auth-typewriter__cursor { width: 5px; height: .78em; flex: 0 0 auto; margin: .1em 0 0 .09em; border-radius: 0; background: var(--auth-electric); box-shadow: 0 0 14px rgba(168,255,208,.48); animation: otto-auth-cursor .72s steps(1,end) infinite; }
 @keyframes otto-auth-cursor { 50% { opacity: 0; } }
 .otto-auth-visual__copy p { max-width: 510px; margin: 0; color: #8fa6c0; font-size: 12px; line-height: 1.65; }
 .otto-auth-trust { position: relative; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; color: #8299b4; font-size: 9px; letter-spacing: .02em; }
 .otto-auth-trust span { display: inline-flex; align-items: center; gap: 6px; }
 .otto-auth-trust svg { width: 13px; height: 13px; fill: none; stroke: #75e7aa; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-.otto-auth-panel { position: relative; display: grid; place-items: center; overflow-y: auto; padding: 36px clamp(34px, 5vw, 76px); background: radial-gradient(circle at 15% 15%, rgba(96,165,250,.12), transparent 28%), #f5f8fc; }
-.otto-auth-panel::before { content: ''; position: absolute; inset: 22px; border: 1px solid rgba(37,99,235,.08); border-radius: 30px; pointer-events: none; }
-.otto-auth-card { position: relative; z-index: 1; width: min(100%, 466px); display: grid; gap: 15px; padding: clamp(26px, 3vw, 38px); border: 1px solid rgba(202,214,229,.88); border-radius: 26px; background: rgba(255,255,255,.9); box-shadow: 0 28px 70px rgba(35,61,94,.13), inset 0 1px rgba(255,255,255,.85); backdrop-filter: blur(22px); animation: otto-auth-rise .5s cubic-bezier(.2,.8,.2,1); }
+.otto-auth-panel { position: relative; display: grid; place-items: center; overflow-y: auto; padding: 32px clamp(30px, 4.6vw, 68px); background-color: #e9eff8; background-image: linear-gradient(rgba(49,82,132,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(49,82,132,.055) 1px, transparent 1px); background-size: 24px 24px; }
+.otto-auth-panel::before { content: ''; position: absolute; width: 78px; height: 78px; right: 24px; top: 24px; background: linear-gradient(90deg, #2563eb 25%, transparent 25% 50%, #2563eb 50% 75%, transparent 75%) 0 0/24px 24px; opacity: .12; pointer-events: none; }
+.otto-auth-card { --auth-line: #31425d; position: relative; z-index: 1; width: min(100%, 430px); display: grid; gap: 14px; padding: 27px 28px 24px; border: 1px solid #385070; border-radius: 4px; color: #f3f7ff; background: #0b172a; box-shadow: 10px 10px 0 rgba(37,99,235,.13), 0 26px 65px rgba(25,48,82,.25), inset 0 1px rgba(255,255,255,.045); animation: otto-auth-rise .5s cubic-bezier(.2,.8,.2,1); }
 @keyframes otto-auth-rise { from { opacity: 0; transform: translateY(12px) scale(.985); } }
-.otto-auth-card__eyebrow { display: flex; justify-content: space-between; color: #8493a6; font: 700 9px/1 var(--otto-font-mono); letter-spacing: .15em; }
-.otto-auth-card__eyebrow span { color: var(--auth-blue); }
-.otto-auth-card__topline { width: fit-content; display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 7px 10px; border: 1px solid #d7eadf; border-radius: 99px; color: #47705e; background: #f1fbf5; font-size: 10px; font-weight: 650; }
+.otto-auth-card__pixel-corner { position: absolute; z-index: 2; width: 10px; height: 10px; right: -1px; top: -1px; background: var(--auth-electric); box-shadow: -10px 0 #0b172a, 0 10px #0b172a; }
+.otto-auth-card__masthead { min-height: 42px; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #263751; }
+.otto-auth-card__masthead > span:nth-child(2) { display: grid; gap: 4px; }
+.otto-auth-card__masthead strong { color: #f6f9ff; font: 760 9px/1 var(--otto-font-mono); letter-spacing: .16em; }
+.otto-auth-card__masthead small { color: #72839e; font-size: 9px; }
+.otto-auth-card__masthead b { color: #79a8ff; font: 760 9px/1 var(--otto-font-mono); letter-spacing: .1em; }
+.otto-auth-card__pixel-mark { position: relative; width: 28px; height: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 5px; background: #142640; box-shadow: inset 0 0 0 1px #345172; }
+.otto-auth-card__pixel-mark i { display: block; background: var(--auth-electric); }
+.otto-auth-card__pixel-mark i:nth-child(2), .otto-auth-card__pixel-mark i:nth-child(3) { opacity: .42; }
+.otto-auth-card__topline { width: fit-content; display: flex; align-items: center; gap: 8px; margin-top: 5px; padding: 6px 9px; border: 1px solid #284a42; border-radius: 3px; color: #9bd6b9; background: #102821; font-size: 10px; font-weight: 650; }
 .otto-auth-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #20a866; box-shadow: 0 0 0 4px rgba(32,168,102,.12); }
-.otto-auth-card h2 { margin: 5px 0 -7px; font-size: clamp(27px, 2.5vw, 34px); line-height: 1.12; letter-spacing: -.043em; }
-.otto-auth-card__intro { margin: 0 0 5px; color: var(--auth-muted); font-size: 12px; line-height: 1.65; }
-.otto-auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 5px; border: 1px solid #e7edf4; border-radius: 14px; background: #edf2f8; }
-.otto-auth-tabs button { min-height: 44px; border: 0; border-radius: 10px; color: #708095; background: transparent; font: 650 12px var(--otto-font); cursor: pointer; transition: color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
-.otto-auth-tabs button:hover:not(.is-active) { color: var(--auth-ink); background: rgba(255,255,255,.48); }
-.otto-auth-tabs button.is-active { color: #163a76; background: #fff; box-shadow: 0 3px 12px rgba(41,72,112,.1); }
+.otto-auth-card h2 { margin: 4px 0 -7px; color: #f7f9ff; font-size: clamp(28px, 2.5vw, 34px); line-height: 1.1; letter-spacing: -.043em; }
+.otto-auth-card__intro { margin: 0 0 4px; color: #8291aa; font-size: 11.5px; line-height: 1.6; }
+.otto-auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid #263a58; border-radius: 3px; background: #101f35; }
+.otto-auth-tabs button { min-height: 44px; border: 0; border-radius: 2px; color: #8292aa; background: transparent; font: 680 12px var(--otto-font); cursor: pointer; transition: color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
+.otto-auth-tabs button:hover:not(.is-active) { color: #d9e5f7; background: rgba(255,255,255,.04); }
+.otto-auth-tabs button.is-active { color: #10251e; background: var(--auth-electric); box-shadow: 3px 3px 0 #285a49; }
 .otto-auth-tabs button:focus-visible { outline: 3px solid rgba(37,99,235,.23); outline-offset: 2px; }
 
-.otto-auth-field { display: grid; gap: 7px; color: #34455a; font-size: 11px; font-weight: 700; }
-.otto-auth-field > input, .otto-auth-phone, .otto-auth-code { width: 100%; min-height: 50px; border: 1px solid var(--auth-line); border-radius: 12px; background: #fff; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
-.otto-auth-field > input { padding: 0 14px; color: var(--auth-ink); outline: none; font: 13px var(--otto-font); }
+.otto-auth-field { display: grid; gap: 7px; color: #b8c4d6; font-size: 11px; font-weight: 700; }
+.otto-auth-field > input, .otto-auth-phone, .otto-auth-code { width: 100%; min-height: 50px; border: 1px solid var(--auth-line); border-radius: 3px; background: #101e33; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
+.otto-auth-field > input { padding: 0 14px; color: #f2f6fc; outline: none; font: 13px var(--otto-font); }
 .otto-auth-phone, .otto-auth-code { display: flex; align-items: center; overflow: hidden; }
-.otto-auth-phone:hover, .otto-auth-code:hover, .otto-auth-field > input:hover { border-color: #b8c8db; }
-.otto-auth-phone:focus-within, .otto-auth-code:focus-within, .otto-auth-field > input:focus { border-color: var(--auth-blue); box-shadow: 0 0 0 4px rgba(37,99,235,.12); background: #fff; }
-.otto-auth-phone b { align-self: stretch; display: grid; place-items: center; padding: 0 13px; border-right: 1px solid var(--auth-line); color: #36506e; background: #f8fafc; font-size: 12px; }
-.otto-auth-phone input, .otto-auth-code input { min-width: 0; flex: 1; height: 48px; border: 0; outline: none; padding: 0 13px; color: var(--auth-ink); background: transparent; font: 13px var(--otto-font); }
-.otto-auth-phone input::placeholder, .otto-auth-code input::placeholder, .otto-auth-field > input::placeholder { color: #9aa8b8; }
-.otto-auth-code button { flex: 0 0 auto; min-height: 44px; margin-right: 3px; padding: 0 12px; border: 0; border-radius: 9px; color: #175d43; background: #e8f8ef; font: 750 10px var(--otto-font); cursor: pointer; transition: background .2s ease, color .2s ease, transform .2s ease; }
-.otto-auth-code button:hover:not(:disabled) { color: #0d4f36; background: #d8f4e5; transform: translateY(-1px); }
+.otto-auth-phone:hover, .otto-auth-code:hover, .otto-auth-field > input:hover { border-color: #4d6381; }
+.otto-auth-phone:focus-within, .otto-auth-code:focus-within, .otto-auth-field > input:focus { border-color: #6fa0ff; box-shadow: 0 0 0 3px rgba(70,125,231,.2); background: #13243d; }
+.otto-auth-phone b { align-self: stretch; display: grid; place-items: center; padding: 0 13px; border-right: 1px solid var(--auth-line); color: #b8c8de; background: #142640; font-size: 12px; }
+.otto-auth-phone input, .otto-auth-code input { min-width: 0; flex: 1; height: 48px; border: 0; outline: none; padding: 0 13px; color: #f2f6fc; background: transparent; font: 13px var(--otto-font); }
+.otto-auth-phone input::placeholder, .otto-auth-code input::placeholder, .otto-auth-field > input::placeholder { color: #687a94; }
+.otto-auth-code button { flex: 0 0 auto; min-height: 44px; margin-right: 3px; padding: 0 12px; border: 0; border-radius: 2px; color: #10251e; background: var(--auth-electric); font: 760 10px var(--otto-font); cursor: pointer; transition: background .2s ease, color .2s ease, transform .2s ease; }
+.otto-auth-code button:hover:not(:disabled) { color: #071510; background: #c0ffdd; transform: translateY(-1px); }
 .otto-auth-code button:focus-visible { outline: 3px solid rgba(32,168,102,.2); outline-offset: 1px; }
-.otto-auth-code button:disabled { color: #95a2b0; background: #f1f4f7; cursor: default; }
-.otto-auth-notice { margin-top: -5px; color: #576a80; font-size: 10px; line-height: 1.5; }
-.otto-auth-error { padding: 11px 13px; border: 1px solid #f0c7be; border-radius: 10px; color: #a23428; background: #fff3f0; font-size: 11px; line-height: 1.5; }
-.otto-auth-submit { min-height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 17px; border: 0; border-radius: 12px; color: #fff; background: linear-gradient(110deg, #102b57, #185cd6 72%, #2573ef); font: 750 13px var(--otto-font); cursor: pointer; box-shadow: 0 13px 28px rgba(30,92,205,.24); transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
-.otto-auth-submit:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.04); box-shadow: 0 17px 32px rgba(30,92,205,.3); }
+.otto-auth-code button:disabled { color: #64758c; background: #1a2a40; cursor: default; }
+.otto-auth-notice { margin-top: -5px; color: #9badc5; font-size: 10px; line-height: 1.5; }
+.otto-auth-error { padding: 11px 13px; border: 1px solid #733c42; border-radius: 3px; color: #ffb6ae; background: #2a171e; font-size: 11px; line-height: 1.5; }
+.otto-auth-submit { min-height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 17px; border: 0; border-radius: 3px; color: #10251e; background: var(--auth-electric); font: 780 13px var(--otto-font); cursor: pointer; box-shadow: 4px 4px 0 #285a49; transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
+.otto-auth-submit:hover:not(:disabled) { transform: translate(-1px,-1px); filter: brightness(1.04); box-shadow: 6px 6px 0 #285a49; }
 .otto-auth-submit:active:not(:disabled) { transform: translateY(0); }
 .otto-auth-submit:focus-visible { outline: 3px solid rgba(37,99,235,.28); outline-offset: 3px; }
-.otto-auth-submit svg { width: 21px; height: 21px; fill: none; stroke: var(--auth-electric); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
+.otto-auth-submit svg { width: 21px; height: 21px; fill: none; stroke: #10251e; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
 .otto-auth-submit:hover:not(:disabled) svg { transform: translateX(3px); }
 .otto-auth-submit:disabled { opacity: .46; cursor: default; box-shadow: none; filter: grayscale(.2); }
-.otto-auth-server { margin-top: 2px; border-top: 1px solid var(--auth-line); padding-top: 13px; color: var(--auth-muted); font-size: 10px; }
+.otto-auth-server { margin-top: 2px; border-top: 1px solid #263751; padding-top: 12px; color: #8090a8; font-size: 10px; }
 .otto-auth-server summary { min-height: 30px; display: flex; align-items: center; cursor: pointer; user-select: none; font-weight: 650; }
 .otto-auth-server summary:focus-visible { outline: 3px solid rgba(37,99,235,.18); outline-offset: 3px; border-radius: 5px; }
 .otto-auth-server[open] summary { margin-bottom: 12px; }
-.otto-auth-legal { margin: -5px 0 0; text-align: center; color: #8b98a8; font-size: 8.5px; line-height: 1.5; }
+.otto-auth-legal { margin: -5px 0 0; text-align: center; color: #66778f; font-size: 8.5px; line-height: 1.5; }
 .otto-auth-legal span { margin-right: 5px; color: #27a96b; font-size: 7px; }
 
 /* 身份控制台 */
@@ -826,7 +799,6 @@ h6.otto-prose__h {
   .otto-auth-shell { height: auto; min-height: 100%; grid-template-columns: 1fr; overflow-y: auto; }
   .otto-auth-visual { min-height: 490px; padding: 30px 38px 28px; }
   .otto-auth-mascot-stage { position: absolute; width: 58%; height: 390px; right: -3%; top: 54px; margin: 0; }
-  .otto-auth-mascot { height: 360px; min-height: 0; }
   .otto-auth-mascot-stage__label { right: 7%; top: 12%; }
   .otto-auth-visual__copy { max-width: 57%; margin-top: auto; }
   .otto-auth-visual__copy h1 { font-size: clamp(38px, 7vw, 54px); }
@@ -838,17 +810,16 @@ h6.otto-prose__h {
   .otto-auth-visual { min-height: 405px; padding: 24px; }
   .otto-auth-brand small { display: none; }
   .otto-auth-mascot-stage { width: 72%; height: 300px; right: -15%; top: 45px; opacity: .74; }
-  .otto-auth-mascot { height: 290px; }
+  .otto-pet-stage--login .otto-pet-stage__motion { transform: translateX(-50%) scale(.82); transform-origin: bottom center; }
   .otto-auth-mascot-stage__label { display: none; }
   .otto-auth-visual__copy { max-width: 76%; }
   .otto-auth-visual__copy h1 { margin: 9px 0 11px; font-size: clamp(31px, 9vw, 40px); }
-  .otto-auth-capability { min-height: 44px; margin-bottom: 0; padding: 0 11px; font-size: 10.5px; }
   .otto-auth-visual__copy p { display: none; }
   .otto-auth-trust { margin-top: 12px; }
   .otto-auth-trust span:nth-child(n + 2) { display: none; }
   .otto-auth-panel { min-height: 620px; padding: 24px 16px; }
-  .otto-auth-panel::before { inset: 9px; border-radius: 22px; }
-  .otto-auth-card { padding: 25px 21px; border-radius: 21px; }
+  .otto-auth-panel::before { right: 9px; top: 9px; border-radius: 0; }
+  .otto-auth-card { padding: 25px 21px; border-radius: 4px; }
   .otto-account-page { padding: 24px 16px 42px; }
   .otto-account-hero, .otto-account-directory > header { align-items: stretch; flex-direction: column; }
   .otto-account-page__create { align-self: flex-start; }
@@ -859,16 +830,13 @@ h6.otto-prose__h {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .otto-auth-visual,
   .otto-auth-visual__aurora,
-  .otto-auth-mascot,
-  .otto-auth-mascot__paper-line.is-live,
-  .otto-auth-mascot__paw--left,
-  .otto-auth-mascot__paw--right,
-  .otto-auth-mascot__spark,
   .otto-auth-typewriter__cursor,
   .otto-auth-boot > span,
   .otto-auth-card,
-  .otto-account-editor { animation: none; }
+  .otto-account-editor,
+  .otto-pet-stage--login .otto-pet-stage__sprite { animation: none; }
   .otto-auth-typewriter__cursor { opacity: 1; }
   .otto-auth-submit, .otto-auth-submit svg { transition: none; }
 }
@@ -3792,6 +3760,39 @@ h6.otto-prose__h {
 @keyframes otto-pet-travel-left {
   from { left: 76%; }
   to { left: 24%; }
+}
+
+/* 登录页复用同一套 hatch-pet 图集：只放大 sprite，不带右栏标题、地面和位移动画。 */
+.otto-pet-stage.otto-pet-stage--login {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+.otto-pet-stage--login .otto-pet-stage__scene {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.otto-pet-stage--login .otto-pet-stage__motion {
+  left: 50%;
+  bottom: 0;
+  width: 316.8px;
+  height: 343.2px;
+  transform: translateX(-50%);
+  animation: none;
+  filter: drop-shadow(0 22px 28px rgba(0,0,0,.28));
+}
+.otto-pet-stage--login .otto-pet-stage__sprite {
+  transform-origin: bottom center;
+  animation: otto-login-pet-bob 2.8s steps(4,end) infinite;
+}
+@keyframes otto-login-pet-bob {
+  50% { transform: translateY(-5px); }
 }
 
 /* —— 顶部 tab 条 —— */

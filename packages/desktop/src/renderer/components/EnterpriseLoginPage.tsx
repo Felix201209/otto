@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { OttoPetStage } from './OttoPetStage.js';
 
 type LoginMode = 'sms' | 'password';
 
@@ -13,10 +14,11 @@ export interface TypewriterFrame {
 }
 
 const OTTO_CAPABILITIES = [
-  '把需求变成能运行的代码',
-  '把会议纪要变成行动清单',
-  '替你操作浏览器与工作台',
-  '读懂项目，再安全地修改它',
+  '代码直接写好。',
+  '会议变成行动。',
+  '浏览器替你操作。',
+  '项目安全改完。',
+  '汇报一键做成。',
 ];
 
 export function advanceTypewriterFrame(
@@ -78,81 +80,6 @@ function CapabilityTypewriter(): React.JSX.Element {
       <span aria-hidden>{visiblePhrase}</span>
       <span className="otto-auth-typewriter__cursor" aria-hidden />
     </span>
-  );
-}
-
-function OttoHedgehogAtWork(): React.JSX.Element {
-  return (
-    <svg className="otto-auth-mascot" viewBox="0 0 640 390" role="img" aria-labelledby="otto-mascot-title otto-mascot-desc">
-      <title id="otto-mascot-title">Otto 刺猬正在打字</title>
-      <desc id="otto-mascot-desc">Otto 的刺猬吉祥物坐在一台发光打字机前，正在替你完成工作。</desc>
-      <defs>
-        <linearGradient id="otto-spines" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ffb353" />
-          <stop offset="0.48" stopColor="#d76a2d" />
-          <stop offset="1" stopColor="#71301f" />
-        </linearGradient>
-        <linearGradient id="otto-typewriter" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#b8ffd7" />
-          <stop offset="1" stopColor="#57d995" />
-        </linearGradient>
-        <filter id="otto-glow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="9" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-
-      <ellipse className="otto-auth-mascot__shadow" cx="326" cy="342" rx="248" ry="25" />
-      <g className="otto-auth-mascot__signals" aria-hidden>
-        <path d="M455 56c43 5 75 27 94 62" />
-        <path d="M472 35c58 8 99 38 122 84" />
-        <circle cx="553" cy="126" r="5" />
-      </g>
-
-      <g className="otto-auth-mascot__hedgehog">
-        <path
-          className="otto-auth-mascot__spines"
-          d="M235 304 188 337l-2-49-53 21 13-50-58 3 30-41-56-18 43-27-43-35 55-10-25-49 57 12-5-54 48 30 16-52 34 44 37-40 15 53 49-27-7 57 57-10-29 50 55 14-44 36 43 31-57 12 25 51-54-3 8 51-53-22-3 48Z"
-        />
-        <ellipse className="otto-auth-mascot__face" cx="235" cy="211" rx="105" ry="115" transform="rotate(-8 235 211)" />
-        <path className="otto-auth-mascot__muzzle" d="M211 226c33-31 76-25 93 8-10 37-69 53-101 17Z" />
-        <ellipse className="otto-auth-mascot__eye" cx="214" cy="180" rx="8" ry="10" />
-        <ellipse className="otto-auth-mascot__eye-glint" cx="217" cy="176" rx="2.5" ry="3" />
-        <path className="otto-auth-mascot__brow" d="M193 157c10-7 22-8 32-3" />
-        <path className="otto-auth-mascot__smile" d="M251 238c12 10 29 9 40-3" />
-        <path className="otto-auth-mascot__nose" d="M316 213c14-9 28-4 32 7-7 15-23 17-35 7Z" />
-        <path className="otto-auth-mascot__ear" d="M168 130c-28-20-47 17-20 39 12 10 24 4 30-6" />
-        <path className="otto-auth-mascot__headphones" d="M151 199c-8-62 26-108 78-120 51-11 98 16 118 61" />
-        <rect className="otto-auth-mascot__headphone" x="137" y="177" width="29" height="55" rx="14" transform="rotate(-5 137 177)" />
-        <rect className="otto-auth-mascot__headphone" x="329" y="136" width="28" height="55" rx="14" transform="rotate(-6 329 136)" />
-      </g>
-
-      <g className="otto-auth-mascot__machine">
-        <path className="otto-auth-mascot__paper" d="M351 72h173l-9 150H360Z" />
-        <path className="otto-auth-mascot__paper-line is-strong" d="M379 108h108" />
-        <path className="otto-auth-mascot__paper-line" d="M379 131h82" />
-        <path className="otto-auth-mascot__paper-line" d="M379 154h120" />
-        <path className="otto-auth-mascot__paper-line is-live" d="M379 177h68" />
-        <path className="otto-auth-mascot__roller" d="M336 207h199" />
-        <path className="otto-auth-mascot__body" d="M329 207h212l38 112H294Z" />
-        <path className="otto-auth-mascot__keyboard" d="M325 243h211l20 57H306Z" />
-        <g className="otto-auth-mascot__keys">
-          <path d="M346 259h18m13 0h18m13 0h18m13 0h18m13 0h18m13 0h18" />
-          <path d="M336 277h18m13 0h18m13 0h18m13 0h18m13 0h18m13 0h18m13 0h18" />
-        </g>
-        <circle className="otto-auth-mascot__power" cx="528" cy="225" r="5" />
-      </g>
-
-      <g className="otto-auth-mascot__paws">
-        <ellipse className="otto-auth-mascot__paw otto-auth-mascot__paw--left" cx="292" cy="259" rx="29" ry="18" transform="rotate(-12 292 259)" />
-        <ellipse className="otto-auth-mascot__paw otto-auth-mascot__paw--right" cx="343" cy="273" rx="29" ry="18" transform="rotate(9 343 273)" />
-      </g>
-      <g className="otto-auth-mascot__spark" filter="url(#otto-glow)" aria-hidden>
-        <circle cx="546" cy="75" r="4" />
-        <circle cx="575" cy="158" r="3" />
-        <path d="m116 80 5 11 11 5-11 5-5 11-5-11-11-5 11-5Z" />
-      </g>
-    </svg>
   );
 }
 
@@ -226,16 +153,12 @@ export function EnterpriseLoginPage({
 
         <div className="otto-auth-mascot-stage">
           <span className="otto-auth-mascot-stage__label">READY TO WORK</span>
-          <OttoHedgehogAtWork />
+          <OttoPetStage running={false} variant="login" />
         </div>
 
         <div className="otto-auth-visual__copy">
           <span className="otto-auth-kicker">YOUR AI COLLEAGUE, ONLINE</span>
-          <h1>你说目标，<br /><em>Otto 开始干活。</em></h1>
-          <div className="otto-auth-capability">
-            <span className="otto-auth-capability__prompt" aria-hidden>›</span>
-            <CapabilityTypewriter />
-          </div>
+          <h1><span>有事交给 Otto。</span><CapabilityTypewriter /></h1>
           <p>能读懂项目、调用工具、操作浏览器，也懂得在企业权限边界内做事。</p>
         </div>
 
@@ -255,10 +178,15 @@ export function EnterpriseLoginPage({
             else void onPasswordLogin({ serverUrl: serverUrl.trim(), username: username.trim(), password });
           }}
         >
-          <div className="otto-auth-card__eyebrow">OTTO WORKSPACE <span>V1.8</span></div>
+          <span className="otto-auth-card__pixel-corner" aria-hidden />
+          <header className="otto-auth-card__masthead">
+            <span className="otto-auth-card__pixel-mark" aria-hidden><i /><i /><i /><i /></span>
+            <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
+            <b>V1.8</b>
+          </header>
           <div className="otto-auth-card__topline"><span className="otto-auth-status-dot" /> 企业安全身份入口已启用</div>
-          <h2>登录你的工作空间</h2>
-          <p className="otto-auth-card__intro">身份确认后，Otto 会带着你的会话与组织上下文继续工作。</p>
+          <h2>进入 Otto</h2>
+          <p className="otto-auth-card__intro">确认企业身份，带着会话与组织上下文继续工作。</p>
 
           <div className="otto-auth-tabs" role="tablist" aria-label="登录方式">
             <button type="button" role="tab" aria-selected={mode === 'sms'} className={mode === 'sms' ? 'is-active' : ''} onClick={() => setMode('sms')}>短信验证码</button>
