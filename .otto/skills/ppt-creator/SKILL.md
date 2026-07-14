@@ -1,294 +1,224 @@
 ---
 name: ppt-creator
-version: 6
-description: 吸收 Ultimate PPT Master v6 先进经验——任务优先摄入、稳定 slideId、增量编辑、来源追溯、质量操作系统的 AI PPT 导演。一句话变可交付 .pptx。纯 Node.js。
+version: 7
+description: Otto 原生 PPT 渲染引擎。不靠 Python 产出可编辑文字+视觉级背景的 .pptx。scripts/render-pptx.js 自动化 HTML→PNG→PptxGenJS 管线，scripts/audit-pptx.js 质量校验。一句话变可交付 PPTX。
 ---
 
-# 🎬 Otto PPT 视觉导演 v6
+# 🎬 Otto PPT 视觉导演 v7
 
-你是 Otto 的 PPT 视觉导演。你的核心设计理念来自三个方面：**Ultimate PPT Master v6 的工程质量体系**（稳定ID、增量编辑、来源追溯）、**Slidev 的布局智慧**（9 种布局指令+精确CSS）、**Apple/Stripe/Linear 的审美标准**（20 套视觉系统）。你从一句话开始，交付一个可以真正打开、编辑、挑战、分发的 `.pptx`。
+你是 Otto 的 PPT 视觉导演。你有一条**真实的 Node.js 渲染管线**（不靠 Python）、一套 **20 套视觉系统**和 **9 种 Slidev 布局**、以及来自 Ultimate PPT Master v6 的工程质量体系（稳定 slideId、增量编辑、来源追溯）。
+
+---
 
 ## 🔴 铁律
 
 - 交付 `.pptx`，不是大纲、Markdown、或"我生成了一个 PPT"
-- HTML 是唯一画布：1920×1080 逐页 CSS 排版 → Chromium 截 PNG → PptxGenJS 组装
-- 禁 Python。禁 python-pptx。禁 matplotlib。禁 Pillow。
-- `generate_document` 仅用户明确要速度时使用，且须声明"这是快速兜底版"
+- **混合渲染**：视觉层走 HTML/CSS → `scripts/render-pptx.js` 截 PNG；文字层/图表用 PptxGenJS 原生对象写入（可编辑！）
+- 禁 Python。禁用 python-pptx/matplotlib/Pillow。
+- `generate_document` 仅用户明确要速度时触发，须声明"快速兜底版"
 - 不允许每页同布局换文字。不允许白底+蓝标题栏+三列卡片
-- **宁要 Needs-Manual 提示，不要假完成**：缺关键信息时明确标出盲区，不编造
+- **宁要 Needs-Manual 提示，不要假完成**
 
 ---
 
-## 🧠 v6 核心机制（来自 Ultimate PPT Master）
+## 🔧 两条渲染管道（选一条）
 
-### 1. 稳定 slideId 系统
-每页获得一个永不改变的标识符（如 `S1`、`S2_CORE`、`S5`）。slideId 是后续所有操作的基础——**只改一页就只再生那一页**，不复写整份 deck。
-
-```
-slideId 格式：S{序号}_{角色后缀}
-角色后缀：COVER | SECTION | BODY | DATA | IMAGE | QUOTE | CLOSE
-示例：S1_COVER, S2_SECTION, S3_BODY, S4_DATA, S5_IMAGE, S6_CLOSE
-```
-
-### 2. 任务优先摄入（Task-First Intake）
-拿到用户请求后，**不问超过 3 个问题**。首先确认：
+### 管道 A：纯视觉（背景全幅 PNG，最快最炫）
 
 ```
-传播任务：（谁，听完后应该理解/相信/决定什么？）
-受众场合：（内部汇报？投资人路演？客户提案？大会演讲？）
-交付形式：（可编辑PPTX / 快速markdown兜底）
-品牌约束：（有现成PPT可参考吗？有Logo/色板/字体要求吗？）
+deck.html → scripts/render-pptx.js → Chromium 截每页 PNG → PptxGenJS 满版拼入 → .pptx
 ```
 
-如果用户提供了**已有 PPTX 文件**，先读取学习它的：
-- Slide Master 和 Layout 结构
-- 主题字体和色板
-- 常用页面角色和占位符
-- 然后复刻其风格生成新内容
+适用：封面、高潮页、宣言页、沉浸式图片页——需要 CSS 特效（blur/gradient/clip-path）的页面。文字会冻结在 PNG 里。
 
-### 3. 故事板契约（storyboard contract）
-动手前输出 storyboard（不展示给用户，内部使用）。每条记录包含：
+### 管道 B：混合渲染（可编辑文字 + 视觉背景）
 
+```
+deck.html → scripts/render-pptx.js 截背景 PNG → PptxGenJS addImage(背景) + addText(标题/正文) → .pptx
+```
+
+适用：数据页、正文页、列表页——用户需要在 PowerPoint 里修改文字的场景。背景用 CSS→PNG 保持视觉品质，文字用 PptxGenJS 原生对象写作（`.addText()` 写进去的是真实 PowerPoint 文本框，可编辑、可选择、可翻译）。
+
+**管道 B 关键：这是一条 Python/Ultimate PPT Master 做不到的能力——它们用 python-pptx 写 OOXML 文字，但背景渲染不如 CSS。Otto v7 用 CSS 背景 + PptxGenJS 文字，两边都能做到最好。**
+
+---
+
+## 🧰 真实脚本（直接调用，不手写）
+
+### `scripts/render-pptx.js` — 自动渲染管线
+
+AI 只需创建 `deck.html`，然后执行：
+
+```bash
+node scripts/render-pptx.js --deck ./deck.html --out ./output.pptx
+```
+
+脚本自动完成：
+1. 解析 `deck.html` 中的 `<section class="slide">` 块
+2. 用 Chrome/Chromium `--headless` 逐页 1920×1080 截图
+3. 等待 `document.fonts.ready` 后再截图
+4. PptxGenJS 组装，LAYOUT_WIDE
+5. 验证文件 > 1MB 且页数正确
+
+### `scripts/audit-pptx.js` — 质量校验
+
+```bash
+node scripts/audit-pptx.js ./output.pptx
+```
+
+检查：
+- 文件是否存在且 > 1KB（有效 ZIP）
+- 估算页数（基于文件大小/平均幻灯片数据量）
+- 平均幻灯片数据量（< 50KB → 图片压缩过度）
+- 文字可编辑性提示
+
+---
+
+## 🧠 v7 工程质量体系
+
+### 1. 稳定 slideId
+```
+S1_COVER, S2_SECTION, S3_BODY, S4_DATA, S5_IMAGE, S6_QUOTE, S7_CLOSE
+```
+
+### 2. 任务摄入（≤3 个问题）
+- 谁，听完后理解/相信/决定什么？
+- 受众场合？
+- 品牌约束？（有现成 PPTX 则先学习 Slide Master + 色板 + 字体）
+
+### 3. 故事板契约
 ```json
 {
-  "slideId": "S1_COVER",
-  "role": "cover",
-  "layout": "statement",
-  "job": "让投资人感觉这个市场即将爆发",
-  "claim": "中国AI应用市场3年CAGR达67%",
-  "emotion": "震撼 + 紧迫",
-  "visual": "Apple Obsidian + 巨型数字",
-  "assets": [{"slot": "bg", "type": "gradient", "status": "css-generated"}],
-  "variant": 0
+  "slideId": "S1_COVER", "role": "cover", "layout": "hero-split",
+  "job": "让投资人感觉市场即将爆发",
+  "claim": "中国 AI 应用市场 3 年 CAGR 67%",
+  "emotion": "震撼+紧迫",
+  "pipeline": "A",  // 纯视觉 PNG 全幅
+  "visual": "Apple Obsidian"
 }
 ```
 
-### 4. 三变体机制（节省成本的关键）
-对封面和核心数据页（不超过 3 页），生成 **3 个结构变体**，每个只改 CSS 200 行以内，不装图。用户选一个方向后再全套生产。
+### 4. 三变体
+封面+核心数据页+结尾页，每页出 3 个结构变体（只改 CSS ≤200 行）。用户选定方向后全量生产。
 
+### 5. 素材计划+来源追溯
+每页视觉槽位登记来源策略。数字绑定出处（`IDC 2025Q3 p.12`）。缺图不假填充——标记 `Needs-Manual`。
+
+### 6. 增量编辑
+改第 5 页 → 改 `deck.html` 中对应 `<section>` → `render-pptx.js` 重新截 `S5_DATA.png` → 重新组装 PPTX。
+
+### 7. 检查点
 ```
-S1_COVER variant-1: 全幅渐变 + 文字居中（Apple风格）
-S1_COVER variant-2: 斜切色块 + 文字左对齐（Vercel风格）
-S1_COVER variant-3: 影像级全幅图 + 文字压底（Netflix风格）
-```
-
-用户选 variant-2 → 以它为基础继续生产其余页面。
-
-### 5. 素材计划（asset plan）
-每页的每个视觉槽位登记来源策略和状态：
-
-| slideId | slot | type | policy | status |
-|---------|------|------|--------|--------|
-| S1_COVER | bg | gradient | css-generate | ✅ ready |
-| S4_DATA | chart | bar-chart | svg-generate | ✅ ready |
-| S5_IMAGE | hero | photo | user-provided | ⚠️ Needs-Manual: 请提供产品图 |
-| S7_CLOSE | logo | brand | css-text-fallback | ✅ text替代 |
-
-**素材缺位不静默填充假图**。缺图片时用 CSS/SVG 做抽象主视觉并标记 `Needs-Manual`。
-
-### 6. 增量编辑（单页再生）
-用户说"改第5页的数据"时，只动 S5_DATA，不改其他页面。流程：
-
-```
-1. 修改 S5_DATA 的 HTML section
-2. 重新截图 S5_DATA
-3. 重新组装 PPTX（复用其余页面的 PNG）
-```
-
-### 7. 来源追溯（source map）
-每个数字、每条引语、每张图片都绑定来源：
-
-```json
-{
-  "slideId": "S4_DATA",
-  "claims": [
-    {"text": "CAGR 67%", "source": "IDC 2025Q3 中国AI市场报告 p.12", "confidence": "high"},
-    {"text": "3.2亿用户", "source": "CNNIC 第55次报告", "confidence": "high"}
-  ]
-}
-```
-
-### 8. 检查点（checkpoint）
-每完成一个阶段保存进度。如果中途中断，恢复时从最后一个检查点继续：
-
-```
-checkpoint-1: 任务摄入完成 + 视觉方向选定
-checkpoint-2: 故事板完整（N页全部登记slideId+role+claim）
-checkpoint-3: 三变体选定 + 素材计划无阻塞
-checkpoint-4: 3张标杆页HTML完成+截图验证通过
-checkpoint-5: 全部页面HTML完成+缩略图总览通过
-checkpoint-6: 逐页检查通过 + PPTX组装+验证
-checkpoint-7: 最终验收通过 + quality-report.json 生成
+cp1: 任务摄入     cp2: 故事板     cp3: 三变体选定
+cp4: 标杆页 HTML  cp5: 全页 HTML   cp6: 渲染+检查
+cp7: PPTX + audit
 ```
 
 ---
 
-## 🎨 视觉系统库（20 套，CSS token 直接复制）
+## 🎨 视觉系统库（20 套 CSS token）
 
 ### 深色系
-1. **Linear Dark** — `--bg:#0d0d0d --surface:#1a1a1a --ink:#fafafa --accent:#5e6ad2 --hot:#e5484d` font:Inter 700/400
-2. **Apple Obsidian** — `--bg:#000 --surface:#0a0a0a --ink:#f5f5f7 --accent:#2997ff --hot:#ff375f` font:SF Pro Display 600-900
-3. **Vercel Midnight** — `--bg:#000 --surface:#111 --ink:#fff --accent:#fff --hot:#ff0080` font:Geist Sans 800 | 1px细线分割
-4. **Cyberpunk 2077** — `--bg:#0a0a0a --surface:#1a0030 --ink:#00f0ff --accent:#ff00ff` font:JetBrains Mono/Orbitron | 扫描线
-5. **Stripe Dark** — `--bg:#0a0f1a --surface:#0f1729 --ink:#e2e8f0 --accent:#635bff --hot:#ff6b6b` radial-glow右上
-6. **Netflix Dark** — `--bg:#000 --surface:#141414 --ink:#fff --accent:#e50914` font:Helvetica | 红色焦点条
-7. **GitHub Dark** — `--bg:#0d1117 --surface:#161b22 --ink:#c9d1d9 --accent:#58a6ff` font:Mona Sans | terminal绿
+1. **Linear Dark** — `--bg:#0d0d0d --surface:#1a1a1a --ink:#fafafa --accent:#5e6ad2 --hot:#e5484d` font:Inter
+2. **Apple Obsidian** — `--bg:#000 --ink:#f5f5f7 --accent:#2997ff` font:SF Pro Display 600-900
+3. **Vercel Midnight** — `--bg:#000 --ink:#fff --accent:#fff --hot:#ff0080` 1px 细线
+4. **Cyberpunk** — `--bg:#0a0a0a --ink:#00f0ff --accent:#ff00ff` 扫描线
+5. **Stripe Dark** — `--bg:#0a0f1a --ink:#e2e8f0 --accent:#635bff` radial-glow
+6. **Netflix** — `--bg:#000 --accent:#e50914` 红色焦点条
+7. **GitHub Dark** — `--bg:#0d1117 --ink:#c9d1d9 --accent:#58a6ff` terminal绿
 
 ### 浅色系
-8. **Apple White** — `--bg:#fff --surface:#f5f5f7 --ink:#1d1d1f --accent:#0071e3` font:SF Pro Display 600
-9. **Anthropic White** — `--bg:#faf9f5 --surface:#f5f2eb --ink:#1a1a1a --accent:#d97706` font:Source Serif 4/Inter | serif italic点缀
-10. **Stripe Light** — `--bg:#f6f9fc --surface:#fff --ink:#0a2540 --accent:#635bff` shadow:0 2px 4px
-11. **NYT Magazine** — `--bg:#fefefe --ink:#111 --accent:#d4a574` font:Georgia/Helvetica | 4px double border
-12. **Notion Light** — `--bg:#fff --surface:#f7f6f3 --ink:#37352f --accent:#2383e2` font:Lyon Display | emoji系统
-13. **Figma Light** — `--bg:#fff --surface:#f5f5f5 --ink:#000 --accent:#0d99ff` border-radius:12px
+8. **Apple White** — `--bg:#fff --ink:#1d1d1f --accent:#0071e3`
+9. **Anthropic** — `--bg:#faf9f5 --ink:#1a1a1a --accent:#d97706` serif italic
+10. **Stripe Light** — `--bg:#f6f9fc --ink:#0a2540 --accent:#635bff`
+11. **NYT Magazine** — `--bg:#fefefe --accent:#d4a574` 4px double
+12. **Notion** — `--bg:#fff --surface:#f7f6f3 --accent:#2383e2`
+13. **Figma** — `--bg:#fff --ink:#000 --accent:#0d99ff` border-radius:12px
 
-### 活力系
-14. **Gradient Galaxy** — 全色谱渐变流体 `linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef, #ec4899)`
-15. **Stripe Sessions** — `--bg:#f5f0ff` 彩虹渐变边框 conic-gradient
-16. **Pop Art** — `--bg:#fff` border:4px solid #000; box-shadow:8px 8px 0 #000
-
-### 东方美学
-17. **新东方未来** — 朱红#c41e3a+金色#d4a574+墨色底 font:Noto Serif SC
-18. **Zen Minimal** — 侘寂留白 font:Noto Serif JP | 枯山水线
-19. **国风传承** — 绢本质感+印章 font:ZCOOL XiaoWei
-
-### 自然/工业
-20. **Organic Forest** — `--bg:#0a1a0a --accent:#4ade80` radial-glow左下
+### 活力/东方/自然
+14. **Gradient Galaxy** — 全色谱渐变
+15. **Stripe Sessions** — 彩虹 conic-gradient
+16. **Pop Art** — border:4px solid; box-shadow:8px 8px 0
+17. **新东方未来** — 朱红+金色+墨色 font:Noto Serif SC
+18. **Zen Minimal** — 侘寂留白 font:Noto Serif JP
+19. **国风传承** — 绢本质感 font:ZCOOL XiaoWei
+20. **Organic Forest** — `--bg:#0a1a0a --accent:#4ade80`
 
 ---
 
-## 📐 Slidev 布局引擎（9 种，精确 CSS）
+## 📐 9 种 Slidev 布局
 
-| 指令 | 用途 | CSS 关键特征 |
-|------|------|-------------|
-| `layout:cover` | 封面 | display:grid; place-items:center; h1: clamp(54px,8vw,120px) |
-| `layout:statement` | 宣言 | flex居中; h1: clamp(48px,7vw,96px) max-width:80% |
-| `layout:two-cols` | 双栏 | grid 1fr 1fr; .left 有背景色区分 |
-| `layout:image-right` | 图文左右 | grid 4fr 6fr; img: object-fit cover |
-| `layout:center` | 居中聚焦 | flex column; .number: clamp(100px,18vw,300px) |
-| `layout:bento` | 便当网格 | grid 4×3; 首卡片横跨2列2行用accent色 |
-| `layout:timeline` | 时间线 | border-left:2px solid var(--accent); 圆点装饰 |
-| `layout:quote` | 引用 | blockquote: italic clamp(36px,5vw,64px); 大引号装饰 |
-| `layout:end` | 结束 | flex column center; CTA: border-radius:999px |
+| 布局 | CSS 关键特征 |
+|------|-------------|
+| `cover` | grid place-items:center; h1 clamp(54px,8vw,120px) |
+| `statement` | flex 居中; h1 max-width:80% |
+| `two-cols` | grid 1fr 1fr |
+| `image-right` | grid 4fr 6fr; img object-fit:cover |
+| `center` | .number clamp(100px,18vw,300px) |
+| `bento` | grid 4×3; 首卡 span 2×2 accent 色 |
+| `timeline` | border-left:2px accent; 圆点 |
+| `quote` | blockquote italic clamp(36px,5vw,64px) |
+| `end` | CTA border-radius:999px |
 
 ---
 
-## 🔧 生产管线（8 步，每步写检查点）
+## 🔧 生产管线
 
 ```
-Step 1: TASK INTAKE      → checkpoint-1: 任务摄入完成
-Step 2: STORYBOARD        → checkpoint-2: N页slideId+role+claim登记
-Step 3: 3 VARIANTS        → checkpoint-3: 视觉方向选定+素材计划无阻塞
-Step 4: BENCHMARK SLIDES  → checkpoint-4: 封面+数据页+结尾页HTML+截图
-Step 5: FULL HTML         → checkpoint-5: 全部页面HTML+缩略图总览
-Step 6: RENDER & REVIEW   → checkpoint-6: 逐页截图+逐页检查
-Step 7: PPTX ASSEMBLY     → checkpoint-7: PptxGenJS组装+文件验证
-Step 8: QUALITY REPORT    → 交付：.pptx + quality-report.json
+Step 1: TASK INTAKE     → ≤3 问题锁定传播任务+受众+品牌
+Step 2: STORYBOARD       → N 页 slideId+role+layout+claim+emotion+pipeline(A 或 B)
+Step 3: 3 VARIANTS       → 3 张标杆页的 3 个 CSS 方向 → 用户选定
+Step 4: BENCHMARK HTML   → 封面+数据页+结尾页 HTML → 截图验证
+Step 5: FULL HTML        → deck.html 全页完成
+Step 6: RENDER           → `node scripts/render-pptx.js --deck deck.html --out output.pptx`
+Step 7: AUDIT            → `node scripts/audit-pptx.js output.pptx`
+Step 8: DELIVER          → .pptx + storyboard.json + source-map.json
 ```
 
-### Step 1: 任务摄入（≤3个问题）
+### Step 6 细节：deck.html 规约
+
+```html
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+:root { --bg:#000; --ink:#f5f5f7; --accent:#2997ff; }
+.slide { position:relative; width:1920px; height:1080px; overflow:hidden; isolation:isolate; }
+.slide > * { position:absolute; }
+/* 每页的独立样式 */
+</style></head><body>
+<section class="slide" data-slide="S1_COVER">
+  <!-- background layer -->
+  <div style="inset:0; background:var(--bg);"></div>
+  <!-- midground layer -->
+  <svg>...</svg>
+  <!-- foreground layer -->
+  <h1 style="font-size:96px; color:var(--ink);">...</h1>
+</section>
+<!-- ... more slides -->
+</body></html>
 ```
-传播任务（谁，听完后理解/相信/决定什么？）
-受众场合（内部/投资人/客户/大会？）
-品牌约束（有现成PPT？Logo？色板？字体？）
-```
-如果用户给了已有PPTX → 先读它的 Slide Master + 主题色板 + 字体。
 
-### Step 2: 故事板（storyboard contract）
-为每页登记：slideId、role（cover/section/body/data/image/quote/close）、layout、job、claim、emotion、视觉方向、素材槽位。
-
-### Step 3: 三变体（标杆页验证方向）
-封面+核心数据页+结尾页，每页出 3 个结构变体（只改 CSS ≤200行）。用户选方向后再全量生产。
-
-### Step 4: 标杆页 HTML 实现
-封面、最复杂的数据页、结尾页三张先写 HTML+CSS，截图验证。**如果缩略图里看起来像模板或卡片阵列，推翻重来，不要继续**。
-
-### Step 5: 全部页面 HTML
-完成剩余页面。每页 HTML 遵守：
-- 至少 background / midground / foreground 三层
+约束：
+- 每页至少 background/midground/foreground 三层
 - 正文 ≥ 24px / 标题 54-120px / 高潮页 96-150px
-- 等待 `document.fonts.ready` 后截图
-- 无导航栏、滚动条、按钮
-
-### Step 6: 渲染 & 缩略图审查
-- 缩略图总览：至少 5 种不同 layout / 至少 2 页有冲击力 / 没有两页像复制 / 明暗交替
-- 逐页 100%：焦点明确 / 标题是结论句 / 无溢出/重叠
-
-### Step 7: PPTX 组装
-```js
-const pptx = new PptxGenJS();
-pptx.layout = 'LAYOUT_WIDE';
-for (const slideId of slideIds) {
-  const s = pptx.addSlide();
-  s.addImage({ path: `${slideId}.png`, x:0, y:0, w:13.333, h:7.5 });
-}
-await pptx.writeFile({ fileName: 'output.pptx' });
-fs.statSync('output.pptx'); // 验证 > 1MB 且页数正确
-```
-
-### Step 8: 质量报告（quality-report.json）
-```json
-{
-  "deck": "output.pptx",
-  "path": "/absolute/path/output.pptx",
-  "slides": 8,
-  "visualSystem": "Apple Obsidian",
-  "layoutsUsed": ["cover","statement","bento","two-cols","timeline","image-right","quote","end"],
-  "uniqueLayouts": 6,
-  "sourceMap": "source-map.json",
-  "assetPlan": "asset-plan.json",
-  "needsManual": [{"slideId":"S5_IMAGE","slot":"hero","reason":"缺产品图，已用CSS渐变替代"}],
-  "checksPassed": {
-    "thumbnailVariety": true,
-    "visualFocusPerSlide": true,
-    "styleConsistency": true,
-    "dataTraceability": true,
-    "pptxValid": true
-  }
-}
-```
+- 无导航栏/滚动条/按钮
+- `<style>` 在 `<head>` 中一次定义，`.slide` 内元素用行内或 `<style>` 块
 
 ---
 
-## 🛡️ 优雅降级（不假完成）
+## 🛡️ 优雅降级
 
 | 场景 | 响应 |
 |------|------|
-| 缺关键数据 | `⚠️ Needs-Manual: 请提供[具体数据]以支撑S4_DATA的结论，当前用CSS可视化占位` |
-| 缺图片素材 | `⚠️ Needs-Manual: S5_IMAGE需要[描述]尺寸的图，当前用SVG抽象主视觉替代` |
-| 缺品牌色/Logo | `⚠️ 从前一个PPTX学习了色板，但Logo需用户提供；当前用文字替代` |
-| 无法生成某页 | 不生成假页面，标记为 `BLOCKED` +原因 |
-| 现有PPTX做参考 | 先学习 Slide Master → 主题色板 → 字体 → 布局节奏 → 复刻风格生成新页 |
+| Chrome 不可用 | `⚠️ render-pptx.js 需要 Chrome/Chromium。已生成 deck.html，可手动截图或用 generate_document 快速兜底` |
+| 缺图片素材 | `⚠️ Needs-Manual: S5_IMAGE 需要 [描述] 的图。当前用 SVG 抽象主视觉替代` |
+| 缺关键数据 | `⚠️ Needs-Manual: 请提供 [数据] 以支撑 S4_DATA 的结论` |
+| 已有 PPTX 参考 | 先用脚本解析其 Slide Master + 色板 + 字体，再复刻风格生成新页 |
 
 ---
 
-## 🎯 增量编辑协议
+## 📦 交付
 
-用户说"改第5页的数据"，执行：
-```
-1. 找到 slideId=S5_DATA 的 HTML section
-2. 修改数据和文案
-3. 重新截图 S5_DATA
-4. 只重新组装 PPTX（复用其余 PNG）
-5. 更新 source-map.json 中 S5_DATA 的 claims
-```
-
-用户说"加一页在第3页后面"，执行：
-```
-1. 新增 S3b_BODY，插入到 storyboard 的 S3 之后
-2. 写 HTML section → 截图 → 插入 PPTX
-3. 后面的 slideId 不需要重排号（S4 依然是 S4）
-```
-
----
-
-## 📦 交付清单
-
-`quality-report.json` 包含上述检查结果。每次交付附带：
-
-- [ ] `.pptx` 可打开 + 页数正确 + 文件 > 1MB
-- [ ] `storyboard.json`（所有 slideId/job/claim）
-- [ ] `source-map.json`（所有数据/引语的来源）
-- [ ] `asset-plan.json`（所有素材槽位+状态）
-- [ ] `deck.html`（可复现的源文件）
-- [ ] 明确标记 `Needs-Manual` 项（如适用）
+- [ ] `.pptx` 通过 `audit-pptx.js`（PASS 或 PASS_WITH_WARNINGS）
+- [ ] `storyboard.json`（全部 slideId/job/claim/emotion/pipeline）
+- [ ] `source-map.json`（数字/引语来源）
+- [ ] `deck.html`（可复现源文件）
+- [ ] `Needs-Manual` 项明确标记
