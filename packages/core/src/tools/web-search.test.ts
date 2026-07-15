@@ -105,6 +105,28 @@ describe('WebSearchTool', () => {
       );
     });
 
+    it('首条内置线路被拦截时自动切到下一条，不把线路错误丢给用户', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('<html><body>captcha</body></html>', { status: 200 }),
+        )
+        .mockResolvedValueOnce(
+          new Response(BING_HTML_FIXTURE, { status: 200 }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tool = new WebSearchTool(makeConfig());
+      const result = await tool.execute(
+        { query: '自动搜索线路' },
+        new AbortController().signal,
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(result.llmContent)).toContain('1. First & Best Result');
+      expect(String(result.llmContent)).not.toContain('Error:');
+    });
+
     it('页面结构不认识时 fail-loud 返回明确错误，而不是静默空结果', async () => {
       vi.stubGlobal(
         'fetch',
@@ -155,7 +177,7 @@ describe('WebSearchTool', () => {
       );
       await vi.advanceTimersByTimeAsync(15001);
       const result = await pending;
-      expect(String(result.llmContent)).toContain('timed out after 15s');
+      expect(String(result.llmContent)).toContain('timed out after');
     });
   });
 
@@ -221,8 +243,10 @@ describe('WebSearchTool', () => {
       expect(content).toContain('only snippet');
     });
 
-    it('没配 key 时 fail-loud，且不发任何请求', async () => {
-      const fetchMock = vi.fn();
+    it('自定义线路没配 key 时自动回到内置搜索，不要求小白用户排查配置', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(BING_HTML_FIXTURE, { status: 200 }),
+      );
       vi.stubGlobal('fetch', fetchMock);
 
       const tool = new WebSearchTool(
@@ -236,9 +260,9 @@ describe('WebSearchTool', () => {
         new AbortController().signal,
       );
       const content = String(result.llmContent);
-      expect(content).toContain('Error');
-      expect(content).toContain('OTTO_BOCHA_API_KEY');
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(content).toContain('provider: bing');
+      expect(content).toContain('First & Best Result');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('响应结构不对时 fail-loud', async () => {
@@ -329,8 +353,10 @@ describe('WebSearchTool', () => {
       });
     });
 
-    it('缺少 API Key 或模型时 fail-loud，且不发请求', async () => {
-      const fetchMock = vi.fn();
+    it('缺少 API Key 或模型时自动使用内置线路', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(BING_HTML_FIXTURE, { status: 200 }),
+      );
       vi.stubGlobal('fetch', fetchMock);
       const tool = new WebSearchTool(
         makeConfig({
@@ -347,9 +373,9 @@ describe('WebSearchTool', () => {
         { query: 'x' },
         new AbortController().signal,
       );
-      expect(String(result.llmContent)).toContain('Error');
-      expect(String(result.llmContent)).toContain('ARK_API_KEY');
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(String(result.llmContent)).toContain('provider: bing');
+      expect(String(result.llmContent)).toContain('First & Best Result');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 

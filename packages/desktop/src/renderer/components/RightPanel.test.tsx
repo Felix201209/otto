@@ -222,14 +222,14 @@ describe('RightPanel v1.7 工作入口', () => {
     render(<RightPanel busy={false} onLaunchExpert={vi.fn()} onOpenAgents={vi.fn()} />);
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
     fireEvent.click(
-      screen.getByRole('button', { name: '总结当下工作 → 生成报告' }),
+      screen.getByRole('button', { name: '生成今日总结' }),
     );
 
     expect(workLogReport).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText(/已生成并保存「市场竞品调研报告」/),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '打开已生成报告' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开总结' }));
     await waitFor(() =>
       expect(openPath).toHaveBeenCalledWith(
         '/tmp/2026-07-10-市场竞品调研报告.md',
@@ -261,8 +261,8 @@ describe('RightPanel v1.7 工作入口', () => {
       '• 09:30 生成调研报告\n• 14:20 安排复盘日程',
     ));
     const tooltipText = screen.getByRole('tooltip').textContent ?? '';
-    expect(tooltipText).toContain('成果 生成调研报告');
+    expect(tooltipText).toContain('• 完成 · 生成调研报告');
     expect(tooltipText).toContain('完成宏创园区竞品数据对比与结论。');
-    expect(tooltipText).toContain('[calendar] 安排复盘日程（失败）');
+    expect(tooltipText).toContain('• calendar · 安排复盘日程（失败）');
   });
 });

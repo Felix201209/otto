@@ -31,6 +31,7 @@ import {
   IconSettings,
 } from './icons.js';
 import { OrganizationTree } from './OrganizationTree.js';
+import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 
 function formatTime(ts: number): string {
@@ -87,7 +88,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onOpenHub: () => void;
   onOpenAccounts?: () => void;
-  onLogout?: () => void;
+  onLogout?: () => void | Promise<void>;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -111,6 +112,8 @@ export function Sidebar({
   onDelete,
 }: SidebarProps): React.JSX.Element {
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const sessionGroups = relativeSessionGroups(groups);
   const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
 
@@ -229,10 +232,39 @@ export function Sidebar({
               <strong>{enterpriseAccount.name}</strong>
               <small>{enterpriseAccount.department || `@${enterpriseAccount.username}`}</small>
             </span>
-            {onLogout ? <button type="button" onClick={onLogout} aria-label="退出登录" title="退出登录">↗</button> : null}
+            {onLogout ? (
+              <button
+                type="button"
+                className="otto-sidebar-account__logout"
+                onClick={() => setLogoutConfirmOpen(true)}
+                aria-label="退出登录"
+                title="退出登录"
+              >
+                退出
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
+      {enterpriseAccount && onLogout ? (
+        <LogoutConfirmDialog
+          open={logoutConfirmOpen}
+          accountName={enterpriseAccount.name}
+          busy={logoutBusy}
+          onCancel={() => setLogoutConfirmOpen(false)}
+          onConfirm={() => {
+            void (async () => {
+              setLogoutBusy(true);
+              try {
+                await onLogout();
+                setLogoutConfirmOpen(false);
+              } finally {
+                setLogoutBusy(false);
+              }
+            })();
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

@@ -59,7 +59,10 @@ import {
   type AutoSkillCandidateInfo,
 } from './protocol.js';
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
-import { resolveAgentProfile } from './agentProfiles.js';
+import {
+  buildAgentProfileRuntimeRules,
+  resolveAgentProfile,
+} from './agentProfiles.js';
 import {
   InMemorySessionStore,
   type SessionRuntime,
@@ -134,6 +137,7 @@ import {
   getKnowledgeDir,
   getSessionManager,
   getAutoMemoryEngine,
+  loadBuiltinSkillInstructions,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -186,7 +190,14 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
     model: model?.startsWith('otto:') ? undefined : model,
     feishuMode: Boolean(summary?.feishuChatId),
-    ...(profile ? { userRules: profile.systemPrompt } : {}),
+    ...(profile
+      ? {
+          userRules: buildAgentProfileRuntimeRules(
+            profile,
+            loadBuiltinSkillInstructions,
+          ),
+        }
+      : {}),
     ...(summary?.productEdition !== 'enterprise'
       ? {
           excludeTools: [

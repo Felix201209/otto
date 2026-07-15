@@ -40,6 +40,7 @@ import {
   appearIncompleteFromStreaming,
   getWorkLogger,
   generateCustomModelId,
+  loadBuiltinSkillInstructions,
   MODEL_SERVICE_URL_UNAVAILABLE,
   type CustomModelConfig,
   type ToolCallRequestInfo,
@@ -193,6 +194,13 @@ function messageContentToText(content: MessageContent): string {
     .join('\n')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** 普通会话中的 PPT 意图也要命中内置工作流，不能要求用户先找到专家入口。 */
+export function messageNeedsBuiltinPptSkill(text: string): boolean {
+  return /(?:\b(?:ppt|pptx)\b|幻灯片|演示文稿|\b(?:pitch|slide)\s+deck\b)/i.test(
+    text,
+  );
 }
 
 const GENERIC_SESSION_TITLES = new Set([
@@ -483,6 +491,34 @@ export class CoreSessionRuntime implements SessionRuntime {
       return;
     }
     const toolRegistry = this.toolRegistry;
+
+    // 自然语言“做 PPT”与 /ppt、专家卡片走同一内置 Skill。直接更新 system
+    // instruction，不把可靠性寄托在模型是否记得调用 use_skill。
+    const taskText = messageContentToText(input);
+    if (messageNeedsBuiltinPptSkill(taskText)) {
+      const currentRules = this.config.getUserRules();
+      const marker = '<skill_loaded name="ppt-creator" source="otto-builtin">';
+      if (!currentRules.includes(marker)) {
+        const skill = loadBuiltinSkillInstructions('ppt-creator')?.trim();
+        if (skill) {
+          this.config.setUserRules(
+            [
+              currentRules,
+              '## Otto 内置强制 Skill：ppt-creator',
+              '以下完整 Skill 已由 Otto 在系统层直接加载。不要再次调用 use_skill，也不得跳过、缩写或改用快速模板；必须按其工作流执行。',
+              marker,
+              skill,
+              '</skill_loaded>',
+            ].filter(Boolean).join('\n\n'),
+          );
+          try {
+            await this.config.getOttoClient().updateSystemPromptWithMcpPrompts();
+          } catch {
+            // 动态刷新失败不让本轮对话直接报错；专家 profile 路径仍在初始化时注入。
+          }
+        }
+      }
+    }
 
     const chat = await this.config.getOttoClient().getChat();
     let modelName = this.config.getModel();

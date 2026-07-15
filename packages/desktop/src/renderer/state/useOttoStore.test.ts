@@ -25,6 +25,7 @@ import type {
 let capturedHandler: ((f: ServerToClient) => void) | null = null;
 let _capturedConnHandler: ((connected: boolean) => void) | null = null;
 const sendSpy = vi.fn();
+const usageSpy = vi.fn(async () => ({ recorded: true, source: 'client_reported' as const }));
 
 vi.mock('../transport.js', () => ({
   connect: vi.fn(async () => true),
@@ -88,6 +89,12 @@ function makeMsg(over: Partial<OttoMessage> = {}): OttoMessage {
 beforeEach(() => {
   capturedHandler = null;
   sendSpy.mockClear();
+  usageSpy.mockReset();
+  usageSpy.mockResolvedValue({ recorded: true, source: 'client_reported' });
+  Object.defineProperty(window, 'otto', {
+    configurable: true,
+    value: { enterpriseUsageRecord: usageSpy },
+  });
 });
 
 afterEach(() => {
@@ -271,6 +278,52 @@ describe('applyFrame 各帧分支', () => {
     expect(m.isStreaming).toBe(false);
     expect(m.isReasoning).toBe(false);
     expect(m.tokenUsage).toEqual({ inputTokens: 1, outputTokens: 2, totalTokens: 3 });
+  });
+
+  it('chat_complete：将当前登录会话的 provider Token 用量异步上报', () => {
+    const { push } = setup();
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 's1', model: 'deepseek-v4-pro' }) },
+    });
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'm1' }) } });
+    push({
+      type: 'chat_complete',
+      payload: {
+        sessionId: 's1',
+        messageId: 'm1',
+        tokenUsage: {
+          inputTokens: 11, outputTokens: 22, totalTokens: 33, model: 'provider-model-id',
+        },
+      },
+    });
+
+    expect(usageSpy).toHaveBeenCalledWith({
+      sessionId: 's1',
+      messageId: 'm1',
+      model: 'provider-model-id',
+      inputTokens: 11,
+      outputTokens: 22,
+      totalTokens: 33,
+    });
+  });
+
+  it('Token 上报失败不阻断 chat_complete 收口，也不污染对话错误状态', () => {
+    usageSpy.mockRejectedValueOnce(new Error('企业用量服务暂不可用'));
+    const { view, push } = setup();
+    push({ type: 'message_start', payload: { message: makeMsg({ id: 'm1', isStreaming: true }) } });
+    push({
+      type: 'chat_complete',
+      payload: {
+        sessionId: 's1',
+        messageId: 'm1',
+        tokenUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      },
+    });
+
+    expect(view.result.current.state.messages['s1'][0].isStreaming).toBe(false);
+    expect(view.result.current.state.messages['s1'][0].tokenUsage?.totalTokens).toBe(3);
+    expect(view.result.current.state.lastError).toBeNull();
   });
 
   it('chat_complete(cancelled)：工具执行阶段取消也清掉 isProcessingTools，停止按钮不再卡住', () => {
@@ -631,6 +684,8 @@ describe('groupSessions selector', () => {
       modelsLoaded: true,
       currentModel: null,
       lastError: null,
+      queuedCounts: {},
+      pendingCreateRequestId: null,
     };
   }
 

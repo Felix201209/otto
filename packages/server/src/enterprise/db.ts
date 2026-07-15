@@ -12,14 +12,23 @@ import os from 'os';
 import fs from 'fs';
 import {
   createHash,
+  createHmac,
   randomBytes,
   randomUUID,
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
+import {
+  buildOrganizationInviteLink,
+  resolveEnterprisePublicBaseUrl,
+} from './publicInvite.js';
 
 const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+
+export const DEFAULT_ORGANIZATION_ID = 'org_default';
+export const ORGANIZATION_INVITE_VALIDITY_MS = 5 * 60 * 60 * 1000;
+const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /**
  * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
@@ -81,6 +90,14 @@ export function getDB(): Database {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
+  // 首次进入 B2B v2 schema 前保留一份只读回滚副本。已有备份不覆盖，避免反复占用磁盘。
+  if (fs.existsSync(DB_PATH)) {
+    const backupPath = `${DB_PATH}.pre-b2b-v2.bak`;
+    if (!fs.existsSync(backupPath) && fs.statSync(DB_PATH).size > 0) {
+      fs.copyFileSync(DB_PATH, backupPath, fs.constants.COPYFILE_EXCL);
+    }
+  }
+
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -91,8 +108,31 @@ export function getDB(): Database {
 
 function initSchema(d: Database): void {
   d.exec(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      invite_secret TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS organization_invites (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      nonce TEXT NOT NULL,
+      issued_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      revoked_at_ms INTEGER,
+      created_by_account_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS employees (
       id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       name TEXT NOT NULL,
       role TEXT,
       department TEXT,
@@ -100,11 +140,13 @@ function initSchema(d: Database): void {
       status TEXT DEFAULT 'active',
       personality TEXT,
       onboarded_at TEXT DEFAULT (datetime('now')),
-      offboarded_at TEXT
+      offboarded_at TEXT,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS task_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       employee_id TEXT NOT NULL,
       task_type TEXT NOT NULL,
       context TEXT,
@@ -113,40 +155,48 @@ function initSchema(d: Database): void {
       tokens_used INTEGER DEFAULT 0,
       cost_cny REAL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (employee_id) REFERENCES employees(id)
+      FOREIGN KEY (employee_id) REFERENCES employees(id),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS knowledge (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       department TEXT,
       category TEXT,
       content TEXT NOT NULL,
       contributor TEXT,
       confidence REAL DEFAULT 0.5,
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS invite_codes (
       code TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       department TEXT NOT NULL,
       max_uses INTEGER DEFAULT 1,
       used_count INTEGER DEFAULT 0,
       created_by TEXT,
       created_at TEXT DEFAULT (datetime('now')),
-      expires_at TEXT
+      expires_at TEXT,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       event TEXT NOT NULL,
       employee_id TEXT,
       detail TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       employee_id TEXT UNIQUE,
       username TEXT NOT NULL COLLATE NOCASE UNIQUE,
       phone TEXT,
@@ -158,41 +208,77 @@ function initSchema(d: Database): void {
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (employee_id) REFERENCES employees(id)
+      FOREIGN KEY (employee_id) REFERENCES employees(id),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS account_tags (
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       account_id TEXT NOT NULL,
       tag TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (account_id, tag),
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       account_id TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       expires_at TEXT NOT NULL,
       revoked_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_used_at TEXT,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS sms_login_challenges (
       id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       account_id TEXT NOT NULL,
       code_hash TEXT NOT NULL,
       expires_at_ms INTEGER NOT NULL,
       attempts_remaining INTEGER NOT NULL DEFAULT 5,
       consumed_at_ms INTEGER,
       created_at_ms INTEGER NOT NULL,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_registration_challenges (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
+      phone TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      attempts_remaining INTEGER NOT NULL DEFAULT 5,
+      consumed_at_ms INTEGER,
+      created_at_ms INTEGER NOT NULL,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS account_token_usage (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(account_id, message_id),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS it_tickets (
       id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       created_by_account_id TEXT NOT NULL,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
@@ -200,10 +286,12 @@ function initSchema(d: Database): void {
       status TEXT NOT NULL DEFAULT 'open',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id)
+      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE TABLE IF NOT EXISTS ticket_deliveries (
+      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       ticket_id TEXT NOT NULL,
       account_id TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'delivered',
@@ -211,10 +299,14 @@ function initSchema(d: Database): void {
       read_at TEXT,
       PRIMARY KEY (ticket_id, account_id),
       FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_emp ON task_logs(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
+    CREATE INDEX IF NOT EXISTS idx_organization_invites_active
+      ON organization_invites(organization_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_tasks_type ON task_logs(task_type);
     CREATE INDEX IF NOT EXISTS idx_knowledge_dept ON knowledge(department);
     CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
@@ -222,8 +314,24 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sms_challenges_account_created
       ON sms_login_challenges(account_id, created_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_sms_registration_phone_created
+      ON sms_registration_challenges(phone, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
+    CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
+      ON account_token_usage(organization_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
+      ON account_token_usage(account_id, created_at);
   `);
+
+  d.prepare(
+    `INSERT OR IGNORE INTO organizations (id, name, slug, invite_secret)
+     VALUES (?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_ORGANIZATION_ID,
+    process.env.OTTO_DEFAULT_ORGANIZATION_NAME?.trim() || '默认企业',
+    'default',
+    randomBytes(32).toString('hex'),
+  );
 
   // v1.8 以前的线上库没有手机号列。先探测再做幂等迁移，保留既有账号和会话。
   const accountColumns = d.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>;
@@ -234,6 +342,302 @@ function initSchema(d: Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_phone_unique
       ON accounts(phone) WHERE phone IS NOT NULL;
   `);
+
+  // B2B v2：旧库所有既有数据归入默认企业，密码、标签和会话继续有效。
+  const ensureOrganizationColumn = (table: string): void => {
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'organization_id')) {
+      d.exec(
+        `ALTER TABLE ${table} ADD COLUMN organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}'`,
+      );
+    }
+  };
+  for (const table of [
+    'employees',
+    'task_logs',
+    'knowledge',
+    'invite_codes',
+    'audit_logs',
+    'accounts',
+    'account_tags',
+    'auth_sessions',
+    'sms_login_challenges',
+    'sms_registration_challenges',
+    'it_tickets',
+    'ticket_deliveries',
+  ]) ensureOrganizationColumn(table);
+
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
+    CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_organization ON knowledge(organization_id, department);
+    CREATE INDEX IF NOT EXISTS idx_audit_organization ON audit_logs(organization_id, created_at);
+    PRAGMA user_version = 2;
+  `);
+}
+
+// ============================================================
+// Organizations and time-boxed registration invites
+// ============================================================
+
+export interface OrganizationView {
+  id: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface OrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  invite_secret: string;
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationInviteView {
+  id: string;
+  organizationId: string;
+  code: string;
+  link: string;
+  status: 'active' | 'expired' | 'revoked';
+  issuedAt: string;
+  expiresAt: string;
+  validHours: 5;
+}
+
+interface OrganizationInviteRow {
+  id: string;
+  organization_id: string;
+  nonce: string;
+  issued_at_ms: number;
+  expires_at_ms: number;
+  revoked_at_ms: number | null;
+}
+
+function toOrganizationView(row: OrganizationRow): OrganizationView {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeOrganizationSlug(input: string): string {
+  const slug = input.trim().toLocaleLowerCase('en-US').replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!slug || slug.length > 48) throw new Error('企业标识只能使用字母、数字和连字符');
+  return slug;
+}
+
+export function createOrganization(input: {
+  name: string;
+  slug?: string;
+  now?: number;
+}): OrganizationView {
+  const name = input.name.trim();
+  if (!name || name.length > 80) throw new Error('企业名称不能为空且不能超过 80 个字符');
+  const slug = normalizeOrganizationSlug(
+    input.slug || `company-${randomBytes(5).toString('hex')}`,
+  );
+  const id = `org_${randomUUID()}`;
+  getDB().prepare(
+    `INSERT INTO organizations (id, name, slug, invite_secret)
+     VALUES (?, ?, ?, ?)`,
+  ).run(id, name, slug, randomBytes(32).toString('hex'));
+  logAudit('organization_create', null, `Organization ${slug} created`, id);
+  return getOrganization(id)!;
+}
+
+export function getOrganization(id: string): OrganizationView | null {
+  const row = getDB().prepare('SELECT * FROM organizations WHERE id = ?').get(id) as
+    | OrganizationRow
+    | undefined;
+  return row ? toOrganizationView(row) : null;
+}
+
+export function listOrganizations(): OrganizationView[] {
+  return (getDB().prepare('SELECT * FROM organizations ORDER BY name, slug').all() as OrganizationRow[])
+    .map(toOrganizationView);
+}
+
+function normalizeOrganizationInviteCode(code: string): string {
+  return code.toLocaleUpperCase('en-US').replace(/[^A-Z2-9]/g, '');
+}
+
+function deriveOrganizationInviteCode(organization: OrganizationRow, nonce: string): string {
+  const digest = createHmac('sha256', organization.invite_secret)
+    .update(`${organization.id}:${nonce}`)
+    .digest();
+  let code = '';
+  for (let index = 0; index < 8; index += 1) {
+    code += ORGANIZATION_INVITE_ALPHABET[digest[index]! % ORGANIZATION_INVITE_ALPHABET.length];
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
+function toOrganizationInviteView(
+  row: OrganizationInviteRow,
+  organization: OrganizationRow,
+  now: number,
+): OrganizationInviteView {
+  const status = row.revoked_at_ms != null
+    ? 'revoked'
+    : now >= row.expires_at_ms ? 'expired' : 'active';
+  const code = deriveOrganizationInviteCode(organization, row.nonce);
+  const publicBaseUrl = resolveEnterprisePublicBaseUrl({
+    configuredUrl: process.env.OTTO_ENTERPRISE_PUBLIC_URL,
+  });
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    code,
+    link: buildOrganizationInviteLink(publicBaseUrl, code),
+    status,
+    issuedAt: new Date(row.issued_at_ms).toISOString(),
+    expiresAt: new Date(row.expires_at_ms).toISOString(),
+    validHours: 5,
+  };
+}
+
+export type OrganizationInviteStatus = 'active' | 'expired' | 'revoked' | 'invalid';
+
+export interface OrganizationInviteInspection {
+  status: OrganizationInviteStatus;
+  organizationId: string | null;
+}
+
+/**
+ * Inspect one derived invite code without returning organization metadata.
+ * Public landing pages use this to distinguish a missing link from a link that
+ * existed but is no longer usable, while keeping tenant details private.
+ */
+export function inspectOrganizationInvite(
+  code: string,
+  now = Date.now(),
+): OrganizationInviteInspection {
+  const normalized = normalizeOrganizationInviteCode(code);
+  if (normalized.length !== 8) return { status: 'invalid', organizationId: null };
+
+  const rows = getDB().prepare(
+    `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
+     FROM organization_invites i
+     JOIN organizations o ON o.id = i.organization_id`,
+  ).all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+  const matches = rows.filter((row) => {
+    const organization: OrganizationRow = {
+      id: row.organization_id,
+      name: row.name,
+      slug: row.slug,
+      invite_secret: row.invite_secret,
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+    const expected = normalizeOrganizationInviteCode(
+      deriveOrganizationInviteCode(organization, row.nonce),
+    );
+    return expected.length === normalized.length
+      && timingSafeEqual(Buffer.from(expected), Buffer.from(normalized));
+  });
+  if (matches.length !== 1) return { status: 'invalid', organizationId: null };
+
+  const match = matches[0]!;
+  if (match.status !== 'active') return { status: 'invalid', organizationId: null };
+  if (match.revoked_at_ms != null) {
+    return { status: 'revoked', organizationId: match.organization_id };
+  }
+  if (now >= match.expires_at_ms) {
+    return { status: 'expired', organizationId: match.organization_id };
+  }
+  return { status: 'active', organizationId: match.organization_id };
+}
+
+export function issueOrganizationInvite(
+  organizationId: string,
+  now = Date.now(),
+  createdByAccountId?: string | null,
+): OrganizationInviteView {
+  const organization = getDB().prepare(
+    'SELECT * FROM organizations WHERE id = ? AND status = ?',
+  ).get(organizationId, 'active') as OrganizationRow | undefined;
+  if (!organization) throw new Error('Organization not found');
+  const id = `orginvite_${randomUUID()}`;
+  const nonce = randomBytes(24).toString('base64url');
+  const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
+  const database = getDB();
+  database.prepare(
+    `INSERT INTO organization_invites
+       (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, organizationId, nonce, now, expiresAtMs, createdByAccountId || null);
+  database.prepare(
+    `UPDATE organization_invites SET revoked_at_ms = ?
+     WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
+  ).run(now, organizationId, id);
+  logAudit('organization_invite_issue', null, 'Registration invite issued for 5 hours', organizationId);
+  const row = database.prepare('SELECT * FROM organization_invites WHERE id = ?').get(id) as OrganizationInviteRow;
+  return toOrganizationInviteView(row, organization, now);
+}
+
+export function getOrganizationInvite(
+  organizationId: string,
+  now = Date.now(),
+): OrganizationInviteView | null {
+  const organization = getDB().prepare('SELECT * FROM organizations WHERE id = ?').get(organizationId) as
+    | OrganizationRow
+    | undefined;
+  if (!organization) return null;
+  const row = getDB().prepare(
+    `SELECT * FROM organization_invites
+     WHERE organization_id = ? ORDER BY issued_at_ms DESC LIMIT 1`,
+  ).get(organizationId) as OrganizationInviteRow | undefined;
+  return row ? toOrganizationInviteView(row, organization, now) : null;
+}
+
+export function resolveOrganizationInvite(code: string, now = Date.now()): OrganizationView | null {
+  const normalized = normalizeOrganizationInviteCode(code);
+  if (normalized.length !== 8) return null;
+  const rows = getDB().prepare(
+    `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
+     FROM organization_invites i
+     JOIN organizations o ON o.id = i.organization_id
+     WHERE i.revoked_at_ms IS NULL AND i.expires_at_ms > ? AND o.status = 'active'`,
+  ).all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+  const matches = rows.filter((row) => {
+    const organization: OrganizationRow = {
+      id: row.organization_id,
+      name: row.name,
+      slug: row.slug,
+      invite_secret: row.invite_secret,
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+    const expected = normalizeOrganizationInviteCode(
+      deriveOrganizationInviteCode(organization, row.nonce),
+    );
+    return expected.length === normalized.length
+      && timingSafeEqual(Buffer.from(expected), Buffer.from(normalized));
+  });
+  if (matches.length !== 1) return null;
+  const match = matches[0]!;
+  return toOrganizationView({
+    id: match.organization_id,
+    name: match.name,
+    slug: match.slug,
+    invite_secret: match.invite_secret,
+    status: match.status,
+    created_at: match.created_at,
+    updated_at: match.updated_at,
+  });
 }
 
 // ============================================================
@@ -242,6 +646,8 @@ function initSchema(d: Database): void {
 
 export interface AccountView {
   id: string;
+  organizationId: string;
+  organizationName: string;
   employeeId: string | null;
   username: string;
   phone: string | null;
@@ -257,6 +663,7 @@ export interface AccountView {
 
 interface AccountRow {
   id: string;
+  organization_id: string;
   employee_id: string | null;
   username: string;
   phone: string | null;
@@ -316,15 +723,18 @@ function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function tagsForAccount(accountId: string): string[] {
+function tagsForAccount(accountId: string, organizationId: string): string[] {
   return (getDB().prepare(
-    'SELECT tag FROM account_tags WHERE account_id = ? ORDER BY tag',
-  ).all(accountId) as Array<{ tag: string }>).map((row) => row.tag);
+    'SELECT tag FROM account_tags WHERE account_id = ? AND organization_id = ? ORDER BY tag',
+  ).all(accountId, organizationId) as Array<{ tag: string }>).map((row) => row.tag);
 }
 
 function toAccountView(row: AccountRow): AccountView {
+  const organization = getOrganization(row.organization_id);
   return {
     id: row.id,
+    organizationId: row.organization_id,
+    organizationName: organization?.name || '未知企业',
     employeeId: row.employee_id,
     username: row.username,
     phone: row.phone,
@@ -333,20 +743,25 @@ function toAccountView(row: AccountRow): AccountView {
     department: row.department,
     isAdmin: row.is_admin === 1,
     status: row.status,
-    tags: tagsForAccount(row.id),
+    tags: tagsForAccount(row.id, row.organization_id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-function replaceAccountTags(accountId: string, tags: string[]): void {
+function replaceAccountTags(accountId: string, organizationId: string, tags: string[]): void {
   const database = getDB();
-  database.prepare('DELETE FROM account_tags WHERE account_id = ?').run(accountId);
-  const insert = database.prepare('INSERT INTO account_tags (account_id, tag) VALUES (?, ?)');
-  for (const tag of normalizeTags(tags)) insert.run(accountId, tag);
+  database.prepare(
+    'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
+  ).run(accountId, organizationId);
+  const insert = database.prepare(
+    'INSERT INTO account_tags (organization_id, account_id, tag) VALUES (?, ?, ?)',
+  );
+  for (const tag of normalizeTags(tags)) insert.run(organizationId, accountId, tag);
 }
 
 export function createAccount(input: {
+  organizationId?: string;
   username: string;
   password: string;
   name: string;
@@ -357,6 +772,8 @@ export function createAccount(input: {
   tags?: string[];
   isAdmin?: boolean;
 }): AccountView {
+  const organizationId = input.organizationId || DEFAULT_ORGANIZATION_ID;
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
   const username = normalizeUsername(input.username);
   const name = input.name.trim();
   if (!username || !name || !input.password) throw new Error('username, password and name required');
@@ -364,10 +781,11 @@ export function createAccount(input: {
   try {
     getDB().prepare(
     `INSERT INTO accounts
-       (id, employee_id, username, phone, password_hash, name, role, department, is_admin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, is_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
+      organizationId,
       input.employeeId || null,
       username,
       normalizeOptionalPhone(input.phone),
@@ -383,36 +801,85 @@ export function createAccount(input: {
     }
     throw error;
   }
-  replaceAccountTags(id, input.tags ?? []);
-  logAudit('account_create', input.employeeId || null, `Preset account ${username} created`);
+  replaceAccountTags(id, organizationId, input.tags ?? []);
+  logAudit('account_create', input.employeeId || null, `Preset account ${username} created`, organizationId);
   return getAccount(id)!;
 }
 
-export function getAccount(id: string): AccountView | null {
-  const row = getDB().prepare('SELECT * FROM accounts WHERE id = ?').get(id) as AccountRow | undefined;
+export function getAccount(id: string, organizationId?: string): AccountView | null {
+  const row = (organizationId
+    ? getDB().prepare('SELECT * FROM accounts WHERE id = ? AND organization_id = ?').get(id, organizationId)
+    : getDB().prepare('SELECT * FROM accounts WHERE id = ?').get(id)) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
 }
 
-export function listAccounts(): AccountView[] {
-  return (getDB().prepare('SELECT * FROM accounts ORDER BY name, username').all() as AccountRow[])
+export function listAccounts(organizationId = DEFAULT_ORGANIZATION_ID): AccountView[] {
+  return (getDB().prepare(
+    'SELECT * FROM accounts WHERE organization_id = ? ORDER BY name, username',
+  ).all(organizationId) as AccountRow[])
     .map(toAccountView);
 }
 
-export function authenticateAccount(username: string, password: string): AccountView | null {
-  const normalized = normalizeUsername(username);
-  const row = getDB().prepare(
+export function authenticateAccount(identifier: string, password: string): AccountView | null {
+  const normalized = normalizeUsername(identifier);
+  let row = getDB().prepare(
     'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE',
   ).get(normalized) as AccountRow | undefined;
-  if (!row || row.status !== 'active' || !passwordMatches(password, row.password_hash)) return null;
+  if (!row) {
+    try {
+      row = getDB().prepare(
+        'SELECT * FROM accounts WHERE phone = ?',
+      ).get(normalizePhone(identifier)) as AccountRow | undefined;
+    } catch {
+      // 不是手机号时继续按“账号或密码错误”处理，避免泄露账号是否存在。
+    }
+  }
+  if (!row || row.status !== 'active'
+    || getOrganization(row.organization_id)?.status !== 'active'
+    || !passwordMatches(password, row.password_hash)) return null;
   return toAccountView(row);
 }
 
-export function findActiveAccountByPhone(phone: string): AccountView | null {
+export function findAccountByPhone(phone: string): AccountView | null {
   const normalized = normalizePhone(phone);
   const row = getDB().prepare(
-    "SELECT * FROM accounts WHERE phone = ? AND status = 'active'",
+    'SELECT * FROM accounts WHERE phone = ?',
   ).get(normalized) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
+}
+
+export function findActiveAccountByPhone(phone: string): AccountView | null {
+  const account = findAccountByPhone(phone);
+  return account?.status === 'active' ? account : null;
+}
+
+export function createSelfRegisteredAccount(input: {
+  organizationId: string;
+  phone: string;
+  name: string;
+  password: string;
+}): AccountView {
+  const normalized = normalizePhone(input.phone);
+  const existing = findAccountByPhone(normalized);
+  if (existing) throw new Error('该手机号已注册，请直接登录');
+
+  const digits = normalized.slice(3);
+  try {
+    return createAccount({
+      organizationId: input.organizationId,
+      username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
+      password: input.password,
+      name: input.name,
+      phone: normalized,
+      role: '成员',
+      tags: ['普通成员'],
+      isAdmin: false,
+    });
+  } catch (error) {
+    // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
+    if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+    throw error;
+  }
 }
 
 export function updateAccount(id: string, patch: {
@@ -425,8 +892,8 @@ export function updateAccount(id: string, patch: {
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
-}): AccountView {
-  const current = getAccount(id);
+}, organizationId?: string): AccountView {
+  const current = getAccount(id, organizationId);
   if (!current) throw new Error('Account not found');
 
   const assignments: string[] = [];
@@ -457,7 +924,10 @@ export function updateAccount(id: string, patch: {
   if (assignments.length > 0) {
     assignments.push("updated_at = datetime('now')");
     try {
-      getDB().prepare(`UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`).run(...values, id);
+      const sql = organizationId
+        ? `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ? AND organization_id = ?`
+        : `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`;
+      getDB().prepare(sql).run(...values, id, ...(organizationId ? [organizationId] : []));
     } catch (error) {
       if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
         throw new Error('手机号已绑定其他账号');
@@ -465,21 +935,30 @@ export function updateAccount(id: string, patch: {
       throw error;
     }
   }
-  if (patch.tags !== undefined) replaceAccountTags(id, patch.tags);
-  logAudit('account_update', current.employeeId, `Preset account ${current.username} updated`);
-  return getAccount(id)!;
+  if (patch.tags !== undefined) replaceAccountTags(id, current.organizationId, patch.tags);
+  logAudit(
+    'account_update',
+    current.employeeId,
+    `Preset account ${current.username} updated`,
+    current.organizationId,
+  );
+  return getAccount(id, organizationId)!;
 }
 
-export function createAuthSession(accountId: string, ttlMs = 7 * 24 * 60 * 60 * 1000): {
+export function createAuthSession(accountId: string, ttlMs = 30 * 24 * 60 * 60 * 1000): {
   token: string;
   expiresAt: string;
 } {
-  if (!getAccount(accountId)) throw new Error('Account not found');
+  const account = getAccount(accountId);
+  if (!account || getOrganization(account.organizationId)?.status !== 'active') {
+    throw new Error('Account not found');
+  }
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   getDB().prepare(
-    'INSERT INTO auth_sessions (id, account_id, token_hash, expires_at) VALUES (?, ?, ?, ?)',
-  ).run(`session_${randomUUID()}`, accountId, tokenHash(token), expiresAt);
+    `INSERT INTO auth_sessions (id, organization_id, account_id, token_hash, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(`session_${randomUUID()}`, account.organizationId, accountId, tokenHash(token), expiresAt);
   return { token, expiresAt };
 }
 
@@ -488,7 +967,9 @@ export function getAccountBySession(token: string): AccountView | null {
   const row = getDB().prepare(
     `SELECT a.* FROM auth_sessions s
      JOIN accounts a ON a.id = s.account_id
-     WHERE s.token_hash = ? AND s.revoked_at IS NULL AND a.status = 'active'`,
+     JOIN organizations o ON o.id = a.organization_id
+     WHERE s.token_hash = ? AND s.revoked_at IS NULL
+       AND a.status = 'active' AND o.status = 'active'`,
   ).get(tokenHash(token)) as AccountRow | undefined;
   if (!row) return null;
   const session = getDB().prepare(
@@ -553,10 +1034,23 @@ export function createSmsLoginChallenge(
   const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
   getDB().prepare(
     `INSERT INTO sms_login_challenges
-       (id, account_id, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(challengeId, accountId, passwordHash(code), expiresAtMs, SMS_CHALLENGE_MAX_ATTEMPTS, now);
-  logAudit('sms_login_code_requested', account.employeeId, 'SMS login code requested');
+       (id, organization_id, account_id, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    challengeId,
+    account.organizationId,
+    accountId,
+    passwordHash(code),
+    expiresAtMs,
+    SMS_CHALLENGE_MAX_ATTEMPTS,
+    now,
+  );
+  logAudit(
+    'sms_login_code_requested',
+    account.employeeId,
+    'SMS login code requested',
+    account.organizationId,
+  );
   return {
     ok: true,
     challengeId,
@@ -571,6 +1065,129 @@ export function discardSmsLoginChallenge(challengeId: string): void {
   getDB().prepare(
     'DELETE FROM sms_login_challenges WHERE id = ? AND consumed_at_ms IS NULL',
   ).run(challengeId);
+}
+
+export function createSmsRegistrationChallenge(
+  phone: string,
+  code: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+  options: { now?: number } = {},
+): SmsChallengeIssueResult {
+  if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
+  const normalized = normalizePhone(phone);
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  const now = options.now ?? Date.now();
+  const recent = getDB().prepare(
+    `SELECT created_at_ms FROM sms_registration_challenges
+     WHERE phone = ? AND created_at_ms > ?
+     ORDER BY created_at_ms DESC`,
+  ).all(normalized, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
+  const latest = recent[0]?.created_at_ms;
+  if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
+    return {
+      ok: false,
+      reason: 'cooldown',
+      retryAfterSeconds: Math.ceil((latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000),
+    };
+  }
+  if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
+    const oldest = recent[recent.length - 1]!.created_at_ms;
+    return {
+      ok: false,
+      reason: 'hourly_limit',
+      retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000)),
+    };
+  }
+
+  const challengeId = `smsreg_${randomUUID()}`;
+  const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
+  getDB().prepare(
+    `INSERT INTO sms_registration_challenges
+       (id, organization_id, phone, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    challengeId,
+    organizationId,
+    normalized,
+    passwordHash(code),
+    expiresAtMs,
+    SMS_CHALLENGE_MAX_ATTEMPTS,
+    now,
+  );
+  logAudit('sms_registration_code_requested', null, 'SMS registration code requested', organizationId);
+  return {
+    ok: true,
+    challengeId,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    retryAfterSeconds: SMS_CHALLENGE_COOLDOWN_MS / 1000,
+  };
+}
+
+export function discardSmsRegistrationChallenge(challengeId: string): void {
+  if (!challengeId) return;
+  getDB().prepare(
+    'DELETE FROM sms_registration_challenges WHERE id = ? AND consumed_at_ms IS NULL',
+  ).run(challengeId);
+}
+
+export type SmsRegistrationVerifyResult =
+  | { ok: true; phone: string; organizationId: string }
+  | {
+      ok: false;
+      reason: 'invalid' | 'expired' | 'locked' | 'used';
+      attemptsRemaining: number;
+    };
+
+export function verifySmsRegistrationChallenge(
+  challengeId: string,
+  code: string,
+  now = Date.now(),
+): SmsRegistrationVerifyResult {
+  const row = getDB().prepare(
+    `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining, consumed_at_ms
+     FROM sms_registration_challenges WHERE id = ?`,
+  ).get(challengeId) as {
+    organization_id: string;
+    phone: string;
+    code_hash: string;
+    expires_at_ms: number;
+    attempts_remaining: number;
+    consumed_at_ms: number | null;
+  } | undefined;
+
+  if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
+  if (row.consumed_at_ms != null) {
+    return {
+      ok: false,
+      reason: row.attempts_remaining <= 0 ? 'locked' : 'used',
+      attemptsRemaining: Math.max(0, row.attempts_remaining),
+    };
+  }
+  if (now > row.expires_at_ms) {
+    getDB().prepare(
+      'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
+    ).run(now, challengeId);
+    return { ok: false, reason: 'expired', attemptsRemaining: row.attempts_remaining };
+  }
+  if (!passwordMatches(code, row.code_hash)) {
+    const remaining = Math.max(0, row.attempts_remaining - 1);
+    getDB().prepare(
+      `UPDATE sms_registration_challenges
+       SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
+       WHERE id = ?`,
+    ).run(remaining, remaining, now, challengeId);
+    return {
+      ok: false,
+      reason: remaining === 0 ? 'locked' : 'invalid',
+      attemptsRemaining: remaining,
+    };
+  }
+
+  getDB().prepare(
+    'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
+  ).run(now, challengeId);
+  logAudit('sms_registration_verified', null, 'SMS registration verified', row.organization_id);
+  return { ok: true, phone: row.phone, organizationId: row.organization_id };
 }
 
 export type SmsChallengeVerifyResult =
@@ -668,23 +1285,35 @@ export function createTicket(input: {
   const recipients = (getDB().prepare(
     `SELECT a.* FROM accounts a
      JOIN account_tags t ON t.account_id = a.id
-     WHERE a.status = 'active' AND t.tag IN (${placeholders})
+     WHERE a.organization_id = ? AND t.organization_id = ?
+       AND a.status = 'active' AND t.tag IN (${placeholders})
      GROUP BY a.id
      HAVING COUNT(DISTINCT t.tag) = ?
      ORDER BY a.name, a.username`,
-  ).all(...targetTags, targetTags.length) as AccountRow[]).map(toAccountView);
+  ).all(
+    creator.organizationId,
+    creator.organizationId,
+    ...targetTags,
+    targetTags.length,
+  ) as AccountRow[]).map(toAccountView);
 
   const id = `ticket_${randomUUID()}`;
   getDB().prepare(
     `INSERT INTO it_tickets
-       (id, created_by_account_id, title, description, target_tags)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, creator.id, title, description, JSON.stringify(targetTags));
+       (id, organization_id, created_by_account_id, title, description, target_tags)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, creator.organizationId, creator.id, title, description, JSON.stringify(targetTags));
   const deliver = getDB().prepare(
-    'INSERT INTO ticket_deliveries (ticket_id, account_id) VALUES (?, ?)',
+    `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
+     VALUES (?, ?, ?)`,
   );
-  for (const recipient of recipients) deliver.run(id, recipient.id);
-  logAudit('ticket_create', creator.employeeId, `Ticket ${id} delivered to ${recipients.length} account(s)`);
+  for (const recipient of recipients) deliver.run(creator.organizationId, id, recipient.id);
+  logAudit(
+    'ticket_create',
+    creator.employeeId,
+    `Ticket ${id} delivered to ${recipients.length} account(s)`,
+    creator.organizationId,
+  );
   const row = getDB().prepare('SELECT created_at, status FROM it_tickets WHERE id = ?').get(id) as {
     created_at: string;
     status: string;
@@ -716,7 +1345,7 @@ export function listTicketInbox(accountId: string): Array<{
      FROM ticket_deliveries d
      JOIN it_tickets t ON t.id = d.ticket_id
      JOIN accounts a ON a.id = t.created_by_account_id
-     WHERE d.account_id = ?
+     WHERE d.account_id = ? AND d.organization_id = t.organization_id
      ORDER BY t.created_at DESC`,
   ).all(accountId) as Array<{
     id: string;
@@ -739,25 +1368,171 @@ export function listTicketInbox(accountId: string): Array<{
 }
 
 // ============================================================
+// Provider-reported Token usage (client_reported, idempotent)
+// ============================================================
+
+export interface AccountTokenUsageView {
+  accountId: string;
+  name: string;
+  username: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  lastUsedAt: string | null;
+}
+
+export interface OrganizationUsageSummary {
+  organizationId: string;
+  periodDays: number;
+  source: 'client_reported';
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  byAccount: AccountTokenUsageView[];
+}
+
+function normalizeReportedTokenCount(value: unknown): number {
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number) || number < 0) throw new Error('Token 用量必须是非负数字');
+  return Math.min(1_000_000_000, Math.floor(number));
+}
+
+export function recordTokenUsage(input: {
+  accountId: string;
+  sessionId: string;
+  messageId: string;
+  model?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}): boolean {
+  const account = getAccount(input.accountId);
+  if (!account) throw new Error('Account not found');
+  const sessionId = input.sessionId.trim().slice(0, 160);
+  const messageId = input.messageId.trim().slice(0, 160);
+  if (!sessionId || !messageId) throw new Error('sessionId and messageId required');
+  const inputTokens = normalizeReportedTokenCount(input.inputTokens);
+  const outputTokens = normalizeReportedTokenCount(input.outputTokens);
+  const totalTokens = Math.max(
+    normalizeReportedTokenCount(input.totalTokens),
+    inputTokens + outputTokens,
+  );
+  const result = getDB().prepare(
+    `INSERT OR IGNORE INTO account_token_usage
+       (id, organization_id, account_id, session_id, message_id, model,
+        input_tokens, output_tokens, total_tokens)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    `usage_${randomUUID()}`,
+    account.organizationId,
+    account.id,
+    sessionId,
+    messageId,
+    input.model?.trim().slice(0, 120) || null,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  ) as { changes?: number | bigint };
+  return Number(result.changes ?? 0) > 0;
+}
+
+export function getOrganizationUsageSummary(
+  organizationId: string,
+  periodDays = 30,
+): OrganizationUsageSummary {
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  const safePeriodDays = Math.min(365, Math.max(1, Math.floor(periodDays) || 30));
+  const since = new Date(Date.now() - safePeriodDays * 86_400_000).toISOString();
+  const rows = getDB().prepare(
+    `SELECT a.id AS account_id, a.name, a.username,
+            COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
+            COUNT(u.id) AS request_count,
+            MAX(u.created_at) AS last_used_at
+     FROM accounts a
+     LEFT JOIN account_token_usage u
+       ON u.account_id = a.id
+      AND u.organization_id = a.organization_id
+      AND u.created_at >= ?
+     WHERE a.organization_id = ?
+     GROUP BY a.id, a.name, a.username
+     ORDER BY total_tokens DESC, a.name, a.username`,
+  ).all(since, organizationId) as Array<{
+    account_id: string;
+    name: string;
+    username: string;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    request_count: number;
+    last_used_at: string | null;
+  }>;
+  const byAccount = rows.map((row) => ({
+    accountId: row.account_id,
+    name: row.name,
+    username: row.username,
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    totalTokens: Number(row.total_tokens),
+    requestCount: Number(row.request_count),
+    lastUsedAt: row.last_used_at,
+  }));
+  return {
+    organizationId,
+    periodDays: safePeriodDays,
+    source: 'client_reported',
+    totalInputTokens: byAccount.reduce((sum, row) => sum + row.inputTokens, 0),
+    totalOutputTokens: byAccount.reduce((sum, row) => sum + row.outputTokens, 0),
+    totalTokens: byAccount.reduce((sum, row) => sum + row.totalTokens, 0),
+    requestCount: byAccount.reduce((sum, row) => sum + row.requestCount, 0),
+    byAccount,
+  };
+}
+
+// ============================================================
 // Employee operations
 // ============================================================
 export function createEmployee(emp: {
   id: string; name: string; role?: string;
   department?: string; invite_code?: string; personality?: string;
+  organizationId?: string;
 }): void {
+  const organizationId = emp.organizationId || DEFAULT_ORGANIZATION_ID;
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
   getDB().prepare(
-    `INSERT INTO employees (id, name, role, department, invite_code, personality)
-     VALUES (@id, @name, @role, @department, @invite_code, @personality)`
-  ).run({ ...emp, role: emp.role || null, department: emp.department || null, invite_code: emp.invite_code || null, personality: emp.personality || null });
-  logAudit('onboard', emp.id, `Employee ${emp.name} onboarded to ${emp.department || 'unassigned'}`);
+    `INSERT INTO employees
+       (id, organization_id, name, role, department, invite_code, personality)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    emp.id,
+    organizationId,
+    emp.name,
+    emp.role || null,
+    emp.department || null,
+    emp.invite_code || null,
+    emp.personality || null,
+  );
+  logAudit(
+    'onboard',
+    emp.id,
+    `Employee ${emp.name} onboarded to ${emp.department || 'unassigned'}`,
+    organizationId,
+  );
 }
 
-export function getEmployee(id: string): any | null {
+export function getEmployee(id: string, organizationId?: string): any | null {
   // 1. 先查 SQLite（B套本地数据）
-  const local = getDB().prepare('SELECT * FROM employees WHERE id = ?').get(id);
+  const local = organizationId
+    ? getDB().prepare('SELECT * FROM employees WHERE id = ? AND organization_id = ?').get(id, organizationId)
+    : getDB().prepare('SELECT * FROM employees WHERE id = ?').get(id);
   if (local) return local;
 
   // 2. 降级查 OrgMemoryStore（A套飞书同步数据）
+  // A 套历史数据没有租户字段，只能视为默认企业；绝不能并入其他企业。
+  if (organizationId && organizationId !== DEFAULT_ORGANIZATION_ID) return null;
   try {
     const orgData = loadOrgMemoryStore();
     const user = orgData.users?.find((u: any) => u.id === id);
@@ -777,16 +1552,25 @@ export function getEmployee(id: string): any | null {
   return null;
 }
 
-export function listEmployees(department?: string): any[] {
+export function listEmployees(
+  department?: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any[] {
   // 1. 先查 SQLite
   let local: any[];
   if (department) {
-    local = getDB().prepare('SELECT * FROM employees WHERE department = ? AND status = ? ORDER BY onboarded_at').all(department, 'active');
+    local = getDB().prepare(
+      `SELECT * FROM employees
+       WHERE organization_id = ? AND department = ? AND status = ? ORDER BY onboarded_at`,
+    ).all(organizationId, department, 'active');
   } else {
-    local = getDB().prepare('SELECT * FROM employees WHERE status = ? ORDER BY onboarded_at').all('active');
+    local = getDB().prepare(
+      'SELECT * FROM employees WHERE organization_id = ? AND status = ? ORDER BY onboarded_at',
+    ).all(organizationId, 'active');
   }
 
   // 2. 合并 OrgMemoryStore 的飞书同步数据（去重）
+  if (organizationId !== DEFAULT_ORGANIZATION_ID) return local;
   try {
     const orgData = loadOrgMemoryStore();
     const localIds = new Set(local.map((e: any) => e.id));
@@ -831,9 +1615,16 @@ function loadOrgMemoryStore(): any {
   return { users: [], teams: [], companies: [], licenses: [] };
 }
 
-export function offboardEmployee(id: string): void {
-  getDB().prepare('UPDATE employees SET status = ?, offboarded_at = datetime(\'now\') WHERE id = ?').run('offboarded', id);
-  logAudit('offboard', id, `Employee offboarded`);
+export function offboardEmployee(id: string, organizationId?: string): boolean {
+  const employee = getEmployee(id, organizationId);
+  if (!employee || !employee.organization_id) return false;
+  const result = getDB().prepare(
+    `UPDATE employees SET status = ?, offboarded_at = datetime('now')
+     WHERE id = ? AND organization_id = ?`,
+  ).run('offboarded', id, employee.organization_id) as { changes?: number | bigint };
+  const changed = Number(result.changes ?? 0) > 0;
+  if (changed) logAudit('offboard', id, 'Employee offboarded', employee.organization_id);
+  return changed;
 }
 
 // ============================================================
@@ -843,6 +1634,10 @@ export function logTask(task: {
   employee_id: string; task_type: string; context?: string;
   result?: string; duration_min?: number; tokens_used?: number; cost_cny?: number;
 }): void {
+  const employee = getDB().prepare(
+    'SELECT organization_id FROM employees WHERE id = ?',
+  ).get(task.employee_id) as { organization_id: string } | undefined;
+  if (!employee) throw new Error('Employee not found');
   // 成本/token 口径归一：显式上报 0 或非正值时回落到默认估计，保证与 report 聚合口径一致，
   // 避免「多数任务 cost=0、少数有真实成本」时 totalCost 塌到极小、laborPerToken 爆表。
   const normalized = {
@@ -851,16 +1646,40 @@ export function logTask(task: {
     cost_cny: normalizeCostCNY(task.cost_cny),
   };
   getDB().prepare(
-    `INSERT INTO task_logs (employee_id, task_type, context, result, duration_min, tokens_used, cost_cny)
-     VALUES (@employee_id, @task_type, @context, @result, @duration_min, @tokens_used, @cost_cny)`
-  ).run(normalized);
-  logAudit('learn', task.employee_id, `Task: ${task.task_type} (${task.duration_min || 0}min)`);
+    `INSERT INTO task_logs
+       (organization_id, employee_id, task_type, context, result, duration_min, tokens_used, cost_cny)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    employee.organization_id,
+    normalized.employee_id,
+    normalized.task_type,
+    normalized.context || null,
+    normalized.result || null,
+    normalized.duration_min || 0,
+    normalized.tokens_used,
+    normalized.cost_cny,
+  );
+  logAudit(
+    'learn',
+    task.employee_id,
+    `Task: ${task.task_type} (${task.duration_min || 0}min)`,
+    employee.organization_id,
+  );
 }
 
-export function getTaskHistory(employeeId: string, limit = 20): any[] {
-  return getDB().prepare(
-    'SELECT * FROM task_logs WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?'
-  ).all(employeeId, limit);
+export function getTaskHistory(
+  employeeId: string,
+  limit = 20,
+  organizationId?: string,
+): any[] {
+  return organizationId
+    ? getDB().prepare(
+      `SELECT * FROM task_logs WHERE employee_id = ? AND organization_id = ?
+       ORDER BY created_at DESC LIMIT ?`,
+    ).all(employeeId, organizationId, limit)
+    : getDB().prepare(
+      'SELECT * FROM task_logs WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?',
+    ).all(employeeId, limit);
 }
 
 // ============================================================
@@ -869,28 +1688,47 @@ export function getTaskHistory(employeeId: string, limit = 20): any[] {
 export function addKnowledge(k: {
   department?: string; category: string; content: string;
   contributor?: string; confidence?: number;
+  organizationId?: string;
 }): void {
+  const organizationId = k.organizationId || DEFAULT_ORGANIZATION_ID;
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
   getDB().prepare(
-    `INSERT INTO knowledge (department, category, content, contributor, confidence)
-     VALUES (@department, @category, @content, @contributor, @confidence)`
-  ).run(k);
+    `INSERT INTO knowledge
+       (organization_id, department, category, content, contributor, confidence)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    organizationId,
+    k.department || null,
+    k.category,
+    k.content,
+    k.contributor || null,
+    k.confidence ?? 0.5,
+  );
 }
 
-export function getKnowledge(department?: string, category?: string): any[] {
-  let sql = 'SELECT * FROM knowledge WHERE 1=1';
-  const params: any[] = [];
+export function getKnowledge(
+  department?: string,
+  category?: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any[] {
+  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
+  const params: any[] = [organizationId];
   if (department) { sql += ' AND department = ?'; params.push(department); }
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY created_at DESC';
   return getDB().prepare(sql).all(...params);
 }
 
-export function searchKnowledge(query: string, department?: string): any[] {
+export function searchKnowledge(
+  query: string,
+  department?: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any[] {
   // Match against both category (task_type is usually stored here, e.g. "contract_review")
   // and content (free-text description), otherwise knowledge tagged by category never
   // surfaces during recall when task_type doesn't literally appear in the Chinese content.
-  let sql = 'SELECT * FROM knowledge WHERE (content LIKE ? OR category LIKE ?)';
-  const params: any[] = [`%${query}%`, `%${query}%`];
+  let sql = 'SELECT * FROM knowledge WHERE organization_id = ? AND (content LIKE ? OR category LIKE ?)';
+  const params: any[] = [organizationId, `%${query}%`, `%${query}%`];
   if (department) { sql += ' AND department = ?'; params.push(department); }
   sql += ' ORDER BY confidence DESC LIMIT 20';
   return getDB().prepare(sql).all(...params);
@@ -899,22 +1737,36 @@ export function searchKnowledge(query: string, department?: string): any[] {
 // ============================================================
 // Invite codes
 // ============================================================
-export function createInviteCode(department: string, createdBy?: string, maxUses = 1): string {
+export function createInviteCode(
+  department: string,
+  createdBy?: string,
+  maxUses = 1,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): string {
+  if (!getOrganization(organizationId)) throw new Error('Organization not found');
   const code = generateCode();
   getDB().prepare(
-    'INSERT INTO invite_codes (code, department, max_uses, created_by) VALUES (?, ?, ?, ?)'
-  ).run(code, department, maxUses, createdBy || 'admin');
-  logAudit('invite_create', null, `Code ${code} for ${department}`);
+    `INSERT INTO invite_codes (code, organization_id, department, max_uses, created_by)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(code, organizationId, department, maxUses, createdBy || 'admin');
+  logAudit('invite_create', null, `Code ${code} for ${department}`, organizationId);
   return code;
 }
 
-export function validateInviteCode(code: string): { valid: boolean; department?: string; error?: string } {
-  const row: any = getDB().prepare('SELECT * FROM invite_codes WHERE code = ?').get(code);
+export function validateInviteCode(
+  code: string,
+  organizationId?: string,
+): { valid: boolean; department?: string; organizationId?: string; error?: string } {
+  const row: any = organizationId
+    ? getDB().prepare(
+      'SELECT * FROM invite_codes WHERE code = ? AND organization_id = ?',
+    ).get(code, organizationId)
+    : getDB().prepare('SELECT * FROM invite_codes WHERE code = ?').get(code);
   if (!row) return { valid: false, error: 'Invalid invite code' };
   if (row.used_count >= row.max_uses) return { valid: false, error: 'Invite code already used' };
   if (row.expires_at && new Date(row.expires_at) < new Date()) return { valid: false, error: 'Invite code expired' };
   getDB().prepare('UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?').run(code);
-  return { valid: true, department: row.department };
+  return { valid: true, department: row.department, organizationId: row.organization_id };
 }
 
 function generateCode(): string {
@@ -927,19 +1779,23 @@ function generateCode(): string {
 // ============================================================
 // Reports
 // ============================================================
-export function getReport(periodDays = 30, department?: string): any {
+export function getReport(
+  periodDays = 30,
+  department?: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any {
   const db = getDB();
   const since = new Date(Date.now() - periodDays * 86400000).toISOString();
 
   let empFilter = '';
-  const params: any[] = [since];
+  const params: any[] = [since, organizationId];
   if (department) {
-    empFilter = ' AND employee_id IN (SELECT id FROM employees WHERE department = ?)';
-    params.push(department);
+    empFilter = ' AND employee_id IN (SELECT id FROM employees WHERE organization_id = ? AND department = ?)';
+    params.push(organizationId, department);
   }
 
   const tasks: any[] = db.prepare(
-    `SELECT * FROM task_logs WHERE created_at >= ?${empFilter} ORDER BY created_at`
+    `SELECT * FROM task_logs WHERE created_at >= ? AND organization_id = ?${empFilter} ORDER BY created_at`,
   ).all(...params);
 
   const totalTasks = tasks.length;
@@ -975,7 +1831,7 @@ export function getReport(periodDays = 30, department?: string): any {
     byType[t.task_type].cost += normalizeCostCNY(t.cost_cny);
   }
 
-  const activeEmployees = listEmployees(department).length;
+  const activeEmployees = listEmployees(department, organizationId).length;
 
   return {
     period: `${periodDays}d`,
@@ -1070,34 +1926,57 @@ function buildBottlenecks(
 // ============================================================
 // Audit
 // ============================================================
-export function logAudit(event: string, employeeId: string | null, detail: string): void {
+export function logAudit(
+  event: string,
+  employeeId: string | null,
+  detail: string,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): void {
   getDB().prepare(
-    'INSERT INTO audit_logs (event, employee_id, detail) VALUES (?, ?, ?)'
-  ).run(event, employeeId, detail);
+    `INSERT INTO audit_logs (organization_id, event, employee_id, detail)
+     VALUES (?, ?, ?, ?)`,
+  ).run(organizationId, event, employeeId, detail);
 }
 
-export function getAuditLogs(limit = 50): any[] {
-  return getDB().prepare('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?').all(limit);
+export function getAuditLogs(limit = 50, organizationId = DEFAULT_ORGANIZATION_ID): any[] {
+  return getDB().prepare(
+    `SELECT * FROM audit_logs WHERE organization_id = ?
+     ORDER BY created_at DESC LIMIT ?`,
+  ).all(organizationId, limit);
 }
 
 // ============================================================
 // Export all (for backup)
 // ============================================================
-export function exportAll(): any {
+export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID): any {
   return {
     // Full backup must include offboarded employees too, otherwise every
     // offboarding silently erases historical employee records from the
     // export — contradicting the "export ALL data" guarantee.
-    employees: getDB().prepare('SELECT * FROM employees ORDER BY onboarded_at').all(),
-    taskLogs: getDB().prepare('SELECT * FROM task_logs ORDER BY created_at DESC LIMIT 1000').all(),
-    knowledge: getKnowledge(),
-    inviteCodes: getDB().prepare('SELECT * FROM invite_codes').all(),
-    auditLogs: getAuditLogs(200),
+    employees: getDB().prepare(
+      'SELECT * FROM employees WHERE organization_id = ? ORDER BY onboarded_at',
+    ).all(organizationId),
+    taskLogs: getDB().prepare(
+      `SELECT * FROM task_logs WHERE organization_id = ?
+       ORDER BY created_at DESC LIMIT 1000`,
+    ).all(organizationId),
+    knowledge: getKnowledge(undefined, undefined, organizationId),
+    inviteCodes: getDB().prepare(
+      'SELECT * FROM invite_codes WHERE organization_id = ?',
+    ).all(organizationId),
+    auditLogs: getAuditLogs(200, organizationId),
     // 账号导出不包含 password_hash / session token 摘要；备份可迁移组织信息，
     // 但不能把登录凭证扩散到普通数据导出文件。
-    accounts: listAccounts(),
-    accountTags: getDB().prepare('SELECT account_id, tag, created_at FROM account_tags').all(),
-    tickets: getDB().prepare('SELECT * FROM it_tickets ORDER BY created_at DESC').all(),
-    ticketDeliveries: getDB().prepare('SELECT * FROM ticket_deliveries ORDER BY delivered_at DESC').all(),
+    accounts: listAccounts(organizationId),
+    accountTags: getDB().prepare(
+      `SELECT account_id, tag, created_at FROM account_tags
+       WHERE organization_id = ?`,
+    ).all(organizationId),
+    tickets: getDB().prepare(
+      `SELECT * FROM it_tickets WHERE organization_id = ? ORDER BY created_at DESC`,
+    ).all(organizationId),
+    ticketDeliveries: getDB().prepare(
+      `SELECT * FROM ticket_deliveries WHERE organization_id = ? ORDER BY delivered_at DESC`,
+    ).all(organizationId),
   };
 }

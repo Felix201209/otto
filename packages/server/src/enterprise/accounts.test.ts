@@ -53,17 +53,21 @@ describe('预设账号与密码', () => {
     expect(JSON.stringify(db.listAccounts())).not.toContain('password_hash');
   });
 
-  it('只接受正确密码和 active 账号，错误时不区分账号不存在或密码错误', async () => {
+  it('用户名或已绑定手机号都能配合正确密码登录，错误时不泄露账号状态', async () => {
     const db = await freshDb();
     const account = db.createAccount({
       username: 'it01',
       password: 'correct-horse-123',
       name: 'IT 一号',
+      phone: '13800138000',
       tags: ['IT', '报修'],
     });
 
     expect(db.authenticateAccount('IT01', 'correct-horse-123')?.id).toBe(account.id);
+    expect(db.authenticateAccount('138 0013 8000', 'correct-horse-123')?.id).toBe(account.id);
+    expect(db.authenticateAccount('+8613800138000', 'correct-horse-123')?.id).toBe(account.id);
     expect(db.authenticateAccount('it01', 'wrong-password')).toBeNull();
+    expect(db.authenticateAccount('13800138000', 'wrong-password')).toBeNull();
     expect(db.authenticateAccount('missing', 'correct-horse-123')).toBeNull();
 
     db.updateAccount(account.id, { status: 'disabled' });
@@ -132,6 +136,16 @@ describe('会话', () => {
 
     db.revokeAuthSession(session.token);
     expect(db.getAccountBySession(session.token)).toBeNull();
+  });
+
+  it('默认会话至少保持 30 天，重开桌面 App 时可继续自动登录', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'remember-me', password: 'remember-password', name: '保持登录用户',
+    });
+    const before = Date.now();
+    const session = db.createAuthSession(account.id);
+    expect(new Date(session.expiresAt).getTime() - before).toBeGreaterThanOrEqual(30 * 24 * 60 * 60 * 1000 - 1000);
   });
 });
 

@@ -59,20 +59,20 @@ export type TabId =
   | 'ide';
 
 const TAB_LABEL: Record<TabId, string> = {
-  prefs: '偏好设置',
+  prefs: '外观与回复',
   organization: '企业与身份',
-  models: '企业模型（未启用）',
+  models: '企业模型',
   search: '联网搜索',
   feishu: '飞书接入',
-  mcp: 'MCP 服务器',
-  context: 'Context 用量',
-  doctor: '依赖体检',
+  mcp: '外部工具（MCP）',
+  context: '上下文详情',
+  doctor: '运行检查',
   update: '软件更新',
   todos: '任务清单',
   memory: '记忆',
   skills: '技能库',
   tools: '工具清单',
-  workflows: 'Workflow',
+  workflows: '自动流程',
   extensions: '扩展',
   ide: 'IDE 伴生',
 };
@@ -82,11 +82,20 @@ const TAB_LABEL: Record<TabId, string> = {
  * 资产的）。分组是这次排版重构的核心——13 个入口平铺没有任何层次，分三组
  * 后每组不超过 5 项，一眼可扫完。
  */
-const NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
-  { label: '设置', tabs: ['prefs', 'organization', 'models', 'search', 'feishu', 'mcp', 'extensions', 'ide', 'update'] },
-  { label: '诊断', tabs: ['doctor', 'context', 'workflows'] },
-  { label: '工作区', tabs: ['todos', 'memory', 'skills', 'tools'] },
+const SIMPLE_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
+  { label: '常用', tabs: ['prefs', 'search', 'update'] },
+  { label: '账号与连接', tabs: ['organization', 'feishu'] },
 ];
+
+const ADVANCED_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
+  { label: '高级连接', tabs: ['models', 'mcp', 'extensions', 'ide'] },
+  { label: '排查问题', tabs: ['doctor', 'context', 'workflows'] },
+  { label: '数据与能力', tabs: ['todos', 'memory', 'skills', 'tools'] },
+];
+
+const ADVANCED_TABS = new Set(
+  ADVANCED_NAV_GROUPS.flatMap((group) => group.tabs),
+);
 
 interface SettingsHubPageProps {
   data: UseSettingsData;
@@ -110,6 +119,9 @@ export function SettingsHubPage({
   models,
 }: SettingsHubPageProps): React.JSX.Element {
   const [tab, setTab] = useState<TabId>(initialTab ?? 'prefs');
+  const [showAdvanced, setShowAdvanced] = useState(
+    () => Boolean(initialTab && ADVANCED_TABS.has(initialTab)),
+  );
   const { state, actions } = data;
 
   // 打开面板即拉一次偏好设置（最常用 tab）。
@@ -149,8 +161,8 @@ export function SettingsHubPage({
       <header className="otto-hub__head">
         <IconSettings size={20} className="otto-hub__headicon" />
         <div className="otto-hub__headtext">
-          <div className="otto-hub__title">设置与诊断中心</div>
-          <div className="otto-hub__subtitle">配置 Otto 的偏好与集成，查看运行诊断。</div>
+          <div className="otto-hub__title">Otto 设置</div>
+          <div className="otto-hub__subtitle">常用能力已经准备好；通常不需要改任何专业参数。</div>
         </div>
         <button
           type="button"
@@ -166,7 +178,7 @@ export function SettingsHubPage({
 
       <div className="otto-hub__body">
         <nav className="otto-hub__nav" aria-label="设置分区">
-          {NAV_GROUPS.map((group) => (
+          {SIMPLE_NAV_GROUPS.map((group) => (
             <div key={group.label} className="otto-hub__nav-group">
               <div className="otto-hub__nav-grouplabel">{group.label}</div>
               {group.tabs.map((t) => (
@@ -182,6 +194,34 @@ export function SettingsHubPage({
               ))}
             </div>
           ))}
+          <button
+            type="button"
+            className={'otto-hub__nav-advanced' + (showAdvanced ? ' is-open' : '')}
+            aria-expanded={showAdvanced}
+            onClick={() => {
+              if (showAdvanced && ADVANCED_TABS.has(tab)) setTab('prefs');
+              setShowAdvanced((value) => !value);
+            }}
+          >
+            <span>高级设置</span>
+            <IconChevron size={12} />
+          </button>
+          {showAdvanced ? ADVANCED_NAV_GROUPS.map((group) => (
+            <div key={group.label} className="otto-hub__nav-group otto-hub__nav-group--advanced">
+              <div className="otto-hub__nav-grouplabel">{group.label}</div>
+              {group.tabs.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={'otto-hub__nav-item' + (tab === t ? ' is-active' : '')}
+                  aria-current={tab === t ? 'page' : undefined}
+                  onClick={() => setTab(t)}
+                >
+                  {TAB_LABEL[t]}
+                </button>
+              ))}
+            </div>
+          )) : null}
         </nav>
 
         <div className="otto-hub__content">

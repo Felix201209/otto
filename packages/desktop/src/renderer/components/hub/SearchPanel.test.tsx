@@ -30,23 +30,33 @@ function searchData(provider: 'bing' | 'volcengine' = 'volcengine') {
 }
 
 describe('SearchPanel 联网搜索配置', () => {
+  it('默认只告诉用户搜索已自动开启，不暴露专业配置', () => {
+    const { value } = searchData('bing');
+    render(<SearchPanel data={value} />);
+
+    expect(screen.getByText('Otto 可以随时联网搜索')).toBeTruthy();
+    expect(screen.getByText('无需配置')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '火山方舟' })).toBeNull();
+  });
+
   it('火山方舟密钥仅显示已保存状态，保存时发送完整配置但不回显旧密钥', () => {
     const { value, saveSearchConfig } = searchData();
     render(<SearchPanel data={value} />);
 
+    fireEvent.click(screen.getByRole('button', { name: /我有自己的搜索服务/ }));
     expect(screen.getByRole('button', { name: '火山方舟' }).getAttribute('aria-pressed'))
       .toBe('true');
-    expect(screen.getByText('API Key 已安全保存')).toBeTruthy();
+    expect(screen.getByText('密钥已保存')).toBeTruthy();
     const keyInput = screen.getByLabelText('API Key') as HTMLInputElement;
     expect(keyInput.type).toBe('password');
     expect(keyInput.value).toBe('');
-    expect(keyInput.placeholder).toContain('留空保留');
+    expect(keyInput.placeholder).toContain('留空即可继续使用');
 
-    fireEvent.change(screen.getByLabelText('豆包模型或推理接入点 ID'), {
+    fireEvent.change(screen.getByLabelText('模型或接入点 ID'), {
       target: { value: 'doubao-seed-2-0-lite-260215' },
     });
     fireEvent.change(keyInput, { target: { value: 'new-ark-key' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     expect(saveSearchConfig).toHaveBeenCalledWith({
       provider: 'volcengine',
@@ -60,11 +70,12 @@ describe('SearchPanel 联网搜索配置', () => {
     const { value } = searchData('bing');
     render(<SearchPanel data={value} />);
 
+    fireEvent.click(screen.getByRole('button', { name: /我有自己的搜索服务/ }));
     fireEvent.click(screen.getByRole('button', { name: '火山方舟' }));
-    expect((screen.getByLabelText('Responses API 地址') as HTMLInputElement).value)
+    expect((screen.getByLabelText('服务地址') as HTMLInputElement).value)
       .toBe('https://ark.cn-beijing.volces.com/api/v3/responses');
     expect(
-      (screen.getByLabelText('豆包模型或推理接入点 ID') as HTMLInputElement).value,
+      (screen.getByLabelText('模型或接入点 ID') as HTMLInputElement).value,
     ).toBe('doubao-seed-2-0-lite-260215');
   });
 
@@ -72,9 +83,10 @@ describe('SearchPanel 联网搜索配置', () => {
     const { value } = searchData('volcengine');
     render(<SearchPanel data={value} />);
 
+    fireEvent.click(screen.getByRole('button', { name: /我有自己的搜索服务/ }));
     fireEvent.click(screen.getByRole('button', { name: '博查' }));
-    expect((screen.getByRole('button', { name: '保存配置' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled)
       .toBe(true);
-    expect(screen.getByText('尚未配置 API Key')).toBeTruthy();
+    expect(screen.getByText('尚未填写密钥')).toBeTruthy();
   });
 });

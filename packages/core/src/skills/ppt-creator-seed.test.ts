@@ -6,7 +6,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { shouldRefreshBuiltinSkill } from './seed-skills.js';
+import {
+  loadBuiltinSkillInstructions,
+  shouldRefreshBuiltinSkill,
+} from './seed-skills.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const skill = readFileSync(
@@ -15,6 +18,14 @@ const skill = readFileSync(
 );
 
 describe('内置 ppt-creator Skill', () => {
+  it('运行时可以直接读取随包 Skill，不依赖用户目录或模型主动调用', () => {
+    const embedded = loadBuiltinSkillInstructions('ppt-creator');
+
+    expect(embedded).toContain('# 发布会级 PPT 视觉导演');
+    expect(embedded).toContain('自定义 HTML/CSS/SVG');
+    expect(embedded).toContain('逐页 PNG');
+  });
+
   it('要求用 HTML 视觉画布经浏览器渲染，并由 Node 组装 PPTX', () => {
     expect(skill).toContain('HTML 是视觉画布');
     expect(skill).toMatch(/Playwright|Chromium/);

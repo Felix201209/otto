@@ -80,6 +80,27 @@ async function blobToWav(blob: Blob): Promise<Uint8Array> {
  */
 const MODEL_SEARCH_THRESHOLD = 8;
 
+function attachmentKey(attachment: Attachment): string {
+  return 'id' in attachment
+    ? attachment.id
+    : `file-${attachment.filePath}-${attachment.fileName}`;
+}
+
+function attachmentTypeLabel(fileName: string): string {
+  const extension = fileName.split('.').pop()?.trim().toUpperCase();
+  if (!extension || extension === fileName.toUpperCase()) return 'FILE';
+  return extension.slice(0, 5);
+}
+
+function formatAttachmentSize(bytes: number | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '大小未知';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
 /**
  * 首批斜杠命令定义（顺序即面板展示顺序）。执行分派见 runSlashCommand。
  * 导出给右侧面板「工具」tab 复用作数据源（RightPanel），避免两处维护命令清单。
@@ -114,7 +135,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'feishu-stop', description: '停止飞书网关（立即执行）', action: 'local' },
   { id: 'feishu-status', description: '查看飞书连接状态', action: 'local' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
-  { id: 'ppt', description: 'PPT 创作专家', action: 'prompt', prompt: '我要做一份 PPT。请先问我：主题、受众、页数和风格偏好。' },
+  { id: 'ppt', description: 'PPT 创作专家', action: 'agent', agentProfileId: 'ppt' },
   { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
   { id: 'pdf', description: 'PDF 处理', action: 'prompt', prompt: '我要处理 PDF。请调用 PDF 文档处理流程，先询问文件路径、操作类型和输出格式。' },
   { id: 'audio', description: '音视频转文本/纪要', action: 'prompt', prompt: '我要处理音视频或会议录音。请调用会议纪要/转录流程，先询问文件、参会人和输出格式。' },
@@ -194,6 +215,8 @@ interface ComposerProps {
   onCopyLast?: () => void;
   /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
   onShowHelp?: () => void;
+  /** 专家命令（如 /ppt）：新建绑定服务端 profile 的会话。 */
+  onLaunchAgentProfile?: (profileId: string, title: string) => void;
 }
 
 export function Composer({
@@ -223,6 +246,7 @@ export function Composer({
   onOpenSessions,
   onCopyLast,
   onShowHelp,
+  onLaunchAgentProfile,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -232,6 +256,7 @@ export function Composer({
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -460,16 +485,22 @@ export function Composer({
     setAttaching(true);
     let firstError: string | null = null;
     const added: Attachment[] = [];
+    const addedSizes: Record<string, number> = {};
     for (const file of files.slice(0, room)) {
       try {
-        added.push(await fileToAttachment(file));
+        const attachment = await fileToAttachment(file);
+        added.push(attachment);
+        addedSizes[attachmentKey(attachment)] = file.size;
       } catch (err) {
         if (!firstError) {
           firstError = err instanceof Error ? err.message : '附件处理失败';
         }
       }
     }
-    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+    if (added.length > 0) {
+      setAttachments((prev) => [...prev, ...added]);
+      setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
+    }
     setAttachError(
       firstError ??
         (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null),
@@ -477,8 +508,15 @@ export function Composer({
     setAttaching(false);
   };
 
-  const removeAttachment = (id: string): void => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  const removeAttachment = (key: string): void => {
+    setAttachments((prev) => prev.filter((attachment) => (
+      attachmentKey(attachment) !== key
+    )));
+    setAttachmentSizes((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     setAttachError(null);
   };
 
@@ -538,6 +576,7 @@ export function Composer({
     onSend(text, attachments);
     setText('');
     setAttachments([]);
+    setAttachmentSizes({});
     setAttachError(null);
     // 发送后清掉本会话草稿，避免切走再切回时又冒出已发送的内容。
     if (sessionId != null) draftsRef.current[sessionId] = '';
@@ -557,6 +596,13 @@ export function Composer({
   const runSlashCommand = (cmd: SlashCommand) => {
     // 参数：命令名后的原始文本（`/kb search 报销` → 'search 报销'）。
     const args = (slashInput?.argMode ? slashInput.args : '').trim();
+
+    if (cmd.action === 'agent' && cmd.agentProfileId) {
+      onLaunchAgentProfile?.(cmd.agentProfileId, cmd.description);
+      clearInput();
+      taRef.current?.focus();
+      return;
+    }
 
     if (cmd.action === 'prompt' && cmd.prompt) {
       onSend(cmd.prompt, []);
@@ -709,31 +755,52 @@ export function Composer({
       <div className="otto-composer__inner">
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">
-            {attachments.map((a) => (
-              <div key={'id' in a ? a.id : `file-${a.fileName}`} className="otto-attachment">
-                {isImageAttachment(a) ? (
-                  <img
-                    className="otto-attachment__img"
-                    src={attachmentToDataUrl(a)}
-                    alt={a.fileName}
-                  />
-                ) : (
-                  <div className="otto-attachment__file" title={a.fileName}>
-                    <span className="otto-attachment__file-icon">📄</span>
-                    <span className="otto-attachment__file-name">{a.fileName}</span>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="otto-attachment__remove"
-                  title="移除"
-                  aria-label={`移除 ${a.fileName}`}
-                  onClick={() => removeAttachment('id' in a ? a.id : `file-${a.fileName}`)}
+            {attachments.map((attachment) => {
+              const key = attachmentKey(attachment);
+              const image = isImageAttachment(attachment);
+              const typeLabel = attachmentTypeLabel(attachment.fileName);
+              const size = attachmentSizes[key] ?? (
+                image ? attachment.originalSize : undefined
+              );
+              return (
+                <div
+                  key={key}
+                  className={`otto-attachment otto-attachment--${image ? 'image' : 'file'}`}
                 >
-                  <IconClose size={11} />
-                </button>
-              </div>
-            ))}
+                  {image ? (
+                    <img
+                      className="otto-attachment__img"
+                      src={attachmentToDataUrl(attachment)}
+                      alt=""
+                    />
+                  ) : (
+                    <span className="otto-attachment__type-icon" aria-hidden="true">
+                      {typeLabel}
+                    </span>
+                  )}
+                  <div className="otto-attachment__copy">
+                    <span
+                      className="otto-attachment__file-name"
+                      title={attachment.fileName}
+                    >
+                      {attachment.fileName}
+                    </span>
+                    <span className="otto-attachment__meta">
+                      {typeLabel} · {formatAttachmentSize(size)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="otto-attachment__remove"
+                    title={`移除 ${attachment.fileName}`}
+                    aria-label={`移除 ${attachment.fileName}`}
+                    onClick={() => removeAttachment(key)}
+                  >
+                    <IconClose size={13} />
+                  </button>
+                </div>
+              );
+            })}
             {attaching ? (
               <div className="otto-attachment otto-attachment--loading">
                 处理中…

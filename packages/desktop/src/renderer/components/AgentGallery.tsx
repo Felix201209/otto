@@ -5,8 +5,8 @@
  */
 
 /**
- * 「智能体」页面。整页展示 8 个企业专家卡片（PPT 创作 / 会议纪要 / 公文撰写 …），
- * 点击某张卡片即启动该专家（onLaunch）：由上层起一段新会话并注入专家开场消息、切回对话页。
+ * 「智能体」页面。按个人版/企业版权限展示新版 Agent profile。
+ * 点击某张卡片只回传白名单 profile，由服务端在新会话里注入能力与 Skill。
  *
  * 这是**页面**不是弹窗：占据主内容区（右侧栏常驻），无遮罩。返回对话经头部「返回对话」
  * 或 Esc（onBack），也可直接点左侧栏任意会话/新建对话切走。打开即聚焦第一张卡片，
@@ -14,23 +14,32 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import type { Expert } from '../agents/experts.js';
-import { getAllExperts } from '../agents/experts.js';
+import {
+  getEnterpriseAgentProfiles,
+  getPersonalAgentProfiles,
+  type AgentProfile,
+} from '../agents/departmentAgents.js';
+import { GeneratedIcon } from './GeneratedIcon.js';
 import { IconAgent, IconChevron } from './icons.js';
 
 interface AgentGalleryProps {
-  onLaunch: (expert: Expert) => void;
+  mode?: 'personal' | 'enterprise';
+  profiles?: readonly AgentProfile[];
+  onLaunch: (profile: AgentProfile) => void;
   onBack: () => void;
-  /** 当前用户所属部门的 teamId 数组。undefined/空数组 = 个人版，仅显示基础专家 */
-  userTeamIds?: string[];
 }
 
 export function AgentGallery({
+  mode = 'personal',
+  profiles,
   onLaunch,
   onBack,
-  userTeamIds,
 }: AgentGalleryProps): React.JSX.Element {
-  const experts = getAllExperts(userTeamIds);
+  const visibleProfiles = profiles ?? (
+    mode === 'enterprise'
+      ? getEnterpriseAgentProfiles('company_owner')
+      : getPersonalAgentProfiles()
+  );
   const firstCardRef = useRef<HTMLButtonElement>(null);
 
   // 打开即聚焦第一张卡片（键盘可直接 Enter 启动）。
@@ -49,15 +58,15 @@ export function AgentGallery({
   return (
     <section
       className="otto-agents-page"
-      aria-label="专家 · 企业专家"
+      aria-label="专家目录"
       onKeyDown={onKeyDown}
     >
       <header className="otto-agents__head">
         <IconAgent size={20} className="otto-agents__headicon" />
         <div className="otto-agents__headtext">
-          <div className="otto-agents__title">专家 · 企业专家</div>
+          <div className="otto-agents__title">专家</div>
           <div className="otto-agents__subtitle">
-            选一位专家开始 —— 它会加载对应技能并按方法协助你
+            选择一位专家开始，它会在独立会话中按对应方法协助你
           </div>
         </div>
         <button
@@ -74,28 +83,30 @@ export function AgentGallery({
 
       <div className="otto-agents__scroll">
         <div className="otto-agents__grid">
-          {experts.map((expert, i) => (
+          {visibleProfiles.map((profile, i) => (
             <button
-              key={expert.id}
+              key={profile.id}
               ref={i === 0 ? firstCardRef : undefined}
               type="button"
               className="otto-agent-card"
-              style={{ ['--card-accent' as string]: expert.accent }}
-              onClick={() => onLaunch(expert)}
+              style={{ ['--card-accent' as string]: profile.accent ?? '#38bdf8' }}
+              onClick={() => onLaunch(profile)}
             >
               <span className="otto-agent-card__avatar" aria-hidden>
-                {expert.emoji}
+                {profile.icon
+                  ? <GeneratedIcon name={profile.icon} size={28} />
+                  : profile.name.slice(0, 1)}
               </span>
               <span className="otto-agent-card__body">
-                <span className="otto-agent-card__name">{expert.name}</span>
-                <span className="otto-agent-card__tag">{expert.tagline}</span>
+                <span className="otto-agent-card__name">{profile.name}</span>
+                <span className="otto-agent-card__tag">{profile.tagline}</span>
                 <span className="otto-agent-card__skills">
-                  {expert.skills.map((s) => (
+                  {profile.skills.map((s) => (
                     <span key={s} className="otto-agent-card__skill">
                       {s}
                     </span>
                   ))}
-                  {expert.departments && expert.departments.length > 0 && (
+                  {profile.scope === 'department' && (
                     <span className="otto-agent-card__skill otto-agent-card__skill--dept">
                       🔒 部门专属
                     </span>
@@ -107,7 +118,7 @@ export function AgentGallery({
         </div>
 
         <div className="otto-agents__foot">
-          共 {experts.length} 位专家 · 点击即开一段新对话
+          共 {visibleProfiles.length} 位专家 · 点击即可开始新对话
         </div>
       </div>
     </section>

@@ -36,6 +36,11 @@ export {
   initializeSkillsContext,
   clearSkillsContextCache,
 } from './skills-integration.js';
+export {
+  loadBuiltinSkillInstructions,
+  seedDefaultSkills,
+  shouldRefreshBuiltinSkill,
+} from './seed-skills.js';
 
 // Context Builder (legacy)
 export { SkillsContextBuilder } from './skills-context-builder.js';

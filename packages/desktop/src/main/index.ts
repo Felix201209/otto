@@ -97,6 +97,15 @@ import {
   type AccountCreateInput,
   type AccountUpdateInput,
 } from './enterprise-client.js';
+import {
+  defaultEnterpriseServerUrl,
+  migrateEnterpriseServerUrl,
+} from './enterprise-server-url.js';
+import {
+  decodeEnterpriseSession,
+  encodeEnterpriseSession,
+} from './enterprise-session-store.js';
+import { EnterpriseRegistrationIntentStore } from './enterprise-registration-intent.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -182,20 +191,42 @@ const IPC = {
   voiceTranscribe: 'otto:voice-transcribe',
   enterpriseSession: 'otto:enterprise-session',
   enterprisePasswordLogin: 'otto:enterprise-password-login',
-  enterpriseSmsRequest: 'otto:enterprise-sms-request',
-  enterpriseSmsLogin: 'otto:enterprise-sms-login',
+  enterpriseRegistrationRequest: 'otto:enterprise-registration-request',
+  enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
+  enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
+  enterpriseRegister: 'otto:enterprise-register',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
+  enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
+  enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
 
-const DEFAULT_ENTERPRISE_SERVER_URL =
-  process.env.OTTO_ENTERPRISE_SERVER_URL?.trim() || 'https://59-110-154-44.sslip.io';
+const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
+  process.env.OTTO_ENTERPRISE_SERVER_URL,
+);
 const enterpriseClient = new EnterpriseClient();
+const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
+let enterpriseIntentRendererReady = false;
+
+function acceptEnterpriseRegistrationUrl(input: string): boolean {
+  if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (enterpriseIntentRendererReady) {
+      const intent = enterpriseRegistrationIntents.take();
+      if (intent) mainWindow.webContents.send(IPC.enterpriseRegistrationIntentOpened, intent);
+    }
+  }
+  return true;
+}
 
 function enterpriseSessionPath(): string {
   return path.join(app.getPath('userData'), 'enterprise-auth.json');
@@ -204,22 +235,22 @@ function enterpriseSessionPath(): string {
 function loadEnterpriseSession(): void {
   if (enterpriseSessionLoaded) return;
   enterpriseSessionLoaded = true;
-  let serverUrl = DEFAULT_ENTERPRISE_SERVER_URL;
-  let token: string | null = null;
+  let restored = { serverUrl: DEFAULT_ENTERPRISE_SERVER_URL, token: null as string | null };
   try {
-    const parsed = JSON.parse(fs.readFileSync(enterpriseSessionPath(), 'utf8')) as {
-      serverUrl?: string;
-      encryptedToken?: string;
-    };
-    if (typeof parsed.serverUrl === 'string' && parsed.serverUrl) serverUrl = parsed.serverUrl;
-    if (parsed.encryptedToken && safeStorage.isEncryptionAvailable()) {
-      token = safeStorage.decryptString(Buffer.from(parsed.encryptedToken, 'base64'));
-    }
+    restored = decodeEnterpriseSession(
+      fs.readFileSync(enterpriseSessionPath(), 'utf8'),
+      DEFAULT_ENTERPRISE_SERVER_URL,
+      (encryptedToken) => {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用');
+        return safeStorage.decryptString(Buffer.from(encryptedToken, 'base64'));
+      },
+      (serverUrl) => migrateEnterpriseServerUrl(serverUrl, DEFAULT_ENTERPRISE_SERVER_URL),
+    );
   } catch {
     // 首次启动、存储损坏或系统密钥链不可用时安全地保持未登录。
   }
   try {
-    enterpriseClient.restore({ serverUrl, token });
+    enterpriseClient.restore(restored);
   } catch {
     // v1.7.x 可能保存过公网 HTTP 地址。v1.8 起拒绝明文认证并清掉旧会话，
     // 回落到内置 HTTPS 入口，避免升级后启动失败或继续发送明文口令。
@@ -229,13 +260,16 @@ function loadEnterpriseSession(): void {
 
 function saveEnterpriseSession(): void {
   const snapshot = enterpriseClient.snapshot();
-  const encryptedToken = snapshot.token && safeStorage.isEncryptionAvailable()
-    ? safeStorage.encryptString(snapshot.token).toString('base64')
-    : undefined;
+  const safeSnapshot = safeStorage.isEncryptionAvailable()
+    ? snapshot
+    : { ...snapshot, token: null };
   fs.mkdirSync(path.dirname(enterpriseSessionPath()), { recursive: true });
   fs.writeFileSync(
     enterpriseSessionPath(),
-    JSON.stringify({ serverUrl: snapshot.serverUrl, encryptedToken }, null, 2),
+    encodeEnterpriseSession(
+      safeSnapshot,
+      (token) => safeStorage.encryptString(token).toString('base64'),
+    ),
     { encoding: 'utf8', mode: 0o600 },
   );
 }
@@ -491,6 +525,7 @@ function loadIcon(): NativeImage {
 }
 
 function createWindow(): BrowserWindow {
+  enterpriseIntentRendererReady = false;
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -680,6 +715,10 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.enterpriseRegistrationIntent, () => {
+    enterpriseIntentRendererReady = true;
+    return enterpriseRegistrationIntents.take();
+  });
   ipcMain.handle(IPC.enterpriseSession, async () => {
     loadEnterpriseSession();
     const before = enterpriseClient.snapshot().token;
@@ -691,32 +730,46 @@ function registerIpc(): void {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object') throw new Error('登录信息格式不正确');
     const body = input as Record<string, unknown>;
-    if (typeof body.serverUrl !== 'string' || typeof body.username !== 'string' || typeof body.password !== 'string') {
-      throw new Error('服务器地址、账号和密码均为必填项');
+    const identifier = typeof body.identifier === 'string'
+      ? body.identifier
+      : typeof body.username === 'string' ? body.username : null;
+    if (typeof body.serverUrl !== 'string' || identifier === null || typeof body.password !== 'string') {
+      throw new Error('服务器地址、账号或手机号和密码均为必填项');
     }
-    const result = await enterpriseClient.loginWithPassword(body.serverUrl, body.username, body.password);
+    const result = await enterpriseClient.loginWithPassword(body.serverUrl, identifier, body.password);
     saveEnterpriseSession();
     return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
   });
-  ipcMain.handle(IPC.enterpriseSmsRequest, async (_e, input: unknown) => {
+  ipcMain.handle(IPC.enterpriseRegistrationRequest, async (_e, input: unknown) => {
     loadEnterpriseSession();
-    if (!input || typeof input !== 'object') throw new Error('短信登录信息格式不正确');
+    if (!input || typeof input !== 'object') throw new Error('注册信息格式不正确');
     const body = input as Record<string, unknown>;
-    if (typeof body.serverUrl !== 'string' || typeof body.phone !== 'string') {
-      throw new Error('服务器地址和手机号均为必填项');
+    if (typeof body.serverUrl !== 'string' || typeof body.phone !== 'string'
+      || typeof body.inviteCode !== 'string') {
+      throw new Error('服务器地址、企业邀请码和手机号均为必填项');
     }
-    const result = await enterpriseClient.requestSmsCode(body.serverUrl, body.phone);
+    const result = await enterpriseClient.requestRegistrationCode(
+      body.serverUrl,
+      body.phone,
+      body.inviteCode,
+    );
     saveEnterpriseSession();
     return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
   });
-  ipcMain.handle(IPC.enterpriseSmsLogin, async (_e, input: unknown) => {
+  ipcMain.handle(IPC.enterpriseRegister, async (_e, input: unknown) => {
     loadEnterpriseSession();
-    if (!input || typeof input !== 'object') throw new Error('验证码信息格式不正确');
+    if (!input || typeof input !== 'object') throw new Error('注册信息格式不正确');
     const body = input as Record<string, unknown>;
-    if (typeof body.challengeId !== 'string' || typeof body.code !== 'string') {
-      throw new Error('验证码信息不完整');
+    if (typeof body.challengeId !== 'string' || typeof body.code !== 'string'
+      || typeof body.name !== 'string' || typeof body.password !== 'string') {
+      throw new Error('姓名、密码和验证码均为必填项');
     }
-    const result = await enterpriseClient.loginWithSms(body.challengeId, body.code);
+    const result = await enterpriseClient.registerWithSms({
+      challengeId: body.challengeId,
+      code: body.code,
+      name: body.name,
+      password: body.password,
+    });
     saveEnterpriseSession();
     return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
   });
@@ -741,6 +794,32 @@ function registerIpc(): void {
       return enterpriseClient.updateAccount(id, input);
     },
   );
+  ipcMain.handle(IPC.enterpriseUsageRecord, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('Token 用量格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.sessionId !== 'string' || typeof body.messageId !== 'string'
+      || typeof body.inputTokens !== 'number' || typeof body.outputTokens !== 'number'
+      || typeof body.totalTokens !== 'number') {
+      throw new Error('Token 用量字段不完整');
+    }
+    return enterpriseClient.recordTokenUsage({
+      sessionId: body.sessionId,
+      messageId: body.messageId,
+      model: typeof body.model === 'string' ? body.model : null,
+      inputTokens: body.inputTokens,
+      outputTokens: body.outputTokens,
+      totalTokens: body.totalTokens,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationInviteGet, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getOrganizationInvite();
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationInviteIssue, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.issueOrganizationInvite();
+  });
   ipcMain.handle(IPC.enterpriseTicketInbox, async () => {
     loadEnterpriseSession();
     return enterpriseClient.ticketInbox();
@@ -1150,12 +1229,25 @@ function registerIpc(): void {
 const isolatedUserDataDir = process.env.OTTO_USER_DATA_DIR?.trim();
 if (isolatedUserDataDir) app.setPath('userData', isolatedUserDataDir);
 
+// Windows/Linux cold start 会把协议 URL 放进 argv；macOS 则通过 open-url 事件送达。
+// 解析器只接受中心企业邀请码链接，旧 token+key 链接不会改变登录状态。
+enterpriseRegistrationIntents.acceptArgv(process.argv);
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  acceptEnterpriseRegistrationUrl(url);
+});
+
 // 单实例锁：第二次启动直接聚焦已开窗口，避免多开多个 server 抢端口。
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    const accepted = enterpriseRegistrationIntents.acceptArgv(commandLine);
+    if (accepted && enterpriseIntentRendererReady && mainWindow && !mainWindow.isDestroyed()) {
+      const intent = enterpriseRegistrationIntents.take();
+      if (intent) mainWindow.webContents.send(IPC.enterpriseRegistrationIntentOpened, intent);
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -1163,6 +1255,11 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    if (process.defaultApp && process.argv[1]) {
+      app.setAsDefaultProtocolClient('otto', process.execPath, [path.resolve(process.argv[1])]);
+    } else {
+      app.setAsDefaultProtocolClient('otto');
+    }
     // 外观主题：默认跟随系统（'system' 让 renderer 的 prefers-color-scheme 生效）；
     // 用户在偏好里手动选过浅色/深色则恢复上次选择（userData/theme.json）。
     nativeTheme.themeSource = loadSavedThemeSource();

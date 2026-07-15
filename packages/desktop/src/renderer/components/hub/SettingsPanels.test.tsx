@@ -48,17 +48,17 @@ function settingsData(agentStyle = 'default') {
   return { value, setSetting };
 }
 
-describe('PrefsPanel Otto 工作方式', () => {
+describe('PrefsPanel 外观与回复', () => {
   it('面向普通用户展示工作场景，不暴露开发工具品牌名', () => {
     const { value } = settingsData();
     render(<PrefsPanel data={value} />);
 
-    expect(screen.getByText('Otto 工作方式')).toBeTruthy();
+    expect(screen.getByText('外观与回复')).toBeTruthy();
     for (const label of [
-      '日常对话（自然清晰）',
-      '快速执行（少说多做）',
+      '平时聊天',
+      '直接做事',
+      '复杂任务',
       '工作代码（协作开发）',
-      '工程交付（任务与验证）',
       '简洁开发（直接精炼）',
       '企业办公（资料与会议）',
       '协作推进（边讲边做）',
@@ -66,7 +66,7 @@ describe('PrefsPanel Otto 工作方式', () => {
       expect(screen.getByText(label)).toBeTruthy();
     }
     expect(
-      screen.getByText('选择适合日常对话、企业办公、代码处理或工程交付的方式。'),
+      screen.getByText('不需要理解模型参数，只选最接近你的习惯。'),
     ).toBeTruthy();
 
     expect(

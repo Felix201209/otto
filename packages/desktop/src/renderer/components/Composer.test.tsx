@@ -69,6 +69,35 @@ describe('专家提示词草稿', () => {
   });
 });
 
+describe('PPT 专家内置入口', () => {
+  it('/ppt 直接新建绑定 ppt profile 的专家会话，不再给普通会话发送提示词', () => {
+    const onSend = vi.fn();
+    const onLaunchAgentProfile = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+        onLaunchAgentProfile={onLaunchAgentProfile}
+      />,
+    );
+    const textarea = document.querySelector(
+      '.otto-composer__textarea',
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(textarea, { target: { value: '/ppt' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    expect(onLaunchAgentProfile).toHaveBeenCalledWith(
+      'ppt',
+      'PPT 创作专家',
+    );
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
 describe('模型菜单搜索框显隐（阈值 8）', () => {
   it('模型数 ≤ 8：不显示搜索框，平铺全部', () => {
     renderComposer(makeModels(8), 'm0');
@@ -316,5 +345,48 @@ describe('语音录音配件', () => {
     expect(screen.getByRole('group', { name: '语音录音中' })).toBeTruthy();
     expect(screen.getByLabelText('录音时长').textContent).toBe('0:00');
     expect(screen.getByRole('button', { name: '停止录音' })).toBeTruthy();
+  });
+});
+
+describe('附件预览卡片', () => {
+  it('普通文件以横向卡片展示类型、单行文件名、大小和独立删除按钮', async () => {
+    const { container } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(
+      [new Uint8Array(1536)],
+      '产品销售数据汇总与下一季度预测.xlsx',
+      {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+    );
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const fileName = await screen.findByText(file.name);
+    const card = fileName.closest('.otto-attachment');
+    expect(card?.classList.contains('otto-attachment--file')).toBe(true);
+    expect(card?.querySelector('.otto-attachment__type-icon')?.textContent).toBe(
+      'XLSX',
+    );
+    expect(fileName.classList.contains('otto-attachment__file-name')).toBe(true);
+    expect(fileName.getAttribute('title')).toBe(file.name);
+    expect(card?.querySelector('.otto-attachment__meta')?.textContent).toContain(
+      '1.5 KB',
+    );
+
+    const remove = screen.getByRole('button', { name: `移除 ${file.name}` });
+    expect(card?.lastElementChild).toBe(remove);
+    fireEvent.click(remove);
+    expect(screen.queryByText(file.name)).toBeNull();
   });
 });

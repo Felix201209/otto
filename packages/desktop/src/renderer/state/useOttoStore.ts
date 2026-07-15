@@ -538,7 +538,7 @@ export interface OttoActions {
   sendMessage(
     text: string,
     source?: MessageSource,
-    attachments?: ImageAttachment[],
+    attachments?: Attachment[],
     queueAction?: 'merge' | 'next_turn' | 'new_session',
   ): void;
   setModel(model: string): void;
@@ -581,6 +581,10 @@ export function useOttoStore(): UseOttoStore {
   // 已知 id 集，而闭包读不到最新 state，用 ref 兜底。
   const sessionIdsRef = useRef<string[]>([]);
   sessionIdsRef.current = state.sessionIds;
+  const sessionsRef = useRef<Record<string, SessionSummary>>({});
+  sessionsRef.current = state.sessions;
+  const currentModelRef = useRef<string | null>(null);
+  currentModelRef.current = state.currentModel;
   // 专家启动关联：launchRef 记「正在等 create_session 回来的新会话 + 开场消息」；新会话到达后
   // 转存到 kickoffRef，等它被选中且连接就绪时再发开场消息（见下方 kickoff effect）。
   const launchRef = useRef<{ kickoff: string; source: MessageSource } | null>(
@@ -598,6 +602,25 @@ export function useOttoStore(): UseOttoStore {
 
     const unsubFrame = transport.onFrame((frame) => {
       dispatch({ kind: 'frame', frame });
+      if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
+        const { sessionId, messageId, tokenUsage } = frame.payload;
+        try {
+          // 用量上报是旁路遥测：会话令牌只在 main 进程持有，任何网络/鉴权失败
+          // 都必须被吞掉，绝不能反向污染聊天收口或让用户无法继续对话。
+          void window.otto.enterpriseUsageRecord({
+            sessionId,
+            messageId,
+            model: tokenUsage.model
+              ?? sessionsRef.current[sessionId]?.model
+              ?? currentModelRef.current,
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            totalTokens: tokenUsage.totalTokens,
+          }).catch(() => undefined);
+        } catch {
+          // preload 桥在异常启动阶段不可用时同样保持聊天主链路可用。
+        }
+      }
       // 专家启动：create_session 之后广播的首个「id 未见过」的 session_upsert 即新会话。
       // sessionIdsRef 此刻仍是「本帧应用前」的已知 id 集（dispatch 异步），故新 id 必不在其中。
       if (

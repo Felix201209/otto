@@ -95,6 +95,23 @@ function findSeedDir(): string | null {
 }
 
 /**
+ * 直接读取随安装包分发的内置 Skill 正文。
+ *
+ * 专家 profile 可用它把强制工作流直接放进 system context，而不是把可靠性
+ * 交给模型是否记得再次调用 use_skill。只允许简单目录名，避免路径穿越。
+ */
+export function loadBuiltinSkillInstructions(name: string): string | undefined {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return undefined;
+  const seedDir = findSeedDir();
+  if (!seedDir) return undefined;
+  try {
+    return readFileSync(join(seedDir, name, 'SKILL.md'), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 预置内置 skill 到 ~/.otto-user/skills/。
  * @returns 本次实际新装或安全刷新的 skill 名。
  */

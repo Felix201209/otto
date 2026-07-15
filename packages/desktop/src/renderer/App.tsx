@@ -80,11 +80,13 @@ export function App(): React.JSX.Element {
     return (
       <EnterpriseLoginPage
         initialServerUrl={auth.state.serverUrl}
+        initialInviteCode={auth.state.registrationIntent?.inviteCode}
         busy={auth.state.busy}
         error={auth.state.error}
         onPasswordLogin={auth.actions.loginWithPassword}
-        onRequestSms={auth.actions.requestSmsCode}
-        onSmsLogin={auth.actions.loginWithSms}
+        onRequestRegistrationCode={auth.actions.requestRegistrationCode}
+        onRegister={auth.actions.register}
+        onClearError={auth.actions.clearError}
       />
     );
   }
@@ -420,7 +422,7 @@ function OttoWorkspaceApp({
         onDelete={actions.deleteSession}
         productWorkspace={product.state.workspace}
         enterpriseAccount={account}
-        onLogout={() => void onLogout()}
+        onLogout={onLogout}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
@@ -441,7 +443,6 @@ function OttoWorkspaceApp({
           profiles={galleryProfiles}
           onLaunch={handleLaunchProfile}
           onBack={() => setMainView('chat')}
-          userTeamIds={userTeamIds ?? undefined}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
@@ -487,6 +488,10 @@ function OttoWorkspaceApp({
               onOpenPrefs={() => openHub('prefs')}
               onOpenSessions={() => setAllConvOpen(true)}
               onShowHelp={handleShowHelp}
+              onLaunchAgentProfile={(profileId, title) => {
+                setMainView('chat');
+                actions.launchAgentProfile(title, profileId);
+              }}
             />
           )}
           <RightPanel

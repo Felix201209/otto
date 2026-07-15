@@ -21,11 +21,54 @@ import {
   ToolConfirmationOutcome,
   generateCustomModelId,
 } from 'otto-core';
-import { CoreSessionRuntime } from './runtime.js';
+import { CoreSessionRuntime, messageNeedsBuiltinPptSkill } from './runtime.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ToolCallStatus, type ServerToClient } from './protocol.js';
 
 const noOpWorkLogger = { log: async () => undefined };
+
+describe('PPT 内置 Skill 自动路由', () => {
+  it('普通会话中的自然语言 PPT 任务也会命中，普通文档任务不会误触发', () => {
+    expect(messageNeedsBuiltinPptSkill('帮我做一个产品发布会 PPT')).toBe(true);
+    expect(messageNeedsBuiltinPptSkill('把这份材料整理成演示文稿')).toBe(true);
+    expect(messageNeedsBuiltinPptSkill('生成一个 pitch deck')).toBe(true);
+    expect(messageNeedsBuiltinPptSkill('写一份 Word 工作总结')).toBe(false);
+  });
+
+  it('命中后把随包 Skill 写入 system rules 并刷新当前 chat', async () => {
+    async function* stream(): AsyncGenerator<unknown> {
+      yield chunk('PPT_READY', 'STOP');
+    }
+    let rules = '';
+    const refreshSystem = vi.fn(async () => undefined);
+    const config = {
+      initialize: async () => undefined,
+      refreshAuth: async () => undefined,
+      getToolRegistry: async () => ({
+        discoverMcpTools: async () => undefined,
+        getFunctionDeclarations: () => [],
+      }),
+      getOttoClient: () => ({
+        updateSystemPromptWithMcpPrompts: refreshSystem,
+        getChat: async () => ({ sendMessageStream: async () => stream() }),
+      }),
+      getUserRules: () => rules,
+      setUserRules: (next: string) => { rules = next; },
+      getModel: () => 'test-model',
+      getMaxSessionTurns: () => 10,
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '自然语言做 PPT' });
+    const runtime = new CoreSessionRuntime(store, session.sessionId, config, noOpWorkLogger);
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: '帮我做一份发布会 PPT' }], 'local');
+
+    expect(rules).toContain('<skill_loaded name="ppt-creator" source="otto-builtin">');
+    expect(rules).toContain('# 发布会级 PPT 视觉导演');
+    expect(refreshSystem).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('CoreSessionRuntime 模型切换', () => {
   it('通过 OttoClient.switchModel 切换正在使用的 live chat，而不只改 Config 标签', async () => {

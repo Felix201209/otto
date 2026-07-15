@@ -135,7 +135,11 @@ export function OrganizationPanel({
           {isOwner ? (
             <Card>
               <div className="otto-product-form">
-                <div className="otto-hub__field-label">生成企业链接</div>
+                <div className="otto-hub__field-label">组织架构签名链接</div>
+                <p className="otto-hub__field-hint">
+                  成员首次入企统一使用「企业身份控制台」生成的 5 小时企业引入链接。
+                  此处链接只用于职位和总分公司组织关系，不会改变账号所属企业。
+                </p>
                 <label>
                   职位
                   <select value={selectedPosition} onChange={(event) => setSelectedPosition(event.target.value)}>
@@ -165,17 +169,16 @@ export function OrganizationPanel({
                       });
                     }}
                   >生成职位链接</button>
-                  <button type="button" className="otto-hub__btn" onClick={() => actions.createInvite({ kind: 'company' })}>生成公司加入链接</button>
                   <button type="button" className="otto-hub__btn" onClick={() => actions.createInvite({
                     kind: 'company_link',
                     direction: 'parent_invites_child',
                     ...(targetCompanyId.trim() ? { targetCompanyId: targetCompanyId.trim() } : {}),
-                  })}>引入子公司链接</button>
+                  })}>引入子公司关系</button>
                   <button type="button" className="otto-hub__btn" onClick={() => actions.createInvite({
                     kind: 'company_link',
                     direction: 'child_requests_parent',
                     ...(targetCompanyId.trim() ? { targetCompanyId: targetCompanyId.trim() } : {}),
-                  })}>接入总公司链接</button>
+                  })}>接入总公司关系</button>
                 </div>
                 <div className="otto-product-company-accept">
                   <div className="otto-hub__field-label">输入总公司 / 子公司签名链接</div>
@@ -205,7 +208,7 @@ export function OrganizationPanel({
                 <strong>链接已签名 · {new Date(state.lastInvite.expiresAt).toLocaleString('zh-CN')} 失效</strong>
                 <textarea readOnly value={state.lastInvite.link} aria-label="生成的企业链接" />
                 <button type="button" className="otto-hub__btn" onClick={() => void navigator.clipboard.writeText(state.lastInvite!.link)}>复制链接</button>
-                <span>当前版本支持粘贴核验；跨设备组织详情需要后续接入企业服务端。</span>
+                <span>该签名链接仅用于组织架构或职位关系；成员入企以中心服务签发的 5 小时企业引入链接为准。</span>
               </div>
             </Card>
           ) : null}

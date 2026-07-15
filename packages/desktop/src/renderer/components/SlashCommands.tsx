@@ -25,15 +25,18 @@ export interface SlashCommand {
   /** 一句话说明，右侧灰字。 */
   description: string;
   /**
-   * 执行方式三选一：
+   * 执行方式：
    *   - 'local'：本地分派回调（开面板/新建会话等）；
    *   - 'prompt'：把预置提示词发给模型；
+   *   - 'agent'：新建绑定服务端 profile 的专家会话；
    *   - 'server'：经 run_slash_command 帧交给 server 命令执行层（结果以
    *     slash_command_result 的 markdown 回来，渲染成聊天区系统气泡）。
    */
-  action?: 'local' | 'prompt' | 'server';
+  action?: 'local' | 'prompt' | 'server' | 'agent';
   /** action=prompt 时发送给 Otto 的完整指令。 */
   prompt?: string;
+  /** action=agent 时绑定的服务端白名单 profile id。 */
+  agentProfileId?: string;
   /** 用法提示（server 命令的子命令/参数形态），面板灰字附注。 */
   usage?: string;
   /**

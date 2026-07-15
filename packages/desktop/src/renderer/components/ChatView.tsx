@@ -20,7 +20,7 @@ import type {
   ModelInfo,
   MessageSource,
 } from 'otto-server';
-import type { ImageAttachment } from '../state/useOttoStore.js';
+import type { Attachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
@@ -87,7 +87,7 @@ interface ChatViewProps {
   onSend: (
     text: string,
     source: MessageSource,
-    attachments?: ImageAttachment[],
+    attachments?: Attachment[],
   ) => void;
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
@@ -125,6 +125,8 @@ interface ChatViewProps {
   onOpenSessions?: () => void;
   /** 斜杠命令 `/help`：在聊天区展示命令总览（系统气泡）。 */
   onShowHelp?: () => void;
+  /** 斜杠专家入口：创建绑定服务端 profile 的新会话。 */
+  onLaunchAgentProfile?: (profileId: string, title: string) => void;
 }
 
 export function ChatView({
@@ -154,6 +156,7 @@ export function ChatView({
   onOpenPrefs,
   onOpenSessions,
   onShowHelp,
+  onLaunchAgentProfile,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -382,6 +385,7 @@ export function ChatView({
         onOpenSessions={onOpenSessions}
         onCopyLast={copyLastReply}
         onShowHelp={onShowHelp}
+        onLaunchAgentProfile={onLaunchAgentProfile}
       />
     </section>
   );

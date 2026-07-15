@@ -7,6 +7,8 @@
 
 export interface EnterpriseAccount {
   id: string;
+  organizationId: string;
+  organizationName: string;
   employeeId: string | null;
   username: string;
   phone: string | null;
@@ -18,6 +20,16 @@ export interface EnterpriseAccount {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  usage?: EnterpriseAccountUsage;
+}
+
+export interface EnterpriseAccountUsage {
+  accountId: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  lastUsedAt: string | null;
 }
 
 export interface AccountCreateInput {
@@ -53,6 +65,32 @@ export interface SmsChallenge {
   expiresAt: string;
   retryAfterSeconds: number;
   message: string;
+  organization: { id: string; name: string };
+}
+
+export interface TokenUsageRecordInput {
+  sessionId: string;
+  messageId: string;
+  model?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface EnterpriseOrganizationInvite {
+  id: string;
+  organizationId: string;
+  code: string;
+  link: string;
+  status: 'active' | 'expired' | 'revoked';
+  issuedAt: string;
+  expiresAt: string;
+  validHours: 5;
+}
+
+export interface EnterpriseOrganizationInviteContext {
+  organization: { id: string; name: string };
+  invite: EnterpriseOrganizationInvite | null;
 }
 
 class EnterpriseRequestError extends Error {
@@ -130,7 +168,7 @@ export class EnterpriseClient {
     }
   }
 
-  async loginWithPassword(serverUrl: string, username: string, password: string): Promise<{
+  async loginWithPassword(serverUrl: string, identifier: string, password: string): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
   }> {
@@ -142,22 +180,31 @@ export class EnterpriseClient {
       expiresAt: string;
     }>('/enterprise/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ identifier, password }),
     });
     this.token = result.token;
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
-  async requestSmsCode(serverUrl: string, phone: string): Promise<SmsChallenge> {
+  async requestRegistrationCode(
+    serverUrl: string,
+    phone: string,
+    inviteCode: string,
+  ): Promise<SmsChallenge> {
     this.serverUrl = normalizeServerUrl(serverUrl);
     this.token = null;
-    return this.request<SmsChallenge>('/enterprise/auth/sms/request', {
+    return this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
       method: 'POST',
-      body: JSON.stringify({ phone }),
+      body: JSON.stringify({ phone, inviteCode }),
     });
   }
 
-  async loginWithSms(challengeId: string, code: string): Promise<{
+  async registerWithSms(input: {
+    challengeId: string;
+    code: string;
+    name: string;
+    password: string;
+  }): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
   }> {
@@ -165,9 +212,9 @@ export class EnterpriseClient {
       account: EnterpriseAccount;
       token: string;
       expiresAt: string;
-    }>('/enterprise/auth/sms/verify', {
+    }>('/enterprise/auth/register/sms/verify', {
       method: 'POST',
-      body: JSON.stringify({ challengeId, code }),
+      body: JSON.stringify(input),
     });
     this.token = result.token;
     return { account: result.account, expiresAt: result.expiresAt };
@@ -211,6 +258,29 @@ export class EnterpriseClient {
       `/enterprise/accounts/${encodeURIComponent(id)}`,
       { method: 'PATCH', body: JSON.stringify(input) },
     )).account;
+  }
+
+  async recordTokenUsage(input: TokenUsageRecordInput): Promise<{
+    recorded: boolean;
+    source: 'client_reported';
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/usage', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/organization/invite');
+  }
+
+  async issueOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext & {
+    invite: EnterpriseOrganizationInvite;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/organization/invite', { method: 'POST' });
   }
 
   async ticketInbox(): Promise<unknown[]> {

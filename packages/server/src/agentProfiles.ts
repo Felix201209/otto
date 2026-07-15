@@ -13,6 +13,8 @@ export interface ServerAgentProfile {
   roles?: Array<'company_owner' | 'company_admin' | 'manager' | 'member'>;
   department?: string;
   skills: string[];
+  /** 必须由 server 直接注入完整正文的随包 Skill；不依赖模型再次调用 use_skill。 */
+  embeddedSkills?: string[];
   systemPrompt: string;
   /** 新建该专家会话时由服务端持久化的首条 assistant 欢迎语。 */
   welcomeMessage?: string;
@@ -140,6 +142,7 @@ const commonExpertProfiles = commonExpertSpecs.map<ServerAgentProfile>(
     scope: 'base',
     edition: 'both',
     skills,
+    ...(id === 'ppt' ? { embeddedSkills: ['ppt-creator'] } : {}),
     systemPrompt: `你是${name}。你的职责是${mission}。开始前先确认输入、目标和交付形式，并优先加载 ${skills.join('、')} Skill；缺失信息必须标为待确认，不得编造事实、来源或执行结果。涉及外发、覆盖文件、花钱或影响他人的操作，必须先展示最终内容并取得确认。`,
   }),
 );
@@ -258,4 +261,26 @@ const profileById = new Map(BUILTIN_AGENT_PROFILES.map((profile) => [profile.id,
 
 export function resolveAgentProfile(id: string | undefined): ServerAgentProfile | undefined {
   return id ? profileById.get(id) : undefined;
+}
+
+export function buildAgentProfileRuntimeRules(
+  profile: ServerAgentProfile,
+  loadBuiltinSkill: (name: string) => string | undefined,
+): string {
+  const embedded = (profile.embeddedSkills ?? []).flatMap((name) => {
+    const content = loadBuiltinSkill(name)?.trim();
+    if (!content) return [];
+    return [
+      [
+        `## Otto 内置强制 Skill：${name}`,
+        '',
+        '以下完整 Skill 已由 Otto 在系统层直接加载。不要再次调用 use_skill，也不得跳过、缩写或改用快速模板；必须按其工作流执行。',
+        '',
+        `<skill_loaded name="${name}" source="otto-builtin">`,
+        content,
+        '</skill_loaded>',
+      ].join('\n'),
+    ];
+  });
+  return [profile.systemPrompt, ...embedded].join('\n\n---\n\n');
 }

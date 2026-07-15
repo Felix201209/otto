@@ -132,6 +132,8 @@ export interface VoiceResult { text: string; rawText: string; polished: boolean 
 
 export interface EnterpriseAccount {
   id: string;
+  organizationId: string;
+  organizationName: string;
   employeeId: string | null;
   username: string;
   phone: string | null;
@@ -143,6 +145,16 @@ export interface EnterpriseAccount {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  usage?: EnterpriseAccountUsage;
+}
+
+export interface EnterpriseAccountUsage {
+  accountId: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  lastUsedAt: string | null;
 }
 
 export interface EnterpriseAccountCreateInput {
@@ -174,6 +186,36 @@ export interface EnterpriseSmsChallenge {
   expiresAt: string;
   retryAfterSeconds: number;
   message: string;
+  organization: { id: string; name: string };
+}
+
+export interface EnterpriseRegistrationIntent {
+  inviteCode: string;
+}
+
+export interface EnterpriseTokenUsageInput {
+  sessionId: string;
+  messageId: string;
+  model?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface EnterpriseOrganizationInvite {
+  id: string;
+  organizationId: string;
+  code: string;
+  link: string;
+  status: 'active' | 'expired' | 'revoked';
+  issuedAt: string;
+  expiresAt: string;
+  validHours: 5;
+}
+
+export interface EnterpriseOrganizationInviteContext {
+  organization: { id: string; name: string };
+  invite: EnterpriseOrganizationInvite | null;
 }
 
 // ── IPC channel 名（与 main 对齐）──
@@ -196,12 +238,17 @@ const IPC = {
   voiceTranscribe: 'otto:voice-transcribe',
   enterpriseSession: 'otto:enterprise-session',
   enterprisePasswordLogin: 'otto:enterprise-password-login',
-  enterpriseSmsRequest: 'otto:enterprise-sms-request',
-  enterpriseSmsLogin: 'otto:enterprise-sms-login',
+  enterpriseRegistrationRequest: 'otto:enterprise-registration-request',
+  enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
+  enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
+  enterpriseRegister: 'otto:enterprise-register',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
+  enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
+  enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
@@ -335,21 +382,36 @@ export interface OttoBridge {
   enterpriseSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }>;
   enterprisePasswordLogin(input: {
     serverUrl: string;
-    username: string;
+    identifier: string;
     password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
-  enterpriseSmsRequest(input: {
+  enterpriseRegistrationRequest(input: {
     serverUrl: string;
     phone: string;
+    inviteCode: string;
   }): Promise<EnterpriseSmsChallenge>;
-  enterpriseSmsLogin(input: {
+  enterpriseRegistrationIntent(): Promise<EnterpriseRegistrationIntent | null>;
+  onEnterpriseRegistrationIntent(
+    handler: (intent: EnterpriseRegistrationIntent) => void,
+  ): () => void;
+  enterpriseRegister(input: {
     challengeId: string;
     code: string;
+    name: string;
+    password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
   enterpriseLogout(): Promise<void>;
   enterpriseAccounts(): Promise<EnterpriseAccount[]>;
   enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
   enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
+  enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
+    recorded: boolean;
+    source: 'client_reported';
+  }>;
+  enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext>;
+  enterpriseOrganizationInviteIssue(): Promise<EnterpriseOrganizationInviteContext & {
+    invite: EnterpriseOrganizationInvite;
+  }>;
   enterpriseTicketInbox(): Promise<unknown[]>;
   enterpriseTicketSubmit(input: {
     title: string;
@@ -718,7 +780,7 @@ const bridge: OttoBridge = {
   },
   enterprisePasswordLogin(input: {
     serverUrl: string;
-    username: string;
+    identifier: string;
     password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
     return ipcRenderer.invoke(IPC.enterprisePasswordLogin, input) as Promise<{
@@ -727,17 +789,35 @@ const bridge: OttoBridge = {
       expiresAt: string;
     }>;
   },
-  enterpriseSmsRequest(input: {
+  enterpriseRegistrationRequest(input: {
     serverUrl: string;
     phone: string;
+    inviteCode: string;
   }): Promise<EnterpriseSmsChallenge> {
-    return ipcRenderer.invoke(IPC.enterpriseSmsRequest, input) as Promise<EnterpriseSmsChallenge>;
+    return ipcRenderer.invoke(IPC.enterpriseRegistrationRequest, input) as Promise<EnterpriseSmsChallenge>;
   },
-  enterpriseSmsLogin(input: {
+  enterpriseRegistrationIntent(): Promise<EnterpriseRegistrationIntent | null> {
+    return ipcRenderer.invoke(IPC.enterpriseRegistrationIntent) as Promise<
+      EnterpriseRegistrationIntent | null
+    >;
+  },
+  onEnterpriseRegistrationIntent(
+    handler: (intent: EnterpriseRegistrationIntent) => void,
+  ): () => void {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      intent: EnterpriseRegistrationIntent,
+    ): void => handler(intent);
+    ipcRenderer.on(IPC.enterpriseRegistrationIntentOpened, listener);
+    return () => ipcRenderer.removeListener(IPC.enterpriseRegistrationIntentOpened, listener);
+  },
+  enterpriseRegister(input: {
     challengeId: string;
     code: string;
+    name: string;
+    password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
-    return ipcRenderer.invoke(IPC.enterpriseSmsLogin, input) as Promise<{
+    return ipcRenderer.invoke(IPC.enterpriseRegister, input) as Promise<{
       serverUrl: string;
       account: EnterpriseAccount;
       expiresAt: string;
@@ -757,6 +837,27 @@ const bridge: OttoBridge = {
     input: EnterpriseAccountUpdateInput,
   ): Promise<EnterpriseAccount> {
     return ipcRenderer.invoke(IPC.enterpriseAccountUpdate, id, input) as Promise<EnterpriseAccount>;
+  },
+  enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
+    recorded: boolean;
+    source: 'client_reported';
+  }> {
+    return ipcRenderer.invoke(IPC.enterpriseUsageRecord, input) as Promise<{
+      recorded: boolean;
+      source: 'client_reported';
+    }>;
+  },
+  enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteGet) as Promise<
+      EnterpriseOrganizationInviteContext
+    >;
+  },
+  enterpriseOrganizationInviteIssue(): Promise<EnterpriseOrganizationInviteContext & {
+    invite: EnterpriseOrganizationInvite;
+  }> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteIssue) as Promise<
+      EnterpriseOrganizationInviteContext & { invite: EnterpriseOrganizationInvite }
+    >;
   },
   enterpriseTicketInbox(): Promise<unknown[]> {
     return ipcRenderer.invoke(IPC.enterpriseTicketInbox) as Promise<unknown[]>;

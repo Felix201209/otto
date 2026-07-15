@@ -13,7 +13,8 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 const ACCOUNT = {
-  id: 'acc_1', employeeId: null, username: 'staff01', phone: '+8613800138000', name: '员工一号',
+  id: 'acc_1', organizationId: 'org_acme', organizationName: '星河科技',
+  employeeId: null, username: 'staff01', phone: '+8613800138000', name: '员工一号',
   role: null, department: null, isAdmin: false, status: 'active' as const,
   tags: ['普通员工'], createdAt: '2026-07-13', updatedAt: '2026-07-13',
 };
@@ -36,25 +37,120 @@ describe('EnterpriseClient', () => {
     });
   });
 
-  it('短信登录先请求挑战，再用验证码换取并保存会话', async () => {
+  it('首次注册先请求挑战，再提交姓名、密码和验证码并保存会话', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, {
         challengeId: 'sms_1', expiresAt: '2099-01-01', retryAfterSeconds: 60, message: '已发送',
+        organization: { id: 'org_acme', name: '星河科技' },
       }))
       .mockResolvedValueOnce(jsonResponse(200, {
         account: ACCOUNT, token: 'sms-session', expiresAt: '2099-01-02',
       }));
     const client = new EnterpriseClient(fetchMock as typeof fetch);
 
-    const challenge = await client.requestSmsCode('https://enterprise.otto.test', '13800138000');
+    const challenge = await client.requestRegistrationCode(
+      'https://enterprise.otto.test',
+      '13800138000',
+      'ABCD-EFGH',
+    );
     expect(challenge.challengeId).toBe('sms_1');
-    const loggedIn = await client.loginWithSms('sms_1', '042731');
+    expect(challenge.organization).toEqual({ id: 'org_acme', name: '星河科技' });
+    const loggedIn = await client.registerWithSms({
+      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
+    });
     expect(loggedIn.account.id).toBe(ACCOUNT.id);
     expect(client.snapshot().token).toBe('sms-session');
     expect(fetchMock.mock.calls.map(([url, init]) => [url, (init as RequestInit).method])).toEqual([
-      ['https://enterprise.otto.test/enterprise/auth/sms/request', 'POST'],
-      ['https://enterprise.otto.test/enterprise/auth/sms/verify', 'POST'],
+      ['https://enterprise.otto.test/enterprise/auth/register/sms/request', 'POST'],
+      ['https://enterprise.otto.test/enterprise/auth/register/sms/verify', 'POST'],
     ]);
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      phone: '13800138000', inviteCode: 'ABCD-EFGH',
+    });
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toEqual({
+      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
+    });
+  });
+
+  it('登录后按消息幂等键上报 provider 返回的 Token 用量', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, { recorded: true, source: 'client_reported' }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.recordTokenUsage({
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      model: 'deepseek-v4-pro',
+      inputTokens: 12,
+      outputTokens: 34,
+      totalTokens: 46,
+    })).resolves.toEqual({ recorded: true, source: 'client_reported' });
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://enterprise.otto.test/enterprise/usage');
+    const init = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer session-token' });
+    expect(JSON.parse(init.body as string)).toEqual({
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      model: 'deepseek-v4-pro',
+      inputTokens: 12,
+      outputTokens: 34,
+      totalTokens: 46,
+    });
+  });
+
+  it('未登录时不发送 Token 用量', async () => {
+    const fetchMock = vi.fn();
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    client.restore({ serverUrl: 'https://enterprise.otto.test', token: null });
+
+    await expect(client.recordTokenUsage({
+      sessionId: 'session-1', messageId: 'message-1',
+      inputTokens: 1, outputTokens: 2, totalTokens: 3,
+    })).rejects.toThrow('登录已失效');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('企业管理员可读取并手动换新 5 小时中心引入链接', async () => {
+    const firstInvite = {
+      id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
+      link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
+      issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2026-07-14T05:00:00.000Z',
+      validHours: 5 as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: { ...ACCOUNT, isAdmin: true }, token: 'admin-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        organization: { id: 'org_acme', name: '星河科技' }, invite: firstInvite,
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, {
+        organization: { id: 'org_acme', name: '星河科技' },
+        invite: {
+          ...firstInvite,
+          id: 'invite_2',
+          code: 'WXYZ-2345',
+          link: 'https://59.110.154.44:7777/enterprise/join/WXYZ-2345',
+        },
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'admin', 'password');
+
+    expect((await client.getOrganizationInvite()).invite?.link)
+      .toBe('https://59.110.154.44:7777/enterprise/join/ABCD-EFGH');
+    expect((await client.issueOrganizationInvite()).invite.code).toBe('WXYZ-2345');
+    expect(fetchMock.mock.calls.slice(1).map(([, init]) => (init as RequestInit).method)).toEqual([
+      'GET', 'POST',
+    ]);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer admin-token',
+    });
   });
 
   it('拒绝带账号密码、查询参数或非 http(s) 协议的服务器地址', async () => {

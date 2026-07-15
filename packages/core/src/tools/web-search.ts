@@ -23,9 +23,14 @@ const MAX_CONTENT_LENGTH = 10000;
 
 // bing/bocha 的 HTTP 搜索超时（15秒）；gemini grounding 保留原有 30 秒
 const HTTP_SEARCH_TIMEOUT_MS = 15000;
+const BING_ROUTE_TIMEOUTS_MS = [9000, 6000] as const;
 
-// 国内可直连的 Bing 搜索页（免 key，默认 provider）
-const BING_SEARCH_ENDPOINT = 'https://cn.bing.com/search';
+// 两条免 key 内置线路。优先国内站；被限流、验证或结构异常时自动换全球站。
+// 对用户统一表现为“内置搜索”，不要求理解 provider 或排查 API Key。
+const BING_SEARCH_ENDPOINTS = [
+  'https://cn.bing.com/search',
+  'https://www.bing.com/search',
+] as const;
 
 // 博查 Web Search API（需 key，可选 provider）
 const BOCHA_SEARCH_ENDPOINT = 'https://api.bochaai.com/v1/web-search';
@@ -321,11 +326,12 @@ export class WebSearchTool extends BaseTool<
     url: string,
     init: RequestInit,
     signal: AbortSignal,
+    timeoutMs = HTTP_SEARCH_TIMEOUT_MS,
   ): Promise<Response> {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(
       () => timeoutController.abort(),
-      HTTP_SEARCH_TIMEOUT_MS,
+      timeoutMs,
     );
     try {
       return await fetch(url, {
@@ -336,7 +342,7 @@ export class WebSearchTool extends BaseTool<
       // 超时中止与外部取消区分开，给出可行动的错误信息
       if (timeoutController.signal.aborted && !signal.aborted) {
         throw new Error(
-          `Search request timed out after ${HTTP_SEARCH_TIMEOUT_MS / 1000}s`,
+          `Search request timed out after ${timeoutMs / 1000}s`,
         );
       }
       throw error;
@@ -353,49 +359,47 @@ export class WebSearchTool extends BaseTool<
     params: WebSearchToolParams,
     signal: AbortSignal,
   ): Promise<WebSearchToolResult> {
-    const url = `${BING_SEARCH_ENDPOINT}?q=${encodeURIComponent(params.query)}&count=10`;
-
-    let html: string;
-    try {
-      const response = await this.fetchWithSearchTimeout(
-        url,
-        {
-          headers: {
-            'User-Agent': DESKTOP_USER_AGENT,
-            Accept:
-              'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    const failures: string[] = [];
+    for (const [routeIndex, endpoint] of BING_SEARCH_ENDPOINTS.entries()) {
+      if (signal.aborted) break;
+      const url = `${endpoint}?q=${encodeURIComponent(params.query)}&count=10`;
+      try {
+        const response = await this.fetchWithSearchTimeout(
+          url,
+          {
+            headers: {
+              'User-Agent': DESKTOP_USER_AGENT,
+              Accept:
+                'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            },
           },
-        },
-        signal,
-      );
-      if (!response.ok) {
-        return this.errorResult(
-          `Bing search failed with HTTP ${response.status} ${response.statusText} for query "${params.query}". Bing may be rate-limiting or blocking the request; retry later or switch searchProvider to 'bocha' or 'gemini'.`,
+          signal,
+          BING_ROUTE_TIMEOUTS_MS[routeIndex] ?? HTTP_SEARCH_TIMEOUT_MS,
         );
+        if (!response.ok) {
+          failures.push(`${new URL(endpoint).hostname}: HTTP ${response.status} ${response.statusText}`);
+          continue;
+        }
+        const html = await response.text();
+        if (!html.includes('b_algo')) {
+          failures.push(`${new URL(endpoint).hostname}: unrecognized page structure or verification page`);
+          continue;
+        }
+        const items = parseBingResults(html);
+        if (items.length === 0) {
+          failures.push(`${new URL(endpoint).hostname}: result blocks could not be parsed`);
+          continue;
+        }
+        return this.formatResults('bing', params.query, items);
+      } catch (error) {
+        failures.push(`${new URL(endpoint).hostname}: ${getErrorMessage(error)}`);
       }
-      html = await response.text();
-    } catch (error) {
-      return this.errorResult(
-        `Bing search request failed for query "${params.query}": ${getErrorMessage(error)}`,
-      );
     }
 
-    // 防御性解析：结构对不上必须 fail-loud，绝不静默返回空结果
-    if (!html.includes('b_algo')) {
-      return this.errorResult(
-        `Bing returned a page without any recognizable result blocks for query "${params.query}". The page structure may have changed, or Bing served a CAPTCHA/redirect page. Try again later or switch searchProvider to 'bocha' or 'gemini'.`,
-      );
-    }
-
-    const items = parseBingResults(html);
-    if (items.length === 0) {
-      return this.errorResult(
-        `Bing result blocks were found but none could be parsed for query "${params.query}". The result page structure likely changed; the Bing HTML parser needs updating. Switch searchProvider to 'bocha' or 'gemini' as a workaround.`,
-      );
-    }
-
-    return this.formatResults('bing', params.query, items);
+    return this.errorResult(
+      `Built-in web search failed on all available routes for query "${params.query}". ${failures.join(' | ')}`,
+    );
   }
 
   /**
@@ -832,18 +836,36 @@ export class WebSearchTool extends BaseTool<
       };
     }
 
-    // 严格按显式配置分发（默认 bing）：需 key 的 provider 配置不完整时不自动降级。
+    // 自定义线路是增强项，不是可用性的单点：失败时自动回到免 key 内置搜索。
     const provider = this.getProvider();
+    let primary: WebSearchToolResult;
     switch (provider) {
       case 'bocha':
-        return this.executeBochaSearch(params, signal);
+        primary = await this.executeBochaSearch(params, signal);
+        break;
       case 'volcengine':
-        return this.executeVolcengineSearch(params, signal);
+        primary = await this.executeVolcengineSearch(params, signal);
+        break;
       case 'gemini':
-        return this.executeGeminiSearch(params, signal);
+        primary = await this.executeGeminiSearch(params, signal);
+        break;
       case 'bing':
       default:
         return this.executeBingSearch(params, signal);
     }
+
+    const primaryText = String(primary.llmContent ?? '');
+    const unavailable =
+      primaryText.startsWith('Error:') ||
+      /(?:currently unavailable|tool unavailable|authentication failure|insufficient credits)/i.test(
+        primaryText,
+      );
+    if (!unavailable || signal.aborted) return primary;
+
+    const fallback = await this.executeBingSearch(params, signal);
+    if (!String(fallback.llmContent ?? '').startsWith('Error:')) return fallback;
+    return this.errorResult(
+      `Both the configured ${provider} search route and Otto built-in search routes failed. Configured route: ${primaryText.slice(0, 500)} Built-in route: ${String(fallback.llmContent).slice(0, 500)}`,
+    );
   }
 }

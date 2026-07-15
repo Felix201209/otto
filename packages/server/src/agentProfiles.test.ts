@@ -34,7 +34,8 @@ describe('服务端 Agent profile 白名单', () => {
   });
 
   it('PPT 专家强制使用 HTML 视觉渲染而不是 Python 脚本', () => {
-    const prompt = resolveAgentProfile('ppt')?.systemPrompt ?? '';
+    const profile = resolveAgentProfile('ppt');
+    const prompt = profile?.systemPrompt ?? '';
 
     expect(prompt).toContain('HTML');
     expect(prompt).toContain('浏览器');
@@ -44,6 +45,7 @@ describe('服务端 Agent profile 白名单', () => {
     expect(prompt).toContain('炫酷');
     expect(prompt).toContain('自定义 HTML/CSS/SVG');
     expect(prompt).toContain('固定模板');
+    expect(profile?.embeddedSkills).toEqual(['ppt-creator']);
   });
 
   it('每个专家都有对应身份的简短欢迎语', () => {

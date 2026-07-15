@@ -27,6 +27,12 @@ const AGENT_STYLES: Array<{ id: string; label: string; icon: GeneratedIconName }
   { id: 'windsurf', label: '协作推进（边讲边做）', icon: 'style-windsurf' },
 ];
 
+const SIMPLE_AGENT_STYLES = [
+  { id: 'default', label: '平时聊天', icon: 'style-default' as GeneratedIconName, hint: '自然、清楚，适合大多数事情' },
+  { id: 'codex', label: '直接做事', icon: 'style-codex' as GeneratedIconName, hint: '少解释，优先把事情完成' },
+  { id: 'augment', label: '复杂任务', icon: 'style-augment' as GeneratedIconName, hint: '先拆解，再执行和检查' },
+];
+
 /** 外观主题选项（nativeTheme.themeSource 三态）。 */
 const THEME_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string }> = [
   { id: 'system', label: '跟随系统' },
@@ -61,16 +67,21 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
   };
 
   return (
-    <Panel title="偏好设置" desc="Otto 的工作风格与全局偏好。">
+    <Panel title="外观与回复" desc="只保留日常真正需要的选择；默认设置已经适合大多数人。">
       {!s ? (
         <Empty>正在加载偏好设置…</Empty>
       ) : (
-        <Card>
+        <>
+        <Card className="otto-prefs-simple">
+          <div className="otto-prefs-simple__intro">
+            <span className="otto-prefs-simple__check" aria-hidden>✓</span>
+            <div><strong>推荐设置已生效</strong><span>不知道怎么选时保持默认就好，所有选项都会立即生效。</span></div>
+          </div>
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
               <div className="otto-hub__field-label">外观</div>
               <div className="otto-hub__field-hint">
-                深浅色主题：跟随系统或手动固定，立即生效并记住选择。
+                选择你看着最舒服的界面。
               </div>
             </div>
             <div className="otto-hub__chiprow">
@@ -89,19 +100,43 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
 
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
-              <div className="otto-hub__field-label">Otto 工作方式</div>
+              <div className="otto-hub__field-label">希望 Otto 怎么帮你</div>
               <div className="otto-hub__field-hint">
-                选择适合日常对话、企业办公、代码处理或工程交付的方式。
+                不需要理解模型参数，只选最接近你的习惯。
               </div>
             </div>
-            <div className="otto-hub__chiprow">
-              {AGENT_STYLES.map((style) => (
+            <div className="otto-prefs-modes">
+              {SIMPLE_AGENT_STYLES.map((style) => (
                 <button
                   key={style.id}
                   type="button"
                   className={
                     'otto-hub__chip' + (s.agentStyle === style.id ? ' is-active' : '')
                   }
+                  onClick={() => actions.setSetting('agentStyle', style.id)}
+                >
+                  <GeneratedIcon name={style.icon} size={18} />
+                  <span><strong>{style.label}</strong><small>{style.hint}</small></span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <details className="otto-hub__details">
+          <summary>更多偏好</summary>
+          <Card>
+          <div className="otto-hub__setting otto-hub__setting--stack">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">其他工作风格</div>
+              <div className="otto-hub__field-hint">只有你明确知道自己想要哪种风格时才需要改。</div>
+            </div>
+            <div className="otto-hub__chiprow">
+              {AGENT_STYLES.filter((style) => !SIMPLE_AGENT_STYLES.some((simple) => simple.id === style.id)).map((style) => (
+                <button
+                  key={style.id}
+                  type="button"
+                  className={'otto-hub__chip' + (s.agentStyle === style.id ? ' is-active' : '')}
                   onClick={() => actions.setSetting('agentStyle', style.id)}
                 >
                   <GeneratedIcon name={style.icon} size={18} />
@@ -151,7 +186,9 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
               </button>
             </div>
           </div>
-        </Card>
+          </Card>
+        </details>
+        </>
       )}
     </Panel>
   );

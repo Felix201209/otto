@@ -96,4 +96,14 @@ describe('OrganizationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '验证并接入企业框架' }));
     expect(acceptCompanyLink).toHaveBeenCalledWith(link);
   });
+
+  it('成员入企统一走 5 小时中心引入链接，本地面板只保留组织关系链接', () => {
+    const { value } = product(enterprise());
+    render(<OrganizationPanel product={value} />);
+
+    expect(screen.queryByRole('button', { name: '生成公司加入链接' })).toBeNull();
+    expect(screen.getByText(/5 小时企业引入链接/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '引入子公司关系' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '接入总公司关系' })).toBeTruthy();
+  });
 });

@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ScheduleItemInfo } from 'otto-server';
 import { IconChevron } from './icons.js';
 
@@ -39,10 +39,37 @@ export function DayAgenda({
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [notes, setNotes] = useState('');
+  const [workResults, setWorkResults] = useState<Array<{
+    time: string;
+    action: string;
+    taskTitle?: string;
+    details?: string;
+  }>>([]);
   const sorted = useMemo(
     () => [...schedules].sort((a, b) => a.startAt.localeCompare(b.startAt)),
     [schedules],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const bridge = window.otto;
+    if (!bridge?.workLogRecent) {
+      setWorkResults([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void bridge.workLogRecent(92).then((days) => {
+      if (cancelled) return;
+      const day = days.find((item) => item.date === date);
+      setWorkResults(
+        (day?.entries ?? []).filter((entry) => entry.entryType === 'work_result'),
+      );
+    }).catch(() => {
+      if (!cancelled) setWorkResults([]);
+    });
+    return () => { cancelled = true; };
+  }, [date]);
 
   const submit = (): void => {
     if (!title.trim() || !startTime) return;
@@ -76,6 +103,26 @@ export function DayAgenda({
           </button>
         </div>
       </header>
+
+      <section className="otto-agenda__results" aria-label="当日工作成果">
+        <div className="otto-agenda__results-head">
+          <div><span>WORK RESULTS</span><h2>当日工作成果</h2></div>
+          <strong>{workResults.length}</strong>
+        </div>
+        {workResults.length > 0 ? (
+          <div className="otto-agenda__results-grid">
+            {workResults.map((entry, index) => (
+              <article key={`${entry.time}-${index}`}>
+                <div className="otto-agenda__result-time">{entry.time}</div>
+                <strong>完成 · {entry.taskTitle || entry.action}</strong>
+                {entry.details ? <p>{entry.details.replace(/\s+/g, ' ').slice(0, 220)}</p> : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="otto-agenda__results-empty">这一天还没有自动归纳的工作成果。</div>
+        )}
+      </section>
 
       {adding ? (
         <div className="otto-agenda__form">

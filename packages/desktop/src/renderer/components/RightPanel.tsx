@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AutoSkillCandidateInfo, ProductWorkspaceSnapshot } from 'otto-server';
 import {
   BASE_AGENT_PROFILES,
@@ -124,7 +124,15 @@ export function RightPanel({
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
   const [friendNote, setFriendNote] = useState('');
-  const [worklogData, setWorklogData] = useState('');
+  const [workSummary, setWorkSummary] = useState<{
+    summary: string;
+    date: string;
+    totalActions: number;
+    workResults: number;
+  } | null>(null);
+  const [worklogDays, setWorklogDays] = useState<WorkLogDay[]>([]);
+  const [worklogLoading, setWorklogLoading] = useState(false);
+  const [workReportPreview, setWorkReportPreview] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
   const profiles = useMemo(() => visibleProfiles(mode, workspace), [mode, workspace]);
   const parkBrand = useParkBrand();
@@ -132,6 +140,33 @@ export function RightPanel({
   useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab('agents');
   }, [activeTab, tabs]);
+
+  const refreshWorkLog = useCallback(async (): Promise<void> => {
+    setWorklogLoading(true);
+    try {
+      const [today, days] = await Promise.all([
+        window.otto.workLogToday(),
+        window.otto.workLogRecent(92),
+      ]);
+      setWorkSummary(today);
+      setWorklogDays(days);
+    } catch {
+      // 工作日志不可用不影响其它右栏功能；保留上一次成功数据。
+    } finally {
+      setWorklogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'worklog') void refreshWorkLog();
+  }, [activeTab, refreshWorkLog]);
+
+  const worklogByDate = useMemo(
+    () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
+    [worklogDays],
+  );
+  const todayEntries = workSummary ? worklogByDate[workSummary.date] ?? [] : [];
+  const todayResults = todayEntries.filter((entry) => entry.entryType === 'work_result');
 
   if (collapsed) {
     return (
@@ -310,21 +345,48 @@ export function RightPanel({
 
         {activeTab === 'worklog' ? (
           <div className="otto-worklog-panel">
+            <div className="otto-worklog-panel__head">
+              <div><strong>我的工作成果</strong><span>完成一轮工作后自动归纳</span></div>
+              <button type="button" disabled={worklogLoading} onClick={() => void refreshWorkLog()}>
+                {worklogLoading ? '更新中…' : '刷新'}
+              </button>
+            </div>
+
+            <div className="otto-worklog-panel__hero">
+              <div><strong>{workSummary?.workResults ?? 0}</strong><span>项成果</span></div>
+              <p>{todayResults.length > 0 ? `今天已完成 ${todayResults.map((item) => item.taskTitle || item.action).slice(0, 2).join('、')}` : '今天完成的报告、方案和任务会自动出现在这里。'}</p>
+            </div>
+
+            {todayResults.length > 0 ? (
+              <div className="otto-worklog-panel__results">
+                {todayResults.slice(0, 4).map((entry, index) => (
+                  <article key={`${entry.time}-${index}`}>
+                    <span className="otto-worklog-panel__result-dot" aria-hidden />
+                    <div><strong>完成 · {entry.taskTitle || entry.action}</strong><small>{entry.time}{entry.details ? ` · ${entry.details.replace(/\s+/g, ' ').slice(0, 76)}` : ''}</small></div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+
             <div className="otto-worklog-panel__actions">
-              <button type="button" onClick={async () => {
-                try { setWorklogData((await window.otto.workLogToday()).summary); } catch { /* 保留 */ }
-              }}>刷新今日日志</button>
-              <button type="button" onClick={async () => {
+              <button type="button" className="is-primary" onClick={async () => {
                 try {
                   const report = await window.otto.workLogReport();
                   setWorkReportPath(report.ok ? report.path : '');
-                  setWorklogData(report.ok ? `${report.message}\n\n${report.markdown}` : report.message);
+                  setWorkReportPreview(report.ok ? `${report.message}\n\n${report.markdown}` : report.message);
                 } catch { /* 保留 */ }
-              }}>总结当下工作 → 生成报告</button>
-              {workReportPath ? <button type="button" onClick={() => void window.otto.openPath(workReportPath)}>打开已生成报告</button> : null}
+              }}>生成今日总结</button>
+              {workReportPath ? <button type="button" onClick={() => void window.otto.openPath(workReportPath)}>打开总结</button> : null}
             </div>
-            <WorkLogCalendar onSelectDate={onSelectDate} />
-            <pre className="otto-worklog-panel__summary">{worklogData || '选择一个日期在主区域查看日程。'}</pre>
+            <WorkLogCalendar onSelectDate={onSelectDate} byDate={worklogByDate} />
+            <div className="otto-worklog-panel__tip">悬浮日期看当天成果；点击日期进入日程与工作详情。</div>
+            {workReportPreview ? <pre className="otto-worklog-panel__summary">{workReportPreview}</pre> : null}
+            {workSummary ? (
+              <details className="otto-worklog-panel__details">
+                <summary>查看执行明细</summary>
+                <pre>{workSummary.summary}</pre>
+              </details>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -381,23 +443,22 @@ interface WorkLogEntry {
   taskTitle?: string;
 }
 
-function WorkLogCalendar({ onSelectDate }: { onSelectDate: (date: string) => void }): React.JSX.Element {
+interface WorkLogDay {
+  date: string;
+  entries: WorkLogEntry[];
+}
+
+function WorkLogCalendar({
+  onSelectDate,
+  byDate,
+}: {
+  onSelectDate: (date: string) => void;
+  byDate: Record<string, WorkLogEntry[]>;
+}): React.JSX.Element {
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-  const [byDate, setByDate] = useState<Record<string, WorkLogEntry[]>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.otto.workLogRecent(92).then((days) => {
-      if (!cancelled) {
-        setByDate(Object.fromEntries(days.map((day) => [day.date, day.entries])));
-      }
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
-
   const year = visibleMonth.getFullYear();
   const month = visibleMonth.getMonth();
   const days = new Date(year, month + 1, 0).getDate();
@@ -418,6 +479,9 @@ function WorkLogCalendar({ onSelectDate }: { onSelectDate: (date: string) => voi
           const day = index + 1;
           const key = dateKey(year, month, day);
           const entries = byDate[key] ?? [];
+          const orderedEntries = [...entries].sort((left, right) =>
+            left.entryType === right.entryType ? 0 : left.entryType === 'work_result' ? -1 : 1,
+          );
           return (
             <button
               key={key}
@@ -434,12 +498,12 @@ function WorkLogCalendar({ onSelectDate }: { onSelectDate: (date: string) => voi
                   <span className="otto-wcal__pop-title">
                     {month + 1} 月 {day} 日 · {entries.length} 条
                   </span>
-                  {entries.slice(0, 12).map((entry, entryIndex) => (
+                  {orderedEntries.slice(0, 12).map((entry, entryIndex) => (
                     <span className="otto-wcal__pop-item" key={`${entry.time}-${entryIndex}`}>
                       <span className="otto-wcal__pop-time">{entry.time}</span>
                       <span className="otto-wcal__pop-copy">
                         <span className="otto-wcal__pop-action">
-                          {entry.entryType === 'work_result' ? '成果' : `[${entry.category}]`} {entry.action}
+                          • {entry.entryType === 'work_result' ? '完成' : entry.category} · {entry.action}
                           {entry.success ? '' : '（失败）'}
                         </span>
                         {entry.details ? (
