@@ -372,14 +372,16 @@ describe('附件预览卡片', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
 
-    const fileName = await screen.findByText(file.name);
+    const displayName = '产品销售数据汇总与下一季度预测';
+    const fileName = await screen.findByText(displayName);
     const card = fileName.closest('.otto-attachment');
     expect(card?.classList.contains('otto-attachment--file')).toBe(true);
-    expect(card?.querySelector('.otto-attachment__type-icon')?.textContent).toBe(
-      'XLSX',
-    );
+    const typeIcon = card?.querySelector('.otto-attachment__type-icon');
+    expect(typeIcon?.textContent).toBe('EXCEL');
+    expect(typeIcon?.getAttribute('data-type')).toBe('EXCEL');
     expect(fileName.classList.contains('otto-attachment__file-name')).toBe(true);
     expect(fileName.getAttribute('title')).toBe(file.name);
+    expect(fileName.textContent).not.toContain('.xlsx');
     expect(card?.querySelector('.otto-attachment__meta')?.textContent).toContain(
       '1.5 KB',
     );
@@ -387,6 +389,6 @@ describe('附件预览卡片', () => {
     const remove = screen.getByRole('button', { name: `移除 ${file.name}` });
     expect(card?.lastElementChild).toBe(remove);
     fireEvent.click(remove);
-    expect(screen.queryByText(file.name)).toBeNull();
+    expect(screen.queryByText(displayName)).toBeNull();
   });
 });

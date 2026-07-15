@@ -35,3 +35,29 @@ describe('桌面端窄窗口响应式契约', () => {
     expect(narrow).toMatch(/\.otto-auth-panel\s*\{[^}]*padding:\s*24px/);
   });
 });
+
+describe('工作日志日历样式契约', () => {
+  it('重置日期按钮，并让底部两行的明细弹层向上展开', () => {
+    const dayRule = appCss.match(/\.otto-wcal__day\s*\{([^}]*)\}/)?.[1] ?? '';
+
+    expect(dayRule).toMatch(/border:\s*0/);
+    expect(dayRule).toMatch(/background:\s*transparent/);
+    expect(dayRule).toMatch(/padding:\s*0/);
+    expect(dayRule).toMatch(/cursor:\s*pointer/);
+    expect(appCss).toContain(
+      '.otto-wcal__day:nth-last-child(-n+14) .otto-wcal__pop',
+    );
+    expect(appCss).not.toContain(':not(:nth-last-child(-n+7))');
+  });
+});
+
+describe('附件类型封面样式契约', () => {
+  it('封面缩写不会继承集合容器的零号字体', () => {
+    const coverRule = appCss.match(
+      /\.otto-attachment__type-icon::before\s*\{([^}]*)\}/,
+    )?.[1] ?? '';
+
+    expect(coverRule).toMatch(/display:\s*block/);
+    expect(coverRule).toMatch(/font:\s*700\s+8px\/1/);
+  });
+});
