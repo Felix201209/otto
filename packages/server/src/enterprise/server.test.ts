@@ -63,7 +63,9 @@ afterEach(async () => {
   }
 });
 
-describe('管理端鉴权：受保护路由需正确 token', () => {
+// 首个用例会动态加载完整企业服务模块；并行全量回归时冷启动可能超过 Vitest
+// 默认 5 秒。给隔离服务套件留出确定余量，避免把模块编译争用误报成鉴权失败。
+describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }, () => {
   it('带错 token 访问 /enterprise/report → 401', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const res = await fetch(`${base}/enterprise/report?token=wrong-token-xxxxxxxxxxx`);

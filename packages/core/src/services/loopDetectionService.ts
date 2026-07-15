@@ -17,6 +17,9 @@ const TOOL_CALL_LOOP_THRESHOLD = 10;
 const CONTENT_LOOP_THRESHOLD = 20;
 const CONTENT_CHUNK_SIZE = 500;
 const MAX_HISTORY_LENGTH = 10000;
+// 流式响应通常一次只追加几个字符。若每超出上限 1 字符就遍历整张 hash 索引，
+// 长回答会退化成 O(n²) 并卡住 UI；允许一个 chunk 的缓冲区，再批量回收索引。
+const HISTORY_TRUNCATION_BATCH = CONTENT_CHUNK_SIZE;
 
 /**
  * Tools that preview models tend to abuse or get stuck in loops with.
@@ -296,7 +299,10 @@ export class LoopDetectionService {
    * When truncating, adjusts all stored indices to maintain their relative positions.
    */
   private truncateAndUpdate(): void {
-    if (this.streamContentHistory.length <= MAX_HISTORY_LENGTH) {
+    if (
+      this.streamContentHistory.length
+      <= MAX_HISTORY_LENGTH + HISTORY_TRUNCATION_BATCH
+    ) {
       return;
     }
 

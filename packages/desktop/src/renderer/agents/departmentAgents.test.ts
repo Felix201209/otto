@@ -94,13 +94,15 @@ describe('v1.7 Agent profile 目录', () => {
     }
   });
 
-  it('PPT 专家把 HTML 当视觉画布并明确禁止 Python 脚本', () => {
+  it('PPT 专家先加载内置 Skill，并把 HTML 当主视觉画布', () => {
     const prompt = ALL_AGENT_PROFILES.find((profile) => profile.id === 'ppt')?.systemPrompt ?? '';
 
+    expect(prompt).toContain('ppt-creator Skill');
     expect(prompt).toContain('HTML');
     expect(prompt).toContain('浏览器');
     expect(prompt).toContain('PptxGenJS');
-    expect(prompt).toContain('禁止使用 Python');
+    expect(prompt).toContain('python-pptx');
+    expect(prompt).toContain('固定模板');
     expect(prompt).toContain('审美');
   });
 

@@ -33,14 +33,14 @@ describe('服务端 Agent profile 白名单', () => {
     expect(resolveAgentProfile('evil-client-prompt')).toBeUndefined();
   });
 
-  it('PPT 专家强制使用 HTML 视觉渲染而不是 Python 脚本', () => {
+  it('PPT 专家强制先加载内置 Skill，并以 HTML 视觉渲染为主', () => {
     const profile = resolveAgentProfile('ppt');
     const prompt = profile?.systemPrompt ?? '';
 
     expect(prompt).toContain('HTML');
     expect(prompt).toContain('浏览器');
     expect(prompt).toContain('PptxGenJS');
-    expect(prompt).toContain('禁止使用 Python');
+    expect(prompt).toContain('python-pptx');
     expect(prompt).toContain('审美');
     expect(prompt).toContain('炫酷');
     expect(prompt).toContain('自定义 HTML/CSS/SVG');
