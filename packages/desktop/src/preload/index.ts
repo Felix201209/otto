@@ -210,8 +210,7 @@ export interface EnterpriseOrganizationInvite {
   status: 'active' | 'expired' | 'revoked';
   issuedAt: string;
   expiresAt: string;
-  validHours: 5;
-}
+  validHours: 168;
 
 export interface EnterpriseOrganizationInviteContext {
   organization: { id: string; name: string };

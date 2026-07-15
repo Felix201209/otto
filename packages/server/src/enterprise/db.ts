@@ -27,7 +27,7 @@ const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.ot
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ORGANIZATION_INVITE_VALIDITY_MS = 5 * 60 * 60 * 1000;
+export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /**
@@ -408,8 +408,7 @@ export interface OrganizationInviteView {
   status: 'active' | 'expired' | 'revoked';
   issuedAt: string;
   expiresAt: string;
-  validHours: 5;
-}
+  validHours: 168;
 
 interface OrganizationInviteRow {
   id: string;
@@ -503,7 +502,7 @@ function toOrganizationInviteView(
     status,
     issuedAt: new Date(row.issued_at_ms).toISOString(),
     expiresAt: new Date(row.expires_at_ms).toISOString(),
-    validHours: 5,
+    validHours: 168,
   };
 }
 
@@ -582,7 +581,7 @@ export function issueOrganizationInvite(
     `UPDATE organization_invites SET revoked_at_ms = ?
      WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
   ).run(now, organizationId, id);
-  logAudit('organization_invite_issue', null, 'Registration invite issued for 5 hours', organizationId);
+  logAudit('organization_invite_issue', null, 'Registration invite issued for 7 days', organizationId);
   const row = database.prepare('SELECT * FROM organization_invites WHERE id = ?').get(id) as OrganizationInviteRow;
   return toOrganizationInviteView(row, organization, now);
 }

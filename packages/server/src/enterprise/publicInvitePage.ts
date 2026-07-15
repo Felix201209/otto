@@ -24,7 +24,7 @@ function renderPublicInvitePage(state: PublicInvitePageState, code?: string): st
   const description = isActive
     ? '点击下方按钮打开 Otto。企业邀请码已经随链接准备好，你仍需完成姓名、手机号与短信验证。'
     : state === 'unavailable'
-      ? '企业引入链接仅在生成后的 5 小时内有效，换新后旧链接也会立即停止使用。'
+      ? '企业引入链接仅在生成后的 7 天内有效，换新后旧链接也会立即停止使用。'
       : '请检查地址是否完整，或联系企业管理员重新发送一条引入链接。';
   const safeCode = code ? escapeHTML(code) : '';
   const deepLink = code
@@ -74,7 +74,7 @@ function renderPublicInvitePage(state: PublicInvitePageState, code?: string): st
       <div class="brand"><span class="mark" aria-hidden="true">O</span> OTTO ENTERPRISE</div>
       <section class="card">
         <header class="hero">
-          <div class="eyebrow"><span class="dot"></span>${isActive ? '企业成员引入 · 5 小时有效' : '企业成员引入'}</div>
+          <div class="eyebrow"><span class="dot"></span>${isActive ? '企业成员引入 · 7 天有效' : '企业成员引入'}</div>
           <h1>${escapeHTML(title)}</h1>
           <p class="description">${escapeHTML(description)}</p>
         </header>
