@@ -106,6 +106,12 @@ function attachmentTypeKey(fileName: string): string {
   return ext.toUpperCase().slice(0, 5);
 }
 
+function attachmentFileName(fileName: string): string {
+  const lastDot = fileName.lastIndexOf('.');
+  if (lastDot <= 0) return fileName;
+  return fileName.slice(0, lastDot);
+}
+
 function formatAttachmentSize(bytes: number | undefined): string {
   if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '大小未知';
   if (bytes < 1024) return `${bytes} B`;
@@ -774,6 +780,7 @@ export function Composer({
               const image = isImageAttachment(attachment);
               const typeLabel = attachmentTypeLabel(attachment.fileName);
               const typeKey = attachmentTypeKey(attachment.fileName);
+              const displayName = attachmentFileName(attachment.fileName);
               const size = attachmentSizes[key] ?? (
                 image ? attachment.originalSize : undefined
               );
@@ -801,7 +808,7 @@ export function Composer({
                       className="otto-attachment__file-name"
                       title={attachment.fileName}
                     >
-                      {attachment.fileName}
+                      {displayName}
                     </span>
                     <span className="otto-attachment__meta">
                       {typeLabel} · {formatAttachmentSize(size)}
