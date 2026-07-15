@@ -37,7 +37,7 @@ describe('桌面端窄窗口响应式契约', () => {
 });
 
 describe('工作日志日历样式契约', () => {
-  it('重置日期按钮，并让底部两行的明细弹层向上展开', () => {
+  it('重置日期按钮，并让最后一行的明细弹层向上展开', () => {
     const dayRule = appCss.match(/\.otto-wcal__day\s*\{([^}]*)\}/)?.[1] ?? '';
 
     expect(dayRule).toMatch(/border:\s*0/);
@@ -45,7 +45,7 @@ describe('工作日志日历样式契约', () => {
     expect(dayRule).toMatch(/padding:\s*0/);
     expect(dayRule).toMatch(/cursor:\s*pointer/);
     expect(appCss).toContain(
-      '.otto-wcal__day:nth-last-child(-n+14) .otto-wcal__pop',
+      '.otto-wcal__day:nth-last-child(-n+7) .otto-wcal__pop',
     );
     expect(appCss).not.toContain(':not(:nth-last-child(-n+7))');
   });

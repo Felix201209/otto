@@ -293,7 +293,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('logoutModal');
     expect(html).toContain('确认退出管理员后台');
     expect(html).toContain('企业成员引入链接');
-    expect(html).toContain('精确有效 5 小时');
+    expect(html).toContain('精确有效 7 天');
     expect(html).toContain('/enterprise/organization/invite');
     expect(html).toContain('currentInvite.link');
     expect(html).not.toContain("server:location.origin");
@@ -693,7 +693,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     return (await response.json()).token;
   }
 
-  it('邀请码只允许在 5 小时窗口内申请短信，注册账号固定加入邀请码所属企业', async () => {
+  it('邀请码只允许在 7 天窗口内申请短信，注册账号固定加入邀请码所属企业', async () => {
     const sent: Array<{ phone: string; code: string }> = [];
     const { base } = await startIsolated(ADMIN_TOKEN, {
       async sendVerificationCode(phone, code) {
@@ -740,7 +740,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
   });
 
-  it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 5 小时邀请码', async () => {
+  it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 7 天邀请码', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
     const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha' });
@@ -798,7 +798,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const firstInvite = (await first.json()).invite;
     expect(firstInvite).toMatchObject({
       status: 'active',
-      validHours: 5,
+      validHours: 168,
       link: `https://join.otto.example/enterprise/join/${firstInvite.code}`,
     });
 
@@ -981,7 +981,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(created).toMatchObject({
       organization: { name: 'Gamma 商贸', slug: 'gamma' },
       admin: { organizationId: expect.any(String), username: 'gamma.owner', isAdmin: true },
-      invite: { status: 'active', validHours: 5 },
+      invite: { status: 'active', validHours: 168 },
     });
 
     const ownerToken = await login(base, 'gamma.owner', 'gamma-owner-password');

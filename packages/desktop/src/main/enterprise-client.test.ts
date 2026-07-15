@@ -144,12 +144,12 @@ describe('EnterpriseClient', () => {
     });
   });
 
-  it('企业管理员可读取并手动换新 5 小时中心引入链接', async () => {
+  it('企业管理员可读取并手动换新 7 天中心引入链接', async () => {
     const firstInvite = {
       id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
       link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
-      issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2026-07-14T05:00:00.000Z',
-      validHours: 5 as const,
+      issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2026-07-21T00:00:00.000Z',
+      validHours: 168 as const,
     };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, {

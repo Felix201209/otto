@@ -23,7 +23,7 @@ const INVITE = {
   id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
   link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
   issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2099-07-14T05:00:00.000Z',
-  validHours: 5 as const,
+  validHours: 168 as const,
 };
 
 const clipboardWrite = vi.fn(async () => undefined);
@@ -72,7 +72,7 @@ describe('企业账号模板与标签预设', () => {
   });
 });
 
-describe('5 小时企业引入链接', () => {
+describe('企业引入链接', () => {
   it('倒计时文案精确到秒，失效后明确提示管理员换新', () => {
     expect(formatInviteRemaining('2026-07-14T05:00:00.000Z', Date.parse('2026-07-14T00:00:01.000Z')))
       .toBe('4 小时 59 分 59 秒后失效');

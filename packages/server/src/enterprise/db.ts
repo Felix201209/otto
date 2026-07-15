@@ -421,6 +421,7 @@ export interface OrganizationInviteView {
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
+}
 
 interface OrganizationInviteRow {
   id: string;

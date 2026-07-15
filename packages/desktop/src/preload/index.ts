@@ -218,6 +218,7 @@ export interface EnterpriseOrganizationInvite {
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
+}
 
 export interface EnterpriseOrganizationInviteContext {
   organization: { id: string; name: string };
