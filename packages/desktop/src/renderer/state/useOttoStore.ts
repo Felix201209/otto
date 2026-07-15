@@ -621,6 +621,22 @@ export function useOttoStore(): UseOttoStore {
           // preload 桥在异常启动阶段不可用时同样保持聊天主链路可用。
         }
       }
+      if (frame.type === 'knowledge_activity' && frame.payload.action === 'auto_capture') {
+        for (const entry of frame.payload.captured ?? []) {
+          try {
+            // 组织知识同步同样是旁路：只上传 core 已脱敏、去重并确认写入的条目；
+            // 未登录或企业服务暂不可用时不能阻断聊天和个人本地知识库。
+            void window.otto.enterpriseKnowledgeRecord({
+              sourceId: entry.id,
+              category: entry.category,
+              content: entry.content,
+              confidence: entry.confidence ?? 0.8,
+            }).catch(() => undefined);
+          } catch {
+            // preload 桥在异常启动阶段不可用时保持主链路可用。
+          }
+        }
+      }
       // 专家启动：create_session 之后广播的首个「id 未见过」的 session_upsert 即新会话。
       // sessionIdsRef 此刻仍是「本帧应用前」的已知 id 集（dispatch 异步），故新 id 必不在其中。
       if (

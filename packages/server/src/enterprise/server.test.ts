@@ -900,6 +900,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       organizationId: alpha.id,
       employeeId: 'alpha-worker',
       username: 'alpha.worker', password: 'alpha-worker-password', name: 'Alpha 员工',
+      department: '研发部',
     });
     db.addKnowledge({ organizationId: alpha.id, category: 'alpha', content: 'Alpha 知识' });
     db.addKnowledge({ organizationId: beta.id, category: 'beta', content: 'Beta 知识' });
@@ -926,6 +927,38 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(JSON.stringify(await knowledge.json())).toContain('Alpha 知识');
     expect(JSON.stringify(db.getKnowledge(undefined, undefined, alpha.id))).not.toContain('Beta 知识');
+
+    const autoKnowledgeBody = {
+      sourceId: 'kb_auto_1',
+      category: 'solution',
+      content: '部署完成后先检查健康端点。',
+      confidence: 0.9,
+      department: '伪造部门',
+      contributor: '伪造人员',
+    };
+    const firstCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(autoKnowledgeBody),
+    });
+    expect(firstCapture.status).toBe(200);
+    expect(await firstCapture.json()).toEqual({ status: 'added', added: true });
+
+    const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(autoKnowledgeBody),
+    });
+    expect(await duplicateCapture.json()).toEqual({ status: 'exists', added: false });
+
+    const captured = db.getKnowledge('研发部', 'solution', alpha.id)
+      .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      department: '研发部',
+      contributor: 'Alpha 员工',
+      confidence: 0.9,
+    });
   });
 
   it('平台令牌可创建新企业及首位管理员，企业管理员不能创建其他企业', async () => {

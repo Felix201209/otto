@@ -47,6 +47,8 @@ export interface IngestResult {
   skippedSanitized: number;
   /** 因置信度过低跳过的条目数 */
   skippedLowConfidence: number;
+  /** 本次实际新增的脱敏条目；供组织知识库等下游精确同步，不能用 recent 猜测。 */
+  entries: KnowledgeEntry[];
 }
 
 /** 精简版消息记录（用于 shouldCapture / extractCandidates 分析） */
@@ -141,7 +143,7 @@ export class KnowledgeCapture {
    *
    * 规则：
    *  - 有明确决策、偏好表达、解决方案描述、调研结论 → true
-   *  - 只有闲聊 / 没工具调用 / 对话太短（<3 轮交换）→ false
+   *  - 只有闲聊 / 没有真实成功结果且对话太短（<3 轮交换）→ false
    */
   shouldCapture(messages: SimpleMessage[]): boolean {
     if (messages.length === 0) return false;
@@ -152,8 +154,11 @@ export class KnowledgeCapture {
         (m.role === 'user' || m.role === 'assistant') &&
         m.text.trim().length > 10,
     );
+    const successfulTools = messages.filter(
+      (m) => m.role === 'tool' && m.toolSuccess === true,
+    ).length;
 
-    if (substantive.length < 3) return false;
+    if (substantive.length < 3 && successfulTools === 0) return false;
 
     const fullText = messages.map((m) => m.text).join('\n');
 
@@ -188,10 +193,7 @@ export class KnowledgeCapture {
     if (hitGroups.size >= 2 || totalHits >= 3) return true;
 
     // 补充：有成功工具结果（写了文件 / 修了代码）
-    const successfulTools = messages.filter(
-      (m) => m.role === 'tool' && m.toolSuccess === true,
-    ).length;
-    if (successfulTools >= 2) return true;
+    if (successfulTools >= 1) return true;
 
     return false;
   }
@@ -207,6 +209,9 @@ export class KnowledgeCapture {
     sessionId: string,
   ): KnowledgeCandidate[] {
     const candidates: KnowledgeCandidate[] = [];
+    const hasSuccessfulTool = messages.some(
+      (message) => message.role === 'tool' && message.toolSuccess === true,
+    );
 
     // 收集所有 assistant 回复（整段）
     const assistantBlocks: { text: string; index: number }[] = [];
@@ -219,9 +224,11 @@ export class KnowledgeCapture {
 
     for (const block of assistantBlocks) {
       const text = block.text;
-      const extracted = this.tryExtract(text, sessionId);
+      const extracted = this.tryExtract(text, sessionId, hasSuccessfulTool);
       for (const entry of extracted) {
-        candidates.push(entry);
+        candidates.push(hasSuccessfulTool
+          ? { ...entry, confidence: Math.max(entry.confidence, 0.85) }
+          : entry);
       }
     }
 
@@ -240,13 +247,14 @@ export class KnowledgeCapture {
   private tryExtract(
     text: string,
     sessionId: string,
+    corroboratedByTool = false,
   ): KnowledgeCandidate[] {
     const results: KnowledgeCandidate[] = [];
 
     // 检测解决方案模式："问题是" / "解决" / "root cause" / 步骤列表
     if (
       /问题|原因|root cause|排查|debug/i.test(text) &&
-      (text.length > 80 || /\d\.\s/.test(text))
+      (text.length > 80 || /\d\.\s/.test(text) || (corroboratedByTool && text.length > 30))
     ) {
       const content = this.sanitizeSecrets(text.slice(0, 800));
       if (content.length >= 20) {
@@ -427,6 +435,7 @@ export class KnowledgeCapture {
       skippedDuplicate: 0,
       skippedSanitized: 0,
       skippedLowConfidence: 0,
+      entries: [],
     };
 
     for (const candidate of candidates) {
@@ -451,13 +460,15 @@ export class KnowledgeCapture {
           continue;
         }
 
-        await this.store.upsert(
+        const entry = await this.store.upsert(
           candidate.category,
           sanitizedContent,
           candidate.tags,
           fp,
+          candidate.confidence,
         );
         result.written++;
+        result.entries.push(entry);
       } catch {
         // 写入失败静默忽略，不阻塞
       }

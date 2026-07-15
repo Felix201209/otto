@@ -29,6 +29,8 @@ export interface KnowledgeEntry {
   createdAt: string;
   /** 内容指纹（sha256 前 16 hex），供去重；可选，旧条目无此字段时为 undefined */
   fingerprint?: string;
+  /** 自动捕获置信度；手动条目及旧条目可为空。 */
+  confidence?: number;
 }
 
 /** 检索结果：条目 + 相关度分（越大越相关） */
@@ -167,6 +169,7 @@ export class LocalKnowledgeStore {
     content: string,
     tags: string[] = [],
     fingerprint?: string,
+    confidence?: number,
   ): Promise<KnowledgeEntry> {
     const trimmedContent = (content ?? '').trim();
     if (!trimmedContent) {
@@ -179,6 +182,7 @@ export class LocalKnowledgeStore {
       tags: (tags ?? []).map((tag) => String(tag).trim()).filter(Boolean),
       createdAt: new Date().toISOString(),
       ...(fingerprint ? { fingerprint } : {}),
+      ...(confidence !== undefined ? { confidence } : {}),
     };
 
     await this.enqueue(async () => {
@@ -270,6 +274,7 @@ export class LocalKnowledgeStore {
     content: string,
     tags: string[] = [],
     fingerprint?: string,
+    confidence?: number,
   ): Promise<KnowledgeEntry> {
     const trimmedContent = (content ?? '').trim();
     if (!trimmedContent) {
@@ -278,12 +283,12 @@ export class LocalKnowledgeStore {
 
     // 无指纹走新增
     if (!fingerprint) {
-      return this.add(category, trimmedContent, tags);
+      return this.add(category, trimmedContent, tags, undefined, confidence);
     }
 
     const existing = await this.findByFingerprint(fingerprint);
     if (!existing) {
-      return this.add(category, trimmedContent, tags, fingerprint);
+      return this.add(category, trimmedContent, tags, fingerprint, confidence);
     }
 
     // 存在则更新
@@ -295,6 +300,7 @@ export class LocalKnowledgeStore {
         ? (tags ?? []).map((t) => String(t).trim()).filter(Boolean)
         : existing.tags,
       createdAt: new Date().toISOString(),
+      ...(confidence !== undefined ? { confidence } : {}),
     };
 
     await this.enqueue(async () => {

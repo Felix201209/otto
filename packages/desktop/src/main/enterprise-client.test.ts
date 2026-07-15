@@ -116,6 +116,34 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('登录后把自动提炼的知识条目写入组织知识库', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'added', added: true }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.recordKnowledge({
+      sourceId: 'kb_123',
+      category: 'solution',
+      content: '合同审查先核对违约条款。',
+      confidence: 0.9,
+    })).resolves.toEqual({ status: 'added', added: true });
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://enterprise.otto.test/enterprise/knowledge');
+    const init = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer session-token' });
+    expect(JSON.parse(init.body as string)).toEqual({
+      sourceId: 'kb_123',
+      category: 'solution',
+      content: '合同审查先核对违约条款。',
+      confidence: 0.9,
+    });
+  });
+
   it('企业管理员可读取并手动换新 5 小时中心引入链接', async () => {
     const firstInvite = {
       id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',

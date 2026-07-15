@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Database } from '../sqlite-compat.js';
 
 type DbModule = typeof import('./db.js');
 
@@ -48,6 +49,47 @@ afterEach(() => {
   } catch {
     /* ignore */
   }
+});
+
+describe('知识库旧库迁移', () => {
+  it('为单组织旧表补齐 organization_id/source_id，保留历史知识并支持幂等写入', async () => {
+    const legacy = new Database(path.join(tmpDir, 'data.db'));
+    legacy.exec(`
+      CREATE TABLE knowledge (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        department TEXT,
+        category TEXT,
+        content TEXT NOT NULL,
+        contributor TEXT,
+        confidence REAL DEFAULT 0.5,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO knowledge (department, category, content, contributor, confidence)
+      VALUES ('研发部', 'solution', '旧版知识仍需保留', '历史员工', 0.9);
+    `);
+    legacy.close();
+
+    const db = await freshDb();
+    const columns = db.getDB().prepare('PRAGMA table_info(knowledge)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['organization_id', 'source_id']),
+    );
+    expect(db.getKnowledge()).toEqual([
+      expect.objectContaining({ content: '旧版知识仍需保留', contributor: '历史员工' }),
+    ]);
+
+    const entry = {
+      sourceId: 'local-kb-1',
+      department: '研发部',
+      category: 'solution',
+      content: '自动捕获的新知识',
+      contributor: '当前员工',
+      confidence: 0.85,
+    };
+    expect(db.addKnowledge(entry)).toBe(true);
+    expect(db.addKnowledge(entry)).toBe(false);
+  });
 });
 
 describe('report 边界：0 任务不崩/不 NaN/不除零', () => {
