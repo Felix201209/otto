@@ -87,9 +87,13 @@ function attachmentKey(attachment: Attachment): string {
 }
 
 function attachmentTypeLabel(fileName: string): string {
-  const extension = fileName.split('.').pop()?.trim().toUpperCase();
-  if (!extension || extension === fileName.toUpperCase()) return 'FILE';
-  return extension.slice(0, 5);
+  const ext = fileName.split('.').pop()?.trim().toLowerCase();
+  if (!ext || ext === fileName.toLowerCase()) return 'FILE';
+  if (ext === 'pdf') return 'PDF';
+  if (ext === 'doc' || ext === 'docx') return 'WORD';
+  if (ext === 'ppt' || ext === 'pptx') return 'PPT';
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'EXCEL';
+  return ext.toUpperCase().slice(0, 5);
 }
 
 function formatAttachmentSize(bytes: number | undefined): string {
@@ -774,7 +778,7 @@ export function Composer({
                       alt=""
                     />
                   ) : (
-                    <span className="otto-attachment__type-icon" aria-hidden="true">
+                    <span className="otto-attachment__type-icon" aria-hidden="true" data-type={typeLabel}>
                       {typeLabel}
                     </span>
                   )}

@@ -2084,6 +2084,57 @@ h6.otto-prose__h {
   font: 750 9px/1 var(--otto-font-mono);
   letter-spacing: -0.02em;
 }
+/* PDF/DOC 类型徽章不显示文字，改用图形封面 */
+.otto-attachment__type-icon[data-type="PDF"]::before,
+.otto-attachment__type-icon[data-type="WORD"]::before,
+.otto-attachment__type-icon[data-type="PPT"]::before,
+.otto-attachment__type-icon[data-type="EXCEL"]::before {
+  display: block;
+  font: 600 8px/1 var(--otto-font-mono);
+  text-transform: none;
+  letter-spacing: normal;
+  visibility: visible;
+}
+.otto-attachment__type-icon[data-type="PDF"] {
+  font-size: 0; /* 隐藏默认文字 */
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.28);
+  background: linear-gradient(145deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.05));
+}
+.otto-attachment__type-icon[data-type="PDF"]::before {
+  content: 'PDF';
+  color: #ef4444;
+}
+.otto-attachment__type-icon[data-type="WORD"] {
+  font-size: 0;
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.28);
+  background: linear-gradient(145deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.05));
+}
+.otto-attachment__type-icon[data-type="WORD"]::before {
+  content: 'DOC';
+  color: #3b82f6;
+}
+.otto-attachment__type-icon[data-type="PPT"] {
+  font-size: 0;
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.28);
+  background: linear-gradient(145deg, rgba(249, 115, 22, 0.12), rgba(249, 115, 22, 0.05));
+}
+.otto-attachment__type-icon[data-type="PPT"]::before {
+  content: 'PPT';
+  color: #f97316;
+}
+.otto-attachment__type-icon[data-type="EXCEL"] {
+  font-size: 0;
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.28);
+  background: linear-gradient(145deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.05));
+}
+.otto-attachment__type-icon[data-type="EXCEL"]::before {
+  content: 'XLS';
+  color: #22c55e;
+}
 .otto-attachment__copy {
   min-width: 0;
   flex: 1 1 auto;
