@@ -88,6 +88,16 @@ function attachmentKey(attachment: Attachment): string {
 
 function attachmentTypeLabel(fileName: string): string {
   const ext = fileName.split('.').pop()?.trim().toLowerCase();
+  if (!ext || ext === fileName.toLowerCase()) return '文件';
+  if (ext === 'pdf') return 'PDF 文档';
+  if (ext === 'doc' || ext === 'docx') return 'Word 文档';
+  if (ext === 'ppt' || ext === 'pptx') return 'PPT 演示';
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'Excel 表格';
+  return ext.toUpperCase().slice(0, 5);
+}
+
+function attachmentTypeKey(fileName: string): string {
+  const ext = fileName.split('.').pop()?.trim().toLowerCase();
   if (!ext || ext === fileName.toLowerCase()) return 'FILE';
   if (ext === 'pdf') return 'PDF';
   if (ext === 'doc' || ext === 'docx') return 'WORD';
@@ -763,6 +773,7 @@ export function Composer({
               const key = attachmentKey(attachment);
               const image = isImageAttachment(attachment);
               const typeLabel = attachmentTypeLabel(attachment.fileName);
+              const typeKey = attachmentTypeKey(attachment.fileName);
               const size = attachmentSizes[key] ?? (
                 image ? attachment.originalSize : undefined
               );
@@ -779,8 +790,8 @@ export function Composer({
                     />
                   ) : (
                     <span className="otto-attachment__type-col" aria-hidden="true">
-                      <span className="otto-attachment__type-icon" data-type={typeLabel}>
-                        {typeLabel}
+                      <span className="otto-attachment__type-icon" data-type={typeKey}>
+                        {typeKey}
                       </span>
                       <span className="otto-attachment__type-label">{typeLabel}</span>
                     </span>
