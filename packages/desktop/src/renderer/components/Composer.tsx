@@ -778,8 +778,11 @@ export function Composer({
                       alt=""
                     />
                   ) : (
-                    <span className="otto-attachment__type-icon" aria-hidden="true" data-type={typeLabel}>
-                      {typeLabel}
+                    <span className="otto-attachment__type-col" aria-hidden="true">
+                      <span className="otto-attachment__type-icon" data-type={typeLabel}>
+                        {typeLabel}
+                      </span>
+                      <span className="otto-attachment__type-label">{typeLabel}</span>
                     </span>
                   )}
                   <div className="otto-attachment__copy">
