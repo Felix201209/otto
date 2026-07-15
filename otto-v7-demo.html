@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+:root {
+  --bg: #000;
+  --surface: #0a0a0a;
+  --ink: #f5f5f7;
+  --accent: #2997ff;
+  --hot: #ff375f;
+  --muted: #86868b;
+  --glow: radial-gradient(ellipse at 30% 20%, rgba(41,151,255,0.15), transparent 60%);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1920px; height: 1080px; overflow: hidden; }
+.slide { position: relative; width: 1920px; height: 1080px; overflow: hidden; isolation: isolate; }
+.slide > * { position: absolute; }
+
+/* Slide 1: Cover */
+.s1-cover { background: var(--bg); display: flex; align-items: center; justify-content: center; text-align: center; }
+.s1-cover .bg-glow { inset: 0; background: var(--glow); }
+.s1-cover .content { position: relative; z-index: 2; }
+.s1-cover h1 { font-family: 'Segoe UI', system-ui; font-size: 110px; font-weight: 900; color: var(--ink); line-height: 0.95; letter-spacing: -0.03em; }
+.s1-cover .tagline { font-family: 'Segoe UI', system-ui; font-size: 32px; color: var(--muted); margin-top: 24px; font-weight: 300; letter-spacing: 0.15em; }
+.s1-cover .accent-line { width: 80px; height: 4px; background: var(--accent); margin: 36px auto 0; border-radius: 2px; }
+
+/* Slide 2: Dual Pipeline */
+.s2-dual { background: var(--bg); }
+.s2-dual .bg-glow { inset: 0; background: var(--glow); }
+.s2-dual .pipeline-a { top: 120px; left: 100px; width: 700px; }
+.s2-dual .pipeline-b { top: 120px; right: 100px; width: 700px; }
+.s2-dual .label { font-family: 'Segoe UI', system-ui; font-size: 14px; font-weight: 600; color: var(--accent); letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 16px; }
+.s2-dual h2 { font-family: 'Segoe UI', system-ui; font-size: 42px; font-weight: 700; color: var(--ink); margin-bottom: 20px; line-height: 1.1; }
+.s2-dual p { font-family: 'Segoe UI', system-ui; font-size: 22px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+.s2-dual .divider { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 1px; height: 400px; background: rgba(255,255,255,0.1); }
+.s2-dual .title-text { top: 50px; left: 100px; font-family: 'Segoe UI', system-ui; font-size: 64px; font-weight: 800; color: var(--ink); }
+
+/* Slide 3: 20 Visual Systems */
+.s3-systems { background: var(--bg); }
+.s3-systems .bg-glow { inset: 0; background: var(--glow); }
+.s3-systems .title-text { top: 60px; left: 100px; font-family: 'Segoe UI', system-ui; font-size: 56px; font-weight: 800; color: var(--ink); }
+.s3-systems .grid { top: 180px; left: 100px; right: 100px; bottom: 80px; display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(5, auto); gap: 12px; }
+.s3-systems .chip { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px 18px; font-family: 'Segoe UI', system-ui; font-size: 15px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+.s3-systems .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* Slide 4: 9 Layouts */
+.s4-layouts { background: var(--bg); }
+.s4-layouts .bg-glow { inset: 0; background: var(--glow); }
+.s4-layouts .title-text { top: 60px; left: 100px; font-family: 'Segoe UI', system-ui; font-size: 56px; font-weight: 800; color: var(--ink); }
+.s4-layouts .grid { top: 180px; left: 100px; right: 100px; bottom: 80px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 16px; }
+.s4-layouts .card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 28px; display: flex; flex-direction: column; justify-content: center; }
+.s4-layouts .card .name { font-family: 'Segoe UI', system-ui; font-size: 22px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+.s4-layouts .card .desc { font-family: 'Segoe UI', system-ui; font-size: 15px; color: var(--muted); }
+
+/* Slide 5: Hybrid Pipeline */
+.s5-hybrid { background: linear-gradient(135deg, #000 0%, #0a0a1a 50%, #000814 100%); }
+.s5-hybrid .bg-glow { top: -200px; right: -200px; width: 800px; height: 800px; background: radial-gradient(circle, rgba(41,151,255,0.2), transparent 70%); border-radius: 50%; }
+.s5-hybrid .title-text { top: 60px; left: 100px; font-family: 'Segoe UI', system-ui; font-size: 56px; font-weight: 800; color: var(--ink); }
+.s5-hybrid .content { top: 200px; left: 100px; right: 100px; display: flex; gap: 40px; }
+.s5-hybrid .box { flex: 1; background: var(--surface); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 40px; }
+.s5-hybrid .box .emoji { font-size: 48px; margin-bottom: 20px; }
+.s5-hybrid .box h3 { font-family: 'Segoe UI', system-ui; font-size: 28px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
+.s5-hybrid .box p { font-family: 'Segoe UI', system-ui; font-size: 18px; color: var(--muted); line-height: 1.5; }
+.s5-hybrid .arrow { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: var(--accent); opacity: 0.3; }
+
+/* Slide 6: v5 vs v6 vs v7 对比 */
+.s6-compare { background: var(--bg); }
+.s6-compare .bg-glow { inset: 0; background: var(--glow); }
+.s6-compare .title-text { top: 50px; left: 100px; font-family: 'Segoe UI', system-ui; font-size: 52px; font-weight: 800; color: var(--ink); }
+.s6-compare table { top: 180px; left: 100px; right: 100px; border-collapse: collapse; }
+.s6-compare th, .s6-compare td { padding: 16px 24px; text-align: left; font-family: 'Segoe UI', system-ui; }
+.s6-compare th { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.s6-compare td { font-size: 20px; color: var(--ink); border-bottom: 1px solid rgba(255,255,255,0.05); }
+.s6-compare td.version { color: var(--accent); font-weight: 700; font-size: 16px; }
+.s6-compare .check { color: #4ade80; }
+.s6-compare .cross { color: var(--muted); }
+
+/* Slide 7: big number */
+.s7-number { background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.s7-number .bg-glow { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 600px; height: 600px; background: radial-gradient(circle, rgba(41,151,255,0.3), transparent 70%); border-radius: 50%; }
+.s7-number .content { position: relative; z-index: 2; text-align: center; }
+.s7-number .big { font-family: 'Segoe UI', system-ui; font-size: 360px; font-weight: 900; color: transparent; line-height: 0.8; letter-spacing: -0.06em; background: linear-gradient(180deg, var(--accent) 0%, var(--ink) 100%); -webkit-background-clip: text; background-clip: text; }
+.s7-number .label { font-family: 'Segoe UI', system-ui; font-size: 28px; color: var(--muted); letter-spacing: 0.2em; text-transform: uppercase; margin-top: 16px; }
+
+/* Slide 8: end */
+.s8-end { background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+.s8-end .bg-glow { inset: 0; background: var(--glow); }
+.s8-end h1 { position: relative; z-index: 2; font-family: 'Segoe UI', system-ui; font-size: 72px; font-weight: 900; color: var(--ink); }
+.s8-end .cta { position: relative; z-index: 2; margin-top: 40px; padding: 16px 48px; border: 2px solid rgba(255,255,255,0.3); border-radius: 999px; font-family: 'Segoe UI', system-ui; font-size: 24px; color: var(--ink); }
+.s8-end .footer { position: absolute; bottom: 60px; font-family: 'Segoe UI', system-ui; font-size: 18px; color: var(--muted); opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<!-- S1: Cover -->
+<div class="slide s1-cover">
+  <div class="bg-glow"></div>
+  <div class="content">
+    <h1>Otto v7<br>PPT 视觉引擎</h1>
+    <div class="tagline">CSS BACKGROUND &nbsp;·&nbsp; EDITABLE TEXT &nbsp;·&nbsp; 20 VISUAL SYSTEMS</div>
+    <div class="accent-line"></div>
+  </div>
+</div>
+
+<!-- S2: Dual Pipeline -->
+<div class="slide s2-dual">
+  <div class="bg-glow"></div>
+  <div class="title-text">两条渲染管道</div>
+  <div class="divider"></div>
+  <div class="pipeline-a">
+    <div class="label">Pipeline A · 视觉优先</div>
+    <h2>全幅 CSS 渲染</h2>
+    <p>backdrop-filter · clip-path · radial-glow</p>
+    <p>渐变网格 · 扫描线 · 玻璃质感</p>
+    <p style="color:var(--muted);font-size:18px;margin-top:20px;">封面/高潮页/宣言页/沉浸式图片页</p>
+  </div>
+  <div class="pipeline-b">
+    <div class="label">Pipeline B · 可编辑优先</div>
+    <h2>CSS 背景 + 原生文本框</h2>
+    <p>背景走 PNG 保留视觉品质</p>
+    <p>文字用 PptxGenJS addText() 写成</p>
+    <p style="color:#4ade80;font-size:18px;margin-top:20px;">✅ 在 PowerPoint 里可以选中、编辑、翻译</p>
+  </div>
+</div>
+
+<!-- S3: 20 Visual Systems -->
+<div class="slide s3-systems">
+  <div class="bg-glow"></div>
+  <div class="title-text">20 套视觉系统</div>
+  <div class="grid">
+    <div class="chip"><span class="dot" style="background:#5e6ad2"></span>Linear Dark</div>
+    <div class="chip"><span class="dot" style="background:#2997ff"></span>Apple Obsidian</div>
+    <div class="chip"><span class="dot" style="background:#fff"></span>Vercel Midnight</div>
+    <div class="chip"><span class="dot" style="background:#00f0ff"></span>Cyberpunk 2077</div>
+    <div class="chip"><span class="dot" style="background:#635bff"></span>Stripe Dark</div>
+    <div class="chip"><span class="dot" style="background:#e50914"></span>Netflix Dark</div>
+    <div class="chip"><span class="dot" style="background:#58a6ff"></span>GitHub Dark</div>
+    <div class="chip"><span class="dot" style="background:#0071e3"></span>Apple White</div>
+    <div class="chip"><span class="dot" style="background:#d97706"></span>Anthropic White</div>
+    <div class="chip"><span class="dot" style="background:#635bff"></span>Stripe Light</div>
+    <div class="chip"><span class="dot" style="background:#d4a574"></span>NYT Magazine</div>
+    <div class="chip"><span class="dot" style="background:#2383e2"></span>Notion Light</div>
+    <div class="chip"><span class="dot" style="background:#0d99ff"></span>Figma Light</div>
+    <div class="chip"><span class="dot" style="background:linear-gradient(135deg,#6366f1,#d946ef)"></span>Gradient Galaxy</div>
+    <div class="chip"><span class="dot" style="background:conic-gradient(#635bff,#00d4ff,#50e3c2,#635bff)"></span>Stripe Sessions</div>
+    <div class="chip"><span class="dot" style="background:#ff3366"></span>Pop Art</div>
+    <div class="chip"><span class="dot" style="background:#c41e3a"></span>新东方未来</div>
+    <div class="chip"><span class="dot" style="background:#8b4513"></span>Zen Minimal</div>
+    <div class="chip"><span class="dot" style="background:#b8860b"></span>国风传承</div>
+    <div class="chip"><span class="dot" style="background:#4ade80"></span>Organic Forest</div>
+  </div>
+</div>
+
+<!-- S4: 9 Layouts -->
+<div class="slide s4-layouts">
+  <div class="bg-glow"></div>
+  <div class="title-text">9 种 Slidev 布局</div>
+  <div class="grid">
+    <div class="card"><div class="name">cover</div><div class="desc">封面 · 居中大标题 + 副标题</div></div>
+    <div class="card"><div class="name">statement</div><div class="desc">宣言 · 一句话占据画面</div></div>
+    <div class="card"><div class="name">two-cols</div><div class="desc">双栏 · 左右分屏对比</div></div>
+    <div class="card"><div class="name">image-right</div><div class="desc">图文 · 图右文左</div></div>
+    <div class="card"><div class="name">center</div><div class="desc">聚焦 · 巨型数字居中</div></div>
+    <div class="card"><div class="name">bento</div><div class="desc">便当 · 4×3 信息网格</div></div>
+    <div class="card"><div class="name">timeline</div><div class="desc">时间线 · 阶段推进</div></div>
+    <div class="card"><div class="name">quote</div><div class="desc">引用 · 大号引用块</div></div>
+    <div class="card"><div class="name">end</div><div class="desc">结尾 · CTA 行动号召</div></div>
+  </div>
+</div>
+
+<!-- S5: Hybrid -->
+<div class="slide s5-hybrid">
+  <div class="bg-glow"></div>
+  <div class="title-text">混合渲染：独有的能力</div>
+  <div class="content">
+    <div class="box">
+      <div class="emoji">🎨</div>
+      <h3>CSS 视觉背景</h3>
+      <p>backdrop-filter blur<br>clip-path 裁切<br>radial-glow 光晕<br>gradient grid 渐变网格</p>
+    </div>
+    <div class="box" style="background:rgba(41,151,255,0.05);border-color:rgba(41,151,255,0.2);">
+      <div class="emoji">✏️</div>
+      <h3>PptxGenJS 原生文字</h3>
+      <p>addText() 文本框<br>在 PowerPoint 可选择<br>可编辑 · 可翻译<br>不是冻结的 PNG 截图</p>
+    </div>
+    <div class="box">
+      <div class="emoji">🚀</div>
+      <h3>打开即用</h3>
+      <p>真实 .pptx 文件<br>双渲染管道<br>node render-pptx.js<br>一键生成</p>
+    </div>
+  </div>
+</div>
+
+<!-- S6: Version Compare -->
+<div class="slide s6-compare">
+  <div class="bg-glow"></div>
+  <div class="title-text">版本演进</div>
+  <table style="top:180px;left:100px;right:100px;border-collapse:collapse;">
+    <tr>
+      <th></th><th>v5</th><th>v6</th><th>v7</th>
+    </tr>
+    <tr>
+      <td class="version">Slidev Layouts</td>
+      <td class="check">9 种</td>
+      <td class="check">9 种</td>
+      <td class="check">9 种</td>
+    </tr>
+    <tr>
+      <td class="version">CSS Token 视觉系统</td>
+      <td class="check">20 套</td>
+      <td class="check">20 套</td>
+      <td class="check">20 套</td>
+    </tr>
+    <tr>
+      <td class="version">工程 slideId</td>
+      <td class="cross">—</td>
+      <td class="check">✅</td>
+      <td class="check">✅</td>
+    </tr>
+    <tr>
+      <td class="version">增量编辑</td>
+      <td class="cross">—</td>
+      <td class="check">✅</td>
+      <td class="check">✅</td>
+    </tr>
+    <tr>
+      <td class="version">真实渲染脚本</td>
+      <td class="cross">—</td>
+      <td class="cross">—</td>
+      <td class="check">✅ render-pptx.js</td>
+    </tr>
+    <tr>
+      <td class="version">质量审核脚本</td>
+      <td class="cross">—</td>
+      <td class="cross">—</td>
+      <td class="check">✅ audit-pptx.js</td>
+    </tr>
+    <tr>
+      <td class="version">混合渲染</td>
+      <td class="cross">—</td>
+      <td class="cross">—</td>
+      <td class="check">✅ CSS背景+可编辑文字</td>
+    </tr>
+  </table>
+</div>
+
+<!-- S7: Big Number -->
+<div class="slide s7-number">
+  <div class="bg-glow"></div>
+  <div class="content">
+    <div class="big">20</div>
+    <div class="label">Visual Systems · Ready to Use</div>
+  </div>
+</div>
+
+<!-- S8: End -->
+<div class="slide s8-end">
+  <div class="bg-glow"></div>
+  <h1>Let's Make It Real</h1>
+  <div class="cta">node scripts/render-pptx.js</div>
+  <div class="footer">Otto v7 · Pure Node.js · Zero Python</div>
+</div>
+
+</body>
+</html>

@@ -270,7 +270,7 @@ export function EnterpriseLoginPage({
                   placeholder="XXXX-XXXX"
                   required
                 />
-                <small>邀请码由企业管理员生成，5 小时内有效</small>
+                <small>邀请码由企业管理员生成，7 天内有效</small>
               </label>
               <div className="otto-auth-register-grid">
                 <label className="otto-auth-field">
