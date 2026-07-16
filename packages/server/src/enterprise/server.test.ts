@@ -293,7 +293,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('logoutModal');
     expect(html).toContain('确认退出管理员后台');
     expect(html).toContain('企业成员引入链接');
-    expect(html).toContain('精确有效 5 小时');
+    expect(html).toContain('精确有效 7 天');
     expect(html).toContain('/enterprise/organization/invite');
     expect(html).toContain('currentInvite.link');
     expect(html).not.toContain("server:location.origin");
@@ -693,7 +693,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     return (await response.json()).token;
   }
 
-  it('邀请码只允许在 5 小时窗口内申请短信，注册账号固定加入邀请码所属企业', async () => {
+  it('邀请码只允许在 7 天窗口内申请短信，注册账号固定加入邀请码所属企业', async () => {
     const sent: Array<{ phone: string; code: string }> = [];
     const { base } = await startIsolated(ADMIN_TOKEN, {
       async sendVerificationCode(phone, code) {
@@ -740,7 +740,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
   });
 
-  it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 5 小时邀请码', async () => {
+  it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 7 天邀请码', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
     const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha' });
@@ -798,7 +798,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const firstInvite = (await first.json()).invite;
     expect(firstInvite).toMatchObject({
       status: 'active',
-      validHours: 5,
+      validHours: 168,
       link: `https://join.otto.example/enterprise/join/${firstInvite.code}`,
     });
 
@@ -900,6 +900,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       organizationId: alpha.id,
       employeeId: 'alpha-worker',
       username: 'alpha.worker', password: 'alpha-worker-password', name: 'Alpha 员工',
+      department: '研发部',
     });
     db.addKnowledge({ organizationId: alpha.id, category: 'alpha', content: 'Alpha 知识' });
     db.addKnowledge({ organizationId: beta.id, category: 'beta', content: 'Beta 知识' });
@@ -926,6 +927,38 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(JSON.stringify(await knowledge.json())).toContain('Alpha 知识');
     expect(JSON.stringify(db.getKnowledge(undefined, undefined, alpha.id))).not.toContain('Beta 知识');
+
+    const autoKnowledgeBody = {
+      sourceId: 'kb_auto_1',
+      category: 'solution',
+      content: '部署完成后先检查健康端点。',
+      confidence: 0.9,
+      department: '伪造部门',
+      contributor: '伪造人员',
+    };
+    const firstCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(autoKnowledgeBody),
+    });
+    expect(firstCapture.status).toBe(200);
+    expect(await firstCapture.json()).toEqual({ status: 'added', added: true });
+
+    const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(autoKnowledgeBody),
+    });
+    expect(await duplicateCapture.json()).toEqual({ status: 'exists', added: false });
+
+    const captured = db.getKnowledge('研发部', 'solution', alpha.id)
+      .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      department: '研发部',
+      contributor: 'Alpha 员工',
+      confidence: 0.9,
+    });
   });
 
   it('平台令牌可创建新企业及首位管理员，企业管理员不能创建其他企业', async () => {
@@ -948,7 +981,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(created).toMatchObject({
       organization: { name: 'Gamma 商贸', slug: 'gamma' },
       admin: { organizationId: expect.any(String), username: 'gamma.owner', isAdmin: true },
-      invite: { status: 'active', validHours: 5 },
+      invite: { status: 'active', validHours: 168 },
     });
 
     const ownerToken = await login(base, 'gamma.owner', 'gamma-owner-password');

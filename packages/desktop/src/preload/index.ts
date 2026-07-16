@@ -202,6 +202,13 @@ export interface EnterpriseTokenUsageInput {
   totalTokens: number;
 }
 
+export interface EnterpriseKnowledgeRecordInput {
+  sourceId: string;
+  category: string;
+  content: string;
+  confidence: number;
+}
+
 export interface EnterpriseOrganizationInvite {
   id: string;
   organizationId: string;
@@ -247,6 +254,7 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -407,6 +415,10 @@ export interface OttoBridge {
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
+  }>;
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
+    status: 'added' | 'exists';
+    added: boolean;
   }>;
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext>;
   enterpriseOrganizationInviteIssue(): Promise<EnterpriseOrganizationInviteContext & {
@@ -845,6 +857,15 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.enterpriseUsageRecord, input) as Promise<{
       recorded: boolean;
       source: 'client_reported';
+    }>;
+  },
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
+    status: 'added' | 'exists';
+    added: boolean;
+  }> {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRecord, input) as Promise<{
+      status: 'added' | 'exists';
+      added: boolean;
     }>;
   },
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext> {

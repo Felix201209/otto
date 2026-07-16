@@ -96,6 +96,7 @@ import {
   EnterpriseClient,
   type AccountCreateInput,
   type AccountUpdateInput,
+  type EnterpriseKnowledgeRecordInput,
 } from './enterprise-client.js';
 import {
   defaultEnterpriseServerUrl,
@@ -200,6 +201,7 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -811,6 +813,24 @@ function registerIpc(): void {
       outputTokens: body.outputTokens,
       totalTokens: body.totalTokens,
     });
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeRecord, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('知识条目格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.sourceId !== 'string' || !body.sourceId
+      || typeof body.category !== 'string' || !body.category
+      || typeof body.content !== 'string' || !body.content
+      || typeof body.confidence !== 'number' || !Number.isFinite(body.confidence)) {
+      throw new Error('知识条目字段不完整');
+    }
+    const record: EnterpriseKnowledgeRecordInput = {
+      sourceId: body.sourceId,
+      category: body.category,
+      content: body.content,
+      confidence: Math.min(1, Math.max(0, body.confidence)),
+    };
+    return enterpriseClient.recordKnowledge(record);
   });
   ipcMain.handle(IPC.enterpriseOrganizationInviteGet, async () => {
     loadEnterpriseSession();

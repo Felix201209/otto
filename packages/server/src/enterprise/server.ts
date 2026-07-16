@@ -897,15 +897,28 @@ function makeHandler(
           sendJSON(res, 400, { error: 'content required' });
           return;
         }
-        db.addKnowledge({
+        const confidence = typeof body.confidence === 'number'
+          && Number.isFinite(body.confidence)
+          && body.confidence >= 0
+          && body.confidence <= 1
+          ? body.confidence
+          : 0.5;
+        const sourceId = typeof body.sourceId === 'string'
+          ? body.sourceId.trim().slice(0, 200)
+          : undefined;
+        const added = db.addKnowledge({
           organizationId,
-          department: body.department as string | undefined,
+          sourceId: sourceId || undefined,
+          // 普通成员不能伪造部门；管理员手动录入时可明确指定本企业部门。
+          department: memberAccount!.isAdmin && typeof body.department === 'string'
+            ? body.department
+            : memberAccount!.department || undefined,
           category: (body.category as string) || 'general',
           content,
-          contributor: body.contributor as string | undefined,
-          confidence: (body.confidence as number) || 0.5,
+          contributor: memberAccount!.name,
+          confidence,
         });
-        sendJSON(res, 200, { status: 'added' });
+        sendJSON(res, 200, { status: added ? 'added' : 'exists', added });
         return;
       }
 

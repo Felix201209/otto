@@ -733,6 +733,8 @@ export interface KnowledgeItem {
   content: string;
   tags: string[];
   createdAt: string;
+  /** 自动捕获置信度；手动或旧条目可为空。 */
+  confidence?: number;
 }
 
 /** 知识库列表 / 检索结果（S→C）。 */
@@ -768,6 +770,8 @@ export type KnowledgeActivityMsg = Envelope<
     skippedLowConfidence?: number;
     /** 最近条目（最多 5 条，供 UI 展示） */
     recent?: KnowledgeItem[];
+    /** 本次真正新增的条目；组织知识库同步必须只消费它，避免重复上传 recent。 */
+    captured?: KnowledgeItem[];
   }
 >;
 

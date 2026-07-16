@@ -2765,6 +2765,7 @@ export class OttoServer {
               skippedDuplicate: result.skippedDuplicate,
               skippedSanitized: result.skippedSanitized,
               skippedLowConfidence: result.skippedLowConfidence,
+              captured: result.entries,
               recent: entries,
             },
           });

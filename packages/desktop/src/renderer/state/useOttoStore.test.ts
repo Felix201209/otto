@@ -26,6 +26,7 @@ let capturedHandler: ((f: ServerToClient) => void) | null = null;
 let _capturedConnHandler: ((connected: boolean) => void) | null = null;
 const sendSpy = vi.fn();
 const usageSpy = vi.fn(async () => ({ recorded: true, source: 'client_reported' as const }));
+const knowledgeSpy = vi.fn(async () => ({ status: 'added' as const, added: true }));
 
 vi.mock('../transport.js', () => ({
   connect: vi.fn(async () => true),
@@ -91,9 +92,14 @@ beforeEach(() => {
   sendSpy.mockClear();
   usageSpy.mockReset();
   usageSpy.mockResolvedValue({ recorded: true, source: 'client_reported' });
+  knowledgeSpy.mockReset();
+  knowledgeSpy.mockResolvedValue({ status: 'added', added: true });
   Object.defineProperty(window, 'otto', {
     configurable: true,
-    value: { enterpriseUsageRecord: usageSpy },
+    value: {
+      enterpriseUsageRecord: usageSpy,
+      enterpriseKnowledgeRecord: knowledgeSpy,
+    },
   });
 });
 
@@ -324,6 +330,41 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.messages['s1'][0].isStreaming).toBe(false);
     expect(view.result.current.state.messages['s1'][0].tokenUsage?.totalTokens).toBe(3);
     expect(view.result.current.state.lastError).toBeNull();
+  });
+
+  it('knowledge_activity 只把本次新捕获条目主动同步到组织知识库', () => {
+    const { push } = setup();
+    push({
+      type: 'knowledge_activity',
+      payload: {
+        action: 'auto_capture',
+        sessionId: 's1',
+        written: 1,
+        captured: [{
+          id: 'kb_123',
+          category: 'solution',
+          content: '合同审查先核对违约条款。',
+          tags: ['contract'],
+          createdAt: '2026-07-15T00:00:00.000Z',
+          confidence: 0.9,
+        }],
+        recent: [{
+          id: 'kb_old',
+          category: 'preference',
+          content: '旧条目不应重复同步',
+          tags: [],
+          createdAt: '2026-07-14T00:00:00.000Z',
+        }],
+      },
+    } as ServerToClient);
+
+    expect(knowledgeSpy).toHaveBeenCalledTimes(1);
+    expect(knowledgeSpy).toHaveBeenCalledWith({
+      sourceId: 'kb_123',
+      category: 'solution',
+      content: '合同审查先核对违约条款。',
+      confidence: 0.9,
+    });
   });
 
   it('chat_complete(cancelled)：工具执行阶段取消也清掉 isProcessingTools，停止按钮不再卡住', () => {

@@ -77,6 +77,13 @@ export interface TokenUsageRecordInput {
   totalTokens: number;
 }
 
+export interface EnterpriseKnowledgeRecordInput {
+  sourceId: string;
+  category: string;
+  content: string;
+  confidence: number;
+}
+
 export interface EnterpriseOrganizationInvite {
   id: string;
   organizationId: string;
@@ -266,6 +273,17 @@ export class EnterpriseClient {
   }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/usage', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<{
+    status: 'added' | 'exists';
+    added: boolean;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/knowledge', {
       method: 'POST',
       body: JSON.stringify(input),
     });

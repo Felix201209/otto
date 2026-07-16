@@ -162,6 +162,7 @@ function initSchema(d: Database): void {
     CREATE TABLE IF NOT EXISTS knowledge (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
+      source_id TEXT,
       department TEXT,
       category TEXT,
       content TEXT NOT NULL,
@@ -367,6 +368,17 @@ function initSchema(d: Database): void {
     'ticket_deliveries',
   ]) ensureOrganizationColumn(table);
 
+  // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
+  // 否则最早期的单组织 knowledge 表会因缺少该列而无法启动迁移。
+  const knowledgeColumns = d.prepare('PRAGMA table_info(knowledge)').all() as Array<{ name: string }>;
+  if (!knowledgeColumns.some((column) => column.name === 'source_id')) {
+    d.exec('ALTER TABLE knowledge ADD COLUMN source_id TEXT');
+  }
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_source_unique
+      ON knowledge(organization_id, source_id) WHERE source_id IS NOT NULL;
+  `);
+
   d.exec(`
     CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
@@ -409,6 +421,7 @@ export interface OrganizationInviteView {
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
+}
 
 interface OrganizationInviteRow {
   id: string;
@@ -1688,21 +1701,25 @@ export function addKnowledge(k: {
   department?: string; category: string; content: string;
   contributor?: string; confidence?: number;
   organizationId?: string;
-}): void {
+  sourceId?: string;
+}): boolean {
   const organizationId = k.organizationId || DEFAULT_ORGANIZATION_ID;
   if (!getOrganization(organizationId)) throw new Error('Organization not found');
-  getDB().prepare(
+  const result = getDB().prepare(
     `INSERT INTO knowledge
-       (organization_id, department, category, content, contributor, confidence)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (organization_id, source_id, department, category, content, contributor, confidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(organization_id, source_id) WHERE source_id IS NOT NULL DO NOTHING`,
   ).run(
     organizationId,
+    k.sourceId || null,
     k.department || null,
     k.category,
     k.content,
     k.contributor || null,
     k.confidence ?? 0.5,
-  );
+  ) as { changes?: number | bigint };
+  return Number(result.changes ?? 0) > 0;
 }
 
 export function getKnowledge(

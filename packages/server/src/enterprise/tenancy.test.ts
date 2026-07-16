@@ -36,8 +36,8 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('企业与 5 小时有效邀请码', () => {
-  it('管理员生成邀请码后 5 小时失效，后台重新生成时旧码立即作废', async () => {
+describe('企业与 7 天有效邀请码', () => {
+  it('管理员生成邀请码后 7 天失效，后台重新生成时旧码立即作废', async () => {
     const db = await freshDb();
     const epoch = Date.UTC(2026, 6, 14, 0, 0, 0);
     const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha', now: epoch });
@@ -46,26 +46,27 @@ describe('企业与 5 小时有效邀请码', () => {
     const alphaInvite = db.issueOrganizationInvite(alpha.id, epoch);
     expect(alphaInvite.link)
       .toBe(`https://join.otto.example/enterprise/join/${alphaInvite.code}`);
-    const sameWindow = db.getOrganizationInvite(alpha.id, epoch + 4 * 60 * 60 * 1_000);
+    const sameWindow = db.getOrganizationInvite(alpha.id, epoch + 6 * 24 * 60 * 60 * 1_000);
     const betaInvite = db.issueOrganizationInvite(beta.id, epoch);
 
     expect(alphaInvite.code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(sameWindow?.code).toBe(alphaInvite.code);
     expect(betaInvite.code).not.toBe(alphaInvite.code);
-    expect(alphaInvite.validHours).toBe(5);
-    expect(db.resolveOrganizationInvite(alphaInvite.code, epoch + 4 * 60 * 60 * 1_000)?.id)
+    expect(alphaInvite.validHours).toBe(168);
+    expect(db.resolveOrganizationInvite(alphaInvite.code, epoch + 6 * 24 * 60 * 60 * 1_000)?.id)
       .toBe(alpha.id);
 
-    expect(db.resolveOrganizationInvite(alphaInvite.code, epoch + 5 * 60 * 60 * 1_000)).toBeNull();
-    expect(db.getOrganizationInvite(alpha.id, epoch + 5 * 60 * 60 * 1_000)).toMatchObject({
+    const expiredAt = epoch + 7 * 24 * 60 * 60 * 1_000;
+    expect(db.resolveOrganizationInvite(alphaInvite.code, expiredAt)).toBeNull();
+    expect(db.getOrganizationInvite(alpha.id, expiredAt)).toMatchObject({
       code: alphaInvite.code,
       status: 'expired',
     });
 
-    const nextWindow = db.issueOrganizationInvite(alpha.id, epoch + 5 * 60 * 60 * 1_000);
+    const nextWindow = db.issueOrganizationInvite(alpha.id, expiredAt);
     expect(nextWindow.code).not.toBe(alphaInvite.code);
-    expect(db.resolveOrganizationInvite(alphaInvite.code, epoch + 5 * 60 * 60 * 1_000)).toBeNull();
-    expect(db.resolveOrganizationInvite(nextWindow.code, epoch + 5 * 60 * 60 * 1_000)?.id)
+    expect(db.resolveOrganizationInvite(alphaInvite.code, expiredAt)).toBeNull();
+    expect(db.resolveOrganizationInvite(nextWindow.code, expiredAt)?.id)
       .toBe(alpha.id);
   });
 });
