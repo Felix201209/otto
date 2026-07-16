@@ -338,13 +338,139 @@ export async function generateSkillCandidates(
   return candidates;
 }
 
+// ── 日志预分析（给 LLM 喂结构化的质量数据，而不是扔原始日志让它猜）──
+
+interface PatternAnalytics {
+  ngramKey: string;
+  /** 跨多少天出现 */
+  daysSeen: number;
+  /** 总出现次数 */
+  totalOps: number;
+  /** 近 3 天出现次数（抓近期趋势） */
+  recentOps: number;
+  /** 趋势方向 */
+  trend: 'accelerating' | 'stable' | 'declining' | 'sporadic';
+  /** 成功率 */
+  successRate: number;
+  /** 主要发生的时段 */
+  peakHour: string;
+  /** 涉及的类别 */
+  categories: string[];
+  /** 平均耗时（ms） */
+  avgDurationMs: number;
+  /** 综合质量分 0-100 */
+  qualityScore: number;
+}
+
+/** 分析单个 N-gram模式的深度指标。 */
+function analyzePattern(
+  ngram: { pattern: string; entries: WorkLogEntry[]; count: number },
+  allEntries: Array<{ date: string; entry: WorkLogEntry }>,
+  allDates: string[],
+): PatternAnalytics {
+  const ops = allEntries.filter(({ entry }) => {
+    const actions = ngram.pattern.split(' → ');
+    return actions.some((a) => entry.action.includes(a.trim().split(':')[0]?.slice(0, 20) ?? a.trim().slice(0, 20)));
+  });
+
+  const dates = new Set(ops.map((o) => o.date));
+  const totalOps = ops.length;
+  const sortedDates = [...dates].sort();
+
+  // 近 3 天
+  const recentDays = new Set(allDates.slice(-3));
+  const recentOps = ops.filter((o) => recentDays.has(o.date)).length;
+
+  // 趋势
+  const half = Math.ceil(sortedDates.length / 2);
+  const firstHalf = sortedDates.slice(0, half).length;
+  const secondHalf = sortedDates.slice(half).length;
+  const trend: PatternAnalytics['trend'] =
+    totalOps < 3
+      ? 'sporadic'
+      : secondHalf > firstHalf * 1.5
+        ? 'accelerating'
+        : firstHalf > secondHalf * 1.5
+          ? 'declining'
+          : 'stable';
+
+  // 成功率
+  const successes = ops.filter((o) => o.entry.success).length;
+  const successRate = totalOps > 0 ? successes / totalOps : 1;
+
+  // 高峰时段
+  const hourBuckets: Record<string, number> = {};
+  for (const op of ops) {
+    const h = new Date(op.entry.timestamp).getHours();
+    const key = `${String(h).padStart(2, '0')}:00`;
+    hourBuckets[key] = (hourBuckets[key] || 0) + 1;
+  }
+  const peakHour = Object.entries(hourBuckets).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
+
+  // 类别
+  const categories = [...new Set(ops.map((o) => o.entry.category))];
+
+  // 平均耗时
+  const durations = ops.map((o) => o.entry.durationMs).filter((d): d is number => typeof d === 'number' && d > 0);
+  const avgDurationMs = durations.length > 0
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+    : 0;
+
+  // 综合质量分（0-100）
+  const frequencyScore = Math.min(40, totalOps * 8); // 0-40
+  const consistencyScore = Math.min(20, ngram.count * 5); // 0-20
+  const trendScore = trend === 'accelerating' ? 20 : trend === 'stable' ? 15 : trend === 'sporadic' ? 5 : 10;
+  const successScore = Math.round(successRate * 20); // 0-20
+  const qualityScore = Math.min(100, frequencyScore + consistencyScore + trendScore + successScore);
+
+  return {
+    ngramKey: ngram.pattern,
+    daysSeen: dates.size,
+    totalOps,
+    recentOps,
+    trend,
+    successRate,
+    peakHour,
+    categories,
+    avgDurationMs,
+    qualityScore,
+  };
+}
+
+/** 读取项目 OTTO.md（如果存在）。 */
+function readProjectContext(cwd?: string): string {
+  try {
+    const fsSync = require('fs');
+    const dir = cwd ?? process.cwd();
+    const p = require('path').join(dir, 'OTTO.md');
+    if (fsSync.existsSync(p)) {
+      return fsSync.readFileSync(p, 'utf8').slice(0, 2000);
+    }
+  } catch { /* not found, ok */ }
+  return '';
+}
+
+/** 列出已有 Skill名称（用于去重提示 LLM）。 */
+function listExistingSkillNames(skillsDir?: string): string[] {
+  try {
+    const fsSync = require('fs');
+    const dir = skillsDir ?? resolveAutoSkillSkillsDir();
+    if (!fsSync.existsSync(dir)) return [];
+    return fsSync.readdirSync(dir).filter((f: string) => {
+      try {
+        const stat = fsSync.statSync(require('path').join(dir, f));
+        return stat.isDirectory() && !f.startsWith('.');
+      } catch { return false; }
+    });
+  } catch { return []; }
+}
+
 /**
  * 调 LLM 分析工作日志，按语义分组提炼 Skill。
  *
- * Prompt 策略：
- * - 把所有日志条目 + N-gram 初筛结果发给 LLM
- * - 让 LLM 识别「同类型操作的变体」（比如不同文件名的同种操作）
- * - 输出结构化 JSON，包含 skill name、描述、SKILL.md 正文
+ * 升级版：先对日志做预分析（频次趋势、成功率、时段分布、质量分），
+ * 然后把结构化的分析结果 + 项目上下文 + 已有 Skill 清单一起喂给 LLM，
+ * 让 LLM 产出有深度、可排名、可追溯的 Skill 候选。
  */
 async function callLLMForSkillCandidates(
   config: Config,
@@ -356,54 +482,94 @@ async function callLLMForSkillCandidates(
   const client = config.getOttoClient();
   if (!client) throw new Error('LLM client unavailable');
 
+  const allDates = [...new Set(allEntries.map((e) => e.date))].sort();
+
+  // 预分析：为每个 N-gram模式生成质量报告
+  const analytics = ngramPatterns
+    .slice(0, 10)
+    .map((ngram) => analyzePattern(ngram, allEntries, allDates))
+    .filter((a) => a.daysSeen >= 2)
+    .sort((a, b) => b.qualityScore - a.qualityScore);
+
+  // OTTO.md 项目上下文
+  const projectContext = readProjectContext(config.getTargetDir?.() ?? undefined);
+
+  // 已有 Skill 清单
+  const existingSkills = listExistingSkillNames(skillsDir);
+
   // 构建日志摘要（限制总 token）
   const entrySummaries = allEntries
-    .slice(-200) // 最多 200 条
+    .slice(-200)
     .map(
       ({ date, entry }) =>
-        `[${date}] ${entry.category} | ${entry.action}${entry.details ? ` | ${entry.details.slice(0, 100)}` : ''}`,
+        `[${date}] ${entry.category} | ${entry.action}${entry.details ? ` | ${entry.details.slice(0, 100)}` : ''}${entry.success ? '' : ' ⚠️失败'}`,
     );
 
-  const ngramHints = ngramPatterns
-    .slice(0, 8)
-    .map((p) => `- "${p.pattern}"（跨 ${p.count} 天）`)
-    .join('\n');
+  const analyticsSection = analytics.length > 0
+    ? [
+      '',
+      '# 预分析报告（系统自动计算的模式质量指标）',
+      '',
+      '| 模式 | 天数 | 总次数 | 近3天 | 趋势 | 成功率 | 高峰 | 质量分 |',
+      '|------|------|--------|-------|------|--------|------|--------|',
+      ...analytics.map((a) => {
+        const trendIcon = { accelerating: '📈上升', stable: '➡️稳定', declining: '📉下降', sporadic: '🔀散落' }[a.trend];
+        return `| ${a.ngramKey.slice(0, 50)} | ${a.daysSeen}d | ${a.totalOps} | ${a.recentOps} | ${trendIcon} | ${Math.round(a.successRate * 100)}% | ${a.peakHour} | ${a.qualityScore}/100 |`;
+      }),
+      '',
+      `> 质量分综合了频次(0-40)、跨天一致性(0-20)、趋势(0-20)、成功率(0-20)。`,
+      `> 优先关注 📈上升 + 高分 的模式。📉下降 的模式可能已不需要。`,
+    ].join('\n')
+    : '';
+
+  const projectSection = projectContext
+    ? ['', '# 项目上下文（来自 OTTO.md）', '```', projectContext, '```'].join('\n')
+    : '';
+
+  const existingSection = existingSkills.length > 0
+    ? `\n\n# 已有 Skill（避免重复）\n${existingSkills.map((s) => `- ${s}`).join('\n')}\n> 如果新发现的模式可以改进某个已有 Skill，请在 skillMarkdown 里注明"建议替换已有 Skill: xxx"。`
+    : '';
 
   const prompt = [
-    '你是 Otto 的工作习惯分析师。下面是用户过去几天的操作日志，请做语义分析：',
+    '你是 Otto 的工作习惯分析师。以下是用户的深度分析报告，请做语义建模：',
     '',
     '# 任务',
-    '1. 从日志中识别重复出现的**工作模式**（不是精确字符串匹配，而是语义相同的动作族，比如不同文件名的"读文件→改文件→提交"应归为一类）',
-    '2. 对每个模式，生成一个可复用的 Skill',
-    '3. 输出 JSON',
+    '1. 重点看**质量分 > 40 且趋势为上升或稳定**的模式',
+    '2. 识别语义相同的操作变体（不同文件名/不同参数的同类型操作应归为一类）',
+    '3. 结合项目上下文，理解用户在做什么，为每个有价值的模式生成可复用的 Skill',
+    '4. 按质量高低排序（最好的放前面），只输出 JSON',
+    '',
+    projectSection,
     '',
     '# 日志条目（日期 + 类别 + 操作 + 详情）',
     ...entrySummaries,
     '',
-    '# N-gram 初筛结果（供参考，不必完全采纳）',
-    ngramHints || '（无显著 N-gram 模式）',
+    analyticsSection,
+    existingSection,
     '',
-    '# 输出格式（严格 JSON，不要其他文字）',
+    '# 输出格式（严格 JSON，不要任何解释）',
     '```json',
     '{',
     '  "skills": [',
     '    {',
-    '      "name": "kebab-case 名称，如 auto-read-edit-commit",',
+    '      "name": "kebab-case 名称，如 auto-code-review",',
     '      "title": "人类可读标题，如 代码审查工作流",',
-    '      "description": "一句话描述这个 Skill 的用途，如 读取源码文件、根据规范编辑后提交的完整评审流程",',
-    '      "triggerHint": "触发此 Skill 的关键词或用户意图，如 帮我审查这段代码",',
-    '      "occurrenceNote": "出现频次说明，如 在过去 5 天中出现 3 次",',
-    '      "skillMarkdown": "完整的 SKILL.md 正文（Markdown格式），包含：触发场景、操作步骤（每步最多一行）、注意事项、输出格式。用专业流畅的中文。至少 15 行。"',
+    '      "description": "一句话描述，如 读取源码、按规范编辑后提交的完整审查流程。成功率 95%，工作日 14-16点执行",',
+    '      "triggerHint": "用户什么意图触发，如 帮我审查代码 / review 一下这个 PR",',
+    '      "occurrenceNote": "频次 + 趋势说明，如 过去 7 天内出现 6 次，趋势上升。质量分 78",',
+    '      "skillMarkdown": "完整的 SKILL.md 正文（Markdown），包含: name/description YAML头、触发场景（2-3个典型例子）、操作步骤（每步简明扼要，标注成功关键前置条件）、注意事项（从失败日志中总结的坑和边界情况）、期望输出格式。中文，简介专业，至少 20 行。"',
     '    }',
     '  ]',
     '}',
     '```',
     '',
-    '要求：',
-    '- 只输出 JSON，不要任何解释文字',
-    '- 只对确有价值的重复模式生成 Skill（出现至少 3 次且操作步骤有意义）',
-    '- 最多 5 个 Skill',
-    '- SKILL.md 正文用中文，简洁专业，禁止编造用户没做过的事',
+    '硬性要求：',
+    '- 只输出 JSON 大括号，不要任何额外文字或代码块标记',
+    '- 质量分 < 30 的模式直接跳过，不要生成 Skill',
+    '- 与已有 Skill 高度重叠的，在 skillMarkdown 里标注"建议合并到已有 Skill: xxx"',
+    '- skillMarkdown 必须包含从失败日志中总结的注意事项（如果有失败记录的话）',
+    '- 每步操作必须标注前置条件或输入要求（如"确认目标文件已存在""确认有写入权限"）',
+    '- 中文书写，最多 5 个候选',
   ].join('\n');
 
   const chat = await client.createTemporaryChat(
@@ -422,8 +588,8 @@ async function callLLMForSkillCandidates(
   const text = getResponseText(response);
   if (!text) throw new Error('LLM returned empty response');
 
-  // 解析 JSON（容错：去掉可能包裹的 ```json 标记）
-  const jsonText = text
+  // 解析 JSON（容错）
+  let jsonText = text
     .replace(/^```json\s*/i, '')
     .replace(/```\s*$/, '')
     .trim();
@@ -439,7 +605,6 @@ async function callLLMForSkillCandidates(
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    // 再试一次：找到第一个 { 到最后一个 }
     const firstBrace = jsonText.indexOf('{');
     const lastBrace = jsonText.lastIndexOf('}');
     if (firstBrace >= 0 && lastBrace > firstBrace) {
