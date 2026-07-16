@@ -24,9 +24,12 @@
  * 在真机运行时抛 `ERR_REQUIRE_ESM` 直接崩溃（Node/Electron 官方错误信息本身就是这句
  * 建议）。因此这里只保留 `import type` 型引入（纯类型，编译期擦除，不产生 require），
  * 运行期需要的值全部经 loadOttoServer() 懒加载并缓存。
+ *
+ * 同样，enterprise-server 也是 ESM，经 loadEnterpriseServer() 动态 import。
  */
 
 import * as http from 'node:http';
+import type { Server as HttpServer } from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -43,6 +46,18 @@ function loadOttoServer(): Promise<typeof import('otto-server')> {
   }
   return ottoServerModulePromise;
 }
+
+/** enterprise-server（ESM）动态加载并缓存。 */
+let enterpriseServerModulePromise: Promise<typeof import('otto-server/dist/src/enterprise/server.js')> | undefined;
+function loadEnterpriseServer(): Promise<typeof import('otto-server/dist/src/enterprise/server.js')> {
+  if (!enterpriseServerModulePromise) {
+    enterpriseServerModulePromise = import('otto-server/dist/src/enterprise/server.js');
+  }
+  return enterpriseServerModulePromise;
+}
+
+/** enterprise-server 默认端口。 */
+const ENTERPRISE_DEFAULT_PORT = 7777;
 
 /** 聊天记录落盘目录：~/.otto-user/sessions/（每个会话一个 json 文件）。 */
 function sessionsDir(): string {
@@ -67,6 +82,8 @@ export interface EnsuredServer {
 export class ServerManager {
   /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
   private embedded?: OttoServerType;
+  /** 企业后台 server（管理员登录 / 看板 / 账号管理）。本进程内嵌拉起时持有。 */
+  private enterpriseSrv?: HttpServer;
   private ownership: ServerOwnership = 'discovered';
   /**
    * 已进入退出流程（shutdown 被调过）。ensure 的每个异步完成点都要检查它：
@@ -105,6 +122,9 @@ export class ServerManager {
     const port = resolvePort(mod.DEFAULT_PORT);
     const embeddedEp = await this.startEmbedded(port, mod);
     this.ownership = 'embedded';
+    // 3) 同时拉起 enterprise-server（管理员登录 / 看板功能依赖）。
+    // 静默失败：企业后台是辅助功能，不影响主对话。
+    await this.ensureEnterprise();
     return { endpoint: embeddedEp, ownership: 'embedded' };
   }
 
@@ -119,6 +139,19 @@ export class ServerManager {
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    // 停 enterprise-server（内嵌时才有）。
+    if (this.enterpriseSrv) {
+      try {
+        await new Promise<void>((resolve) => {
+          this.enterpriseSrv!.close(() => resolve());
+          // 兜底：3 秒后无论如何 resolve
+          setTimeout(resolve, 3000);
+        });
+      } catch {
+        // 退出路径，吞掉。
+      }
+      this.enterpriseSrv = undefined;
+    }
     // 判 this.embedded 而非 ownership：embedded 只在本进程拉起时赋值，
     // 且 ownership 的赋值晚于拉起完成，退出竞态窗口内以 embedded 为准。
     if (this.embedded) {
@@ -181,6 +214,37 @@ export class ServerManager {
     const { host, port: boundPort } = server.endpoint;
     // 内嵌 server 由本进程写端点文件。
     return mod.writeEndpoint(host, boundPort);
+  }
+
+  /** 确保 enterprise-server（管理员登录/看板）在同进程内嵌拉起。幂等：已跑就跳过。 */
+  private async ensureEnterprise(): Promise<void> {
+    if (this.enterpriseSrv) return; // 已启动
+    if (this.shuttingDown) return;
+    try {
+      const { createEnterpriseServer } = await loadEnterpriseServer();
+      if (this.shuttingDown) return;
+      const { server, host, port } = createEnterpriseServer({
+        host: '127.0.0.1',
+        port: ENTERPRISE_DEFAULT_PORT,
+      });
+      if (this.shuttingDown) {
+        server.close();
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, host, () => {
+          console.log(`[ServerManager] enterprise-server 已就绪: http://${host}:${port}`);
+          resolve();
+        });
+        // 端口占用兜底：3 秒超时也不阻塞启动
+        setTimeout(resolve, 3000);
+      });
+      this.enterpriseSrv = server;
+    } catch (err) {
+      console.warn('[ServerManager] enterprise-server 启动失败（非致命，管理后台不可用）:',
+        (err as Error)?.message ?? String(err));
+    }
   }
 }
 
