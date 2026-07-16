@@ -83,6 +83,14 @@ export function normalizeTokens(tokens: unknown): number {
 
 let db: Database | null = null;
 
+/** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
+export function closeEnterpriseDatabase(): void {
+  if (!db) return;
+  const database = db;
+  db = null;
+  database.close();
+}
+
 export function getDB(): Database {
   if (db) return db;
 
@@ -731,6 +739,10 @@ function passwordMatches(password: string, stored: string): boolean {
   }
 }
 
+function assertAccountPassword(password: string): void {
+  if (password.length < 8) throw new Error('登录密码至少需要 8 位');
+}
+
 function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
@@ -789,6 +801,7 @@ export function createAccount(input: {
   const username = normalizeUsername(input.username);
   const name = input.name.trim();
   if (!username || !name || !input.password) throw new Error('username, password and name required');
+  assertAccountPassword(input.password);
   const id = `acc_${randomUUID()}`;
   try {
     getDB().prepare(
@@ -905,56 +918,86 @@ export function updateAccount(id: string, patch: {
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
 }, organizationId?: string): AccountView {
-  const current = getAccount(id, organizationId);
-  if (!current) throw new Error('Account not found');
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const current = getAccount(id, organizationId);
+    if (!current) throw new Error('Account not found');
 
-  const assignments: string[] = [];
-  const values: unknown[] = [];
-  const set = (column: string, value: unknown): void => {
-    assignments.push(`${column} = ?`);
-    values.push(value);
-  };
-  if (patch.username !== undefined) {
-    const username = normalizeUsername(patch.username);
-    if (!username) throw new Error('username required');
-    set('username', username);
-  }
-  if (patch.phone !== undefined) set('phone', normalizeOptionalPhone(patch.phone));
-  if (patch.password !== undefined) {
-    if (!patch.password) throw new Error('password required');
-    set('password_hash', passwordHash(patch.password));
-  }
-  if (patch.name !== undefined) {
-    const name = patch.name.trim();
-    if (!name) throw new Error('name required');
-    set('name', name);
-  }
-  if (patch.role !== undefined) set('role', patch.role?.trim() || null);
-  if (patch.department !== undefined) set('department', patch.department?.trim() || null);
-  if (patch.isAdmin !== undefined) set('is_admin', patch.isAdmin ? 1 : 0);
-  if (patch.status !== undefined) set('status', patch.status);
-  if (assignments.length > 0) {
-    assignments.push("updated_at = datetime('now')");
-    try {
-      const sql = organizationId
-        ? `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ? AND organization_id = ?`
-        : `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`;
-      getDB().prepare(sql).run(...values, id, ...(organizationId ? [organizationId] : []));
-    } catch (error) {
-      if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
-        throw new Error('手机号已绑定其他账号');
-      }
-      throw error;
+    const removesActiveAdmin = current.isAdmin && current.status === 'active'
+      && (patch.isAdmin === false || patch.status === 'disabled');
+    if (removesActiveAdmin) {
+      const other = database.prepare(
+        `SELECT 1 FROM accounts
+         WHERE organization_id = ? AND id <> ? AND is_admin = 1 AND status = 'active'
+         LIMIT 1`,
+      ).get(current.organizationId, current.id);
+      if (!other) throw new Error('企业至少需要保留一名可登录管理员');
     }
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    const set = (column: string, value: unknown): void => {
+      assignments.push(`${column} = ?`);
+      values.push(value);
+    };
+    if (patch.username !== undefined) {
+      const username = normalizeUsername(patch.username);
+      if (!username) throw new Error('username required');
+      set('username', username);
+    }
+    if (patch.phone !== undefined) set('phone', normalizeOptionalPhone(patch.phone));
+    if (patch.password !== undefined) {
+      assertAccountPassword(patch.password);
+      set('password_hash', passwordHash(patch.password));
+    }
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) throw new Error('name required');
+      set('name', name);
+    }
+    if (patch.role !== undefined) set('role', patch.role?.trim() || null);
+    if (patch.department !== undefined) set('department', patch.department?.trim() || null);
+    if (patch.isAdmin !== undefined) set('is_admin', patch.isAdmin ? 1 : 0);
+    if (patch.status !== undefined) set('status', patch.status);
+    if (assignments.length > 0) {
+      assignments.push("updated_at = datetime('now')");
+      try {
+        const sql = organizationId
+          ? `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ? AND organization_id = ?`
+          : `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`;
+        database.prepare(sql).run(...values, id, ...(organizationId ? [organizationId] : []));
+      } catch (error) {
+        if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
+          throw new Error('手机号已绑定其他账号');
+        }
+        throw error;
+      }
+    }
+    if (patch.tags !== undefined) replaceAccountTags(id, current.organizationId, patch.tags);
+
+    const shouldRevokeSessions = patch.password !== undefined
+      || (patch.status !== undefined && patch.status !== current.status)
+      || (patch.isAdmin !== undefined && patch.isAdmin !== current.isAdmin);
+    if (shouldRevokeSessions) {
+      database.prepare(
+        "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
+      ).run(id);
+    }
+
+    logAudit(
+      'account_update',
+      current.employeeId,
+      `Preset account ${current.username} updated`,
+      current.organizationId,
+    );
+    const updated = getAccount(id, organizationId)!;
+    database.exec('COMMIT');
+    return updated;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
   }
-  if (patch.tags !== undefined) replaceAccountTags(id, current.organizationId, patch.tags);
-  logAudit(
-    'account_update',
-    current.employeeId,
-    `Preset account ${current.username} updated`,
-    current.organizationId,
-  );
-  return getAccount(id, organizationId)!;
 }
 
 export function createAuthSession(accountId: string, ttlMs = 30 * 24 * 60 * 60 * 1000): {
