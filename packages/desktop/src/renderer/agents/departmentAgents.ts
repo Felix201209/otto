@@ -474,7 +474,7 @@ export function getEnterpriseAgentProfiles(
     ? ENTERPRISE_CEO_PROFILE
     : ENTERPRISE_WORK_PROFILE;
   const departmentProfiles = role === 'company_owner' || role === 'company_admin'
-    ? DEPARTMENT_AGENT_PROFILES
+    ? getDepartmentAgentProfiles('ceo-office')
     : department
       ? getDepartmentAgentProfiles(department)
       : [];
