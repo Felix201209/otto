@@ -72,7 +72,7 @@ export {
   rejectSkill,
   rejectPendingSkill,
   listPendingSkillCandidates,
-  generateSkillContent,
+  generateLegacySkillContent,
   resolveAutoSkillUserDir,
   resolveAutoSkillSkillsDir,
   scanAndStageSkillCandidates,
