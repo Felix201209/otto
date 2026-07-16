@@ -274,9 +274,12 @@ describe('report/dashboard 路由基本可达', () => {
 
     const html = await res.text();
     expect(html).toContain('管理员登录');
-    expect(html).toContain('用户名');
+    expect(html).toContain('账号或手机号');
     expect(html).toContain('type="password"');
-    expect(html).toContain('/enterprise/auth/login');
+    expect(html).toContain('id="togglePassword"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('/enterprise/auth/admin/login');
+    expect(html).toContain('loadWorkspaceWithFeedback');
     expect(html).toContain('/enterprise/accounts');
     expect(html).toContain('editPhone');
     expect(html).toContain('sessionStorage');
@@ -426,6 +429,41 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: '账号或密码错误' });
     }
+  });
+
+  it('管理员专用登录只给管理员创建会话，普通成员被拒绝且不留下孤儿会话', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'staff01', password: 'staff-password', name: '普通成员',
+    });
+    db.createAccount({
+      username: 'admin01', password: 'admin-password', name: '管理员',
+      phone: '13800138000', isAdmin: true,
+    });
+
+    const sessionsBefore = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    const staffLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'staff01', password: 'staff-password' }),
+    });
+    expect(staffLogin.status).toBe(403);
+    expect(await staffLogin.json()).toEqual({ error: '该账号没有管理员权限' });
+    const sessionsAfterStaff = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    expect(sessionsAfterStaff).toBe(sessionsBefore);
+
+    const adminLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: '13800138000', password: 'admin-password' }),
+    });
+    expect(adminLogin.status).toBe(200);
+    const adminBody = await adminLogin.json();
+    expect(adminBody.account).toMatchObject({ username: 'admin01', isAdmin: true });
+    expect(adminBody.token).toEqual(expect.any(String));
+    const sessionsAfterAdmin = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    expect(sessionsAfterAdmin).toBe(sessionsBefore + 1);
   });
 
   it('短信验证码只用于首次注册，注册时保存姓名和密码，之后用手机号密码登录', async () => {
