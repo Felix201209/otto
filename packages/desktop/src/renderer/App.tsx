@@ -53,6 +53,7 @@ export function App(): React.JSX.Element {
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
+  const [showRightPanel, setShowRightPanel] = useState(false);
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
@@ -68,9 +69,21 @@ export function App(): React.JSX.Element {
   const [saveError, setSaveError] = useState<string | null>(null);
   // 首启无模型时自动浮出一次（用 ref 防止反复弹）。
   const autoFloated = useRef(false);
+  // 豁免码：检查本地是否已激活豁免码，如果是则跳过 SetupPanel
+  const [exemptActive, setExemptActive] = useState(false);
+  useEffect(() => {
+    // Check exempt code in localStorage (renderer-side, no IPC needed)
+    try {
+      const exempt = localStorage.getItem('otto_exempt_code');
+      if (exempt === 'OTTO-DEV-2026') {
+        setExemptActive(true);
+      }
+    } catch {}
+  }, []);
   useEffect(() => {
     if (
       !autoFloated.current &&
+      !exemptActive &&
       state.connection === 'connected' &&
       state.modelsLoaded &&
       state.models.length === 0
@@ -294,6 +307,7 @@ export function App(): React.JSX.Element {
             onRegenerate={handleRegenerate}
             onRespondQuestion={actions.respondToolConfirmation}
             onOpenSetup={() => setMainView('settings')}
+            onToggleAgents={() => setShowRightPanel(v => !v)}
             onNewChat={handleNewChat}
             onClearContext={handleClearContext}
             onExport={
@@ -305,10 +319,12 @@ export function App(): React.JSX.Element {
             onOpenMemory={() => openHub('memory')}
             onOpenSkills={() => openHub('skills')}
           />
-          <RightPanel
-            onLaunchExpert={handleLaunchExpert}
-            onOpenAgents={() => setMainView('agents')}
-          />
+          {showRightPanel && (
+            <RightPanel
+              onLaunchExpert={handleLaunchExpert}
+              onOpenAgents={() => setMainView('agents')}
+            />
+          )}
         </div>
       )}
 

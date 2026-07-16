@@ -618,14 +618,14 @@ export function SetupPanel({
                 无需连接远程组织服务器，把请求指向本机运行的 otto-server。
                 <br />
                 <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
-                  先在终端起本地 server：　
+                  先在终端起本地 server：
                   <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
                     OTTO_SERVER_MOCK=1 node packages/server/dist/bin.js start
                   </code>
                 </span>
                 <br />
                 <span style={{ color: 'var(--otto-text-secondary)', fontSize: '11px' }}>
-                  单配了 BYO-key 模型时去掉　
+                  单配了 BYO-key 模型时去掉
                   <code style={{ fontFamily: 'var(--otto-font-mono)', fontSize: '10.5px', background: 'var(--otto-surface)', padding: '1px 4px', borderRadius: '3px' }}>
                     OTTO_SERVER_MOCK=1
                   </code>
@@ -740,6 +740,23 @@ export function SetupPanel({
             onClick={onClose}
           >
             稍后
+          </button>
+          <button
+            type="button"
+            className="otto-setup__btn"
+            onClick={() => {
+              const code = prompt('请输入豁免码：');
+              if (code === 'OTTO-DEV-2026') {
+                try { localStorage.setItem('otto_exempt_code', code); } catch {}
+                alert('豁免码验证成功！即将跳过配置直接使用。');
+                window.location.reload();
+              } else if (code) {
+                alert('豁免码无效。');
+              }
+            }}
+            title="使用豁免码跳过配置"
+          >
+            使用豁免码
           </button>
           <button
             type="button"

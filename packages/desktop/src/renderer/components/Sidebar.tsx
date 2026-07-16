@@ -28,6 +28,7 @@ import {
   IconChevron,
   IconSparkle,
   IconSettings,
+  IconVideo,
 } from './icons.js';
 
 function formatTime(ts: number): string {
@@ -125,6 +126,15 @@ export function Sidebar({
           <IconSettings size={16} />
           设置与诊断
           <IconChevron size={15} className="otto-viewall__chev" />
+        </button>
+        <button
+          type="button"
+          className="otto-viewall"
+          onClick={() => window.otto?.openVideoEditor()}
+          title="打开内置视频编辑器"
+        >
+          <IconVideo size={16} />
+          视频编辑器
         </button>
       </div>
     </aside>

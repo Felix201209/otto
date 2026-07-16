@@ -59,6 +59,7 @@ interface ChatViewProps {
   onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
+  onToggleAgents: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
   /** 斜杠命令 `/clear`：清空当前会话上下文。 */
@@ -86,6 +87,7 @@ export function ChatView({
   onRegenerate,
   onRespondQuestion,
   onOpenSetup,
+  onToggleAgents,
   onNewChat,
   onClearContext,
   onExport,
@@ -214,6 +216,20 @@ export function ChatView({
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
               <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="otto-topbar-setup"
+            onClick={onToggleAgents}
+            title="智能体面板"
+            aria-label="智能体面板"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
             </svg>
           </button>
           <span className="otto-user-avatar" title="当前用户">

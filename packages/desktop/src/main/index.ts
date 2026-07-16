@@ -68,6 +68,8 @@ const serverManager = new ServerManager();
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 视频编辑器窗口（OpenReel）。 */
+let videoEditorWindow: BrowserWindow | undefined;
 
 // ── IPC channel 名（与 preload 对齐）──
 const IPC = {
@@ -76,6 +78,7 @@ const IPC = {
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
   saveTextFile: 'otto:save-text-file',
+  openVideoEditor: 'otto:open-video-editor',
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
@@ -153,6 +156,51 @@ function createWindow(): BrowserWindow {
 
   void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
   return win;
+}
+
+/** 创建内置视频编辑器窗口（OpenReel）。 */
+function createVideoEditorWindow(): void {
+  if (videoEditorWindow && !videoEditorWindow.isDestroyed()) {
+    videoEditorWindow.show();
+    videoEditorWindow.focus();
+    return;
+  }
+
+  videoEditorWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    title: 'Otto - Video Editor',
+    icon: loadIcon(),
+    backgroundColor: '#0a0a0a',
+    autoHideMenuBar: process.platform !== 'darwin',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  // Load bundled OpenReel from resources/video-editor/
+  const editorPath = path.join(__dirname, '..', '..', '..', '..', 'resources', 'video-editor', 'index.html');
+  const fs = require('fs');
+  if (fs.existsSync(editorPath)) {
+    void videoEditorWindow.loadFile(editorPath);
+  } else {
+    // Fallback: dev server
+    void videoEditorWindow.loadURL('http://localhost:5174');
+  }
+
+  videoEditorWindow.on('closed', () => {
+    videoEditorWindow = undefined;
+  });
+
+  // External links open in system browser
+  videoEditorWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 }
 
 /** 收紧单个窗口 webContents 的导航 / 新窗口行为。 */
@@ -313,6 +361,10 @@ function registerIpc(): void {
   // 飞书一键开关（诚实占位）：桌面端暂不代管飞书 daemon，见 FEISHU_DESKTOP_NOTICE。
   // 返回明确的「暂不支持」而非 reject，让 renderer 显示真话而不是「操作失败」。
   // running 恒为 false：桌面端并未托管进程，不谎报「运行中」。
+  ipcMain.handle(IPC.openVideoEditor, () => {
+    createVideoEditorWindow();
+    return Promise.resolve({ ok: true });
+  });
   ipcMain.handle(IPC.feishuStart, () =>
     Promise.resolve({ text: FEISHU_DESKTOP_NOTICE }),
   );
