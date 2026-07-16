@@ -435,7 +435,7 @@ export interface CompanyLinkInviteInput extends BaseInviteInput {
   targetCompanyId?: string;
 }
 
-const DEFAULT_INVITE_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
 const MAX_INVITE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function encodeCompactClaims(claims: CompactInviteClaims): string {
