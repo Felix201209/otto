@@ -127,6 +127,8 @@ import {
   rejectPendingSkill,
   startAutoSkillScanner,
   stopAutoSkillScanner,
+  getProactiveService,
+  type ProactiveLocalNotifier,
   type WorkflowAgentRecord,
   type SkillCandidate,
   type Config as CoreConfig,
@@ -457,6 +459,34 @@ export class OttoServer {
         payload: { schedules },
       });
     });
+
+    // 主动服务引擎：定时检查 cron 规则（晨间简报、明早日程提醒等），
+    // 通过 WS 广播给所有桌面客户端，无须飞书在线。
+    try {
+      const proactive = getProactiveService();
+      proactive.setLocalNotifier({
+        notify: async (message, priority, ruleId) => {
+          const ruleName =
+            { morning_briefing: '晨间简报', tomorrow_early_schedule: '明早日程提醒', daily_work_summary: '每日汇总' }[ruleId] ?? ruleId;
+          this.broadcastAll({
+            type: 'proactive_alert',
+            payload: { ruleId, ruleName, message, priority, timestamp: new Date().toISOString() },
+          });
+        },
+      } as ProactiveLocalNotifier);
+      proactive.startScheduler(() => ({
+        userId: 'local',
+        userName: 'Otto User',
+        currentDay: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()],
+        currentTime: `${new Date().getHours()}:${new Date().getMinutes()}`,
+        recentActions: [],
+        pendingTasks: 0,
+        hasUpcomingMeeting: false,
+      }));
+      console.log('[Server] ProactiveService started (local mode)');
+    } catch (err) {
+      console.warn('[Server] ProactiveService init failed (non-fatal):', err);
+    }
   }
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
@@ -467,6 +497,7 @@ export class OttoServer {
     }
     this.workflowUnsub?.();
     this.workflowUnsub = undefined;
+    try { getProactiveService().stopScheduler(); } catch { /* ignore */ }
     this.scheduleUnsub?.();
     this.scheduleUnsub = undefined;
     // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。

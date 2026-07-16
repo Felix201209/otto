@@ -1239,6 +1239,18 @@ export type SchedulesListMsg = Envelope<
   'schedules_list',
   { date?: string; timezone?: string; schedules: ScheduleItemInfo[] }
 >;
+
+/** 主动服务推送（晨间简报/明早日程提醒/空闲提醒等） */
+export type ProactiveAlertMsg = Envelope<
+  'proactive_alert',
+  {
+    ruleId: string;
+    ruleName: string;
+    message: string;
+    priority: 'low' | 'medium' | 'high';
+    timestamp: string;
+  }
+>;
 export type PendingAutoSkillsMsg = Envelope<
   'pending_auto_skills',
   {
@@ -1291,6 +1303,7 @@ export type ServerToClient =
   | ProductWorkspaceMsg
   | EnterpriseInviteCreatedMsg
   | SchedulesListMsg
+  | ProactiveAlertMsg
   | PendingAutoSkillsMsg
   | MessageQueuedMsg
   | QueueDrainedMsg;

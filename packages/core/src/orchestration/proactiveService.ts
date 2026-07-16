@@ -22,6 +22,12 @@ export interface ProactiveFeishuSender {
   sendMessage(userId: string, message: string): Promise<void>;
 }
 
+/** 本地通知接口（由 otto-server 注入，无飞书时也能推送） */
+export interface ProactiveLocalNotifier {
+  /** 推送一条主动提醒，server 广播给所有连接的客户端 */
+  notify(message: string, priority: 'low' | 'medium' | 'high', ruleId: string): Promise<void>;
+}
+
 /** 日历轮询检查器（用于检测最近结束的会议） */
 export interface CalendarMeetingResult {
   meetingId: string;
@@ -153,6 +159,18 @@ const BUILTIN_RULES: ProactiveRule[] = [
     enabled: true,
     minIntervalHours: 20,
   },
+  {
+    id: 'tomorrow_early_schedule',
+    name: '明早日程提前提醒',
+    trigger: { type: 'cron', cron: '0 20 * * *' }, // 每晚20:00
+    action: {
+      type: 'feishu_message',
+      message: '明早有日程安排，记得早做准备。',
+      priority: 'medium',
+    },
+    enabled: true,
+    minIntervalHours: 22,
+  },
 ];
 
 /**
@@ -163,6 +181,7 @@ export class ProactiveService {
   private actionHistory: Map<string, string[]> = new Map(); // userId -> recent actions
   private triggeredToday: Set<string> = new Set(); // 防止同一天重复触发
   private feishuSender: ProactiveFeishuSender | null = null;
+  private localNotifier: ProactiveLocalNotifier | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   /** 日历轮询检查器（fallback：飞书 WebSocket 事件不可用时使用） */
   private calendarChecker: CalendarCheckerFn | null = null;
@@ -173,6 +192,12 @@ export class ProactiveService {
   setFeishuSender(sender: ProactiveFeishuSender): void {
     this.feishuSender = sender;
     console.log('[ProactiveService] Feishu sender injected');
+  }
+
+  /** 注入本地通知器（无飞书时也能推送到桌面） */
+  setLocalNotifier(notifier: ProactiveLocalNotifier): void {
+    this.localNotifier = notifier;
+    console.log('[ProactiveService] Local notifier injected');
   }
 
   /** 注入日历轮询检查器（用于检测最近结束的会议） */
@@ -244,7 +269,9 @@ export class ProactiveService {
    * 执行触发的规则：发飞书消息 + 记工作日志（标注主动服务）。
    */
   private async executeAndLog(rule: ProactiveRule, ctx: ProactiveContext): Promise<void> {
-    // 1. 发飞书消息
+    let messageDelivered = false;
+
+    // 1. 优先走飞书
     if (this.feishuSender) {
       try {
         if (rule.action.type === 'feishu_card') {
@@ -252,8 +279,18 @@ export class ProactiveService {
         } else if (rule.action.type === 'feishu_message') {
           await this.feishuSender.sendMessage(ctx.userId, rule.action.message);
         }
+        messageDelivered = true;
       } catch (err) {
         console.warn(`[ProactiveService] Feishu send failed for rule ${rule.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. 回退到本地通知
+    if (!messageDelivered && this.localNotifier) {
+      try {
+        await this.localNotifier.notify(rule.action.message, rule.action.priority, rule.id);
+      } catch (err) {
+        console.warn(`[ProactiveService] Local notify failed for rule ${rule.id}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -324,6 +361,51 @@ export class ProactiveService {
             rule.action.message = logger.formatDailySummaryForFeishu(summary);
           } catch {
             continue; // 生成汇总失败，跳过
+          }
+        }
+
+        // 明早日程提醒：读取本地日程，检查明早6-9点是否有安排
+        if (rule.id === 'tomorrow_early_schedule') {
+          try {
+            const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const tomorrowStr = tomorrow.toISOString().split('T')[0];
+            const schedules = ls(tomorrowStr);
+            const earlySchedules = schedules.filter((s) => {
+              const hour = parseInt(s.startAt.slice(11, 13), 10);
+              return hour >= 6 && hour <= 9;
+            });
+            if (earlySchedules.length === 0) {
+              continue;
+            }
+            const titles = earlySchedules.map((s) => {
+              const time = s.startAt.slice(11, 16);
+              return `${time} ${s.title}`;
+            }).join('；');
+            rule.action.message = `📅 明早日程提醒：${titles}。记得早做准备哦。`;
+          } catch {
+            continue;
+          }
+        }
+
+        // 晨间简报：读取今日本地日程，注入到消息中
+        if (rule.id === 'morning_briefing') {
+          try {
+            const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+            const today = new Date().toISOString().split('T')[0];
+            const schedules = ls(today);
+            if (schedules.length > 0) {
+              const lines = schedules.map((s) => {
+                const time = s.startAt.slice(11, 16);
+                return `${time} ${s.title}`;
+              }).join('\n');
+              rule.action.message = `早上好！今日日程安排：\n${lines}\n祝你工作顺利！`;
+            } else {
+              rule.action.message = '早上好！今日暂无日程安排，祝你工作顺利！';
+            }
+          } catch {
+            // 读不到也没关系，用默认消息
           }
         }
 
