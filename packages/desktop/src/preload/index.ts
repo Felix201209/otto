@@ -268,6 +268,7 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  openVideoEditor: 'otto:open-video-editor',
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
   setLocalTestUrl: 'otto:set-local-test-url',
@@ -333,6 +334,7 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  openVideoEditor(): Promise<{ ok: boolean }>;
   /**
    * host-only 命令：原生保存对话框 + 写文本文件（导出会话用）。
    * 返回实际写入路径；用户取消对话框时返回 null。
@@ -679,6 +681,9 @@ const bridge: OttoBridge = {
 
   openPath(path: string): Promise<void> {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
+  },
+  openVideoEditor(): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean }>;
   },
 
   saveTextFile(suggestedFileName: string, content: string): Promise<string | null> {

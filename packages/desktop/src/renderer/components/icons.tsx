@@ -255,7 +255,17 @@ export function IconSettings({ size, className }: IconProps): React.JSX.Element 
   );
 }
 
-/** 关闭图标（toast 关闭等）。 */
+/** 视频编辑器（摄像机图标）。 */
+export function IconVideo({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="2" y="6" width="14" height="12" rx="2" />
+      <path d="M22 8l-6 4 6 4V8z" />
+    </svg>
+  );
+}
+
+/** 关闭 ✕（toast 关闭等）。 */
 export function IconClose({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className} strokeWidth={2}>
