@@ -39,6 +39,18 @@ import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 import {
+  createRedeemCodes,
+  redeemCode as redeemCreditCode,
+  getCreditBalance,
+  checkAndReserveCredits,
+  deductCredits,
+  topUpCredits,
+  listRedeemCodes,
+  revokeRedeemCode,
+  listCreditTransactions,
+} from './credits.js';
+
+import {
   buildOrganizationInviteLink,
   isOrganizationInviteCode,
   resolveEnterprisePublicBaseUrl,
@@ -1044,7 +1056,84 @@ function makeHandler(
         return;
       }
 
-      // ===== Join (employee uses invite code) =====
+            // ===== Enterprise Credits System =====
+      if (path === '/enterprise/credits/balance' && method === 'GET') {
+        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
+        const balance = getCreditBalance(memberAccount.organizationId);
+        sendJSON(res, 200, balance);
+        return;
+      }
+
+      if (path === '/enterprise/credits/redeem' && method === 'POST') {
+        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
+        const body = await readBody(req);
+        const code = typeof body.code === 'string' ? body.code : '';
+        if (!code) { sendJSON(res, 400, { error: '兑换码不能为空' }); return; }
+        try {
+          const result = redeemCreditCode(code, memberAccount.id);
+          sendJSON(res, 200, result);
+        } catch (err) {
+          sendJSON(res, 400, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/credits/redeem-codes' && method === 'POST') {
+        if (!memberAccount || !memberAccount.isAdmin) { sendJSON(res, 403, { error: '需要管理员权限' }); return; }
+        const body = await readBody(req);
+        const creditAmount = typeof body.creditAmount === 'number' ? body.creditAmount : 0;
+        const count = typeof body.count === 'number' ? body.count : 1;
+        if (creditAmount <= 0) { sendJSON(res, 400, { error: '面额必须大于0' }); return; }
+        try {
+          const codes = createRedeemCodes(memberAccount.organizationId, memberAccount.id, creditAmount, count);
+          sendJSON(res, 201, { codes });
+        } catch (err) {
+          sendJSON(res, 400, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/credits/redeem-codes' && method === 'GET') {
+        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
+        const url = new URL(req.url || '/', publicBaseUrl);
+        const status = url.searchParams.get('status') as 'active' | 'redeemed' | 'revoked' | null;
+        const codes = listRedeemCodes(memberAccount.organizationId, (status as any) || undefined);
+        sendJSON(res, 200, { codes });
+        return;
+      }
+
+      if (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke') && method === 'POST') {
+        if (!memberAccount || !memberAccount.isAdmin) { sendJSON(res, 403, { error: '需要管理员权限' }); return; }
+        const codeId = path.split('/')[4];
+        const ok = revokeRedeemCode(codeId, memberAccount.organizationId);
+        sendJSON(res, ok ? 200 : 404, ok ? { ok: true } : { error: '兑换码不存在或已处理' });
+        return;
+      }
+
+      if (path === '/enterprise/credits/topup' && method === 'POST') {
+        if (!memberAccount || !memberAccount.isAdmin) { sendJSON(res, 403, { error: '需要管理员权限' }); return; }
+        const body = await readBody(req);
+        const amount = typeof body.amount === 'number' ? body.amount : 0;
+        if (amount <= 0) { sendJSON(res, 400, { error: '充值金额必须大于0' }); return; }
+        try {
+          const result = topUpCredits(memberAccount.organizationId, memberAccount.id, amount, typeof body.note === 'string' ? body.note : undefined);
+          sendJSON(res, 200, result);
+        } catch (err) {
+          sendJSON(res, 400, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/credits/transactions' && method === 'GET') {
+        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
+        const url = new URL(req.url || '/', publicBaseUrl);
+        const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+        const txns = listCreditTransactions(memberAccount.organizationId, limit);
+        sendJSON(res, 200, { transactions: txns });
+        return;
+      }
+
+// ===== Join (employee uses invite code) =====
       if (path === '/enterprise/join' && method === 'POST') {
         const body = await readBody(req);
         const invite_code = body.invite_code as string | undefined;
