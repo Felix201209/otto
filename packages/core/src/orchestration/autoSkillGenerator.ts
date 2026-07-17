@@ -865,6 +865,14 @@ let scanTimer: ReturnType<typeof setInterval> | null = null;
 let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let scanInFlight = false;
 
+// ── 实时触发监视器 ──
+let realtimeWatcher: any = null;
+export function setRealtimeWatcher(watcher: any): void { realtimeWatcher = watcher; }
+export function getRealtimeWatcher(): any { return realtimeWatcher; }
+
+export { AutoSkillRealtimeWatcher, RealtimePatternSummary } from "./autoSkillEnhance.js";
+
+
 export interface AutoSkillScannerOptions {
   /** 首次扫描延迟；避免与桌面首屏初始化争抢磁盘。 */
   initialDelayMs?: number;

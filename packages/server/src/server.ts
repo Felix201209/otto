@@ -130,6 +130,9 @@ import {
   stopAutoSkillScanner,
   getProactiveService,
   type ProactiveLocalNotifier,
+  AutoSkillRealtimeWatcher,
+  recordSkillUsage,
+  setRealtimeWatcher,
   type WorkflowAgentRecord,
   type SkillCandidate,
   type Config as CoreConfig,
@@ -416,6 +419,23 @@ export class OttoServer {
         sessionId: 'auto-skill-scanner',
       });
       setAutoSkillConfigForProfile(scannerConfig);
+
+      // 实时触发监视器：每完成一个操作就检查是否达到重复阈值
+      const realtimeWatcher = new AutoSkillRealtimeWatcher({ threshold: 3 });
+      realtimeWatcher.setCallback((summary) => {
+        this.broadcastAll({
+          type: "realtime_pattern",
+          payload: {
+            pattern: summary.pattern,
+            count: summary.count,
+            samples: summary.samples,
+            suggestion: summary.suggestion,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      });
+      setRealtimeWatcher(realtimeWatcher);
+
       this.autoSkillScannerStarted = startAutoSkillScanner(
         scannerConfig,
         () => this.productWorkspace.snapshot().context.userId,

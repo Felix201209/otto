@@ -1251,6 +1251,18 @@ export type ProactiveAlertMsg = Envelope<
     timestamp: string;
   }
 >;
+/** 实时模式触发（操作重复达阈值，建议生成Skill） */
+export type RealtimePatternMsg = Envelope<
+  "realtime_pattern",
+  {
+    pattern: string;
+    count: number;
+    samples: Array<{ action: string; details?: string; time: string }>;
+    suggestion: string;
+    timestamp: string;
+  }
+>;
+
 export type PendingAutoSkillsMsg = Envelope<
   'pending_auto_skills',
   {
@@ -1304,6 +1316,7 @@ export type ServerToClient =
   | EnterpriseInviteCreatedMsg
   | SchedulesListMsg
   | ProactiveAlertMsg
+  | RealtimePatternMsg
   | PendingAutoSkillsMsg
   | MessageQueuedMsg
   | QueueDrainedMsg;

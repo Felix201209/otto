@@ -79,6 +79,7 @@ export {
   setAutoSkillFeishuNotifier,
   startAutoSkillScanner,
   stopAutoSkillScanner,
+  setRealtimeWatcher,
 } from './autoSkillGenerator.js';
 export type {
   SkillCandidate,
@@ -94,6 +95,21 @@ export {
   setAutoSkillConfigForProfile,
 } from './autoSkillProfile.js';
 export type { AutoSkillProfileData } from './autoSkillProfile.js';
+
+// 自动 Skill 增强（实时触发 / 效果追踪 / 自动优化 / 多项目迁移）
+export {
+  AutoSkillRealtimeWatcher,
+  recordSkillUsage,
+  getSkillStats,
+  getSkillRankings,
+  optimizeExistingSkill,
+  optimizeAllSkills,
+  adaptSkillForProject,
+} from './autoSkillEnhance.js';
+export type {
+  RealtimePatternSummary,
+  SkillUsageRecord,
+} from './autoSkillEnhance.js';
 
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';
