@@ -30,6 +30,8 @@ module.exports = {
     alias: {
       electron: false,
       'qrcode-terminal': false,
+      // 浏览器模式下 node:fs / node:path 等 Node API 不可用 → 空 mock
+      'otto-core': false,
     },
   },
   module: {

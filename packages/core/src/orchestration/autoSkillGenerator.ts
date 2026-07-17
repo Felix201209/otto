@@ -688,6 +688,17 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
     });
   } catch { /* 不影响主流程 */ }
 
+  // 🆕 自动孵化专家：Skill写盘后生成 AgentProfile
+  try {
+    const { generateProfilePipeline } = await import("./autoSkillProfile.js");
+    await generateProfilePipeline([
+      { skillName: candidate.name, skillDir, skillContent: candidate.skillContent },
+    ]);
+  } catch {
+    // 专家孵化可选，Skill已就绪即可
+  }
+
+
   return safePath;
 }
 

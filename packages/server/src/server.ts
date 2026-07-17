@@ -126,6 +126,7 @@ import {
   confirmPendingSkill,
   rejectPendingSkill,
   startAutoSkillScanner,
+  setAutoSkillConfigForProfile,
   stopAutoSkillScanner,
   getProactiveService,
   type ProactiveLocalNotifier,
@@ -414,6 +415,7 @@ export class OttoServer {
       const scannerConfig = createCoreConfig({
         sessionId: 'auto-skill-scanner',
       });
+      setAutoSkillConfigForProfile(scannerConfig);
       this.autoSkillScannerStarted = startAutoSkillScanner(
         scannerConfig,
         () => this.productWorkspace.snapshot().context.userId,
