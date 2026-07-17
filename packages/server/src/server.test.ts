@@ -21,7 +21,11 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { WebSocket } from 'ws';
-import { OttoServer, type RuntimeFactory } from './server.js';
+import {
+  OttoServer,
+  resolveSessionRuntimeModel,
+  type RuntimeFactory,
+} from './server.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
 import type { SessionRuntime } from './sessions.js';
@@ -114,6 +118,15 @@ beforeEach(() => {
   vi.stubEnv('HOME', tmpHome);
   vi.stubEnv('USERPROFILE', tmpHome);
   vi.stubEnv('OTTO_USER_DIR', path.join(tmpHome, 'user'));
+});
+
+describe('会话运行时模型边界', () => {
+  it('内部测试企业会话继续使用成员自己的 BYOK，只有未上线的 otto:* 才回退', () => {
+    const customModel = 'custom:openai-responses:gpt-5.6-sol@test';
+    expect(resolveSessionRuntimeModel('enterprise', customModel)).toBe(customModel);
+    expect(resolveSessionRuntimeModel('personal', customModel)).toBe(customModel);
+    expect(resolveSessionRuntimeModel('enterprise', 'otto:managed')).toBeUndefined();
+  });
 });
 
 describe('OttoServer WS（v1.7 产品工作区）', () => {

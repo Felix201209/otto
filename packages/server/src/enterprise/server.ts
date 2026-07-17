@@ -1517,7 +1517,7 @@ function adminAccountsHTML(): string {
 </main>
 <main id="adminView" class="admin hidden">
   <aside class="rail"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="nav-label">企业管理</div><div class="nav-item"><span class="nav-dot"></span>成员与用量</div><div class="rail-foot"><div><div id="railUser" class="rail-user"></div><div id="railMeta" class="rail-meta">企业管理员</div></div><button id="logoutButton" class="ghost-dark" type="button">退出登录</button></div></aside>
-  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
+  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/admin/credits">积分管理</a> <a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
     <div class="ops-grid">
       <section class="ops-card" aria-labelledby="inviteTitle"><div class="ops-head"><div><div class="eyebrow">MEMBER ONBOARDING</div><h2 id="inviteTitle">企业成员引入链接</h2><p>成员点击后由 Otto 打开首次注册并自动填入企业信息；精确有效 7 天，生成新链接会立即废止旧链接。</p></div><span id="inviteBadge" class="badge off">尚未生成</span></div><div class="invite-row"><div><input id="inviteCode" class="invite-code" aria-label="当前企业邀请码" value="••••-••••" readonly><div class="invite-meta"><span id="inviteCountdown" class="sub">等待管理员生成</span></div><input id="inviteLinkPreview" class="invite-link-preview hidden" aria-label="当前企业引入链接" value="" readonly></div><div class="invite-actions"><button id="copyInviteLink" class="primary" type="button" disabled>复制企业引入链接</button><button id="copyInvite" class="copy" type="button" disabled>复制邀请码</button><button id="issueInvite" class="secondary" type="button">生成引入链接</button></div></div><div id="inviteError" class="error hidden" role="alert"></div></section>
       <section class="ops-card" aria-labelledby="usageTitle"><div class="ops-head"><div><div class="eyebrow">AI CONSUMPTION</div><h2 id="usageTitle">近 30 天 Token</h2><p>按登录账号汇总模型返回的用量。</p></div><span class="badge">客户端回传</span></div><div id="totalTokens" class="token-number">0</div><div class="token-split"><span>输入 <b id="inputTokens">0</b></span><span>输出 <b id="outputTokens">0</b></span><span>请求 <b id="requestCount">0</b></span></div><div class="token-note">用于企业内部用量观察，不等同于模型供应商的计费账单。</div></section>
@@ -1945,10 +1945,13 @@ function adminCreditsHTML(): string {
 :root{--ink:#18221e;--muted:#66716c;--line:#dce3df;--panel:#fff;--subtle:#edf2ef;--accent:#176a4b;--accent-hover:#11563c;--accent-soft:#e5f1eb;--danger:#aa3f35;--danger-soft:#faece9;--radius:10px;--shadow:0 12px 36px rgba(26,42,34,.12)}
 *{box-sizing:border-box}body{margin:0;background:#f4f6f5;color:var(--ink);font-family:Inter,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;line-height:1.5}
 button,input{font:inherit}button{cursor:pointer}:focus-visible{outline:3px solid rgba(23,106,75,.24);outline-offset:2px}
+.hidden{display:none!important}
 .header{background:var(--panel);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5}
 .header h1{font-size:22px;margin:0;letter-spacing:-.02em}
 .header a{color:var(--muted);font-size:12px}
 .main{max-width:960px;margin:0 auto;padding:28px 20px 60px}
+.auth-notice{max-width:720px;margin:28px auto 0;padding:18px 20px;border:1px solid var(--line);border-left:4px solid var(--danger);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow)}
+.auth-notice h2{font-size:17px;margin:0 0 7px}.auth-notice p{color:var(--muted);margin:0 0 13px}.auth-notice a{display:inline-block;color:#fff;background:var(--accent);border-radius:7px;padding:9px 13px;text-decoration:none;font-weight:700}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px 24px;margin-bottom:20px}
 .card h2{font-size:16px;margin:0 0 14px;letter-spacing:-.015em}
 .balance{display:flex;gap:24px;flex-wrap:wrap}
@@ -1987,14 +1990,19 @@ button,input{font:inherit}button{cursor:pointer}:focus-visible{outline:3px solid
 .nav-back a{color:var(--muted);font-size:12px}
 </style></head><body>
 <div class="header"><h1>💰 Otto 企业积分管理</h1><div><a href="/enterprise/admin">← 返回账号管理</a></div></div>
-<main class="main">
+<section id="authNotice" class="auth-notice hidden" aria-labelledby="authTitle">
+  <h2 id="authTitle">需要管理员登录</h2>
+  <p id="authMessage">请先返回账号管理页完成管理员登录，再进入积分管理。</p>
+  <a href="/enterprise/admin">返回管理员登录</a>
+</section>
+<main id="creditsContent" class="main">
   <div class="card" id="balanceCard"><h2>积分余额</h2><div class="balance"><div class="balance-item ok"><strong id="bal">--</strong><span>可用积分</span></div><div class="balance-item"><strong id="todayConsumed">--</strong><span>今日消耗</span></div><div class="balance-item"><strong id="totalConsumed">--</strong><span>累计消耗</span></div><div class="balance-item"><strong id="totalTopped">--</strong><span>累计充值</span></div></div></div>
 
   <div class="card"><h2>管理员直接充值</h2>
     <div style="display:flex;gap:10px;align-items:flex-end">
       <div class="field" style="flex:1;margin:0"><label>充值积分数量</label><input id="topupAmount" type="number" min="1" value="1000" placeholder="输入积分数量"></div>
       <div class="field" style="flex:1;margin:0"><label>备注</label><input id="topupNote" placeholder="充值备注（可选）"></div>
-      <button class="btn" onclick="doTopup()" style="height:40px;white-space:nowrap">确认充值</button>
+      <button id="topupButton" class="btn" type="button" style="height:40px;white-space:nowrap">确认充值</button>
     </div><div id="topupMsg"></div>
   </div>
 
@@ -2002,16 +2010,16 @@ button,input{font:inherit}button{cursor:pointer}:focus-visible{outline:3px solid
     <div style="display:flex;gap:10px;align-items:flex-end">
       <div class="field" style="flex:1;margin:0"><label>单个面额</label><input id="codeAmount" type="number" min="1" value="100" placeholder="面额"></div>
       <div class="field" style="flex:0 0 80px;margin:0"><label>数量</label><input id="codeCount" type="number" min="1" max="100" value="10"></div>
-      <button class="btn" onclick="doCreateCodes()" style="height:40px">生成</button>
+      <button id="createCodesButton" class="btn" type="button" style="height:40px">生成</button>
     </div><div id="codeMsg"></div>
   </div>
 
   <div class="card"><h2>兑换码列表</h2>
     <div style="display:flex;gap:6px;margin-bottom:12px">
-      <button class="btn btn-outline" onclick="loadCodes('active')">可用</button>
-      <button class="btn btn-outline" onclick="loadCodes('redeemed')">已用</button>
-      <button class="btn btn-outline" onclick="loadCodes('revoked')">已作废</button>
-      <button class="btn btn-outline" onclick="loadCodes()">全部</button>
+      <button class="btn btn-outline" type="button" data-code-status="active">可用</button>
+      <button class="btn btn-outline" type="button" data-code-status="redeemed">已用</button>
+      <button class="btn btn-outline" type="button" data-code-status="revoked">已作废</button>
+      <button class="btn btn-outline" type="button" data-code-status="">全部</button>
     </div>
     <div id="codeList" class="code-list"><div class="empty">点击上方按钮加载</div></div>
   </div>
@@ -2020,22 +2028,161 @@ button,input{font:inherit}button{cursor:pointer}:focus-visible{outline:3px solid
     <div style="max-height:300px;overflow:auto"><table class="txn-table"><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>操作人</th><th>说明</th></tr></thead><tbody id="txnBody"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody></table></div></div>
 </main>
 <script>
-const TOKEN = sessionStorage.getItem('otto_admin_token') || '';
-const H = {'content-type':'application/json','authorization':'Bearer '+TOKEN};
-async function api(p,o){const r=await fetch(p,{...o||{},headers:{...H,...(o||{}).headers}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
-function msg(el,t,ok){el.innerHTML='<div class="msg msg-'+(ok?'ok':'err')+'">'+t+'</div>';setTimeout(()=>el.innerHTML='',3000)}
-
-async function loadBalance(){
-  try{const d=await api('/enterprise/credits/balance');$('bal').textContent=d.balance.toLocaleString();$('todayConsumed').textContent=d.todayConsumed.toLocaleString();$('totalConsumed').textContent=d.totalConsumed.toLocaleString();$('totalTopped').textContent=d.totalToppedUp.toLocaleString();
-    const pct=d.balance<d.todayConsumed*3;$('bal').parentElement.className='balance-item'+(pct?' warn':' ok')}catch(e){$('bal').textContent='ERR'}}
-async function doTopup(){const a=+$('topupAmount').value;if(!a||a<=0)return;try{await api('/enterprise/credits/topup',{method:'POST',body:JSON.stringify({amount:a,note:$('topupNote').value})});msg($('topupMsg'),'充值成功',1);loadBalance()}catch(e){msg($('topupMsg'),e.message,0)}}
-async function doCreateCodes(){const a=+$('codeAmount').value,c=+$('codeCount').value;if(!a||!c)return;try{const d=await api('/enterprise/credits/redeem-codes',{method:'POST',body:JSON.stringify({creditAmount:a,count:c})});msg($('codeMsg'),'已生成 '+d.codes.length+' 个兑换码',1);loadCodes('active')}catch(e){msg($('codeMsg'),e.message,0)}}
-async function loadCodes(s){try{const d=await api('/enterprise/credits/redeem-codes'+(s?'?status='+s:''));const codes=d.codes||[];if(codes.length===0){$('codeList').innerHTML='<div class="empty">暂无兑换码</div>';return}
-  $('codeList').innerHTML=codes.map(c=>'<div class="code-row'+(c.status!=='active'?' redeemed':'')+'"><div><b>'+c.code+'</b><small> '+c.creditAmount+' 积分</small></div><div><span>'+c.status+'</span>'+(c.redeemedBy?' <span>by '+c.redeemedBy+'</span>':'')+(c.status==='active'?' <button class="btn btn-danger" style="font-size:11px;padding:4px 8px" onclick="revokeCode(\''+c.id+'\')">作废</button>':'')+'</div></div>').join('')}catch(e){$('codeList').innerHTML='<div class="empty">加载失败</div>'}}
-async function revokeCode(id){try{await api('/enterprise/credits/redeem-codes/'+id+'/revoke',{method:'POST'});loadCodes('active')}catch(e){alert(e.message)}}
-async function loadTxns(){try{const d=await api('/enterprise/credits/transactions?limit=50');const rows=d.transactions||[];if(rows.length===0){$('txnBody').innerHTML='<tr><td colspan="5" class="empty">暂无交易记录</td></tr>';return}
-  $('txnBody').innerHTML=rows.map(r=>'<tr><td>'+r.createdAt.slice(0,19)+'</td><td>'+r.type+'</td><td class="'+(r.amount>=0?'plus':'minus')+'">'+(r.amount>=0?'+':'')+r.amount.toLocaleString()+'</td><td>'+(r.accountName||'-')+'</td><td>'+r.description+'</td></tr>').join('')}catch(e){$('txnBody').innerHTML='<tr><td colspan="5" class="empty">加载失败</td></tr>'}}
 function $(id){return document.getElementById(id)}
-loadBalance();loadTxns();
+const KEY='otto.enterprise.admin.session';
+let TOKEN=sessionStorage.getItem(KEY)||'';
+function finiteNumber(value){const number=Number(value);return Number.isFinite(number)?number:0}
+function formatNumber(value){return new Intl.NumberFormat('zh-CN').format(finiteNumber(value))}
+function authorizationError(message){const error=new Error(message);error.authorization=true;return error}
+function requireAdminLogin(message){TOKEN='';sessionStorage.removeItem(KEY);$('authMessage').textContent=message||'请先返回账号管理页完成管理员登录，再进入积分管理。';$('authNotice').classList.remove('hidden');$('creditsContent').classList.add('hidden')}
+function showCredits(){$('authNotice').classList.add('hidden');$('creditsContent').classList.remove('hidden')}
+async function api(path,options){
+  if(!TOKEN){requireAdminLogin('请先返回账号管理页完成管理员登录，再进入积分管理。');throw authorizationError('需要管理员登录')}
+  const request=Object.assign({},options||{});
+  request.headers=Object.assign({'content-type':'application/json','authorization':'Bearer '+TOKEN},request.headers||{});
+  const r=await fetch(path,request);
+  const data=await r.json().catch(()=>({}));
+  if(r.status===401||r.status===403){requireAdminLogin('管理员登录已失效，请返回账号管理页重新登录。');throw authorizationError('管理员登录已失效')}
+  if(!r.ok)throw new Error(data.error||'请求失败');
+  return data
+}
+function msg(element,text,ok){
+  const box=document.createElement('div');
+  box.className='msg msg-'+(ok?'ok':'err');
+  box.textContent=String(text||'');
+  element.replaceChildren(box);
+  setTimeout(()=>{if(element.firstChild===box)element.replaceChildren()},3000)
+}
+function emptyBlock(text){
+  const empty=document.createElement('div');
+  empty.className='empty';
+  empty.textContent=text;
+  return empty
+}
+function emptyTableRow(text){
+  const row=document.createElement('tr');
+  const cell=document.createElement('td');
+  cell.colSpan=5;
+  cell.className='empty';
+  cell.textContent=text;
+  row.appendChild(cell);
+  return row
+}
+async function loadBalance(){
+  try{
+    const data=await api('/enterprise/credits/balance');
+    $('bal').textContent=formatNumber(data.balance);
+    $('todayConsumed').textContent=formatNumber(data.todayConsumed);
+    $('totalConsumed').textContent=formatNumber(data.totalConsumed);
+    $('totalTopped').textContent=formatNumber(data.totalToppedUp);
+    const low=finiteNumber(data.balance)<finiteNumber(data.todayConsumed)*3;
+    $('bal').parentElement.className='balance-item'+(low?' warn':' ok')
+  }catch(error){if(!error.authorization)$('bal').textContent='ERR'}
+}
+async function doTopup(){
+  const amount=+$('topupAmount').value;
+  if(!Number.isSafeInteger(amount)||amount<=0){msg($('topupMsg'),'请输入正整数积分数量',false);return}
+  try{
+    await api('/enterprise/credits/topup',{method:'POST',body:JSON.stringify({amount:amount,note:$('topupNote').value})});
+    msg($('topupMsg'),'充值成功',true);
+    await Promise.all([loadBalance(),loadTxns()])
+  }catch(error){if(!error.authorization)msg($('topupMsg'),error.message,false)}
+}
+async function doCreateCodes(){
+  const amount=+$('codeAmount').value;
+  const count=+$('codeCount').value;
+  if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(count)||count<1||count>100){msg($('codeMsg'),'面额和数量必须是有效正整数',false);return}
+  try{
+    const data=await api('/enterprise/credits/redeem-codes',{method:'POST',body:JSON.stringify({creditAmount:amount,count:count})});
+    const codes=Array.isArray(data.codes)?data.codes:[];
+    msg($('codeMsg'),'已生成 '+codes.length+' 个兑换码',true);
+    await loadCodes('active')
+  }catch(error){if(!error.authorization)msg($('codeMsg'),error.message,false)}
+}
+function renderCodes(codes){
+  const list=$('codeList');
+  if(codes.length===0){list.replaceChildren(emptyBlock('暂无兑换码'));return}
+  const fragment=document.createDocumentFragment();
+  codes.forEach(code=>{
+    const row=document.createElement('div');
+    row.className='code-row'+(code.status==='active'?'':' redeemed');
+    const identity=document.createElement('div');
+    const codeText=document.createElement('b');
+    codeText.textContent=String(code.code||'');
+    const amountText=document.createElement('small');
+    amountText.textContent=' '+formatNumber(code.creditAmount)+' 积分';
+    identity.append(codeText,amountText);
+    const actions=document.createElement('div');
+    const statusText=document.createElement('span');
+    statusText.textContent=String(code.status||'');
+    actions.appendChild(statusText);
+    if(code.redeemedBy){
+      const redeemer=document.createElement('span');
+      redeemer.textContent=' by '+String(code.redeemedBy);
+      actions.appendChild(redeemer)
+    }
+    if(code.status==='active'){
+      const button=document.createElement('button');
+      button.type='button';
+      button.className='btn btn-danger';
+      button.style.fontSize='11px';
+      button.style.padding='4px 8px';
+      button.textContent='作废';
+      const id=String(code.id||'');
+      button.addEventListener('click',()=>revokeCode(id));
+      actions.appendChild(button)
+    }
+    row.append(identity,actions);
+    fragment.appendChild(row)
+  });
+  list.replaceChildren(fragment)
+}
+async function loadCodes(status){
+  try{
+    const suffix=status?'?status='+encodeURIComponent(status):'';
+    const data=await api('/enterprise/credits/redeem-codes'+suffix);
+    renderCodes(Array.isArray(data.codes)?data.codes:[])
+  }catch(error){if(!error.authorization)$('codeList').replaceChildren(emptyBlock('加载失败'))}
+}
+async function revokeCode(id){
+  try{await api('/enterprise/credits/redeem-codes/'+encodeURIComponent(id)+'/revoke',{method:'POST'});await loadCodes('active')}
+  catch(error){if(!error.authorization)msg($('codeMsg'),error.message,false)}
+}
+function renderTransactions(rows){
+  const body=$('txnBody');
+  if(rows.length===0){body.replaceChildren(emptyTableRow('暂无交易记录'));return}
+  const fragment=document.createDocumentFragment();
+  rows.forEach(row=>{
+    const tableRow=document.createElement('tr');
+    const timeCell=document.createElement('td');
+    timeCell.textContent=String(row.createdAt||'').slice(0,19);
+    const typeCell=document.createElement('td');
+    typeCell.textContent=String(row.type||'');
+    const amount=finiteNumber(row.amount);
+    const amountCell=document.createElement('td');
+    amountCell.className=amount>=0?'plus':'minus';
+    amountCell.textContent=(amount>=0?'+':'')+formatNumber(amount);
+    const accountCell=document.createElement('td');
+    accountCell.textContent=String(row.accountName||'-');
+    const descriptionCell=document.createElement('td');
+    descriptionCell.textContent=String(row.description||'');
+    tableRow.append(timeCell,typeCell,amountCell,accountCell,descriptionCell);
+    fragment.appendChild(tableRow)
+  });
+  body.replaceChildren(fragment)
+}
+async function loadTxns(){
+  try{const data=await api('/enterprise/credits/transactions?limit=50');renderTransactions(Array.isArray(data.transactions)?data.transactions:[])}
+  catch(error){if(!error.authorization)$('txnBody').replaceChildren(emptyTableRow('加载失败'))}
+}
+$('topupButton').addEventListener('click',doTopup);
+$('createCodesButton').addEventListener('click',doCreateCodes);
+document.querySelectorAll('[data-code-status]').forEach(button=>button.addEventListener('click',()=>loadCodes(button.dataset.codeStatus||'')));
+async function initialize(){
+  if(!TOKEN){requireAdminLogin('请先返回账号管理页完成管理员登录，再进入积分管理。');return}
+  showCredits();
+  await Promise.all([loadBalance(),loadCodes('active'),loadTxns()])
+}
+initialize();
 </script></body></html>`;
 }

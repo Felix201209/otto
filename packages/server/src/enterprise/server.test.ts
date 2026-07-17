@@ -15,6 +15,7 @@ import path from 'node:path';
 
 type ServerModule = typeof import('./server.js');
 type DatabaseModule = typeof import('./db.js');
+type AccountView = ReturnType<DatabaseModule['createAccount']>;
 
 let tmpDir: string;
 let servers: Server[] = [];
@@ -614,7 +615,50 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('aria-pressed="false"><b>普通成员</b>');
     expect(html).toContain('function trapFocus');
     expect(html).toContain('function expireAdminSession');
+    expect(html).toContain('href="/enterprise/admin/credits"');
+    expect(html).toContain('积分管理');
     expect(html).not.toContain(ADMIN_TOKEN);
+  });
+
+  it('积分管理复用账号后台会话，未登录或会话失效时明确引导返回管理员登录', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const res = await fetch(`${base}/enterprise/admin/credits`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+
+    const html = await res.text();
+    expect(html).toContain("const KEY='otto.enterprise.admin.session'");
+    expect(html).toContain('sessionStorage.getItem(KEY)');
+    expect(html).toContain('sessionStorage.removeItem(KEY)');
+    expect(html).not.toContain('otto_admin_token');
+    expect(html).toContain('id="authNotice"');
+    expect(html).toContain('href="/enterprise/admin"');
+    expect(html).toContain('返回管理员登录');
+    expect(html).toContain('function requireAdminLogin');
+    expect(html).toContain('if(!TOKEN)');
+    expect(html).toMatch(/status===401\s*\|\|\s*r\.status===403/);
+    expect(html).not.toContain(ADMIN_TOKEN);
+  });
+
+  it('积分管理只用 DOM 与 textContent 渲染服务端字段，杜绝存储型 XSS', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const html = await (await fetch(`${base}/enterprise/admin/credits`)).text();
+
+    expect(html).not.toContain('innerHTML');
+    expect(html).toContain('document.createElement');
+    expect(html).toContain('replaceChildren');
+    expect(html).toContain('codeText.textContent=String(code.code');
+    expect(html).toContain('statusText.textContent=String(code.status');
+    expect(html).toContain('redeemer.textContent=');
+    expect(html).toContain('accountCell.textContent=String(row.accountName');
+    expect(html).toContain('descriptionCell.textContent=String(row.description');
+    expect(html).toContain('encodeURIComponent(id)');
+    expect(html).not.toMatch(/\+code\.(?:code|status|redeemedBy|id)\+/);
+    expect(html).not.toMatch(/\+row\.(?:accountName|description|type)\+/);
   });
 
   it('dashboard 公开返回安全页面外壳，令牌只允许从 sessionStorage 或表单输入', async () => {
@@ -692,7 +736,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       tags?: string[];
       isAdmin?: boolean;
     },
-  ): Promise<{ base: string; account: any }> {
+  ): Promise<{ base: string; account: AccountView }> {
     const { base } = await startIsolated(adminToken);
     const db = await import('./db.js');
     return { base, account: db.createAccount(input) };
@@ -1613,9 +1657,15 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const betaAccounts = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${betaToken}` },
     });
-    expect((await alphaAccounts.json()).accounts.map((account: any) => account.id).sort())
+    const alphaAccountRows = (await alphaAccounts.json()) as {
+      accounts: Array<{ id: string }>;
+    };
+    const betaAccountRows = (await betaAccounts.json()) as {
+      accounts: Array<{ id: string }>;
+    };
+    expect(alphaAccountRows.accounts.map((account) => account.id).sort())
       .toEqual([alphaAdmin.id, alphaStaff.id].sort());
-    expect((await betaAccounts.json()).accounts.map((account: any) => account.id).sort())
+    expect(betaAccountRows.accounts.map((account) => account.id).sort())
       .toEqual([betaAdmin.id, betaStaff.id].sort());
 
     const crossTenantPatch = await fetch(`${base}/enterprise/accounts/${betaStaff.id}`, {
@@ -1726,8 +1776,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const accountsResponse = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });
-    const accounts = (await accountsResponse.json()).accounts;
-    expect(accounts.find((account: any) => account.id === alphaStaff.id).usage)
+    const accounts = ((await accountsResponse.json()) as {
+      accounts: Array<{ id: string; usage?: { totalTokens: number; requestCount: number } }>;
+    }).accounts;
+    expect(accounts.find((account) => account.id === alphaStaff.id)?.usage)
       .toMatchObject({ totalTokens: 150, requestCount: 1 });
   });
 

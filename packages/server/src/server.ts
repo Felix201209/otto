@@ -43,6 +43,7 @@ import {
   type MessageContent,
   type MessageSource,
   type ModelInfo,
+  type SessionSummary,
   type ServerToClient,
   type SettingsSnapshot,
   type SearchConfigSnapshot,
@@ -86,7 +87,6 @@ import { executeSlashCommand, listSlashCommands } from './commands/index.js';
 import {
   deleteCustomModel,
   listModelInfos,
-  loadCustomModels,
   loadPreferredModel,
   replaceCustomModel,
   saveCustomModel,
@@ -131,17 +131,14 @@ import {
   getProactiveService,
   type ProactiveLocalNotifier,
   AutoSkillRealtimeWatcher,
-  recordSkillUsage,
   setRealtimeWatcher,
   getHabitAnalyzer,
   type WorkflowAgentRecord,
   type SkillCandidate,
   type Config as CoreConfig,
   LocalKnowledgeStore,
-  type KnowledgeEntry,
   KnowledgeCapture,
   type SimpleMessage,
-  getKnowledgeDir,
   getSessionManager,
   getAutoMemoryEngine,
   loadBuiltinSkillInstructions,
@@ -183,6 +180,18 @@ export type RuntimeFactory = (
   model: string | undefined,
 ) => Promise<SessionRuntime>;
 
+/**
+ * 内部测试阶段个人版与企业版都使用成员自己的 BYOK 模型。
+ * `otto:*` 仍是未上线的托管模型占位符，只能回退到当前个人模型。
+ */
+export function resolveSessionRuntimeModel(
+  productEdition: SessionSummary['productEdition'],
+  model: string | undefined,
+): string | undefined {
+  void productEdition;
+  return model?.startsWith('otto:') ? undefined : model;
+}
+
 /** 默认运行时工厂：构造 headless core Config 并包进 CoreSessionRuntime。 */
 const defaultRuntimeFactory: RuntimeFactory = async (
   store,
@@ -195,10 +204,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     sessionId,
     // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
-    // 企业版禁止自定义模型（BYOK），统一走 otto:* 托管模型。
-    model: model?.startsWith('otto:') || summary?.productEdition !== 'enterprise'
-      ? (model?.startsWith('otto:') ? undefined : model)
-      : undefined,
+    model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
     ...(profile
       ? {
@@ -222,14 +228,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
         }
       : {}),
   });
-  // 企业版传递组织/账号信息给 runtime，启用积分扣减和 BYOK 拦截
-  const enterpriseOrgId = summary?.productEdition === 'enterprise'
-    ? (summary as any)?.enterpriseOrgId
-    : undefined;
-  const enterpriseAccountId = summary?.productEdition === 'enterprise'
-    ? (summary as any)?.enterpriseAccountId
-    : undefined;
-  return createCoreSessionRuntime(store, sessionId, config, enterpriseOrgId, enterpriseAccountId);
+  return createCoreSessionRuntime(store, sessionId, config);
 };
 
 export interface OttoServerOptions {
