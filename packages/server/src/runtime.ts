@@ -117,8 +117,10 @@ export async function createCoreSessionRuntime(
   store: SessionStore,
   sessionId: string,
   config: Config,
+  enterpriseOrgId?: string,
+  enterpriseAccountId?: string,
 ): Promise<CoreSessionRuntime> {
-  const runtime = new CoreSessionRuntime(store, sessionId, config);
+  const runtime = new CoreSessionRuntime(store, sessionId, config, getWorkLogger(), enterpriseOrgId, enterpriseAccountId);
   await runtime.initialize();
   return runtime;
 }
@@ -345,12 +347,21 @@ export class CoreSessionRuntime implements SessionRuntime {
     (result: ConfirmationResult) => void
   >();
 
+  /** 企业版参数：禁止BYOK，积分扣减。 */
+  private readonly enterpriseOrgId?: string;
+  private readonly enterpriseAccountId?: string;
+
   constructor(
     private readonly store: SessionStore,
     private readonly sessionId: string,
     private readonly config: Config,
     private readonly workLogger: WorkResultLogger = getWorkLogger(),
-  ) {}
+    enterpriseOrgId?: string,
+    enterpriseAccountId?: string,
+  ) {
+    this.enterpriseOrgId = enterpriseOrgId;
+    this.enterpriseAccountId = enterpriseAccountId;
+  }
 
   /**
    * 初始化 core：config.initialize() + refreshAuth（USE_PROXY_AUTH，自定义模型走此鉴权）。
@@ -377,6 +388,10 @@ export class CoreSessionRuntime implements SessionRuntime {
   }
 
   async setModel(model: string): Promise<void> {
+    // 企业版禁止自定义模型（BYOK），只允许 Otto 托管模型
+    if (this.enterpriseOrgId && (model.startsWith('custom:') || model.startsWith('byok:'))) {
+      throw new Error('企业版不支持自定义模型。请联系管理员购买 Otto 积分，或使用 /status 查看剩余额度。');
+    }
     // 不能只改 Config：OttoChat 会缓存 specifiedModel，真实出网请求仍会走旧模型。
     // 统一走 core 的 switchModel，让 Config、live chat、工具与系统提示词一起切换。
     const result = await this.config
@@ -395,6 +410,9 @@ export class CoreSessionRuntime implements SessionRuntime {
     currentModel: string,
     attemptedModels: Set<string>,
   ): Promise<string | null> {
+    // 企业版不查找自定义模型（BYOK已禁止）
+    if (this.enterpriseOrgId) return null;
+
     const currentConfig = this.config.getCustomModelConfig?.(currentModel);
     const candidates = (this.config.getCustomModels?.() ?? [])
       .filter((model) => model.enabled !== false)
@@ -703,6 +721,16 @@ export class CoreSessionRuntime implements SessionRuntime {
             },
           });
           await this.recordWorkResult(input, assistantText);
+
+          // 企业版积分扣减
+          if (this.enterpriseOrgId && this.enterpriseAccountId && lastUsage) {
+            await this.deductEnterpriseCredits(
+              lastUsage.totalTokenCount ?? lastUsage.promptTokenCount ?? 0 + (lastUsage.candidatesTokenCount ?? 0),
+              modelName,
+              assistantId,
+            );
+          }
+
           this.store.setStatus(this.sessionId, 'idle');
           break;
         }
@@ -1273,5 +1301,39 @@ export class CoreSessionRuntime implements SessionRuntime {
       payload: { sessionId: this.sessionId, code, message },
     });
     this.store.setStatus(this.sessionId, 'error');
+  }
+
+  /** 企业版积分扣减（后台执行，失败不阻塞对话）。 */
+  private async deductEnterpriseCredits(
+    tokens: number,
+    modelName: string,
+    messageId?: string,
+  ): Promise<void> {
+    try {
+      const { checkAndReserveCredits, deductCredits } = await import('./enterprise/credits.js');
+      const { allowed, estimatedCost, reason } = checkAndReserveCredits(
+        this.enterpriseOrgId!,
+        this.enterpriseAccountId!,
+        tokens,
+      );
+      if (!allowed && reason) {
+        // 余额不足 → 发一个警告帧但不阻断对话
+        this.store.publish(this.sessionId, {
+          type: 'error',
+          payload: { sessionId: this.sessionId, code: 'credits_low', message: reason },
+        });
+        return;
+      }
+      deductCredits(
+        this.enterpriseOrgId!,
+        this.enterpriseAccountId!,
+        estimatedCost,
+        `LLM 调用扣减（${modelName}）`,
+        modelName,
+        messageId,
+      );
+    } catch {
+      // 积分系统不可用时不影响对话
+    }
   }
 }

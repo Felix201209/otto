@@ -195,7 +195,10 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     sessionId,
     // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
-    model: model?.startsWith('otto:') ? undefined : model,
+    // 企业版禁止自定义模型（BYOK），统一走 otto:* 托管模型。
+    model: model?.startsWith('otto:') || summary?.productEdition !== 'enterprise'
+      ? (model?.startsWith('otto:') ? undefined : model)
+      : undefined,
     feishuMode: Boolean(summary?.feishuChatId),
     ...(profile
       ? {
@@ -219,7 +222,14 @@ const defaultRuntimeFactory: RuntimeFactory = async (
         }
       : {}),
   });
-  return createCoreSessionRuntime(store, sessionId, config);
+  // 企业版传递组织/账号信息给 runtime，启用积分扣减和 BYOK 拦截
+  const enterpriseOrgId = summary?.productEdition === 'enterprise'
+    ? (summary as any)?.enterpriseOrgId
+    : undefined;
+  const enterpriseAccountId = summary?.productEdition === 'enterprise'
+    ? (summary as any)?.enterpriseAccountId
+    : undefined;
+  return createCoreSessionRuntime(store, sessionId, config, enterpriseOrgId, enterpriseAccountId);
 };
 
 export interface OttoServerOptions {
