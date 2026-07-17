@@ -23,6 +23,7 @@ const ENV_KEYS = [
   'OTTO_ESTIMATE_MANUAL_MULT',
   'OTTO_ESTIMATE_CNY_PER_HOUR',
   'OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP',
+  'OTTO_ENTERPRISE_USAGE_DAILY_LIMIT',
 ] as const;
 
 /** 设隔离目录 + 可选估算 env，然后拿到全新的 db 模块（单例已重置）。 */
@@ -89,6 +90,116 @@ describe('知识库旧库迁移', () => {
     };
     expect(db.addKnowledge(entry)).toBe(true);
     expect(db.addKnowledge(entry)).toBe(false);
+  });
+});
+
+describe('数据库 readiness', () => {
+  it('执行真实查询并返回当前 schema version', async () => {
+    const db = await freshDb();
+    expect(db.getDatabaseReadiness()).toEqual({
+      ready: true,
+      schemaVersion: 2,
+    });
+  });
+});
+
+describe('企业 Token 用量时间窗口', () => {
+  it('按 UTC datetime 比较完整 30 天边界，并把 SQLite 时间返回为带 Z 的 ISO', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'));
+    try {
+      const db = await freshDb();
+      const account = db.createAccount({
+        username: 'usage-window',
+        password: 'usage-window-password',
+        name: '用量边界用户',
+      });
+      db.recordTokenUsage({
+        accountId: account.id,
+        sessionId: 'inside',
+        messageId: 'inside-window',
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      });
+      db.recordTokenUsage({
+        accountId: account.id,
+        sessionId: 'outside',
+        messageId: 'outside-window',
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+      });
+      db.getDB().prepare(
+        'UPDATE account_token_usage SET created_at = ? WHERE message_id = ?',
+      ).run('2026-06-16 13:00:00', 'inside-window');
+      db.getDB().prepare(
+        'UPDATE account_token_usage SET created_at = ? WHERE message_id = ?',
+      ).run('2026-06-16 11:59:59', 'outside-window');
+
+      const summary = db.getOrganizationUsageSummary(db.DEFAULT_ORGANIZATION_ID, 30);
+      expect(summary).toMatchObject({
+        totalInputTokens: 10,
+        totalOutputTokens: 5,
+        totalTokens: 15,
+        requestCount: 1,
+      });
+      expect(summary.byAccount.find((row) => row.accountId === account.id)?.lastUsedAt)
+        .toBe('2026-06-16T13:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('每账号每日记录数有硬上限，重复消息仍保持幂等且不消耗额外配额', async () => {
+    const db = await freshDb({ OTTO_ENTERPRISE_USAGE_DAILY_LIMIT: '2' });
+    const account = db.createAccount({
+      username: 'usage-quota',
+      password: 'usage-quota-password',
+      name: '用量配额用户',
+    });
+    const record = (messageId: string) => db.recordTokenUsage({
+      accountId: account.id,
+      sessionId: 'quota-session',
+      messageId,
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+    });
+
+    expect(record('message-1')).toBe(true);
+    expect(record('message-1')).toBe(false);
+    expect(record('message-2')).toBe(true);
+    expect(() => record('message-3')).toThrow('账号今日 Token 用量记录已达上限');
+  });
+});
+
+describe('企业邀请码原子更新', () => {
+  it('审计写入失败时回滚新邀请码，并保持旧邀请码继续有效', async () => {
+    const db = await freshDb();
+    const oldInvite = db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 1_000);
+    const beforeCount = (db.getDB().prepare(
+      'SELECT COUNT(*) AS count FROM organization_invites',
+    ).get() as { count: number }).count;
+    db.getDB().exec(`
+      CREATE TRIGGER fail_invite_audit
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.event = 'organization_invite_issue'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced audit failure');
+      END;
+    `);
+
+    expect(() => db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 2_000))
+      .toThrow(/forced audit failure/);
+
+    const afterCount = (db.getDB().prepare(
+      'SELECT COUNT(*) AS count FROM organization_invites',
+    ).get() as { count: number }).count;
+    expect(afterCount).toBe(beforeCount);
+    expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 2_000)?.id)
+      .toBe(oldInvite.id);
+    expect(db.inspectOrganizationInvite(oldInvite.code, 2_000).status).toBe('active');
   });
 });
 

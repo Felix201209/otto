@@ -47,30 +47,48 @@ export function useEnterpriseAuth(): {
   const signedInRef = useRef(false);
   const initializedRef = useRef(false);
   const pendingIntentRef = useRef<EnterpriseRegistrationIntent | null>(null);
+  const authEpochRef = useRef(0);
+  const registrationRequestEpochRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    const initialEpoch = authEpochRef.current + 1;
+    authEpochRef.current = initialEpoch;
     const applyIntent = (intent: EnterpriseRegistrationIntent): void => {
       if (signedInRef.current) return;
       if (!initializedRef.current) {
         pendingIntentRef.current = intent;
         return;
       }
+      authEpochRef.current += 1;
+      registrationRequestEpochRef.current += 1;
       setRegistrationIntent(intent);
       setAccount(null);
       setError(null);
+      setBusy(false);
       setStatus('signed-out');
     };
     const unsubscribeIntent = window.otto.onEnterpriseRegistrationIntent(applyIntent);
+    const unsubscribeInvalidated = window.otto.onEnterpriseSessionInvalidated(() => {
+      authEpochRef.current += 1;
+      registrationRequestEpochRef.current += 1;
+      initializedRef.current = true;
+      signedInRef.current = false;
+      setAccount(null);
+      setError('登录已失效，请重新登录');
+      setBusy(false);
+      setStatus('signed-out');
+    });
 
     void Promise.all([
       window.otto.enterpriseSession(),
       window.otto.enterpriseRegistrationIntent(),
     ])
       .then(([session, coldIntent]) => {
-        if (cancelled) return;
+        if (cancelled || initialEpoch !== authEpochRef.current) return;
         initializedRef.current = true;
         setServerUrl(session.serverUrl);
+        setError(session.connectionError ?? null);
         if (session.account) {
           signedInRef.current = true;
           pendingIntentRef.current = null;
@@ -87,7 +105,7 @@ export function useEnterpriseAuth(): {
         setStatus('signed-out');
       })
       .catch((cause: unknown) => {
-        if (cancelled) return;
+        if (cancelled || initialEpoch !== authEpochRef.current) return;
         initializedRef.current = true;
         signedInRef.current = false;
         setError(friendlyAuthError(cause));
@@ -96,6 +114,7 @@ export function useEnterpriseAuth(): {
     return () => {
       cancelled = true;
       unsubscribeIntent();
+      unsubscribeInvalidated();
     };
   }, []);
 
@@ -104,21 +123,26 @@ export function useEnterpriseAuth(): {
     identifier: string;
     password: string;
   }): Promise<void> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
     setBusy(true);
     setError(null);
     try {
       const result = await window.otto.enterprisePasswordLogin(input);
+      if (epoch !== authEpochRef.current) return;
       setServerUrl(result.serverUrl);
       setAccount(result.account);
       setRegistrationIntent(null);
       signedInRef.current = true;
       setStatus('signed-in');
     } catch (cause) {
+      if (epoch !== authEpochRef.current) return;
       signedInRef.current = false;
       setError(friendlyAuthError(cause));
       setStatus('signed-out');
     } finally {
-      setBusy(false);
+      if (epoch === authEpochRef.current) setBusy(false);
     }
   }, []);
 
@@ -127,13 +151,15 @@ export function useEnterpriseAuth(): {
     phone: string;
     inviteCode: string;
   }): Promise<EnterpriseSmsChallenge> => {
+    const epoch = registrationRequestEpochRef.current + 1;
+    registrationRequestEpochRef.current = epoch;
     setError(null);
     try {
       const result = await window.otto.enterpriseRegistrationRequest(input);
-      setServerUrl(result.serverUrl);
+      if (epoch === registrationRequestEpochRef.current) setServerUrl(result.serverUrl);
       return result;
     } catch (cause) {
-      setError(friendlyAuthError(cause));
+      if (epoch === registrationRequestEpochRef.current) setError(friendlyAuthError(cause));
       throw cause;
     }
   }, []);
@@ -144,32 +170,41 @@ export function useEnterpriseAuth(): {
     name: string;
     password: string;
   }): Promise<void> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
     setBusy(true);
     setError(null);
     try {
       const result = await window.otto.enterpriseRegister(input);
+      if (epoch !== authEpochRef.current) return;
       setServerUrl(result.serverUrl);
       setAccount(result.account);
       setRegistrationIntent(null);
       signedInRef.current = true;
       setStatus('signed-in');
     } catch (cause) {
+      if (epoch !== authEpochRef.current) return;
       signedInRef.current = false;
       setError(friendlyAuthError(cause));
       setStatus('signed-out');
     } finally {
-      setBusy(false);
+      if (epoch === authEpochRef.current) setBusy(false);
     }
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
     setBusy(true);
     setError(null);
     try {
       await window.otto.enterpriseLogout();
     } catch (cause) {
-      setError(friendlyAuthError(cause));
+      if (epoch === authEpochRef.current) setError(friendlyAuthError(cause));
     } finally {
+      if (epoch !== authEpochRef.current) return;
       signedInRef.current = false;
       setAccount(null);
       setStatus('signed-out');

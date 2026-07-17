@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   EnterpriseAccount,
   EnterpriseAccountCreateInput,
@@ -69,13 +69,36 @@ export function applyAccountTemplate(draft: AccountDraft, templateId: AccountTem
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  const withoutIpcPrefix = message.replace(/^Error invoking remote method '[^']+':\s*/, '');
+  return withoutIpcPrefix.replace(/^Error:\s*/, '') || '操作失败，请稍后重试';
 }
 
 function maskedPhone(phone: string | null): string {
   if (!phone) return '未绑定手机';
   const local = phone.replace(/^\+86/, '');
   return `+86 ${local.slice(0, 3)} **** ${local.slice(-4)}`;
+}
+
+function formatLastUsedAt(value: string | null): string {
+  if (!value) return '尚无使用记录';
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '最后使用时间不可用';
+  return `最后使用 ${new Date(timestamp).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })}`;
+}
+
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), '
+    + 'a[href], [tabindex]:not([tabindex="-1"])',
+  )].filter((element) => element.getAttribute('aria-hidden') !== 'true' && element.tabIndex >= 0);
 }
 
 export function formatInviteRemaining(expiresAt: string, now = Date.now()): string {
@@ -109,6 +132,10 @@ export function AccountManagementPage({
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const dialogRef = useRef<HTMLElement>(null);
+  const initialFocusRef = useRef<HTMLInputElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +180,21 @@ export function AccountManagementPage({
     return () => window.clearInterval(timer);
   }, [inviteContext?.invite?.id]);
 
+  useEffect(() => {
+    if (!editing) return undefined;
+    initialFocusRef.current?.focus();
+    return () => {
+      contentRef.current?.removeAttribute('inert');
+      restoreFocusRef.current?.focus();
+      restoreFocusRef.current = null;
+    };
+  }, [editing]);
+
+  useEffect(() => {
+    if (editing) contentRef.current?.setAttribute('inert', '');
+    else contentRef.current?.removeAttribute('inert');
+  }, [editing]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return accounts;
@@ -162,12 +204,19 @@ export function AccountManagementPage({
   }, [accounts, query]);
 
   const openCreate = (): void => {
+    if (loading) return;
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setEditing('new');
     setDraft(EMPTY_DRAFT);
     setError(null);
   };
 
   const openEdit = (account: EnterpriseAccount): void => {
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setEditing(account);
     setDraft({
       username: account.username,
@@ -181,6 +230,34 @@ export function AccountManagementPage({
       status: account.status,
     });
     setError(null);
+  };
+
+  const closeEditor = (): void => {
+    if (!saving) setEditing(null);
+  };
+
+  const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeEditor();
+      return;
+    }
+    if (event.key !== 'Tab' || !dialogRef.current) return;
+    const focusable = focusableElements(dialogRef.current);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogRef.current.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialogRef.current.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   const save = async (): Promise<void> => {
@@ -253,14 +330,19 @@ export function AccountManagementPage({
 
   return (
     <main className="otto-account-page">
+      <div
+        ref={contentRef}
+        className="otto-account-page__content"
+        aria-hidden={editing ? true : undefined}
+      >
       <header className="otto-account-hero">
         <div>
           <button type="button" className="otto-account-page__back" onClick={onBack}>← 返回工作台</button>
           <div className="otto-account-page__eyebrow">IDENTITY &amp; ACCESS</div>
           <h1>企业身份控制台</h1>
-          <p>集中管理登录方式、组织角色与职责标签。验证码只用于首次注册，之后使用手机号或账号加密码登录。</p>
+          <p>集中管理登录方式、组织角色与职责标签。验证码只用于首次注册，之后使用手机号或账号加密码登录。Token 用量由客户端回传，仅用于内部观察，不等同于模型供应商账单。</p>
         </div>
-        <button type="button" className="otto-account-page__create" onClick={openCreate} aria-label="新增账号"><span>＋</span> 新增成员</button>
+        <button type="button" className="otto-account-page__create" onClick={openCreate} disabled={loading} aria-label="新增账号"><span>＋</span> 新增成员</button>
       </header>
 
       {currentAccount.isAdmin ? (
@@ -274,7 +356,7 @@ export function AccountManagementPage({
             <button
               type="button"
               onClick={() => void issueInvite()}
-              disabled={inviteBusy}
+              disabled={inviteBusy || inviteLoading}
               aria-label={inviteContext?.invite ? '生成新引入链接' : '生成 7 天引入链接'}
             >
               {inviteBusy ? '正在生成…' : inviteContext?.invite ? '换新链接' : '生成链接'}
@@ -322,28 +404,55 @@ export function AccountManagementPage({
         </header>
 
         {error && !editing ? <div className="otto-account-page__error" role="alert">{error}</div> : null}
-        <div className="otto-account-table" role="table" aria-label="账号列表">
-          <div className="otto-account-table__row otto-account-table__header" role="row">
-            <span>成员</span><span>组织信息</span><span>职责标签</span><span>访问状态</span><span />
-          </div>
-          {loading ? <div className="otto-account-table__empty">正在同步企业身份目录…</div> : null}
-          {!loading && filtered.length === 0 ? <div className="otto-account-table__empty">没有匹配的成员</div> : null}
-          {filtered.map((account) => (
-            <div className="otto-account-table__row" role="row" key={account.id}>
-              <div className="otto-account-table__identity"><span className="otto-account-table__avatar">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>@{account.username} · {maskedPhone(account.phone)}</small></div></div>
-              <div><strong>{account.role || '未设置岗位'}</strong><small>{account.department || '未分配部门'}</small></div>
-              <div className="otto-account-table__tags">{account.tags.length ? account.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>暂无标签</small>}</div>
-              <div className="otto-account-table__state">{account.isAdmin ? <span className="is-admin">管理员</span> : <span>成员</span>}<span className={account.status === 'active' ? 'is-active' : 'is-disabled'}>{account.status === 'active' ? '可登录' : '已停用'}</span>{account.phone ? <span className="is-sms">手机</span> : null}</div>
-              <button type="button" onClick={() => openEdit(account)} aria-label={`编辑 ${account.name}`}>编辑</button>
-            </div>
-          ))}
+        <div className="otto-account-table">
+          <table aria-label="账号列表">
+            <thead>
+              <tr className="otto-account-table__row otto-account-table__header">
+                <th scope="col">成员</th>
+                <th scope="col">组织信息</th>
+                <th scope="col">职责标签</th>
+                <th scope="col">使用量</th>
+                <th scope="col">访问状态</th>
+                <th scope="col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? <tr><td className="otto-account-table__empty" colSpan={6}>正在同步企业身份目录…</td></tr> : null}
+              {!loading && filtered.length === 0 ? <tr><td className="otto-account-table__empty" colSpan={6}>没有匹配的成员</td></tr> : null}
+              {filtered.map((account) => (
+                <tr className="otto-account-table__row" key={account.id}>
+                  <td><div className="otto-account-table__identity"><span className="otto-account-table__avatar">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>@{account.username} · {maskedPhone(account.phone)}</small></div></div></td>
+                  <td><strong>{account.role || '未设置岗位'}</strong><small>{account.department || '未分配部门'}</small></td>
+                  <td><div className="otto-account-table__tags">{account.tags.length ? account.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>暂无标签</small>}</div></td>
+                  <td>
+                    <div className="otto-account-table__usage">
+                      <strong>{account.usage ? `${account.usage.totalTokens.toLocaleString('en-US')} tokens` : '暂无用量'}</strong>
+                      <small>{account.usage ? `${account.usage.requestCount.toLocaleString('en-US')} 次请求` : '尚无调用数据'}</small>
+                      {account.usage ? <small title={account.usage.lastUsedAt ?? undefined}>{formatLastUsedAt(account.usage.lastUsedAt)}</small> : null}
+                    </div>
+                  </td>
+                  <td><div className="otto-account-table__state">{account.isAdmin ? <span className="is-admin">管理员</span> : <span>成员</span>}<span className={account.status === 'active' ? 'is-active' : 'is-disabled'}>{account.status === 'active' ? '可登录' : '已停用'}</span>{account.phone ? <span className="is-sms">手机</span> : null}</div></td>
+                  <td><button type="button" onClick={() => openEdit(account)} aria-label={`编辑 ${account.name}`}>编辑</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
+      </div>
 
       {editing ? (
-        <div className="otto-account-editor__overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditing(null); }}>
-          <section className="otto-account-editor" role="dialog" aria-modal="true" aria-label={editing === 'new' ? '新增账号' : '编辑账号'}>
-            <header><div><span>{editing === 'new' ? 'NEW IDENTITY' : 'IDENTITY DETAIL'}</span><h2>{editing === 'new' ? '添加企业成员' : '编辑成员身份'}</h2><p>账号、手机和角色决定成员如何进入 Otto 及能访问的空间。</p></div><button type="button" onClick={() => setEditing(null)} aria-label="关闭">×</button></header>
+        <div className="otto-account-editor__overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
+          <section
+            ref={dialogRef}
+            className="otto-account-editor"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editing === 'new' ? '新增账号' : '编辑账号'}
+            tabIndex={-1}
+            onKeyDown={handleEditorKeyDown}
+          >
+            <header><div><span>{editing === 'new' ? 'NEW IDENTITY' : 'IDENTITY DETAIL'}</span><h2>{editing === 'new' ? '添加企业成员' : '编辑成员身份'}</h2><p>账号、手机和角色决定成员如何进入 Otto 及能访问的空间。</p></div><button type="button" onClick={closeEditor} disabled={saving} aria-label="关闭">×</button></header>
             <section className="otto-account-templates" aria-label="账户模板">
               <div><strong>账户模板</strong><small>先选一个最接近的岗位，再按需调整</small></div>
               <div>
@@ -359,7 +468,7 @@ export function AccountManagementPage({
               </div>
             </section>
             <div className="otto-account-editor__grid">
-              <label><span>登录账号</span><input aria-label="登录账号" value={draft.username} onChange={(e) => setDraft((v) => ({ ...v, username: e.target.value }))} required /></label>
+              <label><span>登录账号</span><input ref={initialFocusRef} aria-label="登录账号" value={draft.username} onChange={(e) => setDraft((v) => ({ ...v, username: e.target.value }))} required /></label>
               <label><span>显示名称</span><input aria-label="显示名称" value={draft.name} onChange={(e) => setDraft((v) => ({ ...v, name: e.target.value }))} required /></label>
               <label><span>手机号码</span><input aria-label="手机号码" inputMode="tel" value={draft.phone} onChange={(e) => setDraft((v) => ({ ...v, phone: e.target.value }))} placeholder="用于短信验证码登录" /></label>
               <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
@@ -370,7 +479,7 @@ export function AccountManagementPage({
               <label className="otto-account-editor__check"><input type="checkbox" checked={draft.isAdmin} onChange={(e) => setDraft((v) => ({ ...v, isAdmin: e.target.checked }))} /><span>授予身份管理权限</span></label>
             </div>
             {error ? <div className="otto-account-page__error" role="alert">{error}</div> : null}
-            <footer><button type="button" onClick={() => setEditing(null)} disabled={saving}>取消</button><button type="button" className="is-primary" onClick={() => void save()} disabled={saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : '保存身份'}</button></footer>
+            <footer><button type="button" onClick={closeEditor} disabled={saving}>取消</button><button type="button" className="is-primary" onClick={() => void save()} disabled={saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : '保存身份'}</button></footer>
             {editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>
         </div>

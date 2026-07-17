@@ -94,6 +94,7 @@ import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voice
 import { transcribeAudio } from './voiceService.js';
 import {
   EnterpriseClient,
+  logoutAndPersistEnterpriseSession,
   type AccountCreateInput,
   type AccountUpdateInput,
   type EnterpriseKnowledgeRecordInput,
@@ -151,8 +152,14 @@ interface SkillShareRecord {
 const CRASH_RELOAD_WINDOW_MS = 60_000;
 const CRASH_RELOAD_MAX = 3;
 
+/** 企业身份服务真实入口；公网默认由中心部署负责，本机仅显式 loopback 时内嵌。 */
+const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
+  process.env.OTTO_ENTERPRISE_SERVER_URL,
+);
 /** server 生命周期管理器（发现/拉起/探活/退出清理）。 */
-const serverManager = new ServerManager();
+const serverManager = new ServerManager({
+  enterpriseServerUrl: DEFAULT_ENTERPRISE_SERVER_URL,
+});
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
@@ -195,6 +202,7 @@ const IPC = {
   enterpriseRegistrationRequest: 'otto:enterprise-registration-request',
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
+  enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
   enterpriseRegister: 'otto:enterprise-register',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
@@ -208,10 +216,20 @@ const IPC = {
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
 } as const;
 
-const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
-  process.env.OTTO_ENTERPRISE_SERVER_URL,
-);
-const enterpriseClient = new EnterpriseClient();
+const enterpriseClient = new EnterpriseClient(fetch, () => {
+  // 任一受保护接口返回 401 都会走这里：立即持久化清 token，并通知 renderer
+  // 退出过期管理员界面。错误登录时 token 本来为空，不会触发此回调。
+  if (enterpriseSessionLoaded) {
+    try {
+      saveEnterpriseSession();
+    } catch (error) {
+      console.warn('[otto-desktop] 清理失效企业会话失败:', error);
+    }
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
+  }
+});
 const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
@@ -777,8 +795,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.enterpriseLogout, async () => {
     loadEnterpriseSession();
-    await enterpriseClient.logout();
-    saveEnterpriseSession();
+    await logoutAndPersistEnterpriseSession(enterpriseClient, saveEnterpriseSession);
   });
   ipcMain.handle(IPC.enterpriseAccounts, async () => {
     loadEnterpriseSession();
@@ -1262,6 +1279,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  let quitCleanupStarted = false;
+  let quitCleanupFinished = false;
   app.on('second-instance', (_event, commandLine) => {
     const accepted = enterpriseRegistrationIntents.acceptArgv(commandLine);
     if (accepted && enterpriseIntentRendererReady && mainWindow && !mainWindow.isDestroyed()) {
@@ -1305,13 +1324,24 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (quitCleanupFinished) return;
+    event.preventDefault();
+    if (quitCleanupStarted) return;
+    quitCleanupStarted = true;
     // 退出前中止未完成的更新下载（审查 M2）：abort 触发下载循环的 AbortError
     // 清理路径，best-effort 删掉 Downloads 里的 .part 临时文件。幂等，无任务时空操作。
     // 即使进程赶在异步清理完成前退出，下次下载同一资产会截断重写同名 .part，
     // 且 sha256 校验兜底完整性，残留无危害。
     updateService.cancelDownload();
     // 仅内嵌 server 随 app 退出而停；discovered（headless/CLI 已在跑）故意留活。
-    void serverManager.shutdown();
+    void serverManager.shutdown()
+      .catch((error) => {
+        console.warn('[otto-desktop] 退出清理 server 失败:', error);
+      })
+      .finally(() => {
+        quitCleanupFinished = true;
+        app.quit();
+      });
   });
 }

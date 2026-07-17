@@ -24,6 +24,13 @@ const ENV_KEYS = [
   'OTTO_ENTERPRISE_DIR',
   'OTTO_ENTERPRISE_ADMIN_TOKEN',
   'OTTO_ENTERPRISE_PUBLIC_URL',
+  'OTTO_ENTERPRISE_HOST',
+  'OTTO_ENTERPRISE_PORT',
+  'OTTO_APP_VERSION',
+  'OTTO_BUILD_COMMIT',
+  'GITHUB_SHA',
+  'OTTO_ENTERPRISE_TRUST_PROXY_HOPS',
+  'OTTO_ENTERPRISE_TRUSTED_PROXIES',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
@@ -31,7 +38,8 @@ const ADMIN_TOKEN = 'test-admin-token-abc123';
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
 async function startIsolated(
   adminToken?: string,
-  smsSender?: { sendVerificationCode(phone: string, code: string): Promise<boolean> },
+  smsSender?: { sendVerificationCode(phone: string, code: string): Promise<boolean> } | null,
+  serverOptions: Record<string, unknown> = {},
 ): Promise<{ base: string; server: Server }> {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   process.env.OTTO_ENTERPRISE_PUBLIC_URL = 'https://join.otto.example';
@@ -39,7 +47,12 @@ async function startIsolated(
   const mod: ServerModule = await import('./server.js');
   const database: DatabaseModule = await import('./db.js');
   closeDatabases.push(database.closeEnterpriseDatabase);
-  const { server } = mod.createEnterpriseServer({ host: '127.0.0.1', adminToken, smsSender });
+  const { server } = mod.createEnterpriseServer({
+    host: '127.0.0.1',
+    adminToken,
+    smsSender,
+    ...serverOptions,
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   servers.push(server);
   const port = (server.address() as AddressInfo).port;
@@ -49,6 +62,7 @@ async function startIsolated(
 beforeEach(() => {
   for (const k of ENV_KEYS) prevEnv[k] = process.env[k];
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-ent-srv-'));
+  process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   servers = [];
   closeDatabases = [];
 });
@@ -82,19 +96,17 @@ describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }
 
   it('完全不带 token 访问受保护路由 → 401', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    for (const p of ['/enterprise/report', '/enterprise/employees', '/enterprise/audit', '/enterprise/export', '/enterprise/dashboard']) {
+    for (const p of ['/enterprise/report', '/enterprise/employees', '/enterprise/audit', '/enterprise/export']) {
       const res = await fetch(`${base}${p}`);
       expect(res.status, `${p} 应 401`).toBe(401);
     }
   });
 
-  it('带正确 token（query）→ 放行 200，返回 report', async () => {
+  it('即使 query 带正确 token 也拒绝，避免令牌进入 URL、代理日志与浏览器历史', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const res = await fetch(`${base}/enterprise/report?token=${ADMIN_TOKEN}`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toHaveProperty('totalTasks');
-    expect(body).toHaveProperty('laborPerTokenCNY');
+    expect(res.status).toBe(401);
+    expect(await res.json()).toHaveProperty('error');
   });
 
   it('带正确 token（x-otto-admin-token header）→ 放行 200', async () => {
@@ -120,14 +132,18 @@ describe('tokensMatch 长度不等短路（不抛，稳定返回 401）', () => 
   it('错误 token 长度远短于真 token → 不抛异常，返回 401', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     // 长度不等：timingSafeEqual 会抛，tokensMatch 必须先短路。若未短路则会 500。
-    const res = await fetch(`${base}/enterprise/report?token=x`);
+    const res = await fetch(`${base}/enterprise/report`, {
+      headers: { 'x-otto-admin-token': 'x' },
+    });
     expect(res.status).toBe(401); // 不是 500 → 证明短路生效
   });
 
   it('错误 token 长度远长于真 token → 同样 401 不 500', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const longWrong = 'z'.repeat(200);
-    const res = await fetch(`${base}/enterprise/report?token=${longWrong}`);
+    const res = await fetch(`${base}/enterprise/report`, {
+      headers: { 'x-otto-admin-token': longWrong },
+    });
     expect(res.status).toBe(401);
   });
 
@@ -135,18 +151,177 @@ describe('tokensMatch 长度不等短路（不抛，稳定返回 401）', () => 
     const { base } = await startIsolated(ADMIN_TOKEN);
     const sameLenWrong = 'y'.repeat(ADMIN_TOKEN.length);
     expect(sameLenWrong.length).toBe(ADMIN_TOKEN.length);
-    const res = await fetch(`${base}/enterprise/report?token=${sameLenWrong}`);
+    const res = await fetch(`${base}/enterprise/report`, {
+      headers: { 'x-otto-admin-token': sameLenWrong },
+    });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('正式公网启动的部署身份安全门', () => {
+  it('非 loopback 监听缺少 OTTO_APP_VERSION / 完整 OTTO_BUILD_COMMIT 时同步拒绝启动', async () => {
+    process.env.OTTO_ENTERPRISE_PORT = '0';
+    delete process.env.OTTO_APP_VERSION;
+    delete process.env.OTTO_BUILD_COMMIT;
+    delete process.env.GITHUB_SHA;
+    vi.resetModules();
+    const mod: ServerModule = await import('./server.js');
+
+    let started: Server | null = null;
+    let error: unknown;
+    try {
+      started = mod.startEnterpriseServer({
+        host: '0.0.0.0',
+        port: 0,
+        adminToken: ADMIN_TOKEN,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    if (started) servers.push(started);
+
+    expect(String(error)).toContain('OTTO_APP_VERSION');
+    expect(String(error)).toContain('OTTO_BUILD_COMMIT');
+  });
+
+  it('非 loopback 监听拒绝短 SHA；loopback 开发在无构建标识时仍可启动', async () => {
+    process.env.OTTO_ENTERPRISE_PORT = '0';
+    process.env.OTTO_APP_VERSION = '1.8.4';
+    process.env.OTTO_BUILD_COMMIT = 'abc123';
+    vi.resetModules();
+    const publicModule: ServerModule = await import('./server.js');
+    let publicStarted: Server | null = null;
+    let publicError: unknown;
+    try {
+      publicStarted = publicModule.startEnterpriseServer({
+        host: '0.0.0.0',
+        port: 0,
+        adminToken: ADMIN_TOKEN,
+      });
+    } catch (caught) {
+      publicError = caught;
+    }
+    if (publicStarted) servers.push(publicStarted);
+    expect(String(publicError)).toMatch(/OTTO_BUILD_COMMIT.*40/i);
+
+    delete process.env.OTTO_APP_VERSION;
+    delete process.env.OTTO_BUILD_COMMIT;
+    vi.resetModules();
+    const localModule: ServerModule = await import('./server.js');
+    const local = localModule.startEnterpriseServer({ host: '127.0.0.1', port: 0 });
+    servers.push(local);
+    await new Promise<void>((resolve) => local.once('listening', resolve));
+    expect((local.address() as AddressInfo).port).toBeGreaterThan(0);
+  });
+
+  it('非 loopback 监听在版本和完整 40 位 SHA 齐备时可启动', async () => {
+    process.env.OTTO_ENTERPRISE_PORT = '0';
+    process.env.OTTO_APP_VERSION = '1.8.4';
+    process.env.OTTO_BUILD_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+    vi.resetModules();
+    const mod: ServerModule = await import('./server.js');
+    const server = mod.startEnterpriseServer({
+      host: '0.0.0.0',
+      port: 0,
+      adminToken: ADMIN_TOKEN,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    expect((server.address() as AddressInfo).port).toBeGreaterThan(0);
+  });
+
+  it('非 loopback 监听接受调用方显式传入的版本和完整提交，不强制依赖进程环境', async () => {
+    process.env.OTTO_ENTERPRISE_PORT = '7777';
+    delete process.env.OTTO_APP_VERSION;
+    delete process.env.OTTO_BUILD_COMMIT;
+    delete process.env.GITHUB_SHA;
+    vi.resetModules();
+    const mod: ServerModule = await import('./server.js');
+    const server = mod.startEnterpriseServer({
+      host: '0.0.0.0',
+      port: 0,
+      adminToken: ADMIN_TOKEN,
+      appVersion: '1.8.4',
+      buildCommit: '0123456789abcdef0123456789abcdef01234567',
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    expect((server.address() as AddressInfo).port).toBeGreaterThan(0);
+    expect((server.address() as AddressInfo).port).not.toBe(7777);
+  });
+});
+
+describe('可信反向代理客户端地址解析', () => {
+  it('trustedProxyHops=0 或直连来源不可信时忽略 X-Forwarded-For', async () => {
+    const mod: ServerModule = await import('./server.js');
+    expect(mod.resolveEnterpriseClientAddress(
+      '203.0.113.10',
+      '198.51.100.23',
+      { trustedProxyHops: 0 },
+    )).toBe('203.0.113.10');
+    expect(mod.resolveEnterpriseClientAddress(
+      '203.0.113.10',
+      '198.51.100.23',
+      { trustedProxyHops: 1, trustedProxyAddresses: ['10.0.0.5'] },
+    )).toBe('203.0.113.10');
+  });
+
+  it('仅对 loopback 或明确可信直连代理按 trustedProxyHops 取 XFF 客户端', async () => {
+    const mod: ServerModule = await import('./server.js');
+    expect(mod.resolveEnterpriseClientAddress(
+      '::1',
+      '198.51.100.23',
+      { trustedProxyHops: 1 },
+    )).toBe('198.51.100.23');
+    expect(mod.resolveEnterpriseClientAddress(
+      '10.0.0.5',
+      '198.51.100.23, 10.0.0.4',
+      { trustedProxyHops: 2, trustedProxyAddresses: ['10.0.0.5'] },
+    )).toBe('198.51.100.23');
+  });
+
+  it('XFF 格式非法、重复 header 或链长不足时 fail closed 回落直连地址', async () => {
+    const mod: ServerModule = await import('./server.js');
+    for (const forwarded of [
+      'not-an-ip',
+      ['198.51.100.23', '198.51.100.24'],
+      '198.51.100.23',
+    ]) {
+      expect(mod.resolveEnterpriseClientAddress(
+        '127.0.0.1',
+        forwarded,
+        { trustedProxyHops: forwarded === '198.51.100.23' ? 2 : 1 },
+      )).toBe('127.0.0.1');
+    }
   });
 });
 
 describe('受保护 vs 公开路由边界', () => {
   it('公开路由 /enterprise/health 无 token 也可达 200', async () => {
+    process.env.OTTO_APP_VERSION = '1.8.4-test';
+    process.env.OTTO_BUILD_COMMIT = 'abc123def456';
     const { base } = await startIsolated(ADMIN_TOKEN);
     const res = await fetch(`${base}/enterprise/health`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.status).toBe('ok');
+    expect(body).toMatchObject({
+      status: 'ok',
+      db: 'connected',
+      service: 'otto-enterprise',
+      apiVersion: 2,
+      version: '1.8.4-test',
+      appVersion: '1.8.4-test',
+      buildCommit: 'abc123def456',
+      schemaVersion: 2,
+      capabilities: [
+        'password_auth',
+        'sms_registration',
+        'organization_invites',
+        'usage_summary',
+        'admin_console',
+      ],
+    });
+    expect(body.uptime).toEqual(expect.any(Number));
   });
 
   it('企业知识库无登录会话不可读取', async () => {
@@ -155,16 +330,39 @@ describe('受保护 vs 公开路由边界', () => {
     expect(res.status).toBe(401);
   });
 
-  it('未配置 token 时（本机模式）受保护路由不鉴权、直接可达', async () => {
-    // adminToken 为空 → 鉴权中间件跳过（仅本机场景）。
+  it('未配置静态 token 时，本机管理路由仍必须使用管理员登录会话', async () => {
     const { base } = await startIsolated(''); // 显式空 token
-    const res = await fetch(`${base}/enterprise/report`);
-    expect(res.status).toBe(200);
+    const database = await import('./db.js');
+    database.createAccount({
+      username: 'local-admin',
+      password: 'local-admin-password',
+      name: '本机管理员',
+      isAdmin: true,
+    });
+
+    expect((await fetch(`${base}/enterprise/report`)).status).toBe(401);
+
+    const login = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'local-admin', password: 'local-admin-password' }),
+    });
+    expect(login.status).toBe(200);
+    const token = (await login.json()).token;
+    expect((await fetch(`${base}/enterprise/report`, {
+      headers: { authorization: `Bearer ${token}` },
+    })).status).toBe(200);
   });
 
-  it('本机兼容模式拒绝第三方网页跨域改写企业邀请码，但保留同源管理能力', async () => {
+  it('本机模式拒绝第三方网页跨域改写企业邀请码，并只向已登录管理员保留同源能力', async () => {
     const { base } = await startIsolated('');
     const db = await import('./db.js');
+    db.createAccount({
+      username: 'local-admin',
+      password: 'local-admin-password',
+      name: '本机管理员',
+      isAdmin: true,
+    });
     expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID)).toBeNull();
 
     const crossOrigin = await fetch(`${base}/enterprise/organization/invite`, {
@@ -193,9 +391,15 @@ describe('受保护 vs 公开路由边界', () => {
     expect(rebindingStatus).toBe(403);
     expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID)).toBeNull();
 
+    const login = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'local-admin', password: 'local-admin-password' }),
+    });
+    const token = (await login.json()).token;
     const sameOrigin = await fetch(`${base}/enterprise/organization/invite`, {
       method: 'POST',
-      headers: { origin: base },
+      headers: { origin: base, authorization: `Bearer ${token}` },
     });
     expect(sameOrigin.status).toBe(201);
     expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID)).not.toBeNull();
@@ -364,14 +568,26 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).not.toContain(ADMIN_TOKEN);
   });
 
-  it('dashboard（带 token）返回 HTML 且含估算披露文案', async () => {
+  it('dashboard 公开返回安全页面外壳，令牌只允许从 sessionStorage 或表单输入', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    const res = await fetch(`${base}/enterprise/dashboard?token=${ADMIN_TOKEN}`);
+    const res = await fetch(`${base}/enterprise/dashboard`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
     const html = await res.text();
     expect(html).toContain('Otto Enterprise');
     expect(html).toContain('估算');
+    expect(html).toContain("sessionStorage.getItem(KEY)");
+    expect(html).toContain('id="dashboardToken"');
+    expect(html).toContain("authorization:'Bearer '+TOKEN");
+    expect(html).not.toContain(ADMIN_TOKEN);
+
+    const queryToken = await fetch(`${base}/enterprise/dashboard?token=${ADMIN_TOKEN}`);
+    expect(queryToken.status).toBe(400);
+    expect(queryToken.headers.get('cache-control')).toBe('no-store');
   });
 
   it('report 端到端：logTask 后 laborPerToken 不爆表（cost=0 场景经服务端也被兜底）', async () => {
@@ -397,7 +613,9 @@ describe('report/dashboard 路由基本可达', () => {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
       body: JSON.stringify({ employee_id: 'e1', task_type: 't2', duration_min: 60, cost_cny: 0.03 }),
     });
-    const r = await (await fetch(`${base}/enterprise/report?token=${ADMIN_TOKEN}`)).json();
+    const r = await (await fetch(`${base}/enterprise/report`, {
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+    })).json();
     expect(r.totalTasks).toBe(2);
     // 关键：绝不再出现天文数字，封顶 ≤ 50。
     expect(r.laborPerTokenCNY).toBeLessThanOrEqual(50);
@@ -482,6 +700,153 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: '账号或密码错误' });
     }
+  });
+
+  it('密码登录按 identifier + 客户端地址限流，429 带 Retry-After，且错误文案不枚举账号', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      loginRateLimit: {
+        maxFailures: 3,
+        windowMs: 60_000,
+        blockMs: 60_000,
+        maxEntries: 8,
+      },
+    });
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'limited-user',
+      password: 'limited-password',
+      name: '限流用户',
+      phone: '13800138000',
+    });
+
+    const login = (identifier: string, password: string) => fetch(
+      `${base}/enterprise/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      },
+    );
+
+    const missing = await login('missing-user', 'wrong-password');
+    const wrongPassword = await login('limited-user', 'wrong-password');
+    expect(missing.status).toBe(401);
+    expect(wrongPassword.status).toBe(401);
+    expect(await missing.json()).toEqual({ error: '账号或密码错误' });
+    expect(await wrongPassword.json()).toEqual({ error: '账号或密码错误' });
+
+    expect((await login('limited-user', 'wrong-password')).status).toBe(401);
+    const blocked = await login('limited-user', 'wrong-password');
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await blocked.json()).toMatchObject({
+      error: '登录尝试过于频繁，请稍后再试',
+      retryAfterSeconds: expect.any(Number),
+    });
+
+    // 同一个手机号的常见展示格式必须归入同一 identifier，不能靠空格或 +86 绕过。
+    expect((await login('13800138000', 'wrong-password')).status).toBe(401);
+    expect((await login('138 0013 8000', 'wrong-password')).status).toBe(401);
+    const phoneBlocked = await login('+86 138-0013-8000', 'wrong-password');
+    expect(phoneBlocked.status).toBe(429);
+  });
+
+  it('密码登录成功会清理失败计数，时间窗过期会衰减，限流表达到上限会淘汰旧键', async () => {
+    let now = 1_000;
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      loginRateLimit: {
+        maxFailures: 3,
+        windowMs: 1_000,
+        blockMs: 60_000,
+        maxEntries: 2,
+        now: () => now,
+      },
+    });
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'decay-user',
+      password: 'decay-password',
+      name: '衰减用户',
+    });
+    const login = (identifier: string, password: string) => fetch(
+      `${base}/enterprise/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      },
+    );
+
+    expect((await login('decay-user', 'wrong-password')).status).toBe(401);
+    expect((await login('decay-user', 'wrong-password')).status).toBe(401);
+    expect((await login('decay-user', 'decay-password')).status).toBe(200);
+    expect((await login('decay-user', 'wrong-password')).status).toBe(401);
+    expect((await login('decay-user', 'wrong-password')).status).toBe(401);
+
+    now += 1_001;
+    expect((await login('decay-user', 'wrong-password')).status).toBe(401);
+
+    // maxEntries=2：第三个 identifier 进入后会淘汰最旧键，旧键再次失败仍从 1 开始。
+    expect((await login('oldest-key', 'wrong-password')).status).toBe(401);
+    expect((await login('second-key', 'wrong-password')).status).toBe(401);
+    expect((await login('third-key', 'wrong-password')).status).toBe(401);
+    expect((await login('oldest-key', 'wrong-password')).status).toBe(401);
+  });
+
+  it('显式信任一层反向代理时按真实客户端 IP 隔离，且取最靠近代理的 XFF 地址防伪造', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      loginRateLimit: {
+        maxFailures: 2,
+        windowMs: 60_000,
+        blockMs: 60_000,
+        trustedProxyHops: 1,
+      },
+    });
+    const login = (forwardedFor: string) => fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-forwarded-for': forwardedFor,
+      },
+      body: JSON.stringify({ identifier: 'known-admin', password: 'wrong-password' }),
+    });
+
+    expect((await login('203.0.113.10')).status).toBe(401);
+    expect((await login('198.51.100.20')).status).toBe(401);
+    expect((await login('203.0.113.10')).status).toBe(429);
+    // 代理追加真实客户端地址时，攻击者自带的最左侧伪造值不能更换限流身份。
+    expect((await login('192.0.2.99, 203.0.113.10')).status).toBe(429);
+    // 另一真实客户端仍有自己的失败预算，不会被同机 Caddy 的 loopback 地址连坐。
+    expect((await login('198.51.100.20')).status).toBe(429);
+  });
+
+  it('独立客户端 IP 桶限制跨账号密码喷洒，不因更换 identifier 绕过', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      loginRateLimit: {
+        maxFailures: 5,
+        maxIpFailures: 3,
+        windowMs: 60_000,
+        blockMs: 60_000,
+        trustedProxyHops: 1,
+      },
+    });
+    const login = (identifier: string, forwardedFor: string) => fetch(
+      `${base}/enterprise/auth/login`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': forwardedFor,
+        },
+        body: JSON.stringify({ identifier, password: 'wrong-password' }),
+      },
+    );
+
+    expect((await login('user-a', '203.0.113.50')).status).toBe(401);
+    expect((await login('user-b', '203.0.113.50')).status).toBe(401);
+    expect((await login('user-c', '203.0.113.50')).status).toBe(429);
+    expect((await login('user-d', '203.0.113.50')).status).toBe(429);
+    expect((await login('user-d', '198.51.100.60')).status).toBe(401);
   });
 
   it('管理员专用登录只给管理员创建会话，普通成员被拒绝且不留下孤儿会话', async () => {
@@ -688,6 +1053,55 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(list.status).toBe(200);
     expect((await list.json()).accounts).toHaveLength(3);
+  });
+
+  it('新增账号支持 disabled，并明确拒绝非法 status 而不是静默创建 active 账号', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+    });
+    const db = await import('./db.js');
+    const login = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'admin', password: 'admin-password' }),
+    });
+    const token = (await login.json()).token;
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+    const disabled = await fetch(`${base}/enterprise/accounts`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        username: 'disabled-user',
+        password: 'disabled-password',
+        name: '停用成员',
+        status: 'disabled',
+      }),
+    });
+    expect(disabled.status).toBe(201);
+    expect((await disabled.json()).account).toMatchObject({
+      username: 'disabled-user',
+      status: 'disabled',
+    });
+    expect((await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'disabled-user', password: 'disabled-password' }),
+    })).status).toBe(401);
+
+    const invalid = await fetch(`${base}/enterprise/accounts`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        username: 'invalid-status-user',
+        password: 'invalid-password',
+        name: '非法状态成员',
+        status: 'pending',
+      }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: '账号状态必须是 active 或 disabled' });
+    expect(db.listAccounts().some((account) => account.username === 'invalid-status-user')).toBe(false);
   });
 
   it('新增或编辑账号时重复绑定手机号 → 409，不把数据约束错误暴露成 500', async () => {
@@ -1189,5 +1603,39 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify({ name: '越权企业', slug: 'forbidden' }),
     });
     expect(denied.status).toBe(403);
+  });
+
+  it('平台创建企业、首位管理员和邀请是原子事务，管理员冲突不会留下孤儿企业', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'already-used-owner',
+      password: 'existing-password',
+      name: '已有管理员',
+      isAdmin: true,
+    });
+    const before = db.listOrganizations();
+
+    const provision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '不应残留的企业',
+        slug: 'must-rollback',
+        admin: {
+          username: 'already-used-owner',
+          password: 'new-owner-password',
+          name: '冲突管理员',
+        },
+      }),
+    });
+
+    expect(provision.status).toBe(409);
+    expect(db.listOrganizations()).toEqual(before);
+    expect(db.listOrganizations().some((organization) => organization.slug === 'must-rollback')).toBe(false);
+    expect((db.getDB().prepare(
+      `SELECT COUNT(*) AS count FROM organization_invites
+       WHERE organization_id NOT IN (SELECT id FROM organizations)`,
+    ).get() as { count: number }).count).toBe(0);
   });
 });

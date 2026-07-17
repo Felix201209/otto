@@ -6,8 +6,8 @@
  *
  * 相对 enterprise 分支原版做的加固（optimize）：
  *   1. 默认只监听 127.0.0.1（原版 0.0.0.0 全网裸奔）；要局域网暴露须显式设 HOST。
- *   2. 管理端路由（invite/offboard/export/audit/employees/report/dashboard）需 admin token；
- *      监听非本地又没设 token 时自动生成并打印，绝不无鉴权对外。
+ *   2. 管理端路由（invite/offboard/export/audit/employees/report/dashboard）需管理员凭证；
+ *      监听非本地又没设 token 时自动生成并仅写入 0600 文件，绝不无鉴权对外。
  *   3. 去掉通配 CORS（`*`）——看板是同源 fetch，不需要跨域放行。
  *   4. 看板对「省时/省钱/ROI」显式标注「估算」，不把估值当实测。
  *   5. 不在模块顶层 listen()，导出 create/start 函数，可被测试/桌面按需拉起。
@@ -26,7 +26,16 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import {
+  createHash,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from 'node:crypto';
+import fs from 'node:fs';
+import { isIP } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 import {
@@ -46,7 +55,6 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/audit',
   '/enterprise/employees',
   '/enterprise/report',
-  '/enterprise/dashboard',
   '/enterprise/accounts',
   '/enterprise/organization/invite',
   '/enterprise/usage/summary',
@@ -74,10 +82,250 @@ export interface EnterpriseServerOptions {
   adminToken?: string;
   /** 验证码发送器；测试可注入，显式 null 表示关闭。 */
   smsSender?: VerificationSmsSender | null;
+  /** 部署版本；不传则读 OTTO_APP_VERSION。 */
+  appVersion?: string;
+  /** 构建提交；不传则读 OTTO_BUILD_COMMIT / GITHUB_SHA。 */
+  buildCommit?: string;
+  /** 密码登录限流参数；生产使用安全默认值，测试可注入时钟和较小阈值。 */
+  loginRateLimit?: PasswordLoginRateLimitOptions;
 }
 
 export interface VerificationSmsSender {
   sendVerificationCode(phone: string, code: string): Promise<boolean>;
+}
+
+export interface PasswordLoginRateLimitOptions {
+  maxFailures?: number;
+  /** 单个客户端 IP 在窗口内跨账号失败的上限，防 identifier 轮换式密码喷洒。 */
+  maxIpFailures?: number;
+  windowMs?: number;
+  blockMs?: number;
+  maxEntries?: number;
+  /**
+   * 仅在明确知道前方有多少层可信反向代理时设置。1 表示 Caddy 直连本服务；
+   * 服务会从 X-Forwarded-For 右侧按跳数取真实客户端，默认 0 完全忽略该 header。
+   */
+  trustedProxyHops?: number;
+  /**
+   * 允许提供 X-Forwarded-For 的直连代理 IP（仅支持精确 IP）。
+   * loopback 代理始终可信；其他来源必须列在这里或 OTTO_ENTERPRISE_TRUSTED_PROXIES。
+   */
+  trustedProxyAddresses?: string[];
+  now?: () => number;
+}
+
+export interface EnterpriseProxyOptions {
+  trustedProxyHops?: number;
+  trustedProxyAddresses?: readonly string[];
+}
+
+const ENTERPRISE_API_VERSION = 2;
+const ENTERPRISE_CAPABILITIES = [
+  'password_auth',
+  'sms_registration',
+  'organization_invites',
+  'usage_summary',
+  'admin_console',
+] as const;
+
+interface DeploymentInfo {
+  version: string;
+  buildCommit: string;
+  startedAt: string;
+}
+
+interface LoginRateLimiter {
+  keys(req: IncomingMessage, identifier: string): {
+    identity: string;
+    client: string;
+  };
+  retryAfterSeconds(keys: { identity: string; client: string }): number;
+  recordFailure(keys: { identity: string; client: string }): number;
+  clearIdentity(key: string): void;
+}
+
+function positiveInteger(value: number | undefined, fallback: number, maximum: number): number {
+  if (!Number.isFinite(value) || value == null || value <= 0) return fallback;
+  return Math.min(maximum, Math.max(1, Math.floor(value)));
+}
+
+function nonNegativeInteger(value: number | undefined, fallback: number, maximum: number): number {
+  if (!Number.isFinite(value) || value == null || value < 0) return fallback;
+  return Math.min(maximum, Math.floor(value));
+}
+
+function normalizedIp(value: string): string | null {
+  const normalized = value.trim().replace(/^::ffff:/, '');
+  return isIP(normalized) ? normalized : null;
+}
+
+function isLoopbackAddress(address: string): boolean {
+  return address === '127.0.0.1' || address === '::1';
+}
+
+/**
+ * 解析用于登录限流的客户端 IP。默认完全忽略 XFF；即便配置了可信跳数，也只有
+ * loopback 或明确列出的直连代理可以提供该 header，格式有歧义时一律回落直连地址。
+ */
+export function resolveEnterpriseClientAddress(
+  remoteAddress: string | undefined,
+  forwardedFor: string | string[] | undefined,
+  options: EnterpriseProxyOptions = {},
+): string {
+  const direct = normalizedIp(remoteAddress || '') || 'unknown';
+  const trustedProxyHops = nonNegativeInteger(options.trustedProxyHops, 0, 5);
+  if (trustedProxyHops === 0) return direct;
+
+  const trustedProxyAddresses = new Set(
+    (options.trustedProxyAddresses ?? [])
+      .map((address) => normalizedIp(address))
+      .filter((address): address is string => address !== null),
+  );
+  if (!isLoopbackAddress(direct) && !trustedProxyAddresses.has(direct)) return direct;
+  if (typeof forwardedFor !== 'string' || forwardedFor.length > 2048) return direct;
+
+  const forwardedChain = forwardedFor
+    .split(',')
+    .map((address) => normalizedIp(address));
+  if (forwardedChain.length === 0 || forwardedChain.some((address) => address === null)) {
+    return direct;
+  }
+  const chain = [...forwardedChain as string[], direct];
+  const candidateIndex = chain.length - trustedProxyHops - 1;
+  if (candidateIndex < 0) return direct;
+  return chain[candidateIndex] || direct;
+}
+
+function rateLimitClientAddress(
+  req: IncomingMessage,
+  options: EnterpriseProxyOptions,
+): string {
+  return resolveEnterpriseClientAddress(
+    req.socket.remoteAddress,
+    req.headers['x-forwarded-for'],
+    options,
+  );
+}
+
+/**
+ * 每个 EnterpriseServer 实例独立的有界登录限流器。键只保留 identifier + 客户端地址
+ * 的 SHA-256，不在内存中保存明文账号；超过上限按 LRU 淘汰，避免攻击者撑爆进程。
+ */
+function createLoginRateLimiter(options: PasswordLoginRateLimitOptions = {}): LoginRateLimiter {
+  const maxFailures = positiveInteger(options.maxFailures, 5, 100);
+  const maxIpFailures = positiveInteger(options.maxIpFailures, 30, 1_000);
+  const windowMs = positiveInteger(options.windowMs, 15 * 60 * 1000, 24 * 60 * 60 * 1000);
+  const blockMs = positiveInteger(options.blockMs, 60 * 1000, 24 * 60 * 60 * 1000);
+  const maxEntries = positiveInteger(options.maxEntries, 10_000, 100_000);
+  const trustedProxyHops = nonNegativeInteger(options.trustedProxyHops, 0, 5);
+  const trustedProxyAddresses = options.trustedProxyAddresses ?? [];
+  const now = options.now ?? Date.now;
+  type RateEntry = {
+    failures: number;
+    windowStartedAt: number;
+    blockedUntil: number;
+  };
+  const identityEntries = new Map<string, RateEntry>();
+  const clientEntries = new Map<string, RateEntry>();
+
+  const touch = (
+    entries: Map<string, RateEntry>,
+    key: string,
+    entry: RateEntry,
+  ): void => {
+    entries.delete(key);
+    while (entries.size >= maxEntries) {
+      const oldest = entries.keys().next().value as string | undefined;
+      if (!oldest) break;
+      entries.delete(oldest);
+    }
+    entries.set(key, entry);
+  };
+
+  const currentEntryIn = (
+    entries: Map<string, RateEntry>,
+    key: string,
+    timestamp: number,
+  ): RateEntry | null => {
+    const entry = entries.get(key);
+    if (!entry) return null;
+    if (entry.blockedUntil <= timestamp && timestamp - entry.windowStartedAt >= windowMs) {
+      entries.delete(key);
+      return null;
+    }
+    touch(entries, key, entry);
+    return entry;
+  };
+
+  const retryAfterFor = (
+    entries: Map<string, RateEntry>,
+    key: string,
+    timestamp: number,
+  ): number => {
+    const entry = currentEntryIn(entries, key, timestamp);
+    return entry && entry.blockedUntil > timestamp
+      ? Math.max(1, Math.ceil((entry.blockedUntil - timestamp) / 1000))
+      : 0;
+  };
+
+  const recordFailureFor = (
+    entries: Map<string, RateEntry>,
+    key: string,
+    threshold: number,
+    timestamp: number,
+  ): number => {
+    const existing = currentEntryIn(entries, key, timestamp);
+    const entry = existing && timestamp - existing.windowStartedAt < windowMs
+      ? existing
+      : { failures: 0, windowStartedAt: timestamp, blockedUntil: 0 };
+    entry.failures += 1;
+    if (entry.failures >= threshold) entry.blockedUntil = timestamp + blockMs;
+    touch(entries, key, entry);
+    return entry.blockedUntil > timestamp
+      ? Math.max(1, Math.ceil((entry.blockedUntil - timestamp) / 1000))
+      : 0;
+  };
+
+  return {
+    keys(req, identifier) {
+      const clientAddress = rateLimitClientAddress(req, {
+        trustedProxyHops,
+        trustedProxyAddresses,
+      });
+      let normalizedIdentifier = identifier.trim().toLocaleLowerCase('en-US');
+      try {
+        // 登录接受带空格、连字符或 +86 的手机号，限流键必须采用相同归一化，
+        // 否则攻击者可仅改变展示格式绕过失败计数。
+        normalizedIdentifier = db.normalizePhone(identifier);
+      } catch {
+        // 非手机号继续按大小写无关的用户名计数。
+      }
+      const identity = createHash('sha256')
+        .update(`${normalizedIdentifier}\0${clientAddress}`)
+        .digest('base64url');
+      const client = createHash('sha256')
+        .update(`client\0${clientAddress}`)
+        .digest('base64url');
+      return { identity, client };
+    },
+    retryAfterSeconds(keys) {
+      const timestamp = now();
+      return Math.max(
+        retryAfterFor(identityEntries, keys.identity, timestamp),
+        retryAfterFor(clientEntries, keys.client, timestamp),
+      );
+    },
+    recordFailure(keys) {
+      const timestamp = now();
+      return Math.max(
+        recordFailureFor(identityEntries, keys.identity, maxFailures, timestamp),
+        recordFailureFor(clientEntries, keys.client, maxIpFailures, timestamp),
+      );
+    },
+    clearIdentity(key) {
+      identityEntries.delete(key);
+    },
+  };
 }
 
 function isLoopback(host: string): boolean {
@@ -109,13 +357,13 @@ function readBody(req: IncomingMessage): Promise<RouteBody> {
   });
 }
 
-/** 从 header / bearer / query 里取令牌。 */
-function extractToken(req: IncomingMessage, url: URL): string {
+/** 管理令牌只允许放在 header；URL query 会进入代理日志与浏览器历史，禁止使用。 */
+function extractToken(req: IncomingMessage): string {
   const h = req.headers['x-otto-admin-token'];
   if (typeof h === 'string' && h) return h;
   const auth = req.headers['authorization'];
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7);
-  return url.searchParams.get('token') || '';
+  return '';
 }
 
 function tokensMatch(a: string, b: string): boolean {
@@ -175,6 +423,7 @@ function accountConflictMessage(error: unknown): string | null {
 function accountInputMessage(error: unknown): string | null {
   const message = error instanceof Error ? error.message : String(error);
   if (message === '手机号格式不正确' || message === '登录密码至少需要 8 位') return message;
+  if (message === '账号状态必须是 active 或 disabled') return message;
   if (message === 'username required') return '账号不能为空';
   if (message === 'name required') return '姓名不能为空';
   return null;
@@ -193,6 +442,8 @@ function makeHandler(
   adminToken: string,
   smsSender: VerificationSmsSender | null,
   publicBaseUrl: string,
+  loginRateLimiter: LoginRateLimiter,
+  deploymentInfo: DeploymentInfo,
 ) {
   return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 只需要 path/query，不使用客户端可控的 Host 或 X-Forwarded-Host 作为 URL 权威源。
@@ -215,6 +466,17 @@ function makeHandler(
       return;
     }
 
+    // 旧版曾允许 /dashboard?token=... 并把令牌注入 HTML。明确拒绝这一入口，
+    // 防止平台令牌或账号会话进入反向代理日志、浏览器历史和 Referer。
+    if (path === '/enterprise/dashboard' && url.searchParams.has('token')) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      sendJSON(res, 400, {
+        error: '请勿在 URL 中传递管理令牌，请在安全看板页面中登录或粘贴令牌',
+      });
+      return;
+    }
+
     // 无静态 token 的兼容模式只能通过明确的 loopback Host 使用，避免 DNS
     // rebinding 让恶意域名在 Origin/Host 同名时伪装成本机管理站点。
     if (isAdminRoute(path) && !adminToken && !isLoopbackRequestHost(req)) {
@@ -231,11 +493,11 @@ function makeHandler(
       return;
     }
 
-    // 管理端鉴权：兼容原有静态 admin token，同时允许预设管理员账号的登录会话。
-    // 本机模式未配置 adminToken 时维持旧行为（仅 loopback 使用）；对外监听时 start
-    // 会自动生成 admin token，因此不会出现公网裸管理接口。
+    // 管理端鉴权：兼容平台静态 admin token，同时允许企业管理员账号的登录会话。
+    // 即便是未配置静态 token 的本机服务，也必须先登录；loopback 只限制可访问来源，
+    // 绝不能等价于“任何本机进程或网页都拥有平台管理员权限”。
     if (isAdminRoute(path)) {
-      const token = extractToken(req, url);
+      const token = extractToken(req);
       if (adminToken && tokensMatch(token, adminToken)) {
         adminPrincipal = { kind: 'system', organizationId: db.DEFAULT_ORGANIZATION_ID };
       } else if (adminToken) {
@@ -250,23 +512,22 @@ function makeHandler(
         }
         adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
       } else {
-        // 仅限未配置 token 的本机兼容模式。若带了有效管理员会话，仍按其企业隔离；
-        // 无会话时沿用旧版默认企业管理行为。
+        // 未配置静态 token 的本机模式仅接受管理员账号会话，不提供平台级绕过。
         const account = db.getAccountBySession(token);
-        if (account) {
-          if (!account.isAdmin) {
-            sendJSON(res, 403, { error: 'forbidden: admin account required' });
-            return;
-          }
-          adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
-        } else {
-          adminPrincipal = { kind: 'system', organizationId: db.DEFAULT_ORGANIZATION_ID };
+        if (!account) {
+          sendJSON(res, 401, { error: 'unauthorized: admin login required' });
+          return;
         }
+        if (!account.isAdmin) {
+          sendJSON(res, 403, { error: 'forbidden: admin account required' });
+          return;
+        }
+        adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
       }
     }
 
     if (MEMBER_ROUTES.has(path)) {
-      memberAccount = db.getAccountBySession(extractToken(req, url));
+      memberAccount = db.getAccountBySession(extractToken(req));
       if (!memberAccount) {
         sendJSON(res, 401, { error: '登录已失效，请重新登录' });
         return;
@@ -276,12 +537,38 @@ function makeHandler(
     try {
       // ===== Health =====
       if (path === '/enterprise/health' && method === 'GET') {
-        sendJSON(res, 200, {
-          status: 'ok',
-          uptime: process.uptime(),
-          db: 'connected',
-          sms: { configured: smsSender !== null },
-        });
+        try {
+          const readiness = db.getDatabaseReadiness();
+          sendJSON(res, 200, {
+            status: 'ok',
+            service: 'otto-enterprise',
+            apiVersion: ENTERPRISE_API_VERSION,
+            version: deploymentInfo.version,
+            // appVersion 作为旧调用方的可读别名保留；新版客户端使用 version。
+            appVersion: deploymentInfo.version,
+            buildCommit: deploymentInfo.buildCommit,
+            schemaVersion: readiness.schemaVersion,
+            capabilities: [...ENTERPRISE_CAPABILITIES],
+            uptime: process.uptime(),
+            startedAt: deploymentInfo.startedAt,
+            runtimeVersion: process.version,
+            db: 'connected',
+            sms: { configured: smsSender !== null },
+          });
+        } catch {
+          sendJSON(res, 503, {
+            status: 'unavailable',
+            service: 'otto-enterprise',
+            apiVersion: ENTERPRISE_API_VERSION,
+            version: deploymentInfo.version,
+            appVersion: deploymentInfo.version,
+            buildCommit: deploymentInfo.buildCommit,
+            schemaVersion: null,
+            capabilities: [...ENTERPRISE_CAPABILITIES],
+            db: 'unavailable',
+            error: 'enterprise database unavailable',
+          });
+        }
         return;
       }
 
@@ -320,12 +607,32 @@ function makeHandler(
           ? body.identifier
           : typeof body.username === 'string' ? body.username : '';
         const password = typeof body.password === 'string' ? body.password : '';
+        const rateLimitKeys = loginRateLimiter.keys(req, identifier);
+        const existingRetryAfter = loginRateLimiter.retryAfterSeconds(rateLimitKeys);
+        if (existingRetryAfter > 0) {
+          res.setHeader('Retry-After', String(existingRetryAfter));
+          sendJSON(res, 429, {
+            error: '登录尝试过于频繁，请稍后再试',
+            retryAfterSeconds: existingRetryAfter,
+          });
+          return;
+        }
         const account = db.authenticateAccount(identifier, password);
         if (!account) {
+          const retryAfterSeconds = loginRateLimiter.recordFailure(rateLimitKeys);
+          if (retryAfterSeconds > 0) {
+            res.setHeader('Retry-After', String(retryAfterSeconds));
+            sendJSON(res, 429, {
+              error: '登录尝试过于频繁，请稍后再试',
+              retryAfterSeconds,
+            });
+            return;
+          }
           // 不区分「账号不存在」与「密码错误」，避免泄露预设账号清单。
           sendJSON(res, 401, { error: '账号或密码错误' });
           return;
         }
+        loginRateLimiter.clearIdentity(rateLimitKeys.identity);
         // 管理后台必须在创建会话前校验角色，避免普通成员登录后留下浏览器无法使用的孤儿会话。
         if (path === '/enterprise/auth/admin/login' && !account.isAdmin) {
           sendJSON(res, 403, { error: '该账号没有管理员权限' });
@@ -449,7 +756,7 @@ function makeHandler(
       }
 
       if (path === '/enterprise/auth/me' && method === 'GET') {
-        const account = db.getAccountBySession(extractToken(req, url));
+        const account = db.getAccountBySession(extractToken(req));
         if (!account) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
           return;
@@ -459,7 +766,7 @@ function makeHandler(
       }
 
       if (path === '/enterprise/auth/logout' && method === 'POST') {
-        const token = extractToken(req, url);
+        const token = extractToken(req);
         const account = db.getAccountBySession(token);
         if (!account) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
@@ -504,6 +811,10 @@ function makeHandler(
           sendJSON(res, 400, { error: '登录密码至少需要 8 位' });
           return;
         }
+        if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
+          sendJSON(res, 400, { error: '账号状态必须是 active 或 disabled' });
+          return;
+        }
         try {
           const account = db.createAccount({
             organizationId: adminPrincipal!.organizationId,
@@ -515,6 +826,7 @@ function makeHandler(
             department: typeof body.department === 'string' ? body.department : null,
             tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === 'string') : [],
             isAdmin: body.isAdmin === true,
+            status: body.status === 'disabled' ? 'disabled' : 'active',
           });
           sendJSON(res, 201, { account });
         } catch (error) {
@@ -535,6 +847,10 @@ function makeHandler(
           return;
         }
         const body = await readBody(req);
+        if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
+          sendJSON(res, 400, { error: '账号状态必须是 active 或 disabled' });
+          return;
+        }
         const status = body.status === 'active' || body.status === 'disabled' ? body.status : undefined;
         try {
           const account = db.updateAccount(accountId, {
@@ -593,7 +909,7 @@ function makeHandler(
 
       // ===== Per-account provider-reported Token usage =====
       if (path === '/enterprise/usage' && method === 'POST') {
-        const account = db.getAccountBySession(extractToken(req, url));
+        const account = db.getAccountBySession(extractToken(req));
         if (!account) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
           return;
@@ -662,25 +978,25 @@ function makeHandler(
           return;
         }
         try {
-          const organization = db.createOrganization({
+          const provisioned = db.provisionOrganization({
             name,
             slug: typeof body.slug === 'string' ? body.slug : undefined,
-          });
-          const firstAdmin = db.createAccount({
-            organizationId: organization.id,
-            username,
-            password,
-            name: adminName,
-            phone: typeof admin.phone === 'string' ? admin.phone : null,
-            role: '企业管理员',
-            tags: ['企业管理员'],
-            isAdmin: true,
+            admin: {
+              username,
+              password,
+              name: adminName,
+              phone: typeof admin.phone === 'string' ? admin.phone : null,
+            },
           });
           const invite = withPublicInviteLink(
-            db.issueOrganizationInvite(organization.id, Date.now(), firstAdmin.id),
+            provisioned.invite,
             publicBaseUrl,
           );
-          sendJSON(res, 201, { organization, admin: firstAdmin, invite });
+          sendJSON(res, 201, {
+            organization: provisioned.organization,
+            admin: provisioned.admin,
+            invite,
+          });
         } catch (error) {
           const conflict = accountConflictMessage(error);
           if (conflict) sendJSON(res, 409, { error: conflict });
@@ -693,7 +1009,7 @@ function makeHandler(
 
       // ===== IT ticket routing: persist one delivery for every matching account =====
       if (path === '/enterprise/tickets' && method === 'POST') {
-        const account = db.getAccountBySession(extractToken(req, url));
+        const account = db.getAccountBySession(extractToken(req));
         if (!account) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
           return;
@@ -719,7 +1035,7 @@ function makeHandler(
       }
 
       if (path === '/enterprise/tickets/inbox' && method === 'GET') {
-        const account = db.getAccountBySession(extractToken(req, url));
+        const account = db.getAccountBySession(extractToken(req));
         if (!account) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
           return;
@@ -1022,11 +1338,15 @@ function makeHandler(
       if (path === '/enterprise/dashboard' && method === 'GET') {
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+          'Referrer-Policy': 'no-referrer',
           'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
         });
-        // 使用本次请求实际通过鉴权的凭证。企业管理员会话因此只会加载本企业报表；
-        // 不再无条件把平台级静态 token 交给所有 dashboard 访问者。
-        res.end(adminDashboardHTML(extractToken(req, url)));
+        // 看板只返回不含凭证的页面外壳。管理员登录会话通过同源 sessionStorage
+        // 复用，平台令牌则在页面内手动粘贴；服务器绝不把令牌注入 HTML。
+        res.end(adminDashboardHTML());
         return;
       }
 
@@ -1060,7 +1380,7 @@ function adminAccountsHTML(): string {
 </main>
 <main id="adminView" class="admin hidden">
   <aside class="rail"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="nav-label">企业管理</div><div class="nav-item"><span class="nav-dot"></span>成员与用量</div><div class="rail-foot"><div><div id="railUser" class="rail-user"></div><div id="railMeta" class="rail-meta">企业管理员</div></div><button id="logoutButton" class="ghost-dark" type="button">退出登录</button></div></aside>
-  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><button id="createButton" class="primary" type="button">新增账号</button></header>
+  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
     <div class="ops-grid">
       <section class="ops-card" aria-labelledby="inviteTitle"><div class="ops-head"><div><div class="eyebrow">MEMBER ONBOARDING</div><h2 id="inviteTitle">企业成员引入链接</h2><p>成员点击后由 Otto 打开首次注册并自动填入企业信息；精确有效 7 天，生成新链接会立即废止旧链接。</p></div><span id="inviteBadge" class="badge off">尚未生成</span></div><div class="invite-row"><div><input id="inviteCode" class="invite-code" aria-label="当前企业邀请码" value="••••-••••" readonly><div class="invite-meta"><span id="inviteCountdown" class="sub">等待管理员生成</span></div><input id="inviteLinkPreview" class="invite-link-preview hidden" aria-label="当前企业引入链接" value="" readonly></div><div class="invite-actions"><button id="copyInviteLink" class="primary" type="button" disabled>复制企业引入链接</button><button id="copyInvite" class="copy" type="button" disabled>复制邀请码</button><button id="issueInvite" class="secondary" type="button">生成引入链接</button></div></div><div id="inviteError" class="error hidden" role="alert"></div></section>
       <section class="ops-card" aria-labelledby="usageTitle"><div class="ops-head"><div><div class="eyebrow">AI CONSUMPTION</div><h2 id="usageTitle">近 30 天 Token</h2><p>按登录账号汇总模型返回的用量。</p></div><span class="badge">客户端回传</span></div><div id="totalTokens" class="token-number">0</div><div class="token-split"><span>输入 <b id="inputTokens">0</b></span><span>输出 <b id="outputTokens">0</b></span><span>请求 <b id="requestCount">0</b></span></div><div class="token-note">用于企业内部用量观察，不等同于模型供应商的计费账单。</div></section>
@@ -1169,9 +1489,7 @@ restoreSession();
 </script></body></html>`;
 }
 
-function adminDashboardHTML(token: string): string {
-  // 看板自身的 fetch 要带上 admin token（report/employees/audit 都是管理路由）。
-  const tokenJson = JSON.stringify(token || '');
+function adminDashboardHTML(): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Otto Enterprise Dashboard</title>
 <style>
@@ -1205,10 +1523,16 @@ td{padding:10px 12px;border-top:1px solid #334155;font-size:13px}
 .bn .k{color:#94a3b8;font-size:12px;margin-bottom:6px}
 .bn .t{color:#f1f5f9;font-size:15px;font-weight:600}
 .bn .m{color:#64748b;font-size:12px;margin-top:4px}
+.auth-notice{max-width:680px;margin:18px 0 24px;padding:16px 18px;border:1px solid #475569;border-radius:10px;background:#1e293b;color:#cbd5e1}
+.auth-notice p{margin:0 0 10px;line-height:1.6}.auth-notice form{display:flex;gap:8px;flex-wrap:wrap}.auth-notice input{min-width:260px;flex:1;padding:9px 11px;border:1px solid #475569;border-radius:7px;background:#0f172a;color:#f8fafc}.auth-notice button,.auth-notice a{display:inline-block;padding:9px 12px;border:1px solid #60a5fa;border-radius:7px;background:#2563eb;color:#fff;text-decoration:none;cursor:pointer}.auth-notice a{background:transparent}.hidden{display:none!important}
 </style>
 </head><body>
 <div class="header"><h1>Otto Enterprise</h1><span id="updateTime"></span></div>
 <div class="note" id="discloseNote">数据全部存在本机 <b>~/.otto-enterprise/data.db</b>，零云端。标 <b>估算</b> 的指标基于假设，非实测。</div>
+<section id="authNotice" class="auth-notice hidden" aria-labelledby="authTitle">
+  <p id="authTitle">看板需要管理员会话。可先前往账号管理登录，或粘贴服务器生成的平台管理令牌；令牌只保存在当前标签页。</p>
+  <form id="dashboardTokenForm"><input id="dashboardToken" type="password" autocomplete="off" aria-label="平台管理令牌" placeholder="粘贴平台管理令牌"><button type="submit">打开看板</button><a href="/enterprise/admin">前往管理员登录</a></form>
+</section>
 <div class="grid" id="cards"></div>
 <div class="charts">
   <div class="chart-card"><h3>各任务类型：耗时与次数</h3><div id="barChart"></div></div>
@@ -1222,10 +1546,13 @@ td{padding:10px 12px;border-top:1px solid #334155;font-size:13px}
 <div class="section"><h2>最近动态</h2>
   <table id="auditTable"><thead><tr><th>时间</th><th>事件</th><th>员工</th><th>详情</th></tr></thead><tbody></tbody></table></div>
 <script>
-const TOKEN=${tokenJson};
-const H=TOKEN?{'x-otto-admin-token':TOKEN}:{};
+const KEY='otto.enterprise.admin.session';
+let TOKEN=sessionStorage.getItem(KEY)||'';
+const authNotice=document.getElementById('authNotice');
+function headers(){return TOKEN?{authorization:'Bearer '+TOKEN}:{}}
 const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-async function j(u){const r=await fetch(u,{headers:H});if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
+function requireAuth(message){TOKEN='';sessionStorage.removeItem(KEY);authNotice.classList.remove('hidden');document.getElementById('updateTime').textContent=message||'请先登录'}
+async function j(u){const r=await fetch(u,{headers:headers()});if(r.status===401||r.status===403){requireAuth('管理员会话已失效');throw new Error('管理员会话已失效')}if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
 // ---- 内联 SVG 图表（无外部依赖，CSP 友好）----
 function barChartSVG(rows){
   if(!rows||!rows.length)return '<div class="chart-empty">暂无任务数据</div>';
@@ -1281,6 +1608,8 @@ function bottlenecksHTML(b){
   return items.map(x=>'<div class="bn"><div class="k">'+x.k+'</div><div class="t">'+esc(x.t)+'</div><div class="m">'+x.m+'</div></div>').join('');
 }
 async function load(){
+  if(!TOKEN){requireAuth('请先登录');return}
+  authNotice.classList.add('hidden');
   try{
     const [report,emps,audit]=await Promise.all([j('/enterprise/report?period=30'),j('/enterprise/employees'),j('/enterprise/audit')]);
     document.getElementById('updateTime').textContent='更新于 '+new Date().toLocaleTimeString();
@@ -1309,7 +1638,8 @@ async function load(){
     ab.innerHTML=audit.logs.length?audit.logs.slice(0,15).map(l=>'<tr><td>'+esc(l.created_at)+'</td><td>'+esc(l.event)+'</td><td>'+esc(l.employee_id)+'</td><td>'+esc(l.detail)+'</td></tr>').join(''):'<tr><td colspan="4" class="empty">暂无动态</td></tr>';
   }catch(err){document.getElementById('updateTime').textContent='加载失败：'+err.message;}
 }
-load();setInterval(load,10000);
+document.getElementById('dashboardTokenForm').addEventListener('submit',event=>{event.preventDefault();const value=document.getElementById('dashboardToken').value.trim();if(!value)return;TOKEN=value;sessionStorage.setItem(KEY,TOKEN);document.getElementById('dashboardToken').value='';load()});
+load();setInterval(()=>{if(TOKEN)load()},10000);
 </script>
 </body></html>`;
 }
@@ -1327,7 +1657,8 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   generatedToken: boolean;
 } {
   const host = opts.host || process.env.OTTO_ENTERPRISE_HOST || '127.0.0.1';
-  const port = opts.port || parseInt(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT), 10);
+  const port = opts.port
+    ?? parseInt(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT), 10);
   const publicBaseUrl = resolveEnterprisePublicBaseUrl({
     configuredUrl: opts.publicUrl ?? process.env.OTTO_ENTERPRISE_PUBLIC_URL,
     host,
@@ -1348,12 +1679,97 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const smsSender = opts.smsSender === undefined
     ? (hasSmsEnv ? createAliyunLoginSmsFromEnv() : null)
     : opts.smsSender;
-  const server = createServer(makeHandler(adminToken, smsSender, publicBaseUrl));
+  const version = opts.appVersion?.trim()
+    || process.env.OTTO_APP_VERSION?.trim()
+    || 'unknown';
+  const buildCommit = opts.buildCommit?.trim()
+    || process.env.OTTO_BUILD_COMMIT?.trim()
+    || process.env.GITHUB_SHA?.trim()
+    || 'unknown';
+  const configuredProxyHops = nonNegativeInteger(
+    opts.loginRateLimit?.trustedProxyHops
+      ?? Number(process.env.OTTO_ENTERPRISE_TRUST_PROXY_HOPS),
+    0,
+    5,
+  );
+  const configuredProxyAddresses = opts.loginRateLimit?.trustedProxyAddresses
+    ?? process.env.OTTO_ENTERPRISE_TRUSTED_PROXIES?.split(',')
+      .map((address) => address.trim())
+      .filter(Boolean)
+    ?? [];
+  const loginRateLimiter = createLoginRateLimiter({
+    ...opts.loginRateLimit,
+    trustedProxyHops: configuredProxyHops,
+    trustedProxyAddresses: configuredProxyAddresses,
+  });
+  const server = createServer(makeHandler(
+    adminToken,
+    smsSender,
+    publicBaseUrl,
+    loginRateLimiter,
+    {
+      version,
+      buildCommit,
+      startedAt: new Date().toISOString(),
+    },
+  ));
   return { server, host, port, publicBaseUrl, adminToken, generatedToken };
 }
 
-/** 组装并 listen；返回 http.Server。打印访问地址与（如有）自动生成的 token。 */
+function persistGeneratedAdminToken(token: string): string {
+  const directory = process.env.OTTO_ENTERPRISE_DIR
+    || path.join(os.homedir(), '.otto-enterprise');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(directory, 0o700);
+  } catch {
+    // 某些受限文件系统不支持 chmod；写文件仍使用最小权限。
+  }
+  const tokenPath = path.join(directory, 'admin-token');
+  fs.writeFileSync(tokenPath, `${token}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  try {
+    fs.chmodSync(tokenPath, 0o600);
+  } catch {
+    // 同上；创建时的 mode 已是主防线。
+  }
+  return tokenPath;
+}
+
+function validatedStartOptions(opts: EnterpriseServerOptions): EnterpriseServerOptions {
+  const host = opts.host || process.env.OTTO_ENTERPRISE_HOST || '127.0.0.1';
+  if (isLoopback(host)) return opts;
+
+  const appVersion = opts.appVersion?.trim()
+    || process.env.OTTO_APP_VERSION?.trim()
+    || '';
+  const buildCommit = opts.buildCommit?.trim()
+    || process.env.OTTO_BUILD_COMMIT?.trim()
+    || process.env.GITHUB_SHA?.trim()
+    || '';
+  const errors: string[] = [];
+  if (!appVersion || appVersion.toLowerCase() === 'unknown') {
+    errors.push('OTTO_APP_VERSION 必须设置为明确的发布版本');
+  }
+  if (!/^[0-9a-f]{40}$/i.test(buildCommit)) {
+    errors.push('OTTO_BUILD_COMMIT 必须是完整的 40 位十六进制 Git SHA');
+  }
+  if (errors.length > 0) {
+    throw new Error(`[Otto Enterprise] 拒绝非 loopback 启动：${errors.join('；')}`);
+  }
+  return {
+    ...opts,
+    host,
+    appVersion,
+    buildCommit,
+  };
+}
+
+/** 组装并 listen；返回 http.Server。访问地址不包含凭证，自动令牌只落 0600 文件。 */
 export function startEnterpriseServer(opts: EnterpriseServerOptions = {}): Server {
+  const validatedOptions = validatedStartOptions(opts);
   const {
     server,
     host,
@@ -1361,20 +1777,22 @@ export function startEnterpriseServer(opts: EnterpriseServerOptions = {}): Serve
     publicBaseUrl,
     adminToken,
     generatedToken,
-  } = createEnterpriseServer(opts);
+  } = createEnterpriseServer(validatedOptions);
+  const generatedTokenPath = generatedToken
+    ? persistGeneratedAdminToken(adminToken)
+    : null;
   server.listen(port, host, () => {
-    const tokenQuery = adminToken ? `?token=${adminToken}` : '';
     console.log(`[Otto Enterprise] 服务端运行于 http://${host}:${port}`);
     console.log(`[Otto Enterprise] 账号管理: http://localhost:${port}/enterprise/admin`);
     console.log(`[Otto Enterprise] 企业引入: ${publicBaseUrl}/enterprise/join/{邀请码}`);
-    console.log(`[Otto Enterprise] 老板看板: http://localhost:${port}/enterprise/dashboard${tokenQuery}`);
+    console.log(`[Otto Enterprise] 老板看板: http://localhost:${port}/enterprise/dashboard`);
     console.log(`[Otto Enterprise] 数据: ~/.otto-enterprise/data.db（本地，零云端）`);
-    if (adminToken) {
-      console.log(
-        `[Otto Enterprise] 管理令牌${generatedToken ? '（自动生成，请保存）' : ''}: ${adminToken}`,
-      );
+    if (generatedTokenPath) {
+      console.log(`[Otto Enterprise] 自动生成的管理令牌已安全保存: ${generatedTokenPath}`);
+    } else if (adminToken) {
+      console.log('[Otto Enterprise] 已使用环境中配置的平台管理令牌（不会输出令牌内容）');
     } else {
-      console.log('[Otto Enterprise] 仅本机访问，未设管理令牌（设 OTTO_ENTERPRISE_ADMIN_TOKEN 可加固）');
+      console.log('[Otto Enterprise] 未配置平台令牌；管理页面仍要求管理员账号登录');
     }
     console.log('[Otto Enterprise] Ctrl+C 停止');
   });

@@ -100,6 +100,29 @@ export interface EnterpriseOrganizationInviteContext {
   invite: EnterpriseOrganizationInvite | null;
 }
 
+export interface EnterpriseSessionResult {
+  serverUrl: string;
+  account: EnterpriseAccount | null;
+  /** 恢复 token 时服务暂不可达；保留地址/token，让同页重试而不是锁死登录。 */
+  connectionError?: string;
+}
+
+interface EnterpriseServerHealth {
+  status?: unknown;
+  apiVersion?: unknown;
+  capabilities?: unknown;
+}
+
+interface EnterpriseRequestBehavior {
+  omitAuthorization?: boolean;
+  preserveSessionOnUnauthorized?: boolean;
+  serverUrl?: string;
+  authorizationToken?: string | null;
+}
+
+const ENTERPRISE_SERVER_UPGRADE_ERROR = '企业服务器版本过旧或功能不完整，请联系管理员升级后重试';
+const ENTERPRISE_AUTH_SUPERSEDED_ERROR = '认证操作已被新的请求替代，请重试';
+
 class EnterpriseRequestError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
@@ -131,30 +154,53 @@ function normalizeServerUrl(input: string): string {
 export class EnterpriseClient {
   private serverUrl = '';
   private token: string | null = null;
+  private currentAccount: EnterpriseAccount | null = null;
+  private compatibleServerUrl = '';
+  private compatibleCapabilities = new Set<string>();
+  private authOperationGeneration = 0;
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly onSessionInvalidated: () => void = () => undefined,
+  ) {}
 
   restore(session: StoredSession): void {
-    this.serverUrl = session.serverUrl ? normalizeServerUrl(session.serverUrl) : '';
+    this.authOperationGeneration += 1;
+    this.setServerUrl(session.serverUrl ? normalizeServerUrl(session.serverUrl) : '');
     this.token = session.token;
+    this.currentAccount = null;
   }
 
   snapshot(): StoredSession {
     return { serverUrl: this.serverUrl, token: this.token };
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.serverUrl) throw new Error('请先填写企业服务器地址');
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    behavior: EnterpriseRequestBehavior = {},
+  ): Promise<T> {
+    const requestServerUrl = behavior.serverUrl ?? this.serverUrl;
+    const hasExplicitAuthorization = Object.prototype.hasOwnProperty.call(
+      behavior,
+      'authorizationToken',
+    );
+    const requestToken = hasExplicitAuthorization
+      ? behavior.authorizationToken ?? null
+      : this.token;
+    if (!requestServerUrl) throw new Error('请先填写企业服务器地址');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const headers: Record<string, string> = {
         accept: 'application/json',
         ...(init.body ? { 'content-type': 'application/json' } : {}),
-        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+        ...(requestToken && !behavior.omitAuthorization
+          ? { authorization: `Bearer ${requestToken}` }
+          : {}),
         ...(init.headers as Record<string, string> | undefined),
       };
-      const response = await this.fetchImpl(`${this.serverUrl}${path}`, {
+      const response = await this.fetchImpl(`${requestServerUrl}${path}`, {
         ...init,
         method: init.method ?? 'GET',
         headers,
@@ -162,6 +208,15 @@ export class EnterpriseClient {
       });
       const body = await response.json().catch(() => ({})) as { error?: string } & T;
       if (!response.ok) {
+        if (
+          response.status === 401
+          && !behavior.preserveSessionOnUnauthorized
+          && requestServerUrl === this.serverUrl
+          && requestToken !== null
+          && requestToken === this.token
+        ) {
+          this.invalidateSession();
+        }
         throw new EnterpriseRequestError(body.error || `服务器返回 ${response.status}`, response.status);
       }
       return body;
@@ -179,8 +234,10 @@ export class EnterpriseClient {
     account: EnterpriseAccount;
     expiresAt: string;
   }> {
-    this.serverUrl = normalizeServerUrl(serverUrl);
-    this.token = null;
+    const targetServerUrl = normalizeServerUrl(serverUrl);
+    const generation = this.beginAuthOperation(targetServerUrl);
+    await this.assertCompatibleServer(targetServerUrl, ['password_auth']);
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
     const result = await this.request<{
       account: EnterpriseAccount;
       token: string;
@@ -188,8 +245,13 @@ export class EnterpriseClient {
     }>('/enterprise/auth/login', {
       method: 'POST',
       body: JSON.stringify({ identifier, password }),
+    }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: null,
     });
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
+    this.currentAccount = result.account;
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
@@ -198,12 +260,22 @@ export class EnterpriseClient {
     phone: string,
     inviteCode: string,
   ): Promise<SmsChallenge> {
-    this.serverUrl = normalizeServerUrl(serverUrl);
-    this.token = null;
-    return this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
+    const targetServerUrl = normalizeServerUrl(serverUrl);
+    const generation = this.beginAuthOperation(targetServerUrl);
+    await this.assertCompatibleServer(
+      targetServerUrl,
+      ['sms_registration', 'organization_invites'],
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    const challenge = await this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
       method: 'POST',
       body: JSON.stringify({ phone, inviteCode }),
+    }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: null,
     });
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    return challenge;
   }
 
   async registerWithSms(input: {
@@ -215,6 +287,14 @@ export class EnterpriseClient {
     account: EnterpriseAccount;
     expiresAt: string;
   }> {
+    const targetServerUrl = this.serverUrl;
+    if (!targetServerUrl) throw new Error('请先填写企业服务器地址');
+    const generation = this.beginAuthOperation(targetServerUrl);
+    await this.assertCompatibleServer(
+      targetServerUrl,
+      ['sms_registration', 'organization_invites'],
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
     const result = await this.request<{
       account: EnterpriseAccount;
       token: string;
@@ -222,32 +302,61 @@ export class EnterpriseClient {
     }>('/enterprise/auth/register/sms/verify', {
       method: 'POST',
       body: JSON.stringify(input),
+    }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: null,
     });
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
+    this.currentAccount = result.account;
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
-  async getSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }> {
+  async getSession(): Promise<EnterpriseSessionResult> {
     if (!this.serverUrl || !this.token) return { serverUrl: this.serverUrl, account: null };
+    const targetServerUrl = this.serverUrl;
+    const targetToken = this.token;
+    const generation = this.authOperationGeneration;
     try {
-      const result = await this.request<{ account: EnterpriseAccount }>('/enterprise/auth/me');
-      return { serverUrl: this.serverUrl, account: result.account };
-    } catch (error) {
-      if (error instanceof EnterpriseRequestError && error.status === 401) {
-        this.token = null;
-        return { serverUrl: this.serverUrl, account: null };
+      await this.assertCompatibleServer(targetServerUrl, ['password_auth']);
+      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+        return this.currentSessionResult();
       }
-      throw error;
+      const result = await this.request<{ account: EnterpriseAccount }>('/enterprise/auth/me', {}, {
+        serverUrl: targetServerUrl,
+        authorizationToken: targetToken,
+        preserveSessionOnUnauthorized: true,
+      });
+      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+        return this.currentSessionResult();
+      }
+      this.currentAccount = result.account;
+      return { serverUrl: targetServerUrl, account: result.account };
+    } catch (error) {
+      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+        return this.currentSessionResult();
+      }
+      if (error instanceof EnterpriseRequestError && error.status === 401) {
+        this.invalidateSession();
+        return { serverUrl: targetServerUrl, account: null };
+      }
+      const connectionError = error instanceof Error ? error.message : String(error);
+      return { serverUrl: targetServerUrl, account: null, connectionError };
     }
   }
 
   async logout(): Promise<void> {
-    if (!this.token) return;
-    try {
-      await this.request('/enterprise/auth/logout', { method: 'POST' });
-    } finally {
-      this.token = null;
-    }
+    const targetServerUrl = this.serverUrl;
+    const targetToken = this.token;
+    this.authOperationGeneration += 1;
+    this.token = null;
+    this.currentAccount = null;
+    if (!targetServerUrl || !targetToken) return;
+    await this.request('/enterprise/auth/logout', { method: 'POST' }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: targetToken,
+      preserveSessionOnUnauthorized: true,
+    });
   }
 
   async listAccounts(): Promise<EnterpriseAccount[]> {
@@ -261,10 +370,25 @@ export class EnterpriseClient {
   }
 
   async updateAccount(id: string, input: AccountUpdateInput): Promise<EnterpriseAccount> {
-    return (await this.request<{ account: EnterpriseAccount }>(
+    const previous = this.currentAccount;
+    const requestGeneration = this.authOperationGeneration;
+    const requestToken = this.token;
+    const account = (await this.request<{ account: EnterpriseAccount }>(
       `/enterprise/accounts/${encodeURIComponent(id)}`,
       { method: 'PATCH', body: JSON.stringify(input) },
     )).account;
+    if (
+      previous?.id === id
+      && requestGeneration === this.authOperationGeneration
+      && requestToken === this.token
+    ) {
+      const sessionWasRevoked = input.password !== undefined
+        || (input.status !== undefined && input.status !== previous.status)
+        || (input.isAdmin !== undefined && input.isAdmin !== previous.isAdmin);
+      if (sessionWasRevoked) this.invalidateSession();
+      else this.currentAccount = account;
+    }
+    return account;
   }
 
   async recordTokenUsage(input: TokenUsageRecordInput): Promise<{
@@ -309,5 +433,101 @@ export class EnterpriseClient {
     return (await this.request<{ ticket: unknown }>('/enterprise/tickets', {
       method: 'POST', body: JSON.stringify(input),
     })).ticket;
+  }
+
+  private setServerUrl(serverUrl: string): void {
+    if (serverUrl !== this.serverUrl) {
+      this.compatibleServerUrl = '';
+      this.compatibleCapabilities.clear();
+    }
+    this.serverUrl = serverUrl;
+  }
+
+  private beginAuthOperation(serverUrl: string): number {
+    this.authOperationGeneration += 1;
+    this.setServerUrl(serverUrl);
+    this.token = null;
+    this.currentAccount = null;
+    return this.authOperationGeneration;
+  }
+
+  private assertAuthOperationCurrent(generation: number, serverUrl: string): void {
+    if (generation !== this.authOperationGeneration || serverUrl !== this.serverUrl) {
+      throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
+    }
+  }
+
+  private isSessionSnapshotCurrent(
+    generation: number,
+    serverUrl: string,
+    token: string,
+  ): boolean {
+    return generation === this.authOperationGeneration
+      && serverUrl === this.serverUrl
+      && token === this.token;
+  }
+
+  private currentSessionResult(): EnterpriseSessionResult {
+    return {
+      serverUrl: this.serverUrl,
+      account: this.token ? this.currentAccount : null,
+    };
+  }
+
+  private async assertCompatibleServer(
+    serverUrl: string,
+    requiredCapabilities: readonly string[],
+  ): Promise<void> {
+    if (
+      this.compatibleServerUrl === serverUrl
+      && requiredCapabilities.every((capability) => this.compatibleCapabilities.has(capability))
+    ) {
+      return;
+    }
+
+    const health = await this.request<EnterpriseServerHealth>(
+      '/enterprise/health',
+      {},
+      {
+        omitAuthorization: true,
+        preserveSessionOnUnauthorized: true,
+        serverUrl,
+        authorizationToken: null,
+      },
+    );
+    const capabilities = Array.isArray(health.capabilities)
+      && health.capabilities.every((capability) => typeof capability === 'string')
+      ? new Set(health.capabilities)
+      : null;
+    const isCompatible = health.status === 'ok'
+      && typeof health.apiVersion === 'number'
+      && health.apiVersion >= 2
+      && capabilities !== null
+      && requiredCapabilities.every((capability) => capabilities.has(capability));
+    if (!isCompatible) throw new Error(ENTERPRISE_SERVER_UPGRADE_ERROR);
+
+    if (serverUrl === this.serverUrl) {
+      this.compatibleServerUrl = serverUrl;
+      this.compatibleCapabilities = capabilities;
+    }
+  }
+
+  private invalidateSession(): void {
+    const hadToken = Boolean(this.token);
+    this.authOperationGeneration += 1;
+    this.token = null;
+    this.currentAccount = null;
+    if (hadToken) this.onSessionInvalidated();
+  }
+}
+
+export async function logoutAndPersistEnterpriseSession(
+  client: Pick<EnterpriseClient, 'logout'>,
+  persistSession: () => void,
+): Promise<void> {
+  try {
+    await client.logout();
+  } finally {
+    persistSession();
   }
 }

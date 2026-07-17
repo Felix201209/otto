@@ -193,6 +193,12 @@ export interface EnterpriseRegistrationIntent {
   inviteCode: string;
 }
 
+export interface EnterpriseSessionState {
+  serverUrl: string;
+  account: EnterpriseAccount | null;
+  connectionError?: string;
+}
+
 export interface EnterpriseTokenUsageInput {
   sessionId: string;
   messageId: string;
@@ -248,6 +254,7 @@ const IPC = {
   enterpriseRegistrationRequest: 'otto:enterprise-registration-request',
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
+  enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
   enterpriseRegister: 'otto:enterprise-register',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
@@ -387,7 +394,7 @@ export interface OttoBridge {
   voiceGetConfig(): Promise<VoicePublicConfig>;
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
-  enterpriseSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }>;
+  enterpriseSession(): Promise<EnterpriseSessionState>;
   enterprisePasswordLogin(input: {
     serverUrl: string;
     identifier: string;
@@ -402,6 +409,7 @@ export interface OttoBridge {
   onEnterpriseRegistrationIntent(
     handler: (intent: EnterpriseRegistrationIntent) => void,
   ): () => void;
+  onEnterpriseSessionInvalidated(handler: () => void): () => void;
   enterpriseRegister(input: {
     challengeId: string;
     code: string;
@@ -784,11 +792,8 @@ const bridge: OttoBridge = {
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult> {
     return ipcRenderer.invoke(IPC.voiceTranscribe, bytes, mimeType) as Promise<VoiceResult>;
   },
-  enterpriseSession(): Promise<{ serverUrl: string; account: EnterpriseAccount | null }> {
-    return ipcRenderer.invoke(IPC.enterpriseSession) as Promise<{
-      serverUrl: string;
-      account: EnterpriseAccount | null;
-    }>;
+  enterpriseSession(): Promise<EnterpriseSessionState> {
+    return ipcRenderer.invoke(IPC.enterpriseSession) as Promise<EnterpriseSessionState>;
   },
   enterprisePasswordLogin(input: {
     serverUrl: string;
@@ -822,6 +827,11 @@ const bridge: OttoBridge = {
     ): void => handler(intent);
     ipcRenderer.on(IPC.enterpriseRegistrationIntentOpened, listener);
     return () => ipcRenderer.removeListener(IPC.enterpriseRegistrationIntentOpened, listener);
+  },
+  onEnterpriseSessionInvalidated(handler: () => void): () => void {
+    const listener = (): void => handler();
+    ipcRenderer.on(IPC.enterpriseSessionInvalidated, listener);
+    return () => ipcRenderer.removeListener(IPC.enterpriseSessionInvalidated, listener);
   },
   enterpriseRegister(input: {
     challengeId: string;

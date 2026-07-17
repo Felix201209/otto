@@ -62,11 +62,14 @@ describe('v1.7 Agent profile 目录', () => {
     }
   });
 
-  it('CEO 内测目录的 35 位专家全部使用独立 imagegen 头像', () => {
+  it('CEO 内测目录只含通用专家与 CEO 办公室 4 位 Agent，且头像互不重复', () => {
     const owner = getEnterpriseAgentProfiles('company_owner');
-    expect(owner).toHaveLength(35);
+    expect(owner).toHaveLength(BASE_AGENT_PROFILES.length + 4);
+    expect(owner.filter((profile) => profile.scope === 'department').every(
+      (profile) => profile.department === 'ceo-office',
+    )).toBe(true);
     expect(owner.every((profile) => profile.icon?.startsWith('agent-') || profile.icon?.startsWith('expert-'))).toBe(true);
-    expect(new Set(owner.map((profile) => profile.icon)).size).toBe(35);
+    expect(new Set(owner.map((profile) => profile.icon)).size).toBe(owner.length);
   });
 
   it.each(DEPARTMENT_IDS)('%s 部门恰好有 4 个基础 Agent', (department) => {

@@ -25,9 +25,11 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WINDOWS_RIPGREP_INTEGRITY } from './ripgrep-integrity.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(__dirname, '..');
@@ -36,7 +38,19 @@ const repoRoot = path.resolve(desktopRoot, '..', '..');
 const VENDOR_DIR = path.join(desktopRoot, 'vendor', 'win', 'ripgrep');
 const RG_EXE = path.join(VENDOR_DIR, 'rg.exe');
 const VERSION_STAMP = path.join(VENDOR_DIR, '.version');
-const TARGET = 'x86_64-pc-windows-msvc';
+
+function sha256(data) {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+function assertDigest(actual, expected, label) {
+  if (actual !== expected) {
+    throw new Error(
+      `${label} SHA256 不匹配；期望 ${expected}，实际 ${actual}。`
+      + ' 已停止，禁止把未核验二进制打入安装包',
+    );
+  }
+}
 
 /** 从 @vscode/ripgrep 的 postinstall 源码里读 VERSION 常量，保证同源同版本。 */
 function readRipgrepVersion() {
@@ -61,7 +75,13 @@ function readRipgrepVersion() {
 async function main() {
   const force = process.argv.includes('--force');
   const version = readRipgrepVersion();
-  const zipName = `ripgrep-${version}-${TARGET}.zip`;
+  const integrity = WINDOWS_RIPGREP_INTEGRITY[version];
+  if (!integrity) {
+    throw new Error(
+      `尚未登记 ${version} 的可信摘要；请先核验 microsoft/ripgrep-prebuilt 上游资产`,
+    );
+  }
+  const zipName = `ripgrep-${version}-${integrity.target}.zip`;
   const url = `https://github.com/microsoft/ripgrep-prebuilt/releases/download/${version}/${zipName}`;
 
   if (
@@ -70,32 +90,58 @@ async function main() {
     fs.existsSync(VERSION_STAMP) &&
     fs.readFileSync(VERSION_STAMP, 'utf8').trim() === version
   ) {
-    console.log(`[fetch-win-ripgrep] 已有 ${version} 的 rg.exe，跳过（--force 重下）`);
+    const executableDigest = sha256(fs.readFileSync(RG_EXE));
+    assertDigest(
+      executableDigest,
+      integrity.executableSha256,
+      `已有 ${version} rg.exe`,
+    );
+    console.log(
+      `[fetch-win-ripgrep] 已核验 ${version} 的 rg.exe `
+      + `(${executableDigest.slice(0, 16)}...)，跳过（--force 重下）`,
+    );
     return;
   }
 
   fs.mkdirSync(VENDOR_DIR, { recursive: true });
-  const zipPath = path.join(VENDOR_DIR, zipName);
+  const stagingDir = fs.mkdtempSync(path.join(VENDOR_DIR, '.staging-'));
+  const zipPath = path.join(stagingDir, zipName);
+  const stagedExecutable = path.join(stagingDir, 'rg.exe');
 
-  console.log(`[fetch-win-ripgrep] 下载 ${url}`);
-  const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) {
-    throw new Error(`下载失败 HTTP ${res.status}：${url}`);
+  try {
+    console.log(`[fetch-win-ripgrep] 下载 ${url}`);
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) {
+      throw new Error(`下载失败 HTTP ${res.status}：${url}`);
+    }
+    const zipBytes = Buffer.from(await res.arrayBuffer());
+    assertDigest(sha256(zipBytes), integrity.zipSha256, `${version} 上游 ZIP`);
+    fs.writeFileSync(zipPath, zipBytes);
+
+    // 解压到隔离目录，摘要通过后才替换正式构建输入。
+    execFileSync('unzip', ['-o', zipPath, 'rg.exe', '-d', stagingDir], {
+      stdio: 'inherit',
+    });
+    if (!fs.existsSync(stagedExecutable)) {
+      throw new Error('解压后未找到 rg.exe——zip 结构可能变了，人工检查');
+    }
+    const executableDigest = sha256(fs.readFileSync(stagedExecutable));
+    assertDigest(
+      executableDigest,
+      integrity.executableSha256,
+      `${version} 解压后的 rg.exe`,
+    );
+
+    fs.copyFileSync(stagedExecutable, RG_EXE);
+    fs.writeFileSync(VERSION_STAMP, `${version}\n`);
+    const sizeMb = (fs.statSync(RG_EXE).size / 1024 / 1024).toFixed(1);
+    console.log(
+      `[fetch-win-ripgrep] 完成：${RG_EXE}（${sizeMb} MB，${version}，`
+      + `SHA256 ${executableDigest.slice(0, 16)}...）`,
+    );
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
   }
-  fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
-
-  // 解压出 rg.exe（zip 内就一个文件）。用系统 unzip，mac/linux 都有。
-  execFileSync('unzip', ['-o', zipPath, 'rg.exe', '-d', VENDOR_DIR], {
-    stdio: 'inherit',
-  });
-  fs.rmSync(zipPath);
-
-  if (!fs.existsSync(RG_EXE)) {
-    throw new Error('解压后未找到 rg.exe——zip 结构可能变了，人工检查');
-  }
-  fs.writeFileSync(VERSION_STAMP, `${version}\n`);
-  const sizeMb = (fs.statSync(RG_EXE).size / 1024 / 1024).toFixed(1);
-  console.log(`[fetch-win-ripgrep] 完成：${RG_EXE}（${sizeMb} MB，${version}）`);
 }
 
 main().catch((err) => {

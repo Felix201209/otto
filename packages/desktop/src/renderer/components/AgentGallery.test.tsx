@@ -14,6 +14,7 @@ import {
   DEPARTMENT_AGENT_PROFILES,
   ENTERPRISE_CEO_PROFILE,
   PERSONAL_OTTO_PROFILE,
+  getEnterpriseAgentProfiles,
 } from '../agents/departmentAgents.js';
 
 function renderGallery() {
@@ -57,7 +58,7 @@ describe('AgentGallery（页面）', () => {
     expect(onLaunch.mock.calls.every((call) => call.length === 1)).toBe(true);
   });
 
-  it('企业版展示全部部门基础 Agent', () => {
+  it('企业管理者展示 CEO 办公室 Agent，不越权混入其他部门', () => {
     render(
       <AgentGallery
         mode="enterprise"
@@ -68,9 +69,10 @@ describe('AgentGallery（页面）', () => {
     expect(screen.getByText(ENTERPRISE_CEO_PROFILE.name)).toBeTruthy();
     expect(screen.queryByText(PERSONAL_OTTO_PROFILE.name)).toBeNull();
     expect(screen.getByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeTruthy();
+    const ownerProfiles = getEnterpriseAgentProfiles('company_owner');
     expect(
       screen.getByText(
-        `共 ${BASE_AGENT_PROFILES.length + DEPARTMENT_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`,
+        `共 ${ownerProfiles.length} 位专家 · 点击即可开始新对话`,
       ),
     ).toBeTruthy();
   });

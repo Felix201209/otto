@@ -752,6 +752,7 @@ h6.otto-prose__h {
 .otto-account-hero p { max-width: 650px; margin: 0; color: var(--otto-text-secondary); font-size: 13px; line-height: 1.6; }
 .otto-account-page__create { height: 42px; flex: 0 0 auto; padding: 0 17px; border: 0; border-radius: 10px; color: #ecfff4; background: var(--identity-night); font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: var(--otto-shadow-card); }
 .otto-account-page__create span { margin-right: 5px; color: var(--identity-lime); font-size: 15px; }
+.otto-account-page__create:disabled { opacity: .55; cursor: default; }
 
 .otto-account-invite { max-width: 1180px; margin: 0 auto 18px; overflow: hidden; border: 1px solid #24453b; border-radius: 15px; color: #eafff2; background: #091712; box-shadow: var(--otto-shadow-card); }
 .otto-account-invite > header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 19px; border-bottom: 1px solid #1d382f; }
@@ -785,26 +786,36 @@ h6.otto-prose__h {
 .otto-account-directory h2 { margin: 0 0 5px; font-size: 18px; }
 .otto-account-directory header p { margin: 0; color: var(--otto-text-tertiary); font-size: 11px; }
 .otto-account-search { width: min(330px,38%); height: 35px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--otto-border); border-radius: 9px; color: var(--otto-text-tertiary); background: var(--otto-bg); }
+.otto-account-search:focus-within { border-color: var(--otto-accent); box-shadow: var(--otto-shadow-focus); }
 .otto-account-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--otto-text); background: transparent; font-size: 11.5px; }
 .otto-account-page__error { margin: 12px 18px; padding: 10px 12px; border: 1px solid color-mix(in srgb,var(--otto-danger) 28%,var(--otto-border)); border-radius: 9px; color: var(--otto-danger); background: color-mix(in srgb,var(--otto-danger) 6%,var(--otto-surface)); font-size: 11px; }
 .otto-account-table { overflow-x: auto; }
-.otto-account-table__row { min-width: 820px; display: grid; grid-template-columns: 1.4fr 1fr 1.25fr 1fr 50px; gap: 14px; align-items: center; min-height: 72px; padding: 11px 18px; border-bottom: 1px solid var(--otto-border); font-size: 12px; }
-.otto-account-table__row:last-child { border-bottom: 0; }
-.otto-account-table__header { min-height: 38px; color: var(--otto-text-tertiary); background: var(--otto-surface-raised); font: 700 9.5px/1 var(--otto-font-mono); letter-spacing: .11em; text-transform: uppercase; }
+.otto-account-table table { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; }
+.otto-account-table__row > th, .otto-account-table__row > td { min-height: 72px; padding: 11px 9px; border-bottom: 1px solid var(--otto-border); vertical-align: middle; font-size: 12px; text-align: left; }
+.otto-account-table__row > th:first-child, .otto-account-table__row > td:first-child { width: 22%; padding-left: 18px; }
+.otto-account-table__row > th:nth-child(2), .otto-account-table__row > td:nth-child(2) { width: 14%; }
+.otto-account-table__row > th:nth-child(3), .otto-account-table__row > td:nth-child(3) { width: 17%; }
+.otto-account-table__row > th:nth-child(4), .otto-account-table__row > td:nth-child(4) { width: 20%; }
+.otto-account-table__row > th:nth-child(5), .otto-account-table__row > td:nth-child(5) { width: 19%; }
+.otto-account-table__row > th:last-child, .otto-account-table__row > td:last-child { width: 8%; padding-right: 18px; text-align: right; }
+.otto-account-table tbody .otto-account-table__row:last-child > td { border-bottom: 0; }
+.otto-account-table__header > th { height: 38px; color: var(--otto-text-tertiary); background: var(--otto-surface-raised); font: 700 9.5px/1 var(--otto-font-mono); letter-spacing: .11em; text-transform: uppercase; }
 .otto-account-table__identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .otto-account-table__avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; color: #10241d; background: #dff8e9; font-size: 11px; font-weight: 850; }
 .otto-account-table__row strong, .otto-account-table__row small { display: block; min-width: 0; }
 .otto-account-table__row strong { color: var(--otto-text); font-size: 12px; }
 .otto-account-table__row small { margin-top: 4px; color: var(--otto-text-tertiary); font-size: 10.5px; }
 .otto-account-table__tags, .otto-account-table__state { display: flex; flex-wrap: wrap; gap: 4px; }
+.otto-account-table__usage { min-width: 0; }
+.otto-account-table__usage small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otto-account-table__tags span, .otto-account-table__state span { padding: 4px 7px; border-radius: 999px; color: var(--otto-text-secondary); background: var(--otto-code-bg); font-size: 9.5px; }
 .otto-account-table__tags span:first-child { color: var(--otto-accent); background: var(--otto-accent-soft); }
 .otto-account-table__state .is-admin { color: #eafff3; background: #10241d; }
 .otto-account-table__state .is-active { color: var(--otto-success); }
 .otto-account-table__state .is-disabled { color: var(--otto-danger); }
 .otto-account-table__state .is-sms { color: #156b4a; background: #e5f8ee; }
-.otto-account-table__row > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
-.otto-account-table__empty { padding: 55px 20px; text-align: center; color: var(--otto-text-tertiary); font-size: 12px; }
+.otto-account-table__row > td > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
+.otto-account-table .otto-account-table__empty { height: 120px; padding: 35px 20px; text-align: center; color: var(--otto-text-tertiary); font-size: 12px; }
 
 .otto-account-editor__overlay { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(3,13,10,.55); backdrop-filter: blur(10px); }
 .otto-account-editor { width: min(720px,94vw); max-height: 91vh; overflow-y: auto; padding: 23px; border: 1px solid var(--otto-border); border-radius: 18px; background: var(--otto-surface); box-shadow: var(--otto-shadow-pop); animation: otto-auth-rise .28s ease; }

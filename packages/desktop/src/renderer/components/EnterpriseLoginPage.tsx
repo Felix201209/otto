@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { OttoPetStage } from './OttoPetStage.js';
 
 type LoginMode = 'login' | 'register';
@@ -140,9 +140,14 @@ export function EnterpriseLoginPage({
   const [organizationName, setOrganizationName] = useState('');
   const [requesting, setRequesting] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const requestEpochRef = useRef(0);
+  const submitLockedRef = useRef(false);
+  const formPending = busy || submitting;
 
   useEffect(() => {
     if (!initialInviteCode) return;
+    requestEpochRef.current += 1;
     setMode('register');
     setInviteCode(sanitizeOrganizationInviteCode(initialInviteCode));
     setChallengeId('');
@@ -150,6 +155,7 @@ export function EnterpriseLoginPage({
     setNotice('');
     setOrganizationName('');
     setCountdown(0);
+    setRequesting(false);
     onClearError();
   }, [initialInviteCode, onClearError]);
 
@@ -160,7 +166,9 @@ export function EnterpriseLoginPage({
   }, [countdown]);
 
   const requestCode = async (): Promise<void> => {
-    if (requesting || countdown > 0) return;
+    if (formPending || requesting || countdown > 0) return;
+    const requestEpoch = requestEpochRef.current + 1;
+    requestEpochRef.current = requestEpoch;
     setRequesting(true);
     setNotice('');
     try {
@@ -169,6 +177,7 @@ export function EnterpriseLoginPage({
         phone: phone.trim(),
         inviteCode,
       });
+      if (requestEpoch !== requestEpochRef.current) return;
       setChallengeId(result.challengeId);
       setNotice(result.message);
       setOrganizationName(result.organization.name);
@@ -176,7 +185,52 @@ export function EnterpriseLoginPage({
     } catch {
       // 具体错误由 useEnterpriseAuth 写入 error，表单只负责结束 loading。
     } finally {
-      setRequesting(false);
+      if (requestEpoch === requestEpochRef.current) setRequesting(false);
+    }
+  };
+
+  const invalidateRegistrationChallenge = (): void => {
+    requestEpochRef.current += 1;
+    setRequesting(false);
+    setChallengeId('');
+    setCode('');
+    setNotice('');
+    setOrganizationName('');
+    setCountdown(0);
+  };
+
+  const submitAuth = async (): Promise<void> => {
+    if (formPending || requesting || submitLockedRef.current) return;
+    if (mode === 'register' && !isRegistrationReady({
+      inviteCode,
+      name,
+      password: registrationPassword,
+      confirmPassword,
+      challengeId,
+      code,
+    })) return;
+    if (mode === 'login' && (!identifier.trim() || !loginPassword)) return;
+
+    submitLockedRef.current = true;
+    setSubmitting(true);
+    try {
+      if (mode === 'register') {
+        await onRegister({
+          challengeId,
+          code: code.trim(),
+          name: name.trim(),
+          password: registrationPassword,
+        });
+      } else {
+        await onPasswordLogin({
+          serverUrl: initialServerUrl.trim(),
+          identifier: identifier.trim(),
+          password: loginPassword,
+        });
+      }
+    } finally {
+      submitLockedRef.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -215,20 +269,7 @@ export function EnterpriseLoginPage({
           className={`otto-auth-card otto-auth-card--${mode}`}
           onSubmit={(event) => {
             event.preventDefault();
-            if (mode === 'register') {
-              void onRegister({
-                challengeId,
-                code: code.trim(),
-                name: name.trim(),
-                password: registrationPassword,
-              });
-              return;
-            }
-            void onPasswordLogin({
-              serverUrl: initialServerUrl.trim(),
-              identifier: identifier.trim(),
-              password: loginPassword,
-            });
+            void submitAuth();
           }}
         >
           <span className="otto-auth-card__pixel-corner" aria-hidden />
@@ -258,13 +299,10 @@ export function EnterpriseLoginPage({
                   spellCheck={false}
                   maxLength={9}
                   value={inviteCode}
+                  disabled={formPending}
                   onChange={(event) => {
                     setInviteCode(sanitizeOrganizationInviteCode(event.target.value));
-                    setChallengeId('');
-                    setCode('');
-                    setNotice('');
-                    setOrganizationName('');
-                    setCountdown(0);
+                    invalidateRegistrationChallenge();
                     onClearError();
                   }}
                   placeholder="XXXX-XXXX"
@@ -279,7 +317,11 @@ export function EnterpriseLoginPage({
                     aria-label="姓名"
                     autoComplete="name"
                     value={name}
-                    onChange={(event) => setName(event.target.value)}
+                    disabled={formPending}
+                    onChange={(event) => {
+                      setName(event.target.value);
+                      onClearError();
+                    }}
                     placeholder="填写真实姓名"
                     required
                   />
@@ -293,13 +335,10 @@ export function EnterpriseLoginPage({
                       inputMode="tel"
                       autoComplete="tel"
                       value={phone}
+                      disabled={formPending}
                       onChange={(event) => {
                         setPhone(event.target.value);
-                        setChallengeId('');
-                        setCode('');
-                        setNotice('');
-                        setOrganizationName('');
-                        setCountdown(0);
+                        invalidateRegistrationChallenge();
                         onClearError();
                       }}
                       placeholder="11 位手机号"
@@ -317,7 +356,11 @@ export function EnterpriseLoginPage({
                     autoComplete="new-password"
                     minLength={8}
                     value={registrationPassword}
-                    onChange={(event) => setRegistrationPassword(event.target.value)}
+                    disabled={formPending}
+                    onChange={(event) => {
+                      setRegistrationPassword(event.target.value);
+                      onClearError();
+                    }}
                     placeholder="至少 8 位"
                     required
                   />
@@ -330,7 +373,11 @@ export function EnterpriseLoginPage({
                     autoComplete="new-password"
                     minLength={8}
                     value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    disabled={formPending}
+                    onChange={(event) => {
+                      setConfirmPassword(event.target.value);
+                      onClearError();
+                    }}
                     placeholder="再次输入密码"
                     required
                   />
@@ -345,14 +392,18 @@ export function EnterpriseLoginPage({
                     autoComplete="one-time-code"
                     maxLength={6}
                     value={code}
-                    onChange={(event) => setCode(sanitizeSmsCode(event.target.value))}
+                    disabled={formPending}
+                    onChange={(event) => {
+                      setCode(sanitizeSmsCode(event.target.value));
+                      onClearError();
+                    }}
                     placeholder="6 位验证码"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => void requestCode()}
-                    disabled={requesting || countdown > 0
+                    disabled={formPending || requesting || countdown > 0
                       || phone.replace(/\D/g, '').length !== 11
                       || inviteCode.replace(/[^A-Z2-9]/g, '').length !== 8}
                   >
@@ -378,7 +429,11 @@ export function EnterpriseLoginPage({
                   aria-label="账号或手机号"
                   autoComplete="username"
                   value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
+                  disabled={formPending}
+                  onChange={(event) => {
+                    setIdentifier(event.target.value);
+                    onClearError();
+                  }}
                   placeholder="企业账号或 11 位手机号"
                   required
                 />
@@ -390,7 +445,11 @@ export function EnterpriseLoginPage({
                   type="password"
                   autoComplete="current-password"
                   value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
+                  disabled={formPending}
+                  onChange={(event) => {
+                    setLoginPassword(event.target.value);
+                    onClearError();
+                  }}
                   placeholder="输入登录密码"
                   required
                 />
@@ -402,16 +461,18 @@ export function EnterpriseLoginPage({
           <button
             className="otto-auth-submit"
             type="submit"
-            disabled={busy || (mode === 'register' && !isRegistrationReady({
-              inviteCode,
-              name,
-              password: registrationPassword,
-              confirmPassword,
-              challengeId,
-              code,
-            }))}
+            disabled={formPending || requesting
+              || (mode === 'login' && (!identifier.trim() || !loginPassword))
+              || (mode === 'register' && !isRegistrationReady({
+                inviteCode,
+                name,
+                password: registrationPassword,
+                confirmPassword,
+                challengeId,
+                code,
+              }))}
           >
-            <span>{busy ? '正在验证身份…' : mode === 'register' ? '创建账号并进入' : '进入 Otto'}</span>
+            <span>{formPending ? '正在验证身份…' : mode === 'register' ? '创建账号并进入' : '进入 Otto'}</span>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M5 12h13m-5-5 5 5-5 5" /></svg>
           </button>
 
@@ -419,9 +480,14 @@ export function EnterpriseLoginPage({
             <span>{mode === 'register' ? '已经有 Otto 账号？' : '第一次使用 Otto？'}</span>
             <button
               type="button"
+              disabled={formPending || requesting}
               onClick={() => {
-                setMode((current) => current === 'register' ? 'login' : 'register');
-                setNotice('');
+                const nextMode = mode === 'register' ? 'login' : 'register';
+                invalidateRegistrationChallenge();
+                setRegistrationPassword('');
+                setConfirmPassword('');
+                setLoginPassword('');
+                setMode(nextMode);
                 onClearError();
               }}
             >

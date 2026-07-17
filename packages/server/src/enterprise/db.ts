@@ -67,6 +67,11 @@ export const ESTIMATE = {
   laborPerTokenCap: envNum('OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP', 50),
 };
 
+const USAGE_DAILY_RECORD_LIMIT = Math.min(
+  100_000,
+  Math.max(1, Math.floor(envNum('OTTO_ENTERPRISE_USAGE_DAILY_LIMIT', 10_000))),
+);
+
 /**
  * 成本口径归一：非正/缺失的单任务成本一律回落到默认成本估计，避免「显式上报 0」
  * 把整体成本口径拉塌，导致 laborSaved/totalCost 爆表。tokens 同理。
@@ -113,6 +118,21 @@ export function getDB(): Database {
 
   initSchema(db);
   return db;
+}
+
+/** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
+export function getDatabaseReadiness(): { ready: true; schemaVersion: number } {
+  const database = getDB();
+  const probe = database.prepare('SELECT 1 AS ready').get() as { ready?: number } | undefined;
+  if (probe?.ready !== 1) throw new Error('Enterprise database readiness probe failed');
+  const schema = database.prepare('PRAGMA user_version').get() as
+    | { user_version?: number }
+    | undefined;
+  const schemaVersion = Number(schema?.user_version);
+  if (!Number.isInteger(schemaVersion) || schemaVersion <= 0) {
+    throw new Error('Enterprise database schema version is unavailable');
+  }
+  return { ready: true, schemaVersion };
 }
 
 function initSchema(d: Database): void {
@@ -547,17 +567,16 @@ export function inspectOrganizationInvite(
   const normalized = normalizeOrganizationInviteCode(code);
   if (normalized.length !== 8) return { status: 'invalid', organizationId: null };
 
-  // 只加载有效期内的活跃邀请码，按时间倒序（最新优先），避免全表扫描。
+  // 邀请码由 nonce 动态派生，库中没有可直接索引的明文 code；必须保留已撤销/
+  // 已过期记录，公开落地页才能正确区分 404 与 410。先在 SQL 层排除已停用企业，
+  // 再恒定时间比对候选 code，不能引用 organization_invites 中不存在的 status 列。
   const rows = getDB().prepare(
     `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
      FROM organization_invites i
      JOIN organizations o ON o.id = i.organization_id
-     WHERE i.status = 'active'
-       AND i.revoked_at_ms IS NULL
-       AND i.expires_at_ms > ?
-     ORDER BY i.issued_at_ms DESC
-     LIMIT 50`,
-  ).all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+     WHERE o.status = 'active'
+     ORDER BY i.issued_at_ms DESC`,
+  ).all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
   const matches = rows.filter((row) => {
     const organization: OrganizationRow = {
       id: row.organization_id,
@@ -592,26 +611,41 @@ export function issueOrganizationInvite(
   now = Date.now(),
   createdByAccountId?: string | null,
 ): OrganizationInviteView {
-  const organization = getDB().prepare(
-    'SELECT * FROM organizations WHERE id = ? AND status = ?',
-  ).get(organizationId, 'active') as OrganizationRow | undefined;
-  if (!organization) throw new Error('Organization not found');
-  const id = `orginvite_${randomUUID()}`;
-  const nonce = randomBytes(24).toString('base64url');
-  const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
   const database = getDB();
-  database.prepare(
-    `INSERT INTO organization_invites
-       (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, organizationId, nonce, now, expiresAtMs, createdByAccountId || null);
-  database.prepare(
-    `UPDATE organization_invites SET revoked_at_ms = ?
-     WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
-  ).run(now, organizationId, id);
-  logAudit('organization_invite_issue', null, 'Registration invite issued for 7 days', organizationId);
-  const row = database.prepare('SELECT * FROM organization_invites WHERE id = ?').get(id) as OrganizationInviteRow;
-  return toOrganizationInviteView(row, organization, now);
+  database.exec('SAVEPOINT issue_organization_invite');
+  try {
+    const organization = database.prepare(
+      'SELECT * FROM organizations WHERE id = ? AND status = ?',
+    ).get(organizationId, 'active') as OrganizationRow | undefined;
+    if (!organization) throw new Error('Organization not found');
+    const id = `orginvite_${randomUUID()}`;
+    const nonce = randomBytes(24).toString('base64url');
+    const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
+    database.prepare(
+      `INSERT INTO organization_invites
+         (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(id, organizationId, nonce, now, expiresAtMs, createdByAccountId || null);
+    database.prepare(
+      `UPDATE organization_invites SET revoked_at_ms = ?
+       WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
+    ).run(now, organizationId, id);
+    logAudit(
+      'organization_invite_issue',
+      null,
+      'Registration invite issued for 7 days',
+      organizationId,
+    );
+    const row = database.prepare(
+      'SELECT * FROM organization_invites WHERE id = ?',
+    ).get(id) as OrganizationInviteRow;
+    database.exec('RELEASE SAVEPOINT issue_organization_invite');
+    return toOrganizationInviteView(row, organization, now);
+  } catch (error) {
+    database.exec('ROLLBACK TO SAVEPOINT issue_organization_invite');
+    database.exec('RELEASE SAVEPOINT issue_organization_invite');
+    throw error;
+  }
 }
 
 export function getOrganizationInvite(
@@ -802,6 +836,7 @@ export function createAccount(input: {
   department?: string | null;
   tags?: string[];
   isAdmin?: boolean;
+  status?: 'active' | 'disabled';
 }): AccountView {
   const organizationId = input.organizationId || DEFAULT_ORGANIZATION_ID;
   if (!getOrganization(organizationId)) throw new Error('Organization not found');
@@ -809,12 +844,16 @@ export function createAccount(input: {
   const name = input.name.trim();
   if (!username || !name || !input.password) throw new Error('username, password and name required');
   assertAccountPassword(input.password);
+  const status = input.status ?? 'active';
+  if (status !== 'active' && status !== 'disabled') {
+    throw new Error('账号状态必须是 active 或 disabled');
+  }
   const id = `acc_${randomUUID()}`;
   try {
     getDB().prepare(
     `INSERT INTO accounts
-       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, is_admin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, is_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       organizationId,
@@ -826,6 +865,7 @@ export function createAccount(input: {
       input.role?.trim() || null,
       input.department?.trim() || null,
       input.isAdmin ? 1 : 0,
+      status,
     );
   } catch (error) {
     if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
@@ -836,6 +876,52 @@ export function createAccount(input: {
   replaceAccountTags(id, organizationId, input.tags ?? []);
   logAudit('account_create', input.employeeId || null, `Preset account ${username} created`, organizationId);
   return getAccount(id)!;
+}
+
+/**
+ * 平台开户的唯一写入口：企业、首位管理员和首个 7 天邀请要么全部成功，
+ * 要么全部回滚，避免账号冲突或邀请失败后留下不可管理的孤儿企业。
+ */
+export function provisionOrganization(input: {
+  name: string;
+  slug?: string;
+  admin: {
+    username: string;
+    password: string;
+    name: string;
+    phone?: string | null;
+  };
+  now?: number;
+}): {
+  organization: OrganizationView;
+  admin: AccountView;
+  invite: OrganizationInviteView;
+} {
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const organization = createOrganization({
+      name: input.name,
+      slug: input.slug,
+      now: input.now,
+    });
+    const admin = createAccount({
+      organizationId: organization.id,
+      username: input.admin.username,
+      password: input.admin.password,
+      name: input.admin.name,
+      phone: input.admin.phone,
+      role: '企业管理员',
+      tags: ['企业管理员'],
+      isAdmin: true,
+    });
+    const invite = issueOrganizationInvite(organization.id, input.now ?? Date.now(), admin.id);
+    database.exec('COMMIT');
+    return { organization, admin, invite };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function getAccount(id: string, organizationId?: string): AccountView | null {
@@ -1455,6 +1541,17 @@ export interface OrganizationUsageSummary {
   byAccount: AccountTokenUsageView[];
 }
 
+function sqliteUtcToIso(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const withZone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized)
+    ? normalized
+    : `${normalized}Z`;
+  const timestamp = Date.parse(withZone);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+}
+
 function normalizeReportedTokenCount(value: unknown): number {
   const number = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(number) || number < 0) throw new Error('Token 用量必须是非负数字');
@@ -1481,6 +1578,18 @@ export function recordTokenUsage(input: {
     normalizeReportedTokenCount(input.totalTokens),
     inputTokens + outputTokens,
   );
+  const duplicate = getDB().prepare(
+    'SELECT 1 AS found FROM account_token_usage WHERE account_id = ? AND message_id = ?',
+  ).get(account.id, messageId) as { found?: number } | undefined;
+  if (duplicate?.found === 1) return false;
+  const recentCount = getDB().prepare(
+    `SELECT COUNT(*) AS count
+     FROM account_token_usage
+     WHERE account_id = ? AND datetime(created_at) >= datetime('now', '-1 day')`,
+  ).get(account.id) as { count?: number } | undefined;
+  if (Number(recentCount?.count ?? 0) >= USAGE_DAILY_RECORD_LIMIT) {
+    throw new Error('账号今日 Token 用量记录已达上限');
+  }
   const result = getDB().prepare(
     `INSERT OR IGNORE INTO account_token_usage
        (id, organization_id, account_id, session_id, message_id, model,
@@ -1516,9 +1625,9 @@ export function getOrganizationUsageSummary(
             MAX(u.created_at) AS last_used_at
      FROM accounts a
      LEFT JOIN account_token_usage u
-       ON u.account_id = a.id
+      ON u.account_id = a.id
       AND u.organization_id = a.organization_id
-      AND u.created_at >= ?
+      AND datetime(u.created_at) >= datetime(?)
      WHERE a.organization_id = ?
      GROUP BY a.id, a.name, a.username
      ORDER BY total_tokens DESC, a.name, a.username`,
@@ -1540,7 +1649,7 @@ export function getOrganizationUsageSummary(
     outputTokens: Number(row.output_tokens),
     totalTokens: Number(row.total_tokens),
     requestCount: Number(row.request_count),
-    lastUsedAt: row.last_used_at,
+    lastUsedAt: sqliteUtcToIso(row.last_used_at),
   }));
   return {
     organizationId,

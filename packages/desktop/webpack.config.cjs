@@ -25,6 +25,9 @@ module.exports = (_env, argv) => {
     output: {
       path: path.resolve(__dirname, 'dist/renderer'),
       filename: 'main.js',
+      // contextIsolation + sandbox 下没有 Node 的 `global`。electron-renderer
+      // target 默认会让 chunk runtime 引用它，生产包因此在 React 挂载前白屏。
+      globalObject: 'globalThis',
       clean: true,
     },
     devtool: isProd ? false : 'source-map',

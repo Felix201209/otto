@@ -163,4 +163,124 @@ describe('专业登录入口', () => {
       ),
     ).toBe('账号或密码错误');
   });
+
+  it('修改登录字段会清除旧错误，提交期间禁止重复提交与切换注册模式', async () => {
+    let finishLogin!: () => void;
+    const loginPending = new Promise<void>((resolve) => {
+      finishLogin = resolve;
+    });
+    const onPasswordLogin = vi.fn(() => loginPending);
+    const onClearError = vi.fn();
+    render(
+      <EnterpriseLoginPage
+        initialServerUrl="https://enterprise.otto.test"
+        busy={false}
+        error="账号或密码错误"
+        onPasswordLogin={onPasswordLogin}
+        onRequestRegistrationCode={async () => ({
+          challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
+          organization: { id: 'org_acme', name: '星河科技' },
+        })}
+        onRegister={async () => undefined}
+        onClearError={onClearError}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('账号或手机号'), {
+      target: { value: 'staff01' },
+    });
+    fireEvent.change(screen.getByLabelText('密码'), {
+      target: { value: 'password-1' },
+    });
+    expect(onClearError).toHaveBeenCalledTimes(2);
+
+    const form = screen.getByRole('button', { name: '进入 Otto' }).closest('form');
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
+
+    expect(onPasswordLogin).toHaveBeenCalledOnce();
+    expect((screen.getByRole('button', { name: '正在验证身份…' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect((screen.getByRole('button', { name: '注册新账号' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+
+    finishLogin();
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: '进入 Otto' }) as HTMLButtonElement).disabled)
+        .toBe(false);
+    });
+  });
+
+  it('邀请码或手机号改变后忽略晚到的验证码响应，切回登录时清除注册密码与验证码', async () => {
+    let finishRequest!: (value: {
+      challengeId: string;
+      message: string;
+      retryAfterSeconds: number;
+      organization: { id: string; name: string };
+    }) => void;
+    const requestPending = new Promise<{
+      challengeId: string;
+      message: string;
+      retryAfterSeconds: number;
+      organization: { id: string; name: string };
+    }>((resolve) => {
+      finishRequest = resolve;
+    });
+    render(
+      <EnterpriseLoginPage
+        initialServerUrl="https://enterprise.otto.test"
+        busy={false}
+        error={null}
+        onPasswordLogin={async () => undefined}
+        onRequestRegistrationCode={() => requestPending}
+        onRegister={async () => undefined}
+        onClearError={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '注册新账号' }));
+    fireEvent.change(screen.getByLabelText('企业邀请码'), {
+      target: { value: 'ABCD-EFGH' },
+    });
+    fireEvent.change(screen.getByLabelText('手机号'), {
+      target: { value: '13800138000' },
+    });
+    fireEvent.change(screen.getByLabelText('设置登录密码'), {
+      target: { value: 'password-1' },
+    });
+    fireEvent.change(screen.getByLabelText('确认登录密码'), {
+      target: { value: 'password-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '获取验证码' }));
+
+    expect((screen.getByRole('button', { name: '发送中…' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect((screen.getByRole('button', {
+      name: '已有账号，返回登录',
+    }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('手机号'), {
+      target: { value: '13900139000' },
+    });
+    finishRequest({
+      challengeId: 'stale_sms',
+      message: '旧验证码已发送',
+      retryAfterSeconds: 60,
+      organization: { id: 'org_stale', name: '旧企业' },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('将加入「旧企业」')).toBeNull();
+      expect(screen.queryByText('旧验证码已发送')).toBeNull();
+      expect((screen.getByRole('button', { name: '获取验证码' }) as HTMLButtonElement).disabled)
+        .toBe(false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '已有账号，返回登录' }));
+    fireEvent.click(screen.getByRole('button', { name: '注册新账号' }));
+    expect((screen.getByLabelText('设置登录密码') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('确认登录密码') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('短信验证码') as HTMLInputElement).value).toBe('');
+  });
 });

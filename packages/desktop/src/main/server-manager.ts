@@ -58,6 +58,8 @@ function loadEnterpriseServer(): Promise<typeof import('otto-server/dist/src/ent
 
 /** enterprise-server 默认端口。 */
 const ENTERPRISE_DEFAULT_PORT = 7777;
+/** enterprise-server 监听完成的最长等待时间。 */
+const ENTERPRISE_LISTEN_TIMEOUT_MS = 3000;
 
 /** 聊天记录落盘目录：~/.otto-user/sessions/（每个会话一个 json 文件）。 */
 function sessionsDir(): string {
@@ -79,11 +81,53 @@ export interface EnsuredServer {
   ownership: ServerOwnership;
 }
 
+export type EnterpriseServerOwnership =
+  | 'external'
+  | 'discovered'
+  | 'embedded'
+  | 'unavailable';
+
+/**
+ * ServerManager 的可替换边界。生产环境使用下面的真实默认值；单测注入隔离实现，
+ * 才能覆盖「主服务已发现」「7777 竞争」「监听永不完成」这些生命周期分支。
+ */
+export interface ServerManagerDependencies {
+  loadOttoServer: typeof loadOttoServer;
+  loadEnterpriseServer: typeof loadEnterpriseServer;
+  pidAlive: typeof pidAlive;
+  probeHealth: typeof probeHealth;
+  enterpriseListenTimeoutMs: number;
+}
+
+const DEFAULT_DEPENDENCIES: ServerManagerDependencies = {
+  loadOttoServer,
+  loadEnterpriseServer,
+  pidAlive,
+  probeHealth,
+  enterpriseListenTimeoutMs: ENTERPRISE_LISTEN_TIMEOUT_MS,
+};
+
+export interface ServerManagerOptions {
+  /**
+   * 桌面企业身份服务的实际入口。公网/自托管远端由外部部署负责；只有显式
+   * localhost/loopback 开发入口才由桌面进程内嵌拉起，避免每台客户端创建
+   * 一套与中心企业库脱节的本机数据库。
+   */
+  enterpriseServerUrl?: string | null;
+  dependencies?: ServerManagerDependencies;
+}
+
 export class ServerManager {
   /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
   private embedded?: OttoServerType;
   /** 企业后台 server（管理员登录 / 看板 / 账号管理）。本进程内嵌拉起时持有。 */
   private enterpriseSrv?: HttpServer;
+  /** enterprise 启动中的共享 Promise，防并发 ensure 重复抢占同一端口。 */
+  private enterpriseEnsurePromise?: Promise<void>;
+  /** 退出时中止尚未完成的 listen。 */
+  private enterpriseListenAbort?: AbortController;
+  /** 企业服务的真实可用状态，供诊断和回归测试读取。 */
+  private enterpriseOwnership: EnterpriseServerOwnership = 'unavailable';
   private ownership: ServerOwnership = 'discovered';
   /**
    * 已进入退出流程（shutdown 被调过）。ensure 的每个异步完成点都要检查它：
@@ -91,18 +135,28 @@ export class ServerManager {
    * 不检查就会留下一个没人管的孤儿 server。
    */
   private shuttingDown = false;
+  private readonly dependencies: ServerManagerDependencies;
+  private readonly localEnterpriseServerUrl: string | null;
+
+  constructor(options: ServerManagerOptions = {}) {
+    this.dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
+    this.localEnterpriseServerUrl = loopbackServerUrl(options.enterpriseServerUrl);
+    if (!this.localEnterpriseServerUrl && options.enterpriseServerUrl) {
+      this.enterpriseOwnership = 'external';
+    }
+  }
 
   /**
    * 确保有可用 server，返回其端点。已尽量幂等：可重复调用（重连场景）。
    */
   async ensure(): Promise<EnsuredServer> {
     this.throwIfShuttingDown();
-    const mod = await loadOttoServer();
+    const mod = await this.dependencies.loadOttoServer();
     this.throwIfShuttingDown();
     // 1) 发现并探活已运行的 server（headless / CLI 已在跑时直接复用）。
     const discovered = mod.readEndpoint();
-    if (discovered && pidAlive(discovered.pid)) {
-      const healthy = await probeHealth(
+    if (discovered && this.dependencies.pidAlive(discovered.pid)) {
+      const healthy = await this.dependencies.probeHealth(
         discovered.host,
         discovered.port,
         mod.HTTP_ROUTES.health,
@@ -110,11 +164,14 @@ export class ServerManager {
       this.throwIfShuttingDown();
       if (healthy) {
         this.ownership = 'discovered';
+        // 主服务由 CLI/headless 进程持有时，桌面端仍必须单独保证企业后台可用。
+        // 旧实现从这里提前返回，导致管理员登录/邀请码接口从未启动。
+        if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
         return { endpoint: discovered, ownership: 'discovered' };
       }
     }
     // 端点文件陈旧（进程没了或不应答）→ 清掉，避免误导后续读取。
-    if (discovered && !pidAlive(discovered.pid)) {
+    if (discovered && !this.dependencies.pidAlive(discovered.pid)) {
       mod.clearEndpoint();
     }
 
@@ -124,7 +181,7 @@ export class ServerManager {
     this.ownership = 'embedded';
     // 3) 同时拉起 enterprise-server（管理员登录 / 看板功能依赖）。
     // 静默失败：企业后台是辅助功能，不影响主对话。
-    await this.ensureEnterprise();
+    if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
     return { endpoint: embeddedEp, ownership: 'embedded' };
   }
 
@@ -133,12 +190,26 @@ export class ServerManager {
     return this.ownership;
   }
 
+  /** 当前 enterprise-server 是复用、内嵌还是不可用。 */
+  get currentEnterpriseOwnership(): EnterpriseServerOwnership {
+    return this.enterpriseOwnership;
+  }
+
   /**
    * app 退出清理：只在内嵌时停 server（discovered 的 server 故意留活）。
    * 先置 shuttingDown，让还在跑的 ensure()/startEmbedded() 在完成点自行终止。
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    // listen 尚未完成时 enterpriseSrv 还没有赋值；必须显式中止并等待启动路径收尾。
+    this.enterpriseListenAbort?.abort();
+    if (this.enterpriseEnsurePromise) {
+      try {
+        await this.enterpriseEnsurePromise;
+      } catch {
+        // ensureEnterprise 会降级处理；退出路径再兜底吞掉。
+      }
+    }
     // 停 enterprise-server（内嵌时才有）。
     if (this.enterpriseSrv) {
       try {
@@ -151,6 +222,7 @@ export class ServerManager {
         // 退出路径，吞掉。
       }
       this.enterpriseSrv = undefined;
+      this.enterpriseOwnership = 'unavailable';
     }
     // 判 this.embedded 而非 ownership：embedded 只在本进程拉起时赋值，
     // 且 ownership 的赋值晚于拉起完成，退出竞态窗口内以 embedded 为准。
@@ -162,7 +234,7 @@ export class ServerManager {
       } finally {
         // loadOttoServer 此时必已完成过一次（embedded 存在即说明 ensure 跑过），
         // 缓存命中不会真的再 import()。
-        const mod = await loadOttoServer();
+        const mod = await this.dependencies.loadOttoServer();
         mod.clearEndpoint();
         this.embedded = undefined;
       }
@@ -218,32 +290,81 @@ export class ServerManager {
 
   /** 确保 enterprise-server（管理员登录/看板）在同进程内嵌拉起。幂等：已跑就跳过。 */
   private async ensureEnterprise(): Promise<void> {
-    if (this.enterpriseSrv) return; // 已启动
+    if (this.enterpriseSrv) {
+      this.enterpriseOwnership = 'embedded';
+      return;
+    }
+    if (this.enterpriseEnsurePromise) return this.enterpriseEnsurePromise;
     if (this.shuttingDown) return;
+    const operation = this.startEnterprise();
+    this.enterpriseEnsurePromise = operation;
     try {
-      const { createEnterpriseServer } = await loadEnterpriseServer();
+      await operation;
+    } finally {
+      if (this.enterpriseEnsurePromise === operation) {
+        this.enterpriseEnsurePromise = undefined;
+      }
+    }
+  }
+
+  /** enterprise-server 单次启动尝试；调用方负责并发去重。 */
+  private async startEnterprise(): Promise<void> {
+    const localUrl = new URL(this.localEnterpriseServerUrl!);
+    const host = localUrl.hostname === 'localhost'
+      ? '127.0.0.1'
+      : localUrl.hostname.replace(/^\[|\]$/g, '');
+    const port = localUrl.port ? Number(localUrl.port) : ENTERPRISE_DEFAULT_PORT;
+    try {
+      // 先探活再监听：CLI 或另一个 Otto 实例已经启动企业服务时直接复用，
+      // 避免把正常的 EADDRINUSE 当成后台不可用。
+      if (await this.dependencies.probeHealth(host, port, '/enterprise/health')) {
+        this.enterpriseOwnership = 'discovered';
+        return;
+      }
+      const { createEnterpriseServer } = await this.dependencies.loadEnterpriseServer();
       if (this.shuttingDown) return;
-      const { server, host, port } = createEnterpriseServer({
-        host: '127.0.0.1',
-        port: ENTERPRISE_DEFAULT_PORT,
+      const created = createEnterpriseServer({
+        host,
+        port,
+        publicUrl: this.localEnterpriseServerUrl ?? undefined,
       });
+      const { server } = created;
       if (this.shuttingDown) {
         server.close();
         return;
       }
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, host, () => {
-          console.log(`[ServerManager] enterprise-server 已就绪: http://${host}:${port}`);
-          resolve();
-        });
-        // 端口占用兜底：3 秒超时也不阻塞启动
-        setTimeout(resolve, 3000);
-      });
+      const abort = new AbortController();
+      this.enterpriseListenAbort = abort;
+      await listenWithTimeout(
+        server,
+        created.host,
+        created.port,
+        this.dependencies.enterpriseListenTimeoutMs,
+        abort.signal,
+      );
+      this.throwIfShuttingDown();
       this.enterpriseSrv = server;
+      this.enterpriseOwnership = 'embedded';
+      console.log(
+        `[ServerManager] enterprise-server 已就绪: http://${created.host}:${created.port}`,
+      );
     } catch (err) {
-      console.warn('[ServerManager] enterprise-server 启动失败（非致命，管理后台不可用）:',
-        (err as Error)?.message ?? String(err));
+      // 探活与 listen 之间可能有另一个进程抢先占住 7777。只要它此刻健康，
+      // 就视为成功复用；否则才诚实标为不可用。
+      if (
+        (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE'
+        && await this.dependencies.probeHealth(host, port, '/enterprise/health')
+      ) {
+        this.enterpriseOwnership = 'discovered';
+        return;
+      }
+      this.enterpriseOwnership = 'unavailable';
+      if (!this.shuttingDown) {
+        console.warn('[ServerManager] enterprise-server 启动失败（非致命，管理后台不可用）:',
+          (err as Error)?.message ?? String(err));
+      }
+    } finally {
+      this.enterpriseListenAbort = undefined;
     }
   }
 }
@@ -304,5 +425,74 @@ function probeHealth(
       resolve(false);
     });
     req.on('error', () => resolve(false));
+  });
+}
+
+/** 仅识别桌面能够真实提供的明文 loopback 服务；HTTPS/远端均由外部部署负责。 */
+function loopbackServerUrl(input: string | null | undefined): string | null {
+  if (!input) return null;
+  try {
+    const url = new URL(input);
+    const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    if (url.protocol !== 'http:' || !isLoopback || url.username || url.password) return null;
+    if (url.search || url.hash) return null;
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (pathname && pathname !== '/') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 等待 http.Server 真正进入 listening。超时不是成功：必须关掉半启动实例并拒绝，
+ * 否则后续逻辑会持有一个从未监听的 server，界面却没有任何失败信号。
+ */
+function listenWithTimeout(
+  server: HttpServer,
+  host: string,
+  port: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      server.off('listening', onListening);
+      server.off('error', onError);
+      signal?.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onListening = () => finish();
+    const onError = (error: Error) => finish(error);
+    const onAbort = () => {
+      try {
+        server.close();
+      } catch {
+        // 尚未监听时 close 可能失败；仍要立即结束等待。
+      }
+      finish(new Error('enterprise-server 启动已取消'));
+    };
+    const timer = setTimeout(() => {
+      try {
+        server.close();
+      } catch {
+        // 尚未真正监听时 close 可能抛 ERR_SERVER_NOT_RUNNING；原始超时仍是主错误。
+      }
+      finish(new Error(`enterprise-server 监听超时（${timeoutMs}ms）`));
+    }, timeoutMs);
+    server.once('listening', onListening);
+    server.once('error', onError);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      server.listen(port, host);
+    } catch (error) {
+      finish(error as Error);
+    }
   });
 }

@@ -24,10 +24,12 @@ const ACCOUNT = {
 };
 
 let intentHandler: ((intent: { inviteCode: string }) => void) | null = null;
+let invalidatedHandler: (() => void) | null = null;
 let bridge: Record<string, ReturnType<typeof vi.fn>>;
 
 beforeEach(() => {
   intentHandler = null;
+  invalidatedHandler = null;
   bridge = {
     enterpriseSession: vi.fn(async () => ({
       serverUrl: 'https://enterprise.otto.test',
@@ -37,6 +39,10 @@ beforeEach(() => {
     onEnterpriseRegistrationIntent: vi.fn((handler: (intent: { inviteCode: string }) => void) => {
       intentHandler = handler;
       return () => { intentHandler = null; };
+    }),
+    onEnterpriseSessionInvalidated: vi.fn((handler: () => void) => {
+      invalidatedHandler = handler;
+      return () => { invalidatedHandler = null; };
     }),
     enterprisePasswordLogin: vi.fn(),
     enterpriseRegistrationRequest: vi.fn(),
@@ -99,5 +105,119 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.registrationIntent).toBeNull();
     expect(view.result.current.state.status).toBe('signed-in');
     expect(view.result.current.state.account?.organizationId).toBe('org_acme');
+  });
+
+  it('恢复会话断网时仍保留服务器地址，让用户无需重启即可重试', async () => {
+    bridge.enterpriseSession.mockResolvedValueOnce({
+      serverUrl: 'https://enterprise.otto.test',
+      account: null,
+      connectionError: '连接企业服务器超时',
+    });
+    const view = renderHook(() => useEnterpriseAuth());
+
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
+
+    expect(view.result.current.state.serverUrl).toBe('https://enterprise.otto.test');
+    expect(view.result.current.state.error).toBe('连接企业服务器超时');
+  });
+
+  it('后台操作使 token 失效时立即退回登录页，而不是保留过期管理员界面', async () => {
+    bridge.enterpriseSession.mockResolvedValueOnce({
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+    });
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
+
+    act(() => invalidatedHandler?.());
+
+    expect(view.result.current.state.status).toBe('signed-out');
+    expect(view.result.current.state.account).toBeNull();
+    expect(view.result.current.state.error).toBe('登录已失效，请重新登录');
+  });
+
+  it('会话失效事件发生后，较早发起的登录响应不能把过期界面重新登录', async () => {
+    let finishLogin!: (value: {
+      serverUrl: string;
+      account: typeof ACCOUNT;
+      expiresAt: string;
+    }) => void;
+    bridge.enterprisePasswordLogin.mockImplementationOnce(() => new Promise((resolve) => {
+      finishLogin = resolve;
+    }));
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
+
+    let loginPromise!: Promise<void>;
+    act(() => {
+      loginPromise = view.result.current.actions.loginWithPassword({
+        serverUrl: 'https://enterprise.otto.test',
+        identifier: 'staff01',
+        password: 'password-1',
+      });
+    });
+    expect(view.result.current.state.busy).toBe(true);
+
+    act(() => invalidatedHandler?.());
+    expect(view.result.current.state.status).toBe('signed-out');
+    expect(view.result.current.state.busy).toBe(false);
+
+    finishLogin({
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+      expiresAt: '2099-01-01',
+    });
+    await act(async () => loginPromise);
+
+    expect(view.result.current.state.status).toBe('signed-out');
+    expect(view.result.current.state.account).toBeNull();
+    expect(view.result.current.state.error).toBe('登录已失效，请重新登录');
+  });
+
+  it('并发登录只接受最后一次请求的结果，较慢的旧响应不能覆盖新账号', async () => {
+    const newerAccount = { ...ACCOUNT, id: 'acc_2', username: 'staff02', name: '员工二号' };
+    let finishFirst!: (value: {
+      serverUrl: string;
+      account: typeof ACCOUNT;
+      expiresAt: string;
+    }) => void;
+    bridge.enterprisePasswordLogin
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirst = resolve;
+      }))
+      .mockResolvedValueOnce({
+        serverUrl: 'https://enterprise.otto.test',
+        account: newerAccount,
+        expiresAt: '2099-01-01',
+      });
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = view.result.current.actions.loginWithPassword({
+        serverUrl: 'https://enterprise.otto.test',
+        identifier: 'staff01',
+        password: 'password-1',
+      });
+      second = view.result.current.actions.loginWithPassword({
+        serverUrl: 'https://enterprise.otto.test',
+        identifier: 'staff02',
+        password: 'password-2',
+      });
+    });
+    await act(async () => second);
+    expect(view.result.current.state.account?.id).toBe('acc_2');
+
+    finishFirst({
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+      expiresAt: '2099-01-01',
+    });
+    await act(async () => first);
+
+    expect(view.result.current.state.status).toBe('signed-in');
+    expect(view.result.current.state.account?.id).toBe('acc_2');
   });
 });
