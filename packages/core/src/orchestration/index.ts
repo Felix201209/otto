@@ -111,6 +111,13 @@ export type {
   SkillUsageRecord,
 } from './autoSkillEnhance.js';
 
+// 习惯分析引擎（HabitAnalyzer）
+export {
+  HabitAnalyzer,
+  getHabitAnalyzer,
+} from './habitAnalyzer.js';
+export type { HabitInsight, OperationRecord } from './habitAnalyzer.js';
+
 // Skill 分享
 export { SkillShareManager, getSkillShareManager } from './skillShare.js';
 export type { SkillShareRecord, ShareSkillParams, ListSharedSkillsParams, ShareStatus, InstallRecord, SkillShareEvent, SkillShareNotification, NotificationSender, SkillComment } from './skillShare.js';

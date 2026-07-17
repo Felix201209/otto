@@ -1252,6 +1252,24 @@ export type ProactiveAlertMsg = Envelope<
   }
 >;
 /** 实时模式触发（操作重复达阈值，建议生成Skill） */
+/** 习惯分析洞察（HabitAnalyzer定期产出） */
+export type HabitInsightMsg = Envelope<
+  "habit_insight",
+  {
+    insights: Array<{
+      id: string;
+      type: "workflow" | "bottleneck" | "suggestion" | "peak_hour" | "tool_chain" | "summary";
+      title: string;
+      description: string;
+      evidence: string[];
+      action?: string;
+      priority: number;
+      confidence: number;
+      timestamp: string;
+    }>;
+  }
+>;
+
 export type RealtimePatternMsg = Envelope<
   "realtime_pattern",
   {
@@ -1317,6 +1335,7 @@ export type ServerToClient =
   | SchedulesListMsg
   | ProactiveAlertMsg
   | RealtimePatternMsg
+  | HabitInsightMsg
   | PendingAutoSkillsMsg
   | MessageQueuedMsg
   | QueueDrainedMsg;

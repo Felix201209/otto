@@ -133,6 +133,7 @@ import {
   AutoSkillRealtimeWatcher,
   recordSkillUsage,
   setRealtimeWatcher,
+  getHabitAnalyzer,
   type WorkflowAgentRecord,
   type SkillCandidate,
   type Config as CoreConfig,
@@ -435,6 +436,18 @@ export class OttoServer {
         });
       });
       setRealtimeWatcher(realtimeWatcher);
+
+      // 习惯分析引擎：后台积累操作日志，定期调LLM做深度分析
+      const habitAnalyzer = getHabitAnalyzer();
+      habitAnalyzer.setConfig(scannerConfig);
+      habitAnalyzer.setCallback((insights) => {
+        this.broadcastAll({
+          type: "habit_insight",
+          payload: { insights },
+        });
+      });
+      habitAnalyzer.start();
+
 
       this.autoSkillScannerStarted = startAutoSkillScanner(
         scannerConfig,
