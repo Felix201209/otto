@@ -126,6 +126,55 @@ describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }
     expect(res.status).toBe(200);
     expect(await res.json()).toHaveProperty('logs');
   });
+
+  it('鉴权阶段数据库异常由 handler 收口为不泄露内部细节的 500', async () => {
+    const { server } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    database.getDB().close();
+    // 上面故意关闭底层连接来模拟鉴权数据库故障；避免 afterEach 对同一连接二次 close。
+    closeDatabases = [];
+
+    const listener = server.listeners('request')[0] as (
+      req: Record<string, unknown>,
+      res: Record<string, unknown>,
+    ) => Promise<void>;
+    let statusCode = 0;
+    let responseBody = '';
+    let headersSent = false;
+    const response = {
+      get headersSent() { return headersSent; },
+      setHeader() {},
+      writeHead(status: number) {
+        statusCode = status;
+        headersSent = true;
+        return this;
+      },
+      end(body?: string) {
+        responseBody = body || '';
+        return this;
+      },
+      destroy() {
+        return this;
+      },
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(listener({
+        url: '/enterprise/report',
+        method: 'GET',
+        headers: {
+          host: '127.0.0.1',
+          authorization: 'Bearer invalid-account-session',
+        },
+      }, response)).resolves.toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(statusCode).toBe(500);
+    expect(JSON.parse(responseBody)).toEqual({ error: '企业服务暂时不可用，请稍后重试' });
+    expect(responseBody).not.toMatch(/database|sqlite|closed/i);
+  });
 });
 
 describe('tokensMatch 长度不等短路（不抛，稳定返回 401）', () => {
@@ -1304,6 +1353,187 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(response.status).toBe(200);
     return (await response.json()).token;
   }
+
+  it('积分路由使用账号会话，且创建、充值、作废仅允许企业管理员', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const admin = db.createAccount({
+      username: 'credit.admin',
+      password: 'credit-admin-password',
+      name: '积分管理员',
+      isAdmin: true,
+    });
+    const member = db.createAccount({
+      username: 'credit.member',
+      password: 'credit-member-password',
+      name: '积分成员',
+    });
+    const adminToken = await login(base, admin.username, 'credit-admin-password');
+    const memberToken = await login(base, member.username, 'credit-member-password');
+    const memberHeaders = {
+      authorization: `Bearer ${memberToken}`,
+      'content-type': 'application/json',
+    };
+    const adminHeaders = {
+      authorization: `Bearer ${adminToken}`,
+      'content-type': 'application/json',
+    };
+
+    expect((await fetch(`${base}/enterprise/credits/balance`)).status).toBe(401);
+    const memberBalance = await fetch(`${base}/enterprise/credits/balance`, {
+      headers: memberHeaders,
+    });
+    expect(memberBalance.status).toBe(200);
+    expect(await memberBalance.json()).toMatchObject({ balance: 0 });
+
+    const memberCreate = await fetch(`${base}/enterprise/credits/redeem-codes`, {
+      method: 'POST',
+      headers: memberHeaders,
+      body: JSON.stringify({ creditAmount: 100, count: 1 }),
+    });
+    expect(memberCreate.status).toBe(403);
+    const memberTopUp = await fetch(`${base}/enterprise/credits/topup`, {
+      method: 'POST',
+      headers: memberHeaders,
+      body: JSON.stringify({ amount: 100 }),
+    });
+    expect(memberTopUp.status).toBe(403);
+    const memberRevoke = await fetch(
+      `${base}/enterprise/credits/redeem-codes/not-a-code/revoke`,
+      { method: 'POST', headers: memberHeaders },
+    );
+    expect(memberRevoke.status).toBe(403);
+    const memberCodes = await fetch(`${base}/enterprise/credits/redeem-codes`, {
+      headers: memberHeaders,
+    });
+    expect(memberCodes.status).toBe(403);
+    const memberTransactions = await fetch(`${base}/enterprise/credits/transactions`, {
+      headers: memberHeaders,
+    });
+    expect(memberTransactions.status).toBe(403);
+
+    const topUp = await fetch(`${base}/enterprise/credits/topup`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ amount: 100 }),
+    });
+    expect(topUp.status).toBe(200);
+    expect(await topUp.json()).toEqual({ newBalance: 100 });
+
+    const created = await fetch(`${base}/enterprise/credits/redeem-codes`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ creditAmount: 25, count: 1 }),
+    });
+    expect(created.status).toBe(201);
+    const codeId = (await created.json()).codes[0].id;
+    const invalidStatus = await fetch(
+      `${base}/enterprise/credits/redeem-codes?status=unknown`,
+      { headers: adminHeaders },
+    );
+    expect(invalidStatus.status).toBe(400);
+    const unlimitedTransactions = await fetch(
+      `${base}/enterprise/credits/transactions?limit=-1`,
+      { headers: adminHeaders },
+    );
+    expect(unlimitedTransactions.status).toBe(400);
+    const revoked = await fetch(`${base}/enterprise/credits/redeem-codes/${codeId}/revoke`, {
+      method: 'POST',
+      headers: adminHeaders,
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ ok: true });
+  });
+
+  it('积分路由只将领域错误映射为 400，底层数据库异常统一收口为不泄露细节的 500', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const database = await import('./db.js');
+    const admin = database.createAccount({
+      username: 'credit.failure.admin',
+      password: 'credit-failure-admin-password',
+      name: '积分故障管理员',
+      isAdmin: true,
+    });
+    const member = database.createAccount({
+      username: 'credit.failure.member',
+      password: 'credit-failure-member-password',
+      name: '积分故障成员',
+    });
+    const adminToken = await login(base, admin.username, 'credit-failure-admin-password');
+    const memberToken = await login(base, member.username, 'credit-failure-member-password');
+    const adminHeaders = {
+      authorization: `Bearer ${adminToken}`,
+      'content-type': 'application/json',
+    };
+    const memberHeaders = {
+      authorization: `Bearer ${memberToken}`,
+      'content-type': 'application/json',
+    };
+    const invalidCount = await fetch(`${base}/enterprise/credits/redeem-codes`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ creditAmount: 25, count: 101 }),
+    });
+    expect(invalidCount.status).toBe(400);
+    expect(await invalidCount.json()).toEqual({
+      error: '兑换码生成数量必须是 1 到 100 的整数',
+    });
+    const created = await fetch(`${base}/enterprise/credits/redeem-codes`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ creditAmount: 25, count: 1 }),
+    });
+    expect(created.status).toBe(201);
+    const code = (await created.json()).codes[0].code as string;
+
+    database.getDB().exec(`
+      CREATE TRIGGER fail_credit_redeem
+      BEFORE UPDATE OF status ON redeem_codes
+      BEGIN
+        SELECT RAISE(ABORT, 'sensitive-redeem-storage-failure');
+      END;
+      CREATE TRIGGER fail_credit_create
+      BEFORE INSERT ON redeem_codes
+      BEGIN
+        SELECT RAISE(ABORT, 'sensitive-create-storage-failure');
+      END;
+      CREATE TRIGGER fail_credit_topup
+      BEFORE UPDATE OF credit_balance ON organizations
+      BEGIN
+        SELECT RAISE(ABORT, 'sensitive-topup-storage-failure');
+      END;
+    `);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const responses = await Promise.all([
+        fetch(`${base}/enterprise/credits/redeem`, {
+          method: 'POST',
+          headers: memberHeaders,
+          body: JSON.stringify({ code }),
+        }),
+        fetch(`${base}/enterprise/credits/redeem-codes`, {
+          method: 'POST',
+          headers: adminHeaders,
+          body: JSON.stringify({ creditAmount: 50, count: 1 }),
+        }),
+        fetch(`${base}/enterprise/credits/topup`, {
+          method: 'POST',
+          headers: adminHeaders,
+          body: JSON.stringify({ amount: 100 }),
+        }),
+      ]);
+
+      for (const response of responses) {
+        expect(response.status).toBe(500);
+        const text = await response.text();
+        expect(JSON.parse(text)).toEqual({ error: '企业服务暂时不可用，请稍后重试' });
+        expect(text).not.toMatch(/sensitive|sqlite|trigger|database/i);
+      }
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 
   it('邀请码只允许在 7 天窗口内申请短信，注册账号固定加入邀请码所属企业', async () => {
     const sent: Array<{ phone: string; code: string }> = [];

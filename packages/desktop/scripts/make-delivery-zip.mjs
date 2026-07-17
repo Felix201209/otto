@@ -32,6 +32,7 @@ import {
   statSync,
   lstatSync,
   realpathSync,
+  rmSync,
 } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -172,6 +173,42 @@ function assertSourceStateUnchanged(
 
 // ── Step 1: 构建 ─────────────────────────────────────────────────────────
 
+/**
+ * electron-builder 的解包目录体积通常在 400–500 MB。安装包生成后继续保留它们
+ * 会显著抬高后续平台的磁盘峰值；只允许清理 release 下三个固定的可再生目录。
+ */
+function cleanupUnpackedOutput(name) {
+  const allowed = new Set(['mac-arm64', 'mac', 'win-unpacked']);
+  if (!allowed.has(name)) {
+    throw new Error(`拒绝清理未登记的构建目录: ${name}`);
+  }
+  const target = path.join(RELEASE_DIR, name);
+  if (!existsSync(target)) return;
+  const releaseMetadata = lstatSync(RELEASE_DIR);
+  if (releaseMetadata.isSymbolicLink() || !releaseMetadata.isDirectory()) {
+    throw new Error(`release 必须是工作树内的真实目录，拒绝清理: ${RELEASE_DIR}`);
+  }
+  const metadata = lstatSync(target);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`构建中间产物必须是普通目录，拒绝清理: ${target}`);
+  }
+  const releaseRoot = realpathSync(RELEASE_DIR);
+  const resolved = realpathSync(target);
+  if (path.dirname(resolved) !== releaseRoot) {
+    throw new Error(`构建中间产物越出 release 目录，拒绝清理: ${target}`);
+  }
+  rmSync(target, { recursive: true, force: false });
+  log('BUILD', `已清理可再生中间目录: ${name}`);
+}
+
+function runBuildStep(command, args, unpackedOutput) {
+  try {
+    execFileSync(command, args, { cwd: DESKTOP_DIR, stdio: 'inherit' });
+  } finally {
+    cleanupUnpackedOutput(unpackedOutput);
+  }
+}
+
 async function writeBuildProvenance(sourceCommit) {
   const windowsRipgrep = await inspectWindowsRipgrep();
   const assets = await Promise.all(
@@ -240,19 +277,21 @@ async function build(sourceCommit) {
 
   // mac: arm64 + x64
   log('BUILD', '构建 Mac arm64...');
-  execFileSync('npx', ['electron-builder', '--mac', 'dmg', '--arm64'], {
-    cwd: DESKTOP_DIR,
-    stdio: 'inherit',
-  });
+  runBuildStep(
+    'npx',
+    ['electron-builder', '--mac', 'dmg', '--arm64'],
+    'mac-arm64',
+  );
 
   log('BUILD', '构建 Mac x64...');
-  execFileSync('npx', ['electron-builder', '--mac', 'dmg', '--x64'], {
-    cwd: DESKTOP_DIR,
-    stdio: 'inherit',
-  });
+  runBuildStep(
+    'npx',
+    ['electron-builder', '--mac', 'dmg', '--x64'],
+    'mac',
+  );
 
   log('BUILD', '构建 Windows x64...');
-  execFileSync('npm', ['run', 'dist:win'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
+  runBuildStep('npm', ['run', 'dist:win'], 'win-unpacked');
 
   // 构建可能持续数十分钟；不能把期间被修改或切换过的工作树标成开工时的 SHA。
   assertSourceStateUnchanged(sourceCommit, { phase: '安装包构建' });

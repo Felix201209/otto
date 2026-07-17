@@ -39,11 +39,10 @@ import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 import {
+  CreditsRequestError,
   createRedeemCodes,
   redeemCode as redeemCreditCode,
   getCreditBalance,
-  checkAndReserveCredits,
-  deductCredits,
   topUpCredits,
   listRedeemCodes,
   revokeRedeemCode,
@@ -79,6 +78,11 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/task',
   '/enterprise/recall',
   '/enterprise/knowledge',
+  '/enterprise/credits/balance',
+  '/enterprise/credits/redeem',
+  '/enterprise/credits/redeem-codes',
+  '/enterprise/credits/topup',
+  '/enterprise/credits/transactions',
 ]);
 
 interface RouteBody {
@@ -391,6 +395,11 @@ function isAdminRoute(path: string): boolean {
   return ADMIN_ROUTES.has(path) || path.startsWith('/enterprise/accounts/');
 }
 
+function isMemberRoute(path: string): boolean {
+  return MEMBER_ROUTES.has(path)
+    || (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke'));
+}
+
 function isCrossOriginBrowserRequest(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (typeof origin !== 'string' || !origin) return false;
@@ -489,64 +498,64 @@ function makeHandler(
       return;
     }
 
-    // 无静态 token 的兼容模式只能通过明确的 loopback Host 使用，避免 DNS
-    // rebinding 让恶意域名在 Origin/Host 同名时伪装成本机管理站点。
-    if (isAdminRoute(path) && !adminToken && !isLoopbackRequestHost(req)) {
-      sendJSON(res, 403, { error: 'forbidden: loopback admin host required' });
-      return;
-    }
-
-    // 本机兼容模式允许无静态 token 管理，但仍必须阻止第三方网页借浏览器
-    // 对状态变更接口发起 blind POST/PATCH（无 Origin 的 CLI/桌面调用不受影响）。
-    if (isAdminRoute(path)
-      && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-      && isCrossOriginBrowserRequest(req)) {
-      sendJSON(res, 403, { error: 'forbidden: cross-origin admin request' });
-      return;
-    }
-
-    // 管理端鉴权：兼容平台静态 admin token，同时允许企业管理员账号的登录会话。
-    // 即便是未配置静态 token 的本机服务，也必须先登录；loopback 只限制可访问来源，
-    // 绝不能等价于“任何本机进程或网页都拥有平台管理员权限”。
-    if (isAdminRoute(path)) {
-      const token = extractToken(req);
-      if (adminToken && tokensMatch(token, adminToken)) {
-        adminPrincipal = { kind: 'system', organizationId: db.DEFAULT_ORGANIZATION_ID };
-      } else if (adminToken) {
-        const account = db.getAccountBySession(token);
-        if (!account) {
-          sendJSON(res, 401, { error: 'unauthorized: admin login required' });
-          return;
-        }
-        if (!account.isAdmin) {
-          sendJSON(res, 403, { error: 'forbidden: admin account required' });
-          return;
-        }
-        adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
-      } else {
-        // 未配置静态 token 的本机模式仅接受管理员账号会话，不提供平台级绕过。
-        const account = db.getAccountBySession(token);
-        if (!account) {
-          sendJSON(res, 401, { error: 'unauthorized: admin login required' });
-          return;
-        }
-        if (!account.isAdmin) {
-          sendJSON(res, 403, { error: 'forbidden: admin account required' });
-          return;
-        }
-        adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
-      }
-    }
-
-    if (MEMBER_ROUTES.has(path)) {
-      memberAccount = db.getAccountBySession(extractToken(req));
-      if (!memberAccount) {
-        sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+    try {
+      // 无静态 token 的兼容模式只能通过明确的 loopback Host 使用，避免 DNS
+      // rebinding 让恶意域名在 Origin/Host 同名时伪装成本机管理站点。
+      if (isAdminRoute(path) && !adminToken && !isLoopbackRequestHost(req)) {
+        sendJSON(res, 403, { error: 'forbidden: loopback admin host required' });
         return;
       }
-    }
 
-    try {
+      // 本机兼容模式允许无静态 token 管理，但仍必须阻止第三方网页借浏览器
+      // 对状态变更接口发起 blind POST/PATCH（无 Origin 的 CLI/桌面调用不受影响）。
+      if (isAdminRoute(path)
+        && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+        && isCrossOriginBrowserRequest(req)) {
+        sendJSON(res, 403, { error: 'forbidden: cross-origin admin request' });
+        return;
+      }
+
+      // 管理端鉴权：兼容平台静态 admin token，同时允许企业管理员账号的登录会话。
+      // 即便是未配置静态 token 的本机服务，也必须先登录；loopback 只限制可访问来源，
+      // 绝不能等价于“任何本机进程或网页都拥有平台管理员权限”。
+      if (isAdminRoute(path)) {
+        const token = extractToken(req);
+        if (adminToken && tokensMatch(token, adminToken)) {
+          adminPrincipal = { kind: 'system', organizationId: db.DEFAULT_ORGANIZATION_ID };
+        } else if (adminToken) {
+          const account = db.getAccountBySession(token);
+          if (!account) {
+            sendJSON(res, 401, { error: 'unauthorized: admin login required' });
+            return;
+          }
+          if (!account.isAdmin) {
+            sendJSON(res, 403, { error: 'forbidden: admin account required' });
+            return;
+          }
+          adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
+        } else {
+          // 未配置静态 token 的本机模式仅接受管理员账号会话，不提供平台级绕过。
+          const account = db.getAccountBySession(token);
+          if (!account) {
+            sendJSON(res, 401, { error: 'unauthorized: admin login required' });
+            return;
+          }
+          if (!account.isAdmin) {
+            sendJSON(res, 403, { error: 'forbidden: admin account required' });
+            return;
+          }
+          adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
+        }
+      }
+
+      if (isMemberRoute(path)) {
+        memberAccount = db.getAccountBySession(extractToken(req));
+        if (!memberAccount) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+      }
+
       // ===== Health =====
       if (path === '/enterprise/health' && method === 'GET') {
         try {
@@ -1056,7 +1065,7 @@ function makeHandler(
         return;
       }
 
-            // ===== Enterprise Credits System =====
+      // ===== Enterprise Credits System =====
       if (path === '/enterprise/credits/balance' && method === 'GET') {
         if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
         const balance = getCreditBalance(memberAccount.organizationId);
@@ -1073,7 +1082,8 @@ function makeHandler(
           const result = redeemCreditCode(code, memberAccount.id);
           sendJSON(res, 200, result);
         } catch (err) {
-          sendJSON(res, 400, { error: (err as Error).message });
+          if (!(err instanceof CreditsRequestError)) throw err;
+          sendJSON(res, 400, { error: err.message });
         }
         return;
       }
@@ -1088,16 +1098,28 @@ function makeHandler(
           const codes = createRedeemCodes(memberAccount.organizationId, memberAccount.id, creditAmount, count);
           sendJSON(res, 201, { codes });
         } catch (err) {
-          sendJSON(res, 400, { error: (err as Error).message });
+          if (!(err instanceof CreditsRequestError)) throw err;
+          sendJSON(res, 400, { error: err.message });
         }
         return;
       }
 
       if (path === '/enterprise/credits/redeem-codes' && method === 'GET') {
-        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
-        const url = new URL(req.url || '/', publicBaseUrl);
-        const status = url.searchParams.get('status') as 'active' | 'redeemed' | 'revoked' | null;
-        const codes = listRedeemCodes(memberAccount.organizationId, (status as any) || undefined);
+        if (!memberAccount?.isAdmin) {
+          sendJSON(res, 403, { error: '需要管理员权限' });
+          return;
+        }
+        const status = url.searchParams.get('status');
+        if (status !== null && !['active', 'redeemed', 'revoked'].includes(status)) {
+          sendJSON(res, 400, { error: '兑换码状态无效' });
+          return;
+        }
+        const codes = listRedeemCodes(
+          memberAccount.organizationId,
+          status === null
+            ? undefined
+            : status as 'active' | 'redeemed' | 'revoked',
+        );
         sendJSON(res, 200, { codes });
         return;
       }
@@ -1119,21 +1141,29 @@ function makeHandler(
           const result = topUpCredits(memberAccount.organizationId, memberAccount.id, amount, typeof body.note === 'string' ? body.note : undefined);
           sendJSON(res, 200, result);
         } catch (err) {
-          sendJSON(res, 400, { error: (err as Error).message });
+          if (!(err instanceof CreditsRequestError)) throw err;
+          sendJSON(res, 400, { error: err.message });
         }
         return;
       }
 
       if (path === '/enterprise/credits/transactions' && method === 'GET') {
-        if (!memberAccount) { sendJSON(res, 401, { error: 'Not authenticated' }); return; }
-        const url = new URL(req.url || '/', publicBaseUrl);
-        const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+        if (!memberAccount?.isAdmin) {
+          sendJSON(res, 403, { error: '需要管理员权限' });
+          return;
+        }
+        const rawLimit = url.searchParams.get('limit');
+        const limit = rawLimit === null ? 50 : Number(rawLimit);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+          sendJSON(res, 400, { error: 'limit 必须是 1 到 200 的整数' });
+          return;
+        }
         const txns = listCreditTransactions(memberAccount.organizationId, limit);
         sendJSON(res, 200, { transactions: txns });
         return;
       }
 
-// ===== Join (employee uses invite code) =====
+      // ===== Join (employee uses invite code) =====
       if (path === '/enterprise/join' && method === 'POST') {
         const body = await readBody(req);
         const invite_code = body.invite_code as string | undefined;
@@ -1455,8 +1485,12 @@ function makeHandler(
 
       sendJSON(res, 404, { error: `Not found: ${method} ${path}` });
     } catch (err: unknown) {
-      const m = err instanceof Error ? err.message : String(err);
-      sendJSON(res, 500, { error: m });
+      console.error('[Otto Enterprise] 请求处理失败', err);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendJSON(res, 500, { error: '企业服务暂时不可用，请稍后重试' });
     }
   };
 }

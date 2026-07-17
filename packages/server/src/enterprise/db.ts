@@ -112,12 +112,22 @@ export function getDB(): Database {
     }
   }
 
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  initSchema(db);
-  return db;
+  const database = new Database(DB_PATH);
+  try {
+    database.pragma('journal_mode = WAL');
+    database.pragma('foreign_keys = ON');
+    initSchema(database);
+    db = database;
+    return database;
+  } catch (error) {
+    // 迁移失败时绝不能把半初始化连接留在模块单例中；后续请求应重新执行完整初始化。
+    try {
+      database.close();
+    } catch {
+      // 保留原始迁移异常。
+    }
+    throw error;
+  }
 }
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
@@ -382,14 +392,19 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_credit_trans_org ON credit_transactions(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_redeem_codes_code ON redeem_codes(code);
 
-    -- Add credit_balance to organizations
-    ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
       ON account_token_usage(account_id, created_at);
   `);
+
+  const organizationColumns = d.prepare(
+    'PRAGMA table_info(organizations)',
+  ).all() as Array<{ name: string }>;
+  if (!organizationColumns.some((column) => column.name === 'credit_balance')) {
+    d.exec('ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0');
+  }
 
   d.prepare(
     `INSERT OR IGNORE INTO organizations (id, name, slug, invite_secret)

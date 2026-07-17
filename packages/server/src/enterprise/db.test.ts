@@ -101,6 +101,27 @@ describe('数据库 readiness', () => {
       schemaVersion: 2,
     });
   });
+
+  it('credit_balance 迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
+    const first = await freshDb();
+    first.getDB();
+    first.closeEnterpriseDatabase();
+
+    vi.resetModules();
+    const reopened: DbModule = await import('./db.js');
+    try {
+      expect(reopened.getDatabaseReadiness()).toEqual({
+        ready: true,
+        schemaVersion: 2,
+      });
+      const columns = reopened.getDB()
+        .prepare('PRAGMA table_info(organizations)')
+        .all() as Array<{ name: string }>;
+      expect(columns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
+    } finally {
+      reopened.closeEnterpriseDatabase();
+    }
+  });
 });
 
 describe('企业 Token 用量时间窗口', () => {

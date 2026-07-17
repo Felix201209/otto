@@ -7,7 +7,9 @@
  * 1. 组织积分池（organizations.credit_balance）
  * 2. 兑换码（一次性，可指定面额）
  * 3. 积分流水（每笔消费/充值可审计）
- * 4. 企业版禁止 BYOK，只允许 Otto 托管的模型
+ *
+ * 本模块只提供积分数据与账本原语；是否在模型调用链启用计费由调用方显式决定，
+ * 不能把存在余额表误报为已经强制托管模型或禁止 BYOK。
  */
 
 import { getDB, DEFAULT_ORGANIZATION_ID } from './db.js';
@@ -49,9 +51,6 @@ export const CREDITS_TABLES_SQL = [
     FOREIGN KEY (created_by) REFERENCES accounts(id)
   )`,
 
-  // 组织积分余额（扩展现有 organizations 表）
-  `ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0`,
-
   `CREATE INDEX IF NOT EXISTS idx_credit_transactions_org
     ON credit_transactions(organization_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_credit_transactions_account
@@ -66,7 +65,99 @@ export const CREDITS_TABLES_SQL = [
 
 const REDEEM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 无 I/O/0/1
 const REDEEM_CODE_LENGTH = 12;
-const REDEEM_CODE_FORMAT = 'XXXX-XXXX-XXXX'; // 4-4-4
+const MAX_QUERY_LIMIT = 200;
+const REDEEM_CODE_STATUSES = new Set(['active', 'redeemed', 'revoked']);
+
+type CreditsDatabase = ReturnType<typeof getDB>;
+
+/** 可安全返回给 API 调用方的积分输入或业务状态错误。 */
+export class CreditsRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CreditsRequestError';
+  }
+}
+
+function assertPositiveSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new CreditsRequestError(`${label}必须是正整数`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new CreditsRequestError(`${label}必须是非负整数`);
+  }
+}
+
+function assertQueryLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_QUERY_LIMIT) {
+    throw new CreditsRequestError(`查询数量必须是 1 到 ${MAX_QUERY_LIMIT} 的整数`);
+  }
+}
+
+function normalizeRedeemCode(code: string): string {
+  const compact = code
+    .trim()
+    .toLocaleUpperCase('en-US')
+    .replace(/[\s-]+/g, '');
+  const validCharacters = new RegExp(`^[${REDEEM_ALPHABET}]{${REDEEM_CODE_LENGTH}}$`);
+  if (!validCharacters.test(compact)) throw new CreditsRequestError('兑换码格式错误');
+  return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8, 12)}`;
+}
+
+function activeOrganizationBalance(db: CreditsDatabase, organizationId: string): number {
+  const row = db.prepare(
+    'SELECT credit_balance FROM organizations WHERE id = ? AND status = ?',
+  ).get(organizationId, 'active') as { credit_balance: number } | undefined;
+  if (!row) throw new CreditsRequestError('企业不存在或已停用');
+  if (!Number.isSafeInteger(row.credit_balance) || row.credit_balance < 0) {
+    throw new Error('企业积分余额异常');
+  }
+  return row.credit_balance;
+}
+
+function assertAccountInOrganization(
+  db: CreditsDatabase,
+  accountId: string,
+  organizationId: string,
+  options: { requireAdmin?: boolean } = {},
+): void {
+  const account = db.prepare(
+    `SELECT organization_id, is_admin, status
+     FROM accounts
+     WHERE id = ?`,
+  ).get(accountId) as {
+    organization_id: string;
+    is_admin: number;
+    status: 'active' | 'disabled';
+  } | undefined;
+  if (!account) throw new CreditsRequestError('账号不存在');
+  if (account.organization_id !== organizationId) {
+    throw new CreditsRequestError('账号不属于当前企业');
+  }
+  if (account.status !== 'active') throw new CreditsRequestError('账号已停用');
+  if (options.requireAdmin && account.is_admin !== 1) {
+    throw new CreditsRequestError('需要管理员权限');
+  }
+}
+
+function withSavepoint<T>(
+  db: CreditsDatabase,
+  name: 'create_redeem_codes' | 'redeem_credit_code' | 'top_up_credits' | 'deduct_credits',
+  operation: () => T,
+): T {
+  db.exec(`SAVEPOINT ${name}`);
+  try {
+    const result = operation();
+    db.exec(`RELEASE SAVEPOINT ${name}`);
+    return result;
+  } catch (error) {
+    db.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+    db.exec(`RELEASE SAVEPOINT ${name}`);
+    throw error;
+  }
+}
 
 function generateRedeemCode(): string {
   const bytes = crypto.randomBytes(REDEEM_CODE_LENGTH);
@@ -89,6 +180,17 @@ export interface RedeemCodeInfo {
   createdAt: string;
 }
 
+interface RedeemCodeRow {
+  id: string;
+  code: string;
+  credit_amount: number;
+  status: RedeemCodeInfo['status'];
+  created_by: string;
+  redeemed_by: string | null;
+  redeemed_at: string | null;
+  created_at: string;
+}
+
 /** 管理员创建一批兑换码 */
 export function createRedeemCodes(
   organizationId: string,
@@ -96,29 +198,34 @@ export function createRedeemCodes(
   creditAmount: number,
   count: number = 1,
 ): RedeemCodeInfo[] {
-  if (creditAmount <= 0) throw new Error('兑换码面额必须大于 0');
-  if (count < 1 || count > 100) throw new Error('一次最多生成 100 个兑换码');
-
-  const results: RedeemCodeInfo[] = [];
-  const db = getDB();
-  const now = new Date().toISOString();
-
-  const insert = db.prepare(
-    `INSERT INTO redeem_codes (id, organization_id, code, credit_amount, created_by, status, created_at)
-     VALUES (?, ?, ?, ?, ?, 'active', ?)`,
-  );
-
-  for (let i = 0; i < count; i++) {
-    const id = crypto.randomUUID();
-    const code = generateRedeemCode();
-    insert.run(id, organizationId, code, creditAmount, adminAccountId, now);
-    results.push({
-      id, code, creditAmount, status: 'active',
-      createdBy: adminAccountId, redeemedBy: null, redeemedAt: null, createdAt: now,
-    });
+  assertPositiveSafeInteger(creditAmount, '兑换码面额');
+  if (!Number.isSafeInteger(count) || count < 1 || count > 100) {
+    throw new CreditsRequestError('兑换码生成数量必须是 1 到 100 的整数');
   }
 
-  return results;
+  const db = getDB();
+  return withSavepoint(db, 'create_redeem_codes', () => {
+    activeOrganizationBalance(db, organizationId);
+    assertAccountInOrganization(db, adminAccountId, organizationId, { requireAdmin: true });
+    const now = new Date().toISOString();
+    const results: RedeemCodeInfo[] = [];
+    const insert = db.prepare(
+      `INSERT INTO redeem_codes (id, organization_id, code, credit_amount, created_by, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+    );
+
+    for (let i = 0; i < count; i++) {
+      const id = crypto.randomUUID();
+      const code = generateRedeemCode();
+      insert.run(id, organizationId, code, creditAmount, adminAccountId, now);
+      results.push({
+        id, code, creditAmount, status: 'active',
+        createdBy: adminAccountId, redeemedBy: null, redeemedAt: null, createdAt: now,
+      });
+    }
+
+    return results;
+  });
 }
 
 /** 用户输入兑换码兑换积分 */
@@ -126,53 +233,58 @@ export function redeemCode(
   code: string,
   accountId: string,
 ): { creditAmount: number; newBalance: number } {
-  const normalized = code.replace(/[^A-Z2-9]/gi, '').toUpperCase();
-  if (normalized.length !== 12) throw new Error('兑换码格式错误');
-
+  const normalized = normalizeRedeemCode(code);
   const db = getDB();
-  const row = db.prepare(
-    'SELECT * FROM redeem_codes WHERE code = ?',
-  ).get(code.replace(/-/g, '').replace(/(.{4})(.{4})(.{4})/, '$1-$2-$3')) as any;
+  return withSavepoint(db, 'redeem_credit_code', () => {
+    const redeemRow = db.prepare(
+      'SELECT * FROM redeem_codes WHERE code = ?',
+    ).get(normalized) as {
+      id: string;
+      organization_id: string;
+      credit_amount: number;
+      status: 'active' | 'redeemed' | 'revoked';
+    } | undefined;
 
-  // Try different formats
-  const redeemRow = row ?? db.prepare(
-    'SELECT * FROM redeem_codes WHERE REPLACE(code, "-", "") = ?',
-  ).get(code.replace(/-/g, '')) as any;
+    if (!redeemRow) throw new CreditsRequestError('兑换码不存在');
+    if (redeemRow.status !== 'active') {
+      throw new CreditsRequestError(
+        redeemRow.status === 'redeemed' ? '此兑换码已被使用' : '此兑换码已被作废',
+      );
+    }
+    assertAccountInOrganization(db, accountId, redeemRow.organization_id);
+    assertPositiveSafeInteger(redeemRow.credit_amount, '兑换码面额');
+    const currentBalance = activeOrganizationBalance(db, redeemRow.organization_id);
+    const newBalance = currentBalance + redeemRow.credit_amount;
+    if (!Number.isSafeInteger(newBalance)) throw new Error('企业积分余额超出安全整数范围');
 
-  if (!redeemRow) throw new Error('兑换码不存在');
-  if (redeemRow.status !== 'active') throw new Error(redeemRow.status === 'redeemed' ? '此兑换码已被使用' : '此兑换码已被作废');
+    const now = new Date().toISOString();
+    const redeemed = db.prepare(
+      `UPDATE redeem_codes
+       SET status = ?, redeemed_by = ?, redeemed_at = ?
+       WHERE id = ? AND status = ?`,
+    ).run('redeemed', accountId, now, redeemRow.id, 'active');
+    if (Number(redeemed.changes) !== 1) throw new CreditsRequestError('此兑换码已被处理');
 
-  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId) as any;
-  if (!account) throw new Error('账号不存在');
+    db.prepare(
+      'UPDATE organizations SET credit_balance = ? WHERE id = ?',
+    ).run(newBalance, redeemRow.organization_id);
+    db.prepare(
+      `INSERT INTO credit_transactions
+         (id, organization_id, account_id, type, amount, balance_after, description, redeem_code_id, created_at)
+       VALUES (?, ?, ?, 'redeem', ?, ?, ?, ?, ?)`,
+    ).run(
+      crypto.randomUUID(),
+      redeemRow.organization_id,
+      accountId,
+      redeemRow.credit_amount,
+      newBalance,
+      `兑换码兑换 ${redeemRow.credit_amount} 积分`,
+      redeemRow.id,
+      now,
+    );
 
-  const now = new Date().toISOString();
-
-  // 1. 标记兑换码已使用
-  db.prepare(
-    'UPDATE redeem_codes SET status = ?, redeemed_by = ?, redeemed_at = ? WHERE id = ?',
-  ).run('redeemed', accountId, now, redeemRow.id);
-
-  // 2. 增加组织积分余额
-  db.prepare(
-    'UPDATE organizations SET credit_balance = credit_balance + ? WHERE id = ?',
-  ).run(redeemRow.credit_amount, redeemRow.organization_id);
-
-  const balanceRow = db.prepare(
-    'SELECT credit_balance FROM organizations WHERE id = ?',
-  ).get(redeemRow.organization_id) as { credit_balance: number };
-
-  // 3. 记流水
-  db.prepare(
-    `INSERT INTO credit_transactions (id, organization_id, account_id, type, amount, balance_after, description, redeem_code_id, created_at)
-     VALUES (?, ?, ?, 'redeem', ?, ?, ?, ?, ?)`,
-  ).run(
-    crypto.randomUUID(), redeemRow.organization_id, accountId,
-    redeemRow.credit_amount, balanceRow.credit_balance,
-    `兑换码兑换 ${redeemRow.credit_amount} 积分`,
-    redeemRow.id, now,
-  );
-
-  return { creditAmount: redeemRow.credit_amount, newBalance: balanceRow.credit_balance };
+    return { creditAmount: redeemRow.credit_amount, newBalance };
+  });
 }
 
 // ── 积分消耗 ────────────────────────────────────────────────────
@@ -226,14 +338,16 @@ export function checkAndReserveCredits(
   accountId: string,
   estimatedTokens: number,
 ): { allowed: boolean; balance: number; estimatedCost: number; reason?: string } {
+  assertNonNegativeSafeInteger(estimatedTokens, 'estimatedTokens');
   const db = getDB();
-  const row = db.prepare(
-    'SELECT credit_balance FROM organizations WHERE id = ?',
-  ).get(organizationId) as { credit_balance: number } | undefined;
-
-  const balance = row?.credit_balance ?? 0;
+  assertAccountInOrganization(db, accountId, organizationId);
+  const balance = activeOrganizationBalance(db, organizationId);
   // 1 积分 ≈ 1000 tokens（可配置）
-  const rate = parseInt(process.env['OTTO_CREDIT_TOKEN_RATE'] || '1000', 10);
+  const rateRaw = process.env['OTTO_CREDIT_TOKEN_RATE'] || '1000';
+  const rate = Number(rateRaw);
+  if (!Number.isSafeInteger(rate) || rate <= 0) {
+    throw new Error('OTTO_CREDIT_TOKEN_RATE 必须是正整数');
+  }
   const estimatedCost = Math.max(1, Math.ceil(estimatedTokens / rate));
 
   if (balance < estimatedCost) {
@@ -257,28 +371,69 @@ export function deductCredits(
   model?: string | null,
   messageId?: string,
 ): number {
+  assertPositiveSafeInteger(amount, '扣费金额');
   const db = getDB();
+  const normalizedMessageId = messageId?.trim() || null;
 
-  const orgRow = db.prepare(
-    'UPDATE organizations SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?',
-  ).run(amount, organizationId);
+  return withSavepoint(db, 'deduct_credits', () => {
+    assertAccountInOrganization(db, accountId, organizationId);
 
-  const newRow = db.prepare(
-    'SELECT credit_balance FROM organizations WHERE id = ?',
-  ).get(organizationId) as { credit_balance: number };
+    // 先取得 SQLite 写锁，再检查幂等键，避免并发重试同时看到“尚未记账”。
+    const locked = db.prepare(
+      `UPDATE organizations
+       SET credit_balance = credit_balance
+       WHERE id = ? AND status = ?`,
+    ).run(organizationId, 'active');
+    if (Number(locked.changes) !== 1) {
+      throw new CreditsRequestError('企业不存在或已停用');
+    }
 
-  // 记流水
-  db.prepare(
-    `INSERT INTO credit_transactions (id, organization_id, account_id, type, amount, balance_after, description, model, message_id, created_at)
-     VALUES (?, ?, ?, 'consume', ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    crypto.randomUUID(), organizationId, accountId,
-    -amount, newRow.credit_balance,
-    description, model || null, messageId || null,
-    new Date().toISOString(),
-  );
+    if (normalizedMessageId) {
+      const previous = db.prepare(
+        `SELECT id
+         FROM credit_transactions
+         WHERE organization_id = ? AND account_id = ? AND type = 'consume' AND message_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      ).get(organizationId, accountId, normalizedMessageId) as
+        | { id: string }
+        | undefined;
+      if (previous) return activeOrganizationBalance(db, organizationId);
+    }
 
-  return newRow.credit_balance;
+    const balance = activeOrganizationBalance(db, organizationId);
+    if (balance < amount) {
+      throw new CreditsRequestError(
+        `积分余额不足（需要 ${amount} 积分，剩余 ${balance} 积分）`,
+      );
+    }
+
+    const deducted = db.prepare(
+      `UPDATE organizations
+       SET credit_balance = credit_balance - ?
+       WHERE id = ? AND status = ? AND credit_balance >= ?`,
+    ).run(amount, organizationId, 'active', amount);
+    if (Number(deducted.changes) !== 1) throw new CreditsRequestError('积分余额不足');
+
+    const newBalance = balance - amount;
+    db.prepare(
+      `INSERT INTO credit_transactions
+         (id, organization_id, account_id, type, amount, balance_after, description, model, message_id, created_at)
+       VALUES (?, ?, ?, 'consume', ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      crypto.randomUUID(),
+      organizationId,
+      accountId,
+      -amount,
+      newBalance,
+      description,
+      model || null,
+      normalizedMessageId,
+      new Date().toISOString(),
+    );
+
+    return newBalance;
+  });
 }
 
 // ── 管理员充值 ──────────────────────────────────────────────────
@@ -290,28 +445,33 @@ export function topUpCredits(
   amount: number,
   note?: string,
 ): { newBalance: number } {
-  if (amount <= 0) throw new Error('充值金额必须大于 0');
-
+  assertPositiveSafeInteger(amount, '充值金额');
   const db = getDB();
-  db.prepare(
-    'UPDATE organizations SET credit_balance = credit_balance + ? WHERE id = ?',
-  ).run(amount, organizationId);
+  return withSavepoint(db, 'top_up_credits', () => {
+    assertAccountInOrganization(db, adminAccountId, organizationId, { requireAdmin: true });
+    const balance = activeOrganizationBalance(db, organizationId);
+    const newBalance = balance + amount;
+    if (!Number.isSafeInteger(newBalance)) throw new Error('企业积分余额超出安全整数范围');
 
-  const newRow = db.prepare(
-    'SELECT credit_balance FROM organizations WHERE id = ?',
-  ).get(organizationId) as { credit_balance: number };
+    db.prepare(
+      'UPDATE organizations SET credit_balance = ? WHERE id = ? AND status = ?',
+    ).run(newBalance, organizationId, 'active');
+    db.prepare(
+      `INSERT INTO credit_transactions
+         (id, organization_id, account_id, type, amount, balance_after, description, created_at)
+       VALUES (?, ?, ?, 'topup', ?, ?, ?, ?)`,
+    ).run(
+      crypto.randomUUID(),
+      organizationId,
+      adminAccountId,
+      amount,
+      newBalance,
+      note?.trim() || `管理员充值 ${amount} 积分`,
+      new Date().toISOString(),
+    );
 
-  db.prepare(
-    `INSERT INTO credit_transactions (id, organization_id, account_id, type, amount, balance_after, description, created_at)
-     VALUES (?, ?, ?, 'topup', ?, ?, ?, ?)`,
-  ).run(
-    crypto.randomUUID(), organizationId, adminAccountId,
-    amount, newRow.credit_balance,
-    note || `管理员充值 ${amount} 积分`,
-    new Date().toISOString(),
-  );
-
-  return { newBalance: newRow.credit_balance };
+    return { newBalance };
+  });
 }
 
 // ── 兑换码查询 ──────────────────────────────────────────────────
@@ -321,19 +481,22 @@ export function listRedeemCodes(
   organizationId: string,
   status?: 'active' | 'redeemed' | 'revoked',
 ): RedeemCodeInfo[] {
+  if (status !== undefined && !REDEEM_CODE_STATUSES.has(status)) {
+    throw new CreditsRequestError('兑换码状态无效');
+  }
   const db = getDB();
-  let rows: any[];
+  let rows: RedeemCodeRow[];
   if (status) {
     rows = db.prepare(
       'SELECT * FROM redeem_codes WHERE organization_id = ? AND status = ? ORDER BY created_at DESC LIMIT 200',
-    ).all(organizationId, status) as any[];
+    ).all(organizationId, status) as RedeemCodeRow[];
   } else {
     rows = db.prepare(
       'SELECT * FROM redeem_codes WHERE organization_id = ? ORDER BY created_at DESC LIMIT 200',
-    ).all(organizationId) as any[];
+    ).all(organizationId) as RedeemCodeRow[];
   }
 
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     id: r.id,
     code: r.code,
     creditAmount: r.credit_amount,
@@ -351,7 +514,7 @@ export function revokeRedeemCode(codeId: string, organizationId: string): boolea
   const result = db.prepare(
     'UPDATE redeem_codes SET status = ? WHERE id = ? AND organization_id = ? AND status = ?',
   ).run('revoked', codeId, organizationId, 'active');
-  return (result as any).changes > 0;
+  return Number(result.changes) > 0;
 }
 
 // ── 交易查询 ────────────────────────────────────────────────────
@@ -366,11 +529,22 @@ export interface CreditTransaction {
   createdAt: string;
 }
 
+interface CreditTransactionRow {
+  id: string;
+  type: string;
+  amount: number;
+  balance_after: number;
+  description: string;
+  account_name: string | null;
+  created_at: string;
+}
+
 /** 查询积分流水 */
 export function listCreditTransactions(
   organizationId: string,
   limit: number = 50,
 ): CreditTransaction[] {
+  assertQueryLimit(limit);
   const db = getDB();
   const rows = db.prepare(
     `SELECT ct.*, a.name as account_name
@@ -379,15 +553,15 @@ export function listCreditTransactions(
      WHERE ct.organization_id = ?
      ORDER BY ct.created_at DESC
      LIMIT ?`,
-  ).all(organizationId, limit) as any[];
+  ).all(organizationId, limit) as CreditTransactionRow[];
 
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     id: r.id,
     type: r.type,
     amount: r.amount,
     balanceAfter: r.balance_after,
     description: r.description,
-    accountName: r.account_name,
+    accountName: r.account_name ?? undefined,
     createdAt: r.created_at,
   }));
 }
