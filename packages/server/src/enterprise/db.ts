@@ -14,6 +14,7 @@ import {
   createHash,
   createHmac,
   randomBytes,
+  randomInt,
   randomUUID,
   scryptSync,
   timingSafeEqual,
@@ -546,11 +547,17 @@ export function inspectOrganizationInvite(
   const normalized = normalizeOrganizationInviteCode(code);
   if (normalized.length !== 8) return { status: 'invalid', organizationId: null };
 
+  // 只加载有效期内的活跃邀请码，按时间倒序（最新优先），避免全表扫描。
   const rows = getDB().prepare(
     `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
      FROM organization_invites i
-     JOIN organizations o ON o.id = i.organization_id`,
-  ).all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+     JOIN organizations o ON o.id = i.organization_id
+     WHERE i.status = 'active'
+       AND i.revoked_at_ms IS NULL
+       AND i.expires_at_ms > ?
+     ORDER BY i.issued_at_ms DESC
+     LIMIT 50`,
+  ).all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
   const matches = rows.filter((row) => {
     const organization: OrganizationRow = {
       id: row.organization_id,
@@ -1824,14 +1831,18 @@ export function validateInviteCode(
   if (!row) return { valid: false, error: 'Invalid invite code' };
   if (row.used_count >= row.max_uses) return { valid: false, error: 'Invite code already used' };
   if (row.expires_at && new Date(row.expires_at) < new Date()) return { valid: false, error: 'Invite code expired' };
-  getDB().prepare('UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?').run(code);
+  // 原子操作：WHERE used_count < max_uses 防止并发超用
+  const result = getDB().prepare(
+    'UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ? AND used_count < max_uses',
+  ).run(code);
+  if (result.changes === 0) return { valid: false, error: 'Invite code already used' };
   return { valid: true, department: row.department, organizationId: row.organization_id };
 }
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 6; i++) code += chars[randomInt(chars.length)];
   return code;
 }
 

@@ -58,7 +58,7 @@ export function isRegistrationReady(input: {
   challengeId: string;
   code: string;
 }): boolean {
-  return input.inviteCode.replace(/[^A-Z2-9]/g, '').length === 8
+  return input.inviteCode.replace(/[^A-HJ-NP-Z2-9]/g, '').length === 8
     && Boolean(input.name.trim())
     && input.password.length >= 8
     && input.password === input.confirmPassword
