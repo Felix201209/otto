@@ -178,15 +178,18 @@ class R:
         mi=[x for x in[author,ds,self.m.get("department")] if x]
         self.pdf.cell(self.pw,6," · ".join(mi),align="C")
 
-    # ── 章节（accent 细竖线 + 标题，简洁专业） ──────────────
+    # ── 章节（accent 细竖线，不填充矩形） ────────────
     def chapter(self,title,layout):
         self.pdf.ln(5)
-        bar_w=2; pad=5
-        self.pdf.set_fill_color(*_rgb(self.t["accent"]))
-        self.pdf.rect(self.mg,self.pdf.get_y()-1,bar_w,self.t["h1_sz"]+2,"F")
-        self.pdf.set_x(self.mg+bar_w+pad)
+        bar_x=self.mg+2; pad=5
+        # 只画细线，不填充矩形
+        y_start=self.pdf.get_y()-1
+        y_end=y_start+self.t["h1_sz"]+2
+        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.8)
+        self.pdf.line(bar_x,y_start,bar_x,y_end)
+        self.pdf.set_x(bar_x+pad)
         self._f(True,self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-        self.pdf.cell(self.pw-bar_w-pad,self.t["h1_sz"]*0.55,title,new_x="LMARGIN",new_y="NEXT")
+        self.pdf.cell(self.pw-bar_x-self.mg-pad,self.t["h1_sz"]*0.55,title,new_x="LMARGIN",new_y="NEXT")
         self.pdf.ln(2)
         self._toc.append({"level":1,"text":title,"page":self.pdf.page})
 
@@ -217,14 +220,18 @@ class R:
             self.pdf.cell(self.pw,self.t["b_sz"]*0.5,f"  {idx}. {item}",new_x="LMARGIN",new_y="NEXT")
 
     def quote(self,text):
-        self.pdf.ln(2); bar_w=2; pad=4; sy=self.pdf.get_y()
-        self.pdf.set_x(self.mg+bar_w+pad); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text)
+        self.pdf.ln(2); bar_w=0.5; pad=4; sy=self.pdf.get_y()
+        self.pdf.set_x(self.mg+3+pad)
+        self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        self.pdf.multi_cell(self.pw-3-pad,(self.t["b_sz"]-1)*0.5,text)
         h=self.pdf.get_y()-sy+3
+        # 浅底色背景
         self.pdf.set_fill_color(*_rgb(self.t["light_tint"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
-        self.pdf.set_fill_color(*_rgb(self.t["callout_bar"])); self.pdf.rect(self.mg,sy-2,bar_w,h,"F")
-        self.pdf.set_xy(self.mg+bar_w+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(1)
+        # 细竖线替代填充矩形
+        self.pdf.set_draw_color(*_rgb(self.t["callout_bar"])); self.pdf.set_line_width(1.2)
+        self.pdf.line(self.mg+2,sy-2,self.mg+2,self.pdf.get_y())
+        self.pdf.set_xy(self.mg+3+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        self.pdf.multi_cell(self.pw-3-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(1)
 
     def table(self,hdrs,rows):
         if not hdrs: return
