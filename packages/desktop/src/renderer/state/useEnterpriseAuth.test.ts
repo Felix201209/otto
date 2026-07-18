@@ -23,7 +23,7 @@ const ACCOUNT = {
   updatedAt: '2026-07-14',
 };
 
-let intentHandler: ((intent: { inviteCode: string }) => void) | null = null;
+let intentHandler: ((intent: { inviteCode: string; serverUrl?: string }) => void) | null = null;
 let invalidatedHandler: (() => void) | null = null;
 let bridge: Record<string, ReturnType<typeof vi.fn>>;
 
@@ -36,7 +36,9 @@ beforeEach(() => {
       account: null,
     })),
     enterpriseRegistrationIntent: vi.fn(async () => ({ inviteCode: 'ABCD-EFGH' })),
-    onEnterpriseRegistrationIntent: vi.fn((handler: (intent: { inviteCode: string }) => void) => {
+    onEnterpriseRegistrationIntent: vi.fn((
+      handler: (intent: { inviteCode: string; serverUrl?: string }) => void,
+    ) => {
       intentHandler = handler;
       return () => { intentHandler = null; };
     }),
@@ -84,12 +86,20 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.registrationIntent).toBeNull();
   });
 
-  it('运行中的 second-instance/open-url intent 会实时替换待注册邀请码', async () => {
+  it('运行中的 second-instance/open-url intent 先切到已规范化服务器，再替换待注册邀请码', async () => {
     const view = renderHook(() => useEnterpriseAuth());
-    await waitFor(() => expect(intentHandler).not.toBeNull());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
+    expect(view.result.current.state.serverUrl).toBe('https://enterprise.otto.test');
 
-    act(() => intentHandler?.({ inviteCode: 'WXYZ-2345' }));
-    expect(view.result.current.state.registrationIntent).toEqual({ inviteCode: 'WXYZ-2345' });
+    act(() => intentHandler?.({
+      inviteCode: 'WXYZ-2345',
+      serverUrl: 'https://new-enterprise.otto.test',
+    }));
+    expect(view.result.current.state.serverUrl).toBe('https://new-enterprise.otto.test');
+    expect(view.result.current.state.registrationIntent).toEqual({
+      inviteCode: 'WXYZ-2345',
+      serverUrl: 'https://new-enterprise.otto.test',
+    });
     expect(view.result.current.state.status).toBe('signed-out');
   });
 

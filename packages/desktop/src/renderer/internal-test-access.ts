@@ -1,7 +1,7 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * v1.8.5 内部测试通道。
+ * v1.8.6 内部测试通道。
  *
  * 这里只绕过客户端登录页，不创建服务端会话，也不伪造管理员权限。等新企业
  * Microservice 提供 HTTPS、版本化健康检查和稳定协议后，将此常量改为 false
@@ -10,7 +10,7 @@
 
 import type { EnterpriseAccount } from '../preload/index.js';
 
-export const INTERNAL_TEST_ACCESS_ENABLED = true;
+export { INTERNAL_TEST_ACCESS_ENABLED } from '../main/internal-test-access.js';
 
 export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   id: 'local_internal_test',

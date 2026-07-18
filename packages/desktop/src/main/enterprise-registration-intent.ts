@@ -13,6 +13,34 @@ export interface EnterpriseRegistrationIntent {
 
 const ENTERPRISE_INVITE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
 
+function normalizeEnterpriseServerUrl(input: string): string | null {
+  let server: URL;
+  try {
+    server = new URL(input);
+  } catch {
+    return null;
+  }
+
+  if (server.username
+    || server.password
+    || server.search
+    || server.hash) {
+    return null;
+  }
+
+  const isHttps = server.protocol === 'https:';
+  const isLoopbackHttp = server.protocol === 'http:'
+    && (server.hostname === '127.0.0.1'
+      || server.hostname === 'localhost'
+      || server.hostname === '[::1]');
+  if (!isHttps && !isLoopbackHttp) return null;
+
+  const pathPrefix = server.pathname === '/'
+    ? ''
+    : server.pathname.replace(/\/+$/, '');
+  return `${server.origin}${pathPrefix}`;
+}
+
 export function parseEnterpriseRegistrationIntent(
   input: string,
 ): EnterpriseRegistrationIntent | null {
@@ -41,9 +69,13 @@ export function parseEnterpriseRegistrationIntent(
   if (!keys.includes('invite') || url.searchParams.getAll('invite').length !== 1) {
     return null;
   }
+  if (url.searchParams.getAll('server').length > 1) return null;
   const inviteCode = (url.searchParams.get('invite') || '').toLocaleUpperCase('en-US');
   if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
-  const serverUrl = url.searchParams.get('server') || undefined;
+  const serverInput = url.searchParams.get('server');
+  if (serverInput === null) return { inviteCode };
+  const serverUrl = normalizeEnterpriseServerUrl(serverInput);
+  if (!serverUrl) return null;
   return { inviteCode, serverUrl };
 }
 

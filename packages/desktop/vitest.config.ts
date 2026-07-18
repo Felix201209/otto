@@ -50,6 +50,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    setupFiles: ['src/renderer/test-setup.ts'],
     include: ['src/renderer/**/*.test.{ts,tsx}', 'src/main/**/*.test.ts'],
     // 把 RTL 强制内联，让上面的 alias 对其内部 `react-dom/client` import 也生效，
     // 否则 RTL（CJS）会绕过 vite 解析、自行命中另一份 react-dom 实例。

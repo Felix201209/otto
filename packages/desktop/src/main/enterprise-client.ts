@@ -100,6 +100,25 @@ export interface EnterpriseOrganizationInviteContext {
   invite: EnterpriseOrganizationInvite | null;
 }
 
+export interface EnterpriseOrganizationView {
+  organization: {
+    id: string;
+    name: string;
+    status: 'active' | 'disabled';
+    createdAt: string;
+  } | null;
+  members: Array<{
+    id: string;
+    username: string;
+    name: string;
+    role: string | null;
+    department: string | null;
+    isAdmin: boolean;
+    status: 'active' | 'disabled';
+  }>;
+  employeeCount: number;
+}
+
 export interface EnterpriseSessionResult {
   serverUrl: string;
   account: EnterpriseAccount | null;
@@ -146,9 +165,10 @@ function normalizeServerUrl(input: string): string {
   if (url.protocol !== 'https:' && !isLocalDevelopment) {
     throw new Error('公网企业服务器必须使用 HTTPS');
   }
-  const pathname = url.pathname.replace(/\/+$/, '');
-  if (pathname && pathname !== '/') throw new Error('服务器地址只填写主机和端口');
-  return url.origin;
+  const pathPrefix = url.pathname === '/'
+    ? ''
+    : url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${pathPrefix}`;
 }
 
 export class EnterpriseClient {
@@ -411,6 +431,11 @@ export class EnterpriseClient {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  }
+
+  async getOrganizationView(): Promise<EnterpriseOrganizationView> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/organization/view');
   }
 
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {

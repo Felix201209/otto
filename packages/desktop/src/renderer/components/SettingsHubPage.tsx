@@ -40,6 +40,7 @@ import { IconSettings, IconChevron, IconClose } from './icons.js';
 import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 import { SearchPanel } from './hub/SearchPanel.js';
+import { INTERNAL_TEST_ACCESS_ENABLED } from '../internal-test-access.js';
 
 export type TabId =
   | 'prefs'
@@ -59,6 +60,19 @@ export type TabId =
   | 'workflows'
   | 'extensions'
   | 'ide';
+
+/**
+ * 内测包暂不暴露尚未完成真实配对闭环的本机 Agent 入口。
+ * 保留 tab 与组件代码，后续配对协议就绪后只需关闭内测开关即可恢复。
+ */
+export function isSettingsTabVisible(tab: TabId): boolean {
+  return !(INTERNAL_TEST_ACCESS_ENABLED && tab === 'local-agent');
+}
+
+/** 防止斜杠命令或旧的导航状态绕过隐藏入口。 */
+export function resolveInitialSettingsTab(initialTab?: TabId): TabId {
+  return initialTab && isSettingsTabVisible(initialTab) ? initialTab : 'prefs';
+}
 
 const TAB_LABEL: Record<TabId, string> = {
   prefs: '外观与回复',
@@ -121,7 +135,7 @@ export function SettingsHubPage({
   product,
   models,
 }: SettingsHubPageProps): React.JSX.Element {
-  const [tab, setTab] = useState<TabId>(initialTab ?? 'prefs');
+  const [tab, setTab] = useState<TabId>(() => resolveInitialSettingsTab(initialTab));
   const [showAdvanced, setShowAdvanced] = useState(
     () => Boolean(initialTab && ADVANCED_TABS.has(initialTab)),
   );
@@ -184,7 +198,7 @@ export function SettingsHubPage({
           {SIMPLE_NAV_GROUPS.map((group) => (
             <div key={group.label} className="otto-hub__nav-group">
               <div className="otto-hub__nav-grouplabel">{group.label}</div>
-              {group.tabs.map((t) => (
+              {group.tabs.filter(isSettingsTabVisible).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -243,7 +257,7 @@ export function SettingsHubPage({
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}
-            {tab === 'local-agent' ? <LocalAgentPanel /> : null}
+            {tab === 'local-agent' && isSettingsTabVisible(tab) ? <LocalAgentPanel /> : null}
             {tab === 'mcp' ? <McpPanel data={data} /> : null}
             {tab === 'context' ? (
               <ContextPanel data={data} activeSession={activeSession} />

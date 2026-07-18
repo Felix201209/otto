@@ -269,7 +269,15 @@ async function inspectWindowsRipgrep() {
 }
 
 async function build(sourceCommit) {
-  log('BUILD', '开始编译桌面端...');
+  log('BUILD', '开始编译服务端与桌面端...');
+
+  // desktop 通过 file:../server 读取 otto-server/dist。必须先从当前 HEAD
+  // 重建 server（tsc -b 会同步 project reference），禁止把旧 dist 打进新版本。
+  execFileSync('npm', ['run', 'build', '--workspace=packages/server'], {
+    cwd: ROOT_DIR,
+    stdio: 'inherit',
+  });
+  log('BUILD', 'otto-server 当前源码构建完成');
 
   // 构建 renderer + main + preload
   execFileSync('npm', ['run', 'build'], { cwd: DESKTOP_DIR, stdio: 'inherit' });

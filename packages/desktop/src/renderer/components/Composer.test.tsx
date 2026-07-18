@@ -123,15 +123,26 @@ describe('旧企业模型显示迁移', () => {
 });
 
 describe('执行授权菜单', () => {
-  it('可在手动、当前会话自动、所有会话自动之间切换并发送真实策略帧', () => {
+  it('默认全局自动，并可降级到当前会话或手动后再恢复', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
     localStorage.clear();
     renderComposer([], null);
-    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
     expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }));
+    expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
+    expect(send.mock.calls.slice(-2).map(([message]) => message)).toEqual([
+      {
+        type: 'set_authorization_mode',
+        payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+      },
+      {
+        type: 'set_authorization_mode',
+        payload: { sessionId: 's1', mode: 'auto', scope: 'session' },
+      },
+    ]);
     expect(send).toHaveBeenLastCalledWith({
       type: 'set_authorization_mode',
       payload: { sessionId: 's1', mode: 'auto', scope: 'session' },
@@ -139,12 +150,44 @@ describe('执行授权菜单', () => {
     expect(screen.getByRole('button', { name: '执行授权：当前会话自动' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '执行授权：当前会话自动' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /手动授权/ }));
+    expect(send).toHaveBeenLastCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'session' },
+    });
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（所有会话）/ }));
     expect(localStorage.getItem('otto.authorization.global-auto')).toBe('1');
     expect(send).toHaveBeenLastCalledWith({
       type: 'set_authorization_mode',
       payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
     });
+  });
+
+  it('离开仅当前会话自动的会话时在服务端 fail closed 回手动', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', '0');
+    const props = {
+      models: [] as ModelInfo[],
+      currentModel: null,
+      onSend: vi.fn(),
+      onSetModel: vi.fn(),
+    };
+    const view = render(<Composer {...props} sessionId="s1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }));
+    send.mockClear();
+
+    view.rerender(<Composer {...props} sessionId="s2" />);
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'session' },
+    });
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
   });
 });
 

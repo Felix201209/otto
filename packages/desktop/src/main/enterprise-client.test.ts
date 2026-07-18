@@ -72,6 +72,27 @@ describe('EnterpriseClient', () => {
     });
   });
 
+  it('保留 HTTPS 部署路径前缀，并在前缀下请求全部企业接口', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+
+    await client.loginWithPassword(
+      'https://enterprise.otto.test/company/',
+      'staff01',
+      'password',
+    );
+
+    expect(client.snapshot().serverUrl).toBe('https://enterprise.otto.test/company');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/company/enterprise/health',
+      'https://enterprise.otto.test/company/enterprise/auth/login',
+    ]);
+  });
+
   it('首次注册先请求挑战，再提交姓名、密码和验证码并保存会话', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
@@ -181,6 +202,51 @@ describe('EnterpriseClient', () => {
       content: '合同审查先核对违约条款。',
       confidence: 0.9,
     });
+  });
+
+  it('登录成员通过 main 内的会话令牌读取完整组织架构', async () => {
+    const organizationView = {
+      organization: {
+        id: 'org_acme',
+        name: '星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'staff01',
+        name: '员工一号',
+        role: '工程师',
+        department: '研发部',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, organizationView));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getOrganizationView()).resolves.toEqual(organizationView);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/organization/view');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer session-token',
+    });
+  });
+
+  it('未登录时不会请求组织架构接口', async () => {
+    const fetchMock = vi.fn();
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    client.restore({ serverUrl: 'https://enterprise.otto.test', token: null });
+
+    await expect(client.getOrganizationView()).rejects.toThrow('登录已失效');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('企业管理员可读取并手动换新 7 天中心引入链接', async () => {

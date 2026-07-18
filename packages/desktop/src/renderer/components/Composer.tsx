@@ -275,6 +275,8 @@ export function Composer({
     () => localStorage.getItem('otto.authorization.global-auto') !== '0',
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
+  const authorizationStateRef = useRef({ globalAuto, sessionAuthorization });
+  authorizationStateRef.current = { globalAuto, sessionAuthorization };
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
@@ -402,6 +404,21 @@ export function Composer({
     }
   }, [globalAuto, sessionId]);
 
+  React.useEffect(() => {
+    const departingSessionId = sessionId;
+    return () => {
+      const state = authorizationStateRef.current;
+      if (departingSessionId
+        && !state.globalAuto
+        && state.sessionAuthorization[departingSessionId] === 'auto') {
+        transport.send({
+          type: 'set_authorization_mode',
+          payload: { sessionId: departingSessionId, mode: 'manual', scope: 'session' },
+        });
+      }
+    };
+  }, [sessionId]);
+
   const pickAuthorization = (kind: 'manual' | 'session' | 'global'): void => {
     if (!sessionId) return;
     if (kind === 'global') {
@@ -410,6 +427,15 @@ export function Composer({
       setSessionAuthorization({});
       transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'all' } });
     } else if (kind === 'session') {
+      const wasGlobal = globalAuto;
+      localStorage.setItem('otto.authorization.global-auto', '0');
+      setGlobalAuto(false);
+      if (wasGlobal) {
+        transport.send({
+          type: 'set_authorization_mode',
+          payload: { sessionId, mode: 'manual', scope: 'all' },
+        });
+      }
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'auto' }));
       transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'session' } });
     } else {

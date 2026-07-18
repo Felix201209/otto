@@ -54,6 +54,14 @@ export function useEnterpriseAuth(): {
     let cancelled = false;
     const initialEpoch = authEpochRef.current + 1;
     authEpochRef.current = initialEpoch;
+    const applyRegistrationIntent = (
+      intent: EnterpriseRegistrationIntent | null,
+    ): void => {
+      // Main 进程已把链接中的 server 规范化到安全 origin；先切服务器，
+      // 再暴露邀请码，避免运行中的注册链接继续请求旧企业服务器。
+      if (intent?.serverUrl) setServerUrl(intent.serverUrl);
+      setRegistrationIntent(intent);
+    };
     const applyIntent = (intent: EnterpriseRegistrationIntent): void => {
       if (signedInRef.current) return;
       if (!initializedRef.current) {
@@ -62,7 +70,7 @@ export function useEnterpriseAuth(): {
       }
       authEpochRef.current += 1;
       registrationRequestEpochRef.current += 1;
-      setRegistrationIntent(intent);
+      applyRegistrationIntent(intent);
       setAccount(null);
       setError(null);
       setBusy(false);
@@ -100,9 +108,7 @@ export function useEnterpriseAuth(): {
         signedInRef.current = false;
         const intent = pendingIntentRef.current ?? coldIntent;
         pendingIntentRef.current = null;
-        setRegistrationIntent(intent);
-        // 如果邀请链接携带了企业服务器地址，覆盖 session 中的默认地址
-        if (intent?.serverUrl) setServerUrl(intent.serverUrl);
+        applyRegistrationIntent(intent);
         setAccount(null);
         setStatus('signed-out');
       })
