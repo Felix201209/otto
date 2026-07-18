@@ -159,32 +159,36 @@ class R:
         if rf is None: rf=parse_xml(f'<w:rFonts {nsdecls("w")} />'); rPr.insert(0,rf)
         rf.set(qn("w:eastAsia"),fn)
 
-    # ── 封面（零空白） ────────────────────────────────────────────
+    # ── 封面（纯白底 + accent 细线装饰） ──────────────────────────
     def cover(self):
         if not self.t["cover"]: return
         self._hc=True
         title=self.m.get("title",""); sub=self.m.get("subtitle","")
         author=self.m.get("author",""); date=self.m.get("date","") or datetime.now().strftime("%Y年%m月")
-        base=self.t["base"]; accent=self.t["accent"]
+        accent=self.t["accent"]
 
-        # 色块 — 最小化
-        pb=self.doc.add_paragraph()
-        pb.paragraph_format.space_before=Pt(0); pb.paragraph_format.space_after=Pt(0)
-        pb.paragraph_format.line_spacing=Pt(36)
-        pb._element.get_or_add_pPr().append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{base}" w:val="clear"/>'))
+        # 顶部留白
+        for _ in range(3):
+            p=self.doc.add_paragraph()
+            p.paragraph_format.space_before=Pt(0); p.paragraph_format.space_after=Pt(0)
+            p.paragraph_format.line_spacing=Pt(8)
 
-        # 标题
+        # 标题（白底黑字，不用深色块）
         pt=self.doc.add_paragraph(); pt.alignment=WD_ALIGN_PARAGRAPH.CENTER
-        pt.paragraph_format.space_before=Pt(14); pt.paragraph_format.space_after=Pt(6)
+        pt.paragraph_format.space_before=Pt(0); pt.paragraph_format.space_after=Pt(10)
         self._rn(pt.add_run(title),name=self.t["h_font"],sz=Pt(self.t["t_sz"]),color=self._c("base"),bold=True)
 
-        # 装饰线 — 合并到标题同段落下方，不独立成段
-        pl=self.doc.add_paragraph(); pl.alignment=WD_ALIGN_PARAGRAPH.CENTER
-        pl.paragraph_format.space_after=Pt(6)
-        pl._element.get_or_add_pPr().append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="6" w:space="1" w:color="{accent}"/></w:pBdr>'))
+        # accent 色装饰线（双线：上细下粗）
+        for w,sz in [(0.5,8),(0.2,2)]:
+            pl=self.doc.add_paragraph(); pl.alignment=WD_ALIGN_PARAGRAPH.CENTER
+            pl.paragraph_format.space_before=Pt(2); pl.paragraph_format.space_after=Pt(2)
+            # Use paragraph border
+            pPr=pl._element.get_or_add_pPr()
+            pPr.append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="{sz}" w:space="1" w:color="{accent}"/></w:pBdr>'))
 
         if sub:
             ps=self.doc.add_paragraph(); ps.alignment=WD_ALIGN_PARAGRAPH.CENTER
+            ps.paragraph_format.space_before=Pt(12)
             self._rn(ps.add_run(sub),sz=Pt(self.t["b_sz"]+2),color=self._c("body"))
         for mt in [x for x in [author,date,self.m.get("department")] if x]:
             pm=self.doc.add_paragraph(); pm.alignment=WD_ALIGN_PARAGRAPH.CENTER
