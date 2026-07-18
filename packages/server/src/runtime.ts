@@ -360,8 +360,9 @@ export class CoreSessionRuntime implements SessionRuntime {
     // 自定义模型（BYO-key）经 USE_PROXY_AUTH 鉴权，对齐 validateNonInteractiveAuth。
     await this.config.refreshAuth(AuthType.USE_PROXY_AUTH);
     this.toolRegistry = await this.config.getToolRegistry();
-    // GUI 自己处理确认；不要沿用 headless 的 YOLO 默认值绕过普通确认。
-    this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
+    // 默认使用 coreConfig 的 YOLO 模式（自动执行），
+    // 用户可通过 /confirm 命令切回手动确认模式。
+    // this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
     // 同步 MCP 工具（若已配置）。失败仅告警，不阻塞。
     try {
       await this.toolRegistry.discoverMcpTools();
@@ -372,7 +373,8 @@ export class CoreSessionRuntime implements SessionRuntime {
 
   setAuthorizationMode(mode: RuntimeAuthorizationMode): void {
     this.authorizationMode = mode;
-    this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
+    // 保持当前的 approval mode，不覆盖——用户可能已切到手动模式
+    // this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
   }
 
   async setModel(model: string): Promise<void> {
