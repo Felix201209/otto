@@ -399,7 +399,7 @@ EXAMPLES:
   Resume: {format:"resume", output_format:"pdf", title:"My Resume", content:"## Experience\\n\\n- Job 1..."}
   Simple: {format:"article", output_format:"markdown", content:"# Hello World"}
 
-PPTX VISUAL GRAMMAR: Start each slide with <!-- layout: cover|statement|split|timeline|quote|list|section|visual -->. Use ## headings for split, numbered lists for timeline, > for quote, and local Markdown images for visual. Put the deck art direction and colors in template_options. If omitted, Otto infers a varied layout from content.
+PPTX VISUAL GRAMMAR: Start each slide with <!-- layout: cover|statement|split|timeline|quote|list|section|visual -->. Use ## headings for split, numbered lists for timeline, > for quote, and local Markdown images for visual. Put the deck art direction and colors in template_options (e.g. "navy and gold, editorial style"). If you skip layout hints, Otto auto-infers the best layout based on page position, content density, and visual patterns — early short pages become covers, data-heavy pages become lists with native text, sparse impact statements become statement pages, and closing pages with short text become statement. For data tables use | header | format. Mixed pages (text + single image) auto-select visual layout for best rendering.\n\nPPTX SMART HINTS: You can steer the renderer with 3 hints per slide — (1) a <!-- layout: xxx --> comment to force a specific visual style, (2) bold numbers like **42%** or **150万** on data pages to trigger native editable text with auto-sizing, and (3) pipe tables | for native PPT table objects that are selectable and searchable. The renderer automatically alternates between editorial and list styles on consecutive bullet pages to avoid visual monotony.
 
 PPTX QUALITY BOUNDARY: This deterministic renderer is a speed fallback. For a high-aesthetic or flashy deck, load ppt-creator and build a topic-specific custom HTML/CSS/SVG canvas instead of presenting this fallback as premium work.
 
@@ -410,7 +410,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       {
         type: Type.OBJECT,
         properties: {
-          content: { type: Type.STRING, description: 'Markdown content. Slides: use # for a conclusion title, --- for page breaks, and an HTML comment layout directive per page: cover, statement, split, timeline, quote, list, section, or visual.' },
+          content: { type: Type.STRING, description: 'Markdown content. Slides: --- for page breaks, optional <!-- layout: xxx --> per page. Otto auto-infers layout from content position, density, images, and data patterns. Bold numbers (**42%**) + pipe tables trigger native editable text & table objects.' },
           format: { type: Type.STRING, enum: ['report','slides','letter','resume','article','table'], description: 'Document layout style' },
           output_format: { type: Type.STRING, enum: ['pdf','docx','html','markdown','pptx'], description: 'Output file format. Slides only: pdf, html, pptx.' },
           output_path: { type: Type.STRING, description: 'Output file path. Default: Desktop/generated_<ts>.<ext>' },
@@ -561,7 +561,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       const pgNum = String(idx + 1).padStart(2, '0');
 
       // Native text slides: editable pptxgenjs objects (not pixel images)
-      if (this.canUseNativeText(sec)) {
+      if (this.canUseNativeText(sec, idx, sections.length)) {
         this.renderNativeSlide(presentation, sec, idx, sections.length, theme, pgNum);
         continue;
       }
@@ -579,12 +579,17 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     await presentation.writeFile({ fileName: outPath, compression: true });
   }
 
-  /** Check if a slide is text-heavy enough for native pptxgenjs rendering. */
-  private canUseNativeText(sec: ParsedSlideSection): boolean {
-    const layout = sec.requestedLayout ?? this.inferSlideLayout(sec, 0);
-    if (layout === 'cover' || layout === 'section' || layout === 'quote') return false;
+  /** Smart routing: decide if a slide should use native pptxgenjs or HTML→PNG. */
+  private canUseNativeText(sec: ParsedSlideSection, index?: number, total?: number): boolean {
+    const layout = sec.requestedLayout ?? this.inferSlideLayout(sec, index ?? 0, total);
+    // Visual-first layouts always use HTML→PNG for best aesthetics
+    if (layout === 'cover' || layout === 'section') return false;
+    // Images + quotes look better as styled HTML
     const hasImg = sec.body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l.trim()));
-    if (layout === 'visual' || hasImg) return false;
+    if (hasImg) return false;
+    // Quote pages with heavy styling need HTML
+    if (layout === 'quote' || layout === 'visual') return false;
+    // Everything else benefits from native editable text
     return true;
   }
 
@@ -1026,28 +1031,73 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       .trim();
   }
 
-  private inferSlideLayout(section: ParsedSlideSection, index: number): SlideLayout {
+  private inferSlideLayout(section: ParsedSlideSection, index: number, total?: number): SlideLayout {
     if (section.requestedLayout) return section.requestedLayout;
-    if (index === 0) return 'cover';
 
     const body = section.body.map((line) => line.trim()).filter(Boolean);
-    if (body.length === 0) return 'section';
-    if (body.some((line) => /^!\[[^\]]*\]\(.+\)$/.test(line))) return 'visual';
-    if (body.some((line) => /^>\s+/.test(line))) return 'quote';
+    const visibleText = this.cleanInlineMarkdown(body.join(' ')).replace(/^[-*+>]\s+/gm, '').trim();
+    const lineCount = body.length;
+    const textLen = visibleText.length;
+    const totalPages = total ?? index + 1;
 
-    const orderedItems = body.filter((line) => /^\d+[.)]\s+/.test(line)).length;
+    // Inferred page role
+    const isFirstPage = index === 0;
+    const isLastPage = index === totalPages - 1 && totalPages > 1;
+    const isEarly = index <= 1;
+
+    // Content type detection
+    const hasImage = body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l));
+    const imageCount = body.filter((l) => /^!\[[^\]]*\]\(.+\)$/.test(l)).length;
+    const hasQuote = body.some((l) => /^>\s/.test(l));
+    const orderedItems = body.filter((l) => /^\d+[.)]\s+/.test(l)).length;
+    const bulletItems = body.filter((l) => /^[-*+]\s+/.test(l)).length;
+    const subheadings = body.filter((l) => /^#{2,6}\s+/.test(l)).length;
+    const hasTable = body.some((l) => /^\|.+\|$/.test(l));
+    const hasBoldNumbers = /\*\*\d+[%％倍万亿]/.test(visibleText) || /\*\*[+-]?\d+\.?\d*/.test(visibleText);
+    const isDataHeavy = hasTable || (hasBoldNumbers && lineCount >= 3);
+    const isSparse = lineCount <= 2 && textLen <= 90;
+
+    // Empty slide → section divider
+    if (lineCount === 0) return 'section';
+
+    // Data-heavy pages: use native text rendering with tables
+    if (isDataHeavy && !hasImage && !hasQuote) return 'list';
+
+    // Cover: first page, or early page with short text
+    if (isFirstPage) return 'cover';
+    if (isEarly && isSparse && !hasImage && !hasTable) return 'cover';
+
+    // Images → visual layout
+    if (hasImage && !isDataHeavy) {
+      if (imageCount >= 2) return 'visual';
+      if (textLen <= 150) return 'visual';
+      // Text + single image: still visual for best rendering
+      return 'visual';
+    }
+
+    // Quote
+    if (hasQuote && !hasTable && textLen <= 300) return 'quote';
+
+    // Statement: standalone impactful sentence
+    if (isSparse && !isFirstPage && !hasImage) return 'statement';
+
+    // Timeline: numbered sequence (3-5 items)
     if (orderedItems >= 3 && orderedItems <= 5) return 'timeline';
 
-    const subheadings = body.filter((line) => /^#{2,6}\s+/.test(line)).length;
+    // Split: multiple subheadings (2-3 clear sections)
     if (subheadings >= 2 && subheadings <= 3) return 'split';
 
-    const visibleText = this.cleanInlineMarkdown(body.join(' '))
-      .replace(/^[-*+>]\s+/gm, '')
-      .trim();
-    if (body.length <= 2 && visibleText.length <= 90) return 'statement';
+    // Content-heavy presentation slides: alternate editorial/list for variety
+    const isSecondHalf = index > totalPages / 2;
+    if (bulletItems >= 3) return isSecondHalf ? 'list' : 'editorial';
+    if (bulletItems >= 1 && lineCount <= 5) return 'editorial';
 
-    const bulletItems = body.filter((line) => /^[-*+]\s+/.test(line)).length;
-    if (bulletItems >= 2) return index % 2 === 0 ? 'editorial' : 'list';
+    // Heavy text, late in deck: use list for scannability
+    if (textLen > 500 && isSecondHalf) return 'list';
+
+    // Closing page
+    if (isLastPage && textLen <= 200) return 'statement';
+
     return 'editorial';
   }
 
