@@ -16,7 +16,7 @@ function escapeHTML(value: string): string {
   })[character]!);
 }
 
-function renderPublicInvitePage(state: PublicInvitePageState, code?: string): string {
+function renderPublicInvitePage(state: PublicInvitePageState, code?: string, serverUrl?: string): string {
   const isActive = state === 'active' && Boolean(code);
   const title = isActive
     ? '加入企业，打开 Otto'
@@ -28,7 +28,8 @@ function renderPublicInvitePage(state: PublicInvitePageState, code?: string): st
       : '请检查地址是否完整，或联系企业管理员重新发送一条引入链接。';
   const safeCode = code ? escapeHTML(code) : '';
   const deepLink = code
-    ? escapeHTML('otto://enterprise/join?invite=' + encodeURIComponent(code))
+    ? escapeHTML('otto://enterprise/join?invite=' + encodeURIComponent(code) +
+      (serverUrl ? '&server=' + encodeURIComponent(serverUrl) : ''))
     : '';
 
   return `<!doctype html>
@@ -106,6 +107,7 @@ export function sendPublicInvitePage(
   res: ServerResponse,
   status: 200 | 404 | 410,
   code?: string,
+  serverUrl?: string,
 ): void {
   const state: PublicInvitePageState = status === 200
     ? 'active'
@@ -120,5 +122,5 @@ export function sendPublicInvitePage(
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
   });
-  res.end(renderPublicInvitePage(state, status === 200 ? code : undefined));
+  res.end(renderPublicInvitePage(state, status === 200 ? code : undefined, serverUrl));
 }

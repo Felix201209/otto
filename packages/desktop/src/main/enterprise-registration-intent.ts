@@ -7,6 +7,8 @@
 
 export interface EnterpriseRegistrationIntent {
   inviteCode: string;
+  /** 企业服务器地址（可选，从邀请链接的 server 参数提取） */
+  serverUrl?: string;
 }
 
 const ENTERPRISE_INVITE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
@@ -34,12 +36,15 @@ export function parseEnterpriseRegistrationIntent(
   }
 
   const keys = [...url.searchParams.keys()];
-  if (keys.length !== 1 || keys[0] !== 'invite' || url.searchParams.getAll('invite').length !== 1) {
+  const validKeys = keys.filter(k => k === 'invite' || k === 'server');
+  if (validKeys.length !== keys.length) return null;
+  if (!keys.includes('invite') || url.searchParams.getAll('invite').length !== 1) {
     return null;
   }
   const inviteCode = (url.searchParams.get('invite') || '').toLocaleUpperCase('en-US');
   if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
-  return { inviteCode };
+  const serverUrl = url.searchParams.get('server') || undefined;
+  return { inviteCode, serverUrl };
 }
 
 /**

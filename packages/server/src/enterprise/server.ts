@@ -617,7 +617,7 @@ function makeHandler(
           sendPublicInvitePage(res, 410);
           return;
         }
-        sendPublicInvitePage(res, 200, code);
+        sendPublicInvitePage(res, 200, code, publicBaseUrl);
         return;
       }
 

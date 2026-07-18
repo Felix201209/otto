@@ -101,6 +101,8 @@ export function useEnterpriseAuth(): {
         const intent = pendingIntentRef.current ?? coldIntent;
         pendingIntentRef.current = null;
         setRegistrationIntent(intent);
+        // 如果邀请链接携带了企业服务器地址，覆盖 session 中的默认地址
+        if (intent?.serverUrl) setServerUrl(intent.serverUrl);
         setAccount(null);
         setStatus('signed-out');
       })

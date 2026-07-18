@@ -191,6 +191,8 @@ export interface EnterpriseSmsChallenge {
 
 export interface EnterpriseRegistrationIntent {
   inviteCode: string;
+  /** 企业服务器地址（从邀请链接的 server 参数提取） */
+  serverUrl?: string;
 }
 
 export interface EnterpriseSessionState {
