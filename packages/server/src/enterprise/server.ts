@@ -655,6 +655,33 @@ function makeHandler(
         return;
       }
 
+      // ===== Pairing Token Verification (called by Otto Desktop) =====
+      if (path === '/enterprise/local-agent/pair/verify' && method === 'POST') {
+        const body = await readBody(req);
+        const token = (typeof body.token === 'string' ? body.token : '').toUpperCase();
+        if (!token || !pairingTokens.has(token)) {
+          sendJSON(res, 400, { ok: false, error: '令牌无效或已过期' });
+          return;
+        }
+        const record = pairingTokens.get(token)!;
+        if (Date.now() > record.expiresAt) {
+          pairingTokens.delete(token);
+          sendJSON(res, 400, { ok: false, error: '令牌已过期' });
+          return;
+        }
+        // 令牌有效，返回 instanceId 供 desktop 确认
+        pairingTokens.delete(token);
+        sendJSON(res, 200, {
+          ok: true,
+          data: {
+            verified: true,
+            instanceId: record.instanceId,
+            message: '配对令牌验证成功',
+          },
+        });
+        return;
+      }
+
       // ===== Public enterprise onboarding landing page =====
       if (path.startsWith('/enterprise/join/') && method === 'GET') {
         const encodedCode = path.slice('/enterprise/join/'.length);

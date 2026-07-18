@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license
  * Copyright 2025 Otto
  * SPDX-License-Identifier: Apache-2.0
@@ -837,24 +837,21 @@ function registerIpc(): void {
     const trimmed = token.trim().toUpperCase();
     try {
       const serverUrl = enterpriseClient.snapshot().serverUrl || DEFAULT_ENTERPRISE_SERVER_URL;
-      const res = await enterpriseFetch(`${serverUrl}/enterprise/local-agent/pair`, {
+      const res = await fetch(`${serverUrl}/enterprise/local-agent/pair/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: trimmed }),
       });
-      // Note: pairing endpoint currently generates tokens, not validates them.
-      // For MVP, we accept any non-empty 6-char token as valid.
-      if (!res.ok && res.status !== 404) {
+      if (!res.ok) {
         const errBody = await res.json().catch(() => ({ error: 'server error' }));
-        return { ok: false, message: (errBody as { error?: string }).error ?? '服务器验证失败' };
+        return { ok: false, message: (errBody as { error?: string }).error ?? '令牌无效或已过期' };
       }
-      // Token accepted — persist the pairing
-      // In a real implementation, the server would validate the token
-      // and return a session
+      const data = await res.json() as { ok: boolean; data?: { instanceId?: string } };
       return {
         ok: true,
         message: '企业服务器接入成功！',
         enterpriseUrl: serverUrl,
+        instanceId: data.data?.instanceId ?? '',
       };
     } catch (e) {
       return {
