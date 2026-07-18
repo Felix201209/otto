@@ -1,30 +1,110 @@
 ---
 name: spreadsheet-pro
-description: 表格数据建模、公式、数据透视、清洗与分析。当用户要处理表格、算公式、做数据透视、清洗数据、Excel、CSV、spreadsheet 时使用。
+version: 3
+description: AI 驱动 Excel 表格引擎——生成、分析、透视、清洗。AI 通过 YAML 设计令牌创造视觉语言，引擎渲染专业 .xlsx。
 ---
 
-# 表格数据处理
+# 📊 Otto Spreadsheet-Pro v3 — AI 驱动 Excel 引擎
 
-把一堆数据，变成能回答问题、能决策的表格。
+> **不做模板。AI 创造表格风格，引擎执行。**
 
-## 开工先问清
-- 数据长什么样：字段名、几行示例、来源
-- 想得到什么：汇总 / 对比 / 趋势 / 清洗 / 建模
-- 目标格式：Excel / CSV / 在线表格
+---
 
-## 常见任务打法
-- 清洗：去重、统一格式、处理缺失值（标注而非乱填）、拆合列
-- 计算：优先用结构化公式（SUMIFS / XLOOKUP / 透视表）而非硬编码
-- 分析：先定问题，再选方法；给出结论 + 支撑数字
-- 透视：明确行 / 列 / 值 / 筛选四要素再动手
+## 🔧 首次使用
 
-## 纪律
-- 公式给出中文解释，说明每一步在算什么
-- 不臆造数据；示例数据显式标注"示例"
-- 大数据量优先给"方法 + 公式模板"，让用户在自己数据上套用
-- 涉及金额/比例，保留口径说明（含税？环比？）
+```bash
+pip install openpyxl
+```
 
-## 本地优先
-- 普通 Excel / CSV 输入、分析和导出均使用本地文件路径与本地工具
-- 不为生成或处理表格要求 Otto 私有服务地址，也不隐式上传原始数据
-- 只有用户明确要求“飞书表格/在线协作”时，才调用对应远程能力
+---
+
+## 🎨 设计令牌系统
+
+```yaml
+# 色彩
+primary: "1B3A5C"       # 主色（标签页/标题栏）
+accent: "2E75B6"        # 强调色
+body_color: "333333"    # 数据文字
+header_bg: "1B3A5C"     # 表头背景
+header_text: "FFFFFF"   # 表头文字
+stripe_bg: "F0F4F8"     # 交替行背景
+border_color: "CCCCCC"  # 边框色
+title_bg: "1B3A5C"      # 标题栏背景
+title_text: "FFFFFF"    # 标题栏文字
+negative_color: "DC3545" # 负数/警告色
+positive_color: "28A745" # 正数/成功色
+
+# 字体
+heading_font: "Microsoft YaHei"
+body_font: "Microsoft YaHei"
+title_size: "14"
+header_size: "11"
+body_size: "10.5"
+
+# 设计身份
+design_name: "深空数据"
+design_mood: "冷静、专业"
+```
+
+---
+
+## 🚀 生成 Excel
+
+### 格式
+
+Markdown 的 `##` 标题分割为独立工作表（sheet），`|表格|` 写入数据行。段落文字作为说明。
+
+```markdown
+---
+title: Q2 销售分析报告
+author: 市场部
+design_name: "深空数据"
+primary: "0A2647"
+accent: "144272"
+stripe_bg: "EBF5FB"
+---
+
+## 销售总览
+
+本季度整体表现良好，同比增长 15%。
+
+| 区域 | Q2 销售额 | Q1 销售额 | 环比增长 |
+|------|----------|----------|---------|
+| 华北 | 1,250 | 1,100 | 13.6% |
+| 华东 | 2,180 | 1,980 | 10.1% |
+| 华南 | 980 | 820 | 19.5% |
+
+## 产品分类
+
+| 产品线 | 销售额 | 占比 |
+|--------|--------|------|
+| A 系列 | 1,890 | 42.8% |
+| B 系列 | 1,420 | 32.1% |
+| C 系列 | 1,100 | 24.9% |
+```
+
+### 生成
+
+```bash
+python scripts/create_xlsx.py input.md output.xlsx
+```
+
+---
+
+## 🔧 分析工具
+
+### 数据分析
+```bash
+python scripts/analyze.py input.xlsx --sheet "销售总览"
+```
+
+### 数据透视
+```bash
+python scripts/pivot.py input.xlsx output.xlsx \
+  --rows "区域" --vals "销售额" --agg sum
+```
+
+### 数据清洗
+```bash
+python scripts/clean.py input.xlsx output.xlsx
+```
