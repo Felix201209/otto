@@ -314,7 +314,12 @@ export function AccountManagementPage({
 
   const copyInviteValue = async (kind: 'link' | 'code', value: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(value);
+      // 优先走 IPC clipboard（Electron 桌面端），可靠且不受 CSP/navigator API 限制
+      if (window.otto?.writeClipboard) {
+        await window.otto.writeClipboard(value);
+      } else {
+        await navigator.clipboard.writeText(value);
+      }
       setCopied(kind);
       setInviteError(null);
     } catch (cause) {

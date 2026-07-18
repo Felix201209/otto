@@ -176,6 +176,26 @@ const bridge = {
   onMenu(_handler: MenuHandler): () => void { return () => {}; },
   openExternal(_url: string): Promise<void> { return Promise.resolve(); },
   openPath(_path: string): Promise<void> { return Promise.resolve(); },
+  async writeClipboard(text: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback: create temporary textarea
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  },
   saveTextFile(): Promise<string | null> { return Promise.resolve(null); },
   feishuStart(): Promise<{ text: string; pid?: number }> { return Promise.resolve({ text: '浏览器模式不支持飞书守护' }); },
   feishuStop(): Promise<{ text: string }> { return Promise.resolve({ text: '浏览器模式不支持飞书守护' }); },
