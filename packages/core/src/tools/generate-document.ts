@@ -673,49 +673,159 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     return rgb.reduce((s, c) => s + c, 0) < 80;
   }
 
-  /** Render a text slide with native pptxgenjs objects (editable, searchable). */
+  /** Accent bar color: either a user-provided hex or the theme primary. */
+  private accentBarColor(sec: ParsedSlideSection, theme: SlideTheme): string {
+    const barMatch = sec.body
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .find((l) => /^\s*<!--\s*(?:bar|accent)\s*:\s*(#[0-9a-f]{6}|[a-z]+)\s*-->/i.test(l));
+    if (barMatch) {
+      const m = barMatch.match(/:\s*(#[0-9a-f]{6})\b/i);
+      if (m) return m[1].toUpperCase();
+    }
+    return theme.accent;
+  }
+
+  /** Render a text slide with native pptxgenjs objects (editable, design-rich). */
   private renderNativeSlide(
     pres: any, sec: ParsedSlideSection, index: number, total: number,
     theme: SlideTheme, pgNum: string,
   ): void {
     const slide = pres.addSlide();
     slide.background = { color: theme.background.replace('#', '') };
+    const isLight = this.isLightTheme(theme);
+    const barColor = this.accentBarColor(sec, theme);
+    const primaryColor = isLight ? this.mixHexColors(barColor, theme.background, 0.15) : barColor;
 
-    slide.addText(pgNum, { x: 11.6, y: 7.0, w: 1.2, h: 0.4, fontSize: 10,
-      color: theme.muted.replace('#', ''), align: 'right', fontFace: 'PingFang SC' });
+    // ── accent bar (left vertical stripe) ──
+    slide.addShape(pres.ShapeType?.rect ?? 'rect', {
+      x: 0, y: 0, w: 0.12, h: 7.5,
+      fill: { color: barColor.replace('#', '') },
+      line: { color: barColor.replace('#', ''), width: 0 },
+    });
 
+    // ── title ──
     const title = this.stripMarkdown(sec.title);
     if (title) {
-      slide.addText(title, { x: 0.8, y: 0.4, w: 11.8, h: 0.9, fontSize: 30,
-        bold: true, color: theme.text.replace('#', ''), fontFace: 'PingFang SC' });
+      const titleColor = isLight ? this.darkenColor(primaryColor, 0.55) : '#FAFAFA';
+      slide.addText(title, {
+        x: 0.9, y: 0.5, w: 10.5, h: 0.95,
+        fontSize: 34, bold: true, color: titleColor.replace('#', ''),
+        fontFace: 'PingFang SC', align: 'left',
+      });
+
+      // accent underline under title
+      slide.addShape(pres.ShapeType?.rect ?? 'rect', {
+        x: 0.9, y: 1.55, w: 1.6, h: 0.06,
+        fill: { color: barColor.replace('#', '') },
+        line: { color: barColor.replace('#', ''), width: 0 },
+      });
     }
 
-    let y = title ? 1.5 : 0.4;
+    let y = title ? 1.9 : 0.6;
     const parsed = this.parseNativeSlideBody(sec.body, theme);
 
+    // ── tables ──
     for (const tb of parsed.tables) {
-      const hrs = tb.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11,
-        color: 'FFFFFF', fill: { color: theme.primary.replace('#', '') }, fontFace: 'PingFang SC' as const } }));
-      const drs = tb.rows.map((row: string[]) => row.map((cell: string) => ({ text: cell, options: { fontSize: 10,
-        color: theme.text.replace('#', ''), fontFace: 'PingFang SC' as const } })));
-      slide.addTable([hrs, ...drs] as any, { x: 0.8, y, w: 11.8,
-        border: { type: 'solid', pt: 0.5, color: theme.surface.replace('#', '') } as any });
-      y += Math.min(4.5, (tb.rows.length + 1) * 0.36) + 0.2;
+      const headerBg = isLight ? this.mixHexColors(barColor, '#FFFFFF', 0.82) : barColor;
+      const headerText = isLight ? theme.text : '#FFFFFF';
+      const rowCount = tb.rows.length;
+      const hPerRow = Math.min(0.42, (5.8 - y) / Math.max(1, rowCount + 1));
+      const hrs = tb.headers.map((h: string) => ({
+        text: h,
+        options: {
+          bold: true, fontSize: 12, color: headerText.replace('#', ''),
+          fill: { color: headerBg.replace('#', '') },
+          fontFace: 'PingFang SC' as const,
+        },
+      }));
+      const drs = tb.rows.map((row: string[]) =>
+        row.map((cell: string) => ({
+          text: cell,
+          options: {
+            fontSize: 11,
+            color: theme.text.replace('#', ''),
+            fontFace: 'PingFang SC' as const,
+          },
+        })),
+      );
+      slide.addTable([hrs, ...drs] as any, {
+        x: 0.9, y, w: 11.4,
+        border: { type: 'solid', pt: 0.5, color: theme.surface.replace('#', '') } as any,
+        rowH: hPerRow,
+      });
+      y += (rowCount + 1) * hPerRow + 0.25;
     }
 
+    // ── text blocks ──
     for (const blk of parsed.texts) {
-      if (y > 6.5) break;
-      const h = Math.min(4.8, blk.lines.length * 0.38);
-      slide.addText(blk.lines.map((ln: string) => ({ text: ln, options: {
-        fontSize: blk.fontSize, color: (blk.color || theme.text).replace('#', ''),
-        bold: blk.bold, fontFace: 'PingFang SC' as const,
-        bullet: blk.isBullet ? { code: '\u2022' } : undefined, breakType: 'none' as const,
-      } })), { x: 0.8 + (blk.indent || 0) * 1.2, y, w: 11.8 - (blk.indent || 0) * 1.2,
-        h, valign: 'top' as const } as any);
-      y += h + 0.1;
+      if (y > 6.4) break;
+
+      const isHeading = blk.bold && blk.fontSize >= 18;
+      const isBulletBlock = blk.isBullet;
+
+      if (isHeading) {
+        // Section divider in text: accent number + top border
+        slide.addShape(pres.ShapeType?.rect ?? 'rect', {
+          x: 0.9, y: y - 0.05, w: 0.26, h: 0.04,
+          fill: { color: barColor.replace('#', '') },
+          line: { color: barColor.replace('#', ''), width: 0 },
+        });
+        y += 0.08;
+      }
+
+      const blockColor = isHeading
+        ? this.isLightTheme(theme)
+          ? this.darkenColor(primaryColor, 0.45)
+          : '#F0F4F8'
+        : (blk.color || theme.text);
+
+      slide.addText(
+        blk.lines.map((ln: string) => ({
+          text: ln,
+          options: {
+            fontSize: blk.fontSize || 14,
+            color: blockColor.replace('#', ''),
+            bold: blk.bold ?? false,
+            fontFace: 'PingFang SC' as const,
+            bullet: isBulletBlock ? {
+              code: '\u2022',
+              color: barColor.replace('#', ''),
+            } : undefined,
+            breakType: 'none' as const,
+          },
+        })),
+        {
+          x: 0.9 + (blk.indent || 0) * 1.4,
+          y,
+          w: 11.4 - (blk.indent || 0) * 1.4,
+          h: isHeading ? 0.48 : Math.min(4.5, blk.lines.length * 0.40),
+          valign: (isHeading ? 'middle' : 'top') as any,
+          lineSpacingMultiple: isHeading ? 1.15 : 1.38,
+        } as any,
+      );
+
+      y += (isHeading ? 0.58 : Math.min(4.5, blk.lines.length * 0.40)) + 0.12;
     }
+
+    // ── footer ──
+    const footerStr = `${pgNum} / ${String(total).padStart(2, '0')}`;
+    const footerColor = isLight
+      ? this.mixHexColors(theme.text, '#FFFFFF', 0.55)
+      : this.mixHexColors('#E0E0E0', theme.background, 0.55);
+    slide.addText(footerStr, {
+      x: 0.9, y: 6.9, w: 2.0, h: 0.35,
+      fontSize: 10, color: footerColor.replace('#', ''),
+      align: 'left', fontFace: 'PingFang SC',
+    });
 
     if (sec.notes.length > 0) slide.addNotes(sec.notes.join('\n'));
+  }
+
+  private isLightTheme(theme: SlideTheme): boolean {
+    const bg = theme.background;
+    const rgb = this.hexToRgb(bg);
+    return (rgb[0] + rgb[1] + rgb[2]) / 3 > 128;
   }
 
   /** Parse slide body into native text blocks and PPT tables. */
