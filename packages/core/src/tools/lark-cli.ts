@@ -245,6 +245,8 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '- Authorization is fully automatic: if the CLI is not configured/authorized yet, this tool launches the browser device-flow login itself and streams the verification URL to the user in real time within the same call. Do NOT manually run "lark-cli config init" or "auth login" in a shell.',
         '- Do NOT guess subcommands or flags. If unsure what a command supports, run it with "--help" first (e.g. command="calendar --help"). Error responses include hints with available options — follow them instead of guessing.',
         '',
+        'Search routing: current lark-cli does NOT support top-level command="+search". For user document/cloud-drive search, use command="drive +search"; for document body search, use command="docs +search". Legacy command="+search" is normalized to "drive +search" for compatibility.',
+        '',
         'COMMON COMMAND CHEATSHEET (use these patterns to avoid trial-and-error):',
         '',
         '## Calendar',
@@ -424,9 +426,14 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
   }
 
   getDescription(params: LarkCliParams): string {
+    const command = this.normalizeCommand(params.command);
     const argsStr = params.args ? ` with args [${params.args.join(', ')}]` : '';
     const identityStr = params.as ? ` as ${params.as}` : '';
-    return `Running lark-cli command: "${params.command}"${argsStr}${identityStr}`;
+    const normalizedStr =
+      command === params.command.trim()
+        ? ''
+        : ` (normalized from "${params.command}")`;
+    return `Running lark-cli command: "${command}"${normalizedStr}${argsStr}${identityStr}`;
   }
 
   /**
@@ -539,10 +546,23 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
   }
 
   /**
+   * Keeps Otto compatible with older prompts that still call the removed
+   * top-level search shortcut from earlier lark-cli versions.
+   */
+  private normalizeCommand(command: string): string {
+    const normalized = command.trim().replace(/\s+/g, ' ');
+    if (normalized === '+search') {
+      return 'drive +search';
+    }
+    return normalized;
+  }
+
+  /**
    * Builds the full command string passed to the shell.
    */
   private buildCommand(params: LarkCliParams, binary: string): string {
-    let cmdString = `${binary} ${params.command}`;
+    const command = this.normalizeCommand(params.command);
+    let cmdString = `${binary} ${command}`;
 
     if (params.args && params.args.length > 0) {
       const sanitized = params.args.map((arg) => this.sanitizeArg(arg));
@@ -592,14 +612,15 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
     // lark-cli's hints (which would tempt the agent to fall back to a raw
     // shell command, hiding the URL from the user). We skip this for auth
     // commands themselves to avoid infinite recursion.
-    if (!isAuthCommand(params.command) && this.needsAuthorization(raw)) {
+    const normalizedCommand = this.normalizeCommand(params.command);
+    if (!isAuthCommand(normalizedCommand) && this.needsAuthorization(raw)) {
       const failureType = this.classifyAuthFailure(raw);
       let authCmd: string;
 
       if (failureType === 'login') {
         // User login required: extract the auth login command from the hint
         // or infer domain from the original command.
-        authCmd = this.extractAuthLoginCommand(raw, params.command, binary);
+        authCmd = this.extractAuthLoginCommand(raw, normalizedCommand, binary);
 
         // Apply project-level Feishu/Lark authorization scope minimization rules
         let feishuSettings:
