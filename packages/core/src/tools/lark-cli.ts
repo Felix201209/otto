@@ -246,6 +246,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '- Do NOT guess subcommands or flags. If unsure what a command supports, run it with "--help" first (e.g. command="calendar --help"). Error responses include hints with available options — follow them instead of guessing.',
         '',
         'Search routing: current lark-cli does NOT support top-level command="+search". For user document/cloud-drive search, use command="drive +search"; for document body search, use command="docs +search". Legacy command="+search" is normalized to "drive +search" for compatibility.',
+        'Drive list routing: current lark-cli misroutes command="drive files list" by treating "files" as a domain. Use command="drive +search" instead; legacy command="drive files list" is normalized to "drive +search" for compatibility.',
         '',
         'COMMON COMMAND CHEATSHEET (use these patterns to avoid trial-and-error):',
         '',
@@ -562,12 +563,12 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
   }
 
   /**
-   * Keeps Otto compatible with older prompts that still call the removed
-   * top-level search shortcut from earlier lark-cli versions.
+   * Keeps Otto compatible with older prompts and broken lark-cli routes that
+   * have safe shortcut equivalents.
    */
   private normalizeCommand(command: string): string {
     const normalized = command.trim().replace(/\s+/g, ' ');
-    if (normalized === '+search') {
+    if (normalized === '+search' || normalized === 'drive files list') {
       return 'drive +search';
     }
     return normalized;

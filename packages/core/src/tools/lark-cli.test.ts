@@ -214,6 +214,24 @@ describe('LarkCliTool', () => {
       expect(cmdStr).toContain('宣传');
     });
 
+    it('should normalize broken drive files list route to drive +search', async () => {
+      const child = nextChild();
+      const promise = tool.execute(
+        { command: 'drive files list', args: ['--query', '宣传'] },
+        new AbortController().signal,
+      );
+      child.emitStdout('{"status": "ok"}');
+      child.close(0);
+      const result = await promise;
+
+      expect(result.status).toBe('success');
+      const cmdStr = mockSpawn.mock.calls[0][0] as string;
+      expect(cmdStr).toContain('drive +search');
+      expect(cmdStr).not.toContain('drive files list');
+      expect(cmdStr).toContain('--query');
+      expect(cmdStr).toContain('宣传');
+    });
+
     it('should reuse the exact pinned native binary from the npx cache', async () => {
       const packageDir = path.join(
         tempHome,
