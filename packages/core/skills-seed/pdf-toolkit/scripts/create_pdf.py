@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Otto PDF-Toolkit v5 — 零空白紧凑排版。python create_pdf.py in.md out.pdf"""
+"""Otto PDF-Toolkit v6 — 视觉感知多布局引擎。python create_pdf.py in.md out.pdf"""
 from __future__ import annotations
 import re, sys, os
 from datetime import datetime
@@ -12,377 +12,292 @@ if sys.platform == 'win32':
 try: from fpdf import FPDF
 except ImportError: print("pip install fpdf2"); sys.exit(1)
 
+def _rgb(h): h=h.lstrip("#"); return tuple(int(h[i:i+2],16) for i in(0,2,4))
+def _hex(r,g,b): return f"{max(0,min(255,int(r))):02X}{max(0,min(255,int(g))):02X}{max(0,min(255,int(b))):02X}"
+def _light(h,a): r,g,b=_rgb(h); return _hex(r+(255-r)*a,g+(255-g)*a,b+(255-b)*a)
 
-def _rgb(h): h = h.lstrip("#"); return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-def _hex(r, g, b): return f"{max(0, min(255, int(r))):02X}{max(0, min(255, int(g))):02X}{max(0, min(255, int(b))):02X}"
-def _light(h, a):
-    r, g, b = _rgb(h); return _hex(r + (255 - r) * a, g + (255 - g) * a, b + (255 - b) * a)
+def resolve(meta):
+    base=meta.get("base","0A1628"); accent=meta.get("accent","2D7DD2"); surface=meta.get("surface","F0F4F8")
+    return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
+        "base":base,"accent":accent,"surface":surface,
+        "body":_light(base,0.85) if _rgb(base)[0]<60 else "333333",
+        "muted":_light(base,0.55),"callout_bg":_light(accent,0.90),
+        "callout_bar":accent,"hr":_light(base,0.80),
+        "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
+        "h_font":meta.get("heading_font","Helvetica"),"b_font":meta.get("body_font","Helvetica"),
+        "t_sz":int(meta.get("title_size","24")),"h1_sz":int(meta.get("h1_size","16")),
+        "h2_sz":int(meta.get("h2_size","12")),"b_sz":int(meta.get("body_size","10")),
+        "cover":meta.get("cover","true")!="false","toc":meta.get("toc","false")=="true",
+        "margin":float(meta.get("margin","25"))}
 
-def resolve_theme(meta: dict) -> dict:
-    base = meta.get("base", "0A1628"); accent = meta.get("accent", "2D7DD2"); surface = meta.get("surface", "F0F4F8")
-    return {
-        "theme": meta.get("theme", ""), "atmo": meta.get("atmosphere", ""),
-        "base": base, "accent": accent, "surface": surface,
-        "body": _light(base, 0.85) if _rgb(base)[0] < 60 else "333333",
-        "muted": _light(base, 0.55), "callout_bg": _light(accent, 0.90),
-        "callout_bar": accent, "hr": _light(base, 0.80),
-        "hdr_bg": base, "hdr_text": "FFFFFF", "stripe": surface,
-        "h_font": meta.get("heading_font", "Helvetica"),
-        "b_font": meta.get("body_font", "Helvetica"),
-        "t_sz": int(meta.get("title_size", "24")),
-        "h1_sz": int(meta.get("h1_size", "16")),
-        "h2_sz": int(meta.get("h2_size", "12")),
-        "b_sz": int(meta.get("body_size", "10")),
-        "cover": meta.get("cover", "true") != "false",
-        "toc": meta.get("toc", "false") == "true",
-        "margin": float(meta.get("margin", "25")),
-    }
+LAYOUT_RE=re.compile(r'<!--\s*layout:\s*(\w[\w-]*)\s*-->')
 
-
-def parse_md(text: str) -> tuple[dict, list[dict]]:
-    meta = {}; body = text.strip()
+def parse(text):
+    meta={}; body=text.strip()
     if body.startswith("---"):
-        parts = body.split("---", 2)
-        if len(parts) >= 3:
+        parts=body.split("---",2)
+        if len(parts)>=3:
             for line in parts[1].strip().split("\n"):
-                if ":" in line and not line.startswith("#"):
-                    k, _, v = line.partition(":"); meta[k.strip()] = v.strip().strip('"').strip("'")
-            body = parts[2].strip()
+                if ":" in line and not line[0]=="#": k,_,v=line.partition(":"); meta[k.strip()]=v.strip().strip('"').strip("'")
+            body=parts[2].strip()
 
-    lines = body.split("\n"); i = 0
-    secs = []; cur = {"heading": "", "blocks": []}
+    lines=body.split("\n"); i=0
+    secs=[]; cur={"heading":"","layout":"narrative","blocks":[]}
     def save():
         if cur["blocks"]: secs.append(cur.copy())
 
-    tbl = []; in_t = False
-    while i < len(lines):
-        line = lines[i]
+    tbl=[]; in_t=False
+    while i<len(lines):
+        line=lines[i]
         if line.strip().startswith("|") and line.strip().endswith("|"):
-            tbl.append(line); in_t = True; i += 1; continue
+            tbl.append(line); in_t=True; i+=1; continue
         elif in_t:
-            h, r = _ptbl(tbl)
-            if h: cur["blocks"].append({"type": "table", "h": h, "r": r})
-            tbl = []; in_t = False; continue
-        if not line.strip(): i += 1; continue
+            h,r=_tbl(tbl)
+            if h: cur["blocks"].append({"t":"table","h":h,"r":r})
+            tbl=[]; in_t=False; continue
+        if not line.strip(): i+=1; continue
 
-        m = re.match(r"^(##)\s+(.+)$", line)
-        if m: save(); cur = {"heading": m.group(2).strip(), "blocks": []}; i += 1; continue
-
-        m = re.match(r"^(#{3,6})\s+(.+)$", line)
-        if m: cur["blocks"].append({"type": "sub", "lvl": len(m.group(1)), "text": m.group(2).strip()}); i += 1; continue
-
-        m = re.match(r"^[-*+]\s+(.+)$", line)
+        m=re.match(r"^(##)\s+(.+)$",line)
         if m:
-            items = []
-            while i < len(lines) and re.match(r"^[-*+]\s+(.+)$", lines[i]):
-                items.append(re.match(r"^[-*+]\s+(.+)$", lines[i]).group(1).strip()); i += 1
-            cur["blocks"].append({"type": "bullet", "items": items}); continue
+            save(); txt=m.group(2).strip(); lm=LAYOUT_RE.search(txt)
+            layout="narrative"
+            if lm: layout=lm.group(1); txt=txt[:lm.start()].strip()
+            cur={"heading":txt,"layout":layout,"blocks":[]}; i+=1; continue
 
-        m = re.match(r"^\d+[.)]\s+(.+)$", line)
+        m=re.match(r"^(#{3,6})\s+(.+)$",line)
+        if m: cur["blocks"].append({"t":"sub","lvl":len(m.group(1)),"text":m.group(2).strip()}); i+=1; continue
+
+        m=re.match(r"^[-*+]\s+(.+)$",line)
         if m:
-            items = []
-            while i < len(lines) and re.match(r"^\d+[.)]\s+(.+)$", lines[i]):
-                items.append(re.match(r"^\d+[.)]\s+(.+)$", lines[i]).group(1).strip()); i += 1
-            cur["blocks"].append({"type": "ordered", "items": items}); continue
+            items=[]
+            while i<len(lines) and re.match(r"^[-*+]\s+(.+)$",lines[i]):
+                items.append(re.match(r"^[-*+]\s+(.+)$",lines[i]).group(1).strip()); i+=1
+            cur["blocks"].append({"t":"bullet","items":items}); continue
+
+        m=re.match(r"^\d+[.)]\s+(.+)$",line)
+        if m:
+            items=[]
+            while i<len(lines) and re.match(r"^\d+[.)]\s+(.+)$",lines[i]):
+                items.append(re.match(r"^\d+[.)]\s+(.+)$",lines[i]).group(1).strip()); i+=1
+            cur["blocks"].append({"t":"ordered","items":items}); continue
 
         if line.startswith("> "):
-            q = []
-            while i < len(lines) and lines[i].startswith("> "):
-                q.append(lines[i][2:].strip()); i += 1
-            cur["blocks"].append({"type": "quote", "text": " ".join(q)}); continue
+            q=[]
+            while i<len(lines) and lines[i].startswith("> "):
+                q.append(lines[i][2:].strip()); i+=1
+            cur["blocks"].append({"t":"quote","text":" ".join(q)}); continue
 
-        if line.strip() in ("---", "***", "___"):
-            cur["blocks"].append({"type": "hr"}); i += 1; continue
+        if line.strip() in ("---","***","___"):
+            cur["blocks"].append({"t":"hr"}); i+=1; continue
 
-        p = []
-        while i < len(lines) and lines[i].strip() and not lines[i].startswith("#") and \
-              not re.match(r"^[-*+]\s+", lines[i]) and not re.match(r"^\d+[.)]\s+", lines[i]) and \
+        p=[]
+        while i<len(lines) and lines[i].strip() and not lines[i].startswith("#") and \
+              not re.match(r"^[-*+]\s+",lines[i]) and not re.match(r"^\d+[.)]\s+",lines[i]) and \
               not lines[i].startswith("|") and not lines[i].startswith("> ") and \
-              lines[i].strip() not in ("---", "***", "___"):
-            p.append(lines[i]); i += 1
-        cur["blocks"].append({"type": "para", "text": "\n".join(p)})
-    if tbl:
-        h, r = _ptbl(tbl)
-        if h: cur["blocks"].append({"type": "table", "h": h, "r": r})
+              lines[i].strip() not in ("---","***","___"):
+            p.append(lines[i]); i+=1
+        cur["blocks"].append({"t":"para","text":"\n".join(p)})
+    if tbl: h,r=_tbl(tbl);
+    if h: cur["blocks"].append({"t":"table","h":h,"r":r})
     save()
-    return meta, secs
+    return meta,secs
 
-def _ptbl(raw):
-    if len(raw) < 2: return [], []
-    h = [c.strip() for c in raw[0].strip("|").split("|")]
-    rows = []
+def _tbl(raw):
+    if len(raw)<2: return [],[]
+    h=[c.strip() for c in raw[0].strip("|").split("|")]
+    rows=[]
     for line in raw[1:]:
-        if re.match(r"^[\|\-\s:]+$", line.strip()): continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
+        if re.match(r"^[\|\-\s:]+$",line.strip()): continue
+        cells=[c.strip() for c in line.strip("|").split("|")]
         if cells: rows.append(cells)
-    return h, rows
+    return h,rows
 
 
-class PDFRenderer:
-    def __init__(self, t: dict, meta: dict):
-        self.t = t; self.m = meta
-        self.pdf = FPDF(unit="mm", format="A4")
-        self.pdf.set_auto_page_break(True, t["margin"])
-        self.mg = t["margin"]; self.pw = self.pdf.w - 2 * self.mg
-        self._has_cover = False; self._toc = []; self._cn = None
-        self._reg_fonts()
+class R:
+    def __init__(self,t,meta):
+        self.t=t; self.m=meta
+        self.pdf=FPDF(unit="mm",format="A4")
+        self.pdf.set_auto_page_break(True,t["margin"])
+        self.mg=t["margin"]; self.pw=self.pdf.w-2*self.mg
+        self._hc=False; self._toc=[]; self._cn=None
+        self._rf()
 
-    def _reg_fonts(self):
-        for p in ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simsun.ttc",
-                  "C:/Windows/Fonts/simhei.ttf", "/System/Library/Fonts/PingFang.ttc",
+    def _rf(self):
+        for p in["C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/simsun.ttc",
+                  "C:/Windows/Fonts/simhei.ttf","/System/Library/Fonts/PingFang.ttc",
                   "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"]:
             if os.path.exists(p):
-                try: self.pdf.add_font("CN", "", p); self.pdf.add_font("CN", "B", p); self._cn = "CN"; return
+                try: self.pdf.add_font("CN","",p); self.pdf.add_font("CN","B",p); self._cn="CN"; return
                 except: pass
 
-    def _c(self, k): return _rgb(self.t[k])
+    def _c(self,k): return _rgb(self.t[k])
+    def _f(self,bold=False,sz=None):
+        self.pdf.set_font(self._cn or "Helvetica","B" if bold else "",sz or self.t["b_sz"])
 
-    def _f(self, bold=False, sz=None):
-        fn = self._cn or "Helvetica"
-        self.pdf.set_font(fn, "B" if bold else "", sz or self.t["b_sz"])
-
-    def _header(self):
-        if self._has_cover and self.pdf.page == 1: return
-        self.pdf.set_font(self._cn or "Helvetica", "", 7)
-        self.pdf.set_text_color(*_rgb(self.t["muted"]))
-        self.pdf.cell(self.pw, 3, self.m.get("title", "")[:50], align="L")
-        self.pdf.ln(3)
+    def _hdr(self):
+        if self._hc and self.pdf.page==1: return
+        self.pdf.set_font(self._cn or "Helvetica","",7); self.pdf.set_text_color(*_rgb(self.t["muted"]))
+        self.pdf.cell(self.pw,3,self.m.get("title","")[:50],align="L"); self.pdf.ln(3)
         self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.2)
-        self.pdf.line(self.mg, self.pdf.get_y(), self.pdf.w - self.mg, self.pdf.get_y())
-        self.pdf.ln(3)
+        self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y()); self.pdf.ln(3)
 
-    def _footer(self):
-        if self._has_cover and self.pdf.page == 1: return
-        self.pdf.set_y(-self.mg + 6)
+    def _ftr(self):
+        if self._hc and self.pdf.page==1: return
+        self.pdf.set_y(-self.mg+6)
         self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.15)
-        self.pdf.line(self.mg, self.pdf.get_y(), self.pdf.w - self.mg, self.pdf.get_y())
-        self.pdf.set_font(self._cn or "Helvetica", "", 7)
-        self.pdf.set_text_color(*_rgb(self.t["muted"]))
-        self.pdf.cell(self.pw, 4, f"— {self.pdf.page_no()} —", align="C")
-
-    # ── 封面 ────────────────────────────────────────────────────────────
+        self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y())
+        self.pdf.set_font(self._cn or "Helvetica","",7); self.pdf.set_text_color(*_rgb(self.t["muted"]))
+        self.pdf.cell(self.pw,4,f"— {self.pdf.page_no()} —",align="C")
 
     def cover(self):
         if not self.t["cover"]: return
-        self._has_cover = True
-        title = self.m.get("title", ""); sub = self.m.get("subtitle", "")
-        author = self.m.get("author", ""); ds = self.m.get("date", "") or datetime.now().strftime("%Y年%m月")
-
-        self.pdf.add_page()
-        w = self.pdf.w; h = self.pdf.h
-
-        # 顶部色块
-        self.pdf.set_fill_color(*_rgb(self.t["base"]))
-        self.pdf.rect(0, 0, w, h * 0.35, "F")
-
-        # 装饰线
+        self._hc=True; title=self.m.get("title",""); sub=self.m.get("subtitle","")
+        author=self.m.get("author",""); ds=self.m.get("date","") or datetime.now().strftime("%Y年%m月")
+        self.pdf.add_page(); w=self.pdf.w; h=self.pdf.h
+        self.pdf.set_fill_color(*_rgb(self.t["base"])); self.pdf.rect(0,0,w,h*0.35,"F")
         self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.5)
-        self.pdf.line(self.mg, h * 0.35 + 5, w - self.mg, h * 0.35 + 5)
+        self.pdf.line(self.mg,h*0.35+5,w-self.mg,h*0.35+5)
+        self.pdf.set_y(h*0.35+16)
+        self._f(True,self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
+        self.pdf.multi_cell(self.pw,self.t["t_sz"]*0.55,title,align="C")
+        if sub: self.pdf.ln(5); self._f(False,self.t["b_sz"]+2); self.pdf.set_text_color(*_rgb(self.t["body"])); self.pdf.multi_cell(self.pw,7,sub,align="C")
+        self.pdf.ln(10); self._f(False,self.t["b_sz"]); self.pdf.set_text_color(*_rgb(self.t["muted"]))
+        mi=[x for x in[author,ds,self.m.get("department")] if x]
+        self.pdf.cell(self.pw,6," · ".join(mi),align="C")
 
-        # 标题
-        self.pdf.set_y(h * 0.35 + 16)
-        self._f(True, self.t["t_sz"])
-        self.pdf.set_text_color(*_rgb(self.t["base"]))
-        self.pdf.multi_cell(self.pw, self.t["t_sz"] * 0.55, title, align="C")
-
-        if sub:
-            self.pdf.ln(5)
-            self._f(False, self.t["b_sz"] + 2)
-            self.pdf.set_text_color(*_rgb(self.t["body"]))
-            self.pdf.multi_cell(self.pw, 7, sub, align="C")
-
-        self.pdf.ln(10)
-        self._f(False, self.t["b_sz"]); self.pdf.set_text_color(*_rgb(self.t["muted"]))
-        meta_items = [x for x in [author, ds, self.m.get("department")] if x]
-        self.pdf.cell(self.pw, 6, " · ".join(meta_items), align="C")
-
-    # ── 章节 ────────────────────────────────────────────────────────────
-
-    def chapter(self, title: str):
-        """简洁章节标题，带 accent 左竖线，不翻页。"""
-        self.pdf.ln(6)
-        # 左侧 accent 竖线
-        x = self.mg
+    def chapter(self,title,layout):
+        """简洁章节标题——左侧 accent 竖线标注。"""
+        self.pdf.ln(4)
+        x=self.mg
         self.pdf.set_fill_color(*_rgb(self.t["accent"]))
-        self.pdf.rect(x, self.pdf.get_y() - 2, 2.5, self.t["h1_sz"] + 4, "F")
-        # 标题
-        self.pdf.set_x(x + 6)
-        self._f(True, self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-        self.pdf.cell(self.pw - 6, self.t["h1_sz"] * 0.55, title, new_x="LMARGIN", new_y="NEXT")
-        self.pdf.ln(4)
-        self._toc.append({"level": 1, "text": title, "page": self.pdf.page})
-
-    def sub(self, text: str, lvl: int):
+        self.pdf.rect(x,self.pdf.get_y()-2,2.5,self.t["h1_sz"]+4,"F")
+        self.pdf.set_x(x+6)
+        self._f(True,self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
+        self.pdf.cell(self.pw-6,self.t["h1_sz"]*0.55,title,new_x="LMARGIN",new_y="NEXT")
         self.pdf.ln(3)
-        sz = self.t["h1_sz"] if lvl == 3 else self.t["h2_sz"]
-        bold = lvl <= 3
-        self._f(bold, sz); self.pdf.set_text_color(*_rgb(self.t["base"] if lvl == 3 else self.t["body"]))
-        self.pdf.cell(self.pw, sz * 0.55, text, new_x="LMARGIN", new_y="NEXT")
+        self._toc.append({"level":1,"text":title,"page":self.pdf.page})
+
+    def sub(self,text,lvl):
         self.pdf.ln(2)
-        if lvl <= 3:
-            self._toc.append({"level": 2, "text": text, "page": self.pdf.page})
+        sz=self.t["h1_sz"] if lvl==3 else self.t["h2_sz"]; bold=lvl<=3
+        self._f(bold,sz); self.pdf.set_text_color(*_rgb(self.t["base"] if lvl==3 else self.t["body"]))
+        self.pdf.cell(self.pw,sz*0.55,text,new_x="LMARGIN",new_y="NEXT"); self.pdf.ln(1)
+        if lvl<=3: self._toc.append({"level":2,"text":text,"page":self.pdf.page})
 
-    # ── 正文 ─────────────────────────────────────────────────────────────
-
-    def para(self, text: str):
+    def para(self,text):
         self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        # 行内格式
-        for tok in re.split(r"(\*\*.+?\*\*|\*.+?\*|`.+?`)", text):
-            if tok.startswith("**") and tok.endswith("**"):
-                self._f(True); self.pdf.set_text_color(*_rgb(self.t["body"]))
-                self.pdf.write(self.t["b_sz"] * 0.55, tok[2:-2])
-            elif tok.startswith("*") and tok.endswith("*") and not tok.startswith("**"):
-                self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-                self.pdf.write(self.t["b_sz"] * 0.55, tok[1:-1])
-            elif tok.startswith("`") and tok.endswith("`"):
-                self.pdf.set_font("Courier", "", self.t["b_sz"] - 1); self.pdf.set_text_color(*_rgb(self.t["accent"]))
-                self.pdf.write(self.t["b_sz"] * 0.55, tok[1:-1])
-            elif tok:
-                self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-                self.pdf.write(self.t["b_sz"] * 0.55, tok)
-        self.pdf.ln(4)
+        for tok in re.split(r"(\*\*.+?\*\*|\*.+?\*|`.+?`)",text):
+            if tok.startswith("**") and tok.endswith("**"): self._f(True); self.pdf.set_text_color(*_rgb(self.t["body"])); self.pdf.write(self.t["b_sz"]*0.55,tok[2:-2])
+            elif tok.startswith("*") and tok.endswith("*") and not tok.startswith("**"): self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"])); self.pdf.write(self.t["b_sz"]*0.55,tok[1:-1])
+            elif tok.startswith("`") and tok.endswith("`"): self.pdf.set_font("Courier","",self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["accent"])); self.pdf.write(self.t["b_sz"]*0.55,tok[1:-1])
+            elif tok: self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"])); self.pdf.write(self.t["b_sz"]*0.55,tok)
+        self.pdf.ln(3)
 
-    def bullet(self, items: list):
+    def bullet(self,items):
         for item in items:
             self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-            self.pdf.cell(self.pw, self.t["b_sz"] * 0.5, f"  •  {item}", new_x="LMARGIN", new_y="NEXT")
+            self.pdf.cell(self.pw,self.t["b_sz"]*0.5,f"  •  {item}",new_x="LMARGIN",new_y="NEXT")
 
-    def ordered(self, items: list):
-        for idx, item in enumerate(items, 1):
+    def ordered(self,items):
+        for idx,item in enumerate(items,1):
             self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-            self.pdf.cell(self.pw, self.t["b_sz"] * 0.5, f"  {idx}. {item}", new_x="LMARGIN", new_y="NEXT")
+            self.pdf.cell(self.pw,self.t["b_sz"]*0.5,f"  {idx}. {item}",new_x="LMARGIN",new_y="NEXT")
 
-    def quote(self, text: str):
-        """左侧 accent bar + 浅底色，只渲染一次。"""
-        self.pdf.ln(3)
-        bar_w = 2.5; pad = 5
-        start_y = self.pdf.get_y()
+    def quote(self,text):
+        self.pdf.ln(2); bar_w=2.5; pad=5; sy=self.pdf.get_y()
+        self.pdf.set_x(self.mg+bar_w+pad); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text)
+        h=self.pdf.get_y()-sy+4
+        self.pdf.set_fill_color(*_rgb(self.t["callout_bg"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
+        self.pdf.set_fill_color(*_rgb(self.t["callout_bar"])); self.pdf.rect(self.mg,sy-2,bar_w,h,"F")
+        self.pdf.set_xy(self.mg+bar_w+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(2)
 
-        # 先用 write 算高度
-        self.pdf.set_x(self.mg + bar_w + pad)
-        self._f(False, self.t["b_sz"] - 1); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        self.pdf.multi_cell(self.pw - bar_w - pad, (self.t["b_sz"] - 1) * 0.5, text)
-        h = self.pdf.get_y() - start_y + 4
-
-        # 画背景 + 竖线
-        self.pdf.set_fill_color(*_rgb(self.t["callout_bg"]))
-        self.pdf.rect(self.mg, start_y - 2, self.pw, h, "F")
-        self.pdf.set_fill_color(*_rgb(self.t["callout_bar"]))
-        self.pdf.rect(self.mg, start_y - 2, bar_w, h, "F")
-
-        # 再写文字
-        self.pdf.set_xy(self.mg + bar_w + pad, start_y)
-        self._f(False, self.t["b_sz"] - 1); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        self.pdf.multi_cell(self.pw - bar_w - pad, (self.t["b_sz"] - 1) * 0.5, text)
-        self.pdf.ln(2)
-
-    def table(self, hdrs: list, rows: list):
+    def table(self,hdrs,rows):
         if not hdrs: return
-        self.pdf.ln(3); cols = len(hdrs); cw = self.pw / cols
-
-        self.pdf.set_fill_color(*_rgb(self.t["hdr_bg"]))
-        self.pdf.set_text_color(*_rgb(self.t["hdr_text"]))
-        self._f(True, self.t["b_sz"] - 1)
-        for j, h in enumerate(hdrs):
-            self.pdf.cell(cw, 7, h, border=1, fill=True, align="C")
+        self.pdf.ln(2); cols=len(hdrs); cw=self.pw/cols
+        self.pdf.set_fill_color(*_rgb(self.t["hdr_bg"])); self.pdf.set_text_color(*_rgb(self.t["hdr_text"]))
+        self._f(True,self.t["b_sz"]-1)
+        for j,h in enumerate(hdrs): self.pdf.cell(cw,7,h,border=1,fill=True,align="C")
         self.pdf.ln()
-
-        for i, row in enumerate(rows):
-            if i % 2 == 1: self.pdf.set_fill_color(*_rgb(self.t["stripe"]))
-            else: self.pdf.set_fill_color(255, 255, 255)
-            self.pdf.set_text_color(*_rgb(self.t["body"]))
-            self._f(False, self.t["b_sz"] - 1)
-            for j, val in enumerate(row):
-                if j < cols:
-                    self.pdf.cell(cw, 6, str(val)[:45], border=1, fill=True, align="C" if j == 0 else "L")
+        for i,row in enumerate(rows):
+            if i%2==1: self.pdf.set_fill_color(*_rgb(self.t["stripe"]))
+            else: self.pdf.set_fill_color(255,255,255)
+            self.pdf.set_text_color(*_rgb(self.t["body"])); self._f(False,self.t["b_sz"]-1)
+            for j,val in enumerate(row):
+                if j<cols: self.pdf.cell(cw,6,str(val)[:45],border=1,fill=True,align="C" if j==0 else "L")
             self.pdf.ln()
         self.pdf.ln(2)
 
-    # ── TOC ──────────────────────────────────────────────────────────────
-
     def toc_page(self):
         if not self.t["toc"] or not self._toc: return
-        # 在正文末尾插入目录
-        self.pdf.add_page()
-        self._f(True, self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-        self.pdf.cell(self.pw, 10, "目  录", new_x="LMARGIN", new_y="NEXT")
-        self.pdf.ln(3)
+        self.pdf.add_page(); self._f(True,self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
+        self.pdf.cell(self.pw,10,"目  录",new_x="LMARGIN",new_y="NEXT"); self.pdf.ln(3)
         self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.3)
-        self.pdf.line(self.mg, self.pdf.get_y(), self.pdf.w - self.mg, self.pdf.get_y())
-        self.pdf.ln(5)
-
+        self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y()); self.pdf.ln(5)
         for e in self._toc:
-            self.pdf.set_x(self.mg + (e["level"] - 1) * 8)
-            self._f(e["level"] == 1, self.t["b_sz"] + (1 if e["level"] == 1 else 0))
+            self.pdf.set_x(self.mg+(e["level"]-1)*8)
+            self._f(e["level"]==1,self.t["b_sz"]+(1 if e["level"]==1 else 0))
             self.pdf.set_text_color(*_rgb(self.t["body"]))
-            self.pdf.cell(self.pw - (e["level"] - 1) * 8 - 10, 7, e["text"][:60])
-            self.pdf.cell(10, 7, str(e.get("page", "")), align="R", new_x="LMARGIN", new_y="NEXT")
-
-    # ── 签名 ─────────────────────────────────────────────────────────────
+            self.pdf.cell(self.pw-(e["level"]-1)*8-10,7,e["text"][:60])
+            self.pdf.cell(10,7,str(e.get("page","")),align="R",new_x="LMARGIN",new_y="NEXT")
 
     def sig(self):
-        s = self.m.get("signature_unit") or self.m.get("author") or ""
-        d = self.m.get("signature_date") or self.m.get("date") or ""
+        s=self.m.get("signature_unit") or self.m.get("author") or ""
+        d=self.m.get("signature_date") or self.m.get("date") or ""
         if not s and not d: return
-        self.pdf.ln(6)
-        self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        for line in [s, d]:
-            if line: self.pdf.cell(self.pw, 7, line, align="R", new_x="LMARGIN", new_y="NEXT")
+        self.pdf.ln(6); self._f(False); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        for line in[s,d]:
+            if line: self.pdf.cell(self.pw,7,line,align="R",new_x="LMARGIN",new_y="NEXT")
 
-    def build(self, secs: list):
-        self.pdf.set_title(self.m.get("title", "")); self.pdf.set_author(self.m.get("author", ""))
-        self.pdf.header = lambda: self._header()
-        self.pdf.footer = lambda: self._footer()
-
+    def build(self,secs):
+        self.pdf.set_title(self.m.get("title","")); self.pdf.set_author(self.m.get("author",""))
+        self.pdf.header=lambda:self._hdr(); self.pdf.footer=lambda:self._ftr()
         self.cover()
-        if not self._has_cover:
-            title = self.m.get("title", "")
+        if not self._hc:
+            title=self.m.get("title","")
             if title:
-                self.pdf.add_page()
-                self._f(True, self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-                self.pdf.multi_cell(self.pw, self.t["t_sz"] * 0.55, title, align="C")
-                self.pdf.ln(6)
+                self.pdf.add_page(); self._f(True,self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
+                self.pdf.multi_cell(self.pw,self.t["t_sz"]*0.55,title,align="C"); self.pdf.ln(6)
                 self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.4)
-                self.pdf.line(self.pdf.w / 2 - 25, self.pdf.get_y(), self.pdf.w / 2 + 25, self.pdf.get_y())
-                self.pdf.ln(8)
+                self.pdf.line(self.pdf.w/2-25,self.pdf.get_y(),self.pdf.w/2+25,self.pdf.get_y()); self.pdf.ln(8)
 
         for sec in secs:
-            if sec.get("heading"):
-                self.chapter(sec["heading"])
-            for blk in sec.get("blocks", []):
-                t = blk["type"]
-                if t == "sub": self.sub(blk["text"], blk["lvl"])
-                elif t == "para": self.para(blk["text"])
-                elif t == "bullet": self.bullet(blk["items"])
-                elif t == "ordered": self.ordered(blk["items"])
-                elif t == "quote": self.quote(blk["text"])
-                elif t == "table": self.table(blk["h"], blk["r"])
-                elif t == "hr":
-                    self.pdf.ln(2)
-                    self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.15)
-                    y = self.pdf.get_y()
-                    self.pdf.line(self.mg + 20, y, self.pdf.w - self.mg - 20, y)
-                    self.pdf.ln(2)
+            if sec.get("heading"): self.chapter(sec["heading"],sec.get("layout","narrative"))
+            layout=sec.get("layout","narrative")
 
-        self.sig()
-        self.toc_page()
+            for blk in sec.get("blocks",[]):
+                t=blk["t"]
+                if t=="sub": self.sub(blk["text"],blk["lvl"])
+                elif t=="para": self.para(blk["text"])
+                elif t=="bullet": self.bullet(blk["items"])
+                elif t=="ordered": self.ordered(blk["items"])
+                elif t=="quote": self.quote(blk["text"])
+                elif t=="table": self.table(blk["h"],blk["r"])
+                elif t=="hr":
+                    self.pdf.ln(1); self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.15)
+                    y=self.pdf.get_y(); self.pdf.line(self.mg+20,y,self.pdf.w-self.mg-20,y); self.pdf.ln(1)
 
-    def save(self, p): self.pdf.output(p)
+            if layout=="closing": self.sig()
+
+        self.sig(); self.toc_page()
+
+    def save(self,p): self.pdf.output(p)
 
 
 def main():
     import argparse
-    p = argparse.ArgumentParser(description="Otto PDF-Toolkit v5")
+    p=argparse.ArgumentParser(description="Otto PDF-Toolkit v6")
     p.add_argument("input"); p.add_argument("output")
-    a = p.parse_args()
-    ip = Path(a.input)
+    a=p.parse_args()
+    ip=Path(a.input)
     if not ip.exists(): print(f"找不到 {a.input}"); sys.exit(1)
-    meta, secs = parse_md(ip.read_text(encoding="utf-8"))
-    t = resolve_theme(meta)
-    if "title" not in meta: meta["title"] = ip.stem
-    gen = PDFRenderer(t, meta); gen.build(secs)
-    op = Path(a.output); op.parent.mkdir(parents=True, exist_ok=True)
-    gen.save(str(op))
-    print(f"✅ {op.name}  {op.stat().st_size/1024:.0f}KB  {len(secs)}章")
+    meta,secs=parse(ip.read_text(encoding="utf-8"))
+    t=resolve(meta)
+    if "title" not in meta: meta["title"]=ip.stem
+    g=R(t,meta); g.build(secs)
+    op=Path(a.output); op.parent.mkdir(parents=True,exist_ok=True)
+    g.save(str(op))
+    print(f"✅ {op.name}  {op.stat().st_size/1024:.0f}KB  {len(secs)}节")
 
-if __name__ == "__main__": main()
+if __name__=="__main__": main()
