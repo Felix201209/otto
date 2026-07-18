@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-Otto Doc-Writer v3 — AI 驱动的智能排版引擎
+Otto Doc-Writer v4 — 视觉母题驱动排版引擎
 
-哲学：不做模板。每份文档都应该有自己的视觉语言。
-AI 通过 YAML frontmatter 注入设计令牌（颜色/字体/布局），引擎忠实还原。
+对标 ppt-creator 的方案：AI 为每份文档创造独有视觉母题，
+引擎将其转化为丰富的排版决策——封面、章节过渡、正文、引用、
+表格、落款——每块都有独立的视觉表情，不是"所有页面一个样"。
 
 用法：
   python create_docx.py <input.md> <output.docx>
 
-输入 Markdown 的 YAML frontmatter 中可指定完整设计令牌。不指定时引擎自动推断。
+Markdown 中用 ## 标记新章节。AI 在 YAML frontmatter 里声明
+视觉母题（theme/base/accent/atmosphere/fonts），其余由引擎生成。
 """
 from __future__ import annotations
 
-import json, os, re, sys
+import re, sys, json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,84 +31,112 @@ try:
     from docx.oxml.ns import qn, nsdecls
     from docx.oxml import parse_xml
 except ImportError:
-    print("错误：需要 python-docx。pip install python-docx"); sys.exit(1)
+    print("pip install python-docx"); sys.exit(1)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 设计令牌解析 — 从 YAML frontmatter 读取 AI 的设计意图
+# 视觉母题系统
 # ═══════════════════════════════════════════════════════════════════════
 
-def parse_design_tokens(meta: dict) -> dict:
+def resolve_theme(meta: dict) -> dict:
     """
-    从 frontmatter 解析设计令牌。AI 可写任意键，引擎理解以下：
-
-    色彩：
-      primary, accent, body_color, bg_color, muted, table_header_bg,
-      table_header_text, table_stripe, callout_bg, callout_bar, hr_color
-    字体：
-      heading_font, body_font, title_size, h1_size, h2_size, body_size
-    排版：
-      page_width, page_height, margin_top, margin_bottom, margin_left, margin_right,
-      line_spacing, first_indent, title_align, cover, toc
-    身份：
-      design_name (AI 给这套视觉命名), design_mood
+    AI 在 YAML 中声明：
+      theme: 母题名称
+      base:   基础色（最深的底色或主色）
+      accent: 强调色
+      surface: 表面色（卡片/引用块底色）
+      atmosphere: 气氛关键词，引擎据此微调排版
+      heading_font / body_font / body_size
+      cover: true/false
+      toc: true/false
     """
     t: dict[str, Any] = {}
 
-    # ── 颜色 ──
-    t["primary"]       = meta.get("primary",       "1B3A5C")
-    t["accent"]        = meta.get("accent",        "2E75B6")
-    t["body_color"]    = meta.get("body_color",    "333333")
-    t["bg_color"]      = meta.get("bg_color",      "")
-    t["muted"]         = meta.get("muted",         "888888")
-    t["table_header_bg"]   = meta.get("table_header_bg",   t["primary"])
-    t["table_header_text"] = meta.get("table_header_text", "FFFFFF")
-    t["table_stripe"]      = meta.get("table_stripe",      "F5F7FA")
-    t["callout_bg"]        = meta.get("callout_bg",        "F0F4F8")
-    t["callout_bar"]       = meta.get("callout_bar",       t["accent"])
-    t["hr_color"]          = meta.get("hr_color",          "CCCCCC")
-    t["cover_bg"]          = meta.get("cover_bg",          t["primary"])
-    t["cover_text"]        = meta.get("cover_text",        "FFFFFF")
-    t["header_line_color"] = meta.get("header_line_color", t["accent"])
+    t["theme_name"]  = meta.get("theme", "Undefined")
+    t["atmosphere"]  = meta.get("atmosphere", "")
 
-    # ── 字体 ──
-    t["heading_font"] = meta.get("heading_font", "Microsoft YaHei")
-    t["body_font"]    = meta.get("body_font",    "SimSun")
-    t["title_size"]   = _pt(meta.get("title_size", "26"))
-    t["h1_size"]      = _pt(meta.get("h1_size",    "16"))
-    t["h2_size"]      = _pt(meta.get("h2_size",    "14"))
-    t["body_size"]    = _pt(meta.get("body_size",  "12"))
+    # 色彩——3 色足够，引擎派生其余
+    t["base"]    = meta.get("base",    "0A1628")
+    t["accent"]  = meta.get("accent",  "2D7DD2")
+    t["surface"] = meta.get("surface", "F5F7FA")
 
-    # ── 排版 ──
-    t["cover"]          = meta.get("cover", "true") != "false"
-    t["toc"]            = meta.get("toc",   "true")  == "true"
-    t["first_indent"]   = meta.get("first_indent",  "true") != "false"
-    t["title_align"]    = meta.get("title_align",    "center")
-    t["line_spacing"]   = float(meta.get("line_spacing", "1.5"))
-    t["page_width"]     = Cm(float(meta.get("page_width", "21")))
-    t["page_height"]    = Cm(float(meta.get("page_height", "29.7")))
-    t["margin_top"]     = Cm(float(meta.get("margin_top", "2.54")))
-    t["margin_bottom"]  = Cm(float(meta.get("margin_bottom", "2.54")))
-    t["margin_left"]    = Cm(float(meta.get("margin_left", "3.18")))
-    t["margin_right"]   = Cm(float(meta.get("margin_right", "3.18")))
+    # 自动派生
+    t["base_light"]  = _lighten(t["base"], 0.15)
+    t["body"]        = _readable_body(t["base"])
+    t["muted"]       = _muted(t["base"])
+    t["table_hdr"]   = t["base"]
+    t["table_text"]  = "FFFFFF"
+    t["stripe"]      = t["surface"]
+    t["callout_bg"]  = _blend(t["surface"], t["accent"], 0.06)
+    t["callout_bar"] = t["accent"]
+    t["hr"]          = _to_hex(*_lighten_rgb(*_hex_to_rgb(t["base"]), 0.75))
+    t["cover_bg"]    = t["base"]
+    t["cover_text"]  = "FFFFFF"
+    t["white"]       = "FFFFFF"
 
-    # ── 身份 ──
-    t["design_name"] = meta.get("design_name", "")
-    t["design_mood"] = meta.get("design_mood", "")
+    # 字体
+    t["h_font"] = meta.get("heading_font", "Microsoft YaHei")
+    t["b_font"] = meta.get("body_font",    "Microsoft YaHei")
+    t["title_sz"]  = int(meta.get("title_size", "28"))
+    t["h1_sz"]     = int(meta.get("h1_size",    "17"))
+    t["h2_sz"]     = int(meta.get("h2_size",    "14"))
+    t["body_sz"]   = int(meta.get("body_size",  "11"))
+
+    t["cover"]  = meta.get("cover", "true") != "false"
+    t["toc"]    = meta.get("toc", "true") == "true"
+    t["indent"] = meta.get("indent", "true") != "false"
+
+    t["margin"]  = float(meta.get("margin", "2.54"))
+    t["line_sp"] = float(meta.get("line_spacing", "1.6"))
 
     return t
 
 
-def _pt(val) -> Pt:
-    return Pt(float(str(val).replace("pt", "")))
+# ═══════════════════════════════════════════════════════════════════════
+# 色彩工具
+# ═══════════════════════════════════════════════════════════════════════
+
+def _hex_to_rgb(h: str) -> tuple:
+    h = h.lstrip("#"); return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def _to_hex(r, g, b) -> str:
+    return f"{max(0,min(255,int(r))):02X}{max(0,min(255,int(g))):02X}{max(0,min(255,int(b))):02X}"
+
+def _lighten_rgb(r, g, b, amt: float) -> tuple:
+    return (r + (255 - r) * amt, g + (255 - g) * amt, b + (255 - b) * amt)
+
+def _darken_rgb(r, g, b, amt: float) -> tuple:
+    return (r * (1 - amt), g * (1 - amt), b * (1 - amt))
+
+def _lighten(h: str, amt: float) -> str:
+    return _to_hex(*_lighten_rgb(*_hex_to_rgb(h), amt))
+
+def _readable_body(base_hex: str) -> str:
+    """从基础色推出可读正文色。"""
+    r, g, b = _hex_to_rgb(base_hex)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    if lum < 60: return "D0D6E0"
+    if lum < 128: return "2D3540"
+    return "333333"
+
+def _muted(base_hex: str) -> str:
+    r, g, b = _hex_to_rgb(base_hex)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    if lum < 60: return "6B7B94"
+    return "888888"
+
+def _blend(c1: str, c2: str, ratio: float) -> str:
+    r1, g1, b1 = _hex_to_rgb(c1)
+    r2, g2, b2 = _hex_to_rgb(c2)
+    return _to_hex(r1*(1-ratio)+r2*ratio, g1*(1-ratio)+g2*ratio, b1*(1-ratio)+b2*ratio)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Markdown 解析
 # ═══════════════════════════════════════════════════════════════════════
 
-def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    meta: dict[str, Any] = {}
+def parse_md(text: str) -> tuple[dict, list[dict]]:
+    meta = {}
     body = text.strip()
     if body.startswith("---"):
         parts = body.split("---", 2)
@@ -114,360 +144,341 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
             for line in parts[1].strip().split("\n"):
                 line = line.strip()
                 if ":" in line and not line.startswith("#"):
-                    key, _, val = line.partition(":")
-                    meta[key.strip()] = val.strip().strip('"').strip("'")
+                    k, _, v = line.partition(":")
+                    meta[k.strip()] = v.strip().strip('"').strip("'")
             body = parts[2].strip()
-    return meta, body
 
+    lines = body.split("\n"); i = 0
+    sections: list[dict] = []
+    cur = {"heading": "", "blocks": []}
 
-def parse_markdown_body(text: str) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-    lines = text.split("\n"); i = 0
-    table_buf: list[str] = []; in_table = False
+    def save():
+        if cur["blocks"]: sections.append(cur.copy())
 
-    def flush():
-        nonlocal table_buf, in_table
-        if table_buf:
-            blocks.append({"type": "table", "raw": table_buf})
-            table_buf = []; in_table = False
+    tbl = []; in_t = False
 
     while i < len(lines):
         line = lines[i]
         if line.strip().startswith("|") and line.strip().endswith("|"):
-            table_buf.append(line); in_table = True; i += 1; continue
-        elif in_table:
-            flush(); continue
+            tbl.append(line); in_t = True; i += 1; continue
+        elif in_t:
+            if tbl:
+                hdrs, rows = _parse_tbl(tbl)
+                if hdrs: cur["blocks"].append({"type":"table","h":hdrs,"r":rows})
+            tbl = []; in_t = False; continue
         if not line.strip(): i += 1; continue
 
-        m = re.match(r"^(#{1,6})\s+(.+)$", line)
+        m = re.match(r"^(#{2})\s+(.+)$", line)
         if m:
-            flush()
-            blocks.append({"type": "heading", "level": len(m.group(1)), "text": m.group(2).strip()})
+            save()
+            cur = {"heading": m.group(2).strip(), "blocks": []}
+            i += 1; continue
+
+        m = re.match(r"^(#{3,6})\s+(.+)$", line)
+        if m:
+            cur["blocks"].append({"type":"subheading","level":len(m.group(1)),"text":m.group(2).strip()})
             i += 1; continue
 
         m = re.match(r"^[-*+]\s+(.+)$", line)
         if m:
-            flush()
             items = []
             while i < len(lines) and re.match(r"^[-*+]\s+(.+)$", lines[i]):
-                items.append(re.match(r"^[-*+]\s+(.+)$", lines[i]).group(1).strip())
-                i += 1
-            blocks.append({"type": "bullet_list", "items": items}); continue
+                items.append(re.match(r"^[-*+]\s+(.+)$", lines[i]).group(1).strip()); i += 1
+            cur["blocks"].append({"type":"bullet","items":items}); continue
 
         m = re.match(r"^\d+[.)]\s+(.+)$", line)
         if m:
-            flush()
             items = []
             while i < len(lines) and re.match(r"^\d+[.)]\s+(.+)$", lines[i]):
-                items.append(re.match(r"^\d+[.)]\s+(.+)$", lines[i]).group(1).strip())
-                i += 1
-            blocks.append({"type": "ordered_list", "items": items}); continue
+                items.append(re.match(r"^\d+[.)]\s+(.+)$", lines[i]).group(1).strip()); i += 1
+            cur["blocks"].append({"type":"ordered","items":items}); continue
 
         if line.startswith("> "):
-            flush()
-            qlines = []
+            q = []
             while i < len(lines) and lines[i].startswith("> "):
-                qlines.append(lines[i][2:].strip())
-                i += 1
-            blocks.append({"type": "quote", "text": "\n".join(qlines)}); continue
+                q.append(lines[i][2:].strip()); i += 1
+            cur["blocks"].append({"type":"quote","text":" ".join(q)}); continue
 
-        if line.strip() in ("---", "***", "___"):
-            flush()
-            blocks.append({"type": "hr"}); i += 1; continue
+        if line.strip() in ("---","***","___"):
+            cur["blocks"].append({"type":"hr"}); i += 1; continue
 
-        flush()
-        para_lines = []
+        p = []
         while i < len(lines) and lines[i].strip() and not lines[i].startswith("#") and \
               not re.match(r"^[-*+]\s+", lines[i]) and not re.match(r"^\d+[.)]\s+", lines[i]) and \
               not lines[i].startswith("|") and not lines[i].startswith("> ") and \
               lines[i].strip() not in ("---","***","___"):
-            para_lines.append(lines[i])
-            i += 1
-        blocks.append({"type": "paragraph", "text": "\n".join(para_lines)})
+            p.append(lines[i]); i += 1
+        cur["blocks"].append({"type":"para","text":"\n".join(p)})
+    if tbl:
+        hdrs, rows = _parse_tbl(tbl)
+        if hdrs: cur["blocks"].append({"type":"table","h":hdrs,"r":rows})
+    save()
 
-    flush()
-    return blocks
+    return meta, sections
 
 
-def parse_table(raw: list[str]) -> tuple[list[str], list[list[str]]]:
+def _parse_tbl(raw):
     if len(raw) < 2: return [], []
-    headers = [c.strip() for c in raw[0].strip("|").split("|")]
+    h = [c.strip() for c in raw[0].strip("|").split("|")]
     rows = []
     for line in raw[1:]:
         if re.match(r"^[\|\-\s:]+$", line.strip()): continue
         cells = [c.strip() for c in line.strip("|").split("|")]
         if cells: rows.append(cells)
-    return headers, rows
+    return h, rows
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 文档渲染引擎 — 纯渲染，不选模板
+# 文档渲染引擎 v4
 # ═══════════════════════════════════════════════════════════════════════
 
 class DocxRenderer:
-    """设计令牌驱动的文档渲染器。"""
-
-    def __init__(self, tokens: dict[str, Any], meta: dict[str, Any]):
+    def __init__(self, t: dict, meta: dict):
+        self.t = t; self.m = meta
         self.doc = Document()
-        self.t = tokens   # 设计令牌
-        self.m = meta     # 文档元数据
+        self._sec = self.doc.sections[0]
         self._has_cover = False
-        self._setup_page(self.doc.sections[0])
+        self._chap = 0
+        self._setup_page(self._sec)
         self._setup_styles()
 
-    # ── 令牌读取 ──
+    # ── helpers ──
+    def _c(self, k): return RGBColor.from_string(self.t[k])
+    def _hex(self, k): return self.t[k]
+    def _mw(self): return Cm(self.t["margin"])
+    def _cw(self): return Cm(21 - 2 * self.t["margin"])
 
-    def _tc(self, key: str) -> str:  return self.t.get(key, "000000")
-    def _clr(self, key: str) -> RGBColor: return RGBColor.from_string(self._tc(key))
-    def _fnt(self, key: str) -> str: return self.t.get(key + "_font" if key in ("heading","body") else key, "SimSun")
-    def _fsz(self, key: str) -> Pt:  return self.t.get(key + "_size", Pt(12)) if key in ("h1","h2","body","title") else Pt(12)
-
-    # ── 页面 ──
-
-    def _setup_page(self, section):
-        section.page_width  = self.t["page_width"]
-        section.page_height = self.t["page_height"]
-        section.top_margin    = self.t["margin_top"]
-        section.bottom_margin = self.t["margin_bottom"]
-        section.left_margin   = self.t["margin_left"]
-        section.right_margin  = self.t["margin_right"]
+    def _setup_page(self, sec):
+        m = self._mw()
+        sec.page_width = Cm(21); sec.page_height = Cm(29.7)
+        sec.top_margin = m; sec.bottom_margin = m
+        sec.left_margin = m; sec.right_margin = m
 
     def _setup_styles(self):
-        bf = self.t["body_font"]
-        bs = self.t["body_size"]
-        hf = self.t["heading_font"]
+        bf = self.t["b_font"]; bs = Pt(self.t["body_sz"])
+        hf = self.t["h_font"]
+        body_c = self._c("body")
 
         ns = self.doc.styles["Normal"]
-        ns.font.name = bf; ns.font.size = bs
-        ns.font.color.rgb = self._clr("body_color")
-        ns.paragraph_format.space_after = Pt(6)
-        ns.paragraph_format.line_spacing = self.t["line_spacing"]
-        self._eastAsia(ns, bf)
+        ns.font.name = bf; ns.font.size = bs; ns.font.color.rgb = body_c
+        ns.paragraph_format.space_after = Pt(4)
+        ns.paragraph_format.line_spacing = self.t["line_sp"]
+        self._ea(ns, bf)
 
-        for lvl, (sz, color_key) in enumerate([
-            (self.t["h1_size"], "primary"),
-            (self.t["h2_size"], "body_color"),
-            (Pt(self.t["h2_size"].pt * 0.85), "muted"),
-        ], 1):
+        for lvl in range(1, 4):
             s = self.doc.styles[f"Heading {lvl}"]
-            s.font.name = hf; s.font.size = sz; s.font.bold = True
-            s.font.color.rgb = self._clr(color_key)
-            self._eastAsia(s, hf)
-            s.paragraph_format.space_before = Pt(30 if lvl == 1 else 24 if lvl == 2 else 18)
-            s.paragraph_format.space_after  = Pt(12 if lvl == 1 else 8  if lvl == 2 else 6)
+            sizes = {1: Pt(self.t["h1_sz"]), 2: Pt(self.t["h2_sz"]),
+                     3: Pt(self.t["h2_sz"] - 1)}
+            s.font.name = hf; s.font.size = sizes[lvl]; s.font.bold = True
+            s.font.color.rgb = self._c("base") if lvl == 1 else body_c
+            self._ea(s, hf)
+            s.paragraph_format.space_before = Pt(28 if lvl == 1 else 20 if lvl == 2 else 14)
+            s.paragraph_format.space_after = Pt(8)
             s.paragraph_format.keep_with_next = True
             if lvl == 1:
-                self._style_bottom_border(s, self._tc("accent"), 6)
+                # accent 下划线
+                pPr = s.element.get_or_add_pPr()
+                pPr.append(parse_xml(
+                    f'<w:pBdr {nsdecls("w")}>'
+                    f'<w:bottom w:val="single" w:sz="6" w:space="6" w:color="{self._hex("accent")}"/>'
+                    f'</w:pBdr>'))
 
-    def _eastAsia(self, style, name):
+    def _ea(self, style, font):
         rPr = style.element.get_or_add_rPr()
         rf = rPr.find(qn("w:rFonts"))
         if rf is None:
-            rf = parse_xml(f'<w:rFonts {nsdecls("w")} />')
-            rPr.insert(0, rf)
-        rf.set(qn("w:eastAsia"), name)
+            rf = parse_xml(f'<w:rFonts {nsdecls("w")} />'); rPr.insert(0, rf)
+        rf.set(qn("w:eastAsia"), font)
 
-    def _style_bottom_border(self, style, color, sz):
-        pPr = style.element.get_or_add_pPr()
-        pPr.append(parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'<w:bottom w:val="single" w:sz="{sz}" w:space="4" w:color="{color}"/>'
-            f'</w:pBdr>'))
-
-    # ── Run 排版 ──
-
-    def _run(self, run, *, name=None, size=None, color=None, bold=False, italic=False):
-        fn = name or self.t["body_font"]
-        run.font.name = fn
-        run.font.size = size or self.t["body_size"]
-        run.font.color.rgb = color or self._clr("body_color")
-        run.bold = bold; run.italic = italic
-        rPr = run._element.get_or_add_rPr()
+    def _run(self, r, *, name=None, sz=None, color=None, bold=False, italic=False):
+        fn = name or self.t["b_font"]; ss = sz or Pt(self.t["body_sz"])
+        cc = color or self._c("body")
+        r.font.name = fn; r.font.size = ss; r.font.color.rgb = cc
+        r.bold = bold; r.italic = italic
+        rPr = r._element.get_or_add_rPr()
         rf = rPr.find(qn("w:rFonts"))
         if rf is None:
-            rf = parse_xml(f'<w:rFonts {nsdecls("w")} />')
-            rPr.insert(0, rf)
+            rf = parse_xml(f'<w:rFonts {nsdecls("w")} />'); rPr.insert(0, rf)
         rf.set(qn("w:eastAsia"), fn)
 
-    # ── 封面 ──
+    # ── 封面 ────────────────────────────────────────────────────────
 
-    def add_cover(self):
-        if not self.t.get("cover"): return
+    def cover(self):
+        if not self.t["cover"]: return
         self._has_cover = True
-        section = self.doc.sections[0]
-        section.top_margin = Cm(4); section.bottom_margin = Cm(3)
+        sec = self._sec
+        sec.top_margin = Cm(4); sec.bottom_margin = Cm(3)
 
         title = self.m.get("title", "")
-        subtitle = self.m.get("subtitle", "")
+        sub = self.m.get("subtitle", "")
         author = self.m.get("author", "")
         date_str = self.m.get("date", "") or datetime.now().strftime("%Y年%m月")
-        primary = self._tc("cover_bg") or self._tc("primary")
-        accent  = self._tc("accent")
-        muted   = self._tc("muted")
+        base = self._hex("base"); accent = self._hex("accent")
 
-        # 顶部色块
-        for _ in range(3):
+        # 顶部色块（占页面 ~40%）
+        for _ in range(4):
             p = self.doc.add_paragraph()
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = Pt(8)
-            pPr = p._element.get_or_add_pPr()
-            pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{primary}" w:val="clear"/>'))
+            shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{base}" w:val="clear"/>')
+            p._element.get_or_add_pPr().append(shd)
 
+        # 留白
         for _ in range(3): self.doc.add_paragraph()
 
-        # 标题
-        pt = self.doc.add_paragraph()
-        pt.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        pt.paragraph_format.space_after = Pt(16)
-        r = pt.add_run(title)
-        self._run(r, name=self.t["heading_font"], size=self.t["title_size"],
-                  color=self._clr("primary"), bold=True)
-
-        if subtitle:
-            ps = self.doc.add_paragraph()
-            ps.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            ps.paragraph_format.space_after = Pt(6)
-            r = ps.add_run(subtitle)
-            self._run(r, size=Pt(14), color=self._clr("body_color"))
+        # 大标题
+        p = self.doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(14)
+        r = p.add_run(title)
+        self._run(r, name=self.t["h_font"], sz=Pt(self.t["title_sz"]),
+                  color=self._c("base"), bold=True)
 
         # 装饰线
         pl = self.doc.add_paragraph()
         pl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        pl.paragraph_format.space_before = Pt(24)
-        pl.paragraph_format.space_after = Pt(24)
+        pl.paragraph_format.space_before = Pt(16)
+        pl.paragraph_format.space_after = Pt(16)
         pl._element.get_or_add_pPr().append(parse_xml(
             f'<w:pBdr {nsdecls("w")}>'
             f'<w:bottom w:val="single" w:sz="12" w:space="1" w:color="{accent}"/>'
             f'</w:pBdr>'))
 
+        # 副标题
+        if sub:
+            ps = self.doc.add_paragraph()
+            ps.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            ps.paragraph_format.space_after = Pt(6)
+            self._run(ps.add_run(sub), sz=Pt(self.t["body_sz"] + 3),
+                      color=self._c("body"))
+
         # 元信息
-        meta_items = []
-        if author: meta_items.append(author)
-        if date_str: meta_items.append(date_str)
-        if self.m.get("department"): meta_items.append(self.m["department"])
-        for mt in meta_items:
+        for mt in [x for x in [author, date_str, self.m.get("department")] if x]:
             pm = self.doc.add_paragraph()
             pm.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            pm.paragraph_format.space_after = Pt(4)
-            self._run(pm.add_run(mt), size=Pt(11), color=RGBColor.from_string("999999"))
+            pm.paragraph_format.space_after = Pt(3)
+            self._run(pm.add_run(mt), sz=Pt(self.t["body_sz"] - 1),
+                      color=self._c("muted"))
 
         # 分节
-        new_sec = self.doc.add_section()
-        self._setup_page(new_sec)
+        new = self.doc.add_section()
+        self._setup_page(new)
 
-    def _body_section(self):
+    def _body_sec(self):
         if self._has_cover and len(self.doc.sections) > 1:
             return self.doc.sections[1]
-        return self.doc.sections[0]
+        return self._sec
 
-    # ── TOC ──
+    # ── TOC ─────────────────────────────────────────────────────────
 
-    def add_toc(self):
-        if not self.t.get("toc"): return
-
+    def toc(self):
+        if not self.t["toc"]: return
         p = self.doc.add_paragraph()
         p.paragraph_format.space_after = Pt(12)
-        self._run(p.add_run("目  录"), name=self.t["heading_font"],
-                  size=Pt(18), color=self._clr("primary"), bold=True)
-
+        self._run(p.add_run("目  录"), name=self.t["h_font"],
+                  sz=Pt(self.t["h1_sz"]), color=self._c("base"), bold=True)
         pl = self.doc.add_paragraph()
         pl._element.get_or_add_pPr().append(parse_xml(
             f'<w:pBdr {nsdecls("w")}>'
-            f'<w:bottom w:val="single" w:sz="6" w:space="4" w:color="{self._tc("accent")}"/>'
+            f'<w:bottom w:val="single" w:sz="6" w:space="4" w:color="{self._hex("accent")}"/>'
             f'</w:pBdr>'))
-
         ptoc = self.doc.add_paragraph()
         r = ptoc.add_run()
         r._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>'))
         r2 = ptoc.add_run()
         r2._element.append(parse_xml(
             f'<w:instrText {nsdecls("w")} xml:space="preserve">'
-            f' TOC \\o "1-3" \\h \\z \\u </w:instrText>'))
+            f' TOC \\o "1-2" \\h \\z \\u </w:instrText>'))
         r3 = ptoc.add_run()
         r3._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="separate"/>'))
-        r4 = ptoc.add_run("（在 Word 中右键 → 更新域 即可生成目录）")
-        self._run(r4, size=Pt(10), color=RGBColor.from_string("AAAAAA"), italic=True)
+        r4 = ptoc.add_run("（Word 中右键 → 更新域 即可生成目录）")
+        self._run(r4, sz=Pt(9), color=RGBColor.from_string("AAAAAA"), italic=True)
         r5 = ptoc.add_run()
         r5._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="end"/>'))
+        self.doc.add_page_break()
+
+    # ── 章节过渡页 ──────────────────────────────────────────────────
+
+    def chapter_opener(self, title: str):
+        """章节过渡页：大号数字 + accent 色块 + 标题。"""
+        self._chap += 1
+        # 留白
+        for _ in range(4): self.doc.add_paragraph()
+
+        # 大号章节号
+        pn = self.doc.add_paragraph()
+        pn.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        pn.paragraph_format.space_after = Pt(4)
+        self._run(pn.add_run(f"0{self._chap}" if self._chap < 10 else str(self._chap)),
+                  name=self.t["h_font"], sz=Pt(48), color=self._c("accent"), bold=True)
+
+        # 章节标题
+        self.doc.add_paragraph(text=title, style="Heading 1")
+
+        # accent 底部色块分隔
+        pb = self.doc.add_paragraph()
+        pb.paragraph_format.space_before = Pt(8)
+        pb.paragraph_format.space_after = Pt(2)
+        pb._element.get_or_add_pPr().append(parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'<w:bottom w:val="single" w:sz="18" w:space="1" w:color="{self._hex("accent")}"/>'
+            f'</w:pBdr>'))
 
         self.doc.add_page_break()
 
-    # ── 标题（无封面时） ──
+    # ── 正文 ────────────────────────────────────────────────────────
 
-    def add_title(self, text: str):
-        if self._has_cover: return
+    def heading(self, text: str, level: int):
+        self.doc.add_paragraph(text, style=f"Heading {min(level,3)}")
+
+    def para(self, text: str):
         p = self.doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if self.t["title_align"] == "center" else WD_ALIGN_PARAGRAPH.LEFT
-        p.paragraph_format.space_before = Pt(18)
-        p.paragraph_format.space_after = Pt(8)
-        self._run(p.add_run(text), name=self.t["heading_font"],
-                  size=self.t["title_size"], color=self._clr("primary"), bold=True)
-
-        # 装饰线
-        p2 = self.doc.add_paragraph()
-        p2.paragraph_format.space_after = Pt(18)
-        p2._element.get_or_add_pPr().append(parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'<w:bottom w:val="single" w:sz="8" w:space="6" w:color="{self._tc("accent")}"/>'
-            f'</w:pBdr>'))
-
-    def add_subtitle(self, text: str):
-        if self._has_cover: return
-        p = self.doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if self.t["title_align"] == "center" else WD_ALIGN_PARAGRAPH.LEFT
-        p.paragraph_format.space_after = Pt(24)
-        self._run(p.add_run(text), size=Pt(14), color=RGBColor.from_string("999999"))
-
-    # ── 正文块 ──
-
-    def add_heading(self, text: str, level: int):
-        self.doc.add_paragraph(text, style=f"Heading {min(level, 3)}")
-
-    def add_paragraph(self, text: str):
-        p = self.doc.add_paragraph()
-        if self.t.get("first_indent"): p.paragraph_format.first_line_indent = Cm(0.74)
+        if self.t["indent"]: p.paragraph_format.first_line_indent = Cm(0.74)
         p.paragraph_format.space_after = Pt(6)
         self._fmt_text(p, text)
 
-    def add_quote(self, text: str):
+    def bullet(self, items: list[str]):
+        for item in items:
+            p = self.doc.add_paragraph()
+            pf = p.paragraph_format
+            pf.left_indent = Cm(1); pf.first_line_indent = Cm(-0.5)
+            pf.space_after = Pt(3)
+            self._run(p.add_run("•  " + item))
+
+    def ordered(self, items: list[str]):
+        for idx, item in enumerate(items, 1):
+            p = self.doc.add_paragraph()
+            pf = p.paragraph_format
+            pf.left_indent = Cm(1); pf.first_line_indent = Cm(-0.5)
+            pf.space_after = Pt(3)
+            self._run(p.add_run(f"{idx}.  {item}"))
+
+    def quote(self, text: str):
         p = self.doc.add_paragraph()
         pf = p.paragraph_format
-        pf.left_indent = Cm(1.2); pf.right_indent = Cm(0.5)
+        pf.left_indent = Cm(1.2); pf.right_indent = Cm(0.8)
         pf.space_before = Pt(14); pf.space_after = Pt(14)
         pPr = p._element.get_or_add_pPr()
         pPr.append(parse_xml(
             f'<w:pBdr {nsdecls("w")}>'
-            f'<w:left w:val="single" w:sz="18" w:space="8" w:color="{self._tc("callout_bar")}"/>'
+            f'<w:left w:val="single" w:sz="24" w:space="10" w:color="{self._hex("callout_bar")}"/>'
             f'</w:pBdr>'))
-        pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{self._tc("callout_bg")}" w:val="clear"/>'))
-        self._run(p.add_run(text), size=Pt(10.5), color=RGBColor.from_string("666666"), italic=True)
+        pPr.append(parse_xml(
+            f'<w:shd {nsdecls("w")} w:fill="{self._hex("callout_bg")}" w:val="clear"/>'))
+        self._run(p.add_run(text), sz=Pt(self.t["body_sz"] - 0.5),
+                  color=RGBColor.from_string("555555"), italic=True)
 
-    def add_bullet_list(self, items: list[str]):
-        for item in items:
-            p = self.doc.add_paragraph()
-            pf = p.paragraph_format
-            pf.left_indent = Cm(1.0); pf.first_line_indent = Cm(-0.5)
-            pf.space_after = Pt(3)
-            self._run(p.add_run("•  " + item))
-
-    def add_ordered_list(self, items: list[str]):
-        for idx, item in enumerate(items, 1):
-            p = self.doc.add_paragraph()
-            pf = p.paragraph_format
-            pf.left_indent = Cm(1.0); pf.first_line_indent = Cm(-0.5)
-            pf.space_after = Pt(3)
-            self._run(p.add_run(f"{idx}.  {item}"))
-
-    def add_table(self, headers: list[str], rows: list[list[str]]):
-        if not headers: return
+    def table(self, hdrs: list[str], rows: list[list[str]]):
+        if not hdrs: return
         self.doc.add_paragraph()
-        cols = len(headers)
-        table = self.doc.add_table(rows=1 + len(rows), cols=cols)
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        table.autofit = True
+        cols = len(hdrs)
+        tbl = self.doc.add_table(rows=1 + len(rows), cols=cols)
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER; tbl.autofit = True
 
-        tblPr = table._tbl.tblPr if table._tbl.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")} />')
+        # 边框
+        tblPr = tbl._tbl.tblPr
+        if tblPr is None: tblPr = parse_xml(f'<w:tblPr {nsdecls("w")} />')
         for old in tblPr.findall(qn("w:tblBorders")): tblPr.remove(old)
         tblPr.append(parse_xml(
             f'<w:tblBorders {nsdecls("w")}>'
@@ -475,16 +486,13 @@ class DocxRenderer:
             f'<w:left w:val="single" w:sz="4" w:space="0" w:color="DDDDDD"/>'
             f'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="DDDDDD"/>'
             f'<w:right w:val="single" w:sz="4" w:space="0" w:color="DDDDDD"/>'
-            f'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="DDDDDD"/>'
-            f'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="DDDDDD"/>'
+            f'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="EEEEEE"/>'
+            f'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="EEEEEE"/>'
             f'</w:tblBorders>'))
 
-        hdr_bg   = self._tc("table_header_bg")
-        hdr_text = self._tc("table_header_text")
-        stripe   = self._tc("table_stripe")
-
-        for j, h in enumerate(headers):
-            cell = table.rows[0].cells[j]; cell.text = ""
+        # 表头
+        for j, h in enumerate(hdrs):
+            cell = tbl.rows[0].cells[j]; cell.text = ""
             cp = cell.paragraphs[0]; cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
             cp.paragraph_format.space_before = Pt(5)
             cp.paragraph_format.space_after = Pt(5)
@@ -494,14 +502,14 @@ class DocxRenderer:
                 f'<w:left w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/>'
                 f'</w:tcMar>'))
             cell._element.get_or_add_tcPr().append(parse_xml(
-                f'<w:shd {nsdecls("w")} w:fill="{hdr_bg}" w:val="clear"/>'))
-            self._run(cp.add_run(h), name=self.t["heading_font"], size=Pt(10.5),
-                      color=RGBColor.from_string(hdr_text), bold=True)
+                f'<w:shd {nsdecls("w")} w:fill="{self._hex("table_hdr")}" w:val="clear"/>'))
+            self._run(cp.add_run(h), name=self.t["h_font"], sz=Pt(self.t["body_sz"] - 0.5),
+                      color=RGBColor.from_string(self._hex("table_text")), bold=True)
 
         for i, row in enumerate(rows):
             for j, val in enumerate(row):
                 if j >= cols: continue
-                cell = table.rows[i + 1].cells[j]; cell.text = ""
+                cell = tbl.rows[i+1].cells[j]; cell.text = ""
                 cp = cell.paragraphs[0]
                 cp.paragraph_format.space_before = Pt(4)
                 cp.paragraph_format.space_after = Pt(4)
@@ -512,129 +520,115 @@ class DocxRenderer:
                     f'</w:tcMar>'))
                 if i % 2 == 1:
                     cell._element.get_or_add_tcPr().append(parse_xml(
-                        f'<w:shd {nsdecls("w")} w:fill="{stripe}" w:val="clear"/>'))
-                self._run(cp.add_run(val), size=Pt(10.5))
+                        f'<w:shd {nsdecls("w")} w:fill="{self._hex("stripe")}" w:val="clear"/>'))
+                self._run(cp.add_run(val), sz=Pt(self.t["body_sz"] - 0.5))
         self.doc.add_paragraph()
 
-    def add_hr(self):
-        p = self.doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(10)
-        p.paragraph_format.space_after = Pt(10)
-        p._element.get_or_add_pPr().append(parse_xml(
-            f'<w:pBdr {nsdecls("w")}>'
-            f'<w:bottom w:val="single" w:sz="4" w:space="1" w:color="{self._tc("hr_color")}"/>'
-            f'</w:pBdr>'))
+    # ── 落款 / 页眉页脚 ─────────────────────────────────────────────
 
-    # ── 签名 ──
-
-    def add_signature(self):
+    def signature(self):
         sign = self.m.get("signature_unit") or self.m.get("author") or ""
-        date_str = self.m.get("signature_date") or self.m.get("date") or ""
-        if not sign and not date_str: return
+        ds = self.m.get("signature_date") or self.m.get("date") or ""
+        if not sign and not ds: return
         self.doc.add_paragraph()
-        for line in [sign, date_str]:
+        for line in [sign, ds]:
             if line:
                 p = self.doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                p.paragraph_format.space_after = Pt(4)
+                p.paragraph_format.space_after = Pt(3)
                 self._run(p.add_run(line))
 
-    # ── 页眉页脚 ──
-
-    def add_header_footer(self):
+    def hf(self):
         title = self.m.get("title", "")
-        section = self._body_section()
+        sec = self._body_sec()
 
-        header = section.header
-        header.is_linked_to_previous = False
-        hp = header.paragraphs[0]
+        hdr = sec.header; hdr.is_linked_to_previous = False
+        hp = hdr.paragraphs[0]
         hp.paragraph_format.space_after = Pt(4)
-        self._run(hp.add_run(title or ""), size=Pt(8.5), color=RGBColor.from_string("BBBBBB"))
+        self._run(hp.add_run(title or ""), sz=Pt(8), color=self._c("muted"))
+        hp._element.get_or_add_pPr().append(parse_xml(
+            f'<w:pBdr {nsdecls("w")}>'
+            f'<w:bottom w:val="single" w:sz="4" w:space="2" w:color="{self._hex("accent")}"/>'
+            f'</w:pBdr>'))
 
-        hcol = self._tc("header_line_color")
-        if hcol and hcol != "none":
-            hp._element.get_or_add_pPr().append(parse_xml(
-                f'<w:pBdr {nsdecls("w")}>'
-                f'<w:bottom w:val="single" w:sz="4" w:space="2" w:color="{hcol}"/>'
-                f'</w:pBdr>'))
-
-        footer = section.footer
-        footer.is_linked_to_previous = False
-        fp = footer.paragraphs[0]
-        fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ftr = sec.footer; ftr.is_linked_to_previous = False
+        fp = ftr.paragraphs[0]; fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
         fp.paragraph_format.space_before = Pt(8)
         fp._element.get_or_add_pPr().append(parse_xml(
             f'<w:pBdr {nsdecls("w")}>'
             f'<w:top w:val="single" w:sz="4" w:space="4" w:color="E0E0E0"/>'
             f'</w:pBdr>'))
-
-        self._run(fp.add_run("— "), size=Pt(9), color=RGBColor.from_string("CCCCCC"))
+        self._run(fp.add_run("— "), sz=Pt(8), color=RGBColor.from_string("CCCCCC"))
         for tag, text in [("begin", None), (None, " PAGE "), ("end", None)]:
             rr = fp.add_run()
             rr._element.append(parse_xml(
                 f'<w:fldChar {nsdecls("w")} w:fldCharType="{tag}"/>' if tag else
                 f'<w:instrText {nsdecls("w")} xml:space="preserve">{text}</w:instrText>'))
-        self._run(fp.add_run(" —"), size=Pt(9), color=RGBColor.from_string("CCCCCC"))
+        self._run(fp.add_run(" —"), sz=Pt(8), color=RGBColor.from_string("CCCCCC"))
 
         if self._has_cover:
-            cs = self.doc.sections[0]
-            cs.different_first_page_header_footer = True
+            cs = self._sec; cs.different_first_page_header_footer = True
             cs.header.paragraphs[0].clear()
             cs.footer.paragraphs[0].clear()
 
-    # ── 行内格式化 ──
+    # ── 行内格式 ────────────────────────────────────────────────────
 
-    def _fmt_text(self, paragraph, text: str):
+    def _fmt_text(self, p, text):
         tokens = re.split(r"(\*\*.+?\*\*|\*.+?\*|`.+?`)", text)
         for tok in tokens:
             if tok.startswith("**") and tok.endswith("**"):
-                self._run(paragraph.add_run(tok[2:-2]), bold=True)
+                self._run(p.add_run(tok[2:-2]), bold=True)
             elif tok.startswith("*") and tok.endswith("*") and not tok.startswith("**"):
-                self._run(paragraph.add_run(tok[1:-1]), italic=True)
+                self._run(p.add_run(tok[1:-1]), italic=True)
             elif tok.startswith("`") and tok.endswith("`"):
-                self._run(paragraph.add_run(tok[1:-1]), name="Consolas", size=Pt(10),
-                          color=RGBColor(0xC7, 0x25, 0x4E))
+                self._run(p.add_run(tok[1:-1]), name="Consolas",
+                          sz=Pt(self.t["body_sz"] - 1), color=RGBColor(0xC7, 0x25, 0x4E))
             elif tok:
-                self._run(paragraph.add_run(tok))
+                self._run(p.add_run(tok))
 
-    # ── 文档属性 ──
+    # ── 主流程 ──────────────────────────────────────────────────────
 
-    def _set_props(self):
+    def build(self, sections: list[dict]):
         self.doc.core_properties.title = self.m.get("title", "")
         self.doc.core_properties.author = self.m.get("author", "")
-        self.doc.core_properties.subject = self.m.get("subject", "")
 
-    # ── 主流程 ──
-
-    def build(self, blocks: list[dict[str, Any]]):
-        self._set_props()
-        self.add_cover()
-
+        self.cover()
         if not self._has_cover:
             title = self.m.get("title", "")
-            if title: self.add_title(title)
-            sub = self.m.get("subtitle", "")
-            if sub: self.add_subtitle(sub)
+            if title:
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_after = Pt(12)
+                self._run(p.add_run(title), name=self.t["h_font"],
+                          sz=Pt(self.t["title_sz"]), color=self._c("base"), bold=True)
+                pl = self.doc.add_paragraph()
+                pl.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                pl.paragraph_format.space_after = Pt(16)
+                pl._element.get_or_add_pPr().append(parse_xml(
+                    f'<w:pBdr {nsdecls("w")}>'
+                    f'<w:bottom w:val="single" w:sz="8" w:space="6" w:color="{self._hex("accent")}"/>'
+                    f'</w:pBdr>'))
 
-        if self.t.get("toc"): self.add_toc()
+        self.toc()
 
-        for block in blocks:
-            t = block["type"]
-            if   t == "heading":      self.add_heading(block["text"], block["level"])
-            elif t == "paragraph":    self.add_paragraph(block["text"])
-            elif t == "bullet_list":  self.add_bullet_list(block["items"])
-            elif t == "ordered_list": self.add_ordered_list(block["items"])
-            elif t == "quote":        self.add_quote(block["text"])
-            elif t == "table":
-                h, r = parse_table(block["raw"])
-                self.add_table(h, r)
-            elif t == "hr":           self.add_hr()
+        for sec in sections:
+            if sec.get("heading"):
+                self.chapter_opener(sec["heading"])
 
-        self.add_signature()
-        self.add_header_footer()
+            for blk in sec.get("blocks", []):
+                t = blk["type"]
+                if   t == "subheading": self.heading(blk["text"], blk["level"])
+                elif t == "para":       self.para(blk["text"])
+                elif t == "bullet":     self.bullet(blk["items"])
+                elif t == "ordered":    self.ordered(blk["items"])
+                elif t == "quote":      self.quote(blk["text"])
+                elif t == "table":      self.table(blk["h"], blk["r"])
+                elif t == "hr":         self.doc.add_paragraph()
 
-    def save(self, path: str):
-        self.doc.save(path)
+        self.signature()
+        self.hf()
+
+    def save(self, path): self.doc.save(path)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -643,42 +637,22 @@ class DocxRenderer:
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(
-        description="Otto Doc-Writer v3: AI 驱动排版引擎",
-        epilog="AI 通过 YAML frontmatter 注入设计令牌。不指定时引擎自动推断。")
-    parser.add_argument("input", help="输入 Markdown 文件")
-    parser.add_argument("output", help="输出 .docx 文件")
-    args = parser.parse_args()
-
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"错误：找不到 {args.input}"); sys.exit(1)
-
-    text = input_path.read_text(encoding="utf-8")
-    meta, body = parse_frontmatter(text)
-    tokens = parse_design_tokens(meta)
-
-    if "title" not in meta:
-        meta["title"] = input_path.stem
-
-    blocks = parse_markdown_body(body)
-    gen = DocxRenderer(tokens, meta)
-    gen.build(blocks)
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    gen.save(str(output_path))
-
-    size_kb = output_path.stat().st_size / 1024
-    dn = tokens.get("design_name", "")
-    dm = tokens.get("design_mood", "")
-    tag = ""
-    if dn:  tag += dn
-    if dm:  tag += (" · " + dm) if tag else dm
-    print(f"✅ 文档已生成：{output_path}")
-    print(f"   视觉语言：{tag}" if tag else f"   视觉语言：自动推断")
-    print(f"   大小：{size_kb:.1f} KB · {len(blocks)} 个内容块")
-
+    p = argparse.ArgumentParser(description="Otto Doc-Writer v4: 视觉母题驱动排版引擎")
+    p.add_argument("input"); p.add_argument("output")
+    a = p.parse_args()
+    ip = Path(a.input)
+    if not ip.exists(): print(f"找不到 {a.input}"); sys.exit(1)
+    text = ip.read_text(encoding="utf-8")
+    meta, secs = parse_md(text)
+    t = resolve_theme(meta)
+    if "title" not in meta: meta["title"] = ip.stem
+    gen = DocxRenderer(t, meta)
+    gen.build(secs)
+    op = Path(a.output); op.parent.mkdir(parents=True, exist_ok=True)
+    gen.save(str(op))
+    print(f"✅ {op}")
+    print(f"   视觉母题：{t['theme_name']}" + (f" · {t['atmosphere']}" if t['atmosphere'] else ""))
+    print(f"   大小：{op.stat().st_size/1024:.1f}KB · {len(secs)}章")
 
 if __name__ == "__main__":
     main()
