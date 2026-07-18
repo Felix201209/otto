@@ -413,6 +413,8 @@ export class ProactiveService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private calendarChecker: CalendarCheckerFn | null = null;
   private processedMeetings: Set<string> = new Set();
+  /** 已提醒过的日程ID集合（防重复） */
+  private remindedScheduleIds: Set<string> = new Set();
 
   setFeishuSender(sender: ProactiveFeishuSender): void {
     this.feishuSender = sender;
@@ -460,6 +462,46 @@ export class ProactiveService {
           } catch (err) {
             console.warn(`[ProactiveService] Calendar polling error: ${err instanceof Error ? err.message : String(err)}`);
           }
+        }
+
+        // 3. 会议/日程提前提醒：检查接下来10分钟内开始的日程
+        try {
+          const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+          const today = new Date().toISOString().split('T')[0];
+          const schedules = ls(today);
+          const nowMs = Date.now();
+          const advanceMs = 10 * 60 * 1000; // 提前10分钟提醒
+
+          for (const s of schedules) {
+            if (this.remindedScheduleIds.has(s.id)) continue;
+            const startMs = new Date(s.startAt).getTime();
+            const timeUntilStart = startMs - nowMs;
+
+            if (timeUntilStart > 0 && timeUntilStart <= advanceMs + 5 * 60 * 1000) {
+              this.remindedScheduleIds.add(s.id);
+              const minutesUntil = Math.round(timeUntilStart / 60000);
+              const timeStr = s.startAt.slice(11, 16);
+              let reminderMsg = `⏰ 日程提醒：${minutesUntil}分钟后「${s.title}」开始（${timeStr}）`;
+              if (s.notes) reminderMsg += `\n📝 ${s.notes}`;
+              const rule: ProactiveRule = {
+                id: `meeting_reminder_${s.id}`,
+                name: '日程提前提醒',
+                trigger: { type: 'pattern' },
+                action: { type: 'feishu_message', message: reminderMsg, priority: 'high' },
+                enabled: true,
+                minIntervalHours: 0,
+              };
+              await this.executeAndLog(rule, ctx);
+            }
+          }
+
+          // 清理过旧提醒ID（保留最近200个）
+          if (this.remindedScheduleIds.size > 200) {
+            const entries = [...this.remindedScheduleIds];
+            this.remindedScheduleIds = new Set(entries.slice(-100));
+          }
+        } catch {
+          // 本地日程不可用时跳过
         }
       } catch (err) {
         console.warn(`[ProactiveService] Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
