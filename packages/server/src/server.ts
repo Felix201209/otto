@@ -2217,6 +2217,24 @@ export class OttoServer {
         }
         return;
       }
+      case 'grant_position_capabilities': {
+        try {
+          const workspace = this.productWorkspace.grantPositionCapabilities(
+            msg.payload.positionId,
+            msg.payload.capabilities as import('./productWorkspace.js').PositionCapability[],
+          );
+          this.broadcastAll({ type: 'product_workspace', payload: workspace });
+        } catch (error) {
+          this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'workspace_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+        return;
+      }
       case 'get_pending_auto_skills': {
         try {
           const candidates = (await listPendingSkillCandidates()).map(
