@@ -272,7 +272,7 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorizationOpen, setAuthorizationOpen] = useState(false);
   const [globalAuto, setGlobalAuto] = useState(
-    () => localStorage.getItem('otto.authorization.global-auto') === '1',
+    () => localStorage.getItem('otto.authorization.global-auto') !== '0',
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -414,7 +414,7 @@ export function Composer({
       transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'session' } });
     } else {
       const wasGlobal = globalAuto;
-      localStorage.removeItem('otto.authorization.global-auto');
+      localStorage.setItem('otto.authorization.global-auto', '0');
       setGlobalAuto(false);
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'manual' }));
       transport.send({
