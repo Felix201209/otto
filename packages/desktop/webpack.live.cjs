@@ -59,6 +59,10 @@ module.exports = {
       /^otto-server$/,
       path.resolve(__dirname, '../server/dist/index.js'),
     ),
+    new webpack.NormalModuleReplacementPlugin(
+      /^node:crypto$/,
+      path.resolve(__dirname, 'preview/node-crypto-stub.ts'),
+    ),
     // preload/index.js → 空对象（只有 type，运行时不需要）
     new webpack.NormalModuleReplacementPlugin(
       /\/preload\/index\.js$/,
