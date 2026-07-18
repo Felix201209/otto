@@ -262,6 +262,7 @@ const IPC = {
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
+  enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
@@ -420,6 +421,12 @@ export interface OttoBridge {
     password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
   enterpriseLogout(): Promise<void>;
+  /** 接入企业：提交配对令牌，完成本地 Otto 与企业服务器的连接。 */
+  enterprisePair(token: string): Promise<{
+    ok: boolean;
+    message: string;
+    enterpriseUrl?: string;
+  }>;
   enterpriseAccounts(): Promise<EnterpriseAccount[]>;
   enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
   enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
@@ -852,6 +859,13 @@ const bridge: OttoBridge = {
   },
   enterpriseLogout(): Promise<void> {
     return ipcRenderer.invoke(IPC.enterpriseLogout) as Promise<void>;
+  },
+  enterprisePair(token: string) {
+    return ipcRenderer.invoke(IPC.enterprisePair, token) as Promise<{
+      ok: boolean;
+      message: string;
+      enterpriseUrl?: string;
+    }>;
   },
   enterpriseAccounts(): Promise<EnterpriseAccount[]> {
     return ipcRenderer.invoke(IPC.enterpriseAccounts) as Promise<EnterpriseAccount[]>;

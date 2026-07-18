@@ -1369,6 +1369,18 @@ export interface HealthInfo {
   feishu: { enabled: boolean; connected: boolean; status?: FeishuHealthStatus };
 }
 
+/**
+ * GET /local-agent/ping — 跨域探测响应。
+ * 仅返回最小化只读信息，不暴露 session/工具等敏感数据。
+ * 企业服务器网页用此接口检测用户机器上是否运行着 otto。
+ */
+export interface LocalAgentPingResponse {
+  status: 'ok';
+  serverVersion: string;
+  protocolVersion: string;
+  instanceId: string;
+}
+
 /** 飞书网关健康状况（供桌面端渲染状态徽章）。 */
 export interface FeishuHealthStatus {
   running: boolean;
@@ -1431,6 +1443,7 @@ export interface FeishuConfigSaveRequest {
  */
 export const HTTP_ROUTES = {
   health: '/health',
+  localAgentPing: '/local-agent/ping',
   sessions: '/sessions',
   sessionHistory: (id: string) => `/sessions/${id}/history`,
   models: '/models',
@@ -1438,6 +1451,27 @@ export const HTTP_ROUTES = {
   feishuStop: '/feishu/stop',
   feishuConfig: '/feishu/config',
   ws: '/ws',
+} as const;
+
+/**
+ * 企业服务器信任域白名单（硬编码，不可远程配置）。
+ * 仅允许这些来源的网页通过浏览器跨域探测本地 otto。
+ * 探测接口只返回最小化只读信息，不暴露 session/工具操作面。
+ */
+export const TRUSTED_ORIGINS: ReadonlySet<string> = new Set([
+  'https://59.110.154.44:7777',
+  // 本地开发
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
+/**
+ * 浏览器 Private Network Access 预检所需响应头。
+ * Chrome 109+ 要求公网→本地网络的请求必须先通过预检。
+ * 详见 https://developer.chrome.com/blog/private-network-access-preflight
+ */
+export const PNA_HEADERS = {
+  'access-control-allow-private-network': 'true',
 } as const;
 
 // ============================================================================
