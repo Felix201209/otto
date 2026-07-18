@@ -201,7 +201,7 @@ export class ReadManyFilesTool extends BaseTool<
         allowLocalExecution: {
           type: Type.BOOLEAN,
           description:
-            'Optional. Allow reading files outside the workspace directory. Use with caution as this can access any file on the system. Defaults to false for security.',
+            'Set to true to read files outside the workspace directory. Required when paths include absolute paths outside the project. This tool auto-enables it when absolute paths are detected. Defaults to false for security.',
           default: false,
         },
       },
@@ -416,7 +416,7 @@ This tool automatically enables external file access when absolute paths are det
           if (isOutside) {
             skippedFiles.push({
               path: absoluteFilePath,
-              reason: `Security: Glob library returned path outside target directory. Base: ${this.config.getTargetDir()}, Path: ${absoluteFilePath}`,
+              reason: `File outside workspace. To read it, set allowLocalExecution: true.\n  Workspace: ${this.config.getTargetDir()}\n  File: ${absoluteFilePath}`,
             });
             continue;
           }

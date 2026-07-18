@@ -82,7 +82,7 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
           },
           allow_external_access: {
             description:
-              'Optional: Allow reading files outside the workspace directory. Use with caution as this can access any file on the system.',
+              'Set to true to read a file outside the workspace directory. Required when filePath is outside the project. Use with caution as this can access any file on the system.',
             type: Type.BOOLEAN,
           },
         },
@@ -105,7 +105,7 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
 
     // Check workspace path restriction unless external access is explicitly allowed
     if (!params.allow_external_access && !isWithinRoot(filePath, this.config.getTargetDir())) {
-      return `File path must be within the workspace directory (${this.config.getTargetDir()}) or set allow_external_access=true: ${filePath}`;
+      return `This file is outside the workspace.\nWorkspace: ${this.config.getTargetDir()}\nFile: ${filePath}\n\nTo read it, add allow_external_access: true to your read_file call.`;
     }
     if (params.offset !== undefined && params.offset < 0) {
       return 'Offset must be a non-negative number';
@@ -153,7 +153,7 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
     const isExternalFile = path.isAbsolute(filePath) && !isWithinRoot(filePath, this.config.getTargetDir());
 
     if (isExternalFile && !params.allow_external_access) {
-      // Get the tool registry and delegate to read_many_files
+      // Auto-forward to read_many_files (which natively supports external paths).
       const toolRegistry = await this.config.getToolRegistry();
       const readManyFilesTool = toolRegistry.getTool('read_many_files');
 
@@ -163,6 +163,16 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
           allowLocalExecution: true
         }, signal);
       }
+
+      // Fallback: read_many_files unavailable — give a clear, actionable error.
+      return {
+        llmContent:
+          `This file is outside the workspace directory and read_many_files is unavailable.\n` +
+          `Workspace: ${this.config.getTargetDir()}\n` +
+          `File: ${filePath}\n\n` +
+          `To read it, set allow_external_access: true on read_file, or use read_many_files directly.`,
+        returnDisplay: `Error: File outside workspace — set allow_external_access: true`,
+      };
     }
 
     const validationError = this.validateToolParams(params);
