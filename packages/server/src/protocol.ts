@@ -603,10 +603,6 @@ export type AcceptCompanyLinkMsg = Envelope<
   'accept_company_link',
   { link: string }
 >;
-export type GrantPositionCapabilitiesMsg = Envelope<
-  'grant_position_capabilities',
-  { positionId: string; capabilities: string[] }
->;
 
 export interface AutoSkillCandidateInfo {
   id: string;
@@ -717,7 +713,6 @@ export type ClientToServer =
   | CreateEnterpriseInviteMsg
   | AddFriendMsg
   | AcceptCompanyLinkMsg
-  | GrantPositionCapabilitiesMsg
   | GetPendingAutoSkillsMsg
   | ConfirmPendingAutoSkillMsg
   | RejectPendingAutoSkillMsg
@@ -1767,12 +1762,6 @@ export function validateClientPayload(msg: {
     case 'accept_company_link': {
       if (!isPlainObject(p)) return 'accept_company_link payload 必须是对象';
       return isNonEmptyString(p['link']) ? null : 'link 必须是非空字符串';
-    }
-    case 'grant_position_capabilities': {
-      if (!isPlainObject(p)) return 'grant_position_capabilities payload 必须是对象';
-      if (!isNonEmptyString(p['positionId'])) return 'positionId 必须是非空字符串';
-      if (!Array.isArray(p['capabilities'])) return 'capabilities 必须是数组';
-      return null;
     }
     case 'confirm_pending_auto_skill':
     case 'reject_pending_auto_skill': {

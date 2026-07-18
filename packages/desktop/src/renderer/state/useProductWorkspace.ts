@@ -115,7 +115,6 @@ export interface ProductWorkspaceActions {
       }): void;
   acceptCompanyLink(link: string): void;
   addFriend(displayName: string, note?: string): void;
-  grantPositionCapabilities(positionId: string, capabilities: string[]): void;
   refreshPendingAutoSkills(): void;
   confirmPendingAutoSkill(candidateId: string): void;
   rejectPendingAutoSkill(candidateId: string): void;
@@ -179,8 +178,6 @@ export function useProductWorkspace(): UseProductWorkspace {
         type: 'add_friend',
         payload: { displayName: displayName.trim(), ...(note?.trim() ? { note: note.trim() } : {}) },
       }),
-    grantPositionCapabilities: (positionId, capabilities) =>
-      transport.send({ type: 'grant_position_capabilities', payload: { positionId, capabilities } }),
     refreshPendingAutoSkills: () =>
       transport.send({ type: 'get_pending_auto_skills', payload: {} }),
     confirmPendingAutoSkill: (candidateId) =>

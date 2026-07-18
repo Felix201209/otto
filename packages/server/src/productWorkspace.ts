@@ -40,41 +40,9 @@ export type ProductCapability =
   | 'organization:read'
   | 'organization:manage'
   | 'invite:issue'
-  | 'invite:revoke'
-  | 'member:remove'
-  | 'member:transfer'
-  | 'position:assign'
-  | 'org:view_all'
   | 'schedule:write'
   | 'billing:read'
   | 'billing:manage';
-
-/**
- * CEO 可以授予某个职位的额外能力（HR赋能等）。
- * 这些能力是 ProductCapability 的子集，普通角色逻辑不会自动赋予。
- */
-export type PositionCapability = Extract<
-  ProductCapability,
-  'invite:issue' | 'invite:revoke' | 'member:remove' | 'member:transfer' | 'position:assign' | 'org:view_all'
->;
-
-export const ALL_POSITION_CAPABILITIES: PositionCapability[] = [
-  'invite:issue',
-  'invite:revoke',
-  'member:remove',
-  'member:transfer',
-  'position:assign',
-  'org:view_all',
-];
-
-export const POSITION_CAPABILITY_LABELS: Record<PositionCapability, string> = {
-  'invite:issue': '签发邀请链接（加人）',
-  'invite:revoke': '撤销邀请链接',
-  'member:remove': '移除成员（离职处理）',
-  'member:transfer': '调岗',
-  'position:assign': '给未分配成员指定职位',
-  'org:view_all': '查看全员名单',
-};
 
 export interface ProductContext {
   edition: ProductEdition;
@@ -99,8 +67,6 @@ export interface EnterpriseContextInput {
   role: Exclude<ProductRole, 'personal'>;
   departmentId?: string;
   positionId?: string;
-  /** 由职位授权的额外能力，createEnterpriseContext 会合并进 capabilities */
-  positionGrantedCapabilities?: PositionCapability[];
 }
 
 const PERSONAL_CAPABILITIES: ProductCapability[] = [
@@ -147,10 +113,6 @@ export function createEnterpriseContext(input: EnterpriseContextInput): ProductC
   if (elevated) {
     capabilities.add('organization:manage');
     capabilities.add('billing:manage');
-  }
-  // 合并职位授权的额外能力（CEO 通过 grantPositionCapabilities 赋予）
-  for (const cap of input.positionGrantedCapabilities ?? []) {
-    capabilities.add(cap);
   }
 
   return {
@@ -205,8 +167,6 @@ export interface WorkspacePosition {
   departmentId: string;
   title: string;
   incumbentUserId?: string;
-  /** CEO 额外授予该职位的能力，持有者的 context.capabilities 会合并此列表 */
-  grantedCapabilities?: PositionCapability[];
 }
 
 export interface OrganizationFramework {

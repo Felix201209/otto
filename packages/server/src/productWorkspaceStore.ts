@@ -18,7 +18,6 @@ import {
   type InviteKind,
   type InviteRedemption,
   type ManagerWorkspace,
-  type PositionCapability,
   type ProductContext,
 } from './productWorkspace.js';
 
@@ -268,12 +267,6 @@ export class ProductWorkspaceStore {
       throw new Error('父子公司链接需要由企业管理者在企业框架页接入');
     }
     const role = redemption.role ?? 'member';
-    // 获取该职位的授权能力
-    const positionGranted = redemption.positionId
-      ? (this.state.managerWorkspace?.organization.positions.find(
-          (p) => p.id === redemption.positionId,
-        )?.grantedCapabilities ?? [])
-      : [];
     this.state.context = createEnterpriseContext({
       userId: cleanUserId,
       displayName: cleanDisplayName,
@@ -281,7 +274,6 @@ export class ProductWorkspaceStore {
       role,
       departmentId: redemption.departmentId,
       positionId: redemption.positionId,
-      positionGrantedCapabilities: positionGranted,
     });
     this.state.personalDisplayName = cleanDisplayName;
     this.state.redemptions.push(redemption);
@@ -363,43 +355,6 @@ export class ProductWorkspaceStore {
       createdAt: this.now().toISOString(),
     };
     this.state.friends.push(friend);
-    this.save();
-    return this.snapshot();
-  }
-
-  /**
-   * CEO 为某职位授权额外能力（HR赋能）。
-   * 若该职位当前有在岗成员，同步刷新其 context.capabilities。
-   */
-  grantPositionCapabilities(
-    positionId: string,
-    capabilities: PositionCapability[],
-  ): ProductWorkspaceSnapshot {
-    if (
-      this.state.context.role !== 'company_owner' &&
-      this.state.context.role !== 'company_admin'
-    ) {
-      throw new Error('只有企业 CEO 可以授予职位能力');
-    }
-    const org = this.state.managerWorkspace?.organization;
-    if (!org) throw new Error('当前没有可管理的企业框架');
-    const position = org.positions.find((p) => p.id === positionId);
-    if (!position) throw new Error('职位不存在');
-    position.grantedCapabilities = [...capabilities];
-
-    // 如果该职位有在岗成员且是当前登录者，刷新当前 context
-    if (position.incumbentUserId === this.state.context.userId) {
-      this.state.context = createEnterpriseContext({
-        userId: this.state.context.userId,
-        displayName: this.state.context.displayName,
-        companyId: this.state.context.companyId!,
-        role: this.state.context.role,
-        departmentId: this.state.context.departmentId,
-        positionId: this.state.context.positionId,
-        positionGrantedCapabilities: capabilities,
-      });
-    }
-
     this.save();
     return this.snapshot();
   }
