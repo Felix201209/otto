@@ -188,10 +188,18 @@ export class ProductWorkspaceStore {
   }
 
   switchToPersonal(): ProductWorkspaceSnapshot {
+    const wasEnterprise = this.state.context.edition === 'enterprise';
+    const wasMember = this.state.context.role !== 'company_owner';
     this.state.context = createPersonalContext({
       userId: this.state.personalUserId,
       displayName: this.state.personalDisplayName,
     });
+    // 非管理员的成员退出企业时，清除旧的红利与成员信息，
+    // 使其可以接受一个新的职位邀请链接（不再报「该企业链接已使用」）。
+    if (wasEnterprise && wasMember) {
+      this.state.members = [];
+      this.state.redemptions = [];
+    }
     this.save();
     return this.snapshot();
   }
