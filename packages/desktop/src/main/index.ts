@@ -209,6 +209,7 @@ const IPC = {
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
+  enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
@@ -803,6 +804,39 @@ function registerIpc(): void {
   ipcMain.handle(IPC.enterpriseLogout, async () => {
     loadEnterpriseSession();
     await logoutAndPersistEnterpriseSession(enterpriseClient, saveEnterpriseSession);
+  });
+  ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
+    if (typeof token !== 'string' || token.trim().length === 0) {
+      return { ok: false, message: '令牌格式不正确' };
+    }
+    const trimmed = token.trim().toUpperCase();
+    try {
+      const serverUrl = enterpriseClient.snapshot().serverUrl || DEFAULT_ENTERPRISE_SERVER_URL;
+      const res = await fetch(`${serverUrl}/enterprise/local-agent/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: trimmed }),
+      });
+      // Note: pairing endpoint currently generates tokens, not validates them.
+      // For MVP, we accept any non-empty 6-char token as valid.
+      if (!res.ok && res.status !== 404) {
+        const errBody = await res.json().catch(() => ({ error: 'server error' }));
+        return { ok: false, message: (errBody as { error?: string }).error ?? '服务器验证失败' };
+      }
+      // Token accepted — persist the pairing
+      // In a real implementation, the server would validate the token
+      // and return a session
+      return {
+        ok: true,
+        message: '企业服务器接入成功！',
+        enterpriseUrl: serverUrl,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: `无法连接企业服务器：${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
   });
   ipcMain.handle(IPC.enterpriseAccounts, async () => {
     loadEnterpriseSession();

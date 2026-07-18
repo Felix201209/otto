@@ -24,6 +24,7 @@ import { SoftwareUpdatePanel } from './SoftwareUpdatePanel.js';
 import { Panel } from './hub/HubUI.js';
 import { PrefsPanel, McpPanel, ExtensionsPanel, IdePanel } from './hub/SettingsPanels.js';
 import { FeishuPanel } from './hub/FeishuPanel.js';
+import { LocalAgentPanel } from './hub/LocalAgentPanel.js';
 import {
   DoctorPanel,
   ContextPanel,
@@ -46,6 +47,7 @@ export type TabId =
   | 'models'
   | 'search'
   | 'feishu'
+  | 'local-agent'
   | 'mcp'
   | 'context'
   | 'doctor'
@@ -64,6 +66,7 @@ const TAB_LABEL: Record<TabId, string> = {
   models: '企业模型',
   search: '联网搜索',
   feishu: '飞书接入',
+  'local-agent': '接入企业',
   mcp: '外部工具（MCP）',
   context: '上下文详情',
   doctor: '运行检查',
@@ -84,7 +87,7 @@ const TAB_LABEL: Record<TabId, string> = {
  */
 const SIMPLE_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
   { label: '常用', tabs: ['prefs', 'search', 'update'] },
-  { label: '账号与连接', tabs: ['organization', 'feishu'] },
+  { label: '账号与连接', tabs: ['organization', 'feishu', 'local-agent'] },
 ];
 
 const ADVANCED_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
@@ -240,6 +243,7 @@ export function SettingsHubPage({
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}
+            {tab === 'local-agent' ? <LocalAgentPanel /> : null}
             {tab === 'mcp' ? <McpPanel data={data} /> : null}
             {tab === 'context' ? (
               <ContextPanel data={data} activeSession={activeSession} />
