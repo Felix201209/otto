@@ -5577,6 +5577,7 @@ h6.otto-prose__h {
   padding-left: 2px;
 }
 .otto-wcal__grid {
+  --otto-wcal-popover-width: min(240px, calc(100% - 16px));
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
@@ -5627,7 +5628,7 @@ h6.otto-prose__h {
   border-radius: 50%;
   background: var(--otto-accent);
 }
-/* 悬浮明细：统一居中对齐，不再按 nth-child 错位计算列位置。 */
+/* 悬浮明细：按列贴边，避免右侧日期的弹层被右栏滚动容器裁掉。 */
 .otto-wcal__pop {
   display: none;
   position: absolute;
@@ -5635,8 +5636,8 @@ h6.otto-prose__h {
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
-  width: max-content;
-  max-width: 200px;
+  width: var(--otto-wcal-popover-width);
+  max-width: var(--otto-wcal-popover-width);
   max-height: 220px;
   overflow-y: auto;
   padding: 10px 12px;
@@ -5646,6 +5647,15 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-pop);
   text-align: left;
   pointer-events: none;
+}
+.otto-wcal__day.is-pop-left .otto-wcal__pop {
+  left: 0;
+  transform: none;
+}
+.otto-wcal__day.is-pop-right .otto-wcal__pop {
+  right: 0;
+  left: auto;
+  transform: none;
 }
 .otto-wcal__day.has-log:hover .otto-wcal__pop {
   display: block;

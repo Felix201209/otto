@@ -479,6 +479,7 @@ function WorkLogCalendar({
           const day = index + 1;
           const key = dateKey(year, month, day);
           const entries = byDate[key] ?? [];
+          const weekdayColumn = (firstWeekday + index) % 7;
           const orderedEntries = [...entries].sort((left, right) =>
             left.entryType === right.entryType ? 0 : left.entryType === 'work_result' ? -1 : 1,
           );
@@ -486,7 +487,13 @@ function WorkLogCalendar({
             <button
               key={key}
               type="button"
-              className={'otto-wcal__day' + (entries.length ? ' has-log' : '') + (key === todayKey ? ' is-today' : '')}
+              className={
+                'otto-wcal__day'
+                + (entries.length ? ' has-log' : '')
+                + (key === todayKey ? ' is-today' : '')
+                + (weekdayColumn <= 1 ? ' is-pop-left' : '')
+                + (weekdayColumn >= 5 ? ' is-pop-right' : '')
+              }
               onClick={() => onSelectDate(key)}
               title={entries.length
                 ? entries.map((entry) => `• ${entry.time} ${entry.action}`).join('\n')

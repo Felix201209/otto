@@ -39,15 +39,20 @@ describe('桌面端窄窗口响应式契约', () => {
 describe('工作日志日历样式契约', () => {
   it('重置日期按钮，并让最后一行的明细弹层向上展开', () => {
     const dayRule = appCss.match(/\.otto-wcal__day\s*\{([^}]*)\}/)?.[1] ?? '';
+    const gridRule = appCss.match(/\.otto-wcal__grid\s*\{([^}]*)\}/)?.[1] ?? '';
+    const popRule = appCss.match(/\.otto-wcal__pop\s*\{([^}]*)\}/)?.[1] ?? '';
 
     expect(dayRule).toMatch(/border:\s*0/);
     expect(dayRule).toMatch(/background:\s*transparent/);
     expect(dayRule).toMatch(/padding:\s*0/);
     expect(dayRule).toMatch(/cursor:\s*pointer/);
+    expect(gridRule).toMatch(/--otto-wcal-popover-width:\s*min\(240px,\s*calc\(100%\s*-\s*16px\)\)/);
+    expect(popRule).toMatch(/width:\s*var\(--otto-wcal-popover-width\)/);
     expect(appCss).toContain(
       '.otto-wcal__day:nth-last-child(-n+7) .otto-wcal__pop',
     );
-    expect(appCss).not.toContain(':not(:nth-last-child(-n+7))');
+    expect(appCss).toContain('.otto-wcal__day.is-pop-left .otto-wcal__pop');
+    expect(appCss).toContain('.otto-wcal__day.is-pop-right .otto-wcal__pop');
   });
 });
 
