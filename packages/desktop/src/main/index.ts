@@ -31,6 +31,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   nativeImage,
@@ -214,6 +215,7 @@ const IPC = {
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
+  writeClipboard: 'otto:write-clipboard',
 } as const;
 
 const enterpriseClient = new EnterpriseClient(fetch, () => {
@@ -735,6 +737,11 @@ function pushEndpointToRenderer(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.writeClipboard, (_e, text: unknown) => {
+    if (typeof text !== 'string') return false;
+    clipboard.writeText(text);
+    return true;
+  });
   ipcMain.handle(IPC.enterpriseRegistrationIntent, () => {
     enterpriseIntentRendererReady = true;
     return enterpriseRegistrationIntents.take();

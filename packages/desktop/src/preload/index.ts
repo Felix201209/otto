@@ -266,6 +266,7 @@ const IPC = {
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
+  writeClipboard: 'otto:write-clipboard',
 } as const;
 
 /** renderer 注册的入站帧回调。 */
@@ -438,6 +439,8 @@ export interface OttoBridge {
     description: string;
     targetTags?: string[];
   }): Promise<unknown>;
+  /** 将文本写入系统剪贴板（通过 IPC 调用 main 进程 clipboard 模块，不受 renderer 权限限制）。 */
+  writeClipboard(text: string): Promise<boolean>;
 }
 
 // ── 退避参数 ──
@@ -899,6 +902,9 @@ const bridge: OttoBridge = {
     targetTags?: string[];
   }): Promise<unknown> {
     return ipcRenderer.invoke(IPC.enterpriseTicketSubmit, input) as Promise<unknown>;
+  },
+  writeClipboard(text: string): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.writeClipboard, text) as Promise<boolean>;
   },
 };
 

@@ -207,7 +207,7 @@ export function OrganizationPanel({
               <div className="otto-product-invite-result">
                 <strong>链接已签名 · {new Date(state.lastInvite.expiresAt).toLocaleString('zh-CN')} 失效</strong>
                 <textarea readOnly value={state.lastInvite.link} aria-label="生成的企业链接" />
-                <button type="button" className="otto-hub__btn" onClick={() => void navigator.clipboard.writeText(state.lastInvite!.link)}>复制链接</button>
+                <button type="button" className="otto-hub__btn" onClick={() => { window.otto.writeClipboard(state.lastInvite!.link); }}>复制链接</button>
                 <span>该签名链接仅用于组织架构或职位关系；成员入企以中心服务签发的 7 天企业引入链接为准。</span>
               </div>
             </Card>
