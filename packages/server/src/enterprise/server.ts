@@ -55,6 +55,10 @@ import {
   resolveEnterprisePublicBaseUrl,
 } from './publicInvite.js';
 import { sendPublicInvitePage } from './publicInvitePage.js';
+import { sendLocalAgentPage } from './localAgentPage.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join as pathJoin } from 'node:path';
 
 const DEFAULT_PORT = 7777;
 
@@ -136,6 +140,14 @@ export interface EnterpriseProxyOptions {
 }
 
 const ENTERPRISE_API_VERSION = 2;
+
+/** 内存中的配对令牌存储（服务重启后自动失效）。 */
+const pairingTokens = new Map<string, {
+  instanceId: string;
+  expiresAt: number;
+  createdAt: number;
+}>();
+
 const ENTERPRISE_CAPABILITIES = [
   'password_auth',
   'sms_registration',
@@ -590,6 +602,55 @@ function makeHandler(
             error: 'enterprise database unavailable',
           });
         }
+        return;
+      }
+
+      // ===== Local Agent Discovery SDK =====
+      if (path === '/enterprise/sdk/otto-discovery.js' && method === 'GET') {
+        try {
+          const __filename = fileURLToPath(import.meta.url);
+          const __dirname = dirname(__filename);
+          const sdkPath = pathJoin(__dirname, 'public', 'otto-discovery.js');
+          const sdkContent = readFileSync(sdkPath, 'utf-8');
+          res.writeHead(200, {
+            'Content-Type': 'application/javascript; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(sdkContent);
+        } catch {
+          sendJSON(res, 404, { error: 'sdk not found' });
+        }
+        return;
+      }
+
+      // ===== Local Agent Detection Page =====
+      if (path === '/enterprise/local-agent' && method === 'GET') {
+        sendLocalAgentPage(res);
+        return;
+      }
+
+      // ===== Pairing Token Generation =====
+      if (path === '/enterprise/local-agent/pair' && method === 'POST') {
+        const body = await readBody(req);
+        const instanceId = typeof body.instanceId === 'string' ? body.instanceId : '';
+        if (!instanceId) {
+          sendJSON(res, 400, { ok: false, error: 'missing instanceId' });
+          return;
+        }
+        // 生成 6 位配对令牌，5 分钟过期
+        const token = randomBytes(3).toString('hex').toUpperCase();
+        const expiresAt = Date.now() + 5 * 60 * 1000;
+        // 存到内存中（服务重启后令牌自动失效）
+        pairingTokens.set(token, { instanceId, expiresAt, createdAt: Date.now() });
+        sendJSON(res, 200, {
+          ok: true,
+          data: {
+            token,
+            expiresIn: 300,
+            instructions: '请在 Otto 桌面端中输入此令牌完成接入',
+          },
+        });
         return;
       }
 

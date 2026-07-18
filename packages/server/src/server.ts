@@ -58,6 +58,11 @@ import {
   type WorkflowAgentSummary,
   type ExtensionSummary,
   type AutoSkillCandidateInfo,
+  type LocalAgentPingResponse,
+} from './protocol.js';
+import {
+  TRUSTED_ORIGINS,
+  PNA_HEADERS,
 } from './protocol.js';
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
 import {
@@ -303,6 +308,8 @@ export class OttoServer {
   /** 飞书网关是否启用。非 readonly：/feishu/start、/feishu/stop 运行期可翻转。 */
   private enableFeishu: boolean;
   private readonly startedAt = Date.now();
+  /** 稳定实例标识：用于 /local-agent/ping 跨域探测，供企业服务器做去重。 */
+  private readonly instanceId = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 9)}`;
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
@@ -1607,6 +1614,16 @@ export class OttoServer {
    * - Host：要求主机名是 localhost/127.0.0.1/[::1]，挡 DNS-rebinding。
    */
   private isLocalRequestAllowed(req: IncomingMessage): boolean {
+    const url = new URL(req.url ?? '/', `http://${this.host}:${this.port}`);
+
+    // /local-agent/ping 允许信任域跨域探测（安全接口，只读最小信息）
+    if (url.pathname === HTTP_ROUTES.localAgentPing) {
+      const origin = req.headers.origin;
+      if (!origin) return true; // Node 客户端（无 Origin）
+      if (TRUSTED_ORIGINS.has(origin)) return true;
+      return false;
+    }
+
     const origin = req.headers.origin;
     if (origin && origin !== 'null' && !origin.startsWith('file://')) {
       try {
@@ -1635,6 +1652,19 @@ export class OttoServer {
 
     if (path === HTTP_ROUTES.health) {
       return sendJson(res, 200, ok(this.health()));
+    }
+    // 跨域探测接口：企业服务器网页检测本地 otto（只读，最小化响应）
+    if (path === HTTP_ROUTES.localAgentPing) {
+      if (req.method === 'OPTIONS') {
+        return sendPreflightResponse(res, req.headers.origin);
+      }
+      const pingResponse: LocalAgentPingResponse = {
+        status: 'ok',
+        serverVersion: '0.1.0',
+        protocolVersion: PROTOCOL_VERSION,
+        instanceId: this.instanceId,
+      };
+      return sendJsonWithCors(res, 200, ok(pingResponse), req.headers.origin);
     }
     if (path === HTTP_ROUTES.sessions && req.method === 'GET') {
       return sendJson(res, 200, ok(this.store.listSessions()));
@@ -3075,6 +3105,51 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(json);
+}
+
+/**
+ * 带 CORS + PNA 头的 JSON 响应，仅用于 /local-agent/ping 跨域探测。
+ * 只在 origin 属于 TRUSTED_ORIGINS 时设置 ACAO 头。
+ */
+function sendJsonWithCors(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  origin: string | undefined,
+): void {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    ...PNA_HEADERS,
+  };
+  if (origin && TRUSTED_ORIGINS.has(origin)) {
+    headers['access-control-allow-origin'] = origin;
+    headers['vary'] = 'Origin';
+  }
+  const json = JSON.stringify(body);
+  res.writeHead(status, headers);
+  res.end(json);
+}
+
+/**
+ * 处理浏览器跨域 OPTIONS 预检请求（仅 /local-agent/ping）。
+ * 返回 PNA + CORS 头，告诉浏览器可以发起实际请求。
+ */
+function sendPreflightResponse(
+  res: ServerResponse,
+  origin: string | undefined,
+): void {
+  const headers: Record<string, string> = {
+    'access-control-allow-methods': 'GET, OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'access-control-max-age': '86400',
+    ...PNA_HEADERS,
+  };
+  if (origin && TRUSTED_ORIGINS.has(origin)) {
+    headers['access-control-allow-origin'] = origin;
+    headers['vary'] = 'Origin';
+  }
+  res.writeHead(204, headers);
+  res.end();
 }
 
 /** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此）。 */
