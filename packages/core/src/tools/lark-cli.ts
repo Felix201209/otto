@@ -317,7 +317,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '## Wiki (Knowledge Base)',
         '- List spaces: command="wiki +space-list"',
         '- List nodes in space: command="wiki +node-list" args=["--space-id", "<id>"]',
-        '- Create wiki node with content (TWO-STEP — wiki +node-create auto-creates an empty backing doc):',
+        '- Create wiki node with content (TWO-STEP REQUIRED — do both steps in one turn, do NOT stop between them):',
         '  Step 1 — Create node (auto-creates empty docx): command="wiki +node-create" args=["--space-id", "<id>", "--title", "Title", "--node-type", "origin", "--obj-type", "docx"]',
         '  Step 2 — Fill auto-created doc with content: command="docs +update" args=["--api-version", "v2", "--doc", "<obj_token_from_step1_response>", "--command", "overwrite", "--content", "@<relative-path>"]',
         '  IMPORTANT: wiki +node-create does NOT have --obj-token flag (it has --obj-type and --origin-node-token). It always creates an empty backing document. The correct flow is: create node -> read obj_token from response -> docs +update to fill it.',
