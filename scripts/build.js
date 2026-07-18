@@ -78,9 +78,8 @@ if (!existsSync(join(root, 'node_modules'))) {
 const allWorkspaces = [
   { path: 'packages/core', name: 'core' },
   { path: 'packages/cli', name: 'cli' },
-  { path: 'packages/server', name: 'server' },
-  { path: 'packages/vscode-ui-plugin', name: 'vscode-ui-plugin' }
-  // 注意: packages/desktop 刻意不进主链 (独立 electron/webpack 构建, 同 vscode-ui-plugin/webview 范式)。
+  { path: 'packages/server', name: 'server' }
+  // 注意: packages/desktop 刻意不进主链 (独立 electron/webpack 构建)。
   // 用 `npm run build --workspace=packages/desktop` 单独构建, 避免 electron native 拖垮 core/cli/CI 主链。
 ];
 
@@ -93,7 +92,6 @@ const workspaces = process.env.NPM_PUBLISH_MODE === '1'
 const results = [];
 
 // Determine which packages are required (critical) for build success
-// vscode-ui-plugin is optional and won't block the build process
 const criticalPackages = new Set(['core', 'cli', 'server']);
 
 printHeader('Building workspaces');
@@ -117,9 +115,6 @@ if (skipRebuild) {
         // Only throw error if it's a critical package
         if (isCritical) {
           throw error;
-        } else {
-          // For non-critical packages (vscode), log warning and continue
-          console.log(`\n${COLORS.yellow}⚠️  ${workspace.name} build failed, but continuing (non-critical package)${COLORS.reset}`);
         }
       }
     }

@@ -60,8 +60,7 @@ function updateAllPackageVersions(newVersion) {
   const packagesToUpdate = [
     'packages/cli/package.json',
     'packages/cli/src/package.json',
-    'packages/core/package.json',
-    'packages/vscode-ide-companion/package.json'
+    'packages/core/package.json'
   ];
 
   console.log(chalk.blue('   📦 Syncing version numbers across all sub-projects:'));

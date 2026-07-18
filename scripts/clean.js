@@ -86,17 +86,7 @@ for (const workspacePattern of workspaces) {
       printItem('success', join(pkgDirRel, 'node_modules'), 'Dependencies');
     }
 
-    // Webview special case
-    if (pkgDirRel.includes('vscode-ui-plugin')) {
-      const webviewDir = join(pkgDir, 'webview');
-      ['build', 'node_modules', 'dist'].forEach(dir => {
-        const target = join(webviewDir, dir);
-        if (existsSync(target)) {
-          rmSync(target, RMRF_OPTIONS);
-          printItem('success', join(pkgDirRel, 'webview', dir), 'Webview Artifact');
-        }
-      });
-    }
+
   }
 }
 

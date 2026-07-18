@@ -34,7 +34,7 @@ if (!versionType) {
 // 2. Bump the version in the root and specific workspace package.json files.
 run(`npm version ${versionType} --no-git-tag-version --allow-same-version`);
 
-// Update specific workspaces only, excluding vscode-ide-companion (fixed version 99.99.xx)
+// Update specific workspaces only
 const workspacesToUpdate = ['packages/cli', 'packages/core'];
 for (const workspace of workspacesToUpdate) {
   run(`npm version ${versionType} --workspace=${workspace} --no-git-tag-version --allow-same-version`);
