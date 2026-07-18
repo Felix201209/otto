@@ -1,0 +1,265 @@
+use std::io::{self, BufRead, Write};
+use serde::{Serialize, Deserialize};
+
+mod session_store;
+mod encryption;
+mod tokenizer;
+mod agent_pool;
+
+use session_store::SessionStore;
+use encryption::EncryptionStore;
+use tokenizer::Tokenizer;
+use agent_pool::AgentPool;
+
+#[derive(Deserialize)]
+struct Request {
+    id: Option<u64>,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct Response {
+    id: Option<u64>,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+}
+
+fn main() {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    let mut store: Option<SessionStore> = None;
+    let mut enc_store: Option<EncryptionStore> = None;
+    let mut tok: Option<Tokenizer> = None;
+    let mut pool: Option<AgentPool> = None;
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let req: Request = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                let resp = Response { id: None, result: None, error: Some(format!("Parse error: {}", e)) };
+                let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
+                continue;
+            }
+        };
+
+        let resp = match handle_request(&req, &mut store, &mut enc_store, &mut tok, &mut pool) {
+            Ok(v) => Response { id: req.id, result: Some(v), error: None },
+            Err(e) => Response { id: req.id, result: None, error: Some(e) },
+        };
+        
+        let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
+        let _ = stdout.flush();
+    }
+}
+
+fn handle_request(
+    req: &Request,
+    store: &mut Option<SessionStore>,
+    enc_store: &mut Option<EncryptionStore>,
+    tok: &mut Option<Tokenizer>,
+    pool: &mut Option<AgentPool>,
+) -> Result<serde_json::Value, String> {
+    let params = req.params.as_ref();
+    
+    match req.method.as_str() {
+        // === No-params methods ===
+        "ping" => Ok(serde_json::json!({"pong": true})),
+        
+        "session_store.list" => {
+            let s = store.as_ref().ok_or("Store not opened")?;
+            let sessions = s.list()?;
+            Ok(serde_json::to_value(sessions).unwrap())
+        }
+        "session_store.size_bytes" => {
+            let s = store.as_ref().ok_or("Store not opened")?;
+            Ok(serde_json::json!({"size": s.size_bytes()}))
+        }
+        
+        "encryption.generate_key" => {
+            Ok(serde_json::json!({"key": EncryptionStore::generate_key()}))
+        }
+        "encryption.list_ids" => {
+            let es = enc_store.as_ref().ok_or("EncStore not opened")?;
+            let ids = es.list_ids()?;
+            Ok(serde_json::json!({"ids": ids}))
+        }
+        
+        "tokenizer.supported_models" => {
+            Ok(serde_json::json!({"models": tokenizer::supported_models()}))
+        }
+        
+        "agent_pool.stats" => {
+            let p = pool.as_ref().ok_or("Pool not created")?;
+            Ok(serde_json::json!({
+                "current_memory_mb": p.current_memory_mb(),
+                "max_memory_mb": p.max_memory_mb(),
+                "agent_count": p.agent_count(),
+            }))
+        }
+        "agent_pool.list_agents" => {
+            let p = pool.as_ref().ok_or("Pool not created")?;
+            let agents = p.list_agents();
+            Ok(serde_json::to_value(agents).unwrap())
+        }
+
+        // === Session Store ===
+        "session_store.open" => {
+            let p = params.ok_or("Missing params")?;
+            let path = p["path"].as_str().ok_or("Missing path")?;
+            let cache_size = p["cache_size"].as_u64().map(|v| v as usize);
+            let s = SessionStore::new(path.to_string(), cache_size)?;
+            *store = Some(s);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "session_store.save" => {
+            let p = params.ok_or("Missing params")?;
+            let s = store.as_ref().ok_or("Store not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?.to_string();
+            let title = p["title"].as_str().unwrap_or("").to_string();
+            let messages: Vec<session_store::Message> = serde_json::from_value(
+                p["messages"].clone()
+            ).map_err(|e| format!("Bad messages: {}", e))?;
+            s.save(id, title, messages)?;
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "session_store.load" => {
+            let p = params.ok_or("Missing params")?;
+            let s = store.as_ref().ok_or("Store not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let data = s.load(id)?;
+            Ok(serde_json::to_value(data).unwrap_or(serde_json::Value::Null))
+        }
+        "session_store.delete" => {
+            let p = params.ok_or("Missing params")?;
+            let s = store.as_mut().ok_or("Store not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let deleted = s.delete(id)?;
+            Ok(serde_json::json!({"deleted": deleted}))
+        }
+
+        // === Encryption Store ===
+        "encryption.open" => {
+            let p = params.ok_or("Missing params")?;
+            let path = p["path"].as_str().ok_or("Missing path")?;
+            let key = p["key"].as_str().ok_or("Missing key")?;
+            let es = EncryptionStore::new(path.to_string(), key.to_string())?;
+            *enc_store = Some(es);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "encryption.save" => {
+            let p = params.ok_or("Missing params")?;
+            let es = enc_store.as_ref().ok_or("EncStore not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let data = p["data"].as_str().ok_or("Missing data")?;
+            es.save_encrypted(id.to_string(), data.to_string())?;
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "encryption.load" => {
+            let p = params.ok_or("Missing params")?;
+            let es = enc_store.as_ref().ok_or("EncStore not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let data = es.load_decrypted(id)?;
+            Ok(serde_json::json!({"data": data}))
+        }
+        "encryption.delete" => {
+            let p = params.ok_or("Missing params")?;
+            let es = enc_store.as_ref().ok_or("EncStore not opened")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let deleted = es.delete(id)?;
+            Ok(serde_json::json!({"deleted": deleted}))
+        }
+
+        // === Tokenizer ===
+        "tokenizer.create" => {
+            let p = params.ok_or("Missing params")?;
+            let model = p["model"].as_str().ok_or("Missing model")?;
+            let t = Tokenizer::new(model.to_string())?;
+            *tok = Some(t);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "tokenizer.count" => {
+            let p = params.ok_or("Missing params")?;
+            let t = tok.as_ref().ok_or("Tokenizer not created")?;
+            let text = p["text"].as_str().ok_or("Missing text")?;
+            let count = t.count(text);
+            Ok(serde_json::json!({"tokens": count}))
+        }
+        "tokenizer.truncate" => {
+            let p = params.ok_or("Missing params")?;
+            let t = tok.as_ref().ok_or("Tokenizer not created")?;
+            let text = p["text"].as_str().ok_or("Missing text")?;
+            let max = p["max_tokens"].as_u64().ok_or("Missing max_tokens")? as u32;
+            let result = t.truncate(text, max);
+            Ok(serde_json::json!({"text": result}))
+        }
+
+        // === Agent Pool ===
+        "agent_pool.create" => {
+            let p = params.ok_or("Missing params")?;
+            let max_mem = p["max_memory_mb"].as_u64().unwrap_or(256) as u32;
+            let max_agents = p["max_agents"].as_u64().unwrap_or(10) as u32;
+            let pool_instance = AgentPool::new(max_mem, max_agents);
+            *pool = Some(pool_instance);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+        "agent_pool.register" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let mem = p["memory_mb"].as_u64().unwrap_or(10) as u32;
+            let ok = pool_ref.register(id.to_string(), mem)?;
+            Ok(serde_json::json!({"registered": ok}))
+        }
+        "agent_pool.unregister" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let ok = pool_ref.unregister(id)?;
+            Ok(serde_json::json!({"unregistered": ok}))
+        }
+        "agent_pool.update_memory" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let mem = p["memory_mb"].as_u64().ok_or("Missing memory_mb")? as u32;
+            let ok = pool_ref.update_memory(id, mem)?;
+            Ok(serde_json::json!({"updated": ok}))
+        }
+        "agent_pool.add_log" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let log = p["log"].as_str().ok_or("Missing log")?;
+            let ok = pool_ref.add_log(id, log.to_string());
+            Ok(serde_json::json!({"added": ok}))
+        }
+        "agent_pool.drain_pending" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let id = p["id"].as_str().ok_or("Missing id")?;
+            let results = pool_ref.drain_pending_results(id);
+            Ok(serde_json::json!({"results": results}))
+        }
+        "agent_pool.cleanup_idle" => {
+            let p = params.ok_or("Missing params")?;
+            let pool_ref = pool.as_ref().ok_or("Pool not created")?;
+            let secs = p["idle_seconds"].as_u64().unwrap_or(300) as u32;
+            let count = pool_ref.cleanup_idle(secs);
+            Ok(serde_json::json!({"cleaned": count}))
+        }
+
+        _ => Err(format!("Unknown method: {}", req.method)),
+    }
+}
