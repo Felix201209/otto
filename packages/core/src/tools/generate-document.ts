@@ -541,50 +541,166 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     presentation.subject = documentTitle;
     presentation.title = documentTitle;
 
-    const parsedSlides = content
+    const theme = this.resolveSlideTheme(templateOptions, documentTitle);
+
+    const sections = content
       .split(/^\s*---\s*$/m)
-      .map((section) => this.parseSlideSection(section, documentTitle))
-      .filter((section) => section.title || section.body.length > 0);
-    if (parsedSlides.length === 0) {
-      parsedSlides.push({ title: documentTitle, body: [], notes: [] });
+      .map((sec) => this.parseSlideSection(sec, documentTitle))
+      .filter((sec) => sec.title || sec.body.length > 0);
+
+    if (sections.length === 0) {
+      const slide = presentation.addSlide();
+      slide.addText(documentTitle, { x: 1, y: 2, w: 11.333, h: 3, fontSize: 44, bold: true, align: 'center', color: '333333' });
+      await presentation.writeFile({ fileName: outPath, compression: true });
+      return;
     }
 
-    for (let index = 0; index < parsedSlides.length; index += 1) {
+    for (let idx = 0; idx < sections.length; idx += 1) {
       if (signal.aborted) throw new Error('PPT 本地生成已取消');
-      const section = parsedSlides[index];
-      const htmlPath = path.join(tmpDir, `slide-${index + 1}.html`);
-      const imagePath = path.join(tmpDir, `slide-${index + 1}.png`);
-      fs.writeFileSync(
-        htmlPath,
-        this.buildSlideHtml(
-          section,
-          index,
-          parsedSlides.length,
-          this.resolveSlideTheme(templateOptions, documentTitle),
-        ),
-        'utf8',
-      );
-      await this.htmlRenderer.render({
-        htmlPath,
-        outputPath: imagePath,
-        width: 1920,
-        height: 1080,
-        signal,
-      });
+      const sec = sections[idx];
+      const pgNum = String(idx + 1).padStart(2, '0');
 
+      // Native text slides: editable pptxgenjs objects (not pixel images)
+      if (this.canUseNativeText(sec)) {
+        this.renderNativeSlide(presentation, sec, idx, sections.length, theme, pgNum);
+        continue;
+      }
+
+      // Visual slides (cover, section, quote, images): HTML→PNG pipeline
+      const htmlPath = path.join(tmpDir, 'slide-' + (idx + 1) + '.html');
+      const imgPath = path.join(tmpDir, 'slide-' + (idx + 1) + '.png');
+      fs.writeFileSync(htmlPath, this.buildSlideHtml(sec, idx, sections.length, theme), 'utf8');
+      await this.htmlRenderer.render({ htmlPath, outputPath: imgPath, width: 1920, height: 1080, signal });
       const slide = presentation.addSlide();
-      slide.addImage({
-        path: imagePath,
-        altText: section.title || documentTitle,
-        x: 0,
-        y: 0,
-        w: 13.333,
-        h: 7.5,
-      });
-      if (section.notes.length > 0) slide.addNotes(section.notes.join('\n'));
+      slide.addImage({ path: imgPath, altText: sec.title || documentTitle, x: 0, y: 0, w: 13.333, h: 7.5 });
+      if (sec.notes.length > 0) slide.addNotes(sec.notes.join('\n'));
     }
 
     await presentation.writeFile({ fileName: outPath, compression: true });
+  }
+
+  /** Check if a slide is text-heavy enough for native pptxgenjs rendering. */
+  private canUseNativeText(sec: ParsedSlideSection): boolean {
+    const layout = sec.requestedLayout ?? this.inferSlideLayout(sec, 0);
+    if (layout === 'cover' || layout === 'section' || layout === 'quote') return false;
+    const hasImg = sec.body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l.trim()));
+    if (layout === 'visual' || hasImg) return false;
+    return true;
+  }
+
+  /** Render a text slide with native pptxgenjs objects (editable, searchable). */
+  private renderNativeSlide(
+    pres: any, sec: ParsedSlideSection, index: number, total: number,
+    theme: SlideTheme, pgNum: string,
+  ): void {
+    const slide = pres.addSlide();
+    slide.background = { color: theme.background.replace('#', '') };
+
+    slide.addText(pgNum, { x: 11.6, y: 7.0, w: 1.2, h: 0.4, fontSize: 10,
+      color: theme.muted.replace('#', ''), align: 'right', fontFace: 'PingFang SC' });
+
+    const title = this.stripMarkdown(sec.title);
+    if (title) {
+      slide.addText(title, { x: 0.8, y: 0.4, w: 11.8, h: 0.9, fontSize: 30,
+        bold: true, color: theme.text.replace('#', ''), fontFace: 'PingFang SC' });
+    }
+
+    let y = title ? 1.5 : 0.4;
+    const parsed = this.parseNativeSlideBody(sec.body, theme);
+
+    for (const tb of parsed.tables) {
+      const hrs = tb.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11,
+        color: 'FFFFFF', fill: { color: theme.primary.replace('#', '') }, fontFace: 'PingFang SC' as const } }));
+      const drs = tb.rows.map((row: string[]) => row.map((cell: string) => ({ text: cell, options: { fontSize: 10,
+        color: theme.text.replace('#', ''), fontFace: 'PingFang SC' as const } })));
+      slide.addTable([hrs, ...drs] as any, { x: 0.8, y, w: 11.8,
+        border: { type: 'solid', pt: 0.5, color: theme.surface.replace('#', '') } as any });
+      y += Math.min(4.5, (tb.rows.length + 1) * 0.36) + 0.2;
+    }
+
+    for (const blk of parsed.texts) {
+      if (y > 6.5) break;
+      const h = Math.min(4.8, blk.lines.length * 0.38);
+      slide.addText(blk.lines.map((ln: string) => ({ text: ln, options: {
+        fontSize: blk.fontSize, color: (blk.color || theme.text).replace('#', ''),
+        bold: blk.bold, fontFace: 'PingFang SC' as const,
+        bullet: blk.isBullet ? { code: '\u2022' } : undefined, breakType: 'none' as const,
+      } })), { x: 0.8 + (blk.indent || 0) * 1.2, y, w: 11.8 - (blk.indent || 0) * 1.2,
+        h, valign: 'top' as const } as any);
+      y += h + 0.1;
+    }
+
+    if (sec.notes.length > 0) slide.addNotes(sec.notes.join('\n'));
+  }
+
+  /** Parse slide body into native text blocks and PPT tables. */
+  private parseNativeSlideBody(lines: string[], theme: SlideTheme): {
+    texts: Array<{ lines: string[]; fontSize: number; color?: string; bold?: boolean; isBullet?: boolean; indent?: number }>;
+    tables: Array<{ headers: string[]; rows: string[][] }>;
+  } {
+    const result = { texts: [] as any[], tables: [] as any[] };
+
+    let cur: any = null;
+    let inTable = false;
+    let tblHeaders: string[] = [];
+    let tblRows: string[][] = [];
+
+    for (const rawLine of lines) {
+      const ln = rawLine.trim();
+      if (!ln) { cur = null; continue; }
+
+      // Table row
+      if (/^\|.+\\|$/.test(ln)) {
+        if (ln.includes('---')) continue;
+        inTable = true;
+        const cells = ln.split('|').slice(1, -1).map((c: string) => this.stripMarkdown(c.trim()));
+        if (tblHeaders.length === 0) { tblHeaders = cells; } else { tblRows.push(cells); }
+        continue;
+      }
+
+      // Flush buffered table
+      if (inTable && tblHeaders.length > 0) {
+        result.tables.push({ headers: tblHeaders, rows: tblRows });
+        tblHeaders = []; tblRows = []; inTable = false;
+      }
+
+      const hd = ln.match(/^#{2,6}\s+(.+)$/);
+      if (hd) { cur = null; result.texts.push({ lines: [this.stripMarkdown(hd[1])], fontSize: 18, bold: true, color: theme.primary }); continue; }
+
+      const bul = ln.match(/^[-*+]\s+(.+)$/);
+      const num = ln.match(/^\d+[.)]\s+(.+)$/);
+      if (bul || num) {
+        const txt = this.stripMarkdown((bul || num)![1]);
+        if (!cur || !cur.isBullet) { cur = { lines: [txt], fontSize: 13, color: theme.text, isBullet: true }; result.texts.push(cur); }
+        else { cur.lines.push(txt); }
+        continue;
+      }
+
+      const qt = ln.match(/^>\s*(.+)$/);
+      if (qt) { cur = null; result.texts.push({ lines: [this.stripMarkdown(qt[1])], fontSize: 15, indent: 1, color: theme.muted }); continue; }
+
+      const cl = this.stripMarkdown(ln);
+      if (cl) {
+        if (!cur || cur.isBullet) { cur = { lines: [cl], fontSize: 13, color: theme.text }; result.texts.push(cur); }
+        else { cur.lines.push(cl); }
+      }
+    }
+
+    if (inTable && tblHeaders.length > 0) result.tables.push({ headers: tblHeaders, rows: tblRows });
+    return result;
+  }
+
+  /** Strip markdown formatting for native PPT text. */
+  private stripMarkdown(text: string): string {
+    return text
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/_([^_]+)_/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/^#{1,6}\s+/, '')
+      .trim();
   }
 
   private buildSlideHtml(
