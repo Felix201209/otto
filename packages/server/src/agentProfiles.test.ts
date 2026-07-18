@@ -48,6 +48,28 @@ describe('服务端 Agent profile 白名单', () => {
     expect(profile?.embeddedSkills).toEqual(['ppt-creator']);
   });
 
+  it('Word/Excel/PDF 专家也强制注入内置 Skill 并拥有专属工作流', () => {
+    const doc = resolveAgentProfile('doc');
+    expect(doc?.embeddedSkills).toEqual(['doc-writer']);
+    expect(doc?.systemPrompt).toContain('视觉母题');
+    expect(doc?.systemPrompt).toContain('create_docx.py');
+    expect(doc?.systemPrompt).toContain('禁止');
+
+    const sheet = resolveAgentProfile('sheet');
+    expect(sheet?.embeddedSkills).toEqual(['spreadsheet-pro']);
+    expect(sheet?.systemPrompt).toContain('视觉母题');
+    expect(sheet?.systemPrompt).toContain('create_xlsx.py');
+    expect(sheet?.systemPrompt).toContain('交替行条纹');
+    expect(sheet?.systemPrompt).toContain('禁止');
+
+    const pdf = resolveAgentProfile('pdf');
+    expect(pdf?.embeddedSkills).toEqual(['pdf-toolkit']);
+    expect(pdf?.systemPrompt).toContain('视觉母题');
+    expect(pdf?.systemPrompt).toContain('create_pdf.py');
+    expect(pdf?.systemPrompt).toContain('merge_pdf');
+    expect(pdf?.systemPrompt).toContain('禁止');
+  });
+
   it('每个专家都有对应身份的简短欢迎语', () => {
     for (const profile of BUILTIN_AGENT_PROFILES) {
       expect(profile.welcomeMessage).toContain('Hello，我是');

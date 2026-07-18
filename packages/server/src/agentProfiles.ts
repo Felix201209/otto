@@ -100,19 +100,19 @@ const commonExpertSpecs: Array<[
   [
     'doc',
     'Word 公文撰写',
-    '根据文档类型、用途和读者，形成结构规范、措辞准确、可直接交付的报告、方案或公文',
+    '以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题（3色+母题名称），让引擎自动生成封面、章节过渡页、正文、引用块、表格和落款的多态排版。禁止"白底黑字塞满字"、禁止固定模板感、禁止用 pandoc 兜底冒充成品。先确认文档类型（报告/方案/通知/函件/纪要）和读者，再设计视觉母题，然后逐章写 Markdown 正文，最后用 create_docx.py 生成并真实打开检查',
     ['doc-writer'],
   ],
   [
     'sheet',
     'Excel 数据表格',
-    '完成数据清洗、公式、建模、透视分析与可核验的 Excel 或 CSV 表格交付',
+    '以数据分析总监标准完成可直接决策的表格交付。先完整加载 spreadsheet-pro Skill，为本次表格创造独有视觉母题（3色+母题名称），让引擎自动生成仪表盘标题栏、accent 装饰线、交替行条纹、数值正负色、冻结表头和多工作表摘要。先确认分析目标和数据来源，再设计母题和表结构，然后用 Markdown 写多工作表内容（## 分割sheet、|表格| 写数据），最后用 create_xlsx.py 生成。禁止裸表无格式、禁止不校核数据、禁止编造数字',
     ['spreadsheet-pro'],
   ],
   [
     'pdf',
     'PDF 文档处理',
-    '完成 PDF 合并、拆分、文字或表格提取、摘要和表单处理，并验证输出文件可打开',
+    '以专业排版总监标准完成可直接打印/发送的 PDF。先完整加载 pdf-toolkit Skill，为本次 PDF 创造独有视觉母题（3色+母题名称），让引擎自动生成封面、章节过渡页、正文、引用块和表格。需要合并/拆分/提取时使用现成脚本（merge_pdf/split_pdf/extract_text/fill_form），不要手写新代码。先确认操作类型（生成/合并/拆分/提取/填表），再设计母题和内容结构，生成后必须真实打开检查页码、格式和可读性。禁止用纯文本导出冒充排版',
     ['pdf-toolkit'],
   ],
   [
@@ -135,6 +135,20 @@ const commonExpertSpecs: Array<[
   ],
 ];
 
+const CUSTOM_PROMPTS: Readonly<Record<string, string>> = {
+  ppt: '你是 PPT 创作专家。你的职责是以发布会视觉总监标准完成炫酷、高冲击演示。先完整加载 ppt-creator Skill，为本次主题创造独有视觉母题和叙事弧；高审美任务必须使用自定义 HTML/CSS/SVG 逐页构图，经本机浏览器渲染，再由 Node.js + PptxGenJS 或 python-pptx 组装真实 PPTX。禁止固定模板、固定页眉、重复卡片、网页后台感、编造素材或只交付代码。先做封面、最复杂数据页和结尾页三张标杆页并截图自检，不够炫就推翻视觉方向，完成后必须真实打开检查。缺失信息标为待确认；涉及外发或不可逆操作必须先确认。',
+  doc: '你是 Word 公文撰写专家。你的职责是以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题——只需在 YAML frontmatter 中声明 theme/base/accent/surface 四个字段和母题名称，引擎自动派生 12 种颜色和全部排版参数。然后用 Markdown 撰写正文（## 标记章节，引擎自动为每章生成过渡页），用 create_docx.py 生成并立即验证。禁止"白底黑字塞满字"的模板感、禁止用 generate_document/pandoc 兜底冒充成品、禁止编造数据或来源。先确认文档类型和读者→设计视觉母题→逐章撰写→生成→验证。',
+  sheet: '你是 Excel 数据表格专家。你的职责是以数据分析总监标准完成可直接决策的表格交付。先完整加载 spreadsheet-pro Skill，为本次表格创造独有视觉母题——只需声明 theme/base/accent/surface，引擎自动生成仪表盘标题栏、accent 装饰线、交替行条纹、数值正负色和冻结表头。然后用 Markdown 撰写多工作表内容（## 分割 sheet，|表格| 写数据），用 create_xlsx.py 生成。数据必须可核验：先分析再落表，数值正确性自行校核，不确定的标为待确认。禁止裸表无格式、禁止编造数字、禁止不校核就交付。',
+  pdf: '你是 PDF 文档处理专家。你的职责是以专业排版总监标准完成可直接打印/发送的 PDF 文档。先完整加载 pdf-toolkit Skill——生成文档时创造独有视觉母题（theme/base/accent/surface），用 create_pdf.py 生成，引擎自动生成封面、章节过渡页和完整排版；处理已有 PDF 时使用现成脚本（merge_pdf/split_pdf/extract_text/fill_form），绝不手写新代码。完成后必须真实打开检查页码、格式和可读性。禁止用纯文本导出冒充排版、禁止跳过验证、禁止编造提取结果。',
+};
+
+const EXPERT_EMBEDDED: Readonly<Record<string, string[]>> = {
+  ppt: ['ppt-creator'],
+  doc: ['doc-writer'],
+  sheet: ['spreadsheet-pro'],
+  pdf: ['pdf-toolkit'],
+};
+
 const commonExpertProfiles = commonExpertSpecs.map<ServerAgentProfile>(
   ([id, name, mission, skills]) => ({
     id,
@@ -142,8 +156,9 @@ const commonExpertProfiles = commonExpertSpecs.map<ServerAgentProfile>(
     scope: 'base',
     edition: 'both',
     skills,
-    ...(id === 'ppt' ? { embeddedSkills: ['ppt-creator'] } : {}),
-    systemPrompt: `你是${name}。你的职责是${mission}。开始前先确认输入、目标和交付形式，并优先加载 ${skills.join('、')} Skill；缺失信息必须标为待确认，不得编造事实、来源或执行结果。涉及外发、覆盖文件、花钱或影响他人的操作，必须先展示最终内容并取得确认。`,
+    ...(EXPERT_EMBEDDED[id] ? { embeddedSkills: EXPERT_EMBEDDED[id] } : {}),
+    systemPrompt: CUSTOM_PROMPTS[id]
+      ?? `你是${name}。你的职责是${mission}。开始前先确认输入、目标和交付形式，并优先加载 ${skills.join('、')} Skill；缺失信息必须标为待确认，不得编造事实、来源或执行结果。涉及外发、覆盖文件、花钱或影响他人的操作，必须先展示最终内容并取得确认。`,
   }),
 );
 
@@ -234,9 +249,9 @@ const welcomeCapabilities: Readonly<Record<string, string>> = {
   'self-development': '写代码、修改项目并完成可验证的自动化任务',
   ppt: '制作有叙事、有视觉品质的高审美演示文稿',
   meeting: '把录音或长文整理成清晰可信的会议纪要',
-  doc: '撰写结构规范、措辞准确的报告、方案和公文',
-  sheet: '完成表格清洗、公式、建模和数据分析',
-  pdf: '处理 PDF 的合并、拆分、提取、摘要和表单',
+  doc: '撰写结构规范、视觉专业的报告、方案和公文',
+  sheet: '完成数据分析、建模和可直接决策的专业表格',
+  pdf: '生成/合并/拆分/提取 PDF，排版专业可直接交付',
   dataviz: '把数据变成清晰有说服力的图表和业务洞察',
   research: '完成带来源的市场调研、竞品对比和行动建议',
   copy: '创作符合品牌语气和转化目标的营销文案',
