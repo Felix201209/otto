@@ -19,14 +19,15 @@ except ImportError:
 
 def _rgb(h): h=h.lstrip("#"); return tuple(int(h[i:i+2],16) for i in(0,2,4))
 def _hex(r,g,b): return f"{max(0,min(255,int(r))):02X}{max(0,min(255,int(g))):02X}{max(0,min(255,int(b))):02X}"
-def _light(h,a): r,g,b=_rgb(h); return _hex(r+(255-r)*a,g+(255-g)*a,b+(255-b)*a)
+def _readable_body(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.35,g*0.35,b*0.35) if lum<80 else "2D2D2D"
+def _readable_muted(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.45+100,g*0.45+100,b*0.45+100) if lum<80 else "666666"
 
 def resolve(meta):
     base=meta.get("base","0A1628"); accent=meta.get("accent","2D7DD2"); surface=meta.get("surface","F0F4F8")
     return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
         "base":base,"accent":accent,"surface":surface,
-        "body":_light(base,0.85) if _rgb(base)[0]<60 else "333333",
-        "muted":_light(base,0.55),
+        "body":_readable_body(base),
+        "muted":_readable_muted(base),
         "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
         "border":"D0D5DD","neg":"DC3545","pos":"28A745",
         "h_font":meta.get("heading_font","Microsoft YaHei"),

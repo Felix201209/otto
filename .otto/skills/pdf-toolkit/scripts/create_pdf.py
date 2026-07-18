@@ -14,15 +14,19 @@ except ImportError: print("pip install fpdf2"); sys.exit(1)
 
 def _rgb(h): h=h.lstrip("#"); return tuple(int(h[i:i+2],16) for i in(0,2,4))
 def _hex(r,g,b): return f"{max(0,min(255,int(r))):02X}{max(0,min(255,int(g))):02X}{max(0,min(255,int(b))):02X}"
-def _light(h,a): r,g,b=_rgb(h); return _hex(r+(255-r)*a,g+(255-g)*a,b+(255-b)*a)
+def _readable_body(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.35,g*0.35,b*0.35) if lum<80 else "2D2D2D"
+def _readable_muted(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.45+100,g*0.45+100,b*0.45+100) if lum<80 else "666666"
+def _blend(c1,c2,r): r1,g1,b1=_rgb(c1); r2,g2,b2=_rgb(c2); return _hex(r1*(1-r)+r2*r,g1*(1-r)+g2*r,b1*(1-r)+b2*r)
+def _dark(h,a): r,g,b=_rgb(h); return _hex(r*(1-a),g*(1-a),b*(1-a))
 
 def resolve(meta):
     base=meta.get("base","0A1628"); accent=meta.get("accent","2D7DD2"); surface=meta.get("surface","F0F4F8")
     return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
         "base":base,"accent":accent,"surface":surface,
-        "body":_light(base,0.85) if _rgb(base)[0]<60 else "333333",
-        "muted":_light(base,0.55),"callout_bg":_light(accent,0.90),
-        "callout_bar":accent,"hr":_light(base,0.80),
+        "body":_readable_body(base),
+        "muted":_readable_muted(base),
+        "light_tint":_blend(base,accent,0.08),
+        "callout_bar":accent,"hr":_dark(_blend(base,accent,0.5),0.5),
         "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
         "h_font":meta.get("heading_font","Helvetica"),"b_font":meta.get("body_font","Helvetica"),
         "t_sz":int(meta.get("title_size","24")),"h1_sz":int(meta.get("h1_size","16")),
@@ -208,7 +212,7 @@ class R:
         self.pdf.set_x(self.mg+bar_w+pad); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
         self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text)
         h=self.pdf.get_y()-sy+4
-        self.pdf.set_fill_color(*_rgb(self.t["callout_bg"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
+        self.pdf.set_fill_color(*_rgb(self.t["light_tint"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
         self.pdf.set_fill_color(*_rgb(self.t["callout_bar"])); self.pdf.rect(self.mg,sy-2,bar_w,h,"F")
         self.pdf.set_xy(self.mg+bar_w+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
         self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(2)
