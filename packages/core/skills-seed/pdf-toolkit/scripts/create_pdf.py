@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Otto PDF-Toolkit v6 — 视觉感知多布局引擎。python create_pdf.py in.md out.pdf"""
+"""Otto PDF-Toolkit v10 — 白底专业排版。python create_pdf.py in.md out.pdf"""
 from __future__ import annotations
 import re, sys, os
 from datetime import datetime
@@ -14,8 +14,8 @@ except ImportError: print("pip install fpdf2"); sys.exit(1)
 
 def _rgb(h): h=h.lstrip("#"); return tuple(int(h[i:i+2],16) for i in(0,2,4))
 def _hex(r,g,b): return f"{max(0,min(255,int(r))):02X}{max(0,min(255,int(g))):02X}{max(0,min(255,int(b))):02X}"
-def _readable_body(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.35,g*0.35,b*0.35) if lum<80 else "2D2D2D"
-def _readable_muted(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.45+100,g*0.45+100,b*0.45+100) if lum<80 else "666666"
+def _body(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.35,g*0.35,b*0.35) if lum<80 else "2D2D2D"
+def _muted(base): r,g,b=_rgb(base); lum=0.299*r+0.587*g+0.114*b; return _hex(r*0.40+90,g*0.40+90,b*0.40+90) if lum<80 else "777777"
 def _blend(c1,c2,r): r1,g1,b1=_rgb(c1); r2,g2,b2=_rgb(c2); return _hex(r1*(1-r)+r2*r,g1*(1-r)+g2*r,b1*(1-r)+b2*r)
 def _dark(h,a): r,g,b=_rgb(h); return _hex(r*(1-a),g*(1-a),b*(1-a))
 
@@ -23,11 +23,10 @@ def resolve(meta):
     base=meta.get("base","0A1628"); accent=meta.get("accent","2D7DD2"); surface=meta.get("surface","F0F4F8")
     return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
         "base":base,"accent":accent,"surface":surface,
-        "body":_readable_body(base),
-        "muted":_readable_muted(base),
-        "light_tint":_blend(base,accent,0.08),
-        "callout_bar":accent,"hr":_dark(_blend(base,accent,0.5),0.5),
-        "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
+        "body":_body(base),"muted":_muted(base),
+        "light_tint":_blend(base,accent,0.08),"callout_bar":accent,
+        "hr":_dark(_blend(base,accent,0.5),0.5),
+        "hdr_bg":"F0F2F5","hdr_text":base,"stripe":surface,
         "h_font":meta.get("heading_font","Helvetica"),"b_font":meta.get("body_font","Helvetica"),
         "t_sz":int(meta.get("title_size","24")),"h1_sz":int(meta.get("h1_size","16")),
         "h2_sz":int(meta.get("h2_size","12")),"b_sz":int(meta.get("body_size","10")),
@@ -44,12 +43,10 @@ def parse(text):
             for line in parts[1].strip().split("\n"):
                 if ":" in line and not line[0]=="#": k,_,v=line.partition(":"); meta[k.strip()]=v.strip().strip('"').strip("'")
             body=parts[2].strip()
-
     lines=body.split("\n"); i=0
     secs=[]; cur={"heading":"","layout":"narrative","blocks":[]}
     def save():
         if cur["blocks"]: secs.append(cur.copy())
-
     tbl=[]; in_t=False
     while i<len(lines):
         line=lines[i]
@@ -60,40 +57,33 @@ def parse(text):
             if h: cur["blocks"].append({"t":"table","h":h,"r":r})
             tbl=[]; in_t=False; continue
         if not line.strip(): i+=1; continue
-
         m=re.match(r"^(##)\s+(.+)$",line)
         if m:
             save(); txt=m.group(2).strip(); lm=LAYOUT_RE.search(txt)
             layout="narrative"
             if lm: layout=lm.group(1); txt=txt[:lm.start()].strip()
             cur={"heading":txt,"layout":layout,"blocks":[]}; i+=1; continue
-
         m=re.match(r"^(#{3,6})\s+(.+)$",line)
         if m: cur["blocks"].append({"t":"sub","lvl":len(m.group(1)),"text":m.group(2).strip()}); i+=1; continue
-
         m=re.match(r"^[-*+]\s+(.+)$",line)
         if m:
             items=[]
             while i<len(lines) and re.match(r"^[-*+]\s+(.+)$",lines[i]):
                 items.append(re.match(r"^[-*+]\s+(.+)$",lines[i]).group(1).strip()); i+=1
             cur["blocks"].append({"t":"bullet","items":items}); continue
-
         m=re.match(r"^\d+[.)]\s+(.+)$",line)
         if m:
             items=[]
             while i<len(lines) and re.match(r"^\d+[.)]\s+(.+)$",lines[i]):
                 items.append(re.match(r"^\d+[.)]\s+(.+)$",lines[i]).group(1).strip()); i+=1
             cur["blocks"].append({"t":"ordered","items":items}); continue
-
         if line.startswith("> "):
             q=[]
             while i<len(lines) and lines[i].startswith("> "):
                 q.append(lines[i][2:].strip()); i+=1
             cur["blocks"].append({"t":"quote","text":" ".join(q)}); continue
-
         if line.strip() in ("---","***","___"):
             cur["blocks"].append({"t":"hr"}); i+=1; continue
-
         p=[]
         while i<len(lines) and lines[i].strip() and not lines[i].startswith("#") and \
               not re.match(r"^[-*+]\s+",lines[i]) and not re.match(r"^\d+[.)]\s+",lines[i]) and \
@@ -101,7 +91,7 @@ def parse(text):
               lines[i].strip() not in ("---","***","___"):
             p.append(lines[i]); i+=1
         cur["blocks"].append({"t":"para","text":"\n".join(p)})
-    if tbl: h,r=_tbl(tbl);
+    if tbl: h,r=_tbl(tbl)
     if h: cur["blocks"].append({"t":"table","h":h,"r":r})
     save()
     return meta,secs
@@ -116,7 +106,6 @@ def _tbl(raw):
         if cells: rows.append(cells)
     return h,rows
 
-
 class R:
     def __init__(self,t,meta):
         self.t=t; self.m=meta
@@ -129,6 +118,7 @@ class R:
     def _rf(self):
         for p in["C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/simsun.ttc",
                   "C:/Windows/Fonts/simhei.ttf","/System/Library/Fonts/PingFang.ttc",
+                  "/System/Library/Fonts/STHeiti Light.ttc",
                   "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"]:
             if os.path.exists(p):
                 try: self.pdf.add_font("CN","",p); self.pdf.add_font("CN","B",p); self._cn="CN"; return
@@ -142,43 +132,62 @@ class R:
         if self._hc and self.pdf.page==1: return
         self.pdf.set_font(self._cn or "Helvetica","",7); self.pdf.set_text_color(*_rgb(self.t["muted"]))
         self.pdf.cell(self.pw,3,self.m.get("title","")[:50],align="L"); self.pdf.ln(3)
-        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.2)
-        self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y()); self.pdf.ln(3)
+        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.15)
+        self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y()); self.pdf.ln(2)
 
     def _ftr(self):
         if self._hc and self.pdf.page==1: return
-        self.pdf.set_y(-self.mg+6)
-        self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.15)
+        self.pdf.set_y(-self.mg+5)
+        self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.12)
         self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y())
         self.pdf.set_font(self._cn or "Helvetica","",7); self.pdf.set_text_color(*_rgb(self.t["muted"]))
-        self.pdf.cell(self.pw,4,f"— {self.pdf.page_no()} —",align="C")
+        self.pdf.cell(self.pw,3,f"— {self.pdf.page_no()} —",align="C")
 
+    # ── 封面（白底 + accent 双装饰线，对齐 docx v10） ──────────
     def cover(self):
         if not self.t["cover"]: return
-        self._hc=True; title=self.m.get("title",""); sub=self.m.get("subtitle","")
+        self._hc=True
+        title=self.m.get("title",""); sub=self.m.get("subtitle","")
         author=self.m.get("author",""); ds=self.m.get("date","") or datetime.now().strftime("%Y年%m月")
-        self.pdf.add_page(); w=self.pdf.w; h=self.pdf.h
-        self.pdf.set_fill_color(*_rgb(self.t["base"])); self.pdf.rect(0,0,w,h*0.35,"F")
-        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.5)
-        self.pdf.line(self.mg,h*0.35+5,w-self.mg,h*0.35+5)
-        self.pdf.set_y(h*0.35+16)
+        accent=self.t["accent"]
+
+        self.pdf.add_page()
+
+        # 顶部留白
+        self.pdf.ln(30)
+
+        # 大标题
         self._f(True,self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
         self.pdf.multi_cell(self.pw,self.t["t_sz"]*0.55,title,align="C")
-        if sub: self.pdf.ln(5); self._f(False,self.t["b_sz"]+2); self.pdf.set_text_color(*_rgb(self.t["body"])); self.pdf.multi_cell(self.pw,7,sub,align="C")
+
+        # accent 双装饰线（上粗下细）
+        self.pdf.ln(4)
+        for sz in[0.6,0.25]:
+            y=self.pdf.get_y()
+            self.pdf.set_draw_color(*_rgb(accent)); self.pdf.set_line_width(sz)
+            self.pdf.line(self.pdf.w/2-30,y,self.pdf.w/2+30,y)
+            self.pdf.ln(4)
+
+        # 副标题
+        if sub:
+            self.pdf.ln(4); self._f(False,self.t["b_sz"]+2); self.pdf.set_text_color(*_rgb(self.t["body"]))
+            self.pdf.multi_cell(self.pw,7,sub,align="C")
+
+        # 元信息
         self.pdf.ln(10); self._f(False,self.t["b_sz"]); self.pdf.set_text_color(*_rgb(self.t["muted"]))
         mi=[x for x in[author,ds,self.m.get("department")] if x]
         self.pdf.cell(self.pw,6," · ".join(mi),align="C")
 
+    # ── 章节（accent 细竖线 + 标题，简洁专业） ──────────────
     def chapter(self,title,layout):
-        """简洁章节标题——左侧 accent 竖线标注。"""
-        self.pdf.ln(4)
-        x=self.mg
+        self.pdf.ln(5)
+        bar_w=2; pad=5
         self.pdf.set_fill_color(*_rgb(self.t["accent"]))
-        self.pdf.rect(x,self.pdf.get_y()-2,2.5,self.t["h1_sz"]+4,"F")
-        self.pdf.set_x(x+6)
+        self.pdf.rect(self.mg,self.pdf.get_y()-1,bar_w,self.t["h1_sz"]+2,"F")
+        self.pdf.set_x(self.mg+bar_w+pad)
         self._f(True,self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-        self.pdf.cell(self.pw-6,self.t["h1_sz"]*0.55,title,new_x="LMARGIN",new_y="NEXT")
-        self.pdf.ln(3)
+        self.pdf.cell(self.pw-bar_w-pad,self.t["h1_sz"]*0.55,title,new_x="LMARGIN",new_y="NEXT")
+        self.pdf.ln(2)
         self._toc.append({"level":1,"text":title,"page":self.pdf.page})
 
     def sub(self,text,lvl):
@@ -208,19 +217,21 @@ class R:
             self.pdf.cell(self.pw,self.t["b_sz"]*0.5,f"  {idx}. {item}",new_x="LMARGIN",new_y="NEXT")
 
     def quote(self,text):
-        self.pdf.ln(2); bar_w=2.5; pad=5; sy=self.pdf.get_y()
+        self.pdf.ln(2); bar_w=2; pad=4; sy=self.pdf.get_y()
         self.pdf.set_x(self.mg+bar_w+pad); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
         self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text)
-        h=self.pdf.get_y()-sy+4
+        h=self.pdf.get_y()-sy+3
         self.pdf.set_fill_color(*_rgb(self.t["light_tint"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
         self.pdf.set_fill_color(*_rgb(self.t["callout_bar"])); self.pdf.rect(self.mg,sy-2,bar_w,h,"F")
         self.pdf.set_xy(self.mg+bar_w+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
-        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(2)
+        self.pdf.multi_cell(self.pw-bar_w-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(1)
 
     def table(self,hdrs,rows):
         if not hdrs: return
         self.pdf.ln(2); cols=len(hdrs); cw=self.pw/cols
-        self.pdf.set_fill_color(*_rgb(self.t["hdr_bg"])); self.pdf.set_text_color(*_rgb(self.t["hdr_text"]))
+        # 表头：浅灰底 + 深色文字
+        self.pdf.set_fill_color(*_rgb(self.t["hdr_bg"]))
+        self.pdf.set_text_color(*_rgb(self.t["hdr_text"]))
         self._f(True,self.t["b_sz"]-1)
         for j,h in enumerate(hdrs): self.pdf.cell(cw,7,h,border=1,fill=True,align="C")
         self.pdf.ln()
@@ -237,7 +248,7 @@ class R:
         if not self.t["toc"] or not self._toc: return
         self.pdf.add_page(); self._f(True,self.t["h1_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
         self.pdf.cell(self.pw,10,"目  录",new_x="LMARGIN",new_y="NEXT"); self.pdf.ln(3)
-        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.3)
+        self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.25)
         self.pdf.line(self.mg,self.pdf.get_y(),self.pdf.w-self.mg,self.pdf.get_y()); self.pdf.ln(5)
         for e in self._toc:
             self.pdf.set_x(self.mg+(e["level"]-1)*8)
@@ -261,15 +272,18 @@ class R:
         if not self._hc:
             title=self.m.get("title","")
             if title:
-                self.pdf.add_page(); self._f(True,self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
-                self.pdf.multi_cell(self.pw,self.t["t_sz"]*0.55,title,align="C"); self.pdf.ln(6)
-                self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(0.4)
-                self.pdf.line(self.pdf.w/2-25,self.pdf.get_y(),self.pdf.w/2+25,self.pdf.get_y()); self.pdf.ln(8)
+                self.pdf.add_page()
+                self.pdf.ln(10)
+                self._f(True,self.t["t_sz"]); self.pdf.set_text_color(*_rgb(self.t["base"]))
+                self.pdf.multi_cell(self.pw,self.t["t_sz"]*0.55,title,align="C")
+                self.pdf.ln(3)
+                for sz in[0.5,0.2]:
+                    y=self.pdf.get_y(); self.pdf.set_draw_color(*_rgb(self.t["accent"])); self.pdf.set_line_width(sz)
+                    self.pdf.line(self.pdf.w/2-25,y,self.pdf.w/2+25,y); self.pdf.ln(3)
+                self.pdf.ln(4)
 
         for sec in secs:
             if sec.get("heading"): self.chapter(sec["heading"],sec.get("layout","narrative"))
-            layout=sec.get("layout","narrative")
-
             for blk in sec.get("blocks",[]):
                 t=blk["t"]
                 if t=="sub": self.sub(blk["text"],blk["lvl"])
@@ -279,29 +293,26 @@ class R:
                 elif t=="quote": self.quote(blk["text"])
                 elif t=="table": self.table(blk["h"],blk["r"])
                 elif t=="hr":
-                    self.pdf.ln(1); self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.15)
+                    self.pdf.ln(1); self.pdf.set_draw_color(*_rgb(self.t["hr"])); self.pdf.set_line_width(0.12)
                     y=self.pdf.get_y(); self.pdf.line(self.mg+20,y,self.pdf.w-self.mg-20,y); self.pdf.ln(1)
-
-            if layout=="closing": self.sig()
-
+            if sec.get("layout")=="closing": self.sig()
         self.sig(); self.toc_page()
 
     def save(self,p): self.pdf.output(p)
 
-
 def main():
     import argparse
-    p=argparse.ArgumentParser(description="Otto PDF-Toolkit v6")
+    p=argparse.ArgumentParser(description="Otto PDF-Toolkit v10")
     p.add_argument("input"); p.add_argument("output")
     a=p.parse_args()
     ip=Path(a.input)
-    if not ip.exists(): print(f"找不到 {a.input}"); sys.exit(1)
+    if not ip.exists(): print(f"not found: {a.input}"); sys.exit(1)
     meta,secs=parse(ip.read_text(encoding="utf-8"))
     t=resolve(meta)
     if "title" not in meta: meta["title"]=ip.stem
     g=R(t,meta); g.build(secs)
     op=Path(a.output); op.parent.mkdir(parents=True,exist_ok=True)
     g.save(str(op))
-    print(f"✅ {op.name}  {op.stat().st_size/1024:.0f}KB  {len(secs)}节")
+    print(f"OK {op.name} {op.stat().st_size/1024:.0f}KB {len(secs)}sections")
 
 if __name__=="__main__": main()

@@ -28,7 +28,7 @@ def resolve(meta):
         "base":base,"accent":accent,"surface":surface,
         "body":_readable_body(base),
         "muted":_readable_muted(base),
-        "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
+        "hdr_bg":"F0F2F5","hdr_text":base,"stripe":surface,
         "border":"D0D5DD","neg":"DC3545","pos":"28A745",
         "h_font":meta.get("heading_font","Microsoft YaHei"),
         "b_font":meta.get("body_font","Microsoft YaHei"),
