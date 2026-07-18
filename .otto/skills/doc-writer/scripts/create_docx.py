@@ -32,7 +32,7 @@ def resolve(meta):
     return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
         "base":base,"accent":accent,"surface":surface,
         "body":_body(base),"muted":_muted(base),
-        "light_tint":_blend(base,accent,0.08),"callout_bar":accent,
+        "light_tint":_blend("FFFFFF",accent,0.04),"callout_bar":_blend("FFFFFF",accent,0.3),
         "hr":_dark(_blend(base,accent,0.5),0.5),
         "hdr_bg":"F5F5F5","hdr_text":base,"stripe":surface,
         "h_font":meta.get("heading_font","Microsoft YaHei"),
@@ -64,9 +64,10 @@ def parse(text):
         if line.strip().startswith("|") and line.strip().endswith("|"):
             tbl.append(line); in_t=True; i+=1; continue
         elif in_t:
-            if tbl: h,r=_tbl(tbl)
-            if h: cur["blocks"].append({"t":"table","h":h,"r":r})
-            tbl=[]; in_t=False; continue
+            if tbl:
+                hh, rr = _tbl(tbl)
+                if hh: cur["blocks"].append({"t": "table", "h": hh, "r": rr})
+            tbl = []; in_t = False; continue
         if not line.strip(): i+=1; continue
         m=re.match(r"^(##)\s+(.+)$",line)
         if m:
@@ -102,8 +103,9 @@ def parse(text):
               lines[i].strip() not in ("---","***","___"):
             p.append(lines[i]); i+=1
         cur["blocks"].append({"t":"para","text":"\n".join(p)})
-    if tbl: h,r=_tbl(tbl)
-    if h: cur["blocks"].append({"t":"table","h":h,"r":r})
+    if tbl:
+        hh, rr = _tbl(tbl)
+        if hh: cur["blocks"].append({"t": "table", "h": hh, "r": rr})
     save()
     return meta,secs
 
@@ -267,9 +269,9 @@ class R:
         p.paragraph_format.left_indent=Cm(0.8); p.paragraph_format.space_before=Pt(6)
         p.paragraph_format.space_after=Pt(6)
         pPr=p._element.get_or_add_pPr()
-        pPr.append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:left w:val="single" w:sz="10" w:space="6" w:color="{self.t["callout_bar"]}"/></w:pBdr>'))
+        pPr.append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:left w:val="single" w:sz="12" w:space="8" w:color="{self.t["callout_bar"]}"/></w:pBdr>'))
         pPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{self.t["light_tint"]}" w:val="clear"/>'))
-        self._rn(p.add_run(text),sz=Pt(self.t["b_sz"]),color=self._c("body"),italic=True)
+        self._rn(p.add_run(text),sz=Pt(self.t["b_sz"]),color=self._c("body"))
 
     def table(self,hdrs,rows):
         if not hdrs: return

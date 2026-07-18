@@ -24,7 +24,7 @@ def resolve(meta):
     return {"theme":meta.get("theme",""),"atmo":meta.get("atmosphere",""),
         "base":base,"accent":accent,"surface":surface,
         "body":_body(base),"muted":_muted(base),
-        "light_tint":_blend(base,accent,0.08),"callout_bar":accent,
+        "light_tint":_blend("FFFFFF",accent,0.04),"callout_bar":_blend("FFFFFF",accent,0.3),
         "hr":_dark(_blend(base,accent,0.5),0.5),
         "hdr_bg":"F0F2F5","hdr_text":base,"stripe":surface,
         "h_font":meta.get("heading_font","Helvetica"),"b_font":meta.get("body_font","Helvetica"),
