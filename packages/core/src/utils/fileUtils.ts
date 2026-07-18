@@ -49,28 +49,17 @@ export function isWithinRoot(
   pathToCheck: string,
   rootDirectory: string,
 ): boolean {
-  let normalizedPathToCheck = path.resolve(pathToCheck);
-  let normalizedRootDirectory = path.resolve(rootDirectory);
+  const absPath = path.resolve(pathToCheck);
+  const absRoot = path.resolve(rootDirectory);
 
-  if (process.platform === 'win32') {
-    // 💡 Windows 平台文件路径大小写不敏感。统一转成小写进行比对，
-    // 彻底解决 'D:\...' vs 'd:\...' 盘符大小写不匹配导致 isWithinRoot 校验报错的致命 Bug！
-    normalizedPathToCheck = normalizedPathToCheck.toLowerCase();
-    normalizedRootDirectory = normalizedRootDirectory.toLowerCase();
-  }
+  // path.relative handles case-insensitivity and cross-drive on Windows.
+  // On cross-drive, path.relative returns an absolute path, correctly judged as outside root.
+  const rel = path.relative(absRoot, absPath);
 
-  // Ensure the rootDirectory path ends with a separator for correct startsWith comparison,
-  // unless it's the root path itself (e.g., '/' or 'C:\').
-  const rootWithSeparator =
-    normalizedRootDirectory === path.sep ||
-    normalizedRootDirectory.endsWith(path.sep)
-      ? normalizedRootDirectory
-      : normalizedRootDirectory + path.sep;
-
-  return (
-    normalizedPathToCheck === normalizedRootDirectory ||
-    normalizedPathToCheck.startsWith(rootWithSeparator)
-  );
+  if (rel === '') return true;
+  if (rel.startsWith('..')) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
 }
 
 /**

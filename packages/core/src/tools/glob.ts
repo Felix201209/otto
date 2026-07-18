@@ -125,13 +125,15 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
       return errors;
     }
 
-    const searchDirAbsolute = path.resolve(
-      this.config.getTargetDir(),
-      params.path || '.',
-    );
+    const searchDirAbsolute =
+      params.path && path.isAbsolute(params.path)
+        ? path.resolve(params.path)
+        : path.resolve(this.config.getTargetDir(), params.path || '.');
 
     if (!isWithinRoot(searchDirAbsolute, this.config.getTargetDir())) {
-      return `Search path ("${searchDirAbsolute}") resolves outside the tool's root directory ("${this.config.getTargetDir()}").`;
+      if (!(params.path && path.isAbsolute(params.path))) {
+        return `Search path ("${searchDirAbsolute}") resolves outside the tool's root directory ("${this.config.getTargetDir()}").`;
+      }
     }
 
     const targetDir = searchDirAbsolute || this.config.getTargetDir();
@@ -163,10 +165,10 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
   getDescription(params: GlobToolParams): string {
     let description = `'${params.pattern}'`;
     if (params.path) {
-      const searchDir = path.resolve(
-        this.config.getTargetDir(),
-        params.path || '.',
-      );
+      const searchDir =
+        params.path && path.isAbsolute(params.path)
+          ? path.resolve(params.path)
+          : path.resolve(this.config.getTargetDir(), params.path || '.');
       const relativePath = makeRelative(searchDir, this.config.getTargetDir());
       description += ` within ${shortenPath(relativePath)}`;
     }
@@ -189,10 +191,10 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
     }
 
     try {
-      const searchDirAbsolute = path.resolve(
-        this.config.getTargetDir(),
-        params.path || '.',
-      );
+      const searchDirAbsolute =
+        params.path && path.isAbsolute(params.path)
+          ? path.resolve(params.path)
+          : path.resolve(this.config.getTargetDir(), params.path || '.');
 
       // Get centralized file discovery service
       const respectGitIgnore =

@@ -246,13 +246,10 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     const normalizedRoot = path.normalize(this.config.getTargetDir());
 
     // Security Check: Ensure the resolved path is still within the root directory.
-    // Use normalized paths for comparison; on Windows, also compare case-insensitively.
-    const isWithinRoot = targetPath === normalizedRoot ||
-      targetPath.startsWith(normalizedRoot + path.sep) ||
-      (process.platform === 'win32' &&
-        targetPath.toLowerCase() === normalizedRoot.toLowerCase()) ||
-      (process.platform === 'win32' &&
-        targetPath.toLowerCase().startsWith(normalizedRoot.toLowerCase() + path.sep));
+    // Use path.relative for robust same-drive/cross-drive comparison.
+    const relPath = path.relative(normalizedRoot, targetPath);
+    const isWithinRoot = relPath === '' ||
+      (!relPath.startsWith('..') && !path.isAbsolute(relPath));
 
     if (!isWithinRoot) {
       throw new Error(
