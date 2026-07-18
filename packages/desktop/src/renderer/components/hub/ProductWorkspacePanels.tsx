@@ -27,9 +27,15 @@ export function OrganizationPanel({
 
   const organization = workspace?.managerWorkspace?.organization;
   const positions = organization?.positions ?? [];
+  const departments = organization?.departments ?? [];
+
   const departmentById = useMemo(
-    () => new Map(organization?.departments.map((item) => [item.id, item.name]) ?? []),
-    [organization?.departments],
+    () => new Map(departments.map((d) => [d.id, d.name])),
+    [departments],
+  );
+  const positionById = useMemo(
+    () => new Map(positions.map((p) => [p.id, p])),
+    [positions],
   );
 
   if (!workspace) {
@@ -38,6 +44,7 @@ export function OrganizationPanel({
 
   const isEnterprise = workspace.context.edition === 'enterprise';
   const isOwner = workspace.context.role === 'company_owner' || workspace.context.role === 'company_admin';
+  const members = workspace.members ?? [];
 
   return (
     <Panel
@@ -60,17 +67,24 @@ export function OrganizationPanel({
             </button>
             <button type="button" className={flow === 'join' ? 'is-active' : ''} onClick={() => setFlow('join')}>
               <strong>我要加入一个公司</strong>
-              <span>粘贴企业签发的复杂链接，进入对应部门和职位</span>
+              <span>粘贴 CEO 发给你的职位邀请链接</span>
             </button>
           </div>
 
           {flow === 'owner' ? (
             <Card>
               <div className="otto-product-form">
-                <label>管理者姓名<input value={managerName} onChange={(event) => setManagerName(event.target.value)} placeholder="例如：陈晨" /></label>
-                <label>企业名称<input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="例如：北辰科技" /></label>
-                <label>所属行业<input value={industry} onChange={(event) => setIndustry(event.target.value)} placeholder="例如：企业软件" /></label>
-                <label>企业规模<select value={employeeScale} onChange={(event) => setEmployeeScale(event.target.value)}><option>1-50人</option><option>51-200人</option><option>201-500人</option><option>500人以上</option></select></label>
+                <label>管理者姓名<input value={managerName} onChange={(e) => setManagerName(e.target.value)} placeholder="例如：陈晨" /></label>
+                <label>企业名称<input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="例如：北辰科技" /></label>
+                <label>所属行业<input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="例如：企业软件" /></label>
+                <label>企业规模
+                  <select value={employeeScale} onChange={(e) => setEmployeeScale(e.target.value)}>
+                    <option>1-50人</option>
+                    <option>51-200人</option>
+                    <option>201-500人</option>
+                    <option>500人以上</option>
+                  </select>
+                </label>
                 <button
                   type="button"
                   className="otto-hub__btn otto-hub__btn--primary"
@@ -91,16 +105,24 @@ export function OrganizationPanel({
           {flow === 'join' ? (
             <Card>
               <div className="otto-product-form">
-                <label>你的姓名<input value={joinName} onChange={(event) => setJoinName(event.target.value)} /></label>
-                <label>企业链接<textarea value={joinLink} onChange={(event) => setJoinLink(event.target.value)} placeholder="otto://enterprise/join?token=…" /></label>
+                <label>你的姓名<input value={joinName} onChange={(e) => setJoinName(e.target.value)} placeholder="例如：李明" /></label>
+                <label>
+                  职位邀请链接
+                  <textarea
+                    value={joinLink}
+                    onChange={(e) => setJoinLink(e.target.value)}
+                    placeholder="粘贴 CEO 发给你的链接（otto://enterprise/join?token=…）"
+                    rows={3}
+                  />
+                </label>
                 <button
                   type="button"
                   className="otto-hub__btn otto-hub__btn--primary"
                   disabled={!joinName.trim() || !joinLink.trim()}
                   onClick={() => actions.joinEnterprise(
-                    joinLink,
+                    joinLink.trim(),
                     workspace.context.userId,
-                    joinName,
+                    joinName.trim(),
                   )}
                 >
                   验证链接并加入
@@ -111,64 +133,163 @@ export function OrganizationPanel({
         </>
       ) : (
         <>
+          {/* 当前身份卡片 */}
           <Card>
             <div className="otto-product-identity">
               <div><span>当前身份</span><strong>{isOwner ? 'CEO · 企业管理者' : '企业成员'}</strong></div>
               <div><span>企业</span><strong>{workspace.managerWorkspace?.profile.companyName ?? workspace.context.companyId}</strong></div>
+              {/* 员工：展示自己的部门和职位 */}
+              {!isOwner && workspace.context.departmentId ? (
+                <div>
+                  <span>部门</span>
+                  <strong>{departmentById.get(workspace.context.departmentId) ?? workspace.context.departmentId}</strong>
+                </div>
+              ) : null}
+              {!isOwner && workspace.context.positionId ? (
+                <div>
+                  <span>职位</span>
+                  <strong>{positionById.get(workspace.context.positionId)?.title ?? workspace.context.positionId}</strong>
+                </div>
+              ) : null}
               <div><span>模型策略</span><strong>内部测试 · 成员个人 API</strong></div>
             </div>
           </Card>
 
-          {organization ? (
+          {/* CEO：部门框架概览 */}
+          {isOwner && organization ? (
             <Card>
+              <div className="otto-hub__field-label">部门框架</div>
               <div className="otto-product-framework">
-                {organization.departments.map((department) => (
-                  <div key={department.id}>
-                    <strong>{department.name}</strong>
-                    <span>{organization.positions.find((item) => item.departmentId === department.id)?.title ?? '待设置负责人'}</span>
-                  </div>
-                ))}
+                {departments.map((dept) => {
+                  const lead = positions.find((p) => p.departmentId === dept.id);
+                  const leadMember = lead?.incumbentUserId
+                    ? members.find((m) => m.userId === lead.incumbentUserId)
+                    : null;
+                  return (
+                    <div key={dept.id}>
+                      <strong>{dept.name}</strong>
+                      <span>
+                        {lead?.title ?? '待设置负责人'}
+                        {leadMember ? ` · ${leadMember.displayName}` : ''}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </Card>
           ) : null}
 
+          {/* CEO：成员总览 */}
           {isOwner ? (
             <Card>
+              <div className="otto-hub__field-label">成员总览（{members.length} 人）</div>
+              {members.length === 0 ? (
+                <p className="otto-hub__field-hint">暂无成员，生成职位邀请链接发给员工后他们会出现在这里。</p>
+              ) : (
+                <div className="otto-product-members">
+                  {members.map((member) => {
+                    const pos = member.positionId ? positionById.get(member.positionId) : null;
+                    const deptName = member.departmentId ? departmentById.get(member.departmentId) : null;
+                    return (
+                      <div key={member.userId} className="otto-product-member-row">
+                        <div className="otto-product-member-info">
+                          <strong>{member.displayName}</strong>
+                          <span>
+                            {deptName ?? '未分配部门'}
+                            {pos ? ` · ${pos.title}` : ''}
+                            {member.role === 'company_owner' ? ' · CEO' : ''}
+                          </span>
+                        </div>
+                        {/* CEO可以重新给成员生成职位链接（赋能/调岗） */}
+                        {member.role !== 'company_owner' ? (
+                          <button
+                            type="button"
+                            className="otto-hub__btn otto-hub__btn--sm"
+                            onClick={() => setSelectedPosition(member.positionId ?? '')}
+                            title="生成职位邀请链接发给该成员"
+                          >
+                            调整职位
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          ) : null}
+
+          {/* CEO：生成职位邀请链接 */}
+          {isOwner ? (
+            <Card>
+              <div className="otto-hub__field-label">生成职位邀请链接</div>
+              <p className="otto-hub__field-hint">
+                选择一个职位，生成专属邀请链接发给对应员工。员工点击链接后加入，职位信息自动绑定。
+                每次生成的链接独立有效（默认 7 天），可重复发给不同人用于同一职位的交接或赋能。
+              </p>
               <div className="otto-product-form">
-                <div className="otto-hub__field-label">组织架构签名链接</div>
-                <p className="otto-hub__field-hint">
-                  成员首次入企统一使用「企业身份控制台」生成的 7 天企业引入链接。
-                  此处链接只用于职位和总分公司组织关系，不会改变账号所属企业。
-                </p>
                 <label>
                   职位
-                  <select value={selectedPosition} onChange={(event) => setSelectedPosition(event.target.value)}>
-                    <option value="">选择职位</option>
-                    {positions.map((position) => (
-                      <option key={position.id} value={position.id}>
-                        {departmentById.get(position.departmentId)} · {position.title}
+                  <select value={selectedPosition} onChange={(e) => setSelectedPosition(e.target.value)}>
+                    <option value="">— 选择职位 —</option>
+                    {positions.map((pos) => (
+                      <option key={pos.id} value={pos.id}>
+                        {departmentById.get(pos.departmentId)} · {pos.title}
+                        {pos.incumbentUserId
+                          ? ` （在岗：${members.find((m) => m.userId === pos.incumbentUserId)?.displayName ?? pos.incumbentUserId}）`
+                          : ' （空缺）'}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label>
-                  目标企业 ID（可选，填写后链接只能由该企业接收）
-                  <input value={targetCompanyId} onChange={(event) => setTargetCompanyId(event.target.value)} placeholder="company_…" />
-                </label>
-                <div className="otto-product-link-actions">
+                <button
+                  type="button"
+                  className="otto-hub__btn otto-hub__btn--primary"
+                  disabled={!selectedPosition}
+                  onClick={() => {
+                    const pos = positions.find((p) => p.id === selectedPosition);
+                    if (pos) actions.createInvite({
+                      kind: 'position',
+                      positionId: pos.id,
+                      departmentId: pos.departmentId,
+                    });
+                  }}
+                >
+                  生成邀请链接
+                </button>
+              </div>
+
+              {/* 生成结果 */}
+              {state.lastInvite ? (
+                <div className="otto-product-invite-result">
+                  <strong>链接已生成 · {new Date(state.lastInvite.expiresAt).toLocaleString('zh-CN')} 失效</strong>
+                  <textarea readOnly value={state.lastInvite.link} aria-label="生成的职位邀请链接" rows={3} />
                   <button
                     type="button"
-                    className="otto-hub__btn otto-hub__btn--primary"
-                    disabled={!selectedPosition}
-                    onClick={() => {
-                      const position = positions.find((item) => item.id === selectedPosition);
-                      if (position) actions.createInvite({
-                        kind: 'position',
-                        positionId: position.id,
-                        departmentId: position.departmentId,
-                      });
-                    }}
-                  >生成职位链接</button>
+                    className="otto-hub__btn"
+                    onClick={() => { window.otto.writeClipboard(state.lastInvite!.link); }}
+                  >
+                    复制链接
+                  </button>
+                  <span>将此链接直接发给员工，对方在 Otto 中粘贴即可加入对应职位。</span>
+                </div>
+              ) : null}
+            </Card>
+          ) : null}
+
+          {/* CEO：总分公司关系（折叠区，不影响主流程） */}
+          {isOwner ? (
+            <Card>
+              <div className="otto-hub__field-label">总分公司关系（高级）</div>
+              <p className="otto-hub__field-hint">
+                用于多法人主体的企业关联。普通员工邀请无需使用此功能。
+              </p>
+              <div className="otto-product-form">
+                <label>
+                  目标企业 ID（可选，填写后链接只能由该企业接收）
+                  <input value={targetCompanyId} onChange={(e) => setTargetCompanyId(e.target.value)} placeholder="company_…" />
+                </label>
+                <div className="otto-product-link-actions">
                   <button type="button" className="otto-hub__btn" onClick={() => actions.createInvite({
                     kind: 'company_link',
                     direction: 'parent_invites_child',
@@ -181,34 +302,21 @@ export function OrganizationPanel({
                   })}>接入总公司关系</button>
                 </div>
                 <div className="otto-product-company-accept">
-                  <div className="otto-hub__field-label">输入总公司 / 子公司签名链接</div>
+                  <div className="otto-hub__field-label" style={{ marginTop: '12px' }}>输入总公司 / 子公司签名链接</div>
                   <textarea
                     value={companyLink}
-                    onChange={(event) => setCompanyLink(event.target.value)}
+                    onChange={(e) => setCompanyLink(e.target.value)}
                     placeholder="otto://enterprise/join?token=…"
                     aria-label="待接入的总分公司链接"
+                    rows={2}
                   />
                   <button
                     type="button"
                     className="otto-hub__btn otto-hub__btn--primary"
                     disabled={!companyLink.trim()}
-                    onClick={() => {
-                      actions.acceptCompanyLink(companyLink);
-                      setCompanyLink('');
-                    }}
+                    onClick={() => { actions.acceptCompanyLink(companyLink); setCompanyLink(''); }}
                   >验证并接入企业框架</button>
                 </div>
-              </div>
-            </Card>
-          ) : null}
-
-          {state.lastInvite ? (
-            <Card>
-              <div className="otto-product-invite-result">
-                <strong>链接已签名 · {new Date(state.lastInvite.expiresAt).toLocaleString('zh-CN')} 失效</strong>
-                <textarea readOnly value={state.lastInvite.link} aria-label="生成的企业链接" />
-                <button type="button" className="otto-hub__btn" onClick={() => { window.otto.writeClipboard(state.lastInvite!.link); }}>复制链接</button>
-                <span>该签名链接仅用于组织架构或职位关系；成员入企以中心服务签发的 7 天企业引入链接为准。</span>
               </div>
             </Card>
           ) : null}
