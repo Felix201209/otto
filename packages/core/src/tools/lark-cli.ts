@@ -331,6 +331,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '  FALLBACK for dead nodes (error 131005): If wiki +node-delete fails because the underlying document was already deleted, use the raw API:',
         '    command="api" args=["DELETE", "/open-apis/wiki/v2/spaces/<space_id>/nodes/<node_token>", "--data", "{\\\"obj_token\\\": \\\"<obj_token>\\\", \\\"obj_type\\\": \\\"wiki\\\"}"]',
         '  CRITICAL: First use wiki +node-get to obtain the obj_token, then pass it in the DELETE body. Without the explicit obj_token in the body, the API cannot identify the dead node.',
+        '  KNOWN API LIMITATION: After a successful deletion, wiki +node-list may still show the deleted node for a short period (Feishu API caching delay). This is a Feishu API-side issue, not an Otto bug. If the node still appears, wait 1-2 minutes and list again — it should be gone. Do NOT attempt to delete it again if the first deletion returned success.',
         '',
         '## VC (Video Conference)',
         '- Search meetings: command="vc +search" args=["--start", "2025-01-01", "--end", "2025-01-07"]',
