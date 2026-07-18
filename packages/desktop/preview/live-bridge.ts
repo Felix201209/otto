@@ -193,8 +193,8 @@ const bridge = {
   skillShareList(): Promise<any> { return Promise.resolve({ text: '' }); },
   skillMarketplace(): Promise<any> { return Promise.resolve({ text: '' }); },
   setLocalTestUrl(): Promise<void> { return Promise.resolve(); },
-  appVersion(): Promise<string> { return Promise.resolve('1.8.4-browser'); },
-  updateCheck(): Promise<any> { return Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.4', latestVersion: null }); },
+  appVersion(): Promise<string> { return Promise.resolve('1.8.5-browser'); },
+  updateCheck(): Promise<any> { return Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.5', latestVersion: null }); },
   updateDownload(): Promise<any> { return Promise.resolve({ ok: false, error: '浏览器模式不支持更新' }); },
   updateCancel(): Promise<void> { return Promise.resolve(); },
   updateInstall(): Promise<any> { return Promise.resolve({ ok: false, message: '浏览器模式不支持' }); },
@@ -202,7 +202,7 @@ const bridge = {
   voiceGetConfig(): Promise<any> { return Promise.resolve({ enabled: false, asrProvider: 'openai', asrEndpoint: '', asrModel: '', volcResourceId: '', polishEnabled: false, polishEndpoint: '', polishModel: '', polishPrompt: '', hasAsrApiKey: false, hasVolcCredentials: false, hasPolishApiKey: false }); },
   voiceSaveConfig(): Promise<any> { return Promise.resolve({}); },
   voiceTranscribe(): Promise<any> { return Promise.resolve({ text: '', rawText: '', polished: false }); },
-  // 浏览器模式：伪造一个本地账号以绕过企业登录页，直接进工作区
+  // 浏览器模式保留 IPC 形状；App 的内部测试门禁不会读取这里的会话。
   enterpriseSession(): Promise<any> {
     return Promise.resolve({
       serverUrl: 'http://127.0.0.1:7637',
@@ -216,7 +216,7 @@ const bridge = {
         name: '开发者',
         role: null,
         department: null,
-        isAdmin: true,
+        isAdmin: false,
         status: 'active' as const,
         tags: [],
         createdAt: new Date().toISOString(),
@@ -224,14 +224,14 @@ const bridge = {
       },
     });
   },
-  enterprisePasswordLogin(): Promise<any> { return Promise.resolve({ serverUrl: 'http://127.0.0.1:7637', account: { id: 'browser-dev', organizationId: 'local', organizationName: '本地开发', employeeId: null, username: 'dev', phone: null, name: '开发者', role: null, department: null, isAdmin: true, status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, expiresAt: new Date(Date.now() + 86400000).toISOString() }); },
+  enterprisePasswordLogin(): Promise<any> { return Promise.resolve({ serverUrl: 'http://127.0.0.1:7637', account: { id: 'browser-dev', organizationId: 'local', organizationName: '本地开发', employeeId: null, username: 'dev', phone: null, name: '开发者', role: null, department: null, isAdmin: false, status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, expiresAt: new Date(Date.now() + 86400000).toISOString() }); },
   enterpriseRegistrationRequest(): Promise<any> { return Promise.resolve({}); },
   enterpriseRegistrationIntent(): Promise<any> { return Promise.resolve(null); },
   onEnterpriseRegistrationIntent(): () => void { return () => {}; },
   onEnterpriseSessionInvalidated(): () => void { return () => {}; },
   enterpriseRegister(): Promise<any> { return Promise.resolve({}); },
   enterpriseLogout(): Promise<void> { return Promise.resolve(); },
-  enterpriseAccounts(): Promise<any> { return Promise.resolve([{ id: 'browser-dev', organizationId: 'local', organizationName: '本地开发', employeeId: null, username: 'dev', phone: null, name: '开发者', role: null, department: null, isAdmin: true, status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]); },
+  enterpriseAccounts(): Promise<any> { return Promise.resolve([{ id: 'browser-dev', organizationId: 'local', organizationName: '本地开发', employeeId: null, username: 'dev', phone: null, name: '开发者', role: null, department: null, isAdmin: false, status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]); },
   enterpriseAccountCreate(): Promise<any> { return Promise.resolve({}); },
   enterpriseAccountUpdate(): Promise<any> { return Promise.resolve({}); },
   enterpriseUsageRecord(): Promise<any> { return Promise.resolve({ recorded: false, source: 'client_reported' }); },

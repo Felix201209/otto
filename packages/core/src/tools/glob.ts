@@ -73,6 +73,11 @@ export interface GlobToolParams {
    * Whether to respect .gitignore patterns (optional, defaults to true)
    */
   respect_git_ignore?: boolean;
+
+  /**
+   * Allow searching an explicitly absolute directory outside the workspace.
+   */
+  allow_external_access?: boolean;
 }
 
 /**
@@ -109,6 +114,11 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
               'Optional: Whether to respect .gitignore patterns when finding files. Only available in git repositories. Defaults to true.',
             type: Type.BOOLEAN,
           },
+          allow_external_access: {
+            description:
+              'Optional: Set to true to search an absolute directory outside the workspace. Relative parent traversal is never treated as external opt-in.',
+            type: Type.BOOLEAN,
+          },
         },
         required: ['pattern'],
         type: Type.OBJECT,
@@ -133,6 +143,9 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
     if (!isWithinRoot(searchDirAbsolute, this.config.getTargetDir())) {
       if (!(params.path && path.isAbsolute(params.path))) {
         return `Search path ("${searchDirAbsolute}") resolves outside the tool's root directory ("${this.config.getTargetDir()}").`;
+      }
+      if (!params.allow_external_access) {
+        return `This search path is outside the workspace.\nWorkspace: ${this.config.getTargetDir()}\nSearch path: ${searchDirAbsolute}\n\nTo search it, add allow_external_access: true to your glob call.`;
       }
     }
 
@@ -201,6 +214,10 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
         params.respect_git_ignore ??
         this.config.getFileFilteringRespectGitIgnore();
       const fileDiscovery = this.config.getFileService();
+      const isExternalSearch = !isWithinRoot(
+        searchDirAbsolute,
+        this.config.getTargetDir(),
+      );
 
       const entries = (await glob(params.pattern, {
         cwd: searchDirAbsolute,
@@ -218,7 +235,7 @@ export class GlobTool extends BaseTool<GlobToolParams, ToolResult> {
       let filteredEntries = entries;
       let gitIgnoredCount = 0;
 
-      if (respectGitIgnore) {
+      if (respectGitIgnore && !isExternalSearch) {
         const relativePaths = entries.map((p) =>
           path.relative(this.config.getTargetDir(), p.fullpath()),
         );

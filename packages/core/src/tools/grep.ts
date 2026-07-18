@@ -248,8 +248,11 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     // Security Check: Ensure the resolved path is still within the root directory.
     // Use path.relative for robust same-drive/cross-drive comparison.
     const relPath = path.relative(normalizedRoot, targetPath);
-    const isWithinRoot = relPath === '' ||
-      (!relPath.startsWith('..') && !path.isAbsolute(relPath));
+    const leavesRoot =
+      relPath === '..' ||
+      relPath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relPath);
+    const isWithinRoot = relPath === '' || !leavesRoot;
 
     if (!isWithinRoot) {
       throw new Error(

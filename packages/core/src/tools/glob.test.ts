@@ -247,6 +247,41 @@ describe('GlobTool', () => {
       );
     });
 
+    it('requires explicit opt-in for an absolute path outside the workspace', async () => {
+      const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-tool-external-'));
+      try {
+        await fs.writeFile(path.join(externalDir, 'external.txt'), 'external');
+        const withoutPermission = {
+          pattern: '*.txt',
+          path: externalDir,
+        } as GlobToolParams;
+        expect(globTool.validateToolParams(withoutPermission)).toContain(
+          'allow_external_access: true',
+        );
+
+        const withPermission = {
+          ...withoutPermission,
+          allow_external_access: true,
+        } as GlobToolParams;
+        expect(globTool.validateToolParams(withPermission)).toBeNull();
+        const result = await globTool.execute(withPermission, abortSignal);
+        expect(result.llmContent).toContain(path.join(externalDir, 'external.txt'));
+      } finally {
+        await fs.rm(externalDir, { recursive: true, force: true });
+      }
+    });
+
+    it('never treats relative parent traversal as explicit external access', () => {
+      const params = {
+        pattern: '*.txt',
+        path: '..',
+        allow_external_access: true,
+      } as GlobToolParams;
+      expect(globTool.validateToolParams(params)).toContain(
+        "resolves outside the tool's root directory",
+      );
+    });
+
     it('should return error if specified search path does not exist', async () => {
       const params: GlobToolParams = {
         pattern: '*.txt',

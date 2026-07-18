@@ -97,6 +97,16 @@ describe('GrepTool', () => {
       // Should now be valid since grep supports file search
       expect(grepTool.validateToolParams(params)).toBeNull();
     });
+
+    it('accepts a workspace child whose name begins with two dots', async () => {
+      const cacheDir = path.join(tempRootDir, '..cache');
+      await fs.mkdir(cacheDir);
+      await fs.writeFile(path.join(cacheDir, 'entry.txt'), 'hello');
+
+      expect(
+        grepTool.validateToolParams({ pattern: 'hello', path: cacheDir }),
+      ).toBeNull();
+    });
   });
 
   describe('execute', () => {

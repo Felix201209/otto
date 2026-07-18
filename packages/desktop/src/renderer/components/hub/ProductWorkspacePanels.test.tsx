@@ -97,12 +97,14 @@ describe('OrganizationPanel', () => {
     expect(acceptCompanyLink).toHaveBeenCalledWith(link);
   });
 
-  it('成员入企统一走 7 天中心引入链接，本地面板只保留组织关系链接', () => {
+  it('本机职位邀请如实说明 24 小时有效、需手工粘贴且不会跨设备同步', () => {
     const { value } = product(enterprise());
     render(<OrganizationPanel product={value} />);
 
     expect(screen.queryByRole('button', { name: '生成公司加入链接' })).toBeNull();
-    expect(screen.getByText(/7 天企业引入链接/)).toBeTruthy();
+    expect(screen.getByText(/默认 24 小时/)).toBeTruthy();
+    expect(screen.getByText(/在 Otto「企业与身份」中手工粘贴/)).toBeTruthy();
+    expect(screen.getByText(/不会自动同步回管理者这台设备/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '引入子公司关系' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '接入总公司关系' })).toBeTruthy();
   });

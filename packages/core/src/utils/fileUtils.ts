@@ -57,7 +57,7 @@ export function isWithinRoot(
   const rel = path.relative(absRoot, absPath);
 
   if (rel === '') return true;
-  if (rel.startsWith('..')) return false;
+  if (rel === '..' || rel.startsWith(`..${path.sep}`)) return false;
   if (path.isAbsolute(rel)) return false;
   return true;
 }

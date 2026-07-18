@@ -291,7 +291,9 @@ export async function generateSkillCandidates(
 
   // N-gram 预筛：至少检出基础模式才继续（纯随机操作不调 LLM）
   const patterns = await detectPatterns(options);
-  if (patterns.length < opts.minOccurrences!) {
+  // detectPatterns 已按 minOccurrences 过滤每个模式；这里应判断是否存在
+  // 合格模式，而不是误把“不同模式的数量”当作“单个模式的出现次数”。
+  if (patterns.length === 0) {
     return [];
   }
 

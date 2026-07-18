@@ -54,6 +54,10 @@ import { AccountManagementPage } from './components/AccountManagementPage.js';
 import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
 import type { EnterpriseAccount } from '../preload/index.js';
 import {
+  INTERNAL_TEST_ACCESS_ENABLED,
+  INTERNAL_TEST_ACCOUNT,
+} from './internal-test-access.js';
+import {
   DEPARTMENT_LABELS,
   getEnterpriseAgentProfiles,
   getPersonalAgentProfiles,
@@ -68,6 +72,13 @@ const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 export function App(): React.JSX.Element {
+  if (INTERNAL_TEST_ACCESS_ENABLED) {
+    return <OttoWorkspaceApp account={INTERNAL_TEST_ACCOUNT} />;
+  }
+  return <AuthenticatedOttoApp />;
+}
+
+function AuthenticatedOttoApp(): React.JSX.Element {
   const auth = useEnterpriseAuth();
   if (auth.state.status === 'loading') {
     return (
@@ -99,7 +110,7 @@ function OttoWorkspaceApp({
   onLogout,
 }: {
   account: EnterpriseAccount;
-  onLogout: () => Promise<void>;
+  onLogout?: () => Promise<void>;
 }): React.JSX.Element {
   const { state, actions } = useOttoStore();
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。

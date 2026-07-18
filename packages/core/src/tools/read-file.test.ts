@@ -66,9 +66,9 @@ describe('ReadFileTool', () => {
     it('should return error for path outside root', () => {
       const outsidePath = path.resolve(os.tmpdir(), 'outside-root.txt');
       const params: ReadFileToolParams = { absolute_path: outsidePath };
-      expect(tool.validateToolParams(params)).toMatch(
-        /File path must be within the workspace directory/,
-      );
+      const error = tool.validateToolParams(params);
+      expect(error).toContain('This file is outside the workspace.');
+      expect(error).toContain('allow_external_access: true');
     });
 
     it('should return error for negative offset', () => {

@@ -49,7 +49,7 @@ export function OrganizationPanel({
   return (
     <Panel
       title="企业与身份"
-      desc="个人 API 与企业身份严格隔离；企业版身份由服务端签名链接和角色权限决定。"
+      desc="中心账号与本机职位编排彼此独立；内部测试阶段不把本机状态冒充服务端成员数据。"
       actions={
         isEnterprise ? (
           <button type="button" className="otto-hub__btn" onClick={actions.switchToPersonal}>
@@ -67,7 +67,7 @@ export function OrganizationPanel({
             </button>
             <button type="button" className={flow === 'join' ? 'is-active' : ''} onClick={() => setFlow('join')}>
               <strong>我要加入一个公司</strong>
-              <span>粘贴 CEO 发给你的职位邀请链接</span>
+              <span>在此手工粘贴 CEO 发给你的本机职位邀请链接</span>
             </button>
           </div>
 
@@ -182,9 +182,9 @@ export function OrganizationPanel({
           {/* CEO：成员总览 */}
           {isOwner ? (
             <Card>
-              <div className="otto-hub__field-label">成员总览（{members.length} 人）</div>
+              <div className="otto-hub__field-label">本机成员总览（{members.length} 人）</div>
               {members.length === 0 ? (
-                <p className="otto-hub__field-hint">暂无成员，生成职位邀请链接发给员工后他们会出现在这里。</p>
+                <p className="otto-hub__field-hint">暂无本机成员记录；跨设备成员同步尚未启用。</p>
               ) : (
                 <div className="otto-product-members">
                   {members.map((member) => {
@@ -206,9 +206,9 @@ export function OrganizationPanel({
                             type="button"
                             className="otto-hub__btn otto-hub__btn--sm"
                             onClick={() => setSelectedPosition(member.positionId ?? '')}
-                            title="生成职位邀请链接发给该成员"
+                            title="在下方复用该成员的当前职位"
                           >
-                            调整职位
+                            复用职位
                           </button>
                         ) : null}
                       </div>
@@ -224,8 +224,8 @@ export function OrganizationPanel({
             <Card>
               <div className="otto-hub__field-label">生成职位邀请链接</div>
               <p className="otto-hub__field-hint">
-                选择一个职位，生成专属邀请链接发给对应员工。员工点击链接后加入，职位信息自动绑定。
-                每次生成的链接独立有效（默认 7 天），可重复发给不同人用于同一职位的交接或赋能。
+                这是仅保存在当前设备的签名职位链接，默认 24 小时有效。员工需在 Otto「企业与身份」中手工粘贴；
+                核销状态不会自动同步回管理者这台设备。
               </p>
               <div className="otto-product-form">
                 <label>

@@ -79,6 +79,9 @@ describe('fileUtils', () => {
       expect(isWithinRoot(path.join(root, 'subdir', 'file.txt'), root)).toBe(
         true,
       );
+      expect(isWithinRoot(path.join(root, '..cache', 'file.txt'), root)).toBe(
+        true,
+      );
     });
 
     it('should return true for the root path itself', () => {

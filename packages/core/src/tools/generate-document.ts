@@ -585,13 +585,15 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
   /** Smart routing: decide if a slide should use native pptxgenjs or HTML→PNG. */
   private canUseNativeText(sec: ParsedSlideSection, index?: number, total?: number): boolean {
     const layout = sec.requestedLayout ?? this.inferSlideLayout(sec, index ?? 0, total);
-    // Visual-first layouts always use HTML→PNG for best aesthetics
-    if (layout === 'cover' || layout === 'section') return false;
+    // Native objects are reserved for the two content-dense layouts they can
+    // faithfully reproduce. Statement/timeline/split and explicit art
+    // direction rely on the HTML composition and must not silently collapse
+    // into the generic editable-text renderer.
+    if (layout !== 'list' && layout !== 'editorial') return false;
+    if (sec.requestedLayout) return false;
     // Images + quotes look better as styled HTML
     const hasImg = sec.body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l.trim()));
     if (hasImg) return false;
-    // Quote pages with heavy styling need HTML
-    if (layout === 'quote' || layout === 'visual') return false;
     // Everything else benefits from native editable text
     return true;
   }
@@ -627,7 +629,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     return this.makeLightTheme(base);
   }
 
-  /** Derive a dark variant: swap primary to be the cover background. */
+  /** Derive a dark variant while preserving the requested brand primary. */
   private makeDarkTheme(base: SlideTheme): SlideTheme {
     return {
       ...base,
@@ -637,7 +639,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       muted: this.mixHexColors('#E8EDF2', this.darkenColor(base.primary, 0.85), 0.55),
       coverBackground: base.primary,
       coverText: this.contrastText(base.primary),
-      primary: this.mixHexColors(base.primary, '#FFFFFF', 0.15),
+      primary: base.primary,
       accent: base.accent,
       secondary: base.secondary,
     };
@@ -904,7 +906,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     total: number,
     theme: SlideTheme,
   ): string {
-    const layout = this.inferSlideLayout(section, index);
+    const layout = this.inferSlideLayout(section, index, total);
     const density = this.getSlideDensity(section.body);
     const title = this.escapeHtml(section.title);
     const body = this.renderSlideBodyHtml(section.body, layout);
@@ -1233,7 +1235,6 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     // Inferred page role
     const isFirstPage = index === 0;
     const isLastPage = index === totalPages - 1 && totalPages > 1;
-    const isEarly = index <= 1;
 
     // Content type detection
     const hasImage = body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l));
@@ -1253,9 +1254,9 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     // Data-heavy pages: use native text rendering with tables
     if (isDataHeavy && !hasImage && !hasQuote) return 'list';
 
-    // Cover: first page, or early page with short text
+    // Cover: exactly the first page. Treating a sparse second page as another
+    // cover produces duplicate covers and masks the intended statement layout.
     if (isFirstPage) return 'cover';
-    if (isEarly && isSparse && !hasImage && !hasTable) return 'cover';
 
     // Images → visual layout
     if (hasImage && !isDataHeavy) {

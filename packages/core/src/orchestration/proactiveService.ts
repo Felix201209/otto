@@ -6,18 +6,17 @@
  * 基于工作日志分析 + 行为模式识别：
  * - 昨天提过的任务今天没跟进 → 提醒补漏
  * - 同一任务类别连续3天 → 检测卡住
- * - 本地日程过期未处理 → 提醒
+ * - 本地日程即将开始 → 提前提醒
  * - 每日收盘生成工作洞察
  * - 早晨简报含日程和昨日未完成项
  */
 
-import type { Config } from '../config/config.js';
-import type { WorkLogEntry, DailySummary } from './workLog.js';
-import { getWorkLogger } from './workLog.js';
+import type { WorkLogEntry } from './workLog.js';
+import { formatLocalDate, getWorkLogger } from './workLog.js';
 
 /** 智能洞察：一条从工作日志分析出的可执行提醒 */
 export interface WisdomNudge {
-  type: 'unresolved' | 'stuck' | 'overdue_schedule' | 'pattern' | 'suggestion';
+  type: 'unresolved' | 'stuck' | 'pattern' | 'suggestion';
   message: string;
   priority: 'low' | 'medium' | 'high';
   /** 关联的日志条目日期 */
@@ -92,8 +91,7 @@ const BUILTIN_RULES: ProactiveRule[] = [
     enabled: true, minIntervalHours: 20,
     generateMessage: async (ctx) => {
       const now = new Date();
-      const today = now.toISOString().split('T')[0];
-      const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+      const today = formatLocalDate(now);
       const nudges = await generateWisdomNudges(ctx);
 
       let msg = '☀️ 早上好！\n';
@@ -105,12 +103,14 @@ const BUILTIN_RULES: ProactiveRule[] = [
         if (schedules.length > 0) {
           msg += '\n📅 今日日程：\n';
           for (const s of schedules.slice(0, 5)) {
-            msg += `  ${s.startAt.slice(11, 16)} ${s.title}\n`;
+            msg += `  ${formatLocalTime(s.startAt)} ${s.title}\n`;
           }
         } else {
           msg += '\n📅 今日暂无日程安排。\n';
         }
-      } catch {}
+      } catch {
+        // 本地日程不可用时仍可继续生成工作日志简报。
+      }
 
       // 昨日未完成洞察
       if (nudges.length > 0) {
@@ -135,7 +135,7 @@ const BUILTIN_RULES: ProactiveRule[] = [
     enabled: true, minIntervalHours: 20,
     generateMessage: async (ctx) => {
       const nudges = await generateWisdomNudges(ctx);
-      const today = new Date().toISOString().split('T')[0];
+      const today = formatLocalDate(new Date());
       const logger = getWorkLogger();
       const summary = await logger.generateDailySummary(today);
 
@@ -213,15 +213,15 @@ const BUILTIN_RULES: ProactiveRule[] = [
         const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        const tomorrowStr = formatLocalDate(tomorrow);
         const schedules = ls(tomorrowStr);
-        const earlySchedules = schedules.filter((s: { startAt: string; title: string }) => {
-          const hour = parseInt(s.startAt.slice(11, 13), 10);
+        const earlySchedules = schedules.filter((s) => {
+          const hour = new Date(s.startAt).getHours();
           return hour >= 6 && hour <= 9;
         });
         if (earlySchedules.length === 0) return null;
-        const titles = earlySchedules.map((s: { startAt: string; title: string }) => {
-          const time = s.startAt.slice(11, 16);
+        const titles = earlySchedules.map((s) => {
+          const time = formatLocalTime(s.startAt);
           return `${time} ${s.title}`;
         }).join('；');
         return `📅 明早日程提醒：${titles}。记得早做准备哦。`;
@@ -252,6 +252,22 @@ const BUILTIN_RULES: ProactiveRule[] = [
   },
 ];
 
+function formatLocalTime(iso: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+function cloneRule(rule: ProactiveRule): ProactiveRule {
+  return {
+    ...rule,
+    trigger: { ...rule.trigger },
+    action: { ...rule.action },
+  };
+}
+
 // ── 智能洞察引擎 ───────────────────────────────────────────────────────
 
 /**
@@ -260,10 +276,9 @@ const BUILTIN_RULES: ProactiveRule[] = [
  * 检测维度：
  * - unresolved：昨天提到的关键字今天没出现
  * - stuck：同一类别连续3天出现
- * - overdue_schedule：本地日程截至今天仍标记为 pending
  * - pattern：多天重复模式（如"每天早上都会处理邮件"）
  */
-async function generateWisdomNudges(ctx: ProactiveContext): Promise<WisdomNudge[]> {
+async function generateWisdomNudges(_ctx: ProactiveContext): Promise<WisdomNudge[]> {
   const nudges: WisdomNudge[] = [];
   const logger = getWorkLogger();
 
@@ -272,10 +287,10 @@ async function generateWisdomNudges(ctx: ProactiveContext): Promise<WisdomNudge[
   const now = new Date();
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 86400000);
-    dates.push(d.toISOString().split('T')[0]);
+    dates.push(formatLocalDate(d));
   }
 
-  let allEntries: Array<{ date: string; entry: WorkLogEntry }> = [];
+  const allEntries: Array<{ date: string; entry: WorkLogEntry }> = [];
   for (const date of dates) {
     const entries = await logger.readDay(date);
     for (const e of entries) {
@@ -338,27 +353,7 @@ async function generateWisdomNudges(ctx: ProactiveContext): Promise<WisdomNudge[
     });
   }
 
-  // ── 3) overdue_schedule：检查本地待办 ──
-  try {
-    const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
-    const todayS = ls(today);
-    const todayStr = today;
-    const overdueSchedules = todayS.filter((s: { status?: string; date?: string; title: string }) => {
-      if (s.status === 'done' || s.status === 'cancelled') return false;
-      // 日期在今天之前
-      return !!(s.date && s.date < todayStr);
-    });
-    if (overdueSchedules.length > 0) {
-      nudges.push({
-        type: 'overdue_schedule',
-        message: `有${overdueSchedules.length}项日程已过期但未标记完成：${overdueSchedules.slice(0, 3).map((s: { title: string }) => s.title).join('、')}。要我帮你更新状态吗？`,
-        priority: 'high',
-        sourceDates: [today],
-      });
-    }
-  } catch { /* local_schedule 不可用时跳过 */ }
-
-  // ── 4) pattern：今天与昨天/前天的行为模式对比 ──
+  // ── 3) pattern：今天与昨天/前天的行为模式对比 ──
   const toolUsageByDate = new Map<string, Map<string, number>>();
   for (const { date, entry } of allEntries) {
     if (!toolUsageByDate.has(date)) toolUsageByDate.set(date, new Map());
@@ -405,9 +400,10 @@ function extractKeywords(entries: Array<{ date: string; entry: WorkLogEntry }>):
 // ── 引擎主体 ───────────────────────────────────────────────────────────
 
 export class ProactiveService {
-  private rules: ProactiveRule[] = [...BUILTIN_RULES];
+  private rules: ProactiveRule[] = BUILTIN_RULES.map(cloneRule);
   private actionHistory: Map<string, string[]> = new Map();
   private triggeredToday: Set<string> = new Set();
+  private triggeredDate = formatLocalDate(new Date());
   private feishuSender: ProactiveFeishuSender | null = null;
   private localNotifier: ProactiveLocalNotifier | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -464,12 +460,13 @@ export class ProactiveService {
           }
         }
 
-        // 3. 会议/日程提前提醒：检查接下来10分钟内开始的日程
+        // 3. 会议/日程提前提醒：检查接下来 10 分钟内开始的日程
         try {
           const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
-          const today = new Date().toISOString().split('T')[0];
+          const now = new Date();
+          const today = formatLocalDate(now);
           const schedules = ls(today);
-          const nowMs = Date.now();
+          const nowMs = now.getTime();
           const advanceMs = 10 * 60 * 1000; // 提前10分钟提醒
 
           for (const s of schedules) {
@@ -477,10 +474,10 @@ export class ProactiveService {
             const startMs = new Date(s.startAt).getTime();
             const timeUntilStart = startMs - nowMs;
 
-            if (timeUntilStart > 0 && timeUntilStart <= advanceMs + 5 * 60 * 1000) {
+            if (timeUntilStart > 0 && timeUntilStart <= advanceMs) {
               this.remindedScheduleIds.add(s.id);
-              const minutesUntil = Math.round(timeUntilStart / 60000);
-              const timeStr = s.startAt.slice(11, 16);
+              const minutesUntil = Math.ceil(timeUntilStart / 60000);
+              const timeStr = formatLocalTime(s.startAt);
               let reminderMsg = `⏰ 日程提醒：${minutesUntil}分钟后「${s.title}」开始（${timeStr}）`;
               if (s.notes) reminderMsg += `\n📝 ${s.notes}`;
               const rule: ProactiveRule = {
@@ -506,8 +503,8 @@ export class ProactiveService {
       } catch (err) {
         console.warn(`[ProactiveService] Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }, 5 * 60 * 1000);
-    console.log('[ProactiveService] Scheduler started (5min interval)');
+    }, 60 * 1000);
+    console.log('[ProactiveService] Scheduler started (1min interval)');
   }
 
   stopScheduler(): void {
@@ -569,6 +566,8 @@ export class ProactiveService {
 
   async checkAndTrigger(ctx: ProactiveContext): Promise<ProactiveRule[]> {
     const triggered: ProactiveRule[] = [];
+    const now = new Date();
+    this.resetDedupeIfNewDay(now);
 
     for (const rule of this.rules) {
       if (!rule.enabled) continue;
@@ -578,31 +577,25 @@ export class ProactiveService {
         if (hoursSince < rule.minIntervalHours) continue;
       }
 
-      const triggerKey = `${ctx.userId}_${rule.id}`;
+      const triggerSlot =
+        rule.trigger.type === 'cron'
+          ? `${formatLocalDate(now)}_${now.getHours()}`
+          : formatLocalDate(now);
+      const triggerKey = `${ctx.userId}_${rule.id}_${triggerSlot}`;
       if (this.triggeredToday.has(triggerKey)) continue;
 
       if (rule.condition && !rule.condition(ctx)) continue;
 
       if (!this.matchTrigger(rule, ctx)) continue;
 
-      // wisdom 类规则：动态生成消息
-      if (rule.trigger.type === 'wisdom' && rule.generateMessage) {
-        const dynamicMsg = await rule.generateMessage(ctx);
-        if (!dynamicMsg) continue; // 无内容不触发
-        rule.action.message = dynamicMsg;
-      }
-      // cron/pattern 规则也可能有 generateMessage
       if (rule.generateMessage) {
         const dynamicMsg = await rule.generateMessage(ctx);
-        if (dynamicMsg) {
-          rule.action.message = dynamicMsg;
-        } else if (!rule.action.message) {
-          continue; // 没有预设消息也没有动态消息
-        }
+        if (!dynamicMsg) continue;
+        rule.action.message = dynamicMsg;
       }
 
       triggered.push(rule);
-      rule.lastTriggered = new Date().toISOString();
+      rule.lastTriggered = now.toISOString();
       this.triggeredToday.add(triggerKey);
     }
 
@@ -611,17 +604,19 @@ export class ProactiveService {
 
   async onEvent(event: string, ctx: ProactiveContext): Promise<ProactiveRule[]> {
     const triggered: ProactiveRule[] = [];
+    const now = new Date();
+    this.resetDedupeIfNewDay(now);
     for (const rule of this.rules) {
       if (!rule.enabled) continue;
       if (rule.trigger.type !== 'event') continue;
       if (rule.trigger.event !== event) continue;
       if (rule.condition && !rule.condition(ctx)) continue;
 
-      const triggerKey = `${ctx.userId}_${rule.id}_${event}`;
+      const triggerKey = `${ctx.userId}_${rule.id}_${event}_${formatLocalDate(now)}`;
       if (this.triggeredToday.has(triggerKey)) continue;
 
       triggered.push(rule);
-      rule.lastTriggered = new Date().toISOString();
+      rule.lastTriggered = now.toISOString();
       this.triggeredToday.add(triggerKey);
       await this.executeAndLog(rule, ctx);
     }
@@ -630,6 +625,14 @@ export class ProactiveService {
 
   dailyReset(): void {
     this.triggeredToday.clear();
+    this.triggeredDate = formatLocalDate(new Date());
+  }
+
+  private resetDedupeIfNewDay(now: Date): void {
+    const currentDate = formatLocalDate(now);
+    if (currentDate === this.triggeredDate) return;
+    this.triggeredToday.clear();
+    this.triggeredDate = currentDate;
   }
 
   getActionStats(userId: string): {
@@ -663,10 +666,14 @@ export class ProactiveService {
         const minute = now.getMinutes();
         const parts = rule.trigger.cron.split(/\s+/);
         if (parts.length >= 5) {
-          const cronMin = parseInt(parts[0]);
-          const cronHour = parseInt(parts[1]);
+          const cronMinutes = parseCronValues(parts[0], 0, 59);
+          const cronHours = parseCronValues(parts[1], 0, 23);
           const cronDays = parseCronDays(parts[4]);
-          return minute === cronMin && hour === cronHour && cronDays.includes(day);
+          return (
+            cronMinutes.includes(minute) &&
+            cronHours.includes(hour) &&
+            cronDays.includes(day)
+          );
         }
         return false;
       }
@@ -704,14 +711,48 @@ function parseCronDays(field: string): number[] {
   for (const part of field.split(',')) {
     const trimmed = part.trim();
     if (trimmed.includes('-')) {
-      const [start, end] = trimmed.split('-').map(d => parseInt(d.trim()));
+      const [start, end] = trimmed
+        .split('-')
+        .map((d) => parseInt(d.trim(), 10));
       if (!isNaN(start) && !isNaN(end)) {
         for (let i = start; i <= end; i++) days.push(i);
       }
     } else {
-      const d = parseInt(trimmed);
+      const d = parseInt(trimmed, 10);
       if (!isNaN(d)) days.push(d);
     }
   }
   return days;
+}
+
+function parseCronValues(field: string, min: number, max: number): number[] {
+  if (field === '*') {
+    return Array.from({ length: max - min + 1 }, (_, index) => min + index);
+  }
+
+  const values = new Set<number>();
+  for (const part of field.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.includes('-')) {
+      const [start, end] = trimmed
+        .split('-')
+        .map((value) => Number.parseInt(value.trim(), 10));
+      if (
+        Number.isInteger(start) &&
+        Number.isInteger(end) &&
+        start >= min &&
+        end <= max &&
+        start <= end
+      ) {
+        for (let value = start; value <= end; value++) values.add(value);
+      }
+      continue;
+    }
+
+    const value = Number.parseInt(trimmed, 10);
+    if (Number.isInteger(value) && value >= min && value <= max) {
+      values.add(value);
+    }
+  }
+  return [...values];
 }
