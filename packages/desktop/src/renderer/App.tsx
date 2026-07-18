@@ -45,6 +45,7 @@ import { useSettingsData } from './state/useSettingsData.js';
 import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 import { WhatsNewDialog } from './components/WhatsNewDialog.js';
+import { ProactiveToast } from './components/ProactiveToast.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
@@ -588,6 +589,8 @@ function OttoWorkspaceApp({
 
       {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}
       <WhatsNewDialog />
+      {/* 主动服务提醒：右下角 toast（日程/洞察/日报等） */}
+      <ProactiveToast />
     </div>
   );
 }
