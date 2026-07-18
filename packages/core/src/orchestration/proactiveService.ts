@@ -1,84 +1,79 @@
 /**
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  *
- * Otto Proactive Service — 主动服务引擎。
+ * Otto Proactive Service v2 — 智能主动提醒引擎。
  *
- * 从"被动响应"升级为"主动提醒"：
- * - 检测到周五下午4点小王还没发周报 → 主动提醒
- * - 检测到刚结束会议 → 主动问"要整理纪要吗"
- * - 检测到被拉进新项目群 → 主动提供背景资料
- *
- * 基于 LangGraph 的定时触发 + 行为模式统计。
+ * 基于工作日志分析 + 行为模式识别：
+ * - 昨天提过的任务今天没跟进 → 提醒补漏
+ * - 同一任务类别连续3天 → 检测卡住
+ * - 本地日程过期未处理 → 提醒
+ * - 每日收盘生成工作洞察
+ * - 早晨简报含日程和昨日未完成项
  */
 
 import type { Config } from '../config/config.js';
+import type { WorkLogEntry, DailySummary } from './workLog.js';
 import { getWorkLogger } from './workLog.js';
+
+/** 智能洞察：一条从工作日志分析出的可执行提醒 */
+export interface WisdomNudge {
+  type: 'unresolved' | 'stuck' | 'overdue_schedule' | 'pattern' | 'suggestion';
+  message: string;
+  priority: 'low' | 'medium' | 'high';
+  /** 关联的日志条目日期 */
+  sourceDates: string[];
+}
 
 /** 飞书推送接口（由 CLI gateway 注入） */
 export interface ProactiveFeishuSender {
-  /** 发送飞书卡片消息给用户 */
   sendCard(userId: string, message: string): Promise<void>;
-  /** 发送飞书文本消息给用户 */
   sendMessage(userId: string, message: string): Promise<void>;
 }
 
 /** 本地通知接口（由 otto-server 注入，无飞书时也能推送） */
 export interface ProactiveLocalNotifier {
-  /** 推送一条主动提醒，server 广播给所有连接的客户端 */
   notify(message: string, priority: 'low' | 'medium' | 'high', ruleId: string): Promise<void>;
 }
 
-/** 日历轮询检查器（用于检测最近结束的会议） */
 export interface CalendarMeetingResult {
   meetingId: string;
   topic: string;
-  endTime: string; // ISO 时间戳
+  endTime: string;
   hostUserId: string;
   operatorId: string;
 }
 
 export type CalendarCheckerFn = () => Promise<CalendarMeetingResult[]>;
 
-/** 主动服务规则 */
 export interface ProactiveRule {
   id: string;
   name: string;
-  /** 触发条件 */
   trigger: {
-    type: 'cron' | 'event' | 'pattern';
-    // cron: 定时表达式 (如 "0 16 * * 5" = 每周五16:00)
+    type: 'cron' | 'event' | 'pattern' | 'wisdom';
     cron?: string;
-    // event: 事件类型 (如 "meeting_ended", "added_to_group")
     event?: string;
-    // pattern: 行为模式 (如 "no_action_30min" = 30分钟无操作)
     pattern?: string;
   };
-  /** 条件判断（额外的触发条件） */
   condition?: (ctx: ProactiveContext) => boolean;
-  /** 触发后执行的动作 */
+  /** wisdom 类规则：返回 null 表示不触发 */
+  generateMessage?: (ctx: ProactiveContext) => Promise<string | null>;
   action: {
     type: 'feishu_card' | 'feishu_message' | 'todo_create' | 'memory_check';
     message: string;
-    /** 卡片内容（如果是 feishu_card） */
     cardData?: Record<string, unknown>;
-    /** 优先级 */
     priority: 'low' | 'medium' | 'high';
   };
-  /** 是否启用 */
   enabled: boolean;
-  /** 上次触发时间（防重复） */
   lastTriggered?: string;
-  /** 最小触发间隔（小时），防止过度打扰 */
   minIntervalHours: number;
 }
 
-/** 主动服务上下文 */
 export interface ProactiveContext {
   userId: string;
   userName: string;
-  currentDay: string; // Monday, Tuesday...
+  currentDay: string;
   currentTime: string; // HH:MM
-  recentActions: string[]; // 最近操作
+  recentActions: string[];
   pendingTasks: number;
   hasUpcomingMeeting: boolean;
   lastMeetingEnd?: string;
@@ -86,23 +81,102 @@ export interface ProactiveContext {
   role?: string;
 }
 
-/** 内置规则集 */
+// ── 内置规则 ───────────────────────────────────────────────────────────
+
 const BUILTIN_RULES: ProactiveRule[] = [
+  {
+    id: 'morning_briefing',
+    name: '晨间简报',
+    trigger: { type: 'cron', cron: '0 9 * * 1-5' },
+    action: { type: 'feishu_card', message: '', priority: 'low' },
+    enabled: true, minIntervalHours: 20,
+    generateMessage: async (ctx) => {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+      const nudges = await generateWisdomNudges(ctx);
+
+      let msg = '☀️ 早上好！\n';
+
+      // 今日日程
+      try {
+        const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+        const schedules = ls(today);
+        if (schedules.length > 0) {
+          msg += '\n📅 今日日程：\n';
+          for (const s of schedules.slice(0, 5)) {
+            msg += `  ${s.startAt.slice(11, 16)} ${s.title}\n`;
+          }
+        } else {
+          msg += '\n📅 今日暂无日程安排。\n';
+        }
+      } catch {}
+
+      // 昨日未完成洞察
+      if (nudges.length > 0) {
+        const topNudges = nudges.filter(n => n.priority === 'high' || n.priority === 'medium').slice(0, 3);
+        if (topNudges.length > 0) {
+          msg += '\n💡 待关注：\n';
+          for (const n of topNudges) {
+            const icon = n.priority === 'high' ? '⚠️' : '📌';
+            msg += `  ${icon} ${n.message}\n`;
+          }
+        }
+      }
+
+      return msg;
+    },
+  },
+  {
+    id: 'daily_work_insight',
+    name: '每日收盘洞察',
+    trigger: { type: 'cron', cron: '0 18 * * 1-5' },
+    action: { type: 'feishu_card', message: '', priority: 'medium' },
+    enabled: true, minIntervalHours: 20,
+    generateMessage: async (ctx) => {
+      const nudges = await generateWisdomNudges(ctx);
+      const today = new Date().toISOString().split('T')[0];
+      const logger = getWorkLogger();
+      const summary = await logger.generateDailySummary(today);
+
+      if (summary.totalActions === 0 && nudges.length === 0) {
+        return null; // 无内容，不推送
+      }
+
+      let msg = `📋 今日收盘（${today}）\n`;
+
+      if (summary.totalActions > 0) {
+        msg += `\n📊 今日工作：${summary.totalActions} 次操作\n`;
+        // Top highlights 摘要
+        if (summary.highlights && summary.highlights.length > 0) {
+          for (const r of summary.highlights.slice(0, 3)) {
+            msg += `  ✅ ${r}\n`;
+          }
+        }
+      }
+
+      if (nudges.length > 0) {
+        msg += '\n🔔 智能提醒：\n';
+        for (const n of nudges.slice(0, 5)) {
+          const icon = n.priority === 'high' ? '⚠️' : n.priority === 'medium' ? '📌' : '💬';
+          msg += `  ${icon} ${n.message}\n`;
+        }
+      }
+
+      return msg;
+    },
+  },
   {
     id: 'weekly_report_reminder',
     name: '周报提醒',
-    trigger: { type: 'cron', cron: '0 16 * * 5' }, // 每周五16:00
-    condition: (ctx) => {
-      // 只在用户还没发周报时提醒
-      return !ctx.recentActions.some(a => a.includes('周报') || a.includes('weekly report'));
-    },
+    trigger: { type: 'cron', cron: '0 16 * * 5' },
+    condition: (ctx) => !ctx.recentActions.some(a => a.includes('周报') || a.includes('weekly report')),
     action: {
       type: 'feishu_card',
       message: '今天还没发周报，要我帮你起草吗？',
       priority: 'medium',
     },
-    enabled: true,
-    minIntervalHours: 24,
+    enabled: true, minIntervalHours: 24,
   },
   {
     id: 'meeting_summary_offer',
@@ -114,8 +188,7 @@ const BUILTIN_RULES: ProactiveRule[] = [
       message: '刚结束一个会议，要我把纪要整理成飞书文档发到群里吗？',
       priority: 'high',
     },
-    enabled: true,
-    minIntervalHours: 1,
+    enabled: true, minIntervalHours: 1,
   },
   {
     id: 'idle_reminder',
@@ -127,103 +200,246 @@ const BUILTIN_RULES: ProactiveRule[] = [
       message: '你有 {pendingTasks} 个待办任务，需要我帮忙处理吗？',
       priority: 'low',
     },
-    enabled: true,
-    minIntervalHours: 2,
-  },
-  {
-    id: 'morning_briefing',
-    name: '晨间简报',
-    trigger: { type: 'cron', cron: '0 9 * * 1-5' }, // 工作日9:00
-    action: {
-      type: 'feishu_card',
-      message: '早上好！今天的日程安排：{schedule}，待办任务：{tasks}',
-      priority: 'low',
-    },
-    enabled: true,
-    minIntervalHours: 20,
-  },
-  {
-    id: 'daily_work_summary',
-    name: '每日工作汇总推送',
-    trigger: { type: 'cron', cron: '0 18 * * 1-5' }, // 工作日18:00
-    condition: (ctx) => {
-      // 只在有操作记录时推送
-      const logger = getWorkLogger();
-      return true; // checkAndTrigger 内部会调用，这里先放行，实际推送时判断有无数据
-    },
-    action: {
-      type: 'feishu_card',
-      message: '📋 今日工作汇总已生成，点击查看详情',
-      priority: 'medium',
-    },
-    enabled: true,
-    minIntervalHours: 20,
+    enabled: true, minIntervalHours: 2,
   },
   {
     id: 'tomorrow_early_schedule',
     name: '明早日程提前提醒',
-    trigger: { type: 'cron', cron: '0 20 * * *' }, // 每晚20:00
-    action: {
-      type: 'feishu_message',
-      message: '明早有日程安排，记得早做准备。',
-      priority: 'medium',
+    trigger: { type: 'cron', cron: '0 20 * * *' },
+    action: { type: 'feishu_message', message: '', priority: 'medium' },
+    enabled: true, minIntervalHours: 22,
+    generateMessage: async () => {
+      try {
+        const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        const schedules = ls(tomorrowStr);
+        const earlySchedules = schedules.filter((s: { startAt: string; title: string }) => {
+          const hour = parseInt(s.startAt.slice(11, 13), 10);
+          return hour >= 6 && hour <= 9;
+        });
+        if (earlySchedules.length === 0) return null;
+        const titles = earlySchedules.map((s: { startAt: string; title: string }) => {
+          const time = s.startAt.slice(11, 16);
+          return `${time} ${s.title}`;
+        }).join('；');
+        return `📅 明早日程提醒：${titles}。记得早做准备哦。`;
+      } catch {
+        return null;
+      }
     },
-    enabled: true,
-    minIntervalHours: 22,
+  },
+  {
+    id: 'wisdom_nudge',
+    name: '智能工作洞察',
+    trigger: { type: 'cron', cron: '0 10,15 * * 1-5' }, // 工作日上午10点和下午3点
+    action: { type: 'feishu_card', message: '', priority: 'medium' },
+    enabled: true, minIntervalHours: 4,
+    generateMessage: async (ctx) => {
+      const nudges = await generateWisdomNudges(ctx);
+      const urgent = nudges.filter(n => n.priority === 'high');
+      if (urgent.length === 0 && nudges.length < 2) return null;
+
+      let msg = '🧠 智能工作洞察\n\n';
+      const toShow = [...urgent, ...nudges.filter(n => n.priority !== 'high').slice(0, 3)];
+      for (const n of toShow) {
+        const icon = n.priority === 'high' ? '⚠️' : n.priority === 'medium' ? '📌' : '💬';
+        msg += `${icon} ${n.message}\n`;
+      }
+      return msg;
+    },
   },
 ];
 
+// ── 智能洞察引擎 ───────────────────────────────────────────────────────
+
 /**
- * 主动服务引擎。
+ * 分析最近 N 天的工作日志，生成可执行的智能提醒。
+ *
+ * 检测维度：
+ * - unresolved：昨天提到的关键字今天没出现
+ * - stuck：同一类别连续3天出现
+ * - overdue_schedule：本地日程截至今天仍标记为 pending
+ * - pattern：多天重复模式（如"每天早上都会处理邮件"）
  */
+async function generateWisdomNudges(ctx: ProactiveContext): Promise<WisdomNudge[]> {
+  const nudges: WisdomNudge[] = [];
+  const logger = getWorkLogger();
+
+  // 读取最近7天日志
+  const dates: string[] = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    dates.push(d.toISOString().split('T')[0]);
+  }
+
+  let allEntries: Array<{ date: string; entry: WorkLogEntry }> = [];
+  for (const date of dates) {
+    const entries = await logger.readDay(date);
+    for (const e of entries) {
+      allEntries.push({ date, entry: e });
+    }
+  }
+
+  if (allEntries.length === 0) return nudges;
+
+  const today = dates[6];
+  const yesterday = dates[5];
+
+  const todayEntries = allEntries.filter(e => e.date === today);
+  const yesterdayEntries = allEntries.filter(e => e.date === yesterday);
+
+  // ── 1) unresolved：昨天出现的关键词今天没出现 ──
+  const yesterdayKeywords = extractKeywords(yesterdayEntries);
+  const todayKeywords = extractKeywords(todayEntries);
+
+  const droppedKeywords = yesterdayKeywords.filter(
+    kw => !todayKeywords.includes(kw) && kw.length >= 2
+  );
+  if (droppedKeywords.length > 0) {
+    nudges.push({
+      type: 'unresolved',
+      message: `昨天提到「${droppedKeywords.slice(0, 3).join('」「')}」但今天没有跟进记录，需要继续吗？`,
+      priority: 'high',
+      sourceDates: [yesterday],
+    });
+  }
+
+  // ── 2) stuck：同一类别连续3天出现 ──
+  const categoryByDate = new Map<string, Set<string>>();
+  for (const { date, entry } of allEntries) {
+    if (!categoryByDate.has(date)) categoryByDate.set(date, new Set());
+    categoryByDate.get(date)!.add(entry.category || 'other');
+  }
+
+  // 找最近3天都出现的类别
+  const last3Dates = dates.slice(-3);
+  const persistentCategories: string[] = [];
+  for (const cat of ['code', 'shell', 'file', 'document', 'spreadsheet', 'task', 'message', 'debug']) {
+    let count = 0;
+    for (const d of last3Dates) {
+      if (categoryByDate.get(d)?.has(cat)) count++;
+    }
+    if (count >= 3) persistentCategories.push(cat);
+  }
+  if (persistentCategories.length > 0) {
+    const catNames: Record<string, string> = {
+      code: '代码开发', shell: '命令行操作', file: '文件处理',
+      document: '文档撰写', spreadsheet: '表格处理', task: '任务管理',
+      message: '消息沟通', debug: '调试修复',
+    };
+    nudges.push({
+      type: 'stuck',
+      message: `已经连续3天在「${persistentCategories.map(c => catNames[c] || c).join('」「')}」——是卡住了还是接近完成？需要帮忙梳理吗？`,
+      priority: 'medium',
+      sourceDates: last3Dates,
+    });
+  }
+
+  // ── 3) overdue_schedule：检查本地待办 ──
+  try {
+    const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
+    const todayS = ls(today);
+    const todayStr = today;
+    const overdueSchedules = todayS.filter((s: { status?: string; date?: string; title: string }) => {
+      if (s.status === 'done' || s.status === 'cancelled') return false;
+      // 日期在今天之前
+      return !!(s.date && s.date < todayStr);
+    });
+    if (overdueSchedules.length > 0) {
+      nudges.push({
+        type: 'overdue_schedule',
+        message: `有${overdueSchedules.length}项日程已过期但未标记完成：${overdueSchedules.slice(0, 3).map((s: { title: string }) => s.title).join('、')}。要我帮你更新状态吗？`,
+        priority: 'high',
+        sourceDates: [today],
+      });
+    }
+  } catch { /* local_schedule 不可用时跳过 */ }
+
+  // ── 4) pattern：今天与昨天/前天的行为模式对比 ──
+  const toolUsageByDate = new Map<string, Map<string, number>>();
+  for (const { date, entry } of allEntries) {
+    if (!toolUsageByDate.has(date)) toolUsageByDate.set(date, new Map());
+    const tmap = toolUsageByDate.get(date)!;
+    tmap.set(entry.toolName, (tmap.get(entry.toolName) || 0) + 1);
+  }
+
+  // 检查今天是否明显减产
+  if (yesterdayEntries.length > 5 && todayEntries.length === 0) {
+    nudges.push({
+      type: 'suggestion',
+      message: '今天似乎还没有开始工作记录，是新项目启动日还是需要我帮忙？',
+      priority: 'low',
+      sourceDates: [today],
+    });
+  }
+
+  return nudges;
+}
+
+/** 从日志条目中提取关键动作词 */
+function extractKeywords(entries: Array<{ date: string; entry: WorkLogEntry }>): string[] {
+  const keywords = new Set<string>();
+  for (const { entry } of entries) {
+    const text = (entry.action || '') + ' ' + (entry.taskTitle || '') + ' ' + (entry.userInput || '');
+    // 提取中文关键词（连续2个或以上汉字）
+    const chineseWords = text.match(/[\u4e00-\u9fff]{2,}/g);
+    if (chineseWords) {
+      for (const w of chineseWords) {
+        if (w.length >= 2 && w.length <= 8) keywords.add(w);
+      }
+    }
+    // 提取英文关键词（驼峰/下划线/连字符连接的词）
+    const englishWords = text.match(/[a-zA-Z][a-zA-Z0-9_-]{2,}/g);
+    if (englishWords) {
+      for (const w of englishWords) {
+        if (w.length >= 3 && !/^\d+$/.test(w)) keywords.add(w.toLowerCase());
+      }
+    }
+  }
+  return [...keywords];
+}
+
+// ── 引擎主体 ───────────────────────────────────────────────────────────
+
 export class ProactiveService {
   private rules: ProactiveRule[] = [...BUILTIN_RULES];
-  private actionHistory: Map<string, string[]> = new Map(); // userId -> recent actions
-  private triggeredToday: Set<string> = new Set(); // 防止同一天重复触发
+  private actionHistory: Map<string, string[]> = new Map();
+  private triggeredToday: Set<string> = new Set();
   private feishuSender: ProactiveFeishuSender | null = null;
   private localNotifier: ProactiveLocalNotifier | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
-  /** 日历轮询检查器（fallback：飞书 WebSocket 事件不可用时使用） */
   private calendarChecker: CalendarCheckerFn | null = null;
-  /** 已处理的会议 ID 集合（防重复触发） */
   private processedMeetings: Set<string> = new Set();
 
-  /** 注入飞书发送器 */
   setFeishuSender(sender: ProactiveFeishuSender): void {
     this.feishuSender = sender;
     console.log('[ProactiveService] Feishu sender injected');
   }
 
-  /** 注入本地通知器（无飞书时也能推送到桌面） */
   setLocalNotifier(notifier: ProactiveLocalNotifier): void {
     this.localNotifier = notifier;
     console.log('[ProactiveService] Local notifier injected');
   }
 
-  /** 注入日历轮询检查器（用于检测最近结束的会议） */
   setCalendarChecker(checker: CalendarCheckerFn): void {
     this.calendarChecker = checker;
     console.log('[ProactiveService] Calendar checker injected');
   }
 
-  /**
-   * 启动定时驱动器（每5分钟检查一次 cron 规则 + 日历轮询）。
-   * 由 CLI gateway 或桌面端 main 进程调用。
-   */
   startScheduler(getContext: () => ProactiveContext): void {
-    if (this.timer) return; // 已启动
-    // 每5分钟检查一次
+    if (this.timer) return;
     this.timer = setInterval(async () => {
       try {
         const ctx = getContext();
 
-        // 1. 检查 cron/pattern 规则
         const triggered = await this.checkAndTrigger(ctx);
         for (const rule of triggered) {
           await this.executeAndLog(rule, ctx);
         }
 
-        // 2. 日历轮询：检测最近结束的会议（WebSocket 事件的 fallback）
         if (this.calendarChecker) {
           try {
             const meetings = await this.calendarChecker();
@@ -231,15 +447,12 @@ export class ProactiveService {
               if (this.processedMeetings.has(m.meetingId)) continue;
               this.processedMeetings.add(m.meetingId);
 
-              // 构建带会议信息的上下文
               const meetingCtx: ProactiveContext = {
                 ...ctx,
                 lastMeetingEnd: m.endTime,
               };
               await this.onEvent('meeting_ended', meetingCtx);
             }
-
-            // 清理旧会议 ID（保留最近 200 个）
             if (this.processedMeetings.size > 200) {
               const entries = [...this.processedMeetings];
               this.processedMeetings = new Set(entries.slice(-100));
@@ -249,14 +462,12 @@ export class ProactiveService {
           }
         }
       } catch (err) {
-        // 定时器出错不能崩溃
         console.warn(`[ProactiveService] Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }, 5 * 60 * 1000);
     console.log('[ProactiveService] Scheduler started (5min interval)');
   }
 
-  /** 停止定时驱动器 */
   stopScheduler(): void {
     if (this.timer) {
       clearInterval(this.timer);
@@ -265,19 +476,18 @@ export class ProactiveService {
     }
   }
 
-  /**
-   * 执行触发的规则：发飞书消息 + 记工作日志（标注主动服务）。
-   */
   private async executeAndLog(rule: ProactiveRule, ctx: ProactiveContext): Promise<void> {
     let messageDelivered = false;
+    const finalMessage = rule.action.message;
 
-    // 1. 优先走飞书
+    if (!finalMessage) return;
+
     if (this.feishuSender) {
       try {
         if (rule.action.type === 'feishu_card') {
-          await this.feishuSender.sendCard(ctx.userId, rule.action.message);
-        } else if (rule.action.type === 'feishu_message') {
-          await this.feishuSender.sendMessage(ctx.userId, rule.action.message);
+          await this.feishuSender.sendCard(ctx.userId, finalMessage);
+        } else {
+          await this.feishuSender.sendMessage(ctx.userId, finalMessage);
         }
         messageDelivered = true;
       } catch (err) {
@@ -285,150 +495,84 @@ export class ProactiveService {
       }
     }
 
-    // 2. 回退到本地通知
     if (!messageDelivered && this.localNotifier) {
       try {
-        await this.localNotifier.notify(rule.action.message, rule.action.priority, rule.id);
+        await this.localNotifier.notify(finalMessage, rule.action.priority, rule.id);
       } catch (err) {
         console.warn(`[ProactiveService] Local notify failed for rule ${rule.id}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
-    // 2. 记工作日志（标注主动服务，与普通操作区分）
     try {
       const logger = getWorkLogger();
       await logger.log({
         toolName: 'proactive_service',
-        action: `[主动服务] ${rule.name}：${rule.action.message.substring(0, 100)}`,
+        action: `[主动提醒] ${rule.name}: ${finalMessage.substring(0, 100)}`,
         category: 'other',
         success: true,
-        details: `触发规则：${rule.id} | 优先级：${rule.action.priority} | 用户：${ctx.userName}`,
+        details: `rule: ${rule.id} | priority: ${rule.action.priority} | user: ${ctx.userName}`,
       });
     } catch { /* 不影响主流程 */ }
   }
 
-  /**
-   * 添加自定义规则。
-   */
   addRule(rule: ProactiveRule): void {
     this.rules.push(rule);
   }
 
-  /**
-   * 记录用户行为（用于模式检测）。
-   */
   recordAction(userId: string, action: string): void {
     const history = this.actionHistory.get(userId) || [];
     history.push(`[${new Date().toISOString()}] ${action}`);
-    // 只保留最近20条
-    this.actionHistory.set(userId, history.slice(-20));
+    this.actionHistory.set(userId, history.slice(-30));
   }
 
-  /**
-   * 检查并触发主动服务。
-   * 由定时器或事件驱动调用。
-   */
   async checkAndTrigger(ctx: ProactiveContext): Promise<ProactiveRule[]> {
     const triggered: ProactiveRule[] = [];
 
     for (const rule of this.rules) {
       if (!rule.enabled) continue;
 
-      // 检查最小间隔
       if (rule.lastTriggered) {
         const hoursSince = (Date.now() - new Date(rule.lastTriggered).getTime()) / (1000 * 60 * 60);
         if (hoursSince < rule.minIntervalHours) continue;
       }
 
-      // 检查防重复
       const triggerKey = `${ctx.userId}_${rule.id}`;
       if (this.triggeredToday.has(triggerKey)) continue;
 
-      // 检查条件
       if (rule.condition && !rule.condition(ctx)) continue;
 
-      // 匹配触发条件
-      if (this.matchTrigger(rule, ctx)) {
-        // 每日工作汇总：生成当日汇总内容替换 message
-        if (rule.id === 'daily_work_summary') {
-          try {
-            const logger = getWorkLogger();
-            const today = new Date().toISOString().split('T')[0];
-            const summary = await logger.generateDailySummary(today);
-            if (summary.totalActions === 0) {
-              continue; // 今天没有操作记录，不推送
-            }
-            rule.action.message = logger.formatDailySummaryForFeishu(summary);
-          } catch {
-            continue; // 生成汇总失败，跳过
-          }
-        }
+      if (!this.matchTrigger(rule, ctx)) continue;
 
-        // 明早日程提醒：读取本地日程，检查明早6-9点是否有安排
-        if (rule.id === 'tomorrow_early_schedule') {
-          try {
-            const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = tomorrow.toISOString().split('T')[0];
-            const schedules = ls(tomorrowStr);
-            const earlySchedules = schedules.filter((s) => {
-              const hour = parseInt(s.startAt.slice(11, 13), 10);
-              return hour >= 6 && hour <= 9;
-            });
-            if (earlySchedules.length === 0) {
-              continue;
-            }
-            const titles = earlySchedules.map((s) => {
-              const time = s.startAt.slice(11, 16);
-              return `${time} ${s.title}`;
-            }).join('；');
-            rule.action.message = `📅 明早日程提醒：${titles}。记得早做准备哦。`;
-          } catch {
-            continue;
-          }
-        }
-
-        // 晨间简报：读取今日本地日程，注入到消息中
-        if (rule.id === 'morning_briefing') {
-          try {
-            const { listLocalSchedules: ls } = await import('../tools/local-schedule.js');
-            const today = new Date().toISOString().split('T')[0];
-            const schedules = ls(today);
-            if (schedules.length > 0) {
-              const lines = schedules.map((s) => {
-                const time = s.startAt.slice(11, 16);
-                return `${time} ${s.title}`;
-              }).join('\n');
-              rule.action.message = `早上好！今日日程安排：\n${lines}\n祝你工作顺利！`;
-            } else {
-              rule.action.message = '早上好！今日暂无日程安排，祝你工作顺利！';
-            }
-          } catch {
-            // 读不到也没关系，用默认消息
-          }
-        }
-
-        triggered.push(rule);
-        rule.lastTriggered = new Date().toISOString();
-        this.triggeredToday.add(triggerKey);
+      // wisdom 类规则：动态生成消息
+      if (rule.trigger.type === 'wisdom' && rule.generateMessage) {
+        const dynamicMsg = await rule.generateMessage(ctx);
+        if (!dynamicMsg) continue; // 无内容不触发
+        rule.action.message = dynamicMsg;
       }
+      // cron/pattern 规则也可能有 generateMessage
+      if (rule.generateMessage) {
+        const dynamicMsg = await rule.generateMessage(ctx);
+        if (dynamicMsg) {
+          rule.action.message = dynamicMsg;
+        } else if (!rule.action.message) {
+          continue; // 没有预设消息也没有动态消息
+        }
+      }
+
+      triggered.push(rule);
+      rule.lastTriggered = new Date().toISOString();
+      this.triggeredToday.add(triggerKey);
     }
 
     return triggered;
   }
 
-  /**
-   * 触发事件驱动型规则。
-   */
   async onEvent(event: string, ctx: ProactiveContext): Promise<ProactiveRule[]> {
     const triggered: ProactiveRule[] = [];
-
     for (const rule of this.rules) {
       if (!rule.enabled) continue;
       if (rule.trigger.type !== 'event') continue;
       if (rule.trigger.event !== event) continue;
-
       if (rule.condition && !rule.condition(ctx)) continue;
 
       const triggerKey = `${ctx.userId}_${rule.id}_${event}`;
@@ -437,35 +581,22 @@ export class ProactiveService {
       triggered.push(rule);
       rule.lastTriggered = new Date().toISOString();
       this.triggeredToday.add(triggerKey);
-
-      // 执行：发飞书 + 记工作日志
       await this.executeAndLog(rule, ctx);
     }
-
     return triggered;
   }
 
-  /**
-   * 每日重置（清除防重复标记）。
-   */
   dailyReset(): void {
     this.triggeredToday.clear();
   }
 
-  /**
-   * 获取用户行为统计（用于报告）。
-   */
   getActionStats(userId: string): {
-    totalActions: number;
-    mostFrequent: string;
-    lastAction: string;
+    totalActions: number; mostFrequent: string; lastAction: string;
   } {
     const history = this.actionHistory.get(userId) || [];
     if (history.length === 0) {
       return { totalActions: 0, mostFrequent: 'none', lastAction: 'none' };
     }
-
-    // 统计最频繁的行为
     const actionCounts: Record<string, number> = {};
     for (const h of history) {
       const action = h.replace(/^\[[^\]]+\]\s*/, '').split(':')[0].trim();
@@ -473,7 +604,6 @@ export class ProactiveService {
     }
     const mostFrequent = Object.entries(actionCounts)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'none';
-
     return {
       totalActions: history.length,
       mostFrequent,
@@ -481,31 +611,23 @@ export class ProactiveService {
     };
   }
 
-  /** 检查是否匹配触发条件 */
   private matchTrigger(rule: ProactiveRule, ctx: ProactiveContext): boolean {
     switch (rule.trigger.type) {
       case 'cron': {
-        // 简化的 cron 匹配：检查当前时间是否匹配
-        // 实际实现可用 node-cron 库
         if (!rule.trigger.cron) return false;
         const now = new Date();
-        const day = now.getDay(); // 0=Sunday, 5=Friday
+        const day = now.getDay();
         const hour = now.getHours();
         const minute = now.getMinutes();
-
-        // 解析简化 cron: "M H * * D"
-        // D 支持: * / 1,3,5 / 1-5
         const parts = rule.trigger.cron.split(/\s+/);
         if (parts.length >= 5) {
           const cronMin = parseInt(parts[0]);
           const cronHour = parseInt(parts[1]);
           const cronDays = parseCronDays(parts[4]);
-
           return minute === cronMin && hour === cronHour && cronDays.includes(day);
         }
         return false;
       }
-
       case 'pattern': {
         if (rule.trigger.pattern === 'no_action_30min') {
           const history = this.actionHistory.get(ctx.userId) || [];
@@ -516,22 +638,17 @@ export class ProactiveService {
         }
         return false;
       }
-
+      case 'wisdom':
+        return true; // wisdom 规则始终尝试，由 generateMessage 决定是否产出
       case 'event':
-        // 事件驱动型由 onEvent 处理
         return false;
-
       default:
         return false;
     }
   }
 }
 
-/**
- * 全局单例。
- */
 let globalProactive: ProactiveService | null = null;
-
 export function getProactiveService(): ProactiveService {
   if (!globalProactive) {
     globalProactive = new ProactiveService();
@@ -539,9 +656,6 @@ export function getProactiveService(): ProactiveService {
   return globalProactive;
 }
 
-/**
- * 解析 cron 的 day-of-week 字段，支持: * / 1,3,5 / 1-5
- */
 function parseCronDays(field: string): number[] {
   if (field === '*') return [0, 1, 2, 3, 4, 5, 6];
   const days: number[] = [];
