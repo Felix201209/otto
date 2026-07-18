@@ -1126,10 +1126,15 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       new Set((templateOptions.match(/#[0-9a-f]{6}\b/gi) || []).map((color) => color.toUpperCase())),
     );
     const palettes = [
-      ['#183153', '#6E88A6', '#E4572E', '#F4F1EA', '#15202B'],
-      ['#174C3C', '#6D927F', '#E08A5B', '#F3F0E8', '#17322A'],
-      ['#4A3267', '#9B83B5', '#D85C41', '#F5F0E8', '#241C2D'],
-      ['#8A3A2B', '#C98572', '#276C73', '#F7F1E8', '#2C211D'],
+      ['#0F2940', '#3876A0', '#E8593D', '#FFFFFF', '#15202B'],
+      ['#1A3C2E', '#4D8C6E', '#D97C3B', '#FFFDFA', '#1C2F26'],
+      ['#3C1F5C', '#7B5EA7', '#C4483A', '#FEFCFD', '#1D1329'],
+      ['#7B2D1F', '#B8705E', '#225B5F', '#FFF8F5', '#201814'],
+
+      ['#F5F7FA', '#4A7FB5', '#D8452B', '#FFFFFF', '#1E293B'],
+      ['#FCFAF3', '#3C6E4F', '#C66231', '#FFFFFF', '#1E2620'],
+      ['#FAF8FC', '#6B4C8E', '#BE3D31', '#FFFFFF', '#1D1926'],
+      ['#FEF8F4', '#2D6B7A', '#B8422A', '#FFFFFF', '#1A1817'],
     ];
     const keywordPalette = /深色|dark|黑色/.test(descriptor)
       ? ['#1E1E1E', '#3D3D3D', '#00D9FF', '#121212', '#E0E0E0']
@@ -1148,9 +1153,18 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       (hash, character) => ((hash * 31) + character.codePointAt(0)!) >>> 0,
       7,
     );
-    const palette = explicitColors.length >= 5
-      ? explicitColors.slice(0, 5)
-      : keywordPalette || palettes[titleHash % palettes.length];
+    const prefersDark = /深色|dark|黑色|ink/.test(descriptor);
+    const prefersLight = /浅色|light|白色|明亮/.test(descriptor);
+    const palette =
+      explicitColors.length >= 5
+        ? explicitColors.slice(0, 5)
+        : keywordPalette
+          ? keywordPalette
+          : prefersDark
+            ? palettes[titleHash % 4]
+            : prefersLight
+              ? palettes[4 + (titleHash % 4)]
+              : palettes[4 + (titleHash % 4)];
     const [primary, secondary, accent, background, text] = palette;
     const coverBackground = this.contrastRatio(primary, '#FFFFFF') >= 4.5
       ? primary
