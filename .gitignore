@@ -1,107 +1,29 @@
-# API keys and secrets
-.env
-.env~
-.env.backup.*
-.gemini_security
-1
-# otto settings (runtime config + working dirs)
-# 用 .otto/* 而非 .otto/ 忽略运行时垃圾（clipboard、mcp-tmp、日志…），
-# 再用 !.otto/skills/ 把随产品分发的「企业专家」种子技能重新纳入版本控制。
-.otto/*
-!.otto/skills/
-.otto-user/
-.deepv/
-!otto/config.yaml
+# Rust
+/target/
+Cargo.lock
+*.pdb
 
-server/
-# but keep the new otto-server workspace package tracked (its dist/ + node_modules
-# are still ignored by the generic `dist` and `node_modules` rules below)
-!packages/server/
+# Node
+/node_modules/
+/dist/
+*.log
 
-# Dependency directory
-node_modules
-bower_components
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-vertex-server/
-.vs/
-# Editors
-.idea
-*.iml
-
-# OS metadata
+# OS
 .DS_Store
 Thumbs.db
 
-# TypeScript build info files
-*.tsbuildinfo
-.tsbuildinfo
-
-# Ignore built ts files
-dist
-
-# TypeScript编译产物（在源码目录中的）
-# 注意：只忽略与.ts/.tsx文件同名的编译产物
-packages/*/src/**/*.js
-packages/*/src/**/*.d.ts
-packages/*/src/**/*.js.map
-
-# TypeScript编译产物（包根目录下的配置文件编译产物）
-packages/*/vitest.setup.js
-packages/*/vitest.setup.d.ts
-packages/*/vitest.setup.js.map
-packages/*/vitest.config.js
-packages/*/vitest.config.d.ts
-packages/*/vitest.config.js.map
-packages/*/webview/vitest.config.js
-
-# 构建缓存文件
-.build-cache.json
-**/.build-cache.json
-
-# Docker folder to help skip auth refreshes
-.docker
-
-bundle
-
-# Test report files
-junit.xml
-packages/*/coverage/
-
-# Generated files
-packages/cli/src/generated/
-.integration-tests/
-packages/vscode-ide-companion/*.vsix
-
-.augment/
-.cursor/
-temp
-packages/vscode-ui-plugin/webview/build
-remote-client/build
-.ottocode
-.deepvcode
-.npmrc
-
-# Temporary backup during publish
-.publish-backup
-
 # Build artifacts
-*.tgz
+*.exe
+*.dll
+*.so
+*.dylib
 
-packages/cli/clipboard/
-
-# Debug exports (local diagnostics)
-debug_export_*.md
-probe-output.jsonl
-build_output.txt
-
-# LLM-generated wiki (local diagnostics)
-.llm-wiki/
-
-# Local runtime config & artifacts (per-project, never commit)
-.easycode/
-.easycode-bak/
-.easycode-user/
-
-# Next.js build output
-packages/web/.next/
-packages/web/out/
+# Test artifacts
+*.db
+*.tmp
