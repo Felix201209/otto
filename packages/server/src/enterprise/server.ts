@@ -83,6 +83,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/credits/redeem-codes',
   '/enterprise/credits/topup',
   '/enterprise/credits/transactions',
+  '/enterprise/organization/view',
 ]);
 
 interface RouteBody {
@@ -1314,6 +1315,34 @@ function makeHandler(
         const department = url.searchParams.get('department') || undefined;
         sendJSON(res, 200, {
           employees: db.listEmployees(department, adminPrincipal!.organizationId),
+        });
+        return;
+      }
+
+      // ===== Organization view (non-admin, any authenticated member) =====
+      if (path === '/enterprise/organization/view' && method === 'GET') {
+        const organizationId = memberAccount!.organizationId;
+        const org = db.getOrganization(organizationId);
+        const accounts = db.listAccounts(organizationId);
+        const employees = db.listEmployees(undefined, organizationId);
+        // Return non-sensitive info only
+        sendJSON(res, 200, {
+          organization: org ? {
+            id: org.id,
+            name: org.name,
+            status: org.status,
+            createdAt: org.createdAt,
+          } : null,
+          members: accounts.map((a) => ({
+            id: a.id,
+            username: a.username,
+            name: a.name,
+            role: a.role,
+            department: a.department,
+            isAdmin: a.isAdmin,
+            status: a.status,
+          })),
+          employeeCount: employees.length,
         });
         return;
       }
