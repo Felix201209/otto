@@ -541,7 +541,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     presentation.subject = documentTitle;
     presentation.title = documentTitle;
 
-    const theme = this.resolveSlideTheme(templateOptions, documentTitle);
+    const baseTheme = this.resolveSlideTheme(templateOptions, documentTitle);
 
     const sections = content
       .split(/^\s*---\s*$/m)
@@ -560,16 +560,19 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       const sec = sections[idx];
       const pgNum = String(idx + 1).padStart(2, '0');
 
+      // Per-slide theme: pick light/dark based on content
+      const slideTheme = this.pickSlideTheme(sec, idx, sections.length, baseTheme);
+
       // Native text slides: editable pptxgenjs objects (not pixel images)
       if (this.canUseNativeText(sec, idx, sections.length)) {
-        this.renderNativeSlide(presentation, sec, idx, sections.length, theme, pgNum);
+        this.renderNativeSlide(presentation, sec, idx, sections.length, slideTheme, pgNum);
         continue;
       }
 
       // Visual slides (cover, section, quote, images): HTML→PNG pipeline
       const htmlPath = path.join(tmpDir, 'slide-' + (idx + 1) + '.html');
       const imgPath = path.join(tmpDir, 'slide-' + (idx + 1) + '.png');
-      fs.writeFileSync(htmlPath, this.buildSlideHtml(sec, idx, sections.length, theme), 'utf8');
+      fs.writeFileSync(htmlPath, this.buildSlideHtml(sec, idx, sections.length, slideTheme), 'utf8');
       await this.htmlRenderer.render({ htmlPath, outputPath: imgPath, width: 1920, height: 1080, signal });
       const slide = presentation.addSlide();
       slide.addImage({ path: imgPath, altText: sec.title || documentTitle, x: 0, y: 0, w: 13.333, h: 7.5 });
@@ -591,6 +594,83 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     if (layout === 'quote' || layout === 'visual') return false;
     // Everything else benefits from native editable text
     return true;
+  }
+
+  /** Pick per-slide theme: dark for dramatic pages, light for readable data pages. */
+  private pickSlideTheme(
+    sec: ParsedSlideSection, index: number, total: number, base: SlideTheme,
+  ): SlideTheme {
+    const layout = sec.requestedLayout ?? this.inferSlideLayout(sec, index, total);
+    const body = sec.body.map((l) => l.trim()).filter(Boolean);
+    const visibleText = this.cleanInlineMarkdown(body.join(' ')).replace(/^[-*+>]\s+/gm, '').trim();
+    const desc = `${body.slice(0, 3).join(' ')} ${visibleText}`.toLowerCase();
+
+    const hasImg = body.some((l) => /^!\[[^\]]*\]\(.+\)$/.test(l));
+    const hasTable = body.some((l) => /^\|.+\|$/.test(l));
+    const hasBoldNums = /\*\*\d+[%％倍万亿]/.test(visibleText) || /\*\*[+-]?\d+\.?\d*/.test(visibleText);
+    const isDataHeavy = hasTable || hasBoldNums;
+    const isShortImpact = visibleText.length <= 80;
+
+    // User explicitly requested dark/light in template_options → full deck respects it
+    if (/深色|dark|ink/.test(desc) && !/浅色|light|明亮/.test(desc)) return this.makeDarkTheme(base);
+    if (/浅色|light|明亮/.test(desc) && !/深色|dark|ink/.test(desc)) return this.makeLightTheme(base);
+
+    // Per-slide intelligent pick
+    if (layout === 'cover' || layout === 'section') return this.makeDarkTheme(base);
+    if (layout === 'quote' || layout === 'visual') return this.makeDarkTheme(base);
+    if (layout === 'statement' && isShortImpact) return this.makeDarkTheme(base);
+    if (isDataHeavy) return this.makeLightTheme(base);
+    if (hasImg) return this.makeDarkTheme(base);
+    if (visibleText.length > 400) return this.makeLightTheme(base);
+    if (layout === 'timeline' || layout === 'list') return this.makeLightTheme(base);
+
+    return this.makeLightTheme(base);
+  }
+
+  /** Derive a dark variant: swap primary to be the cover background. */
+  private makeDarkTheme(base: SlideTheme): SlideTheme {
+    return {
+      ...base,
+      background: this.darkenColor(base.primary, 0.85),
+      text: '#E8EDF2',
+      surface: this.mixHexColors(base.primary, '#FFFFFF', 0.08),
+      muted: this.mixHexColors('#E8EDF2', this.darkenColor(base.primary, 0.85), 0.55),
+      coverBackground: base.primary,
+      coverText: this.contrastText(base.primary),
+      primary: this.mixHexColors(base.primary, '#FFFFFF', 0.15),
+      accent: base.accent,
+      secondary: base.secondary,
+    };
+  }
+
+  /** Derive a light variant: clean bright background. */
+  private makeLightTheme(base: SlideTheme): SlideTheme {
+    const bg = this.isNearBlack(base.primary) ? '#FFFFFF' : this.lightenColor(base.primary, 0.92);
+    const txt = this.contrastText(this.isNearBlack(base.primary) ? '#FFFFFF' : bg);
+    return {
+      ...base,
+      background: bg,
+      text: txt,
+      surface: this.mixHexColors(bg, txt, 0.06),
+      muted: this.mixHexColors(txt, bg, 0.45),
+      coverBackground: base.primary,
+      coverText: this.contrastText(base.primary),
+    };
+  }
+
+  private darkenColor(hex: string, factor: number): string {
+    const rgb = this.hexToRgb(hex);
+    return '#' + rgb.map((c) => Math.round(c * factor).toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  private lightenColor(hex: string, factor: number): string {
+    const rgb = this.hexToRgb(hex);
+    return '#' + rgb.map((c) => Math.round(c + (255 - c) * factor).toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  private isNearBlack(hex: string): boolean {
+    const rgb = this.hexToRgb(hex);
+    return rgb.reduce((s, c) => s + c, 0) < 80;
   }
 
   /** Render a text slide with native pptxgenjs objects (editable, searchable). */
