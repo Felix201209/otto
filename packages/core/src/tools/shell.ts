@@ -953,7 +953,8 @@ Reserve this tool for system commands and terminal operations that have no dedic
               console.log('[ShellTool] Background task completed:', task.id, 'exit code:', exitCode);
               taskManager.completeTask(task.id, {
                 exitCode: exitCode ?? undefined,
-                signal: sig ?? undefined
+                signal: sig ?? undefined,
+                error: sig ? `Process terminated by external signal: ${sig} (user may have cancelled it)` : undefined,
               });
             });
 
@@ -1027,6 +1028,11 @@ Reserve this tool for system commands and terminal operations that have no dedic
         }
     }
 
+    // 检测进程是否被外部信号终止（用户在外侧用 Ctrl+C 或 Task Manager 取消）
+    const wasExternallyKilled = processSignal !== null &&
+      !abortedSignal.aborted &&
+      !timedOut;
+
     let llmContent = '';
     if (abortedSignal.aborted) {
       if (timedOut) {
@@ -1044,6 +1050,17 @@ Reserve this tool for system commands and terminal operations that have no dedic
           llmContent += ' There was no output before it was cancelled.';
         }
       }
+    } else if (wasExternallyKilled) {
+      llmContent =
+        `⚠️ USER CANCELLED — The user cancelled this command from outside the tool (process received signal: ${processSignal}).\n\n` +
+        `Command: ${params.command}\n` +
+        `Directory: ${params.directory || '(root)'}\n` +
+        `Exit Code: ${code ?? '(none)'}\n` +
+        `Signal: ${processSignal}\n` +
+        `Process Group PGID: ${shell.pid ?? '(none)'}\n\n` +
+        (output.trim()
+          ? `Partial output captured before cancellation:\n${output}`
+          : 'No output was captured before the command was cancelled.');
     } else {
       llmContent = [
         `Command: ${params.command}`,
@@ -1077,6 +1094,13 @@ Reserve this tool for system commands and terminal operations that have no dedic
         } else {
           returnDisplayMessage = output;
         }
+
+        // 如果进程被外部信号终止，在输出前加上明确的取消提示
+        if (wasExternallyKilled) {
+          returnDisplayMessage =
+            '⚠️ Command was cancelled by user. Partial output:\n' +
+            returnDisplayMessage;
+        }
       } else {
         // Output is empty, let's provide a reason if the command failed or was cancelled
         if (abortedSignal.aborted) {
@@ -1086,7 +1110,15 @@ Reserve this tool for system commands and terminal operations that have no dedic
             returnDisplayMessage = 'Command cancelled by user.';
           }
         } else if (processSignal) {
-          returnDisplayMessage = `Command terminated by signal: ${processSignal}`;
+          // 被外部信号终止（用户在终端按了 Ctrl+C、用 Task Manager 杀进程等）
+          const signalNames: Record<string, string> = {
+            SIGINT: 'Ctrl+C (interrupt)',
+            SIGTERM: 'termination request',
+            SIGKILL: 'force kill',
+            SIGHUP: 'terminal closed',
+          };
+          const humanSignal = signalNames[processSignal] || `signal ${processSignal}`;
+          returnDisplayMessage = `Command cancelled by user (${humanSignal}).`;
         } else if (error) {
           // If error is not null, it's an Error object (or other truthy value)
           returnDisplayMessage = `Command failed: ${getErrorMessage(error)}`;
@@ -1240,6 +1272,7 @@ Reserve this tool for system commands and terminal operations that have no dedic
       taskManager.completeTask(task.id, {
         exitCode: exitCode ?? undefined,
         signal: signal ?? undefined,
+        error: signal ? `Process terminated by external signal: ${signal} (user may have cancelled it)` : undefined,
       });
 
       // 清理临时文件
