@@ -34,7 +34,7 @@ def resolve(meta):
         "body":_body(base),"muted":_muted(base),
         "light_tint":_blend(base,accent,0.08),"callout_bar":accent,
         "hr":_dark(_blend(base,accent,0.5),0.5),
-        "hdr_bg":base,"hdr_text":"FFFFFF","stripe":surface,
+        "hdr_bg":"F5F5F5","hdr_text":base,"stripe":surface,
         "h_font":meta.get("heading_font","Microsoft YaHei"),
         "b_font":meta.get("body_font","Microsoft YaHei"),
         "t_sz":int(meta.get("title_size","24")),"h1_sz":int(meta.get("h1_size","16")),
