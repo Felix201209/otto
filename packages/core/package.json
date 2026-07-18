@@ -10,6 +10,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "node ../../scripts/build_package.js",
+    "build:native": "cd rust-native && cargo build --release",
+    "build:native:win": "cd rust-native && cargo build --release --target x86_64-pc-windows-gnu",
+    "build:all": "npm run build:native && npm run build",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -19,7 +22,10 @@
   "files": [
     "dist",
     "scripts",
-    "skills-seed"
+    "skills-seed",
+    "bin",
+    "rust-native/src",
+    "rust-native/Cargo.toml"
   ],
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",

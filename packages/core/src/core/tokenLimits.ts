@@ -22,6 +22,7 @@
 
 import type { Config } from '../config/config.js';
 import { isCustomModel } from '../types/customModel.js';
+import { NativeTokenizer, isNativeAvailable } from '../native/index.js';
 
 type Model = string;
 type TokenCount = number;
@@ -46,6 +47,58 @@ const AUTO_MODE_CONFIG = {
  * 比 4K/8K 之类的小默认安全得多，避免触发频繁过早压缩。
  */
 const CUSTOM_MODEL_FALLBACK_MAX_TOKENS = 200_000;
+
+// Native tokenizer cache (one per model)
+const nativeTokenizers = new Map<string, NativeTokenizer>();
+
+/**
+ * 使用本地 Rust tokenizer 计算 token 数量（零延迟，离线可用）
+ * 如果 native 不可用，返回 null
+ */
+export async function countTokensLocal(text: string, model: string): Promise<number | null> {
+  if (!isNativeAvailable()) return null;
+  
+  let tokenizer = nativeTokenizers.get(model);
+  if (!tokenizer) {
+    // Map common model names to tiktoken model names
+    const tiktokenModel = mapToTiktokenModel(model);
+    tokenizer = new NativeTokenizer(tiktokenModel);
+    const ok = await tokenizer.init();
+    if (!ok) return null;
+    nativeTokenizers.set(model, tokenizer);
+  }
+  
+  return tokenizer.count(text);
+}
+
+/**
+ * 将 Otto 模型名映射到 tiktoken 支持的模型名
+ */
+function mapToTiktokenModel(model: string): string {
+  // Handle custom models
+  if (isCustomModel(model)) {
+    // Extract base model name from custom:provider:model@hash
+    const parts = model.split(':');
+    if (parts.length >= 3) {
+      const baseModel = parts[2].split('@')[0];
+      return mapToTiktokenModel(baseModel);
+    }
+    return 'gpt-4';
+  }
+  
+  // Map common model patterns
+  const lowerModel = model.toLowerCase();
+  if (lowerModel.includes('gpt-4o')) return 'gpt-4o';
+  if (lowerModel.includes('gpt-4')) return 'gpt-4';
+  if (lowerModel.includes('gpt-3.5')) return 'gpt-3.5-turbo';
+  if (lowerModel.includes('claude-3-opus')) return 'claude-3-opus-20240229';
+  if (lowerModel.includes('claude-3-sonnet')) return 'claude-3-sonnet-20240229';
+  if (lowerModel.includes('claude-3-haiku')) return 'claude-3-haiku-20240307';
+  if (lowerModel.includes('claude')) return 'claude-3-sonnet-20240229';
+  
+  // Default to gpt-4 tokenizer (most accurate for modern models)
+  return 'gpt-4';
+}
 
 /**
  * 从Config获取准确的Token限制。

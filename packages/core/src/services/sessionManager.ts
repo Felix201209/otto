@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
 import { getProjectTempDir } from '../utils/paths.js';
 import { getErrorMessage } from '../utils/errors.js';
+import { NativeSessionStore, NativeEncryptionStore, isNativeAvailable } from '../native/index.js';
 
 export interface SessionMetadata {
   sessionId: string;
@@ -61,12 +62,39 @@ export class SessionManager {
   private projectRoot: string;
   private sessionsDir: string;
   private indexPath: string;
+  
+  // Native storage (optional, for performance)
+  private nativeStore: NativeSessionStore | null = null;
+  private nativeEncryptionStore: NativeEncryptionStore | null = null;
+  private useNativeStorage: boolean = false;
 
-  constructor(projectRoot: string) {
+  constructor(projectRoot: string, options?: { useNativeStorage?: boolean; encryptionKey?: string }) {
     this.projectRoot = path.resolve(projectRoot);
     const projectTempDir = getProjectTempDir(this.projectRoot);
     this.sessionsDir = path.join(projectTempDir, 'sessions');
     this.indexPath = path.join(this.sessionsDir, 'index.json');
+    
+    // Initialize native storage if requested
+    if (options?.useNativeStorage && isNativeAvailable()) {
+      const nativeDbPath = path.join(this.sessionsDir, 'sessions.db');
+      this.nativeStore = new NativeSessionStore(nativeDbPath);
+      this.useNativeStorage = true;
+      
+      // Initialize encryption store if key provided
+      if (options.encryptionKey) {
+        const encDbPath = path.join(this.sessionsDir, 'encrypted.db');
+        this.nativeEncryptionStore = new NativeEncryptionStore(encDbPath, options.encryptionKey);
+      }
+      
+      console.log('[SessionManager] Using native Rust storage backend');
+    }
+  }
+  
+  /**
+   * Check if native storage is available and enabled
+   */
+  isUsingNativeStorage(): boolean {
+    return this.useNativeStorage && this.nativeStore !== null;
   }
 
   /**
@@ -910,6 +938,108 @@ export class SessionManager {
     } catch {
       // history文件不存在或无法读取，视为空session
       return true;
+    }
+  }
+
+  // ============ Native Storage Methods ============
+  
+  /**
+   * Save session to native storage (if enabled)
+   * This provides faster reads/writes with LRU caching
+   */
+  async saveToNativeStorage(sessionId: string, metadata: SessionMetadata, history: any[]): Promise<boolean> {
+    if (!this.nativeStore) return false;
+    
+    try {
+      const messages = history.map((item, idx) => ({
+        role: item.type === 'user' ? 'user' : 'assistant',
+        content: typeof item.text === 'string' ? item.text : JSON.stringify(item.text || ''),
+        timestamp: new Date().getTime() + idx,
+        metadata: item.type ? JSON.stringify({ type: item.type }) : undefined,
+      }));
+      
+      return await this.nativeStore.save(sessionId, metadata.title, messages);
+    } catch (err) {
+      console.warn('[SessionManager] Native save failed:', (err as Error).message);
+      return false;
+    }
+  }
+  
+  /**
+   * Load session from native storage (if enabled)
+   * Falls back to null if not available
+   */
+  async loadFromNativeStorage(sessionId: string): Promise<{ metadata: SessionMetadata; history: any[] } | null> {
+    if (!this.nativeStore) return null;
+    
+    try {
+      const data = await this.nativeStore.load(sessionId);
+      if (!data) return null;
+      
+      // Convert native format back to Otto format
+      const metadata: SessionMetadata = {
+        sessionId,
+        title: data.meta.title,
+        createdAt: new Date(data.meta.updated_at * 1000).toISOString(),
+        lastActiveAt: new Date(data.meta.updated_at * 1000).toISOString(),
+        messageCount: data.meta.message_count,
+        totalTokens: 0,
+        hasCheckpoint: false,
+      };
+      
+      const history = data.messages.map(msg => ({
+        type: msg.role === 'user' ? 'user' : 'model',
+        text: msg.content,
+      }));
+      
+      return { metadata, history };
+    } catch (err) {
+      console.warn('[SessionManager] Native load failed:', (err as Error).message);
+      return null;
+    }
+  }
+  
+  /**
+   * Save sensitive data to encrypted native storage
+   * Use for API keys, tokens, etc.
+   */
+  async saveEncrypted(key: string, data: string): Promise<boolean> {
+    if (!this.nativeEncryptionStore) return false;
+    
+    try {
+      return await this.nativeEncryptionStore.save(key, data);
+    } catch (err) {
+      console.warn('[SessionManager] Encrypted save failed:', (err as Error).message);
+      return false;
+    }
+  }
+  
+  /**
+   * Load sensitive data from encrypted native storage
+   */
+  async loadEncrypted(key: string): Promise<string | null> {
+    if (!this.nativeEncryptionStore) return null;
+    
+    try {
+      return await this.nativeEncryptionStore.load(key);
+    } catch (err) {
+      console.warn('[SessionManager] Encrypted load failed:', (err as Error).message);
+      return null;
+    }
+  }
+  
+  /**
+   * Get native storage statistics
+   */
+  async getNativeStorageStats(): Promise<{ sizeBytes: number; sessionCount: number } | null> {
+    if (!this.nativeStore) return null;
+    
+    try {
+      const sizeBytes = await this.nativeStore.sizeBytes();
+      const sessions = await this.nativeStore.list();
+      return { sizeBytes, sessionCount: sessions.length };
+    } catch {
+      return null;
     }
   }
 

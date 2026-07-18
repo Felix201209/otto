@@ -23,6 +23,7 @@ import { CompressionService } from '../services/compressionService.js';
 import { SceneManager, SceneType } from './sceneManager.js';
 import { t } from '../utils/simpleI18n.js';
 import { AgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
+import { NativeAgentPool, isNativeAvailable } from '../native/index.js';
 
 // ─── SubAgent 超时与内存保护常量 ───
 
@@ -37,6 +38,23 @@ const MAX_EXECUTION_LOG_ENTRIES = 200;
 
 /** SubAgent 整体执行的最大 wall-clock 时间（由 TaskTool 设置，此处仅作文档说明）。 */
 // const SUBAGENT_OVERALL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — enforced in TaskTool.execute()
+
+// Global agent pool for memory management (shared across all SubAgents)
+let globalAgentPool: NativeAgentPool | null = null;
+
+/**
+ * Get or create the global agent pool for memory management
+ */
+function getAgentPool(): NativeAgentPool | null {
+  if (!isNativeAvailable()) return null;
+  
+  if (!globalAgentPool) {
+    // Default: 256MB max, 10 concurrent agents
+    globalAgentPool = new NativeAgentPool(256, 10);
+  }
+  
+  return globalAgentPool;
+}
 
 export interface SubAgentExecutionContext {
   agentId: string;
@@ -110,6 +128,9 @@ export class SubAgent {
 
   // 🎯 AbortSignal监听器清理函数
   private abortListener: (() => void) | null = null;
+  
+  // Native agent pool tracking
+  private registeredInPool: boolean = false;
 
   /**
    * 检查AbortSignal状态，如果已被触发则抛出错误
@@ -156,6 +177,9 @@ export class SubAgent {
       compressionPreserveThreshold: 0.3, // 保留适中历史，确保任务连续性
       skipEnvironmentMessages: 2, // 只跳过真正的环境信息，任务描述是执行历史的一部分
     });
+    
+    // Register with native agent pool for memory management
+    this.registerWithAgentPool();
 
     // 创建子Agent执行上下文
     this.toolExecutionContext = {
@@ -182,6 +206,54 @@ export class SubAgent {
       approvalMode: this.config.getApprovalMode(),
       getPreferredEditor: () => undefined, // SubAgent通常不需要编辑器
     });
+  }
+
+  /**
+   * Register this SubAgent with the native agent pool for memory tracking
+   */
+  private async registerWithAgentPool(): Promise<void> {
+    const pool = getAgentPool();
+    if (!pool) return;
+    
+    // Estimate initial memory: ~10MB base + history overhead
+    const initialMemoryMb = 10;
+    const registered = await pool.register(this.context.agentId, initialMemoryMb);
+    
+    if (registered) {
+      this.registeredInPool = true;
+      this.log(`Registered with agent pool (initial: ${initialMemoryMb}MB)`);
+    }
+  }
+  
+  /**
+   * Update memory usage in the agent pool
+   */
+  private async updateAgentPoolMemory(): Promise<void> {
+    if (!this.registeredInPool) return;
+    
+    const pool = getAgentPool();
+    if (!pool) return;
+    
+    // Estimate current memory usage
+    // Base: 10MB + executionLog (avg 200 bytes per entry) + pendingToolResults
+    const logMemoryBytes = this.executionLog.length * 200;
+    const pendingMemoryBytes = this.pendingToolResults.length * 500; // estimate
+    const totalMemoryMb = 10 + (logMemoryBytes + pendingMemoryBytes) / (1024 * 1024);
+    
+    await pool.updateMemory(this.context.agentId, Math.ceil(totalMemoryMb));
+  }
+  
+  /**
+   * Unregister from the agent pool
+   */
+  private async unregisterFromAgentPool(): Promise<void> {
+    if (!this.registeredInPool) return;
+    
+    const pool = getAgentPool();
+    if (!pool) return;
+    
+    await pool.unregister(this.context.agentId);
+    this.registeredInPool = false;
   }
 
   /**
@@ -286,6 +358,9 @@ export class SubAgent {
         this.abortListener();
         this.abortListener = null;
       }
+      
+      // Unregister from agent pool
+      await this.unregisterFromAgentPool();
 
       // 简化：无需完成中央任务
 
@@ -925,6 +1000,9 @@ export class SubAgent {
       this.executionLog = this.executionLog.slice(-MAX_EXECUTION_LOG_ENTRIES);
     }
     console.log('[SubAgent] ' + formattedMessage);
+    
+    // Update agent pool memory tracking (async, non-blocking)
+    this.updateAgentPoolMemory().catch(() => {});
   }
 
   /**

@@ -105,3 +105,8 @@ build_output.txt
 # Next.js build output
 packages/web/.next/
 packages/web/out/
+
+# Rust build artifacts
+packages/core/rust-native/target/
+packages/core/bin/*.exe
+!packages/core/bin/.gitkeep
