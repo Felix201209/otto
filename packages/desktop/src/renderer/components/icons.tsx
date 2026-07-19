@@ -265,7 +265,7 @@ export function IconVideo({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
-/** 关闭 ✕（toast 关闭等）。 */
+/** 关闭图标（toast 关闭等）。 */
 export function IconClose({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className} strokeWidth={2}>

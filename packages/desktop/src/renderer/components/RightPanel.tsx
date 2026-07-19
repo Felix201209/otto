@@ -218,14 +218,14 @@ export function RightPanel({
                   type="button"
                   className="otto-expert-card"
                   onClick={openParkServices}
-                  title="访客邀约 · 会议室 · IT 报修 · 行政后勤 · 班车 · 餐饮"
+                  title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
                 >
                   <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
                     <IconBuilding size={17} />
                   </span>
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
-                    <span className="otto-expert-card__desc">访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮</span>
+                    <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
                   </span>
                 </button>
               </div>

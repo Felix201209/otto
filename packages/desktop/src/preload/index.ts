@@ -334,6 +334,7 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  /** 打开内置视频编辑器窗口。 */
   openVideoEditor(): Promise<{ ok: boolean }>;
   /**
    * host-only 命令：原生保存对话框 + 写文本文件（导出会话用）。

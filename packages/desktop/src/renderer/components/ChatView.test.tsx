@@ -69,6 +69,7 @@ function renderChat(onRegenerate = vi.fn()) {
       onSetModel={vi.fn()}
       onRegenerate={onRegenerate}
       onOpenSetup={vi.fn()}
+      onToggleAgents={vi.fn()}
       onNewChat={vi.fn()}
       onClearContext={vi.fn()}
     />,
@@ -88,6 +89,7 @@ describe('ChatView 重新生成携带消息 id', () => {
       onSetModel: vi.fn(),
       onRegenerate: vi.fn(),
       onOpenSetup: vi.fn(),
+      onToggleAgents: vi.fn(),
       onNewChat: vi.fn(),
       onClearContext: vi.fn(),
     };

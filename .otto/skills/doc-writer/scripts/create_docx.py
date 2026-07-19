@@ -184,7 +184,9 @@ class R:
         for w,sz in [(0.5,8),(0.2,2)]:
             pl=self.doc.add_paragraph(); pl.alignment=WD_ALIGN_PARAGRAPH.CENTER
             pl.paragraph_format.space_before=Pt(2); pl.paragraph_format.space_after=Pt(2)
-            # Use paragraph border
+            pl.paragraph_format.line_spacing=Pt(w*4)  # 最小行高防折叠
+            # 加一个极小空格，防止空段落边框在 Word 中折叠消失
+            r=pl.add_run(" "); r.font.size=Pt(1); r.font.color.rgb=RGBColor.from_string("FFFFFF")
             pPr=pl._element.get_or_add_pPr()
             pPr.append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="{sz}" w:space="1" w:color="{accent}"/></w:pBdr>'))
 
@@ -205,23 +207,59 @@ class R:
     def _bs(self):
         return self.doc.sections[1] if self._hc and len(self.doc.sections)>1 else self.doc.sections[0]
 
-    # ── TOC（零空行） ─────────────────────────────────────────────
-    def toc(self):
+    # ── TOC（纯静态目录） ──────────────────────────────────────
+    def toc(self, secs):
         if not self.t["toc"]: return
         p=self.doc.add_paragraph(); p.paragraph_format.space_after=Pt(4)
         self._rn(p.add_run("目  录"),name=self.t["h_font"],sz=Pt(self.t["h1_sz"]),color=self._c("base"),bold=True)
         pl=self.doc.add_paragraph()
         pl._element.get_or_add_pPr().append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="3" w:space="1" w:color="{self.t["accent"]}"/></w:pBdr>'))
-        ptoc=self.doc.add_paragraph()
-        ptoc.paragraph_format.space_after=Pt(2)
-        for tag in["begin",None,"separate",None,"end"]:
-            r=ptoc.add_run()
-            if tag=="begin": r._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>'))
-            elif tag=="end": r._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="end"/>'))
-            elif tag=="separate": r._element.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="separate"/>'))
-            else: r._element.append(parse_xml(f'<w:instrText {nsdecls("w")} xml:space="preserve"> TOC \\o "1-2" \\h \\z \\u </w:instrText>'))
-        rt=ptoc.add_run("（Word 中右键→更新域即可生成目录）")
-        self._rn(rt,sz=Pt(8),color=self._c("muted"),italic=True)
+
+        # 收集所有条目：chapter → (level, text)
+        entries = []
+        for sec in secs:
+            h = sec.get("heading","")
+            if h: entries.append((1, h))
+            for blk in sec.get("blocks",[]):
+                if blk["t"] == "sub":
+                    lvl = min(blk.get("lvl", 2), 3)
+                    entries.append((lvl, blk["text"]))
+
+        if entries:
+            tab_pos = 8510
+            tab_xml = f'<w:tabs {nsdecls("w")}><w:tab w:val="right" w:leader="dot" w:pos="{tab_pos}"/></w:tabs>'
+            accent_c = self._c("accent")
+            body_c   = self._c("body")
+
+            for lvl, text in entries:
+                pe = self.doc.add_paragraph()
+                pe.paragraph_format.space_before  = Pt(3 if lvl == 1 else 0)
+                pe.paragraph_format.space_after   = Pt(3 if lvl == 1 else 0)
+                pe.paragraph_format.line_spacing  = Pt(15 if lvl == 1 else 13)
+
+                if   lvl == 2: pe.paragraph_format.left_indent = Cm(0.6)
+                elif lvl >= 3: pe.paragraph_format.left_indent = Cm(1.2)
+
+                pPr = pe._element.get_or_add_pPr()
+                for old_tabs in pPr.findall(qn("w:tabs")): pPr.remove(old_tabs)
+                pPr.append(parse_xml(tab_xml))
+
+                # 前导文字 + <w:tab/> → dot leader 自动填满至右边界
+                if lvl == 1:
+                    idx = sum(1 for e in entries[:entries.index((lvl, text))] if e[0]==1) + 1
+                    label = f"{idx}.  {text}"
+                    self._rn(pe.add_run(label), name=self.t["h_font"],
+                             sz=Pt(self.t["b_sz"] + 1), color=accent_c, bold=True)
+                elif lvl == 2:
+                    self._rn(pe.add_run(text), name=self.t["h_font"],
+                             sz=Pt(self.t["b_sz"]), color=body_c, bold=False)
+                else:
+                    self._rn(pe.add_run(text), name=self.t["h_font"],
+                             sz=Pt(self.t["b_sz"] - 1), color=self._c("muted"), bold=False)
+                # 制表符（触发右对齐 dot leader）
+                rt = pe.add_run()
+                rt._element.append(parse_xml(f'<w:tab {nsdecls("w")}/>'))
+
         self.doc.add_page_break()
 
     # ── 章节 ──────────────────────────────────────────────────
@@ -332,7 +370,7 @@ class R:
                 self._rn(p.add_run(title),name=self.t["h_font"],sz=Pt(self.t["t_sz"]),color=self._c("base"),bold=True)
                 pl=self.doc.add_paragraph(); pl.alignment=WD_ALIGN_PARAGRAPH.CENTER
                 pl._element.get_or_add_pPr().append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="3" w:space="1" w:color="{self.t["accent"]}"/></w:pBdr>'))
-        self.toc()
+        self.toc(secs)
         for sec in secs:
             if sec.get("heading"): self.chapter(sec["heading"],sec.get("layout","narrative"))
             for blk in sec.get("blocks",[]):
