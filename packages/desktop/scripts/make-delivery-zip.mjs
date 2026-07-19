@@ -72,6 +72,8 @@ const ARGS = process.argv.slice(2);
 const SHOULD_BUILD = ARGS.includes('--build');
 const SHOULD_PUBLISH = ARGS.includes('--publish');
 const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -273,33 +275,33 @@ async function build(sourceCommit) {
 
   // desktop 通过 file:../server 读取 otto-server/dist。必须先从当前 HEAD
   // 重建 server（tsc -b 会同步 project reference），禁止把旧 dist 打进新版本。
-  execFileSync('npm', ['run', 'build', '--workspace=packages/server'], {
+  execFileSync(NPM_BIN, ['run', 'build', '--workspace=packages/server'], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
   });
   log('BUILD', 'otto-server 当前源码构建完成');
 
   // 构建 renderer + main + preload
-  execFileSync('npm', ['run', 'build'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
+  execFileSync(NPM_BIN, ['run', 'build'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
   log('BUILD', 'TypeScript + Webpack 编译完成');
 
   // mac: arm64 + x64
   log('BUILD', '构建 Mac arm64...');
   runBuildStep(
-    'npx',
+    NPX_BIN,
     ['electron-builder', '--mac', 'dmg', '--arm64'],
     'mac-arm64',
   );
 
   log('BUILD', '构建 Mac x64...');
   runBuildStep(
-    'npx',
+    NPX_BIN,
     ['electron-builder', '--mac', 'dmg', '--x64'],
     'mac',
   );
 
   log('BUILD', '构建 Windows x64...');
-  runBuildStep('npm', ['run', 'dist:win'], 'win-unpacked');
+  runBuildStep(NPM_BIN, ['run', 'dist:win'], 'win-unpacked');
 
   // 构建可能持续数十分钟；不能把期间被修改或切换过的工作树标成开工时的 SHA。
   assertSourceStateUnchanged(sourceCommit, { phase: '安装包构建' });
