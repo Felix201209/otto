@@ -289,7 +289,7 @@ export function RightPanel({
             <div className="otto-auto-skill">
               <div className="otto-auto-skill__head">
                 <div><strong>自动 Skill 候选</strong><span>重复流程先由你确认，再生成</span></div>
-                <button type="button" onClick={onRefreshAutoSkills}>刷新</button>
+                <button type="button" onClick={onRefreshAutoSkills}>立即分析</button>
               </div>
               {autoSkillLastAction?.kind === 'confirmed' ? (
                 <div className="otto-auto-skill__success">
@@ -297,7 +297,7 @@ export function RightPanel({
                 </div>
               ) : null}
               {autoSkillCandidates.length === 0 ? (
-                <div className="otto-auto-skill__empty">暂无候选。Otto 会在同一流程跨天重复至少 3 次后提出建议。</div>
+                <div className="otto-auto-skill__empty">暂无候选。点击“立即分析”会扫描最近工作日志；同一流程跨天重复至少 3 次后会进入这里。</div>
               ) : autoSkillCandidates.map((candidate) => (
                 <article key={candidate.id} className="otto-auto-skill__candidate">
                   <strong>{candidate.name}</strong>
