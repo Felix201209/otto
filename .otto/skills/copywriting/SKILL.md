@@ -60,10 +60,22 @@ description: 品牌营销文案引擎。把产品、受众、渠道、品牌语�
 
 ### Step 2：生成物料
 
-使用脚本生成多格式交付：
+使用脚本生成多格式交付。普通 `use_skill` 流程优先使用 Otto 展示的
+`copywriting` Skill 绝对目录；内置专家的默认安装目录是
+`~/.otto-user/skills/copywriting`。
+
+macOS / Linux：
 
 ```bash
-python .otto/skills/copywriting/scripts/create_copy.py config.json output.html
+COPYWRITING_SKILL_DIR="$HOME/.otto-user/skills/copywriting"
+python3 "$COPYWRITING_SKILL_DIR/scripts/create_copy.py" config.json output/copy.html
+```
+
+Windows PowerShell：
+
+```powershell
+$CopywritingSkillDir = Join-Path $HOME ".otto-user\skills\copywriting"
+py -3 "$CopywritingSkillDir\scripts\create_copy.py" config.json output\copy.html
 ```
 
 自动产出：

@@ -76,6 +76,12 @@ describe('内置 skill 安全刷新', () => {
       'old-skill-md-hash',
       'old-skill-md-hash',
     )).toBe(true);
+    expect(shouldRefreshBuiltinSkill(
+      'copywriting',
+      'previous-managed-seed-hash',
+      'new-seed-dir-hash',
+      'previous-managed-seed-hash',
+    )).toBe(true);
   });
 
   it('不会覆盖用户改过的 skill，也不会重复刷新同一版本', () => {
@@ -96,6 +102,12 @@ describe('内置 skill 安全刷新', () => {
       'new-seed-dir-hash',
       'old-skill-md-hash',
       'old-skill-md-hash',
+    )).toBe(false);
+    expect(shouldRefreshBuiltinSkill(
+      'copywriting',
+      'user-customized-dir-hash',
+      'new-seed-dir-hash',
+      'previous-managed-seed-hash',
     )).toBe(false);
   });
 });

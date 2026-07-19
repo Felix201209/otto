@@ -21,19 +21,42 @@ description: 数据可视化专家。用户要做图表、可视化、趋势图�
 
 当用户上传或指定 CSV、TSV、XLS、XLSX 文件时，按这个顺序执行：
 
-1. 使用自动分析脚本读取数据：
+普通 `use_skill` 流程优先使用 Otto 展示的实际目录；内置 Skill 的默认安装目录是
+`~/.otto-user/skills/data-viz-pro`。下面先把它记为变量，避免写死某个用户名。
+
+1. 首次使用先安装依赖。macOS / Linux：
 
 ```bash
-python .otto/skills/data-viz-pro/scripts/analyze_data.py <数据文件> <输出目录>
+DATA_VIZ_SKILL_DIR="$HOME/.otto-user/skills/data-viz-pro"
+python3 -m pip install -r "$DATA_VIZ_SKILL_DIR/requirements.txt"
 ```
 
-2. 阅读输出目录中的：
+Windows：
+
+```powershell
+$DataVizSkillDir = Join-Path $HOME ".otto-user\skills\data-viz-pro"
+py -3 -m pip install -r "$DataVizSkillDir\requirements.txt"
+```
+
+2. 使用自动分析脚本读取数据。macOS / Linux：
+
+```bash
+python3 "$DATA_VIZ_SKILL_DIR/scripts/analyze_data.py" <数据文件> <输出目录>
+```
+
+Windows：
+
+```powershell
+py -3 "$DataVizSkillDir\scripts\analyze_data.py" <数据文件> <输出目录>
+```
+
+3. 阅读输出目录中的：
 
 - `profile.json`：字段类型、行列数、缺失值、数值摘要。
 - `analysis_report.md`：关键发现和推荐图表。
 - `manifest.json`：推荐图表配置文件列表。
 
-3. 给用户提供选项，而不是让用户自己想：
+4. 给用户提供选项，而不是让用户自己想：
 
 ```text
 我看完数据后，建议先做这几张图：
@@ -45,10 +68,17 @@ python .otto/skills/data-viz-pro/scripts/analyze_data.py <数据文件> <输出�
 你可以直接选 1/2/3，或让我全部生成。
 ```
 
-4. 如果用户要求直接生成，或需求很明确，使用渲染脚本：
+5. 如果用户要求直接生成，或需求很明确，使用渲染脚本。
+   macOS / Linux：
 
 ```bash
-python .otto/skills/data-viz-pro/scripts/create_chart.py <chart_config.json> <output.png>
+python3 "$DATA_VIZ_SKILL_DIR/scripts/create_chart.py" <chart_config.json> <output.png>
+```
+
+Windows：
+
+```powershell
+py -3 "$DataVizSkillDir\scripts\create_chart.py" <chart_config.json> <output.png>
 ```
 
 渲染会同时输出：
@@ -59,7 +89,13 @@ python .otto/skills/data-viz-pro/scripts/create_chart.py <chart_config.json> <ou
 也可以让自动分析脚本直接渲染：
 
 ```bash
-python .otto/skills/data-viz-pro/scripts/analyze_data.py <数据文件> <输出目录> --render
+python3 "$DATA_VIZ_SKILL_DIR/scripts/analyze_data.py" <数据文件> <输出目录> --render
+```
+
+Windows：
+
+```powershell
+py -3 "$DataVizSkillDir\scripts\analyze_data.py" <数据文件> <输出目录> --render
 ```
 
 ## 图表选择规则
@@ -160,4 +196,9 @@ python .otto/skills/data-viz-pro/scripts/analyze_data.py <数据文件> <输出�
 
 ## 重要提醒
 
-不要把临时分析文件放进正式代码提交，除非用户明确要求。默认输出到任务临时目录、用户指定目录，或 `.otto/skills/data-viz-pro/output/`。
+- 单次自动分析最多读取 200,000 行、100 MB；更大的数据先筛选或聚合。
+- 单张图最多 20,000 个数据点、50 个系列、500 个类别；超限时脚本会明确失败，不会静默截断用户提供的 JSON。
+- 画布单边不超过 24 英寸、面积不超过 300 平方英寸，有效 DPI 不超过 600。
+- `--render` 只有在 PNG 和 SVG 都真实存在且非空时才写入 manifest；渲染失败会非零退出。
+
+不要把临时分析文件放进正式代码提交，除非用户明确要求。默认输出到任务临时目录、用户指定目录，或该 Skill 的 `output/`。

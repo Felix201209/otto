@@ -76,8 +76,22 @@ description: 市场竞品分析与行业研究引擎。把行业、竞品、目�
 
 ## 脚本生成
 
+安装版 Otto 会把本 Skill 放在用户目录 `~/.otto-user/skills/market-research`。
+先确认 Python 3 可用，再从安装后的 Skill 目录运行脚本；不要使用仓库内的开发路径。
+
+macOS / Linux：
+
 ```bash
-python .otto/skills/market-research/scripts/create_research.py config.json output.html
+python3 --version
+python3 "$HOME/.otto-user/skills/market-research/scripts/create_research.py" config.json output.html
+```
+
+Windows PowerShell：
+
+```powershell
+py -3 --version
+$SkillScript = Join-Path $HOME ".otto-user\skills\market-research\scripts\create_research.py"
+py -3 $SkillScript config.json output.html
 ```
 
 自动产出：
