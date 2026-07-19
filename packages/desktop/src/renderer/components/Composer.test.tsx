@@ -123,6 +123,41 @@ describe('PPT 专家内置入口', () => {
     );
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it('/pdf 和 /excel 也直接新建绑定专家 profile 的会话', () => {
+    const onSend = vi.fn();
+    const onLaunchAgentProfile = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+        onLaunchAgentProfile={onLaunchAgentProfile}
+      />,
+    );
+    const textarea = document.querySelector(
+      '.otto-composer__textarea',
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(textarea, { target: { value: '/pdf' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    fireEvent.change(textarea, { target: { value: '/excel' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    expect(onLaunchAgentProfile).toHaveBeenNthCalledWith(
+      1,
+      'pdf',
+      'PDF 处理专家',
+    );
+    expect(onLaunchAgentProfile).toHaveBeenNthCalledWith(
+      2,
+      'sheet',
+      'Excel 数据表格专家',
+    );
+    expect(onSend).not.toHaveBeenCalled();
+  });
 });
 
 describe('模型菜单搜索框显隐（阈值 8）', () => {

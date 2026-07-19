@@ -65,6 +65,29 @@ describe('服务端 Agent profile 白名单', () => {
     expect(docPrompt).toContain('不要让用户打一大段需求');
   });
 
+  it('基础 Otto 与 PDF/Excel 专家也会用选项式问题引导办公文档任务', () => {
+    const basePrompt = resolveAgentProfile('otto-personal')?.systemPrompt ?? '';
+    expect(basePrompt).toContain('办公文档傻瓜式引导');
+    expect(basePrompt).toContain('PPT、Word、PDF、Excel');
+    expect(basePrompt).toContain('ask_user_question');
+
+    const workPrompt = resolveAgentProfile('otto-enterprise-work')?.systemPrompt ?? '';
+    expect(workPrompt).toContain('办公文档傻瓜式引导');
+    expect(workPrompt).toContain('Excel 至少询问');
+
+    const sheetPrompt = resolveAgentProfile('sheet')?.systemPrompt ?? '';
+    expect(sheetPrompt).toContain('ask_user_question');
+    expect(sheetPrompt).toContain('任务类型');
+    expect(sheetPrompt).toContain('数据清洗与汇总');
+    expect(sheetPrompt).toContain('可编辑 XLSX');
+
+    const pdfPrompt = resolveAgentProfile('pdf')?.systemPrompt ?? '';
+    expect(pdfPrompt).toContain('ask_user_question');
+    expect(pdfPrompt).toContain('操作类型');
+    expect(pdfPrompt).toContain('生成排版 PDF');
+    expect(pdfPrompt).toContain('PDF 成品');
+  });
+
   it('Word/Excel/PDF 专家也强制注入内置 Skill 并拥有专属工作流', () => {
     const doc = resolveAgentProfile('doc');
     expect(doc?.embeddedSkills).toEqual(['doc-writer']);

@@ -32,7 +32,8 @@ async function transcribeOpenAI(audio: Uint8Array, mimeType: string, cfg: Loaded
   const { public: p, secrets: s } = cfg;
   if (!s.asrApiKey) throw new Error('请先配置语音识别 API Key');
   const form = new FormData();
-  form.append('file', new Blob([audio], { type: mimeType }), mimeType.includes('wav') ? 'speech.wav' : 'speech.webm');
+  const fileBytes = new Uint8Array(audio);
+  form.append('file', new Blob([fileBytes], { type: mimeType }), mimeType.includes('wav') ? 'speech.wav' : 'speech.webm');
   form.append('model', p.asrModel);
   const response = await fetcher(p.asrEndpoint, { method: 'POST', headers: { Authorization: `Bearer ${s.asrApiKey}` }, body: form });
   const json = await response.json() as { text?: string; error?: { message?: string } };

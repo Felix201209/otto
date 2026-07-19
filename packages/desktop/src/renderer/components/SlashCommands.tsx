@@ -60,7 +60,10 @@ export function filterCommands(
 ): SlashCommand[] {
   const q = query.trim().toLowerCase();
   if (q === '') return [...commands];
-  return commands.filter((c) => c.id.toLowerCase().startsWith(q));
+  const matches = commands.filter((c) => c.id.toLowerCase().startsWith(q));
+  const exact = matches.findIndex((c) => c.id.toLowerCase() === q);
+  if (exact <= 0) return matches;
+  return [matches[exact], ...matches.slice(0, exact), ...matches.slice(exact + 1)];
 }
 
 /**

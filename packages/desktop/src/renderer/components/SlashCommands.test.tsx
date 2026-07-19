@@ -47,6 +47,18 @@ describe('filterCommands', () => {
     expect(filterCommands(CMDS, 'S').map((c) => c.id)).toEqual(['settings']);
   });
 
+  it('精确命令优先于更长的前缀命令', () => {
+    const commands: SlashCommand[] = [
+      { id: 'doctor', description: '依赖体检' },
+      { id: 'doc', description: '文档写作专家' },
+    ];
+
+    expect(filterCommands(commands, 'doc').map((c) => c.id)).toEqual([
+      'doc',
+      'doctor',
+    ]);
+  });
+
   it('无匹配返回空数组', () => {
     expect(filterCommands(CMDS, 'zzz')).toEqual([]);
   });

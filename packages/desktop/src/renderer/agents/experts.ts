@@ -55,7 +55,7 @@ export const EXPERTS: readonly Expert[] = [
     accent: '#7C3AED',
     skills: ['ppt-creator'],
     kickoff:
-      '我要做一份炫酷、高冲击的 PPT。请先用 use_skill 加载 `ppt-creator`，不要套通用模板；然后一次性问我：主题、受众、时长、素材和风格偏好。',
+      '我要做一份炫酷、高冲击的 PPT。请先用 use_skill 加载 `ppt-creator`，不要套通用模板；然后用可点击选项一次性让我确认视觉风格、使用场景、页数深度、叙事节奏/画幅，不要让我打一大段需求。',
   },
   {
     id: 'meeting',
@@ -75,7 +75,7 @@ export const EXPERTS: readonly Expert[] = [
     accent: '#38bdf8',
     skills: ['doc-writer'],
     kickoff:
-      '我要写一份正式文档（报告/方案/公文）。请先用 use_skill 加载 `doc-writer` 技能，按它的结构与措辞规范来写。先问我：文档类型、用途与读者、需要覆盖的要点，以及篇幅要求。',
+      '我要写一份正式文档（报告/方案/公文）。请先用 use_skill 加载 `doc-writer` 技能，按它的结构与措辞规范来写。然后用可点击选项一次性让我确认文档类型、读者对象、排版风格和篇幅，不要让我打一大段需求。',
   },
   {
     id: 'sheet',
@@ -85,7 +85,7 @@ export const EXPERTS: readonly Expert[] = [
     accent: '#38bdf8',
     skills: ['spreadsheet-pro'],
     kickoff:
-      '我要处理一份表格数据。请先用 use_skill 加载 `spreadsheet-pro` 技能，帮我做建模、公式、数据透视或清洗分析。先问我：数据长什么样（字段/示例）、我想得到什么结果，以及目标是 Excel 还是 CSV。',
+      '我要处理一份表格数据。请先用 use_skill 加载 `spreadsheet-pro` 技能，帮我做建模、公式、数据透视或清洗分析。然后用可点击选项一次性让我确认任务类型、数据来源、分析深度和交付形态，不要让我打一大段需求。',
   },
   {
     id: 'pdf',
@@ -95,7 +95,7 @@ export const EXPERTS: readonly Expert[] = [
     accent: '#38bdf8',
     skills: ['pdf-toolkit'],
     kickoff:
-      '我要处理 PDF 文档。请先用 use_skill 加载 `pdf-toolkit` 技能，帮我完成合并/拆分/提取文字/内容摘要/填表等操作。先问我：手上的 PDF 是什么、具体想做哪一类处理，以及期望的输出形式。',
+      '我要处理 PDF 文档。请先用 use_skill 加载 `pdf-toolkit` 技能，帮我完成生成/合并/拆分/提取文字/内容摘要/填表等操作。然后用可点击选项一次性让我确认操作类型、输出用途、处理强度和交付格式，不要让我打一大段需求。',
   },
   {
     id: 'dataviz',

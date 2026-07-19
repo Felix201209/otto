@@ -13,8 +13,8 @@ import { describe, it, expect } from 'vitest';
 import { EXPERTS } from './experts.js';
 
 describe('企业专家目录', () => {
-  it('恰好 9 位专家', () => {
-    expect(EXPERTS).toHaveLength(9);
+  it('恰好 8 位专家', () => {
+    expect(EXPERTS).toHaveLength(8);
   });
 
   it('id 唯一、头像 emoji 唯一', () => {
@@ -50,7 +50,7 @@ describe('企业专家目录', () => {
         expect(e.kickoff).toContain(s);
       }
       // 开场消息应显式要求加载技能。
-      expect(e.kickoff).toContain('use_skill');
+      expect(e.kickoff).toContain('加载');
     }
   });
 
@@ -59,5 +59,13 @@ describe('企业专家目录', () => {
     expect(ppt?.tagline).toContain('炫酷');
     expect(ppt?.kickoff).toContain('高冲击');
     expect(ppt?.kickoff).toContain('不要套通用模板');
+  });
+
+  it('PPT/Word/PDF/Excel 开场消息要求用可点击选项降低输入成本', () => {
+    for (const id of ['ppt', 'doc', 'sheet', 'pdf']) {
+      const expert = EXPERTS.find((item) => item.id === id);
+      expect(expert?.kickoff).toContain('可点击选项');
+      expect(expert?.kickoff).toContain('不要让我打一大段需求');
+    }
   });
 });
