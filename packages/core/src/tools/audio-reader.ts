@@ -396,14 +396,23 @@ async function transcribeWithLocalBridge(filePath: string): Promise<string | nul
   const scriptPath = path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
   if (!fs.existsSync(scriptPath)) return null;
 
-  const pyCommands = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+  const pyCommands = process.platform === 'win32'
+    ? [
+        { command: 'python', prefixArgs: [] },
+        { command: 'py', prefixArgs: ['-3'] },
+        { command: 'python3', prefixArgs: [] },
+      ]
+    : [
+        { command: 'python3', prefixArgs: [] },
+        { command: 'python', prefixArgs: [] },
+      ];
   for (const py of pyCommands) {
     try {
       const result = await execFileAsync(
-        py,
-        [scriptPath, '--input-file', filePath, '--transcribe-only'],
+        py.command,
+        [...py.prefixArgs, scriptPath, '--input-file', filePath, '--transcribe-only'],
         {
-          timeout: 120_000,
+          timeout: 360_000,
           maxBuffer: 5 * 1024 * 1024,
           windowsHide: true,
         },

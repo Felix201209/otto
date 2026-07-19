@@ -7,6 +7,8 @@
 
 import path from 'path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   BaseTool,
   ToolResult,
@@ -17,10 +19,10 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
 import { DoctorService, DoctorReport } from '../services/doctor.js';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 export interface VoiceBridgeToolParams {
   action: 'listen' | 'listen_raw' | 'listen_long';
@@ -145,45 +147,62 @@ REQUIREMENTS:
     const duration = p.duration || (p.action === 'listen_long' ? 60 : 10);
     const mode = p.action === 'listen_raw' ? 'raw' : 'polished';
 
-    try {
+    const pyCommands = process.platform === 'win32'
+      ? [
+          { command: 'python', prefixArgs: [] },
+          { command: 'py', prefixArgs: ['-3'] },
+          { command: 'python3', prefixArgs: [] },
+        ]
+      : [
+          { command: 'python3', prefixArgs: [] },
+          { command: 'python', prefixArgs: [] },
+        ];
+    let lastError = '';
+
+    for (const py of pyCommands) {
       const scriptPath = path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
-      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-      const cmd = `${pyCmd} "${scriptPath}" --duration ${duration} --mode ${mode}`;
+      try {
+        const result = await execFileAsync(
+          py.command,
+          [...py.prefixArgs, scriptPath, '--duration', String(duration), '--mode', mode],
+          {
+            timeout: duration * 1000 + 360_000,
+            maxBuffer: 5 * 1024 * 1024,
+            windowsHide: true,
+          },
+        );
 
-      const result = await ProcessGuard.exec({
-        command: cmd,
-        timeoutMs: duration * 1000 + 30000,
-        maxBuffer: 5 * 1024 * 1024,
-      });
+        const text = result.stdout.trim();
+        if (!text) {
+          return {
+            llmContent:
+              `voice_bridge NO SPEECH DETECTED\n\n` +
+              `Otto recorded audio but did not receive usable speech text.\n` +
+              `Try again closer to the microphone, increase duration, or check microphone permissions.`,
+            returnDisplay: 'voice_bridge NO SPEECH DETECTED',
+          };
+        }
 
-      const text = result.stdout.trim();
-      if (!text) {
         return {
-          llmContent:
-            `voice_bridge NO SPEECH DETECTED\n\n` +
-            `Otto recorded audio but did not receive usable speech text.\n` +
-            `Try again closer to the microphone, increase duration, or check microphone permissions.`,
-          returnDisplay: 'voice_bridge NO SPEECH DETECTED',
+          llmContent: 'voice_bridge OK: ' + text,
+          returnDisplay: 'voice_bridge OK: ' + text.substring(0, 100),
         };
+      } catch (e: unknown) {
+        lastError = e instanceof Error ? e.message : String(e);
       }
-
-      return {
-        llmContent: 'voice_bridge OK: ' + text,
-        returnDisplay: 'voice_bridge OK: ' + text.substring(0, 100),
-      };
-    } catch (e: unknown) {
-      const m = e instanceof Error ? e.message : String(e);
-      return {
-        llmContent:
-          `voice_bridge FAILED\n\n` +
-          `Reason: ${m}\n\n` +
-          `How to fix:\n` +
-          `- Check microphone permission for Otto or the terminal.\n` +
-          `- Install ffmpeg for recording and audio decoding.\n` +
-          `- Install local Whisper with: pip install -U openai-whisper\n` +
-          `- If the computer is slow, set OTTO_WHISPER_MODEL=small and retry.`,
-        returnDisplay: 'voice_bridge FAILED: ' + m,
-      };
     }
+
+    return {
+      llmContent:
+        `voice_bridge FAILED\n\n` +
+        `Reason: ${lastError || 'No Python command could run the voice bridge.'}\n\n` +
+        `How to fix:\n` +
+        `- Install Python 3 and make sure python, py -3, or python3 works in the terminal.\n` +
+        `- Check microphone permission for Otto or the terminal.\n` +
+        `- Install ffmpeg for recording and audio decoding.\n` +
+        `- Install local Whisper with: pip install -U openai-whisper\n` +
+        `- If the computer is slow, set OTTO_WHISPER_MODEL=small and retry.`,
+      returnDisplay: 'voice_bridge FAILED: ' + (lastError || 'Python unavailable'),
+    };
   }
 }
