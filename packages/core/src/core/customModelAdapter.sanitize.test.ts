@@ -237,6 +237,73 @@ describe('customModelAdapter > callCustomModel sanitize 末梢防线', () => {
   });
 });
 
+describe('customModelAdapter > OpenAI tool message final guard', () => {
+  let originalFetch: typeof globalThis.fetch | undefined;
+  let sanitizeSpy: any;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    sanitizeSpy = vi.spyOn(OttoChat, 'sanitizeRequestContents').mockImplementation((contents) => contents);
+  });
+
+  afterEach(() => {
+    sanitizeSpy.mockRestore();
+    if (originalFetch) globalThis.fetch = originalFetch;
+    else delete (globalThis as any).fetch;
+  });
+
+  it('repairs assistant tool_calls that are missing following tool messages before OpenAI request', async () => {
+    let capturedBody: any;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        text: async () => '',
+      } as any;
+    }) as any;
+
+    const broken: Content[] = [
+      { role: MESSAGE_ROLES.USER, parts: [{ text: 'run a tool' } as any] },
+      {
+        role: MESSAGE_ROLES.MODEL,
+        parts: [{ functionCall: { name: 'read_file', id: 'call-missing', args: {} } as any }],
+      },
+      { role: MESSAGE_ROLES.USER, parts: [{ text: 'continue' } as any] },
+    ];
+
+    await callCustomModel(
+      {
+        provider: 'openai',
+        modelId: 'fake-model',
+        displayName: 'fake openai',
+        baseUrl: 'https://example.test',
+        apiKey: 'test-key',
+      } as any,
+      { contents: broken },
+    );
+
+    const toolCallIndex = capturedBody.messages.findIndex(
+      (message: any) => message.role === 'assistant' && message.tool_calls?.[0]?.id === 'call-missing',
+    );
+
+    expect(toolCallIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedBody.messages[toolCallIndex + 1]).toMatchObject({
+      role: 'tool',
+      tool_call_id: 'call-missing',
+    });
+    expect(capturedBody.messages[toolCallIndex + 2]).toMatchObject({
+      role: 'user',
+      content: 'continue',
+    });
+  });
+});
+
 describe('customModelAdapter > callCustomModelStream sanitize 末梢防线', () => {
   let sanitizeSpy: any;
   let originalFetch: typeof globalThis.fetch | undefined;
