@@ -16,6 +16,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDir = path.join(repoRoot, 'deployment', 'enterprise-oneclick');
@@ -283,7 +284,31 @@ try {
   if (existsSync(archive) || existsSync(checksum)) {
     throw new Error(`deliverable already exists, refusing overwrite: ${archive}`);
   }
-  run('tar', ['-czf', archive, '-C', temporaryRoot, finalPackageName]);
+  run('tar', ['--no-xattrs', '-czf', archive, '-C', temporaryRoot, finalPackageName], {
+    env: {
+      ...process.env,
+      COPYFILE_DISABLE: '1',
+    },
+  });
+  const archiveTar = gunzipSync(readFileSync(archive));
+  for (const forbiddenMetadataMarker of [
+    'LIBARCHIVE.xattr.',
+    'SCHILY.xattr.',
+    'com.apple.provenance',
+  ]) {
+    if (archiveTar.includes(Buffer.from(forbiddenMetadataMarker))) {
+      throw new Error(`archive contains non-portable metadata marker: ${forbiddenMetadataMarker}`);
+    }
+  }
+  const archiveEntries = run('tar', ['-tzf', archive], { capture: true })
+    .split('\n')
+    .filter(Boolean);
+  const nonPortableEntries = archiveEntries.filter(
+    (entry) => path.basename(entry).startsWith('._') || path.basename(entry) === '.DS_Store',
+  );
+  if (nonPortableEntries.length > 0) {
+    throw new Error(`archive contains non-portable entries: ${nonPortableEntries.join(', ')}`);
+  }
   const archiveHash = shaFile(archive);
   writeFileSync(checksum, `${archiveHash}  ${path.basename(archive)}\n`);
   console.log(`[bundle] 完成：${archive}`);
