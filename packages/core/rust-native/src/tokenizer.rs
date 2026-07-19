@@ -38,7 +38,8 @@ impl TiktokenCounter {
         }
 
         // 加载并缓存
-        let bpe = get_bpe_from_model(model).map_err(|e| format!("load bpe for '{}': {}", model, e))?;
+        let bpe =
+            get_bpe_from_model(model).map_err(|e| format!("load bpe for '{}': {}", model, e))?;
         let bpe = Arc::new(bpe);
         {
             let mut cache = self.cache.write();
@@ -120,7 +121,12 @@ impl Tokenizer {
             // 长文本用快速估算 + 校准
             let fast_estimate = self.fast.count(text, model)?;
             // 取前 200 字符做精确计数，算出比例
-            let sample = &text[..text.char_indices().take(200).last().map(|(i, _)| i).unwrap_or(text.len())];
+            let sample = &text[..text
+                .char_indices()
+                .take(200)
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(text.len())];
             let precise_sample = self.precise.count(sample, model)?;
             let fast_sample = self.fast.count(sample, model)?;
 
@@ -141,11 +147,20 @@ impl Tokenizer {
     /// 支持的模型列表
     pub fn supported_models() -> Vec<&'static str> {
         vec![
-            "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini",
-            "gpt-3.5-turbo", "gpt-3.5",
-            "text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large",
-            "claude-3-opus", "claude-3-sonnet", "claude-3-haiku",
-            "claude-3.5-sonnet", "claude-sonnet-4-20250514",
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-3.5-turbo",
+            "gpt-3.5",
+            "text-embedding-ada-002",
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "claude-3-opus",
+            "claude-3-sonnet",
+            "claude-3-haiku",
+            "claude-3.5-sonnet",
+            "claude-sonnet-4-20250514",
         ]
     }
 }

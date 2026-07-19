@@ -214,7 +214,10 @@ impl AgentPool {
         let agents = self.agents.read();
         let stats = self.stats.read();
         let total_memory: u64 = agents.values().map(|s| s.info.memory_limit_mb).sum();
-        let active_count = agents.values().filter(|s| s.info.status == AgentStatus::Active).count();
+        let active_count = agents
+            .values()
+            .filter(|s| s.info.status == AgentStatus::Active)
+            .count();
 
         serde_json::json!({
             "active_agents": active_count,
@@ -235,7 +238,11 @@ impl AgentPool {
 
     /// 列出所有 agents
     pub fn list_agents(&self) -> Vec<AgentInfo> {
-        self.agents.read().values().map(|s| s.info.clone()).collect()
+        self.agents
+            .read()
+            .values()
+            .map(|s| s.info.clone())
+            .collect()
     }
 
     /// 清理所有 idle agents

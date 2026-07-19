@@ -1,21 +1,18 @@
-/// Session Store - sled 嵌入式 KV + LRU 缓存
-///
-/// 类似 Linux 内核的 VFS 层：
-/// - trait 定义接口（可替换后端）
-/// - sled 是默认实现（类似 ext4）
-/// - LRU 缓存加速热数据读取
-///
+//! Session storage subsystem.
+//!
+//! This is the Rust-side VFS-like layer for Otto sessions: stable store API,
+//! replaceable backends, sled persistence by default, and an LRU metadata cache.
+
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use lru::LruCache;
 use parking_lot::RwLock;
-use serde_json;
 use sha2::{Digest, Sha256};
 
 use crate::protocol::{SessionIndex, SessionMetadata};
 
-/// 存储后端 trait — 类似 VFS，可以替换实现
 pub trait SessionBackend: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String>;
     fn put(&self, key: &str, value: &[u8]) -> Result<(), String>;
@@ -24,14 +21,13 @@ pub trait SessionBackend: Send + Sync {
     fn flush(&self) -> Result<(), String>;
 }
 
-/// sled 实现
 pub struct SledBackend {
     db: sled::Db,
 }
 
 impl SledBackend {
     pub fn open(path: &Path) -> Result<Self, String> {
-        let db = sled::open(path).map_err(|e| format!("sled open failed: {}", e))?;
+        let db = sled::open(path).map_err(|e| format!("sled open failed: {e}"))?;
         Ok(Self { db })
     }
 }
@@ -40,48 +36,49 @@ impl SessionBackend for SledBackend {
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
         self.db
             .get(key.as_bytes())
-            .map(|v| v.map(|iv| iv.to_vec()))
-            .map_err(|e| format!("sled get: {}", e))
+            .map(|value| value.map(|item| item.to_vec()))
+            .map_err(|e| format!("sled get: {e}"))
     }
 
     fn put(&self, key: &str, value: &[u8]) -> Result<(), String> {
         self.db
             .insert(key.as_bytes(), value)
             .map(|_| ())
-            .map_err(|e| format!("sled put: {}", e))
+            .map_err(|e| format!("sled put: {e}"))
     }
 
     fn delete(&self, key: &str) -> Result<(), String> {
         self.db
             .remove(key.as_bytes())
             .map(|_| ())
-            .map_err(|e| format!("sled delete: {}", e))
+            .map_err(|e| format!("sled delete: {e}"))
     }
 
     fn list_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         let mut results = Vec::new();
         for item in self.db.scan_prefix(prefix.as_bytes()) {
-            let (k, v) = item.map_err(|e| format!("sled scan: {}", e))?;
-            let key_str = String::from_utf8_lossy(&k).to_string();
-            results.push((key_str, v.to_vec()));
+            let (key, value) = item.map_err(|e| format!("sled scan: {e}"))?;
+            results.push((String::from_utf8_lossy(&key).to_string(), value.to_vec()));
         }
         Ok(results)
     }
 
     fn flush(&self) -> Result<(), String> {
-        self.db.flush().map(|_| ()).map_err(|e| format!("sled flush: {}", e))
+        self.db
+            .flush()
+            .map(|_| ())
+            .map_err(|e| format!("sled flush: {e}"))
     }
 }
 
-/// 内存后端（用于测试或临时场景）
 pub struct MemoryBackend {
-    data: RwLock<std::collections::HashMap<String, Vec<u8>>>,
+    data: RwLock<HashMap<String, Vec<u8>>>,
 }
 
 impl MemoryBackend {
     pub fn new() -> Self {
         Self {
-            data: RwLock::new(std::collections::HashMap::new()),
+            data: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -103,12 +100,11 @@ impl SessionBackend for MemoryBackend {
 
     fn list_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         let data = self.data.read();
-        let results: Vec<_> = data
+        Ok(data
             .iter()
-            .filter(|(k, _)| k.starts_with(prefix))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        Ok(results)
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
     }
 
     fn flush(&self) -> Result<(), String> {
@@ -116,15 +112,6 @@ impl SessionBackend for MemoryBackend {
     }
 }
 
-/// SessionStore — 核心存储引擎
-///
-/// 架构：
-/// ```text
-///   SessionStore
-///   ├── LRU Cache (热数据, 内存)
-///   ├── Backend trait (sled / memory / rocksdb)
-///   └── Index (session 列表 + lastActive)
-/// ```
 pub struct SessionStore {
     backend: Arc<dyn SessionBackend>,
     cache: RwLock<LruCache<String, String>>,
@@ -132,31 +119,30 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// 打开 sled 后端
     pub fn open_sled(path: &Path, cache_size: usize) -> Result<Self, String> {
         let backend: Arc<dyn SessionBackend> = Arc::new(SledBackend::open(path)?);
         let index = Self::load_index_from_backend(&backend)?;
-        Ok(Self {
-            backend,
-            cache: RwLock::new(LruCache::new(
-                std::num::NonZeroUsize::new(cache_size).unwrap_or(std::num::NonZeroUsize::new(1000).unwrap()),
-            )),
-            index: RwLock::new(index),
-        })
+        Ok(Self::new(backend, cache_size, index))
     }
 
-    /// 打开内存后端
     pub fn open_memory(cache_size: usize) -> Self {
-        let backend = Arc::new(MemoryBackend::new());
-        Self {
-            backend,
-            cache: RwLock::new(LruCache::new(
-                std::num::NonZeroUsize::new(cache_size).unwrap_or(std::num::NonZeroUsize::new(1000).unwrap()),
-            )),
-            index: RwLock::new(SessionIndex {
+        Self::new(
+            Arc::new(MemoryBackend::new()),
+            cache_size,
+            SessionIndex {
                 last_active_session: None,
                 sessions: Vec::new(),
-            }),
+            },
+        )
+    }
+
+    fn new(backend: Arc<dyn SessionBackend>, cache_size: usize, index: SessionIndex) -> Self {
+        let capacity = std::num::NonZeroUsize::new(cache_size)
+            .unwrap_or_else(|| std::num::NonZeroUsize::new(1000).unwrap());
+        Self {
+            backend,
+            cache: RwLock::new(LruCache::new(capacity)),
+            index: RwLock::new(index),
         }
     }
 
@@ -164,7 +150,7 @@ impl SessionStore {
         match backend.get("__index__")? {
             Some(data) => {
                 let json = String::from_utf8_lossy(&data);
-                serde_json::from_str(&json).map_err(|e| format!("index parse: {}", e))
+                serde_json::from_str(&json).map_err(|e| format!("index parse: {e}"))
             }
             None => Ok(SessionIndex {
                 last_active_session: None,
@@ -175,148 +161,156 @@ impl SessionStore {
 
     fn save_index(&self) -> Result<(), String> {
         let index = self.index.read();
-        let json = serde_json::to_string(&*index).map_err(|e| format!("index serialize: {}", e))?;
+        let json = serde_json::to_string(&*index).map_err(|e| format!("index serialize: {e}"))?;
         self.backend.put("__index__", json.as_bytes())?;
-        self.backend.flush()?;
-        Ok(())
+        self.backend.flush()
     }
 
-    /// 获取 session 元数据（缓存优先）
     pub fn get_metadata(&self, session_id: &str) -> Result<Option<SessionMetadata>, String> {
-        let cache_key = format!("meta:{}", session_id);
+        let cache_key = format!("meta:{session_id}");
 
-        // L1: 内存缓存
         {
             let mut cache = self.cache.write();
             if let Some(cached) = cache.get(&cache_key) {
-                let meta: SessionMetadata =
-                    serde_json::from_str(&cached).map_err(|e| format!("cache parse: {}", e))?;
+                let meta = serde_json::from_str(cached).map_err(|e| format!("cache parse: {e}"))?;
                 return Ok(Some(meta));
             }
         }
 
-        // L2: 持久化后端
         match self.backend.get(&cache_key)? {
             Some(data) => {
-                let json = String::from_utf8_lossy(&data);
-                let meta: SessionMetadata =
-                    serde_json::from_str(&json).map_err(|e| format!("meta parse: {}", e))?;
-                // 回填缓存
-                self.cache.write().put(cache_key, json.to_string());
+                let json = String::from_utf8_lossy(&data).to_string();
+                let meta = serde_json::from_str(&json).map_err(|e| format!("meta parse: {e}"))?;
+                self.cache.write().put(cache_key, json);
                 Ok(Some(meta))
             }
             None => Ok(None),
         }
     }
 
-    /// 保存 session 元数据
     pub fn put_metadata(&self, meta: &SessionMetadata) -> Result<(), String> {
         let cache_key = format!("meta:{}", meta.session_id);
-        let json = serde_json::to_string(meta).map_err(|e| format!("meta serialize: {}", e))?;
+        let json = serde_json::to_string(meta).map_err(|e| format!("meta serialize: {e}"))?;
 
-        // 写后端
         self.backend.put(&cache_key, json.as_bytes())?;
-
-        // 更新缓存
         self.cache.write().put(cache_key, json);
 
-        // 更新索引
         {
             let mut index = self.index.write();
             if let Some(existing) = index
                 .sessions
                 .iter_mut()
-                .find(|s| s.session_id == meta.session_id)
+                .find(|session| session.session_id == meta.session_id)
             {
                 *existing = meta.clone();
             } else {
                 index.sessions.push(meta.clone());
             }
-            // 按最后活跃时间排序
-            index.sessions.sort_by(|a, b| {
-                b.last_active_at.cmp(&a.last_active_at)
-            });
+            index
+                .sessions
+                .sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
             index.last_active_session = Some(meta.session_id.clone());
         }
 
-        self.save_index()?;
-        Ok(())
+        self.save_index()
     }
 
-    /// 获取 session 历史
     pub fn get_history(&self, session_id: &str) -> Result<Option<String>, String> {
-        let key = format!("history:{}", session_id);
-        match self.backend.get(&key)? {
-            Some(data) => Ok(Some(String::from_utf8_lossy(&data).to_string())),
-            None => Ok(None),
-        }
+        self.get_json_string(&format!("history:{session_id}"))
     }
 
-    /// 保存 session 历史
     pub fn put_history(&self, session_id: &str, history_json: &str) -> Result<(), String> {
-        let key = format!("history:{}", session_id);
-        self.backend.put(&key, history_json.as_bytes())?;
-        Ok(())
+        self.put_json_string(&format!("history:{session_id}"), history_json)
     }
 
-    /// 获取 session token 数据
     pub fn get_tokens(&self, session_id: &str) -> Result<Option<String>, String> {
-        let key = format!("tokens:{}", session_id);
-        match self.backend.get(&key)? {
+        self.get_json_string(&format!("tokens:{session_id}"))
+    }
+
+    pub fn put_tokens(&self, session_id: &str, tokens_json: &str) -> Result<(), String> {
+        self.put_json_string(&format!("tokens:{session_id}"), tokens_json)
+    }
+
+    pub fn get_context(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.get_json_string(&format!("context:{session_id}"))
+    }
+
+    pub fn put_context(&self, session_id: &str, context_json: &str) -> Result<(), String> {
+        self.put_json_string(&format!("context:{session_id}"), context_json)
+    }
+
+    pub fn get_checkpoints(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.get_json_string(&format!("checkpoints:{session_id}"))
+    }
+
+    pub fn put_checkpoint(
+        &self,
+        session_id: &str,
+        checkpoint: serde_json::Value,
+    ) -> Result<(), String> {
+        let key = format!("checkpoints:{session_id}");
+        let mut checkpoints = match self.backend.get(&key)? {
+            Some(data) => {
+                let json = String::from_utf8_lossy(&data);
+                serde_json::from_str::<Vec<serde_json::Value>>(&json)
+                    .map_err(|e| format!("checkpoints parse: {e}"))?
+            }
+            None => Vec::new(),
+        };
+
+        checkpoints.push(checkpoint);
+        let json = serde_json::to_string(&checkpoints)
+            .map_err(|e| format!("checkpoints serialize: {e}"))?;
+        self.backend.put(&key, json.as_bytes())
+    }
+
+    fn get_json_string(&self, key: &str) -> Result<Option<String>, String> {
+        match self.backend.get(key)? {
             Some(data) => Ok(Some(String::from_utf8_lossy(&data).to_string())),
             None => Ok(None),
         }
     }
 
-    /// 保存 session token 数据
-    pub fn put_tokens(&self, session_id: &str, tokens_json: &str) -> Result<(), String> {
-        let key = format!("tokens:{}", session_id);
-        self.backend.put(&key, tokens_json.as_bytes())?;
-        Ok(())
+    fn put_json_string(&self, key: &str, json: &str) -> Result<(), String> {
+        self.backend.put(key, json.as_bytes())
     }
 
-    /// 列出所有 sessions
     pub fn list_sessions(&self) -> Vec<SessionMetadata> {
         self.index.read().sessions.clone()
     }
 
-    /// 获取最后活跃 session
     pub fn last_active_session(&self) -> Option<String> {
         self.index.read().last_active_session.clone()
     }
 
-    /// 删除 session
     pub fn delete_session(&self, session_id: &str) -> Result<(), String> {
-        // 删后端数据
-        let _ = self.backend.delete(&format!("meta:{}", session_id));
-        let _ = self.backend.delete(&format!("history:{}", session_id));
-        let _ = self.backend.delete(&format!("tokens:{}", session_id));
-        let _ = self.backend.delete(&format!("checkpoints:{}", session_id));
+        let _ = self.backend.delete(&format!("meta:{session_id}"));
+        let _ = self.backend.delete(&format!("history:{session_id}"));
+        let _ = self.backend.delete(&format!("tokens:{session_id}"));
+        let _ = self.backend.delete(&format!("context:{session_id}"));
+        let _ = self.backend.delete(&format!("checkpoints:{session_id}"));
 
-        // 清缓存
-        self.cache.write().pop(&format!("meta:{}", session_id));
+        self.cache.write().pop(&format!("meta:{session_id}"));
 
-        // 更新索引
         {
             let mut index = self.index.write();
-            index.sessions.retain(|s| s.session_id != session_id);
+            index
+                .sessions
+                .retain(|session| session.session_id != session_id);
             if index.last_active_session.as_deref() == Some(session_id) {
                 index.last_active_session = index.sessions.first().map(|s| s.session_id.clone());
             }
         }
 
-        self.save_index()?;
-        Ok(())
+        self.save_index()
     }
 
-    /// 计算 workdir hash
     pub fn compute_workdir_hash(workdir: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(workdir.as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
-    /// 统计信息
     pub fn stats(&self) -> serde_json::Value {
         let index = self.index.read();
         let cache = self.cache.read();
@@ -328,7 +322,6 @@ impl SessionStore {
         })
     }
 
-    /// 刷盘
     pub fn flush(&self) -> Result<(), String> {
         self.backend.flush()
     }

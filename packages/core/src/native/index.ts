@@ -157,6 +157,8 @@ export class OttoNative {
     total_tokens: number;
     has_checkpoint: boolean;
     model?: string;
+    first_user_message?: string;
+    last_assistant_message?: string;
     workdir_hash?: string;
   }): Promise<void> {
     await this.call('session.put', metadata);
@@ -176,6 +178,30 @@ export class OttoNative {
 
   async sessionPutHistory(sessionId: string, history: any[]): Promise<void> {
     await this.call('session.put_history', { session_id: sessionId, history });
+  }
+
+  async sessionGetTokens(sessionId: string): Promise<any> {
+    return this.call('session.get_tokens', { session_id: sessionId });
+  }
+
+  async sessionPutTokens(sessionId: string, tokens: any): Promise<void> {
+    await this.call('session.put_tokens', { session_id: sessionId, tokens });
+  }
+
+  async sessionGetContext(sessionId: string): Promise<any> {
+    return this.call('session.get_context', { session_id: sessionId });
+  }
+
+  async sessionPutContext(sessionId: string, context: any[]): Promise<void> {
+    await this.call('session.put_context', { session_id: sessionId, context });
+  }
+
+  async sessionGetCheckpoints(sessionId: string): Promise<any> {
+    return this.call('session.get_checkpoints', { session_id: sessionId });
+  }
+
+  async sessionPutCheckpoint(sessionId: string, checkpoint: any): Promise<void> {
+    await this.call('session.put_checkpoint', { session_id: sessionId, checkpoint });
   }
 
   async sessionStats(): Promise<any> {

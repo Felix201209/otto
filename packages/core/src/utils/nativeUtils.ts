@@ -4,7 +4,7 @@
  * 提供简洁的 API 封装，让 otto-core 可以无痛使用 Rust 核心
  */
 
-import { getNativeInstance, initNativeUtils } from './index.js';
+import { getNativeInstance, initNativeUtils } from '../native/index.js';
 
 export { initNativeUtils };
 

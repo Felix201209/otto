@@ -86,8 +86,7 @@ pub struct EncryptionStore {
 impl EncryptionStore {
     /// 从 master key 创建
     pub fn new(master_key: &[u8; 32], backend: Arc<dyn EncryptionBackend>) -> Self {
-        let cipher = Aes256Gcm::new_from_slice(master_key)
-            .expect("AES-256 key must be 32 bytes");
+        let cipher = Aes256Gcm::new_from_slice(master_key).expect("AES-256 key must be 32 bytes");
         Self { cipher, backend }
     }
 
@@ -140,8 +139,8 @@ impl EncryptionStore {
                     .decrypt(nonce, ciphertext)
                     .map_err(|e| format!("decrypt (wrong key?): {}", e))?;
 
-                let value = String::from_utf8(plaintext)
-                    .map_err(|e| format!("utf8 decode: {}", e))?;
+                let value =
+                    String::from_utf8(plaintext).map_err(|e| format!("utf8 decode: {}", e))?;
 
                 Ok(Some(value))
             }
