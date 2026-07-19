@@ -492,7 +492,9 @@ function OttoWorkspaceApp({
             messages={activeMessages}
             models={state.models}
             currentModel={state.currentModel}
-            userInitial="F"
+            userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+            identityLabel={identityLabel}
+            modelManagementLabel="模型与个人 API 设置"
             busy={busy}
             onSend={handleSend}
             onCancel={actions.cancel}
