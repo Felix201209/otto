@@ -155,7 +155,6 @@ function OttoWorkspaceApp({
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
-  const [showRightPanel, setShowRightPanel] = useState(true);
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
@@ -487,37 +486,80 @@ function OttoWorkspaceApp({
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
-          <ChatView
-            session={activeSession}
-            messages={activeMessages}
-            models={state.models}
-            currentModel={state.currentModel}
-            userInitial="F"
-            busy={busy}
-            onSend={handleSend}
-            onCancel={actions.cancel}
-            onSetModel={actions.setModel}
-            onRegenerate={handleRegenerate}
-            onRespondQuestion={actions.respondToolConfirmation}
-            onOpenSetup={() => setMainView('settings')}
-            onToggleAgents={() => setShowRightPanel(v => !v)}
-            onNewChat={handleNewChat}
-            onClearContext={handleClearContext}
-            onExport={
-              activeSession
-                ? () => settingsData.actions.exportConversation(activeSession.sessionId)
-                : undefined
-            }
-            onOpenDoctor={() => openHub('doctor')}
-            onOpenMemory={() => openHub('memory')}
-            onOpenSkills={() => openHub('skills')}
-          />
-          {showRightPanel && (
-            <RightPanel
-              onLaunchExpert={handleLaunchExpert}
-              onOpenAgents={() => setMainView('agents')}
+          {mainView === 'agenda' ? (
+            <DayAgenda
+              date={selectedDate}
+              schedules={selectedSchedules}
+              onCreate={product.actions.createSchedule}
+              onDelete={product.actions.deleteSchedule}
+              onBack={() => setMainView('chat')}
+            />
+          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
+            <SkillZonePage onBack={() => setMainView('chat')} />
+          ) : (
+            <ChatView
+              session={activeSession}
+              messages={activeMessages}
+              models={state.models}
+              currentModel={state.currentModel}
+              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              identityLabel={`${account.name} · ${account.department || account.tags.join(' / ') || identityLabel}`}
+              modelManagementLabel="模型与个人 API 设置"
+              busy={busy}
+              onSend={handleSend}
+              onCancel={actions.cancel}
+              onSetModel={actions.setModel}
+              onRegenerate={handleRegenerate}
+              onRespondQuestion={actions.respondToolConfirmation}
+              onOpenSetup={openModelSettings}
+              onToggleAgents={() => setMainView('agents')}
+              onNewChat={handleNewChat}
+              onClearContext={handleClearContext}
+              onExport={
+                activeSession
+                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                  : undefined
+              }
+              onOpenDoctor={() => openHub('doctor')}
+              onOpenFeishu={() => openHub('feishu')}
+              onOpenMemory={() => openHub('memory')}
+              onOpenSkills={() => openHub('skills')}
+              onOpenPrefs={() => openHub('prefs')}
+              onOpenSessions={() => setAllConvOpen(true)}
+              onShowHelp={handleShowHelp}
+              onLaunchAgentProfile={(profileId, title) => {
+                setMainView('chat');
+                actions.launchAgentProfile(title, profileId);
+              }}
+              commands={slashCommands}
+              onRunServerCommand={(name, args) => {
+                if (!activeSession) return;
+                transport.send({
+                  type: 'run_slash_command',
+                  payload: { sessionId: activeSession.sessionId, name, args },
+                });
+              }}
             />
           )}
+          <RightPanel
+            busy={busy}
+            mode={edition}
+            workspace={product.state.workspace}
+            onLaunchAgentProfile={handleLaunchProfile}
+            onOpenAgents={() => setMainView('agents')}
+            onOpenSkillZone={() => setMainView('skillzone')}
+            onSelectDate={(date) => {
+              product.actions.selectDate(date);
+              setMainView('agenda');
+            }}
+            onOpenOrganization={() => openHub('organization')}
+            onAddFriend={product.actions.addFriend}
+            autoSkillCandidates={product.state.pendingAutoSkills}
+            autoSkillLastAction={product.state.lastAutoSkillAction}
+            onRefreshAutoSkills={product.actions.refreshPendingAutoSkills}
+            onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
+            onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
+          />
         </div>
       )}
 

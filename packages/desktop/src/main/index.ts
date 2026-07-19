@@ -119,6 +119,8 @@ import { INTERNAL_TEST_ACCESS_ENABLED } from './internal-test-access.js';
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
 const CSP_FALLBACK_HOST = '127.0.0.1';
 const CSP_FALLBACK_PORT = 7637;
+const FEISHU_DESKTOP_NOTICE =
+  '桌面端暂不直接托管飞书 daemon。请先在终端运行 `otto feishu daemon start`，或在 Otto CLI 中使用 `/feishu setup` 完成配置。';
 
 /**
  * renderer 静态资源目录。与 createWindow 的 loadFile 用同一推导
