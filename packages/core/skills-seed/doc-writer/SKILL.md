@@ -1,10 +1,10 @@
 ---
 name: doc-writer
-version: 6
+version: 8
 description: 视觉感知 Word 排版引擎。AI 先定义传播任务、创造视觉母题、为每节选定布局——封面/通栏/双栏/引用/数据——引擎多态渲染。生成后截图自检，不达标则迭代。
 ---
 
-# 📄 Otto Doc-Writer v6 — 视觉感知排版
+# 📄 Otto Doc-Writer v8 — 零空白终极版
 
 > **对标 ppt-creator：AI 定义任务→创造母题→逐节选布局→多态渲染→自检迭代。**
 > **你不是模板填充工，你是排版总监。**

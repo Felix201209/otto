@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -28,11 +28,41 @@ const legacyUnmodifiedSkillHashes: Record<string, ReadonlySet<string>> = {
   'ppt-creator': new Set([
     '1ddbafc17534762249a5323ccd5da0d46713dfc7bda27b4aa2b70993be17a3f2',
   ]),
+  'doc-writer': new Set([
+    '84ed1bbb2eb0251e6e2afcebbcdc71445daca811ecb6603aad54876ada563efd',
+  ]),
 };
 
 function sha256File(filePath: string): string | null {
   try {
     return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function sha256SkillDir(skillDir: string): string | null {
+  try {
+    const hash = createHash('sha256');
+    const visit = (dir: string) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )) {
+        if (ent.name === managedStateFile) continue;
+        const fullPath = join(dir, ent.name);
+        const relPath = relative(skillDir, fullPath).replace(/\\/g, '/');
+        if (ent.isDirectory()) {
+          hash.update(`dir:${relPath}\0`);
+          visit(fullPath);
+        } else {
+          hash.update(`file:${relPath}\0`);
+          hash.update(readFileSync(fullPath));
+          hash.update('\0');
+        }
+      }
+    };
+    visit(skillDir);
+    return hash.digest('hex');
   } catch {
     return null;
   }
@@ -63,10 +93,14 @@ export function shouldRefreshBuiltinSkill(
   currentHash: string,
   sourceHash: string,
   managedHash?: string,
+  legacyCurrentHash?: string,
 ): boolean {
   if (currentHash === sourceHash) return false;
   if (managedHash && managedHash === currentHash) return true;
-  return legacyUnmodifiedSkillHashes[name]?.has(currentHash) ?? false;
+  const legacyHashes = legacyUnmodifiedSkillHashes[name];
+  return legacyHashes?.has(currentHash)
+    || (legacyCurrentHash ? legacyHashes?.has(legacyCurrentHash) : false)
+    || false;
 }
 
 /**
@@ -138,9 +172,9 @@ export function seedDefaultSkills(): string[] {
   for (const name of names) {
     const src = join(seedDir, name);
     const dst = join(target, name);
-    const sourceHash = sha256File(join(src, 'SKILL.md'));
+    const sourceHash = sha256SkillDir(src);
     if (existsSync(dst)) {
-      const currentHash = sha256File(join(dst, 'SKILL.md'));
+      const currentHash = sha256SkillDir(dst);
       if (!sourceHash || !currentHash) continue;
       if (currentHash === sourceHash) {
         try { writeManagedHash(dst, sourceHash); } catch { /* best effort */ }
@@ -151,6 +185,7 @@ export function seedDefaultSkills(): string[] {
         currentHash,
         sourceHash,
         readManagedHash(dst),
+        sha256File(join(dst, 'SKILL.md')) ?? undefined,
       )) continue;
     }
     try {
