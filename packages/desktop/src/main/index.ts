@@ -239,6 +239,7 @@ const IPC = {
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
@@ -1132,6 +1133,10 @@ function registerIpc(): void {
       throw new Error('消息信息不正确');
     }
     return enterpriseClient.sendDirectMessage(peerAccountId, content);
+  });
+  ipcMain.handle(IPC.enterpriseAtoaInbox, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listAtoaInbox();
   });
   ipcMain.handle(IPC.enterpriseParkServicePush, async (_event, input: unknown) => {
     loadEnterpriseSession();

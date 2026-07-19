@@ -137,6 +137,10 @@ export interface EnterpriseDirectMessage {
   readAt: string | null;
 }
 
+export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
+  peerAccountId: string;
+}
+
 export interface EnterpriseSessionResult {
   serverUrl: string;
   account: EnterpriseAccount | null;
@@ -481,6 +485,13 @@ export class EnterpriseClient {
       `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
       { method: 'POST', body: JSON.stringify({ content }) },
     )).message;
+  }
+
+  async listAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ requests: EnterpriseAtoaInboxMessage[] }>(
+      '/enterprise/atoa/inbox',
+    )).requests;
   }
 
   async pushParkService(input: {

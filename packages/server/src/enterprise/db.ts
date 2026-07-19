@@ -1173,6 +1173,10 @@ export interface DirectMessageView {
   readAt: string | null;
 }
 
+export interface AtoaInboxMessageView extends DirectMessageView {
+  peerAccountId: string;
+}
+
 interface DirectMessageRow {
   id: string;
   sender_account_id: string;
@@ -1239,6 +1243,48 @@ export function listDirectMessages(input: {
     input.accountId,
     limit,
   ) as DirectMessageRow[]).reverse().map(toDirectMessageView);
+}
+
+export function listPendingAtoaRequests(input: {
+  organizationId: string;
+  accountId: string;
+  requestPrefix: string;
+  responsePrefix: string;
+  limit?: number;
+}): AtoaInboxMessageView[] {
+  const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 50)));
+  const requests = getDB().prepare(
+    `SELECT * FROM direct_messages
+     WHERE organization_id = ?
+       AND recipient_account_id = ?
+       AND content LIKE ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT ?`,
+  ).all(
+    input.organizationId,
+    input.accountId,
+    `${input.requestPrefix}%`,
+    limit,
+  ) as DirectMessageRow[];
+  const responses = getDB().prepare(
+    `SELECT content FROM direct_messages
+     WHERE organization_id = ?
+       AND sender_account_id = ?
+       AND content LIKE ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT 300`,
+  ).all(
+    input.organizationId,
+    input.accountId,
+    `${input.responsePrefix}%`,
+  ) as Array<{ content: string }>;
+  return requests
+    .filter((request) => !responses.some((response) => response.content.includes(request.id)))
+    .reverse()
+    .map((request) => ({
+      ...toDirectMessageView(request),
+      peerAccountId: request.sender_account_id,
+    }));
 }
 
 export function authenticateAccount(identifier: string, password: string): AccountView | null {

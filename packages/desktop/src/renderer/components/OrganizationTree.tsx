@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@ import type {
   EnterpriseDirectMessage,
   EnterpriseOrganizationView,
 } from '../../preload/index.js';
+import { buildAtoaRequest, displayDirectMessageContent } from '../atoaProtocol.js';
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { IconChevronDown } from './icons.js';
 
@@ -16,11 +17,13 @@ export function OrganizationTree({
   workspace,
   enterpriseAccount,
   openRequest = 0,
+  onAskOttoFromDirectChat,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
   /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
   openRequest?: number;
+  onAskOttoFromDirectChat?: (input: DirectChatOttoRequest) => void;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
@@ -61,11 +64,11 @@ export function OrganizationTree({
     if (openRequest > 0) setOpen(true);
   }, [openRequest]);
 
-  // 本地 workspace 没有管理者组织快照时，经 preload → main 读取企业组织。
+  // 本地 workspace 没有管理员组织快照时，经 preload -> main 读取企业组织。
   // 会话 token 始终只保留在 main 的 EnterpriseClient 内。
   useEffect(() => {
-    // 远程组织目录只允许真实企业账号触发。本机企业成员或内测假身份没有
-    // Bearer 会话时展示占位信息，不调用 IPC、更不会产生无意义的 401。
+    // 远程组织目录只允许真实企业账号触发；本机企业成员或内测假身份没有
+    // Bearer 会话时展示占位信息，不调用 IPC，也不产生无意义的 401。
     if (!hasAuthenticatedOrganization) return;
 
     let cancelled = false;
@@ -162,19 +165,33 @@ export function OrganizationTree({
           )}
         </div>
       ) : null}
-      {chatMember ? <DirectMessagePanel member={chatMember} onClose={() => setChatMember(null)} /> : null}
+      {chatMember ? (
+        <DirectMessagePanel
+          member={chatMember}
+          onClose={() => setChatMember(null)}
+          onAskOtto={onAskOttoFromDirectChat}
+        />
+      ) : null}
     </section>
   );
 }
 
-function DirectMessagePanel({ member, onClose }: {
+export interface DirectChatOttoRequest {
+  member: EnterpriseOrganizationView['members'][number];
+  messages: EnterpriseDirectMessage[];
+  question?: string;
+}
+
+function DirectMessagePanel({ member, onClose, onAskOtto }: {
   member: EnterpriseOrganizationView['members'][number];
   onClose: () => void;
+  onAskOtto?: (input: DirectChatOttoRequest) => void;
 }): React.JSX.Element {
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [askingPeerOtto, setAskingPeerOtto] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -191,10 +208,45 @@ function DirectMessagePanel({ member, onClose }: {
     return () => { active = false; window.clearInterval(timer); };
   }, [member.id]);
 
+  const askOtto = (question?: string) => {
+    onAskOtto?.({
+      member,
+      messages,
+      question: question?.trim() || undefined,
+    });
+  };
+
+  const askPeerOtto = async (question?: string) => {
+    const content = buildAtoaRequest(question?.trim() || draft.trim());
+    setAskingPeerOtto(true);
+    try {
+      const message = await window.otto.enterpriseMessageSend(member.id, content);
+      setMessages((current) => [...current, message]);
+      setDraft('');
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAskingPeerOtto(false);
+    }
+  };
+
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
     const content = draft.trim();
     if (!content || sending) return;
+    const ottoShortcut = content.match(/^@otto(?:\s+|$)([\s\S]*)$/i);
+    if (ottoShortcut) {
+      askOtto(ottoShortcut[1] || undefined);
+      setDraft('');
+      setError('');
+      return;
+    }
+    const peerOttoShortcut = content.match(/^@peer-otto(?:\s+|$)([\s\S]*)$/i);
+    if (peerOttoShortcut) {
+      await askPeerOtto(peerOttoShortcut[1] || undefined);
+      return;
+    }
     setSending(true);
     try {
       const message = await window.otto.enterpriseMessageSend(member.id, content);
@@ -212,6 +264,23 @@ function DirectMessagePanel({ member, onClose }: {
     <div className="otto-direct-chat" role="dialog" aria-label={`与 ${member.name} 聊天`}>
       <header>
         <strong>{member.name}</strong>
+        {onAskOtto ? (
+          <button
+            type="button"
+            className="otto-direct-chat__otto"
+            onClick={() => askOtto(draft)}
+          >
+            问 Otto
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="otto-direct-chat__otto"
+          disabled={askingPeerOtto}
+          onClick={() => void askPeerOtto(draft)}
+        >
+          问对方 Otto
+        </button>
         <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
       </header>
       <div className="otto-direct-chat__messages">
@@ -220,7 +289,7 @@ function DirectMessagePanel({ member, onClose }: {
             key={message.id}
             className={'otto-direct-chat__message' + (message.senderAccountId === member.id ? ' is-peer' : ' is-me')}
           >
-            {message.content}
+            {displayDirectMessageContent(message.content)}
           </div>
         ))}
       </div>

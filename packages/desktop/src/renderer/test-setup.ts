@@ -26,6 +26,14 @@ beforeEach(() => {
         createdAt: new Date(0).toISOString(),
         readAt: null,
       })),
+      enterpriseAtoaInbox: vi.fn(async () => []),
+      workLogToday: vi.fn(async () => ({
+        summary: '',
+        date: new Date(0).toISOString().slice(0, 10),
+        totalActions: 0,
+        workResults: 0,
+      })),
+      workLogRecent: vi.fn(async () => []),
     } as unknown as Window['otto'],
   });
 });

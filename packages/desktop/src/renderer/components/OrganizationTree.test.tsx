@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
-import type { EnterpriseAccount } from '../../preload/index.js';
+import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
 import { OrganizationTree } from './OrganizationTree.js';
 
 afterEach(cleanup);
@@ -325,5 +325,179 @@ describe('OrganizationTree', () => {
     expect(enterpriseOrganizationView).not.toHaveBeenCalled();
     expect(screen.getByText('已通过链接加入；组织详情将在企业服务同步后显示。'))
       .toBeTruthy();
+  });
+
+  it('can ask Otto from a direct chat with recent messages', async () => {
+    const messages: EnterpriseDirectMessage[] = [{
+      id: 'dm_1',
+      senderAccountId: 'acc_2',
+      recipientAccountId: 'acc_1',
+      content: 'Please help review the proposal today.',
+      createdAt: '2026-07-19T09:00:00.000Z',
+      readAt: null,
+    }, {
+      id: 'dm_2',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_2',
+      content: 'I will prepare a short version first.',
+      createdAt: '2026-07-19T09:03:00.000Z',
+      readAt: null,
+    }];
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 2,
+    }));
+    const enterpriseMessagesList = vi.fn(async () => messages);
+    Object.assign(window.otto, { enterpriseOrganizationView, enterpriseMessagesList });
+    const onAskOttoFromDirectChat = vi.fn();
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        onAskOttoFromDirectChat={onAskOttoFromDirectChat}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByText('Bob'));
+    expect(await screen.findByText('Please help review the proposal today.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '问 Otto' }));
+
+    expect(onAskOttoFromDirectChat).toHaveBeenCalledWith({
+      member: expect.objectContaining({ id: 'acc_2', name: 'Bob' }),
+      messages,
+      question: undefined,
+    });
+  });
+
+  it('uses @otto as a direct-chat shortcut instead of sending it as a message', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    const enterpriseMessagesList = vi.fn(async () => []);
+    const enterpriseMessageSend = vi.fn();
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+      enterpriseMessageSend,
+    });
+    const onAskOttoFromDirectChat = vi.fn();
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        onAskOttoFromDirectChat={onAskOttoFromDirectChat}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByText('Bob'));
+    await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: '@otto summarize action items' } });
+    fireEvent.submit(input.closest('form')!);
+
+    expect(enterpriseMessageSend).not.toHaveBeenCalled();
+    expect(onAskOttoFromDirectChat).toHaveBeenCalledWith({
+      member: expect.objectContaining({ id: 'acc_2', name: 'Bob' }),
+      messages: [],
+      question: 'summarize action items',
+    });
+  });
+
+  it('sends a peer Otto request as a structured direct message', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    const enterpriseMessagesList = vi.fn(async () => []);
+    const enterpriseMessageSend = vi.fn(async (_peerAccountId: string, content: string) => ({
+      id: 'dm_atoa',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_2',
+      content,
+      createdAt: '2026-07-19T09:10:00.000Z',
+      readAt: null,
+    }));
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+      enterpriseMessageSend,
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByText('Bob'));
+    await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Are you free now?' } });
+    fireEvent.click(screen.getByRole('button', { name: '问对方 Otto' }));
+
+    await waitFor(() => expect(enterpriseMessageSend).toHaveBeenCalledOnce());
+    expect(enterpriseMessageSend.mock.calls[0][0]).toBe('acc_2');
+    expect(enterpriseMessageSend.mock.calls[0][1]).toContain('OTTO_ATOA_REQUEST ');
+    expect(await screen.findByText(/向对方 Otto 提问：Are you free now\?/)).toBeTruthy();
   });
 });

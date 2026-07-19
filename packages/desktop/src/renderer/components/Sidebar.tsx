@@ -6,15 +6,10 @@
 
 /**
  * 左侧栏。以会话列表为主体：
- *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
- *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
- *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
- *
- * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
- *   - 重命名走 inline 输入框（双击标题 或 菜单「重命名」→ 变输入框，Enter 提交、Esc 取消）。
- *   - 删除**二次确认**走居中弹窗 ConfirmDialog（半透明遮罩 + 居中卡片），删除不可逆。
- * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
- */
+ *   品牌 otto�?+ compose 按钮 / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体�?
+ *   查看全部对话 / 设置与诊断中心（左下角常驻入口）�? *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel�? *
+ * 会话项支�?hover 溢出菜单（⋯ �?重命�?/ 删除）：
+ *   - 重命名走 inline 输入框（双击标题 �?菜单「重命名」→ 变输入框，Enter 提交、Esc 取消）�? *   - 删除**二次确认**走居中弹�?ConfirmDialog（半透明遮罩 + 居中卡片），删除不可逆�? * 会话项因此从 <button> 改为 role=button �?<div>：按钮不能嵌按钮/输入框（无效 HTML）�? */
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { ProductWorkspaceSnapshot, SessionSummary } from 'otto-server';
@@ -30,7 +25,7 @@ import {
   IconSparkle,
   IconSettings,
 } from './icons.js';
-import { OrganizationTree } from './OrganizationTree.js';
+import { OrganizationTree, type DirectChatOttoRequest } from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 
@@ -41,7 +36,7 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
-/** 按用户本地自然日计算相对日期，避免跨时区或夏令时把“昨天”算成同一天。 */
+/** 按用户本地自然日计算相对日期，避免跨时区或夏令时把“昨天”算成同一天�?*/
 function formatRelativeDay(ts: number, now = Date.now()): string {
   const current = new Date(now);
   const target = new Date(ts);
@@ -77,14 +72,15 @@ function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
-  /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
+  /** 当前是否停在「设置与诊断中心」页（高亮该入口）�?*/
   hubActive?: boolean;
   accountManagementActive?: boolean;
-  /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
+  /** 静默检查发现新�?�?设置入口亮一个不打扰的小圆点（无弹窗）�?*/
   updateBadge?: boolean;
   productWorkspace?: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
   organizationOpenRequest?: number;
+  onAskOttoFromDirectChat?: (input: DirectChatOttoRequest) => void;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -104,6 +100,7 @@ export function Sidebar({
   productWorkspace = null,
   enterpriseAccount,
   organizationOpenRequest = 0,
+  onAskOttoFromDirectChat,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -149,6 +146,7 @@ export function Sidebar({
           workspace={productWorkspace}
           enterpriseAccount={enterpriseAccount}
           openRequest={organizationOpenRequest}
+          onAskOttoFromDirectChat={onAskOttoFromDirectChat}
         />
 
         <section className="otto-conversations" aria-label="对话任务">
@@ -157,9 +155,9 @@ export function Sidebar({
             className="otto-conversations__toggle"
             onClick={() => setSessionsOpen((value) => !value)}
             aria-expanded={sessionsOpen}
-            aria-label={`对话任务（${sessionCount}）`}
+            aria-label={`对话任务�?{sessionCount}）`}
           >
-            <span>对话任务（{sessionCount}）</span>
+            <span>对话任务（{sessionCount}�?/span>
             <IconChevronDown
               size={13}
               className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
@@ -199,11 +197,10 @@ export function Sidebar({
             className={'otto-viewall otto-viewall--accounts' + (accountManagementActive ? ' is-active' : '')}
             onClick={onOpenAccounts}
             aria-current={accountManagementActive ? 'page' : undefined}
-            title="企业身份控制台"
+            title="企业身份控制�?
           >
-            <span className="otto-viewall__accounticon" aria-hidden>◎</span>
-            身份与权限
-            <IconChevron size={15} className="otto-viewall__chev" />
+            <span className="otto-viewall__accounticon" aria-hidden>�?/span>
+            身份与权�?            <IconChevron size={15} className="otto-viewall__chev" />
           </button>
         ) : null}
         <button type="button" className="otto-viewall" onClick={onViewAll}>
@@ -211,22 +208,21 @@ export function Sidebar({
           查看全部对话
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
-        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
+        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角�?*/}
         <button
           type="button"
           className={'otto-viewall otto-viewall--hub' + (hubActive ? ' is-active' : '')}
           onClick={onOpenHub}
           aria-current={hubActive ? 'page' : undefined}
-          title="设置与诊断中心"
+          title="设置与诊断中�?
         >
           <IconSettings size={16} />
-          设置与诊断
-          {updateBadge ? (
+          设置与诊�?          {updateBadge ? (
             <span
               className="otto-viewall__dot"
               role="status"
-              aria-label="有可用更新"
-              title="发现新版本，进入「软件更新」查看"
+              aria-label="有可用更�?
+              title="发现新版本，进入「软件更新」查�?
             />
           ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
@@ -245,11 +241,10 @@ export function Sidebar({
                 type="button"
                 className="otto-sidebar-account__logout"
                 onClick={() => setLogoutConfirmOpen(true)}
-                aria-label="退出登录"
-                title="退出登录"
+                aria-label="退出登�?
+                title="退出登�?
               >
-                退出
-              </button>
+                退�?              </button>
             ) : null}
           </div>
         ) : null}
@@ -277,7 +272,7 @@ export function Sidebar({
   );
 }
 
-/** 溢出菜单三点图标（内联，避免动 icons.tsx）。 */
+/** 溢出菜单三点图标（内联，避免�?icons.tsx）�?*/
 function IconMoreDots(): React.JSX.Element {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -288,7 +283,7 @@ function IconMoreDots(): React.JSX.Element {
   );
 }
 
-/** 会话项本地交互态：普通 / 菜单打开 / 重命名中 / 删除确认中。 */
+/** 会话项本地交互态：普�?/ 菜单打开 / 重命名中 / 删除确认中�?*/
 type ItemMode = 'idle' | 'menu' | 'rename' | 'confirm';
 
 function SessionItem({
@@ -309,8 +304,7 @@ function SessionItem({
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // 进入重命名态即聚焦并全选，让用户直接改写。
-  useEffect(() => {
+  // 进入重命名态即聚焦并全选，让用户直接改写�?  useEffect(() => {
     if (mode === 'rename') {
       const el = inputRef.current;
       el?.focus();
@@ -318,10 +312,7 @@ function SessionItem({
     }
   }, [mode]);
 
-  // 菜单态打开时，点击本项之外则收起（回 idle），避免菜单悬挂。
-  // 确认态由 ConfirmDialog 弹窗自己管开关（点遮罩/Esc/取消），不走这套外点收起——
-  // 否则点弹窗卡片（在本项 DOM 之外）会被误判为外点而把弹窗关掉。
-  useEffect(() => {
+  // 菜单态打开时，点击本项之外则收起（�?idle），避免菜单悬挂�?  // 确认态由 ConfirmDialog 弹窗自己管开关（点遮�?Esc/取消），不走这套外点收起—�?  // 否则点弹窗卡片（在本�?DOM 之外）会被误判为外点而把弹窗关掉�?  useEffect(() => {
     if (mode !== 'menu') return;
     const onDoc = (e: MouseEvent): void => {
       if (!rootRef.current?.contains(e.target as Node)) setMode('idle');
@@ -337,8 +328,7 @@ function SessionItem({
 
   const commitRename = (): void => {
     const clean = draft.trim();
-    // 有变化且非空才提交；否则当作取消（回 idle）。
-    if (clean && clean !== session.title) onRename(session.sessionId, clean);
+    // 有变化且非空才提交；否则当作取消（回 idle）�?    if (clean && clean !== session.title) onRename(session.sessionId, clean);
     setMode('idle');
   };
 
@@ -347,8 +337,7 @@ function SessionItem({
     setMode('idle');
   };
 
-  // —— 重命名态：整行换成 inline 输入框 ——
-  if (mode === 'rename') {
+  // —�?重命名态：整行换成 inline 输入�?—�?  if (mode === 'rename') {
     return (
       <div
         ref={rootRef}
@@ -370,7 +359,7 @@ function SessionItem({
             }
           }}
           onBlur={commitRename}
-          aria-label="重命名会话"
+          aria-label="重命名会�?
         />
       </div>
     );
@@ -395,12 +384,11 @@ function SessionItem({
         <span
           className="otto-session__title"
           onDoubleClick={(e) => {
-            // 双击标题直接进重命名（不触发选中冒泡）。
-            e.stopPropagation();
+            // 双击标题直接进重命名（不触发选中冒泡）�?            e.stopPropagation();
             startRename();
           }}
         >
-          {session.title || '未命名对话'}
+          {session.title || '未命名对�?}
         </span>
         <span className="otto-session__time">{formatTime(session.updatedAt)}</span>
         <button
@@ -435,8 +423,7 @@ function SessionItem({
             className="otto-session__menuitem"
             onClick={() => startRename()}
           >
-            重命名
-          </button>
+            重命�?          </button>
           <button
             type="button"
             role="menuitem"
@@ -451,7 +438,7 @@ function SessionItem({
       <ConfirmDialog
         open={mode === 'confirm'}
         title="删除对话"
-        message={`确定删除「${session.title || '未命名对话'}」吗？此操作不可撤销。`}
+        message={`确定删除�?{session.title || '未命名对�?}」吗？此操作不可撤销。`}
         onCancel={() => setMode('idle')}
         onConfirm={() => {
           onDelete(session.sessionId);

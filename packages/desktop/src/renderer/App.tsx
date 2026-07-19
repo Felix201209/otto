@@ -6,19 +6,11 @@
 
 /**
  * 顶层 App。单窗布局（docs/otto-desktop-ui-spec.md 为唯一基准）：
- *   左 Sidebar（会话列表 + 来源徽章） + 主 ChatView（顶栏/消息流/工具卡/输入区）。
- *
- * 飞书与本地会话共用同一聊天面（Issue #6 在 Sidebar/ChatView 内联实现：
- * 源徽章 + 顶栏「飞书·实时同步」指示），不再有独立 tab。
- * 状态/传输走 useOttoStore（preload WS ↔ otto-server，协议见 packages/server/src/protocol.ts）。
- *
- * 已接：会话分组列表（今天/昨天）、选择/新建会话、发消息（乐观渲染）、模型选择、
- *       流式回复、工具调用卡（含 diff）、错误 toast、setup/BYO-key 图形引导（Issue #7，
- *       SetupPanel 完整向导 + save_custom_model 落盘闭环）、断连/重连横幅、流式停止。
- * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为空 TODO）。
- */
+ *   �?Sidebar（会话列�?+ 来源徽章�?+ �?ChatView（顶�?消息�?工具�?输入区）�? *
+ * 飞书与本地会话共用同一聊天面（Issue #6 �?Sidebar/ChatView 内联实现�? * 源徽�?+ 顶栏「飞书·实时同步」指示），不再有独立 tab�? * 状�?传输�?useOttoStore（preload WS �?otto-server，协议见 packages/server/src/protocol.ts）�? *
+ * 已接：会话分组列表（今天/昨天）、选择/新建会话、发消息（乐观渲染）、模型选择�? *       流式回复、工具调用卡（含 diff）、错�?toast、setup/BYO-key 图形引导（Issue #7�? *       SetupPanel 完整向导 + save_custom_model 落盘闭环）、断�?重连横幅、流式停止�? * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为�?TODO）�? */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
 import type { MessageSource } from 'otto-server';
@@ -52,8 +44,17 @@ import { SkillZonePage } from './components/SkillZonePage.js';
 import { EnterpriseLoginPage } from './components/EnterpriseLoginPage.js';
 import { AccountManagementPage } from './components/AccountManagementPage.js';
 import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
-import type { EnterpriseAccount } from '../preload/index.js';
+import type {
+  EnterpriseAtoaInboxMessage,
+  EnterpriseAccount,
+  EnterpriseDirectMessage,
+  EnterpriseOrganizationView,
+} from '../preload/index.js';
 import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
+import {
+  buildAtoaResponse,
+  parseAtoaMessage,
+} from './atoaProtocol.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
   INTERNAL_TEST_ACCOUNT,
@@ -64,11 +65,70 @@ import {
   type AgentProfile,
 } from './agents/departmentAgents.js';
 
-/** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
+/** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口�?*/
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
-/** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
+/** 主内容区当前视图：对�?/ 智能�?/ 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层�?*/
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+
+type DirectChatOttoRequest = {
+  member: EnterpriseOrganizationView['members'][number];
+  messages: EnterpriseDirectMessage[];
+  question?: string;
+};
+
+type WorkLogDay = Awaited<ReturnType<Window['otto']['workLogRecent']>>[number];
+
+function isAvailabilityQuestion(question: string): boolean {
+  return /有空|忙|时间|方便|空闲|available|free|busy|schedule|when/i.test(question);
+}
+
+function summarizeWorkLogDay(day: WorkLogDay | undefined): string {
+  if (!day || day.entries.length === 0) return '今天暂无可用工作日志�?;
+  const results = day.entries
+    .filter((entry) => entry.category === 'work_result')
+    .slice(0, 3)
+    .map((entry) => entry.taskTitle || entry.action)
+    .filter(Boolean);
+  const total = day.entries.length;
+  return results.length > 0
+    ? `今天已有 ${total} 条工作记录，近期成果包括�?{results.join('�?)}。`
+    : `今天已有 ${total} 条工作记录，但没有明确标记为成果的条目。`;
+}
+
+async function buildPeerOttoAnswer(question: string): Promise<string> {
+  let todaySummary = '暂时无法读取今天的工作日志�?;
+  let recentSummary = '暂时无法读取近期工作日志�?;
+  try {
+    const [today, recent] = await Promise.all([
+      window.otto.workLogToday().catch(() => null),
+      window.otto.workLogRecent(7).catch(() => []),
+    ]);
+    if (today) {
+      todaySummary = today.summary || `今天�?${today.totalActions} 条记录�?{today.workResults} 项成果。`;
+    }
+    const recentDays = recent.filter((day) => day.entries.length > 0);
+    recentSummary = recentDays.length > 0
+      ? recentDays.slice(0, 3).map(summarizeWorkLogDay).join('\n')
+      : '最�?7 天暂无可用工作日志�?;
+  } catch {}
+
+  if (isAvailabilityQuestion(question)) {
+    return [
+      '我是对方�?Otto，只能基于对方本机允许读取的工作日志做谨慎判断�?,
+      todaySummary,
+      recentSummary,
+      '结论：我不能替对方承诺一定有空；如果你要约时间，建议发一个具体时间段让对方确认�?,
+    ].join('\n');
+  }
+  return [
+    '我是对方�?Otto，已基于对方本机工作日志做了初步判断�?,
+    `你的问题�?{question}`,
+    todaySummary,
+    recentSummary,
+    '建议：如果这个问题需要对方本人确认，我会建议你继续让对方最终确认；我不会编造工作日志之外的信息�?,
+  ].join('\n');
+}
 
 export function App(): React.JSX.Element {
   const auth = useEnterpriseAuth();
@@ -86,7 +146,7 @@ export function App(): React.JSX.Element {
     return (
       <div className="otto-auth-boot" role="status">
         <span>O</span>
-        <div><strong>OTTO</strong><small>正在验证企业身份…</small></div>
+        <div><strong>OTTO</strong><small>正在验证企业身份�?/small></div>
       </div>
     );
   }
@@ -115,23 +175,61 @@ function OttoWorkspaceApp({
   onLogout?: () => Promise<void>;
 }): React.JSX.Element {
   const { state, actions } = useOttoStore();
-  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
-  const settingsData = useSettingsData();
-  // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
-  const softwareUpdate = useSoftwareUpdate();
+  // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos�?  const settingsData = useSettingsData();
+  // 软件更新状态机：SettingsHub「软件更新」tab �?Sidebar 入口小圆点共享一份�?  const softwareUpdate = useSoftwareUpdate();
   const product = useProductWorkspace();
   const [autoProfileRevision, setAutoProfileRevision] = useState(0);
   const centralIdentity = useMemo(
     () => resolveCentralEnterpriseIdentity(account),
-    // profile.json 刷新后重取固定目录；中心账号仍是身份与权限的唯一来源。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // profile.json 刷新后重取固定目录；中心账号仍是身份与权限的唯一来源�?    // eslint-disable-next-line react-hooks/exhaustive-deps
     [account, autoProfileRevision],
   );
   const edition = centralIdentity.edition;
 
-  // profile.json 涉及本机文件系统，只允许 main 读取；renderer 接收纯数据，
-  // 避免把 otto-core 及 Node 内置模块打进 sandbox bundle。
   useEffect(() => {
+    const processed = new Set<string>();
+    let running = false;
+    let cancelled = false;
+
+    const handleRequest = async (request: EnterpriseAtoaInboxMessage): Promise<void> => {
+      if (processed.has(request.id)) return;
+      const parsed = parseAtoaMessage(request.content);
+      if (parsed?.kind !== 'request') return;
+      processed.add(request.id);
+      const answer = await buildPeerOttoAnswer(parsed.payload.question);
+      await window.otto.enterpriseMessageSend(request.peerAccountId, buildAtoaResponse({
+        requestId: request.id,
+        question: parsed.payload.question,
+        answer,
+      }));
+    };
+
+    const poll = async (): Promise<void> => {
+      if (running || cancelled) return;
+      running = true;
+      try {
+        const requests = await window.otto.enterpriseAtoaInbox();
+        for (const request of requests) {
+          if (cancelled) break;
+          await handleRequest(request);
+        }
+      } catch {
+        // Enterprise auth, network, or older server issues should never block normal chat.
+      } finally {
+        running = false;
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [account.id]);
+
+  // profile.json 涉及本机文件系统，只允许 main 读取；renderer 接收纯数据，
+  // 避免�?otto-core �?Node 内置模块打进 sandbox bundle�?  useEffect(() => {
     let cancelled = false;
     void window.otto.autoGeneratedAgentProfiles()
       .then((profiles) => {
@@ -146,34 +244,26 @@ function OttoWorkspaceApp({
   }, []);
 
   // 启动后延迟静默检查一次：发现新版只点亮设置入口小圆点（无弹窗），
-  // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户。
-  useEffect(() => {
+  // 检查失败保持沉默（silentCheck 内部即如此），绝不打扰用户�?  useEffect(() => {
     const timer = window.setTimeout(
       () => softwareUpdate.actions.silentCheck(),
       SILENT_UPDATE_CHECK_DELAY_MS,
     );
     return () => window.clearTimeout(timer);
-    // actions 引用稳定（hook 内 useMemo），只在挂载时安排一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // actions 引用稳定（hook �?useMemo），只在挂载时安排一次�?    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // —— 「查看全部对话」检索面板（仍是浮层） ——
-  const [allConvOpen, setAllConvOpen] = useState(false);
+  // —�?「查看全部对话」检索面板（仍是浮层�?—�?  const [allConvOpen, setAllConvOpen] = useState(false);
 
-  // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
-  const [mainView, setMainView] = useState<MainView>('chat');
-  // 右侧智能体面板切换（默认显示）。
-  const [showRightPanel, setShowRightPanel] = useState(true);
-  // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页。
-  const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
-  // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
-  const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
+  // —�?主内容区视图：对�?/ 智能�?/ 设置，整页切换（右侧栏常驻）—�?  const [mainView, setMainView] = useState<MainView>('chat');
+  // 右侧智能体面板切换（默认显示）�?  const [showRightPanel, setShowRightPanel] = useState(true);
+  // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页�?  const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
+  // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命�?/doctor /memory /skills 直达用）�?  const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
     setHubInitialTab(tab);
     setMainView('hub');
   };
-  // 悬浮设置窗打开时全局接管 Esc；焦点即使还留在底层按钮也必须能关闭。
-  useEffect(() => {
+  // 悬浮设置窗打开时全局接管 Esc；焦点即使还留在底层按钮也必须能关闭�?  useEffect(() => {
     if (mainView !== 'hub') return;
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
@@ -183,19 +273,13 @@ function OttoWorkspaceApp({
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [mainView]);
-  // setup 页是否打开（由 mainView 派生），供 BYO-key 落盘裁决闭环判定。
-  const setupOpen = mainView === 'settings';
-  // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案。
-  // 由 App 在 setupOpen 期间临时监听原始帧驱动（models_list=成功 / error(save_failed)=失败），
-  // 不污染全局 lastError，也不动 store 的 error 落地逻辑。
-  const [saving, setSaving] = useState(false);
+  // setup 页是否打开（由 mainView 派生），�?BYO-key 落盘裁决闭环判定�?  const setupOpen = mainView === 'settings';
+  // setup 落盘的实时态：'idle' | 'saving' | 失败时存错误文案�?  // �?App �?setupOpen 期间临时监听原始帧驱动（models_list=成功 / error(save_failed)=失败），
+  // 不污染全局 lastError，也不动 store �?error 落地逻辑�?  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  // 首启无模型时自动浮出一次（用 ref 防止反复弹）。
-  const autoFloated = useRef(false);
-  // 当前用户所属部门 teamId 数组。null = 尚未加载；undefined/[] = 个人版。
-  const [userTeamIds, setUserTeamIds] = useState<string[] | null>(null);
-  // 豁免码：跳过 SetupPanel 的开发调试机制。
-  const [exemptActive, setExemptActive] = useState(false);
+  // 首启无模型时自动浮出一次（�?ref 防止反复弹）�?  const autoFloated = useRef(false);
+  // 当前用户所属部�?teamId 数组。null = 尚未加载；undefined/[] = 个人版�?  const [userTeamIds, setUserTeamIds] = useState<string[] | null>(null);
+  // 豁免码：跳过 SetupPanel 的开发调试机制�?  const [exemptActive, setExemptActive] = useState(false);
   useEffect(() => {
     try {
       const exempt = localStorage.getItem('otto_exempt_code');
@@ -217,13 +301,7 @@ function OttoWorkspaceApp({
     }
   }, [state.connection, state.modelsLoaded, state.models.length, product.state.workspace?.context.edition]);
 
-  // setup 落盘闭环：仅当面板打开且**本次保存进行中（saving）**时，才让裁决帧驱动面板开合。
-  //   models_list  → 本次落盘成功（server 写盘后广播最新列表）→ 关面板。
-  //   error(save_failed) → 落盘失败 → 面板内提示，不关。
-  // 加 saving 闸门的原因：models_list 还会因 get_models 回包、或其它客户端（如 TUI）
-  // save_custom_model 成功后的 broadcastAll 而到来；若不区分「是不是本次保存」，这些与本次
-  // 无关的广播会把用户正在填 key 的面板意外关掉、丢掉输入。只认 saving=true 之后的裁决帧。
-  useEffect(() => {
+  // setup 落盘闭环：仅当面板打开�?*本次保存进行中（saving�?*时，才让裁决帧驱动面板开合�?  //   models_list  �?本次落盘成功（server 写盘后广播最新列表）�?关面板�?  //   error(save_failed) �?落盘失败 �?面板内提示，不关�?  // �?saving 闸门的原因：models_list 还会�?get_models 回包、或其它客户端（�?TUI�?  // save_custom_model 成功后的 broadcastAll 而到来；若不区分「是不是本次保存」，这些与本�?  // 无关的广播会把用户正在填 key 的面板意外关掉、丢掉输入。只�?saving=true 之后的裁决帧�?  useEffect(() => {
     if (!setupOpen || !saving) return;
     const off = transport.onFrame((frame) => {
       if (frame.type === 'models_list') {
@@ -241,31 +319,23 @@ function OttoWorkspaceApp({
     return off;
   }, [setupOpen, saving]);
 
-  // 关面板时复位落盘态，避免下次打开残留旧错误/转圈。
-  const closeSetup = (): void => {
+  // 关面板时复位落盘态，避免下次打开残留旧错�?转圈�?  const closeSetup = (): void => {
     setMainView('chat');
     setSaving(false);
     setSaveError(null);
   };
 
-  // 提交一个自定义模型：发结构化帧，进入「保存中」，由上面的帧监听裁决结果。
-  const handleSaveModel = (payload: SaveCustomModelPayload): void => {
+  // 提交一个自定义模型：发结构化帧，进入「保存中」，由上面的帧监听裁决结果�?  const handleSaveModel = (payload: SaveCustomModelPayload): void => {
     setSaveError(null);
     setSaving(true);
     transport.send({ type: 'save_custom_model', payload });
   };
 
-  // 删除自定义模型：server 成功后广播 models_list，列表自动刷新（多窗口同步）。
-  const handleDeleteModel = (id: string): void => {
+  // 删除自定义模型：server 成功后广�?models_list，列表自动刷新（多窗口同步）�?  const handleDeleteModel = (id: string): void => {
     transport.send({ type: 'delete_custom_model', payload: { id } });
   };
 
-  // —— 首启/新建自动引导 ——
-  // 连上且会话列表已知晓（sessionsLoaded）后：
-  //   · 若一个会话都没有且本次尚未引导过 → 建一个现成会话（首启即可直接打字，消除死路）；
-  //   · 否则若无选中但有会话 → 选中第一个。
-  // 用 ref 记「本次会话内是否已引导过」，避免 sessions_list 反复到达时重复建会话。
-  const bootstrappedRef = useRef(false);
+  // —�?首启/新建自动引导 —�?  // 连上且会话列表已知晓（sessionsLoaded）后�?  //   · 若一个会话都没有且本次尚未引导过 �?建一个现成会话（首启即可直接打字，消除死路）�?  //   · 否则若无选中但有会话 �?选中第一个�?  // �?ref 记「本次会话内是否已引导过」，避免 sessions_list 反复到达时重复建会话�?  const bootstrappedRef = useRef(false);
   useEffect(() => {
     if (state.connection !== 'connected' || !state.sessionsLoaded) return;
     if (state.sessionIds.length === 0) {
@@ -275,8 +345,7 @@ function OttoWorkspaceApp({
       }
       return;
     }
-    // 有会话：标记已引导（防止之后清空又误建），无选中则补选第一个。
-    bootstrappedRef.current = true;
+    // 有会话：标记已引导（防止之后清空又误建），无选中则补选第一个�?    bootstrappedRef.current = true;
     if (!state.activeSessionId) {
       actions.selectSession(state.sessionIds[0]);
     }
@@ -288,10 +357,7 @@ function OttoWorkspaceApp({
     actions,
   ]);
 
-  // —— 应用菜单 IPC ——
-  // 主进程菜单（File→New Chat / Settings…，含 Cmd+N、Cmd+,）经 transport.onMenu 广播 action。
-  // 订阅并路由：'new-chat'→新建会话；'open-settings'→打开 setup。卸载时取消订阅。
-  useEffect(() => {
+  // —�?应用菜单 IPC —�?  // 主进程菜单（File→New Chat / Settings…，�?Cmd+N、Cmd+,）经 transport.onMenu 广播 action�?  // 订阅并路由：'new-chat'→新建会话；'open-settings'→打开 setup。卸载时取消订阅�?  useEffect(() => {
     const off = transport.onMenu((action) => {
       if (action === 'new-chat') {
         setMainView('chat');
@@ -312,31 +378,25 @@ function OttoWorkspaceApp({
     ? state.messages[state.activeSessionId] ?? []
     : [];
 
-  // session.status 是全局运行态的权威源：工具段结束→下一轮开始的帧间隙里，旧消息会
-  // 短暂不 busy，但会话始终 streaming/thinking。以 status 驱动可避免停止按钮被卸载，
-  // 也不会让历史里偶发残留的 isProcessingTools 把已 idle 的会话重新锁死。
-  const busy =
+  // session.status 是全局运行态的权威源：工具段结束→下一轮开始的帧间隙里，旧消息�?  // 短暂�?busy，但会话始终 streaming/thinking。以 status 驱动可避免停止按钮被卸载�?  // 也不会让历史里偶发残留的 isProcessingTools 把已 idle 的会话重新锁死�?  const busy =
     activeSession?.status === 'thinking' || activeSession?.status === 'streaming';
 
-  // 重新生成：重发**被点 bot 消息所对应的那一轮用户提问**（保持其来源），而非
-  // 永远重发全会话最后一轮。据 messageId 在列表里定位该 bot 消息，往前找最近的
-  // 一条用户消息即是它的提问轮次。messageId 缺失/未命中时兜底回退到最后一条用户消息。
-  const handleRegenerate = (messageId?: string): void => {
+  // 重新生成：重�?*被点 bot 消息所对应的那一轮用户提�?*（保持其来源），而非
+  // 永远重发全会话最后一轮。据 messageId 在列表里定位�?bot 消息，往前找最近的
+  // 一条用户消息即是它的提问轮次。messageId 缺失/未命中时兜底回退到最后一条用户消息�?  const handleRegenerate = (messageId?: string): void => {
     let target: (typeof activeMessages)[number] | undefined;
     const idx = messageId
       ? activeMessages.findIndex((m) => m.id === messageId)
       : -1;
     if (idx >= 0) {
-      // 从被点的 bot 消息往前回溯，命中的第一条用户消息就是这轮的提问。
-      for (let i = idx; i >= 0; i--) {
+      // 从被点的 bot 消息往前回溯，命中的第一条用户消息就是这轮的提问�?      for (let i = idx; i >= 0; i--) {
         if (activeMessages[i].role === 'user') {
           target = activeMessages[i];
           break;
         }
       }
     }
-    // 兜底：无 id 或未定位到（异常数据）→ 退回最后一条用户消息。
-    if (!target) {
+    // 兜底：无 id 或未定位到（异常数据）→ 退回最后一条用户消息�?    if (!target) {
       target = [...activeMessages].reverse().find((m) => m.role === 'user');
     }
     if (!target) return;
@@ -356,8 +416,7 @@ function OttoWorkspaceApp({
   };
 
   // 新建对话：若已存在一个「无消息的空会话」，直接复用（选中它）而非再建一个，
-  // 避免连点堆出一串空壳。找不到才真正新建。
-  const handleNewChat = (): void => {
+  // 避免连点堆出一串空壳。找不到才真正新建�?  const handleNewChat = (): void => {
     setMainView('chat');
     const empty = state.sessionIds
       .map((id) => state.sessions[id])
@@ -374,19 +433,46 @@ function OttoWorkspaceApp({
     actions.createSession();
   };
 
-  // 斜杠命令 /clear：清空当前会话上下文。store/协议目前没有「清空历史」能力
-  // （reducer 无 clear 帧、server 协议也未定义），为不改协议/后端，退化为「新建会话」——
-  // 语义上等价于「开一段全新的、没有上文的对话」，是最小可行方案。
-  const handleClearContext = (): void => {
+  // 斜杠命令 /clear：清空当前会话上下文。store/协议目前没有「清空历史」能�?  // （reducer �?clear 帧、server 协议也未定义），为不改协�?后端，退化为「新建会话」—�?  // 语义上等价于「开一段全新的、没有上文的对话」，是最小可行方案�?  const handleClearContext = (): void => {
     setMainView('chat');
     actions.createSession();
   };
 
-  // 启动专家：新会话只在服务端绑定 profile system prompt，不向聊天框暴露或填入模板。
-  const handleLaunchProfile = (profile: AgentProfile): void => {
+  // 启动专家：新会话只在服务端绑�?profile system prompt，不向聊天框暴露或填入模板�?  const handleLaunchProfile = (profile: AgentProfile): void => {
     setMainView('chat');
     actions.launchAgentProfile(profile.name, profile.id);
   };
+
+  const handleAskOttoFromDirectChat = useCallback(({
+    member,
+    messages,
+    question,
+  }: DirectChatOttoRequest): void => {
+    const recentMessages = messages.slice(-40);
+    const transcript = recentMessages.map((message) => {
+      const speaker = message.senderAccountId === member.id ? member.name : account.name;
+      const createdAt = message.createdAt
+        ? new Date(message.createdAt).toLocaleString('zh-CN', { hour12: false })
+        : '';
+      return `- ${createdAt} ${speaker}: ${message.content}`;
+    }).join('\n');
+    const cleanQuestion = question?.trim()
+      || '请基于这段聊天记录总结背景、待办、风险和下一步建议�?;
+    const prompt = [
+      '你正在被企业一对一聊天调用。请只基于下面聊天记录和用户问题提供帮助�?,
+      `当前用户�?{account.name}${account.department ? `�?{account.department}）` : ''}`,
+      `聊天对象�?{member.name}${member.department ? `�?{member.department}）` : ''}`,
+      '',
+      '聊天记录�?,
+      transcript || '（当前还没有可用聊天记录�?,
+      '',
+      `用户希望 Otto 处理的问题：${cleanQuestion}`,
+      '',
+      '请先说明你理解到的上下文，再给出可执行建议；如果需要发送给对方的内容，请单独给出可复制版本。不要编造聊天记录之外的信息�?,
+    ].join('\n');
+    setMainView('chat');
+    actions.launchAgentProfileWithPrompt(`Otto 协助�?{member.name}`, 'otto-enterprise-work', prompt);
+  }, [account.department, account.name, actions]);
 
   const openModelSettings = (): void => {
     setMainView('settings');
@@ -403,16 +489,12 @@ function OttoWorkspaceApp({
     [product.state.schedules, selectedDate],
   );
 
-  // —— 斜杠命令：本地 + server 合并清单 ——
-  // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命令
-  // 合并后传给命令面板；server 新增命令时面板自动出现，两处清单不漂移。
-  const slashCommands = useMemo(
+  // —�?斜杠命令：本�?+ server 合并清单 —�?  // server 侧命令由 slash_commands_list 帧下发（单一事实源），与本地面板类命�?  // 合并后传给命令面板；server 新增命令时面板自动出现，两处清单不漂移�?  const slashCommands = useMemo(
     () => mergeServerCommands(SLASH_COMMANDS, state.slashCommands ?? []),
     [state.slashCommands],
   );
 
-  // `/help`：由合并后的完整清单生成命令总览，插一条本地系统气泡（ephemeral）。
-  const handleShowHelp = (): void => {
+  // `/help`：由合并后的完整清单生成命令总览，插一条本地系统气泡（ephemeral）�?  const handleShowHelp = (): void => {
     actions.postSystemNote(buildHelpMarkdown(slashCommands));
   };
 
@@ -437,10 +519,11 @@ function OttoWorkspaceApp({
         productWorkspace={product.state.workspace}
         enterpriseAccount={account}
         organizationOpenRequest={organizationOpenRequest}
+        onAskOttoFromDirectChat={handleAskOttoFromDirectChat}
         onLogout={onLogout}
       />
 
-      {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
+      {/* 主内容区：设�?/ 智能�?/ 设置诊断中心 / 对话，整页切换（不再是弹窗）�?*/}
       {mainView === 'settings' ? (
         <SetupPanel
           models={state.models}
@@ -479,7 +562,7 @@ function OttoWorkspaceApp({
               currentModel={state.currentModel}
               userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
               identityLabel={`${account.name} · ${centralIdentity.identityLabel}`}
-              modelManagementLabel="模型与个人 API 设置"
+              modelManagementLabel="模型与个�?API 设置"
               busy={busy}
               onSend={handleSend}
               onCancel={actions.cancel}
@@ -544,13 +627,13 @@ function OttoWorkspaceApp({
         </div>
       )}
 
-      {/* 断连 / 重连横幅：WS 非 connected 时浮出，给用户可见反馈。 */}
+      {/* 断连 / 重连横幅：WS �?connected 时浮出，给用户可见反馈�?*/}
       {state.connection !== 'connected' ? (
         <div className="otto-conn-banner" role="status" aria-live="polite">
           <span className="otto-conn-banner__dot" aria-hidden />
           {state.connection === 'connecting'
-            ? '连接中…'
-            : '已断开，正在重连…'}
+            ? '连接中�?
+            : '已断开，正在重连�?}
         </div>
       ) : null}
 
@@ -585,8 +668,7 @@ function OttoWorkspaceApp({
         />
       ) : null}
 
-      {/* 设置与诊断中心：悬浮大窗（Jeremy：参考 workbuddy）——对话保持在底层，
-          遮罩点击 / Esc / 面板内「返回对话」均可关闭。 */}
+      {/* 设置与诊断中心：悬浮大窗（Jeremy：参�?workbuddy）——对话保持在底层�?          遮罩点击 / Esc / 面板内「返回对话」均可关闭�?*/}
       {mainView === 'hub' ? (
         <div
           className="otto-hubfloat-overlay"
@@ -597,7 +679,7 @@ function OttoWorkspaceApp({
             if (e.key === 'Escape') setMainView('chat');
           }}
         >
-          <div className="otto-hubfloat" role="dialog" aria-modal="true" aria-label="设置与诊断中心">
+          <div className="otto-hubfloat" role="dialog" aria-modal="true" aria-label="设置与诊断中�?>
             <SettingsHubPage
               data={settingsData}
               update={softwareUpdate}
@@ -612,15 +694,15 @@ function OttoWorkspaceApp({
         </div>
       ) : null}
 
-      {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}
+      {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）�?*/}
       <WhatsNewDialog />
-      {/* 主动服务提醒：右下角 toast（日程/洞察/日报等） */}
+      {/* 主动服务提醒：右下角 toast（日�?洞察/日报等） */}
       <ProactiveToast />
     </div>
   );
 }
 
-/** 错误 toast：带关闭按钮，且 6s 后自动消失。 */
+/** 错误 toast：带关闭按钮，且 6s 后自动消失�?*/
 function ErrorToast({
   message,
   onClose,
@@ -628,8 +710,7 @@ function ErrorToast({
   message: string;
   onClose: () => void;
 }): React.JSX.Element {
-  // message 变化即重置计时（新错误重新计 6s）。
-  useEffect(() => {
+  // message 变化即重置计时（新错误重新计 6s）�?  useEffect(() => {
     const t = window.setTimeout(onClose, 6000);
     return () => window.clearTimeout(t);
   }, [message, onClose]);

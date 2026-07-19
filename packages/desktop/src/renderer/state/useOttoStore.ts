@@ -535,6 +535,12 @@ export interface OttoActions {
   launchExpert(title: string, kickoff: string): void;
   /** v1.7：只提交白名单 profile id，由 server 注入 system prompt；不自动发用户消息。 */
   launchAgentProfile(title: string, agentProfileId: string): void;
+  launchAgentProfileWithPrompt(
+    title: string,
+    agentProfileId: string,
+    prompt: string,
+    source?: MessageSource,
+  ): void;
   sendMessage(
     text: string,
     source?: MessageSource,
@@ -595,7 +601,11 @@ export function useOttoStore(): UseOttoStore {
     kickoff: string;
     source: MessageSource;
   } | null>(null);
-  const profileLaunchRef = useRef<string | null>(null);
+  const profileLaunchRef = useRef<{
+    agentProfileId: string;
+    kickoff?: string;
+    source: MessageSource;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -656,11 +666,20 @@ export function useOttoStore(): UseOttoStore {
       } else if (
         profileLaunchRef.current &&
         frame.type === 'session_upsert' &&
-        frame.payload.session.agentProfileId === profileLaunchRef.current &&
+        frame.payload.session.agentProfileId === profileLaunchRef.current.agentProfileId &&
         !sessionIdsRef.current.includes(frame.payload.session.sessionId)
       ) {
+        const sid = frame.payload.session.sessionId;
+        const spec = profileLaunchRef.current;
         profileLaunchRef.current = null;
-        dispatch({ kind: 'select', sessionId: frame.payload.session.sessionId });
+        if (spec.kickoff?.trim()) {
+          kickoffRef.current = {
+            sessionId: sid,
+            kickoff: spec.kickoff.trim(),
+            source: spec.source,
+          };
+        }
+        dispatch({ kind: 'select', sessionId: sid });
       }
     });
 
@@ -782,15 +801,40 @@ export function useOttoStore(): UseOttoStore {
   }, []);
 
   const launchAgentProfile = useCallback((title: string, agentProfileId: string) => {
-    if (!agentProfileId.trim()) return;
+    const cleanAgentProfileId = agentProfileId.trim();
+    if (!cleanAgentProfileId) return;
     if (connectionRef.current !== 'connected') {
       dispatch({ kind: 'local_error', message: '未连接，无法启动 Agent' });
       return;
     }
-    profileLaunchRef.current = agentProfileId;
+    profileLaunchRef.current = { agentProfileId: cleanAgentProfileId, source: 'local' };
     transport.send({
       type: 'create_session',
-      payload: { title, agentProfileId },
+      payload: { title, agentProfileId: cleanAgentProfileId },
+    });
+  }, []);
+
+  const launchAgentProfileWithPrompt = useCallback((
+    title: string,
+    agentProfileId: string,
+    prompt: string,
+    source: MessageSource = 'local',
+  ) => {
+    const cleanAgentProfileId = agentProfileId.trim();
+    const cleanPrompt = prompt.trim();
+    if (!cleanAgentProfileId || !cleanPrompt) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，无法调用 Otto' });
+      return;
+    }
+    profileLaunchRef.current = {
+      agentProfileId: cleanAgentProfileId,
+      kickoff: cleanPrompt,
+      source,
+    };
+    transport.send({
+      type: 'create_session',
+      payload: { title, agentProfileId: cleanAgentProfileId },
     });
   }, []);
 
@@ -897,6 +941,7 @@ export function useOttoStore(): UseOttoStore {
       renameSession,
       launchExpert,
       launchAgentProfile,
+      launchAgentProfileWithPrompt,
       sendMessage,
       setModel,
       cancel,

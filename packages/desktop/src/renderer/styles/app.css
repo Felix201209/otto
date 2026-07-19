@@ -6360,6 +6360,8 @@ h6.otto-prose__h {
 .otto-direct-chat { position: fixed; z-index: 50; left: 232px; bottom: 22px; width: 340px; height: 430px; display: flex; flex-direction: column; border: 1px solid var(--otto-border); border-radius: 12px; background: var(--otto-surface); box-shadow: 0 18px 48px rgba(0,0,0,.28); }
 .otto-direct-chat header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--otto-border); }
 .otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }
+.otto-direct-chat__otto { margin-left:auto; margin-right:8px; border:1px solid var(--otto-border) !important; border-radius:8px; background:var(--otto-bg) !important; color:var(--otto-text) !important; font-size:12px !important; line-height:1; padding:7px 9px; }
+.otto-direct-chat__otto:hover { border-color:var(--otto-accent); color:var(--otto-accent) !important; }
 .otto-direct-chat__messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:12px; }
 .otto-direct-chat__messages p { color:var(--otto-text-tertiary); text-align:center; }
 .otto-direct-chat__message { max-width:80%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }

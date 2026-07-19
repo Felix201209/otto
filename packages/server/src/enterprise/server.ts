@@ -419,6 +419,7 @@ function isAdminRoute(path: string): boolean {
 
 function isMemberRoute(path: string): boolean {
   return MEMBER_ROUTES.has(path)
+    || path === '/enterprise/atoa/inbox'
     || path.startsWith('/enterprise/messages/')
     || (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke'));
 }
@@ -1550,6 +1551,19 @@ function makeHandler(
             status: a.status,
           })),
           employeeCount: employees.length,
+        });
+        return;
+      }
+
+      if (path === '/enterprise/atoa/inbox' && method === 'GET') {
+        sendJSON(res, 200, {
+          requests: db.listPendingAtoaRequests({
+            organizationId: memberAccount!.organizationId,
+            accountId: memberAccount!.id,
+            requestPrefix: 'OTTO_ATOA_REQUEST ',
+            responsePrefix: 'OTTO_ATOA_RESPONSE ',
+            limit: Number(url.searchParams.get('limit') || 50),
+          }),
         });
         return;
       }
