@@ -601,6 +601,7 @@ export async function runDelegatedTask(
   let aborted = false;
   let sessionId: string | undefined;
   let promptSentAt = 0;
+  let interruptTurn: ((error: Error) => void) | undefined;
   // Human-readable startup phase, shown in heartbeats until real output streams.
   let phase = `正在启动本机 ${label}（首次运行需下载依赖，请稍候）…`;
   const startedAt = Date.now();
@@ -630,6 +631,7 @@ export async function runDelegatedTask(
     if (settled) return;
     timedOut = true;
     killChildProcess(child);
+    interruptTurn?.(new Error('Delegated task timed out.'));
   }, timeoutMs);
 
   // Idle watchdog: once the prompt is in flight, fail fast if the agent goes
@@ -643,6 +645,7 @@ export async function runDelegatedTask(
     if (sinceActivity >= idleTimeoutMs && sincePrompt >= idleTimeoutMs) {
       stalled = true;
       killChildProcess(child);
+      interruptTurn?.(new Error('Delegated task went idle.'));
     }
   }, Math.min(HEARTBEAT_INTERVAL_MS, Math.max(1000, Math.floor(idleTimeoutMs / 4))));
 
@@ -653,6 +656,7 @@ export async function runDelegatedTask(
       connection.cancel({ sessionId }).catch(() => undefined);
     }
     killChildProcess(child);
+    interruptTurn?.(new Error('Delegated task was cancelled.'));
   };
   if (signal.aborted) {
     onAbort();
@@ -725,9 +729,14 @@ export async function runDelegatedTask(
     });
   })();
 
+  const interrupted = new Promise<never>((_, reject) => {
+    interruptTurn = reject;
+  });
+
   try {
     const response = await Promise.race([
       turn,
+      interrupted,
       childExited.then((): never => {
         throw new Error(
           launchError ??

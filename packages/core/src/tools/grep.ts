@@ -16,6 +16,8 @@ import { getErrorMessage, isNodeError } from '../utils/errors.js';
 import { Config } from '../config/config.js';
 import { logger } from '../utils/enhancedLogger.js';
 import { isVSCodeEnvironment } from '../utils/environment/index.js';
+import { isWithinRoot } from '../utils/fileUtils.js';
+import micromatch from 'micromatch';
 
 // --- Constants ---
 
@@ -243,18 +245,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
         ? relativePath
         : path.resolve(this.config.getTargetDir(), relativePath || '.'),
     );
-    const normalizedRoot = path.normalize(this.config.getTargetDir());
-
-    // Security Check: Ensure the resolved path is still within the root directory.
-    // Use path.relative for robust same-drive/cross-drive comparison.
-    const relPath = path.relative(normalizedRoot, targetPath);
-    const leavesRoot =
-      relPath === '..' ||
-      relPath.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relPath);
-    const isWithinRoot = relPath === '' || !leavesRoot;
-
-    if (!isWithinRoot) {
+    if (!isWithinRoot(targetPath, this.config.getTargetDir())) {
       throw new Error(
         `Path validation failed: Attempted path "${relativePath || '.'}" resolves outside the allowed root directory "${this.config.getTargetDir()}".`,
       );
@@ -326,7 +317,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       searchDirAbs = this.resolveAndValidatePath(params.path);
       const searchDirDisplay = params.path || '.';
 
-      const allMatches: GrepMatch[] = await this.executeRipgrep(params, searchDirAbs, signal);
+      const allMatches: GrepMatch[] = await this.executeSearch(params, searchDirAbs, signal);
 
       logger.debug('[GrepTool] allMatches', { allMatches: allMatches.length });
       if (allMatches.length === 0) {
@@ -354,6 +345,25 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
   }
 
   // --- Ripgrep Implementation ---
+
+  private async executeSearch(
+    params: GrepToolParams,
+    searchPath: string,
+    signal: AbortSignal,
+  ): Promise<GrepMatch[]> {
+    try {
+      return await this.executeRipgrep(params, searchPath, signal);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (!message.toLowerCase().includes('spawn')) {
+        throw error;
+      }
+      logger.warn('[GrepTool] ripgrep unavailable, falling back to JS search', {
+        error: message,
+      });
+      return this.executeJsSearch(params, searchPath, signal);
+    }
+  }
 
   /**
    * Executes ripgrep with the given parameters
@@ -666,6 +676,115 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     logger.debug('[GrepTool] parseRipgrepOutput:', { outputLength: output.length });
 
     return this.parseStandardOutput(output, basePath, searchPath);
+  }
+
+  private executeJsSearch(
+    params: GrepToolParams,
+    searchPath: string,
+    signal: AbortSignal,
+  ): GrepMatch[] {
+    const rootDir = this.config.getTargetDir();
+    const stat = fs.statSync(searchPath);
+    const files = stat.isFile()
+      ? [searchPath]
+      : this.collectSearchFiles(searchPath, params, rootDir);
+    const flags = params.case_sensitive ? '' : 'i';
+    const pattern = new RegExp(
+      params.word ? `\\b(?:${params.pattern})\\b` : params.pattern,
+      flags,
+    );
+    const matches: GrepMatch[] = [];
+
+    for (const file of files) {
+      if (signal.aborted) throw new Error('Search was aborted');
+      let content: string;
+      try {
+        content = fs.readFileSync(file, 'utf8');
+      } catch {
+        continue;
+      }
+
+      const lines = content.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        pattern.lastIndex = 0;
+        if (pattern.test(lines[i] ?? '')) {
+          matches.push({
+            filePath: path.relative(rootDir, file) || path.basename(file),
+            lineNumber: i + 1,
+            line: lines[i] ?? '',
+          });
+          if (params.max_count && matches.length >= params.max_count) {
+            return matches;
+          }
+        }
+      }
+    }
+
+    return matches;
+  }
+
+  private collectSearchFiles(
+    dir: string,
+    params: GrepToolParams,
+    rootDir: string,
+  ): string[] {
+    const files: string[] = [];
+    const globPattern = params.glob || params.include;
+    const typeGlob = params.type ? this.customTypeToGlob(params.type) : undefined;
+
+    const walk = (currentDir: string) => {
+      for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+        if (!params.hidden && entry.name.startsWith('.')) continue;
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+
+        const relative = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+        const basename = entry.name;
+        if (
+          globPattern &&
+          !micromatch.isMatch(relative, globPattern) &&
+          !micromatch.isMatch(basename, globPattern)
+        ) {
+          continue;
+        }
+        if (typeGlob) {
+          const typeGlobs = Array.isArray(typeGlob) ? typeGlob : [typeGlob];
+          if (
+            !micromatch.isMatch(relative, typeGlobs) &&
+            !micromatch.isMatch(basename, typeGlobs)
+          ) {
+            continue;
+          }
+        }
+        files.push(fullPath);
+      }
+    };
+
+    walk(dir);
+    return files.sort(
+      (a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs,
+    );
+  }
+
+  private customTypeToGlob(type: string): string | string[] | undefined {
+    const customTypeToGlob: Record<string, string | string[]> = {
+      tsx: '*.tsx',
+      jsx: '*.jsx',
+      vue: '*.vue',
+      svelte: '*.svelte',
+      mjs: '*.mjs',
+      cjs: '*.cjs',
+      mts: '*.mts',
+      cts: '*.cts',
+      mdx: '*.mdx',
+      yaml: ['*.yml', '*.yaml'],
+      yml: '*.yml',
+    };
+    return customTypeToGlob[type];
   }
 
   /**
