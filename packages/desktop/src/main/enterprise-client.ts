@@ -15,6 +15,8 @@ export interface EnterpriseAccount {
   name: string;
   role: string | null;
   department: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -90,6 +92,13 @@ export interface EnterpriseOrganizationInvite {
   code: string;
   link: string;
   status: 'active' | 'expired' | 'revoked';
+  defaultDepartment: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  defaultRole: string | null;
+  maxUses: number | null;
+  usedCount: number;
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
@@ -467,11 +476,28 @@ export class EnterpriseClient {
     return this.request('/enterprise/organization/invite');
   }
 
-  async issueOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext & {
+  async issueOrganizationInvite(input: {
+    defaultDepartment?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    defaultRole?: string | null;
+    maxUses?: number | null;
+  } = {}): Promise<EnterpriseOrganizationInviteContext & {
     invite: EnterpriseOrganizationInvite;
   }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return this.request('/enterprise/organization/invite', { method: 'POST' });
+    return this.request('/enterprise/organization/invite', {
+      method: 'POST',
+      body: JSON.stringify({
+        defaultDepartment: input.defaultDepartment ?? null,
+        departmentId: input.departmentId ?? null,
+        positionId: input.positionId ?? null,
+        positionTitle: input.positionTitle ?? null,
+        defaultRole: input.defaultRole ?? null,
+        maxUses: input.maxUses ?? null,
+      }),
+    });
   }
 
   async ticketInbox(): Promise<unknown[]> {

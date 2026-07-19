@@ -16,6 +16,7 @@ const ADMIN = {
   id: 'acc_admin', organizationId: 'org_acme', organizationName: '星河科技',
   employeeId: null, username: 'admin', phone: '+8613800138000', name: '管理员',
   role: '企业管理员', department: 'IT部', isAdmin: true, status: 'active' as const,
+  positionId: null, positionTitle: null,
   tags: ['企业管理员'], createdAt: '2026-07-14', updatedAt: '2026-07-14',
   usage: {
     accountId: 'acc_admin', inputTokens: 700, outputTokens: 534, totalTokens: 1234,
@@ -26,6 +27,9 @@ const ADMIN = {
 const INVITE = {
   id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
   link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
+  defaultDepartment: null,
+  departmentId: null, positionId: null, positionTitle: null, defaultRole: null,
+  maxUses: null, usedCount: 0,
   issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2099-07-14T05:00:00.000Z',
   validHours: 168 as const,
 };

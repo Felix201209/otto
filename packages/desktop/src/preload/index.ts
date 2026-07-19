@@ -140,6 +140,8 @@ export interface EnterpriseAccount {
   name: string;
   role: string | null;
   department: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -223,6 +225,13 @@ export interface EnterpriseOrganizationInvite {
   code: string;
   link: string;
   status: 'active' | 'expired' | 'revoked';
+  defaultDepartment: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  defaultRole: string | null;
+  maxUses: number | null;
+  usedCount: number;
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
@@ -488,7 +497,14 @@ export interface OttoBridge {
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage>;
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext>;
-  enterpriseOrganizationInviteIssue(): Promise<EnterpriseOrganizationInviteContext & {
+  enterpriseOrganizationInviteIssue(input?: {
+    defaultDepartment?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    defaultRole?: string | null;
+    maxUses?: number | null;
+  }): Promise<EnterpriseOrganizationInviteContext & {
     invite: EnterpriseOrganizationInvite;
   }>;
   enterpriseTicketInbox(): Promise<unknown[]>;
@@ -970,10 +986,17 @@ const bridge: OttoBridge = {
       EnterpriseOrganizationInviteContext
     >;
   },
-  enterpriseOrganizationInviteIssue(): Promise<EnterpriseOrganizationInviteContext & {
+  enterpriseOrganizationInviteIssue(input?: {
+    defaultDepartment?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    defaultRole?: string | null;
+    maxUses?: number | null;
+  }): Promise<EnterpriseOrganizationInviteContext & {
     invite: EnterpriseOrganizationInvite;
   }> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteIssue) as Promise<
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteIssue, input ?? {}) as Promise<
       EnterpriseOrganizationInviteContext & { invite: EnterpriseOrganizationInvite }
     >;
   },

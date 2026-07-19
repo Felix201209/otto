@@ -22,6 +22,8 @@ export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   name: '本地用户',
   role: '成员',
   department: '',
+  positionId: null,
+  positionTitle: null,
   isAdmin: false,
   status: 'active',
   tags: ['本地身份'],

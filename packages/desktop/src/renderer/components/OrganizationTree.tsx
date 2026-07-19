@@ -18,6 +18,16 @@ export function OrganizationTree({
   const [orgError, setOrgError] = useState<string | null>(null);
   const [chatMember, setChatMember] = useState<EnterpriseOrganizationView['members'][number] | null>(null);
   const organization = workspace.managerWorkspace?.organization;
+  const chatMemberByWorkspaceKey = useMemo(() => {
+    const result = new Map<string, EnterpriseOrganizationView['members'][number]>();
+    for (const member of orgView?.members ?? []) {
+      if (member.status !== 'active') continue;
+      result.set(normalizeChatKey(member.id), member);
+      result.set(normalizeChatKey(member.username), member);
+      result.set(normalizeChatKey(member.name), member);
+    }
+    return result;
+  }, [orgView?.members]);
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
     [organization?.positions],
@@ -34,7 +44,7 @@ export function OrganizationTree({
   // 本地 workspace 没有管理者组织快照时，经 preload → main 读取企业组织。
   // 会话 token 始终只保留在 main 的 EnterpriseClient 内。
   useEffect(() => {
-    if (workspace.context.edition !== 'enterprise' || workspace.managerWorkspace?.organization) {
+    if (workspace.context.edition !== 'enterprise') {
       return;
     }
 
@@ -56,7 +66,7 @@ export function OrganizationTree({
       });
 
     return () => { cancelled = true; };
-  }, [workspace.context.edition, workspace.managerWorkspace?.organization]);
+  }, [workspace.context.edition]);
 
   if (workspace.context.edition !== 'enterprise') return null;
 
@@ -84,6 +94,8 @@ export function OrganizationTree({
               workspace={workspace}
               positionById={positionById}
               childrenByParent={childrenByParent}
+              chatMemberByWorkspaceKey={chatMemberByWorkspaceKey}
+              onOpenChat={setChatMember}
             />
           ) : orgView ? (
             <div className="otto-orgtree__member-list">
@@ -188,18 +200,26 @@ type Organization = NonNullable<
   ProductWorkspaceSnapshot['managerWorkspace']
 >['organization'];
 
+function normalizeChatKey(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
 function CompanyBranch({
   companyId,
   organization,
   workspace,
   positionById,
   childrenByParent,
+  chatMemberByWorkspaceKey,
+  onOpenChat,
 }: {
   companyId: string;
   organization: Organization;
   workspace: ProductWorkspaceSnapshot;
   positionById: Map<string, Organization['positions'][number]>;
   childrenByParent: Map<string, string[]>;
+  chatMemberByWorkspaceKey: Map<string, EnterpriseOrganizationView['members'][number]>;
+  onOpenChat: (member: EnterpriseOrganizationView['members'][number]) => void;
 }): React.JSX.Element | null {
   const company = organization.companies.find((item) => item.id === companyId);
   if (!company) return null;
@@ -220,12 +240,30 @@ function CompanyBranch({
           return (
             <div key={department.id} className="otto-orgtree__department">
               <div className="otto-orgtree__department-name">{department.name}</div>
-              {members.map((member) => (
-                <div key={member.userId} className="otto-orgtree__member">
-                  <span>{member.displayName}</span>
-                  <span>{member.positionId ? positionById.get(member.positionId)?.title ?? '成员' : '成员'}</span>
-                </div>
-              ))}
+              {members.map((member) => {
+                const chatMember = chatMemberByWorkspaceKey.get(normalizeChatKey(member.userId))
+                  ?? chatMemberByWorkspaceKey.get(normalizeChatKey(member.displayName));
+                const content = (
+                  <>
+                    <span>{member.displayName}</span>
+                    <span>{member.positionId ? positionById.get(member.positionId)?.title ?? '成员' : '成员'}</span>
+                  </>
+                );
+                return chatMember ? (
+                  <button
+                    key={member.userId}
+                    type="button"
+                    className="otto-orgtree__member otto-orgtree__member-button"
+                    onClick={() => onOpenChat(chatMember)}
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  <div key={member.userId} className="otto-orgtree__member">
+                    {content}
+                  </div>
+                );
+              })}
               {members.length === 0
                 ? positions.map((position) => (
                     <div key={position.id} className="otto-orgtree__vacant">
@@ -247,6 +285,8 @@ function CompanyBranch({
             workspace={workspace}
             positionById={positionById}
             childrenByParent={childrenByParent}
+            chatMemberByWorkspaceKey={chatMemberByWorkspaceKey}
+            onOpenChat={onOpenChat}
           />
         ))}
       </div>

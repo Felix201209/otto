@@ -130,6 +130,10 @@ export function AccountManagementPage({
   const [inviteLoading, setInviteLoading] = useState(currentAccount.isAdmin);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteDepartment, setInviteDepartment] = useState('');
+  const [invitePosition, setInvitePosition] = useState('');
+  const [inviteRole, setInviteRole] = useState('');
+  const [inviteMaxUses, setInviteMaxUses] = useState('');
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
@@ -181,6 +185,21 @@ export function AccountManagementPage({
   }, [inviteContext?.invite?.id]);
 
   useEffect(() => {
+    if (inviteContext?.invite) {
+      setInviteDepartment(inviteContext.invite.defaultDepartment ?? '');
+      setInvitePosition(inviteContext.invite.positionTitle ?? '');
+      setInviteRole(inviteContext.invite.defaultRole ?? '');
+      setInviteMaxUses(inviteContext.invite.maxUses == null ? '' : String(inviteContext.invite.maxUses));
+    }
+  }, [
+    inviteContext?.invite?.id,
+    inviteContext?.invite?.defaultDepartment,
+    inviteContext?.invite?.positionTitle,
+    inviteContext?.invite?.defaultRole,
+    inviteContext?.invite?.maxUses,
+  ]);
+
+  useEffect(() => {
     if (!editing) return undefined;
     initialFocusRef.current?.focus();
     return () => {
@@ -202,6 +221,13 @@ export function AccountManagementPage({
       account.name, account.username, account.phone, account.role, account.department, ...account.tags,
     ].filter(Boolean).some((value) => String(value).toLocaleLowerCase().includes(needle)));
   }, [accounts, query]);
+  const departmentOptions = useMemo(() => {
+    const result = new Set<string>(ACCOUNT_DEPARTMENT_PRESETS);
+    for (const account of accounts) {
+      if (account.department?.trim()) result.add(account.department.trim());
+    }
+    return [...result];
+  }, [accounts]);
 
   const openCreate = (): void => {
     if (loading) return;
@@ -302,7 +328,12 @@ export function AccountManagementPage({
     setInviteError(null);
     setCopied(null);
     try {
-      const result = await window.otto.enterpriseOrganizationInviteIssue();
+      const result = await window.otto.enterpriseOrganizationInviteIssue({
+        defaultDepartment: inviteDepartment.trim() || null,
+        positionTitle: invitePosition.trim() || null,
+        defaultRole: inviteRole.trim() || null,
+        maxUses: inviteMaxUses.trim() ? Number(inviteMaxUses.trim()) : null,
+      });
       setInviteContext(result);
       setNow(Date.now());
     } catch (cause) {
@@ -367,6 +398,57 @@ export function AccountManagementPage({
               {inviteBusy ? '正在生成…' : inviteContext?.invite ? '换新链接' : '生成链接'}
             </button>
           </header>
+          <label className="otto-account-invite__department">
+            <span>新成员默认加入部门</span>
+            <input
+              aria-label="新成员默认加入部门"
+              list="otto-invite-departments"
+              value={inviteDepartment}
+              disabled={inviteBusy || inviteLoading}
+              onChange={(event) => setInviteDepartment(event.target.value)}
+              placeholder="不指定则加入未分配部门"
+            />
+            <datalist id="otto-invite-departments">
+              {departmentOptions.map((department) => (
+                <option key={department} value={department} />
+              ))}
+            </datalist>
+          </label>
+          <div className="otto-account-invite__position-grid">
+            <label>
+              <span>职位 / 岗位</span>
+              <input
+                aria-label="岗位邀请码职位"
+                value={invitePosition}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInvitePosition(event.target.value)}
+                placeholder="例如：品牌运营"
+              />
+            </label>
+            <label>
+              <span>角色权限</span>
+              <input
+                aria-label="岗位邀请码角色权限"
+                value={inviteRole}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInviteRole(event.target.value)}
+                placeholder="默认：成员"
+              />
+            </label>
+            <label>
+              <span>可注册人数</span>
+              <input
+                aria-label="岗位邀请码可注册人数"
+                type="number"
+                min={1}
+                max={10000}
+                value={inviteMaxUses}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInviteMaxUses(event.target.value)}
+                placeholder="不填则不限"
+              />
+            </label>
+          </div>
           {inviteLoading ? <div className="otto-account-invite__loading">正在读取当前企业引入链接…</div> : null}
           {!inviteLoading && inviteContext?.invite ? (
             <div className="otto-account-invite__body">
@@ -377,6 +459,16 @@ export function AccountManagementPage({
                   {inviteIsActive
                     ? formatInviteRemaining(inviteContext.invite.expiresAt, now)
                     : '已失效，请生成新链接'}
+                </small>
+                <small>
+                  {[
+                    inviteContext.invite.defaultDepartment || '未分配部门',
+                    inviteContext.invite.positionTitle || '未指定职位',
+                    inviteContext.invite.defaultRole || '成员',
+                  ].join(' / ')}
+                  {inviteContext.invite.maxUses
+                    ? ` · ${inviteContext.invite.usedCount}/${inviteContext.invite.maxUses}`
+                    : ''}
                 </small>
               </div>
               <div className="otto-account-invite__link">

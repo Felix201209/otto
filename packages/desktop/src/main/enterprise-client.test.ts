@@ -33,6 +33,7 @@ const ACCOUNT = {
   id: 'acc_1', organizationId: 'org_acme', organizationName: '星河科技',
   employeeId: null, username: 'staff01', phone: '+8613800138000', name: '员工一号',
   role: null, department: null, isAdmin: false, status: 'active' as const,
+  positionId: null, positionTitle: null,
   tags: ['普通员工'], createdAt: '2026-07-13', updatedAt: '2026-07-13',
 };
 
@@ -253,6 +254,9 @@ describe('EnterpriseClient', () => {
     const firstInvite = {
       id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
       link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
+      defaultDepartment: null,
+      departmentId: null, positionId: null, positionTitle: null, defaultRole: null,
+      maxUses: null, usedCount: 0,
       issuedAt: '2026-07-14T00:00:00.000Z', expiresAt: '2026-07-21T00:00:00.000Z',
       validHours: 168 as const,
     };
@@ -282,6 +286,15 @@ describe('EnterpriseClient', () => {
     expect(fetchMock.mock.calls.slice(2).map(([, init]) => (init as RequestInit).method)).toEqual([
       'GET', 'POST',
     ]);
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).body)
+      .toBe(JSON.stringify({
+        defaultDepartment: null,
+        departmentId: null,
+        positionId: null,
+        positionTitle: null,
+        defaultRole: null,
+        maxUses: null,
+      }));
     expect((fetchMock.mock.calls[3]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer admin-token',
     });

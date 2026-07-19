@@ -761,6 +761,15 @@ h6.otto-prose__h {
 .otto-account-invite > header p { margin: 0; color: #a9c4b8; font-size: 11.5px; line-height: 1.55; }
 .otto-account-invite > header button { min-height: 38px; flex: 0 0 auto; padding: 0 14px; border: 1px solid #6bdc9e; border-radius: 9px; color: #092018; background: #a8ffcf; font: 720 11px var(--otto-font); cursor: pointer; }
 .otto-account-invite > header button:disabled { opacity: .55; cursor: default; }
+.otto-account-invite__department { display: grid; grid-template-columns: minmax(120px, auto) minmax(180px, 320px); gap: 10px; align-items: center; padding: 13px 19px 0; color: #a9c4b8; font-size: 11px; }
+.otto-account-invite__department input { min-height: 34px; border: 1px solid #24473a; border-radius: 8px; padding: 0 11px; color: #eafff2; background: #0d211a; font: 650 11px var(--otto-font); outline: none; }
+.otto-account-invite__department input:focus { border-color: #6bdc9e; box-shadow: 0 0 0 3px rgba(107,220,158,.12); }
+.otto-account-invite__department input:disabled { opacity: .6; }
+.otto-account-invite__position-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; padding: 11px 19px 0; }
+.otto-account-invite__position-grid label { display: grid; gap: 6px; color: #a9c4b8; font-size: 11px; }
+.otto-account-invite__position-grid input { min-height: 34px; border: 1px solid #24473a; border-radius: 8px; padding: 0 11px; color: #eafff2; background: #0d211a; font: 650 11px var(--otto-font); outline: none; }
+.otto-account-invite__position-grid input:focus { border-color: #6bdc9e; box-shadow: 0 0 0 3px rgba(107,220,158,.12); }
+.otto-account-invite__position-grid input:disabled { opacity: .6; }
 .otto-account-invite__body { display: grid; grid-template-columns: minmax(170px,.65fr) minmax(280px,1.8fr) auto; gap: 18px; align-items: center; padding: 16px 19px; }
 .otto-account-invite__code, .otto-account-invite__link { min-width: 0; display: grid; gap: 5px; }
 .otto-account-invite__code > span, .otto-account-invite__link > span { color: #8aa99b; font-size: 10px; }
@@ -883,6 +892,8 @@ h6.otto-prose__h {
   .otto-account-hero, .otto-account-directory > header { align-items: stretch; flex-direction: column; }
   .otto-account-invite > header { align-items: stretch; flex-direction: column; }
   .otto-account-invite > header button { align-self: flex-start; }
+  .otto-account-invite__department { grid-template-columns: 1fr; }
+  .otto-account-invite__position-grid { grid-template-columns: 1fr; }
   .otto-account-invite__body { grid-template-columns: 1fr; }
   .otto-account-invite__actions { grid-column: auto; }
   .otto-account-page__create { align-self: flex-start; }

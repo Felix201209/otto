@@ -63,6 +63,99 @@ interface ServiceInteraction {
   hint: string;
 }
 
+interface ParkActorDirectory {
+  currentUser?: string;
+  admin?: string;
+  serviceDesk?: string;
+  repairer?: string;
+  operator?: string;
+  parking?: string;
+  meeting?: string;
+  energy?: string;
+  security?: string;
+}
+
+interface ParkAccountCandidate {
+  id: string;
+  username: string;
+  name: string;
+  role: string | null;
+  department: string | null;
+  isAdmin: boolean;
+  status: 'active' | 'disabled';
+}
+
+function accountMatches(account: ParkAccountCandidate, words: string[]): boolean {
+  const haystack = [
+    account.username,
+    account.name,
+    account.role,
+    account.department,
+  ].join(' ').toLowerCase();
+  return words.some((word) => haystack.includes(word.toLowerCase()));
+}
+
+function pickAccount(
+  accounts: ParkAccountCandidate[],
+  words: string[],
+  fallback?: ParkAccountCandidate,
+): string | undefined {
+  return accounts.find((account) => account.status === 'active' && accountMatches(account, words))?.name
+    ?? fallback?.name;
+}
+
+function buildParkActorDirectory(
+  currentUser: string | undefined,
+  accounts: ParkAccountCandidate[],
+): ParkActorDirectory {
+  const active = accounts.filter((account) => account.status === 'active');
+  const admin = active.find((account) => account.isAdmin);
+  const serviceDesk = active.find((account) => accountMatches(account, ['客服', '客户成功', '服务']));
+  const repairer = active.find((account) => accountMatches(account, ['维修', '报修', 'IT', '网络', '工程']));
+  return {
+    currentUser,
+    admin: admin?.name,
+    serviceDesk: serviceDesk?.name ?? admin?.name,
+    repairer: repairer?.name,
+    operator: pickAccount(active, ['运营', '物业'], serviceDesk ?? admin),
+    parking: pickAccount(active, ['车场', '停车', '安保'], serviceDesk ?? admin),
+    meeting: pickAccount(active, ['会议', '会务', '行政'], serviceDesk ?? admin),
+    energy: pickAccount(active, ['能源', '电卡', '水电', '物业'], serviceDesk ?? admin),
+    security: pickAccount(active, ['安保', '门岗', '访客'], serviceDesk ?? admin),
+  };
+}
+
+function ownerForParkStep(
+  serviceId: string,
+  stepIndex: number,
+  actors: ParkActorDirectory,
+  fallback: string,
+): string {
+  if (stepIndex === 0) return actors.currentUser ?? fallback;
+  if (stepIndex === 1) return actors.serviceDesk ?? actors.admin ?? fallback;
+  if (serviceId === 'parking' && (stepIndex === 2 || stepIndex === 4)) return actors.parking ?? fallback;
+  if (serviceId === 'network-phone' && stepIndex >= 3) return actors.repairer ?? fallback;
+  if (serviceId === 'meeting-room' && (stepIndex === 2 || stepIndex === 4)) return actors.meeting ?? fallback;
+  if (serviceId === 'electric-card' && (stepIndex === 2 || stepIndex === 4)) return actors.energy ?? fallback;
+  if (serviceId === 'repair' && (stepIndex === 2 || stepIndex === 3)) return actors.repairer ?? fallback;
+  if (serviceId === 'vehicle-visit' && stepIndex >= 2) return actors.security ?? fallback;
+  if (stepIndex === 2) return actors.operator ?? actors.admin ?? fallback;
+  return fallback;
+}
+
+function personalizeParkServices(
+  services: ParkService[],
+  actors: ParkActorDirectory,
+): ParkService[] {
+  return services.map((service) => ({
+    ...service,
+    steps: service.steps?.map((step, index) => ({
+      ...step,
+      owner: ownerForParkStep(service.id, index, actors, step.owner),
+    })),
+  }));
+}
+
 /** 每项服务的现场沟通方式不同，避免所有业务都变成同一套“下一步”。 */
 const SERVICE_INTERACTIONS: Record<string, ServiceInteraction> = {
   renovation: { intro: '装修申请先核对施工范围，再约现场交底；不完整的材料会直接告诉你缺什么。', quickReplies: ['信息已确认，安排现场交底', '需要补充施工方案', '暂时没空，明天下午联系'], hint: '装修通常需要材料确认和现场时间，不建议只用一个“完成”按钮。' },
@@ -77,8 +170,8 @@ const SERVICE_INTERACTIONS: Record<string, ServiceInteraction> = {
  * 9 项正好形成 3 列 × 3 行，对应《客户服务工作流程》。每一条 steps 都是
  * 本地演示数据，真实服务端接入后可替换为工单状态流。
  */
-function defaultServices(park: string): ParkService[] {
-  return [
+function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkService[] {
+  const services: ParkService[] = [
     {
       id: 'announcement', icon: IconPackage, name: '园区公告', desc: '培训通知与全园区推送',
       prompt: `帮我起草一则${park}公告。公告类型（培训/活动/停水停电/其他）：；标题：；时间地点：；正文要点：；推送范围：`,
@@ -173,6 +266,7 @@ function defaultServices(park: string): ParkService[] {
       ],
     },
   ];
+  return personalizeParkServices(services, actors);
 }
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
@@ -388,7 +482,10 @@ function SatisfactionDemo({ onBack, onSendToOtto }: {
   );
 }
 
-function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
+function RepairDemo({ onBack, actors = {} }: {
+  onBack: () => void;
+  actors?: ParkActorDirectory;
+}): React.JSX.Element {
   const [mode, setMode] = useState<'reporter' | 'technician'>('reporter');
   const [ticket, setTicket] = useState<RepairTicket | null>(() => readRepairTicket());
   const [notice, setNotice] = useState(false);
@@ -396,6 +493,8 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
   const [draft, setDraft] = useState('');
   const [technicianDraft, setTechnicianDraft] = useState('');
   const lastReplyRef = useRef<string | undefined>(undefined);
+  const reporterName = actors.currentUser ?? '报修人端';
+  const technicianName = actors.repairer ?? actors.serviceDesk ?? actors.admin ?? '维修人员端';
   const [messages, setMessages] = useState<Array<{ from: 'otto' | 'user'; text: string }>>([
     { from: 'otto', text: '你好，我是 Otto 报修助手。先告诉我故障发生在哪里？例如“某某会议室”。' },
   ]);
@@ -425,8 +524,8 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
   useEffect(() => {
     if (!ticket?.lastMessage || ticket.lastMessageBy !== 'technician' || ticket.lastMessage === lastReplyRef.current) return;
     lastReplyRef.current = ticket.lastMessage;
-    setMessages((current) => [...current, { from: 'otto', text: `维修人员张工：${ticket.lastMessage}` }]);
-  }, [ticket]);
+    setMessages((current) => [...current, { from: 'otto', text: `${technicianName}：${ticket.lastMessage}` }]);
+  }, [technicianName, ticket]);
 
   const submitAnswer = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -478,13 +577,13 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
       <div className="otto-park-demo__summary">
         <div><div className="otto-park-demo__eyebrow">双设备本地演示 · 不使用 Agent</div><h3>客户报修 · Otto 引导填报与维修接单</h3><p>打开两个 Otto 窗口：一台选“报修人端”，另一台选“维修人员端”。</p></div>
         <div className="otto-park-repair__roles" role="group" aria-label="演示设备角色">
-          <button type="button" className={mode === 'reporter' ? 'is-active' : ''} onClick={() => setMode('reporter')}>报修人端</button>
-          <button type="button" className={mode === 'technician' ? 'is-active' : ''} onClick={() => { setMode('technician'); if (ticket && ticket.status === '待派单') setNotice(true); }}>维修人员端</button>
+          <button type="button" className={mode === 'reporter' ? 'is-active' : ''} onClick={() => setMode('reporter')}>{reporterName}</button>
+          <button type="button" className={mode === 'technician' ? 'is-active' : ''} onClick={() => { setMode('technician'); if (ticket && ticket.status === '待派单') setNotice(true); }}>{technicianName}</button>
         </div>
       </div>
       {mode === 'reporter' ? (
         <div className="otto-park-repair__chat" aria-label="Otto 报修引导聊天框">
-          <div className="otto-park-repair__chathead"><strong>报修人端</strong><span>Otto 会一步一步帮你填</span></div>
+          <div className="otto-park-repair__chathead"><strong>{reporterName}</strong><span>Otto 会一步一步帮你填</span></div>
           <div className="otto-park-repair__messages">{messages.map((message, index) => <div key={`${message.from}-${index}`} className={`otto-park-repair__message is-${message.from}`}>{message.text}</div>)}</div>
           {stage < 4 ? <form onSubmit={submitAnswer} className="otto-park-repair__input"><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={stage === 0 ? '例如：A 座 1203 室会议室' : '输入你的回答…'} aria-label="报修回答" /><button type="submit" className="otto-park-demo__primary">发送</button></form> : <div className="otto-park-repair__confirm"><div><strong>工单信息已整理</strong><span>位置、故障、紧急程度和联系人均已填写</span></div><button type="button" className="otto-park-demo__primary" onClick={submitTicket} disabled={ticket?.status === '待派单'}>{ticket?.status === '待派单' ? '已提交，等待维修人员' : '提交报修工单'}</button></div>}
         </div>
@@ -499,10 +598,11 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
   );
 }
 
-function ServiceDemo({ service, onBack, onSendToOtto }: {
+function ServiceDemo({ service, onBack, onSendToOtto, actors = {} }: {
   service: ParkService;
   onBack: () => void;
   onSendToOtto: () => void;
+  actors?: ParkActorDirectory;
 }): React.JSX.Element {
   if (service.id === 'announcement') {
     return <AnnouncementDemo onBack={onBack} onSendToOtto={onSendToOtto} />;
@@ -511,7 +611,7 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
     return <SatisfactionDemo onBack={onBack} onSendToOtto={onSendToOtto} />;
   }
   if (service.id === 'repair') {
-    return <RepairDemo onBack={onBack} />;
+    return <RepairDemo onBack={onBack} actors={actors} />;
   }
 
   const steps = service.steps ?? [];
@@ -671,6 +771,8 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
 export function ParkServicesPlugin(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState(DEFAULT_BRAND);
+  const [parkName, setParkName] = useState(DEFAULT_PARK);
+  const [actors, setActors] = useState<ParkActorDirectory>({});
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
@@ -687,11 +789,37 @@ export function ParkServicesPlugin(): React.JSX.Element {
           id: `custom-${i}`, icon: ICON_POOL[i % ICON_POOL.length], name: s.name, desc: s.desc, prompt: s.prompt,
         })));
       } else if (cfg.parkName) {
-        setServices(defaultServices(cfg.parkName));
+        setParkName(cfg.parkName);
+        setServices(defaultServices(cfg.parkName, actors));
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [actors]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      window.otto?.enterpriseSession?.().catch(() => null),
+      window.otto?.enterpriseOrganizationView?.().catch(() => null),
+      window.otto?.enterpriseAccounts?.().catch(() => []),
+    ]).then(([session, organizationView, accounts]) => {
+      if (cancelled) return;
+      const currentUser = session?.account?.name;
+      const organizationMembers = organizationView?.members ?? [];
+      const accountRows = Array.isArray(accounts) && accounts.length > 0
+        ? accounts
+        : organizationMembers;
+      const nextActors = buildParkActorDirectory(currentUser, accountRows);
+      setActors(nextActors);
+      setServices((current) => {
+        const hasCustomServices = current.some((service) => service.id.startsWith('custom-'));
+        return hasCustomServices
+          ? personalizeParkServices(current, nextActors)
+          : defaultServices(parkName, nextActors);
+      });
+    });
+    return () => { cancelled = true; };
+  }, [parkName]);
 
   useEffect(() => {
     if (open && !selected) firstItemRef.current?.focus();
@@ -746,7 +874,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
           <button type="button" className="otto-park-dialog__close" onClick={close} aria-label="关闭"><IconClose size={14} /></button>
         </div>
         {selected ? (
-          <ServiceDemo service={selected} onBack={() => setSelected(null)} onSendToOtto={sendToOtto} />
+          <ServiceDemo service={selected} onBack={() => setSelected(null)} onSendToOtto={sendToOtto} actors={actors} />
         ) : (
           <div className="otto-park-dialog__grid">
             {services.map((service, index) => {

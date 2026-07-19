@@ -767,11 +767,12 @@ function makeHandler(
         }
         const body = await readBody(req);
         const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
-        const organization = db.resolveOrganizationInvite(inviteCode);
-        if (!organization) {
+        const invite = db.resolveOrganizationInviteWithDefaults(inviteCode);
+        if (!invite) {
           sendJSON(res, 403, { error: '企业邀请码无效或已过期，请联系管理员重新生成' });
           return;
         }
+        const organization = invite.organization;
         const rawPhone = typeof body.phone === 'string' ? body.phone : '';
         let phone: string;
         try {
@@ -786,7 +787,14 @@ function makeHandler(
           return;
         }
         const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-        const issued = db.createSmsRegistrationChallenge(phone, code, organization.id);
+        const issued = db.createSmsRegistrationChallenge(phone, code, organization.id, {
+          organizationInviteId: invite.inviteId,
+          department: invite.defaultDepartment,
+          departmentId: invite.departmentId,
+          positionId: invite.positionId,
+          positionTitle: invite.positionTitle,
+          role: invite.defaultRole,
+        });
         if (!issued.ok) {
           res.setHeader('Retry-After', String(issued.retryAfterSeconds));
           sendJSON(res, 429, {
@@ -848,6 +856,11 @@ function makeHandler(
             phone: verified.phone,
             name,
             password,
+            department: verified.department,
+            role: verified.role,
+            positionId: verified.positionId,
+            positionTitle: verified.positionTitle,
+            organizationInviteId: verified.organizationInviteId,
           });
         } catch (error) {
           const conflict = accountConflictMessage(error) || (error instanceof Error ? error.message : null);
@@ -1006,11 +1019,34 @@ function makeHandler(
       if (path === '/enterprise/organization/invite' && method === 'POST') {
         const principal = adminPrincipal!;
         const organization = db.getOrganization(principal.organizationId);
+        const body = await readBody(req);
+        const defaultDepartment = typeof body.defaultDepartment === 'string'
+          ? body.defaultDepartment
+          : typeof body.department === 'string' ? body.department : null;
+        const departmentId = typeof body.departmentId === 'string' ? body.departmentId : null;
+        const positionId = typeof body.positionId === 'string' ? body.positionId : null;
+        const positionTitle = typeof body.positionTitle === 'string'
+          ? body.positionTitle
+          : typeof body.position === 'string' ? body.position : null;
+        const defaultRole = typeof body.defaultRole === 'string'
+          ? body.defaultRole
+          : typeof body.role === 'string' ? body.role : null;
+        const maxUses = typeof body.maxUses === 'number' || typeof body.maxUses === 'string'
+          ? Number(body.maxUses)
+          : null;
         const invite = withPublicInviteLink(
           db.issueOrganizationInvite(
             principal.organizationId,
             Date.now(),
             principal.kind === 'account' ? principal.account.id : null,
+            {
+              defaultDepartment,
+              departmentId,
+              positionId,
+              positionTitle,
+              defaultRole,
+              maxUses,
+            },
           ),
           publicBaseUrl,
         );
@@ -1702,7 +1738,7 @@ function adminAccountsHTML(): string {
   <div id="formError" class="error hidden" role="alert"></div><div id="saveStatus" class="sr-only" role="status" aria-live="polite"></div><div class="drawer-actions"><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div>
 </form></div>
 <div id="logoutModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><div class="modal-kicker">SECURITY CHECK</div><h2 id="logoutTitle">确认退出管理员后台</h2><p>退出后需要重新输入管理员用户名和密码。未保存的账号修改不会保留。</p><div class="modal-actions"><button id="cancelLogout" class="secondary" type="button">取消</button><button id="confirmLogout" class="danger" type="button">确认退出</button></div></section></div>
-<div id="inviteModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="inviteConfirmTitle"><div class="modal-kicker">MEMBER ONBOARDING</div><h2 id="inviteConfirmTitle">生成新的企业引入链接？</h2><p>新链接将在生成时开始计时，7 天后失效。当前仍有效的链接会立即作废，已发出的旧链接将无法用于首次注册。</p><div class="modal-actions"><button id="cancelInvite" class="secondary" type="button">取消</button><button id="confirmInvite" class="primary" type="button">确认生成</button></div></section></div>
+<div id="inviteModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="inviteConfirmTitle"><div class="modal-kicker">POSITION ONBOARDING</div><h2 id="inviteConfirmTitle">生成新的岗位邀请码？</h2><p>新链接将在生成时开始计时，7 天后失效。当前仍有效的链接会立即作废，已发出的旧链接将无法用于首次注册。</p><div class="field"><label for="inviteDepartment">新成员默认加入部门</label><input id="inviteDepartment" list="departmentPresetList" placeholder="不指定则为未分配部门"></div><div class="field"><label for="invitePosition">职位 / 岗位</label><input id="invitePosition" placeholder="例如：品牌运营"></div><div class="field"><label for="inviteRole">角色权限</label><input id="inviteRole" placeholder="默认：成员"></div><div class="field"><label for="inviteMaxUses">可注册人数</label><input id="inviteMaxUses" type="number" min="1" max="10000" placeholder="不填则不限"></div><div class="modal-actions"><button id="cancelInvite" class="secondary" type="button">取消</button><button id="confirmInvite" class="primary" type="button">确认生成</button></div></section></div>
 <script>
 const KEY='otto.enterprise.admin.session';
 const departmentPresets=['总经办','人力资源部','财务部','法务部','销售部','市场部','产品部','研发部','设计部','IT部','客户成功部','采购部'];
@@ -1744,7 +1780,7 @@ function renderPresets(){$('departmentPresetList').innerHTML=departmentPresets.m
 function render(){const q=$('searchInput').value.trim().toLowerCase();const rows=accounts.filter(account=>!q||[account.name,account.username,account.phone,account.role,account.department].concat(account.tags||[]).some(value=>String(value||'').toLowerCase().includes(q)));$('allCount').textContent=String(accounts.length);$('activeCount').textContent=String(accounts.filter(account=>account.status==='active').length);$('smsCount').textContent=String(accounts.filter(account=>account.phone).length);$('itCount').textContent=String(accounts.filter(account=>(account.tags||[]).includes('IT')&&(account.tags||[]).includes('报修')).length);$('resultCount').textContent=rows.length+' 个账号';$('accountRows').innerHTML=rows.length?rows.map(account=>'<tr><td><div class="name">'+esc(account.name)+'</div><div class="sub">@'+esc(account.username)+(account.phone?' · '+esc(account.phone):' · 未绑定手机')+'</div></td><td>'+esc(account.role||'未设置角色')+'<div class="sub">'+esc(account.department||'未分配部门')+'</div></td><td>'+((account.tags||[]).map(tag=>'<span class="tag">'+esc(tag)+'</span>').join('')||'<span class="sub">无标签</span>')+'</td><td><div class="name mono">'+number(account.usage&&account.usage.totalTokens)+'</div><div class="sub">'+number(account.usage&&account.usage.requestCount)+' 次请求</div></td><td>'+(account.isAdmin?'<span class="badge">管理员</span>':'<span class="sub">普通成员</span>')+'</td><td><span class="badge '+(account.status==='active'?'ok':'off')+'">'+(account.status==='active'?'可登录':'已停用')+'</span></td><td><button class="edit" type="button" data-id="'+esc(account.id)+'" aria-label="编辑 '+esc(account.name)+'（@'+esc(account.username)+'）">编辑</button></td></tr>').join(''):'<tr><td class="empty" colspan="7">没有匹配账号，请调整搜索条件</td></tr>';document.querySelectorAll('button[data-id]').forEach(button=>button.addEventListener('click',()=>openEditor(accounts.find(account=>account.id===button.dataset.id),button)))}
 function renderUsage(){const summary=usageSummary||{};$('totalTokens').textContent=number(summary.totalTokens);$('inputTokens').textContent=number(summary.totalInputTokens);$('outputTokens').textContent=number(summary.totalOutputTokens);$('requestCount').textContent=number(summary.requestCount)}
 function registrationInviteLink(){return currentInvite&&typeof currentInvite.link==='string'?currentInvite.link:''}
-function renderInvite(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}const active=currentInvite&&currentInvite.status==='active'&&new Date(currentInvite.expiresAt).getTime()>Date.now();const link=active?registrationInviteLink():'';$('inviteCode').value=currentInvite?currentInvite.code:'••••-••••';$('copyInvite').disabled=!active;$('copyInviteLink').disabled=!active;$('inviteLinkPreview').value=link;$('inviteLinkPreview').classList.toggle('hidden',!link);$('issueInvite').textContent=currentInvite?'生成新链接':'生成引入链接';$('inviteBadge').className='badge '+(active?'ok':'off');$('inviteBadge').textContent=active?'有效 7 天':currentInvite?'已失效':'尚未生成';function tick(){if(!currentInvite)return;const left=new Date(currentInvite.expiresAt).getTime()-Date.now();if(left<=0){currentInvite.status='expired';renderInvite();return}const h=Math.floor(left/3600000);const m=Math.floor((left%3600000)/60000);const s=Math.floor((left%60000)/1000);$('inviteCountdown').textContent='剩余 '+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+' · 到期 '+new Date(currentInvite.expiresAt).toLocaleString('zh-CN',{hour12:false})}if(active){tick();inviteTimer=setInterval(tick,1000)}else $('inviteCountdown').textContent=currentInvite?'已到期，请手动生成新的企业引入链接':'等待管理员生成'}
+function renderInvite(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}const active=currentInvite&&currentInvite.status==='active'&&new Date(currentInvite.expiresAt).getTime()>Date.now();const link=active?registrationInviteLink():'';$('inviteCode').value=currentInvite?currentInvite.code:'••••-••••';$('copyInvite').disabled=!active;$('copyInviteLink').disabled=!active;$('inviteLinkPreview').value=link;$('inviteLinkPreview').classList.toggle('hidden',!link);if(currentInvite&&$('inviteDepartment'))$('inviteDepartment').value=currentInvite.defaultDepartment||'';if(currentInvite&&$('invitePosition'))$('invitePosition').value=currentInvite.positionTitle||'';if(currentInvite&&$('inviteRole'))$('inviteRole').value=currentInvite.defaultRole||'';if(currentInvite&&$('inviteMaxUses'))$('inviteMaxUses').value=currentInvite.maxUses||'';$('issueInvite').textContent=currentInvite?'生成新邀请码':'生成岗位邀请码';$('inviteBadge').className='badge '+(active?'ok':'off');$('inviteBadge').textContent=active?'有效 7 天':currentInvite?'已失效':'尚未生成';function tick(){if(!currentInvite)return;const left=new Date(currentInvite.expiresAt).getTime()-Date.now();if(left<=0){currentInvite.status='expired';renderInvite();return}const h=Math.floor(left/3600000);const m=Math.floor((left%3600000)/60000);const s=Math.floor((left%60000)/1000);$('inviteCountdown').textContent='剩余 '+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+' · 到期 '+new Date(currentInvite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 岗位 '+[currentInvite.defaultDepartment||'未分配部门',currentInvite.positionTitle||'未指定职位',currentInvite.defaultRole||'成员'].join(' / ')+(currentInvite.maxUses?' · '+currentInvite.usedCount+'/'+currentInvite.maxUses:'')}if(active){tick();inviteTimer=setInterval(tick,1000)}else $('inviteCountdown').textContent=currentInvite?'已到期，请手动生成新的岗位邀请码':'等待管理员生成'}
 function resetWorkspace(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}accounts=[];currentInvite=null;usageSummary=null;$('searchInput').value='';showError('pageError','');showError('inviteError','');render();renderInvite();renderUsage()}
 function setEditorPending(pending){const form=$('accountForm');form.setAttribute('aria-busy',pending?'true':'false');form.querySelectorAll('button,input,select').forEach(control=>{if(pending){control.dataset.pendingDisabled=control.disabled?'true':'false';control.disabled=true}else if(Object.prototype.hasOwnProperty.call(control.dataset,'pendingDisabled')){control.disabled=control.dataset.pendingDisabled==='true';delete control.dataset.pendingDisabled}});$('saveAccount').textContent=pending?'正在保存…':'保存账号';$('saveStatus').textContent=pending?'正在保存账号':''}
 function closeAllOverlays(){$('drawerWrap').classList.add('hidden');$('logoutModal').classList.add('hidden');$('inviteModal').classList.add('hidden');$('adminView').inert=false;activeOverlay=null;overlayReturnFocus=null;editorEpoch+=1;if(isSaving){isSaving=false;setEditorPending(false)}}
@@ -1764,7 +1800,7 @@ function closeLogout(force){if($('confirmLogout').disabled&&!force)return;closeO
 async function logout(){const requestToken=token;const button=$('confirmLogout');button.disabled=true;$('cancelLogout').disabled=true;button.textContent='正在退出';try{await api('/enterprise/auth/logout',{method:'POST'})}catch{}finally{button.disabled=false;$('cancelLogout').disabled=false;button.textContent='确认退出';closeOverlay('logoutModal',false);expireAdminSession('',requestToken)}}
 function openInviteConfirm(){openOverlay('inviteModal',$('cancelInvite'),$('issueInvite'))}
 function closeInviteConfirm(force){if($('confirmInvite').disabled&&!force)return;closeOverlay('inviteModal',true)}
-async function issueInvite(){const requestToken=token;const button=$('confirmInvite');button.disabled=true;$('cancelInvite').disabled=true;button.textContent='正在生成';showError('inviteError','');try{const data=await api('/enterprise/organization/invite',{method:'POST'});if(requestToken!==token)return;currentInvite=data.invite;renderInvite();closeInviteConfirm(true)}catch(error){if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}closeInviteConfirm(true);showError('inviteError',error.message)}finally{button.disabled=false;$('cancelInvite').disabled=false;button.textContent='确认生成'}}
+async function issueInvite(){const requestToken=token;const button=$('confirmInvite');button.disabled=true;$('cancelInvite').disabled=true;button.textContent='正在生成';showError('inviteError','');try{const rawMaxUses=$('inviteMaxUses').value.trim();const data=await api('/enterprise/organization/invite',{method:'POST',body:JSON.stringify({defaultDepartment:$('inviteDepartment').value.trim()||null,positionTitle:$('invitePosition').value.trim()||null,defaultRole:$('inviteRole').value.trim()||null,maxUses:rawMaxUses?Number(rawMaxUses):null})});if(requestToken!==token)return;currentInvite=data.invite;renderInvite();closeInviteConfirm(true)}catch(error){if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}closeInviteConfirm(true);showError('inviteError',error.message)}finally{button.disabled=false;$('cancelInvite').disabled=false;button.textContent='确认生成'}}
 function selectInviteFallback(id,message){const field=$(id);field.classList.remove('hidden');field.focus();field.select();showError('inviteError',message)}
 async function copyInvite(){if(!currentInvite||currentInvite.status!=='active')return;showError('inviteError','');try{await navigator.clipboard.writeText(currentInvite.code);const button=$('copyInvite');button.textContent='已复制邀请码';setTimeout(()=>{button.textContent='复制邀请码'},1500)}catch{selectInviteFallback('inviteCode','复制失败，已选中邀请码，可手动复制')}}
 async function copyInviteLink(){const link=registrationInviteLink();if(!link||!currentInvite||currentInvite.status!=='active')return;showError('inviteError','');try{await navigator.clipboard.writeText(link);const button=$('copyInviteLink');button.textContent='已复制引入链接';setTimeout(()=>{button.textContent='复制企业引入链接'},1500)}catch{selectInviteFallback('inviteLinkPreview','复制失败，已选中企业引入链接，可手动复制')}}

@@ -165,6 +165,13 @@ function initSchema(d: Database): void {
       expires_at_ms INTEGER NOT NULL,
       revoked_at_ms INTEGER,
       created_by_account_id TEXT,
+      default_department TEXT,
+      department_id TEXT,
+      position_id TEXT,
+      position_title TEXT,
+      default_role TEXT,
+      max_uses INTEGER,
+      used_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
     );
@@ -244,6 +251,8 @@ function initSchema(d: Database): void {
       name TEXT NOT NULL,
       role TEXT,
       department TEXT,
+      position_id TEXT,
+      position_title TEXT,
       is_admin INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -310,6 +319,12 @@ function initSchema(d: Database): void {
       code_hash TEXT NOT NULL,
       expires_at_ms INTEGER NOT NULL,
       attempts_remaining INTEGER NOT NULL DEFAULT 5,
+      organization_invite_id TEXT,
+      department TEXT,
+      department_id TEXT,
+      position_id TEXT,
+      position_title TEXT,
+      role TEXT,
       consumed_at_ms INTEGER,
       created_at_ms INTEGER NOT NULL,
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
@@ -471,6 +486,33 @@ function initSchema(d: Database): void {
   if (!knowledgeColumns.some((column) => column.name === 'source_id')) {
     d.exec('ALTER TABLE knowledge ADD COLUMN source_id TEXT');
   }
+  const ensureTextColumn = (table: string, column: string): void => {
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) {
+      d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+    }
+  };
+  ensureTextColumn('organization_invites', 'default_department');
+  ensureTextColumn('organization_invites', 'department_id');
+  ensureTextColumn('organization_invites', 'position_id');
+  ensureTextColumn('organization_invites', 'position_title');
+  ensureTextColumn('organization_invites', 'default_role');
+  ensureTextColumn('sms_registration_challenges', 'department');
+  ensureTextColumn('sms_registration_challenges', 'organization_invite_id');
+  ensureTextColumn('sms_registration_challenges', 'department_id');
+  ensureTextColumn('sms_registration_challenges', 'position_id');
+  ensureTextColumn('sms_registration_challenges', 'position_title');
+  ensureTextColumn('sms_registration_challenges', 'role');
+  ensureTextColumn('accounts', 'position_id');
+  ensureTextColumn('accounts', 'position_title');
+  const ensureIntegerColumn = (table: string, column: string, ddl: string): void => {
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) {
+      d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
+  };
+  ensureIntegerColumn('organization_invites', 'max_uses', 'INTEGER');
+  ensureIntegerColumn('organization_invites', 'used_count', 'INTEGER NOT NULL DEFAULT 0');
   d.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_source_unique
       ON knowledge(organization_id, source_id) WHERE source_id IS NOT NULL;
@@ -515,6 +557,13 @@ export interface OrganizationInviteView {
   code: string;
   link: string;
   status: 'active' | 'expired' | 'revoked';
+  defaultDepartment: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  defaultRole: string | null;
+  maxUses: number | null;
+  usedCount: number;
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
@@ -527,6 +576,13 @@ interface OrganizationInviteRow {
   issued_at_ms: number;
   expires_at_ms: number;
   revoked_at_ms: number | null;
+  default_department: string | null;
+  department_id: string | null;
+  position_id: string | null;
+  position_title: string | null;
+  default_role: string | null;
+  max_uses: number | null;
+  used_count: number;
 }
 
 function toOrganizationView(row: OrganizationRow): OrganizationView {
@@ -610,6 +666,13 @@ function toOrganizationInviteView(
     code,
     link: buildOrganizationInviteLink(publicBaseUrl, code),
     status,
+    defaultDepartment: row.default_department,
+    departmentId: row.department_id,
+    positionId: row.position_id,
+    positionTitle: row.position_title,
+    defaultRole: row.default_role,
+    maxUses: row.max_uses,
+    usedCount: row.used_count ?? 0,
     issuedAt: new Date(row.issued_at_ms).toISOString(),
     expiresAt: new Date(row.expires_at_ms).toISOString(),
     validHours: 168,
@@ -671,13 +734,32 @@ export function inspectOrganizationInvite(
   if (now >= match.expires_at_ms) {
     return { status: 'expired', organizationId: match.organization_id };
   }
+  if (match.max_uses != null && match.used_count >= match.max_uses) {
+    return { status: 'revoked', organizationId: match.organization_id };
+  }
   return { status: 'active', organizationId: match.organization_id };
+}
+
+export interface OrganizationInviteIssueInput {
+  defaultDepartment?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  defaultRole?: string | null;
+  maxUses?: number | null;
+}
+
+function normalizeOptionalText(value: string | null | undefined, label: string, maxLength = 80): string | null {
+  const clean = value?.trim() || null;
+  if (clean && clean.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  return clean;
 }
 
 export function issueOrganizationInvite(
   organizationId: string,
   now = Date.now(),
   createdByAccountId?: string | null,
+  input?: string | OrganizationInviteIssueInput | null,
 ): OrganizationInviteView {
   const database = getDB();
   database.exec('SAVEPOINT issue_organization_invite');
@@ -689,11 +771,35 @@ export function issueOrganizationInvite(
     const id = `orginvite_${randomUUID()}`;
     const nonce = randomBytes(24).toString('base64url');
     const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
+    const options = typeof input === 'string' ? { defaultDepartment: input } : input ?? {};
+    const cleanDepartment = normalizeOptionalText(options.defaultDepartment, '部门名称');
+    const departmentId = normalizeOptionalText(options.departmentId, '部门 ID', 120);
+    const positionId = normalizeOptionalText(options.positionId, '职位 ID', 120);
+    const positionTitle = normalizeOptionalText(options.positionTitle, '职位名称');
+    const defaultRole = normalizeOptionalText(options.defaultRole, '角色');
+    const maxUses = options.maxUses == null ? null : Math.floor(Number(options.maxUses));
+    if (maxUses != null && (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)) {
+      throw new Error('邀请码可注册人数必须在 1 到 10000 之间');
+    }
     database.prepare(
       `INSERT INTO organization_invites
-         (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, organizationId, nonce, now, expiresAtMs, createdByAccountId || null);
+         (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id,
+          default_department, department_id, position_id, position_title, default_role, max_uses)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      organizationId,
+      nonce,
+      now,
+      expiresAtMs,
+      createdByAccountId || null,
+      cleanDepartment,
+      departmentId,
+      positionId,
+      positionTitle,
+      defaultRole,
+      maxUses,
+    );
     database.prepare(
       `UPDATE organization_invites SET revoked_at_ms = ?
        WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
@@ -701,7 +807,9 @@ export function issueOrganizationInvite(
     logAudit(
       'organization_invite_issue',
       null,
-      'Registration invite issued for 7 days',
+      [cleanDepartment, positionTitle, defaultRole].filter(Boolean).length
+        ? `Position invite issued for ${[cleanDepartment, positionTitle, defaultRole].filter(Boolean).join(' / ')}`
+        : 'Registration invite issued for 7 days',
       organizationId,
     );
     const row = database.prepare(
@@ -731,7 +839,20 @@ export function getOrganizationInvite(
   return row ? toOrganizationInviteView(row, organization, now) : null;
 }
 
-export function resolveOrganizationInvite(code: string, now = Date.now()): OrganizationView | null {
+export interface OrganizationInviteResolution {
+  organization: OrganizationView;
+  inviteId: string;
+  defaultDepartment: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  defaultRole: string | null;
+}
+
+export function resolveOrganizationInviteWithDefaults(
+  code: string,
+  now = Date.now(),
+): OrganizationInviteResolution | null {
   const normalized = normalizeOrganizationInviteCode(code);
   if (normalized.length !== 8) return null;
   const rows = getDB().prepare(
@@ -758,15 +879,28 @@ export function resolveOrganizationInvite(code: string, now = Date.now()): Organ
   });
   if (matches.length !== 1) return null;
   const match = matches[0]!;
-  return toOrganizationView({
-    id: match.organization_id,
-    name: match.name,
-    slug: match.slug,
-    invite_secret: match.invite_secret,
-    status: match.status,
-    created_at: match.created_at,
-    updated_at: match.updated_at,
-  });
+  if (match.max_uses != null && match.used_count >= match.max_uses) return null;
+  return {
+    organization: toOrganizationView({
+      id: match.organization_id,
+      name: match.name,
+      slug: match.slug,
+      invite_secret: match.invite_secret,
+      status: match.status,
+      created_at: match.created_at,
+      updated_at: match.updated_at,
+    }),
+    inviteId: match.id,
+    defaultDepartment: match.default_department ?? null,
+    departmentId: match.department_id ?? null,
+    positionId: match.position_id ?? null,
+    positionTitle: match.position_title ?? null,
+    defaultRole: match.default_role ?? null,
+  };
+}
+
+export function resolveOrganizationInvite(code: string, now = Date.now()): OrganizationView | null {
+  return resolveOrganizationInviteWithDefaults(code, now)?.organization ?? null;
 }
 
 // ============================================================
@@ -783,6 +917,8 @@ export interface AccountView {
   name: string;
   role: string | null;
   department: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -800,6 +936,8 @@ interface AccountRow {
   name: string;
   role: string | null;
   department: string | null;
+  position_id: string | null;
+  position_title: string | null;
   is_admin: number;
   status: 'active' | 'disabled';
   created_at: string;
@@ -874,6 +1012,8 @@ function toAccountView(row: AccountRow): AccountView {
     name: row.name,
     role: row.role,
     department: row.department,
+    positionId: row.position_id,
+    positionTitle: row.position_title,
     isAdmin: row.is_admin === 1,
     status: row.status,
     tags: tagsForAccount(row.id, row.organization_id),
@@ -902,6 +1042,8 @@ export function createAccount(input: {
   employeeId?: string | null;
   role?: string | null;
   department?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
@@ -920,8 +1062,8 @@ export function createAccount(input: {
   try {
     getDB().prepare(
     `INSERT INTO accounts
-       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, is_admin, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, position_id, position_title, is_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       organizationId,
@@ -932,6 +1074,8 @@ export function createAccount(input: {
       name,
       input.role?.trim() || null,
       input.department?.trim() || null,
+      input.positionId?.trim() || null,
+      input.positionTitle?.trim() || null,
       input.isAdmin ? 1 : 0,
       status,
     );
@@ -1121,6 +1265,11 @@ export function createSelfRegisteredAccount(input: {
   phone: string;
   name: string;
   password: string;
+  department?: string | null;
+  role?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  organizationInviteId?: string | null;
 }): AccountView {
   const normalized = normalizePhone(input.phone);
   const existing = findAccountByPhone(normalized);
@@ -1128,16 +1277,27 @@ export function createSelfRegisteredAccount(input: {
 
   const digits = normalized.slice(3);
   try {
-    return createAccount({
+    const account = createAccount({
       organizationId: input.organizationId,
       username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
       password: input.password,
       name: input.name,
       phone: normalized,
-      role: '成员',
+      role: input.role?.trim() || '成员',
+      department: input.department?.trim() || null,
+      positionId: input.positionId?.trim() || null,
+      positionTitle: input.positionTitle?.trim() || null,
       tags: ['普通成员'],
       isAdmin: false,
     });
+    if (input.organizationInviteId) {
+      getDB().prepare(
+        `UPDATE organization_invites
+         SET used_count = used_count + 1
+         WHERE id = ? AND organization_id = ?`,
+      ).run(input.organizationInviteId, input.organizationId);
+    }
+    return account;
   } catch (error) {
     // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
     if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
@@ -1364,7 +1524,15 @@ export function createSmsRegistrationChallenge(
   phone: string,
   code: string,
   organizationId = DEFAULT_ORGANIZATION_ID,
-  options: { now?: number } = {},
+  options: {
+    now?: number;
+    department?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    role?: string | null;
+    organizationInviteId?: string | null;
+  } = {},
 ): SmsChallengeIssueResult {
   if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
   const normalized = normalizePhone(phone);
@@ -1394,10 +1562,20 @@ export function createSmsRegistrationChallenge(
 
   const challengeId = `smsreg_${randomUUID()}`;
   const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
+  const department = options.department?.trim() || null;
+  const departmentId = options.departmentId?.trim() || null;
+  const positionId = options.positionId?.trim() || null;
+  const positionTitle = options.positionTitle?.trim() || null;
+  const role = options.role?.trim() || null;
+  const organizationInviteId = options.organizationInviteId?.trim() || null;
+  if (department && department.length > 80) throw new Error('部门名称不能超过 80 个字符');
+  if (positionTitle && positionTitle.length > 80) throw new Error('职位名称不能超过 80 个字符');
+  if (role && role.length > 80) throw new Error('角色不能超过 80 个字符');
   getDB().prepare(
     `INSERT INTO sms_registration_challenges
-       (id, organization_id, phone, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
+        organization_invite_id, department, department_id, position_id, position_title, role, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     challengeId,
     organizationId,
@@ -1405,6 +1583,12 @@ export function createSmsRegistrationChallenge(
     passwordHash(code),
     expiresAtMs,
     SMS_CHALLENGE_MAX_ATTEMPTS,
+    organizationInviteId,
+    department,
+    departmentId,
+    positionId,
+    positionTitle,
+    role,
     now,
   );
   logAudit('sms_registration_code_requested', null, 'SMS registration code requested', organizationId);
@@ -1424,7 +1608,17 @@ export function discardSmsRegistrationChallenge(challengeId: string): void {
 }
 
 export type SmsRegistrationVerifyResult =
-  | { ok: true; phone: string; organizationId: string }
+  | {
+      ok: true;
+      phone: string;
+      organizationId: string;
+      organizationInviteId: string | null;
+      department: string | null;
+      departmentId: string | null;
+      positionId: string | null;
+      positionTitle: string | null;
+      role: string | null;
+    }
   | {
       ok: false;
       reason: 'invalid' | 'expired' | 'locked' | 'used';
@@ -1437,7 +1631,8 @@ export function verifySmsRegistrationChallenge(
   now = Date.now(),
 ): SmsRegistrationVerifyResult {
   const row = getDB().prepare(
-    `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining, consumed_at_ms
+    `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
+            organization_invite_id, department, department_id, position_id, position_title, role, consumed_at_ms
      FROM sms_registration_challenges WHERE id = ?`,
   ).get(challengeId) as {
     organization_id: string;
@@ -1445,6 +1640,12 @@ export function verifySmsRegistrationChallenge(
     code_hash: string;
     expires_at_ms: number;
     attempts_remaining: number;
+    organization_invite_id: string | null;
+    department: string | null;
+    department_id: string | null;
+    position_id: string | null;
+    position_title: string | null;
+    role: string | null;
     consumed_at_ms: number | null;
   } | undefined;
 
@@ -1480,7 +1681,17 @@ export function verifySmsRegistrationChallenge(
     'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
   ).run(now, challengeId);
   logAudit('sms_registration_verified', null, 'SMS registration verified', row.organization_id);
-  return { ok: true, phone: row.phone, organizationId: row.organization_id };
+  return {
+    ok: true,
+    phone: row.phone,
+    organizationId: row.organization_id,
+    organizationInviteId: row.organization_invite_id,
+    department: row.department,
+    departmentId: row.department_id,
+    positionId: row.position_id,
+    positionTitle: row.position_title,
+    role: row.role,
+  };
 }
 
 export type SmsChallengeVerifyResult =

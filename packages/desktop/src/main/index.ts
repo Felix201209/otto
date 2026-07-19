@@ -34,11 +34,13 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   nativeTheme,
   safeStorage,
   session,
   shell,
+  Tray,
   type NativeImage,
 } from 'electron';
 import { fileURLToPath } from 'node:url';
@@ -170,6 +172,10 @@ const serverManager = new ServerManager({
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
+let tray: Tray | undefined;
+/** 用户主动退出标记；关闭窗口时不退出，只有菜单/托盘退出才真正结束进程。 */
+let isQuitting = false;
 /** 视频编辑器窗口（OpenReel）。 */
 let videoEditorWindow: BrowserWindow | undefined;
 
@@ -561,11 +567,66 @@ function loadSavedThemeSource(): 'system' | 'light' | 'dark' {
 }
 
 function loadIcon(): NativeImage {
-  const iconPath = path.join(RENDERER_DIR, 'icon.png');
-  if (fs.existsSync(iconPath)) {
-    return nativeImage.createFromPath(iconPath);
+  const iconPaths = [
+    path.join(RENDERER_DIR, 'icon.png'),
+    path.join(__dirname, '..', '..', 'build', 'icon.png'),
+    path.join(process.resourcesPath, 'build', 'icon.png'),
+  ];
+  for (const iconPath of iconPaths) {
+    if (fs.existsSync(iconPath)) {
+      const image = nativeImage.createFromPath(iconPath);
+      if (!image.isEmpty()) return image;
+    }
   }
   return nativeImage.createEmpty();
+}
+
+function loadTrayIcon(): NativeImage {
+  const icon = loadIcon();
+  if (!icon.isEmpty()) {
+    return process.platform === 'darwin'
+      ? icon.resize({ width: 18, height: 18 })
+      : icon.resize({ width: 16, height: 16 });
+  }
+  const fallback = nativeImage.createFromDataURL(
+    'data:image/svg+xml;utf8,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#111827"/><circle cx="16" cy="16" r="9" fill="#60a5fa"/><circle cx="16" cy="16" r="4" fill="#ffffff"/></svg>',
+      ),
+  );
+  return fallback.resize({ width: process.platform === 'darwin' ? 18 : 16, height: process.platform === 'darwin' ? 18 : 16 });
+}
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createWindow();
+    mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray(): void {
+  if (tray) return;
+  tray = new Tray(loadTrayIcon());
+  tray.setToolTip('Otto');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: '打开 Otto',
+      click: showMainWindow,
+    },
+    {
+      label: '退出 Otto',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
 }
 
 function createWindow(): BrowserWindow {
@@ -596,6 +657,11 @@ function createWindow(): BrowserWindow {
   });
 
   win.once('ready-to-show', () => win.show());
+  win.on('close', (event) => {
+    if (isQuitting || process.platform === 'darwin') return;
+    event.preventDefault();
+    win.hide();
+  });
 
   hardenWebContents(win);
 
@@ -981,9 +1047,17 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.getOrganizationInvite();
   });
-  ipcMain.handle(IPC.enterpriseOrganizationInviteIssue, async () => {
+  ipcMain.handle(IPC.enterpriseOrganizationInviteIssue, async (_event, input: unknown) => {
     loadEnterpriseSession();
-    return enterpriseClient.issueOrganizationInvite();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    return enterpriseClient.issueOrganizationInvite({
+      defaultDepartment: typeof body.defaultDepartment === 'string' ? body.defaultDepartment : null,
+      departmentId: typeof body.departmentId === 'string' ? body.departmentId : null,
+      positionId: typeof body.positionId === 'string' ? body.positionId : null,
+      positionTitle: typeof body.positionTitle === 'string' ? body.positionTitle : null,
+      defaultRole: typeof body.defaultRole === 'string' ? body.defaultRole : null,
+      maxUses: typeof body.maxUses === 'number' ? body.maxUses : null,
+    });
   });
   ipcMain.handle(IPC.enterpriseTicketInbox, async () => {
     loadEnterpriseSession();
@@ -1420,10 +1494,7 @@ if (!gotLock) {
       const intent = enterpriseRegistrationIntents.take();
       if (intent) mainWindow.webContents.send(IPC.enterpriseRegistrationIntentOpened, intent);
     }
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
@@ -1438,6 +1509,7 @@ if (!gotLock) {
 
     registerIpc();
     installAppMenu(() => mainWindow);
+    createTray();
 
     // 先建窗（show:false，ready-to-show 再显），同时并发确保 server。
     mainWindow = createWindow();
@@ -1449,15 +1521,20 @@ if (!gotLock) {
         mainWindow = createWindow();
         // 窗口重建后把已知端点补推一次。
         mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
+      } else {
+        showMainWindow();
       }
     });
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    // Windows/Linux 关闭主窗口后常驻系统托盘，避免 Otto 服务随窗口关闭而退出。
+    // 真正退出走应用菜单或托盘「退出 Otto」。
+    if (process.platform === 'darwin') return;
   });
 
   app.on('before-quit', (event) => {
+    isQuitting = true;
     if (quitCleanupFinished) return;
     event.preventDefault();
     if (quitCleanupStarted) return;
