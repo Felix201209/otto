@@ -298,6 +298,18 @@ async function build(sourceCommit) {
     ['electron-builder', '--mac', 'dmg', '--arm64'],
     'mac-arm64',
   );
+  execFileSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'smoke-packaged-electron.mjs'),
+      path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`),
+    ],
+    {
+      cwd: DESKTOP_DIR,
+      stdio: 'inherit',
+    },
+  );
+  log('BUILD', 'Mac arm64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
 
   log('BUILD', '构建 Mac x64...');
   runBuildStep(

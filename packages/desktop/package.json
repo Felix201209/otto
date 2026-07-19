@@ -8,7 +8,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "build:main": "tsc -p tsconfig.main.json",
-    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:preload": "tsc -p tsconfig.preload.json --noEmit && webpack-cli --config webpack.preload.cjs --mode production && node scripts/verify-preload-bundle.mjs",
     "build:renderer": "webpack-cli --config webpack.config.cjs --mode production",
     "build": "npm run build:main && npm run build:preload && npm run build:renderer",
     "dev:renderer": "webpack-cli --config webpack.config.cjs --mode development --watch",
@@ -45,7 +45,8 @@
     "typescript": "5.9.3",
     "vitest": "3.2.4",
     "webpack": "^5.97.1",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "ws": "^8.21.1"
   },
   "build": {
     "appId": "ai.otto.desktop",
