@@ -179,7 +179,10 @@ export function useProductWorkspace(): UseProductWorkspace {
         payload: { displayName: displayName.trim(), ...(note?.trim() ? { note: note.trim() } : {}) },
       }),
     refreshPendingAutoSkills: () =>
-      transport.send({ type: 'get_pending_auto_skills', payload: {} }),
+      transport.send({
+        type: 'scan_pending_auto_skills' as never,
+        payload: {},
+      }),
     confirmPendingAutoSkill: (candidateId) =>
       transport.send({ type: 'confirm_pending_auto_skill', payload: { candidateId } }),
     rejectPendingAutoSkill: (candidateId) =>

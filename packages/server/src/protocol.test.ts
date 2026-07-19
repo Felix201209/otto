@@ -272,6 +272,10 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
       type: 'get_pending_auto_skills',
       payload: {},
     })).toBeNull();
+    expect(validateClientPayload({
+      type: 'scan_pending_auto_skills',
+      payload: {},
+    })).toBeNull();
     for (const type of ['confirm_pending_auto_skill', 'reject_pending_auto_skill']) {
       expect(validateClientPayload({ type, payload: { candidateId: 'candidate-1' } })).toBeNull();
       expect(validateClientPayload({ type, payload: { candidateId: '' } })).not.toBeNull();

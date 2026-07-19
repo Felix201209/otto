@@ -128,6 +128,7 @@ import {
   listLocalSchedules,
   subscribeLocalSchedules,
   listPendingSkillCandidates,
+  scanAndStageSkillCandidates,
   confirmPendingSkill,
   rejectPendingSkill,
   startAutoSkillScanner,
@@ -2313,13 +2314,35 @@ export class OttoServer {
           });
         }
       }
+      case 'scan_pending_auto_skills': {
+        try {
+          const candidates = (
+            await scanAndStageSkillCandidates(
+              createCoreConfig({ sessionId: 'auto-skill-manual-scan' }),
+              () => this.productWorkspace.snapshot().context.userId,
+            )
+          ).map(publicAutoSkillCandidate);
+          return this.send(conn.socket, {
+            type: 'pending_auto_skills',
+            payload: { candidates },
+          });
+        } catch (error) {
+          return this.send(conn.socket, {
+            type: 'error',
+            payload: {
+              code: 'auto_skill_failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      }
       case 'confirm_pending_auto_skill': {
         try {
           const savedPath = await confirmPendingSkill(msg.payload.candidateId);
           const candidates = (await listPendingSkillCandidates()).map(
             publicAutoSkillCandidate,
           );
-          return this.send(conn.socket, {
+          this.send(conn.socket, {
             type: 'pending_auto_skills',
             payload: {
               candidates,
@@ -2330,6 +2353,8 @@ export class OttoServer {
               },
             },
           });
+          await this.handleGetSkills(conn);
+          return;
         } catch (error) {
           return this.send(conn.socket, {
             type: 'error',

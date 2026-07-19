@@ -616,6 +616,10 @@ export type GetPendingAutoSkillsMsg = Envelope<
   'get_pending_auto_skills',
   Record<string, never>
 >;
+export type ScanPendingAutoSkillsMsg = Envelope<
+  'scan_pending_auto_skills',
+  Record<string, never>
+>;
 export type ConfirmPendingAutoSkillMsg = Envelope<
   'confirm_pending_auto_skill',
   { candidateId: string }
@@ -714,6 +718,7 @@ export type ClientToServer =
   | AddFriendMsg
   | AcceptCompanyLinkMsg
   | GetPendingAutoSkillsMsg
+  | ScanPendingAutoSkillsMsg
   | ConfirmPendingAutoSkillMsg
   | RejectPendingAutoSkillMsg
   | GetSchedulesMsg
@@ -1728,6 +1733,7 @@ export function validateClientPayload(msg: {
     case 'get_product_workspace':
     case 'switch_to_personal':
     case 'get_pending_auto_skills':
+    case 'scan_pending_auto_skills':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
     case 'configure_enterprise': {
       if (!isPlainObject(p)) return 'configure_enterprise payload 必须是对象';
