@@ -227,9 +227,7 @@ export function Sidebar({
         </button>
         {enterpriseAccount ? (
           <div className="otto-sidebar-account">
-            <span className="otto-sidebar-account__avatar">
-              {enterpriseAccount.name.slice(0, 1).toUpperCase()}
-            </span>
+            <span className="otto-sidebar-account__avatar">{enterpriseAccount.name.slice(0, 1).toUpperCase()}</span>
             <span className="otto-sidebar-account__copy">
               <strong>{enterpriseAccount.name}</strong>
               <small>{enterpriseAccount.department || `@${enterpriseAccount.username}`}</small>
