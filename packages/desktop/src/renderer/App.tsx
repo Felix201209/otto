@@ -516,6 +516,10 @@ function OttoWorkspaceApp({
           />
           {showRightPanel && (
             <RightPanel
+              busy={busy}
+              mode={edition}
+              workspace={product.state.workspace}
+              onLaunchAgentProfile={handleLaunchProfile}
               onLaunchExpert={handleLaunchProfile}
               onOpenAgents={() => setMainView('agents')}
             />
