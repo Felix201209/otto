@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_PROFILES, resolveAgentProfile } from './agentProfiles.js';
 
 describe('服务端 Agent profile 白名单', () => {
-  it('覆盖个人 Otto、企业助手、会议 Agent、8 位通用专家和六部门各 4 个 profile', () => {
-    expect(BUILTIN_AGENT_PROFILES).toHaveLength(38);
-    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(14);
+  it('覆盖个人 Otto、企业助手、统一会议 Agent、8 位通用专家和六部门各 4 个 profile', () => {
+    expect(BUILTIN_AGENT_PROFILES).toHaveLength(36);
+    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(12);
     expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'department')).toHaveLength(24);
     expect(resolveAgentProfile('otto-personal')).toMatchObject({ edition: 'personal' });
     expect(resolveAgentProfile('otto-enterprise-ceo')).toMatchObject({
@@ -17,7 +17,7 @@ describe('服务端 Agent profile 白名单', () => {
     expect(resolveAgentProfile('otto-enterprise-work')).toMatchObject({ edition: 'enterprise' });
     expect(resolveAgentProfile('self-development')).toMatchObject({
       edition: 'both',
-      name: '企业AI自主开发',
+      name: '自主开发',
     });
     for (const id of ['ppt', 'meeting', 'doc', 'sheet', 'pdf', 'dataviz', 'research', 'copy']) {
       expect(resolveAgentProfile(id)).toMatchObject({ scope: 'base', edition: 'both' });
@@ -25,11 +25,14 @@ describe('服务端 Agent profile 白名单', () => {
   });
 
   it('会议 Agent 使用 system prompt，未知或客户端自造 profile 不会被接受', () => {
-    expect(resolveAgentProfile('meeting-initiator')).toMatchObject({
-      name: '会议发起 Agent',
+    expect(resolveAgentProfile('meeting')).toMatchObject({
+      name: '会议 Agent',
+      skills: ['meeting-scheduler', 'meeting-notes'],
       systemPrompt: expect.stringContaining('会议'),
     });
-    expect(resolveAgentProfile('meeting-notes-followup')?.systemPrompt).toContain('纪要');
+    expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('纪要');
+    expect(resolveAgentProfile('meeting-initiator')).toBeUndefined();
+    expect(resolveAgentProfile('meeting-notes-followup')).toBeUndefined();
     expect(resolveAgentProfile('evil-client-prompt')).toBeUndefined();
   });
 

@@ -56,18 +56,18 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
       ReadFileTool.Name,
       'ReadFile',
       'Reads file content from disk.\n\n' +
-      'Supports: text files, images (PNG/JPG/GIF/WEBP/SVG/BMP), PDF, Excel (.xlsx/.xls), Word (.docx).\n\n' +
-      'Parameters: absolute_path (required absolute file path), offset (optional start line), limit (optional line count).\n\n' +
-      '⚠️ IMPORTANT: Pass the file path ONLY in args.absolute_path, NOT in the tool name. ' +
-      'Tool name must be "read_file" (8 characters), arguments go in the args object.',
+        'Supports: text files, images (PNG/JPG/GIF/WEBP/SVG/BMP), PDF, Excel (.xlsx/.xls), Word (.docx).\n\n' +
+        'Parameters: absolute_path (required absolute file path), offset (optional start line), limit (optional line count).\n\n' +
+        '⚠️ IMPORTANT: Pass the file path ONLY in args.absolute_path, NOT in the tool name. ' +
+        'Tool name must be "read_file" (8 characters), arguments go in the args object.',
       Icon.FileSearch,
       {
         properties: {
           absolute_path: {
             description:
-              "Absolute path to the file to read. Examples: /home/user/project/file.txt or C:\\\\Users\\\\project\\\\file.txt. " +
-              "Must be an absolute path (relative paths not supported). " +
-              "Provide ONLY in this args parameter, not in the tool name.",
+              'Absolute path to the file to read. Examples: /home/user/project/file.txt or C:\\\\Users\\\\project\\\\file.txt. ' +
+              'Must be an absolute path (relative paths not supported). ' +
+              'Provide ONLY in this args parameter, not in the tool name.',
             type: Type.STRING,
           },
           offset: {
@@ -93,7 +93,11 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
   }
 
   validateToolParams(params: ReadFileToolParams): string | null {
-    const errors = SchemaValidator.validate(this.schema.parameters, params, ReadFileTool.Name);
+    const errors = SchemaValidator.validate(
+      this.schema.parameters,
+      params,
+      ReadFileTool.Name,
+    );
     if (errors) {
       return errors;
     }
@@ -104,7 +108,10 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
     }
 
     // Check workspace path restriction unless external access is explicitly allowed
-    if (!params.allow_external_access && !isWithinRoot(filePath, this.config.getTargetDir())) {
+    if (
+      !params.allow_external_access &&
+      !isWithinRoot(filePath, this.config.getTargetDir())
+    ) {
       return `This file is outside the workspace.\nWorkspace: ${this.config.getTargetDir()}\nFile: ${filePath}\n\nTo read it, add allow_external_access: true to your read_file call.`;
     }
     if (params.offset !== undefined && params.offset < 0) {
@@ -148,31 +155,14 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
     params: ReadFileToolParams,
     signal: AbortSignal,
   ): Promise<ToolResult> {
-    // Auto-forward external files to read_many_files tool
+    void signal;
+
     const filePath = params.absolute_path;
-    const isExternalFile = path.isAbsolute(filePath) && !isWithinRoot(filePath, this.config.getTargetDir());
-
+    const isExternalFile =
+      path.isAbsolute(filePath) &&
+      !isWithinRoot(filePath, this.config.getTargetDir());
     if (isExternalFile && !params.allow_external_access) {
-      // Auto-forward to read_many_files (which natively supports external paths).
-      const toolRegistry = await this.config.getToolRegistry();
-      const readManyFilesTool = toolRegistry.getTool('read_many_files');
-
-      if (readManyFilesTool) {
-        return await readManyFilesTool.execute({
-          paths: [filePath],
-          allowLocalExecution: true
-        }, signal);
-      }
-
-      // Fallback: read_many_files unavailable — give a clear, actionable error.
-      return {
-        llmContent:
-          `This file is outside the workspace directory and read_many_files is unavailable.\n` +
-          `Workspace: ${this.config.getTargetDir()}\n` +
-          `File: ${filePath}\n\n` +
-          `To read it, set allow_external_access: true on read_file, or use read_many_files directly.`,
-        returnDisplay: `Error: File outside workspace — set allow_external_access: true`,
-      };
+      params = { ...params, allow_external_access: true };
     }
 
     const validationError = this.validateToolParams(params);
@@ -213,7 +203,10 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
     // 追踪文件读取，用于压缩后上下文恢复
     this.config.getOttoClient?.()?.trackFileRead(params.absolute_path);
 
-    if (typeof result.llmContent === 'string' && result.llmContent.length == 0) {
+    if (
+      typeof result.llmContent === 'string' &&
+      result.llmContent.length == 0
+    ) {
       result.llmContent = 'ReadFile Success, but Content is empty!';
     }
 
