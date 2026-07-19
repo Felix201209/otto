@@ -100,7 +100,7 @@ class R:
         self._hf_fill=PatternFill(start_color=self._hex("hdr_bg"),end_color=self._hex("hdr_bg"),fill_type="solid")
         self._bf=Font(name=self.t["b_font"],size=self.t["b_sz"],color=self._hex("body"))
         self._sf=PatternFill(start_color=self._hex("stripe"),end_color=self._hex("stripe"),fill_type="solid")
-        self._tf=Font(name=self.t["h_font"],size=self.t["t_sz"],bold=True,color=self._hex("hdr_text"))
+        self._tf=Font(name=self.t["h_font"],size=self.t["t_sz"],bold=True,color="FFFFFF")
         self._tf_fill=PatternFill(start_color=self._hex("base"),end_color=self._hex("base"),fill_type="solid")
         self._bdr=Border(left=Side(style="thin",color=self._hex("border")),
             right=Side(style="thin",color=self._hex("border")),
@@ -157,9 +157,14 @@ class R:
 
             # dashboard 布局：大号KPI
             if layout=="dashboard" and len(rows)>=2:
+                # 表头
+                for j,h in enumerate(rows[0]):
+                    c=ws.cell(sr+1,j+1,value=h); c.font=self._hf; c.fill=self._hf_fill; c.alignment=self._ctr; c.border=self._bdr
+                ws.row_dimensions[sr+1].height=22
+                # 数据（表头下方）
                 for i,row in enumerate(rows[1:][:8]):
                     for j,val in enumerate(row):
-                        c=ws.cell(sr+1+i,j+1,value=val)
+                        c=ws.cell(sr+2+i,j+1,value=val)
                         c.font=Font(name=self.t["b_font"],size=self.t["b_sz"]+2 if j>0 else self.t["b_sz"],bold=(j>0),color=self._hex("base") if j>0 else self._hex("muted"))
                         if i%2==1: c.fill=self._sf
                         if j==0: c.alignment=self._lft
@@ -169,10 +174,6 @@ class R:
                             if num is not None:
                                 if num<0: c.font=Font(name=self.t["b_font"],size=self.t["b_sz"]+2,bold=True,color=self._hex("neg"))
                                 elif num>0: c.font=Font(name=self.t["b_font"],size=self.t["b_sz"]+2,bold=True,color=self._hex("pos"))
-                # 表头
-                for j,h in enumerate(rows[0]):
-                    c=ws.cell(sr+1,j+1,value=h); c.font=self._hf; c.fill=self._hf_fill; c.alignment=self._ctr; c.border=self._bdr
-                ws.row_dimensions[sr+1].height=22
                 self._col_w(ws,[rows[0]]+rows[1:],len(rows[0]))
                 continue
 

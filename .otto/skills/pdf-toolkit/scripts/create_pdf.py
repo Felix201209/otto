@@ -222,14 +222,16 @@ class R:
     def quote(self,text):
         self.pdf.ln(2); bar_w=0.5; pad=4; sy=self.pdf.get_y()
         self.pdf.set_x(self.mg+3+pad)
-        self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
+        # 第一遍：不可见渲染，仅用于测量高度（避免 CJK 换行估算不准）
+        self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["light_tint"]))
         self.pdf.multi_cell(self.pw-3-pad,(self.t["b_sz"]-1)*0.5,text)
         h=self.pdf.get_y()-sy+3
         # 浅底色背景
         self.pdf.set_fill_color(*_rgb(self.t["light_tint"])); self.pdf.rect(self.mg,sy-2,self.pw,h,"F")
-        # 细竖线替代填充矩形
+        # 细竖线
         self.pdf.set_draw_color(*_rgb(self.t["callout_bar"])); self.pdf.set_line_width(1.2)
         self.pdf.line(self.mg+2,sy-2,self.mg+2,self.pdf.get_y())
+        # 第二遍：可见渲染（背景盖住第一遍的文字）
         self.pdf.set_xy(self.mg+3+pad,sy); self._f(False,self.t["b_sz"]-1); self.pdf.set_text_color(*_rgb(self.t["body"]))
         self.pdf.multi_cell(self.pw-3-pad,(self.t["b_sz"]-1)*0.5,text); self.pdf.ln(1)
 

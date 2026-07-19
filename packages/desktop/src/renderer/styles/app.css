@@ -5963,10 +5963,5 @@ h6.otto-prose__h {
   .otto-agenda__form { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 860px) {
-  .otto-right-panel { width: 38px; min-width: 38px; }
-  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__tabs,
-  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__body,
-  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-right-panel__bottom-actions,
-  .otto-right-panel:not(.otto-right-panel--collapsed) .otto-pet-stage { display: none; }
   .otto-product-choice, .otto-product-identity, .otto-credit-summary { grid-template-columns: 1fr; }
 }

@@ -101,7 +101,7 @@ interface ChatViewProps {
   onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
-  onToggleAgents: () => void;
+  onToggleAgents?: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
   /** 斜杠命令 `/clear`：清空当前会话上下文。 */
@@ -145,7 +145,7 @@ export function ChatView({
   onRegenerate,
   onRespondQuestion,
   onOpenSetup,
-  onToggleAgents,
+  onToggleAgents = () => undefined,
   onNewChat,
   onClearContext,
   onExport,
