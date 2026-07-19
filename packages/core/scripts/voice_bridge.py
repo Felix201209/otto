@@ -10,6 +10,15 @@ Platform support:
 
 import sys, os, json, subprocess, tempfile, argparse, wave, glob
 
+DEFAULT_WHISPER_MODEL = os.environ.get('OTTO_WHISPER_MODEL', 'medium')
+DEFAULT_WHISPER_LANGUAGE = os.environ.get('OTTO_WHISPER_LANGUAGE', '').strip() or None
+DEFAULT_WHISPER_INITIAL_PROMPT = os.environ.get(
+    'OTTO_WHISPER_INITIAL_PROMPT',
+    '这是一次中文或中英混合的办公会议、语音备忘或用户指令录音。'
+    '请准确识别姓名、公司名、产品名、数字、日期、金额、任务、结论和待办事项，'
+    '保留原始语言，不要翻译。'
+)
+
 def find_windows_mic():
     """Auto-detect Windows microphone device name for ffmpeg dshow."""
     try:
@@ -96,6 +105,11 @@ def transcribe(audio_path, method='auto'):
     # Method 1: local whisper (best for privacy, works offline)
     if method in ('auto', 'whisper'):
         try:
+            whisper_env = os.environ.copy()
+            whisper_env.setdefault('OTTO_WHISPER_MODEL', DEFAULT_WHISPER_MODEL)
+            if DEFAULT_WHISPER_LANGUAGE:
+                whisper_env.setdefault('OTTO_WHISPER_LANGUAGE', DEFAULT_WHISPER_LANGUAGE)
+            whisper_env.setdefault('OTTO_WHISPER_INITIAL_PROMPT', DEFAULT_WHISPER_INITIAL_PROMPT)
             result = subprocess.run(
                 [sys.executable, '-c', '''
 import sys, ssl
@@ -106,13 +120,29 @@ except:
     pass
 try:
     import whisper
-    model = whisper.load_model("base")
-    result = model.transcribe(sys.argv[1])
+    model_name = os.environ.get("OTTO_WHISPER_MODEL", "medium")
+    language = os.environ.get("OTTO_WHISPER_LANGUAGE") or None
+    initial_prompt = os.environ.get("OTTO_WHISPER_INITIAL_PROMPT") or None
+    try:
+        import torch
+        fp16 = bool(torch.cuda.is_available())
+    except Exception:
+        fp16 = False
+    model = whisper.load_model(model_name)
+    result = model.transcribe(
+        sys.argv[1],
+        language=language,
+        initial_prompt=initial_prompt,
+        temperature=0,
+        condition_on_previous_text=True,
+        fp16=fp16,
+        verbose=False,
+    )
     print(result["text"])
 except ImportError:
     sys.exit(1)
 ''', audio_path],
-                capture_output=True, text=True, timeout=90
+                capture_output=True, text=True, timeout=180, env=whisper_env
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
