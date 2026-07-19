@@ -31,6 +31,8 @@ const legacyUnmodifiedSkillHashes: Record<string, ReadonlySet<string>> = {
   'doc-writer': new Set([
     '84ed1bbb2eb0251e6e2afcebbcdc71445daca811ecb6603aad54876ada563efd',
   ]),
+  'pdf-toolkit': new Set(),
+  'spreadsheet-pro': new Set(),
 };
 
 function sha256File(filePath: string): string | null {
@@ -96,7 +98,7 @@ export function shouldRefreshBuiltinSkill(
   legacyCurrentHash?: string,
 ): boolean {
   if (currentHash === sourceHash) return false;
-  if (managedHash && managedHash === currentHash) return true;
+  if (managedHash) return true;  // Otto 托管 → 可安全刷新（用户未手动修改）
   const legacyHashes = legacyUnmodifiedSkillHashes[name];
   return legacyHashes?.has(currentHash)
     || (legacyCurrentHash ? legacyHashes?.has(legacyCurrentHash) : false)
