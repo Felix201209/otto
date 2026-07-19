@@ -5797,6 +5797,10 @@ h6.otto-prose__h {
   font-size: 11px;
   font-style: normal;
 }
+.otto-park-toast--result {
+  border-color: color-mix(in srgb, #168557 32%, var(--otto-border));
+}
+.otto-park-toast--result span { color: #168557; }
 .otto-park-survey {
   grid-template-columns: minmax(180px, .55fr) minmax(0, 1fr);
 }
@@ -5883,6 +5887,25 @@ h6.otto-prose__h {
 .otto-park-workflow-chat__quick button { border: 1px solid var(--otto-border); border-radius: var(--otto-radius-pill); background: var(--otto-bg); color: var(--otto-text-secondary); cursor: pointer; font-size: 10.5px; padding: 6px 8px; }
 .otto-park-repair__quick button:hover,
 .otto-park-workflow-chat__quick button:hover { border-color: var(--otto-accent); color: var(--otto-accent-hover); }
+.otto-park-request-form,
+.otto-park-technician-form,
+.otto-park-response-form { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); }
+.otto-park-form__guide { display: grid; gap: 3px; padding: 10px 11px; border-radius: var(--otto-radius-sm); background: color-mix(in srgb, var(--otto-accent-soft) 42%, var(--otto-surface)); }
+.otto-park-form__guide strong { color: var(--otto-text); font-size: 12px; }
+.otto-park-form__guide span { color: var(--otto-text-secondary); font-size: 11px; line-height: 1.45; }
+.otto-park-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.otto-park-form__field { display: grid; gap: 5px; color: var(--otto-text-secondary); font-size: 11px; }
+.otto-park-form__field input,
+.otto-park-form__field select,
+.otto-park-form__field textarea { width: 100%; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); font: inherit; font-size: 12px; padding: 8px 9px; }
+.otto-park-form__field textarea { resize: vertical; min-height: 74px; }
+.otto-park-form__field input:disabled { opacity: .7; }
+.otto-park-form__receipt { color: #168557; font-size: 11px; }
+.otto-park-request-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.otto-park-request-summary div { display: grid; gap: 3px; padding: 8px; border-radius: var(--otto-radius-sm); background: var(--otto-bg); }
+.otto-park-request-summary span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-park-request-summary strong { color: var(--otto-text); font-size: 11.5px; }
+.otto-park-workflow-form { display: grid; gap: 10px; margin-top: 12px; }
 .otto-park-notice__reply { margin: 14px 0 0; background: var(--otto-surface); }
 .otto-park-workflow-chat { margin-top: 13px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); overflow: hidden; }
 .otto-park-workflow-chat .otto-park-repair__chathead { padding: 10px 12px; }
@@ -5893,17 +5916,23 @@ h6.otto-prose__h {
 /* 每个责任人收到的 Otto 待处理弹窗。演示时可明确看到渠道接力和兜底动作。 */
 .otto-park-notice-overlay {
   position: fixed;
-  inset: 0;
+  right: 18px;
+  bottom: 18px;
   z-index: 120;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(28, 25, 23, 0.24);
+  align-items: flex-end;
+  justify-content: flex-end;
+  width: min(440px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  padding: 0;
+  pointer-events: none;
   animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-park-notice {
-  width: min(440px, calc(100vw - 40px));
+  width: 100%;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  pointer-events: auto;
   padding: 20px 22px 18px;
   border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border));
   border-radius: var(--otto-radius-lg);
@@ -5983,9 +6012,13 @@ h6.otto-prose__h {
   .otto-park-receiver,
   .otto-park-survey { grid-template-columns: 1fr; }
   .otto-park-toast { right: 12px; bottom: 12px; }
+  .otto-park-notice-overlay { right: 12px; bottom: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+  .otto-park-notice { max-height: calc(100vh - 24px); }
   .otto-park-repair__confirm { align-items: stretch; flex-direction: column; }
   .otto-park-repair__ticket { grid-template-columns: 1fr; }
   .otto-park-repair__replytitle { align-items: flex-start; flex-direction: column; }
+  .otto-park-form__grid,
+  .otto-park-request-summary { grid-template-columns: 1fr; }
 }
 
 /* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */
