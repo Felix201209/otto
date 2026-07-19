@@ -70,7 +70,7 @@ const baseProfiles: ServerAgentProfile[] = [
   },
   {
     id: 'self-development',
-    name: '企业AI自主开发',
+    name: '自主开发',
     scope: 'base',
     edition: 'both',
     skills: [],

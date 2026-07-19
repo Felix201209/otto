@@ -41,7 +41,7 @@ const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(co
 /** v1.6 的自主开发入口迁移为 v1.7 system profile，避免再发送伪用户 kickoff。 */
 const SELF_DEVELOPMENT_PROFILE: AgentProfile = {
   id: 'self-development',
-  name: '企业AI自主开发',
+  name: '自主开发',
   tagline: '写代码 · 改项目 · 自动化任务',
   scope: 'base',
   department: null,
@@ -238,7 +238,7 @@ export function RightPanel({
               onClick={() => setDevelopmentOpen((value) => !value)}
               aria-expanded={developmentOpen}
             >
-              <span>企业AI自主开发</span>
+              <span>自主开发</span>
               <IconChevronDown
                 size={14}
                 className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
