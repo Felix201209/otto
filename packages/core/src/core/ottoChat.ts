@@ -867,6 +867,19 @@ export class OttoChat {
           const response = part.functionResponse;
           const hasMatchingId = response.id && finalToolCallStack[response.id];
           let hasMatchingNameSlot = false;
+
+          // 🐛 修复（2026-07-19 v2）：hasMatchingId 为 true 时也必须消耗一个
+          // name 配额。否则 id 匹配成功的 fr 不消耗 name 计数，后续同名无 id 的
+          // fr 会利用"未消耗"的配额二次通过，导致 fc:fr 数量错配 → API 400。
+          if (hasMatchingId) {
+            if (response.name) {
+              const alreadyAccepted = acceptedResponseCounts[response.name] ?? 0;
+              acceptedResponseCounts[response.name] = alreadyAccepted + 1;
+            }
+            // 同时消费掉这个 id，防止重复 id 匹配
+            if (response.id) delete finalToolCallStack[response.id];
+          }
+
           if (!hasMatchingId && response.name) {
             const totalAvailable = finalToolCallNameCounts[response.name] ?? 0;
             const alreadyAccepted = acceptedResponseCounts[response.name] ?? 0;
