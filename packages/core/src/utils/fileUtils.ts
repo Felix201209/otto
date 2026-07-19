@@ -55,9 +55,10 @@ export function isWithinRoot(
   // path.relative handles case-insensitivity and cross-drive on Windows.
   // On cross-drive, path.relative returns an absolute path, correctly judged as outside root.
   const rel = path.relative(absRoot, absPath);
+  const normalizedRel = rel.replace(/\\/g, '/');
 
   if (rel === '') return true;
-  if (rel === '..' || rel.startsWith(`..${path.sep}`)) return false;
+  if (normalizedRel === '..' || normalizedRel.startsWith('../')) return false;
   if (path.isAbsolute(rel)) return false;
   return true;
 }
