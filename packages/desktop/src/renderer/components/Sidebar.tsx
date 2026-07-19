@@ -29,7 +29,6 @@ import {
   IconChevronDown,
   IconSparkle,
   IconSettings,
-  IconVideo,
 } from './icons.js';
 import { OrganizationTree } from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
@@ -226,15 +225,28 @@ export function Sidebar({
           ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
-        <button
-          type="button"
-          className="otto-viewall"
-          onClick={() => window.otto?.openVideoEditor()}
-          title="打开内置视频编辑器"
-        >
-          <IconVideo size={16} />
-          视频编辑器
-        </button>
+        {enterpriseAccount ? (
+          <div className="otto-sidebar-account">
+            <span className="otto-sidebar-account__avatar">
+              {enterpriseAccount.name.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="otto-sidebar-account__copy">
+              <strong>{enterpriseAccount.name}</strong>
+              <small>{enterpriseAccount.department || `@${enterpriseAccount.username}`}</small>
+            </span>
+            {onLogout ? (
+              <button
+                type="button"
+                className="otto-sidebar-account__logout"
+                onClick={() => setLogoutConfirmOpen(true)}
+                aria-label="退出登录"
+                title="退出登录"
+              >
+                退出
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {enterpriseAccount && onLogout ? (
         <LogoutConfirmDialog
