@@ -5872,6 +5872,23 @@ h6.otto-prose__h {
 .otto-park-repair__ticket span { color: var(--otto-text-tertiary); font-size: 10px; }
 .otto-park-repair__ticket strong { color: var(--otto-text); font-size: 11.5px; font-weight: 600; }
 .otto-park-repair__technician .otto-park-demo__actions { margin: 0 14px 14px; padding-top: 12px; }
+.otto-park-repair__reply { margin: 0 14px 14px; padding: 11px 12px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: color-mix(in srgb, var(--otto-accent-soft) 30%, var(--otto-surface)); }
+.otto-park-repair__replytitle { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.otto-park-repair__replytitle strong { color: var(--otto-text); font-size: 11.5px; }
+.otto-park-repair__replytitle span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-park-repair__reply .otto-park-repair__input { padding: 9px 0 0; border-top: 0; }
+.otto-park-repair__quick,
+.otto-park-workflow-chat__quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.otto-park-repair__quick button,
+.otto-park-workflow-chat__quick button { border: 1px solid var(--otto-border); border-radius: var(--otto-radius-pill); background: var(--otto-bg); color: var(--otto-text-secondary); cursor: pointer; font-size: 10.5px; padding: 6px 8px; }
+.otto-park-repair__quick button:hover,
+.otto-park-workflow-chat__quick button:hover { border-color: var(--otto-accent); color: var(--otto-accent-hover); }
+.otto-park-notice__reply { margin: 14px 0 0; background: var(--otto-surface); }
+.otto-park-workflow-chat { margin-top: 13px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); overflow: hidden; }
+.otto-park-workflow-chat .otto-park-repair__chathead { padding: 10px 12px; }
+.otto-park-workflow-chat .otto-park-repair__messages { max-height: 120px; padding: 11px 12px; }
+.otto-park-workflow-chat > .otto-park-repair__input { padding: 9px 12px 11px; border-top: 1px solid var(--otto-border); }
+.otto-park-workflow-chat__quick { padding: 0 12px; }
 
 /* 每个责任人收到的 Otto 待处理弹窗。演示时可明确看到渠道接力和兜底动作。 */
 .otto-park-notice-overlay {
@@ -5968,6 +5985,7 @@ h6.otto-prose__h {
   .otto-park-toast { right: 12px; bottom: 12px; }
   .otto-park-repair__confirm { align-items: stretch; flex-direction: column; }
   .otto-park-repair__ticket { grid-template-columns: 1fr; }
+  .otto-park-repair__replytitle { align-items: flex-start; flex-direction: column; }
 }
 
 /* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */

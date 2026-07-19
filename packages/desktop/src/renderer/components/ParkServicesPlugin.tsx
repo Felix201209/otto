@@ -57,6 +57,22 @@ const ICON_POOL: IconComponent[] = [
   IconUtensils,
 ];
 
+interface ServiceInteraction {
+  intro: string;
+  quickReplies: string[];
+  hint: string;
+}
+
+/** 每项服务的现场沟通方式不同，避免所有业务都变成同一套“下一步”。 */
+const SERVICE_INTERACTIONS: Record<string, ServiceInteraction> = {
+  renovation: { intro: '装修申请先核对施工范围，再约现场交底；不完整的材料会直接告诉你缺什么。', quickReplies: ['信息已确认，安排现场交底', '需要补充施工方案', '暂时没空，明天下午联系'], hint: '装修通常需要材料确认和现场时间，不建议只用一个“完成”按钮。' },
+  parking: { intro: '停车办理先核验车牌和车位，再确认门禁开通时间。', quickReplies: ['车牌信息确认', '请帮我查可用车位', '我晚点补充车辆资料'], hint: '车场管理员可以先查位，企业无需反复电话确认。' },
+  'network-phone': { intro: '网络/电话申请先确认安装位置和开通日期；工程师也可以先远程指导自查。', quickReplies: ['需求确认，请安排开通', '请远程指导自查线路', '安排工程师上门'], hint: '能远程排除的问题先在线处理，减少工程师无效上门。' },
+  'meeting-room': { intro: '会议室预约会先核对人数、时段和设备；如果冲突，客服会给出替代时段。', quickReplies: ['时间人数确认', '帮我换一个会议室', '需要投屏/视频会议'], hint: '预约不是单向提交，冲突时要能直接换房或补充设备。' },
+  'electric-card': { intro: '电卡办理先核验卡号和金额，再提示到客服中心的办理时间。', quickReplies: ['充值信息确认', '请核验电卡余额', '我稍后到客服中心'], hint: '金额和卡号需要二次确认，避免错充。' },
+  'vehicle-visit': { intro: '来访车辆先登记人、车牌和时间；安保端会收到放行信息，改期也可直接留言。', quickReplies: ['登记信息确认', '访客改期', '请告知门岗放行规则'], hint: '访客信息有变化时直接回复即可，不必重新打电话。' },
+};
+
 /**
  * 9 项正好形成 3 列 × 3 行，对应《客户服务工作流程》。每一条 steps 都是
  * 本地演示数据，真实服务端接入后可替换为工单状态流。
@@ -172,6 +188,8 @@ interface RepairTicket {
   contact: string;
   status: '待派单' | '待接单' | '维修中' | '待验收' | '已完成';
   createdAt: string;
+  lastMessage?: string;
+  lastMessageBy?: 'technician' | 'reporter';
 }
 
 function readRepairTicket(): RepairTicket | null {
@@ -376,6 +394,8 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
   const [notice, setNotice] = useState(false);
   const [stage, setStage] = useState(0);
   const [draft, setDraft] = useState('');
+  const [technicianDraft, setTechnicianDraft] = useState('');
+  const lastReplyRef = useRef<string | undefined>(undefined);
   const [messages, setMessages] = useState<Array<{ from: 'otto' | 'user'; text: string }>>([
     { from: 'otto', text: '你好，我是 Otto 报修助手。先告诉我故障发生在哪里？例如“某某会议室”。' },
   ]);
@@ -401,6 +421,12 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
     window.addEventListener('storage', onStorage);
     return () => { window.removeEventListener(REPAIR_TICKET_EVENT, onTicket); window.removeEventListener('storage', onStorage); };
   }, [mode]);
+
+  useEffect(() => {
+    if (!ticket?.lastMessage || ticket.lastMessageBy !== 'technician' || ticket.lastMessage === lastReplyRef.current) return;
+    lastReplyRef.current = ticket.lastMessage;
+    setMessages((current) => [...current, { from: 'otto', text: `维修人员张工：${ticket.lastMessage}` }]);
+  }, [ticket]);
 
   const submitAnswer = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -434,6 +460,15 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
     setTicket(next); writeRepairTicket(next); setNotice(false);
   };
 
+  const sendTechnicianReply = (text: string): void => {
+    if (!ticket || !text.trim()) return;
+    const next = { ...ticket, lastMessage: text.trim(), lastMessageBy: 'technician' as const };
+    setTechnicianDraft('');
+    setTicket(next);
+    writeRepairTicket(next);
+    setNotice(false);
+  };
+
   return (
     <div className="otto-park-demo">
       <div className="otto-park-demo__topline">
@@ -456,10 +491,10 @@ function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
       ) : (
         <div className="otto-park-repair__technician">
           <div className="otto-park-repair__chathead"><strong>维修人员端 · 网络维修主管张工</strong><span>这台 Otto 只接收待处理提醒</span></div>
-          {!ticket ? <div className="otto-park-repair__empty">等待报修人提交工单。提交后，本窗口会弹出 Otto 待处理提醒。</div> : <><div className="otto-park-repair__ticket"><div><span>工单号</span><strong>{ticket.id}</strong></div><div><span>故障位置</span><strong>{ticket.location}</strong></div><div><span>故障描述</span><strong>{ticket.issue}</strong></div><div><span>紧急程度</span><strong>{ticket.urgency}</strong></div><div><span>现场联系人</span><strong>{ticket.contact}</strong></div></div><div className="otto-park-demo__actions"><button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('维修中')} disabled={ticket.status !== '待派单' && ticket.status !== '待接单'}>接单并开始维修</button><button type="button" className="otto-park-demo__secondary" onClick={() => updateStatus('待验收')} disabled={ticket.status !== '维修中'}>维修完成，等待验收</button>{ticket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('已完成')}>确认企业验收</button> : null}</div></>}
+          {!ticket ? <div className="otto-park-repair__empty">等待报修人提交工单。提交后，本窗口会弹出 Otto 待处理提醒。</div> : <><div className="otto-park-repair__ticket"><div><span>工单号</span><strong>{ticket.id}</strong></div><div><span>故障位置</span><strong>{ticket.location}</strong></div><div><span>故障描述</span><strong>{ticket.issue}</strong></div><div><span>紧急程度</span><strong>{ticket.urgency}</strong></div><div><span>现场联系人</span><strong>{ticket.contact}</strong></div></div><div className="otto-park-repair__reply"><div className="otto-park-repair__replytitle"><strong>给报修人回消息</strong><span>能远程解决就不用来回打电话</span></div><div className="otto-park-repair__quick"><button type="button" onClick={() => sendTechnicianReply('我正在处理另一条工单，预计 30 分钟后回复。请先在 Otto 留言，不用打电话。')}>暂时没空</button><button type="button" onClick={() => sendTechnicianReply('可以先自助排查：请确认会议室墙面开关已打开，再拍一张灯具和开关的照片发回 Otto。')}>发自助排查指引</button><button type="button" onClick={() => sendTechnicianReply('我可以在今天 15:30–16:00 上门，请回复“可以”或告诉我合适时段。')}>安排上门时间</button></div><form className="otto-park-repair__input" onSubmit={(event) => { event.preventDefault(); sendTechnicianReply(technicianDraft); }}><input value={technicianDraft} onChange={(event) => setTechnicianDraft(event.target.value)} placeholder="输入给报修人的回复…" aria-label="回复报修人员" /><button type="submit" className="otto-park-demo__primary">发送回复</button></form></div><div className="otto-park-demo__actions"><button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('维修中')} disabled={ticket.status !== '待派单' && ticket.status !== '待接单'}>接单并开始维修</button><button type="button" className="otto-park-demo__secondary" onClick={() => updateStatus('待验收')} disabled={ticket.status !== '维修中'}>维修完成，等待验收</button>{ticket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('已完成')}>确认企业验收</button> : null}</div></>}
         </div>
       )}
-      {notice && ticket ? <div className="otto-park-notice-overlay" role="alertdialog" aria-modal="true" aria-label="Otto 待处理提醒"><div className="otto-park-notice"><div className="otto-park-notice__eyebrow">Otto 待处理提醒 · 本地模拟</div><h3>企业用户，请处理这条服务环节</h3><p className="otto-park-notice__owner">责任人：<strong>网络维修主管张工</strong></p><p className="otto-park-notice__detail">{ticket.location} · {ticket.issue} · {ticket.urgency}</p><div className="otto-park-notice__channels"><span className="is-active">Otto 弹窗已发送</span><span>未查看优先短信</span></div><div className="otto-park-notice__actions"><button type="button" className="otto-park-demo__primary" onClick={() => { setNotice(false); updateStatus('维修中'); }}>已查看并接单</button><button type="button" className="otto-park-demo__secondary" onClick={() => setNotice(false)}>稍后处理</button></div></div></div> : null}
+      {notice && ticket ? <div className="otto-park-notice-overlay" role="alertdialog" aria-modal="true" aria-label="Otto 待处理提醒"><div className="otto-park-notice"><div className="otto-park-notice__eyebrow">Otto 待处理提醒 · 本地模拟</div><h3>企业用户，请处理这条服务环节</h3><p className="otto-park-notice__owner">责任人：<strong>网络维修主管张工</strong></p><p className="otto-park-notice__detail">{ticket.location} · {ticket.issue} · {ticket.urgency}</p><div className="otto-park-notice__channels"><span className="is-active">Otto 弹窗已发送</span><span>未查看优先短信</span></div><div className="otto-park-repair__reply otto-park-notice__reply"><div className="otto-park-repair__replytitle"><strong>现在可以怎么处理？</strong><span>选择一个回复，报修人端会马上收到</span></div><div className="otto-park-repair__quick"><button type="button" onClick={() => sendTechnicianReply('我暂时没空，预计 30 分钟后回复，请先在 Otto 留言。')}>暂时没空</button><button type="button" onClick={() => sendTechnicianReply('请先按 Otto 指引检查开关，并拍照发回，我可以远程判断。')}>远程指导自查</button><button type="button" onClick={() => sendTechnicianReply('我可以安排上门，请回复合适的时间段。')}>预约上门</button></div><form className="otto-park-repair__input" onSubmit={(event) => { event.preventDefault(); sendTechnicianReply(technicianDraft); }}><input value={technicianDraft} onChange={(event) => setTechnicianDraft(event.target.value)} placeholder="输入回复…" aria-label="弹窗回复报修人员" /><button type="submit" className="otto-park-demo__primary">发送</button></form></div><div className="otto-park-notice__actions"><button type="button" className="otto-park-demo__primary" onClick={() => { setNotice(false); updateStatus('维修中'); }}>已查看并接单</button><button type="button" className="otto-park-demo__secondary" onClick={() => setNotice(false)}>稍后处理</button></div></div></div> : null}
     </div>
   );
 }
@@ -485,6 +520,15 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
   const [notification, setNotification] = useState<number | null>(null);
   const [notificationLog, setNotificationLog] = useState<Record<number, string>>({});
   const [feishuConnected, setFeishuConnected] = useState(true);
+  const [conversation, setConversation] = useState<Array<{ from: 'otto' | 'staff' | 'user'; text: string }>>([
+    { from: 'otto', text: SERVICE_INTERACTIONS[service.id]?.intro ?? 'Otto 会根据这个服务的办理规则，提示下一步需要确认的信息。' },
+  ]);
+  const [replyDraft, setReplyDraft] = useState('');
+  const interaction = SERVICE_INTERACTIONS[service.id] ?? {
+    intro: 'Otto 会根据当前责任人的处理进度，提示你确认、补充或改期。',
+    quickReplies: ['已收到，请继续', '需要补充信息', '暂时没空，稍后联系'],
+    hint: '可以直接在 Otto 里回复，不需要额外打电话。',
+  };
   const finished = completed >= steps.length - 1;
 
   // 每进入一个新环节，先暂停流转并提醒对应责任人，模拟 Otto 中台派单。
@@ -523,8 +567,16 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
 
   const acknowledge = (delivery: string): void => {
     if (notification === null) return;
+    setConversation((current) => [...current, { from: 'staff', text: `已收到你的回复：“${delivery}”。我会把它同步到当前服务环节。` }]);
     setNotificationLog((current) => ({ ...current, [notification]: delivery }));
     setNotification(null);
+  };
+
+  const sendReply = (text: string): void => {
+    const value = text.trim();
+    if (!value) return;
+    setConversation((current) => [...current, { from: 'user', text: value }]);
+    setReplyDraft('');
   };
 
   const currentNotification = notification === null ? null : steps[notification];
@@ -575,6 +627,12 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
           );
         })}
       </ol>
+      <div className="otto-park-workflow-chat" aria-label={`${service.name}沟通区`}>
+        <div className="otto-park-repair__chathead"><strong>Otto 协作沟通</strong><span>{interaction.hint}</span></div>
+        <div className="otto-park-repair__messages">{conversation.map((message, index) => <div key={`${message.from}-${index}`} className={`otto-park-repair__message is-${message.from === 'user' ? 'user' : 'otto'}`}>{message.text}</div>)}</div>
+        <div className="otto-park-workflow-chat__quick">{interaction.quickReplies.map((reply) => <button key={reply} type="button" onClick={() => { sendReply(reply); if (notification !== null) acknowledge(reply); }}>{reply}</button>)}</div>
+        <form className="otto-park-repair__input" onSubmit={(event) => { event.preventDefault(); sendReply(replyDraft); }}><input value={replyDraft} onChange={(event) => setReplyDraft(event.target.value)} placeholder="输入给客服/专员的回复…" aria-label="园区服务回复" /><button type="submit" className="otto-park-demo__primary">发送</button></form>
+      </div>
       <div className="otto-park-demo__actions">
         <button type="button" className="otto-park-demo__primary" onClick={startOrContinue}>
           {finished ? '重新演示' : playing ? '正在自动流转…' : completed < 0 ? '开始演示流程' : '继续自动流转'}
@@ -598,7 +656,8 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
               模拟飞书已连接（未查看时自动同步）
             </label>
             <div className="otto-park-notice__actions">
-              <button type="button" className="otto-park-demo__primary" onClick={() => acknowledge('Otto 已查看并接单')}>已查看并接单</button>
+              <div className="otto-park-workflow-chat__quick">{interaction.quickReplies.slice(0, 2).map((reply) => <button key={reply} type="button" onClick={() => acknowledge(reply)}>{reply}</button>)}</div>
+              <button type="button" className="otto-park-demo__primary" onClick={() => acknowledge('已查看并接单')}>已查看并接单</button>
               <button type="button" className="otto-park-demo__secondary" onClick={() => acknowledge(feishuConnected ? '短信已发送 · 飞书已同步' : '短信已发送')}>模拟未查看，先发短信</button>
             </div>
             <div className="otto-park-notice__hint">12 秒未查看会自动短信提醒；演示中也可直接点击“模拟未查看”查看短信优先、飞书同步的兜底路径。</div>

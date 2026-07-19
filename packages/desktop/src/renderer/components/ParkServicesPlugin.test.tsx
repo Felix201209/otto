@@ -136,6 +136,32 @@ describe('ParkServicesPlugin', () => {
     expect(screen.getByText('已完成')).toBeTruthy();
   });
 
+  it('维修人员端可以在弹窗里回复自助排查建议，报修人端收到消息', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('客户报修'));
+    const input = screen.getByLabelText('报修回答');
+    for (const answer of ['A 座会议室', '灯坏了', '普通', '演示报修人']) {
+      fireEvent.change(input, { target: { value: answer } });
+      fireEvent.submit(input.closest('form')!);
+    }
+    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
+    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
+    fireEvent.click(screen.getByRole('button', { name: '远程指导自查' }));
+    fireEvent.click(screen.getByRole('button', { name: '报修人端' }));
+    expect(screen.getByText(/维修人员张工：请先按 Otto 指引检查开关/)).toBeTruthy();
+  });
+
+  it('其他园区服务使用各自的沟通提示和快捷回复', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('装修管理'));
+    expect(screen.getByText(/装修申请先核对施工范围/)).toBeTruthy();
+    const renovationChat = screen.getByLabelText('装修管理沟通区');
+    expect(renovationChat).toBeTruthy();
+    expect(renovationChat.querySelector('button')?.textContent).toContain('信息已确认');
+  });
+
   it('Esc / 点遮罩 / 右上 × 都能关闭', () => {
     render(<ParkServicesPlugin />);
 
