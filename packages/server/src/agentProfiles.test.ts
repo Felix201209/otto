@@ -22,6 +22,35 @@ describe('服务端 Agent profile 白名单', () => {
     }
   });
 
+  it('三个基础身份使用独立白名单项并锁定 edition 与角色边界', () => {
+    const personal = resolveAgentProfile('otto-personal');
+    const ceo = resolveAgentProfile('otto-enterprise-ceo');
+    const work = resolveAgentProfile('otto-enterprise-work');
+
+    expect(personal).toMatchObject({
+      id: 'otto-personal',
+      name: 'Otto',
+      scope: 'base',
+      edition: 'personal',
+    });
+    expect(personal?.roles).toBeUndefined();
+    expect(ceo).toMatchObject({
+      id: 'otto-enterprise-ceo',
+      name: 'CEO Agent',
+      scope: 'base',
+      edition: 'enterprise',
+      roles: ['company_owner', 'company_admin'],
+    });
+    expect(work).toMatchObject({
+      id: 'otto-enterprise-work',
+      name: '企业工作 Agent',
+      scope: 'base',
+      edition: 'enterprise',
+      roles: ['manager', 'member'],
+    });
+    expect(new Set([personal, ceo, work]).size).toBe(3);
+  });
+
   it('会议 Agent 使用 system prompt，未知或客户端自造 profile 不会被接受', () => {
     expect(resolveAgentProfile('meeting')).toMatchObject({
       name: '会议 Agent',

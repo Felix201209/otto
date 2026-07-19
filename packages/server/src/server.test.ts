@@ -484,6 +484,93 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(enterpriseDenied.type).toBe('error');
     client.close();
   });
+
+  it('create_session 的基础 Agent 与个人、管理者、成员身份白名单一致', async () => {
+    const product = (server as unknown as { productWorkspace: ProductWorkspaceStore }).productWorkspace;
+
+    let client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: '个人首卡', agentProfileId: 'otto-personal' },
+    });
+    const personal = await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.agentProfileId === 'otto-personal',
+    );
+    if (personal.type !== 'session_upsert') throw new Error('unreachable');
+    expect(personal.payload.session).toMatchObject({
+      agentProfileName: 'Otto',
+      productEdition: 'personal',
+    });
+    client.send({
+      type: 'create_session',
+      payload: { title: '错误企业首卡', agentProfileId: 'otto-enterprise-work' },
+    });
+    const personalDenied = await client.waitFor(
+      (frame) => frame.type === 'error'
+        && frame.payload.code === 'forbidden_agent_profile',
+    );
+    expect(personalDenied.type).toBe('error');
+    client.close();
+
+    product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
+    const memberInvite = product.issueInvite({ kind: 'company' });
+    client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: '管理者首卡', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const ceo = await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    if (ceo.type !== 'session_upsert') throw new Error('unreachable');
+    expect(ceo.payload.session).toMatchObject({
+      agentProfileName: 'CEO Agent',
+      productEdition: 'enterprise',
+    });
+    client.send({
+      type: 'create_session',
+      payload: { title: '错误员工首卡', agentProfileId: 'otto-enterprise-work' },
+    });
+    const ownerDenied = await client.waitFor(
+      (frame) => frame.type === 'error'
+        && frame.payload.code === 'forbidden_agent_profile'
+        && frame.payload.message.includes('角色'),
+    );
+    expect(ownerDenied.type).toBe('error');
+    client.close();
+
+    product.acceptInvite(memberInvite.link, {
+      userId: 'member-agent-profile',
+      displayName: '林一',
+    });
+    client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: '成员首卡', agentProfileId: 'otto-enterprise-work' },
+    });
+    const work = await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.agentProfileId === 'otto-enterprise-work',
+    );
+    if (work.type !== 'session_upsert') throw new Error('unreachable');
+    expect(work.payload.session).toMatchObject({
+      agentProfileName: '企业工作 Agent',
+      productEdition: 'enterprise',
+    });
+    client.send({
+      type: 'create_session',
+      payload: { title: '错误管理者首卡', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const memberDenied = await client.waitFor(
+      (frame) => frame.type === 'error'
+        && frame.payload.code === 'forbidden_agent_profile'
+        && frame.payload.message.includes('角色'),
+    );
+    expect(memberDenied.type).toBe('error');
+    client.close();
+  });
 });
 
 afterEach(() => {

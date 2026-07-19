@@ -84,7 +84,10 @@ afterEach(async () => {
   }
 });
 
-describe('本地 Agent 配对路由默认关闭', { timeout: 15_000 }, () => {
+// The first isolated server cold-loads the enterprise module graph. Under the
+// full workspace suite that transform can exceed 15s even though each request
+// still returns immediately, so keep the assertions strict but allow CI startup.
+describe('本地 Agent 配对路由默认关闭', { timeout: 30_000 }, () => {
   it('默认对 SDK、检测页、令牌生成与验证统一返回 404', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const requests: Array<[string, RequestInit | undefined]> = [
