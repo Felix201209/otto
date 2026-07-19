@@ -172,6 +172,23 @@ export class CompressionService {
   }
 
   /**
+   * 检查在指定索引处切分是否会导致孤立的 functionResponse。
+   * 当切分点位于 model(functionCall) 和 user(functionResponse) 之间时返回 true。
+   */
+  private wouldOrphanFunctionResponse(history: Content[], cutIndex: number): boolean {
+    if (cutIndex <= 0 || cutIndex >= history.length) return false;
+    const left = history[cutIndex - 1]; // 会被压缩的消息
+    const right = history[cutIndex];    // 会保留的第一条消息
+    // 左边是 model 且有 functionCall，右边是 user 且有 functionResponse → 会孤立
+    if (left.role === MESSAGE_ROLES.MODEL && left.parts?.some((p: any) => p.functionCall)) {
+      if (right.role === MESSAGE_ROLES.USER && right.parts?.some((p: any) => p.functionResponse)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * 寻找合适的工具调用边界作为压缩分割点
    * 从startIndex开始寻找第一个user消息进行切分，同时确保不在tool_use和tool_result之间切割
    * @param history 对话历史
@@ -252,15 +269,30 @@ export class CompressionService {
     for (let i = history.length - 1; i >= startIndex; i--) {
       const msg = history[i];
       if (msg.role === MESSAGE_ROLES.MODEL && msg.parts?.some((p: any) => p.text)) {
+        const candidateBoundary = i + 1;
+        // 防止切在 model(functionCall) 和 user(functionResponse) 之间导致孤立
+        if (this.wouldOrphanFunctionResponse(history, candidateBoundary)) {
+          console.log(`[findToolCallBoundary] SKIP fallback at index ${candidateBoundary}: would orphan functionResponse, continuing search`);
+          continue;
+        }
         // 找到一个包含text的model消息，这也是一个合理的切割点
-        console.log(`[findToolCallBoundary] Found fallback boundary at index ${i + 1} (model message with text)`);
-        return i + 1;
+        console.log(`[findToolCallBoundary] Found fallback boundary at index ${candidateBoundary} (model message with text)`);
+        return candidateBoundary;
       }
     }
 
     // 策略3：如果还是找不到，返回startIndex本身作为最后的回退
     // 这表示从startIndex开始的所有内容都要保留，前面的全部压缩
     if (startIndex > 0) {
+      // 防止切在 model(functionCall) 和 user(functionResponse) 之间导致孤立
+      if (this.wouldOrphanFunctionResponse(history, startIndex)) {
+        // 把切分点往后推一条消息（把 functionResponse 也纳入压缩）
+        const adjustedIndex = startIndex + 1;
+        if (adjustedIndex < history.length) {
+          console.warn(`[findToolCallBoundary] Adjusting startIndex from ${startIndex} to ${adjustedIndex} to avoid orphaning functionResponse`);
+          return adjustedIndex;
+        }
+      }
       console.warn(`[findToolCallBoundary] Using fallback boundary at startIndex: ${startIndex}`);
       return startIndex;
     }

@@ -698,14 +698,35 @@ const OpenAIConverter = {
       // 3. 处理工具执行结果消息
       if (parts.some((p: any) => p.functionResponse)) {
         const functionResponseParts = parts.filter((p: any) => p.functionResponse);
-        const toolMessages = functionResponseParts.map((p: any) => ({
-          role: 'tool',
-          tool_call_id: idByPart.get(p) || p.functionResponse.id || `call_${p.functionResponse.name}`,
-          content: typeof p.functionResponse.response === 'string'
-            ? p.functionResponse.response
-            : JSON.stringify(p.functionResponse.response || {}),
-        }));
-        messages.push(...toolMessages);
+        const toolMessages: any[] = [];
+        for (const p of functionResponseParts) {
+          const mappedId = idByPart.get(p);
+          if (mappedId === undefined) {
+            // 孤立的 functionResponse：前文找不到对应的 functionCall。
+            // 降级为纯文本消息，避免 OpenAI 400
+            // ("Messages with role 'tool' must be a response to a preceding message with 'tool_calls'").
+            const frName = p.functionResponse?.name || 'unknown';
+            const frContent = typeof p.functionResponse.response === 'string'
+              ? p.functionResponse.response
+              : JSON.stringify(p.functionResponse.response || {});
+            console.warn(`[OpenAIConverter] Orphaned functionResponse for '${frName}' (no matching functionCall) - downgrading to text message`);
+            messages.push({
+              role: 'user',
+              content: `[Tool result for ${frName}: ${frContent.substring(0, 500)}]`,
+            });
+          } else {
+            toolMessages.push({
+              role: 'tool',
+              tool_call_id: mappedId,
+              content: typeof p.functionResponse.response === 'string'
+                ? p.functionResponse.response
+                : JSON.stringify(p.functionResponse.response || {}),
+            });
+          }
+        }
+        if (toolMessages.length > 0) {
+          messages.push(...toolMessages);
+        }
         continue;
       }
 
