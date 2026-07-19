@@ -117,10 +117,12 @@ describe('AudioReaderTool', () => {
 
     const result = await tool.execute({ absolute_path: audioPath }, new AbortController().signal);
 
-    expect(result.llmContent).toContain('Audio transcription is not configured');
+    expect(result.llmContent).toContain('Audio transcription setup is needed');
+    expect(result.llmContent).toContain('Capability check');
     expect(result.llmContent).toContain('not marked as audio-capable');
     expect(result.llmContent).toContain('Install local Whisper');
-    expect(result.llmContent).toContain('OPENAI_API_KEY or ARK_API_KEY');
+    expect(result.llmContent).toContain('winget install --id Gyan.FFmpeg');
+    expect(result.llmContent).toContain('OTTO_WHISPER_MODEL');
     expect(result.llmContent).not.toContain('Gemini');
     expect(config.getOttoClient).not.toHaveBeenCalled();
   });

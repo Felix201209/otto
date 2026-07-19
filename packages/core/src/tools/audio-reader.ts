@@ -257,15 +257,23 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       : `Otto checked the current model, but it is not marked as audio-capable.\n`;
     return {
       llmContent:
-        `Audio transcription is not configured for this model yet.\n\n` +
+        `Audio transcription setup is needed.\n\n` +
+        `Capability check:\n` +
+        `- Current model audio support: ${currentModelPlan ? 'available but failed' : 'not available'}\n` +
+        `- Local speech-to-text: unavailable or returned no text\n\n` +
         currentModelNote +
         `Otto also tried local ASR, but no local/user-owned transcriber returned text. ` +
         `This audio file cannot be transcribed automatically without an audio-capable current model or local ASR.\n\n` +
-        `To enable this without Otto-hosted ASR costs, choose one option:\n` +
-        `1. Install local Whisper: pip install openai-whisper\n` +
-        `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
-        `3. Upload/paste an existing transcript and I can summarize the meeting notes.`,
-      returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
+        `How to fix:\n` +
+        `1. Install local Whisper: pip install -U openai-whisper\n` +
+        `2. Install ffmpeg so Whisper can decode common audio formats\n` +
+        `   - Windows: winget install --id Gyan.FFmpeg\n` +
+        `   - macOS: brew install ffmpeg\n` +
+        `   - Linux: sudo apt-get install -y ffmpeg\n` +
+        `3. Optional quality/performance setting: OTTO_WHISPER_MODEL=small, medium, or large-v3\n` +
+        `4. Restart Otto or the terminal, then try the audio again.\n\n` +
+        `If you already have a transcript, paste it directly and Otto can summarize the meeting notes now.`,
+      returnDisplay: `Audio transcription setup needed`,
     };
   }
 
