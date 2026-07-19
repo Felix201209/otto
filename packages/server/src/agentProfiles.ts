@@ -157,6 +157,7 @@ const CUSTOM_PROMPTS: Readonly<Record<string, string>> = {
 
 const EXPERT_EMBEDDED: Readonly<Record<string, string[]>> = {
   ppt: ['ppt-creator'],
+  meeting: ['meeting-scheduler', 'meeting-notes'],
   doc: ['doc-writer'],
   sheet: ['spreadsheet-pro'],
   pdf: ['pdf-toolkit'],

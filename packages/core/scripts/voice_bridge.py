@@ -97,7 +97,7 @@ def transcribe(audio_path, method='auto'):
     if method in ('auto', 'whisper'):
         try:
             result = subprocess.run(
-                ['python3', '-c', '''
+                [sys.executable, '-c', '''
 import sys, ssl
 # Workaround for macOS SSL certificate issues
 try:
@@ -233,6 +233,8 @@ Output: "把桌面上的Word文档转换为PDF格式"
 
 def main():
     parser = argparse.ArgumentParser(description='Otto Voice Bridge')
+    parser.add_argument('--input-file',
+                       help='Existing audio file to transcribe. If provided, skip microphone recording.')
     parser.add_argument('--duration', type=int, default=10,
                        help='Recording duration in seconds (default: 10)')
     parser.add_argument('--mode', choices=['raw', 'polished'], default='polished',
@@ -241,22 +243,31 @@ def main():
                        help='Skip LLM polish, return raw transcript')
     args = parser.parse_args()
 
-    # Step 1: Record
-    print(f"Recording {args.duration}s...", file=sys.stderr)
-    audio_path = record_audio(duration=args.duration)
-    if not audio_path:
-        print("ERROR: Recording failed. Check microphone permissions.", file=sys.stderr)
-        sys.exit(1)
+    # Step 1: Use an existing file or record from the microphone
+    cleanup_audio = False
+    if args.input_file:
+        audio_path = args.input_file
+        if not os.path.exists(audio_path):
+            print(f"ERROR: Input audio file not found: {audio_path}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(f"Recording {args.duration}s...", file=sys.stderr)
+        audio_path = record_audio(duration=args.duration)
+        cleanup_audio = True
+        if not audio_path:
+            print("ERROR: Recording failed. Check microphone permissions.", file=sys.stderr)
+            sys.exit(1)
 
     # Step 2: Transcribe
     print("Transcribing...", file=sys.stderr)
     text = transcribe(audio_path)
 
     # Cleanup
-    try:
-        os.unlink(audio_path)
-    except:
-        pass
+    if cleanup_audio:
+        try:
+            os.unlink(audio_path)
+        except:
+            pass
 
     if not text:
         print("ERROR: Transcription failed.", file=sys.stderr)

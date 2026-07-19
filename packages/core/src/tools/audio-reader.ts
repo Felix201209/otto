@@ -6,6 +6,9 @@
 
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { Type } from '@google/genai';
 import mime from 'mime-types';
 import { BaseTool, Icon, ToolResult } from './tools.js';
@@ -21,6 +24,9 @@ import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { SceneType } from '../core/sceneManager.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
+
+const execFileAsync = promisify(execFile);
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Parameters for the AudioReader tool
@@ -50,6 +56,19 @@ const DEFAULT_TRANSCRIBE_PROMPT =
 // into the host model.
 const MAX_TRANSCRIPT_LENGTH = 15000;
 
+function truncateTranscript(transcript: string): { transcript: string; truncated: boolean } {
+  if (transcript.length <= MAX_TRANSCRIPT_LENGTH) {
+    return { transcript, truncated: false };
+  }
+  const originalLength = transcript.length;
+  return {
+    transcript:
+      transcript.substring(0, MAX_TRANSCRIPT_LENGTH) +
+      `\n\n[Note: Transcript truncated from ${originalLength} to ${MAX_TRANSCRIPT_LENGTH} characters to prevent context overflow]`,
+    truncated: true,
+  };
+}
+
 /**
  * AudioReader Tool
  *
@@ -63,13 +82,17 @@ const MAX_TRANSCRIPT_LENGTH = 15000;
 export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult> {
   static readonly Name: string = 'audio_reader';
 
-  constructor(private readonly config: Config) {
+  constructor(
+    private readonly config: Config,
+    private readonly localTranscriber: (filePath: string) => Promise<string | null> = transcribeWithLocalBridge,
+  ) {
     super(
       AudioReaderTool.Name,
       'AudioReader',
       'Fallback tool for text-only models that cannot natively process audio. ' +
-        'It offloads the transcription work to a cheap model (gemini-2.5-flash) and ' +
-        'returns a textual transcription/description. Do NOT call this tool proactively: ' +
+        'It first tries Otto local transcription (local Whisper / user cloud ASR env), ' +
+        'then falls back to a cheap model (gemini-2.5-flash) when available. ' +
+        'Do NOT call this tool proactively: ' +
         'only use it when you need to transcribe or understand audio content that ' +
         'cannot be natively processed by your current model. ' +
         'Supports MP3 / WAV / OGG / OPUS / M4A / FLAC / AAC.',
@@ -155,30 +178,6 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       };
     }
 
-    // Check if using a custom model
-    const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
-    const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
-    let resolvedModel: string | undefined = undefined;
-
-    if (isUsingCustomModel && typeof this.config.getCustomModels === 'function') {
-      const customModels = this.config.getCustomModels() || [];
-      const geminiFlashModel = customModels.find(m => {
-        if (m.enabled === false) return false;
-        const modelIdLower = (m.modelId || '').toLowerCase();
-        const displayNameLower = (m.displayName || '').toLowerCase();
-        return (modelIdLower.includes('gemini') && modelIdLower.includes('flash')) ||
-               (displayNameLower.includes('gemini') && displayNameLower.includes('flash'));
-      });
-
-      if (!geminiFlashModel) {
-        return {
-          llmContent: `This tool (${AudioReaderTool.Name}) is currently unavailable because you are using custom models, but no custom Gemini Flash model (e.g., gemini-2.5-flash) was found in your custom models list to execute this tool. Please configure a custom Gemini Flash model to use this feature.`,
-          returnDisplay: `Tool unavailable: Gemini Flash required`
-        };
-      }
-      resolvedModel = generateCustomModelId(geminiFlashModel);
-    }
-
     const filePath = params.absolute_path;
 
     // Verify it's an audio file by content (mime-type) before doing anything expensive
@@ -199,6 +198,53 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
           `Use the read_file tool for text content.`,
         returnDisplay: `Not an audio file (detected: ${detectedType})`,
       };
+    }
+
+    const relative = makeRelative(filePath, this.config.getTargetDir());
+
+    const localTranscript = await this.localTranscriber(filePath);
+    if (localTranscript) {
+      const truncated = truncateTranscript(localTranscript);
+      const header = `Audio transcription for ${shortenPath(relative)} (via local ASR):`;
+      return {
+        llmContent: `${header}\n\n${truncated.transcript}`,
+        returnDisplay: `Transcribed audio locally: ${shortenPath(relative)}${truncated.truncated ? ' (truncated)' : ''}`,
+      };
+    }
+
+    // Check if using a custom model only after local ASR has failed. This lets
+    // Doubao/DeepSeek-style text models still transcribe audio when the user has
+    // local Whisper or user-owned cloud ASR configured.
+    const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
+    const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
+    let resolvedModel: string | undefined = undefined;
+
+    if (isUsingCustomModel && typeof this.config.getCustomModels === 'function') {
+      const customModels = this.config.getCustomModels() || [];
+      const geminiFlashModel = customModels.find(m => {
+        if (m.enabled === false) return false;
+        const modelIdLower = (m.modelId || '').toLowerCase();
+        const displayNameLower = (m.displayName || '').toLowerCase();
+        return (modelIdLower.includes('gemini') && modelIdLower.includes('flash')) ||
+               (displayNameLower.includes('gemini') && displayNameLower.includes('flash'));
+      });
+
+      if (!geminiFlashModel) {
+        return {
+          llmContent:
+            `Audio transcription is not configured for this model yet.\n\n` +
+            `Otto first tried local ASR, but no local/user-owned transcriber returned text. ` +
+            `Because the current chat model is custom and no Gemini Flash fallback is configured, ` +
+            `this audio file cannot be transcribed automatically.\n\n` +
+            `To enable this without Otto-hosted ASR costs, choose one option:\n` +
+            `1. Install local Whisper: pip install openai-whisper\n` +
+            `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
+            `3. Add a custom Gemini Flash model for multimodal fallback\n` +
+            `4. Upload/paste an existing transcript and I can summarize the meeting notes.`,
+          returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
+        };
+      }
+      resolvedModel = generateCustomModelId(geminiFlashModel);
     }
 
     // Read and convert to base64
@@ -259,20 +305,12 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
         };
       }
 
-      let truncated = false;
-      if (transcript.length > MAX_TRANSCRIPT_LENGTH) {
-        const originalLength = transcript.length;
-        transcript = transcript.substring(0, MAX_TRANSCRIPT_LENGTH);
-        transcript += `\n\n[Note: Transcript truncated from ${originalLength} to ${MAX_TRANSCRIPT_LENGTH} characters to prevent context overflow]`;
-        truncated = true;
-      }
-
-      const relative = makeRelative(filePath, this.config.getTargetDir());
+      const truncated = truncateTranscript(transcript);
       const header = `Audio transcription for ${shortenPath(relative)} (via ${isUsingCustomModel ? 'custom model' : 'gemini-2.5-flash'}):`;
 
       return {
-        llmContent: `${header}\n\n${transcript}`,
-        returnDisplay: `Transcribed audio: ${shortenPath(relative)}${truncated ? ' (truncated)' : ''}`,
+        llmContent: `${header}\n\n${truncated.transcript}`,
+        returnDisplay: `Transcribed audio: ${shortenPath(relative)}${truncated.truncated ? ' (truncated)' : ''}`,
       };
     } catch (error) {
       const errorMessage = getErrorMessage(error);
@@ -286,4 +324,29 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       };
     }
   }
+}
+
+async function transcribeWithLocalBridge(filePath: string): Promise<string | null> {
+  const scriptPath = path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
+  if (!fs.existsSync(scriptPath)) return null;
+
+  const pyCommands = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+  for (const py of pyCommands) {
+    try {
+      const result = await execFileAsync(
+        py,
+        [scriptPath, '--input-file', filePath, '--transcribe-only'],
+        {
+          timeout: 120_000,
+          maxBuffer: 5 * 1024 * 1024,
+          windowsHide: true,
+        },
+      );
+      const text = result.stdout.trim();
+      if (text) return text;
+    } catch {
+      // Try the next Python command or fall through to multimodal fallback.
+    }
+  }
+  return null;
 }
