@@ -824,39 +824,67 @@ export class OttoChat {
     // 🆕 最终清理：移除所有仍然孤立的 functionResponse
     // 这处理了 "functionResponse without preceding functionCall" 的情况
     // 这种情况可能发生在压缩后，或者历史记录损坏时
+    //
+    // 🐛 修复（2026-07-19）：旧实现的 name 兜底使用 boolean 标记，只要历史中
+    // 存在过任意同名 functionCall 就放行所有同名 functionResponse。
+    // 这意味着：如果模型调用了 2 次 read_file、但压缩只切掉了第 2 次的 fc
+    // 而保留了第 2 次的 fr，name 兜底会因「第 1 次 read_file 仍存在」而误放行。
+    // 修复：换用计数器——每个 functionCall name 计一个额度，每个 functionResponse
+    // 消耗一个额度；额度耗尽（fr 数量 > fc 数量）时视为孤儿并移除。
     const finalContents: Content[] = [];
     const finalToolCallStack: { [id: string]: boolean } = {};
-    const finalToolCallNames: { [name: string]: boolean } = {};
+    const finalToolCallNameCounts: { [name: string]: number } = {};
+    const acceptedResponseCounts: { [name: string]: number } = {};
 
+    // 第一遍：只统计 fc，不产出（需要先知道每个 name 有多少个 fc 作为额度上限）
     for (const content of fixedContents) {
-      // 记录所有 function call
       if (content.role === MESSAGE_ROLES.MODEL && content.parts) {
-        content.parts.forEach(part => {
+        for (const part of content.parts) {
           if (part.functionCall) {
-            if (part.functionCall.id) finalToolCallStack[part.functionCall.id] = true;
-            if (part.functionCall.name) finalToolCallNames[part.functionCall.name] = true;
+            const fc = part.functionCall;
+            if (fc.id) finalToolCallStack[fc.id] = true;
+            if (fc.name) {
+              finalToolCallNameCounts[fc.name] = (finalToolCallNameCounts[fc.name] ?? 0) + 1;
+            }
           }
-        });
+        }
+      }
+    }
+
+    // 第二遍：产出内容，fr 走额度制匹配
+    for (const content of fixedContents) {
+      if (content.role === MESSAGE_ROLES.MODEL) {
         finalContents.push(content);
       } else if (content.role === MESSAGE_ROLES.USER && content.parts) {
-        // 过滤 functionResponse
-        const validParts = content.parts.filter(part => {
-          if (!part.functionResponse) return true; // 保留非 functionResponse 部分
+        // 过滤 functionResponse —— 使用额度制 name 匹配
+        const validParts: any[] = [];
+        for (const part of content.parts) {
+          if (!part.functionResponse) {
+            validParts.push(part);
+            continue;
+          }
 
           const response = part.functionResponse;
           const hasMatchingId = response.id && finalToolCallStack[response.id];
-          const hasMatchingName = response.name && finalToolCallNames[response.name];
+          let hasMatchingNameSlot = false;
+          if (!hasMatchingId && response.name) {
+            const totalAvailable = finalToolCallNameCounts[response.name] ?? 0;
+            const alreadyAccepted = acceptedResponseCounts[response.name] ?? 0;
+            if (alreadyAccepted < totalAvailable) {
+              hasMatchingNameSlot = true;
+              acceptedResponseCounts[response.name] = alreadyAccepted + 1;
+            }
+          }
 
-          if (hasMatchingId || hasMatchingName) {
-            return true;
+          if (hasMatchingId || hasMatchingNameSlot) {
+            validParts.push(part);
           } else {
             console.warn(
               `[fixRequestContents] ❌ 移除孤立的 functionResponse：${response.name} (id: ${response.id})。` +
-              `这个 response 没有对应的 function call。`
+              `这个 response 没有对应的 function call（name 额度已耗尽或从未出现）。`
             );
-            return false;
           }
-        });
+        }
 
         if (validParts.length > 0) {
           finalContents.push({ ...content, parts: validParts });
