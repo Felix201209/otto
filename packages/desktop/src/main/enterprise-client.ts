@@ -15,6 +15,8 @@ export interface EnterpriseAccount {
   name: string;
   role: string | null;
   department: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -90,6 +92,13 @@ export interface EnterpriseOrganizationInvite {
   code: string;
   link: string;
   status: 'active' | 'expired' | 'revoked';
+  defaultDepartment: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  defaultRole: string | null;
+  maxUses: number | null;
+  usedCount: number;
   issuedAt: string;
   expiresAt: string;
   validHours: 168;
@@ -117,6 +126,15 @@ export interface EnterpriseOrganizationView {
     status: 'active' | 'disabled';
   }>;
   employeeCount: number;
+}
+
+export interface EnterpriseDirectMessage {
+  id: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  content: string;
+  createdAt: string;
+  readAt: string | null;
 }
 
 export interface EnterpriseSessionResult {
@@ -438,16 +456,60 @@ export class EnterpriseClient {
     return this.request('/enterprise/organization/view');
   }
 
+  async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ messages: EnterpriseDirectMessage[] }>(
+      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
+    )).messages;
+  }
+
+  async sendDirectMessage(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ message: EnterpriseDirectMessage }>(
+      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
+      { method: 'POST', body: JSON.stringify({ content }) },
+    )).message;
+  }
+
+  async pushParkService(input: {
+    recipientAccountId: string;
+    serviceId: string;
+    note?: string | null;
+  }): Promise<{ message: EnterpriseDirectMessage }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/park-services/push', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/organization/invite');
   }
 
-  async issueOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext & {
+  async issueOrganizationInvite(input: {
+    defaultDepartment?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    defaultRole?: string | null;
+    maxUses?: number | null;
+  } = {}): Promise<EnterpriseOrganizationInviteContext & {
     invite: EnterpriseOrganizationInvite;
   }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return this.request('/enterprise/organization/invite', { method: 'POST' });
+    return this.request('/enterprise/organization/invite', {
+      method: 'POST',
+      body: JSON.stringify({
+        defaultDepartment: input.defaultDepartment ?? null,
+        departmentId: input.departmentId ?? null,
+        positionId: input.positionId ?? null,
+        positionTitle: input.positionTitle ?? null,
+        defaultRole: input.defaultRole ?? null,
+        maxUses: input.maxUses ?? null,
+      }),
+    });
   }
 
   async ticketInbox(): Promise<unknown[]> {

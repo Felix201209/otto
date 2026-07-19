@@ -12,6 +12,20 @@ beforeEach(() => {
     value: {
       ...existing,
       send: vi.fn(),
+      enterpriseOrganizationView: vi.fn(async () => ({
+        organization: null,
+        members: [],
+        employeeCount: 0,
+      })),
+      enterpriseMessagesList: vi.fn(async () => []),
+      enterpriseMessageSend: vi.fn(async (_peerAccountId: string, content: string) => ({
+        id: 'msg_test',
+        senderAccountId: 'me',
+        recipientAccountId: 'peer',
+        content,
+        createdAt: new Date(0).toISOString(),
+        readAt: null,
+      })),
     } as unknown as Window['otto'],
   });
 });

@@ -195,6 +195,45 @@ describe('企业 Token 用量时间窗口', () => {
   });
 });
 
+describe('企业成员直聊', () => {
+  it('只在同一企业的双方之间持久化、按时间读取并标记已读', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'chat-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'chat-bob', password: 'bob-password-123', name: 'Bob' });
+    const message = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: '  项目进展怎么样？  ',
+    });
+    expect(message).toMatchObject({
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: '项目进展怎么样？',
+      readAt: null,
+    });
+    expect(db.listDirectMessages({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      peerAccountId: alice.id,
+    })[0]).toMatchObject({ id: message.id, content: '项目进展怎么样？' });
+    expect(db.listDirectMessages({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: alice.id,
+      peerAccountId: bob.id,
+    })[0].readAt).not.toBeNull();
+  });
+
+  it('拒绝给自己、跨企业或停用成员发送消息', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'guard-alice', password: 'alice-password-123', name: 'Alice' });
+    const otherOrg = db.createOrganization({ name: '另一企业' });
+    const outsider = db.createAccount({ organizationId: otherOrg.id, username: 'outsider', password: 'outsider-password-123', name: 'Outsider' });
+    expect(() => db.sendDirectMessage({ organizationId: db.DEFAULT_ORGANIZATION_ID, senderAccountId: alice.id, recipientAccountId: alice.id, content: 'self' })).toThrow('不能给自己');
+    expect(() => db.sendDirectMessage({ organizationId: db.DEFAULT_ORGANIZATION_ID, senderAccountId: alice.id, recipientAccountId: outsider.id, content: 'cross tenant' })).toThrow('不存在或已停用');
+  });
+});
+
 describe('企业邀请码原子更新', () => {
   it('审计写入失败时回滚新邀请码，并保持旧邀请码继续有效', async () => {
     const db = await freshDb();

@@ -604,7 +604,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('/enterprise/usage/summary?period=30');
     expect(html).toContain('近 30 天 Token');
     expect(html).toContain('inviteModal');
-    expect(html).toContain('生成新的企业引入链接？');
+    expect(html).toContain('生成新的岗位邀请码？');
     expect(html).toContain('id="organizationTitle" tabindex="-1"');
     expect(html).toContain('id="resultCount" class="result-count" role="status"');
     expect(html).toContain('id="drawerWrap" class="drawer-backdrop hidden" role="dialog"');
@@ -1589,7 +1589,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     const db = await import('./db.js');
     const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha' });
-    const invite = db.issueOrganizationInvite(alpha.id);
+    const invite = db.issueOrganizationInvite(alpha.id, Date.now(), null, {
+      defaultDepartment: '研发部',
+      departmentId: 'dept_rd',
+      positionId: 'pos_brand',
+      positionTitle: '品牌运营',
+      defaultRole: '成员',
+      maxUses: 1,
+    });
 
     const invalid = await fetch(`${base}/enterprise/auth/register/sms/request`, {
       method: 'POST',
@@ -1619,7 +1626,55 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       }),
     });
     expect(register.status).toBe(200);
-    expect((await register.json()).account).toMatchObject({
+    const registered = (await register.json()).account as {
+      organizationId: string;
+      organizationName: string;
+      name: string;
+      department: string | null;
+      role: string | null;
+      positionId: string | null;
+      positionTitle: string | null;
+    };
+    expect(registered.department).toBe('研发部');
+    expect(registered.role).toBe('成员');
+    expect(registered.positionId).toBe('pos_brand');
+    expect(registered.positionTitle).toBe('品牌运营');
+    const alphaAdmin = db.createAccount({
+      organizationId: alpha.id,
+      username: 'alpha.invite.admin',
+      password: 'alpha-admin-password',
+      name: 'Alpha 邀请管理员',
+      isAdmin: true,
+    });
+    const adminToken = await login(base, alphaAdmin.username, 'alpha-admin-password');
+    const accounts = await fetch(`${base}/enterprise/accounts`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(accounts.status).toBe(200);
+    const accountRows = await accounts.json() as {
+      accounts: Array<{
+        phone: string | null;
+        department: string | null;
+        role: string | null;
+        positionId: string | null;
+        positionTitle: string | null;
+      }>;
+    };
+    expect(accountRows.accounts).toContainEqual(expect.objectContaining({
+      phone: '+8613800138000',
+      department: '研发部',
+      role: '成员',
+      positionId: 'pos_brand',
+      positionTitle: '品牌运营',
+    }));
+    expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
+    const exhausted = await fetch(`${base}/enterprise/auth/register/sms/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '13900139000', inviteCode: invite.code }),
+    });
+    expect(exhausted.status).toBe(403);
+    expect(registered).toMatchObject({
       organizationId: alpha.id,
       organizationName: 'Alpha 科技',
       name: 'Alpha 新员工',
@@ -1690,23 +1745,44 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const firstInvite = (await first.json()).invite;
     expect(firstInvite).toMatchObject({
       status: 'active',
+      defaultDepartment: null,
+      positionTitle: null,
+      defaultRole: null,
+      maxUses: null,
+      usedCount: 0,
       validHours: 168,
       link: `https://join.otto.example/enterprise/join/${firstInvite.code}`,
     });
 
     const second = await fetch(`${base}/enterprise/organization/invite`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}` },
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        defaultDepartment: '研发部',
+        positionTitle: '品牌运营',
+        defaultRole: '成员',
+        maxUses: 3,
+      }),
     });
     const secondInvite = (await second.json()).invite;
     expect(secondInvite.code).not.toBe(firstInvite.code);
+    expect(secondInvite.defaultDepartment).toBe('研发部');
+    expect(secondInvite.positionTitle).toBe('品牌运营');
+    expect(secondInvite.defaultRole).toBe('成员');
+    expect(secondInvite.maxUses).toBe(3);
+    expect(secondInvite.usedCount).toBe(0);
     expect(db.resolveOrganizationInvite(firstInvite.code)).toBeNull();
     expect(db.resolveOrganizationInvite(secondInvite.code)?.id).toBe(alpha.id);
 
     const current = await fetch(`${base}/enterprise/organization/invite`, {
       headers: { authorization: `Bearer ${alphaToken}` },
     });
-    expect((await current.json())).toMatchObject({
+    const currentPayload = await current.json();
+    expect(currentPayload.invite.defaultDepartment).toBe('研发部');
+    expect(currentPayload.invite.positionTitle).toBe('品牌运营');
+    expect(currentPayload.invite.defaultRole).toBe('成员');
+    expect(currentPayload.invite.maxUses).toBe(3);
+    expect(currentPayload).toMatchObject({
       organization: { id: alpha.id, name: 'Alpha 科技' },
       invite: { code: secondInvite.code, status: 'active' },
     });

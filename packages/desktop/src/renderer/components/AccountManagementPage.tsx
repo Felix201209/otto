@@ -46,6 +46,18 @@ const ACCOUNT_TEMPLATES = [
 
 export type AccountTemplateId = typeof ACCOUNT_TEMPLATES[number]['id'];
 
+const PARK_SERVICE_OPTIONS = [
+  { id: 'announcement', label: '园区公告' },
+  { id: 'satisfaction', label: '满意度调查' },
+  { id: 'renovation', label: '装修申请' },
+  { id: 'parking', label: '停车位办理' },
+  { id: 'network-phone', label: '网络 / 电话业务' },
+  { id: 'meeting-room', label: '会议室预订' },
+  { id: 'electric-card', label: '电卡充电' },
+  { id: 'repair', label: '客户报修' },
+  { id: 'vehicle-visit', label: '来访车辆登记' },
+] as const;
+
 function tagsFromText(value: string): string[] {
   return [...new Set(value.split(/[,，\n]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
@@ -130,6 +142,16 @@ export function AccountManagementPage({
   const [inviteLoading, setInviteLoading] = useState(currentAccount.isAdmin);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteDepartment, setInviteDepartment] = useState('');
+  const [invitePosition, setInvitePosition] = useState('');
+  const [inviteRole, setInviteRole] = useState('');
+  const [inviteMaxUses, setInviteMaxUses] = useState('');
+  const [parkPushRecipientId, setParkPushRecipientId] = useState('');
+  const [parkPushServiceId, setParkPushServiceId] = useState<typeof PARK_SERVICE_OPTIONS[number]['id']>('repair');
+  const [parkPushNote, setParkPushNote] = useState('');
+  const [parkPushBusy, setParkPushBusy] = useState(false);
+  const [parkPushMessage, setParkPushMessage] = useState<string | null>(null);
+  const [parkPushError, setParkPushError] = useState<string | null>(null);
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
@@ -181,6 +203,21 @@ export function AccountManagementPage({
   }, [inviteContext?.invite?.id]);
 
   useEffect(() => {
+    if (inviteContext?.invite) {
+      setInviteDepartment(inviteContext.invite.defaultDepartment ?? '');
+      setInvitePosition(inviteContext.invite.positionTitle ?? '');
+      setInviteRole(inviteContext.invite.defaultRole ?? '');
+      setInviteMaxUses(inviteContext.invite.maxUses == null ? '' : String(inviteContext.invite.maxUses));
+    }
+  }, [
+    inviteContext?.invite?.id,
+    inviteContext?.invite?.defaultDepartment,
+    inviteContext?.invite?.positionTitle,
+    inviteContext?.invite?.defaultRole,
+    inviteContext?.invite?.maxUses,
+  ]);
+
+  useEffect(() => {
     if (!editing) return undefined;
     initialFocusRef.current?.focus();
     return () => {
@@ -202,6 +239,17 @@ export function AccountManagementPage({
       account.name, account.username, account.phone, account.role, account.department, ...account.tags,
     ].filter(Boolean).some((value) => String(value).toLocaleLowerCase().includes(needle)));
   }, [accounts, query]);
+  const departmentOptions = useMemo(() => {
+    const result = new Set<string>(ACCOUNT_DEPARTMENT_PRESETS);
+    for (const account of accounts) {
+      if (account.department?.trim()) result.add(account.department.trim());
+    }
+    return [...result];
+  }, [accounts]);
+  const parkPushRecipients = useMemo(
+    () => accounts.filter((account) => account.status === 'active'),
+    [accounts],
+  );
 
   const openCreate = (): void => {
     if (loading) return;
@@ -302,7 +350,12 @@ export function AccountManagementPage({
     setInviteError(null);
     setCopied(null);
     try {
-      const result = await window.otto.enterpriseOrganizationInviteIssue();
+      const result = await window.otto.enterpriseOrganizationInviteIssue({
+        defaultDepartment: inviteDepartment.trim() || null,
+        positionTitle: invitePosition.trim() || null,
+        defaultRole: inviteRole.trim() || null,
+        maxUses: inviteMaxUses.trim() ? Number(inviteMaxUses.trim()) : null,
+      });
       setInviteContext(result);
       setNow(Date.now());
     } catch (cause) {
@@ -324,6 +377,28 @@ export function AccountManagementPage({
       setInviteError(null);
     } catch (cause) {
       setInviteError(`复制失败：${errorMessage(cause)}`);
+    }
+  };
+
+  const pushParkService = async (): Promise<void> => {
+    setParkPushBusy(true);
+    setParkPushError(null);
+    setParkPushMessage(null);
+    try {
+      const recipient = parkPushRecipients.find((account) => account.id === parkPushRecipientId);
+      if (!recipient) throw new Error('请选择要接收园区服务的 Otto 用户');
+      const service = PARK_SERVICE_OPTIONS.find((item) => item.id === parkPushServiceId);
+      await window.otto.enterpriseParkServicePush({
+        recipientAccountId: recipient.id,
+        serviceId: parkPushServiceId,
+        note: parkPushNote.trim() || null,
+      });
+      setParkPushMessage(`已把「${service?.label ?? '宏创园区服务'}」推送给 ${recipient.name}`);
+      setParkPushNote('');
+    } catch (cause) {
+      setParkPushError(errorMessage(cause));
+    } finally {
+      setParkPushBusy(false);
     }
   };
 
@@ -367,6 +442,57 @@ export function AccountManagementPage({
               {inviteBusy ? '正在生成…' : inviteContext?.invite ? '换新链接' : '生成链接'}
             </button>
           </header>
+          <label className="otto-account-invite__department">
+            <span>新成员默认加入部门</span>
+            <input
+              aria-label="新成员默认加入部门"
+              list="otto-invite-departments"
+              value={inviteDepartment}
+              disabled={inviteBusy || inviteLoading}
+              onChange={(event) => setInviteDepartment(event.target.value)}
+              placeholder="不指定则加入未分配部门"
+            />
+            <datalist id="otto-invite-departments">
+              {departmentOptions.map((department) => (
+                <option key={department} value={department} />
+              ))}
+            </datalist>
+          </label>
+          <div className="otto-account-invite__position-grid">
+            <label>
+              <span>职位 / 岗位</span>
+              <input
+                aria-label="岗位邀请码职位"
+                value={invitePosition}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInvitePosition(event.target.value)}
+                placeholder="例如：品牌运营"
+              />
+            </label>
+            <label>
+              <span>角色权限</span>
+              <input
+                aria-label="岗位邀请码角色权限"
+                value={inviteRole}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInviteRole(event.target.value)}
+                placeholder="默认：成员"
+              />
+            </label>
+            <label>
+              <span>可注册人数</span>
+              <input
+                aria-label="岗位邀请码可注册人数"
+                type="number"
+                min={1}
+                max={10000}
+                value={inviteMaxUses}
+                disabled={inviteBusy || inviteLoading}
+                onChange={(event) => setInviteMaxUses(event.target.value)}
+                placeholder="不填则不限"
+              />
+            </label>
+          </div>
           {inviteLoading ? <div className="otto-account-invite__loading">正在读取当前企业引入链接…</div> : null}
           {!inviteLoading && inviteContext?.invite ? (
             <div className="otto-account-invite__body">
@@ -377,6 +503,16 @@ export function AccountManagementPage({
                   {inviteIsActive
                     ? formatInviteRemaining(inviteContext.invite.expiresAt, now)
                     : '已失效，请生成新链接'}
+                </small>
+                <small>
+                  {[
+                    inviteContext.invite.defaultDepartment || '未分配部门',
+                    inviteContext.invite.positionTitle || '未指定职位',
+                    inviteContext.invite.defaultRole || '成员',
+                  ].join(' / ')}
+                  {inviteContext.invite.maxUses
+                    ? ` · ${inviteContext.invite.usedCount}/${inviteContext.invite.maxUses}`
+                    : ''}
                 </small>
               </div>
               <div className="otto-account-invite__link">
@@ -392,6 +528,68 @@ export function AccountManagementPage({
           ) : null}
           {!inviteLoading && !inviteContext?.invite ? <div className="otto-account-invite__loading">尚未生成引入链接</div> : null}
           {inviteError ? <div className="otto-account-invite__error" role="alert">{inviteError}</div> : null}
+        </section>
+      ) : null}
+
+      {currentAccount.isAdmin ? (
+        <section className="otto-account-invite otto-account-park-push" aria-label="宏创园区服务推送">
+          <header>
+            <div>
+              <span>PARK SERVICE PUSH</span>
+              <h2>宏创园区服务推送</h2>
+              <p>管理员选择服务和 Otto 用户后，系统会通过企业内私聊把服务办理卡片推送给指定成员。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void pushParkService()}
+              disabled={parkPushBusy || parkPushRecipients.length === 0}
+            >
+              {parkPushBusy ? '正在推送…' : '推送给用户'}
+            </button>
+          </header>
+          <div className="otto-account-invite__position-grid">
+            <label>
+              <span>宏创园区服务</span>
+              <select
+                aria-label="选择宏创园区服务"
+                value={parkPushServiceId}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushServiceId(event.target.value as typeof PARK_SERVICE_OPTIONS[number]['id'])}
+              >
+                {PARK_SERVICE_OPTIONS.map((service) => (
+                  <option key={service.id} value={service.id}>{service.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>推送到 Otto 用户</span>
+              <select
+                aria-label="选择接收服务的 Otto 用户"
+                value={parkPushRecipientId}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushRecipientId(event.target.value)}
+              >
+                <option value="">请选择成员</option>
+                {parkPushRecipients.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} / {account.department || '未分配部门'} / @{account.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>管理员备注</span>
+              <input
+                aria-label="宏创园区服务推送备注"
+                value={parkPushNote}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushNote(event.target.value)}
+                placeholder="例如：请今天下班前处理"
+              />
+            </label>
+          </div>
+          {parkPushMessage ? <div className="otto-account-invite__loading" role="status">{parkPushMessage}</div> : null}
+          {parkPushError ? <div className="otto-account-invite__error" role="alert">{parkPushError}</div> : null}
         </section>
       ) : null}
 
