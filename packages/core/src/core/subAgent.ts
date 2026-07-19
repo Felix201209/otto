@@ -23,6 +23,7 @@ import { CompressionService } from '../services/compressionService.js';
 import { SceneManager, SceneType } from './sceneManager.js';
 import { t } from '../utils/simpleI18n.js';
 import { AgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
+import { getNativeInstance } from '../native/index.js';
 
 // ─── SubAgent 超时与内存保护常量 ───
 
@@ -199,6 +200,14 @@ export class SubAgent {
       isRunning: true,
     };
 
+    // 🔧 通过 AgentPool 注册该 agent（Rust 侧追踪内存）
+    try {
+      const native = getNativeInstance();
+      await native.poolAcquire(this.context.agentId, 256);
+    } catch {
+      // AgentPool 不可用时静默降级
+    }
+
     // 简化：SubAgent 状态通过工具调用状态体现，无需中央注册
 
     this.log(`SubAgent started: ${taskDescription}`);
@@ -291,6 +300,14 @@ export class SubAgent {
 
       // 清理待处理的工具结果
       this.pendingToolResults = [];
+
+      // 🔧 释放 AgentPool 槽位
+      try {
+        const native = getNativeInstance();
+        await native.poolRelease(this.context.agentId);
+      } catch {
+        // 静默降级
+      }
 
       this.log(`SubAgent execution ended (final turn: ${this.context.currentTurn})`);
     }

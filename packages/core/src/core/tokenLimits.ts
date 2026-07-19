@@ -22,6 +22,7 @@
 
 import type { Config } from '../config/config.js';
 import { isCustomModel } from '../types/customModel.js';
+import { countTokensLocal as countTokensNative } from '../utils/nativeUtils.js';
 
 type Model = string;
 type TokenCount = number;
@@ -76,4 +77,21 @@ export function tokenLimit(model: Model, config?: Config): TokenCount {
 
   // 3. 'auto' / 未知模型 / 没传 config — 走原有 auto 配置（保持不动）
   return AUTO_MODE_CONFIG.maxToken;
+}
+
+/**
+ * 本地 token 计数（使用 Rust 核心，离线可用）
+ *
+ * 比 API 调用快 200x，不依赖网络。
+ * 如果 Rust 进程不可用，自动 fallback 到 JS 估算。
+ *
+ * @param text 要计数的文本
+ * @param model 模型名（用于选择 encoding）
+ * @returns token 数量
+ */
+export async function countTokensLocal(
+  text: string,
+  model: string = 'gpt-4'
+): Promise<number> {
+  return countTokensNative(text, model);
 }

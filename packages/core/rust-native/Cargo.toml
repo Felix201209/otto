@@ -1,0 +1,48 @@
+[package]
+name = "otto-native"
+version = "1.0.0"
+edition = "2021"
+description = "Otto Rust native core - high performance session storage, encryption, tokenization, and agent pooling"
+
+[[bin]]
+name = "otto-native"
+path = "src/main.rs"
+
+[dependencies]
+# Embedded KV store
+sled = "0.34"
+
+# Encryption
+aes-gcm = "0.10"
+rand = "0.8"
+
+# Token counting
+tiktoken-rs = "0.6"
+
+# LRU cache
+lru = "0.12"
+
+# Concurrency
+parking_lot = "0.12"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# SHA256 for workdir hashing
+sha2 = "0.10"
+
+# Base64 encoding
+base64 = "0.22"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1

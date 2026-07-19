@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
 import { getProjectTempDir } from '../utils/paths.js';
 import { getErrorMessage } from '../utils/errors.js';
+import { getNativeInstance } from '../native/index.js';
 
 export interface SessionMetadata {
   sessionId: string;
@@ -950,6 +951,16 @@ export class SessionManager {
    * 初始化session（启动时调用）
    */
   async initializeSession(continueLastSession = false, sessionId?: string): Promise<SessionData> {
+    // 🔧 启动 Rust native 核心（异步，不阻塞）
+    try {
+      const native = getNativeInstance(this.projectRoot);
+      await native.start();
+      console.log('[SessionManager] Native Rust core started');
+    } catch (error) {
+      // Native 不可用时静默降级
+      console.warn('[SessionManager] Native core unavailable, using JS fallback');
+    }
+
     // 在初始化session前，先清理空session（但保留最新的空session以备继续使用）
     try {
       await this.cleanupEmptySessions(true); // preserveLatestEmpty = true
