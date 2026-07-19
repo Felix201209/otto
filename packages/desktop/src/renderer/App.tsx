@@ -155,7 +155,7 @@ function OttoWorkspaceApp({
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
-  const [showRightPanel, setShowRightPanel] = useState(false);
+  const [showRightPanel, setShowRightPanel] = useState(true);
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
