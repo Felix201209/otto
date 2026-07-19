@@ -491,8 +491,9 @@ function WorkLogCalendar({
                 'otto-wcal__day'
                 + (entries.length ? ' has-log' : '')
                 + (key === todayKey ? ' is-today' : '')
-                + (weekdayColumn <= 1 ? ' is-pop-left' : '')
-                + (weekdayColumn >= 5 ? ' is-pop-right' : '')
+                + ` is-pop-col-${weekdayColumn}`
+                + (weekdayColumn <= 2 ? ' is-pop-left' : '')
+                + (weekdayColumn >= 4 ? ' is-pop-right' : '')
               }
               onClick={() => onSelectDate(key)}
               title={entries.length
