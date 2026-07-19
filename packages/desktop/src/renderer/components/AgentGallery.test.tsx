@@ -4,53 +4,49 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** AgentGallery v1.7：个人基础 Agent 与企业部门 Agent 分层展示。 */
-
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/react';
 import { AgentGallery } from './AgentGallery.js';
 import {
   BASE_AGENT_PROFILES,
   DEPARTMENT_AGENT_PROFILES,
-  ENTERPRISE_CEO_PROFILE,
-  PERSONAL_OTTO_PROFILE,
   getEnterpriseAgentProfiles,
 } from '../agents/departmentAgents.js';
 
-function renderGallery() {
+function renderGallery(mode: 'personal' | 'enterprise' = 'personal') {
   const onLaunch = vi.fn();
   const onBack = vi.fn();
-  render(<AgentGallery onLaunch={onLaunch} onBack={onBack} />);
+  render(<AgentGallery mode={mode} onLaunch={onLaunch} onBack={onBack} />);
   return { onLaunch, onBack };
 }
 
-describe('AgentGallery（页面）', () => {
-  it('个人版渲染 Otto、会议 Agent 与 8 位通用专家', () => {
+describe('AgentGallery', () => {
+  it('renders the fixed 9-Agent catalog', () => {
     renderGallery();
-    expect(screen.getByText('选择一位专家开始，它会在独立会话中按对应方法协助你')).toBeTruthy();
-    expect(screen.queryByText(/不会自动发送长消息/)).toBeNull();
+
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
-    expect(screen.queryByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeNull();
     expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(screen.getByText('会议 Agent')).toBeTruthy();
     expect(screen.getByText('Word 公文撰写')).toBeTruthy();
     expect(screen.getByText('Excel 数据表格')).toBeTruthy();
     expect(screen.getByText('市场竞品调研')).toBeTruthy();
     expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`)).toBeTruthy();
   });
 
-  it('点击会议 Agent 只回传 profile，不向聊天框暴露后台提示词', () => {
-    const { onLaunch } = renderGallery();
-    const target = BASE_AGENT_PROFILES[1];
-    fireEvent.click(screen.getByText(target.name));
-    expect(onLaunch).toHaveBeenCalledTimes(1);
-    expect(onLaunch).toHaveBeenCalledWith(target);
-    expect(onLaunch.mock.calls[0]).toHaveLength(1);
+  it('does not render department Agents', () => {
+    renderGallery('enterprise');
+
+    expect(DEPARTMENT_AGENT_PROFILES).toHaveLength(0);
+    expect(getEnterpriseAgentProfiles('company_owner')).toHaveLength(9);
+    expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
+    expect(screen.queryByText('产品需求 Agent')).toBeNull();
   });
 
-  it('切换不同专家时只回传对应 profile', () => {
+  it('launches only the selected profile', () => {
     const { onLaunch } = renderGallery();
+
     fireEvent.click(screen.getByText('PPT 创作专家'));
     fireEvent.click(screen.getByText('Excel 数据表格'));
 
@@ -58,36 +54,21 @@ describe('AgentGallery（页面）', () => {
     expect(onLaunch.mock.calls.every((call) => call.length === 1)).toBe(true);
   });
 
-  it('企业管理者展示 CEO 办公室 Agent，不越权混入其他部门', () => {
-    render(
-      <AgentGallery
-        mode="enterprise"
-        onLaunch={vi.fn()}
-        onBack={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(ENTERPRISE_CEO_PROFILE.name)).toBeTruthy();
-    expect(screen.queryByText(PERSONAL_OTTO_PROFILE.name)).toBeNull();
-    expect(screen.getByText(DEPARTMENT_AGENT_PROFILES[0].name)).toBeTruthy();
-    const ownerProfiles = getEnterpriseAgentProfiles('company_owner');
-    expect(
-      screen.getByText(
-        `共 ${ownerProfiles.length} 位专家 · 点击即可开始新对话`,
-      ),
-    ).toBeTruthy();
-  });
-
-  it('点「返回对话」→ onBack', () => {
+  it('returns to chat when clicking the back button', () => {
     const { onBack } = renderGallery();
+
     fireEvent.click(screen.getByRole('button', { name: '返回对话' }));
+
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('Esc → onBack', () => {
+  it('returns to chat on Escape', () => {
     const { onBack } = renderGallery();
+
     fireEvent.keyDown(screen.getByRole('region', { name: '专家目录' }), {
       key: 'Escape',
     });
+
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AutoSkillCandidateInfo, ProductWorkspaceSnapshot } from 'otto-server';
 import {
   BASE_AGENT_PROFILES,
-  DEPARTMENT_LABELS,
   getEnterpriseAgentProfiles,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
@@ -18,7 +17,6 @@ import {
   IconBuilding,
   IconChevron,
   IconChevronDown,
-  IconTerminal,
 } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
@@ -37,18 +35,6 @@ const TOOL_COMMAND_IDS = new Set([
   'audio', 'browser', 'ide', 'export', 'workflow',
 ]);
 const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(command.id));
-
-/** v1.6 的自主开发入口迁移为 v1.7 system profile，避免再发送伪用户 kickoff。 */
-const SELF_DEVELOPMENT_PROFILE: AgentProfile = {
-  id: 'self-development',
-  name: '自主开发',
-  tagline: '写代码 · 改项目 · 自动化任务',
-  scope: 'base',
-  department: null,
-  skills: [],
-  systemPrompt:
-    '你是企业 AI 自主开发专家。先阅读当前项目结构、技术栈和项目规则，再确认要实现或修复的目标；在用户授权范围内完成真实代码改动，运行必要测试、类型检查和界面验收。不要编造执行结果，失败时附真实错误。',
-};
 
 export interface RightPanelProps {
   busy: boolean;
@@ -79,17 +65,11 @@ function visibleProfiles(
 ): readonly AgentProfile[] {
   if (mode === 'personal') return BASE_AGENT_PROFILES;
   const role = workspace?.context.role;
-  const departmentName = workspace?.managerWorkspace?.organization.departments.find(
-    (department) => department.id === workspace.context.departmentId,
-  )?.name;
-  const departmentId = Object.entries(DEPARTMENT_LABELS).find(
-    ([, label]) => label === departmentName,
-  )?.[0] as keyof typeof DEPARTMENT_LABELS | undefined;
   return getEnterpriseAgentProfiles(
     role === 'company_owner' || role === 'company_admin' || role === 'manager' || role === 'member'
       ? role
       : 'member',
-    departmentId ?? null,
+    null,
   );
 }
 
@@ -119,7 +99,6 @@ export function RightPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [parkOpen, setParkOpen] = useState(true);
-  const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [collabOpen, setCollabOpen] = useState(false);
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
@@ -218,46 +197,14 @@ export function RightPanel({
                   type="button"
                   className="otto-expert-card"
                   onClick={openParkServices}
-                  title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
+                  title="访客邀约 · 会议室 · IT 报修 · 行政后勤 · 班车 · 餐饮"
                 >
                   <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
                     <IconBuilding size={17} />
                   </span>
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
-                    <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
-                  </span>
-                </button>
-              </div>
-            ) : null}
-
-            <div className="otto-right-panel__waist" role="separator" />
-            <button
-              type="button"
-              className="otto-right-panel__grouphead"
-              onClick={() => setDevelopmentOpen((value) => !value)}
-              aria-expanded={developmentOpen}
-            >
-              <span>自主开发</span>
-              <IconChevronDown
-                size={14}
-                className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
-              />
-            </button>
-            {developmentOpen ? (
-              <div className="otto-expert-list">
-                <button
-                  type="button"
-                  className="otto-expert-card"
-                  onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
-                  title={SELF_DEVELOPMENT_PROFILE.tagline}
-                >
-                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                    <IconTerminal size={17} />
-                  </span>
-                  <span className="otto-expert-card__body">
-                    <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
-                    <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
+                    <span className="otto-expert-card__desc">访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮</span>
                   </span>
                 </button>
               </div>
@@ -289,7 +236,7 @@ export function RightPanel({
             <div className="otto-auto-skill">
               <div className="otto-auto-skill__head">
                 <div><strong>自动 Skill 候选</strong><span>重复流程先由你确认，再生成</span></div>
-                <button type="button" onClick={onRefreshAutoSkills}>立即分析</button>
+                <button type="button" onClick={onRefreshAutoSkills}>刷新</button>
               </div>
               {autoSkillLastAction?.kind === 'confirmed' ? (
                 <div className="otto-auto-skill__success">
@@ -297,7 +244,7 @@ export function RightPanel({
                 </div>
               ) : null}
               {autoSkillCandidates.length === 0 ? (
-                <div className="otto-auto-skill__empty">暂无候选。点击“立即分析”会扫描最近工作日志；同一流程跨天重复至少 3 次后会进入这里。</div>
+                <div className="otto-auto-skill__empty">暂无候选。Otto 会在同一流程跨天重复至少 3 次后提出建议。</div>
               ) : autoSkillCandidates.map((candidate) => (
                 <article key={candidate.id} className="otto-auto-skill__candidate">
                   <strong>{candidate.name}</strong>
@@ -479,7 +426,6 @@ function WorkLogCalendar({
           const day = index + 1;
           const key = dateKey(year, month, day);
           const entries = byDate[key] ?? [];
-          const weekdayColumn = (firstWeekday + index) % 7;
           const orderedEntries = [...entries].sort((left, right) =>
             left.entryType === right.entryType ? 0 : left.entryType === 'work_result' ? -1 : 1,
           );
@@ -487,14 +433,7 @@ function WorkLogCalendar({
             <button
               key={key}
               type="button"
-              className={
-                'otto-wcal__day'
-                + (entries.length ? ' has-log' : '')
-                + (key === todayKey ? ' is-today' : '')
-                + ` is-pop-col-${weekdayColumn}`
-                + (weekdayColumn <= 2 ? ' is-pop-left' : '')
-                + (weekdayColumn >= 4 ? ' is-pop-right' : '')
-              }
+              className={'otto-wcal__day' + (entries.length ? ' has-log' : '') + (key === todayKey ? ' is-today' : '')}
               onClick={() => onSelectDate(key)}
               title={entries.length
                 ? entries.map((entry) => `• ${entry.time} ${entry.action}`).join('\n')
