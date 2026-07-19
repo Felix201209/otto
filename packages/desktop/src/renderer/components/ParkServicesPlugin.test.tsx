@@ -65,7 +65,7 @@ describe('ParkServicesPlugin', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('会议室预约'));
-    expect(screen.getByText('本地模拟工单 · 不会提交到真实园区系统')).toBeTruthy();
+    expect(screen.getByLabelText('会议室预约申请表')).toBeTruthy();
     expect(screen.getAllByText('会议服务专员')).toHaveLength(2);
     fireEvent.click(screen.getByText('改用 Otto 填写'));
     expect(l.texts).toHaveLength(1);
@@ -101,65 +101,64 @@ describe('ParkServicesPlugin', () => {
     expect(screen.getByText('4 分 · 会议室环境 · 已进入满意度汇总')).toBeTruthy();
   });
 
-  it('报修演示由 Otto 逐步引导填报，并可切换维修人员端', () => {
+  it('报修演示使用申请表，并可切换维修端', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    expect(screen.getByText('Otto 会一步一步帮你填')).toBeTruthy();
-    const input = screen.getByLabelText('报修回答');
-    for (const answer of ['A 座某某会议室', '灯坏了，不亮', '普通', '王工 13800000000']) {
-      fireEvent.change(input, { target: { value: answer } });
-      fireEvent.submit(input.closest('form')!);
-    }
-    expect(screen.getByText('工单信息已整理')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
-    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
+    const requestForm = screen.getByLabelText('客户报修申请表');
+    expect(screen.getByText('Otto 填报提示')).toBeTruthy();
+    fireEvent.submit(requestForm);
+    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
     expect(screen.getByText('网络维修主管张工')).toBeTruthy();
-    expect(screen.getByText('A 座某某会议室')).toBeTruthy();
+    expect(screen.getByText('某某会议室')).toBeTruthy();
   });
 
-  it('维修人员端收到 Otto 待处理提醒并可推进维修状态', () => {
+  it('报修类别选择其他时允许填写自定义类别', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    const input = screen.getByLabelText('报修回答');
-    for (const answer of ['A 座会议室', '灯坏了', '紧急', '演示报修人']) {
-      fireEvent.change(input, { target: { value: answer } });
-      fireEvent.submit(input.closest('form')!);
-    }
-    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
-    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
-    expect(screen.getByRole('alertdialog').textContent).toContain('Otto 待处理提醒 · 本地模拟');
-    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
-    fireEvent.click(screen.getByRole('button', { name: '维修完成，等待验收' }));
+    fireEvent.change(screen.getByLabelText('报修类别'), { target: { value: '其他' } });
+    fireEvent.change(screen.getByLabelText('请填写其他类别'), { target: { value: '玻璃门损坏' } });
+    fireEvent.submit(screen.getByLabelText('客户报修申请表'));
+    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
+    expect(screen.getByText('玻璃门损坏')).toBeTruthy();
+  });
+
+  it('维修端收到 Otto 待处理提醒并可推进维修状态', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('客户报修'));
+    fireEvent.submit(screen.getByLabelText('客户报修申请表'));
+    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
+    expect(screen.getByRole('alertdialog', { name: 'Otto 待处理提醒' }).textContent).toContain('收到新的客户报修申请');
+    fireEvent.click(screen.getByRole('button', { name: '打开维修处理表' }));
+    fireEvent.click(screen.getByRole('button', { name: '接单并处理' }));
+    fireEvent.click(screen.getByRole('button', { name: '提交维修完成' }));
     fireEvent.click(screen.getByRole('button', { name: '确认企业验收' }));
     expect(screen.getByText('已完成')).toBeTruthy();
   });
 
-  it('维修人员端可以在弹窗里回复自助排查建议，报修人端收到消息', () => {
+  it('维修端填写回复表，企业端收到回复弹窗', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    const input = screen.getByLabelText('报修回答');
-    for (const answer of ['A 座会议室', '灯坏了', '普通', '演示报修人']) {
-      fireEvent.change(input, { target: { value: answer } });
-      fireEvent.submit(input.closest('form')!);
-    }
-    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
-    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
-    fireEvent.click(screen.getByRole('button', { name: '远程指导自查' }));
-    fireEvent.click(screen.getByRole('button', { name: '报修人端' }));
-    expect(screen.getByText(/维修人员张工：请先按 Otto 指引检查开关/)).toBeTruthy();
+    fireEvent.submit(screen.getByLabelText('客户报修申请表'));
+    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开维修处理表' }));
+    fireEvent.change(screen.getByLabelText('处理方式'), { target: { value: '远程指导' } });
+    fireEvent.change(screen.getByLabelText('给报修人的说明'), { target: { value: '请先检查开关' } });
+    fireEvent.submit(screen.getByLabelText('维修回复表'));
+    fireEvent.click(screen.getByRole('button', { name: '企业端（报修人）' }));
+    expect(screen.getByRole('alertdialog', { name: '维修人员回复提醒' }).textContent).toContain('请先检查开关');
   });
 
-  it('其他园区服务使用各自的沟通提示和快捷回复', () => {
+  it('其他园区服务使用各自的申请字段和处理选项', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('装修管理'));
     expect(screen.getByText(/装修申请先核对施工范围/)).toBeTruthy();
-    const renovationChat = screen.getByLabelText('装修管理沟通区');
-    expect(renovationChat).toBeTruthy();
-    expect(renovationChat.querySelector('button')?.textContent).toContain('信息已确认');
+    expect(screen.getByLabelText('装修管理申请表')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '提交装修管理申请' })).toBeTruthy();
   });
 
   it('Esc / 点遮罩 / 右上 × 都能关闭', () => {

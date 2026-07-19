@@ -122,6 +122,31 @@ describe('数据库 readiness', () => {
       reopened.closeEnterpriseDatabase();
     }
   });
+
+  it('拒绝打开高于当前版本的未来 schema，且不降级或改写原库', async () => {
+    const future = new Database(path.join(tmpDir, 'data.db'));
+    future.exec(`
+      CREATE TABLE future_only (id TEXT PRIMARY KEY);
+      INSERT INTO future_only (id) VALUES ('preserve-me');
+      PRAGMA user_version = 3;
+    `);
+    future.close();
+
+    const db = await freshDb();
+    expect(() => db.getDB()).toThrow(/schema version 3.*current version 2/i);
+
+    const reopened = new Database(path.join(tmpDir, 'data.db'));
+    try {
+      expect(
+        (reopened.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
+      ).toBe(3);
+      expect(
+        (reopened.prepare('SELECT id FROM future_only').get() as { id: string }).id,
+      ).toBe('preserve-me');
+    } finally {
+      reopened.close();
+    }
+  });
 });
 
 describe('企业 Token 用量时间窗口', () => {

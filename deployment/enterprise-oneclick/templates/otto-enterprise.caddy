@@ -1,0 +1,18 @@
+https://__OTTO_PUBLIC_HOST__:__OTTO_PUBLIC_PORT__ {
+	@unfinished_local_pairing path /enterprise/local-agent /enterprise/local-agent/* /enterprise/sdk/otto-discovery.js
+	respond @unfinished_local_pairing 404
+
+	request_body {
+		max_size 1MB
+	}
+
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+
+	reverse_proxy 127.0.0.1:7778
+}

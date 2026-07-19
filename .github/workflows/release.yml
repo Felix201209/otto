@@ -61,10 +61,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3.1 构建 Webview (VSCode 插件 UI)
-      - name: 🌐 Build Webview
-        run: npm run build:webview --workspace=packages/vscode-ui-plugin
-
       # 4. 获取并同步版本号
       - name: 📌 Get and Sync version
         id: get_version

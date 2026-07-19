@@ -9,16 +9,17 @@ import {
 } from './enterprise-network-policy.js';
 
 describe('enterprise network policy', () => {
-  it('fails closed without transmitting enterprise data in internal-test mode', async () => {
-    const fetchImpl = vi.fn();
+  it('内测免登录模式仍允许显式企业认证请求使用真实传输', async () => {
+    const response = new Response('{}', { status: 200 });
+    const fetchImpl = vi.fn().mockResolvedValue(response);
     const guardedFetch = createEnterpriseNetworkFetch(
       fetchImpl as unknown as typeof fetch,
       true,
     );
 
-    await expect(guardedFetch('https://enterprise.example.com/enterprise/usage'))
-      .rejects.toThrow('内部测试模式已停用企业网络访问');
-    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(guardedFetch('https://enterprise.example.com/enterprise/health'))
+      .resolves.toBe(response);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('delegates to the real transport when internal-test mode is disabled', async () => {
@@ -34,12 +35,9 @@ describe('enterprise network policy', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores, but does not delete, a persisted token in internal-test mode', () => {
+  it('内测免登录模式不再覆盖已经持久化的真实企业会话', () => {
     expect(internalTestEnterpriseSession('https://enterprise.example.com', true))
-      .toEqual({
-        serverUrl: 'https://enterprise.example.com',
-        token: null,
-      });
+      .toBeNull();
     expect(internalTestEnterpriseSession('https://enterprise.example.com', false))
       .toBeNull();
   });

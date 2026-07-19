@@ -97,6 +97,11 @@ interface RouteBody {
 export interface EnterpriseServerOptions {
   port?: number;
   host?: string;
+  /**
+   * 尚未完成的本地 Agent 配对入口；默认关闭且不读取环境变量。
+   * 仅测试或受控开发环境可显式开启。
+   */
+  localAgentPairingEnabled?: boolean;
   /** 对外企业引入页基址；不传则读 OTTO_ENTERPRISE_PUBLIC_URL，再回落到内置公网地址。 */
   publicUrl?: string;
   /** 管理端令牌；不传则读 OTTO_ENTERPRISE_ADMIN_TOKEN。 */
@@ -503,6 +508,7 @@ function makeHandler(
   publicBaseUrl: string,
   loginRateLimiter: LoginRateLimiter,
   deploymentInfo: DeploymentInfo,
+  localAgentPairingEnabled: boolean,
 ) {
   return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 只需要 path/query，不使用客户端可控的 Host 或 X-Forwarded-Host 作为 URL 权威源。
@@ -511,6 +517,16 @@ function makeHandler(
     const method = req.method || 'GET';
     let adminPrincipal: AdminPrincipal | null = null;
     let memberAccount: db.AccountView | null = null;
+
+    if (!localAgentPairingEnabled && (
+      path === '/enterprise/sdk/otto-discovery.js'
+      || path === '/enterprise/local-agent'
+      || path === '/enterprise/local-agent/pair'
+      || path === '/enterprise/local-agent/pair/verify'
+    )) {
+      sendJSON(res, 404, { error: 'not found' });
+      return;
+    }
 
     if (method === 'OPTIONS') {
       res.writeHead(204);
@@ -2104,6 +2120,7 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       buildCommit,
       startedAt: new Date().toISOString(),
     },
+    opts.localAgentPairingEnabled === true,
   ));
   return { server, host, port, publicBaseUrl, adminToken, generatedToken };
 }

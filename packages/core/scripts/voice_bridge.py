@@ -30,6 +30,12 @@ DEFAULT_WHISPER_INITIAL_PROMPT = os.environ.get(
     "Preserve the original language and do not translate.",
 )
 DEFAULT_WHISPER_TIMEOUT = int(os.environ.get("OTTO_WHISPER_TIMEOUT", "300"))
+DEFAULT_WHISPER_BEAM_SIZE = int(os.environ.get("OTTO_WHISPER_BEAM_SIZE", "5"))
+DEFAULT_WHISPER_TEMPERATURES = os.environ.get("OTTO_WHISPER_TEMPERATURES", "0,0.2").strip()
+DEFAULT_WHISPER_NO_SPEECH_THRESHOLD = float(os.environ.get("OTTO_WHISPER_NO_SPEECH_THRESHOLD", "0.6"))
+DEFAULT_WHISPER_LOGPROB_THRESHOLD = float(os.environ.get("OTTO_WHISPER_LOGPROB_THRESHOLD", "-1.0"))
+DEFAULT_WHISPER_COMPRESSION_RATIO_THRESHOLD = float(os.environ.get("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.4"))
+DEFAULT_ASR_BACKEND = os.environ.get("OTTO_ASR_BACKEND", "auto").strip().lower() or "auto"
 
 
 def whisper_model_candidates():
@@ -43,6 +49,7 @@ def whisper_model_candidates():
 def check_dependencies():
     """Report the dependencies this exact Python runtime can use."""
     whisper_available = importlib.util.find_spec("whisper") is not None
+    faster_whisper_available = importlib.util.find_spec("faster_whisper") is not None
     sounddevice_available = importlib.util.find_spec("sounddevice") is not None
     requests_available = importlib.util.find_spec("requests") is not None
     torch_available = importlib.util.find_spec("torch") is not None
@@ -51,12 +58,16 @@ def check_dependencies():
         "python_version": sys.version.split()[0],
         "ffmpeg": shutil.which("ffmpeg"),
         "whisper_module": whisper_available,
+        "faster_whisper_module": faster_whisper_available,
         "sounddevice_module": sounddevice_available,
         "requests_module": requests_available,
         "torch_module": torch_available,
         "cuda": False,
         "user_asr_key": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("ARK_API_KEY")),
         "model_candidates": whisper_model_candidates(),
+        "asr_backend": DEFAULT_ASR_BACKEND,
+        "beam_size": DEFAULT_WHISPER_BEAM_SIZE,
+        "temperature_schedule": DEFAULT_WHISPER_TEMPERATURES,
         "timeout_seconds": DEFAULT_WHISPER_TIMEOUT,
     }
 
@@ -204,58 +215,122 @@ def transcribe_with_local_whisper(audio_path):
     env.setdefault("OTTO_WHISPER_LANGUAGE", DEFAULT_WHISPER_LANGUAGE or "")
     env.setdefault("OTTO_WHISPER_INITIAL_PROMPT", DEFAULT_WHISPER_INITIAL_PROMPT)
     env["OTTO_WHISPER_MODEL_CANDIDATES"] = json.dumps(whisper_model_candidates())
+    env.setdefault("OTTO_WHISPER_BEAM_SIZE", str(DEFAULT_WHISPER_BEAM_SIZE))
+    env.setdefault("OTTO_WHISPER_TEMPERATURES", DEFAULT_WHISPER_TEMPERATURES)
+    env.setdefault("OTTO_WHISPER_NO_SPEECH_THRESHOLD", str(DEFAULT_WHISPER_NO_SPEECH_THRESHOLD))
+    env.setdefault("OTTO_WHISPER_LOGPROB_THRESHOLD", str(DEFAULT_WHISPER_LOGPROB_THRESHOLD))
+    env.setdefault("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", str(DEFAULT_WHISPER_COMPRESSION_RATIO_THRESHOLD))
+    env.setdefault("OTTO_ASR_BACKEND", DEFAULT_ASR_BACKEND)
 
     code = r'''
 import json
 import os
-import ssl
 import sys
-
-try:
-    ssl._create_default_https_context = ssl._create_unverified_context
-except Exception:
-    pass
-
-try:
-    import whisper
-except ImportError:
-    print("openai-whisper Python module is not installed.", file=sys.stderr)
-    sys.exit(1)
 
 try:
     import torch
     fp16 = bool(torch.cuda.is_available())
+    device = "cuda" if fp16 else "cpu"
 except Exception:
     fp16 = False
+    device = "cpu"
 
 audio_path = sys.argv[1]
 models = json.loads(os.environ.get("OTTO_WHISPER_MODEL_CANDIDATES", '["medium","small","base"]'))
 language = os.environ.get("OTTO_WHISPER_LANGUAGE") or None
 initial_prompt = os.environ.get("OTTO_WHISPER_INITIAL_PROMPT") or None
+beam_size = int(os.environ.get("OTTO_WHISPER_BEAM_SIZE", "5"))
+temperatures = tuple(float(t.strip()) for t in os.environ.get("OTTO_WHISPER_TEMPERATURES", "0,0.2").split(",") if t.strip())
+no_speech_threshold = float(os.environ.get("OTTO_WHISPER_NO_SPEECH_THRESHOLD", "0.6"))
+logprob_threshold = float(os.environ.get("OTTO_WHISPER_LOGPROB_THRESHOLD", "-1.0"))
+compression_ratio_threshold = float(os.environ.get("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.4"))
+backend = os.environ.get("OTTO_ASR_BACKEND", "auto").lower()
 last_error = None
 
-for model_name in models:
-    try:
-        model = whisper.load_model(model_name)
-        result = model.transcribe(
-            audio_path,
-            language=language,
-            initial_prompt=initial_prompt,
-            temperature=0,
-            condition_on_previous_text=True,
-            fp16=fp16,
-            verbose=False,
-        )
-        text = (result.get("text") or "").strip()
-        if text:
-            print(text)
-            sys.exit(0)
-        last_error = f"{model_name} returned empty transcript"
-    except Exception as e:
-        last_error = f"{model_name}: {e}"
-        print(f"Whisper model failed, trying next if available: {last_error}", file=sys.stderr)
+def run_faster_whisper():
+    from faster_whisper import WhisperModel
 
-print(last_error or "Whisper returned no text.", file=sys.stderr)
+    last = None
+    compute_type = "float16" if device == "cuda" else "int8"
+    for model_name in models:
+        try:
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            segments, _info = model.transcribe(
+                audio_path,
+                language=language,
+                initial_prompt=initial_prompt,
+                beam_size=beam_size,
+                vad_filter=True,
+                vad_parameters={
+                    "min_silence_duration_ms": 500,
+                    "speech_pad_ms": 250,
+                },
+                condition_on_previous_text=True,
+                no_speech_threshold=no_speech_threshold,
+                log_prob_threshold=logprob_threshold,
+                compression_ratio_threshold=compression_ratio_threshold,
+            )
+            text = " ".join((segment.text or "").strip() for segment in segments).strip()
+            if text:
+                print(text)
+                return True
+            last = f"{model_name} returned empty transcript"
+        except Exception as e:
+            last = f"{model_name}: {e}"
+            print(f"faster-whisper model failed, trying next if available: {last}", file=sys.stderr)
+    raise RuntimeError(last or "faster-whisper returned no text")
+
+def run_openai_whisper():
+    import whisper
+
+    last = None
+    for model_name in models:
+        try:
+            model = whisper.load_model(model_name)
+            result = model.transcribe(
+                audio_path,
+                language=language,
+                initial_prompt=initial_prompt,
+                temperature=temperatures or (0,),
+                beam_size=beam_size,
+                best_of=beam_size,
+                condition_on_previous_text=True,
+                fp16=fp16,
+                no_speech_threshold=no_speech_threshold,
+                logprob_threshold=logprob_threshold,
+                compression_ratio_threshold=compression_ratio_threshold,
+                verbose=False,
+            )
+            text = (result.get("text") or "").strip()
+            if text:
+                print(text)
+                return True
+            last = f"{model_name} returned empty transcript"
+        except Exception as e:
+            last = f"{model_name}: {e}"
+            print(f"Whisper model failed, trying next if available: {last}", file=sys.stderr)
+    raise RuntimeError(last or "Whisper returned no text")
+
+errors = []
+if backend in ("auto", "faster-whisper", "faster_whisper"):
+    try:
+        import faster_whisper  # noqa: F401
+        if run_faster_whisper():
+            sys.exit(0)
+    except Exception as e:
+        errors.append(f"faster-whisper: {e}")
+        print(f"faster-whisper unavailable or failed: {e}", file=sys.stderr)
+
+if backend in ("auto", "openai-whisper", "openai_whisper", "whisper"):
+    try:
+        if run_openai_whisper():
+            sys.exit(0)
+    except ImportError:
+        errors.append("openai-whisper Python module is not installed")
+    except Exception as e:
+        errors.append(f"openai-whisper: {e}")
+
+print("; ".join(errors) or last_error or "Whisper returned no text.", file=sys.stderr)
 sys.exit(2)
 '''
 

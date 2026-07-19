@@ -1,0 +1,39 @@
+[Unit]
+Description=Otto Enterprise Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=otto-enterprise
+Group=otto-enterprise
+WorkingDirectory=/opt/otto-enterprise/current
+EnvironmentFile=/etc/otto-enterprise/enterprise.env
+ExecStart=/opt/otto-enterprise/runtime/current/bin/node /opt/otto-enterprise/current/run.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+
+StateDirectory=otto-enterprise
+StateDirectoryMode=0700
+RuntimeDirectory=otto-enterprise
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/otto-enterprise
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -4,20 +4,33 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
-import type { EnterpriseDirectMessage, EnterpriseOrganizationView } from '../../preload/index.js';
+import type {
+  EnterpriseAccount,
+  EnterpriseDirectMessage,
+  EnterpriseOrganizationView,
+} from '../../preload/index.js';
+import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { IconChevronDown } from './icons.js';
 
 export function OrganizationTree({
   workspace,
+  enterpriseAccount,
 }: {
-  workspace: ProductWorkspaceSnapshot;
+  workspace: ProductWorkspaceSnapshot | null;
+  enterpriseAccount?: EnterpriseAccount;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [chatMember, setChatMember] = useState<EnterpriseOrganizationView['members'][number] | null>(null);
-  const organization = workspace.managerWorkspace?.organization;
+  const hasLocalEnterpriseWorkspace = workspace?.context.edition === 'enterprise';
+  const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
+  // 真实中心账号以服务端目录为权威，不能被机器上残留的本机企业树覆盖。
+  // 只有没有真实中心账号时，才展示本机 ProductWorkspace 的组织框架。
+  const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
+    ? workspace?.managerWorkspace?.organization
+    : undefined;
   const chatMemberByWorkspaceKey = useMemo(() => {
     const result = new Map<string, EnterpriseOrganizationView['members'][number]>();
     for (const member of orgView?.members ?? []) {
@@ -44,9 +57,9 @@ export function OrganizationTree({
   // 本地 workspace 没有管理者组织快照时，经 preload → main 读取企业组织。
   // 会话 token 始终只保留在 main 的 EnterpriseClient 内。
   useEffect(() => {
-    if (workspace.context.edition !== 'enterprise') {
-      return;
-    }
+    // 远程组织目录只允许真实企业账号触发。本机企业成员或内测假身份没有
+    // Bearer 会话时展示占位信息，不调用 IPC、更不会产生无意义的 401。
+    if (!hasAuthenticatedOrganization) return;
 
     let cancelled = false;
     setOrgLoading(true);
@@ -66,9 +79,12 @@ export function OrganizationTree({
       });
 
     return () => { cancelled = true; };
-  }, [workspace.context.edition]);
+  }, [
+    hasAuthenticatedOrganization,
+    enterpriseAccount?.organizationId,
+  ]);
 
-  if (workspace.context.edition !== 'enterprise') return null;
+  if (!hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization) return null;
 
   return (
     <section className="otto-orgtree" aria-label="企业组织架构">
@@ -87,7 +103,7 @@ export function OrganizationTree({
 
       {open ? (
         <div className="otto-orgtree__body">
-          {organization ? (
+          {organization && workspace ? (
             <CompanyBranch
               companyId={organization.rootCompanyId}
               organization={organization}
@@ -105,18 +121,23 @@ export function OrganizationTree({
               {/* Group members by department */}
               {(() => {
                 const deptMap = new Map<string, EnterpriseOrganizationView['members']>();
-                for (const m of orgView.members) {
-                  const dept = m.department || '未分配部门';
+                for (const member of orgView.members) {
+                  const dept = member.department || '未分配部门';
                   if (!deptMap.has(dept)) deptMap.set(dept, []);
-                  deptMap.get(dept)!.push(m);
+                  deptMap.get(dept)!.push(member);
                 }
                 return [...deptMap.entries()].map(([dept, members]) => (
                   <div key={dept} className="otto-orgtree__department">
                     <div className="otto-orgtree__department-name">{dept}</div>
-                    {members.map((m) => (
-                      <button key={m.id} type="button" className="otto-orgtree__member otto-orgtree__member-button" onClick={() => setChatMember(m)}>
-                        <span>{m.name}</span>
-                        <span>{m.isAdmin ? '管理员' : m.role || '成员'}</span>
+                    {members.map((member) => (
+                      <button
+                        key={member.id}
+                        type="button"
+                        className="otto-orgtree__member otto-orgtree__member-button"
+                        onClick={() => setChatMember(member)}
+                      >
+                        <span>{member.name}</span>
+                        <span>{member.isAdmin ? '管理员' : member.role || '成员'}</span>
                       </button>
                     ))}
                   </div>
@@ -182,16 +203,31 @@ function DirectMessagePanel({ member, onClose }: {
 
   return (
     <div className="otto-direct-chat" role="dialog" aria-label={`与 ${member.name} 聊天`}>
-      <header><strong>{member.name}</strong><button type="button" onClick={onClose} aria-label="关闭聊天">×</button></header>
+      <header>
+        <strong>{member.name}</strong>
+        <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
+      </header>
       <div className="otto-direct-chat__messages">
         {messages.length === 0 ? <p>还没有消息，开始聊聊吧。</p> : messages.map((message) => (
-          <div key={message.id} className={'otto-direct-chat__message' + (message.senderAccountId === member.id ? ' is-peer' : ' is-me')}>
+          <div
+            key={message.id}
+            className={'otto-direct-chat__message' + (message.senderAccountId === member.id ? ' is-peer' : ' is-me')}
+          >
             {message.content}
           </div>
         ))}
       </div>
       {error ? <div className="otto-direct-chat__error" role="alert">{error}</div> : null}
-      <form onSubmit={send}><input value={draft} maxLength={4000} onChange={(event) => setDraft(event.target.value)} placeholder="输入消息" aria-label="消息内容"/><button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button></form>
+      <form onSubmit={send}>
+        <input
+          value={draft}
+          maxLength={4000}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="输入消息"
+          aria-label="消息内容"
+        />
+        <button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button>
+      </form>
     </div>
   );
 }

@@ -116,6 +116,7 @@ import {
   internalTestEnterpriseSession,
 } from './enterprise-network-policy.js';
 import { INTERNAL_TEST_ACCESS_ENABLED } from './internal-test-access.js';
+import { resolveVideoEditorIndex } from './video-editor-resource.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -694,8 +695,11 @@ function createVideoEditorWindow(): void {
     },
   });
 
-  // Load bundled OpenReel from resources/video-editor/
-  const editorPath = path.join(__dirname, '..', '..', '..', '..', 'resources', 'video-editor', 'index.html');
+  const editorPath = resolveVideoEditorIndex({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    moduleDir: __dirname,
+  });
   if (fs.existsSync(editorPath)) {
     void videoEditorWindow.loadFile(editorPath);
   } else {

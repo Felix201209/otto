@@ -91,7 +91,13 @@ function parseEnterpriseJoinPageIntent(
   const match = url.pathname.match(ENTERPRISE_JOIN_PATH_PATTERN);
   if (!match) return null;
 
-  const inviteCode = decodeURIComponent(match[2] || '').toLocaleUpperCase('en-US');
+  let decodedInviteCode: string;
+  try {
+    decodedInviteCode = decodeURIComponent(match[2] || '');
+  } catch {
+    return null;
+  }
+  const inviteCode = decodedInviteCode.toLocaleUpperCase('en-US');
   if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
 
   const serverPath = match[1] || '';

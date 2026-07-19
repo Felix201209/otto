@@ -1,16 +1,15 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * v1.8.5 本地测试通道。
+ * 可逆的内部测试通道。
  *
- * 这里只绕过客户端登录页，不创建服务端会话，也不伪造管理员权限。等新企业
- * Microservice 提供 HTTPS、版本化健康检查和稳定协议后，将此常量改为 false
- * 即可恢复原有账号密码 / 邀请码注册流程。
+ * 这里只能在显式启用时绕过客户端登录页，不创建服务端会话，也不伪造管理员
+ * 权限。交付版本默认关闭，使用真实账号密码 / 邀请码注册流程。
  */
 
 import type { EnterpriseAccount } from '../preload/index.js';
 
-export const INTERNAL_TEST_ACCESS_ENABLED = true;
+export { INTERNAL_TEST_ACCESS_ENABLED } from '../main/internal-test-access.js';
 
 export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   id: 'local_internal_test',
@@ -30,3 +29,42 @@ export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   createdAt: '2026-07-18T00:00:00.000Z',
   updatedAt: '2026-07-18T00:00:00.000Z',
 });
+
+export type EnterpriseAccessMode =
+  | 'booting'
+  | 'internal-workspace'
+  | 'registration'
+  | 'login'
+  | 'authenticated-workspace';
+
+/**
+ * “屏蔽登录”是一项可逆的内测入口策略，不是删除认证能力：
+ * - 显式启用的内测包无真实会话时直接进入本地工作区；
+ * - 邀请链接到达时进入注册；
+ * - 已注册账号恢复真实会话并连接企业服务；
+ * - 正式交付包保持原有强制登录门禁。
+ */
+export function resolveEnterpriseAccessMode(input: {
+  internalTestAccessEnabled: boolean;
+  authStatus: 'loading' | 'signed-out' | 'signed-in';
+  hasAccount: boolean;
+  hasRegistrationIntent: boolean;
+}): EnterpriseAccessMode {
+  if (input.hasAccount && input.authStatus === 'signed-in') {
+    return 'authenticated-workspace';
+  }
+  if (input.hasRegistrationIntent) return 'registration';
+  if (input.internalTestAccessEnabled) return 'internal-workspace';
+  if (input.authStatus === 'loading') return 'booting';
+  return 'login';
+}
+
+export function isAuthenticatedEnterpriseAccount(
+  account: EnterpriseAccount | undefined,
+): account is EnterpriseAccount {
+  return Boolean(
+    account
+      && account.id !== INTERNAL_TEST_ACCOUNT.id
+      && account.organizationId !== INTERNAL_TEST_ACCOUNT.organizationId,
+  );
+}

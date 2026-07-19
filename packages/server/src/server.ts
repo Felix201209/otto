@@ -67,6 +67,7 @@ import {
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
 import {
   buildAgentProfileRuntimeRules,
+  buildEnterpriseWorkspaceContext,
   resolveAgentProfile,
 } from './agentProfiles.js';
 import {
@@ -184,6 +185,7 @@ export type RuntimeFactory = (
   store: SessionStore,
   sessionId: string,
   model: string | undefined,
+  workspaceContext?: string,
 ) => Promise<SessionRuntime>;
 
 /**
@@ -203,23 +205,27 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   store,
   sessionId,
   model,
+  workspaceContext,
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
+  let userRules = '';
+  if (profile) {
+    userRules = buildAgentProfileRuntimeRules(
+      profile,
+      loadBuiltinSkillInstructions,
+    );
+  }
+  if (workspaceContext) {
+    userRules = userRules ? `${userRules}\n\n${workspaceContext}` : workspaceContext;
+  }
   const config = createCoreConfig({
     sessionId,
     // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
-    ...(profile
-      ? {
-          userRules: buildAgentProfileRuntimeRules(
-            profile,
-            loadBuiltinSkillInstructions,
-          ),
-        }
-      : {}),
+    ...(userRules ? { userRules } : {}),
     ...(summary?.productEdition !== 'enterprise'
       ? {
           excludeTools: [
@@ -2863,9 +2869,12 @@ export class OttoServer {
 
     const summary = this.store.getSession(sessionId);
     const model = summary?.model;
+    const workspaceContext = summary?.productEdition === 'enterprise'
+      ? buildEnterpriseWorkspaceContext(this.productWorkspace.snapshot())
+      : '';
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
-        const runtime = await this.runtimeFactory(this.store, sessionId, model);
+        const runtime = await this.runtimeFactory(this.store, sessionId, model, workspaceContext);
         runtime.setAuthorizationMode?.(
           this.sessionAuthorizationModes.get(sessionId) ??
             this.globalAuthorizationMode,

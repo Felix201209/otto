@@ -243,10 +243,10 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     const client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
-      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-work' },
     });
     const created = await client.waitFor(
-      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     if (created.type !== 'session_upsert') throw new Error('unreachable');
     const sessionId = created.payload.session.sessionId;

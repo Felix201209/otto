@@ -31,6 +31,8 @@ import {
 import { MCPResponseGuard } from '../services/mcpResponseGuard.js';
 import type { HookEventHandler } from '../hooks/hookEventHandler.js';
 import { getWorkLogger, inferCategory, describeAction } from '../orchestration/workLog.js';
+import { getRealtimeWatcher } from '../orchestration/autoSkillGenerator.js';
+import { getHabitAnalyzer } from '../orchestration/habitAnalyzer.js';
 import { getAuditLogger } from '../orchestration/auditLog.js';
 import { getSkillShareManager } from '../orchestration/skillShare.js';
 
@@ -42,6 +44,30 @@ import {
   modifyWithEditor,
 } from '../tools/modifiable-tool.js';
 import { FileOperationQueue } from '../services/fileOperationQueue.js';
+
+function feedAutoSkillSignals(record: {
+  action: string;
+  category: string;
+  success: boolean;
+  durationMs?: number;
+  details?: string;
+  toolName: string;
+}): void {
+  try {
+    getRealtimeWatcher()?.record?.(record.action, record.details);
+  } catch { /* AutoSkill signals are best-effort. */ }
+  try {
+    getHabitAnalyzer().feed({
+      action: record.action,
+      category: record.category,
+      success: record.success,
+      durationMs: record.durationMs,
+      details: record.details,
+      timestamp: new Date().toISOString(),
+      toolName: record.toolName,
+    });
+  } catch { /* Habit analysis must never affect tool execution. */ }
+}
 
 /**
  * 工具调用的 Agent 上下文信息
@@ -1119,15 +1145,25 @@ export class ToolExecutionEngine {
       // 📋 记录工作日志
       try {
         const logger = getWorkLogger();
+        const action = describeAction(reqInfo.name, reqInfo.args);
+        const category = inferCategory(reqInfo.name, reqInfo.args);
+        const details = typeof toolResult.llmContent === 'string'
+          ? toolResult.llmContent.substring(0, 200)
+          : undefined;
         logger.log({
           toolName: reqInfo.name,
-          action: describeAction(reqInfo.name, reqInfo.args),
-          category: inferCategory(reqInfo.name, reqInfo.args),
+          action,
+          category,
           success: true,
-          details: typeof toolResult.llmContent === 'string'
-            ? toolResult.llmContent.substring(0, 200)
-            : undefined,
+          details,
         }).catch(() => {});
+        feedAutoSkillSignals({
+          toolName: reqInfo.name,
+          action,
+          category,
+          success: true,
+          details,
+        });
       } catch { /* 工作日志失败不影响主流程 */ }
 
       // 📊 记录 Skill 使用统计（用于排行榜使用率）
@@ -1178,13 +1214,23 @@ export class ToolExecutionEngine {
       // 📋 记录工作日志（失败操作）
       try {
         const logger = getWorkLogger();
+        const action = describeAction(reqInfo.name, reqInfo.args);
+        const category = inferCategory(reqInfo.name, reqInfo.args);
+        const details = response.error?.message?.substring(0, 200);
         logger.log({
           toolName: reqInfo.name,
-          action: describeAction(reqInfo.name, reqInfo.args),
-          category: inferCategory(reqInfo.name, reqInfo.args),
+          action,
+          category,
           success: false,
-          details: response.error?.message?.substring(0, 200),
+          details,
         }).catch(() => {});
+        feedAutoSkillSignals({
+          toolName: reqInfo.name,
+          action,
+          category,
+          success: false,
+          details,
+        });
       } catch { /* 工作日志失败不影响主流程 */ }
 
       // 📊 记录 Skill 使用统计（失败也计）

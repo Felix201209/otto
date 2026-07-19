@@ -7,13 +7,11 @@ import { BUILTIN_AGENT_PROFILES, resolveAgentProfile } from './agentProfiles.js'
 
 describe('服务端 Agent profile 白名单', () => {
   it('覆盖个人 Otto、企业助手、统一会议 Agent、8 位通用专家和六部门各 4 个 profile', () => {
-    expect(BUILTIN_AGENT_PROFILES).toHaveLength(36);
-    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(12);
-    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'department')).toHaveLength(24);
+    expect(BUILTIN_AGENT_PROFILES).toHaveLength(11);
+    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(11);
+    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'department')).toHaveLength(0);
     expect(resolveAgentProfile('otto-personal')).toMatchObject({ edition: 'personal' });
-    expect(resolveAgentProfile('otto-enterprise-ceo')).toMatchObject({
-      name: 'CEO Agent', edition: 'enterprise', roles: ['company_owner', 'company_admin'],
-    });
+    expect(resolveAgentProfile('otto-enterprise-ceo')).toBeUndefined();
     expect(resolveAgentProfile('otto-enterprise-work')).toMatchObject({ edition: 'enterprise' });
     expect(resolveAgentProfile('self-development')).toMatchObject({
       edition: 'both',
@@ -28,6 +26,7 @@ describe('服务端 Agent profile 白名单', () => {
     expect(resolveAgentProfile('meeting')).toMatchObject({
       name: '会议 Agent',
       skills: ['meeting-scheduler', 'meeting-notes'],
+      embeddedSkills: ['meeting-scheduler', 'meeting-notes'],
       systemPrompt: expect.stringContaining('会议'),
     });
     expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('纪要');
@@ -108,6 +107,18 @@ describe('服务端 Agent profile 白名单', () => {
     expect(pdf?.systemPrompt).toContain('create_pdf.py');
     expect(pdf?.systemPrompt).toContain('merge_pdf');
     expect(pdf?.systemPrompt).toContain('禁止');
+
+    const copy = resolveAgentProfile('copy');
+    expect(copy?.embeddedSkills).toEqual(['copywriting']);
+    expect(copy?.systemPrompt).toContain('ask_user_question');
+    expect(copy?.systemPrompt).toContain('copywriting');
+    expect(copy?.systemPrompt).toContain('CTA');
+
+    const research = resolveAgentProfile('research');
+    expect(research?.embeddedSkills).toEqual(['market-research']);
+    expect(research?.systemPrompt).toContain('ask_user_question');
+    expect(research?.systemPrompt).toContain('market-research');
+    expect(research?.systemPrompt).toContain('SWOT');
   });
 
   it('每个专家都有对应身份的简短欢迎语', () => {

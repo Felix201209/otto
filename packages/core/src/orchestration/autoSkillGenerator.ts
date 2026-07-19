@@ -283,22 +283,27 @@ export async function generateSkillCandidates(
   const allEntries: Array<{ date: string; entry: WorkLogEntry }> = [];
   for (const [date, entries] of Object.entries(dateRange)) {
     for (const entry of entries) {
-      if (entry.success && entry.entryType !== 'work_result') {
+      if (entry.success) {
         allEntries.push({ date, entry });
       }
     }
   }
+
+  const rejected = await getRejectedSkills();
+  const skillsDir = getSkillsDir(config);
+  const workResultCandidates = await generateWorkResultSkillCandidates(
+    allEntries,
+    rejected,
+    skillsDir,
+  );
 
   // N-gram 预筛：至少检出基础模式才继续（纯随机操作不调 LLM）
   const patterns = await detectPatterns(options);
   // detectPatterns 已按 minOccurrences 过滤每个模式；这里应判断是否存在
   // 合格模式，而不是误把“不同模式的数量”当作“单个模式的出现次数”。
   if (patterns.length === 0) {
-    return [];
+    return workResultCandidates;
   }
-
-  const rejected = await getRejectedSkills();
-  const skillsDir = getSkillsDir(config);
 
   // ── 调 LLM 做语义分析 ──────────────────────────────────────
   try {
@@ -309,7 +314,9 @@ export async function generateSkillCandidates(
       rejected,
       skillsDir,
     );
-    if (llmCandidates.length > 0) return llmCandidates;
+    if (llmCandidates.length > 0) {
+      return mergeSkillCandidates(llmCandidates, workResultCandidates);
+    }
   } catch (err) {
     console.warn(
       `[AutoSkill] LLM analysis failed, falling back to template: ${err instanceof Error ? err.message : String(err)}`,
@@ -337,7 +344,143 @@ export async function generateSkillCandidates(
       filePath,
     });
   }
-  return candidates;
+  return mergeSkillCandidates(candidates, workResultCandidates);
+}
+
+function mergeSkillCandidates(
+  primary: SkillCandidate[],
+  secondary: SkillCandidate[],
+): SkillCandidate[] {
+  const seen = new Set<string>();
+  const merged: SkillCandidate[] = [];
+  for (const candidate of [...primary, ...secondary]) {
+    const key = candidate.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(candidate);
+  }
+  return merged.slice(0, 5);
+}
+
+async function generateWorkResultSkillCandidates(
+  entries: Array<{ date: string; entry: WorkLogEntry }>,
+  rejected: Set<string>,
+  skillsDir: string,
+): Promise<SkillCandidate[]> {
+  const workResults = entries.filter(({ entry }) =>
+    entry.entryType === 'work_result'
+    && entry.success
+    && (entry.taskTitle || entry.userInput || entry.action)
+  );
+  const groups = new Map<string, Array<{ date: string; entry: WorkLogEntry }>>();
+  for (const item of workResults) {
+    const signature = workResultSignature(item.entry);
+    if (!signature) continue;
+    const current = groups.get(signature) ?? [];
+    current.push(item);
+    groups.set(signature, current);
+  }
+
+  const candidates: SkillCandidate[] = [];
+  for (const [signature, samples] of groups.entries()) {
+    const dates = new Set(samples.map((sample) => sample.date));
+    if (samples.length < 3 || dates.size < 2) continue;
+    const name = `auto-${signature}`;
+    const filePath = path.join(skillsDir, name, 'SKILL.md');
+    if (rejected.has(name) || await fileExists(filePath)) continue;
+    const sortedSamples = samples.sort((a, b) => a.date.localeCompare(b.date));
+    const title = workResultTitle(sortedSamples.map((sample) => sample.entry));
+    const skillContent = generateWorkResultSkillContent(name, title, sortedSamples);
+    candidates.push({
+      id: `auto_skill_${createHash('sha256').update(`work-result:${signature}`).digest('hex').slice(0, 16)}`,
+      name,
+      description: `从反复完成的业务成果中沉淀：${title}`,
+      triggerPatterns: [...new Set(sortedSamples.map((sample) =>
+        sample.entry.taskTitle || sample.entry.action,
+      ))].slice(0, 3),
+      detectedPattern: title,
+      occurrenceCount: samples.length,
+      sampleEntries: sortedSamples.slice(-5).map((sample) => sample.entry),
+      skillContent,
+      reason: `检测到你最近多次让 Otto 完成「${title}」类成果，跨 ${dates.size} 天出现 ${samples.length} 次。生成 Skill 后，Otto 会复用你的常见输入、交付格式和验收步骤。`,
+      filePath,
+    });
+  }
+
+  return candidates
+    .sort((a, b) => b.occurrenceCount - a.occurrenceCount)
+    .slice(0, 3);
+}
+
+function workResultSignature(entry: WorkLogEntry): string {
+  const text = `${entry.category} ${entry.taskTitle || ''} ${entry.userInput || ''} ${entry.action || ''}`.toLowerCase();
+  const bucket =
+    /ppt|幻灯片|演示|路演/.test(text) ? 'ppt-delivery'
+    : /文案|品牌|营销|slogan|落地页|小红书/.test(text) ? 'copywriting'
+      : /竞品|调研|市场|swot|行业/.test(text) ? 'market-research'
+        : /word|公文|文档|报告|方案|纪要/.test(text) ? 'doc-delivery'
+          : /pdf|合并|拆分|提取|ocr/.test(text) ? 'pdf-delivery'
+            : /excel|csv|表格|数据|透视|看板/.test(text) ? 'sheet-analysis'
+              : /会议|纪要|转写|待办/.test(text) ? 'meeting-workflow'
+                : /代码|修复|开发|测试|构建/.test(text) ? 'code-workflow'
+                  : `${entry.category || 'general'}-workflow`;
+  return bucket.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function workResultTitle(entries: WorkLogEntry[]): string {
+  const titles = entries
+    .map((entry) => entry.taskTitle || entry.action)
+    .map((title) => title.trim())
+    .filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const title of titles) counts.set(title, (counts.get(title) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '复用工作流';
+}
+
+function generateWorkResultSkillContent(
+  skillName: string,
+  title: string,
+  samples: Array<{ date: string; entry: WorkLogEntry }>,
+): string {
+  const sampleLines = samples.slice(-5).map(({ date, entry }) => {
+    const input = (entry.userInput || entry.action || '').replace(/\s+/g, ' ').slice(0, 180);
+    return `- ${date}: ${input}`;
+  });
+  const categories = [...new Set(samples.map((sample) => sample.entry.category))].join('、') || 'other';
+  return [
+    '---',
+    `name: ${skillName}`,
+    `description: Otto 从用户反复完成的「${title}」类业务成果中自动沉淀的工作流。`,
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    '> 这个 Skill 来自 Otto 对工作成果日志的自动分析。它不是单个工具步骤，而是用户反复需要的业务交付流程。',
+    '',
+    '## 触发场景',
+    `当用户提出与「${title}」相近的需求，或需要同类 ${categories} 交付物时，优先使用本 Skill。`,
+    '',
+    '## 已观察到的典型需求',
+    ...sampleLines,
+    '',
+    '## 工作流程',
+    '1. 先复述用户目标，并确认交付物类型、受众、使用场景和截止要求。',
+    '2. 如果用户只给了主题，不继续追问开放题；先给 3-4 个可点击选项，帮助用户选择风格、深度、输出形态和验收标准。',
+    '3. 读取或确认必要输入，包括源文件、数据范围、品牌素材、目标对象、已有草稿和不可编造的事实边界。',
+    '4. 按同类历史成果的结构生成可直接使用的成品，而不是只给建议。',
+    '5. 对数字、引用、来源、文件路径和输出文件进行核验；缺失信息标为待确认。',
+    '6. 最后输出简短交付说明：完成了什么、文件在哪里、哪些点需要用户确认、下次如何复用。',
+    '',
+    '## 质量要求',
+    '- 不覆盖用户原文件，除非用户明确要求。',
+    '- 涉及外发、花钱、改企业数据或影响他人的动作，必须先展示最终内容并取得确认。',
+    '- 保留用户偏好的结构、语气、篇幅和交付格式；如果本次需求冲突，以本次用户选择为准。',
+    '- 如果无法真实生成文件或完成操作，要明确说明卡在哪一步，不编造结果。',
+    '',
+    '## 输出格式',
+    '交付成品 + 简短说明 + 待确认项。能生成文件时直接生成文件；不能生成时给出可复制的完整内容。',
+    '',
+  ].join('\n');
 }
 
 // ── 日志预分析（给 LLM 喂结构化的质量数据，而不是扔原始日志让它猜）──
@@ -503,8 +646,12 @@ async function callLLMForSkillCandidates(
   const entrySummaries = allEntries
     .slice(-200)
     .map(
-      ({ date, entry }) =>
-        `[${date}] ${entry.category} | ${entry.action}${entry.details ? ` | ${entry.details.slice(0, 100)}` : ''}${entry.success ? '' : ' ⚠️失败'}`,
+      ({ date, entry }) => {
+        const resultContext = entry.entryType === 'work_result'
+          ? ` | 成果:${entry.taskTitle || entry.action} | 需求:${(entry.userInput || '').replace(/\s+/g, ' ').slice(0, 140)}`
+          : '';
+        return `[${date}] ${entry.entryType || 'tool'} | ${entry.category} | ${entry.action}${resultContext}${entry.details ? ` | ${entry.details.slice(0, 100)}` : ''}${entry.success ? '' : ' ⚠️失败'}`;
+      },
     );
 
   const analyticsSection = analytics.length > 0

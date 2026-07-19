@@ -1,8 +1,10 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * v1.8.6 内部测试总开关。该模块不依赖 Node API，main 与 renderer 共用：
- * renderer 屏蔽登录界面，main 同时 fail closed，禁止恢复旧企业会话或向外上报。
+ * 企业内测通道总开关。该模块不依赖 Node API，main 与 renderer 共用。
+ *
+ * 交付版本默认关闭，恢复真实登录、邀请注册和企业会话；代码保留，便于需要时
+ * 构建明确标记的内部免登录测试包，而不是删除认证能力。
  */
 
-export const INTERNAL_TEST_ACCESS_ENABLED = true;
+export const INTERNAL_TEST_ACCESS_ENABLED = false;

@@ -39,6 +39,8 @@ import {
   fixAllFunctionCalls,
   appearIncompleteFromStreaming,
   getWorkLogger,
+  getHabitAnalyzer,
+  getRealtimeWatcher,
   generateCustomModelId,
   loadBuiltinSkillInstructions,
   MODEL_SERVICE_URL_UNAVAILABLE,
@@ -1251,19 +1253,34 @@ export class CoreSessionRuntime implements SessionRuntime {
       userInput,
     );
     try {
+      const category = inferWorkResultCategory(
+        `${taskTitle} ${userInput} ${result}`,
+      );
+      const details = result.slice(0, 8_000);
       await this.workLogger.log({
         toolName: 'otto_work_result',
         action: taskTitle,
-        category: inferWorkResultCategory(
-          `${taskTitle} ${userInput} ${result}`,
-        ),
+        category,
         success: true,
         entryType: 'work_result',
         taskTitle,
         userInput: userInput.slice(0, 2_000),
-        details: result.slice(0, 8_000),
+        details,
         sessionId: this.sessionId,
       });
+      try {
+        getRealtimeWatcher()?.record?.(taskTitle, userInput.slice(0, 500));
+      } catch { /* AutoSkill realtime signals are best-effort. */ }
+      try {
+        getHabitAnalyzer().feed({
+          action: taskTitle,
+          category,
+          success: true,
+          details: details.slice(0, 500),
+          timestamp: new Date().toISOString(),
+          toolName: 'otto_work_result',
+        });
+      } catch { /* Habit analysis must not affect chat completion. */ }
     } catch {
       // 工作日志不可用不应让已完成的对话变成失败。
     }

@@ -66,6 +66,14 @@ export function isRegistrationReady(input: {
     && /^\d{6}$/.test(input.code);
 }
 
+function enterpriseServerHost(serverUrl: string): string {
+  try {
+    return new URL(serverUrl).host || serverUrl.trim();
+  } catch {
+    return serverUrl.trim();
+  }
+}
+
 // Typewriter timing adapted from 21st.dev by designali-in (MIT), with reduced-motion handling.
 function CapabilityTypewriter(): React.JSX.Element {
   const [frame, setFrame] = useState<TypewriterFrame>({ phraseIndex: 0, charIndex: 0, deleting: false });
@@ -144,6 +152,7 @@ export function EnterpriseLoginPage({
   const requestEpochRef = useRef(0);
   const submitLockedRef = useRef(false);
   const formPending = busy || submitting;
+  const serverHost = enterpriseServerHost(initialServerUrl);
 
   useEffect(() => {
     if (!initialInviteCode) return;
@@ -278,6 +287,14 @@ export function EnterpriseLoginPage({
             <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
             <b>{mode === 'register' ? 'NEW ACCOUNT' : 'AUTHORIZED'}</b>
           </header>
+          <div
+            className="otto-auth-server"
+            aria-label="当前企业服务器"
+            title={initialServerUrl.trim()}
+          >
+            <span>当前企业服务器</span>
+            <strong>{serverHost}</strong>
+          </div>
           <div className="otto-auth-card__topline">
             <span className="otto-auth-status-dot" />
             {mode === 'register' ? '首次注册身份核验' : '此设备将安全保持登录'}

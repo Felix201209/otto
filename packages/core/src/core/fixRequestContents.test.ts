@@ -110,7 +110,7 @@ describe('OttoChat.fixRequestContents', () => {
       expect(result).toEqual(input);
     });
 
-    it('ID 不匹配的 response 应该被认为是未匹配（cancel 补全后与原 response 合并）', () => {
+    it('ID 不匹配的 response 应该被认为是孤立项并移除', () => {
       const input: Content[] = [
         {
           role: MESSAGE_ROLES.MODEL,
@@ -126,9 +126,8 @@ describe('OttoChat.fixRequestContents', () => {
 
       // 业务行为：
       //   - call(abc123) 没有匹配响应 → 补 user(cancel id=abc123)
-      //   - 原 response(xyz789) 名字仍是 'search'，final 清理阶段用“id或name任一匹配” 保留了它
-          //     （这不是 bug：是为了容忍部分模型丢失 ID、或 ID 变形返回的场景）
-      //   - 两条 user 被合并为一条，parts=[cancel(abc123), original(xyz789)]
+      //   - 原 response(xyz789) 与调用 ID 不一致，只靠同名不能再消耗同一 call 两次
+      //   - 最终仅保留合法的 cancel，避免上游收到一对多的工具结果后返回 400
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual(input[0]);
       expect(result[1].role).toBe(MESSAGE_ROLES.USER);
@@ -139,12 +138,11 @@ describe('OttoChat.fixRequestContents', () => {
             id: 'abc123',
             response: { result: 'user cancel' }
           }
-        },
-        { functionResponse: { name: 'search', id: 'xyz789', response: { result: '晴天' } } }
+        }
       ]);
     });
 
-    it('name 不匹配的 response 应该被认为是未匹配（cancel 补全后与原 response 合并）', () => {
+    it('name 不匹配的 response 应该被认为是孤立项并移除', () => {
       const input: Content[] = [
         {
           role: MESSAGE_ROLES.MODEL,
@@ -160,10 +158,8 @@ describe('OttoChat.fixRequestContents', () => {
 
       // 业务行为：
       //   - call(search/abc123) 没匹配响应 → 补 user(cancel name=search id=abc123)
-      //   - 原 response(calculate/abc123) 使用 ID abc123，final 清理阶段“id或name”任一匹配 → 保留
-      //   - 两条 user 合并。这表明：模糊匹配是“宽进严出”，
-      //     只要 ID 同、哪怕 name 不同，上游依然可能看到“你调的 search，却返回了 calculate 的结果”，
-      //     但这是历史实现选择的容错。
+      //   - 原 response(calculate/abc123) 名称不一致，不得复用 search 的 call ID
+      //   - 最终仅保留合法的 cancel，保证 name 与 id 都能对应到原调用
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual(input[0]);
       expect(result[1].role).toBe(MESSAGE_ROLES.USER);
@@ -174,8 +170,7 @@ describe('OttoChat.fixRequestContents', () => {
             id: 'abc123',
             response: { result: 'user cancel' }
           }
-        },
-        { functionResponse: { name: 'calculate', id: 'abc123', response: { result: '42' } } }
+        }
       ]);
     });
   });

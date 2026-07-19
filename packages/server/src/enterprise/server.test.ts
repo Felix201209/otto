@@ -84,6 +84,69 @@ afterEach(async () => {
   }
 });
 
+describe('本地 Agent 配对路由默认关闭', { timeout: 15_000 }, () => {
+  it('默认对 SDK、检测页、令牌生成与验证统一返回 404', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const requests: Array<[string, RequestInit | undefined]> = [
+      ['/enterprise/sdk/otto-discovery.js', undefined],
+      ['/enterprise/local-agent', undefined],
+      ['/enterprise/local-agent/pair', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instanceId: 'test-instance' }),
+      }],
+      ['/enterprise/local-agent/pair/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: 'ABCDEF' }),
+      }],
+    ];
+
+    for (const [route, init] of requests) {
+      const res = await fetch(`${base}${route}`, init);
+      await res.arrayBuffer();
+      expect(res.status, `${route} 应默认隐藏`).toBe(404);
+    }
+  });
+
+  it('只有显式启用时才保留 SDK、检测页与一次性令牌验证链路', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      localAgentPairingEnabled: true,
+    });
+
+    const sdk = await fetch(`${base}/enterprise/sdk/otto-discovery.js`);
+    expect(sdk.status).toBe(200);
+    expect(sdk.headers.get('content-type')).toContain('application/javascript');
+
+    const page = await fetch(`${base}/enterprise/local-agent`);
+    expect(page.status).toBe(200);
+
+    const pair = await fetch(`${base}/enterprise/local-agent/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ instanceId: 'test-instance' }),
+    });
+    expect(pair.status).toBe(200);
+    const pairBody = await pair.json() as {
+      data: { token: string };
+    };
+
+    const verify = await fetch(`${base}/enterprise/local-agent/pair/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: pairBody.data.token }),
+    });
+    expect(verify.status).toBe(200);
+    await expect(verify.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        verified: true,
+        instanceId: 'test-instance',
+      },
+    });
+  });
+});
+
 // 首个用例会动态加载完整企业服务模块；并行全量回归时冷启动可能超过 Vitest
 // 默认 5 秒。给隔离服务套件留出确定余量，避免把模块编译争用误报成鉴权失败。
 describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }, () => {
@@ -1042,6 +1105,30 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       tags: ['普通成员'],
     });
     expect(registered.token).toEqual(expect.any(String));
+
+    const registeredSession = await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${registered.token}` },
+    });
+    expect(registeredSession.status).toBe(200);
+    expect((await registeredSession.json()).account).toMatchObject({
+      id: registered.account.id,
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+    });
+
+    const organizationView = await fetch(`${base}/enterprise/organization/view`, {
+      headers: { authorization: `Bearer ${registered.token}` },
+    });
+    expect(organizationView.status).toBe(200);
+    expect(await organizationView.json()).toMatchObject({
+      organization: { id: db.DEFAULT_ORGANIZATION_ID, name: '默认企业' },
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          id: registered.account.id,
+          name: '王小明',
+          department: null,
+        }),
+      ]),
+    });
 
     const adminDenied = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${registered.token}` },

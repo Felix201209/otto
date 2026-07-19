@@ -40,7 +40,6 @@ import { IconSettings, IconChevron, IconClose } from './icons.js';
 import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 import { SearchPanel } from './hub/SearchPanel.js';
-import { INTERNAL_TEST_ACCESS_ENABLED } from '../internal-test-access.js';
 
 export type TabId =
   | 'prefs'
@@ -62,11 +61,14 @@ export type TabId =
   | 'ide';
 
 /**
- * 内测包暂不暴露尚未完成真实配对闭环的本机 Agent 入口。
- * 保留 tab 与组件代码，后续配对协议就绪后只需关闭内测开关即可恢复。
+ * 配对令牌验证已接通，但还没有持久化企业地址、建立企业会话或绑定当前账号，
+ * 因此正式交付版继续隐藏入口。保留 tab 与组件代码，等完整配对闭环上线后
+ * 只需单独打开此功能开关，不能再与“是否显示登录页”的开关耦合。
  */
+const ENTERPRISE_LOCAL_AGENT_PAIRING_ENABLED = false;
+
 export function isSettingsTabVisible(tab: TabId): boolean {
-  return !(INTERNAL_TEST_ACCESS_ENABLED && tab === 'local-agent');
+  return tab !== 'local-agent' || ENTERPRISE_LOCAL_AGENT_PAIRING_ENABLED;
 }
 
 /** 防止斜杠命令或旧的导航状态绕过隐藏入口。 */
