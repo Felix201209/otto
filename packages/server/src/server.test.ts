@@ -380,13 +380,13 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     const client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
-      payload: { title: '发起会议', agentProfileId: 'meeting-initiator' },
+      payload: { title: '会议', agentProfileId: 'meeting' },
     });
     const created = await client.waitFor((f) => f.type === 'session_upsert');
     if (created.type !== 'session_upsert') throw new Error('unreachable');
     expect(created.payload.session).toMatchObject({
-      agentProfileId: 'meeting-initiator',
-      agentProfileName: '会议发起 Agent',
+      agentProfileId: 'meeting',
+      agentProfileName: '会议 Agent',
       productEdition: 'personal',
     });
 

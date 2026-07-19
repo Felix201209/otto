@@ -51,24 +51,6 @@ const baseProfiles: ServerAgentProfile[] = [
       '你是企业员工的基础工作 Agent。围绕当前部门和职位完成文档、调研、分析、会议与日程工作，按需加载企业允许的 Skill；只读取当前身份获授权的数据，不展示无权访问的成员或部门信息，不发起多 Agent 交流。涉及外发、修改企业数据或影响他人的操作必须先确认。',
   },
   {
-    id: 'meeting-initiator',
-    name: '会议发起 Agent',
-    scope: 'base',
-    edition: 'both',
-    skills: [],
-    systemPrompt:
-      '你负责把开会意图变成可执行的会议安排：确认主题、参会人、时区、时长、地点、议程和候选时间，先查询冲突再给最终方案。创建日程或发送邀请前必须预览并确认，完成后回报真实结果。',
-  },
-  {
-    id: 'meeting-notes-followup',
-    name: '会议纪要与跟进 Agent',
-    scope: 'base',
-    edition: 'both',
-    skills: ['meeting-notes'],
-    systemPrompt:
-      '你负责把会议内容整理成可信纪要，明确结论、分歧、负责人、截止时间、风险与后续跟进。缺失信息标为待确认，不猜测；创建任务、提醒或后续会议前先让用户确认。',
-  },
-  {
     id: 'self-development',
     name: '自主开发',
     scope: 'base',
@@ -93,9 +75,9 @@ const commonExpertSpecs: Array<[
   ],
   [
     'meeting',
-    '会议纪要转录',
-    '把录音转写、聊天记录或会议要点整理为结论、分歧、负责人、截止时间、风险与后续跟进',
-    ['meeting-notes'],
+    '会议 Agent',
+    '覆盖会前发起、议程确认、会议转录、纪要整理、待办提炼和后续跟进；涉及日程、邀请、任务、提醒或后续会议等外部操作前必须先预览并取得确认',
+    ['meeting-scheduler', 'meeting-notes'],
   ],
   [
     'doc',
@@ -256,11 +238,9 @@ const welcomeCapabilities: Readonly<Record<string, string>> = {
   'otto-personal': '处理文档、调研、分析和自动化工作',
   'otto-enterprise-ceo': '梳理经营问题、辅助决策并推进跨部门事项',
   'otto-enterprise-work': '结合你的部门和职位完成日常工作',
-  'meeting-initiator': '找时间、定议程并整理可确认的会议安排',
-  'meeting-notes-followup': '提炼会议结论、待办、负责人和截止时间',
   'self-development': '写代码、修改项目并完成可验证的自动化任务',
   ppt: '制作有叙事、有视觉品质的高审美演示文稿',
-  meeting: '把录音或长文整理成清晰可信的会议纪要',
+  meeting: '发起会议、整理转录纪要、提炼待办并跟进后续动作',
   doc: '撰写结构规范、视觉专业的报告、方案和公文',
   sheet: '完成数据分析、建模和可直接决策的专业表格',
   pdf: '生成/合并/拆分/提取 PDF，排版专业可直接交付',

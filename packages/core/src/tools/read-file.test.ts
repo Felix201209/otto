@@ -10,6 +10,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import fsp from 'fs/promises';
+import JSZip from 'jszip';
 import { Config } from '../config/config.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 
@@ -38,6 +39,46 @@ describe('ReadFileTool', () => {
       await fsp.rm(tempRootDir, { recursive: true, force: true });
     }
   });
+
+  async function createDocxFile(filePath: string, paragraphs: string[]) {
+    const zip = new JSZip();
+    zip.file(
+      '[Content_Types].xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+    );
+    zip.folder('_rels')?.file(
+      '.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+    );
+    const body = paragraphs
+      .map(
+        (paragraph) =>
+          `<w:p><w:r><w:t>${paragraph
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')}</w:t></w:r></w:p>`,
+      )
+      .join('');
+    zip.folder('word')?.file(
+      'document.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>${body}</w:body>
+</w:document>`,
+    );
+
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
+    await fsp.writeFile(filePath, buffer);
+  }
 
   describe('validateToolParams', () => {
     it('should return null for valid params (absolute path within root)', () => {
@@ -212,6 +253,60 @@ describe('ReadFileTool', () => {
         ].join('\n'),
         returnDisplay: 'read lines: 6-8',
       });
+    });
+
+    it('should read all paragraphs from a Word document', async () => {
+      const filePath = path.join(tempRootDir, 'report.docx');
+      const longChineseParagraph = '这是一个没有英文空格的中文长段落'.repeat(
+        80,
+      );
+      const paragraphs = [
+        '第一段：标题',
+        longChineseParagraph,
+        ...Array.from(
+          { length: 10 },
+          (_, index) => `第${index + 3}段：后续内容-${index}`,
+        ),
+      ];
+      await createDocxFile(filePath, paragraphs);
+
+      const result = await tool.execute(
+        { absolute_path: filePath },
+        abortSignal,
+      );
+      const content = String(result.llmContent);
+
+      expect(content).toContain('第一段：标题');
+      expect(content).toContain(longChineseParagraph);
+      expect(content).toContain('第12段：后续内容-9');
+      expect(content).not.toContain('[Word content truncated');
+    });
+
+    it('should read an external Word document without forwarding to read_many_files', async () => {
+      const externalDir = await fsp.mkdtemp(
+        path.join(os.tmpdir(), 'read-file-tool-external-'),
+      );
+      const externalPath = path.join(externalDir, 'external-report.docx');
+      const paragraphs = [
+        '外部文档第一段',
+        ...Array.from({ length: 11 }, (_, index) => `外部文档第${index + 2}段`),
+      ];
+      await createDocxFile(externalPath, paragraphs);
+
+      try {
+        const result = await tool.execute(
+          { absolute_path: externalPath },
+          abortSignal,
+        );
+        const content = String(result.llmContent);
+
+        expect(content).toContain('Word document content from');
+        expect(content).toContain('外部文档第一段');
+        expect(content).toContain('外部文档第12段');
+        expect(content).not.toContain('ReadManyFiles Result');
+      } finally {
+        await fsp.rm(externalDir, { recursive: true, force: true });
+      }
     });
 
     describe('with .ottoignore', () => {

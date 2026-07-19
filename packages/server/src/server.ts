@@ -1653,6 +1653,14 @@ export class OttoServer {
     if (path === HTTP_ROUTES.health) {
       return sendJson(res, 200, ok(this.health()));
     }
+    if (path === '/' || path === '/index.html') {
+      void this.serveBrowserApp(res);
+      return;
+    }
+    if (path === '/main.js') {
+      void this.serveRendererAsset(res, 'main.js', 'application/javascript; charset=utf-8');
+      return;
+    }
     // 跨域探测接口：企业服务器网页检测本地 otto（只读，最小化响应）
     if (path === HTTP_ROUTES.localAgentPing) {
       if (req.method === 'OPTIONS') {
@@ -1732,6 +1740,45 @@ export class OttoServer {
     }
 
     sendJson(res, 404, err('not_found'));
+  }
+
+  private async serveBrowserApp(res: ServerResponse): Promise<void> {
+    try {
+      const html = await this.readRendererAsset('index.html');
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      res.end(html.replace('</head>', `${browserBridgeScript()}\n</head>`));
+    } catch (e) {
+      sendJson(
+        res,
+        500,
+        err(`browser_app_unavailable: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    }
+  }
+
+  private async serveRendererAsset(
+    res: ServerResponse,
+    fileName: string,
+    contentType: string,
+  ): Promise<void> {
+    try {
+      const content = await this.readRendererAsset(fileName);
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store',
+      });
+      res.end(content);
+    } catch {
+      sendJson(res, 404, err('not_found'));
+    }
+  }
+
+  private async readRendererAsset(fileName: string): Promise<string> {
+    const rendererDir = path.resolve(process.cwd(), '..', 'desktop', 'dist', 'renderer');
+    return fs.readFile(path.join(rendererDir, fileName), 'utf8');
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -3150,6 +3197,166 @@ function sendPreflightResponse(
   }
   res.writeHead(204, headers);
   res.end();
+}
+
+function browserBridgeScript(): string {
+  return `<script>
+(() => {
+  const frameHandlers = new Set();
+  const connectionHandlers = new Set();
+  const menuHandlers = new Set();
+  const sendQueue = [];
+  let ws;
+  let wantConnected = false;
+
+  const noopOff = () => {};
+  const notifyConnection = (connected) => {
+    for (const handler of connectionHandlers) {
+      try { handler(connected); } catch {}
+    }
+  };
+  const dispatchFrame = (frame) => {
+    for (const handler of frameHandlers) {
+      try { handler(frame); } catch {}
+    }
+  };
+  const flushQueue = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    while (sendQueue.length > 0) ws.send(JSON.stringify(sendQueue.shift()));
+  };
+  const connect = () => new Promise((resolve) => {
+    wantConnected = true;
+    if (ws && ws.readyState === WebSocket.OPEN) return resolve(true);
+    const socket = new WebSocket('ws://' + location.host + '/ws');
+    ws = socket;
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        type: 'hello',
+        payload: { protocolVersion: '1', clientKind: 'desktop' },
+      }));
+      flushQueue();
+      notifyConnection(true);
+      resolve(true);
+    });
+    socket.addEventListener('message', (event) => {
+      try { dispatchFrame(JSON.parse(String(event.data))); } catch {}
+    });
+    socket.addEventListener('close', () => {
+      if (ws === socket) ws = undefined;
+      notifyConnection(false);
+      if (wantConnected) setTimeout(() => { void connect(); }, 800);
+    });
+    socket.addEventListener('error', () => resolve(false));
+  });
+  const api = async (url, init) => {
+    const res = await fetch(url, init);
+    return res.json();
+  };
+  window.otto = {
+    connect,
+    disconnect() {
+      wantConnected = false;
+      if (ws) ws.close();
+      ws = undefined;
+      notifyConnection(false);
+    },
+    send(frame) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+      else sendQueue.push(frame);
+    },
+    onFrame(handler) {
+      frameHandlers.add(handler);
+      return () => frameHandlers.delete(handler);
+    },
+    onConnectionChange(handler) {
+      connectionHandlers.add(handler);
+      try { handler(!!ws && ws.readyState === WebSocket.OPEN); } catch {}
+      return () => connectionHandlers.delete(handler);
+    },
+    isConnected() {
+      return !!ws && ws.readyState === WebSocket.OPEN;
+    },
+    onMenu(handler) {
+      menuHandlers.add(handler);
+      return () => menuHandlers.delete(handler);
+    },
+    openExternal(url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return Promise.resolve();
+    },
+    openPath() { return Promise.resolve(); },
+    openVideoEditor() { return Promise.resolve({ ok: false }); },
+    saveTextFile(name, content) {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name || 'otto-export.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+      return Promise.resolve(name || null);
+    },
+    feishuStart: () => api('/feishu/start', { method: 'POST' }).then((r) => ({ text: r.error || '已请求启动飞书网关', pid: undefined })),
+    feishuStop: () => api('/feishu/stop', { method: 'POST' }).then((r) => ({ text: r.error || '已请求停止飞书网关' })),
+    feishuStatus: () => api('/health').then((r) => ({
+      text: r.ok ? '本地服务运行中' : (r.error || '本地服务异常'),
+      running: !!r.ok,
+      feishu: r.data && r.data.feishu,
+    })),
+    feishuGetConfig: () => api('/feishu/config').then((r) => ({ ok: !!r.ok, config: r.data || null, error: r.error || null })),
+    feishuSaveConfig: (body) => api('/feishu/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => ({ ok: !!r.ok, config: r.data || null, error: r.error || null })),
+    feishuClearConfig: () => api('/feishu/config', { method: 'DELETE' }).then((r) => ({ ok: !!r.ok, config: r.data || null, error: r.error || null })),
+    parkConfig: () => Promise.resolve(null),
+    themeGet: () => Promise.resolve(localStorage.getItem('otto-theme') || 'system'),
+    themeSet: (value) => {
+      localStorage.setItem('otto-theme', value);
+      document.documentElement.dataset.theme = value;
+      return Promise.resolve(value);
+    },
+    skillLeaderboard: () => Promise.resolve({ leaderboard: '浏览器模式暂未接入排行榜。', starBoard: '', tabs: [] }),
+    workLogToday: () => Promise.resolve({ summary: '浏览器模式暂未接入工作日志。', date: new Date().toISOString().slice(0, 10), totalActions: 0, workResults: 0 }),
+    workLogRecent: () => Promise.resolve([]),
+    workLogReport: () => Promise.resolve({ ok: false, date: new Date().toISOString().slice(0, 10), title: '工作日志', markdown: '', path: '', message: '浏览器模式暂未接入工作日志导出。' }),
+    skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
+    skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
+    setLocalTestUrl: () => Promise.resolve(),
+    appVersion: () => Promise.resolve('1.8.6'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.6', latestVersion: null }),
+    updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
+    updateCancel: () => Promise.resolve(),
+    updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),
+    onUpdateProgress: () => noopOff,
+    voiceGetConfig: () => Promise.resolve({ enabled: false, asrProvider: 'openai', asrEndpoint: '', asrModel: '', volcResourceId: '', polishEnabled: false, polishEndpoint: '', polishModel: '', polishPrompt: '', hasAsrApiKey: false, hasVolcCredentials: false, hasPolishApiKey: false }),
+    voiceSaveConfig: (config) => Promise.resolve({ ...config, hasAsrApiKey: false, hasVolcCredentials: false, hasPolishApiKey: false }),
+    voiceTranscribe: () => Promise.reject(new Error('浏览器模式暂未接入语音转写。')),
+    autoGeneratedAgentProfiles: () => Promise.resolve([]),
+    enterpriseSession: () => Promise.resolve({ serverUrl: '', account: null }),
+    enterprisePasswordLogin: () => Promise.reject(new Error('浏览器模式暂未接入企业登录。')),
+    enterpriseRegistrationRequest: () => Promise.reject(new Error('浏览器模式暂未接入企业注册。')),
+    enterpriseRegistrationIntent: () => Promise.resolve(null),
+    onEnterpriseRegistrationIntent: () => noopOff,
+    onEnterpriseSessionInvalidated: () => noopOff,
+    enterpriseRegister: () => Promise.reject(new Error('浏览器模式暂未接入企业注册。')),
+    enterpriseLogout: () => Promise.resolve(),
+    enterprisePair: () => Promise.resolve({ ok: false, message: '浏览器模式暂未接入企业配对。' }),
+    enterpriseAccounts: () => Promise.resolve([]),
+    enterpriseAccountCreate: () => Promise.reject(new Error('浏览器模式暂未接入企业账号管理。')),
+    enterpriseAccountUpdate: () => Promise.reject(new Error('浏览器模式暂未接入企业账号管理。')),
+    enterpriseUsageRecord: () => Promise.resolve({ recorded: false, source: 'client_reported' }),
+    enterpriseKnowledgeRecord: () => Promise.resolve({ status: 'exists', added: false }),
+    enterpriseOrganizationView: () => Promise.resolve({ organization: null, members: [], employeeCount: 0 }),
+    enterpriseOrganizationInviteGet: () => Promise.resolve({ organization: { id: '', name: '' }, invite: null }),
+    enterpriseOrganizationInviteIssue: () => Promise.reject(new Error('浏览器模式暂未接入企业邀请。')),
+    enterpriseTicketInbox: () => Promise.resolve([]),
+    enterpriseTicketSubmit: () => Promise.reject(new Error('浏览器模式暂未接入工单。')),
+    writeClipboard: (text) => navigator.clipboard ? navigator.clipboard.writeText(text).then(() => true).catch(() => false) : Promise.resolve(false),
+  };
+})();
+</script>`;
 }
 
 /** 读并解析 JSON 请求体（64KB 上限——凭证表单远小于此）。 */

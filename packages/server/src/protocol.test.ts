@@ -406,7 +406,7 @@ describe('validateClientPayload：v1.7 产品工作区', () => {
   it('create_session 只接受字符串 agentProfileId', () => {
     expect(validateClientPayload({
       type: 'create_session',
-      payload: { title: '会议', agentProfileId: 'meeting-initiator' },
+      payload: { title: '会议', agentProfileId: 'meeting' },
     })).toBeNull();
     expect(validateClientPayload({
       type: 'create_session',
