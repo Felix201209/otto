@@ -69,6 +69,13 @@ describe('内置 skill 安全刷新', () => {
       'new-seed-hash',
       'managed-current-hash',
     )).toBe(true);
+    expect(shouldRefreshBuiltinSkill(
+      'doc-writer',
+      '84ed1bbb2eb0251e6e2afcebbcdc71445daca811ecb6603aad54876ada563efd',
+      'new-seed-dir-hash',
+      'old-skill-md-hash',
+      'old-skill-md-hash',
+    )).toBe(true);
   });
 
   it('不会覆盖用户改过的 skill，也不会重复刷新同一版本', () => {
@@ -82,6 +89,13 @@ describe('内置 skill 安全刷新', () => {
       'same-hash',
       'same-hash',
       'same-hash',
+    )).toBe(false);
+    expect(shouldRefreshBuiltinSkill(
+      'doc-writer',
+      'user-customized-dir-hash',
+      'new-seed-dir-hash',
+      'old-skill-md-hash',
+      'old-skill-md-hash',
     )).toBe(false);
   });
 });
