@@ -949,18 +949,33 @@ const AnthropicConverter = {
         if (part.functionResponse) {
           // tool_use_id 解析优先级：配对预扫描算出的「权威 id」> 原始 id > 退化 `toolu_${name}`
           const synth = synthIdByPart.get(part);
-          const resolvedToolUseId =
-            synth ||
-            ((typeof part.functionResponse.id === 'string' && part.functionResponse.id.length > 0)
-              ? part.functionResponse.id
-              : `toolu_${part.functionResponse.name}`);
-          anthropicParts.push({
-            type: 'tool_result',
-            tool_use_id: resolvedToolUseId,
-            content: typeof part.functionResponse.response === 'string'
+          if (synth === undefined) {
+            // 孤立的 functionResponse：前文找不到对应的 functionCall。
+            // 降级为纯文本块，避免 Anthropic 400
+            // (ValidationException: unexpected tool_use_id found in tool_result blocks).
+            const frName = part.functionResponse?.name || 'unknown';
+            const frContent = typeof part.functionResponse.response === 'string'
               ? part.functionResponse.response
-              : JSON.stringify(part.functionResponse.response || {}),
-          });
+              : JSON.stringify(part.functionResponse.response || {});
+            console.warn(`[AnthropicConverter] Orphaned functionResponse for '${frName}' (no matching functionCall) - downgrading to text block`);
+            anthropicParts.push({
+              type: 'text',
+              text: `[Tool result for ${frName}: ${frContent.substring(0, 500)}]`,
+            });
+          } else {
+            const resolvedToolUseId =
+              synth ||
+              ((typeof part.functionResponse.id === 'string' && part.functionResponse.id.length > 0)
+                ? part.functionResponse.id
+                : `toolu_${part.functionResponse.name}`);
+            anthropicParts.push({
+              type: 'tool_result',
+              tool_use_id: resolvedToolUseId,
+              content: typeof part.functionResponse.response === 'string'
+                ? part.functionResponse.response
+                : JSON.stringify(part.functionResponse.response || {}),
+            });
+          }
         }
       }
 
