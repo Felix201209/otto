@@ -33,7 +33,15 @@ function makeRunner(present: Set<string>): CommandRunner {
 
 function toolWith(present: Set<string>): VoiceBridgeTool {
   const doctor = new DoctorService(makeRunner(present), NO_MODULES, 'darwin', () => false);
-  return new VoiceBridgeTool(createMockConfig(), doctor);
+  return new VoiceBridgeTool(createMockConfig(), doctor, async () => null);
+}
+
+function toolWithRuntimeStatus(status: Record<string, unknown>): VoiceBridgeTool {
+  return new VoiceBridgeTool(
+    createMockConfig(),
+    new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false),
+    async () => status as any,
+  );
 }
 
 const signal = () => new AbortController().signal;
@@ -84,6 +92,28 @@ describe('VoiceBridgeTool', () => {
     expect(content).toContain('openai-whisper');
     expect(content).toContain('OTTO_WHISPER_MODEL');
     expect(content).toContain('OPENAI_API_KEY');
+  });
+
+  it('uses runtime diagnostics to show exact Python module install command', async () => {
+    const t = toolWithRuntimeStatus({
+      python: '/opt/otto/python',
+      python_version: '3.11.9',
+      ffmpeg: '/usr/local/bin/ffmpeg',
+      whisper_module: false,
+      sounddevice_module: true,
+      torch_module: false,
+      cuda: false,
+      user_asr_key: false,
+      model_candidates: ['medium', 'small', 'base'],
+    });
+
+    const r = await t.execute({ action: 'listen' }, signal());
+    const content = String(r.llmContent);
+    expect(content).toContain('Runtime check');
+    expect(content).toContain('/opt/otto/python');
+    expect(content).toContain('openai-whisper Python module: blocked');
+    expect(content).toContain('"/opt/otto/python" -m pip install -U openai-whisper');
+    expect(content).toContain('medium -> small -> base');
   });
 
   it('does not block on missing whisper when a user ASR key is set', async () => {

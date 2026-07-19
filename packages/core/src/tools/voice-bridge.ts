@@ -24,6 +24,66 @@ import { DoctorService, DoctorReport } from '../services/doctor.js';
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 
+interface PythonCommand {
+  command: string;
+  prefixArgs: string[];
+}
+
+interface VoiceBridgeDependencyStatus {
+  python?: string;
+  python_version?: string;
+  ffmpeg?: string | null;
+  whisper_module?: boolean;
+  sounddevice_module?: boolean;
+  requests_module?: boolean;
+  torch_module?: boolean;
+  cuda?: boolean;
+  user_asr_key?: boolean;
+  model_candidates?: string[];
+  timeout_seconds?: number;
+}
+
+type VoiceBridgeDependencyChecker = () => Promise<VoiceBridgeDependencyStatus | null>;
+
+function getPythonCommands(): PythonCommand[] {
+  return process.platform === 'win32'
+    ? [
+        { command: 'python', prefixArgs: [] },
+        { command: 'py', prefixArgs: ['-3'] },
+        { command: 'python3', prefixArgs: [] },
+      ]
+    : [
+        { command: 'python3', prefixArgs: [] },
+        { command: 'python', prefixArgs: [] },
+      ];
+}
+
+function getVoiceBridgeScriptPath(): string {
+  return path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
+}
+
+async function runVoiceBridgeDependencyCheck(): Promise<VoiceBridgeDependencyStatus | null> {
+  const scriptPath = getVoiceBridgeScriptPath();
+  for (const py of getPythonCommands()) {
+    try {
+      const result = await execFileAsync(
+        py.command,
+        [...py.prefixArgs, scriptPath, '--check-deps'],
+        {
+          timeout: 15_000,
+          maxBuffer: 1024 * 1024,
+          windowsHide: true,
+        },
+      );
+      const parsed = JSON.parse(result.stdout.trim()) as VoiceBridgeDependencyStatus;
+      return parsed;
+    } catch {
+      // Try the next Python launcher.
+    }
+  }
+  return null;
+}
+
 export interface VoiceBridgeToolParams {
   action: 'listen' | 'listen_raw' | 'listen_long';
   duration?: number;
@@ -32,7 +92,11 @@ export interface VoiceBridgeToolParams {
 export class VoiceBridgeTool extends BaseTool<VoiceBridgeToolParams, ToolResult> {
   static readonly Name: string = 'voice_bridge';
 
-  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
+  constructor(
+    private readonly config: Config,
+    private readonly doctor: DoctorService = new DoctorService(),
+    private readonly dependencyChecker: VoiceBridgeDependencyChecker = runVoiceBridgeDependencyCheck,
+  ) {
     const desc = `Voice input bridge - speak naturally, get structured text back.
 
 EXAMPLES:
@@ -88,6 +152,11 @@ REQUIREMENTS:
   }
 
   private async preflight(): Promise<string | null> {
+    const runtimeStatus = await this.dependencyChecker();
+    if (runtimeStatus) {
+      return this.preflightFromRuntimeStatus(runtimeStatus);
+    }
+
     let report: DoctorReport;
     try {
       report = await this.doctor.check();
@@ -132,6 +201,53 @@ REQUIREMENTS:
     );
   }
 
+  private preflightFromRuntimeStatus(status: VoiceBridgeDependencyStatus): string | null {
+    const hasUserAsrKey = !!status.user_asr_key || !!(process.env.OPENAI_API_KEY || process.env.ARK_API_KEY);
+    const missing: string[] = [];
+
+    if (!status.ffmpeg) {
+      missing.push(
+        `- ffmpeg is missing, so recording/audio decoding may fail.\n` +
+        `  Windows: winget install --id Gyan.FFmpeg\n` +
+        `  macOS: brew install ffmpeg\n` +
+        `  Linux: sudo apt-get install -y ffmpeg`,
+      );
+    }
+    if (!status.whisper_module && !hasUserAsrKey) {
+      missing.push(
+        `- Python module openai-whisper is missing, so local speech-to-text is not available.\n` +
+        `  Install with the same Python Otto is using:\n` +
+        `  "${status.python || 'python'}" -m pip install -U openai-whisper\n` +
+        `  Low-spec computer: set OTTO_WHISPER_MODEL=small`,
+      );
+    }
+    if (!status.sounddevice_module && !status.ffmpeg) {
+      missing.push(
+        `- sounddevice is also missing, so Otto has no fallback microphone recorder.\n` +
+        `  Install with: "${status.python || 'python'}" -m pip install sounddevice`,
+      );
+    }
+
+    if (missing.length === 0) return null;
+
+    return (
+      `voice_bridge SETUP NEEDED\n\n` +
+      `Runtime check:\n` +
+      `- Python: ${status.python ? `${status.python} (${status.python_version || 'unknown version'})` : 'blocked'}\n` +
+      `- ffmpeg: ${status.ffmpeg ? 'ready' : 'blocked'}\n` +
+      `- openai-whisper Python module: ${status.whisper_module ? 'ready' : hasUserAsrKey ? 'not installed, but user ASR key is available' : 'blocked'}\n` +
+      `- sounddevice microphone fallback: ${status.sounddevice_module ? 'ready' : 'not installed'}\n` +
+      `- GPU acceleration: ${status.cuda ? 'available' : status.torch_module ? 'not available' : 'torch not installed yet'}\n` +
+      `- Whisper model plan: ${(status.model_candidates || ['auto']).join(' -> ')}\n\n` +
+      `What Otto can do now:\n` +
+      `- If you paste an existing transcript, Otto can summarize it immediately.\n` +
+      `- If the current chat model supports audio, Otto can still try that model first.\n` +
+      `- For reliable local recording/transcription, complete the fix steps below.\n\n` +
+      `Fix steps:\n${missing.join('\n')}\n\n` +
+      `After installing, restart Otto or the terminal, then retry the voice action.`
+    );
+  }
+
   async execute(p: VoiceBridgeToolParams, _s: AbortSignal): Promise<ToolResult> {
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
@@ -147,20 +263,11 @@ REQUIREMENTS:
     const duration = p.duration || (p.action === 'listen_long' ? 60 : 10);
     const mode = p.action === 'listen_raw' ? 'raw' : 'polished';
 
-    const pyCommands = process.platform === 'win32'
-      ? [
-          { command: 'python', prefixArgs: [] },
-          { command: 'py', prefixArgs: ['-3'] },
-          { command: 'python3', prefixArgs: [] },
-        ]
-      : [
-          { command: 'python3', prefixArgs: [] },
-          { command: 'python', prefixArgs: [] },
-        ];
+    const pyCommands = getPythonCommands();
     let lastError = '';
 
     for (const py of pyCommands) {
-      const scriptPath = path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
+      const scriptPath = getVoiceBridgeScriptPath();
       try {
         const result = await execFileAsync(
           py.command,

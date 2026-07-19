@@ -11,6 +11,7 @@ Platform support:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -37,6 +38,27 @@ def whisper_model_candidates():
     if configured and configured != "auto":
         return [configured]
     return ["medium", "small", "base"]
+
+
+def check_dependencies():
+    """Report the dependencies this exact Python runtime can use."""
+    whisper_available = importlib.util.find_spec("whisper") is not None
+    sounddevice_available = importlib.util.find_spec("sounddevice") is not None
+    requests_available = importlib.util.find_spec("requests") is not None
+    torch_available = importlib.util.find_spec("torch") is not None
+    return {
+        "python": sys.executable,
+        "python_version": sys.version.split()[0],
+        "ffmpeg": shutil.which("ffmpeg"),
+        "whisper_module": whisper_available,
+        "sounddevice_module": sounddevice_available,
+        "requests_module": requests_available,
+        "torch_module": torch_available,
+        "cuda": False,
+        "user_asr_key": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("ARK_API_KEY")),
+        "model_candidates": whisper_model_candidates(),
+        "timeout_seconds": DEFAULT_WHISPER_TIMEOUT,
+    }
 
 
 def find_windows_mic():
@@ -178,6 +200,7 @@ def normalize_audio_for_asr(audio_path):
 
 def transcribe_with_local_whisper(audio_path):
     env = os.environ.copy()
+    env.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     env.setdefault("OTTO_WHISPER_LANGUAGE", DEFAULT_WHISPER_LANGUAGE or "")
     env.setdefault("OTTO_WHISPER_INITIAL_PROMPT", DEFAULT_WHISPER_INITIAL_PROMPT)
     env["OTTO_WHISPER_MODEL_CANDIDATES"] = json.dumps(whisper_model_candidates())
@@ -392,6 +415,7 @@ Rules:
 
 def main():
     parser = argparse.ArgumentParser(description="Otto Voice Bridge")
+    parser.add_argument("--check-deps", action="store_true", help="Print dependency diagnostics as JSON and exit.")
     parser.add_argument(
         "--input-file",
         help="Existing audio file to transcribe. If provided, skip microphone recording.",
@@ -405,6 +429,10 @@ def main():
     )
     parser.add_argument("--transcribe-only", action="store_true", help="Skip LLM polish.")
     args = parser.parse_args()
+
+    if args.check_deps:
+        print(json.dumps(check_dependencies(), ensure_ascii=False))
+        return
 
     cleanup_audio = False
     if args.input_file:
