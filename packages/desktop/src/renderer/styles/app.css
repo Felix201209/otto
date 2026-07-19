@@ -5577,10 +5577,11 @@ h6.otto-prose__h {
   padding-left: 2px;
 }
 .otto-wcal__grid {
-  --otto-wcal-popover-width: min(240px, calc(100% - 16px));
+  --otto-wcal-gap: 2px;
+  --otto-wcal-popover-width: min(240px, calc(100vw - 32px));
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
+  gap: var(--otto-wcal-gap);
 }
 .otto-wcal__weekday {
   font-size: 9.5px;
@@ -5652,10 +5653,22 @@ h6.otto-prose__h {
   left: 0;
   transform: none;
 }
+.otto-wcal__day.is-pop-col-1 .otto-wcal__pop {
+  left: calc(-1 * (100% + var(--otto-wcal-gap)));
+}
+.otto-wcal__day.is-pop-col-2 .otto-wcal__pop {
+  left: calc(-2 * (100% + var(--otto-wcal-gap)));
+}
 .otto-wcal__day.is-pop-right .otto-wcal__pop {
   right: 0;
   left: auto;
   transform: none;
+}
+.otto-wcal__day.is-pop-col-4 .otto-wcal__pop {
+  right: calc(-2 * (100% + var(--otto-wcal-gap)));
+}
+.otto-wcal__day.is-pop-col-5 .otto-wcal__pop {
+  right: calc(-1 * (100% + var(--otto-wcal-gap)));
 }
 .otto-wcal__day.has-log:hover .otto-wcal__pop {
   display: block;

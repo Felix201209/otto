@@ -46,13 +46,15 @@ describe('工作日志日历样式契约', () => {
     expect(dayRule).toMatch(/background:\s*transparent/);
     expect(dayRule).toMatch(/padding:\s*0/);
     expect(dayRule).toMatch(/cursor:\s*pointer/);
-    expect(gridRule).toMatch(/--otto-wcal-popover-width:\s*min\(240px,\s*calc\(100%\s*-\s*16px\)\)/);
+    expect(gridRule).toMatch(/--otto-wcal-gap:\s*2px/);
+    expect(gridRule).toMatch(/--otto-wcal-popover-width:\s*min\(240px,\s*calc\(100vw\s*-\s*32px\)\)/);
     expect(popRule).toMatch(/width:\s*var\(--otto-wcal-popover-width\)/);
     expect(appCss).toContain(
       '.otto-wcal__day:nth-last-child(-n+7) .otto-wcal__pop',
     );
     expect(appCss).toContain('.otto-wcal__day.is-pop-left .otto-wcal__pop');
     expect(appCss).toContain('.otto-wcal__day.is-pop-right .otto-wcal__pop');
+    expect(appCss).toContain('.otto-wcal__day.is-pop-col-5 .otto-wcal__pop');
   });
 });
 
