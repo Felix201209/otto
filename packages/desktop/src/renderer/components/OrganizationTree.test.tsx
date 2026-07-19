@@ -213,6 +213,39 @@ describe('OrganizationTree', () => {
     expect(screen.getByText('员工一号')).toBeTruthy();
   });
 
+  it('本地 ProductWorkspace 尚未连接时，真实企业账号仍可加载远程组织树', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: '星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'staff01',
+        name: '员工一号',
+        role: '工程师',
+        department: '研发部',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={null}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    expect(await screen.findByText('星河科技')).toBeTruthy();
+  });
+
   it('默认免登录的本地测试身份不会冒充企业账号或触发组织请求', () => {
     const enterpriseOrganizationView = vi.fn();
     Object.assign(window.otto, { enterpriseOrganizationView });

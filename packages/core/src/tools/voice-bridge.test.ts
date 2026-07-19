@@ -6,6 +6,7 @@
  * before Otto records audio.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
 import { VoiceBridgeTool } from './voice-bridge.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import {
@@ -61,6 +62,18 @@ describe('VoiceBridgeTool', () => {
 
   it('has correct name', () => {
     expect(VoiceBridgeTool.Name).toBe('voice_bridge');
+  });
+
+  it('keeps default TLS certificate verification for Whisper model downloads', () => {
+    const bridgeScript = fs.readFileSync(
+      new URL('../../scripts/voice_bridge.py', import.meta.url),
+      'utf8',
+    );
+
+    expect(bridgeScript).not.toContain('_create_unverified_context');
+    expect(bridgeScript).not.toMatch(
+      /_create_default_https_context\s*=/,
+    );
   });
 
   it('rejects out-of-range duration', () => {

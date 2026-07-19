@@ -208,13 +208,7 @@ def transcribe_with_local_whisper(audio_path):
     code = r'''
 import json
 import os
-import ssl
 import sys
-
-try:
-    ssl._create_default_https_context = ssl._create_unverified_context
-except Exception:
-    pass
 
 try:
     import whisper

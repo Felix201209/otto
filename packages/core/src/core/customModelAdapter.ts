@@ -585,6 +585,12 @@ function pairToolCallIds(
           (r, i) => !usedResp.has(i) && hasId(r.fr) && r.fr.id === c.fc.id,
         );
         if (matchIdx >= 0) {
+          const r = resps[matchIdx];
+          // 已自洽的原始 id 也必须写进映射。转换器把“没有映射”解释为
+          // 孤立 response；此前这里只从 FIFO 队列剔除，导致合法的原始
+          // fc/fr 配对被误降级为文本。
+          idByPart.set(c.part, c.fc.id);
+          idByPart.set(r.part, c.fc.id);
           usedResp.add(matchIdx);
           continue;
         }

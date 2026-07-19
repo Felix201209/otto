@@ -1,4 +1,4 @@
-# Otto Enterprise v1.8.6 新服务器迁移包
+# Otto Enterprise v1.8.7 新服务器迁移包
 
 这是一套面向 Ubuntu 22.04/24.04 的“上传、填配置、执行一条安装命令”迁移包。它会安装固定并校验过 SHA-256 的 Node.js 22 LTS、最小企业服务、systemd 单元，并可选配置 Caddy HTTPS。
 
@@ -78,7 +78,7 @@ sudo systemctl start otto-enterprise
 先在压缩包所在目录校验外层压缩包：
 
 ```bash
-sha256sum -c otto-enterprise-oneclick-v1.8.6-*.tar.gz.sha256
+sha256sum -c otto-enterprise-oneclick-v1.8.7-*.tar.gz.sha256
 ```
 
 `.sha256` 与压缩包放在同一渠道只能证明两者一致，不能证明发送者身份。至少通过另一条可信渠道核对 64 位摘要。
@@ -86,8 +86,8 @@ sha256sum -c otto-enterprise-oneclick-v1.8.6-*.tar.gz.sha256
 校验成功后再解压：
 
 ```bash
-tar -xzf otto-enterprise-oneclick-v1.8.6-*.tar.gz
-cd otto-enterprise-oneclick-v1.8.6-*
+tar -xzf otto-enterprise-oneclick-v1.8.7-*.tar.gz
+cd otto-enterprise-oneclick-v1.8.7-*
 ```
 
 ## 三、填写配置
@@ -234,7 +234,7 @@ sudo journalctl -u caddy -n 100 --no-pager
 
 ### 客户端仍没有组织树
 
-旧 v1.8.6 客户端把“免登录 UI”错误地同时当成了“禁用企业网络”，并且组织树只看本机 ProductWorkspace。必须使用包含本次修复的客户端构建：默认仍免登录，邀请 intent 才进入注册；真实企业账号始终读取 `/enterprise/organization/view`，synthetic 内测账号绝不请求远程组织。
+旧 v1.8.6 客户端把“免登录 UI”错误地同时当成了“禁用企业网络”，并且组织树只看本机 ProductWorkspace。必须使用 v1.8.7 或更新客户端：交付版默认恢复真实登录；邀请 intent 会进入注册并显示目标企业服务器；真实企业账号始终读取 `/enterprise/organization/view`，即使本机 ProductWorkspace 尚未连接也能加载组织树。
 
 ### 想把本包覆盖到已有不同版本
 

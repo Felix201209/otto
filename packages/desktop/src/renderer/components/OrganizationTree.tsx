@@ -15,19 +15,19 @@ export function OrganizationTree({
   workspace,
   enterpriseAccount,
 }: {
-  workspace: ProductWorkspaceSnapshot;
+  workspace: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
-  const hasLocalEnterpriseWorkspace = workspace.context.edition === 'enterprise';
+  const hasLocalEnterpriseWorkspace = workspace?.context.edition === 'enterprise';
   const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
   // 真实中心账号以服务端目录为权威，不能被机器上残留的本机企业树覆盖。
   // 只有没有真实中心账号时，才展示本机 ProductWorkspace 的组织框架。
   const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
-    ? workspace.managerWorkspace?.organization
+    ? workspace?.managerWorkspace?.organization
     : undefined;
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
@@ -91,7 +91,7 @@ export function OrganizationTree({
 
       {open ? (
         <div className="otto-orgtree__body">
-          {organization ? (
+          {organization && workspace ? (
             <CompanyBranch
               companyId={organization.rootCompanyId}
               organization={organization}

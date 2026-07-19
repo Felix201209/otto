@@ -454,9 +454,10 @@ describe('Anthropic tool_use/tool_result id pairing (cross-model migration)', ()
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  // 兜底场景：彻底孤立的 fr（没有任何 fc 配对，理论上 sanitize 已过滤）
+  // 安全场景：彻底孤立的 fr（没有任何 fc 配对）必须在发送前过滤
   // ───────────────────────────────────────────────────────────────────────
-  it('sanity: 彻底孤立的 fr 仍然走旧 fallback，不抛异常', async () => {    const getBody = makeFetchSpy();
+  it('sanity: 彻底孤立的 fr 不得生成无配对的 tool_result', async () => {
+    const getBody = makeFetchSpy();
     await callAnthropicModel(claudeConfig as any, {
       contents: [
         { role: MESSAGE_ROLES.USER, parts: [{ text: 'orphan' }] },
@@ -473,10 +474,7 @@ describe('Anthropic tool_use/tool_result id pairing (cross-model migration)', ()
     const body = getBody();
     const { toolUses, toolResults } = collectToolPairs(body.messages);
     expect(toolUses.length).toBe(0);
-    expect(toolResults.length).toBe(1);
-    // 兜底：退回旧 `toolu_${name}` 字面量（行为兼容）
-    expect(toolResults[0].tool_use_id).toBe('toolu_lonely');
-    // 这里不调用 assertEveryResultHasMatchingUse — 上层 sanitize 会过滤这种情况，
-    // 我们只是确保不会抛异常并保持向后兼容。
+    expect(toolResults.length).toBe(0);
+    expect(JSON.stringify(body.messages)).not.toContain('toolu_lonely');
   });
 });

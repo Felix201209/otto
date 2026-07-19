@@ -97,7 +97,7 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel v1.7 工作入口', () => {
-  it('两种版本都恢复 v1.6 的园区服务与企业 AI 自主开发入口', async () => {
+  it('两种版本都保留园区服务与自主开发入口', async () => {
     installBridge();
     const launch = vi.fn();
     const parkOpen = vi.fn();
@@ -116,7 +116,7 @@ describe('RightPanel v1.7 工作入口', () => {
     expect(launch).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'self-development',
-        name: '企业AI自主开发',
+        name: '自主开发',
       }),
     );
     expect(launch.mock.calls[0]).toHaveLength(1);

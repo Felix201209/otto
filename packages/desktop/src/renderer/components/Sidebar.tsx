@@ -143,12 +143,10 @@ export function Sidebar({
       </button>
 
       <div className="otto-sidebar__workspace">
-        {productWorkspace ? (
-          <OrganizationTree
-            workspace={productWorkspace}
-            enterpriseAccount={enterpriseAccount}
-          />
-        ) : null}
+        <OrganizationTree
+          workspace={productWorkspace}
+          enterpriseAccount={enterpriseAccount}
+        />
 
         <section className="otto-conversations" aria-label="对话任务">
           <button

@@ -63,7 +63,7 @@ jobs:
       # "../core" }]），tsc --noEmit 需要 core/dist/index.d.ts 已存在，否则
       # 报 TS6305 "has not been built from source file"。核心包尚无预构建产物
       # 提交进仓库，必须先跑一次 build 产出 core/dist 才能让下游 typecheck 通过。
-      - name: 🏗️ Build main chain (core/cli/server/vscode-ui-plugin)
+      - name: 🏗️ Build main chain (core/cli/server)
         run: npm run build
 
       - name: 🏗️ Build desktop (independent electron/webpack chain)

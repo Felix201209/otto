@@ -45,6 +45,32 @@ describe('登录页能力打字机', () => {
 });
 
 describe('专业登录入口', () => {
+  it('在登录和注册提交前醒目显示当前企业服务器主机', () => {
+    render(
+      <EnterpriseLoginPage
+        initialServerUrl="https://59.110.154.44:7777/company"
+        busy={false}
+        error={null}
+        onPasswordLogin={async () => undefined}
+        onRequestRegistrationCode={async () => ({
+          challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
+          organization: { id: 'org_acme', name: '星河科技' },
+        })}
+        onRegister={async () => undefined}
+        onClearError={() => undefined}
+      />,
+    );
+
+    const serverBanner = screen.getByLabelText('当前企业服务器');
+    expect(serverBanner.textContent).toContain('59.110.154.44:7777');
+    expect(screen.getByRole('button', { name: '进入 Otto' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '注册新账号' }));
+    expect(screen.getByLabelText('当前企业服务器').textContent)
+      .toContain('59.110.154.44:7777');
+    expect(screen.getByRole('button', { name: '创建账号并进入' })).toBeTruthy();
+  });
+
   it('默认只显示账号或手机号密码登录，注册位于单独入口', () => {
     render(
       <EnterpriseLoginPage

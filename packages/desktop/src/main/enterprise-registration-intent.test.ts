@@ -84,6 +84,12 @@ describe('enterprise registration link parsing', () => {
   ])('rejects non-registration, legacy signed, or suspicious links: %s', (url) => {
     expect(parseEnterpriseRegistrationIntent(url)).toBeNull();
   });
+
+  it('safely rejects invite page links containing malformed percent encoding', () => {
+    expect(parseEnterpriseRegistrationIntent(
+      'https://enterprise.otto.test/enterprise/join/%E0%A4%A',
+    )).toBeNull();
+  });
 });
 
 describe('enterprise registration intent store', () => {

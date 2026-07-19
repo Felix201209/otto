@@ -7,7 +7,7 @@
  * Loads OpenReel from bundled resources (no external server needed).
  */
 
-import { exec, spawn } from 'child_process';
+import { exec, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -41,6 +41,7 @@ export interface VideoEditorToolParams {
 
 export class VideoEditorTool extends BaseTool<VideoEditorToolParams, ToolResult> {
   static readonly Name: string = 'video_editor';
+  private readonly managedChildren = new Set<ChildProcess>();
 
   constructor(private readonly config: Config) {
     const desc = `Built-in Video Editor (OpenReel) - Professional browser-based video editing, bundled with Otto.
@@ -103,7 +104,17 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
   async shouldConfirmExecute(p: VideoEditorToolParams, _s: AbortSignal): Promise<ToolCallConfirmationDetails | false> {
     if (this.config.getApprovalMode() === ApprovalMode.YOLO) return false;
     if (this.validateToolParams(p)) return false;
-    return false; // Editor actions are non-destructive (undoable inside editor)
+    if (p.action === 'close') {
+      return {
+        type: 'exec',
+        title: '[WARN] Close processes started by the video editor?',
+        command: 'video_editor(close)',
+        rootCommand: VideoEditorTool.Name,
+        warning: 'Only child processes started and tracked by this tool will be terminated.',
+        onConfirm: async () => {},
+      };
+    }
+    return false; // Remaining editor actions are non-destructive or undoable.
   }
 
   private getEditorPath(): string {
@@ -112,15 +123,31 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
     return DEV_URL;
   }
 
+  private trackManagedChild(child: ChildProcess): void {
+    this.managedChildren.add(child);
+    const forget = () => this.managedChildren.delete(child);
+    child.once('exit', forget);
+    child.once('error', forget);
+  }
+
+  private isManagedChildRunning(child: ChildProcess): boolean {
+    return child.exitCode === null && child.signalCode === null && !child.killed;
+  }
+
   private async isEditorRunning(): Promise<boolean> {
-    try {
-      const isWin = os.platform() === 'win32';
-      const cmd = isWin
-        ? 'powershell -Command "Get-Process -Name electron -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -like \'*Video*Editor*\'} | Select-Object -First 1"'
-        : 'pgrep -f "video-editor"';
-      const { stdout } = await execAsync(cmd, { timeout: 3000 });
-      return stdout.trim().length > 0;
-    } catch { return false; }
+    return [...this.managedChildren].some(child => this.isManagedChildRunning(child));
+  }
+
+  private closeManagedChildren(): number {
+    let stopped = 0;
+    for (const child of this.managedChildren) {
+      try {
+        if (this.isManagedChildRunning(child) && child.kill()) stopped++;
+      } finally {
+        this.managedChildren.delete(child);
+      }
+    }
+    return stopped;
   }
 
   private async launchEditor(): Promise<string> {
@@ -130,11 +157,11 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
     if (editorPath.startsWith('file://')) {
       // Open bundled editor in default browser (works for all platforms)
       if (isWin) {
-        exec(`start "" "${editorPath}"`);
+        this.trackManagedChild(exec(`start "" "${editorPath}"`));
       } else if (os.platform() === 'darwin') {
-        exec(`open "${editorPath}"`);
+        this.trackManagedChild(exec(`open "${editorPath}"`));
       } else {
-        exec(`xdg-open "${editorPath}"`);
+        this.trackManagedChild(exec(`xdg-open "${editorPath}"`));
       }
       return `launched bundled editor (${editorPath.substring(0, 50)}...)`;
     }
@@ -143,16 +170,17 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
     if (!await this.isDevServerRunning()) {
       const openreelDir = path.join(os.homedir(), 'openreel-video');
       if (!fs.existsSync(openreelDir)) return 'OpenReel not installed. Clone: git clone https://github.com/Augani/openreel-video.git ~';
-      const child = spawn('pnpm', ['dev', '--', '--port', '5174'], { cwd: openreelDir, detached: true, stdio: 'ignore', shell: isWin });
-      child.unref();
+      const child = spawn('pnpm', ['dev', '--', '--port', '5174'], { cwd: openreelDir, stdio: 'ignore', shell: isWin });
+      this.trackManagedChild(child);
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 1000));
         if (await this.isDevServerRunning()) break;
       }
     }
 
-    if (isWin) exec(`start "" "${DEV_URL}"`);
-    else if (os.platform() === 'darwin') exec(`open "${DEV_URL}"`);
+    if (isWin) this.trackManagedChild(exec(`start "" "${DEV_URL}"`));
+    else if (os.platform() === 'darwin') this.trackManagedChild(exec(`open "${DEV_URL}"`));
+    else this.trackManagedChild(exec(`xdg-open "${DEV_URL}"`));
     return `launched dev server at ${DEV_URL}`;
   }
 
@@ -237,14 +265,10 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
         }
 
         case 'close': {
-          try {
-            const isWin = os.platform() === 'win32';
-            const cmd = isWin
-              ? 'powershell -Command "Get-Process -Name electron -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -like \'*Video*\'} | Stop-Process -Force"'
-              : 'pkill -f "video-editor"';
-            await execAsync(cmd, { timeout: 5000 });
-            r = 'Editor closed';
-          } catch { r = 'Editor closed (or was not running)'; }
+          const stopped = this.closeManagedChildren();
+          r = stopped > 0
+            ? `${stopped} managed process${stopped === 1 ? '' : 'es'} closed`
+            : 'No managed editor process was running; no external process was touched';
           break;
         }
 

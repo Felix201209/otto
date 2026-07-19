@@ -115,7 +115,6 @@ describe('parseJSONSafe - JSON parsing robustness', () => {
     });
   });
 });
-
 describe('customModelAdapter - Image Content Support', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -315,12 +314,16 @@ describe('customModelAdapter - Image Content Support', () => {
 
       await callOpenAICompatibleModel(modelConfig as any, request);
 
-      // Verify that pure reasoning message is filtered, and attached to the tool_calls message as reasoning_content
-      expect(capturedBody.messages).toHaveLength(2); // user message, followed by assistant tool call message
+      // Verify that pure reasoning is attached to the assistant tool call. The
+      // protocol safety layer also closes the unfinished call with a matching
+      // synthetic tool result so OpenAI-compatible providers do not reject it.
+      expect(capturedBody.messages).toHaveLength(3);
       expect(capturedBody.messages[0].role).toBe('user');
       expect(capturedBody.messages[1].role).toBe('assistant');
       expect(capturedBody.messages[1].tool_calls).toBeDefined();
       expect(capturedBody.messages[1].reasoning_content).toBe('I need to use a tool to fetch info.');
+      expect(capturedBody.messages[2].role).toBe('tool');
+      expect(capturedBody.messages[2].tool_call_id).toBe(capturedBody.messages[1].tool_calls[0].id);
     });
 
     it('should NOT attach reasoning_content in contentsToMessages when no tool calls are present', async () => {
@@ -3273,4 +3276,3 @@ describe('sanitiseGeminiTools - functionDeclarations cleanup at the wire boundar
     expect(capturedBody.tools[0].functionDeclarations[0].parameters.properties.libraryId.type).toBe('STRING');
   });
 });
-

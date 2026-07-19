@@ -101,6 +101,10 @@
         {
           "from": "../../node_modules/@vscode/ripgrep/bin/rg",
           "to": "ripgrep/rg"
+        },
+        {
+          "from": "../../resources/video-editor",
+          "to": "video-editor"
         }
       ]
     },
@@ -133,6 +137,10 @@
         {
           "from": "vendor/win/ripgrep/rg.exe",
           "to": "ripgrep/rg.exe"
+        },
+        {
+          "from": "../../resources/video-editor",
+          "to": "video-editor"
         }
       ]
     },

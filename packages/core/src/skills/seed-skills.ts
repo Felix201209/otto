@@ -98,7 +98,7 @@ export function shouldRefreshBuiltinSkill(
   legacyCurrentHash?: string,
 ): boolean {
   if (currentHash === sourceHash) return false;
-  if (managedHash) return true;  // Otto 托管 → 可安全刷新（用户未手动修改）
+  if (managedHash && managedHash === currentHash) return true;
   const legacyHashes = legacyUnmodifiedSkillHashes[name];
   return legacyHashes?.has(currentHash)
     || (legacyCurrentHash ? legacyHashes?.has(legacyCurrentHash) : false)
