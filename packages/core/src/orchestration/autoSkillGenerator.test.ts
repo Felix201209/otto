@@ -52,6 +52,28 @@ function repeatedPatternLogs(): Record<string, WorkLogEntry[]> {
   };
 }
 
+function workResult(title: string, day: number, userInput: string): WorkLogEntry {
+  return {
+    timestamp: `2026-07-${String(day).padStart(2, '0')}T10:00:00.000Z`,
+    toolName: 'otto_work_result',
+    action: title,
+    category: 'document',
+    success: true,
+    entryType: 'work_result',
+    taskTitle: title,
+    userInput,
+    details: `已完成 ${title}`,
+  };
+}
+
+function repeatedWorkResultLogs(): Record<string, WorkLogEntry[]> {
+  return {
+    '2026-07-08': [workResult('品牌营销方案', 8, '帮我写一个新品品牌营销方案')],
+    '2026-07-09': [workResult('品牌营销方案', 9, '继续做一份品牌营销文案方案')],
+    '2026-07-10': [workResult('品牌营销方案', 10, '给活动生成品牌营销落地页文案')],
+  };
+}
+
 beforeEach(async () => {
   previousUserDir = process.env['OTTO_USER_DIR'];
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-auto-skill-'));
@@ -81,6 +103,17 @@ describe('AutoSkillGenerator 个人 Skill 候选闭环', () => {
     );
     expect(candidates[0].filePath).not.toContain(path.join('.otto', 'skills'));
     await expect(fs.access(candidates[0].filePath)).rejects.toThrow();
+  });
+
+  it('只有最终业务成果重复时，也会生成业务流程型 Skill 候选', async () => {
+    workLogMock.readDateRange.mockResolvedValueOnce(repeatedWorkResultLogs());
+
+    const candidates = await generateSkillCandidates(fakeConfig);
+
+    const candidate = candidates.find((item) => item.name === 'auto-copywriting');
+    expect(candidate).toBeDefined();
+    expect(candidate?.skillContent).toContain('业务交付流程');
+    expect(candidate?.skillContent).toContain('已观察到的典型需求');
   });
 
   it('扫描只暂存候选，用户明确确认后才写 SKILL.md', async () => {

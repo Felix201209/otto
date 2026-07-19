@@ -80,6 +80,7 @@ export {
   startAutoSkillScanner,
   stopAutoSkillScanner,
   setRealtimeWatcher,
+  getRealtimeWatcher,
 } from './autoSkillGenerator.js';
 export type {
   SkillCandidate,
