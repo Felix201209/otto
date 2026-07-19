@@ -23,7 +23,7 @@ import { makeRelative, shortenPath } from '../utils/paths.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { SceneType } from '../core/sceneManager.js';
 import { getErrorMessage } from '../utils/errors.js';
-import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
+import { isCustomModel, generateCustomModelId, type CustomModelConfig } from '../types/customModel.js';
 
 const execFileAsync = promisify(execFile);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -72,12 +72,10 @@ function truncateTranscript(transcript: string): { transcript: string; truncated
 /**
  * AudioReader Tool
  *
- * Used as a fallback when the active text-only model cannot directly accept
- * audio content.
+ * Used when the active model needs help turning local audio into text.
  *
- * The model can call this tool with the local audio path; we offload the
- * transcription work to a cheap Gemini Flash chat created via `createTemporaryChat`,
- * and return the resulting transcription or summary.
+ * The tool first tries the user's current audio-capable model, then Otto's
+ * local/user-owned ASR bridge, then a configured Gemini Flash helper.
  */
 export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult> {
   static readonly Name: string = 'audio_reader';
@@ -90,8 +88,8 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       AudioReaderTool.Name,
       'AudioReader',
       'Fallback tool for text-only models that cannot natively process audio. ' +
-        'It first tries Otto local transcription (local Whisper / user cloud ASR env), ' +
-        'then falls back to a cheap model (gemini-2.5-flash) when available. ' +
+        'It first tries the current model when it supports audio, then Otto local transcription ' +
+        '(local Whisper / user cloud ASR env), then a cheap model (gemini-2.5-flash) when available. ' +
         'Do NOT call this tool proactively: ' +
         'only use it when you need to transcribe or understand audio content that ' +
         'cannot be natively processed by your current model. ' +
@@ -201,51 +199,7 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
     }
 
     const relative = makeRelative(filePath, this.config.getTargetDir());
-
-    const localTranscript = await this.localTranscriber(filePath);
-    if (localTranscript) {
-      const truncated = truncateTranscript(localTranscript);
-      const header = `Audio transcription for ${shortenPath(relative)} (via local ASR):`;
-      return {
-        llmContent: `${header}\n\n${truncated.transcript}`,
-        returnDisplay: `Transcribed audio locally: ${shortenPath(relative)}${truncated.truncated ? ' (truncated)' : ''}`,
-      };
-    }
-
-    // Check if using a custom model only after local ASR has failed. This lets
-    // Doubao/DeepSeek-style text models still transcribe audio when the user has
-    // local Whisper or user-owned cloud ASR configured.
     const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
-    const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
-    let resolvedModel: string | undefined = undefined;
-
-    if (isUsingCustomModel && typeof this.config.getCustomModels === 'function') {
-      const customModels = this.config.getCustomModels() || [];
-      const geminiFlashModel = customModels.find(m => {
-        if (m.enabled === false) return false;
-        const modelIdLower = (m.modelId || '').toLowerCase();
-        const displayNameLower = (m.displayName || '').toLowerCase();
-        return (modelIdLower.includes('gemini') && modelIdLower.includes('flash')) ||
-               (displayNameLower.includes('gemini') && displayNameLower.includes('flash'));
-      });
-
-      if (!geminiFlashModel) {
-        return {
-          llmContent:
-            `Audio transcription is not configured for this model yet.\n\n` +
-            `Otto first tried local ASR, but no local/user-owned transcriber returned text. ` +
-            `Because the current chat model is custom and no Gemini Flash fallback is configured, ` +
-            `this audio file cannot be transcribed automatically.\n\n` +
-            `To enable this without Otto-hosted ASR costs, choose one option:\n` +
-            `1. Install local Whisper: pip install openai-whisper\n` +
-            `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
-            `3. Add a custom Gemini Flash model for multimodal fallback\n` +
-            `4. Upload/paste an existing transcript and I can summarize the meeting notes.`,
-          returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
-        };
-      }
-      resolvedModel = generateCustomModelId(geminiFlashModel);
-    }
 
     // Read and convert to base64
     let base64Data: string;
@@ -275,12 +229,85 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       },
     ];
 
-    // Delegate the actual transcription work to a cheap, dedicated Gemini Flash chat.
+    const currentModelPlan = getCurrentAudioModelPlan(this.config, currentModel);
+    let modelError: string | undefined;
+    if (currentModelPlan) {
+      const currentResult = await this.transcribeWithTemporaryChat(
+        messageParts,
+        signal,
+        currentModelPlan.model,
+      );
+      if (currentResult.transcript) {
+        return formatTranscriptResult(
+          currentResult.transcript,
+          relative,
+          `current model: ${currentModelPlan.label}`,
+        );
+      }
+      modelError = currentResult.error;
+    }
+
+    const localTranscript = await this.localTranscriber(filePath);
+    if (localTranscript) {
+      return formatTranscriptResult(localTranscript, relative, 'local ASR');
+    }
+
+    const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
+    let resolvedModel: string | undefined = undefined;
+    let fallbackLabel = 'gemini-2.5-flash';
+
+    if (isUsingCustomModel && typeof this.config.getCustomModels === 'function') {
+      const geminiFlashModel = findGeminiFlashModel(this.config.getCustomModels() || [], currentModel);
+
+      if (!geminiFlashModel) {
+        const currentModelNote = currentModelPlan
+          ? `Otto first tried the current audio-capable model, but it failed: ${modelError || 'unknown error'}.\n`
+          : `Otto checked the current model, but it is not marked as audio-capable.\n`;
+        return {
+          llmContent:
+            `Audio transcription is not configured for this model yet.\n\n` +
+            currentModelNote +
+            `Otto also tried local ASR, but no local/user-owned transcriber returned text. ` +
+            `Because the current chat model is custom and no separate Gemini Flash fallback is configured, ` +
+            `this audio file cannot be transcribed automatically.\n\n` +
+            `To enable this without Otto-hosted ASR costs, choose one option:\n` +
+            `1. Install local Whisper: pip install openai-whisper\n` +
+            `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
+            `3. Add a custom Gemini Flash model for multimodal fallback\n` +
+            `4. Upload/paste an existing transcript and I can summarize the meeting notes.`,
+          returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
+        };
+      }
+      resolvedModel = generateCustomModelId(geminiFlashModel);
+      fallbackLabel = `custom Gemini Flash: ${geminiFlashModel.displayName || geminiFlashModel.modelId}`;
+    }
+
+    const fallbackResult = await this.transcribeWithTemporaryChat(
+      messageParts,
+      signal,
+      resolvedModel,
+    );
+    if (fallbackResult.transcript) {
+      return formatTranscriptResult(fallbackResult.transcript, relative, fallbackLabel);
+    }
+
+    const errorMessage = fallbackResult.error || modelError || 'unknown error';
+    return {
+      llmContent: `Error transcribing audio "${filePath}": ${errorMessage}`,
+      returnDisplay: `Error transcribing audio: ${errorMessage}`,
+    };
+  }
+
+  private async transcribeWithTemporaryChat(
+    messageParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }>,
+    signal: AbortSignal,
+    model?: string,
+  ): Promise<{ transcript: string | null; error?: string }> {
     try {
-      const geminiClient = this.config.getOttoClient();
-      const temporaryChat = await geminiClient.createTemporaryChat(
-        SceneType.IMAGE_READER, // Reuse image reader scene since both are cheap visual/multimodal fallback scenes
-        resolvedModel, // use scene-recommended model (gemini-2.5-flash) or custom Gemini Flash model
+      const ottoClient = this.config.getOttoClient();
+      const temporaryChat = await ottoClient.createTemporaryChat(
+        SceneType.IMAGE_READER,
+        model,
         { type: 'sub', agentId: 'AudioReader' },
         { disableSystemPrompt: true },
       );
@@ -296,34 +323,108 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
         SceneType.IMAGE_READER,
       );
 
-      let transcript = (getResponseText(response) || '').trim();
-
+      const transcript = (getResponseText(response) || '').trim();
       if (!transcript) {
-        return {
-          llmContent: `Error: transcription model returned an empty transcript for "${filePath}".`,
-          returnDisplay: 'Empty transcript from model',
-        };
+        return { transcript: null, error: 'transcription model returned an empty transcript' };
       }
-
-      const truncated = truncateTranscript(transcript);
-      const header = `Audio transcription for ${shortenPath(relative)} (via ${isUsingCustomModel ? 'custom model' : 'gemini-2.5-flash'}):`;
-
-      return {
-        llmContent: `${header}\n\n${truncated.transcript}`,
-        returnDisplay: `Transcribed audio: ${shortenPath(relative)}${truncated.truncated ? ' (truncated)' : ''}`,
-      };
+      return { transcript };
     } catch (error) {
-      const errorMessage = getErrorMessage(error);
-      console.error(
-        `[AudioReaderTool] Failed to transcribe audio "${filePath}":`,
-        error,
-      );
-      return {
-        llmContent: `Error transcribing audio "${filePath}": ${errorMessage}`,
-        returnDisplay: `Error transcribing audio: ${errorMessage}`,
-      };
+      console.error('[AudioReaderTool] Temporary audio transcription failed:', error);
+      return { transcript: null, error: getErrorMessage(error) };
     }
   }
+}
+
+function formatTranscriptResult(
+  transcript: string,
+  relativePath: string,
+  sourceLabel: string,
+): ToolResult {
+  const truncated = truncateTranscript(transcript);
+  const shortPath = shortenPath(relativePath);
+  const header = `Audio transcription for ${shortPath} (via ${sourceLabel}):`;
+  return {
+    llmContent: `${header}\n\n${truncated.transcript}`,
+    returnDisplay: `Transcribed audio: ${shortPath}${truncated.truncated ? ' (truncated)' : ''}`,
+  };
+}
+
+function getCurrentAudioModelPlan(
+  config: Config,
+  currentModel: string | undefined,
+): { model: string; label: string } | null {
+  if (!currentModel || currentModel === 'auto') {
+    return null;
+  }
+
+  if (isCustomModel(currentModel)) {
+    const customModel = typeof config.getCustomModelConfig === 'function'
+      ? config.getCustomModelConfig(currentModel)
+      : undefined;
+    if (!customModel || !customModelSupportsAudio(customModel)) {
+      return null;
+    }
+    return {
+      model: currentModel,
+      label: customModel.displayName || customModel.modelId || currentModel,
+    };
+  }
+
+  if (!builtInModelSupportsAudio(currentModel)) {
+    return null;
+  }
+  return { model: currentModel, label: currentModel };
+}
+
+function customModelSupportsAudio(model: CustomModelConfig): boolean {
+  const capabilities = ((model as CustomModelConfig & { capabilities?: string[] }).capabilities || [])
+    .map(capability => capability.toLowerCase());
+  if (
+    capabilities.some(capability =>
+      capability === 'audio' ||
+      capability === 'input_audio' ||
+      capability === 'audio_input' ||
+      capability === 'multimodal' ||
+      capability === 'multimodal_audio',
+    )
+  ) {
+    return true;
+  }
+
+  const haystack = `${model.provider || ''} ${model.modelId || ''} ${model.displayName || ''}`.toLowerCase();
+  if (haystack.includes('gemini')) return true;
+
+  return (
+    haystack.includes('audio') ||
+    haystack.includes('realtime') ||
+    haystack.includes('transcribe') ||
+    haystack.includes('gpt-4o')
+  );
+}
+
+function builtInModelSupportsAudio(model: string): boolean {
+  const lower = model.toLowerCase();
+  return (
+    lower.includes('gemini') ||
+    lower.includes('audio') ||
+    lower.includes('realtime') ||
+    lower.includes('transcribe') ||
+    lower.includes('gpt-4o')
+  );
+}
+
+function findGeminiFlashModel(
+  customModels: CustomModelConfig[],
+  excludeModelId?: string,
+): CustomModelConfig | undefined {
+  return customModels.find(m => {
+    if (m.enabled === false) return false;
+    if (excludeModelId && generateCustomModelId(m) === excludeModelId) return false;
+    const modelIdLower = (m.modelId || '').toLowerCase();
+    const displayNameLower = (m.displayName || '').toLowerCase();
+    return (modelIdLower.includes('gemini') && modelIdLower.includes('flash')) ||
+           (displayNameLower.includes('gemini') && displayNameLower.includes('flash'));
+  });
 }
 
 async function transcribeWithLocalBridge(filePath: string): Promise<string | null> {

@@ -25,22 +25,75 @@ describe('AudioReaderTool', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('uses local ASR before creating a Gemini fallback chat', async () => {
+  it('uses the current audio-capable model before local ASR', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'transcript from current audio model' }],
+            role: 'model',
+          },
+        },
+      ],
+    });
+    const createTemporaryChat = vi.fn().mockResolvedValue({ sendMessage });
+    const localTranscriber = vi.fn().mockResolvedValue('local transcript');
+    const config = createMockConfig({
+      getTargetDir: () => tempDir,
+    }) as any;
+    config.getModel = () => 'custom:openai:gpt-4o-audio-preview@abc123';
+    config.getCustomModelConfig = () => ({
+      enabled: true,
+      provider: 'openai',
+      baseUrl: 'https://example.test/v1',
+      apiKey: 'test-key',
+      modelId: 'gpt-4o-audio-preview',
+      displayName: 'GPT-4o Audio',
+      capabilities: ['audio'],
+    });
+    config.getOttoClient = vi.fn(() => ({ createTemporaryChat }));
+
+    const tool = new AudioReaderTool(config, localTranscriber);
+
+    const result = await tool.execute({ absolute_path: audioPath }, new AbortController().signal);
+
+    expect(result.llmContent).toContain('via current model: GPT-4o Audio');
+    expect(result.llmContent).toContain('transcript from current audio model');
+    expect(createTemporaryChat).toHaveBeenCalledWith(
+      'image_reader',
+      'custom:openai:gpt-4o-audio-preview@abc123',
+      { type: 'sub', agentId: 'AudioReader' },
+      { disableSystemPrompt: true },
+    );
+    expect(localTranscriber).not.toHaveBeenCalled();
+  });
+
+  it('falls back to local ASR when the current custom model is text-only', async () => {
     const getOttoClient = vi.fn();
     const config = createMockConfig({
       getTargetDir: () => tempDir,
     }) as any;
+    config.getModel = () => 'custom:openai:doubao-pro@abc123';
+    config.getCustomModelConfig = () => ({
+      enabled: true,
+      provider: 'openai',
+      baseUrl: 'https://example.test/v1',
+      apiKey: 'test-key',
+      modelId: 'doubao-pro',
+      displayName: 'Doubao Pro',
+      capabilities: ['text'],
+    });
     config.getOttoClient = getOttoClient;
 
     const tool = new AudioReaderTool(
       config,
-      vi.fn().mockResolvedValue('本地转写出来的会议内容'),
+      vi.fn().mockResolvedValue('local meeting transcript'),
     );
 
     const result = await tool.execute({ absolute_path: audioPath }, new AbortController().signal);
 
     expect(result.llmContent).toContain('via local ASR');
-    expect(result.llmContent).toContain('本地转写出来的会议内容');
+    expect(result.llmContent).toContain('local meeting transcript');
     expect(getOttoClient).not.toHaveBeenCalled();
   });
 
@@ -49,9 +102,21 @@ describe('AudioReaderTool', () => {
       getTargetDir: () => tempDir,
     }) as any;
     config.getModel = () => 'custom:openai:doubao-pro@abc123';
+    config.getCustomModelConfig = () => ({
+      enabled: true,
+      provider: 'openai',
+      baseUrl: 'https://example.test/v1',
+      apiKey: 'test-key',
+      modelId: 'doubao-pro',
+      displayName: 'Doubao Pro',
+      capabilities: ['text'],
+    });
     config.getCustomModels = () => [
       {
         enabled: true,
+        provider: 'openai',
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'test-key',
         modelId: 'doubao-pro',
         displayName: 'Doubao Pro',
       },
@@ -63,6 +128,7 @@ describe('AudioReaderTool', () => {
     const result = await tool.execute({ absolute_path: audioPath }, new AbortController().signal);
 
     expect(result.llmContent).toContain('Audio transcription is not configured');
+    expect(result.llmContent).toContain('not marked as audio-capable');
     expect(result.llmContent).toContain('Install local Whisper');
     expect(result.llmContent).toContain('OPENAI_API_KEY or ARK_API_KEY');
     expect(config.getOttoClient).not.toHaveBeenCalled();
