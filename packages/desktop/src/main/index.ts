@@ -170,6 +170,8 @@ const serverManager = new ServerManager({
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 视频编辑器窗口（OpenReel）。 */
+let videoEditorWindow: BrowserWindow | undefined;
 
 // ── IPC channel 名（与 preload 对齐）──
 const IPC = {
@@ -178,6 +180,7 @@ const IPC = {
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
   saveTextFile: 'otto:save-text-file',
+  openVideoEditor: 'otto:open-video-editor',
   feishuStart: 'otto:feishu-start',
   feishuStop: 'otto:feishu-stop',
   feishuStatus: 'otto:feishu-status',
@@ -596,6 +599,50 @@ function createWindow(): BrowserWindow {
 
   void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
   return win;
+}
+
+/** 创建内置视频编辑器窗口（OpenReel）。 */
+function createVideoEditorWindow(): void {
+  if (videoEditorWindow && !videoEditorWindow.isDestroyed()) {
+    videoEditorWindow.show();
+    videoEditorWindow.focus();
+    return;
+  }
+
+  videoEditorWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    title: 'Otto - Video Editor',
+    icon: loadIcon(),
+    backgroundColor: '#0a0a0a',
+    autoHideMenuBar: process.platform !== 'darwin',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  // Load bundled OpenReel from resources/video-editor/
+  const editorPath = path.join(__dirname, '..', '..', '..', '..', 'resources', 'video-editor', 'index.html');
+  if (fs.existsSync(editorPath)) {
+    void videoEditorWindow.loadFile(editorPath);
+  } else {
+    // Fallback: dev server
+    void videoEditorWindow.loadURL('http://localhost:5174');
+  }
+
+  videoEditorWindow.on('closed', () => {
+    videoEditorWindow = undefined;
+  });
+
+  // External links open in system browser
+  videoEditorWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 }
 
 /** 收紧单个窗口 webContents 的导航 / 新窗口行为。 */
@@ -1030,6 +1077,11 @@ function registerIpc(): void {
     const r = await requestFeishuConfig('DELETE');
     if (!r) return { ok: false, config: null, error: '本地 server 未就绪。' };
     return { ok: r.ok, config: r.data, error: r.error };
+  });
+  // ── 内置视频编辑器 ──────────────────────────────────────────
+  ipcMain.handle(IPC.openVideoEditor, () => {
+    createVideoEditorWindow();
+    return Promise.resolve({ ok: true });
   });
   // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
   // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。

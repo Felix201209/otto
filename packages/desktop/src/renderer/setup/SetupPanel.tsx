@@ -848,6 +848,23 @@ export function SetupPanel({
           </button>
           <button
             type="button"
+            className="otto-setup__btn"
+            onClick={() => {
+              const code = prompt('请输入豁免码：');
+              if (code === 'OTTO-DEV-2026') {
+                try { localStorage.setItem('otto_exempt_code', code); } catch {}
+                alert('豁免码验证成功！即将跳过配置直接使用。');
+                window.location.reload();
+              } else if (code) {
+                alert('豁免码无效。');
+              }
+            }}
+            title="使用豁免码跳过配置"
+          >
+            使用豁免码
+          </button>
+          <button
+            type="button"
             className="otto-setup__btn otto-setup__btn--primary"
             disabled={!valid || saving}
             onClick={submit}

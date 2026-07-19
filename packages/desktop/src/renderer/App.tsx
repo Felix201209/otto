@@ -155,6 +155,8 @@ function OttoWorkspaceApp({
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
+  // 右侧智能体面板切换（默认显示）。
+  const [showRightPanel, setShowRightPanel] = useState(true);
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
@@ -183,9 +185,20 @@ function OttoWorkspaceApp({
   const autoFloated = useRef(false);
   // 当前用户所属部门 teamId 数组。null = 尚未加载；undefined/[] = 个人版。
   const [userTeamIds, setUserTeamIds] = useState<string[] | null>(null);
+  // 豁免码：跳过 SetupPanel 的开发调试机制。
+  const [exemptActive, setExemptActive] = useState(false);
+  useEffect(() => {
+    try {
+      const exempt = localStorage.getItem('otto_exempt_code');
+      if (exempt === 'OTTO-DEV-2026') {
+        setExemptActive(true);
+      }
+    } catch {}
+  }, []);
   useEffect(() => {
     if (
       !autoFloated.current &&
+      !exemptActive &&
       state.connection === 'connected' &&
       state.modelsLoaded &&
       state.models.length === 0
@@ -502,6 +515,7 @@ function OttoWorkspaceApp({
               onRegenerate={handleRegenerate}
               onRespondQuestion={actions.respondToolConfirmation}
               onOpenSetup={openModelSettings}
+              onToggleAgents={() => setShowRightPanel(v => !v)}
               onNewChat={handleNewChat}
               onClearContext={handleClearContext}
               onExport={
@@ -524,6 +538,7 @@ function OttoWorkspaceApp({
               }}
             />
           )}
+          {showRightPanel && (
           <RightPanel
             busy={busy}
             mode={edition}
@@ -546,6 +561,7 @@ function OttoWorkspaceApp({
             onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
             onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
           />
+          )}
         </div>
       )}
 
