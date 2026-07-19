@@ -108,6 +108,12 @@ describe('服务端 Agent profile 白名单', () => {
     expect(pdf?.systemPrompt).toContain('create_pdf.py');
     expect(pdf?.systemPrompt).toContain('merge_pdf');
     expect(pdf?.systemPrompt).toContain('禁止');
+
+    const copy = resolveAgentProfile('copy');
+    expect(copy?.embeddedSkills).toEqual(['copywriting']);
+    expect(copy?.systemPrompt).toContain('ask_user_question');
+    expect(copy?.systemPrompt).toContain('copywriting');
+    expect(copy?.systemPrompt).toContain('CTA');
   });
 
   it('每个专家都有对应身份的简短欢迎语', () => {
