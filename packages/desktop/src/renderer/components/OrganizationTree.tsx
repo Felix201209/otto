@@ -15,9 +15,12 @@ import { IconChevronDown } from './icons.js';
 export function OrganizationTree({
   workspace,
   enterpriseAccount,
+  openRequest = 0,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
+  /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
+  openRequest?: number;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
@@ -53,6 +56,10 @@ export function OrganizationTree({
     }
     return result;
   }, [organization?.companies]);
+
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true);
+  }, [openRequest]);
 
   // 本地 workspace 没有管理者组织快照时，经 preload → main 读取企业组织。
   // 会话 token 始终只保留在 main 的 EnterpriseClient 内。

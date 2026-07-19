@@ -138,10 +138,11 @@ describe('RightPanel fixed Agent catalog', () => {
   it('keeps the enterprise owner on its fixed 9-Agent catalog', () => {
     installBridge();
 
-    render(
+    const { container } = render(
       <RightPanel
         busy={false}
         mode="enterprise"
+        enterpriseRole="company_admin"
         workspace={enterpriseWorkspace()}
         onOpenSkillZone={vi.fn()}
       />,
@@ -152,6 +153,24 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('品牌营销文案')).toBeTruthy();
     expect(screen.queryByText('企业工作 Agent')).toBeNull();
     expect(screen.queryByText('产品需求 Agent')).toBeNull();
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
+  });
+
+  it('ignores a stale local owner workspace for an authenticated central member', () => {
+    installBridge();
+
+    const { container } = render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="member"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    expect(screen.getByText('企业工作 Agent')).toBeTruthy();
+    expect(screen.queryByText('CEO Agent')).toBeNull();
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
   });
 
   it('keeps worklog popovers inside the panel on the left and right calendar edges', async () => {
@@ -280,6 +299,32 @@ describe('RightPanel fixed Agent catalog', () => {
     fireEvent.click(toggle);
     expect(screen.getByText('宏创 AI')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('shows the authenticated central organization before stale local company data', () => {
+    installBridge();
+    const workspace = {
+      ...enterpriseWorkspace(),
+      authenticatedOrganization: { id: 'central-org', name: '中心企业' },
+    };
+    const openOrganization = vi.fn();
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="member"
+        workspace={workspace}
+        onOpenOrganization={openOrganization}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /企业与好友/ }));
+    expect(screen.getByText('中心企业')).toBeTruthy();
+    expect(screen.queryByText('宏创 AI')).toBeNull();
+    expect(screen.getByText('成员与部门由中心组织树实时加载')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '打开企业组织树' }));
+    expect(openOrganization).toHaveBeenCalledOnce();
   });
 
   it('requires an explicit confirmation or rejection for auto-Skill candidates', () => {

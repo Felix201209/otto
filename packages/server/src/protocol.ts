@@ -244,6 +244,9 @@ export interface SessionSummary {
   agentProfileId?: string;
   agentProfileName?: string;
   productEdition?: 'personal' | 'enterprise';
+  /** 中心企业身份创建时的租户绑定；legacy 企业会话缺失时必须 fail closed。 */
+  enterpriseAccountId?: string;
+  enterpriseOrganizationId?: string;
   createdAt: number;
   updatedAt: number;
   lastMessagePreview?: string;
@@ -1439,7 +1442,7 @@ export interface FeishuConfigSaveRequest {
  *   GET  /feishu/config               → ApiResponse<FeishuConfigPublic>（脱敏凭证视图，绝不含 secret）
  *   POST /feishu/config               → ApiResponse<FeishuConfigPublic>（保存凭证并立即尝试启动守护）
  *   DELETE /feishu/config             → ApiResponse<FeishuConfigPublic>（停守护并清除凭证）
- *   WS   /ws                          → 双向 ClientToServer / ServerToClient
+ *   WS   /ws?clientToken=<端点令牌>    → 双向 ClientToServer / ServerToClient
  */
 export const HTTP_ROUTES = {
   health: '/health',
@@ -1447,6 +1450,8 @@ export const HTTP_ROUTES = {
   sessions: '/sessions',
   sessionHistory: (id: string) => `/sessions/${id}/history`,
   models: '/models',
+  /** 仅供本机受控主进程同步中心企业身份；必须携带端点 control token。 */
+  enterpriseIdentity: '/internal/enterprise-identity',
   feishuStart: '/feishu/start',
   feishuStop: '/feishu/stop',
   feishuConfig: '/feishu/config',
@@ -1489,6 +1494,8 @@ export interface ServerEndpoint {
   protocolVersion: string;
   pid: number;
   startedAt: number;
+  /** renderer 建立本机 WS 升级握手所需的独立短期外壳令牌。 */
+  clientToken: string;
 }
 
 /** 判别 client 帧 type。 */

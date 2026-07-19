@@ -500,8 +500,9 @@ if [ -e "$TARGET_RELEASE" ] || [ -L "$TARGET_RELEASE" ]; then
 fi
 cp -a "${SCRIPT_DIR}/release" "$TARGET_RELEASE"
 TARGET_RELEASE_CREATED=1
-chown -R root:root "$TARGET_RELEASE"
-chmod -R go-w "$TARGET_RELEASE"
+chown root:root "$INSTALL_ROOT" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/releases"
+chown -R root:root "${INSTALL_ROOT}/runtime" "$TARGET_RELEASE"
+otto_prepare_service_layout "$INSTALL_ROOT" "$TARGET_RELEASE"
 "$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "$TARGET_RELEASE" >/dev/null
 
 mkdir -p "${INSTALL_ROOT}/deploy"

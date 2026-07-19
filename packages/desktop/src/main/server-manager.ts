@@ -37,6 +37,20 @@ import type {
   OttoServer as OttoServerType,
   ServerEndpoint,
 } from 'otto-server';
+import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.js';
+
+type ServerEndpointRecord = ServerEndpoint & { controlToken?: string };
+type TrustedOttoServer = OttoServerType & {
+  readonly endpoint: {
+    host: string;
+    port: number;
+    clientToken: string;
+  };
+  readonly controlToken: string;
+  setAuthenticatedEnterpriseAccount(
+    account: AuthenticatedEnterpriseAccountInput | null,
+  ): unknown;
+};
 
 /** otto-server（ESM）动态加载并缓存：避免每次调用都重新 import()。 */
 let ottoServerModulePromise: Promise<typeof import('otto-server')> | undefined;
@@ -96,6 +110,7 @@ export interface ServerManagerDependencies {
   loadEnterpriseServer: typeof loadEnterpriseServer;
   pidAlive: typeof pidAlive;
   probeHealth: typeof probeHealth;
+  fetchImpl: typeof fetch;
   enterpriseListenTimeoutMs: number;
 }
 
@@ -104,6 +119,7 @@ const DEFAULT_DEPENDENCIES: ServerManagerDependencies = {
   loadEnterpriseServer,
   pidAlive,
   probeHealth,
+  fetchImpl: fetch,
   enterpriseListenTimeoutMs: ENTERPRISE_LISTEN_TIMEOUT_MS,
 };
 
@@ -119,7 +135,13 @@ export interface ServerManagerOptions {
 
 export class ServerManager {
   /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
-  private embedded?: OttoServerType;
+  private embedded?: TrustedOttoServer;
+  /** 最近一次确保成功的内部端点记录；可含控制令牌，绝不返回 renderer。 */
+  private currentEndpointRecord?: ServerEndpointRecord;
+  /** 主服务 ensure 中的共享 Promise，避免启动期 IPC 与 app ready 重复拉起。 */
+  private mainEnsurePromise?: Promise<EnsuredServer>;
+  /** 身份变更严格按调用顺序执行，防 401 清理反压覆盖随后成功的新登录。 */
+  private enterpriseIdentitySyncTail: Promise<void> = Promise.resolve();
   /** 企业后台 server（管理员登录 / 看板 / 账号管理）。本进程内嵌拉起时持有。 */
   private enterpriseSrv?: HttpServer;
   /** enterprise 启动中的共享 Promise，防并发 ensure 重复抢占同一端口。 */
@@ -150,11 +172,37 @@ export class ServerManager {
    * 确保有可用 server，返回其端点。已尽量幂等：可重复调用（重连场景）。
    */
   async ensure(): Promise<EnsuredServer> {
+    if (this.mainEnsurePromise) return this.mainEnsurePromise;
     this.throwIfShuttingDown();
+    const operation = this.ensureOnce();
+    this.mainEnsurePromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.mainEnsurePromise === operation) this.mainEnsurePromise = undefined;
+    }
+  }
+
+  /** 单次主服务发现/拉起；并发折叠由 ensure() 负责。 */
+  private async ensureOnce(): Promise<EnsuredServer> {
+    this.throwIfShuttingDown();
+    // 同一 manager 已经内嵌拉起时直接复用，不能把自己的端点误判成 discovered。
+    if (this.embedded && this.currentEndpointRecord) {
+      this.ownership = 'embedded';
+      return {
+        endpoint: publicServerEndpoint(this.currentEndpointRecord),
+        ownership: 'embedded',
+      };
+    }
     const mod = await this.dependencies.loadOttoServer();
     this.throwIfShuttingDown();
     // 1) 发现并探活已运行的 server（headless / CLI 已在跑时直接复用）。
-    const discovered = mod.readEndpoint();
+    const readEndpointRecord = (mod as typeof mod & {
+      readEndpointRecord?: () => ServerEndpointRecord | undefined;
+    }).readEndpointRecord;
+    // 新 server 通过 trusted-only API 读取令牌；旧模块只剩公开端点，后续身份
+    // 同步会因缺 token 明确 fail closed，而不是退回不受保护的控制方式。
+    const discovered = readEndpointRecord?.() ?? mod.readEndpoint();
     if (discovered && this.dependencies.pidAlive(discovered.pid)) {
       const healthy = await this.dependencies.probeHealth(
         discovered.host,
@@ -164,10 +212,14 @@ export class ServerManager {
       this.throwIfShuttingDown();
       if (healthy) {
         this.ownership = 'discovered';
+        this.currentEndpointRecord = discovered;
         // 主服务由 CLI/headless 进程持有时，桌面端仍必须单独保证企业后台可用。
         // 旧实现从这里提前返回，导致管理员登录/邀请码接口从未启动。
         if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
-        return { endpoint: discovered, ownership: 'discovered' };
+        return {
+          endpoint: publicServerEndpoint(discovered),
+          ownership: 'discovered',
+        };
       }
     }
     // 端点文件陈旧（进程没了或不应答）→ 清掉，避免误导后续读取。
@@ -179,10 +231,28 @@ export class ServerManager {
     const port = resolvePort(mod.DEFAULT_PORT);
     const embeddedEp = await this.startEmbedded(port, mod);
     this.ownership = 'embedded';
+    this.currentEndpointRecord = embeddedEp;
     // 3) 同时拉起 enterprise-server（管理员登录 / 看板功能依赖）。
     // 静默失败：企业后台是辅助功能，不影响主对话。
     if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
-    return { endpoint: embeddedEp, ownership: 'embedded' };
+    return {
+      endpoint: publicServerEndpoint(embeddedEp),
+      ownership: 'embedded',
+    };
+  }
+
+  /**
+   * 把中心企业服务已经验证的账号应用到本机 OttoServer。
+   * embedded 走同进程 setter；discovered 只能走 loopback + 端点控制令牌。
+   */
+  setAuthenticatedEnterpriseAccount(
+    account: AuthenticatedEnterpriseAccountInput | null,
+  ): Promise<void> {
+    const operation = this.enterpriseIdentitySyncTail
+      .catch(() => undefined)
+      .then(() => this.syncAuthenticatedEnterpriseAccount(account));
+    this.enterpriseIdentitySyncTail = operation;
+    return operation;
   }
 
   /** 当前 server 归属（lifecycle 决定退出时是否停 server）。 */
@@ -237,6 +307,7 @@ export class ServerManager {
         const mod = await this.dependencies.loadOttoServer();
         mod.clearEndpoint();
         this.embedded = undefined;
+        this.currentEndpointRecord = undefined;
       }
     }
   }
@@ -254,7 +325,7 @@ export class ServerManager {
   private async startEmbedded(
     port: number,
     mod: typeof import('otto-server'),
-  ): Promise<ServerEndpoint> {
+  ): Promise<ServerEndpointRecord> {
     // 用户已 setup 飞书凭证时启用飞书网关，让桌面 app 的飞书双向同步真正激活
     // （adapter 对无凭证已 fail-soft，这里仅在凭证文件存在时开）。Issue #3/#6。
     const enableFeishu = feishuCredentialsExist();
@@ -266,7 +337,7 @@ export class ServerManager {
       port,
       enableFeishu,
       store,
-    });
+    }) as TrustedOttoServer;
     await server.start();
     // listen 完成时若已进入退出流程（shutdown 与 ensure 竞态：shutdown 先跑完、
     // 这里才 listen 成功），立即停掉刚起的 server 并清理端点文件，不留孤儿。
@@ -283,9 +354,98 @@ export class ServerManager {
     // start 成功且未在退出流程，才把引用交给 shutdown 管理
     // （避免 shutdown 对一个 start 尚未完成的 server 调 stop）。
     this.embedded = server;
-    const { host, port: boundPort } = server.endpoint;
+    const {
+      host,
+      port: boundPort,
+      clientToken,
+    } = server.endpoint;
+    const { controlToken } = server;
     // 内嵌 server 由本进程写端点文件。
-    return mod.writeEndpoint(host, boundPort);
+    const publicEndpoint = mod.writeEndpoint(
+      host,
+      boundPort,
+      clientToken,
+      controlToken,
+    );
+    return { ...publicEndpoint, controlToken };
+  }
+
+  private async syncAuthenticatedEnterpriseAccount(
+    account: AuthenticatedEnterpriseAccountInput | null,
+  ): Promise<void> {
+    if (!this.currentEndpointRecord) await this.ensure();
+    this.throwIfShuttingDown();
+
+    if (this.ownership === 'embedded') {
+      if (!this.embedded) {
+        throw new Error('本机 OttoServer 状态不完整，请重启 Otto 后重试');
+      }
+      this.embedded.setAuthenticatedEnterpriseAccount(account);
+      return;
+    }
+
+    const record = this.currentEndpointRecord;
+    if (!record) throw new Error('本机 OttoServer 尚未就绪，请重启 Otto 后重试');
+    if (!record.controlToken?.trim()) {
+      throw new Error(
+        '检测到旧版本本机 OttoServer，无法安全同步企业身份。' +
+        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+      );
+    }
+    if (!isLoopbackHost(record.host)) {
+      throw new Error('本机 OttoServer 端点不是 loopback，已拒绝发送企业身份');
+    }
+
+    const mod = await this.dependencies.loadOttoServer();
+    const identityRoute = (mod.HTTP_ROUTES as typeof mod.HTTP_ROUTES & {
+      enterpriseIdentity?: string;
+    }).enterpriseIdentity;
+    if (!identityRoute) {
+      throw new Error(
+        '检测到旧版本本机 OttoServer，缺少企业身份控制接口。' +
+        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+      );
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3_000);
+    try {
+      const response = await this.dependencies.fetchImpl(
+        `http://${formatHttpHost(record.host)}:${record.port}${identityRoute}`,
+        {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${record.controlToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ account }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: unknown };
+        const detail = typeof body.error === 'string' && body.error.trim()
+          ? `：${body.error.trim()}`
+          : `（HTTP ${response.status}）`;
+        throw new Error(
+          `本机 OttoServer 拒绝身份同步${detail}。` +
+          '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('请退出所有 Otto/CLI')) {
+        throw error;
+      }
+      const detail = error instanceof Error && error.name === 'AbortError'
+        ? '请求超时'
+        : error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `本机 OttoServer 身份同步失败：${detail}。` +
+        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+      );
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** 确保 enterprise-server（管理员登录/看板）在同进程内嵌拉起。幂等：已跑就跳过。 */
@@ -370,6 +530,30 @@ export class ServerManager {
 }
 
 // ── 自由函数 ──
+
+/** 明确挑选公开字段，避免将未来新增的敏感端点字段经 IPC 泄露给 renderer。 */
+function publicServerEndpoint(record: ServerEndpointRecord): ServerEndpoint {
+  return {
+    host: record.host,
+    port: record.port,
+    protocolVersion: record.protocolVersion,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    clientToken: record.clientToken,
+  };
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function formatHttpHost(host: string): string {
+  const normalized = host.replace(/^\[|\]$/g, '');
+  return normalized.includes(':') ? `[${normalized}]` : normalized;
+}
 
 /** 解析监听端口：env 覆盖 > 默认。 */
 function resolvePort(defaultPort: number): number {

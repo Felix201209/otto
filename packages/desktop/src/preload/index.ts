@@ -31,6 +31,10 @@ import type {
   ServerEndpoint,
   ServerToClient,
 } from 'otto-server';
+import {
+  serverEndpointChanged,
+  serverWebSocketUrl,
+} from './server-endpoint.js';
 
 /**
  * 飞书守护状态（main 从 server /health 透传；renderer 徽标据此渲染）。
@@ -599,7 +603,7 @@ function openSocket(): Promise<boolean> {
         return;
       }
       try {
-        const socket = new WebSocket(`ws://${ep.host}:${ep.port}/ws`);
+        const socket = new WebSocket(serverWebSocketUrl(ep));
         ws = socket;
 
         socket.addEventListener('open', () => {
@@ -1030,8 +1034,7 @@ const bridge: OttoBridge = {
 
 // 端点变更（main 在发现/拉起 server 后推送）：更新缓存，若期望连接则重连到新端点。
 ipcRenderer.on(IPC.endpointChanged, (_e, ep: ServerEndpoint | null) => {
-  const changed =
-    ep?.host !== currentEndpoint?.host || ep?.port !== currentEndpoint?.port;
+  const changed = serverEndpointChanged(currentEndpoint, ep);
   currentEndpoint = ep;
   if (wantConnected && changed) {
     // 重连到新端点：关旧连接，立即重连（清退避计数）。

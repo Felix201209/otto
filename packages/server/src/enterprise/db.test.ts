@@ -286,6 +286,187 @@ describe('企业邀请码原子更新', () => {
       .toBe(oldInvite.id);
     expect(db.inspectOrganizationInvite(oldInvite.code, 2_000).status).toBe('active');
   });
+
+  it('两个已签发短信挑战竞争单人邀请码时只允许一个账号落库', async () => {
+    const db = await freshDb();
+    const now = Date.now();
+    const invite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      now,
+      null,
+      { maxUses: 1 },
+    );
+    const firstChallenge = db.createSmsRegistrationChallenge(
+      '13800138000',
+      '123456',
+      db.DEFAULT_ORGANIZATION_ID,
+      { now: now + 100, organizationInviteId: invite.id },
+    );
+    const secondChallenge = db.createSmsRegistrationChallenge(
+      '13900139000',
+      '654321',
+      db.DEFAULT_ORGANIZATION_ID,
+      { now: now + 100, organizationInviteId: invite.id },
+    );
+    expect(firstChallenge.ok).toBe(true);
+    expect(secondChallenge.ok).toBe(true);
+    if (!firstChallenge.ok || !secondChallenge.ok) {
+      throw new Error('registration challenges should be issued');
+    }
+
+    const firstVerified = db.verifySmsRegistrationChallenge(
+      firstChallenge.challengeId,
+      '123456',
+      now + 1_000,
+    );
+    const secondVerified = db.verifySmsRegistrationChallenge(
+      secondChallenge.challengeId,
+      '654321',
+      now + 1_000,
+    );
+    expect(firstVerified.ok).toBe(true);
+    expect(secondVerified.ok).toBe(true);
+    if (!firstVerified.ok || !secondVerified.ok) {
+      throw new Error('registration challenges should verify');
+    }
+
+    const firstAccount = db.createSelfRegisteredAccount({
+      organizationId: firstVerified.organizationId,
+      phone: firstVerified.phone,
+      name: '第一位员工',
+      password: 'first-registered-password',
+      organizationInviteId: firstVerified.organizationInviteId,
+    });
+    expect(firstAccount.phone).toBe('+8613800138000');
+
+    expect(() => db.createSelfRegisteredAccount({
+      organizationId: secondVerified.organizationId,
+      phone: secondVerified.phone,
+      name: '第二位员工',
+      password: 'second-registered-password',
+      organizationInviteId: secondVerified.organizationInviteId,
+    })).toThrow('企业邀请码可用名额已用完，请联系管理员重新生成');
+
+    expect(db.findAccountByPhone(secondVerified.phone)).toBeNull();
+    expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, now + 1_000))
+      .toMatchObject({ id: invite.id, maxUses: 1, usedCount: 1 });
+  });
+
+  it('短信挑战签发后邀请码被撤销时拒绝创建账号且不核销名额', async () => {
+    const db = await freshDb();
+    const now = Date.now();
+    const invite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      now,
+      null,
+      { maxUses: 1 },
+    );
+    const challenge = db.createSmsRegistrationChallenge(
+      '13600136000',
+      '123456',
+      db.DEFAULT_ORGANIZATION_ID,
+      { now: now + 100, organizationInviteId: invite.id },
+    );
+    expect(challenge.ok).toBe(true);
+    if (!challenge.ok) throw new Error('registration challenge should be issued');
+    const verified = db.verifySmsRegistrationChallenge(
+      challenge.challengeId,
+      '123456',
+      now + 200,
+    );
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error('registration challenge should verify');
+
+    db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, now + 300);
+    expect(db.inspectOrganizationInvite(invite.code, now + 300).status).toBe('revoked');
+
+    expect(() => db.createSelfRegisteredAccount({
+      organizationId: verified.organizationId,
+      phone: verified.phone,
+      name: '撤销后注册员工',
+      password: 'registered-password',
+      organizationInviteId: verified.organizationInviteId,
+    })).toThrow('企业邀请码可用名额已用完，请联系管理员重新生成');
+
+    expect(db.findAccountByPhone(verified.phone)).toBeNull();
+    expect(db.getDB().prepare(
+      'SELECT used_count AS usedCount FROM organization_invites WHERE id = ?',
+    ).get(invite.id)).toMatchObject({ usedCount: 0 });
+  });
+
+  it('短信挑战签发后邀请码过期时拒绝创建账号且不核销名额', async () => {
+    const db = await freshDb();
+    const now = Date.now();
+    const invite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      now,
+      null,
+      { maxUses: 1 },
+    );
+    const challenge = db.createSmsRegistrationChallenge(
+      '13500135000',
+      '654321',
+      db.DEFAULT_ORGANIZATION_ID,
+      { now: now + 100, organizationInviteId: invite.id },
+    );
+    expect(challenge.ok).toBe(true);
+    if (!challenge.ok) throw new Error('registration challenge should be issued');
+    const verified = db.verifySmsRegistrationChallenge(
+      challenge.challengeId,
+      '654321',
+      now + 200,
+    );
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) throw new Error('registration challenge should verify');
+
+    db.getDB().prepare(
+      'UPDATE organization_invites SET expires_at_ms = ? WHERE id = ?',
+    ).run(Date.now() - 1, invite.id);
+    expect(db.inspectOrganizationInvite(invite.code, Date.now()).status).toBe('expired');
+
+    expect(() => db.createSelfRegisteredAccount({
+      organizationId: verified.organizationId,
+      phone: verified.phone,
+      name: '过期后注册员工',
+      password: 'registered-password',
+      organizationInviteId: verified.organizationInviteId,
+    })).toThrow('企业邀请码可用名额已用完，请联系管理员重新生成');
+
+    expect(db.findAccountByPhone(verified.phone)).toBeNull();
+    expect(db.getDB().prepare(
+      'SELECT used_count AS usedCount FROM organization_invites WHERE id = ?',
+    ).get(invite.id)).toMatchObject({ usedCount: 0 });
+  });
+
+  it('账号创建失败时回滚账号和已占用的邀请码名额', async () => {
+    const db = await freshDb();
+    const invite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      2_000_000,
+      null,
+      { maxUses: 1 },
+    );
+    db.getDB().exec(`
+      CREATE TRIGGER fail_self_registered_account_audit
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.event = 'account_create'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced account audit failure');
+      END;
+    `);
+
+    expect(() => db.createSelfRegisteredAccount({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      phone: '13700137000',
+      name: '失败员工',
+      password: 'registered-password',
+      organizationInviteId: invite.id,
+    })).toThrow(/forced account audit failure/);
+
+    expect(db.findAccountByPhone('13700137000')).toBeNull();
+    expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 2_001_000))
+      .toMatchObject({ id: invite.id, maxUses: 1, usedCount: 0 });
+  });
 });
 
 describe('report 边界：0 任务不崩/不 NaN/不除零', () => {

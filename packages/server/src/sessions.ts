@@ -109,6 +109,8 @@ export interface SessionStore {
    */
   renameSession(sessionId: string, title: string): SessionSummary | undefined;
   attachRuntime(sessionId: string, runtime: SessionRuntime): void;
+  /** 摘除并返回 runtime；身份切换时先 detach，防后续请求复用旧权限上下文。 */
+  detachRuntime(sessionId: string): SessionRuntime | undefined;
   getRuntime(sessionId: string): SessionRuntime | undefined;
 
   /** 订阅会话广播。 */
@@ -226,6 +228,8 @@ export class InMemorySessionStore implements SessionStore {
       agentProfileId: init.agentProfileId,
       agentProfileName: init.agentProfileName,
       productEdition: init.productEdition,
+      enterpriseAccountId: init.enterpriseAccountId,
+      enterpriseOrganizationId: init.enterpriseOrganizationId,
       createdAt: now,
       updatedAt: now,
       lastMessagePreview: undefined,
@@ -371,6 +375,14 @@ export class InMemorySessionStore implements SessionStore {
   attachRuntime(sessionId: string, runtime: SessionRuntime): void {
     const s = this.requireSession(sessionId);
     s.runtime = runtime;
+  }
+
+  detachRuntime(sessionId: string): SessionRuntime | undefined {
+    const s = this.sessions.get(sessionId);
+    if (!s?.runtime) return undefined;
+    const runtime = s.runtime;
+    delete s.runtime;
+    return runtime;
   }
 
   getRuntime(sessionId: string): SessionRuntime | undefined {

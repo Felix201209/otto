@@ -7,6 +7,7 @@
 import { EventEmitter } from 'node:events';
 import type { Server as HttpServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import type { ServerEndpoint } from 'otto-server';
 import {
   ServerManager,
   type ServerManagerDependencies,
@@ -15,9 +16,24 @@ import {
 const MAIN_ENDPOINT = {
   host: '127.0.0.1',
   port: 4_123,
-  protocolVersion: 1,
+  protocolVersion: '1',
   pid: 123,
   startedAt: 1,
+  clientToken: 'discovered-client-token',
+} satisfies ServerEndpoint;
+
+const ENTERPRISE_ACCOUNT = {
+  id: 'acc_member',
+  organizationId: 'org_otto',
+  organizationName: 'Otto 企业',
+  name: '成员一号',
+  isAdmin: false,
+  role: 'member',
+  tags: ['engineering'],
+  department: '产品与研发部',
+  positionId: 'pos_engineer',
+  positionTitle: '工程师',
+  leaseExpiresAt: '2026-07-19T12:00:00.000Z',
 };
 
 function discoveredMainModule() {
@@ -62,10 +78,163 @@ function dependencies(
     },
     pidAlive: () => true,
     probeHealth: async (_host, port) => port === MAIN_ENDPOINT.port,
+    fetchImpl: vi.fn() as unknown as typeof fetch,
     enterpriseListenTimeoutMs: 25,
     ...overrides,
   };
 }
+
+function embeddedMainModule(setAuthenticatedEnterpriseAccount: ReturnType<typeof vi.fn>) {
+  class FakePersistentSessionStore {}
+  class FakeOttoServer {
+    readonly endpoint = {
+      host: '127.0.0.1',
+      port: 7_637,
+      clientToken: 'embedded-client-token',
+    };
+    readonly controlToken = 'embedded-control-token';
+
+    start = vi.fn(async () => undefined);
+    stop = vi.fn(async () => undefined);
+    setAuthenticatedEnterpriseAccount = setAuthenticatedEnterpriseAccount;
+  }
+
+  return {
+    readEndpoint: vi.fn(() => undefined),
+    clearEndpoint: vi.fn(),
+    writeEndpoint: vi.fn((
+      host: string,
+      port: number,
+      clientToken: string,
+      _controlToken?: string,
+    ) => ({
+      host,
+      port,
+      protocolVersion: '1',
+      pid: 321,
+      startedAt: 2,
+      clientToken,
+    })),
+    DEFAULT_HOST: '127.0.0.1',
+    DEFAULT_PORT: 7_637,
+    HTTP_ROUTES: {
+      health: '/health',
+      enterpriseIdentity: '/internal/enterprise-identity',
+    },
+    PersistentSessionStore: FakePersistentSessionStore,
+    OttoServer: FakeOttoServer,
+  } as unknown as Awaited<ReturnType<ServerManagerDependencies['loadOttoServer']>>;
+}
+
+describe('ServerManager trusted enterprise identity bridge', () => {
+  it('内嵌 server 直接应用中心认证账号，且 renderer 端点不泄露 control token', async () => {
+    const setAuthenticatedEnterpriseAccount = vi.fn();
+    const mod = embeddedMainModule(setAuthenticatedEnterpriseAccount);
+    const manager = new ServerManager({
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        pidAlive: () => false,
+        probeHealth: async () => false,
+      }),
+    });
+
+    const ensured = await manager.ensure();
+    await manager.setAuthenticatedEnterpriseAccount(ENTERPRISE_ACCOUNT);
+
+    expect(ensured.ownership).toBe('embedded');
+    expect(ensured.endpoint.clientToken).toBe('embedded-client-token');
+    expect(ensured.endpoint).not.toHaveProperty('controlToken');
+    expect(setAuthenticatedEnterpriseAccount).toHaveBeenCalledWith(ENTERPRISE_ACCOUNT);
+    expect(mod.writeEndpoint).toHaveBeenCalledWith(
+      '127.0.0.1',
+      7_637,
+      'embedded-client-token',
+      'embedded-control-token',
+    );
+    await manager.shutdown();
+  });
+
+  it('复用 server 时只把中心认证账号发往受令牌保护的 loopback 控制路由', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      data: { context: { edition: 'enterprise' } },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const discovered = {
+      ...MAIN_ENDPOINT,
+      controlToken: 'discovered-control-token',
+    };
+    const readEndpointRecord = vi.fn(() => discovered);
+    const readPublicEndpoint = vi.fn(() => MAIN_ENDPOINT);
+    const mod = {
+      ...discoveredMainModule(),
+      readEndpoint: readPublicEndpoint,
+      readEndpointRecord,
+      HTTP_ROUTES: {
+        health: '/health',
+        enterpriseIdentity: '/internal/enterprise-identity',
+      },
+    } as unknown as Awaited<ReturnType<ServerManagerDependencies['loadOttoServer']>>;
+    const manager = new ServerManager({
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        fetchImpl: fetchImpl as typeof fetch,
+      }),
+    });
+
+    const ensured = await manager.ensure();
+    await manager.setAuthenticatedEnterpriseAccount(ENTERPRISE_ACCOUNT);
+
+    expect(ensured.endpoint).toEqual(MAIN_ENDPOINT);
+    expect(ensured.endpoint.clientToken).toBe('discovered-client-token');
+    expect(ensured.endpoint).not.toHaveProperty('controlToken');
+    expect(readEndpointRecord).toHaveBeenCalledOnce();
+    expect(readPublicEndpoint).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:4123/internal/enterprise-identity',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          authorization: 'Bearer discovered-control-token',
+          'content-type': 'application/json',
+        }),
+        body: JSON.stringify({ account: ENTERPRISE_ACCOUNT }),
+      }),
+    );
+  });
+
+  it('旧 server 端点没有 control token 时 fail closed，并明确要求重启', async () => {
+    const fetchImpl = vi.fn();
+    const manager = new ServerManager({
+      dependencies: dependencies({ fetchImpl: fetchImpl as typeof fetch }),
+    });
+
+    await manager.ensure();
+    await expect(manager.setAuthenticatedEnterpriseAccount(ENTERPRISE_ACCOUNT))
+      .rejects.toThrow('旧版本本机 OttoServer');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('并发 ensure 共享同一次主服务发现与探活，不重复拉起', async () => {
+    const mod = discoveredMainModule();
+    const probeHealth = vi.fn(async () => true);
+    const manager = new ServerManager({
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        probeHealth,
+      }),
+    });
+
+    const [first, second] = await Promise.all([manager.ensure(), manager.ensure()]);
+
+    expect(first).toEqual(second);
+    expect(mod.readEndpoint).toHaveBeenCalledOnce();
+    expect(probeHealth).toHaveBeenCalledOnce();
+  });
+});
 
 describe('ServerManager enterprise lifecycle', () => {
   it('复用已运行的主服务时仍会启动企业后台服务', async () => {

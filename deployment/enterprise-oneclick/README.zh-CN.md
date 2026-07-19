@@ -170,6 +170,7 @@ curl --fail --show-error \
 - `schemaVersion: 2`
 - `db: connected`
 - `sms.configured: true`
+- `capabilities` 同时包含 `direct_messages`、`position_invites`、`park_service_push`
 
 浏览器验收：
 
@@ -179,6 +180,7 @@ curl --fail --show-error \
 4. 打开已有邀请落地页，确认不是 404/410；
 5. 用修复后的 Otto 客户端完成一次“邀请链接 → 短信注册 → 进入工作区 → 展开企业组织树”；
 6. 确认真实账号看到服务端组织，而不是机器上残留的本机树。
+7. 用两个测试账号互发一条私聊；再用管理员向测试成员推送一次园区服务，确认成员消息中可读。
 
 注意：管理员手动“生成新邀请”会立即废止旧邀请。若只是迁移验收，不要无意点击生成按钮。
 

@@ -23,6 +23,7 @@ import {
   type Server as HttpServer,
   type ServerResponse,
 } from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { homedir } from 'node:os';
@@ -64,7 +65,11 @@ import {
   TRUSTED_ORIGINS,
   PNA_HEADERS,
 } from './protocol.js';
-import { ProductWorkspaceStore } from './productWorkspaceStore.js';
+import {
+  ProductWorkspaceStore,
+  type AuthenticatedEnterpriseAccount,
+  type ProductWorkspaceSnapshot,
+} from './productWorkspaceStore.js';
 import {
   buildAgentProfileRuntimeRules,
   buildEnterpriseWorkspaceContext,
@@ -317,6 +322,14 @@ export class OttoServer {
   private readonly startedAt = Date.now();
   /** 稳定实例标识：用于 /local-agent/ping 跨域探测，供企业服务器做去重。 */
   private readonly instanceId = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 9)}`;
+  /** 256-bit 本机控制令牌，只写入 0600 端点文件，不进入普通线协议。 */
+  private readonly localControlToken = randomBytes(32).toString('base64url');
+  /** 256-bit WS 客户端令牌；可经公开端点 IPC 给 renderer，但不能控制身份。 */
+  private readonly localClientToken = randomBytes(32).toString('base64url');
+  /** 身份安全属性变化代次；阻止旧身份下仍在初始化的 runtime 回挂。 */
+  private enterpriseIdentityGeneration = 0;
+  private enterpriseLeaseTimer?: ReturnType<typeof setTimeout>;
+  private expiredIdentityFingerprint?: string;
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
@@ -379,7 +392,7 @@ export class OttoServer {
       path: HTTP_ROUTES.ws,
       maxPayload: WS_MAX_PAYLOAD_BYTES,
       verifyClient: (info: { req: IncomingMessage }) =>
-        this.isLocalRequestAllowed(info.req),
+        this.isWebSocketRequestAllowed(info.req),
     });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
 
@@ -549,6 +562,10 @@ export class OttoServer {
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    if (this.enterpriseLeaseTimer) {
+      clearTimeout(this.enterpriseLeaseTimer);
+      this.enterpriseLeaseTimer = undefined;
+    }
     if (this.autoSkillScannerStarted) {
       stopAutoSkillScanner();
       this.autoSkillScannerStarted = false;
@@ -595,7 +612,7 @@ export class OttoServer {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       uptimeMs: Date.now() - this.startedAt,
-      sessionCount: this.store.listSessions().length,
+      sessionCount: this.visibleSessions().length,
       feishu: {
         enabled: this.enableFeishu,
         connected: this.feishu?.isConnected() ?? false,
@@ -604,8 +621,247 @@ export class OttoServer {
     };
   }
 
-  get endpoint(): { host: string; port: number } {
-    return { host: this.host, port: this.port };
+  get endpoint(): {
+    host: string;
+    port: number;
+    clientToken: string;
+  } {
+    return {
+      host: this.host,
+      port: this.port,
+      clientToken: this.localClientToken,
+    };
+  }
+
+  /** 供 Electron main / CLI 端点文件写入；renderer 和 WS 客户端不应获得。 */
+  get controlToken(): string {
+    return this.localControlToken;
+  }
+
+  /** 供可信 main/CLI 写入公开端点；权限仅限建立 WS，不能调用控制面。 */
+  get clientToken(): string {
+    return this.localClientToken;
+  }
+
+  /**
+   * 非 WS 的可信身份入口。只有同进程主进程或持有 control token 的 loopback
+   * 控制路由会调用；renderer 不能提交 role/tags 自行升权。
+   */
+  setAuthenticatedEnterpriseAccount(
+    account: AuthenticatedEnterpriseAccount | null,
+  ): ProductWorkspaceSnapshot {
+    const previous = this.productWorkspace.enterpriseIdentityState();
+    const workspace =
+      this.productWorkspace.setAuthenticatedEnterpriseAccount(account);
+    const current = this.productWorkspace.enterpriseIdentityState();
+    this.expiredIdentityFingerprint = undefined;
+    this.scheduleEnterpriseLeaseExpiry();
+    if (
+      previous.fingerprint !== current.fingerprint ||
+      previous.status !== current.status
+    ) {
+      this.invalidateEnterpriseRuntimes();
+    }
+    for (const session of this.store.listSessions()) {
+      const denied = this.sessionAuthorizationError(session, workspace);
+      if (
+        denied &&
+        (session.status === 'thinking' || session.status === 'streaming')
+      ) {
+        this.store.getRuntime(session.sessionId)?.cancel();
+      }
+    }
+    this.broadcastAll({ type: 'product_workspace', payload: workspace });
+    this.broadcastAll({
+      type: 'models_list',
+      payload: { models: this.modelInfos(), current: this.currentModel() },
+    });
+    this.broadcastAll({
+      type: 'sessions_list',
+      payload: { sessions: this.visibleSessions() },
+    });
+    return workspace;
+  }
+
+  /**
+   * 身份安全属性改变或租约真正过期时，旧 runtime 的 system prompt / 权限缓存
+   * 全部作废。先 detach 再 dispose，保证任何新请求都不可能复用旧上下文。
+   */
+  private invalidateEnterpriseRuntimes(): void {
+    this.enterpriseIdentityGeneration += 1;
+    this.messageQueues.clear();
+    for (const session of this.store.listSessions()) {
+      const runtime = this.store.detachRuntime(session.sessionId);
+      if (!runtime) continue;
+      runtime.cancel();
+      void runtime.dispose().catch((error) => {
+        console.warn(
+          `[server] 身份切换后 runtime dispose 失败（sessionId=${session.sessionId}）：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+    }
+    for (const conn of this.conns) {
+      for (const unsubscribe of conn.subscriptions.values()) unsubscribe();
+      conn.subscriptions.clear();
+    }
+  }
+
+  private scheduleEnterpriseLeaseExpiry(): void {
+    if (this.enterpriseLeaseTimer) clearTimeout(this.enterpriseLeaseTimer);
+    this.enterpriseLeaseTimer = undefined;
+    const identity = this.productWorkspace.enterpriseIdentityState();
+    if (identity.status !== 'active') return;
+    const remaining = Date.parse(identity.account.leaseExpiresAt) - Date.now();
+    const delay = Math.max(1, Math.min(remaining + 1, 2_147_483_647));
+    this.enterpriseLeaseTimer = setTimeout(() => {
+      this.enterpriseLeaseTimer = undefined;
+      const latest = this.productWorkspace.enterpriseIdentityState();
+      if (latest.status === 'active') {
+        this.scheduleEnterpriseLeaseExpiry();
+        return;
+      }
+      if (
+        latest.status === 'expired' &&
+        latest.fingerprint !== this.expiredIdentityFingerprint
+      ) {
+        this.expiredIdentityFingerprint = latest.fingerprint;
+        this.invalidateEnterpriseRuntimes();
+        this.broadcastAll({
+          type: 'sessions_list',
+          payload: { sessions: [] },
+        });
+      }
+    }, delay);
+    this.enterpriseLeaseTimer.unref?.();
+  }
+
+  /** 单一授权判断，create_session 与每次发送前复用，防身份切换后沿用旧权限。 */
+  private agentProfileAuthorizationError(
+    agentProfileId: string | undefined,
+    workspace: ProductWorkspaceSnapshot,
+  ): string | undefined {
+    if (!agentProfileId) return undefined;
+    const profile = resolveAgentProfile(agentProfileId);
+    if (!profile) return '未知 Agent profile';
+    if (
+      profile.edition !== 'both' &&
+      profile.edition !== workspace.context.edition
+    ) {
+      return workspace.context.edition === 'personal'
+        ? '个人版只能使用 Otto、会议助手与通用专家。'
+        : '企业版不能使用个人版 Otto profile。';
+    }
+    if (
+      profile.roles &&
+      !profile.roles.includes(
+        workspace.context.role as (typeof profile.roles)[number],
+      )
+    ) {
+      return '当前企业角色不能使用这个 Agent profile。';
+    }
+    if (
+      profile.scope === 'department' &&
+      workspace.context.edition !== 'enterprise'
+    ) {
+      return '个人版不能使用企业部门专家。';
+    }
+    if (
+      profile.scope === 'department' &&
+      workspace.context.role !== 'company_owner' &&
+      workspace.context.role !== 'company_admin'
+    ) {
+      const currentDepartment =
+        workspace.managerWorkspace?.organization.departments.find(
+          (item) => item.id === workspace.context.departmentId,
+        );
+      if (
+        currentDepartment &&
+        profile.department !== currentDepartment.name
+      ) {
+        return '当前成员只能使用本部门 Agent。';
+      }
+    }
+    return undefined;
+  }
+
+  private sessionAuthorizationError(
+    session: SessionSummary,
+    workspace?: ProductWorkspaceSnapshot,
+  ): string | undefined {
+    const identityDenied = this.sessionIdentityAuthorizationError(session);
+    if (identityDenied) return identityDenied;
+    const currentWorkspace = workspace ?? this.productWorkspace.snapshot();
+    if (
+      session.productEdition &&
+      session.productEdition !== currentWorkspace.context.edition
+    ) {
+      return '当前身份版本与该会话不一致，请新建符合当前身份的会话。';
+    }
+    return this.agentProfileAuthorizationError(
+      session.agentProfileId,
+      currentWorkspace,
+    );
+  }
+
+  /**
+   * 中心身份的会话租户边界。中央身份生效时，legacy（无绑定）与任何账号/组织
+   * 不完全匹配的会话都不可见、不可订阅、不可操作；过期时全部 fail closed。
+   */
+  private sessionIdentityAuthorizationError(
+    session: SessionSummary,
+  ): string | undefined {
+    const identity = this.productWorkspace.enterpriseIdentityState();
+    if (identity.status === 'expired') {
+      return '中心认证身份租约已过期，请重新登录。';
+    }
+    if (identity.status === 'active') {
+      if (
+        !session.enterpriseAccountId ||
+        !session.enterpriseOrganizationId
+      ) {
+        return '该会话缺少中心企业身份绑定，已拒绝访问。';
+      }
+      if (
+        session.enterpriseAccountId !== identity.account.id ||
+        session.enterpriseOrganizationId !== identity.account.organizationId
+      ) {
+        return '该会话属于其他企业账号或组织，已拒绝访问。';
+      }
+      return undefined;
+    }
+    if (
+      session.enterpriseAccountId ||
+      session.enterpriseOrganizationId
+    ) {
+      return '该企业会话需要重新登录原中心企业账号。';
+    }
+    return undefined;
+  }
+
+  private visibleSessions(): SessionSummary[] {
+    return this.store
+      .listSessions()
+      .filter((session) => !this.sessionAuthorizationError(session));
+  }
+
+  private createSessionForCurrentIdentity(
+    init: Partial<SessionSummary> = {},
+  ): SessionSummary {
+    const identity = this.productWorkspace.enterpriseIdentityState();
+    if (identity.status === 'expired') {
+      throw new Error('中心认证身份租约已过期，请重新登录');
+    }
+    return this.store.createSession({
+      ...init,
+      ...(identity.status === 'active'
+        ? {
+            enterpriseAccountId: identity.account.id,
+            enterpriseOrganizationId: identity.account.organizationId,
+          }
+        : {}),
+    });
   }
 
   /** 构建斜杠命令宿主（窄接口，注入给命令注册表使用）。 */
@@ -813,7 +1069,7 @@ export class OttoServer {
     // 广播权威快照，让所有客户端把这条会话从列表里剔除（sessions_list 现在是快照语义）。
     this.broadcastAll({
       type: 'sessions_list',
-      payload: { sessions: this.store.listSessions() },
+      payload: { sessions: this.visibleSessions() },
     });
   }
 
@@ -1650,6 +1906,22 @@ export class OttoServer {
     return true;
   }
 
+  /**
+   * WS 升级比普通 loopback HTTP 多两道闸：
+   * 1. 明确拒绝浏览器沙箱会产生的 `Origin: null`；
+   * 2. query 中必须携带端点文件公开的独立 clientToken。
+   * clientToken 只能建立 WS，不能调用持 controlToken 的身份控制路由。
+   */
+  private isWebSocketRequestAllowed(req: IncomingMessage): boolean {
+    if (req.headers.origin === 'null') return false;
+    if (!this.isLocalRequestAllowed(req)) return false;
+    const url = new URL(req.url ?? '/', `http://${this.host}:${this.port}`);
+    return matchesSecret(
+      url.searchParams.get('clientToken') ?? undefined,
+      this.localClientToken,
+    );
+  }
+
   private handleHttp(req: IncomingMessage, res: ServerResponse): void {
     if (!this.isLocalRequestAllowed(req)) {
       return sendJson(res, 403, err('forbidden'));
@@ -1657,6 +1929,37 @@ export class OttoServer {
     const url = new URL(req.url ?? '/', `http://${this.host}:${this.port}`);
     const path = url.pathname;
 
+    if (path === HTTP_ROUTES.enterpriseIdentity) {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, err('method_not_allowed'));
+      }
+      if (!isLoopbackRequest(req)) {
+        return sendJson(res, 403, err('loopback_only'));
+      }
+      if (!matchesBearerToken(req.headers.authorization, this.localControlToken)) {
+        return sendJson(res, 401, err('unauthorized'));
+      }
+      void readJsonBody(req)
+        .then(parseEnterpriseIdentitySyncBody)
+        .then((parsed) => {
+          if (!parsed.ok) {
+            sendJson(res, 400, err(parsed.error));
+            return;
+          }
+          const workspace = this.setAuthenticatedEnterpriseAccount(
+            parsed.account,
+          );
+          sendJson(res, 200, ok(workspace));
+        })
+        .catch((error) => {
+          sendJson(
+            res,
+            400,
+            err(error instanceof Error ? error.message : String(error)),
+          );
+        });
+      return;
+    }
     if (path === HTTP_ROUTES.health) {
       return sendJson(res, 200, ok(this.health()));
     }
@@ -1682,18 +1985,33 @@ export class OttoServer {
       return sendJsonWithCors(res, 200, ok(pingResponse), req.headers.origin);
     }
     if (path === HTTP_ROUTES.sessions && req.method === 'GET') {
-      return sendJson(res, 200, ok(this.store.listSessions()));
+      return sendJson(res, 200, ok(this.visibleSessions()));
     }
     if (path === HTTP_ROUTES.sessions && req.method === 'POST') {
-      const summary = this.store.createSession();
-      this.broadcastAll({
-        type: 'session_upsert',
-        payload: { session: summary },
-      });
-      return sendJson(res, 201, ok(summary));
+      try {
+        const workspace = this.productWorkspace.snapshot();
+        const summary = this.createSessionForCurrentIdentity({
+          productEdition: workspace.context.edition,
+        });
+        this.broadcastAll({
+          type: 'session_upsert',
+          payload: { session: summary },
+        });
+        return sendJson(res, 201, ok(summary));
+      } catch (error) {
+        return sendJson(
+          res,
+          401,
+          err(error instanceof Error ? error.message : String(error)),
+        );
+      }
     }
     const histMatch = path.match(/^\/sessions\/([^/]+)\/history$/);
     if (histMatch && req.method === 'GET') {
+      const session = this.store.getSession(histMatch[1]);
+      if (!session) return sendJson(res, 404, err('session_not_found'));
+      const denied = this.sessionAuthorizationError(session);
+      if (denied) return sendJson(res, 403, err(denied));
       const limit = url.searchParams.has('limit')
         ? Number(url.searchParams.get('limit'))
         : undefined;
@@ -1756,7 +2074,12 @@ export class OttoServer {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
       });
-      res.end(html.replace('</head>', `${browserBridgeScript()}\n</head>`));
+      res.end(
+        html.replace(
+          '</head>',
+          `${browserBridgeScript(this.localClientToken)}\n</head>`,
+        ),
+      );
     } catch (e) {
       sendJson(
         res,
@@ -2014,6 +2337,41 @@ export class OttoServer {
 
   /** 把一帧 ClientToServer 分发到对应处理。 */
   private async dispatch(conn: ClientConn, msg: ClientToServer): Promise<void> {
+    const payload = msg.payload as Record<string, unknown>;
+    const scopedSessionId =
+      typeof payload?.sessionId === 'string' ? payload.sessionId : undefined;
+    if (scopedSessionId) {
+      const session = this.store.getSession(scopedSessionId);
+      if (!session) {
+        return this.send(
+          conn.socket,
+          errorFrame(scopedSessionId, 'no_session', '会话不存在'),
+        );
+      }
+      const identityDenied =
+        this.sessionIdentityAuthorizationError(session);
+      if (identityDenied) {
+        return this.send(
+          conn.socket,
+          errorFrame(
+            scopedSessionId,
+            'forbidden_session',
+            identityDenied,
+          ),
+        );
+      }
+      const denied = this.sessionAuthorizationError(session);
+      if (denied) {
+        return this.send(
+          conn.socket,
+          errorFrame(
+            scopedSessionId,
+            'forbidden_agent_profile',
+            denied,
+          ),
+        );
+      }
+    }
     switch (msg.type) {
       case 'hello':
         // 握手已由 welcome 回应；此处可校验 protocolVersion（TODO 版本协商）。
@@ -2021,7 +2379,7 @@ export class OttoServer {
       case 'list_sessions':
         return this.send(conn.socket, {
           type: 'sessions_list',
-          payload: { sessions: this.store.listSessions() },
+          payload: { sessions: this.visibleSessions() },
         });
       case 'get_history':
         return this.send(conn.socket, {
@@ -2055,71 +2413,20 @@ export class OttoServer {
             },
           });
         }
-        if (
-          profile &&
-          profile.edition !== 'both' &&
-          profile.edition !== workspace.context.edition
-        ) {
+        const denied = this.agentProfileAuthorizationError(
+          msg.payload.agentProfileId,
+          workspace,
+        );
+        if (denied) {
           return this.send(conn.socket, {
             type: 'error',
             payload: {
               code: 'forbidden_agent_profile',
-              message:
-                workspace.context.edition === 'personal'
-                  ? '个人版只能使用 Otto、会议助手与通用专家。'
-                  : '企业版不能使用个人版 Otto profile。',
+              message: denied,
             },
           });
         }
-        if (
-          profile?.roles &&
-          !profile.roles.includes(
-            workspace.context.role as (typeof profile.roles)[number],
-          )
-        ) {
-          return this.send(conn.socket, {
-            type: 'error',
-            payload: {
-              code: 'forbidden_agent_profile',
-              message: '当前企业角色不能使用这个 Agent profile。',
-            },
-          });
-        }
-        if (
-          profile?.scope === 'department' &&
-          workspace.context.edition !== 'enterprise'
-        ) {
-          return this.send(conn.socket, {
-            type: 'error',
-            payload: {
-              code: 'forbidden_agent_profile',
-              message: '个人版不能使用企业部门专家。',
-            },
-          });
-        }
-        if (
-          profile?.scope === 'department' &&
-          workspace.context.role !== 'company_owner' &&
-          workspace.context.role !== 'company_admin'
-        ) {
-          const currentDepartment =
-            workspace.managerWorkspace?.organization.departments.find(
-              (item) => item.id === workspace.context.departmentId,
-            );
-          if (
-            currentDepartment &&
-            profile.department !== currentDepartment.name
-          ) {
-            return this.send(conn.socket, {
-              type: 'error',
-              payload: {
-                code: 'forbidden_agent_profile',
-                message: '当前成员只能使用本部门 Agent。',
-              },
-            });
-          }
-        }
-        const summary = this.store.createSession({
+        const summary = this.createSessionForCurrentIdentity({
           title: msg.payload.title,
           model: msg.payload.model ?? this.currentModel(),
           agentProfileId: profile?.id,
@@ -2156,6 +2463,7 @@ export class OttoServer {
           this.sessionAuthorizationModes.clear();
           patchUserSettings({ authorizationMode: mode });
           for (const session of this.store.listSessions()) {
+            if (this.sessionAuthorizationError(session)) continue;
             this.store
               .getRuntime(session.sessionId)
               ?.setAuthorizationMode?.(mode);
@@ -2678,6 +2986,16 @@ export class OttoServer {
         errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
+    const denied = this.sessionAuthorizationError(session);
+    if (denied) {
+      if (session.status === 'thinking' || session.status === 'streaming') {
+        this.store.getRuntime(sessionId)?.cancel();
+      }
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'forbidden_agent_profile', denied),
+      );
+    }
 
     // 会话正忙（thinking/streaming）：走消息队列而非直接拒绝。
     if (session.status === 'thinking' || session.status === 'streaming') {
@@ -2686,7 +3004,9 @@ export class OttoServer {
 
       // new_session: 创建新会话并路由消息
       if (queueAction === 'new_session') {
-        const newSummary = this.store.createSession();
+        const newSummary = this.createSessionForCurrentIdentity({
+          productEdition: this.productWorkspace.snapshot().context.edition,
+        });
         this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
         return this.handleSendUserMessageRaw(
           newSummary.sessionId, conn, content, source, clientMessageId);
@@ -2727,6 +3047,16 @@ export class OttoServer {
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
+      );
+    }
+    const denied = this.sessionAuthorizationError(session);
+    if (denied) {
+      if (session.status === 'thinking' || session.status === 'streaming') {
+        this.store.getRuntime(sessionId)?.cancel();
+      }
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'forbidden_agent_profile', denied),
       );
     }
 
@@ -2795,10 +3125,30 @@ export class OttoServer {
       return;
     }
 
-    const runtime = await this.ensureRuntime(sessionId);
+    let runtime = await this.ensureRuntime(sessionId);
     if (!runtime) {
       this.store.setStatus(sessionId, 'idle');
       return;
+    }
+    // ensureRuntime 的 Promise resolve 后、真正 run 前仍可能发生身份切换。
+    // 若旧 runtime 已被 detach，则重新构建；再次确认会话仍属于当前身份。
+    if (this.store.getRuntime(sessionId) !== runtime) {
+      runtime = await this.ensureRuntime(sessionId);
+    }
+    const latestSession = this.store.getSession(sessionId);
+    const latestDenied = latestSession
+      ? this.sessionAuthorizationError(latestSession)
+      : '会话已不存在';
+    if (!runtime || latestDenied) {
+      runtime?.cancel();
+      return this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'forbidden_session',
+          latestDenied ?? '中心企业身份已变化，请重试。',
+        ),
+      );
     }
     await runtime.run(content, source);
 
@@ -2861,6 +3211,20 @@ export class OttoServer {
   private async ensureRuntime(
     sessionId: string,
   ): Promise<SessionRuntime | undefined> {
+    const initialSummary = this.store.getSession(sessionId);
+    if (!initialSummary) return undefined;
+    const initialDenied = this.sessionAuthorizationError(initialSummary);
+    if (initialDenied) {
+      this.store.publish(sessionId, {
+        type: 'error',
+        payload: {
+          sessionId,
+          code: 'forbidden_session',
+          message: initialDenied,
+        },
+      });
+      return undefined;
+    }
     const existing = this.store.getRuntime(sessionId);
     if (existing) return existing;
 
@@ -2872,9 +3236,34 @@ export class OttoServer {
     const workspaceContext = summary?.productEdition === 'enterprise'
       ? buildEnterpriseWorkspaceContext(this.productWorkspace.snapshot())
       : '';
+    const identityGeneration = this.enterpriseIdentityGeneration;
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(this.store, sessionId, model, workspaceContext);
+        const latestSummary = this.store.getSession(sessionId);
+        const denied = latestSummary
+          ? this.sessionAuthorizationError(latestSummary)
+          : '会话已不存在';
+        if (
+          identityGeneration !== this.enterpriseIdentityGeneration ||
+          denied
+        ) {
+          runtime.cancel();
+          await runtime.dispose().catch(() => undefined);
+          if (latestSummary) {
+            this.store.publish(sessionId, {
+              type: 'error',
+              payload: {
+                sessionId,
+                code: 'forbidden_session',
+                message:
+                  denied ??
+                  '中心企业身份已变化，已丢弃旧身份下创建的运行时。',
+              },
+            });
+          }
+          return undefined;
+        }
         runtime.setAuthorizationMode?.(
           this.sessionAuthorizationModes.get(sessionId) ??
             this.globalAuthorizationMode,
@@ -3233,7 +3622,7 @@ function sendPreflightResponse(
   res.end();
 }
 
-function browserBridgeScript(): string {
+function browserBridgeScript(clientToken: string): string {
   return `<script>
 (() => {
   const frameHandlers = new Set();
@@ -3261,7 +3650,10 @@ function browserBridgeScript(): string {
   const connect = () => new Promise((resolve) => {
     wantConnected = true;
     if (ws && ws.readyState === WebSocket.OPEN) return resolve(true);
-    const socket = new WebSocket('ws://' + location.host + '/ws');
+    const socket = new WebSocket(
+      'ws://' + location.host + '/ws?clientToken=' +
+      encodeURIComponent(${JSON.stringify(clientToken)})
+    );
     ws = socket;
     socket.addEventListener('open', () => {
       socket.send(JSON.stringify({
@@ -3358,8 +3750,8 @@ function browserBridgeScript(): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.8.6'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.6', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.8.8'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.8', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),
@@ -3420,6 +3812,145 @@ function readJsonBody(
     });
     req.on('error', reject);
   });
+}
+
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const address = req.socket.remoteAddress;
+  return (
+    address === '127.0.0.1' ||
+    address === '::1' ||
+    address === '::ffff:127.0.0.1'
+  );
+}
+
+function matchesBearerToken(
+  authorization: string | undefined,
+  expected: string,
+): boolean {
+  if (!authorization?.startsWith('Bearer ')) return false;
+  return matchesSecret(authorization.slice('Bearer '.length), expected);
+}
+
+function matchesSecret(
+  candidate: string | undefined,
+  expected: string,
+): boolean {
+  if (!candidate) return false;
+  const candidateBytes = Buffer.from(candidate, 'utf8');
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  return (
+    candidateBytes.length === expectedBytes.length &&
+    timingSafeEqual(candidateBytes, expectedBytes)
+  );
+}
+
+type EnterpriseIdentitySyncParseResult =
+  | { ok: true; account: AuthenticatedEnterpriseAccount | null }
+  | { ok: false; error: string };
+
+/** 控制面只接收 {account: 已认证账号|null}，并剥离所有非契约字段。 */
+function parseEnterpriseIdentitySyncBody(
+  body: unknown,
+): EnterpriseIdentitySyncParseResult {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { ok: false, error: '请求体必须是 JSON 对象' };
+  }
+  const wrapped = body as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(wrapped, 'account')) {
+    return { ok: false, error: '请求体缺少 account' };
+  }
+  if (wrapped.account === null) return { ok: true, account: null };
+  if (
+    typeof wrapped.account !== 'object' ||
+    Array.isArray(wrapped.account)
+  ) {
+    return { ok: false, error: 'account 必须是对象或 null' };
+  }
+  const input = wrapped.account as Record<string, unknown>;
+  const requiredText = (
+    key: 'id' | 'organizationId' | 'name',
+  ): string | undefined => {
+    const value = input[key];
+    return typeof value === 'string' && value.trim()
+      ? value.trim()
+      : undefined;
+  };
+  const id = requiredText('id');
+  const organizationId = requiredText('organizationId');
+  const name = requiredText('name');
+  const leaseExpiresAt =
+    typeof input.leaseExpiresAt === 'string' &&
+    input.leaseExpiresAt.trim()
+      ? input.leaseExpiresAt.trim()
+      : undefined;
+  if (!id || !organizationId || !name || !leaseExpiresAt) {
+    return {
+      ok: false,
+      error:
+        'account.id、organizationId、name、leaseExpiresAt 必须是非空字符串',
+    };
+  }
+  if (typeof input.isAdmin !== 'boolean') {
+    return { ok: false, error: 'account.isAdmin 必须是布尔值' };
+  }
+  const nullableTextKeys = [
+    'role',
+    'department',
+    'positionId',
+    'positionTitle',
+  ] as const;
+  for (const key of nullableTextKeys) {
+    const value = input[key];
+    if (
+      value !== undefined &&
+      value !== null &&
+      typeof value !== 'string'
+    ) {
+      return { ok: false, error: `account.${key} 必须是字符串或 null` };
+    }
+  }
+  if (
+    input.organizationName !== undefined &&
+    typeof input.organizationName !== 'string'
+  ) {
+    return { ok: false, error: 'account.organizationName 必须是字符串' };
+  }
+  if (
+    input.tags !== undefined &&
+    (!Array.isArray(input.tags) ||
+      input.tags.some((tag) => typeof tag !== 'string'))
+  ) {
+    return { ok: false, error: 'account.tags 必须是字符串数组' };
+  }
+
+  return {
+    ok: true,
+    account: {
+      id,
+      organizationId,
+      name,
+      isAdmin: input.isAdmin,
+      leaseExpiresAt,
+      ...(typeof input.organizationName === 'string' &&
+      input.organizationName.trim()
+        ? { organizationName: input.organizationName.trim() }
+        : {}),
+      ...(typeof input.role === 'string' || input.role === null
+        ? { role: input.role }
+        : {}),
+      ...(Array.isArray(input.tags) ? { tags: [...input.tags] as string[] } : {}),
+      ...(typeof input.department === 'string' || input.department === null
+        ? { department: input.department }
+        : {}),
+      ...(typeof input.positionId === 'string' || input.positionId === null
+        ? { positionId: input.positionId }
+        : {}),
+      ...(typeof input.positionTitle === 'string' ||
+      input.positionTitle === null
+        ? { positionTitle: input.positionTitle }
+        : {}),
+    },
+  };
 }
 
 /** 校验 POST /feishu/config 请求体；通过返回规整后的请求，不通过返回错误文案。 */

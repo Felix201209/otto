@@ -3,15 +3,23 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_AGENT_PROFILES, resolveAgentProfile } from './agentProfiles.js';
+import {
+  BUILTIN_AGENT_PROFILES,
+  buildEnterpriseWorkspaceContext,
+  resolveAgentProfile,
+} from './agentProfiles.js';
 
 describe('服务端 Agent profile 白名单', () => {
-  it('覆盖个人 Otto、企业助手、统一会议 Agent、8 位通用专家和六部门各 4 个 profile', () => {
-    expect(BUILTIN_AGENT_PROFILES).toHaveLength(11);
-    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(11);
+  it('覆盖三个身份基础 Agent、自主开发和 8 位通用专家', () => {
+    expect(BUILTIN_AGENT_PROFILES).toHaveLength(12);
+    expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(12);
     expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'department')).toHaveLength(0);
     expect(resolveAgentProfile('otto-personal')).toMatchObject({ edition: 'personal' });
-    expect(resolveAgentProfile('otto-enterprise-ceo')).toBeUndefined();
+    expect(resolveAgentProfile('otto-enterprise-ceo')).toMatchObject({
+      name: 'CEO Agent',
+      edition: 'enterprise',
+      roles: ['company_owner', 'company_admin'],
+    });
     expect(resolveAgentProfile('otto-enterprise-work')).toMatchObject({ edition: 'enterprise' });
     expect(resolveAgentProfile('self-development')).toMatchObject({
       edition: 'both',
@@ -49,6 +57,52 @@ describe('服务端 Agent profile 白名单', () => {
       roles: ['manager', 'member'],
     });
     expect(new Set([personal, ceo, work]).size).toBe(3);
+  });
+
+  it('中心认证工作区的运行时提示词使用可信组织和当前成员信息', () => {
+    const prompt = buildEnterpriseWorkspaceContext({
+      context: {
+        edition: 'enterprise',
+        role: 'member',
+        userId: 'central-account-1',
+        displayName: '林一',
+        companyId: 'central-org-1',
+        capabilities: [],
+      },
+      authenticatedOrganization: {
+        id: 'central-org-1',
+        name: '北辰中心企业',
+      },
+      managerWorkspace: {
+        profile: { companyName: '本机错误企业' },
+        organization: {
+          departments: [
+            { id: 'local-department', name: '本机错误部门' },
+          ],
+          positions: [{ id: 'local-position', title: '本机错误职位' }],
+        },
+      },
+      members: [
+        {
+          userId: 'central-account-1',
+          displayName: '林一',
+          companyId: 'central-org-1',
+          departmentName: '产品与研发部',
+          positionTitle: '研发工程师',
+          role: 'member',
+        },
+      ],
+    });
+
+    expect(prompt).toContain('公司：北辰中心企业');
+    expect(prompt).toContain('部门：产品与研发部');
+    expect(prompt).toContain('职位：研发工程师');
+    expect(prompt).toContain('角色：成员');
+    expect(prompt).toContain('由中心企业服务认证');
+    expect(prompt).not.toContain('由企业管理者在 Otto 中建档生成');
+    expect(prompt).not.toContain('本机错误企业');
+    expect(prompt).not.toContain('本机错误部门');
+    expect(prompt).not.toContain('本机错误职位');
   });
 
   it('会议 Agent 使用 system prompt，未知或客户端自造 profile 不会被接受', () => {

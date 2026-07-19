@@ -154,6 +154,31 @@ otto_install_node_runtime() {
   printf '%s\n' "$node_path"
 }
 
+otto_prepare_service_layout() {
+  local install_root="$1"
+  local target_release="$2"
+  local runtime_root="${install_root}/runtime"
+  local releases_root="${install_root}/releases"
+
+  case "$target_release" in
+    "${releases_root}/"*) ;;
+    *) otto_die "目标 release 不在受控 releases 目录：${target_release}" 3 ;;
+  esac
+  for directory in \
+    "$install_root" \
+    "$runtime_root" \
+    "$releases_root" \
+    "$target_release"; do
+    [ -d "$directory" ] && [ ! -L "$directory" ] \
+      || otto_die "systemd 服务路径不是普通目录：${directory}" 3
+  done
+
+  # install.sh 全程使用 umask 077；若不显式收紧为可遍历布局，root canary
+  # 会通过，但 User=otto-enterprise 的 systemd 服务无法进入 /opt 下的目录。
+  chmod 0755 "$install_root" "$runtime_root" "$releases_root"
+  chmod -R a+rX,go-w "$runtime_root" "$target_release"
+}
+
 otto_load_config() {
   local config_path="$1"
   [ -f "$config_path" ] || otto_die "配置文件不存在：${config_path}"

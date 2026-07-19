@@ -5,12 +5,15 @@
 import React, { useMemo, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import type { UseProductWorkspace } from '../../state/useProductWorkspace.js';
+import type { EnterpriseAccount } from '../../../preload/index.js';
 import { Card, Empty, Panel } from './HubUI.js';
 
 export function OrganizationPanel({
   product,
+  enterpriseAccount,
 }: {
   product: UseProductWorkspace;
+  enterpriseAccount?: EnterpriseAccount;
 }): React.JSX.Element {
   const { state, actions } = product;
   const workspace = state.workspace;
@@ -37,6 +40,28 @@ export function OrganizationPanel({
     () => new Map(positions.map((p) => [p.id, p])),
     [positions],
   );
+
+  if (enterpriseAccount) {
+    return (
+      <Panel
+        title="企业与身份"
+        desc="身份信息来自当前已登录的中心企业账号。"
+      >
+        <Card>
+          <div className="otto-product-identity">
+            <div><span>企业</span><strong>{enterpriseAccount.organizationName}</strong></div>
+            <div><span>姓名</span><strong>{enterpriseAccount.name}</strong></div>
+            <div><span>部门</span><strong>{enterpriseAccount.department || '未设置'}</strong></div>
+            <div><span>职位</span><strong>{enterpriseAccount.positionTitle || '未设置'}</strong></div>
+            <div>
+              <span>管理员状态</span>
+              <strong>{enterpriseAccount.isAdmin ? '企业管理员' : '普通成员'}</strong>
+            </div>
+          </div>
+        </Card>
+      </Panel>
+    );
+  }
 
   if (!workspace) {
     return <Panel title="企业与身份" desc="正在读取服务端身份…"><Empty>加载中…</Empty></Panel>;

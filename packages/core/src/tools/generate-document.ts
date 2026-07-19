@@ -1,8 +1,7 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
-import { exec, execFile, execFileSync } from 'child_process';
-import { promisify } from 'util';
+import { exec, execFile, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -17,8 +16,6 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { DoctorService, CommandRunner } from '../services/doctor.js';
-
-const execFileAsync = promisify(execFile);
 
 type ExecFileCallback = (
   error: NodeJS.ErrnoException | null,
@@ -255,13 +252,276 @@ export function findLocalBrowserExecutable(
   );
 }
 
-const defaultBrowserRunner: BrowserRunner = async (executable, args, signal) => {
-  await execFileAsync(executable, args, {
-    signal,
-    timeout: 30_000,
-    maxBuffer: 10 * 1024 * 1024,
+const pngEndMarker = Buffer.from([
+  0x00, 0x00, 0x00, 0x00,
+  0x49, 0x45, 0x4e, 0x44,
+  0xae, 0x42, 0x60, 0x82,
+]);
+const pngSignature = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47,
+  0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+function isCompletePng(filePath: string | undefined): boolean {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  try {
+    const png = fs.readFileSync(filePath);
+    return png.length >= 24 + pngEndMarker.length
+      && png.subarray(0, pngSignature.length).equals(pngSignature)
+      && png.subarray(-pngEndMarker.length).equals(pngEndMarker);
+  } catch {
+    return false;
+  }
+}
+
+export interface BrowserProcessHandle {
+  readonly pid?: number;
+  readonly exited: boolean;
+  onClose(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+  onError(listener: (error: Error) => void): void;
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+export interface BrowserScreenshotProcessOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  killGraceMs?: number;
+  spawnProcess?: (executable: string, args: string[]) => BrowserProcessHandle;
+  terminateProcess?: (
+    processHandle: BrowserProcessHandle,
+    force: boolean,
+  ) => void | Promise<void>;
+  isScreenshotComplete?: (filePath: string | undefined) => boolean;
+}
+
+function spawnBrowserProcess(executable: string, args: string[]): BrowserProcessHandle {
+  const child = spawn(executable, args, {
+    detached: process.platform !== 'win32',
+    stdio: 'ignore',
+    windowsHide: true,
   });
-};
+
+  return {
+    pid: child.pid,
+    get exited() {
+      return child.exitCode !== null || child.signalCode !== null;
+    },
+    onClose(listener) {
+      child.once('close', (code, signal) => listener(code, signal));
+    },
+    onError(listener) {
+      child.once('error', listener);
+    },
+    kill(signal) {
+      return child.kill(signal);
+    },
+  };
+}
+
+function terminateBrowserProcessTree(
+  processHandle: BrowserProcessHandle,
+  force: boolean,
+): void | Promise<void> {
+  const signal: NodeJS.Signals = force ? 'SIGKILL' : 'SIGTERM';
+
+  if (process.platform === 'win32') {
+    if (processHandle.pid) {
+      return new Promise<void>((resolve) => {
+        // Chromium launches helper processes. Always kill the complete tree on
+        // Windows before allowing a fallback attempt to reuse the output path.
+        // `/F` is intentional even for the first request: killing only the
+        // direct parent can orphan helpers after the parent's close event.
+        execFile(
+          'taskkill',
+          ['/PID', String(processHandle.pid), '/T', '/F'],
+          { windowsHide: true, timeout: 1_000 },
+          () => resolve(),
+        );
+      });
+    }
+    if (!processHandle.exited) processHandle.kill(signal);
+    return;
+  }
+
+  if (processHandle.pid) {
+    try {
+      process.kill(-processHandle.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if the process group already vanished.
+    }
+  }
+  processHandle.kill(signal);
+}
+
+function browserAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('浏览器截图已取消。');
+}
+
+type BrowserProcessOutcome =
+  | { kind: 'success' }
+  | { kind: 'failure'; error: Error };
+
+export function runBrowserScreenshotProcess(
+  executable: string,
+  args: string[],
+  signal: AbortSignal,
+  options: BrowserScreenshotProcessOptions = {},
+): Promise<void> {
+  if (signal.aborted) return Promise.reject(browserAbortError(signal));
+
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 25;
+  const killGraceMs = options.killGraceMs ?? 1_000;
+  const spawnProcess = options.spawnProcess ?? spawnBrowserProcess;
+  const terminateProcess = options.terminateProcess ?? terminateBrowserProcessTree;
+  const isScreenshotComplete = options.isScreenshotComplete ?? isCompletePng;
+  const screenshotPath = args
+    .find((arg) => arg.startsWith('--screenshot='))
+    ?.slice('--screenshot='.length);
+
+  return new Promise<void>((resolve, reject) => {
+    let processHandle: BrowserProcessHandle;
+    try {
+      processHandle = spawnProcess(executable, args);
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    let outcome: BrowserProcessOutcome | undefined;
+    let settled = false;
+    let terminationStarted = false;
+    let forceRequested = false;
+    let processClosed = false;
+    let requiredTerminationAttempt = 0;
+    let completedTerminationAttempt = 0;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let hardSettleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      clearInterval(pngPollTimer);
+      clearTimeout(commandTimeout);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (hardSettleTimer) clearTimeout(hardSettleTimer);
+      signal.removeEventListener('abort', abort);
+    };
+
+    const settle = () => {
+      if (settled || !outcome) return;
+      settled = true;
+      cleanup();
+      if (outcome.kind === 'success') {
+        resolve();
+      } else {
+        reject(outcome.error);
+      }
+    };
+
+    const completeTerminationAttempt = (attempt: number) => {
+      completedTerminationAttempt = Math.max(
+        completedTerminationAttempt,
+        attempt,
+      );
+      if (
+        processClosed
+        && completedTerminationAttempt >= requiredTerminationAttempt
+      ) {
+        settle();
+      }
+    };
+
+    const runTerminationAttempt = (force: boolean) => {
+      const attempt = force ? 2 : 1;
+      requiredTerminationAttempt = Math.max(
+        requiredTerminationAttempt,
+        attempt,
+      );
+      try {
+        void Promise.resolve(terminateProcess(processHandle, force)).then(
+          () => completeTerminationAttempt(attempt),
+          () => completeTerminationAttempt(attempt),
+        );
+      } catch {
+        completeTerminationAttempt(attempt);
+      }
+    };
+
+    const requestTermination = () => {
+      if (terminationStarted) return;
+      terminationStarted = true;
+      forceKillTimer = setTimeout(() => {
+        if (forceRequested) return;
+        forceRequested = true;
+        runTerminationAttempt(true);
+      }, Math.max(1, Math.floor(killGraceMs / 2)));
+      hardSettleTimer = setTimeout(settle, killGraceMs);
+      runTerminationAttempt(false);
+    };
+
+    const finishFirst = (nextOutcome: BrowserProcessOutcome) => {
+      if (outcome || settled) return;
+      outcome = nextOutcome;
+      clearInterval(pngPollTimer);
+      clearTimeout(commandTimeout);
+      signal.removeEventListener('abort', abort);
+      requestTermination();
+    };
+
+    function abort(): void {
+      finishFirst({ kind: 'failure', error: browserAbortError(signal) });
+    }
+
+    processHandle.onClose((code, closeSignal) => {
+      processClosed = true;
+      if (!outcome) {
+        outcome = isScreenshotComplete(screenshotPath)
+          ? { kind: 'success' }
+          : {
+              kind: 'failure',
+              error: new Error(
+                `浏览器截图进程退出（code=${String(code)}, signal=${String(closeSignal)}），但未生成完整 PNG。`,
+              ),
+            };
+      }
+      if (
+        !terminationStarted
+        || completedTerminationAttempt >= requiredTerminationAttempt
+      ) {
+        settle();
+      }
+    });
+    processHandle.onError((error) => {
+      if (outcome) return;
+      processClosed = true;
+      outcome = { kind: 'failure', error };
+      settle();
+    });
+
+    const pngPollTimer = setInterval(() => {
+      if (!isScreenshotComplete(screenshotPath)) return;
+      finishFirst({ kind: 'success' });
+    }, pollIntervalMs);
+    const commandTimeout = setTimeout(() => {
+      const timeoutError = Object.assign(
+        new Error(`浏览器截图超时（${timeoutMs} 毫秒）。`),
+        { code: 'BROWSER_SCREENSHOT_TIMEOUT' },
+      );
+      finishFirst({
+        kind: 'failure',
+        error: timeoutError,
+      });
+    }, timeoutMs);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
+const defaultBrowserRunner: BrowserRunner = (executable, args, signal) => (
+  runBrowserScreenshotProcess(executable, args, signal)
+);
 
 /** 使用本机 Chromium 浏览器把本地 HTML 截成固定尺寸 PNG；不调用 Python。 */
 export class ChromeHtmlToImageRenderer implements HtmlToImageRenderer {
@@ -277,35 +537,65 @@ export class ChromeHtmlToImageRenderer implements HtmlToImageRenderer {
       );
     }
 
-    const commonArgs = [
-      '--disable-background-networking',
-      '--disable-gpu',
-      '--disable-sync',
-      '--hide-scrollbars',
-      '--no-default-browser-check',
-      '--no-first-run',
-      '--run-all-compositor-stages-before-draw',
-      '--allow-file-access-from-files',
-      '--force-device-scale-factor=1',
-      `--window-size=${request.width},${request.height}`,
-      `--screenshot=${request.outputPath}`,
-      '--virtual-time-budget=1000',
-      pathToFileURL(request.htmlPath).href,
-    ];
-
+    // A dedicated profile prevents an already-running desktop Chrome instance
+    // from absorbing the headless command and leaving the renderer hanging.
+    const browserProfilePath = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'otto-chrome-profile-'),
+    );
     try {
-      await this.runner(this.browserPath, ['--headless=new', ...commonArgs], request.signal);
-    } catch (error) {
-      if (request.signal.aborted) throw error;
-      await this.runner(this.browserPath, ['--headless', ...commonArgs], request.signal);
-    }
+      const commonArgs = [
+        `--user-data-dir=${browserProfilePath}`,
+        '--disable-background-networking',
+        '--disable-gpu',
+        '--disable-sync',
+        '--hide-scrollbars',
+        '--no-default-browser-check',
+        '--no-first-run',
+        '--run-all-compositor-stages-before-draw',
+        '--allow-file-access-from-files',
+        '--force-device-scale-factor=1',
+        `--window-size=${request.width},${request.height}`,
+        `--screenshot=${request.outputPath}`,
+        '--virtual-time-budget=1000',
+        pathToFileURL(request.htmlPath).href,
+      ];
+      const runAttempt = async (headlessArg: '--headless=new' | '--headless') => {
+        // Each attempt starts without a stale file, including the legacy retry.
+        fs.rmSync(request.outputPath, { force: true });
+        await this.runner(this.browserPath!, [headlessArg, ...commonArgs], request.signal);
+      };
 
-    const png = fs.existsSync(request.outputPath)
-      ? fs.readFileSync(request.outputPath)
-      : Buffer.alloc(0);
-    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    if (png.length === 0 || !png.subarray(0, 8).equals(pngSignature)) {
-      throw new Error(`HTML 转图片失败，浏览器未生成 PNG：${request.outputPath}`);
+      try {
+        await runAttempt('--headless=new');
+      } catch (error) {
+        const errorCode = error && typeof error === 'object' && 'code' in error
+          ? error.code
+          : undefined;
+        if (request.signal.aborted || errorCode === 'BROWSER_SCREENSHOT_TIMEOUT') throw error;
+        await runAttempt('--headless');
+      }
+
+      const png = fs.existsSync(request.outputPath)
+        ? fs.readFileSync(request.outputPath)
+        : Buffer.alloc(0);
+      const hasExpectedDimensions = png.length >= 24
+        && png.readUInt32BE(16) === request.width
+        && png.readUInt32BE(20) === request.height;
+      if (!isCompletePng(request.outputPath) || !hasExpectedDimensions) {
+        throw new Error(`HTML 转图片失败，浏览器未生成 PNG：${request.outputPath}`);
+      }
+    } finally {
+      try {
+        await fs.promises.rm(browserProfilePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        });
+      } catch {
+        // The profile is disposable and contains no user profile data. A
+        // cleanup failure must not hide the renderer's primary result.
+      }
     }
   }
 }
@@ -454,9 +744,8 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     const titleStr = title || 'Untitled';
     const authorStr = author || '';
     const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'generated_'+Date.now()+'.'+output_format);
-    const tmpDir = path.join(os.tmpdir(), 'otto-doc-'+Date.now());
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-doc-'));
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.mkdirSync(tmpDir, { recursive: true });
 
     try {
       if (format === 'slides') {

@@ -28,10 +28,13 @@ async function cmdStart(): Promise<void> {
   const port = Number(process.env.OTTO_SERVER_PORT ?? DEFAULT_PORT);
   const server = new OttoServer({ host: DEFAULT_HOST, port });
   await server.start();
-  const { host, port: boundPort } = server.endpoint;
-  writeEndpoint(host, boundPort);
+  const { host, port: boundPort, clientToken } = server.endpoint;
+  writeEndpoint(host, boundPort, clientToken, server.controlToken);
    
-  console.log(`[otto-server] listening on http://${host}:${boundPort} (ws ${host}:${boundPort}/ws)`);
+  console.log(
+    `[otto-server] listening on http://${host}:${boundPort} ` +
+      `(ws ${host}:${boundPort}/ws，受 clientToken 保护)`,
+  );
 
   // 防重入：连续 Ctrl-C / 重复信号只跑一次优雅停机，
   // 保证 server.stop()（含取消所有活跃 runtime）完整跑完后再 exit。

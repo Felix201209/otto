@@ -302,6 +302,7 @@ describe('HTTP_ROUTES 与常量', () => {
     expect(HTTP_ROUTES.health).toBe('/health');
     expect(HTTP_ROUTES.sessions).toBe('/sessions');
     expect(HTTP_ROUTES.models).toBe('/models');
+    expect(HTTP_ROUTES.enterpriseIdentity).toBe('/internal/enterprise-identity');
     expect(HTTP_ROUTES.ws).toBe('/ws');
   });
 

@@ -116,7 +116,17 @@ describe('首次注册与企业绑定', () => {
     if (!issued.ok) throw new Error('challenge should be issued');
 
     const verified = db.verifySmsRegistrationChallenge(issued.challengeId, '123456', 1_001_000);
-    expect(verified).toEqual({ ok: true, phone: '+8613800138000', organizationId: alpha.id });
+    expect(verified).toEqual({
+      ok: true,
+      phone: '+8613800138000',
+      organizationId: alpha.id,
+      organizationInviteId: null,
+      departmentId: null,
+      department: null,
+      role: null,
+      positionId: null,
+      positionTitle: null,
+    });
     if (!verified.ok) throw new Error('challenge should verify');
     const account = db.createSelfRegisteredAccount({
       organizationId: verified.organizationId,

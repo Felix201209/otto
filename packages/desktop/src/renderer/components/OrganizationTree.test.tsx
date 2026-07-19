@@ -110,6 +110,19 @@ describe('OrganizationTree', () => {
     expect(screen.getAllByText('CEO').length).toBeGreaterThan(0);
   });
 
+  it('右栏请求打开组织树时展开左侧真实组织入口', () => {
+    const { rerender } = render(
+      <OrganizationTree workspace={workspace} openRequest={0} />,
+    );
+    const toggle = screen.getByRole('button', { name: '企业组织' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    rerender(<OrganizationTree workspace={workspace} openRequest={1} />);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('北辰科技')).toBeTruthy();
+  });
+
   it('成员视图挂载即通过 preload 加载组织架构，并正确显示 loading 和数据', async () => {
     let resolveOrganization!: (value: {
       organization: { id: string; name: string; status: 'active'; createdAt: string };

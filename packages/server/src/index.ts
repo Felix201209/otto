@@ -39,6 +39,8 @@ export { registerFeishu } from './feishu/register.js';
 export {
   endpointFilePath,
   readEndpoint,
+  readEndpointRecord,
   writeEndpoint,
   clearEndpoint,
 } from './endpoint.js';
+export type { ServerEndpointRecord } from './endpoint.js';

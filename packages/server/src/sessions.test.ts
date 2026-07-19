@@ -316,6 +316,23 @@ describe('InMemorySessionStore', () => {
   });
 
   describe('deleteSession', () => {
+    it('detachRuntime 原子摘除并返回 runtime，后续不会再被复用或重复 dispose', async () => {
+      const runtime: SessionRuntime = {
+        async run() {},
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      };
+      const s = store.createSession();
+      store.attachRuntime(s.sessionId, runtime);
+
+      expect(store.detachRuntime(s.sessionId)).toBe(runtime);
+      expect(store.getRuntime(s.sessionId)).toBeUndefined();
+      expect(store.detachRuntime(s.sessionId)).toBeUndefined();
+      await store.deleteSession(s.sessionId);
+    });
+
     it('调 runtime.dispose、清 feishuIndex、再 get 为 undefined', async () => {
       let disposed = 0;
       const runtime: SessionRuntime = {

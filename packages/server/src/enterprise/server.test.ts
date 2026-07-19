@@ -435,6 +435,9 @@ describe('受保护 vs 公开路由边界', () => {
         'organization_invites',
         'usage_summary',
         'admin_console',
+        'direct_messages',
+        'position_invites',
+        'park_service_push',
       ],
     });
     expect(body.uptime).toEqual(expect.any(Number));
@@ -1042,6 +1045,81 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const sessionsAfterAdmin = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
     expect(sessionsAfterAdmin).toBe(sessionsBefore + 1);
   });
+
+  it('园区服务推送要求管理员账号会话，并写入接收成员的真实私聊', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const admin = db.createAccount({
+      username: 'park-admin',
+      password: 'admin-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const member = db.createAccount({
+      username: 'park-member',
+      password: 'member-password',
+      name: '接收成员',
+    });
+    const pushBody = JSON.stringify({
+      recipientAccountId: member.id,
+      serviceId: 'repair',
+      note: '请今天下班前补充现场照片',
+    });
+
+    const unauthenticated = await fetch(`${base}/enterprise/park-services/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: pushBody,
+    });
+    expect(unauthenticated.status).toBe(401);
+
+    const adminLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'park-admin', password: 'admin-password' }),
+    });
+    expect(adminLogin.status).toBe(200);
+    const adminSession = await adminLogin.json() as { token: string };
+
+    const pushed = await fetch(`${base}/enterprise/park-services/push`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminSession.token}`,
+        'content-type': 'application/json',
+      },
+      body: pushBody,
+    });
+    expect(pushed.status).toBe(201);
+    await expect(pushed.json()).resolves.toMatchObject({
+      message: {
+        senderAccountId: admin.id,
+        recipientAccountId: member.id,
+        content: expect.stringContaining('【宏创AI园区服务】客户报修'),
+      },
+      recipient: { id: member.id, name: '接收成员' },
+    });
+
+    const memberLogin = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'park-member', password: 'member-password' }),
+    });
+    expect(memberLogin.status).toBe(200);
+    const memberSession = await memberLogin.json() as { token: string };
+    const conversation = await fetch(`${base}/enterprise/messages/${admin.id}`, {
+      headers: { authorization: `Bearer ${memberSession.token}` },
+    });
+    expect(conversation.status).toBe(200);
+    await expect(conversation.json()).resolves.toMatchObject({
+      messages: [
+        expect.objectContaining({
+          senderAccountId: admin.id,
+          recipientAccountId: member.id,
+          content: expect.stringContaining('请今天下班前补充现场照片'),
+        }),
+      ],
+    });
+  }, 20_000);
 
   it('短信验证码只用于首次注册，注册时保存姓名和密码，之后用手机号密码登录', async () => {
     const sent: Array<{ phone: string; code: string }> = [];

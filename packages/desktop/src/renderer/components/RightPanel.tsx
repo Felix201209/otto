@@ -13,6 +13,7 @@ import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
+import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
 import {
   IconBuilding,
   IconChevron,
@@ -20,6 +21,11 @@ import {
 } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
+
+// server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
+type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
+  authenticatedOrganization?: { id: string; name: string };
+};
 
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
@@ -39,6 +45,8 @@ const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(co
 export interface RightPanelProps {
   busy: boolean;
   mode?: 'personal' | 'enterprise';
+  /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
+  enterpriseRole?: CentralEnterpriseRole;
   workspace?: ProductWorkspaceSnapshot | null;
   onLaunchAgentProfile?: (profile: AgentProfile) => void;
   onOpenAgents?: () => void;
@@ -61,21 +69,16 @@ export interface RightPanelProps {
 
 function visibleProfiles(
   mode: 'personal' | 'enterprise',
-  workspace: ProductWorkspaceSnapshot | null,
+  enterpriseRole: CentralEnterpriseRole | undefined,
 ): readonly AgentProfile[] {
   if (mode === 'personal') return BASE_AGENT_PROFILES;
-  const role = workspace?.context.role;
-  return getEnterpriseAgentProfiles(
-    role === 'company_owner' || role === 'company_admin' || role === 'manager' || role === 'member'
-      ? role
-      : 'member',
-    null,
-  );
+  return getEnterpriseAgentProfiles(enterpriseRole ?? 'member', null);
 }
 
 export function RightPanel({
   busy,
   mode = 'personal',
+  enterpriseRole,
   workspace = null,
   onLaunchAgentProfile = () => undefined,
   onOpenAgents = () => undefined,
@@ -113,7 +116,12 @@ export function RightPanel({
   const [worklogLoading, setWorklogLoading] = useState(false);
   const [workReportPreview, setWorkReportPreview] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
-  const profiles = useMemo(() => visibleProfiles(mode, workspace), [mode, workspace]);
+  const profiles = useMemo(
+    () => visibleProfiles(mode, enterpriseRole),
+    [enterpriseRole, mode],
+  );
+  const authenticatedOrganization = (workspace as AuthenticatedWorkspaceSnapshot | null)
+    ?.authenticatedOrganization;
   const parkBrand = useParkBrand();
 
   useEffect(() => {
@@ -352,9 +360,13 @@ export function RightPanel({
               </div>
               {collabTab === 'company' ? (
                 <div className="otto-collab-drawer__content">
-                  <strong>{workspace?.managerWorkspace?.profile.companyName ?? '已加入企业'}</strong>
-                  <span>{workspace?.members.length ?? 0} 位成员 · {workspace?.managerWorkspace?.organization.departments.length ?? 0} 个部门</span>
-                  <button type="button" onClick={onOpenOrganization}>打开企业框架</button>
+                  <strong>{authenticatedOrganization?.name ?? workspace?.managerWorkspace?.profile.companyName ?? '已加入企业'}</strong>
+                  <span>
+                    {authenticatedOrganization
+                      ? '成员与部门由中心组织树实时加载'
+                      : `${workspace?.members.length ?? 0} 位成员 · ${workspace?.managerWorkspace?.organization.departments.length ?? 0} 个部门`}
+                  </span>
+                  <button type="button" onClick={onOpenOrganization}>打开企业组织树</button>
                 </div>
               ) : (
                 <div className="otto-collab-drawer__content">

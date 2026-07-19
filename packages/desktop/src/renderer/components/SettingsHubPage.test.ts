@@ -39,6 +39,12 @@ describe('SettingsHubPage internal-test navigation', () => {
       initialTab: 'local-agent',
       product: {} as never,
       models: [],
+      enterpriseAccount: {
+        id: 'account-1', organizationId: 'org-1', organizationName: '北辰科技',
+        employeeId: null, username: 'felix', phone: null, name: 'Felix', role: null,
+        department: null, positionId: null, positionTitle: null, isAdmin: false,
+        status: 'active', tags: [], createdAt: '', updatedAt: '',
+      },
     }));
 
     expect(screen.queryByRole('button', { name: '接入企业' })).toBeNull();

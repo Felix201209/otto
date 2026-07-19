@@ -40,6 +40,7 @@ import { IconSettings, IconChevron, IconClose } from './icons.js';
 import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 import { SearchPanel } from './hub/SearchPanel.js';
+import type { EnterpriseAccount } from '../../preload/index.js';
 
 export type TabId =
   | 'prefs'
@@ -126,6 +127,7 @@ interface SettingsHubPageProps {
   initialTab?: TabId;
   product: UseProductWorkspace;
   models: ModelInfo[];
+  enterpriseAccount: EnterpriseAccount;
 }
 
 export function SettingsHubPage({
@@ -136,6 +138,7 @@ export function SettingsHubPage({
   initialTab,
   product,
   models,
+  enterpriseAccount,
 }: SettingsHubPageProps): React.JSX.Element {
   const [tab, setTab] = useState<TabId>(() => resolveInitialSettingsTab(initialTab));
   const [showAdvanced, setShowAdvanced] = useState(
@@ -255,7 +258,9 @@ export function SettingsHubPage({
 
           <div className="otto-hub__scroll">
             {tab === 'prefs' ? <PrefsPanel data={data} /> : null}
-            {tab === 'organization' ? <OrganizationPanel product={product} /> : null}
+            {tab === 'organization' ? (
+              <OrganizationPanel product={product} enterpriseAccount={enterpriseAccount} />
+            ) : null}
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}

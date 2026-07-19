@@ -84,6 +84,7 @@ interface SidebarProps {
   updateBadge?: boolean;
   productWorkspace?: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
+  organizationOpenRequest?: number;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -102,6 +103,7 @@ export function Sidebar({
   updateBadge = false,
   productWorkspace = null,
   enterpriseAccount,
+  organizationOpenRequest = 0,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -146,6 +148,7 @@ export function Sidebar({
         <OrganizationTree
           workspace={productWorkspace}
           enterpriseAccount={enterpriseAccount}
+          openRequest={organizationOpenRequest}
         />
 
         <section className="otto-conversations" aria-label="对话任务">

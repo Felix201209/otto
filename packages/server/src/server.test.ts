@@ -28,6 +28,7 @@ import {
 } from './server.js';
 import { InMemorySessionStore } from './sessions.js';
 import { ProductWorkspaceStore } from './productWorkspaceStore.js';
+import type { AuthenticatedEnterpriseAccount } from './productWorkspaceStore.js';
 import type { SessionRuntime } from './sessions.js';
 import type {
   ApiResponse,
@@ -38,6 +39,7 @@ import type {
 } from './protocol.js';
 
 let tmpHome: string;
+const wsClientTokens = new Map<string, string>();
 
 /** 起 server 监听随机端口（port:0），返回基础 URL。
  *  server.endpoint 返回构造端口（0），故从内部 http server 的 address() 取
@@ -47,7 +49,9 @@ async function startServer(server: OttoServer): Promise<string> {
   const http = (server as unknown as { http: { address(): { port: number } } })
     .http;
   const port = http.address().port;
-  return `http://127.0.0.1:${port}`;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  wsClientTokens.set(baseUrl, server.clientToken);
+  return baseUrl;
 }
 
 /** 连 WS 并收集帧；resolve 后返回操作句柄。 */
@@ -61,7 +65,11 @@ interface WsClient {
 }
 
 async function connectWs(baseUrl: string): Promise<WsClient> {
-  const wsUrl = baseUrl.replace('http', 'ws') + '/ws';
+  const clientToken = wsClientTokens.get(baseUrl);
+  if (!clientToken) throw new Error(`测试未登记 WS client token: ${baseUrl}`);
+  const wsUrl =
+    baseUrl.replace('http', 'ws') +
+    `/ws?clientToken=${encodeURIComponent(clientToken)}`;
   const ws = new WebSocket(wsUrl);
   const frames: ServerToClient[] = [];
   const waiters: Array<{ pred: (f: ServerToClient) => boolean; resolve: (f: ServerToClient) => void }> = [];
@@ -145,6 +153,20 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
       productWorkspaceStore,
     });
     baseUrl = await startServer(server);
+  }, 30_000);
+
+  const authenticatedAccount = (
+    patch: Partial<AuthenticatedEnterpriseAccount> = {},
+  ): AuthenticatedEnterpriseAccount => ({
+    id: 'central-account-1',
+    organizationId: 'central-org-1',
+    organizationName: '北辰中心企业',
+    name: '林一',
+    isAdmin: false,
+    leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+    role: 'company_owner',
+    tags: ['CEO', '超级管理员'],
+    ...patch,
   });
 
   afterEach(async () => {
@@ -243,10 +265,10 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     const client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
-      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-work' },
+      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-ceo' },
     });
     const created = await client.waitFor(
-      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-work',
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
     );
     if (created.type !== 'session_upsert') throw new Error('unreachable');
     const sessionId = created.payload.session.sessionId;
@@ -571,6 +593,385 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(memberDenied.type).toBe('error');
     client.close();
   });
+
+  it('中心认证成员不能通过 configure_enterprise 自升 CEO，admin/member 只能创建各自 profile', async () => {
+    const client = await connectWs(baseUrl);
+    server.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+
+    client.send({
+      type: 'configure_enterprise',
+      payload: { managerName: '伪造 CEO', companyName: '伪造企业' },
+    });
+    const escalationDenied = await client.waitFor(
+      (frame) =>
+        frame.type === 'error' &&
+        frame.payload.code === 'workspace_failed' &&
+        frame.payload.message.includes('中心认证身份'),
+    );
+    expect(escalationDenied.type).toBe('error');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '成员工作台', agentProfileId: 'otto-enterprise-work' },
+    });
+    const memberSession = await client.waitFor(
+      (frame) =>
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === 'otto-enterprise-work',
+    );
+    expect(memberSession.type).toBe('session_upsert');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '成员通用文案', agentProfileId: 'copy' },
+    });
+    const commonProfile = await client.waitFor(
+      (frame) =>
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === 'copy',
+    );
+    expect(commonProfile.type).toBe('session_upsert');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '伪造 CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const memberDenied = await client.waitFor(
+      (frame) =>
+        frame.type === 'error' &&
+        frame.payload.code === 'forbidden_agent_profile',
+    );
+    expect(memberDenied.type).toBe('error');
+
+    server.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({ isAdmin: true, role: 'member', tags: [] }),
+    );
+    client.send({
+      type: 'create_session',
+      payload: { title: '管理员工作台', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const adminSession = await client.waitFor(
+      (frame) =>
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    expect(adminSession.type).toBe('session_upsert');
+
+    client.close();
+  });
+
+  it('中心身份降为成员会取消旧 CEO 活跃 runtime，旧会话后续发送也被拒绝', async () => {
+    const client = await connectWs(baseUrl);
+    server.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({ isAdmin: true, role: 'member', tags: [] }),
+    );
+    client.send({
+      type: 'create_session',
+      payload: { title: 'CEO 会话', agentProfileId: 'otto-enterprise-ceo' },
+    });
+    const created = await client.waitFor(
+      (frame) =>
+        frame.type === 'session_upsert' &&
+        frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+    );
+    if (created.type !== 'session_upsert') throw new Error('unreachable');
+    const sessionId = created.payload.session.sessionId;
+    const cancel = vi.fn();
+    server.store.attachRuntime(sessionId, {
+      async run() {},
+      cancel,
+      setModel() {},
+      resolveToolConfirmation() {},
+      getConfig() {
+        return undefined;
+      },
+      async dispose() {},
+    });
+    server.store.setStatus(sessionId, 'thinking');
+
+    server.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId,
+        content: [{ type: 'text', value: '继续执行 CEO 工作' }],
+        source: 'local',
+      },
+    });
+    const denied = await client.waitFor(
+      (frame) =>
+        frame.type === 'error' &&
+        frame.payload.code === 'forbidden_agent_profile' &&
+        frame.payload.sessionId === sessionId,
+    );
+    expect(denied.type).toBe('error');
+    expect(server.store.getHistory(sessionId)).toHaveLength(1);
+    client.close();
+  });
+
+  it('loopback 控制路由必须持有 control token，并校验 account/null 后同步快照', async () => {
+    expect(Buffer.from(server.controlToken, 'base64url')).toHaveLength(32);
+    const body = { account: authenticatedAccount() };
+    const missing = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(missing.status).toBe(401);
+
+    const wrong = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer wrong-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    expect(wrong.status).toBe(401);
+
+    const synced = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    expect(synced.status).toBe(200);
+    const syncedBody = (await synced.json()) as ApiResponse<{
+      context: { role: string };
+    }>;
+    expect(syncedBody.ok).toBe(true);
+    expect(syncedBody.data?.context.role).toBe('member');
+
+    const invalid = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ account: { id: 'broken', isAdmin: false } }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const cleared = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ account: null }),
+    });
+    expect(cleared.status).toBe(200);
+    const clearedBody = (await cleared.json()) as ApiResponse<{
+      context: { edition: string };
+    }>;
+    expect(clearedBody.data?.context.edition).toBe('personal');
+  });
+
+  it('中心会话绑定账号和组织；legacy/错租户会话不会被列出且所有 sessionId 操作统一拒绝', async () => {
+    server.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+    const legacy = server.store.createSession({
+      title: '旧版无租户会话',
+      productEdition: 'enterprise',
+    });
+    const mismatched = server.store.createSession({
+      title: '其它租户会话',
+      productEdition: 'enterprise',
+      enterpriseAccountId: 'other-account',
+      enterpriseOrganizationId: 'other-org',
+    });
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'create_session',
+      payload: { title: '当前成员会话', agentProfileId: 'otto-enterprise-work' },
+    });
+    const created = await client.waitFor(
+      (frame) =>
+        frame.type === 'session_upsert' &&
+        frame.payload.session.title === '当前成员会话',
+    );
+    if (created.type !== 'session_upsert') throw new Error('unreachable');
+    expect(created.payload.session).toMatchObject({
+      enterpriseAccountId: 'central-account-1',
+      enterpriseOrganizationId: 'central-org-1',
+    });
+
+    client.send({ type: 'list_sessions', payload: {} });
+    const listed = await client.waitFor((frame) => frame.type === 'sessions_list');
+    if (listed.type !== 'sessions_list') throw new Error('unreachable');
+    expect(listed.payload.sessions.map((session) => session.sessionId)).toEqual([
+      created.payload.session.sessionId,
+    ]);
+
+    for (const frame of [
+      {
+        type: 'get_history',
+        payload: { sessionId: legacy.sessionId },
+      },
+      {
+        type: 'subscribe',
+        payload: { sessionId: mismatched.sessionId },
+      },
+      {
+        type: 'cancel',
+        payload: { sessionId: legacy.sessionId },
+      },
+      {
+        type: 'rename_session',
+        payload: { sessionId: mismatched.sessionId, title: '越权改名' },
+      },
+    ]) {
+      const previousErrors = client.frames.filter(
+        (item) =>
+          item.type === 'error' &&
+          item.payload.code === 'forbidden_session',
+      ).length;
+      client.send(frame);
+      await client.waitFor(
+        (item) =>
+          item.type === 'error' &&
+          item.payload.code === 'forbidden_session' &&
+          client.frames.filter(
+            (seen) =>
+              seen.type === 'error' &&
+              seen.payload.code === 'forbidden_session',
+          ).length > previousErrors,
+      );
+    }
+    expect(server.store.getSession(mismatched.sessionId)?.title).toBe(
+      '其它租户会话',
+    );
+    client.close();
+  });
+
+  it('续租同一身份不打断 runtime；身份安全指纹变化会 cancel、detach、dispose 并清队列', async () => {
+    server.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+    const session = server.store.createSession({
+      title: '旧身份上下文',
+      productEdition: 'enterprise',
+      enterpriseAccountId: 'central-account-1',
+      enterpriseOrganizationId: 'central-org-1',
+    });
+    const runtime = {
+      run: vi.fn(async () => undefined),
+      cancel: vi.fn(),
+      setModel: vi.fn(),
+      resolveToolConfirmation: vi.fn(),
+      getConfig: vi.fn(() => undefined),
+      dispose: vi.fn(async () => undefined),
+    };
+    server.store.attachRuntime(session.sessionId, runtime);
+    const queues = (
+      server as unknown as {
+        messageQueues: Map<string, unknown[]>;
+      }
+    ).messageQueues;
+    queues.set(session.sessionId, [{}]);
+
+    server.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        leaseExpiresAt: '2099-01-01T00:05:00.000Z',
+      }),
+    );
+    expect(runtime.dispose).not.toHaveBeenCalled();
+    expect(server.store.getRuntime(session.sessionId)).toBe(runtime);
+
+    server.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        name: '林一（新身份资料）',
+        leaseExpiresAt: '2099-01-01T00:05:00.000Z',
+      }),
+    );
+    await vi.waitFor(() => expect(runtime.dispose).toHaveBeenCalledOnce());
+    expect(runtime.cancel).toHaveBeenCalledOnce();
+    expect(server.store.getRuntime(session.sessionId)).toBeUndefined();
+    expect(queues.size).toBe(0);
+  });
+
+  it('中心身份 lease 到期会主动销毁 runtime，且会话列表与会话操作立即 fail closed', async () => {
+    server.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        leaseExpiresAt: new Date(Date.now() + 120).toISOString(),
+      }),
+    );
+    const session = server.store.createSession({
+      title: '即将过期',
+      productEdition: 'enterprise',
+      enterpriseAccountId: 'central-account-1',
+      enterpriseOrganizationId: 'central-org-1',
+    });
+    const runtime = {
+      run: vi.fn(async () => undefined),
+      cancel: vi.fn(),
+      setModel: vi.fn(),
+      resolveToolConfirmation: vi.fn(),
+      getConfig: vi.fn(() => undefined),
+      dispose: vi.fn(async () => undefined),
+    };
+    server.store.attachRuntime(session.sessionId, runtime);
+    const client = await connectWs(baseUrl);
+
+    await vi.waitFor(
+      () => expect(runtime.dispose).toHaveBeenCalledOnce(),
+      { timeout: 2_000 },
+    );
+    expect(runtime.cancel).toHaveBeenCalledOnce();
+    expect(server.store.getRuntime(session.sessionId)).toBeUndefined();
+
+    client.send({ type: 'list_sessions', payload: {} });
+    const listed = await client.waitFor((frame) => frame.type === 'sessions_list');
+    if (listed.type !== 'sessions_list') throw new Error('unreachable');
+    expect(listed.payload.sessions).toEqual([]);
+
+    client.send({
+      type: 'get_history',
+      payload: { sessionId: session.sessionId },
+    });
+    const denied = await client.waitFor(
+      (frame) =>
+        frame.type === 'error' &&
+        frame.payload.code === 'forbidden_session' &&
+        frame.payload.sessionId === session.sessionId,
+    );
+    expect(denied.type).toBe('error');
+    client.close();
+  });
+
+  it('WS 升级必须使用独立 client token，并拒绝 Origin:null', async () => {
+    expect(Buffer.from(server.clientToken, 'base64url')).toHaveLength(32);
+    expect(server.clientToken).not.toBe(server.controlToken);
+    const wsBase = baseUrl.replace('http', 'ws') + '/ws';
+    const rejectedStatus = (
+      url: string,
+      options?: ConstructorParameters<typeof WebSocket>[1],
+    ): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const socket = new WebSocket(url, options);
+        socket.once('open', () => {
+          socket.close();
+          reject(new Error('WS 不应建立成功'));
+        });
+        socket.once('unexpected-response', (_request, response) => {
+          resolve(response.statusCode ?? 0);
+          socket.terminate();
+        });
+        socket.once('error', (error) => reject(error));
+      });
+
+    await expect(rejectedStatus(wsBase)).resolves.toBe(401);
+    await expect(
+      rejectedStatus(`${wsBase}?clientToken=wrong-token`),
+    ).resolves.toBe(401);
+    await expect(
+      rejectedStatus(
+        `${wsBase}?clientToken=${encodeURIComponent(server.clientToken)}`,
+        { origin: 'null' },
+      ),
+    ).resolves.toBe(401);
+  });
 });
 
 afterEach(() => {
@@ -597,6 +998,15 @@ describe('OttoServer HTTP', () => {
     expect(body.data!.status).toBe('ok');
     expect(body.data!.protocolVersion).toBe('1');
     expect(body.data!.sessionCount).toBe(0);
+  });
+
+  it('内置浏览器页只注入 WS clientToken，不回显 controlToken', async () => {
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(encodeURIComponent(server.clientToken));
+    expect(html).not.toContain(server.controlToken);
+    expect(html).toContain('/ws?clientToken=');
   });
 
   it('POST /sessions 201 + 返回 summary', async () => {
@@ -1005,6 +1415,77 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(factoryCalls).toBe(1); // 懒构建去重：只建一次
     expect(runCalls).toBe(2); // 两条都跑了 run
     c.close();
+  });
+
+  it('ensureRuntime 创建期间身份指纹变化，创建完成后再次授权并销毁旧上下文', async () => {
+    let releaseFactory!: () => void;
+    const factoryStarted = vi.fn();
+    const runtime: SessionRuntime = {
+      run: vi.fn(async () => undefined),
+      cancel: vi.fn(),
+      setModel: vi.fn(),
+      resolveToolConfirmation: vi.fn(),
+      getConfig: vi.fn(() => undefined),
+      dispose: vi.fn(async () => undefined),
+    };
+    const factory: RuntimeFactory = async () => {
+      factoryStarted();
+      await new Promise<void>((resolve) => {
+        releaseFactory = resolve;
+      });
+      return runtime;
+    };
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+      productWorkspaceStore: new ProductWorkspaceStore({
+        rootDir: path.join(tmpHome, 'workspace-runtime-lease'),
+      }),
+    });
+    server.setAuthenticatedEnterpriseAccount({
+      id: 'account-a',
+      organizationId: 'org-a',
+      organizationName: '组织 A',
+      name: '成员 A（身份资料已变化）',
+      isAdmin: false,
+      leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    baseUrl = await startServer(server);
+    const session = server.store.createSession({
+      title: '租约竞态',
+      productEdition: 'enterprise',
+      enterpriseAccountId: 'account-a',
+      enterpriseOrganizationId: 'org-a',
+    });
+    const client = await connectWs(baseUrl);
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        content: [{ type: 'text', value: '开始' }],
+        source: 'local',
+      },
+    });
+    await vi.waitFor(() => expect(factoryStarted).toHaveBeenCalledOnce());
+
+    server.setAuthenticatedEnterpriseAccount({
+      id: 'account-a',
+      organizationId: 'org-a',
+      organizationName: '组织 A',
+      name: '成员 A',
+      isAdmin: false,
+      leaseExpiresAt: '2099-01-01T00:05:00.000Z',
+    });
+    releaseFactory();
+    await vi.waitFor(() =>
+      expect(runtime.dispose).toHaveBeenCalledOnce(),
+    );
+    expect(runtime.cancel).toHaveBeenCalledOnce();
+    expect(runtime.run).not.toHaveBeenCalled();
+    expect(server.store.getRuntime(session.sessionId)).toBeUndefined();
+    client.close();
   });
 
   it('工厂抛错 → publish runtime_init_failed + status error', async () => {

@@ -38,11 +38,22 @@ const baseProfiles: ServerAgentProfile[] = [
       '你是用户唯一的基础 Otto Agent。根据任务按需发现并加载本机 Skill，直接完成真实工作；重复流程证据充分时可沉淀为 Skill。不要展示不存在的企业成员或多 Agent 协作，也不要编造执行结果。' + `\n\n${OFFICE_OPTION_GUIDE}`,
   },
   {
+    id: 'otto-enterprise-ceo',
+    name: 'CEO Agent',
+    scope: 'base',
+    edition: 'enterprise',
+    roles: ['company_owner', 'company_admin'],
+    skills: [],
+    systemPrompt:
+      '你是企业管理者的 CEO Agent。围绕企业目标、组织框架、经营复盘和跨部门决策完成真实工作；可以建议部门、负责人和流程，但涉及成员、职位、邀请、预算或对外动作时必须先让 CEO 确认。只使用当前获授权的数据，不编造组织成员、经营数字或执行结果。'
+      + `\n\n${OFFICE_OPTION_GUIDE}`,
+  },
+  {
     id: 'otto-enterprise-work',
     name: '企业工作 Agent',
     scope: 'base',
     edition: 'enterprise',
-    roles: ['company_owner', 'company_admin', 'manager', 'member'],
+    roles: ['manager', 'member'],
     skills: [],
     systemPrompt:
       '你是企业的工作 Agent。每一步工作都要先确认用户身份，再选择对应的职能范围。'
@@ -209,6 +220,7 @@ const rawBuiltinAgentProfiles: readonly ServerAgentProfile[] = [
 
 const welcomeCapabilities: Readonly<Record<string, string>> = {
   'otto-personal': '处理文档、调研、分析和自动化工作',
+  'otto-enterprise-ceo': '推进经营决策、组织协同和跨部门工作',
   'otto-enterprise-work': '结合你的部门和职位完成日常工作',
   'self-development': '写代码、修改项目并完成可验证的自动化任务',
   ppt: '制作有叙事、有视觉品质的高审美演示文稿',
@@ -446,7 +458,25 @@ const DEPARTMENT_WORKFLOW: Readonly<Record<string, string>> = {
  * 个人版返回空字符串。
  */
 export function buildEnterpriseWorkspaceContext(workspace: {
-  context: { edition: string; role: string; displayName?: string; departmentId?: string; positionId?: string };
+  context: {
+    edition: string;
+    role: string;
+    userId?: string;
+    displayName?: string;
+    companyId?: string;
+    departmentId?: string;
+    positionId?: string;
+    capabilities?: readonly string[];
+  };
+  authenticatedOrganization?: { id: string; name: string };
+  members?: Array<{
+    userId: string;
+    displayName?: string;
+    companyId?: string;
+    departmentName?: string;
+    positionTitle?: string;
+    role?: string;
+  }>;
   managerWorkspace?: { profile?: { companyName?: string }; organization?: { departments: Array<{ id: string; name: string }>; positions: Array<{ id: string; title: string }> } };
 }): string {
   if (workspace.context.edition !== 'enterprise') return '';
@@ -454,11 +484,26 @@ export function buildEnterpriseWorkspaceContext(workspace: {
   const ctx = workspace.context;
   const mw = workspace.managerWorkspace;
   const org = mw?.organization;
+  const authenticatedMember = workspace.members?.find(
+    (member) => member.userId === ctx.userId,
+  );
 
-  const company = mw?.profile?.companyName ?? '企业';
+  const company =
+    workspace.authenticatedOrganization?.name ??
+    mw?.profile?.companyName ??
+    '企业';
   const roleLabel = { company_owner: '企业管理者', company_admin: '管理员', manager: '部门负责人', member: '成员' }[ctx.role] ?? ctx.role;
-  const department = org?.departments.find(d => d.id === ctx.departmentId)?.name ?? '未知部门';
-  const position = org?.positions.find(p => p.id === ctx.positionId)?.title ?? ctx.displayName ?? '未知职位';
+  const hasAuthenticatedOrganization = Boolean(
+    workspace.authenticatedOrganization,
+  );
+  const department = hasAuthenticatedOrganization
+    ? authenticatedMember?.departmentName ?? '未知部门'
+    : org?.departments.find(d => d.id === ctx.departmentId)?.name ?? '未知部门';
+  const position = hasAuthenticatedOrganization
+    ? authenticatedMember?.positionTitle ?? '未知职位'
+    : org?.positions.find(p => p.id === ctx.positionId)?.title ??
+      ctx.displayName ??
+      '未知职位';
   const deptSkills = DEPARTMENT_SKILL_MAP[department] ?? [];
   const skillList = deptSkills.length > 0 ? deptSkills.map(s => `\`${s}\``).join('、') : '按需加载';
   const workflow = DEPARTMENT_WORKFLOW[department] ?? '';
@@ -472,7 +517,9 @@ export function buildEnterpriseWorkspaceContext(workspace: {
     `角色：${roleLabel}`,
     `推荐 Skill：${skillList}`,
     '',
-    '以上身份由企业管理者在 Otto 中建档生成。你的职能范围和可操作数据均以此为边界。',
+    hasAuthenticatedOrganization
+      ? '以上身份由中心企业服务认证。你的职能范围和可操作数据均以此为边界。'
+      : '以上身份由企业管理者在 Otto 中建档生成。你的职能范围和可操作数据均以此为边界。',
     workflow,
     '',
   ].join('\n');

@@ -4,11 +4,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'child_process';
 import {
+  type BrowserProcessHandle,
   ChromeHtmlToImageRenderer,
   findLocalBrowserExecutable,
   GenerateDocumentTool,
   type HtmlToImageRenderer,
   normalizeSlidesMarkdown,
+  runBrowserScreenshotProcess,
 } from './generate-document.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import fs from 'fs';
@@ -20,6 +22,35 @@ import iconv from 'iconv-lite';
 
 function hasBin(name: string): boolean {
   try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+class FakeBrowserProcess implements BrowserProcessHandle {
+  readonly pid = 4242;
+  exited = false;
+  private closeListener?: (code: number | null, signal: NodeJS.Signals | null) => void;
+  private errorListener?: (error: Error) => void;
+
+  onClose(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void {
+    this.closeListener = listener;
+  }
+
+  onError(listener: (error: Error) => void): void {
+    this.errorListener = listener;
+  }
+
+  kill(): boolean {
+    return true;
+  }
+
+  close(code: number | null = 0, signal: NodeJS.Signals | null = null): void {
+    this.exited = true;
+    this.closeListener?.(code, signal);
+  }
+
+  fail(error: Error): void {
+    this.exited = true;
+    this.errorListener?.(error);
+  }
 }
 
 describe('GenerateDocumentTool', () => {
@@ -357,8 +388,15 @@ describe('ChromeHtmlToImageRenderer', () => {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
       'base64',
     );
+    fs.writeFileSync(outputPath, png);
+    let browserProfilePath: string | undefined;
     const runner = vi.fn(async (_executable: string, args: string[]) => {
       const screenshotArg = args.find((arg) => arg.startsWith('--screenshot='));
+      const profileArg = args.find((arg) => arg.startsWith('--user-data-dir='));
+      browserProfilePath = profileArg?.slice('--user-data-dir='.length);
+      expect(browserProfilePath).toBeTruthy();
+      expect(fs.existsSync(browserProfilePath!)).toBe(true);
+      expect(fs.existsSync(outputPath)).toBe(false);
       fs.writeFileSync(screenshotArg!.slice('--screenshot='.length), png);
     });
 
@@ -367,19 +405,180 @@ describe('ChromeHtmlToImageRenderer', () => {
       await renderer.render({
         htmlPath,
         outputPath,
-        width: 1600,
-        height: 900,
+        width: 1,
+        height: 1,
         signal: new AbortController().signal,
       });
 
       expect(runner).toHaveBeenCalledTimes(1);
       expect(runner.mock.calls[0][0]).toBe('/local/chrome');
-      expect(runner.mock.calls[0][1]).toContain('--window-size=1600,900');
+      expect(runner.mock.calls[0][1]).toContain('--window-size=1,1');
       expect(runner.mock.calls[0][1].at(-1)).toBe(pathToFileURL(htmlPath).href);
       expect(runner.mock.calls[0][1].join(' ')).not.toMatch(/python/i);
-      expect(runner.mock.calls[0][1].join(' ')).not.toContain('--user-data-dir=');
+      expect(runner.mock.calls[0][1].join(' ')).toContain('--user-data-dir=');
+      expect(fs.existsSync(browserProfilePath!)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes a failed headless attempt before the legacy retry', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-html-retry-'));
+    const htmlPath = path.join(tempDir, 'slide.html');
+    const outputPath = path.join(tempDir, 'slide.png');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lp0aNwAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    fs.writeFileSync(htmlPath, '<!doctype html><h1>Retry</h1>');
+    const runner = vi.fn(async (_executable: string, args: string[]) => {
+      expect(fs.existsSync(outputPath)).toBe(false);
+      fs.writeFileSync(outputPath, png);
+      if (args.includes('--headless=new')) throw new Error('unsupported headless mode');
+    });
+
+    try {
+      await new ChromeHtmlToImageRenderer('/local/chrome', runner).render({
+        htmlPath,
+        outputPath,
+        width: 1,
+        height: 1,
+        signal: new AbortController().signal,
+      });
+      expect(runner).toHaveBeenCalledTimes(2);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps Abort as the first terminal outcome even if a PNG appears during shutdown', async () => {
+    vi.useFakeTimers();
+    const child = new FakeBrowserProcess();
+    const terminations: boolean[] = [];
+    let screenshotComplete = false;
+    const controller = new AbortController();
+    const promise = runBrowserScreenshotProcess(
+      '/local/chrome',
+      ['--screenshot=/tmp/otto-abort.png'],
+      controller.signal,
+      {
+        timeoutMs: 100,
+        pollIntervalMs: 5,
+        killGraceMs: 20,
+        spawnProcess: () => child,
+        terminateProcess: (_process, force) => terminations.push(force),
+        isScreenshotComplete: () => screenshotComplete,
+      },
+    );
+    const assertion = expect(promise).rejects.toThrow('cancelled');
+
+    try {
+      controller.abort(new Error('cancelled'));
+      screenshotComplete = true;
+      await vi.advanceTimersByTimeAsync(25);
+      await assertion;
+      expect(terminations).toEqual([false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps timeout as the first terminal outcome even if a PNG appears afterwards', async () => {
+    vi.useFakeTimers();
+    const child = new FakeBrowserProcess();
+    const terminations: boolean[] = [];
+    let screenshotComplete = false;
+    const promise = runBrowserScreenshotProcess(
+      '/local/chrome',
+      ['--screenshot=/tmp/otto-timeout.png'],
+      new AbortController().signal,
+      {
+        timeoutMs: 10,
+        pollIntervalMs: 2,
+        killGraceMs: 20,
+        spawnProcess: () => child,
+        terminateProcess: (_process, force) => terminations.push(force),
+        isScreenshotComplete: () => screenshotComplete,
+      },
+    );
+    const assertion = expect(promise).rejects.toThrow('浏览器截图超时');
+
+    try {
+      await vi.advanceTimersByTimeAsync(11);
+      screenshotComplete = true;
+      await vi.advanceTimersByTimeAsync(25);
+      await assertion;
+      expect(terminations).toEqual([false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles after a bounded kill grace even when the browser never emits close', async () => {
+    vi.useFakeTimers();
+    const child = new FakeBrowserProcess();
+    const terminations: boolean[] = [];
+    const promise = runBrowserScreenshotProcess(
+      '/local/chrome',
+      ['--screenshot=/tmp/otto-no-close.png'],
+      new AbortController().signal,
+      {
+        timeoutMs: 100,
+        pollIntervalMs: 2,
+        killGraceMs: 20,
+        spawnProcess: () => child,
+        terminateProcess: (_process, force) => terminations.push(force),
+        isScreenshotComplete: () => true,
+      },
+    );
+    const assertion = expect(promise).resolves.toBeUndefined();
+
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      await assertion;
+      expect(terminations).toEqual([false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for asynchronous process-tree cleanup after the direct browser process closes', async () => {
+    vi.useFakeTimers();
+    const child = new FakeBrowserProcess();
+    let finishTreeCleanup: (() => void) | undefined;
+    const treeCleanup = new Promise<void>((resolve) => {
+      finishTreeCleanup = resolve;
+    });
+    const promise = runBrowserScreenshotProcess(
+      '/local/chrome',
+      ['--screenshot=/tmp/otto-tree-cleanup.png'],
+      new AbortController().signal,
+      {
+        timeoutMs: 100,
+        pollIntervalMs: 2,
+        killGraceMs: 50,
+        spawnProcess: () => child,
+        terminateProcess: () => treeCleanup,
+        isScreenshotComplete: () => true,
+      },
+    );
+    let settled = false;
+    void promise.finally(() => {
+      settled = true;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(3);
+      child.close();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      finishTreeCleanup?.();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(promise).resolves.toBeUndefined();
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

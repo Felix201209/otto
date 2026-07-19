@@ -1290,6 +1290,8 @@ export function createSelfRegisteredAccount(input: {
   if (existing) throw new Error('该手机号已注册，请直接登录');
 
   const digits = normalized.slice(3);
+  const database = getDB();
+  database.exec('SAVEPOINT create_self_registered_account');
   try {
     const account = createAccount({
       organizationId: input.organizationId,
@@ -1305,14 +1307,22 @@ export function createSelfRegisteredAccount(input: {
       isAdmin: false,
     });
     if (input.organizationInviteId) {
-      getDB().prepare(
+      const reserved = database.prepare(
         `UPDATE organization_invites
          SET used_count = used_count + 1
-         WHERE id = ? AND organization_id = ?`,
-      ).run(input.organizationInviteId, input.organizationId);
+         WHERE id = ? AND organization_id = ?
+           AND revoked_at_ms IS NULL AND expires_at_ms > ?
+           AND (max_uses IS NULL OR used_count < max_uses)`,
+      ).run(input.organizationInviteId, input.organizationId, Date.now());
+      if (Number(reserved.changes) !== 1) {
+        throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
+      }
     }
+    database.exec('RELEASE SAVEPOINT create_self_registered_account');
     return account;
   } catch (error) {
+    database.exec('ROLLBACK TO SAVEPOINT create_self_registered_account');
+    database.exec('RELEASE SAVEPOINT create_self_registered_account');
     // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
     if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
     throw error;

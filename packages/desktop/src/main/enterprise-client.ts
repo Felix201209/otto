@@ -213,6 +213,16 @@ export class EnterpriseClient {
     return { serverUrl: this.serverUrl, token: this.token };
   }
 
+  /**
+   * 仅供 Electron main 将中心服务已验证的当前账号同步给本机控制面。
+   * 返回深拷贝，调用方无法通过引用修改客户端内部认证状态。
+   */
+  authenticatedAccountSnapshot(): EnterpriseAccount | null {
+    return this.currentAccount
+      ? JSON.parse(JSON.stringify(this.currentAccount)) as EnterpriseAccount
+      : null;
+  }
+
   private async request<T>(
     path: string,
     init: RequestInit = {},
@@ -302,7 +312,7 @@ export class EnterpriseClient {
     const generation = this.beginAuthOperation(targetServerUrl);
     await this.assertCompatibleServer(
       targetServerUrl,
-      ['sms_registration', 'organization_invites'],
+      ['sms_registration', 'organization_invites', 'position_invites'],
     );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     const challenge = await this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
@@ -330,7 +340,7 @@ export class EnterpriseClient {
     const generation = this.beginAuthOperation(targetServerUrl);
     await this.assertCompatibleServer(
       targetServerUrl,
-      ['sms_registration', 'organization_invites'],
+      ['sms_registration', 'organization_invites', 'position_invites'],
     );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     const result = await this.request<{
@@ -458,6 +468,7 @@ export class EnterpriseClient {
 
   async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
     return (await this.request<{ messages: EnterpriseDirectMessage[] }>(
       `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
     )).messages;
@@ -465,6 +476,7 @@ export class EnterpriseClient {
 
   async sendDirectMessage(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
     return (await this.request<{ message: EnterpriseDirectMessage }>(
       `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
       { method: 'POST', body: JSON.stringify({ content }) },
@@ -477,6 +489,7 @@ export class EnterpriseClient {
     note?: string | null;
   }): Promise<{ message: EnterpriseDirectMessage }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['park_service_push']);
     return this.request('/enterprise/park-services/push', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -485,6 +498,10 @@ export class EnterpriseClient {
 
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(
+      this.serverUrl,
+      ['organization_invites', 'position_invites'],
+    );
     return this.request('/enterprise/organization/invite');
   }
 
@@ -499,6 +516,10 @@ export class EnterpriseClient {
     invite: EnterpriseOrganizationInvite;
   }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(
+      this.serverUrl,
+      ['organization_invites', 'position_invites'],
+    );
     return this.request('/enterprise/organization/invite', {
       method: 'POST',
       body: JSON.stringify({

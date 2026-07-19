@@ -26,7 +26,9 @@ export interface WorkspaceMember {
   displayName: string;
   companyId: string;
   departmentId?: string;
+  departmentName?: string;
   positionId?: string;
+  positionTitle?: string;
   role: ProductContext['role'];
 }
 
@@ -47,6 +49,14 @@ export interface WorkspaceCreditAccount {
 export interface ProductWorkspaceSnapshot {
   schemaVersion: 1;
   context: ProductContext;
+  /**
+   * 由中心企业服务认证的组织标识。它是只读展示信息，不等同于本机
+   * managerWorkspace，也不会写入 product-workspace.json。
+   */
+  authenticatedOrganization?: {
+    id: string;
+    name: string;
+  };
   /** 切回个人版时仍保留，便于之后无损恢复企业身份。 */
   managerWorkspace?: ManagerWorkspace;
   members: WorkspaceMember[];
@@ -99,6 +109,36 @@ export interface ProductWorkspaceStoreOptions {
   now?: () => Date;
 }
 
+/**
+ * 已由中心企业服务认证的账号。role/tags 仅保留作输入兼容，绝不参与
+ * 本地授权；授权唯一依据是中心服务签发的 isAdmin。
+ */
+export interface AuthenticatedEnterpriseAccount {
+  id: string;
+  organizationId: string;
+  organizationName?: string;
+  name: string;
+  isAdmin: boolean;
+  /**
+   * 中心服务签发的短期身份租约（ISO-8601）。本机只在租约有效期内信任
+   * 这份身份；过期后不会回退到可能仍是企业版的本机旧身份。
+   */
+  leaseExpiresAt: string;
+  role?: string | null;
+  tags?: string[];
+  department?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+}
+
+export type EnterpriseIdentityState =
+  | { status: 'none'; account: null; fingerprint: 'none' }
+  | {
+      status: 'active' | 'expired';
+      account: AuthenticatedEnterpriseAccount;
+      fingerprint: string;
+    };
+
 const BASIC_DEPARTMENTS = [
   'CEO 办公室',
   '产品与研发部',
@@ -126,6 +166,8 @@ export class ProductWorkspaceStore {
   private readonly publicKeyPath: string;
   private readonly now: () => Date;
   private state: StoredWorkspace;
+  /** 中心身份只驻留内存；清除后无损恢复本机原始状态。 */
+  private authenticatedAccount: AuthenticatedEnterpriseAccount | null = null;
 
   constructor(options: ProductWorkspaceStoreOptions = {}) {
     this.rootDir = options.rootDir ?? defaultRoot();
@@ -138,6 +180,56 @@ export class ProductWorkspaceStore {
   }
 
   snapshot(): ProductWorkspaceSnapshot {
+    const identity = this.enterpriseIdentityState();
+    if (identity.status === 'expired') {
+      throw new Error('中心认证身份租约已过期，请重新登录');
+    }
+    if (identity.status === 'active') {
+      const account = identity.account;
+      const role: ProductContext['role'] = account.isAdmin
+        ? 'company_admin'
+        : 'member';
+      const context = createEnterpriseContext({
+        userId: account.id,
+        displayName: account.name,
+        companyId: account.organizationId,
+        role,
+        ...(account.positionId ? { positionId: account.positionId } : {}),
+      });
+      return JSON.parse(
+        JSON.stringify({
+          schemaVersion: 1,
+          context,
+          ...(account.organizationName
+            ? {
+                authenticatedOrganization: {
+                  id: account.organizationId,
+                  name: account.organizationName,
+                },
+              }
+            : {}),
+          members: [
+            {
+              userId: account.id,
+              displayName: account.name,
+              companyId: account.organizationId,
+              ...(account.department
+                ? { departmentName: account.department }
+                : {}),
+              ...(account.positionId
+                ? { positionId: account.positionId }
+                : {}),
+              ...(account.positionTitle
+                ? { positionTitle: account.positionTitle }
+                : {}),
+              role,
+            },
+          ],
+          friends: this.state.friends,
+          credits: this.state.credits,
+        }),
+      ) as ProductWorkspaceSnapshot;
+    }
     return JSON.parse(
       JSON.stringify({
         schemaVersion: 1,
@@ -153,7 +245,93 @@ export class ProductWorkspaceStore {
     ) as ProductWorkspaceSnapshot;
   }
 
+  /**
+   * 应用中心服务已经认证过的身份。该方法不落盘，调用方必须位于可信控制面；
+   * null 表示注销并恢复此前本机工作区。
+   */
+  setAuthenticatedEnterpriseAccount(
+    account: AuthenticatedEnterpriseAccount | null,
+  ): ProductWorkspaceSnapshot {
+    if (account === null) {
+      this.authenticatedAccount = null;
+      return this.snapshot();
+    }
+    const id = cleanText(account.id, '中心账号 ID');
+    const organizationId = cleanText(account.organizationId, '中心企业 ID');
+    const name = cleanText(account.name, '中心账号姓名');
+    if (typeof account.isAdmin !== 'boolean') {
+      throw new Error('中心账号 isAdmin 必须是布尔值');
+    }
+    const leaseExpiresAtMs = Date.parse(account.leaseExpiresAt);
+    if (
+      !Number.isFinite(leaseExpiresAtMs) ||
+      leaseExpiresAtMs <= this.now().getTime()
+    ) {
+      throw new Error('中心认证身份租约无效或已过期');
+    }
+    this.authenticatedAccount = {
+      id,
+      organizationId,
+      name,
+      isAdmin: account.isAdmin,
+      leaseExpiresAt: new Date(leaseExpiresAtMs).toISOString(),
+      ...(account.organizationName?.trim()
+        ? { organizationName: account.organizationName.trim() }
+        : {}),
+      ...(typeof account.role === 'string' || account.role === null
+        ? { role: account.role }
+        : {}),
+      ...(Array.isArray(account.tags)
+        ? { tags: account.tags.filter((tag): tag is string => typeof tag === 'string') }
+        : {}),
+      ...(typeof account.department === 'string' || account.department === null
+        ? { department: account.department }
+        : {}),
+      ...(account.positionId?.trim()
+        ? { positionId: account.positionId.trim() }
+        : {}),
+      ...(account.positionTitle?.trim()
+        ? { positionTitle: account.positionTitle.trim() }
+        : {}),
+    };
+    return this.snapshot();
+  }
+
+  /**
+   * 返回中心身份的租约状态与稳定指纹。过期身份仍保留在内存中，直到可信
+   * 控制面显式刷新或清除，以便调用方区分「已注销」和「租约过期」并 fail closed。
+   */
+  enterpriseIdentityState(): EnterpriseIdentityState {
+    if (!this.authenticatedAccount) {
+      return { status: 'none', account: null, fingerprint: 'none' };
+    }
+    const account = JSON.parse(
+      JSON.stringify(this.authenticatedAccount),
+    ) as AuthenticatedEnterpriseAccount;
+    const status =
+      Date.parse(account.leaseExpiresAt) > this.now().getTime()
+        ? 'active'
+        : 'expired';
+    return {
+      status,
+      account,
+      fingerprint: JSON.stringify({
+        id: account.id,
+        organizationId: account.organizationId,
+        organizationName: account.organizationName ?? null,
+        name: account.name,
+        isAdmin: account.isAdmin,
+        role: account.role ?? null,
+        tags: [...(account.tags ?? [])].sort(),
+        department: account.department ?? null,
+        positionId: account.positionId ?? null,
+        positionTitle: account.positionTitle ?? null,
+      }),
+    };
+  }
+
   configureManager(input: ConfigureManagerInput): ProductWorkspaceSnapshot {
+    this.assertLocalIdentityMutable();
     const managerName = cleanText(input.managerName, '管理者姓名');
     const companyName = cleanText(input.companyName, '企业名称');
     const workspace = buildManagerWorkspace(
@@ -187,6 +365,7 @@ export class ProductWorkspaceStore {
   }
 
   switchToPersonal(): ProductWorkspaceSnapshot {
+    this.assertLocalIdentityMutable();
     const wasEnterprise = this.state.context.edition === 'enterprise';
     const wasMember = this.state.context.role !== 'company_owner';
     this.state.context = createPersonalContext({
@@ -204,6 +383,7 @@ export class ProductWorkspaceStore {
   }
 
   issueInvite(input: IssueInviteInput): IssuedWorkspaceInvite {
+    this.assertLocalIdentityMutable();
     if (!this.state.context.capabilities.includes('invite:issue')) {
       throw new Error('当前身份没有签发企业链接的权限');
     }
@@ -265,6 +445,7 @@ export class ProductWorkspaceStore {
   }
 
   acceptInvite(link: string, identity: AcceptInviteIdentity): ProductWorkspaceSnapshot {
+    this.assertLocalIdentityMutable();
     const cleanUserId = cleanText(identity.userId, '用户 ID');
     const cleanDisplayName = cleanText(identity.displayName, '姓名');
     const redemption = this.createRedemptionFromLink(link, cleanUserId);
@@ -302,6 +483,7 @@ export class ProductWorkspaceStore {
   }
 
   acceptCompanyLink(link: string): ProductWorkspaceSnapshot {
+    this.assertLocalIdentityMutable();
     if (
       this.state.context.edition !== 'enterprise'
       || this.state.context.role !== 'company_owner'
@@ -356,6 +538,7 @@ export class ProductWorkspaceStore {
   }
 
   addFriend(displayName: string, note?: string): ProductWorkspaceSnapshot {
+    this.assertIdentityLeaseActiveIfPresent();
     const friend: WorkspaceFriend = {
       id: randomUUID(),
       displayName: cleanText(displayName, '好友姓名'),
@@ -365,6 +548,19 @@ export class ProductWorkspaceStore {
     this.state.friends.push(friend);
     this.save();
     return this.snapshot();
+  }
+
+  private assertLocalIdentityMutable(): void {
+    if (this.authenticatedAccount) {
+      this.assertIdentityLeaseActiveIfPresent();
+      throw new Error('中心认证身份生效中，不能修改本机企业身份');
+    }
+  }
+
+  private assertIdentityLeaseActiveIfPresent(): void {
+    if (this.enterpriseIdentityState().status === 'expired') {
+      throw new Error('中心认证身份租约已过期，请重新登录');
+    }
   }
 
   private loadOrCreate(): StoredWorkspace {

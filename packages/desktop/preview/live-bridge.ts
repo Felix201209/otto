@@ -7,7 +7,9 @@
 /**
  * 浏览器端 Otto Bridge —— 替代 Electron preload，直接从浏览器连 otto-server WS。
  *
- * otto-server 已经跑在 http://127.0.0.1:7637，本文件把 ws://127.0.0.1:7637/ws
+ * otto-server 已经跑在 http://127.0.0.1:7637；页面 URL 必须通过
+ * `#clientToken=...` 提供端点文件里的低权限 WS 令牌。fragment 不会发给
+ * preview 静态服务器或进入 referrer。本文件把受保护的 WS
  * 包成 window.otto（与 preload 暴露的 API 形状一致），让 renderer（App.tsx）
  * 不用 Electron 也能在普通浏览器里跑。
  *
@@ -15,6 +17,8 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { serverWebSocketUrl } from '../src/preload/server-endpoint.js';
 
 // ── preload 类型平替（不依赖 electron / otto-server 包）──────────────────
 type Envelope<T extends string, P> = { type: T; payload: P };
@@ -30,6 +34,8 @@ const RECONNECT_MAX_MS = 10_000;
 
 const SERVER_HOST = '127.0.0.1';
 const SERVER_PORT = 7637;
+const CLIENT_TOKEN = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  .get('clientToken') ?? '';
 
 let ws: WebSocket | undefined;
 let wantConnected = false;
@@ -90,7 +96,11 @@ function openSocket(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     void (async () => {
       try {
-        const socket = new WebSocket(`ws://${SERVER_HOST}:${SERVER_PORT}/ws`);
+        const socket = new WebSocket(serverWebSocketUrl({
+          host: SERVER_HOST,
+          port: SERVER_PORT,
+          clientToken: CLIENT_TOKEN,
+        }));
         ws = socket;
 
         socket.addEventListener('open', () => {
@@ -213,8 +223,8 @@ const bridge = {
   skillShareList(): Promise<any> { return Promise.resolve({ text: '' }); },
   skillMarketplace(): Promise<any> { return Promise.resolve({ text: '' }); },
   setLocalTestUrl(): Promise<void> { return Promise.resolve(); },
-  appVersion(): Promise<string> { return Promise.resolve('1.8.6-browser'); },
-  updateCheck(): Promise<any> { return Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.6', latestVersion: null }); },
+  appVersion(): Promise<string> { return Promise.resolve('1.8.8-browser'); },
+  updateCheck(): Promise<any> { return Promise.resolve({ status: 'up-to-date', currentVersion: '1.8.8', latestVersion: null }); },
   updateDownload(): Promise<any> { return Promise.resolve({ ok: false, error: '浏览器模式不支持更新' }); },
   updateCancel(): Promise<void> { return Promise.resolve(); },
   updateInstall(): Promise<any> { return Promise.resolve({ ok: false, message: '浏览器模式不支持' }); },

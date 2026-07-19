@@ -30,6 +30,9 @@ const requiredCapabilities = [
   'organization_invites',
   'usage_summary',
   'admin_console',
+  'direct_messages',
+  'position_invites',
+  'park_service_push',
 ];
 const missing = requiredCapabilities.filter(
   (capability) => !body.capabilities?.includes(capability),

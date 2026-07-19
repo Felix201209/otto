@@ -72,6 +72,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/report',
   '/enterprise/accounts',
   '/enterprise/organization/invite',
+  '/enterprise/park-services/push',
   '/enterprise/usage/summary',
   '/enterprise/organizations',
 ]);
@@ -160,6 +161,9 @@ const ENTERPRISE_CAPABILITIES = [
   'organization_invites',
   'usage_summary',
   'admin_console',
+  'direct_messages',
+  'position_invites',
+  'park_service_push',
 ] as const;
 
 interface DeploymentInfo {

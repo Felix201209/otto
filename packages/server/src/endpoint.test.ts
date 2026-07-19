@@ -41,7 +41,14 @@ afterEach(() => {
 describe('endpoint write/read round-trip', () => {
   it('write 后 read 一致', async () => {
     const ep = await loadEndpoint();
-    const written = ep.writeEndpoint('127.0.0.1', 7637);
+    const controlToken = 'a'.repeat(43);
+    const clientToken = 'b'.repeat(43);
+    const written = ep.writeEndpoint(
+      '127.0.0.1',
+      7637,
+      clientToken,
+      controlToken,
+    );
     expect(written.host).toBe('127.0.0.1');
     expect(written.port).toBe(7637);
     expect(written.pid).toBe(process.pid);
@@ -51,6 +58,14 @@ describe('endpoint write/read round-trip', () => {
     expect(read!.host).toBe('127.0.0.1');
     expect(read!.port).toBe(7637);
     expect(read!.protocolVersion).toBe(written.protocolVersion);
+    expect(read?.clientToken).toBe(clientToken);
+    expect(read).not.toHaveProperty('controlToken');
+    expect(ep.readEndpointRecord()?.controlToken).toBe(controlToken);
+    expect(ep.readEndpointRecord()?.clientToken).toBe(clientToken);
+    expect(
+      JSON.parse(fs.readFileSync(ep.endpointFilePath(), 'utf8')).controlToken,
+    ).toBe(controlToken);
+    expect(fs.statSync(ep.endpointFilePath()).mode & 0o777).toBe(0o600);
   });
 
   it('endpointFilePath 指向临时 HOME', async () => {
@@ -65,9 +80,31 @@ describe('endpoint write/read round-trip', () => {
     expect(ep.readEndpoint()).toBeUndefined();
   });
 
+  it('旧端点文件缺 clientToken 时 fail closed，不生成或回填假 token', async () => {
+    const ep = await loadEndpoint();
+    fs.mkdirSync(path.dirname(ep.endpointFilePath()), { recursive: true });
+    fs.writeFileSync(
+      ep.endpointFilePath(),
+      JSON.stringify({
+        host: '127.0.0.1',
+        port: 7637,
+        protocolVersion: '1',
+        pid: process.pid,
+        startedAt: Date.now(),
+        controlToken: 'legacy-control-token',
+      }),
+    );
+
+    expect(ep.readEndpoint()).toBeUndefined();
+    expect(ep.readEndpointRecord()).toBeUndefined();
+    expect(fs.readFileSync(ep.endpointFilePath(), 'utf8')).not.toContain(
+      'clientToken',
+    );
+  });
+
   it('clear 后 read → undefined', async () => {
     const ep = await loadEndpoint();
-    ep.writeEndpoint('127.0.0.1', 7637);
+    ep.writeEndpoint('127.0.0.1', 7637, 'client-token');
     expect(ep.readEndpoint()).toBeDefined();
     ep.clearEndpoint();
     expect(ep.readEndpoint()).toBeUndefined();

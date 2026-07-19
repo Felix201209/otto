@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ProductWorkspaceStore } from './productWorkspaceStore.js';
+import {
+  ProductWorkspaceStore,
+  type AuthenticatedEnterpriseAccount,
+} from './productWorkspaceStore.js';
 
 let rootDir: string;
 
@@ -19,6 +22,21 @@ afterEach(() => {
 });
 
 describe('ProductWorkspaceStore', () => {
+  const authenticatedAccount = (
+    patch: Partial<AuthenticatedEnterpriseAccount> = {},
+  ): AuthenticatedEnterpriseAccount => ({
+    id: 'central-account-1',
+    organizationId: 'central-org-1',
+    organizationName: '北辰中心企业',
+    name: '林一',
+    isAdmin: false,
+    leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+    role: 'company_owner',
+    tags: ['CEO', '超级管理员'],
+    positionId: 'position-1',
+    ...patch,
+  });
+
   it('首次启动默认为个人版，并跨实例保留同一个用户身份', () => {
     const first = new ProductWorkspaceStore({ rootDir });
     const initial = first.snapshot();
@@ -109,6 +127,109 @@ describe('ProductWorkspaceStore', () => {
       userId: personalUserId,
     });
     expect(personal.managerWorkspace?.profile.companyName).toBe('北辰科技');
+  });
+
+  it('中心认证身份只按 isAdmin 映射权限，并以内存覆盖返回当前组织与成员', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    const local = store.configureManager({
+      managerName: '本机 CEO',
+      companyName: '本机企业',
+    });
+
+    const member = store.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+    expect(member.context).toMatchObject({
+      edition: 'enterprise',
+      role: 'member',
+      userId: 'central-account-1',
+      displayName: '林一',
+      companyId: 'central-org-1',
+      positionId: 'position-1',
+    });
+    expect(member.context.capabilities).not.toContain('organization:manage');
+    expect(member.context.capabilities).not.toContain('invite:issue');
+    expect(member.managerWorkspace).toBeUndefined();
+    expect(member.members).toEqual([
+      expect.objectContaining({
+        userId: 'central-account-1',
+        displayName: '林一',
+        companyId: 'central-org-1',
+        role: 'member',
+      }),
+    ]);
+    expect(member.authenticatedOrganization).toEqual({
+      id: 'central-org-1',
+      name: '北辰中心企业',
+    });
+
+    const admin = store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({ isAdmin: true, role: 'member', tags: [] }),
+    );
+    expect(admin.context.role).toBe('company_admin');
+    expect(admin.context.capabilities).toContain('organization:manage');
+
+    store.setAuthenticatedEnterpriseAccount(null);
+    expect(store.snapshot()).toEqual(local);
+    expect(new ProductWorkspaceStore({ rootDir }).snapshot()).toEqual(local);
+  });
+
+  it('中心认证身份存在时拒绝所有本机企业身份变更', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    store.setAuthenticatedEnterpriseAccount(authenticatedAccount());
+
+    expect(() =>
+      store.configureManager({ managerName: '伪造 CEO', companyName: '伪造企业' }),
+    ).toThrow(/中心认证身份/);
+    expect(() => store.switchToPersonal()).toThrow(/中心认证身份/);
+    expect(() =>
+      store.acceptInvite('otto://enterprise/join', {
+        userId: 'attacker',
+        displayName: '攻击者',
+      }),
+    ).toThrow(/中心认证身份/);
+    expect(() => store.acceptCompanyLink('otto://enterprise/join')).toThrow(
+      /中心认证身份/,
+    );
+    expect(() => store.issueInvite({ kind: 'company' })).toThrow(/中心认证身份/);
+  });
+
+  it('中心身份租约必须有效，过期后快照与本机身份变更都 fail closed', () => {
+    let now = new Date('2026-07-19T00:00:00.000Z');
+    const store = new ProductWorkspaceStore({
+      rootDir,
+      now: () => now,
+    });
+
+    expect(() =>
+      store.setAuthenticatedEnterpriseAccount(
+        authenticatedAccount({ leaseExpiresAt: 'not-a-date' }),
+      ),
+    ).toThrow(/租约/);
+    expect(() =>
+      store.setAuthenticatedEnterpriseAccount(
+        authenticatedAccount({ leaseExpiresAt: now.toISOString() }),
+      ),
+    ).toThrow(/租约/);
+
+    store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({ leaseExpiresAt: '2026-07-19T00:01:00.000Z' }),
+    );
+    expect(store.enterpriseIdentityState()).toMatchObject({
+      status: 'active',
+      account: {
+        id: 'central-account-1',
+        organizationId: 'central-org-1',
+      },
+    });
+
+    now = new Date('2026-07-19T00:01:00.001Z');
+    expect(store.enterpriseIdentityState().status).toBe('expired');
+    expect(() => store.snapshot()).toThrow(/中心认证身份租约已过期/);
+    expect(() =>
+      store.configureManager({ managerName: '攻击者', companyName: '伪造企业' }),
+    ).toThrow(/中心认证身份租约已过期/);
+
+    store.setAuthenticatedEnterpriseAccount(null);
+    expect(store.snapshot().context.edition).toBe('personal');
   });
 
   it('总公司签发引入子公司链接，子公司输入后持久化父子关系且不改变自身 CEO 身份', () => {

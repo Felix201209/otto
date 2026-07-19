@@ -46,6 +46,9 @@ const API_V2_HEALTH = {
     'organization_invites',
     'usage_summary',
     'admin_console',
+    'direct_messages',
+    'position_invites',
+    'park_service_push',
   ],
 };
 
@@ -391,7 +394,53 @@ describe('EnterpriseClient', () => {
       .resolves.toMatchObject({ id: admin.id });
 
     expect(client.snapshot().token).toBeNull();
+    expect(client.authenticatedAccountSnapshot()).toBeNull();
     expect(onSessionInvalidated).toHaveBeenCalledOnce();
+  });
+
+  it('管理员自降权后不把 isAdmin=false 的更新响应当作仍有效会话', async () => {
+    const admin = { ...ACCOUNT, id: 'acc_admin', isAdmin: true };
+    const downgraded = { ...admin, isAdmin: false, role: 'member' };
+    const onSessionInvalidated = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: admin,
+        token: 'admin-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { account: downgraded }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch, onSessionInvalidated);
+    await client.loginWithPassword('https://enterprise.otto.test', 'admin', 'password');
+
+    await expect(client.updateAccount(admin.id, { isAdmin: false }))
+      .resolves.toEqual(downgraded);
+
+    expect(client.snapshot().token).toBeNull();
+    expect(client.authenticatedAccountSnapshot()).toBeNull();
+    expect(onSessionInvalidated).toHaveBeenCalledOnce();
+  });
+
+  it('只读账号快照仅反映中心服务已验证的当前账号，且调用方不能篡改内部状态', async () => {
+    const updated = { ...ACCOUNT, name: '新姓名', role: 'engineer', tags: ['updated'] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'member-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { account: updated }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    const first = client.authenticatedAccountSnapshot();
+    expect(first).toEqual(ACCOUNT);
+    first!.tags.push('renderer-forged');
+    expect(client.authenticatedAccountSnapshot()?.tags).toEqual(['普通员工']);
+
+    await client.updateAccount(ACCOUNT.id, { name: '新姓名', role: 'engineer' });
+    expect(client.authenticatedAccountSnapshot()).toEqual(updated);
   });
 
   it.each([
@@ -419,7 +468,7 @@ describe('EnterpriseClient', () => {
   it('请求注册验证码前验证注册与邀请能力，缺失时不发送手机号和邀请码', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, {
       ...API_V2_HEALTH,
-      capabilities: ['password_auth'],
+      capabilities: ['password_auth', 'sms_registration', 'organization_invites'],
     }));
     const client = new EnterpriseClient(fetchMock as typeof fetch);
 
@@ -431,6 +480,85 @@ describe('EnterpriseClient', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(client.snapshot().token).toBeNull();
+  });
+
+  it('提交短信注册前也验证岗位邀请能力，缺失时不发送验证码和密码', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, {
+      ...API_V2_HEALTH,
+      capabilities: ['password_auth', 'sms_registration', 'organization_invites'],
+    }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    client.restore({ serverUrl: 'https://enterprise.otto.test', token: null });
+
+    await expect(client.registerWithSms({
+      challengeId: 'sms_1',
+      code: '042731',
+      name: '员工一号',
+      password: 'registered-password',
+    })).rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://enterprise.otto.test/enterprise/health');
+  });
+
+  it.each([
+    {
+      name: '读取私信',
+      capability: 'direct_messages',
+      endpoint: '/enterprise/messages/acc_peer',
+      invoke: (client: EnterpriseClient) => client.listDirectMessages('acc_peer'),
+    },
+    {
+      name: '发送私信',
+      capability: 'direct_messages',
+      endpoint: '/enterprise/messages/acc_peer',
+      invoke: (client: EnterpriseClient) => client.sendDirectMessage('acc_peer', '你好'),
+    },
+    {
+      name: '读取岗位邀请码',
+      capability: 'position_invites',
+      endpoint: '/enterprise/organization/invite',
+      invoke: (client: EnterpriseClient) => client.getOrganizationInvite(),
+    },
+    {
+      name: '签发岗位邀请码',
+      capability: 'position_invites',
+      endpoint: '/enterprise/organization/invite',
+      invoke: (client: EnterpriseClient) => client.issueOrganizationInvite({ positionId: 'pos_brand' }),
+    },
+    {
+      name: '推送园区服务',
+      capability: 'park_service_push',
+      endpoint: '/enterprise/park-services/push',
+      invoke: (client: EnterpriseClient) => client.pushParkService({
+        recipientAccountId: 'acc_peer',
+        serviceId: 'svc_shuttle',
+      }),
+    },
+  ])('$name 在业务请求前验证 $capability 能力', async ({ capability, endpoint, invoke }) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: ['password_auth'],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: API_V2_HEALTH.capabilities.filter((item) => item !== capability),
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(invoke(client))
+      .rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/health');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(endpoint))).toBe(false);
   });
 
   it('恢复会话遇到旧服务器时保留服务器地址和 token，并返回明确的升级提示', async () => {

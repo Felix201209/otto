@@ -97,11 +97,19 @@ import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voice
 import { transcribeAudio } from './voiceService.js';
 import {
   EnterpriseClient,
-  logoutAndPersistEnterpriseSession,
   type AccountCreateInput,
   type AccountUpdateInput,
   type EnterpriseKnowledgeRecordInput,
 } from './enterprise-client.js';
+import {
+  authenticateAndSyncEnterpriseAccount,
+  clearInvalidatedEnterpriseIdentity,
+  EnterpriseAuthOperationQueue,
+  logoutAndClearEnterpriseIdentity,
+  refreshEnterpriseIdentityLease,
+  restoreAndSyncEnterpriseSession,
+  syncVerifiedEnterpriseAccount,
+} from './enterprise-auth-sync.js';
 import {
   defaultEnterpriseServerUrl,
   migrateEnterpriseServerUrl,
@@ -240,15 +248,17 @@ const IPC = {
 } as const;
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
+const enterpriseAuthOperations = new EnterpriseAuthOperationQueue();
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   // 任一受保护接口返回 401 都会走这里：立即持久化清 token，并通知 renderer
   // 退出过期管理员界面。错误登录时 token 本来为空，不会触发此回调。
   if (enterpriseSessionLoaded) {
-    try {
-      saveEnterpriseSession();
-    } catch (error) {
-      console.warn('[otto-desktop] 清理失效企业会话失败:', error);
-    }
+    void enterpriseAuthOperations.run(() => clearInvalidatedEnterpriseIdentity(
+      (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+      saveEnterpriseSession,
+    )).catch((error) => {
+      console.warn('[otto-desktop] 清理失效企业会话或本机身份失败:', error);
+    });
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
@@ -257,6 +267,8 @@ const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
 const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
+let enterpriseIdentityRefreshTimer: ReturnType<typeof setInterval> | undefined;
+const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 20_000;
 
 function acceptEnterpriseRegistrationUrl(input: string): boolean {
   if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;
@@ -324,6 +336,34 @@ function saveEnterpriseSession(): void {
     ),
     { encoding: 'utf8', mode: 0o600 },
   );
+}
+
+function startEnterpriseIdentityRefresh(): void {
+  if (enterpriseIdentityRefreshTimer) return;
+  enterpriseIdentityRefreshTimer = setInterval(() => {
+    if (isQuitting) return;
+    loadEnterpriseSession();
+    if (!enterpriseClient.snapshot().token) return;
+    void enterpriseAuthOperations.run(async () => {
+      if (!enterpriseClient.snapshot().token) return;
+      const session = await enterpriseClient.getSession();
+      await refreshEnterpriseIdentityLease(
+        session,
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+    }).catch((error) => {
+      console.warn('[otto-desktop] 刷新企业身份短租约失败:', error);
+    });
+  }, ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS);
+  enterpriseIdentityRefreshTimer.unref?.();
+}
+
+function stopEnterpriseIdentityRefresh(): void {
+  if (!enterpriseIdentityRefreshTimer) return;
+  clearInterval(enterpriseIdentityRefreshTimer);
+  enterpriseIdentityRefreshTimer = undefined;
 }
 
 /**
@@ -892,13 +932,21 @@ function registerIpc(): void {
     enterpriseIntentRendererReady = true;
     return enterpriseRegistrationIntents.take();
   });
-  ipcMain.handle(IPC.enterpriseSession, async () => {
-    loadEnterpriseSession();
-    const before = enterpriseClient.snapshot().token;
-    const result = await enterpriseClient.getSession();
-    if (before && !enterpriseClient.snapshot().token) saveEnterpriseSession();
-    return result;
-  });
+  ipcMain.handle(
+    IPC.enterpriseSession,
+    () => enterpriseAuthOperations.run(async () => {
+      loadEnterpriseSession();
+      const before = enterpriseClient.snapshot().token;
+      const result = await restoreAndSyncEnterpriseSession(
+        await enterpriseClient.getSession(),
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+      if (before && !enterpriseClient.snapshot().token) saveEnterpriseSession();
+      return result;
+    }),
+  );
   ipcMain.handle(IPC.enterprisePasswordLogin, async (_e, input: unknown) => {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object') throw new Error('登录信息格式不正确');
@@ -909,9 +957,19 @@ function registerIpc(): void {
     if (typeof body.serverUrl !== 'string' || identifier === null || typeof body.password !== 'string') {
       throw new Error('服务器地址、账号或手机号和密码均为必填项');
     }
-    const result = await enterpriseClient.loginWithPassword(body.serverUrl, identifier, body.password);
-    saveEnterpriseSession();
-    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    return enterpriseAuthOperations.run(async () => {
+      const result = await authenticateAndSyncEnterpriseAccount(
+        () => enterpriseClient.loginWithPassword(
+          body.serverUrl as string,
+          identifier,
+          body.password as string,
+        ),
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+      return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    });
   });
   ipcMain.handle(IPC.enterpriseRegistrationRequest, async (_e, input: unknown) => {
     loadEnterpriseSession();
@@ -921,13 +979,15 @@ function registerIpc(): void {
       || typeof body.inviteCode !== 'string') {
       throw new Error('服务器地址、企业邀请码和手机号均为必填项');
     }
-    const result = await enterpriseClient.requestRegistrationCode(
-      body.serverUrl,
-      body.phone,
-      body.inviteCode,
-    );
-    saveEnterpriseSession();
-    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    return enterpriseAuthOperations.run(async () => {
+      const result = await enterpriseClient.requestRegistrationCode(
+        body.serverUrl as string,
+        body.phone as string,
+        body.inviteCode as string,
+      );
+      saveEnterpriseSession();
+      return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    });
   });
   ipcMain.handle(IPC.enterpriseRegister, async (_e, input: unknown) => {
     loadEnterpriseSession();
@@ -937,18 +997,30 @@ function registerIpc(): void {
       || typeof body.name !== 'string' || typeof body.password !== 'string') {
       throw new Error('姓名、密码和验证码均为必填项');
     }
-    const result = await enterpriseClient.registerWithSms({
-      challengeId: body.challengeId,
-      code: body.code,
-      name: body.name,
-      password: body.password,
+    return enterpriseAuthOperations.run(async () => {
+      const result = await authenticateAndSyncEnterpriseAccount(
+        () => enterpriseClient.registerWithSms({
+          challengeId: body.challengeId as string,
+          code: body.code as string,
+          name: body.name as string,
+          password: body.password as string,
+        }),
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+      return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
     });
-    saveEnterpriseSession();
-    return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
   });
   ipcMain.handle(IPC.enterpriseLogout, async () => {
-    loadEnterpriseSession();
-    await logoutAndPersistEnterpriseSession(enterpriseClient, saveEnterpriseSession);
+    await enterpriseAuthOperations.run(async () => {
+      loadEnterpriseSession();
+      await logoutAndClearEnterpriseIdentity(
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+    });
   });
   ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
     if (typeof token !== 'string' || token.trim().length === 0) {
@@ -990,11 +1062,24 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     IPC.enterpriseAccountUpdate,
-    async (_e, id: unknown, input: AccountUpdateInput) => {
-      loadEnterpriseSession();
-      if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
-      return enterpriseClient.updateAccount(id, input);
-    },
+    (_e, id: unknown, input: AccountUpdateInput) =>
+      enterpriseAuthOperations.run(async () => {
+        loadEnterpriseSession();
+        if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
+        const currentBefore = enterpriseClient.authenticatedAccountSnapshot();
+        const updated = await enterpriseClient.updateAccount(id, input);
+        if (currentBefore?.id === id) {
+          // 自改管理员权限/密码/状态会让中心服务撤销当前 session，此时快照为 null；
+          // 不能把 PATCH 响应当作仍有效身份继续授权，必须 fail closed 清本机身份。
+          await syncVerifiedEnterpriseAccount(
+            enterpriseClient.authenticatedAccountSnapshot(),
+            enterpriseClient,
+            (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+            saveEnterpriseSession,
+          );
+        }
+        return updated;
+      }),
   );
   ipcMain.handle(IPC.enterpriseUsageRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();
@@ -1532,6 +1617,7 @@ if (!gotLock) {
     mainWindow = createWindow();
     applyCsp();
     await ensureEndpoint();
+    startEnterpriseIdentityRefresh();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -1552,6 +1638,7 @@ if (!gotLock) {
 
   app.on('before-quit', (event) => {
     isQuitting = true;
+    stopEnterpriseIdentityRefresh();
     if (quitCleanupFinished) return;
     event.preventDefault();
     if (quitCleanupStarted) return;
