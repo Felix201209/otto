@@ -46,6 +46,7 @@
     "build:packages": "npm run build --workspaces",
     "build:sandbox": "node scripts/build_sandbox.js --skip-npm-install-build",
     "bundle": "npm run build && node esbuild.config.js && node scripts/copy_bundle_assets.js",
+    "bundle:enterprise": "node scripts/build-enterprise-oneclick.mjs",
     "bundle:dev": "cross-env BUILD_ENV=development npm run build && cross-env BUILD_ENV=development node esbuild.config.js && cross-env BUILD_ENV=development node scripts/copy_bundle_assets.js",
     "bundle:prod": "cross-env BUILD_ENV=production npm run build && cross-env BUILD_ENV=production node esbuild.config.js && cross-env BUILD_ENV=production DOWNLOAD_ALL_PLATFORMS=true node scripts/copy_bundle_assets.js",
     "bundle:cross-platform:dev": "cross-env BUILD_ENV=development DOWNLOAD_ALL_PLATFORMS=true npm run build && cross-env BUILD_ENV=development node esbuild.config.js && cross-env BUILD_ENV=development DOWNLOAD_ALL_PLATFORMS=true node scripts/copy_bundle_assets.js",

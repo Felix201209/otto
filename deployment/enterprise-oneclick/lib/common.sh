@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+
+# Otto Enterprise 一键部署公共函数。调用方必须先 set -Eeuo pipefail。
+
+OTTO_NODE_VERSION="22.23.1"
+OTTO_NODE_MIN_VERSION="22.16.0"
+OTTO_NODE_X64_SHA256="7a8cb04b4a1df4eaf432125324b81b29a088e73570a23259a8de1c65d07fc129"
+OTTO_NODE_ARM64_SHA256="543fa39e57d4c07855939459a323f4deb9a79dd1bb45e6e99458b0f2de10db8d"
+
+otto_log() {
+  printf '[Otto Deploy] %s\n' "$*"
+}
+
+otto_warn() {
+  printf '[Otto Deploy] 警告：%s\n' "$*" >&2
+}
+
+otto_die() {
+  local message="$1"
+  local status="${2:-2}"
+  printf '[Otto Deploy] 错误：%s\n' "$message" >&2
+  exit "$status"
+}
+
+otto_require_command() {
+  command -v "$1" >/dev/null 2>&1 || otto_die "缺少命令：$1"
+}
+
+otto_sha256() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    shasum -a 256 "$file" | awk '{print $1}'
+  fi
+}
+
+otto_verify_package_manifest() {
+  local package_root="$1"
+  local manifest="${package_root}/PACKAGE-MANIFEST.sha256"
+  [ -f "$manifest" ] && [ ! -L "$manifest" ] \
+    || otto_die "部署包缺少普通文件 PACKAGE-MANIFEST.sha256" 3
+
+  local line expected relative absolute actual count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    expected="${line%%  *}"
+    relative="${line#*  }"
+    [ "$relative" != "$line" ] \
+      && [ "${#expected}" -eq 64 ] \
+      && [[ "$expected" =~ ^[a-f0-9]+$ ]] \
+      || otto_die "部署包清单格式无效" 3
+    case "$relative" in
+      ""|/*|.|..|../*|*/../*|*/..|./*|*/./*|*/.)
+        otto_die "部署包清单包含不安全路径：${relative}" 3
+        ;;
+    esac
+    absolute="${package_root}/${relative}"
+    [ -f "$absolute" ] && [ ! -L "$absolute" ] \
+      || otto_die "部署包清单目标缺失、不是普通文件或是符号链接：${relative}" 3
+    actual="$(otto_sha256 "$absolute")"
+    [ "$actual" = "$expected" ] \
+      || otto_die "部署包文件 SHA-256 不匹配：${relative}" 3
+    count=$((count + 1))
+  done < "$manifest"
+  [ "$count" -ge 10 ] || otto_die "部署包清单条目异常：${count}" 3
+  otto_log "部署包清单校验通过：${count} 个文件"
+}
+
+otto_version_at_least() {
+  local actual="${1#v}"
+  local minimum="${2#v}"
+  [ "$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | head -n 1)" = "$minimum" ]
+}
+
+otto_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x64\n' ;;
+    aarch64|arm64) printf 'arm64\n' ;;
+    *) otto_die "仅支持 Linux x86_64/amd64 与 aarch64/arm64，当前为 $(uname -m)" 3 ;;
+  esac
+}
+
+otto_node_sha256() {
+  case "$1" in
+    x64) printf '%s\n' "$OTTO_NODE_X64_SHA256" ;;
+    arm64) printf '%s\n' "$OTTO_NODE_ARM64_SHA256" ;;
+    *) otto_die "未知 Node 架构：$1" ;;
+  esac
+}
+
+otto_resolve_node() {
+  local preferred="${1:-}"
+  if [ -n "$preferred" ] && [ -x "$preferred" ]; then
+    local preferred_version
+    preferred_version="$("$preferred" --version)"
+    if otto_version_at_least "$preferred_version" "$OTTO_NODE_MIN_VERSION"; then
+      printf '%s\n' "$preferred"
+      return
+    fi
+  fi
+  if command -v node >/dev/null 2>&1; then
+    local system_node
+    local system_version
+    system_node="$(command -v node)"
+    system_version="$("$system_node" --version)"
+    if otto_version_at_least "$system_version" "$OTTO_NODE_MIN_VERSION"; then
+      printf '%s\n' "$system_node"
+      return
+    fi
+  fi
+  return 1
+}
+
+otto_install_node_runtime() {
+  local runtime_parent="$1"
+  local arch
+  arch="$(otto_arch)"
+  local runtime_dir="${runtime_parent}/node-v${OTTO_NODE_VERSION}-linux-${arch}"
+  local node_path="${runtime_dir}/bin/node"
+
+  if [ -x "$node_path" ]; then
+    local found_version
+    found_version="$("$node_path" --version)"
+    [ "$found_version" = "v${OTTO_NODE_VERSION}" ] \
+      || otto_die "已有 Node runtime 版本异常：${found_version}"
+    printf '%s\n' "$node_path"
+    return
+  fi
+
+  otto_require_command curl
+  otto_require_command tar
+  local archive="node-v${OTTO_NODE_VERSION}-linux-${arch}.tar.gz"
+  local url="https://nodejs.org/dist/v${OTTO_NODE_VERSION}/${archive}"
+  local expected
+  expected="$(otto_node_sha256 "$arch")"
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  local temp_archive="${temp_dir}/${archive}"
+
+  otto_log "下载固定 Node.js v${OTTO_NODE_VERSION} (${arch})" >&2
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --max-time 300 \
+    --output "$temp_archive" "$url"
+  local actual
+  actual="$(otto_sha256 "$temp_archive")"
+  [ "$actual" = "$expected" ] \
+    || otto_die "Node runtime SHA-256 不匹配：期望 ${expected}，实际 ${actual}" 3
+
+  mkdir -p "$runtime_parent"
+  tar -xzf "$temp_archive" -C "$runtime_parent"
+  [ -x "$node_path" ] || otto_die "Node runtime 解压后入口不存在" 3
+  [ "$("$node_path" --version)" = "v${OTTO_NODE_VERSION}" ] \
+    || otto_die "Node runtime 自检失败" 3
+  rm -rf "$temp_dir"
+  printf '%s\n' "$node_path"
+}
+
+otto_load_config() {
+  local config_path="$1"
+  [ -f "$config_path" ] || otto_die "配置文件不存在：${config_path}"
+  [ ! -L "$config_path" ] || otto_die "配置文件不能是符号链接：${config_path}"
+
+  local raw line key value
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    line="${raw%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    [[ "$line" == \#* ]] && continue
+    [[ "$line" == export\ * ]] && line="${line#export }"
+    [[ "$line" == *=* ]] || otto_die "配置行必须是 KEY=VALUE：${raw}"
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    case "$key" in
+      OTTO_PUBLIC_HOST|OTTO_PUBLIC_PORT|OTTO_ENTERPRISE_PUBLIC_URL|\
+      OTTO_ENTERPRISE_ADMIN_TOKEN|OTTO_BOOTSTRAP_USERNAME|\
+      OTTO_BOOTSTRAP_PASSWORD|OTTO_BOOTSTRAP_NAME|OTTO_CADDY_MODE|\
+      OTTO_ALLOW_SMS_DISABLED|ALIYUN_SMS_PROVIDER|\
+      ALIYUN_SMS_ACCESS_KEY_ID|ALIYUN_SMS_ACCESS_KEY_SECRET|\
+      ALIYUN_SMS_SIGN_NAME|ALIYUN_SMS_TEMPLATE_ID|\
+      OTTO_DEFAULT_ORGANIZATION_NAME|OTTO_ENTERPRISE_USAGE_DAILY_LIMIT|\
+      OTTO_CREDIT_TOKEN_RATE|OTTO_ESTIMATE_MANUAL_MULT|\
+      OTTO_ESTIMATE_CNY_PER_HOUR|OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP)
+        if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+          value="${value:1:${#value}-2}"
+        fi
+        printf -v "$key" '%s' "$value"
+        export "$key"
+        ;;
+      *)
+        otto_die "配置包含不允许的键：${key}"
+        ;;
+    esac
+  done < "$config_path"
+}
+
+otto_random_secret() {
+  local node_path="$1"
+  "$node_path" --input-type=module -e \
+    "import { randomBytes } from 'node:crypto'; console.log(randomBytes(32).toString('base64url'))"
+}
