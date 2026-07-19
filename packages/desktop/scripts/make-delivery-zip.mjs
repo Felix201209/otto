@@ -74,6 +74,7 @@ const SHOULD_PUBLISH = ARGS.includes('--publish');
 const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const EXEC_FILE_OPTIONS = process.platform === 'win32' ? { shell: true } : {};
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ function cleanupUnpackedOutput(name) {
 
 function runBuildStep(command, args, unpackedOutput) {
   try {
-    execFileSync(command, args, { cwd: DESKTOP_DIR, stdio: 'inherit' });
+    execFileSync(command, args, { cwd: DESKTOP_DIR, stdio: 'inherit', ...EXEC_FILE_OPTIONS });
   } finally {
     cleanupUnpackedOutput(unpackedOutput);
   }
@@ -278,11 +279,16 @@ async function build(sourceCommit) {
   execFileSync(NPM_BIN, ['run', 'build', '--workspace=packages/server'], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
+    ...EXEC_FILE_OPTIONS,
   });
   log('BUILD', 'otto-server 当前源码构建完成');
 
   // 构建 renderer + main + preload
-  execFileSync(NPM_BIN, ['run', 'build'], { cwd: DESKTOP_DIR, stdio: 'inherit' });
+  execFileSync(NPM_BIN, ['run', 'build'], {
+    cwd: DESKTOP_DIR,
+    stdio: 'inherit',
+    ...EXEC_FILE_OPTIONS,
+  });
   log('BUILD', 'TypeScript + Webpack 编译完成');
 
   // mac: arm64 + x64
