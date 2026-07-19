@@ -5369,7 +5369,9 @@ h6.otto-prose__h {
   animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-park-dialog {
-  width: min(560px, calc(100vw - 48px));
+  width: min(1000px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
   border-radius: var(--otto-radius-lg);
   background: var(--otto-bg);
   box-shadow: var(--otto-shadow-pop);
@@ -5439,7 +5441,8 @@ h6.otto-prose__h {
 }
 .otto-park-dialog__grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* 9 项服务 = 3 列 × 3 行；窄屏下平滑缩为 2 列。 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 .otto-park-service {
@@ -5493,6 +5496,446 @@ h6.otto-prose__h {
   grid-area: desc;
   font-size: 11.5px;
   color: var(--otto-text-secondary);
+}
+
+/* ── 园区服务 · 无服务端本地演示工单 ───────────────────────────────────── */
+.otto-park-demo {
+  padding-top: 1px;
+}
+.otto-park-demo__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.otto-park-demo__back,
+.otto-park-demo__chat,
+.otto-park-demo__secondary {
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 8px 10px;
+}
+.otto-park-demo__back:hover,
+.otto-park-demo__chat:hover,
+.otto-park-demo__secondary:hover {
+  color: var(--otto-accent-hover);
+  border-color: var(--otto-accent);
+}
+.otto-park-demo__status {
+  border-radius: var(--otto-radius-pill);
+  background: color-mix(in srgb, var(--otto-text-secondary) 10%, transparent);
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+}
+.otto-park-demo__status.is-done {
+  background: color-mix(in srgb, #22a06b 13%, transparent);
+  color: #168557;
+}
+.otto-park-demo__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 15px;
+  padding: 14px 16px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: color-mix(in srgb, var(--otto-accent-soft) 55%, var(--otto-surface));
+}
+.otto-park-demo__eyebrow {
+  color: var(--otto-accent-hover);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.otto-park-demo__summary h3 {
+  margin: 4px 0 3px;
+  color: var(--otto-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+.otto-park-demo__summary p {
+  margin: 0;
+  color: var(--otto-text-secondary);
+  font-size: 11.5px;
+}
+.otto-park-demo__chat {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.otto-park-demo__timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.otto-park-demo__timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  min-height: 62px;
+  color: var(--otto-text-tertiary);
+}
+.otto-park-demo__timeline li:not(:last-child)::before {
+  position: absolute;
+  top: 26px;
+  bottom: 0;
+  left: 12px;
+  width: 2px;
+  background: var(--otto-border);
+  content: '';
+}
+.otto-park-demo__marker {
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--otto-border);
+  border-radius: 50%;
+  background: var(--otto-surface);
+  font-size: 11px;
+  font-weight: 650;
+}
+.otto-park-demo__step {
+  padding: 2px 0 14px;
+}
+.otto-park-demo__step > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.otto-park-demo__step strong {
+  color: var(--otto-text);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.otto-park-demo__step span {
+  border-radius: var(--otto-radius-pill);
+  background: color-mix(in srgb, var(--otto-text-secondary) 10%, transparent);
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+  padding: 2px 6px;
+}
+.otto-park-demo__step p {
+  margin: 3px 0 0;
+  color: inherit;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.otto-park-demo__timeline em {
+  margin-top: 5px;
+  color: inherit;
+  font-size: 10.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.otto-park-demo__timeline li.is-current {
+  color: var(--otto-text-secondary);
+}
+.otto-park-demo__timeline li.is-current .otto-park-demo__marker {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent-hover);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--otto-accent) 13%, transparent);
+}
+.otto-park-demo__timeline li.is-complete {
+  color: var(--otto-text-secondary);
+}
+.otto-park-demo__timeline li.is-complete .otto-park-demo__marker {
+  border-color: #22a06b;
+  background: #22a06b;
+  color: #fff;
+}
+.otto-park-demo__timeline li.is-complete:not(:last-child)::before {
+  background: #22a06b;
+}
+.otto-park-demo__actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 3px;
+  padding-top: 14px;
+  border-top: 1px solid var(--otto-border);
+}
+.otto-park-demo__primary {
+  border: 1px solid var(--otto-accent);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 13px;
+}
+.otto-park-demo__primary:hover { background: var(--otto-accent-hover); }
+.otto-park-demo__primary:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+/* 园区公告是接收端：园区端发布后，Otto 只负责右下角提醒和查看详情。 */
+.otto-park-receiver,
+.otto-park-survey {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, .62fr);
+  gap: 12px;
+}
+.otto-park-receiver__panel,
+.otto-park-announcement-detail,
+.otto-park-survey__publish,
+.otto-park-survey__form,
+.otto-park-survey__result {
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface);
+  padding: 14px;
+}
+.otto-park-receiver__label {
+  color: var(--otto-accent-hover);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.otto-park-receiver h3,
+.otto-park-announcement-detail h3,
+.otto-park-survey h3 {
+  margin: 5px 0 6px;
+  color: var(--otto-text);
+  font-size: 14px;
+  font-weight: 650;
+}
+.otto-park-receiver p,
+.otto-park-announcement-detail p,
+.otto-park-survey p {
+  margin: 0 0 10px;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.otto-park-receiver dl,
+.otto-park-announcement-detail dl {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.otto-park-receiver dl div,
+.otto-park-announcement-detail dl div {
+  display: flex;
+  gap: 8px;
+}
+.otto-park-receiver dt,
+.otto-park-announcement-detail dt {
+  min-width: 56px;
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+}
+.otto-park-receiver dd,
+.otto-park-announcement-detail dd {
+  margin: 0;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+}
+.otto-park-receiver__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 148px;
+  border: 1px dashed var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: color-mix(in srgb, var(--otto-accent-soft) 34%, transparent);
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  padding: 14px;
+}
+.otto-park-announcement-detail {
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--otto-accent-soft) 45%, var(--otto-surface));
+}
+.otto-park-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 130;
+  width: min(300px, calc(100vw - 44px));
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 30%, var(--otto-border));
+  border-radius: var(--otto-radius);
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  box-shadow: var(--otto-shadow-pop);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px;
+  text-align: left;
+  animation: otto-park-pop var(--otto-dur) var(--otto-ease);
+}
+.otto-park-toast span {
+  color: var(--otto-accent-hover);
+  font-size: 11px;
+  font-weight: 650;
+}
+.otto-park-toast strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.otto-park-toast em {
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+.otto-park-survey {
+  grid-template-columns: minmax(180px, .55fr) minmax(0, 1fr);
+}
+.otto-park-survey__form {
+  display: grid;
+  gap: 10px;
+}
+.otto-park-survey__form.is-disabled {
+  opacity: .68;
+}
+.otto-park-survey__form label {
+  display: grid;
+  gap: 5px;
+  color: var(--otto-text-secondary);
+  font-size: 11.5px;
+}
+.otto-park-survey__form select,
+.otto-park-survey__form input,
+.otto-park-survey__form textarea {
+  width: 100%;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 9px;
+}
+.otto-park-survey__form textarea {
+  resize: vertical;
+  min-height: 82px;
+}
+.otto-park-survey__result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+}
+.otto-park-survey__result strong {
+  color: #168557;
+  font-weight: 650;
+}
+
+/* 每个责任人收到的 Otto 待处理弹窗。演示时可明确看到渠道接力和兜底动作。 */
+.otto-park-notice-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(28, 25, 23, 0.24);
+  animation: otto-setup-fade var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-notice {
+  width: min(440px, calc(100vw - 40px));
+  padding: 20px 22px 18px;
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border));
+  border-radius: var(--otto-radius-lg);
+  background: var(--otto-bg);
+  box-shadow: var(--otto-shadow-pop);
+  animation: otto-park-pop var(--otto-dur) var(--otto-ease);
+}
+.otto-park-notice__eyebrow {
+  color: var(--otto-accent-hover);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.otto-park-notice h3 {
+  margin: 7px 0 5px;
+  color: var(--otto-text);
+  font-size: 16px;
+  font-weight: 650;
+}
+.otto-park-notice__owner,
+.otto-park-notice__detail {
+  margin: 0;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.otto-park-notice__owner strong { color: var(--otto-text); }
+.otto-park-notice__detail { margin-top: 7px; }
+.otto-park-notice__channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.otto-park-notice__channels span {
+  padding: 4px 7px;
+  border-radius: var(--otto-radius-pill);
+  background: color-mix(in srgb, var(--otto-text-secondary) 9%, transparent);
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+}
+.otto-park-notice__channels span.is-active {
+  background: color-mix(in srgb, var(--otto-accent) 13%, transparent);
+  color: var(--otto-accent-hover);
+}
+.otto-park-notice__feishu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 13px;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.otto-park-notice__feishu-toggle input { accent-color: var(--otto-accent); }
+.otto-park-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 17px;
+}
+.otto-park-notice__hint {
+  margin-top: 11px;
+  color: var(--otto-text-tertiary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+@media (max-width: 880px) {
+  .otto-park-dialog__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .otto-park-dialog { width: min(100vw - 24px, 560px); padding: 16px; }
+  .otto-park-dialog__grid { grid-template-columns: 1fr; }
+  .otto-park-demo__summary { display: block; }
+  .otto-park-demo__chat { margin-top: 11px; }
+  .otto-park-receiver,
+  .otto-park-survey { grid-template-columns: 1fr; }
+  .otto-park-toast { right: 12px; bottom: 12px; }
 }
 
 /* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */

@@ -6,7 +6,7 @@
 
 /**
  * ParkServicesPlugin 单测（v1.6.0 起无悬浮小钮，入口=openParkServices 事件）：
- * 默认不渲染、事件打开、六项服务齐全、点服务=注入+关闭、三种关闭、
+ * 默认不渲染、事件打开、9 项服务 3×3、内置流程可本地演示、三种关闭、
  * 无障碍属性、企业定制覆盖。
  */
 
@@ -40,24 +40,87 @@ describe('ParkServicesPlugin', () => {
     expect(container.querySelector('.otto-park-fab')).toBeNull();
   });
 
-  it('openParkServices 事件打开居中对话框，六项服务齐全', () => {
+  it('openParkServices 事件打开居中对话框，9 项服务齐全', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     expect(screen.getByRole('dialog')).toBeTruthy();
-    for (const name of ['访客邀约', '会议室预订', 'IT 报修', '行政后勤', '班车通勤', '餐饮服务']) {
+    for (const name of [
+      '装修管理', '满意度调查', '园区公告', '停车位办理', '网络与电话', '会议室预约',
+      '电卡充电', '客户报修', '来访车辆',
+    ]) {
       expect(screen.getByText(name)).toBeTruthy();
     }
+    expect(screen.queryByText('行政后勤')).toBeNull();
+    expect(screen.queryByText('班车通勤')).toBeNull();
+    expect(screen.queryByText('餐饮服务')).toBeNull();
+    expect(document.querySelectorAll('.otto-park-service')).toHaveLength(9);
+    expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
   });
 
-  it('点服务项：派发 composer 注入事件（含服务模板）并关闭对话框', () => {
+  it('内置服务先进入本地演示，可把真实填写请求交给 Otto', () => {
     const l = listenDraft();
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('会议室预订'));
+    fireEvent.click(screen.getByText('会议室预约'));
+    expect(screen.getByText('本地模拟工单 · 不会提交到真实园区系统')).toBeTruthy();
+    expect(screen.getAllByText('会议服务专员')).toHaveLength(2);
+    fireEvent.click(screen.getByText('改用 Otto 填写'));
     expect(l.texts).toHaveLength(1);
     expect(l.texts[0]).toContain('宏创园区会议室');
     expect(screen.queryByRole('dialog')).toBeNull();
     l.stop();
+  });
+
+  it('园区公告是接收端：园区发布后右下角弹窗，员工点击查看', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('园区公告'));
+    expect(screen.getByText('本地模拟公告 · Otto 只作为企业接收端')).toBeTruthy();
+    expect(screen.getByText('暂无新公告')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '模拟园区发布公告' }));
+    expect(screen.getByLabelText('查看园区公告').textContent).toContain('下午临时停水通知');
+    fireEvent.click(screen.getByLabelText('查看园区公告'));
+    expect(screen.getByText('公告详情')).toBeTruthy();
+    expect(screen.getByText('已读回执已记录')).toBeTruthy();
+  });
+
+  it('满意度调查是双向流程：园区发布问卷，员工填写并提交', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('满意度调查'));
+    expect(screen.getByText('园区尚未发布问卷。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '模拟发布问卷' }));
+    expect(screen.getByText('问卷已发布，等待员工提交。')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('总体满意度'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('重点关注'), { target: { value: '会议室环境' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交问卷' }));
+    expect(screen.getByText('园区端已收到反馈')).toBeTruthy();
+    expect(screen.getByText('4 分 · 会议室环境 · 已进入满意度汇总')).toBeTruthy();
+  });
+
+  it('报修演示可逐步经过自动派单、网络维修主管和现场验收', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('客户报修'));
+    expect(screen.getByText('工单系统')).toBeTruthy();
+    expect(screen.getByText('网络维修主管')).toBeTruthy();
+    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：演示申请人');
+    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
+    fireEvent.click(screen.getByText('下一步'));
+    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：自动派单');
+    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
+    fireEvent.click(screen.getByText('下一步'));
+    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：张工');
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
+    expect(screen.getByText('待处理提醒')).toBeTruthy();
+  });
+
+  it('责任人未查看时优先发短信，飞书连接时同步发送', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(screen.getByText('客户报修'));
+    fireEvent.click(screen.getByRole('button', { name: '模拟未查看，先发短信' }));
+    expect(screen.getByText('短信已发送 · 飞书已同步')).toBeTruthy();
   });
 
   it('Esc / 点遮罩 / 右上 × 都能关闭', () => {
@@ -100,13 +163,13 @@ describe('ParkServicesPlugin', () => {
       openDialog();
       expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
       expect(screen.getByText('自定义服务A')).toBeTruthy();
-      expect(screen.queryByText('访客邀约')).toBeNull();
+      expect(screen.queryByText('装修管理')).toBeNull();
     } finally {
       delete (window as unknown as { otto?: typeof otto }).otto;
     }
   });
 
-  it('企业定制：只给 parkName 时六项默认服务换园区称呼', async () => {
+  it('企业定制：只给 parkName 时默认服务换园区称呼', async () => {
     const otto = {
       parkConfig: () => Promise.resolve({ parkName: '星火园区' }),
     };
@@ -115,8 +178,9 @@ describe('ParkServicesPlugin', () => {
       const l = listenDraft();
       render(<ParkServicesPlugin />);
       openDialog();
-      await screen.findByText('会议室预订');
-      fireEvent.click(screen.getByText('会议室预订'));
+      await screen.findByText('会议室预约');
+      fireEvent.click(screen.getByText('会议室预约'));
+      fireEvent.click(screen.getByText('改用 Otto 填写'));
       await new Promise((r) => setTimeout(r, 0));
       expect(l.texts[0]).toContain('星火园区会议室');
       l.stop();
