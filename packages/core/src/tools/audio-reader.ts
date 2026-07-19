@@ -23,7 +23,7 @@ import { makeRelative, shortenPath } from '../utils/paths.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { SceneType } from '../core/sceneManager.js';
 import { getErrorMessage } from '../utils/errors.js';
-import { isCustomModel, generateCustomModelId, type CustomModelConfig } from '../types/customModel.js';
+import { isCustomModel, type CustomModelConfig } from '../types/customModel.js';
 
 const execFileAsync = promisify(execFile);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -75,7 +75,7 @@ function truncateTranscript(transcript: string): { transcript: string; truncated
  * Used when the active model needs help turning local audio into text.
  *
  * The tool first tries the user's current audio-capable model, then Otto's
- * local/user-owned ASR bridge, then a configured Gemini Flash helper.
+ * local/user-owned ASR bridge.
  */
 export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult> {
   static readonly Name: string = 'audio_reader';
@@ -89,7 +89,7 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       'AudioReader',
       'Fallback tool for text-only models that cannot natively process audio. ' +
         'It first tries the current model when it supports audio, then Otto local transcription ' +
-        '(local Whisper / user cloud ASR env), then a cheap model (gemini-2.5-flash) when available. ' +
+        '(local Whisper / user cloud ASR env). ' +
         'Do NOT call this tool proactively: ' +
         'only use it when you need to transcribe or understand audio content that ' +
         'cannot be natively processed by your current model. ' +
@@ -200,38 +200,38 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
 
     const relative = makeRelative(filePath, this.config.getTargetDir());
     const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
-
-    // Read and convert to base64
-    let base64Data: string;
-    let mimeType: string;
-    try {
-      const buffer = await fs.promises.readFile(filePath);
-      base64Data = buffer.toString('base64');
-      mimeType = mime.lookup(filePath) || 'application/octet-stream';
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      return {
-        llmContent: `Error reading audio file: ${msg}`,
-        returnDisplay: `Error reading audio: ${msg}`,
-      };
-    }
-
-    const userPrompt =
-      (params.prompt && params.prompt.trim()) || DEFAULT_TRANSCRIBE_PROMPT;
-
-    const messageParts = [
-      { text: userPrompt },
-      {
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
-      },
-    ];
-
     const currentModelPlan = getCurrentAudioModelPlan(this.config, currentModel);
     let modelError: string | undefined;
+
     if (currentModelPlan) {
+      // Read and convert to base64 only when the current model can consume audio.
+      let base64Data: string;
+      let mimeType: string;
+      try {
+        const buffer = await fs.promises.readFile(filePath);
+        base64Data = buffer.toString('base64');
+        mimeType = mime.lookup(filePath) || 'application/octet-stream';
+      } catch (e) {
+        const msg = getErrorMessage(e);
+        return {
+          llmContent: `Error reading audio file: ${msg}`,
+          returnDisplay: `Error reading audio: ${msg}`,
+        };
+      }
+
+      const userPrompt =
+        (params.prompt && params.prompt.trim()) || DEFAULT_TRANSCRIBE_PROMPT;
+
+      const messageParts = [
+        { text: userPrompt },
+        {
+          inlineData: {
+            mimeType,
+            data: base64Data,
+          },
+        },
+      ];
+
       const currentResult = await this.transcribeWithTemporaryChat(
         messageParts,
         signal,
@@ -252,49 +252,20 @@ export class AudioReaderTool extends BaseTool<AudioReaderToolParams, ToolResult>
       return formatTranscriptResult(localTranscript, relative, 'local ASR');
     }
 
-    const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
-    let resolvedModel: string | undefined = undefined;
-    let fallbackLabel = 'gemini-2.5-flash';
-
-    if (isUsingCustomModel && typeof this.config.getCustomModels === 'function') {
-      const geminiFlashModel = findGeminiFlashModel(this.config.getCustomModels() || [], currentModel);
-
-      if (!geminiFlashModel) {
-        const currentModelNote = currentModelPlan
-          ? `Otto first tried the current audio-capable model, but it failed: ${modelError || 'unknown error'}.\n`
-          : `Otto checked the current model, but it is not marked as audio-capable.\n`;
-        return {
-          llmContent:
-            `Audio transcription is not configured for this model yet.\n\n` +
-            currentModelNote +
-            `Otto also tried local ASR, but no local/user-owned transcriber returned text. ` +
-            `Because the current chat model is custom and no separate Gemini Flash fallback is configured, ` +
-            `this audio file cannot be transcribed automatically.\n\n` +
-            `To enable this without Otto-hosted ASR costs, choose one option:\n` +
-            `1. Install local Whisper: pip install openai-whisper\n` +
-            `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
-            `3. Add a custom Gemini Flash model for multimodal fallback\n` +
-            `4. Upload/paste an existing transcript and I can summarize the meeting notes.`,
-          returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
-        };
-      }
-      resolvedModel = generateCustomModelId(geminiFlashModel);
-      fallbackLabel = `custom Gemini Flash: ${geminiFlashModel.displayName || geminiFlashModel.modelId}`;
-    }
-
-    const fallbackResult = await this.transcribeWithTemporaryChat(
-      messageParts,
-      signal,
-      resolvedModel,
-    );
-    if (fallbackResult.transcript) {
-      return formatTranscriptResult(fallbackResult.transcript, relative, fallbackLabel);
-    }
-
-    const errorMessage = fallbackResult.error || modelError || 'unknown error';
+    const currentModelNote = currentModelPlan
+      ? `Otto first tried the current audio-capable model, but it failed: ${modelError || 'unknown error'}.\n`
+      : `Otto checked the current model, but it is not marked as audio-capable.\n`;
     return {
-      llmContent: `Error transcribing audio "${filePath}": ${errorMessage}`,
-      returnDisplay: `Error transcribing audio: ${errorMessage}`,
+      llmContent:
+        `Audio transcription is not configured for this model yet.\n\n` +
+        currentModelNote +
+        `Otto also tried local ASR, but no local/user-owned transcriber returned text. ` +
+        `This audio file cannot be transcribed automatically without an audio-capable current model or local ASR.\n\n` +
+        `To enable this without Otto-hosted ASR costs, choose one option:\n` +
+        `1. Install local Whisper: pip install openai-whisper\n` +
+        `2. Configure user-owned ASR env vars: OPENAI_API_KEY or ARK_API_KEY\n` +
+        `3. Upload/paste an existing transcript and I can summarize the meeting notes.`,
+      returnDisplay: `Audio transcription needs local ASR or a user-owned ASR key`,
     };
   }
 
@@ -413,20 +384,6 @@ function builtInModelSupportsAudio(model: string): boolean {
   );
 }
 
-function findGeminiFlashModel(
-  customModels: CustomModelConfig[],
-  excludeModelId?: string,
-): CustomModelConfig | undefined {
-  return customModels.find(m => {
-    if (m.enabled === false) return false;
-    if (excludeModelId && generateCustomModelId(m) === excludeModelId) return false;
-    const modelIdLower = (m.modelId || '').toLowerCase();
-    const displayNameLower = (m.displayName || '').toLowerCase();
-    return (modelIdLower.includes('gemini') && modelIdLower.includes('flash')) ||
-           (displayNameLower.includes('gemini') && displayNameLower.includes('flash'));
-  });
-}
-
 async function transcribeWithLocalBridge(filePath: string): Promise<string | null> {
   const scriptPath = path.join(path.dirname(path.dirname(moduleDir)), 'scripts', 'voice_bridge.py');
   if (!fs.existsSync(scriptPath)) return null;
@@ -446,7 +403,7 @@ async function transcribeWithLocalBridge(filePath: string): Promise<string | nul
       const text = result.stdout.trim();
       if (text) return text;
     } catch {
-      // Try the next Python command or fall through to multimodal fallback.
+      // Try the next Python command or report that local ASR is unavailable.
     }
   }
   return null;

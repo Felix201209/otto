@@ -97,7 +97,7 @@ describe('AudioReaderTool', () => {
     expect(getOttoClient).not.toHaveBeenCalled();
   });
 
-  it('explains setup options when a custom text model has no local ASR or Gemini fallback', async () => {
+  it('explains local setup options when a custom text model has no local ASR', async () => {
     const config = createMockConfig({
       getTargetDir: () => tempDir,
     }) as any;
@@ -111,16 +111,6 @@ describe('AudioReaderTool', () => {
       displayName: 'Doubao Pro',
       capabilities: ['text'],
     });
-    config.getCustomModels = () => [
-      {
-        enabled: true,
-        provider: 'openai',
-        baseUrl: 'https://example.test/v1',
-        apiKey: 'test-key',
-        modelId: 'doubao-pro',
-        displayName: 'Doubao Pro',
-      },
-    ];
     config.getOttoClient = vi.fn();
 
     const tool = new AudioReaderTool(config, vi.fn().mockResolvedValue(null));
@@ -131,6 +121,7 @@ describe('AudioReaderTool', () => {
     expect(result.llmContent).toContain('not marked as audio-capable');
     expect(result.llmContent).toContain('Install local Whisper');
     expect(result.llmContent).toContain('OPENAI_API_KEY or ARK_API_KEY');
+    expect(result.llmContent).not.toContain('Gemini');
     expect(config.getOttoClient).not.toHaveBeenCalled();
   });
 });
