@@ -614,6 +614,63 @@ function pairToolCallIds(
 /**
  * OpenAI 格式转换工具
  */
+function closeOpenAIToolCallGaps(messages: any[]): any[] {
+  const closed: any[] = [];
+  let pendingToolIds: Set<string> | null = null;
+
+  const appendMissingToolResults = () => {
+    if (!pendingToolIds || pendingToolIds.size === 0) {
+      pendingToolIds = null;
+      return;
+    }
+
+    for (const id of pendingToolIds) {
+      closed.push({
+        role: 'tool',
+        tool_call_id: id,
+        content: JSON.stringify({
+          result: 'tool result unavailable',
+          error: 'The previous tool call was interrupted before a tool result was recorded.',
+        }),
+      });
+    }
+    pendingToolIds = null;
+  };
+
+  for (const msg of messages) {
+    if (msg?.role === 'tool') {
+      const toolCallId = msg.tool_call_id;
+      if (pendingToolIds?.has(toolCallId)) {
+        closed.push(msg);
+        pendingToolIds.delete(toolCallId);
+        if (pendingToolIds.size === 0) {
+          pendingToolIds = null;
+        }
+      } else {
+        console.warn(`[OpenAIConverter] Dropping orphaned tool message: ${toolCallId || 'unknown'}`);
+      }
+      continue;
+    }
+
+    appendMissingToolResults();
+    closed.push(msg);
+
+    if (msg?.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      pendingToolIds = new Set(
+        msg.tool_calls
+          .map((toolCall: any) => toolCall?.id)
+          .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
+      );
+      if (pendingToolIds.size === 0) {
+        pendingToolIds = null;
+      }
+    }
+  }
+
+  appendMissingToolResults();
+  return closed;
+}
+
 const OpenAIConverter = {
   /**
    * 将单个 part 转换为 OpenAI content 格式
@@ -788,7 +845,7 @@ const OpenAIConverter = {
         merged.push(msg);
       }
     }
-    return merged;
+    return closeOpenAIToolCallGaps(merged);
   },
 
   toolsToOpenAITools(tools: any[]): any[] | undefined {

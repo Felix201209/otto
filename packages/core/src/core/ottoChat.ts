@@ -832,29 +832,26 @@ export class OttoChat {
     // 修复：换用计数器——每个 functionCall name 计一个额度，每个 functionResponse
     // 消耗一个额度；额度耗尽（fr 数量 > fc 数量）时视为孤儿并移除。
     const finalContents: Content[] = [];
-    const finalToolCallStack: { [id: string]: boolean } = {};
-    const finalToolCallNameCounts: { [name: string]: number } = {};
-    const acceptedResponseCounts: { [name: string]: number } = {};
+    const availableToolCallIds = new Set<string>();
+    const availableToolCallNameCounts: { [name: string]: number } = {};
 
-    // 第一遍：只统计 fc，不产出（需要先知道每个 name 有多少个 fc 作为额度上限）
-    for (const content of fixedContents) {
-      if (content.role === MESSAGE_ROLES.MODEL && content.parts) {
-        for (const part of content.parts) {
-          if (part.functionCall) {
-            const fc = part.functionCall;
-            if (fc.id) finalToolCallStack[fc.id] = true;
-            if (fc.name) {
-              finalToolCallNameCounts[fc.name] = (finalToolCallNameCounts[fc.name] ?? 0) + 1;
-            }
-          }
-        }
-      }
-    }
-
-    // 第二遍：产出内容，fr 走额度制匹配
+    // Sequential cleanup: only a functionCall that already appeared may be
+    // consumed by a later functionResponse. Responses that arrive before their
+    // call, or exceed the available call slots, are protocol-orphaned.
     for (const content of fixedContents) {
       if (content.role === MESSAGE_ROLES.MODEL) {
         finalContents.push(content);
+        if (content.parts) {
+          for (const part of content.parts) {
+            if (part.functionCall) {
+              const fc = part.functionCall;
+              if (fc.id) availableToolCallIds.add(fc.id);
+              if (fc.name) {
+                availableToolCallNameCounts[fc.name] = (availableToolCallNameCounts[fc.name] ?? 0) + 1;
+              }
+            }
+          }
+        }
       } else if (content.role === MESSAGE_ROLES.USER && content.parts) {
         // 过滤 functionResponse —— 使用额度制 name 匹配
         const validParts: any[] = [];
@@ -865,7 +862,7 @@ export class OttoChat {
           }
 
           const response = part.functionResponse;
-          const hasMatchingId = response.id && finalToolCallStack[response.id];
+          const hasMatchingId = response.id && availableToolCallIds.has(response.id);
           let hasMatchingNameSlot = false;
 
           // 🐛 修复（2026-07-19 v2）：hasMatchingId 为 true 时也必须消耗一个
@@ -873,19 +870,18 @@ export class OttoChat {
           // fr 会利用"未消耗"的配额二次通过，导致 fc:fr 数量错配 → API 400。
           if (hasMatchingId) {
             if (response.name) {
-              const alreadyAccepted = acceptedResponseCounts[response.name] ?? 0;
-              acceptedResponseCounts[response.name] = alreadyAccepted + 1;
+              const alreadyAccepted = availableToolCallNameCounts[response.name] ?? 0;
+              availableToolCallNameCounts[response.name] = Math.max(0, alreadyAccepted - 1);
             }
             // 同时消费掉这个 id，防止重复 id 匹配
-            if (response.id) delete finalToolCallStack[response.id];
+            if (response.id) availableToolCallIds.delete(response.id);
           }
 
           if (!hasMatchingId && response.name) {
-            const totalAvailable = finalToolCallNameCounts[response.name] ?? 0;
-            const alreadyAccepted = acceptedResponseCounts[response.name] ?? 0;
-            if (alreadyAccepted < totalAvailable) {
+            const totalAvailable = availableToolCallNameCounts[response.name] ?? 0;
+            if (totalAvailable > 0) {
               hasMatchingNameSlot = true;
-              acceptedResponseCounts[response.name] = alreadyAccepted + 1;
+              availableToolCallNameCounts[response.name] = totalAvailable - 1;
             }
           }
 
