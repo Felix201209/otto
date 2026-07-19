@@ -114,6 +114,12 @@ describe('服务端 Agent profile 白名单', () => {
     expect(copy?.systemPrompt).toContain('ask_user_question');
     expect(copy?.systemPrompt).toContain('copywriting');
     expect(copy?.systemPrompt).toContain('CTA');
+
+    const research = resolveAgentProfile('research');
+    expect(research?.embeddedSkills).toEqual(['market-research']);
+    expect(research?.systemPrompt).toContain('ask_user_question');
+    expect(research?.systemPrompt).toContain('market-research');
+    expect(research?.systemPrompt).toContain('SWOT');
   });
 
   it('每个专家都有对应身份的简短欢迎语', () => {
