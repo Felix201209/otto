@@ -119,9 +119,23 @@ async function main() {
     fs.writeFileSync(zipPath, zipBytes);
 
     // 解压到隔离目录，摘要通过后才替换正式构建输入。
-    execFileSync('unzip', ['-o', zipPath, 'rg.exe', '-d', stagingDir], {
-      stdio: 'inherit',
-    });
+    if (process.platform === 'win32') {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          '& { param($zipPath, $stagingDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $stagingDir -Force }',
+          zipPath,
+          stagingDir,
+        ],
+        { stdio: 'inherit' },
+      );
+    } else {
+      execFileSync('unzip', ['-o', zipPath, 'rg.exe', '-d', stagingDir], {
+        stdio: 'inherit',
+      });
+    }
     if (!fs.existsSync(stagedExecutable)) {
       throw new Error('解压后未找到 rg.exe——zip 结构可能变了，人工检查');
     }
