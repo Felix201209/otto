@@ -8,8 +8,8 @@ import {
   parseEnterpriseRegistrationIntent,
 } from './enterprise-registration-intent.js';
 
-describe('企业注册链接安全解析', () => {
-  it('只接受 exact otto://enterprise/join，并规范化邀请码', () => {
+describe('enterprise registration link parsing', () => {
+  it('accepts exact otto://enterprise/join links and normalizes invite codes', () => {
     expect(parseEnterpriseRegistrationIntent(
       'otto://enterprise/join?invite=abcd-efgh',
     )).toEqual({
@@ -17,7 +17,7 @@ describe('企业注册链接安全解析', () => {
     });
   });
 
-  it('接受单个安全的 HTTPS 企业服务器地址并规范化到 origin', () => {
+  it('accepts a single safe HTTPS enterprise server URL and normalizes it to origin', () => {
     expect(parseEnterpriseRegistrationIntent(
       'otto://enterprise/join?invite=abcd-efgh&server=https%3A%2F%2Fenterprise.otto.test%2F',
     )).toEqual({
@@ -26,7 +26,7 @@ describe('企业注册链接安全解析', () => {
     });
   });
 
-  it('本机联调允许 HTTP loopback 地址', () => {
+  it('allows HTTP loopback URLs for local integration', () => {
     expect(parseEnterpriseRegistrationIntent(
       'otto://enterprise/join?invite=ABCD-EFGH&server=http%3A%2F%2F127.0.0.1%3A7777',
     )).toEqual({
@@ -35,9 +35,27 @@ describe('企业注册链接安全解析', () => {
     });
   });
 
-  it('保留企业服务由反向代理配置的 HTTPS 路径前缀', () => {
+  it('preserves HTTPS reverse proxy path prefixes from otto links', () => {
     expect(parseEnterpriseRegistrationIntent(
       'otto://enterprise/join?invite=ABCD-EFGH&server=https%3A%2F%2Fenterprise.otto.test%2Fcompany%2F',
+    )).toEqual({
+      inviteCode: 'ABCD-EFGH',
+      serverUrl: 'https://enterprise.otto.test/company',
+    });
+  });
+
+  it('accepts HTTPS enterprise invite page links', () => {
+    expect(parseEnterpriseRegistrationIntent(
+      'https://59.110.154.44:7777/enterprise/join/5re8-2rwa',
+    )).toEqual({
+      inviteCode: '5RE8-2RWA',
+      serverUrl: 'https://59.110.154.44:7777',
+    });
+  });
+
+  it('preserves HTTPS reverse proxy path prefixes from invite page links', () => {
+    expect(parseEnterpriseRegistrationIntent(
+      'https://enterprise.otto.test/company/enterprise/join/ABCD-EFGH',
     )).toEqual({
       inviteCode: 'ABCD-EFGH',
       serverUrl: 'https://enterprise.otto.test/company',
@@ -48,6 +66,10 @@ describe('企业注册链接安全解析', () => {
     'otto://enterprise/register?invite=ABCD-EFGH',
     'otto://other/join?invite=ABCD-EFGH',
     'otto://enterprise/join?token=signed&key=public',
+    'https://enterprise.otto.test/enterprise/join/ABCD-EFGH?token=signed',
+    'https://enterprise.otto.test/enterprise/join/ABCD-EFGH#fragment',
+    'https://user:pass@enterprise.otto.test/enterprise/join/ABCD-EFGH',
+    'http://enterprise.otto.test/enterprise/join/ABCD-EFGH',
     'otto://enterprise/join?invite=BAD',
     'otto://enterprise/join?invite=ABCI-EFGH',
     'otto://user:pass@enterprise/join?invite=ABCD-EFGH',
@@ -59,13 +81,13 @@ describe('企业注册链接安全解析', () => {
     'otto://enterprise/join?invite=ABCD-EFGH&extra=1',
     'otto://enterprise/join?invite=ABCD-EFGH&invite=WXYZ-2345',
     'otto://enterprise/join?invite=ABCD-EFGH#fragment',
-  ])('拒绝非中心注册链接、旧签名链接或可疑参数：%s', (url) => {
+  ])('rejects non-registration, legacy signed, or suspicious links: %s', (url) => {
     expect(parseEnterpriseRegistrationIntent(url)).toBeNull();
   });
 });
 
-describe('企业注册 intent 缓存', () => {
-  it('cold-start argv 能缓存有效链接并由 renderer 一次性取走', () => {
+describe('enterprise registration intent store', () => {
+  it('caches a valid cold-start argv link until the renderer consumes it once', () => {
     const store = new EnterpriseRegistrationIntentStore();
     expect(store.acceptArgv([
       '/Applications/Otto.app/Contents/MacOS/Otto',
@@ -78,7 +100,7 @@ describe('企业注册 intent 缓存', () => {
     expect(store.take()).toBeNull();
   });
 
-  it('无效 second-instance 参数不会覆盖已缓存的有效 intent', () => {
+  it('does not let invalid second-instance args overwrite a cached valid intent', () => {
     const store = new EnterpriseRegistrationIntentStore();
     store.acceptUrl(
       'otto://enterprise/join?invite=ABCD-EFGH',

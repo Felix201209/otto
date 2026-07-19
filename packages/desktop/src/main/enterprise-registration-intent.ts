@@ -12,6 +12,7 @@ export interface EnterpriseRegistrationIntent {
 }
 
 const ENTERPRISE_INVITE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+const ENTERPRISE_JOIN_PATH_PATTERN = /^(.*)\/enterprise\/join\/([^/]+)$/;
 
 function normalizeEnterpriseServerUrl(input: string): string | null {
   let server: URL;
@@ -52,6 +53,10 @@ export function parseEnterpriseRegistrationIntent(
     return null;
   }
 
+  if (url.protocol === 'https:' || url.protocol === 'http:') {
+    return parseEnterpriseJoinPageIntent(url);
+  }
+
   if (url.protocol !== 'otto:'
     || url.host !== 'enterprise'
     || url.hostname !== 'enterprise'
@@ -75,6 +80,22 @@ export function parseEnterpriseRegistrationIntent(
   const serverInput = url.searchParams.get('server');
   if (serverInput === null) return { inviteCode };
   const serverUrl = normalizeEnterpriseServerUrl(serverInput);
+  if (!serverUrl) return null;
+  return { inviteCode, serverUrl };
+}
+
+function parseEnterpriseJoinPageIntent(
+  url: URL,
+): EnterpriseRegistrationIntent | null {
+  if (url.username || url.password || url.search || url.hash) return null;
+  const match = url.pathname.match(ENTERPRISE_JOIN_PATH_PATTERN);
+  if (!match) return null;
+
+  const inviteCode = decodeURIComponent(match[2] || '').toLocaleUpperCase('en-US');
+  if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
+
+  const serverPath = match[1] || '';
+  const serverUrl = normalizeEnterpriseServerUrl(`${url.origin}${serverPath || '/'}`);
   if (!serverUrl) return null;
   return { inviteCode, serverUrl };
 }
