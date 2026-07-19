@@ -36,6 +36,12 @@ DEFAULT_WHISPER_NO_SPEECH_THRESHOLD = float(os.environ.get("OTTO_WHISPER_NO_SPEE
 DEFAULT_WHISPER_LOGPROB_THRESHOLD = float(os.environ.get("OTTO_WHISPER_LOGPROB_THRESHOLD", "-1.0"))
 DEFAULT_WHISPER_COMPRESSION_RATIO_THRESHOLD = float(os.environ.get("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.4"))
 DEFAULT_ASR_BACKEND = os.environ.get("OTTO_ASR_BACKEND", "auto").strip().lower() or "auto"
+SUPPORTED_ASR_BACKENDS = {"auto", "faster-whisper", "faster_whisper", "openai-whisper", "openai_whisper", "whisper"}
+DEFAULT_ASR_BACKEND_VALID = DEFAULT_ASR_BACKEND in SUPPORTED_ASR_BACKENDS
+DEFAULT_FASTER_WHISPER_DEVICE = os.environ.get("OTTO_FASTER_WHISPER_DEVICE", "auto").strip() or "auto"
+DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = os.environ.get("OTTO_FASTER_WHISPER_COMPUTE_TYPE", "default").strip() or "default"
+NO_SPEECH_EXIT_CODE = 3
+NO_SPEECH = object()
 
 
 def whisper_model_candidates():
@@ -53,6 +59,19 @@ def check_dependencies():
     sounddevice_available = importlib.util.find_spec("sounddevice") is not None
     requests_available = importlib.util.find_spec("requests") is not None
     torch_available = importlib.util.find_spec("torch") is not None
+    cuda_available = False
+    if torch_available:
+        try:
+            import torch
+            cuda_available = bool(torch.cuda.is_available())
+        except Exception:
+            pass
+    if faster_whisper_available:
+        try:
+            import ctranslate2
+            cuda_available = cuda_available or ctranslate2.get_cuda_device_count() > 0
+        except Exception:
+            pass
     return {
         "python": sys.executable,
         "python_version": sys.version.split()[0],
@@ -62,12 +81,15 @@ def check_dependencies():
         "sounddevice_module": sounddevice_available,
         "requests_module": requests_available,
         "torch_module": torch_available,
-        "cuda": False,
+        "cuda": cuda_available,
         "user_asr_key": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("ARK_API_KEY")),
         "model_candidates": whisper_model_candidates(),
         "asr_backend": DEFAULT_ASR_BACKEND,
+        "asr_backend_valid": DEFAULT_ASR_BACKEND_VALID,
         "beam_size": DEFAULT_WHISPER_BEAM_SIZE,
         "temperature_schedule": DEFAULT_WHISPER_TEMPERATURES,
+        "faster_whisper_device": DEFAULT_FASTER_WHISPER_DEVICE,
+        "faster_whisper_compute_type": DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
         "timeout_seconds": DEFAULT_WHISPER_TIMEOUT,
     }
 
@@ -221,6 +243,9 @@ def transcribe_with_local_whisper(audio_path):
     env.setdefault("OTTO_WHISPER_LOGPROB_THRESHOLD", str(DEFAULT_WHISPER_LOGPROB_THRESHOLD))
     env.setdefault("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", str(DEFAULT_WHISPER_COMPRESSION_RATIO_THRESHOLD))
     env.setdefault("OTTO_ASR_BACKEND", DEFAULT_ASR_BACKEND)
+    env.setdefault("OTTO_FASTER_WHISPER_DEVICE", DEFAULT_FASTER_WHISPER_DEVICE)
+    env.setdefault("OTTO_FASTER_WHISPER_COMPUTE_TYPE", DEFAULT_FASTER_WHISPER_COMPUTE_TYPE)
+    env["OTTO_NO_SPEECH_EXIT_CODE"] = str(NO_SPEECH_EXIT_CODE)
 
     code = r'''
 import json
@@ -230,10 +255,8 @@ import sys
 try:
     import torch
     fp16 = bool(torch.cuda.is_available())
-    device = "cuda" if fp16 else "cpu"
 except Exception:
     fp16 = False
-    device = "cpu"
 
 audio_path = sys.argv[1]
 models = json.loads(os.environ.get("OTTO_WHISPER_MODEL_CANDIDATES", '["medium","small","base"]'))
@@ -245,21 +268,32 @@ no_speech_threshold = float(os.environ.get("OTTO_WHISPER_NO_SPEECH_THRESHOLD", "
 logprob_threshold = float(os.environ.get("OTTO_WHISPER_LOGPROB_THRESHOLD", "-1.0"))
 compression_ratio_threshold = float(os.environ.get("OTTO_WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.4"))
 backend = os.environ.get("OTTO_ASR_BACKEND", "auto").lower()
+faster_device = os.environ.get("OTTO_FASTER_WHISPER_DEVICE", "auto")
+faster_compute_type = os.environ.get("OTTO_FASTER_WHISPER_COMPUTE_TYPE", "default")
+no_speech_exit_code = int(os.environ.get("OTTO_NO_SPEECH_EXIT_CODE", "3"))
+supported_backends = {"auto", "faster-whisper", "faster_whisper", "openai-whisper", "openai_whisper", "whisper"}
+if backend not in supported_backends:
+    print(f"Unsupported OTTO_ASR_BACKEND: {backend}", file=sys.stderr)
+    sys.exit(2)
 last_error = None
 
 def run_faster_whisper():
     from faster_whisper import WhisperModel
 
     last = None
-    compute_type = "float16" if device == "cuda" else "int8"
     for model_name in models:
         try:
-            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            model = WhisperModel(
+                model_name,
+                device=faster_device,
+                compute_type=faster_compute_type,
+            )
             segments, _info = model.transcribe(
                 audio_path,
                 language=language,
                 initial_prompt=initial_prompt,
                 beam_size=beam_size,
+                temperature=temperatures or (0,),
                 vad_filter=True,
                 vad_parameters={
                     "min_silence_duration_ms": 500,
@@ -270,11 +304,12 @@ def run_faster_whisper():
                 log_prob_threshold=logprob_threshold,
                 compression_ratio_threshold=compression_ratio_threshold,
             )
-            text = " ".join((segment.text or "").strip() for segment in segments).strip()
+            text = "".join((segment.text or "") for segment in segments).strip()
             if text:
                 print(text)
                 return True
-            last = f"{model_name} returned empty transcript"
+            print(f"{model_name} detected no speech.", file=sys.stderr)
+            return False
         except Exception as e:
             last = f"{model_name}: {e}"
             print(f"faster-whisper model failed, trying next if available: {last}", file=sys.stderr)
@@ -305,7 +340,8 @@ def run_openai_whisper():
             if text:
                 print(text)
                 return True
-            last = f"{model_name} returned empty transcript"
+            print(f"{model_name} detected no speech.", file=sys.stderr)
+            return False
         except Exception as e:
             last = f"{model_name}: {e}"
             print(f"Whisper model failed, trying next if available: {last}", file=sys.stderr)
@@ -315,16 +351,22 @@ errors = []
 if backend in ("auto", "faster-whisper", "faster_whisper"):
     try:
         import faster_whisper  # noqa: F401
-        if run_faster_whisper():
+        faster_result = run_faster_whisper()
+        if faster_result:
             sys.exit(0)
+        if faster_result is False:
+            sys.exit(no_speech_exit_code)
     except Exception as e:
         errors.append(f"faster-whisper: {e}")
         print(f"faster-whisper unavailable or failed: {e}", file=sys.stderr)
 
 if backend in ("auto", "openai-whisper", "openai_whisper", "whisper"):
     try:
-        if run_openai_whisper():
+        openai_result = run_openai_whisper()
+        if openai_result:
             sys.exit(0)
+        if openai_result is False:
+            sys.exit(no_speech_exit_code)
     except ImportError:
         errors.append("openai-whisper Python module is not installed")
     except Exception as e:
@@ -344,6 +386,10 @@ sys.exit(2)
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
+        if result.returncode == NO_SPEECH_EXIT_CODE:
+            if result.stderr.strip():
+                print(result.stderr.strip(), file=sys.stderr)
+            return NO_SPEECH
         if result.stderr.strip():
             print(result.stderr.strip(), file=sys.stderr)
     except subprocess.TimeoutExpired:
@@ -407,6 +453,8 @@ def transcribe(audio_path, method="auto"):
     try:
         if method in ("auto", "whisper"):
             text = transcribe_with_local_whisper(normalized_path)
+            if text is NO_SPEECH:
+                return None
             if text:
                 return text
 
@@ -508,6 +556,13 @@ def main():
     if args.check_deps:
         print(json.dumps(check_dependencies(), ensure_ascii=False))
         return
+    if not DEFAULT_ASR_BACKEND_VALID:
+        print(
+            f"ERROR: Unsupported OTTO_ASR_BACKEND={DEFAULT_ASR_BACKEND}. "
+            "Use auto, faster-whisper, or openai-whisper.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     cleanup_audio = False
     if args.input_file:
