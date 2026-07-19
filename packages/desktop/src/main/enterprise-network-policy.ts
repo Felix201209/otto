@@ -4,23 +4,21 @@
 
 export function createEnterpriseNetworkFetch(
   fetchImpl: typeof fetch,
-  internalTestAccessEnabled: boolean,
+  _internalTestAccessEnabled: boolean,
 ): typeof fetch {
-  if (!internalTestAccessEnabled) return fetchImpl;
-  return (async () => {
-    throw new Error('内部测试模式已停用企业网络访问');
-  }) as typeof fetch;
+  // “内测免登录”只决定默认显示哪个界面，不能切断用户显式发起的企业认证。
+  // 未登录的 EnterpriseClient 不会发送用量、知识或组织请求；真正的邀请码
+  // 注册成功后则必须保留真实传输，才能建立 Bearer 会话并读取组织树。
+  return fetchImpl;
 }
 
 /**
- * 内测包只忽略磁盘上的旧 token，不删除 enterprise-auth.json。
- * 关闭总开关后，真实登录会话仍可按原逻辑恢复。
+ * 内测免登录不覆盖磁盘上的真实企业会话。默认无会话时由 renderer 使用本地
+ * 测试身份；一旦用户通过邀请完成认证，重启后仍应恢复该真实会话。
  */
 export function internalTestEnterpriseSession(
-  defaultServerUrl: string,
-  internalTestAccessEnabled: boolean,
-): { serverUrl: string; token: null } | null {
-  return internalTestAccessEnabled
-    ? { serverUrl: defaultServerUrl, token: null }
-    : null;
+  _defaultServerUrl: string,
+  _internalTestAccessEnabled: boolean,
+): null {
+  return null;
 }

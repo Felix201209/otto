@@ -4,19 +4,31 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
-import type { EnterpriseOrganizationView } from '../../preload/index.js';
+import type {
+  EnterpriseAccount,
+  EnterpriseOrganizationView,
+} from '../../preload/index.js';
+import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { IconChevronDown } from './icons.js';
 
 export function OrganizationTree({
   workspace,
+  enterpriseAccount,
 }: {
   workspace: ProductWorkspaceSnapshot;
+  enterpriseAccount?: EnterpriseAccount;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
-  const organization = workspace.managerWorkspace?.organization;
+  const hasLocalEnterpriseWorkspace = workspace.context.edition === 'enterprise';
+  const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
+  // 真实中心账号以服务端目录为权威，不能被机器上残留的本机企业树覆盖。
+  // 只有没有真实中心账号时，才展示本机 ProductWorkspace 的组织框架。
+  const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
+    ? workspace.managerWorkspace?.organization
+    : undefined;
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
     [organization?.positions],
@@ -33,9 +45,9 @@ export function OrganizationTree({
   // 本地 workspace 没有管理者组织快照时，经 preload → main 读取企业组织。
   // 会话 token 始终只保留在 main 的 EnterpriseClient 内。
   useEffect(() => {
-    if (workspace.context.edition !== 'enterprise' || workspace.managerWorkspace?.organization) {
-      return;
-    }
+    // 远程组织目录只允许真实企业账号触发。本机企业成员或内测假身份没有
+    // Bearer 会话时展示占位信息，不调用 IPC、更不会产生无意义的 401。
+    if (!hasAuthenticatedOrganization) return;
 
     let cancelled = false;
     setOrgLoading(true);
@@ -55,9 +67,12 @@ export function OrganizationTree({
       });
 
     return () => { cancelled = true; };
-  }, [workspace.context.edition, workspace.managerWorkspace?.organization]);
+  }, [
+    hasAuthenticatedOrganization,
+    enterpriseAccount?.organizationId,
+  ]);
 
-  if (workspace.context.edition !== 'enterprise') return null;
+  if (!hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization) return null;
 
   return (
     <section className="otto-orgtree" aria-label="企业组织架构">

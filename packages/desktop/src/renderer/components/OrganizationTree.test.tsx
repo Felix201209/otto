@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
+import type { EnterpriseAccount } from '../../preload/index.js';
 import { OrganizationTree } from './OrganizationTree.js';
 
 afterEach(cleanup);
@@ -50,6 +51,47 @@ const memberWorkspace: ProductWorkspaceSnapshot = {
   members: [],
 };
 
+const personalWorkspace: ProductWorkspaceSnapshot = {
+  ...workspace,
+  context: {
+    edition: 'personal',
+    role: 'personal',
+    userId: 'local-user',
+    capabilities: ['agent:base'],
+  },
+  managerWorkspace: undefined,
+  members: [],
+};
+
+const authenticatedEnterpriseAccount: EnterpriseAccount = {
+  id: 'acc_1',
+  organizationId: 'org_acme',
+  organizationName: '星河科技',
+  employeeId: null,
+  username: 'staff01',
+  phone: '+8613800138000',
+  name: '员工一号',
+  role: '工程师',
+  department: '研发部',
+  isAdmin: false,
+  status: 'active',
+  tags: [],
+  createdAt: '2026-07-13T00:00:00.000Z',
+  updatedAt: '2026-07-13T00:00:00.000Z',
+};
+
+const internalTestAccount: EnterpriseAccount = {
+  ...authenticatedEnterpriseAccount,
+  id: 'local_internal_test',
+  organizationId: 'local-internal-test',
+  organizationName: '内部测试',
+  username: 'internal-test',
+  phone: null,
+  name: '内部测试',
+  role: '测试成员',
+  department: '内部测试',
+};
+
 describe('OrganizationTree', () => {
   it('收起时只显示“企业组织”，点击后完整展开公司、部门、姓名和职位', () => {
     render(<OrganizationTree workspace={workspace} />);
@@ -81,7 +123,12 @@ describe('OrganizationTree', () => {
     const enterpriseOrganizationView = vi.fn(() => pending);
     Object.assign(window.otto, { enterpriseOrganizationView });
 
-    render(<OrganizationTree workspace={memberWorkspace} />);
+    render(
+      <OrganizationTree
+        workspace={memberWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
@@ -118,11 +165,117 @@ describe('OrganizationTree', () => {
     });
     Object.assign(window.otto, { enterpriseOrganizationView });
 
-    render(<OrganizationTree workspace={memberWorkspace} />);
+    render(
+      <OrganizationTree
+        workspace={memberWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
 
     expect(await screen.findByText('组织信息加载失败：服务器暂不可用')).toBeTruthy();
     expect(screen.queryByText('正在加载组织信息…')).toBeNull();
     expect(enterpriseOrganizationView).toHaveBeenCalledOnce();
+  });
+
+  it('邀请码认证后的真实企业账号可从默认个人工作区连接远程组织树', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: '星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'staff01',
+        name: '员工一号',
+        role: '工程师',
+        department: '研发部',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    expect(await screen.findByText('星河科技')).toBeTruthy();
+    expect(screen.getByText('研发部')).toBeTruthy();
+    expect(screen.getByText('员工一号')).toBeTruthy();
+  });
+
+  it('默认免登录的本地测试身份不会冒充企业账号或触发组织请求', () => {
+    const enterpriseOrganizationView = vi.fn();
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    const { container } = render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={internalTestAccount}
+      />,
+    );
+
+    expect(container.innerHTML).toBe('');
+    expect(enterpriseOrganizationView).not.toHaveBeenCalled();
+  });
+
+  it('真实企业账号覆盖机器上残留的本机企业树，以服务端组织为权威', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: '服务端星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'staff01',
+        name: '员工一号',
+        role: '工程师',
+        department: '研发部',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={workspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    expect(await screen.findByText('服务端星河科技')).toBeTruthy();
+    expect(screen.queryByText('北辰科技')).toBeNull();
+  });
+
+  it('本机企业成员只有内测假身份时不调用远程接口', () => {
+    const enterpriseOrganizationView = vi.fn();
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={memberWorkspace}
+        enterpriseAccount={internalTestAccount}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+
+    expect(enterpriseOrganizationView).not.toHaveBeenCalled();
+    expect(screen.getByText('已通过链接加入；组织详情将在企业服务同步后显示。'))
+      .toBeTruthy();
   });
 });

@@ -1043,6 +1043,30 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(registered.token).toEqual(expect.any(String));
 
+    const registeredSession = await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${registered.token}` },
+    });
+    expect(registeredSession.status).toBe(200);
+    expect((await registeredSession.json()).account).toMatchObject({
+      id: registered.account.id,
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+    });
+
+    const organizationView = await fetch(`${base}/enterprise/organization/view`, {
+      headers: { authorization: `Bearer ${registered.token}` },
+    });
+    expect(organizationView.status).toBe(200);
+    expect(await organizationView.json()).toMatchObject({
+      organization: { id: db.DEFAULT_ORGANIZATION_ID, name: '默认企业' },
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          id: registered.account.id,
+          name: '王小明',
+          department: null,
+        }),
+      ]),
+    });
+
     const adminDenied = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${registered.token}` },
     });

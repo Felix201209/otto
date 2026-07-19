@@ -28,6 +28,7 @@ const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.ot
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
+export const ENTERPRISE_SCHEMA_VERSION = 2;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -114,6 +115,19 @@ export function getDB(): Database {
 
   const database = new Database(DB_PATH);
   try {
+    const existingSchema = database.prepare('PRAGMA user_version').get() as
+      | { user_version?: number }
+      | undefined;
+    const existingSchemaVersion = Number(existingSchema?.user_version ?? 0);
+    if (
+      Number.isInteger(existingSchemaVersion)
+      && existingSchemaVersion > ENTERPRISE_SCHEMA_VERSION
+    ) {
+      throw new Error(
+        `Enterprise database schema version ${existingSchemaVersion} is newer than `
+        + `current version ${ENTERPRISE_SCHEMA_VERSION}; refusing downgrade`,
+      );
+    }
     database.pragma('journal_mode = WAL');
     database.pragma('foreign_keys = ON');
     initSchema(database);
@@ -467,7 +481,7 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_knowledge_organization ON knowledge(organization_id, department);
     CREATE INDEX IF NOT EXISTS idx_audit_organization ON audit_logs(organization_id, created_at);
-    PRAGMA user_version = 2;
+    PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
   `);
 }
 

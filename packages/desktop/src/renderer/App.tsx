@@ -56,6 +56,7 @@ import type { EnterpriseAccount } from '../preload/index.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
   INTERNAL_TEST_ACCOUNT,
+  resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
 import {
   DEPARTMENT_LABELS,
@@ -73,15 +74,18 @@ const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 export function App(): React.JSX.Element {
-  if (INTERNAL_TEST_ACCESS_ENABLED) {
+  const auth = useEnterpriseAuth();
+  const accessMode = resolveEnterpriseAccessMode({
+    internalTestAccessEnabled: INTERNAL_TEST_ACCESS_ENABLED,
+    authStatus: auth.state.status,
+    hasAccount: Boolean(auth.state.account),
+    hasRegistrationIntent: Boolean(auth.state.registrationIntent),
+  });
+
+  if (accessMode === 'internal-workspace') {
     return <OttoWorkspaceApp account={INTERNAL_TEST_ACCOUNT} />;
   }
-  return <AuthenticatedOttoApp />;
-}
-
-function AuthenticatedOttoApp(): React.JSX.Element {
-  const auth = useEnterpriseAuth();
-  if (auth.state.status === 'loading') {
+  if (accessMode === 'booting') {
     return (
       <div className="otto-auth-boot" role="status">
         <span>O</span>
@@ -89,7 +93,7 @@ function AuthenticatedOttoApp(): React.JSX.Element {
       </div>
     );
   }
-  if (auth.state.status === 'signed-out' || !auth.state.account) {
+  if (accessMode === 'registration' || accessMode === 'login' || !auth.state.account) {
     return (
       <EnterpriseLoginPage
         initialServerUrl={auth.state.serverUrl}
