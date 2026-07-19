@@ -161,6 +161,30 @@ function defaultServices(park: string): ParkService[] {
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
 const LOCAL_DEMO_SERVICE_IDS = new Set(['announcement', 'satisfaction']);
+const REPAIR_TICKET_STORAGE_KEY = 'otto:local-repair-ticket';
+const REPAIR_TICKET_EVENT = 'otto:local-repair-ticket-updated';
+
+interface RepairTicket {
+  id: string;
+  location: string;
+  issue: string;
+  urgency: string;
+  contact: string;
+  status: '待派单' | '待接单' | '维修中' | '待验收' | '已完成';
+  createdAt: string;
+}
+
+function readRepairTicket(): RepairTicket | null {
+  try {
+    const raw = window.localStorage.getItem(REPAIR_TICKET_STORAGE_KEY);
+    return raw ? JSON.parse(raw) as RepairTicket : null;
+  } catch { return null; }
+}
+
+function writeRepairTicket(ticket: RepairTicket): void {
+  try { window.localStorage.setItem(REPAIR_TICKET_STORAGE_KEY, JSON.stringify(ticket)); } catch { /* preview may disable storage */ }
+  window.dispatchEvent(new CustomEvent(REPAIR_TICKET_EVENT, { detail: ticket }));
+}
 
 export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
@@ -346,6 +370,100 @@ function SatisfactionDemo({ onBack, onSendToOtto }: {
   );
 }
 
+function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
+  const [mode, setMode] = useState<'reporter' | 'technician'>('reporter');
+  const [ticket, setTicket] = useState<RepairTicket | null>(() => readRepairTicket());
+  const [notice, setNotice] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [draft, setDraft] = useState('');
+  const [messages, setMessages] = useState<Array<{ from: 'otto' | 'user'; text: string }>>([
+    { from: 'otto', text: '你好，我是 Otto 报修助手。先告诉我故障发生在哪里？例如“某某会议室”。' },
+  ]);
+  const questions = [
+    '请用一句话描述故障现象，例如“灯坏了”或“网络频繁断开”。',
+    '紧急程度如何？可以回复“普通”“紧急”或“影响办公”。',
+    '最后请留下现场联系人和手机号，方便维修人员到场联系。',
+  ];
+
+  useEffect(() => {
+    const onTicket = (event: Event): void => {
+      const next = (event as CustomEvent<RepairTicket>).detail ?? readRepairTicket();
+      if (next) { setTicket(next); if (mode === 'technician' && next.status === '待派单') setNotice(true); }
+    };
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== REPAIR_TICKET_STORAGE_KEY) {
+        return;
+      }
+      const next = readRepairTicket();
+      if (next) { setTicket(next); if (mode === 'technician' && next.status === '待派单') setNotice(true); }
+    };
+    window.addEventListener(REPAIR_TICKET_EVENT, onTicket);
+    window.addEventListener('storage', onStorage);
+    return () => { window.removeEventListener(REPAIR_TICKET_EVENT, onTicket); window.removeEventListener('storage', onStorage); };
+  }, [mode]);
+
+  const submitAnswer = (event: React.FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    const answer = draft.trim();
+    if (!answer) return;
+    setMessages((current) => [...current, { from: 'user', text: answer }]);
+    setDraft('');
+    if (stage < 3) {
+      setMessages((current) => [...current, { from: 'otto', text: questions[stage] }]);
+      setStage((current) => current + 1);
+    } else {
+      setMessages((current) => [...current, { from: 'otto', text: '信息齐了，我已整理成工单。请确认后提交，网络维修主管会在另一台 Otto 上收到提醒。' }]);
+      setStage(4);
+    }
+  };
+
+  const submitTicket = (): void => {
+    const answers = messages.filter((message) => message.from === 'user').map((message) => message.text);
+    const next: RepairTicket = {
+      id: `DEMO-REPAIR-${Date.now().toString().slice(-6)}`,
+      location: answers[0] ?? '某某会议室', issue: answers[1] ?? '照明设备故障',
+      urgency: answers[2] ?? '普通', contact: answers[3] ?? '演示报修人', status: '待派单', createdAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    };
+    setTicket(next); writeRepairTicket(next);
+    setMessages((current) => [...current, { from: 'otto', text: `工单 ${next.id} 已提交，正在自动派单给网络维修主管张工。` }]);
+  };
+
+  const updateStatus = (status: RepairTicket['status']): void => {
+    if (!ticket) return;
+    const next = { ...ticket, status };
+    setTicket(next); writeRepairTicket(next); setNotice(false);
+  };
+
+  return (
+    <div className="otto-park-demo">
+      <div className="otto-park-demo__topline">
+        <button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button>
+        <span className={`otto-park-demo__status ${ticket?.status === '已完成' ? 'is-done' : ''}`}>{ticket ? ticket.status : '待发起'}</span>
+      </div>
+      <div className="otto-park-demo__summary">
+        <div><div className="otto-park-demo__eyebrow">双设备本地演示 · 不使用 Agent</div><h3>客户报修 · Otto 引导填报与维修接单</h3><p>打开两个 Otto 窗口：一台选“报修人端”，另一台选“维修人员端”。</p></div>
+        <div className="otto-park-repair__roles" role="group" aria-label="演示设备角色">
+          <button type="button" className={mode === 'reporter' ? 'is-active' : ''} onClick={() => setMode('reporter')}>报修人端</button>
+          <button type="button" className={mode === 'technician' ? 'is-active' : ''} onClick={() => { setMode('technician'); if (ticket && ticket.status === '待派单') setNotice(true); }}>维修人员端</button>
+        </div>
+      </div>
+      {mode === 'reporter' ? (
+        <div className="otto-park-repair__chat" aria-label="Otto 报修引导聊天框">
+          <div className="otto-park-repair__chathead"><strong>报修人端</strong><span>Otto 会一步一步帮你填</span></div>
+          <div className="otto-park-repair__messages">{messages.map((message, index) => <div key={`${message.from}-${index}`} className={`otto-park-repair__message is-${message.from}`}>{message.text}</div>)}</div>
+          {stage < 4 ? <form onSubmit={submitAnswer} className="otto-park-repair__input"><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={stage === 0 ? '例如：A 座 1203 室会议室' : '输入你的回答…'} aria-label="报修回答" /><button type="submit" className="otto-park-demo__primary">发送</button></form> : <div className="otto-park-repair__confirm"><div><strong>工单信息已整理</strong><span>位置、故障、紧急程度和联系人均已填写</span></div><button type="button" className="otto-park-demo__primary" onClick={submitTicket} disabled={ticket?.status === '待派单'}>{ticket?.status === '待派单' ? '已提交，等待维修人员' : '提交报修工单'}</button></div>}
+        </div>
+      ) : (
+        <div className="otto-park-repair__technician">
+          <div className="otto-park-repair__chathead"><strong>维修人员端 · 网络维修主管张工</strong><span>这台 Otto 只接收待处理提醒</span></div>
+          {!ticket ? <div className="otto-park-repair__empty">等待报修人提交工单。提交后，本窗口会弹出 Otto 待处理提醒。</div> : <><div className="otto-park-repair__ticket"><div><span>工单号</span><strong>{ticket.id}</strong></div><div><span>故障位置</span><strong>{ticket.location}</strong></div><div><span>故障描述</span><strong>{ticket.issue}</strong></div><div><span>紧急程度</span><strong>{ticket.urgency}</strong></div><div><span>现场联系人</span><strong>{ticket.contact}</strong></div></div><div className="otto-park-demo__actions"><button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('维修中')} disabled={ticket.status !== '待派单' && ticket.status !== '待接单'}>接单并开始维修</button><button type="button" className="otto-park-demo__secondary" onClick={() => updateStatus('待验收')} disabled={ticket.status !== '维修中'}>维修完成，等待验收</button>{ticket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('已完成')}>确认企业验收</button> : null}</div></>}
+        </div>
+      )}
+      {notice && ticket ? <div className="otto-park-notice-overlay" role="alertdialog" aria-modal="true" aria-label="Otto 待处理提醒"><div className="otto-park-notice"><div className="otto-park-notice__eyebrow">Otto 待处理提醒 · 本地模拟</div><h3>企业用户，请处理这条服务环节</h3><p className="otto-park-notice__owner">责任人：<strong>网络维修主管张工</strong></p><p className="otto-park-notice__detail">{ticket.location} · {ticket.issue} · {ticket.urgency}</p><div className="otto-park-notice__channels"><span className="is-active">Otto 弹窗已发送</span><span>未查看优先短信</span></div><div className="otto-park-notice__actions"><button type="button" className="otto-park-demo__primary" onClick={() => { setNotice(false); updateStatus('维修中'); }}>已查看并接单</button><button type="button" className="otto-park-demo__secondary" onClick={() => setNotice(false)}>稍后处理</button></div></div></div> : null}
+    </div>
+  );
+}
+
 function ServiceDemo({ service, onBack, onSendToOtto }: {
   service: ParkService;
   onBack: () => void;
@@ -356,6 +474,9 @@ function ServiceDemo({ service, onBack, onSendToOtto }: {
   }
   if (service.id === 'satisfaction') {
     return <SatisfactionDemo onBack={onBack} onSendToOtto={onSendToOtto} />;
+  }
+  if (service.id === 'repair') {
+    return <RepairDemo onBack={onBack} />;
   }
 
   const steps = service.steps ?? [];
@@ -556,6 +677,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
                 ? '园区端发布消息后，Otto 作为企业接收端在右下角提醒，点击即可查看。'
                 : selected?.id === 'satisfaction'
                   ? '园区发布调查问卷，员工填写并提交，形成双向反馈闭环。'
+                  : selected?.id === 'repair'
+                    ? '报修人端由 Otto 固定问答引导填报；维修人员端接收待处理提醒并推进工单。'
                   : selected
                     ? '每一步都会提醒对应责任人；可模拟 Otto、短信与飞书的接力。'
                     : '9 项服务 · 3 列 × 3 行。选择任一服务即可查看完整本地演示流程。'}

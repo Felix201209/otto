@@ -5843,6 +5843,36 @@ h6.otto-prose__h {
   font-weight: 650;
 }
 
+/* 客户报修双设备演示：报修人聊天引导 + 维修人员待处理工单。 */
+.otto-park-repair__roles { display: flex; gap: 6px; }
+.otto-park-repair__roles button {
+  border: 1px solid var(--otto-border); border-radius: var(--otto-radius-pill);
+  background: var(--otto-surface); color: var(--otto-text-secondary); cursor: pointer; font-size: 11px; padding: 7px 10px;
+}
+.otto-park-repair__roles button.is-active { border-color: var(--otto-accent); background: var(--otto-accent-soft); color: var(--otto-accent-hover); font-weight: 650; }
+.otto-park-repair__chat, .otto-park-repair__technician {
+  border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); overflow: hidden;
+}
+.otto-park-repair__chathead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--otto-border); }
+.otto-park-repair__chathead strong { color: var(--otto-text); font-size: 13px; }
+.otto-park-repair__chathead span { color: var(--otto-text-tertiary); font-size: 10.5px; }
+.otto-park-repair__messages { display: grid; gap: 8px; max-height: 230px; overflow: auto; padding: 14px; }
+.otto-park-repair__message { max-width: 78%; border-radius: 11px; padding: 9px 11px; color: var(--otto-text-secondary); font-size: 12px; line-height: 1.5; }
+.otto-park-repair__message.is-otto { justify-self: start; background: var(--otto-bg); border: 1px solid var(--otto-border); }
+.otto-park-repair__message.is-user { justify-self: end; background: var(--otto-accent-soft); color: var(--otto-text); }
+.otto-park-repair__input { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--otto-border); }
+.otto-park-repair__input input { min-width: 0; flex: 1; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); font: inherit; font-size: 12px; padding: 9px 10px; }
+.otto-park-repair__confirm { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px; border-top: 1px solid var(--otto-border); }
+.otto-park-repair__confirm div { display: grid; gap: 3px; }
+.otto-park-repair__confirm strong { color: var(--otto-text); font-size: 12px; }
+.otto-park-repair__confirm span { color: var(--otto-text-tertiary); font-size: 10.5px; }
+.otto-park-repair__empty { padding: 36px 16px; color: var(--otto-text-secondary); font-size: 12px; text-align: center; }
+.otto-park-repair__ticket { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px; }
+.otto-park-repair__ticket div { display: grid; gap: 3px; padding: 8px; border-radius: var(--otto-radius-sm); background: var(--otto-bg); }
+.otto-park-repair__ticket span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-park-repair__ticket strong { color: var(--otto-text); font-size: 11.5px; font-weight: 600; }
+.otto-park-repair__technician .otto-park-demo__actions { margin: 0 14px 14px; padding-top: 12px; }
+
 /* 每个责任人收到的 Otto 待处理弹窗。演示时可明确看到渠道接力和兜底动作。 */
 .otto-park-notice-overlay {
   position: fixed;
@@ -5936,6 +5966,8 @@ h6.otto-prose__h {
   .otto-park-receiver,
   .otto-park-survey { grid-template-columns: 1fr; }
   .otto-park-toast { right: 12px; bottom: 12px; }
+  .otto-park-repair__confirm { align-items: stretch; flex-direction: column; }
+  .otto-park-repair__ticket { grid-template-columns: 1fr; }
 }
 
 /* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */

@@ -14,7 +14,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/react';
 import { ParkServicesPlugin, openParkServices } from './ParkServicesPlugin.js';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.removeItem('otto:local-repair-ticket');
+});
 
 /** 监听 Composer 注入事件（insertComposerDraft 派发的 CustomEvent）。 */
 function listenDraft(): { texts: string[]; stop: () => void } {
@@ -98,29 +101,39 @@ describe('ParkServicesPlugin', () => {
     expect(screen.getByText('4 分 · 会议室环境 · 已进入满意度汇总')).toBeTruthy();
   });
 
-  it('报修演示可逐步经过自动派单、网络维修主管和现场验收', () => {
+  it('报修演示由 Otto 逐步引导填报，并可切换维修人员端', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    expect(screen.getByText('工单系统')).toBeTruthy();
-    expect(screen.getByText('网络维修主管')).toBeTruthy();
-    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：演示申请人');
-    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
-    fireEvent.click(screen.getByText('下一步'));
-    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：自动派单');
-    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
-    fireEvent.click(screen.getByText('下一步'));
-    expect(screen.getByRole('alertdialog').textContent).toContain('责任人：张工');
-    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
-    expect(screen.getByText('待处理提醒')).toBeTruthy();
+    expect(screen.getByText('Otto 会一步一步帮你填')).toBeTruthy();
+    const input = screen.getByLabelText('报修回答');
+    for (const answer of ['A 座某某会议室', '灯坏了，不亮', '普通', '王工 13800000000']) {
+      fireEvent.change(input, { target: { value: answer } });
+      fireEvent.submit(input.closest('form')!);
+    }
+    expect(screen.getByText('工单信息已整理')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
+    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
+    expect(screen.getByText('网络维修主管张工')).toBeTruthy();
+    expect(screen.getByText('A 座某某会议室')).toBeTruthy();
   });
 
-  it('责任人未查看时优先发短信，飞书连接时同步发送', () => {
+  it('维修人员端收到 Otto 待处理提醒并可推进维修状态', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    fireEvent.click(screen.getByRole('button', { name: '模拟未查看，先发短信' }));
-    expect(screen.getByText('短信已发送 · 飞书已同步')).toBeTruthy();
+    const input = screen.getByLabelText('报修回答');
+    for (const answer of ['A 座会议室', '灯坏了', '紧急', '演示报修人']) {
+      fireEvent.change(input, { target: { value: answer } });
+      fireEvent.submit(input.closest('form')!);
+    }
+    fireEvent.click(screen.getByRole('button', { name: '提交报修工单' }));
+    fireEvent.click(screen.getByRole('button', { name: '维修人员端' }));
+    expect(screen.getByRole('alertdialog').textContent).toContain('Otto 待处理提醒 · 本地模拟');
+    fireEvent.click(screen.getByRole('button', { name: '已查看并接单' }));
+    fireEvent.click(screen.getByRole('button', { name: '维修完成，等待验收' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认企业验收' }));
+    expect(screen.getByText('已完成')).toBeTruthy();
   });
 
   it('Esc / 点遮罩 / 右上 × 都能关闭', () => {
