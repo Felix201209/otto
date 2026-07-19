@@ -48,6 +48,20 @@ describe('服务端 Agent profile 白名单', () => {
     expect(profile?.embeddedSkills).toEqual(['ppt-creator']);
   });
 
+  it('PPT/Word 专家会用选项式问题引导用户确定风格', () => {
+    const pptPrompt = resolveAgentProfile('ppt')?.systemPrompt ?? '';
+    expect(pptPrompt).toContain('ask_user_question');
+    expect(pptPrompt).toContain('视觉风格');
+    expect(pptPrompt).toContain('发布会高冲击');
+    expect(pptPrompt).toContain('不要让用户打一大段需求');
+
+    const docPrompt = resolveAgentProfile('doc')?.systemPrompt ?? '';
+    expect(docPrompt).toContain('ask_user_question');
+    expect(docPrompt).toContain('排版风格');
+    expect(docPrompt).toContain('正式稳重');
+    expect(docPrompt).toContain('不要让用户打一大段需求');
+  });
+
   it('Word/Excel/PDF 专家也强制注入内置 Skill 并拥有专属工作流', () => {
     const doc = resolveAgentProfile('doc');
     expect(doc?.embeddedSkills).toEqual(['doc-writer']);

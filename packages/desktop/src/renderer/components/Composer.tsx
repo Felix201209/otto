@@ -156,7 +156,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'feishu-status', description: '查看飞书连接状态', action: 'local' },
   { id: 'multi-channel', description: '检查微信/企微/钉钉多渠道', action: 'prompt', prompt: '请检查 Otto 的多渠道能力：微信、企业微信、钉钉、飞书适配器和 multi_channel 工具是否可用。' },
   { id: 'ppt', description: 'PPT 创作专家', action: 'agent', agentProfileId: 'ppt' },
-  { id: 'doc', description: '文档写作专家', action: 'prompt', prompt: '我要写一份正式文档。请调用文档写作专家流程，先询问文档类型、用途、读者、要点和篇幅。' },
+  { id: 'doc', description: '文档写作专家', action: 'agent', agentProfileId: 'doc' },
   { id: 'pdf', description: 'PDF 处理', action: 'prompt', prompt: '我要处理 PDF。请调用 PDF 文档处理流程，先询问文件路径、操作类型和输出格式。' },
   { id: 'audio', description: '音视频转文本/纪要', action: 'prompt', prompt: '我要处理音视频或会议录音。请调用会议纪要/转录流程，先询问文件、参会人和输出格式。' },
   { id: 'excel', description: 'Excel 分析可视化', action: 'prompt', prompt: '我要处理 Excel/CSV 数据。请调用表格分析与数据可视化流程，先询问数据字段、目标结果和输出形式。' },
