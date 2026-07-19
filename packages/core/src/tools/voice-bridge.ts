@@ -34,12 +34,16 @@ interface VoiceBridgeDependencyStatus {
   python_version?: string;
   ffmpeg?: string | null;
   whisper_module?: boolean;
+  faster_whisper_module?: boolean;
   sounddevice_module?: boolean;
   requests_module?: boolean;
   torch_module?: boolean;
   cuda?: boolean;
   user_asr_key?: boolean;
   model_candidates?: string[];
+  asr_backend?: string;
+  beam_size?: number;
+  temperature_schedule?: string;
   timeout_seconds?: number;
 }
 
@@ -218,6 +222,7 @@ REQUIREMENTS:
         `- Python module openai-whisper is missing, so local speech-to-text is not available.\n` +
         `  Install with the same Python Otto is using:\n` +
         `  "${status.python || 'python'}" -m pip install -U openai-whisper\n` +
+        `  Optional faster backend: "${status.python || 'python'}" -m pip install -U faster-whisper\n` +
         `  Low-spec computer: set OTTO_WHISPER_MODEL=small`,
       );
     }
@@ -236,9 +241,12 @@ REQUIREMENTS:
       `- Python: ${status.python ? `${status.python} (${status.python_version || 'unknown version'})` : 'blocked'}\n` +
       `- ffmpeg: ${status.ffmpeg ? 'ready' : 'blocked'}\n` +
       `- openai-whisper Python module: ${status.whisper_module ? 'ready' : hasUserAsrKey ? 'not installed, but user ASR key is available' : 'blocked'}\n` +
+      `- faster-whisper optimized backend: ${status.faster_whisper_module ? 'ready' : 'not installed'}\n` +
       `- sounddevice microphone fallback: ${status.sounddevice_module ? 'ready' : 'not installed'}\n` +
       `- GPU acceleration: ${status.cuda ? 'available' : status.torch_module ? 'not available' : 'torch not installed yet'}\n` +
+      `- ASR backend: ${status.asr_backend || 'auto'}\n` +
       `- Whisper model plan: ${(status.model_candidates || ['auto']).join(' -> ')}\n\n` +
+      `- Decode quality: beam_size=${status.beam_size || 5}, temperatures=${status.temperature_schedule || '0,0.2'}\n\n` +
       `What Otto can do now:\n` +
       `- If you paste an existing transcript, Otto can summarize it immediately.\n` +
       `- If the current chat model supports audio, Otto can still try that model first.\n` +

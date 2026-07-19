@@ -113,11 +113,15 @@ describe('VoiceBridgeTool', () => {
       python_version: '3.11.9',
       ffmpeg: '/usr/local/bin/ffmpeg',
       whisper_module: false,
+      faster_whisper_module: false,
       sounddevice_module: true,
       torch_module: false,
       cuda: false,
       user_asr_key: false,
       model_candidates: ['medium', 'small', 'base'],
+      asr_backend: 'auto',
+      beam_size: 5,
+      temperature_schedule: '0,0.2',
     });
 
     const r = await t.execute({ action: 'listen' }, signal());
@@ -126,7 +130,10 @@ describe('VoiceBridgeTool', () => {
     expect(content).toContain('/opt/otto/python');
     expect(content).toContain('openai-whisper Python module: blocked');
     expect(content).toContain('"/opt/otto/python" -m pip install -U openai-whisper');
+    expect(content).toContain('"/opt/otto/python" -m pip install -U faster-whisper');
+    expect(content).toContain('faster-whisper optimized backend: not installed');
     expect(content).toContain('medium -> small -> base');
+    expect(content).toContain('beam_size=5');
   });
 
   it('does not block on missing whisper when a user ASR key is set', async () => {
