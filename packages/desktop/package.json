@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.8.7",
+  "version": "1.8.8",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -52,7 +52,9 @@
     "protocols": [
       {
         "name": "Otto 企业邀请",
-        "schemes": ["otto"]
+        "schemes": [
+          "otto"
+        ]
       }
     ],
     "electronVersion": "43.1.0",

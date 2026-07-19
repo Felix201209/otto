@@ -222,6 +222,8 @@ const IPC = {
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
+  enterpriseMessagesList: 'otto:enterprise-messages-list',
+  enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -962,6 +964,18 @@ function registerIpc(): void {
   ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
     loadEnterpriseSession();
     return enterpriseClient.getOrganizationView();
+  });
+  ipcMain.handle(IPC.enterpriseMessagesList, async (_event, peerAccountId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof peerAccountId !== 'string' || !peerAccountId) throw new Error('成员信息不正确');
+    return enterpriseClient.listDirectMessages(peerAccountId);
+  });
+  ipcMain.handle(IPC.enterpriseMessageSend, async (_event, peerAccountId: unknown, content: unknown) => {
+    loadEnterpriseSession();
+    if (typeof peerAccountId !== 'string' || !peerAccountId || typeof content !== 'string') {
+      throw new Error('消息信息不正确');
+    }
+    return enterpriseClient.sendDirectMessage(peerAccountId, content);
   });
   ipcMain.handle(IPC.enterpriseOrganizationInviteGet, async () => {
     loadEnterpriseSession();

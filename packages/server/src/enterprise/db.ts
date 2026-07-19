@@ -275,6 +275,21 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
+    CREATE TABLE IF NOT EXISTS direct_messages (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      sender_account_id TEXT NOT NULL,
+      recipient_account_id TEXT NOT NULL,
+      content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 4000),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      read_at TEXT,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (sender_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation
+      ON direct_messages(organization_id, sender_account_id, recipient_account_id, created_at);
+
     CREATE TABLE IF NOT EXISTS sms_login_challenges (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -989,6 +1004,83 @@ export function listAccounts(organizationId = DEFAULT_ORGANIZATION_ID): AccountV
     'SELECT * FROM accounts WHERE organization_id = ? ORDER BY name, username',
   ).all(organizationId) as AccountRow[])
     .map(toAccountView);
+}
+
+export interface DirectMessageView {
+  id: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  content: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+interface DirectMessageRow {
+  id: string;
+  sender_account_id: string;
+  recipient_account_id: string;
+  content: string;
+  created_at: string;
+  read_at: string | null;
+}
+
+function toDirectMessageView(row: DirectMessageRow): DirectMessageView {
+  return {
+    id: row.id,
+    senderAccountId: row.sender_account_id,
+    recipientAccountId: row.recipient_account_id,
+    content: row.content,
+    createdAt: row.created_at,
+    readAt: row.read_at,
+  };
+}
+
+export function sendDirectMessage(input: {
+  organizationId: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  content: string;
+}): DirectMessageView {
+  const content = input.content.trim();
+  if (!content || content.length > 4000) throw new Error('消息内容长度必须为 1 到 4000 个字符');
+  if (input.senderAccountId === input.recipientAccountId) throw new Error('不能给自己发送消息');
+  const recipient = getAccount(input.recipientAccountId, input.organizationId);
+  if (!recipient || recipient.status !== 'active') throw new Error('接收成员不存在或已停用');
+  const id = randomUUID();
+  getDB().prepare(
+    `INSERT INTO direct_messages
+      (id, organization_id, sender_account_id, recipient_account_id, content)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, input.organizationId, input.senderAccountId, input.recipientAccountId, content);
+  const row = getDB().prepare('SELECT * FROM direct_messages WHERE id = ?').get(id) as DirectMessageRow;
+  return toDirectMessageView(row);
+}
+
+export function listDirectMessages(input: {
+  organizationId: string;
+  accountId: string;
+  peerAccountId: string;
+  limit?: number;
+}): DirectMessageView[] {
+  const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 100)));
+  getDB().prepare(
+    `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
+     WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?`,
+  ).run(input.organizationId, input.peerAccountId, input.accountId);
+  return (getDB().prepare(
+    `SELECT * FROM direct_messages
+     WHERE organization_id = ? AND (
+       (sender_account_id = ? AND recipient_account_id = ?) OR
+       (sender_account_id = ? AND recipient_account_id = ?)
+     ) ORDER BY created_at DESC, id DESC LIMIT ?`,
+  ).all(
+    input.organizationId,
+    input.accountId,
+    input.peerAccountId,
+    input.peerAccountId,
+    input.accountId,
+    limit,
+  ) as DirectMessageRow[]).reverse().map(toDirectMessageView);
 }
 
 export function authenticateAccount(identifier: string, password: string): AccountView | null {

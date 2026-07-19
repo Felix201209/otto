@@ -119,6 +119,15 @@ export interface EnterpriseOrganizationView {
   employeeCount: number;
 }
 
+export interface EnterpriseDirectMessage {
+  id: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  content: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
 export interface EnterpriseSessionResult {
   serverUrl: string;
   account: EnterpriseAccount | null;
@@ -436,6 +445,21 @@ export class EnterpriseClient {
   async getOrganizationView(): Promise<EnterpriseOrganizationView> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/organization/view');
+  }
+
+  async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ messages: EnterpriseDirectMessage[] }>(
+      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
+    )).messages;
+  }
+
+  async sendDirectMessage(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ message: EnterpriseDirectMessage }>(
+      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
+      { method: 'POST', body: JSON.stringify({ content }) },
+    )).message;
   }
 
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {

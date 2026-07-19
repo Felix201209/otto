@@ -6308,6 +6308,20 @@ h6.otto-prose__h {
 .otto-orgtree__department-name { font-size: 10.5px; color: var(--otto-text-secondary); font-weight: 700; }
 .otto-orgtree__member { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 10px; }
 .otto-orgtree__member span:last-child, .otto-orgtree__vacant { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-orgtree__member-button { width: 100%; border: 0; padding: 4px 2px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.otto-orgtree__member-button:hover { color: var(--otto-accent-hover); }
+.otto-direct-chat { position: fixed; z-index: 50; left: 232px; bottom: 22px; width: 340px; height: 430px; display: flex; flex-direction: column; border: 1px solid var(--otto-border); border-radius: 12px; background: var(--otto-surface); box-shadow: 0 18px 48px rgba(0,0,0,.28); }
+.otto-direct-chat header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--otto-border); }
+.otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }
+.otto-direct-chat__messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:12px; }
+.otto-direct-chat__messages p { color:var(--otto-text-tertiary); text-align:center; }
+.otto-direct-chat__message { max-width:80%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
+.otto-direct-chat__message.is-peer { align-self:flex-start; background:var(--otto-bg); border:1px solid var(--otto-border); }
+.otto-direct-chat__message.is-me { align-self:flex-end; background:var(--otto-accent-soft); }
+.otto-direct-chat__error { padding:6px 12px; color:var(--otto-danger); font-size:11px; }
+.otto-direct-chat form { display:flex; gap:8px; padding:10px; border-top:1px solid var(--otto-border); }
+.otto-direct-chat form input { flex:1; min-width:0; border:1px solid var(--otto-border); border-radius:8px; background:var(--otto-bg); color:var(--otto-text); padding:8px; }
+.otto-direct-chat form button { border:0; border-radius:8px; padding:0 12px; background:var(--otto-accent); color:white; cursor:pointer; }
 
 .otto-right-panel { position: relative; width: 304px; min-width: 304px; transition: width .18s ease, min-width .18s ease; }
 .otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }

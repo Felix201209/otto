@@ -410,6 +410,7 @@ function isAdminRoute(path: string): boolean {
 
 function isMemberRoute(path: string): boolean {
   return MEMBER_ROUTES.has(path)
+    || path.startsWith('/enterprise/messages/')
     || (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke'));
 }
 
@@ -1432,6 +1433,45 @@ function makeHandler(
           })),
           employeeCount: employees.length,
         });
+        return;
+      }
+
+      if (path.startsWith('/enterprise/messages/') && (method === 'GET' || method === 'POST')) {
+        const peerAccountId = decodeURIComponent(path.slice('/enterprise/messages/'.length));
+        const peer = db.getAccount(peerAccountId, memberAccount!.organizationId);
+        if (!peer || peer.status !== 'active') {
+          sendJSON(res, 404, { error: '成员不存在或已停用' });
+          return;
+        }
+        if (peer.id === memberAccount!.id) {
+          sendJSON(res, 400, { error: '不能给自己发送消息' });
+          return;
+        }
+        if (method === 'GET') {
+          sendJSON(res, 200, { messages: db.listDirectMessages({
+            organizationId: memberAccount!.organizationId,
+            accountId: memberAccount!.id,
+            peerAccountId,
+            limit: Number(url.searchParams.get('limit') || 100),
+          }) });
+          return;
+        }
+        const body = await readBody(req);
+        if (typeof body.content !== 'string') {
+          sendJSON(res, 400, { error: '消息内容不能为空' });
+          return;
+        }
+        try {
+          const message = db.sendDirectMessage({
+            organizationId: memberAccount!.organizationId,
+            senderAccountId: memberAccount!.id,
+            recipientAccountId: peerAccountId,
+            content: body.content,
+          });
+          sendJSON(res, 201, { message });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : '消息发送失败' });
+        }
         return;
       }
 

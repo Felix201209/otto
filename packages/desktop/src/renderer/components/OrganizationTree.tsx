@@ -4,7 +4,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
-import type { EnterpriseOrganizationView } from '../../preload/index.js';
+import type { EnterpriseDirectMessage, EnterpriseOrganizationView } from '../../preload/index.js';
 import { IconChevronDown } from './icons.js';
 
 export function OrganizationTree({
@@ -16,6 +16,7 @@ export function OrganizationTree({
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
+  const [chatMember, setChatMember] = useState<EnterpriseOrganizationView['members'][number] | null>(null);
   const organization = workspace.managerWorkspace?.organization;
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
@@ -101,10 +102,10 @@ export function OrganizationTree({
                   <div key={dept} className="otto-orgtree__department">
                     <div className="otto-orgtree__department-name">{dept}</div>
                     {members.map((m) => (
-                      <div key={m.id} className="otto-orgtree__member">
+                      <button key={m.id} type="button" className="otto-orgtree__member otto-orgtree__member-button" onClick={() => setChatMember(m)}>
                         <span>{m.name}</span>
                         <span>{m.isAdmin ? '管理员' : m.role || '成员'}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ));
@@ -121,7 +122,65 @@ export function OrganizationTree({
           )}
         </div>
       ) : null}
+      {chatMember ? <DirectMessagePanel member={chatMember} onClose={() => setChatMember(null)} /> : null}
     </section>
+  );
+}
+
+function DirectMessagePanel({ member, onClose }: {
+  member: EnterpriseOrganizationView['members'][number];
+  onClose: () => void;
+}): React.JSX.Element {
+  const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const next = await window.otto.enterpriseMessagesList(member.id);
+        if (active) { setMessages(next); setError(''); }
+      } catch (reason) {
+        if (active) setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 2000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [member.id]);
+
+  const send = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || sending) return;
+    setSending(true);
+    try {
+      const message = await window.otto.enterpriseMessageSend(member.id, content);
+      setMessages((current) => [...current, message]);
+      setDraft('');
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="otto-direct-chat" role="dialog" aria-label={`与 ${member.name} 聊天`}>
+      <header><strong>{member.name}</strong><button type="button" onClick={onClose} aria-label="关闭聊天">×</button></header>
+      <div className="otto-direct-chat__messages">
+        {messages.length === 0 ? <p>还没有消息，开始聊聊吧。</p> : messages.map((message) => (
+          <div key={message.id} className={'otto-direct-chat__message' + (message.senderAccountId === member.id ? ' is-peer' : ' is-me')}>
+            {message.content}
+          </div>
+        ))}
+      </div>
+      {error ? <div className="otto-direct-chat__error" role="alert">{error}</div> : null}
+      <form onSubmit={send}><input value={draft} maxLength={4000} onChange={(event) => setDraft(event.target.value)} placeholder="输入消息" aria-label="消息内容"/><button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button></form>
+    </div>
   );
 }
 
