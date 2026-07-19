@@ -62,6 +62,7 @@ export class SessionManager {
   private projectRoot: string;
   private sessionsDir: string;
   private indexPath: string;
+  private nativeWarningShown = false;
 
   constructor(projectRoot: string) {
     this.projectRoot = path.resolve(projectRoot);
@@ -119,6 +120,47 @@ export class SessionManager {
   private async saveIndex(index: SessionIndex): Promise<void> {
     await this.ensureSessionsDir();
     await fs.writeFile(this.indexPath, JSON.stringify(index, null, 2));
+  }
+
+  private toNativeMetadata(metadata: SessionMetadata) {
+    return {
+      session_id: metadata.sessionId,
+      title: metadata.title,
+      created_at: metadata.createdAt,
+      last_active_at: metadata.lastActiveAt,
+      message_count: metadata.messageCount,
+      total_tokens: metadata.totalTokens,
+      has_checkpoint: metadata.hasCheckpoint,
+      model: metadata.model,
+      first_user_message: metadata.firstUserMessage,
+      last_assistant_message: metadata.lastAssistantMessage,
+      workdir_hash: metadata.workdirHash,
+    };
+  }
+
+  private async withNativeStore(
+    operation: string,
+    callback: (native: ReturnType<typeof getNativeInstance>) => Promise<void>
+  ): Promise<void> {
+    try {
+      const native = getNativeInstance(this.projectRoot);
+      await native.start();
+      await callback(native);
+    } catch (error) {
+      if (!this.nativeWarningShown) {
+        console.warn(
+          `[SessionManager] Native session mirror unavailable during ${operation}; continuing with JS storage:`,
+          getErrorMessage(error)
+        );
+        this.nativeWarningShown = true;
+      }
+    }
+  }
+
+  private async mirrorSessionDelete(sessionId: string): Promise<void> {
+    await this.withNativeStore('session.delete', async native => {
+      await native.sessionDelete(sessionId);
+    });
   }
 
   /**
@@ -209,6 +251,11 @@ export class SessionManager {
 
     // 更新索引
     await this.updateSessionIndex(sessionId, metadata);
+    await this.withNativeStore('session.create', async native => {
+      await native.sessionPutTokens(sessionId, tokens);
+      await native.sessionPutHistory(sessionId, []);
+      await native.sessionPutContext(sessionId, []);
+    });
 
     return {
       sessionId,
@@ -306,6 +353,11 @@ export class SessionManager {
       // 更新最后活跃时间
       metadata.lastActiveAt = new Date().toISOString();
       await this.updateSessionMetadata(sessionId, metadata);
+      await this.withNativeStore('session.load_mirror', async native => {
+        await native.sessionPutHistory(sessionId, history);
+        await native.sessionPutContext(sessionId, clientHistory);
+        await native.sessionPutTokens(sessionId, tokens);
+      });
 
       return {
         sessionId,
@@ -331,12 +383,18 @@ export class SessionManager {
       path.join(sessionDir, 'history.json'),
       JSON.stringify(history, null, 2)
     );
+    await this.withNativeStore('session.put_history', async native => {
+      await native.sessionPutHistory(sessionId, history);
+    });
 
     if (clientHistory) {
       await fs.writeFile(
         path.join(sessionDir, 'context.json'),
         JSON.stringify(clientHistory, null, 2)
       );
+      await this.withNativeStore('session.put_context', async native => {
+        await native.sessionPutContext(sessionId, clientHistory);
+      });
     }
 
     // 提取第一条用户消息和最后一条助手消息
@@ -396,6 +454,9 @@ export class SessionManager {
       checkpointsFile,
       JSON.stringify(checkpoints, null, 2)
     );
+    await this.withNativeStore('session.put_checkpoint', async native => {
+      await native.sessionPutCheckpoint(sessionId, checkpoint);
+    });
 
     await this.updateSessionMetadata(sessionId, {
       hasCheckpoint: true,
@@ -416,6 +477,52 @@ export class SessionManager {
     } catch (error) {
       return [];
     }
+  }
+
+  async validateNativeSessionMirror(sessionId: string): Promise<{ ok: boolean; mismatches: string[] }> {
+    const sessionDir = this.getSessionDir(sessionId);
+    const mismatches: string[] = [];
+
+    try {
+      const metadata = JSON.parse(await fs.readFile(path.join(sessionDir, 'metadata.json'), 'utf-8'));
+      const tokens = JSON.parse(await fs.readFile(path.join(sessionDir, 'tokens.json'), 'utf-8'));
+      const history = JSON.parse(await fs.readFile(path.join(sessionDir, 'history.json'), 'utf-8'));
+      const context = JSON.parse(await fs.readFile(path.join(sessionDir, 'context.json'), 'utf-8'));
+      const checkpoints = await this.getSessionCheckpoints(sessionId);
+
+      const native = getNativeInstance(this.projectRoot);
+      await native.start();
+
+      const nativeMetadata = await native.sessionGet(sessionId);
+      const nativeHistory = await native.sessionGetHistory(sessionId);
+      const nativeTokens = await native.sessionGetTokens(sessionId);
+      const nativeContext = await native.sessionGetContext(sessionId);
+      const nativeCheckpoints = await native.sessionGetCheckpoints(sessionId);
+
+      const expectedMetadata = this.toNativeMetadata(metadata);
+      if (JSON.stringify(nativeMetadata) !== JSON.stringify(expectedMetadata)) {
+        mismatches.push('metadata');
+      }
+      if (JSON.stringify(nativeHistory?.history ?? null) !== JSON.stringify(history)) {
+        mismatches.push('history');
+      }
+      if (JSON.stringify(nativeTokens?.tokens ?? null) !== JSON.stringify(tokens)) {
+        mismatches.push('tokens');
+      }
+      if (JSON.stringify(nativeContext?.context ?? null) !== JSON.stringify(context)) {
+        mismatches.push('context');
+      }
+      if (JSON.stringify(nativeCheckpoints?.checkpoints ?? []) !== JSON.stringify(checkpoints)) {
+        mismatches.push('checkpoints');
+      }
+    } catch (error) {
+      mismatches.push(`native_unavailable:${getErrorMessage(error)}`);
+    }
+
+    return {
+      ok: mismatches.length === 0,
+      mismatches,
+    };
   }
 
   /**
@@ -478,6 +585,9 @@ export class SessionManager {
 
     // 写入文件
     await fs.writeFile(tokenFile, JSON.stringify(existingTokens, null, 2));
+    await this.withNativeStore('session.put_tokens', async native => {
+      await native.sessionPutTokens(sessionId, existingTokens);
+    });
 
     // 计算总token数
     const totalTokens = Object.values(existingTokens.models)
@@ -563,6 +673,9 @@ export class SessionManager {
     index.lastActiveSession = sessionId;
 
     await this.saveIndex(index);
+    await this.withNativeStore('session.put_metadata', async native => {
+      await native.sessionPut(this.toNativeMetadata(metadata));
+    });
   }
 
   /**
@@ -716,6 +829,7 @@ export class SessionManager {
       try {
         const sessionDir = this.getSessionDir(session.sessionId);
         await fs.rm(sessionDir, { recursive: true, force: true });
+        await this.mirrorSessionDelete(session.sessionId);
 
       } catch (error) {
         console.warn(`[SessionManager] Failed to delete session ${session.sessionId}:`, getErrorMessage(error));
@@ -819,6 +933,7 @@ export class SessionManager {
       try {
         const sessionDir = this.getSessionDir(session.sessionId);
         await fs.rm(sessionDir, { recursive: true, force: true });
+        await this.mirrorSessionDelete(session.sessionId);
 
       } catch (error) {
         console.warn(`[SessionManager] Failed to delete empty session ${session.sessionId}:`, getErrorMessage(error));
