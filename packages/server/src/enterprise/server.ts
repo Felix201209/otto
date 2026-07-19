@@ -445,6 +445,30 @@ type AdminPrincipal =
   | { kind: 'system'; organizationId: string }
   | { kind: 'account'; organizationId: string; account: db.AccountView };
 
+const PARK_SERVICE_PUSH_TEMPLATES: Record<string, { name: string; detail: string }> = {
+  announcement: { name: '园区公告', detail: '请查看园区公告并确认是否需要转发给企业成员。' },
+  satisfaction: { name: '满意度调查', detail: '请填写本次园区服务满意度调查，提交后由管理员汇总。' },
+  renovation: { name: '装修申请', detail: '请补充装修区域、施工内容、开工时间和现场联系人。' },
+  parking: { name: '停车位办理', detail: '请提交车牌号、车辆类型、申请数量和联系人。' },
+  'network-phone': { name: '网络 / 电话业务', detail: '请提交安装位置、工位数量或号码数量、期望开通日期。' },
+  'meeting-room': { name: '会议室预订', detail: '请确认参会人数、日期、时间段和投屏/视频会议需求。' },
+  'electric-card': { name: '电卡充电', detail: '请提交电卡编号、充值金额、公司名称和联系人。' },
+  repair: { name: '客户报修', detail: '请描述故障位置、故障现象、紧急程度和现场联系人。' },
+  'vehicle-visit': { name: '来访车辆登记', detail: '请登记来访人、手机号、车牌号、来访时间和拜访事由。' },
+};
+
+function buildParkServicePushMessage(serviceId: string, note: string | null): string {
+  const service = PARK_SERVICE_PUSH_TEMPLATES[serviceId];
+  const title = service ? service.name : '宏创园区服务';
+  const detail = service ? service.detail : '请打开宏创AI园区服务查看待处理事项。';
+  return [
+    `【宏创AI园区服务】${title}`,
+    detail,
+    note ? `管理员备注：${note}` : null,
+    '请在 Otto 右侧“宏创AI园区服务”入口中继续处理。',
+  ].filter(Boolean).join('\n');
+}
+
 function accountConflictMessage(error: unknown): string | null {
   const message = error instanceof Error ? error.message : String(error);
   if (message === '企业至少需要保留一名可登录管理员') return message;
@@ -999,6 +1023,44 @@ function makeHandler(
           if (conflict) sendJSON(res, 409, { error: conflict });
           else if (inputError) sendJSON(res, 400, { error: inputError });
           else throw error;
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park-services/push' && method === 'POST') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: '请使用企业管理员账号登录后推送园区服务' });
+          return;
+        }
+        const body = await readBody(req);
+        const recipientAccountId = typeof body.recipientAccountId === 'string' ? body.recipientAccountId.trim() : '';
+        const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
+        const note = typeof body.note === 'string' && body.note.trim()
+          ? body.note.trim().slice(0, 500)
+          : null;
+        if (!recipientAccountId || !serviceId) {
+          sendJSON(res, 400, { error: 'recipientAccountId and serviceId required' });
+          return;
+        }
+        if (!PARK_SERVICE_PUSH_TEMPLATES[serviceId]) {
+          sendJSON(res, 400, { error: '未知的宏创园区服务' });
+          return;
+        }
+        try {
+          const message = db.sendDirectMessage({
+            organizationId: principal.organizationId,
+            senderAccountId: principal.account.id,
+            recipientAccountId,
+            content: buildParkServicePushMessage(serviceId, note),
+          });
+          sendJSON(res, 201, {
+            message,
+            service: PARK_SERVICE_PUSH_TEMPLATES[serviceId],
+            recipient: db.getAccount(recipientAccountId, principal.organizationId),
+          });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : '园区服务推送失败' });
         }
         return;
       }

@@ -471,6 +471,18 @@ export class EnterpriseClient {
     )).message;
   }
 
+  async pushParkService(input: {
+    recipientAccountId: string;
+    serviceId: string;
+    note?: string | null;
+  }): Promise<{ message: EnterpriseDirectMessage }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/park-services/push', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/organization/invite');

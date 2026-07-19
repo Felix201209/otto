@@ -46,6 +46,18 @@ const ACCOUNT_TEMPLATES = [
 
 export type AccountTemplateId = typeof ACCOUNT_TEMPLATES[number]['id'];
 
+const PARK_SERVICE_OPTIONS = [
+  { id: 'announcement', label: '园区公告' },
+  { id: 'satisfaction', label: '满意度调查' },
+  { id: 'renovation', label: '装修申请' },
+  { id: 'parking', label: '停车位办理' },
+  { id: 'network-phone', label: '网络 / 电话业务' },
+  { id: 'meeting-room', label: '会议室预订' },
+  { id: 'electric-card', label: '电卡充电' },
+  { id: 'repair', label: '客户报修' },
+  { id: 'vehicle-visit', label: '来访车辆登记' },
+] as const;
+
 function tagsFromText(value: string): string[] {
   return [...new Set(value.split(/[,，\n]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
@@ -134,6 +146,12 @@ export function AccountManagementPage({
   const [invitePosition, setInvitePosition] = useState('');
   const [inviteRole, setInviteRole] = useState('');
   const [inviteMaxUses, setInviteMaxUses] = useState('');
+  const [parkPushRecipientId, setParkPushRecipientId] = useState('');
+  const [parkPushServiceId, setParkPushServiceId] = useState<typeof PARK_SERVICE_OPTIONS[number]['id']>('repair');
+  const [parkPushNote, setParkPushNote] = useState('');
+  const [parkPushBusy, setParkPushBusy] = useState(false);
+  const [parkPushMessage, setParkPushMessage] = useState<string | null>(null);
+  const [parkPushError, setParkPushError] = useState<string | null>(null);
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
@@ -228,6 +246,10 @@ export function AccountManagementPage({
     }
     return [...result];
   }, [accounts]);
+  const parkPushRecipients = useMemo(
+    () => accounts.filter((account) => account.status === 'active'),
+    [accounts],
+  );
 
   const openCreate = (): void => {
     if (loading) return;
@@ -358,6 +380,28 @@ export function AccountManagementPage({
     }
   };
 
+  const pushParkService = async (): Promise<void> => {
+    setParkPushBusy(true);
+    setParkPushError(null);
+    setParkPushMessage(null);
+    try {
+      const recipient = parkPushRecipients.find((account) => account.id === parkPushRecipientId);
+      if (!recipient) throw new Error('请选择要接收园区服务的 Otto 用户');
+      const service = PARK_SERVICE_OPTIONS.find((item) => item.id === parkPushServiceId);
+      await window.otto.enterpriseParkServicePush({
+        recipientAccountId: recipient.id,
+        serviceId: parkPushServiceId,
+        note: parkPushNote.trim() || null,
+      });
+      setParkPushMessage(`已把「${service?.label ?? '宏创园区服务'}」推送给 ${recipient.name}`);
+      setParkPushNote('');
+    } catch (cause) {
+      setParkPushError(errorMessage(cause));
+    } finally {
+      setParkPushBusy(false);
+    }
+  };
+
   const activeCount = accounts.filter((item) => item.status === 'active').length;
   const smsCount = accounts.filter((item) => item.phone).length;
   const adminCount = accounts.filter((item) => item.isAdmin).length;
@@ -484,6 +528,68 @@ export function AccountManagementPage({
           ) : null}
           {!inviteLoading && !inviteContext?.invite ? <div className="otto-account-invite__loading">尚未生成引入链接</div> : null}
           {inviteError ? <div className="otto-account-invite__error" role="alert">{inviteError}</div> : null}
+        </section>
+      ) : null}
+
+      {currentAccount.isAdmin ? (
+        <section className="otto-account-invite otto-account-park-push" aria-label="宏创园区服务推送">
+          <header>
+            <div>
+              <span>PARK SERVICE PUSH</span>
+              <h2>宏创园区服务推送</h2>
+              <p>管理员选择服务和 Otto 用户后，系统会通过企业内私聊把服务办理卡片推送给指定成员。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void pushParkService()}
+              disabled={parkPushBusy || parkPushRecipients.length === 0}
+            >
+              {parkPushBusy ? '正在推送…' : '推送给用户'}
+            </button>
+          </header>
+          <div className="otto-account-invite__position-grid">
+            <label>
+              <span>宏创园区服务</span>
+              <select
+                aria-label="选择宏创园区服务"
+                value={parkPushServiceId}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushServiceId(event.target.value as typeof PARK_SERVICE_OPTIONS[number]['id'])}
+              >
+                {PARK_SERVICE_OPTIONS.map((service) => (
+                  <option key={service.id} value={service.id}>{service.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>推送到 Otto 用户</span>
+              <select
+                aria-label="选择接收服务的 Otto 用户"
+                value={parkPushRecipientId}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushRecipientId(event.target.value)}
+              >
+                <option value="">请选择成员</option>
+                {parkPushRecipients.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} / {account.department || '未分配部门'} / @{account.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>管理员备注</span>
+              <input
+                aria-label="宏创园区服务推送备注"
+                value={parkPushNote}
+                disabled={parkPushBusy}
+                onChange={(event) => setParkPushNote(event.target.value)}
+                placeholder="例如：请今天下班前处理"
+              />
+            </label>
+          </div>
+          {parkPushMessage ? <div className="otto-account-invite__loading" role="status">{parkPushMessage}</div> : null}
+          {parkPushError ? <div className="otto-account-invite__error" role="alert">{parkPushError}</div> : null}
         </section>
       ) : null}
 

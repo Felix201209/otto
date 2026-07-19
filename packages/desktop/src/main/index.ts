@@ -230,6 +230,7 @@ const IPC = {
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -1042,6 +1043,18 @@ function registerIpc(): void {
       throw new Error('消息信息不正确');
     }
     return enterpriseClient.sendDirectMessage(peerAccountId, content);
+  });
+  ipcMain.handle(IPC.enterpriseParkServicePush, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.recipientAccountId !== 'string' || typeof body.serviceId !== 'string') {
+      throw new Error('园区服务推送信息不正确');
+    }
+    return enterpriseClient.pushParkService({
+      recipientAccountId: body.recipientAccountId,
+      serviceId: body.serviceId,
+      note: typeof body.note === 'string' ? body.note : null,
+    });
   });
   ipcMain.handle(IPC.enterpriseOrganizationInviteGet, async () => {
     loadEnterpriseSession();

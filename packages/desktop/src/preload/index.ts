@@ -317,6 +317,7 @@ const IPC = {
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -496,6 +497,11 @@ export interface OttoBridge {
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage>;
+  enterpriseParkServicePush(input: {
+    recipientAccountId: string;
+    serviceId: string;
+    note?: string | null;
+  }): Promise<{ message: EnterpriseDirectMessage }>;
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext>;
   enterpriseOrganizationInviteIssue(input?: {
     defaultDepartment?: string | null;
@@ -980,6 +986,13 @@ const bridge: OttoBridge = {
   },
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
     return ipcRenderer.invoke(IPC.enterpriseMessageSend, peerAccountId, content) as Promise<EnterpriseDirectMessage>;
+  },
+  enterpriseParkServicePush(input: {
+    recipientAccountId: string;
+    serviceId: string;
+    note?: string | null;
+  }): Promise<{ message: EnterpriseDirectMessage }> {
+    return ipcRenderer.invoke(IPC.enterpriseParkServicePush, input) as Promise<{ message: EnterpriseDirectMessage }>;
   },
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext> {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteGet) as Promise<
