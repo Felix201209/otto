@@ -55,6 +55,7 @@ function installBridge(
       totalActions: 0,
       workResults: 0,
     }),
+    enterpriseKnowledgeList: async () => [],
     workLogReport,
     openPath,
   };
@@ -299,6 +300,39 @@ describe('RightPanel fixed Agent catalog', () => {
     fireEvent.click(toggle);
     expect(screen.getByText('宏创 AI')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('loads and displays real enterprise memory entries', async () => {
+    installBridge();
+    (window as unknown as { otto: { enterpriseKnowledgeList: () => Promise<unknown[]> } }).otto.enterpriseKnowledgeList = vi.fn(async () => [
+      {
+        id: 'k1',
+        organizationId: 'org-1',
+        sourceId: 's1',
+        department: '研发部',
+        category: 'solution',
+        content: '客户部署必须先完成企业邀请码校验。',
+        contributor: 'Felix',
+        confidence: 0.86,
+        createdAt: '2026-07-20T04:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: '企业记忆' }));
+
+    expect(await screen.findByText('客户部署必须先完成企业邀请码校验。')).toBeTruthy();
+    expect(screen.getByText('研发部')).toBeTruthy();
+    expect(screen.getByText('solution')).toBeTruthy();
+    expect(screen.getByText('86%')).toBeTruthy();
+    expect(screen.getByText('Felix')).toBeTruthy();
   });
 
   it('shows the authenticated central organization before stale local company data', () => {

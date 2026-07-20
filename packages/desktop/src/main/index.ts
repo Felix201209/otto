@@ -236,6 +236,7 @@ const IPC = {
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
+  enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessageSend: 'otto:enterprise-message-send',
@@ -1117,6 +1118,14 @@ function registerIpc(): void {
       confidence: Math.min(1, Math.max(0, body.confidence)),
     };
     return enterpriseClient.recordKnowledge(record);
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeList, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    return enterpriseClient.listKnowledge({
+      query: typeof body.query === 'string' ? body.query : undefined,
+      department: typeof body.department === 'string' ? body.department : undefined,
+    });
   });
   ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
     loadEnterpriseSession();

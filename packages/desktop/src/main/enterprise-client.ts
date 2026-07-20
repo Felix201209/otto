@@ -86,6 +86,33 @@ export interface EnterpriseKnowledgeRecordInput {
   confidence: number;
 }
 
+export interface EnterpriseKnowledgeItem {
+  id: string;
+  organizationId: string;
+  sourceId: string | null;
+  department: string | null;
+  category: string;
+  content: string;
+  contributor: string | null;
+  confidence: number;
+  createdAt: string;
+}
+
+interface EnterpriseKnowledgeRow {
+  id: string;
+  organization_id?: string;
+  organizationId?: string;
+  source_id?: string | null;
+  sourceId?: string | null;
+  department?: string | null;
+  category: string;
+  content: string;
+  contributor?: string | null;
+  confidence?: number;
+  created_at?: string;
+  createdAt?: string;
+}
+
 export interface EnterpriseOrganizationInvite {
   id: string;
   organizationId: string;
@@ -463,6 +490,31 @@ export class EnterpriseClient {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  }
+
+  async listKnowledge(input: {
+    query?: string;
+    department?: string;
+  } = {}): Promise<EnterpriseKnowledgeItem[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const params = new URLSearchParams();
+    if (input.query?.trim()) params.set('q', input.query.trim());
+    if (input.department?.trim()) params.set('department', input.department.trim());
+    const suffix = params.toString() ? `?${params}` : '';
+    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow[] }>(
+      `/enterprise/knowledge${suffix}`,
+    );
+    return response.knowledge.map((item) => ({
+      id: item.id,
+      organizationId: item.organizationId || item.organization_id || '',
+      sourceId: item.sourceId ?? item.source_id ?? null,
+      department: item.department ?? null,
+      category: item.category,
+      content: item.content,
+      contributor: item.contributor ?? null,
+      confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+      createdAt: item.createdAt || item.created_at || '',
+    }));
   }
 
   async getOrganizationView(): Promise<EnterpriseOrganizationView> {

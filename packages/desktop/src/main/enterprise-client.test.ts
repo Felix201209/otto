@@ -208,6 +208,46 @@ describe('EnterpriseClient', () => {
     });
   });
 
+  it('登录后从组织知识库读取企业记忆并映射字段', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        knowledge: [{
+          id: 'k1',
+          organization_id: 'org_acme',
+          source_id: 'kb_123',
+          department: '研发部',
+          category: 'solution',
+          content: '合同审查先核对违约条款。',
+          contributor: '员工一号',
+          confidence: 0.9,
+          created_at: '2026-07-20T04:00:00.000Z',
+        }],
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.listKnowledge({ query: '合同', department: '研发部' })).resolves.toEqual([{
+      id: 'k1',
+      organizationId: 'org_acme',
+      sourceId: 'kb_123',
+      department: '研发部',
+      category: 'solution',
+      content: '合同审查先核对违约条款。',
+      contributor: '员工一号',
+      confidence: 0.9,
+      createdAt: '2026-07-20T04:00:00.000Z',
+    }]);
+
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/knowledge?q=%E5%90%88%E5%90%8C&department=%E7%A0%94%E5%8F%91%E9%83%A8');
+    const init = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(init.method).toBe('GET');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer session-token' });
+  });
+
   it('登录成员通过 main 内的会话令牌读取完整组织架构', async () => {
     const organizationView = {
       organization: {

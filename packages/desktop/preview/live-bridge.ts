@@ -267,6 +267,7 @@ const bridge = {
   enterpriseAccountUpdate(): Promise<any> { return Promise.resolve({}); },
   enterpriseUsageRecord(): Promise<any> { return Promise.resolve({ recorded: false, source: 'client_reported' }); },
   enterpriseKnowledgeRecord(): Promise<any> { return Promise.resolve({ status: 'added', added: true }); },
+  enterpriseKnowledgeList(): Promise<any> { return Promise.resolve([]); },
   enterpriseOrganizationView(): Promise<any> {
     return Promise.resolve({
       organization: {

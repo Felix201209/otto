@@ -223,6 +223,18 @@ export interface EnterpriseKnowledgeRecordInput {
   confidence: number;
 }
 
+export interface EnterpriseKnowledgeItem {
+  id: string;
+  organizationId: string;
+  sourceId: string | null;
+  department: string | null;
+  category: string;
+  content: string;
+  contributor: string | null;
+  confidence: number;
+  createdAt: string;
+}
+
 export interface EnterpriseOrganizationInvite {
   id: string;
   organizationId: string;
@@ -322,6 +334,7 @@ const IPC = {
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
+  enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessageSend: 'otto:enterprise-message-send',
@@ -504,6 +517,10 @@ export interface OttoBridge {
     status: 'added' | 'exists';
     added: boolean;
   }>;
+  enterpriseKnowledgeList(input?: {
+    query?: string;
+    department?: string;
+  }): Promise<EnterpriseKnowledgeItem[]>;
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage>;
@@ -988,6 +1005,12 @@ const bridge: OttoBridge = {
       status: 'added' | 'exists';
       added: boolean;
     }>;
+  },
+  enterpriseKnowledgeList(input?: {
+    query?: string;
+    department?: string;
+  }): Promise<EnterpriseKnowledgeItem[]> {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeList, input ?? {}) as Promise<EnterpriseKnowledgeItem[]>;
   },
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView> {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationView) as Promise<

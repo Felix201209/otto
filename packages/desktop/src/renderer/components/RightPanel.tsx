@@ -27,6 +27,18 @@ type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
   authenticatedOrganization?: { id: string; name: string };
 };
 
+interface EnterpriseKnowledgeItem {
+  id: string;
+  organizationId: string;
+  sourceId: string | null;
+  department: string | null;
+  category: string;
+  content: string;
+  contributor: string | null;
+  confidence: number;
+  createdAt: string;
+}
+
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   tools: '工具',
@@ -40,6 +52,14 @@ const TOOL_COMMAND_IDS = new Set([
   'multi-channel', 'memory', 'skills',
   'audio', 'browser', 'ide', 'export', 'workflow',
 ]);
+
+function formatEnterpriseMemoryDate(value: string): string {
+  if (!value) return '时间未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return date.toLocaleDateString('zh-CN');
+}
+
 const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(command.id));
 
 export interface RightPanelProps {
@@ -116,6 +136,9 @@ export function RightPanel({
   const [worklogLoading, setWorklogLoading] = useState(false);
   const [workReportPreview, setWorkReportPreview] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
+  const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState('');
   const profiles = useMemo(
     () => visibleProfiles(mode, enterpriseRole),
     [enterpriseRole, mode],
@@ -144,9 +167,29 @@ export function RightPanel({
     }
   }, []);
 
+  const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
+    if (mode !== 'enterprise') return;
+    setKnowledgeLoading(true);
+    setKnowledgeError('');
+    try {
+      const entries = await window.otto.enterpriseKnowledgeList();
+      setKnowledgeItems(entries);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setKnowledgeError(message || '企业记忆加载失败');
+      setKnowledgeItems([]);
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  }, [mode]);
+
   useEffect(() => {
     if (activeTab === 'worklog') void refreshWorkLog();
   }, [activeTab, refreshWorkLog]);
+
+  useEffect(() => {
+    if (activeTab === 'memory' && mode === 'enterprise') void refreshEnterpriseKnowledge();
+  }, [activeTab, mode, refreshEnterpriseKnowledge]);
 
   const worklogByDate = useMemo(
     () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
@@ -285,8 +328,43 @@ export function RightPanel({
 
         {activeTab === 'memory' ? (
           <div>
-            <div className="otto-right-panel__head">企业记忆</div>
-            <div className="otto-right-panel__empty">只在企业版显示。组织级记忆仍由权限控制，不会混入个人版上下文。</div>
+            <div className="otto-worklog-panel__head">
+              <div>
+                <strong>企业记忆</strong>
+                <span>组织与部门沉淀的真实知识</span>
+              </div>
+              <button type="button" disabled={knowledgeLoading} onClick={() => void refreshEnterpriseKnowledge()}>
+                {knowledgeLoading ? '加载中' : '刷新'}
+              </button>
+            </div>
+            {knowledgeError ? (
+              <div className="otto-right-panel__empty">
+                企业记忆加载失败：{knowledgeError}
+              </div>
+            ) : knowledgeLoading && knowledgeItems.length === 0 ? (
+              <div className="otto-right-panel__empty">正在加载企业记忆…</div>
+            ) : knowledgeItems.length === 0 ? (
+              <div className="otto-right-panel__empty">
+                暂无企业记忆。Otto 会在企业会话中把已确认、已去重的工作知识同步到这里。
+              </div>
+            ) : (
+              <div className="otto-enterprise-memory-list">
+                {knowledgeItems.map((item) => (
+                  <article key={item.id} className="otto-enterprise-memory-card">
+                    <div className="otto-enterprise-memory-card__meta">
+                      <span>{item.department || '全组织'}</span>
+                      <span>{item.category}</span>
+                      <span>{Math.round(item.confidence * 100)}%</span>
+                    </div>
+                    <p>{item.content}</p>
+                    <div className="otto-enterprise-memory-card__foot">
+                      {item.contributor ? <span>{item.contributor}</span> : <span>系统沉淀</span>}
+                      <span>{formatEnterpriseMemoryDate(item.createdAt)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         ) : null}
 

@@ -106,7 +106,7 @@ if (!previewWindow.otto) {
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器预览不支持更新' }), updateCancel: () => Promise.resolve(), updateInstall: () => Promise.resolve({ ok: false, message: '浏览器预览不支持安装' }),
     themeGet: () => Promise.resolve('dark'), themeSet: () => Promise.resolve('dark'),
     enterpriseSession: () => Promise.resolve(null), enterpriseLogout: () => Promise.resolve(),
-    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ added: false }),
+    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ added: false }), enterpriseKnowledgeList: () => Promise.resolve([]),
   };
 
   previewWindow.otto = new Proxy(bridge, {
