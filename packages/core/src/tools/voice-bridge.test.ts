@@ -176,13 +176,14 @@ describe('VoiceBridgeTool', () => {
     const content = String(r.llmContent);
     expect(content).toContain('voice_bridge SETUP NEEDED');
     expect(content).toContain('Local speech-to-text: blocked');
-    expect(content).toContain('Whisper');
-    expect(content).toContain('openai-whisper');
+    expect(content).toContain('Otto local transcription');
+    expect(content).toContain('voice/transcription diagnostics');
     expect(content).toContain('OTTO_WHISPER_MODEL');
     expect(content).toContain('OPENAI_API_KEY');
+    expect(content).not.toContain('pip install -U openai-whisper');
   });
 
-  it('uses runtime diagnostics to show exact Python module install command', async () => {
+  it('uses runtime diagnostics to explain local ASR repair without exposing pip commands', async () => {
     const t = toolWithRuntimeStatus({
       python: '/opt/otto/python',
       python_version: '3.11.9',
@@ -206,10 +207,10 @@ describe('VoiceBridgeTool', () => {
     const content = String(r.llmContent);
     expect(content).toContain('Runtime check');
     expect(content).toContain('/opt/otto/python');
-    expect(content).toContain('openai-whisper Python module: blocked');
-    expect(content).toContain('"/opt/otto/python" -m pip install -U openai-whisper');
-    expect(content).toContain('"/opt/otto/python" -m pip install -U faster-whisper');
-    expect(content).toContain('faster-whisper optimized backend: not installed');
+    expect(content).toContain('OpenAI Whisper backend: blocked');
+    expect(content).toContain('voice/transcription diagnostics');
+    expect(content).toContain('faster-whisper local backend: not installed');
+    expect(content).not.toContain('pip install -U openai-whisper');
     expect(content).toContain('medium -> small -> base');
     expect(content).toContain('beam_size=5');
     expect(content).toContain('faster_device=auto/default');
@@ -246,7 +247,7 @@ describe('VoiceBridgeTool', () => {
     const depErr = await callPreflight(t);
     expect(depErr).toContain('OTTO_ASR_BACKEND');
     expect(depErr).toContain('faster-whisper');
-    expect(depErr).toContain('openai-whisper');
+    expect(depErr).toContain('auto');
   });
 
   it('does not block on missing whisper when a user ASR key is set', async () => {

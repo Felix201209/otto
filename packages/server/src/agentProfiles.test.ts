@@ -113,6 +113,10 @@ describe('服务端 Agent profile 白名单', () => {
       systemPrompt: expect.stringContaining('会议'),
     });
     expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('纪要');
+    expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('audio_reader');
+    expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('不要因为文件大而停止');
+    expect(resolveAgentProfile('meeting')?.systemPrompt).toContain('禁止要求普通用户手动执行 Python 包安装命令');
+    expect(resolveAgentProfile('meeting')?.systemPrompt).not.toContain('pip install openai-whisper');
     expect(resolveAgentProfile('meeting-initiator')).toBeUndefined();
     expect(resolveAgentProfile('meeting-notes-followup')).toBeUndefined();
     expect(resolveAgentProfile('evil-client-prompt')).toBeUndefined();

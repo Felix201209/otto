@@ -118,7 +118,7 @@ HOW IT WORKS:
 
 REQUIREMENTS:
   Recording/audio decode: ffmpeg
-  Local transcription: pip install -U openai-whisper
+  Local transcription: Otto local ASR fallback (faster-whisper/openai-whisper backend)
   Optional quality: OTTO_WHISPER_MODEL=small|medium|large-v3`;
 
     super(VoiceBridgeTool.Name, 'VoiceBridge', desc, Icon.Terminal,
@@ -185,8 +185,8 @@ REQUIREMENTS:
     }
     if (whisper && !whisper.present && !hasUserAsrKey) {
       missing.push(
-        `- Whisper is missing, so local speech-to-text is not available.\n` +
-        `  Install: ${whisper.installHint}\n` +
+        `- Otto local transcription is not ready on this computer.\n` +
+        `  Open Otto voice/transcription diagnostics to repair the local ASR backend.\n` +
         `  Accuracy setting: set OTTO_WHISPER_MODEL=medium, small, or large-v3\n` +
         `  Alternative: configure a user-owned ASR key with OPENAI_API_KEY or ARK_API_KEY`,
       );
@@ -237,12 +237,11 @@ REQUIREMENTS:
     }
     if (asrBackendValid && !localAsrReady && !hasUserAsrKey) {
       const selectedBackendHint = requiresFasterWhisper
-        ? `- Python module faster-whisper is missing for the selected ASR backend.\n` +
-          `  Install with: "${status.python || 'python'}" -m pip install -U faster-whisper`
-        : `- Python module openai-whisper is missing, so local speech-to-text is not available.\n` +
-          `  Install with the same Python Otto is using:\n` +
-          `  "${status.python || 'python'}" -m pip install -U openai-whisper\n` +
-          `  Optional faster backend: "${status.python || 'python'}" -m pip install -U faster-whisper\n` +
+        ? `- The selected faster-whisper local ASR backend is missing.\n` +
+          `  Open Otto voice/transcription diagnostics to repair the local ASR backend.`
+        : `- Otto local transcription is not ready on this computer.\n` +
+          `  Open Otto voice/transcription diagnostics to repair the local ASR backend.\n` +
+          `  Recommended backend: faster-whisper for speed, medium/large-v3 model for better accuracy.\n` +
           `  Low-spec computer: set OTTO_WHISPER_MODEL=small`;
       missing.push(
         selectedBackendHint,
@@ -262,8 +261,8 @@ REQUIREMENTS:
       `Runtime check:\n` +
       `- Python: ${status.python ? `${status.python} (${status.python_version || 'unknown version'})` : 'blocked'}\n` +
       `- ffmpeg: ${status.ffmpeg ? 'ready' : 'blocked'}\n` +
-      `- openai-whisper Python module: ${status.whisper_module ? 'ready' : hasUserAsrKey ? 'not installed, but user ASR key is available' : localAsrReady ? 'not installed, but faster-whisper is ready' : 'blocked'}\n` +
-      `- faster-whisper optimized backend: ${status.faster_whisper_module ? 'ready' : 'not installed'}\n` +
+      `- OpenAI Whisper backend: ${status.whisper_module ? 'ready' : hasUserAsrKey ? 'not installed, but user ASR key is available' : localAsrReady ? 'not installed, but faster-whisper is ready' : 'blocked'}\n` +
+      `- faster-whisper local backend: ${status.faster_whisper_module ? 'ready' : 'not installed'}\n` +
       `- sounddevice microphone fallback: ${status.sounddevice_module ? 'ready' : 'not installed'}\n` +
       `- GPU acceleration: ${status.cuda ? 'available' : status.torch_module ? 'not available' : 'torch not installed yet'}\n` +
       `- ASR backend: ${status.asr_backend || 'auto'}\n` +
@@ -337,7 +336,7 @@ REQUIREMENTS:
         `- Install Python 3 and make sure python, py -3, or python3 works in the terminal.\n` +
         `- Check microphone permission for Otto or the terminal.\n` +
         `- Install ffmpeg for recording and audio decoding.\n` +
-        `- Install local Whisper with: pip install -U openai-whisper\n` +
+        `- Open Otto voice/transcription diagnostics to repair the local ASR backend.\n` +
         `- If the computer is slow, set OTTO_WHISPER_MODEL=small and retry.`,
       returnDisplay: 'voice_bridge FAILED: ' + (lastError || 'Python unavailable'),
     };

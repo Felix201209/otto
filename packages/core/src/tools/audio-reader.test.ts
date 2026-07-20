@@ -120,9 +120,11 @@ describe('AudioReaderTool', () => {
     expect(result.llmContent).toContain('Audio transcription setup is needed');
     expect(result.llmContent).toContain('Capability check');
     expect(result.llmContent).toContain('not marked as audio-capable');
-    expect(result.llmContent).toContain('Install local Whisper');
+    expect(result.llmContent).toContain('local transcription fallback');
+    expect(result.llmContent).toContain('voice/transcription diagnostics');
     expect(result.llmContent).toContain('winget install --id Gyan.FFmpeg');
     expect(result.llmContent).toContain('OTTO_WHISPER_MODEL');
+    expect(result.llmContent).not.toContain('pip install -U openai-whisper');
     expect(result.llmContent).not.toContain('Gemini');
     expect(config.getOttoClient).not.toHaveBeenCalled();
   });
