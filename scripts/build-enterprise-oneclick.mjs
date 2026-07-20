@@ -65,8 +65,10 @@ const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true });
 const sourceScope = [
   'package.json',
   'package-lock.json',
+  'tsconfig.json',
   'packages/server/package.json',
   'packages/server/tsconfig.json',
+  'scripts/build_package.js',
   'scripts/copy_files.js',
   'packages/server/src/enterprise',
   'packages/server/src/sqlite-compat.ts',
@@ -85,8 +87,10 @@ const sourceTreeDirty = sourceStatus.length > 0;
 const sourceInputFiles = [
   'package.json',
   'package-lock.json',
+  'tsconfig.json',
   'packages/server/package.json',
   'packages/server/tsconfig.json',
+  'scripts/build_package.js',
   'scripts/copy_files.js',
   'packages/server/src/sqlite-compat.ts',
   'packages/core/package.json',

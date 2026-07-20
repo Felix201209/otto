@@ -49,6 +49,20 @@ describe('createCoreConfig v1.7 模式隔离', () => {
     expect(config.getFeishuMode()).toBe(true);
   });
 
+  it('tool-free 会话把禁用 MCP 发现下沉到真实 Core Config', () => {
+    const config = createCoreConfig({
+      sessionId: 'a2a-tool-free',
+      customModels: [],
+      disableMcpDiscovery: true,
+      disableEnvironmentContext: true,
+      disableTools: true,
+    });
+
+    expect(config.getMcpDiscoveryDisabled()).toBe(true);
+    expect(config.getEnvironmentContextDisabled()).toBe(true);
+    expect(config.getToolsDisabled()).toBe(true);
+  });
+
   it('把桌面搜索 API 配置装配进 Core，并支持运行时读取', () => {
     const config = createCoreConfig({
       sessionId: 'search-config-session',

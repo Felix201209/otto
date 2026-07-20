@@ -26,7 +26,9 @@ describe('企业 A2A 消息协议', () => {
       },
     });
     expect(parsed?.kind === 'request' && parsed.payload.question.length).toBe(1200);
-    expect(displayDirectMessageContent(content)).toContain('等待对方 Otto');
+    const display = displayDirectMessageContent(content);
+    expect(display).toContain('等待对方确认后由其 Otto 回答');
+    expect(display).not.toContain('本机工作数据');
   });
 
   it('回复使用服务端消息 id 对账，并在聊天里隐藏协议前缀', () => {

@@ -107,7 +107,9 @@ export class PersistentSessionStore extends InMemorySessionStore {
     ...args: Parameters<InMemorySessionStore['appendMessage']>
   ): OttoMessage {
     const m = super.appendMessage(...args);
-    this.writeNow(m.sessionId); // 新消息（含用户消息、助手消息起点）立即落地
+    if (!this.isEphemeralSession(m.sessionId)) {
+      this.writeNow(m.sessionId); // 新消息（含用户消息、助手消息起点）立即落地
+    }
     return m;
   }
 
@@ -115,19 +117,21 @@ export class PersistentSessionStore extends InMemorySessionStore {
     ...args: Parameters<InMemorySessionStore['patchMessage']>
   ): OttoMessage | undefined {
     const m = super.patchMessage(...args);
-    if (m) this.scheduleWrite(m.sessionId); // 流式高频更新 → 去抖合并
+    if (m && !this.isEphemeralSession(m.sessionId)) {
+      this.scheduleWrite(m.sessionId); // 流式高频更新 → 去抖合并
+    }
     return m;
   }
 
   override setStatus(sessionId: string, status: SessionStatus): void {
     super.setStatus(sessionId, status);
     // 回合边界（尤其结束 idle）立即写盘，把这一轮流式的最终内容落地。
-    this.writeNow(sessionId);
+    if (!this.isEphemeralSession(sessionId)) this.writeNow(sessionId);
   }
 
   override patchSessionModel(sessionId: string, model: string): void {
     super.patchSessionModel(sessionId, model);
-    this.writeNow(sessionId);
+    if (!this.isEphemeralSession(sessionId)) this.writeNow(sessionId);
   }
 
   override renameSession(
@@ -135,7 +139,7 @@ export class PersistentSessionStore extends InMemorySessionStore {
     title: string,
   ): SessionSummary | undefined {
     const s = super.renameSession(sessionId, title);
-    if (s) this.writeNow(sessionId);
+    if (s && !this.isEphemeralSession(sessionId)) this.writeNow(sessionId);
     return s;
   }
 

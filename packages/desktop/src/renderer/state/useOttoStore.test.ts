@@ -185,6 +185,29 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.sessions['a'].title).toBe('T2'); // 更新
   });
 
+  it('session_created：忽略内部 A2A 临时会话，且不清除用户自己的待创建请求', () => {
+    const { view, push } = setup();
+    act(() => view.result.current.actions.createSession('用户会话'));
+    const pendingRequestId = view.result.current.state.pendingCreateRequestId;
+    expect(pendingRequestId).toBeTruthy();
+
+    push({
+      type: 'session_created',
+      payload: {
+        clientRequestId: 'a2a-internal-request',
+        session: makeSession({
+          sessionId: 'a2a-internal-session',
+          agentProfileId: 'otto-enterprise-a2a',
+        }),
+      },
+    });
+
+    expect(view.result.current.state.sessionIds).not.toContain('a2a-internal-session');
+    expect(view.result.current.state.sessions['a2a-internal-session']).toBeUndefined();
+    expect(view.result.current.state.pendingCreateRequestId).toBe(pendingRequestId);
+    expect(view.result.current.state.activeSessionId).toBeNull();
+  });
+
   it('history：整列替换该 session 消息', () => {
     const { view, push } = setup();
     push({ type: 'message_start', payload: { message: makeMsg({ id: 'old' }) } });

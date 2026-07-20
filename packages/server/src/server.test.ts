@@ -265,10 +265,10 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     const client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
-      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-work' },
     });
     const created = await client.waitFor(
-      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     if (created.type !== 'session_upsert') throw new Error('unreachable');
     const sessionId = created.payload.session.sessionId;
@@ -449,7 +449,7 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
 
     client.send({
       type: 'create_session',
-      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-work' },
     });
     const personalDenied = await client.waitFor(
       (f) => f.type === 'error'
@@ -457,6 +457,17 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
         && f.payload.message.includes('个人版'),
     );
     expect(personalDenied.type).toBe('error');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '企业自主开发', agentProfileId: 'self-development' },
+    });
+    const personalDevelopmentDenied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('个人版'),
+    );
+    expect(personalDevelopmentDenied.type).toBe('error');
 
     client.send({
       type: 'create_session',
@@ -473,13 +484,23 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     product.configureManager({ managerName: '陈晨', companyName: '北辰科技' });
     client.send({
       type: 'create_session',
-      payload: { title: 'CEO 工作台', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '企业工作台', agentProfileId: 'otto-enterprise-work' },
     });
     const ceo = await client.waitFor(
-      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-ceo',
+      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     if (ceo.type !== 'session_upsert') throw new Error('unreachable');
-    expect(ceo.payload.session.agentProfileName).toBe('CEO Agent');
+    expect(ceo.payload.session.agentProfileName).toBe('企业工作 Agent');
+
+    client.send({
+      type: 'create_session',
+      payload: { title: '企业自主开发', agentProfileId: 'self-development' },
+    });
+    const enterpriseDevelopment = await client.waitFor(
+      (f) => f.type === 'session_upsert'
+        && f.payload.session.agentProfileId === 'self-development',
+    );
+    expect(enterpriseDevelopment.type).toBe('session_upsert');
 
     client.send({
       type: 'create_session',
@@ -540,27 +561,17 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
-      payload: { title: '管理者首卡', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '管理者首卡', agentProfileId: 'otto-enterprise-work' },
     });
     const ceo = await client.waitFor(
       (frame) => frame.type === 'session_upsert'
-        && frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+        && frame.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     if (ceo.type !== 'session_upsert') throw new Error('unreachable');
     expect(ceo.payload.session).toMatchObject({
-      agentProfileName: 'CEO Agent',
+      agentProfileName: '企业工作 Agent',
       productEdition: 'enterprise',
     });
-    client.send({
-      type: 'create_session',
-      payload: { title: '错误员工首卡', agentProfileId: 'otto-enterprise-work' },
-    });
-    const ownerDenied = await client.waitFor(
-      (frame) => frame.type === 'error'
-        && frame.payload.code === 'forbidden_agent_profile'
-        && frame.payload.message.includes('角色'),
-    );
-    expect(ownerDenied.type).toBe('error');
     client.close();
 
     product.acceptInvite(memberInvite.link, {
@@ -648,34 +659,38 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     );
     client.send({
       type: 'create_session',
-      payload: { title: '管理员工作台', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '管理员工作台', agentProfileId: 'otto-enterprise-work' },
     });
     const adminSession = await client.waitFor(
       (frame) =>
         frame.type === 'session_upsert' &&
-        frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+        frame.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     expect(adminSession.type).toBe('session_upsert');
 
     client.close();
   });
 
-  it('中心身份降为成员会取消旧 CEO 活跃 runtime，旧会话后续发送也被拒绝', async () => {
+  it('中心身份角色变化会取消旧 runtime，但统一企业工作会话仍可继续', async () => {
     const client = await connectWs(baseUrl);
     server.setAuthenticatedEnterpriseAccount(
       authenticatedAccount({ isAdmin: true, role: 'member', tags: [] }),
     );
     client.send({
       type: 'create_session',
-      payload: { title: 'CEO 会话', agentProfileId: 'otto-enterprise-ceo' },
+      payload: { title: '企业工作会话', agentProfileId: 'otto-enterprise-work' },
     });
     const created = await client.waitFor(
       (frame) =>
         frame.type === 'session_upsert' &&
-        frame.payload.session.agentProfileId === 'otto-enterprise-ceo',
+        frame.payload.session.agentProfileId === 'otto-enterprise-work',
     );
     if (created.type !== 'session_upsert') throw new Error('unreachable');
     const sessionId = created.payload.session.sessionId;
+    client.send({ type: 'subscribe', payload: { sessionId } });
+    await client.waitFor(
+      (frame) => frame.type === 'history' && frame.payload.sessionId === sessionId,
+    );
     const cancel = vi.fn();
     server.store.attachRuntime(sessionId, {
       async run() {},
@@ -689,25 +704,39 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     });
     server.store.setStatus(sessionId, 'thinking');
 
+    const previousHistoryCount = client.frames.filter(
+      (frame) => frame.type === 'history' && frame.payload.sessionId === sessionId,
+    ).length;
     server.setAuthenticatedEnterpriseAccount(authenticatedAccount());
     expect(cancel).toHaveBeenCalledTimes(1);
 
+    // 身份切换期间会先隔离旧 runtime 的事件，再自动恢复仍获授权会话的订阅；
+    // 桌面客户端无需依赖 activeSessionId 改变或手工重订阅。
+    await client.waitFor(
+      (frame) =>
+        frame.type === 'history'
+        && frame.payload.sessionId === sessionId
+        && client.frames.filter(
+          (seen) => seen.type === 'history' && seen.payload.sessionId === sessionId,
+        ).length > previousHistoryCount,
+    );
     client.send({
       type: 'send_user_message',
       payload: {
         sessionId,
-        content: [{ type: 'text', value: '继续执行 CEO 工作' }],
+        content: [{ type: 'text', value: '继续执行企业工作' }],
         source: 'local',
       },
     });
-    const denied = await client.waitFor(
-      (frame) =>
-        frame.type === 'error' &&
-        frame.payload.code === 'forbidden_agent_profile' &&
-        frame.payload.sessionId === sessionId,
+    const completed = await client.waitFor(
+      (frame) => frame.type === 'chat_complete' && frame.payload.sessionId === sessionId,
     );
-    expect(denied.type).toBe('error');
-    expect(server.store.getHistory(sessionId)).toHaveLength(1);
+    expect(completed.type).toBe('chat_complete');
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'error' && frame.payload.code === 'forbidden_agent_profile',
+      ),
+    ).toBe(false);
     client.close();
   });
 
@@ -888,6 +917,7 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     await vi.waitFor(() => expect(runtime.dispose).toHaveBeenCalledOnce());
     expect(runtime.cancel).toHaveBeenCalledOnce();
     expect(server.store.getRuntime(session.sessionId)).toBeUndefined();
+    expect(server.store.getSession(session.sessionId)?.status).toBe('idle');
     expect(queues.size).toBe(0);
   });
 
@@ -1073,7 +1103,44 @@ describe('OttoServer WS（mock 模式）', () => {
     if (upsert.type === 'session_upsert') {
       expect(upsert.payload.session.title).toBe('T1');
     }
+    c.send({ type: 'list_sessions', payload: {} });
+    await c.waitFor((f) => f.type === 'sessions_list');
+    expect(c.frames.some((f) => f.type === 'session_created')).toBe(false);
     c.close();
+  });
+
+  it('create_session 携带 clientRequestId 时仅向创建连接发送 session_created', async () => {
+    const creator = await connectWs(baseUrl);
+    const observer = await connectWs(baseUrl);
+    await creator.waitFor((f) => f.type === 'welcome');
+    await observer.waitFor((f) => f.type === 'welcome');
+
+    creator.send({
+      type: 'create_session',
+      payload: { title: '精确选中', clientRequestId: 'create-request-1' },
+    });
+
+    const creatorUpsert = await creator.waitFor((f) => f.type === 'session_upsert');
+    const observerUpsert = await observer.waitFor((f) => f.type === 'session_upsert');
+    const created = await creator.waitFor((f) => f.type === 'session_created');
+    if (
+      creatorUpsert.type !== 'session_upsert' ||
+      observerUpsert.type !== 'session_upsert' ||
+      created.type !== 'session_created'
+    ) {
+      throw new Error('unreachable');
+    }
+    expect(observerUpsert.payload.session).toEqual(creatorUpsert.payload.session);
+    expect(created.payload).toEqual({
+      session: creatorUpsert.payload.session,
+      clientRequestId: 'create-request-1',
+    });
+
+    observer.send({ type: 'list_sessions', payload: {} });
+    await observer.waitFor((f) => f.type === 'sessions_list');
+    expect(observer.frames.some((f) => f.type === 'session_created')).toBe(false);
+    creator.close();
+    observer.close();
   });
 
   it('list_sessions 往返', async () => {
@@ -1369,6 +1436,87 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
 
   afterEach(async () => {
     await server?.stop();
+  });
+
+  it('A2A tool-free runtime 不注入企业组织与职位上下文', async () => {
+    let capturedWorkspaceContext: string | undefined;
+    const runCompleted = vi.fn();
+    const factory: RuntimeFactory = async (store, sessionId, _model, workspaceContext) => {
+      capturedWorkspaceContext = workspaceContext;
+      return {
+        async run() {
+          store.setStatus(sessionId, 'idle');
+          runCompleted();
+        },
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      };
+    };
+    const productWorkspaceStore = new ProductWorkspaceStore({
+      rootDir: path.join(tmpHome, 'workspace-a2a-context'),
+    });
+    productWorkspaceStore.configureManager({
+      managerName: '陈晨',
+      companyName: '不应进入 A2A 提示的企业',
+    });
+    const store = new InMemorySessionStore();
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store,
+      productWorkspaceStore,
+    });
+    const captureKnowledge = vi.spyOn(
+      server as unknown as { captureKnowledgeAsync(sessionId: string): void },
+      'captureKnowledgeAsync',
+    );
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({
+      type: 'create_session',
+      payload: {
+        title: 'A2A',
+        agentProfileId: 'otto-enterprise-a2a',
+        clientRequestId: 'a2a-test-request',
+      },
+    });
+    const created = await client.waitFor(
+      (frame) => frame.type === 'session_created'
+        && frame.payload.clientRequestId === 'a2a-test-request',
+    );
+    if (created.type !== 'session_created') throw new Error('unreachable');
+    const sessionId = created.payload.session.sessionId;
+    expect(
+      client.frames.some(
+        (frame) => frame.type === 'session_upsert'
+          && frame.payload.session.sessionId === sessionId,
+      ),
+    ).toBe(false);
+    client.send({ type: 'list_sessions', payload: {} });
+    const listed = await client.waitFor((frame) => frame.type === 'sessions_list');
+    if (listed.type !== 'sessions_list') throw new Error('unreachable');
+    expect(listed.payload.sessions.some((item) => item.sessionId === sessionId)).toBe(false);
+    client.send({ type: 'subscribe', payload: { sessionId } });
+    await client.waitFor(
+      (frame) => frame.type === 'history' && frame.payload.sessionId === sessionId,
+    );
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId,
+        content: [{ type: 'text', value: '只回答这个问题' }],
+        source: 'local',
+      },
+    });
+    await vi.waitFor(() => expect(capturedWorkspaceContext).toBe(''));
+    await vi.waitFor(() => expect(runCompleted).toHaveBeenCalledOnce());
+    expect(captureKnowledge).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(store.getSession(sessionId)).toBeUndefined());
+    client.close();
   });
 
   it('ensureRuntime 懒构建去重：并发两条 send 只建一次 runtime', async () => {

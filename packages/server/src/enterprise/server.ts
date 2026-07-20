@@ -595,6 +595,11 @@ function makeHandler(
   deploymentInfo: DeploymentInfo,
   localAgentPairingEnabled: boolean,
 ) {
+  // 同一账号可能在多台桌面端同时在线。服务端对现有 direct_messages 队列做
+  // 短租约 claim，保证一条 A2A 请求同一时刻只交给一个客户端；进程异常后
+  // 租约自动过期并可重试，不新增另一套聊天存储。
+  const atoaClaims = new Map<string, number>();
+  const ATOA_CLAIM_TTL_MS = 180_000;
   return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 只需要 path/query，不使用客户端可控的 Host 或 X-Forwarded-Host 作为 URL 权威源。
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -1843,14 +1848,25 @@ function makeHandler(
       }
 
       if (path === '/enterprise/atoa/inbox' && method === 'GET') {
+        const now = Date.now();
+        for (const [key, expiresAt] of atoaClaims) {
+          if (expiresAt <= now) atoaClaims.delete(key);
+        }
+        const pending = db.listPendingAtoaRequests({
+          organizationId: memberAccount!.organizationId,
+          accountId: memberAccount!.id,
+          requestPrefix: 'OTTO_ATOA_REQUEST ',
+          responsePrefix: 'OTTO_ATOA_RESPONSE ',
+          limit: Number(url.searchParams.get('limit') || 50),
+        });
+        const claimed = pending.find((request) => {
+          const key = `${memberAccount!.organizationId}:${memberAccount!.id}:${request.id}`;
+          if ((atoaClaims.get(key) ?? 0) > now) return false;
+          atoaClaims.set(key, now + ATOA_CLAIM_TTL_MS);
+          return true;
+        });
         sendJSON(res, 200, {
-          requests: db.listPendingAtoaRequests({
-            organizationId: memberAccount!.organizationId,
-            accountId: memberAccount!.id,
-            requestPrefix: 'OTTO_ATOA_REQUEST ',
-            responsePrefix: 'OTTO_ATOA_RESPONSE ',
-            limit: Number(url.searchParams.get('limit') || 50),
-          }),
+          requests: claimed ? [claimed] : [],
         });
         return;
       }
@@ -1887,6 +1903,20 @@ function makeHandler(
             recipientAccountId: peerAccountId,
             content: body.content,
           });
+          if (body.content.startsWith('OTTO_ATOA_RESPONSE ')) {
+            try {
+              const parsed = JSON.parse(body.content.slice('OTTO_ATOA_RESPONSE '.length)) as {
+                requestId?: unknown;
+              };
+              if (typeof parsed.requestId === 'string') {
+                atoaClaims.delete(
+                  `${memberAccount!.organizationId}:${memberAccount!.id}:${parsed.requestId}`,
+                );
+              }
+            } catch {
+              // 普通/损坏消息由现有消息协议处理；不能影响私聊发送。
+            }
+          }
           sendJSON(res, 201, { message });
         } catch (error) {
           sendJSON(res, 400, { error: error instanceof Error ? error.message : '消息发送失败' });

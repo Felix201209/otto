@@ -314,6 +314,11 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return upsertSession(state, frame.payload.session);
 
     case 'session_created': {
+      if (frame.payload.session.agentProfileId === 'otto-enterprise-a2a') {
+        // A2A 由独立 runner 通过 clientRequestId 接管。它是服务端原生临时会话，
+        // 不能进入侧栏，也不能清掉用户同时发起的普通新建会话关联状态。
+        return state;
+      }
       // PR 1: 本端创建的新会话——比对 clientRequestId 精确选中
       const updated = upsertSession(state, frame.payload.session);
       if (state.pendingCreateRequestId === frame.payload.clientRequestId) {

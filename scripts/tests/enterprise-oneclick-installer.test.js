@@ -29,6 +29,10 @@ const MIGRATE_CHECK = path.resolve(
 const HEALTH_CHECK = path.resolve(
   'deployment/enterprise-oneclick/tools/health-check.mjs',
 );
+const ENV_EXAMPLE = path.resolve(
+  'deployment/enterprise-oneclick/config/enterprise.env.example',
+);
+const README = path.resolve('deployment/enterprise-oneclick/README.zh-CN.md');
 const BUNDLE_SCRIPT = path.resolve('scripts/build-enterprise-oneclick.mjs');
 
 function mode(target) {
@@ -114,6 +118,7 @@ describe('enterprise one-click schema contract', () => {
     expect(bundle).toContain("'src/enterprise/repairNotifications.js',");
     expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 3');
     expect(migrationCheck).toContain('readiness.schemaVersion !== 3');
+    expect(healthCheck).toContain('body.apiVersion !== 3');
     expect(healthCheck).toContain('body.schemaVersion !== 3');
     expect(installer).toContain('2|3) ;;');
     expect(exporter).toContain('2|3) ;;');
@@ -156,6 +161,59 @@ describe('enterprise one-click schema contract', () => {
       expect(v4.stderr).toContain('高于部署包支持的 3');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('enterprise one-click runtime configuration contract', () => {
+  it('preserves repair notification and Feishu configuration through installation', () => {
+    const envExample = readFileSync(ENV_EXAMPLE, 'utf8');
+    const common = readFileSync(COMMON_SH, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const readme = readFileSync(README, 'utf8');
+    const allowlist = common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
+    const runtimeEnv = installer.match(
+      /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
+    )?.[1] ?? '';
+    const keys = [
+      'ALIYUN_SMS_NOTIFICATION_TEMPLATE_ID',
+      'OTTO_ENTERPRISE_FEISHU_APP_ID',
+      'OTTO_ENTERPRISE_FEISHU_APP_SECRET',
+      'OTTO_ENTERPRISE_FEISHU_DOMAIN',
+    ];
+
+    for (const key of keys) {
+      expect(envExample).toMatch(new RegExp(`^${key}=`, 'm'));
+      expect(allowlist).toContain(key);
+      expect(runtimeEnv).toContain(`  ${key} "\${${key}:-}"`);
+      expect(readme).toContain(`\`${key}\``);
+    }
+  });
+});
+
+describe('enterprise one-click health contract', () => {
+  it('requires A2A and park repair capabilities in canary and acceptance docs', () => {
+    const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
+    const readme = readFileSync(README, 'utf8');
+
+    for (const capability of ['atoa', 'park_repair_v1']) {
+      expect(healthCheck).toContain(`  '${capability}',`);
+      expect(readme).toContain(`\`${capability}\``);
+    }
+  });
+});
+
+describe('enterprise one-click provenance contract', () => {
+  it('tracks every root build input in both dirty scope and source hashes', () => {
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+    const sourceScope = bundle.match(/const sourceScope = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+    const sourceInputFiles = bundle.match(
+      /const sourceInputFiles = \[([\s\S]*?)\n\]\.sort\(\);/,
+    )?.[1] ?? '';
+
+    for (const input of ['tsconfig.json', 'scripts/build_package.js']) {
+      expect(sourceScope).toContain(`  '${input}',`);
+      expect(sourceInputFiles).toContain(`  '${input}',`);
     }
   });
 });

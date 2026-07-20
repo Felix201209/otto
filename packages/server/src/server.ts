@@ -221,7 +221,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
       loadBuiltinSkillInstructions,
     );
   }
-  if (workspaceContext) {
+  if (workspaceContext && !profile?.toolFree) {
     userRules = userRules ? `${userRules}\n\n${workspaceContext}` : workspaceContext;
   }
   const config = createCoreConfig({
@@ -231,6 +231,9 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
     ...(userRules ? { userRules } : {}),
+    disableMcpDiscovery: profile?.toolFree === true,
+    disableEnvironmentContext: profile?.toolFree === true,
+    disableTools: profile?.toolFree === true,
     ...(summary?.productEdition !== 'enterprise'
       ? {
           excludeTools: [
@@ -245,7 +248,9 @@ const defaultRuntimeFactory: RuntimeFactory = async (
         }
       : {}),
   });
-  return createCoreSessionRuntime(store, sessionId, config);
+  return createCoreSessionRuntime(store, sessionId, config, {
+    toolFree: profile?.toolFree === true,
+  });
 };
 
 export interface OttoServerOptions {
@@ -329,6 +334,10 @@ export class OttoServer {
   /** 身份安全属性变化代次；阻止旧身份下仍在初始化的 runtime 回挂。 */
   private enterpriseIdentityGeneration = 0;
   private enterpriseLeaseTimer?: ReturnType<typeof setTimeout>;
+  private readonly ephemeralSessionTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private expiredIdentityFingerprint?: string;
   private readonly runtimeFactory: RuntimeFactory;
   private readonly mock: boolean;
@@ -575,6 +584,8 @@ export class OttoServer {
     try { getProactiveService().stopScheduler(); } catch { /* ignore */ }
     this.scheduleUnsub?.();
     this.scheduleUnsub = undefined;
+    for (const timer of this.ephemeralSessionTimers.values()) clearTimeout(timer);
+    this.ephemeralSessionTimers.clear();
     // 落盘存储：停机前把挂起的去抖写盘立即落地（被动保存不丢最后一轮）。
     const flush = (this.store as { flush?: () => void }).flush;
     if (typeof flush === 'function') {
@@ -690,10 +701,21 @@ export class OttoServer {
   private invalidateEnterpriseRuntimes(): void {
     this.enterpriseIdentityGeneration += 1;
     this.messageQueues.clear();
+    const subscribedSessionIds = new Map<ClientConn, string[]>();
+    for (const conn of this.conns) {
+      subscribedSessionIds.set(conn, [...conn.subscriptions.keys()]);
+      for (const unsubscribe of conn.subscriptions.values()) unsubscribe();
+      conn.subscriptions.clear();
+    }
     for (const session of this.store.listSessions()) {
       const runtime = this.store.detachRuntime(session.sessionId);
       if (!runtime) continue;
       runtime.cancel();
+      if (session.status === 'thinking' || session.status === 'streaming') {
+        // 旧身份 runtime 已经先 detach；把会话从忙碌态释放，才能由新身份
+        // 重新建立已获授权的 runtime，而不是把下一条消息永久留在旧队列。
+        this.store.setStatus(session.sessionId, 'idle');
+      }
       void runtime.dispose().catch((error) => {
         console.warn(
           `[server] 身份切换后 runtime dispose 失败（sessionId=${session.sessionId}）：${
@@ -702,9 +724,12 @@ export class OttoServer {
         );
       });
     }
-    for (const conn of this.conns) {
-      for (const unsubscribe of conn.subscriptions.values()) unsubscribe();
-      conn.subscriptions.clear();
+    for (const [conn, sessionIds] of subscribedSessionIds) {
+      for (const sessionId of sessionIds) {
+        const session = this.store.getSession(sessionId);
+        if (!session || this.sessionAuthorizationError(session)) continue;
+        this.subscribeConn(conn, sessionId);
+      }
     }
   }
 
@@ -741,6 +766,7 @@ export class OttoServer {
   private agentProfileAuthorizationError(
     agentProfileId: string | undefined,
     workspace: ProductWorkspaceSnapshot,
+    allowLegacy = false,
   ): string | undefined {
     if (!agentProfileId) return undefined;
     const profile = resolveAgentProfile(agentProfileId);
@@ -783,6 +809,9 @@ export class OttoServer {
         return '当前成员只能使用本部门 Agent。';
       }
     }
+    if (profile.legacyOnly && !allowLegacy) {
+      return '该历史 Agent 已停止新建，请使用企业工作 Agent。';
+    }
     return undefined;
   }
 
@@ -802,6 +831,7 @@ export class OttoServer {
     return this.agentProfileAuthorizationError(
       session.agentProfileId,
       currentWorkspace,
+      true,
     );
   }
 
@@ -843,7 +873,10 @@ export class OttoServer {
   private visibleSessions(): SessionSummary[] {
     return this.store
       .listSessions()
-      .filter((session) => !this.sessionAuthorizationError(session));
+      .filter(
+        (session) => !this.store.isEphemeralSession(session.sessionId)
+          && !this.sessionAuthorizationError(session),
+      );
   }
 
   private createSessionForCurrentIdentity(
@@ -862,6 +895,49 @@ export class OttoServer {
           }
         : {}),
     });
+  }
+
+  private createEphemeralSessionForCurrentIdentity(
+    init: Partial<SessionSummary> = {},
+  ): SessionSummary {
+    const identity = this.productWorkspace.enterpriseIdentityState();
+    if (identity.status === 'expired') {
+      throw new Error('中心认证身份租约已过期，请重新登录');
+    }
+    const summary = this.store.createEphemeralSession({
+      ...init,
+      ...(identity.status === 'active'
+        ? {
+            enterpriseAccountId: identity.account.id,
+            enterpriseOrganizationId: identity.account.organizationId,
+          }
+        : {}),
+    });
+    this.scheduleEphemeralSessionCleanup(summary.sessionId);
+    return summary;
+  }
+
+  private scheduleEphemeralSessionCleanup(sessionId: string): void {
+    const existing = this.ephemeralSessionTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      void this.cleanupEphemeralSession(sessionId);
+    }, 5 * 60_000);
+    timer.unref?.();
+    this.ephemeralSessionTimers.set(sessionId, timer);
+  }
+
+  private async cleanupEphemeralSession(sessionId: string): Promise<void> {
+    const timer = this.ephemeralSessionTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.ephemeralSessionTimers.delete(sessionId);
+    this.messageQueues.delete(sessionId);
+    for (const conn of this.conns) {
+      const unsubscribe = conn.subscriptions.get(sessionId);
+      unsubscribe?.();
+      conn.subscriptions.delete(sessionId);
+    }
+    await this.store.deleteSession(sessionId);
   }
 
   /** 构建斜杠命令宿主（窄接口，注入给命令注册表使用）。 */
@@ -2426,7 +2502,10 @@ export class OttoServer {
             },
           });
         }
-        const summary = this.createSessionForCurrentIdentity({
+        const createSession = profile?.ephemeral
+          ? this.createEphemeralSessionForCurrentIdentity.bind(this)
+          : this.createSessionForCurrentIdentity.bind(this);
+        const summary = createSession({
           title: msg.payload.title,
           model: msg.payload.model ?? this.currentModel(),
           agentProfileId: profile?.id,
@@ -2446,10 +2525,21 @@ export class OttoServer {
           });
         }
         const createdSummary = this.store.getSession(summary.sessionId) ?? summary;
-        this.broadcastAll({
-          type: 'session_upsert',
-          payload: { session: createdSummary },
-        });
+        if (!profile?.ephemeral) {
+          this.broadcastAll({
+            type: 'session_upsert',
+            payload: { session: createdSummary },
+          });
+        }
+        if (msg.payload.clientRequestId !== undefined) {
+          this.send(conn.socket, {
+            type: 'session_created',
+            payload: {
+              session: createdSummary,
+              clientRequestId: msg.payload.clientRequestId,
+            },
+          });
+        }
         return;
       }
       case 'send_user_message':
@@ -3150,10 +3240,20 @@ export class OttoServer {
         ),
       );
     }
-    await runtime.run(content, source);
+    const ephemeral = this.store.isEphemeralSession(sessionId);
+    try {
+      await runtime.run(content, source);
 
-    this.captureKnowledgeAsync(sessionId);
-    this.drainQueuedMessages(sessionId, conn);
+      const completedProfile = resolveAgentProfile(
+        this.store.getSession(sessionId)?.agentProfileId,
+      );
+      if (!completedProfile?.toolFree) {
+        this.captureKnowledgeAsync(sessionId);
+      }
+      if (!ephemeral) this.drainQueuedMessages(sessionId, conn);
+    } finally {
+      if (ephemeral) await this.cleanupEphemeralSession(sessionId);
+    }
   }
 
   /**
@@ -3233,7 +3333,8 @@ export class OttoServer {
 
     const summary = this.store.getSession(sessionId);
     const model = summary?.model;
-    const workspaceContext = summary?.productEdition === 'enterprise'
+    const profile = resolveAgentProfile(summary?.agentProfileId);
+    const workspaceContext = summary?.productEdition === 'enterprise' && !profile?.toolFree
       ? buildEnterpriseWorkspaceContext(this.productWorkspace.snapshot())
       : '';
     const identityGeneration = this.enterpriseIdentityGeneration;

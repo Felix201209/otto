@@ -121,37 +121,47 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
-  it('shows the fixed 9 Agents in personal mode', () => {
+  it('shows only the fixed 9 Agents in personal mode', () => {
     installBridge();
 
-    render(<RightPanel busy={false} />);
+    const { container } = render(<RightPanel busy={false} />);
 
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
     expect(screen.queryByText('企业AI自主开发')).toBeNull();
-    expect(screen.getByText('开发 AI 智能体')).toBeTruthy();
-    expect(screen.getByText('自主开发')).toBeTruthy();
+    expect(screen.queryByText('开发 AI 智能体')).toBeNull();
+    expect(screen.queryByText('自主开发')).toBeNull();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
     expect(screen.getByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeTruthy();
     expect(screen.queryByText('访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮')).toBeNull();
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
   });
 
-  it('launches the restored development AI with the server-whitelisted profile', () => {
+  it('launches the independent development AI without counting it among the fixed 9 cards', () => {
     installBridge();
     const launch = vi.fn();
 
-    render(<RightPanel busy={false} onLaunchAgentProfile={launch} />);
+    const { container } = render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="member"
+        workspace={enterpriseWorkspace()}
+        onLaunchAgentProfile={launch}
+      />,
+    );
 
     fireEvent.click(screen.getByText('自主开发'));
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({
       id: 'self-development',
       name: '自主开发',
     }));
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
   });
 
-  it('keeps the enterprise owner on its fixed 9-Agent catalog', () => {
+  it('keeps the enterprise admin on the shared enterprise-work 9-Agent catalog', () => {
     installBridge();
 
     const { container } = render(
@@ -164,10 +174,10 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    expect(screen.getByText('CEO Agent')).toBeTruthy();
+    expect(screen.getByText('企业工作 Agent')).toBeTruthy();
     expect(screen.getByText('PPT 创作专家')).toBeTruthy();
     expect(screen.getByText('品牌营销文案')).toBeTruthy();
-    expect(screen.queryByText('企业工作 Agent')).toBeNull();
+    expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('产品需求 Agent')).toBeNull();
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
   });

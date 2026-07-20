@@ -31,8 +31,10 @@ const requiredCapabilities = [
   'usage_summary',
   'admin_console',
   'direct_messages',
+  'atoa',
   'position_invites',
   'park_service_push',
+  'park_repair_v1',
 ];
 const missing = requiredCapabilities.filter(
   (capability) => !body.capabilities?.includes(capability),
@@ -40,7 +42,7 @@ const missing = requiredCapabilities.filter(
 if (
   body.status !== 'ok'
   || body.service !== 'otto-enterprise'
-  || body.apiVersion !== 2
+  || body.apiVersion !== 3
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
   || body.schemaVersion !== 3

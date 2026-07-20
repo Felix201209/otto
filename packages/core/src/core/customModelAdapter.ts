@@ -3089,13 +3089,20 @@ function* mapGeminiChunkToResponses(chunk: any): Generator<GenerateContentRespon
  *   - Same ring buffer: keep the latest N entries
  *
  * Safety:
- *   - Skipped under `vitest` so unit tests don't pollute the ring with
- *     synthetic dumps. The runner sets `VITEST` automatically.
+ *   - Disabled by default because the body contains full conversation text.
+ *     It is enabled only for an explicit `FILE_DEBUG=1` diagnostic run.
+ *   - Still skipped under `vitest` / NODE_ENV=test so tests never pollute the ring.
  *   - Atomic via `.tmp` + rename so an in-flight crash never leaves
  *     half-written / mixed-with-old-content bytes.
  */
 const GEMINI_DUMP_DIR_SEGMENTS = ['.otto-user', 'last-requests'] as const;
 const GEMINI_DUMP_RING_SIZE = 5;
+
+export function shouldDumpGeminiRequest(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.FILE_DEBUG === '1' && !env.VITEST && env.NODE_ENV !== 'test';
+}
 
 /**
  * Sanitise a model id for use as a filesystem name segment.
@@ -3118,7 +3125,7 @@ function sanitiseModelIdForFilename(raw: string | undefined): string {
 }
 
 function dumpGeminiRequest(kind: 'unary' | 'stream', modelId: string, body: unknown): void {
-  if (process.env.VITEST || process.env.NODE_ENV === 'test') return;
+  if (!shouldDumpGeminiRequest()) return;
   void (async () => {
     try {
       const os = await import('os');

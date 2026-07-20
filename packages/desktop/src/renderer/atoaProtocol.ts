@@ -87,7 +87,7 @@ export function displayDirectMessageContent(content: string): string {
   const parsed = parseAtoaMessage(content);
   if (!parsed) return content;
   if (parsed.kind === 'request') {
-    return `向对方 Otto 提问：${parsed.payload.question}\n\n等待对方 Otto 基于本机工作数据回复。`;
+    return `向对方 Otto 提问：${parsed.payload.question}\n\n等待对方确认后由其 Otto 回答；本次不会自动读取对方的工作日志或文件。`;
   }
   return `对方 Otto 回复：\n${parsed.payload.answer}`;
 }

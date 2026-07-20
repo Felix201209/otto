@@ -1212,6 +1212,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       ],
     });
 
+    const duplicatePoll = await fetch(`${base}/enterprise/atoa/inbox`, {
+      headers: { authorization: `Bearer ${bobToken}` },
+    });
+    expect(duplicatePoll.status).toBe(200);
+    await expect(duplicatePoll.json()).resolves.toEqual({ requests: [] });
+
     const replied = await fetch(`${base}/enterprise/messages/${alice.id}`, {
       method: 'POST',
       headers: {

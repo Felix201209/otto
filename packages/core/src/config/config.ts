@@ -224,6 +224,12 @@ export interface ConfigParameters {
   toolCallCommand?: string;
   mcpServerCommand?: string;
   mcpServers?: Record<string, MCPServerConfig>;
+  /** 安全的无工具会话不得在 initialize() 后台连接任何 MCP 服务。 */
+  disableMcpDiscovery?: boolean;
+  /** 隔离会话不得把 cwd、系统信息或目录树加入模型历史。 */
+  disableEnvironmentContext?: boolean;
+  /** 隔离会话在 OttoChat 的生成配置中也必须保持空工具集。 */
+  disableTools?: boolean;
   userMemory?: string;
   /** 飞书按会话隔离的个人记忆文件路径(每 chat 独立,save_memory 写此处)。 */
   feishuSessionMemoryFile?: string;
@@ -300,6 +306,9 @@ export class Config {
   private readonly toolCallCommand: string | undefined;
   private readonly mcpServerCommand: string | undefined;
   private mcpServers: Record<string, MCPServerConfig> | undefined;
+  private readonly disableMcpDiscovery: boolean;
+  private readonly disableEnvironmentContext: boolean;
+  private readonly disableTools: boolean;
   private userMemory: string;
   private feishuSessionMemoryFile: string | undefined;
   /**
@@ -386,6 +395,9 @@ export class Config {
     this.toolCallCommand = params.toolCallCommand;
     this.mcpServerCommand = params.mcpServerCommand;
     this.mcpServers = params.mcpServers;
+    this.disableMcpDiscovery = params.disableMcpDiscovery ?? false;
+    this.disableEnvironmentContext = params.disableEnvironmentContext ?? false;
+    this.disableTools = params.disableTools ?? false;
     this.userMemory = params.userMemory ?? '';
     this.feishuSessionMemoryFile = params.feishuSessionMemoryFile;
     this.memoryTokenCount = params.memoryTokenCount ?? 0; // 新增
@@ -540,12 +552,25 @@ export class Config {
     // MCP服务器异步后台加载，不阻塞初始化
     // 🎯 使用全局标志确保 MCP 发现只执行一次
     // 这避免了多个 Config 实例（特别是 VSCode 插件模式）导致 MCP 服务器重复连接和状态跳变
-    if (!isMCPDiscoveryTriggered()) {
+    if (!this.disableMcpDiscovery && !isMCPDiscoveryTriggered()) {
       markMCPDiscoveryTriggered();
       setImmediate(() => {
         this.discoverMcpToolsAsync();
       });
     }
+  }
+
+  /** 供 server 与测试确认安全会话的 MCP 隔离已进入真实 Config。 */
+  getMcpDiscoveryDisabled(): boolean {
+    return this.disableMcpDiscovery;
+  }
+
+  getEnvironmentContextDisabled(): boolean {
+    return this.disableEnvironmentContext;
+  }
+
+  getToolsDisabled(): boolean {
+    return this.disableTools;
   }
 
   /**

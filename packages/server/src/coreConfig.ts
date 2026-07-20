@@ -45,6 +45,12 @@ export interface CreateCoreConfigOptions {
   feishuMode?: boolean;
   /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
   excludeTools?: string[];
+  /** 安全无工具会话禁止真实 Config 在后台发现或连接 MCP。 */
+  disableMcpDiscovery?: boolean;
+  /** 安全隔离会话不向模型发送系统环境、cwd 或目录树。 */
+  disableEnvironmentContext?: boolean;
+  /** 安全隔离会话让 OttoChat 的基础生成配置也保持 tools=[]。 */
+  disableTools?: boolean;
   /** 覆盖搜索 API 配置（测试用）；缺省从 ~/.otto-user 读取脱敏配置与 secret。 */
   searchConfig?: SearchRuntimeConfig;
 }
@@ -115,6 +121,9 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     userRules: opts.userRules,
     feishuMode: opts.feishuMode,
     excludeTools: opts.excludeTools,
+    disableMcpDiscovery: opts.disableMcpDiscovery,
+    disableEnvironmentContext: opts.disableEnvironmentContext,
+    disableTools: opts.disableTools,
     searchProvider: searchConfig.provider,
     searchApiKey: searchConfig.apiKey,
     searchApiUrl: searchConfig.apiUrl,

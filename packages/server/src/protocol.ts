@@ -1631,6 +1631,14 @@ export function validateClientPayload(msg: {
         !isNonEmptyString(p['agentProfileId'])
       )
         return 'agentProfileId 必须是非空字符串';
+      if (
+        p['clientRequestId'] !== undefined &&
+        (
+          !isNonEmptyString(p['clientRequestId']) ||
+          p['clientRequestId'].trim().length === 0
+        )
+      )
+        return 'clientRequestId 必须是非空字符串';
       return null;
     }
     case 'send_user_message': {

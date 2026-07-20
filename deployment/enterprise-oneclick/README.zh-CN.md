@@ -104,6 +104,14 @@ chmod 600 ./enterprise.env
 - 阿里云短信四项：`ACCESS_KEY_ID`、`ACCESS_KEY_SECRET`、签名和模板；
 - 若不用包管理 Caddy，把 `OTTO_CADDY_MODE` 改为 `external`。
 
+园区报修通知为可选配置：
+
+- `ALIYUN_SMS_NOTIFICATION_TEMPLATE_ID`：报修短信通知模板；它与注册验证码的 `ALIYUN_SMS_TEMPLATE_ID` 分开配置；
+- `OTTO_ENTERPRISE_FEISHU_APP_ID` 与 `OTTO_ENTERPRISE_FEISHU_APP_SECRET`：必须成对填写，服务端只从 0600 运行配置读取；
+- `OTTO_ENTERPRISE_FEISHU_DOMAIN`：`feishu` 使用飞书中国站，`lark` 使用 Lark 国际站，留空默认飞书中国站。
+
+这些可选项留空不会阻止报修记录写入，但对应的外部通知通道不会发送。安装器会把它们写入 `/etc/otto-enterprise/enterprise.env`，不会放进迁移包或日志。
+
 `OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；空库会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
 
 `external` 表示你自行管理 Nginx/Caddy/负载均衡器。安装器不会验证外置证书、公网 health 或 404 屏蔽规则，完成提示也会明确标为“待外置代理验收”。
@@ -166,11 +174,11 @@ curl --fail --show-error \
 必须看到：
 
 - `status: ok`
-- `apiVersion: 2`
+- `apiVersion: 3`
 - `schemaVersion: 3`
 - `db: connected`
 - `sms.configured: true`
-- `capabilities` 同时包含 `direct_messages`、`position_invites`、`park_service_push`
+- `capabilities` 同时包含 `direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`
 
 浏览器验收：
 
@@ -180,7 +188,9 @@ curl --fail --show-error \
 4. 打开已有邀请落地页，确认不是 404/410；
 5. 用修复后的 Otto 客户端完成一次“邀请链接 → 短信注册 → 进入工作区 → 展开企业组织树”；
 6. 确认真实账号看到服务端组织，而不是机器上残留的本机树。
-7. 用两个测试账号互发一条私聊；再用管理员向测试成员推送一次园区服务，确认成员消息中可读。
+7. 用两个测试账号互发一条私聊，再发起一次 A2A 请求；确认接收方明确同意后才执行，且请求方收到结果；
+8. 用成员账号提交一次园区报修，确认管理员可见；若配置了短信或飞书通知，再核对对应通道真实收到通知；
+9. 用管理员向测试成员推送一次园区服务，确认成员消息中可读。
 
 注意：管理员手动“生成新邀请”会立即废止旧邀请。若只是迁移验收，不要无意点击生成按钮。
 

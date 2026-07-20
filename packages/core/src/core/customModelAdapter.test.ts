@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { callOpenAICompatibleModelStream, callAnthropicModelStream, callOpenAICompatibleModel, callAnthropicModel, callOpenAIResponsesModel, callOpenAIResponsesModelStream, callGeminiNativeModel, callGeminiNativeModelStream, parseJSONSafeExport, sanitiseGeminiToolSchemaExport, sanitiseGeminiToolsExport } from './customModelAdapter.js';
+import { callOpenAICompatibleModelStream, callAnthropicModelStream, callOpenAICompatibleModel, callAnthropicModel, callOpenAIResponsesModel, callOpenAIResponsesModelStream, callGeminiNativeModel, callGeminiNativeModelStream, parseJSONSafeExport, sanitiseGeminiToolSchemaExport, sanitiseGeminiToolsExport, shouldDumpGeminiRequest } from './customModelAdapter.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 
 // 为了测试内部函数，需要导出它（见下方的导出添加）
@@ -2376,6 +2376,14 @@ describe('customModelAdapter - OpenAI Responses API', () => {
 describe('callGeminiNativeModel', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  it('完整请求体默认不落盘，只有显式 FILE_DEBUG=1 才允许诊断 dump', () => {
+    expect(shouldDumpGeminiRequest({})).toBe(false);
+    expect(shouldDumpGeminiRequest({ FILE_DEBUG: '0' })).toBe(false);
+    expect(shouldDumpGeminiRequest({ FILE_DEBUG: '1' })).toBe(true);
+    expect(shouldDumpGeminiRequest({ FILE_DEBUG: '1', NODE_ENV: 'test' })).toBe(false);
+    expect(shouldDumpGeminiRequest({ FILE_DEBUG: '1', VITEST: 'true' })).toBe(false);
   });
 
   it('builds /v1beta/models/{id}:generateContent URL with ?key= and forwards thinkingConfig for Gemini 2.5', async () => {

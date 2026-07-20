@@ -118,8 +118,15 @@ export async function createCoreSessionRuntime(
   store: SessionStore,
   sessionId: string,
   config: Config,
+  options: CoreSessionRuntimeOptions = {},
 ): Promise<CoreSessionRuntime> {
-  const runtime = new CoreSessionRuntime(store, sessionId, config, getWorkLogger());
+  const runtime = new CoreSessionRuntime(
+    store,
+    sessionId,
+    config,
+    getWorkLogger(),
+    options,
+  );
   await runtime.initialize();
   return runtime;
 }
@@ -332,6 +339,11 @@ interface ConfirmationResult {
   payload?: ToolConfirmationResponsePayload;
 }
 
+export interface CoreSessionRuntimeOptions {
+  /** A2A 等不可信远端输入必须在运行时硬性禁止工具，而不是依赖提示词。 */
+  toolFree?: boolean;
+}
+
 export class CoreSessionRuntime implements SessionRuntime {
   private toolRegistry?: ToolRegistry;
   private abort?: AbortController;
@@ -351,6 +363,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     private readonly sessionId: string,
     private readonly config: Config,
     private readonly workLogger: WorkResultLogger = getWorkLogger(),
+    private readonly options: CoreSessionRuntimeOptions = {},
   ) {}
 
   /**
@@ -366,10 +379,12 @@ export class CoreSessionRuntime implements SessionRuntime {
     // 用户可通过 /confirm 命令切回手动确认模式。
     // this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
     // 同步 MCP 工具（若已配置）。失败仅告警，不阻塞。
-    try {
-      await this.toolRegistry.discoverMcpTools();
-    } catch {
-      // MCP 不可用不影响纯对话与内置工具。
+    if (!this.options.toolFree) {
+      try {
+        await this.toolRegistry.discoverMcpTools();
+      } catch {
+        // MCP 不可用不影响纯对话与内置工具。
+      }
     }
   }
 
@@ -602,12 +617,12 @@ export class CoreSessionRuntime implements SessionRuntime {
                 message: currentMessages[0]?.parts ?? [],
                 config: {
                   abortSignal: signal,
-                  tools: [
-                    {
-                      functionDeclarations:
-                        toolRegistry.getFunctionDeclarations(),
-                    },
-                  ],
+                  tools: this.options.toolFree
+                    ? []
+                    : [{
+                        functionDeclarations:
+                          toolRegistry.getFunctionDeclarations(),
+                      }],
                 },
               },
               promptId,
@@ -656,6 +671,7 @@ export class CoreSessionRuntime implements SessionRuntime {
           } catch (error) {
             if (
               signal.aborted ||
+              this.options.toolFree ||
               receivedMeaningfulOutput ||
               !isRetryableModelConnectionError(error)
             ) {
@@ -682,6 +698,23 @@ export class CoreSessionRuntime implements SessionRuntime {
           break;
         }
 
+        // tool-free 是服务端安全边界。即使 provider 在未声明工具时仍返回了
+        // functionCall，也必须在任何工具卡或执行发生前 fail closed。
+        if (this.options.toolFree && functionCalls.length > 0) {
+          if (assistantId !== null) {
+            this.store.patchMessage(this.sessionId, assistantId, {
+              content: [{ type: 'text', value: assistantText }],
+              isStreaming: false,
+              isProcessingTools: false,
+            });
+          }
+          this.fail(
+            'tool_free_violation',
+            'A2A 安全会话拒绝了模型生成的工具调用。',
+          );
+          break;
+        }
+
         // 无工具调用：本轮即终轮，定稿 assistant 消息并收口。
         if (functionCalls.length === 0) {
           if (assistantId === null) {
@@ -705,7 +738,11 @@ export class CoreSessionRuntime implements SessionRuntime {
               text: assistantText,
             },
           });
-          await this.recordWorkResult(input, assistantText);
+          // A2A 输入来自其他员工。tool-free 会话不仅不能调用工具，也不能把
+          // 远端问题写进本机工作日志或触发 AutoSkill/习惯分析等状态变化。
+          if (!this.options.toolFree) {
+            await this.recordWorkResult(input, assistantText);
+          }
 
           this.store.setStatus(this.sessionId, 'idle');
           break;

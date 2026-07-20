@@ -82,4 +82,27 @@ describe('PersistentSessionStore 落盘 + 重启恢复', () => {
     const hist = b.getHistory(s.sessionId);
     expect(hist[0].isStreaming).toBe(false);
   });
+
+  it('临时 A2A 会话只存在内存，消息与状态变化也绝不落盘', async () => {
+    const db = tmpDb();
+    const a = new PersistentSessionStore(db);
+    const session = a.createEphemeralSession({
+      title: 'A2A 临时会话',
+      agentProfileId: 'otto-enterprise-a2a',
+    });
+    a.appendMessage(session.sessionId, {
+      role: 'user',
+      source: 'local',
+      content: [{ type: 'text', value: '来自同事的问题' }],
+    });
+    a.setStatus(session.sessionId, 'thinking');
+    a.flush();
+
+    expect(a.isEphemeralSession(session.sessionId)).toBe(true);
+    expect(a.getHistory(session.sessionId)).toHaveLength(1);
+    expect(new PersistentSessionStore(db).listSessions()).toHaveLength(0);
+
+    await a.deleteSession(session.sessionId);
+    expect(a.isEphemeralSession(session.sessionId)).toBe(false);
+  });
 });

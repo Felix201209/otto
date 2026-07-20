@@ -83,6 +83,9 @@ interface SessionState {
  */
 export interface SessionStore {
   createSession(init?: Partial<SessionSummary>): SessionSummary;
+  /** 仅驻留内存的内部会话；不得被持久化，供 A2A 等一次性安全任务使用。 */
+  createEphemeralSession(init?: Partial<SessionSummary>): SessionSummary;
+  isEphemeralSession(sessionId: string): boolean;
   /** 飞书会话按 chatId 取或建（保证 feishu chatId ↔ session 一一对应）。 */
   getOrCreateFeishuSession(chatId: string, title?: string): SessionSummary;
   getSession(sessionId: string): SessionSummary | undefined;
@@ -146,6 +149,7 @@ const DEFAULT_MAX_MESSAGES_PER_SESSION = 1000;
  */
 export class InMemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionState>();
+  private readonly ephemeralSessionIds = new Set<string>();
   /** feishu chatId → sessionId 索引，保证一一对应。 */
   private readonly feishuIndex = new Map<string, string>();
   /** 会话淘汰监听者（FeishuAdapter 订阅以摘除回推桥）。 */
@@ -200,6 +204,7 @@ export class InMemorySessionStore implements SessionStore {
       this.feishuIndex.delete(s.summary.feishuChatId);
     }
     this.sessions.delete(sessionId);
+    this.ephemeralSessionIds.delete(sessionId);
     void s.runtime?.dispose().catch((e) => {
       // dispose 失败不影响淘汰流程，但留一条日志便于排查资源泄漏。
       console.warn(
@@ -216,6 +221,21 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   createSession(init: Partial<SessionSummary> = {}): SessionSummary {
+    return this.createSessionState(init, false);
+  }
+
+  createEphemeralSession(init: Partial<SessionSummary> = {}): SessionSummary {
+    return this.createSessionState(init, true);
+  }
+
+  isEphemeralSession(sessionId: string): boolean {
+    return this.ephemeralSessionIds.has(sessionId);
+  }
+
+  private createSessionState(
+    init: Partial<SessionSummary>,
+    ephemeral: boolean,
+  ): SessionSummary {
     const now = Date.now();
     const sessionId = init.sessionId ?? randomUUID();
     const summary: SessionSummary = {
@@ -240,6 +260,7 @@ export class InMemorySessionStore implements SessionStore {
       messages: [],
       subscribers: new Set(),
     });
+    if (ephemeral) this.ephemeralSessionIds.add(sessionId);
     if (summary.feishuChatId) {
       this.feishuIndex.set(summary.feishuChatId, sessionId);
     }
@@ -422,6 +443,7 @@ export class InMemorySessionStore implements SessionStore {
       this.feishuIndex.delete(s.summary.feishuChatId);
     }
     this.sessions.delete(sessionId);
+    this.ephemeralSessionIds.delete(sessionId);
   }
 
   private requireSession(sessionId: string): SessionState {

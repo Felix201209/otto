@@ -29,13 +29,13 @@ function account(overrides: Partial<EnterpriseAccount> = {}): EnterpriseAccount 
 }
 
 describe('resolveCentralEnterpriseIdentity', () => {
-  it('只由 isAdmin 决定管理员目录，管理员固定为 CEO + 8 个通用专家', () => {
+  it('企业管理员与其他员工一样固定为企业工作 Agent + 8 个通用专家', () => {
     const view = resolveCentralEnterpriseIdentity(account({ isAdmin: true }));
 
     expect(view.edition).toBe('enterprise');
     expect(view.role).toBe('company_admin');
     expect(view.profiles).toHaveLength(9);
-    expect(view.profiles[0]?.id).toBe('otto-enterprise-ceo');
+    expect(view.profiles[0]?.id).toBe('otto-enterprise-work');
   });
 
   it('忽略 role 和 tags 的自升权信息，普通成员固定为 work + 8 个通用专家', () => {

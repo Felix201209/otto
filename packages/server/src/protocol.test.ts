@@ -419,6 +419,23 @@ describe('validateClientPayload：v1.7 产品工作区', () => {
     })).toContain('agentProfileId');
   });
 
+  it('create_session 的 clientRequestId 可选，存在时必须是非空字符串', () => {
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'create_session',
+      payload: { title: '会议', clientRequestId: 'create-request-1' },
+    })).toBeNull();
+    for (const clientRequestId of ['', '   ', 42]) {
+      expect(validateClientPayload({
+        type: 'create_session',
+        payload: { title: '会议', clientRequestId },
+      })).toContain('clientRequestId');
+    }
+  });
+
   it('管理者建档和加入企业严格校验必填字段', () => {
     expect(validateClientPayload({
       type: 'configure_enterprise',

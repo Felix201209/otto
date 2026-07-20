@@ -61,6 +61,10 @@ import {
   buildAtoaResponse,
   parseAtoaMessage,
 } from './atoaProtocol.js';
+import {
+  askLocalPeerOtto,
+  normalizePeerOttoQuestion,
+} from './peerOttoRunner.js';
 import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
@@ -77,61 +81,6 @@ const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
-
-type WorkLogDay = Awaited<ReturnType<Window['otto']['workLogRecent']>>[number];
-
-function isAvailabilityQuestion(question: string): boolean {
-  return /有空|忙|时间|方便|空闲|available|free|busy|schedule|when/i.test(question);
-}
-
-function summarizeWorkLogDay(day: WorkLogDay | undefined): string {
-  if (!day || day.entries.length === 0) return '当天暂无可用工作日志。';
-  const results = day.entries
-    .filter((entry) => entry.entryType === 'work_result')
-    .slice(0, 3)
-    .map((entry) => entry.taskTitle || entry.action)
-    .filter(Boolean);
-  return results.length > 0
-    ? `${day.date} 已有 ${day.entries.length} 条工作记录，成果包括：${results.join('、')}。`
-    : `${day.date} 已有 ${day.entries.length} 条工作记录，但没有明确标记为成果的条目。`;
-}
-
-async function buildPeerOttoAnswer(question: string): Promise<string> {
-  let todaySummary = '暂时无法读取今天的工作日志。';
-  let recentSummary = '暂时无法读取近期工作日志。';
-  try {
-    const [today, recent] = await Promise.all([
-      window.otto.workLogToday().catch(() => null),
-      window.otto.workLogRecent(7).catch(() => []),
-    ]);
-    if (today) {
-      todaySummary = today.summary
-        || `今天有 ${today.totalActions} 条记录、${today.workResults} 项成果。`;
-    }
-    const recentDays = recent.filter((day) => day.entries.length > 0);
-    recentSummary = recentDays.length > 0
-      ? recentDays.slice(0, 3).map(summarizeWorkLogDay).join('\n')
-      : '最近 7 天暂无可用工作日志。';
-  } catch {
-    // 工作日志是辅助上下文；不可用时仍返回明确、保守的答复。
-  }
-
-  if (isAvailabilityQuestion(question)) {
-    return [
-      '我是对方的 Otto，只能基于对方本机允许读取的工作日志做谨慎判断。',
-      todaySummary,
-      recentSummary,
-      '结论：我不能替对方承诺一定有空。建议发送一个具体时间段，请对方本人确认。',
-    ].join('\n');
-  }
-  return [
-    '我是对方的 Otto，已基于对方本机允许读取的工作日志做初步判断。',
-    `你的问题：${question}`,
-    todaySummary,
-    recentSummary,
-    '以上只覆盖工作日志中可验证的信息；需要本人决定或日志未记录的事项，请继续让对方确认。',
-  ].join('\n');
-}
 
 export function App(): React.JSX.Element {
   const auth = useEnterpriseAuth();
@@ -199,6 +148,7 @@ function OttoWorkspaceApp({
   useEffect(() => {
     if (account.accountType === 'personal') return undefined;
     const processing = new Set<string>();
+    const abortController = new AbortController();
     let polling = false;
     let cancelled = false;
 
@@ -208,9 +158,32 @@ function OttoWorkspaceApp({
       if (processing.has(request.id)) return;
       const parsed = parseAtoaMessage(request.content);
       if (parsed?.kind !== 'request') return;
+      const approvedQuestion = normalizePeerOttoQuestion(parsed.payload.question);
       processing.add(request.id);
       try {
-        const answer = await buildPeerOttoAnswer(parsed.payload.question);
+        const approved = window.confirm([
+          '一位企业同事请求让你的 Otto 回答下面的问题：',
+          '',
+          approvedQuestion,
+          '',
+          '是否允许当前配置模型回答？该模型可能由第三方云服务处理。本次不会把工作日志或文件内容作为回答上下文，且服务器会强制禁用全部工具。',
+        ].join('\n'));
+        let answer = '对方暂未授权其 Otto 自动回答这个问题，请直接在员工私聊中联系本人。';
+        if (approved) {
+          try {
+            answer = await askLocalPeerOtto({
+              question: approvedQuestion,
+              workContext: '本次未提供员工工作日志、文件或其他私有上下文。',
+              requestId: `a2a-${request.id}`,
+              clientMessageId: `a2a-reply-${request.id}`,
+              signal: abortController.signal,
+            });
+          } catch {
+            if (cancelled || abortController.signal.aborted) return;
+            // 给同一私聊写入一次明确失败回执，避免每 8 秒重复弹窗和烧模型费用。
+            answer = '对方 Otto 本次未能完成回答，请直接在员工私聊中联系本人或稍后重新发起。';
+          }
+        }
         await window.otto.enterpriseMessageSend(
           request.peerAccountId,
           buildAtoaResponse({
@@ -249,6 +222,7 @@ function OttoWorkspaceApp({
     const timer = window.setInterval(() => void poll(), 8_000);
     return () => {
       cancelled = true;
+      abortController.abort();
       window.clearInterval(timer);
     };
   }, [account.accountType, account.id]);

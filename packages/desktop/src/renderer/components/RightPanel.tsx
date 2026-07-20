@@ -266,36 +266,40 @@ export function RightPanel({
               </div>
             ) : null}
 
-            <div className="otto-right-panel__waist" role="separator" />
-            <button
-              type="button"
-              className="otto-right-panel__grouphead"
-              onClick={() => setDevelopmentOpen((value) => !value)}
-              aria-expanded={developmentOpen}
-            >
-              <span>开发 AI 智能体</span>
-              <IconChevronDown
-                size={14}
-                className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
-              />
-            </button>
-            {developmentOpen ? (
-              <div className="otto-expert-list">
+            {mode === 'enterprise' ? (
+              <>
+                <div className="otto-right-panel__waist" role="separator" />
                 <button
                   type="button"
-                  className="otto-expert-card"
-                  onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
-                  title={SELF_DEVELOPMENT_PROFILE.tagline}
+                  className="otto-right-panel__grouphead"
+                  onClick={() => setDevelopmentOpen((value) => !value)}
+                  aria-expanded={developmentOpen}
                 >
-                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                    <IconTerminal size={17} />
-                  </span>
-                  <span className="otto-expert-card__body">
-                    <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
-                    <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
-                  </span>
+                  <span>开发 AI 智能体</span>
+                  <IconChevronDown
+                    size={14}
+                    className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
+                  />
                 </button>
-              </div>
+                {developmentOpen ? (
+                  <div className="otto-expert-list">
+                    <button
+                      type="button"
+                      className="otto-expert-card"
+                      onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
+                      title={SELF_DEVELOPMENT_PROFILE.tagline}
+                    >
+                      <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
+                        <IconTerminal size={17} />
+                      </span>
+                      <span className="otto-expert-card__body">
+                        <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
+                        <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </>
             ) : null}
 
             <div className="otto-right-panel__waist" role="separator" />
