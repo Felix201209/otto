@@ -429,7 +429,9 @@ function tokensMatch(a: string, b: string): boolean {
 }
 
 function isAdminRoute(path: string): boolean {
-  return ADMIN_ROUTES.has(path) || path.startsWith('/enterprise/accounts/');
+  return ADMIN_ROUTES.has(path)
+    || path.startsWith('/enterprise/accounts/')
+    || path.startsWith('/enterprise/platform/organizations/');
 }
 
 function isMemberRoute(path: string): boolean {
@@ -1382,7 +1384,7 @@ function makeHandler(
           sendJSON(res, 403, { error: 'forbidden: platform admin token required' });
           return;
         }
-        sendJSON(res, 200, { organizations: db.listOrganizations() });
+        sendJSON(res, 200, { organizations: db.listEnterpriseOrganizations() });
         return;
       }
 
@@ -1432,6 +1434,132 @@ function makeHandler(
             sendJSON(res, 409, { error: '企业标识已存在' });
           } else throw error;
         }
+        return;
+      }
+
+      // ===== Platform-selected enterprise workspace =====
+      // 平台令牌使用显式租户路径，普通企业管理员会话不能借此切换组织。
+      // 个人注册产生的 organization 只是数据隔离容器，不属于平台企业清单，
+      // 因而 getEnterpriseOrganization 会将其按 404 处理。
+      if (path.startsWith('/enterprise/platform/organizations/')) {
+        if (adminPrincipal!.kind !== 'system') {
+          sendJSON(res, 403, { error: 'forbidden: platform admin token required' });
+          return;
+        }
+        const segments = path
+          .slice('/enterprise/platform/organizations/'.length)
+          .split('/');
+        let organizationId = '';
+        let accountId = '';
+        try {
+          organizationId = decodeURIComponent(segments[0] || '');
+          accountId = segments[2] ? decodeURIComponent(segments[2]) : '';
+        } catch {
+          sendJSON(res, 404, { error: 'Organization not found' });
+          return;
+        }
+        const organization = organizationId
+          ? db.getEnterpriseOrganization(organizationId)
+          : null;
+        if (!organization) {
+          sendJSON(res, 404, { error: 'Organization not found' });
+          return;
+        }
+        const resource = segments[1] || '';
+
+        if (segments.length === 2 && resource === 'overview' && method === 'GET') {
+          const usage = db.getOrganizationUsageSummary(organizationId, 30);
+          const usageByAccount = new Map(
+            usage.byAccount.map((row) => [row.accountId, row]),
+          );
+          const accounts = db.listAccounts(organizationId).map((account) => ({
+            ...account,
+            usage: usageByAccount.get(account.id) || {
+              accountId: account.id,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              requestCount: 0,
+              lastUsedAt: null,
+            },
+          }));
+          sendJSON(res, 200, {
+            organization,
+            accounts,
+            invite: withPublicInviteLink(
+              db.getOrganizationInvite(organizationId),
+              publicBaseUrl,
+            ),
+            usage,
+          });
+          return;
+        }
+
+        if (segments.length === 2 && resource === 'invite' && method === 'POST') {
+          const body = await readBody(req);
+          const maxUses = typeof body.maxUses === 'number' || typeof body.maxUses === 'string'
+            ? Number(body.maxUses)
+            : null;
+          const invite = withPublicInviteLink(
+            db.issueOrganizationInvite(
+              organizationId,
+              Date.now(),
+              null,
+              {
+                defaultDepartment: typeof body.defaultDepartment === 'string'
+                  ? body.defaultDepartment
+                  : null,
+                departmentId: typeof body.departmentId === 'string'
+                  ? body.departmentId
+                  : null,
+                positionId: typeof body.positionId === 'string'
+                  ? body.positionId
+                  : null,
+                positionTitle: typeof body.positionTitle === 'string'
+                  ? body.positionTitle
+                  : null,
+                defaultRole: typeof body.defaultRole === 'string'
+                  ? body.defaultRole
+                  : null,
+                maxUses,
+              },
+            ),
+            publicBaseUrl,
+          );
+          sendJSON(res, 201, { organization, invite });
+          return;
+        }
+
+        if (
+          segments.length === 3
+          && resource === 'accounts'
+          && accountId
+          && method === 'DELETE'
+        ) {
+          if (!db.getAccount(accountId, organizationId)) {
+            sendJSON(res, 404, { error: 'Account not found' });
+            return;
+          }
+          try {
+            sendJSON(
+              res,
+              200,
+              db.deleteAccount(accountId, organizationId, 'platform-admin'),
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '删除账号失败';
+            if (message === '企业至少需要保留一名可登录管理员') {
+              sendJSON(res, 409, { error: message });
+            } else if (message === 'Account not found') {
+              sendJSON(res, 404, { error: message });
+            } else {
+              throw error;
+            }
+          }
+          return;
+        }
+
+        sendJSON(res, 404, { error: `Not found: ${method} ${path}` });
         return;
       }
 
@@ -2253,6 +2381,150 @@ restoreSession();
 }
 
 function platformAdminHTML(): string {
+  if (process.env.OTTO_ENTERPRISE_PLATFORM_LEGACY_UI === '1') {
+    return legacyPlatformAdminHTML();
+  }
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Otto 平台企业工作台</title>
+<style>
+:root{--ink:#17211d;--muted:#69736e;--line:#d9e1dd;--line-strong:#c6d1cb;--paper:#f3f6f4;--panel:#fff;--subtle:#edf2ef;--accent:#176a4b;--accent-dark:#10553b;--accent-soft:#e5f1eb;--danger:#a53e35;--danger-soft:#faece9;--nav:#13241d;--nav-soft:#1d352b;--nav-line:#31483e;--shadow:0 18px 48px rgba(19,36,29,.13);--radius:11px}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}button,input{font:inherit}button{cursor:pointer}.hidden{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #2b8f68;outline-offset:2px}
+.platform-shell{min-height:100vh;display:grid;grid-template-columns:300px minmax(0,1fr)}.rail{position:sticky;top:0;height:100vh;background:var(--nav);color:#edf6f1;padding:25px 20px 20px;display:flex;flex-direction:column;overflow:hidden}.brand{font-size:25px;font-weight:850;letter-spacing:-.05em;padding:0 8px}.brand b{color:#6bd5ad}.rail-intro{padding:30px 8px 20px;border-bottom:1px solid var(--nav-line)}.eyebrow{font-size:10px;letter-spacing:.14em;font-weight:800;text-transform:uppercase;color:#59c79d}.rail-intro h1{font-size:22px;letter-spacing:-.035em;margin:8px 0 5px}.rail-intro p{font-size:12px;color:#9cb0a7;margin:0}.organization-controls{display:flex;flex-direction:column;min-height:0;flex:1}.organization-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 8px 10px}.organization-head strong{font-size:13px}.organization-count{font-size:11px;color:#8da198}.organization-search{height:38px;border:1px solid var(--nav-line);border-radius:8px;background:#1a3027;color:#eff7f3;padding:0 11px;margin:0 8px 10px;outline:none}.organization-search::placeholder{color:#758b81}.organization-search:focus{border-color:#69d5ab;box-shadow:0 0 0 3px rgba(105,213,171,.12)}.organization-nav{display:grid;gap:6px;overflow:auto;padding:0 4px 12px}.organization-button{width:100%;border:1px solid transparent;border-radius:9px;background:transparent;color:#cfddd6;padding:11px 12px;text-align:left;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}.organization-button:hover{background:#193027;border-color:#29453a}.organization-button[aria-selected="true"]{background:var(--nav-soft);border-color:#406052;color:#fff}.organization-button strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.organization-button small{display:block;color:#82988d;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.organization-state{width:7px;height:7px;border-radius:50%;background:#65d6ad;margin-top:6px}.organization-empty{padding:22px 12px;color:#82988d;font-size:12px;text-align:center}.rail-action{margin:0 8px 10px;height:41px;border:1px solid #4b6a5d;border-radius:8px;background:#213d32;color:#eff7f3;font-weight:750}.rail-action:hover{background:#29483b}.rail-foot{border-top:1px solid var(--nav-line);padding:15px 8px 0;display:grid;gap:8px}.rail-link,.rail-clear{border:0;background:transparent;color:#a9bbb2;text-decoration:none;text-align:left;padding:4px 0;font-size:12px}.rail-link:hover,.rail-clear:hover{color:#fff}
+.workspace{padding:31px clamp(24px,4vw,58px) 56px;min-width:0}.workspace-top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:23px}.workspace-top h2{font-size:30px;line-height:1.15;letter-spacing:-.04em;margin:4px 0}.workspace-top p{margin:0;color:var(--muted)}.platform-status{display:inline-flex;align-items:center;gap:7px;background:var(--accent-soft);color:#245f49;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:750}.platform-status:before{content:'';width:7px;height:7px;border-radius:50%;background:#2d966c}.auth-card,.empty-panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(19,36,29,.04)}.auth-card{max-width:720px;padding:27px}.auth-card h3{font-size:21px;letter-spacing:-.025em;margin:0 0 7px}.auth-card>p{color:var(--muted);margin:0 0 20px}.token-row{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:end}.field{display:grid;gap:6px}.field label{font-size:12px;font-weight:750;color:#46534d}.field input{height:44px;border:1px solid var(--line-strong);border-radius:8px;padding:0 12px;background:#fff;color:var(--ink);outline:none}.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,106,75,.11)}.primary,.secondary,.danger{min-height:42px;border-radius:8px;padding:0 15px;font-weight:750}.primary{border:1px solid var(--accent);background:var(--accent);color:#fff}.primary:hover{background:var(--accent-dark)}.secondary{border:1px solid var(--line-strong);background:#fff;color:var(--ink)}.secondary:hover{border-color:#91a198;background:#f8faf9}.danger{border:1px solid #d9aaa5;background:#fff;color:var(--danger)}.danger:hover,.danger.armed{border-color:var(--danger);background:var(--danger);color:#fff}.primary:disabled,.secondary:disabled,.danger:disabled{opacity:.5;cursor:default}.error,.notice{padding:10px 12px;border-radius:8px;margin-top:13px}.error{color:var(--danger);background:var(--danger-soft);border:1px solid #ecc8c2}.notice{color:#245f49;background:var(--accent-soft);border:1px solid #cfe3d8}.empty-panel{padding:60px 28px;text-align:center;color:var(--muted)}.empty-panel strong{display:block;color:var(--ink);font-size:20px;margin-bottom:5px}
+.panel-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}.panel-header h3{font-size:28px;letter-spacing:-.035em;margin:4px 0}.panel-meta{color:var(--muted);margin:0}.panel-actions{display:flex;gap:9px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:15px}.metric{padding:17px 19px;border-left:1px solid var(--line)}.metric:first-child{border-left:0}.metric strong{display:block;font-size:24px;line-height:1.2;letter-spacing:-.03em}.metric span{display:block;color:var(--muted);font-size:12px;margin-top:4px}.panel-grid{display:grid;grid-template-columns:minmax(0,1.18fr) minmax(320px,.82fr);gap:14px;margin-bottom:15px}.card{padding:20px;min-width:0}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}.card h4{font-size:17px;margin:0 0 4px}.card-copy{color:var(--muted);font-size:12px;margin:0}.invite-code{font:850 clamp(26px,3.4vw,42px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.075em;margin:19px 0 10px}.invite-meta{color:var(--muted);font-size:12px}.invite-link{display:block;margin:12px 0;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--subtle);color:#53605a;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.inline-actions{display:flex;gap:8px;flex-wrap:wrap}.department-list{display:grid;gap:8px;max-height:280px;overflow:auto}.department{border:1px solid var(--line);border-radius:9px;padding:11px 12px}.department-head{display:flex;justify-content:space-between;gap:12px;font-weight:750}.department-count{font-size:11px;color:var(--muted)}.department-members{color:var(--muted);font-size:12px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.table-card{padding:0;overflow:hidden}.table-heading{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.table-heading h4{margin:0}.table-wrap{overflow:auto}.accounts{width:100%;border-collapse:collapse;min-width:790px}.accounts th{text-align:left;font-size:11px;letter-spacing:.045em;color:#53605a;background:var(--subtle);padding:11px 14px;border-bottom:1px solid var(--line)}.accounts td{padding:13px 14px;border-top:1px solid #e9eeeb;vertical-align:middle}.accounts tbody tr:first-child td{border-top:0}.accounts tbody tr:hover td{background:#fafcfb}.name{font-weight:750}.sub{font-size:12px;color:var(--muted);margin-top:2px}.badge{display:inline-block;border-radius:999px;padding:4px 8px;background:#edf1ef;color:#46534d;font-size:11px;white-space:nowrap}.badge.ok{background:var(--accent-soft);color:#245f49}.badge.admin{background:#e7edf7;color:#365679}.table-empty{text-align:center!important;color:var(--muted);padding:35px!important}
+.modal-backdrop{position:fixed;inset:0;background:rgba(11,25,19,.55);display:grid;place-items:center;padding:20px;z-index:20}.modal{width:min(760px,100%);max-height:min(88vh,760px);overflow:auto;background:#fff;border-radius:13px;box-shadow:var(--shadow);padding:24px}.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.modal h3{font-size:22px;margin:0}.close{border:1px solid var(--line);background:#fff;border-radius:7px;width:36px;height:36px;font-size:20px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.form-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:19px}
+@media(max-width:980px){.platform-shell{grid-template-columns:260px minmax(0,1fr)}.panel-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:repeat(2,1fr)}.metric:nth-child(3){border-left:0;border-top:1px solid var(--line)}.metric:nth-child(4){border-top:1px solid var(--line)}}@media(max-width:720px){.platform-shell{display:block}.rail{position:relative;height:auto;min-height:0;overflow:visible}.organization-nav{max-height:260px}.workspace{padding:24px 16px 44px}.workspace-top,.panel-header{align-items:flex-start;flex-direction:column}.token-row,.form-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.metric{border-left:0;border-top:1px solid var(--line)}.metric:first-child{border-top:0}.panel-actions{width:100%}.panel-actions button{flex:1}}
+</style></head><body>
+<main class="platform-shell">
+  <aside class="rail">
+    <div class="brand">otto<b>✦</b></div>
+    <div class="rail-intro"><div class="eyebrow">PLATFORM CONTROL</div><h1>平台企业管理</h1><p>选择企业，再处理该企业的成员、邀请码和用量。</p></div>
+    <div id="organizationControls" class="organization-controls hidden">
+      <div class="organization-head"><strong>全部企业</strong><span id="organizationCount" class="organization-count">0 个</span></div>
+      <label class="sr-only" for="organizationSearch">搜索企业</label>
+      <input id="organizationSearch" class="organization-search" placeholder="搜索企业名称或标识">
+      <nav id="organizationNav" class="organization-nav" aria-label="全部企业"></nav>
+      <button id="openCreateOrganization" class="rail-action" type="button">＋ 新建企业</button>
+    </div>
+    <div class="rail-foot">
+      <button id="clearToken" class="rail-clear" type="button">退出平台身份</button>
+      <a class="rail-link" href="/enterprise/admin">企业管理员登录</a>
+    </div>
+  </aside>
+  <section class="workspace">
+    <header class="workspace-top"><div><div class="eyebrow">MULTI-ORGANIZATION</div><h2>企业工作台</h2><p>左侧选择企业，右侧始终只展示当前企业的数据。</p></div><span id="authStatus" class="platform-status hidden">平台身份已验证</span></header>
+    <div id="globalNotice" class="notice hidden" role="status"></div>
+    <section id="tokenGate" class="auth-card">
+      <h3>验证平台身份</h3>
+      <p>输入服务器配置的平台管理令牌。令牌只保存在当前标签页，关闭后自动清除。</p>
+      <form id="tokenForm" class="token-row">
+        <div class="field"><label for="platformToken">平台管理令牌</label><input id="platformToken" type="password" autocomplete="off" required></div>
+        <button id="openPlatform" class="primary" type="submit">进入平台工作台</button>
+      </form>
+      <div id="tokenError" class="error hidden" role="alert"></div>
+    </section>
+    <section id="emptyPanel" class="empty-panel hidden"><strong>先从左侧选择企业</strong><span>企业成员、部门目录、邀请码和用量会显示在这里。</span></section>
+    <section id="organizationPanel" class="hidden" aria-live="polite">
+      <header class="panel-header">
+        <div><div class="eyebrow">SELECTED ENTERPRISE</div><h3 id="panelTitle" tabindex="-1">企业</h3><p id="panelMeta" class="panel-meta"></p></div>
+        <div class="panel-actions"><button id="refreshPanel" class="secondary" type="button">刷新</button></div>
+      </header>
+      <div class="summary-grid">
+        <div class="metric"><strong id="metricAccounts">—</strong><span>成员账号</span></div>
+        <div class="metric"><strong id="metricAdmins">—</strong><span>企业管理员</span></div>
+        <div class="metric"><strong id="metricDepartments">—</strong><span>已分配部门</span></div>
+        <div class="metric"><strong id="metricTokens">—</strong><span>近 30 天 Token</span></div>
+      </div>
+      <div class="panel-grid">
+        <section class="card">
+          <div class="card-head"><div><h4>企业成员引入</h4><p class="card-copy">岗位邀请码精确有效 7 天；生成新码会撤销旧码。</p></div><span id="inviteStatus" class="badge">未生成</span></div>
+          <div id="inviteCode" class="invite-code">—</div>
+          <div id="inviteMeta" class="invite-meta">选择企业后加载</div>
+          <div id="inviteLink" class="invite-link">尚无可复制链接</div>
+          <div class="inline-actions"><button id="copyInviteCode" class="secondary" type="button" disabled>复制邀请码</button><button id="copyInviteLink" class="secondary" type="button" disabled>复制引入链接</button><button id="issueInvite" class="primary" type="button">生成新邀请码</button></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h4>部门成员目录</h4><p class="card-copy">当前按成员填写的部门字段分组，不伪造上下级层级。</p></div></div>
+          <div id="departmentList" class="department-list"></div>
+        </section>
+      </div>
+      <section class="card table-card">
+        <div class="table-heading"><div><h4>成员账号</h4><p class="card-copy">账号删除会立即撤销其登录会话，并保留审计记录。</p></div><span id="accountCount" class="organization-count">0 个</span></div>
+        <div class="table-wrap"><table class="accounts"><thead><tr><th scope="col">成员</th><th scope="col">部门 / 职责</th><th scope="col">权限</th><th scope="col">状态</th><th scope="col">30 天 Token</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody id="accountRows"></tbody></table></div>
+      </section>
+      <div id="panelError" class="error hidden" role="alert"></div>
+    </section>
+  </section>
+</main>
+<div id="createOrganizationModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="createOrganizationTitle">
+  <section class="modal">
+    <div class="modal-head"><div><div class="eyebrow">NEW ENTERPRISE</div><h3 id="createOrganizationTitle">新建企业</h3></div><button id="closeCreateOrganization" class="close" type="button" aria-label="关闭">×</button></div>
+    <form id="organizationForm">
+      <div class="form-grid">
+        <div class="field"><label for="organizationName">企业名称</label><input id="organizationName" maxlength="80" required placeholder="例如：星河科技"></div>
+        <div class="field"><label for="organizationSlug">企业标识</label><input id="organizationSlug" maxlength="48" pattern="[a-z0-9-]+" placeholder="可选，例如：galaxy-tech"></div>
+        <div class="field"><label for="adminUsername">首位管理员用户名</label><input id="adminUsername" autocomplete="off" required></div>
+        <div class="field"><label for="adminName">首位企业管理员姓名</label><input id="adminName" autocomplete="name" required></div>
+        <div class="field"><label for="adminPhone">管理员手机号</label><input id="adminPhone" inputmode="tel" autocomplete="tel" placeholder="可选"></div>
+        <div class="field"><label for="adminPassword">管理员初始密码</label><input id="adminPassword" type="password" minlength="8" autocomplete="new-password" required></div>
+      </div>
+      <div class="form-actions"><span id="createStatus" class="organization-count" role="status" aria-live="polite"></span><button id="cancelCreateOrganization" class="secondary" type="button">取消</button><button id="createOrganization" class="primary" type="submit">创建企业</button></div>
+      <div id="createError" class="error hidden" role="alert"></div>
+    </form>
+  </section>
+</div>
+<script>
+const KEY='otto.enterprise.platform.session';
+const SELECTED_KEY=KEY+'.organization';
+let token=sessionStorage.getItem(KEY)||'';
+let organizations=[];
+let selectedOrganizationId=sessionStorage.getItem(SELECTED_KEY)||'';
+let selectedOverview=null;
+let platformRequestEpoch=0;
+let inviteArmed=false;
+let inviteArmTimer=0;
+const $=id=>document.getElementById(id);
+function show(id,message){const element=$(id);element.textContent=message||'';element.classList.toggle('hidden',!message)}
+function formatNumber(value){return Number(value||0).toLocaleString('zh-CN')}
+function isAuthorizationError(error){return error&&((error.status===401)||(error.status===403))}
+async function api(path,options){const response=await fetch(path,Object.assign({},options||{},{headers:Object.assign({'content-type':'application/json'},options&&options.headers||{},token?{authorization:'Bearer '+token}:{})}));const data=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(data.error||('请求失败 '+response.status));error.status=response.status;throw error}return data}
+function setAuthenticated(authenticated){$('tokenGate').classList.toggle('hidden',authenticated);$('organizationControls').classList.toggle('hidden',!authenticated);$('authStatus').classList.toggle('hidden',!authenticated);$('clearToken').classList.toggle('hidden',!authenticated);if(authenticated)$('platformToken').value=''}
+function clearPlatformSession(message){platformRequestEpoch+=1;token='';organizations=[];selectedOrganizationId='';selectedOverview=null;sessionStorage.removeItem(KEY);sessionStorage.removeItem(SELECTED_KEY);setAuthenticated(false);$('organizationNav').replaceChildren();$('organizationCount').textContent='0 个';$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.add('hidden');if(message)show('tokenError',message)}
+function filteredOrganizations(){const query=$('organizationSearch').value.trim().toLocaleLowerCase('zh-CN');if(!query)return organizations;return organizations.filter(organization=>String(organization.name||'').toLocaleLowerCase('zh-CN').includes(query)||String(organization.slug||'').toLocaleLowerCase('en-US').includes(query))}
+function renderOrganizations(){const list=$('organizationNav');list.replaceChildren();const visible=filteredOrganizations();$('organizationCount').textContent=organizations.length+' 个';if(!visible.length){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent=organizations.length?'没有匹配的企业':'还没有企业，请先创建第一家企业';list.append(empty);return}visible.forEach(organization=>{const button=document.createElement('button');button.type='button';button.className='organization-button';button.dataset.organizationId=organization.id;button.setAttribute('aria-selected',String(organization.id===selectedOrganizationId));const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=String(organization.name||'未命名企业');const meta=document.createElement('small');meta.textContent=String(organization.slug||'');copy.append(name,meta);const state=document.createElement('span');state.className='organization-state';state.setAttribute('aria-label',organization.status==='active'?'正常运行':'已停用');button.append(copy,state);button.addEventListener('click',()=>selectOrganization(organization.id,true));list.append(button)})}
+function setPanelLoading(organization){selectedOverview=null;resetInviteArm();renderInvite(null);$('issueInvite').disabled=true;$('organizationPanel').classList.remove('hidden');$('emptyPanel').classList.add('hidden');$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · 正在加载企业数据…';['metricAccounts','metricAdmins','metricDepartments','metricTokens'].forEach(id=>$(id).textContent='—');$('accountRows').replaceChildren();$('departmentList').replaceChildren();show('panelError','')}
+function renderInvite(invite){const available=Boolean(invite&&invite.status==='active');$('inviteCode').textContent=available?String(invite.code||'—'):'—';$('inviteStatus').textContent=available?'有效':'未生成';$('inviteStatus').className=available?'badge ok':'badge';$('inviteMeta').textContent=available?('有效至 '+new Date(invite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 已使用 '+Number(invite.usedCount||0)+(invite.maxUses==null?' 次':' / '+Number(invite.maxUses)+' 次')):'当前企业没有有效邀请码';$('inviteLink').textContent=available?String(invite.link||''):'尚无可复制链接';$('copyInviteCode').disabled=!available;$('copyInviteLink').disabled=!available}
+function renderDepartments(accounts){const list=$('departmentList');list.replaceChildren();const groups=new Map();accounts.forEach(account=>{const department=String(account.department||'未分配部门');if(!groups.has(department))groups.set(department,[]);groups.get(department).push(account)});if(!groups.size){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无成员';list.append(empty);return}Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0],'zh-CN')).forEach(([department,members])=>{const card=document.createElement('article');card.className='department';const head=document.createElement('div');head.className='department-head';const name=document.createElement('span');name.textContent=department;const count=document.createElement('span');count.className='department-count';count.textContent=members.length+' 人';head.append(name,count);const names=document.createElement('div');names.className='department-members';names.textContent=members.map(member=>String(member.name||member.username||'未命名成员')).join('、');card.append(head,names);list.append(card)})}
+function appendCell(row,text,className){const cell=document.createElement('td');if(className)cell.className=className;cell.textContent=String(text==null?'':text);row.append(cell);return cell}
+function renderAccounts(accounts){const rows=$('accountRows');rows.replaceChildren();$('accountCount').textContent=accounts.length+' 个';if(!accounts.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.className='table-empty';cell.textContent='当前企业还没有成员账号';row.append(cell);rows.append(row);return}accounts.forEach(account=>{const row=document.createElement('tr');const member=document.createElement('td');const name=document.createElement('div');name.className='name';name.textContent=String(account.name||'未命名成员');const username=document.createElement('div');username.className='sub';username.textContent='@'+String(account.username||'');member.append(name,username);row.append(member);appendCell(row,(account.department||'未分配部门')+' / '+(account.role||'未设置职责'));const permission=appendCell(row,'');const permissionBadge=document.createElement('span');permissionBadge.className=account.isAdmin?'badge admin':'badge';permissionBadge.textContent=account.isAdmin?'企业管理员':'普通成员';permission.append(permissionBadge);const status=appendCell(row,'');const statusBadge=document.createElement('span');statusBadge.className=account.status==='active'?'badge ok':'badge';statusBadge.textContent=account.status==='active'?'正常':'已停用';status.append(statusBadge);appendCell(row,formatNumber(account.usage&&account.usage.totalTokens));const action=appendCell(row,'');const remove=document.createElement('button');remove.type='button';remove.className='danger';remove.textContent='删除';remove.setAttribute('aria-label','删除账号 '+String(account.name||account.username||''));remove.addEventListener('click',()=>deleteAccount(remove,account));action.append(remove);rows.append(row)})}
+function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts)}
+async function selectOrganization(organizationId,focusTitle){const organization=organizations.find(item=>item.id===organizationId);if(!organization)return;selectedOrganizationId=organizationId;sessionStorage.setItem(SELECTED_KEY,organizationId);renderOrganizations();setPanelLoading(organization);const epoch=++platformRequestEpoch;try{const data=await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/overview');if(epoch!==platformRequestEpoch||selectedOrganizationId!==organizationId)return;renderOverview(data);if(focusTitle)$('panelTitle').focus()}catch(error){if(epoch!==platformRequestEpoch)return;if(isAuthorizationError(error)){clearPlatformSession('平台令牌已失效，请重新验证');$('platformToken').focus()}else show('panelError',error.message||'企业面板加载失败')}}
+async function loadOrganizations(preferredId){show('tokenError','');const data=await api('/enterprise/organizations');organizations=Array.isArray(data.organizations)?data.organizations:[];setAuthenticated(true);const preferred=organizations.find(organization=>organization.id===preferredId);const current=organizations.find(organization=>organization.id===selectedOrganizationId);const next=preferred||current||organizations[0]||null;selectedOrganizationId=next?next.id:'';renderOrganizations();if(next)await selectOrganization(next.id,false);else{$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.remove('hidden')}}
+async function copyText(value,label){if(!value)return;try{await navigator.clipboard.writeText(value);show('globalNotice',label+'已复制');setTimeout(()=>show('globalNotice',''),2200)}catch{show('panelError','浏览器未允许复制，请手动选择文本')}}
+function resetInviteArm(){inviteArmed=false;$('issueInvite').textContent='生成新邀请码';$('issueInvite').classList.remove('armed');if(inviteArmTimer)clearTimeout(inviteArmTimer);inviteArmTimer=0}
+async function issueInvite(){if(!selectedOrganizationId||!selectedOverview||selectedOverview.organization.id!==selectedOrganizationId)return;if(!inviteArmed){inviteArmed=true;$('issueInvite').textContent='再次点击确认换新';$('issueInvite').classList.add('armed');inviteArmTimer=setTimeout(resetInviteArm,5000);return}const organizationId=selectedOrganizationId;resetInviteArm();$('issueInvite').disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/invite',{method:'POST',body:'{}'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','新的 7 天企业邀请码已生成')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(selectedOrganizationId===organizationId&&selectedOverview&&selectedOverview.organization.id===organizationId)$('issueInvite').disabled=false}}
+async function deleteAccount(button,account){if(!selectedOrganizationId)return;if(button.dataset.armed!=='true'){button.dataset.armed='true';button.classList.add('armed');button.textContent='再次点击确认';setTimeout(()=>{if(button.isConnected){button.dataset.armed='false';button.classList.remove('armed');button.textContent='删除'}},5000);return}const organizationId=selectedOrganizationId;button.disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(account.id),{method:'DELETE'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','账号已删除，原登录会话已撤销')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected)button.disabled=false}}
+function openCreateOrganization(){show('createError','');$('createOrganizationModal').classList.remove('hidden');$('organizationName').focus()}
+function closeCreateOrganization(force){if($('createOrganization').disabled&&!force)return;$('createOrganizationModal').classList.add('hidden');$('organizationForm').reset();show('createError','');$('createStatus').textContent=''}
+$('tokenForm').addEventListener('submit',async event=>{event.preventDefault();show('tokenError','');const supplied=$('platformToken').value.trim();if(supplied)token=supplied;$('openPlatform').disabled=true;$('openPlatform').textContent='正在验证…';try{await loadOrganizations(selectedOrganizationId);sessionStorage.setItem(KEY,token)}catch(error){clearPlatformSession(error.message||'平台令牌验证失败')}finally{$('openPlatform').disabled=false;$('openPlatform').textContent='进入平台工作台'}});
+$('organizationSearch').addEventListener('input',renderOrganizations);
+$('refreshPanel').addEventListener('click',()=>{if(selectedOrganizationId)selectOrganization(selectedOrganizationId,false)});
+$('copyInviteCode').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.code,'邀请码'));
+$('copyInviteLink').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.link,'企业引入链接'));
+$('issueInvite').addEventListener('click',issueInvite);
+$('openCreateOrganization').addEventListener('click',openCreateOrganization);
+$('closeCreateOrganization').addEventListener('click',closeCreateOrganization);
+$('cancelCreateOrganization').addEventListener('click',closeCreateOrganization);
+$('createOrganizationModal').addEventListener('click',event=>{if(event.target===$('createOrganizationModal'))closeCreateOrganization()});
+$('organizationForm').addEventListener('submit',async event=>{event.preventDefault();show('createError','');const button=$('createOrganization');button.disabled=true;$('createStatus').textContent='正在创建企业…';const body={name:$('organizationName').value.trim(),admin:{username:$('adminUsername').value.trim(),name:$('adminName').value.trim(),phone:$('adminPhone').value.trim()||null,password:$('adminPassword').value}};const slug=$('organizationSlug').value.trim();if(slug)body.slug=slug;try{const data=await api('/enterprise/organizations',{method:'POST',body:JSON.stringify(body)});closeCreateOrganization(true);show('globalNotice','企业「'+data.organization.name+'」已创建，首位管理员和 7 天邀请码已生效');await loadOrganizations(data.organization.id)}catch(error){if(isAuthorizationError(error)){closeCreateOrganization(true);clearPlatformSession('平台令牌已失效，请重新验证')}else show('createError',error.message)}finally{button.disabled=false;$('createStatus').textContent=''}});
+$('clearToken').addEventListener('click',()=>{clearPlatformSession('');$('platformToken').focus()});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('createOrganizationModal').classList.contains('hidden'))closeCreateOrganization()});
+if(token){loadOrganizations(selectedOrganizationId).then(()=>sessionStorage.setItem(KEY,token)).catch(()=>clearPlatformSession('平台令牌已失效，请重新验证'))}else setAuthenticated(false);
+</script></body></html>`;
+}
+
+function legacyPlatformAdminHTML(): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Otto 平台企业管理</title>

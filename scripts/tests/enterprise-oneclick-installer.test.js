@@ -47,7 +47,7 @@ describe('enterprise one-click service layout', () => {
       const runtime = path.join(installRoot, 'runtime');
       const nodeBin = path.join(runtime, 'node-v22', 'bin', 'node');
       const releases = path.join(installRoot, 'releases');
-      const release = path.join(releases, 'v1.8.9-test');
+      const release = path.join(releases, 'v1.9.0-test');
       const serverEntry = path.join(release, 'src', 'enterprise', 'bin.js');
 
       mkdirSync(path.dirname(nodeBin), { recursive: true, mode: 0o700 });

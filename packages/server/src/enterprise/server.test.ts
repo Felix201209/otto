@@ -722,6 +722,15 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain("api('/enterprise/organizations'");
     expect(html).toContain("method:'POST'");
     expect(html).toContain('首位企业管理员');
+    expect(html).toContain('全部企业');
+    expect(html).toContain('id="organizationNav"');
+    expect(html).toContain('id="organizationPanel"');
+    expect(html).toContain('企业工作台');
+    expect(html).toContain('成员账号');
+    expect(html).toContain('部门成员目录');
+    expect(html).toContain('/enterprise/platform/organizations/');
+    expect(html).toContain('platformRequestEpoch');
+    expect(html).not.toContain('<iframe');
     expect(html).toContain('sessionStorage');
     expect(html).not.toContain(ADMIN_TOKEN);
   });
@@ -2442,6 +2451,143 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify({ name: '越权企业', slug: 'forbidden' }),
     });
     expect(denied.status).toBe(403);
+  });
+
+  it('平台工作台按所选企业隔离面板数据，并从企业清单排除个人空间', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha-panel' });
+    const beta = db.createOrganization({ name: 'Beta 物流', slug: 'beta-panel' });
+    const alphaAdmin = db.createAccount({
+      organizationId: alpha.id,
+      username: 'alpha.panel.owner',
+      password: 'alpha-panel-password',
+      name: 'Alpha 管理员',
+      department: '研发部',
+      isAdmin: true,
+    });
+    const betaAdmin = db.createAccount({
+      organizationId: beta.id,
+      username: 'beta.panel.owner',
+      password: 'beta-panel-password',
+      name: 'Beta 管理员',
+      department: '运营部',
+      isAdmin: true,
+    });
+    const betaMember = db.createAccount({
+      organizationId: beta.id,
+      username: 'beta.panel.member',
+      password: 'beta-member-password',
+      name: 'Beta 成员',
+      department: '客户成功部',
+    });
+    const personal = db.createPersonalRegisteredAccount({
+      phone: '13800138077',
+      name: '个人用户',
+      password: 'personal-password',
+    });
+
+    const organizations = await fetch(`${base}/enterprise/organizations`, {
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+    });
+    expect(organizations.status).toBe(200);
+    const listed = (await organizations.json()) as {
+      organizations: Array<{ id: string; name: string }>;
+    };
+    expect(listed.organizations.map((organization) => organization.id)).toEqual(
+      expect.arrayContaining([alpha.id, beta.id]),
+    );
+    expect(listed.organizations.map((organization) => organization.id)).not.toContain(
+      personal.organizationId,
+    );
+
+    const overview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(overview.status).toBe(200);
+    const panel = (await overview.json()) as {
+      organization: { id: string; name: string };
+      accounts: Array<{ id: string; organizationId: string; name: string }>;
+      usage: { organizationId: string };
+    };
+    expect(panel.organization).toMatchObject({ id: beta.id, name: 'Beta 物流' });
+    expect(panel.usage.organizationId).toBe(beta.id);
+    expect(panel.accounts.map((account) => account.id)).toEqual(
+      expect.arrayContaining([betaAdmin.id, betaMember.id]),
+    );
+    expect(panel.accounts.every((account) => account.organizationId === beta.id)).toBe(true);
+    expect(panel.accounts.map((account) => account.id)).not.toContain(alphaAdmin.id);
+
+    const alphaAdminToken = await login(
+      base,
+      'alpha.panel.owner',
+      'alpha-panel-password',
+    );
+    const denied = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/overview`,
+      { headers: { authorization: `Bearer ${alphaAdminToken}` } },
+    );
+    expect(denied.status).toBe(403);
+
+    const personalOverview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(personal.organizationId)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(personalOverview.status).toBe(404);
+
+    const missing = await fetch(
+      `${base}/enterprise/platform/organizations/org_missing/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it('平台账号删除严格限定所选企业，不能用另一企业的账号 id 越权', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const alpha = db.createOrganization({ name: 'Alpha 删除边界', slug: 'alpha-delete' });
+    const beta = db.createOrganization({ name: 'Beta 删除边界', slug: 'beta-delete' });
+    const alphaAdmin = db.createAccount({
+      organizationId: alpha.id,
+      username: 'alpha.delete.owner',
+      password: 'alpha-delete-password',
+      name: 'Alpha 管理员',
+      isAdmin: true,
+    });
+    db.createAccount({
+      organizationId: beta.id,
+      username: 'beta.delete.owner',
+      password: 'beta-delete-password',
+      name: 'Beta 管理员',
+      isAdmin: true,
+    });
+    const betaMember = db.createAccount({
+      organizationId: beta.id,
+      username: 'beta.delete.member',
+      password: 'beta-member-password',
+      name: 'Beta 成员',
+    });
+
+    const crossTenant = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
+      {
+        method: 'DELETE',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+      },
+    );
+    expect(crossTenant.status).toBe(404);
+    expect(db.getAccount(alphaAdmin.id, alpha.id)).not.toBeNull();
+
+    const deleted = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
+      {
+        method: 'DELETE',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+      },
+    );
+    expect(deleted.status).toBe(200);
+    expect(db.getAccount(betaMember.id, beta.id)).toBeNull();
   });
 
   it('平台创建企业、首位管理员和邀请是原子事务，管理员冲突不会留下孤儿企业', async () => {

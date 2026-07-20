@@ -702,6 +702,43 @@ export function listOrganizations(): OrganizationView[] {
     .map(toOrganizationView);
 }
 
+/**
+ * 平台管理只列出真实企业租户。普通注册也会创建 organization 作为个人数据
+ * 隔离容器，不能把这些个人空间混入平台企业清单。
+ */
+export function listEnterpriseOrganizations(): OrganizationView[] {
+  return (getDB().prepare(
+    `SELECT o.*
+     FROM organizations o
+     WHERE EXISTS (
+       SELECT 1
+       FROM accounts a
+       WHERE a.organization_id = o.id
+         AND a.account_type = 'enterprise'
+         AND a.deleted_at IS NULL
+     )
+     ORDER BY o.name, o.slug`,
+  ).all() as OrganizationRow[]).map(toOrganizationView);
+}
+
+/** 平台企业面板只能访问企业租户，个人空间按不存在处理。 */
+export function getEnterpriseOrganization(id: string): OrganizationView | null {
+  const row = getDB().prepare(
+    `SELECT o.*
+     FROM organizations o
+     WHERE o.id = ?
+       AND EXISTS (
+         SELECT 1
+         FROM accounts a
+         WHERE a.organization_id = o.id
+           AND a.account_type = 'enterprise'
+           AND a.deleted_at IS NULL
+       )
+     LIMIT 1`,
+  ).get(id) as OrganizationRow | undefined;
+  return row ? toOrganizationView(row) : null;
+}
+
 function normalizeOrganizationInviteCode(code: string): string {
   return code.toLocaleUpperCase('en-US').replace(/[^A-Z2-9]/g, '');
 }
