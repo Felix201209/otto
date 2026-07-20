@@ -7,6 +7,7 @@ import type {
   EnterpriseAccount,
   EnterpriseRegistrationIntent,
   EnterpriseSmsChallenge,
+  EnterpriseSmsLoginChallenge,
 } from '../../preload/index.js';
 
 type AuthStatus = 'loading' | 'signed-out' | 'signed-in';
@@ -28,10 +29,15 @@ export function useEnterpriseAuth(): {
   };
   actions: {
     loginWithPassword(input: { serverUrl: string; identifier: string; password: string }): Promise<void>;
+    requestLoginCode(input: {
+      serverUrl: string;
+      phone: string;
+    }): Promise<EnterpriseSmsLoginChallenge>;
+    loginWithSms(input: { challengeId: string; code: string }): Promise<void>;
     requestRegistrationCode(input: {
       serverUrl: string;
       phone: string;
-      inviteCode: string;
+      inviteCode?: string;
     }): Promise<EnterpriseSmsChallenge>;
     register(input: { challengeId: string; code: string; name: string; password: string }): Promise<void>;
     logout(): Promise<void>;
@@ -157,7 +163,7 @@ export function useEnterpriseAuth(): {
   const requestRegistrationCode = useCallback(async (input: {
     serverUrl: string;
     phone: string;
-    inviteCode: string;
+    inviteCode?: string;
   }): Promise<EnterpriseSmsChallenge> => {
     const epoch = registrationRequestEpochRef.current + 1;
     registrationRequestEpochRef.current = epoch;
@@ -169,6 +175,50 @@ export function useEnterpriseAuth(): {
     } catch (cause) {
       if (epoch === registrationRequestEpochRef.current) setError(friendlyAuthError(cause));
       throw cause;
+    }
+  }, []);
+
+  const requestLoginCode = useCallback(async (input: {
+    serverUrl: string;
+    phone: string;
+  }): Promise<EnterpriseSmsLoginChallenge> => {
+    const epoch = registrationRequestEpochRef.current + 1;
+    registrationRequestEpochRef.current = epoch;
+    setError(null);
+    try {
+      const result = await window.otto.enterpriseSmsLoginRequest(input);
+      if (epoch === registrationRequestEpochRef.current) setServerUrl(result.serverUrl);
+      return result;
+    } catch (cause) {
+      if (epoch === registrationRequestEpochRef.current) setError(friendlyAuthError(cause));
+      throw cause;
+    }
+  }, []);
+
+  const loginWithSms = useCallback(async (input: {
+    challengeId: string;
+    code: string;
+  }): Promise<void> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.otto.enterpriseSmsLoginVerify(input);
+      if (epoch !== authEpochRef.current) return;
+      setServerUrl(result.serverUrl);
+      setAccount(result.account);
+      setRegistrationIntent(null);
+      signedInRef.current = true;
+      setStatus('signed-in');
+    } catch (cause) {
+      if (epoch !== authEpochRef.current) return;
+      signedInRef.current = false;
+      setError(friendlyAuthError(cause));
+      setStatus('signed-out');
+    } finally {
+      if (epoch === authEpochRef.current) setBusy(false);
     }
   }, []);
 
@@ -212,20 +262,30 @@ export function useEnterpriseAuth(): {
     } catch (cause) {
       if (epoch === authEpochRef.current) setError(friendlyAuthError(cause));
     } finally {
-      if (epoch !== authEpochRef.current) return;
-      signedInRef.current = false;
-      setAccount(null);
-      setStatus('signed-out');
-      setBusy(false);
+      if (epoch === authEpochRef.current) {
+        signedInRef.current = false;
+        setAccount(null);
+        setStatus('signed-out');
+        setBusy(false);
+      }
     }
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
   return useMemo(() => ({
     state: { status, busy, serverUrl, account, registrationIntent, error },
-    actions: { loginWithPassword, requestRegistrationCode, register, logout, clearError },
+    actions: {
+      loginWithPassword,
+      requestLoginCode,
+      loginWithSms,
+      requestRegistrationCode,
+      register,
+      logout,
+      clearError,
+    },
   }), [
     status, busy, serverUrl, account, registrationIntent, error,
-    loginWithPassword, requestRegistrationCode, register, logout, clearError,
+    loginWithPassword, requestLoginCode, loginWithSms,
+    requestRegistrationCode, register, logout, clearError,
   ]);
 }

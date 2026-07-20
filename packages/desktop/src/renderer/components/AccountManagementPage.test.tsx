@@ -84,6 +84,7 @@ beforeEach(() => {
       })),
       enterpriseAccountCreate: vi.fn(async () => CREATED_ACCOUNT),
       enterpriseAccountUpdate: vi.fn(async (_id, input) => ({ ...ADMIN, ...input })),
+      enterpriseAccountDelete: vi.fn(async (id) => ({ id, deleted: true as const })),
     } as unknown as Window['otto'],
   });
 });
@@ -212,6 +213,23 @@ describe('企业账号目录', () => {
     expect(screen.getByRole('cell', { name: /1,234 tokens/ })).toBeTruthy();
     expect(screen.getByText('7 次请求')).toBeTruthy();
     expect(screen.getByText(/最后使用/).getAttribute('title')).toBe('2026-07-15T08:30:00.000Z');
+  });
+
+  it('CEO 管理中心二次确认后删除其他账号，并立即从成员目录移除', async () => {
+    const remove = vi.fn(async (id: string) => ({ id, deleted: true as const }));
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [ADMIN, CREATED_ACCOUNT]),
+      enterpriseAccountDelete: remove,
+    });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑 新成员' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除账号' }));
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '确认删除账号' }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('acc_new'));
+    expect(screen.queryByText('@new.member')).toBeNull();
   });
 
   it('创建失败后保留填写内容并允许原地重试', async () => {

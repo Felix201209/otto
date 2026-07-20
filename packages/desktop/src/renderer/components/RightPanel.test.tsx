@@ -130,10 +130,25 @@ describe('RightPanel fixed Agent catalog', () => {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
     expect(screen.queryByText('企业AI自主开发')).toBeNull();
+    expect(screen.getByText('开发 AI 智能体')).toBeTruthy();
+    expect(screen.getByText('自主开发')).toBeTruthy();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
     expect(screen.getByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeTruthy();
     expect(screen.queryByText('访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮')).toBeNull();
+  });
+
+  it('launches the restored development AI with the server-whitelisted profile', () => {
+    installBridge();
+    const launch = vi.fn();
+
+    render(<RightPanel busy={false} onLaunchAgentProfile={launch} />);
+
+    fireEvent.click(screen.getByText('自主开发'));
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'self-development',
+      name: '自主开发',
+    }));
   });
 
   it('keeps the enterprise owner on its fixed 9-Agent catalog', () => {

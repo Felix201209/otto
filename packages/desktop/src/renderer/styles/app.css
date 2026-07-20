@@ -715,6 +715,10 @@ h6.otto-prose__h {
 .otto-auth-code button:hover:not(:disabled) { color: #071510; background: #c0ffdd; transform: translateY(-1px); }
 .otto-auth-code button:focus-visible { outline: 3px solid rgba(32,168,102,.2); outline-offset: 1px; }
 .otto-auth-code button:disabled { color: #64758c; background: #1a2a40; cursor: default; }
+.otto-auth-login-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid var(--auth-line); border-radius: 4px; background: #0d192b; }
+.otto-auth-login-methods button { min-height: 36px; border: 0; border-radius: 3px; color: #8192aa; background: transparent; font: 720 11px var(--otto-font); cursor: pointer; }
+.otto-auth-login-methods button[aria-pressed="true"] { color: #10251e; background: var(--auth-electric); }
+.otto-auth-login-methods button:focus-visible { outline: 2px solid rgba(168,255,208,.42); outline-offset: 2px; }
 .otto-auth-notice { margin-top: -5px; color: #9badc5; font-size: 10px; line-height: 1.5; }
 .otto-auth-organization { margin-top: -3px; padding: 9px 11px; border: 1px solid #2c604d; border-radius: 3px; color: #baf3d5; background: #102b22; font-size: 11px; font-weight: 700; }
 .otto-auth-inline-warning { margin-top: -5px; color: #ffc18a; font-size: 10px; line-height: 1.5; }
@@ -726,7 +730,7 @@ h6.otto-prose__h {
 .otto-auth-submit svg { width: 21px; height: 21px; fill: none; stroke: #10251e; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
 .otto-auth-submit:hover:not(:disabled) svg { transform: translateX(3px); }
 .otto-auth-submit:disabled { opacity: .46; cursor: default; box-shadow: none; filter: grayscale(.2); }
-.otto-auth-mode-switch { min-height: 25px; display: flex; align-items: center; justify-content: center; gap: 7px; color: #788aa4; font-size: 10px; }
+.otto-auth-mode-switch { min-height: 25px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px 11px; color: #788aa4; font-size: 10px; }
 .otto-auth-mode-switch button { padding: 3px 0; border: 0; border-bottom: 1px solid rgba(168,255,208,.55); color: var(--auth-electric); background: transparent; font: 720 10px var(--otto-font); cursor: pointer; }
 .otto-auth-mode-switch button:hover { color: #d2ffe6; border-bottom-color: #d2ffe6; }
 .otto-auth-mode-switch button:focus-visible { outline: 2px solid rgba(168,255,208,.42); outline-offset: 3px; }
@@ -858,6 +862,8 @@ h6.otto-prose__h {
 .otto-account-editor footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--otto-border); }
 .otto-account-editor footer button { padding: 9px 15px; border: 1px solid var(--otto-border); border-radius: 9px; color: var(--otto-text-secondary); background: var(--otto-surface); font-size: 11px; cursor: pointer; }
 .otto-account-editor footer button.is-primary { border-color: #10241d; color: #effff5; background: #10241d; }
+.otto-account-editor footer button.is-danger { margin-right: auto; border-color: #cf6158; color: #a72e25; background: #fff5f3; }
+.otto-account-editor footer button.is-danger:hover:not(:disabled) { color: #fff; background: #b63d34; }
 .otto-account-editor footer button:disabled { opacity: .5; cursor: default; }
 .otto-account-editor__self { margin: 11px 0 0; color: var(--otto-text-tertiary); font-size: 10.5px; text-align: right; }
 

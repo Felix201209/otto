@@ -24,7 +24,10 @@ export type ParsedAtoaMessage =
   | { kind: 'request'; payload: AtoaRequestPayload }
   | { kind: 'response'; payload: AtoaResponsePayload };
 
-export function buildAtoaRequest(question: string, id = crypto.randomUUID()): string {
+export function buildAtoaRequest(
+  question: string,
+  id: string = crypto.randomUUID(),
+): string {
   const cleanQuestion = (question.trim() || '请判断你现在是否方便处理这件事，并给出简短建议。')
     .slice(0, 1200);
   const payload: AtoaRequestPayload = {
@@ -58,7 +61,9 @@ export function parseAtoaMessage(content: string): ParsedAtoaMessage | null {
       if (payload?.v === 1 && typeof payload.id === 'string' && typeof payload.question === 'string') {
         return { kind: 'request', payload };
       }
-    } catch {}
+    } catch {
+      // 非法协议消息按普通文本处理。
+    }
   }
   if (content.startsWith(ATOA_RESPONSE_PREFIX)) {
     try {
@@ -71,7 +76,9 @@ export function parseAtoaMessage(content: string): ParsedAtoaMessage | null {
       ) {
         return { kind: 'response', payload };
       }
-    } catch {}
+    } catch {
+      // 非法协议消息按普通文本处理。
+    }
   }
   return null;
 }

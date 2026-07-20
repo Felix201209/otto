@@ -7,6 +7,7 @@ import type { AutoSkillCandidateInfo, ProductWorkspaceSnapshot } from 'otto-serv
 import {
   BASE_AGENT_PROFILES,
   getEnterpriseAgentProfiles,
+  SELF_DEVELOPMENT_PROFILE,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
@@ -18,6 +19,7 @@ import {
   IconBuilding,
   IconChevron,
   IconChevronDown,
+  IconTerminal,
 } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
@@ -68,6 +70,7 @@ export interface RightPanelProps {
   /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
   enterpriseRole?: CentralEnterpriseRole;
   workspace?: ProductWorkspaceSnapshot | null;
+  profiles?: readonly AgentProfile[];
   onLaunchAgentProfile?: (profile: AgentProfile) => void;
   onOpenAgents?: () => void;
   onOpenSkillZone?: () => void;
@@ -100,6 +103,7 @@ export function RightPanel({
   mode = 'personal',
   enterpriseRole,
   workspace = null,
+  profiles: providedProfiles,
   onLaunchAgentProfile = () => undefined,
   onOpenAgents = () => undefined,
   onOpenSkillZone = () => undefined,
@@ -122,6 +126,7 @@ export function RightPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [parkOpen, setParkOpen] = useState(true);
+  const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [collabOpen, setCollabOpen] = useState(false);
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
@@ -140,8 +145,8 @@ export function RightPanel({
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState('');
   const profiles = useMemo(
-    () => visibleProfiles(mode, enterpriseRole),
-    [enterpriseRole, mode],
+    () => providedProfiles ?? visibleProfiles(mode, enterpriseRole),
+    [enterpriseRole, mode, providedProfiles],
   );
   const authenticatedOrganization = (workspace as AuthenticatedWorkspaceSnapshot | null)
     ?.authenticatedOrganization;
@@ -256,6 +261,38 @@ export function RightPanel({
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
                     <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+
+            <div className="otto-right-panel__waist" role="separator" />
+            <button
+              type="button"
+              className="otto-right-panel__grouphead"
+              onClick={() => setDevelopmentOpen((value) => !value)}
+              aria-expanded={developmentOpen}
+            >
+              <span>开发 AI 智能体</span>
+              <IconChevronDown
+                size={14}
+                className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
+              />
+            </button>
+            {developmentOpen ? (
+              <div className="otto-expert-list">
+                <button
+                  type="button"
+                  className="otto-expert-card"
+                  onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
+                  title={SELF_DEVELOPMENT_PROFILE.tagline}
+                >
+                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
+                    <IconTerminal size={17} />
+                  </span>
+                  <span className="otto-expert-card__body">
+                    <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
+                    <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
                   </span>
                 </button>
               </div>

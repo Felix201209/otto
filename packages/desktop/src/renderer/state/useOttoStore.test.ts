@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import type {
   ServerToClient,
   SessionSummary,
@@ -702,6 +702,53 @@ describe('deleteSession / renameSession actions（发帧）', () => {
         (c) => (c[0] as { type?: string })?.type === 'rename_session',
       ),
     ).toBe(false);
+  });
+});
+
+describe('Agent profile 启动动作', () => {
+  it('A2A 本地协助会话在服务端确认后才发送一次任务提示', async () => {
+    const { view, push } = setup();
+
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt(
+        'Otto 协助：同事',
+        'otto-enterprise-work',
+        '请总结这段企业聊天。',
+      );
+    });
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'create_session',
+      payload: {
+        title: 'Otto 协助：同事',
+        agentProfileId: 'otto-enterprise-work',
+      },
+    });
+
+    push({
+      type: 'session_upsert',
+      payload: {
+        session: makeSession({
+          sessionId: 'a2a-session',
+          title: 'Otto 协助：同事',
+          agentProfileId: 'otto-enterprise-work',
+        }),
+      },
+    });
+
+    await waitFor(() => {
+      expect(sendSpy).toHaveBeenCalledWith({
+        type: 'send_user_message',
+        payload: expect.objectContaining({
+          sessionId: 'a2a-session',
+          source: 'local',
+          content: [{ type: 'text', value: '请总结这段企业聊天。' }],
+        }),
+      });
+    });
+    const sentPrompts = sendSpy.mock.calls.filter(
+      ([frame]) => (frame as { type?: string }).type === 'send_user_message',
+    );
+    expect(sentPrompts).toHaveLength(1);
   });
 });
 

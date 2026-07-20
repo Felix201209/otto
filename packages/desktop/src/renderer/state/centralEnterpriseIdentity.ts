@@ -5,6 +5,7 @@
 import type { EnterpriseAccount } from '../../preload/index.js';
 import {
   getEnterpriseAgentProfiles,
+  getPersonalAgentProfiles,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
 
@@ -15,7 +16,7 @@ import {
 export type CentralEnterpriseRole = 'company_admin' | 'member';
 
 export interface CentralEnterpriseIdentity {
-  edition: 'enterprise';
+  edition: 'personal' | 'enterprise';
   role: CentralEnterpriseRole;
   identityLabel: string;
   profiles: readonly AgentProfile[];
@@ -24,6 +25,14 @@ export interface CentralEnterpriseIdentity {
 export function resolveCentralEnterpriseIdentity(
   account: EnterpriseAccount,
 ): CentralEnterpriseIdentity {
+  if (account.accountType === 'personal') {
+    return {
+      edition: 'personal',
+      role: 'member',
+      identityLabel: `${account.name} · 个人空间`,
+      profiles: getPersonalAgentProfiles(),
+    };
+  }
   const role: CentralEnterpriseRole = account.isAdmin ? 'company_admin' : 'member';
   const identityLabel = [
     account.organizationName,

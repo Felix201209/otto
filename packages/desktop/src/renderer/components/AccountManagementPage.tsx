@@ -137,6 +137,7 @@ export function AccountManagementPage({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<EnterpriseAccount | 'new' | null>(null);
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [draft, setDraft] = useState<AccountDraft>(EMPTY_DRAFT);
   const [inviteContext, setInviteContext] = useState<EnterpriseOrganizationInviteContext | null>(null);
   const [inviteLoading, setInviteLoading] = useState(currentAccount.isAdmin);
@@ -158,6 +159,7 @@ export function AccountManagementPage({
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const invite = inviteContext?.invite;
 
   useEffect(() => {
     let cancelled = false;
@@ -197,31 +199,26 @@ export function AccountManagementPage({
   }, [currentAccount.isAdmin]);
 
   useEffect(() => {
-    if (!inviteContext?.invite) return undefined;
+    if (!invite) return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [inviteContext?.invite?.id]);
+  }, [invite]);
 
   useEffect(() => {
-    if (inviteContext?.invite) {
-      setInviteDepartment(inviteContext.invite.defaultDepartment ?? '');
-      setInvitePosition(inviteContext.invite.positionTitle ?? '');
-      setInviteRole(inviteContext.invite.defaultRole ?? '');
-      setInviteMaxUses(inviteContext.invite.maxUses == null ? '' : String(inviteContext.invite.maxUses));
+    if (invite) {
+      setInviteDepartment(invite.defaultDepartment ?? '');
+      setInvitePosition(invite.positionTitle ?? '');
+      setInviteRole(invite.defaultRole ?? '');
+      setInviteMaxUses(invite.maxUses == null ? '' : String(invite.maxUses));
     }
-  }, [
-    inviteContext?.invite?.id,
-    inviteContext?.invite?.defaultDepartment,
-    inviteContext?.invite?.positionTitle,
-    inviteContext?.invite?.defaultRole,
-    inviteContext?.invite?.maxUses,
-  ]);
+  }, [invite]);
 
   useEffect(() => {
     if (!editing) return undefined;
+    const content = contentRef.current;
     initialFocusRef.current?.focus();
     return () => {
-      contentRef.current?.removeAttribute('inert');
+      content?.removeAttribute('inert');
       restoreFocusRef.current?.focus();
       restoreFocusRef.current = null;
     };
@@ -257,6 +254,7 @@ export function AccountManagementPage({
       ? document.activeElement
       : null;
     setEditing('new');
+    setDeleteArmed(false);
     setDraft(EMPTY_DRAFT);
     setError(null);
   };
@@ -266,6 +264,7 @@ export function AccountManagementPage({
       ? document.activeElement
       : null;
     setEditing(account);
+    setDeleteArmed(false);
     setDraft({
       username: account.username,
       password: '',
@@ -281,7 +280,10 @@ export function AccountManagementPage({
   };
 
   const closeEditor = (): void => {
-    if (!saving) setEditing(null);
+    if (!saving) {
+      setEditing(null);
+      setDeleteArmed(false);
+    }
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
@@ -338,7 +340,30 @@ export function AccountManagementPage({
         return;
       }
       setEditing(null);
+      setDeleteArmed(false);
     } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteEditingAccount = async (): Promise<void> => {
+    if (!editing || editing === 'new' || editing.id === currentAccount.id) return;
+    if (!deleteArmed) {
+      setDeleteArmed(true);
+      setError(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await window.otto.enterpriseAccountDelete(editing.id);
+      setAccounts((list) => list.filter((account) => account.id !== editing.id));
+      setEditing(null);
+      setDeleteArmed(false);
+    } catch (cause) {
+      setDeleteArmed(false);
       setError(errorMessage(cause));
     } finally {
       setSaving(false);
@@ -418,9 +443,9 @@ export function AccountManagementPage({
       <header className="otto-account-hero">
         <div>
           <button type="button" className="otto-account-page__back" onClick={onBack}>← 返回工作台</button>
-          <div className="otto-account-page__eyebrow">IDENTITY &amp; ACCESS</div>
-          <h1>企业身份控制台</h1>
-          <p>集中管理登录方式、组织角色与职责标签。验证码只用于首次注册，之后使用手机号或账号加密码登录。Token 用量由客户端回传，仅用于内部观察，不等同于模型供应商账单。</p>
+          <div className="otto-account-page__eyebrow">CEO ORGANIZATION CONTROL</div>
+          <h1>CEO 企业管理中心</h1>
+          <p>集中管理成员、企业邀请、组织角色与职责标签。成员可用账号密码或手机号验证码登录；邀请码只用于加入本企业。Token 用量由客户端回传，仅用于内部观察，不等同于模型供应商账单。</p>
         </div>
         <button type="button" className="otto-account-page__create" onClick={openCreate} disabled={loading} aria-label="新增账号"><span>＋</span> 新增成员</button>
       </header>
@@ -682,7 +707,20 @@ export function AccountManagementPage({
               <label className="otto-account-editor__check"><input type="checkbox" checked={draft.isAdmin} onChange={(e) => setDraft((v) => ({ ...v, isAdmin: e.target.checked }))} /><span>授予身份管理权限</span></label>
             </div>
             {error ? <div className="otto-account-page__error" role="alert">{error}</div> : null}
-            <footer><button type="button" onClick={closeEditor} disabled={saving}>取消</button><button type="button" className="is-primary" onClick={() => void save()} disabled={saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : '保存身份'}</button></footer>
+            <footer>
+              {editing !== 'new' && editing.id !== currentAccount.id ? (
+                <button
+                  type="button"
+                  className="is-danger"
+                  onClick={() => void deleteEditingAccount()}
+                  disabled={saving}
+                >
+                  {deleteArmed ? '确认删除账号' : '删除账号'}
+                </button>
+              ) : null}
+              <button type="button" onClick={closeEditor} disabled={saving}>取消</button>
+              <button type="button" className="is-primary" onClick={() => void save()} disabled={saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : '保存身份'}</button>
+            </footer>
             {editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>
         </div>

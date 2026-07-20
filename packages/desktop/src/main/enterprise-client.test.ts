@@ -42,10 +42,14 @@ const API_V2_HEALTH = {
   apiVersion: 2,
   capabilities: [
     'password_auth',
+    'sms_login',
     'sms_registration',
+    'personal_registration',
     'organization_invites',
     'usage_summary',
     'admin_console',
+    'account_deletion',
+    'multi_organization',
     'direct_messages',
     'position_invites',
     'park_service_push',
@@ -132,6 +136,66 @@ describe('EnterpriseClient', () => {
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
     });
+  });
+
+  it('普通注册不发送邀请码，且只要求个人注册能力', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        status: 'ok',
+        apiVersion: 3,
+        capabilities: ['sms_registration', 'personal_registration'],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        challengeId: 'sms_personal',
+        expiresAt: '2099-01-01',
+        retryAfterSeconds: 60,
+        message: '已发送',
+        registrationMode: 'personal',
+        organization: null,
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+
+    const challenge = await client.requestRegistrationCode(
+      'https://enterprise.otto.test',
+      '13800138000',
+    );
+
+    expect(challenge.registrationMode).toBe('personal');
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string))
+      .toEqual({ phone: '13800138000' });
+  });
+
+  it('支持手机号验证码登录并保存会话', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        challengeId: 'sms_login_1',
+        expiresAt: '2099-01-01',
+        retryAfterSeconds: 60,
+        message: '已发送',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'sms-login-session',
+        expiresAt: '2099-01-02',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+
+    const challenge = await client.requestLoginCode(
+      'https://enterprise.otto.test',
+      '13800138000',
+    );
+    expect(challenge.challengeId).toBe('sms_login_1');
+    await expect(client.loginWithSms({
+      challengeId: challenge.challengeId,
+      code: '042731',
+    })).resolves.toMatchObject({ account: { id: ACCOUNT.id } });
+    expect(client.snapshot().token).toBe('sms-login-session');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/health',
+      'https://enterprise.otto.test/enterprise/auth/sms/request',
+      'https://enterprise.otto.test/enterprise/auth/sms/verify',
+    ]);
   });
 
   it('登录后按消息幂等键上报 provider 返回的 Token 用量', async () => {
@@ -291,6 +355,54 @@ describe('EnterpriseClient', () => {
 
     await expect(client.getOrganizationView()).rejects.toThrow('登录已失效');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('登录成员使用会话令牌读取 A2A 待处理请求', async () => {
+    const requests = [{
+      id: 'msg_atoa_1',
+      peerAccountId: 'acc_2',
+      content: 'OTTO_ATOA_REQUEST {"v":1,"id":"request-1","question":"现在方便吗？"}',
+      createdAt: '2026-07-19T12:00:00.000Z',
+    }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { requests }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.listAtoaInbox()).resolves.toEqual(requests);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/atoa/inbox');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer session-token',
+    });
+  });
+
+  it('管理员删除账号后返回删除结果', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: { ...ACCOUNT, isAdmin: true },
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        id: 'acc_staff',
+        deleted: true,
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.deleteAccount('acc_staff')).resolves.toEqual({
+      id: 'acc_staff',
+      deleted: true,
+    });
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/accounts/acc_staff');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('DELETE');
   });
 
   it('企业管理员可读取并手动换新 7 天中心引入链接', async () => {

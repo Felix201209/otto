@@ -5,7 +5,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { OttoPetStage } from './OttoPetStage.js';
 
-type LoginMode = 'login' | 'register';
+type LoginMode = 'login' | 'register' | 'join';
+type LoginMethod = 'password' | 'sms';
 
 export interface TypewriterFrame {
   phraseIndex: number;
@@ -52,13 +53,15 @@ export function sanitizeOrganizationInviteCode(value: string): string {
 
 export function isRegistrationReady(input: {
   inviteCode: string;
+  inviteRequired?: boolean;
   name: string;
   password: string;
   confirmPassword: string;
   challengeId: string;
   code: string;
 }): boolean {
-  return input.inviteCode.replace(/[^A-HJ-NP-Z2-9]/g, '').length === 8
+  return (!input.inviteRequired
+    || input.inviteCode.replace(/[^A-HJ-NP-Z2-9]/g, '').length === 8)
     && Boolean(input.name.trim())
     && input.password.length >= 8
     && input.password === input.confirmPassword
@@ -114,6 +117,8 @@ export function EnterpriseLoginPage({
   busy,
   error,
   onPasswordLogin,
+  onRequestLoginCode,
+  onSmsLogin,
   onRequestRegistrationCode,
   onRegister,
   onClearError,
@@ -123,18 +128,32 @@ export function EnterpriseLoginPage({
   busy: boolean;
   error: string | null;
   onPasswordLogin: (input: { serverUrl: string; identifier: string; password: string }) => Promise<void>;
-  onRequestRegistrationCode: (input: { serverUrl: string; phone: string; inviteCode: string }) => Promise<{
+  onRequestLoginCode?: (input: { serverUrl: string; phone: string }) => Promise<{
     challengeId: string;
     message: string;
     retryAfterSeconds: number;
-    organization: { id: string; name: string };
+  }>;
+  onSmsLogin?: (input: { challengeId: string; code: string }) => Promise<void>;
+  onRequestRegistrationCode: (input: { serverUrl: string; phone: string; inviteCode?: string }) => Promise<{
+    challengeId: string;
+    message: string;
+    retryAfterSeconds: number;
+    registrationMode?: 'personal' | 'enterprise';
+    organization: { id: string; name: string } | null;
   }>;
   onRegister: (input: { challengeId: string; code: string; name: string; password: string }) => Promise<void>;
   onClearError: () => void;
 }): React.JSX.Element {
-  const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'register' : 'login');
+  const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'join' : 'login');
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>('password');
   const [identifier, setIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginPhone, setLoginPhone] = useState('');
+  const [loginCode, setLoginCode] = useState('');
+  const [loginChallengeId, setLoginChallengeId] = useState('');
+  const [loginNotice, setLoginNotice] = useState('');
+  const [loginCountdown, setLoginCountdown] = useState(0);
+  const [loginRequesting, setLoginRequesting] = useState(false);
   const [name, setName] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -157,7 +176,7 @@ export function EnterpriseLoginPage({
   useEffect(() => {
     if (!initialInviteCode) return;
     requestEpochRef.current += 1;
-    setMode('register');
+    setMode('join');
     setInviteCode(sanitizeOrganizationInviteCode(initialInviteCode));
     setChallengeId('');
     setCode('');
@@ -174,6 +193,15 @@ export function EnterpriseLoginPage({
     return () => window.clearInterval(timer);
   }, [countdown]);
 
+  useEffect(() => {
+    if (loginCountdown <= 0) return undefined;
+    const timer = window.setInterval(
+      () => setLoginCountdown((value) => Math.max(0, value - 1)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [loginCountdown]);
+
   const requestCode = async (): Promise<void> => {
     if (formPending || requesting || countdown > 0) return;
     const requestEpoch = requestEpochRef.current + 1;
@@ -184,17 +212,49 @@ export function EnterpriseLoginPage({
       const result = await onRequestRegistrationCode({
         serverUrl: initialServerUrl.trim(),
         phone: phone.trim(),
-        inviteCode,
+        ...(mode === 'join' ? { inviteCode } : {}),
       });
       if (requestEpoch !== requestEpochRef.current) return;
       setChallengeId(result.challengeId);
       setNotice(result.message);
-      setOrganizationName(result.organization.name);
+      setOrganizationName(result.organization?.name ?? '');
       setCountdown(result.retryAfterSeconds);
     } catch {
       // 具体错误由 useEnterpriseAuth 写入 error，表单只负责结束 loading。
     } finally {
       if (requestEpoch === requestEpochRef.current) setRequesting(false);
+    }
+  };
+
+  const invalidateLoginChallenge = (): void => {
+    setLoginChallengeId('');
+    setLoginCode('');
+    setLoginNotice('');
+    setLoginCountdown(0);
+    setLoginRequesting(false);
+  };
+
+  const requestSmsLoginCode = async (): Promise<void> => {
+    if (
+      formPending
+      || loginRequesting
+      || loginCountdown > 0
+      || !onRequestLoginCode
+    ) return;
+    setLoginRequesting(true);
+    setLoginNotice('');
+    try {
+      const result = await onRequestLoginCode({
+        serverUrl: initialServerUrl.trim(),
+        phone: loginPhone.trim(),
+      });
+      setLoginChallengeId(result.challengeId);
+      setLoginNotice(result.message);
+      setLoginCountdown(result.retryAfterSeconds);
+    } catch {
+      // 具体错误由 useEnterpriseAuth 写入 error。
+    } finally {
+      setLoginRequesting(false);
     }
   };
 
@@ -209,32 +269,45 @@ export function EnterpriseLoginPage({
   };
 
   const submitAuth = async (): Promise<void> => {
-    if (formPending || requesting || submitLockedRef.current) return;
-    if (mode === 'register' && !isRegistrationReady({
+    if (formPending || requesting || loginRequesting || submitLockedRef.current) return;
+    if ((mode === 'register' || mode === 'join') && !isRegistrationReady({
       inviteCode,
+      inviteRequired: mode === 'join',
       name,
       password: registrationPassword,
       confirmPassword,
       challengeId,
       code,
     })) return;
-    if (mode === 'login' && (!identifier.trim() || !loginPassword)) return;
+    if (
+      mode === 'login'
+      && (
+        loginMethod === 'password'
+          ? (!identifier.trim() || !loginPassword)
+          : (!loginChallengeId || !/^\d{6}$/.test(loginCode) || !onSmsLogin)
+      )
+    ) return;
 
     submitLockedRef.current = true;
     setSubmitting(true);
     try {
-      if (mode === 'register') {
+      if (mode === 'register' || mode === 'join') {
         await onRegister({
           challengeId,
           code: code.trim(),
           name: name.trim(),
           password: registrationPassword,
         });
-      } else {
+      } else if (loginMethod === 'password') {
         await onPasswordLogin({
           serverUrl: initialServerUrl.trim(),
           identifier: identifier.trim(),
           password: loginPassword,
+        });
+      } else if (onSmsLogin) {
+        await onSmsLogin({
+          challengeId: loginChallengeId,
+          code: loginCode,
         });
       }
     } finally {
@@ -275,7 +348,7 @@ export function EnterpriseLoginPage({
 
       <section className="otto-auth-panel">
         <form
-          className={`otto-auth-card otto-auth-card--${mode}`}
+          className={`otto-auth-card otto-auth-card--${mode === 'login' ? 'login' : 'register'}`}
           onSubmit={(event) => {
             event.preventDefault();
             void submitAuth();
@@ -285,7 +358,7 @@ export function EnterpriseLoginPage({
           <header className="otto-auth-card__masthead">
             <span className="otto-auth-card__pixel-mark" aria-hidden><i /><i /><i /><i /></span>
             <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
-            <b>{mode === 'register' ? 'NEW ACCOUNT' : 'AUTHORIZED'}</b>
+            <b>{mode === 'login' ? 'AUTHORIZED' : mode === 'join' ? 'JOIN COMPANY' : 'NEW ACCOUNT'}</b>
           </header>
           <div
             className="otto-auth-server"
@@ -297,36 +370,44 @@ export function EnterpriseLoginPage({
           </div>
           <div className="otto-auth-card__topline">
             <span className="otto-auth-status-dot" />
-            {mode === 'register' ? '首次注册身份核验' : '此设备将安全保持登录'}
+            {mode === 'login'
+              ? '此设备将安全保持登录'
+              : mode === 'join' ? '企业成员加入' : '创建个人 Otto 账号'}
           </div>
 
-          {mode === 'register' ? (
+          {mode === 'register' || mode === 'join' ? (
             <>
-              <h2>创建 Otto 账号</h2>
+              <h2>{mode === 'join' ? '加入企业' : '创建 Otto 账号'}</h2>
               <p className="otto-auth-card__intro">
-                <span>输入管理员提供的企业邀请码。</span>{' '}
-                <span>验证码只在首次注册时使用。以后直接用手机号和密码登录。</span>
+                {mode === 'join' ? (
+                  <span>企业员工输入管理员提供的邀请码，验证后加入对应组织。</span>
+                ) : (
+                  <span>普通注册不需要企业邀请码，将创建互相隔离的个人空间。</span>
+                )}{' '}
+                <span>注册后可用账号密码或手机号验证码登录。</span>
               </p>
-              <label className="otto-auth-field otto-auth-invite-field">
-                <span>企业邀请码</span>
-                <input
-                  aria-label="企业邀请码"
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  spellCheck={false}
-                  maxLength={9}
-                  value={inviteCode}
-                  disabled={formPending}
-                  onChange={(event) => {
-                    setInviteCode(sanitizeOrganizationInviteCode(event.target.value));
-                    invalidateRegistrationChallenge();
-                    onClearError();
-                  }}
-                  placeholder="XXXX-XXXX"
-                  required
-                />
-                <small>邀请码由企业管理员生成，7 天内有效</small>
-              </label>
+              {mode === 'join' ? (
+                <label className="otto-auth-field otto-auth-invite-field">
+                  <span>企业邀请码</span>
+                  <input
+                    aria-label="企业邀请码"
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={9}
+                    value={inviteCode}
+                    disabled={formPending}
+                    onChange={(event) => {
+                      setInviteCode(sanitizeOrganizationInviteCode(event.target.value));
+                      invalidateRegistrationChallenge();
+                      onClearError();
+                    }}
+                    placeholder="XXXX-XXXX"
+                    required
+                  />
+                  <small>仅加入企业时需要，由企业管理员生成</small>
+                </label>
+              ) : null}
               <div className="otto-auth-register-grid">
                 <label className="otto-auth-field">
                   <span>姓名</span>
@@ -422,7 +503,8 @@ export function EnterpriseLoginPage({
                     onClick={() => void requestCode()}
                     disabled={formPending || requesting || countdown > 0
                       || phone.replace(/\D/g, '').length !== 11
-                      || inviteCode.replace(/[^A-Z2-9]/g, '').length !== 8}
+                      || (mode === 'join'
+                        && inviteCode.replace(/[^A-Z2-9]/g, '').length !== 8)}
                   >
                     {requesting ? '发送中…' : countdown > 0 ? `${countdown}s 后重试` : '获取验证码'}
                   </button>
@@ -439,38 +521,120 @@ export function EnterpriseLoginPage({
           ) : (
             <>
               <h2>欢迎回来</h2>
-              <p className="otto-auth-card__intro">登录后会在此设备安全保持登录，重开 Otto 会自动进入工作区。</p>
-              <label className="otto-auth-field">
-                <span>账号或手机号</span>
-                <input
-                  aria-label="账号或手机号"
-                  autoComplete="username"
-                  value={identifier}
-                  disabled={formPending}
-                  onChange={(event) => {
-                    setIdentifier(event.target.value);
+              <p className="otto-auth-card__intro">账号密码和手机号验证码是两种独立登录方式，均不需要企业邀请码。</p>
+              <div className="otto-auth-login-methods" aria-label="登录方式">
+                <button
+                  type="button"
+                  aria-pressed={loginMethod === 'password'}
+                  onClick={() => {
+                    setLoginMethod('password');
+                    invalidateLoginChallenge();
                     onClearError();
                   }}
-                  placeholder="企业账号或 11 位手机号"
-                  required
-                />
-              </label>
-              <label className="otto-auth-field">
-                <span>密码</span>
-                <input
-                  aria-label="密码"
-                  type="password"
-                  autoComplete="current-password"
-                  value={loginPassword}
-                  disabled={formPending}
-                  onChange={(event) => {
-                    setLoginPassword(event.target.value);
+                >
+                  密码登录
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={loginMethod === 'sms'}
+                  onClick={() => {
+                    setLoginMethod('sms');
+                    invalidateLoginChallenge();
                     onClearError();
                   }}
-                  placeholder="输入登录密码"
-                  required
-                />
-              </label>
+                >
+                  验证码登录
+                </button>
+              </div>
+              {loginMethod === 'password' ? (
+                <>
+                  <label className="otto-auth-field">
+                    <span>账号或手机号</span>
+                    <input
+                      aria-label="账号或手机号"
+                      autoComplete="username"
+                      value={identifier}
+                      disabled={formPending}
+                      onChange={(event) => {
+                        setIdentifier(event.target.value);
+                        onClearError();
+                      }}
+                      placeholder="账号或 11 位手机号"
+                      required
+                    />
+                  </label>
+                  <label className="otto-auth-field">
+                    <span>密码</span>
+                    <input
+                      aria-label="密码"
+                      type="password"
+                      autoComplete="current-password"
+                      value={loginPassword}
+                      disabled={formPending}
+                      onChange={(event) => {
+                        setLoginPassword(event.target.value);
+                        onClearError();
+                      }}
+                      placeholder="输入登录密码"
+                      required
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label className="otto-auth-field">
+                    <span>手机号</span>
+                    <div className="otto-auth-phone">
+                      <b>+86</b>
+                      <input
+                        aria-label="登录手机号"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        value={loginPhone}
+                        disabled={formPending}
+                        onChange={(event) => {
+                          setLoginPhone(event.target.value);
+                          invalidateLoginChallenge();
+                          onClearError();
+                        }}
+                        placeholder="11 位手机号"
+                        required
+                      />
+                    </div>
+                  </label>
+                  <label className="otto-auth-field">
+                    <span>短信验证码</span>
+                    <div className="otto-auth-code">
+                      <input
+                        aria-label="登录验证码"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        value={loginCode}
+                        disabled={formPending}
+                        onChange={(event) => {
+                          setLoginCode(sanitizeSmsCode(event.target.value));
+                          onClearError();
+                        }}
+                        placeholder="6 位验证码"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void requestSmsLoginCode()}
+                        disabled={formPending || loginRequesting || loginCountdown > 0
+                          || loginPhone.replace(/\D/g, '').length !== 11
+                          || !onRequestLoginCode}
+                      >
+                        {loginRequesting
+                          ? '发送中…'
+                          : loginCountdown > 0 ? `${loginCountdown}s 后重试` : '获取验证码'}
+                      </button>
+                    </div>
+                  </label>
+                  {loginNotice ? <div className="otto-auth-notice" role="status">{loginNotice}</div> : null}
+                </>
+              )}
             </>
           )}
 
@@ -478,10 +642,15 @@ export function EnterpriseLoginPage({
           <button
             className="otto-auth-submit"
             type="submit"
-            disabled={formPending || requesting
-              || (mode === 'login' && (!identifier.trim() || !loginPassword))
-              || (mode === 'register' && !isRegistrationReady({
+            disabled={formPending || requesting || loginRequesting
+              || (mode === 'login' && (
+                loginMethod === 'password'
+                  ? (!identifier.trim() || !loginPassword)
+                  : (!loginChallengeId || !/^\d{6}$/.test(loginCode) || !onSmsLogin)
+              ))
+              || ((mode === 'register' || mode === 'join') && !isRegistrationReady({
                 inviteCode,
+                inviteRequired: mode === 'join',
                 name,
                 password: registrationPassword,
                 confirmPassword,
@@ -489,30 +658,64 @@ export function EnterpriseLoginPage({
                 code,
               }))}
           >
-            <span>{formPending ? '正在验证身份…' : mode === 'register' ? '创建账号并进入' : '进入 Otto'}</span>
+            <span>
+              {formPending
+                ? '正在验证身份…'
+                : mode === 'login'
+                  ? '进入 Otto'
+                  : mode === 'join' ? '加入企业并进入' : '创建账号并进入'}
+            </span>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M5 12h13m-5-5 5 5-5 5" /></svg>
           </button>
 
           <div className="otto-auth-mode-switch">
-            <span>{mode === 'register' ? '已经有 Otto 账号？' : '第一次使用 Otto？'}</span>
-            <button
-              type="button"
-              disabled={formPending || requesting}
-              onClick={() => {
-                const nextMode = mode === 'register' ? 'login' : 'register';
-                invalidateRegistrationChallenge();
-                setRegistrationPassword('');
-                setConfirmPassword('');
-                setLoginPassword('');
-                setMode(nextMode);
-                onClearError();
-              }}
-            >
-              {mode === 'register' ? '已有账号，返回登录' : '注册新账号'}
-            </button>
+            <span>{mode === 'login' ? '第一次使用 Otto？' : '已经有 Otto 账号？'}</span>
+            {mode === 'login' ? (
+              <>
+                <button
+                  type="button"
+                  disabled={formPending || requesting || loginRequesting}
+                  onClick={() => {
+                    invalidateRegistrationChallenge();
+                    invalidateLoginChallenge();
+                    setMode('register');
+                    onClearError();
+                  }}
+                >
+                  普通注册
+                </button>
+                <button
+                  type="button"
+                  disabled={formPending || requesting || loginRequesting}
+                  onClick={() => {
+                    invalidateRegistrationChallenge();
+                    invalidateLoginChallenge();
+                    setMode('join');
+                    onClearError();
+                  }}
+                >
+                  使用邀请码加入企业
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={formPending || requesting}
+                onClick={() => {
+                  invalidateRegistrationChallenge();
+                  setRegistrationPassword('');
+                  setConfirmPassword('');
+                  setLoginPassword('');
+                  setMode('login');
+                  onClearError();
+                }}
+              >
+                已有账号，返回登录
+              </button>
+            )}
           </div>
 
-          <p className="otto-auth-legal"><span aria-hidden>●</span> TLS 加密连接 · 身份信息仅用于企业账号与权限管理</p>
+          <p className="otto-auth-legal"><span aria-hidden>●</span> TLS 加密连接 · 企业邀请码只用于加入组织</p>
         </form>
       </section>
     </main>

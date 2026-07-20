@@ -146,7 +146,7 @@ export interface EnterpriseProxyOptions {
   trustedProxyAddresses?: readonly string[];
 }
 
-const ENTERPRISE_API_VERSION = 2;
+const ENTERPRISE_API_VERSION = 3;
 
 /** 内存中的配对令牌存储（服务重启后自动失效）。 */
 const pairingTokens = new Map<string, {
@@ -157,11 +157,16 @@ const pairingTokens = new Map<string, {
 
 const ENTERPRISE_CAPABILITIES = [
   'password_auth',
+  'sms_login',
   'sms_registration',
+  'personal_registration',
   'organization_invites',
   'usage_summary',
   'admin_console',
+  'account_deletion',
+  'multi_organization',
   'direct_messages',
+  'atoa',
   'position_invites',
   'park_service_push',
 ] as const;
@@ -799,9 +804,79 @@ function makeHandler(
         return;
       }
 
-      if ((path === '/enterprise/auth/sms/request' || path === '/enterprise/auth/sms/verify')
-        && method === 'POST') {
-        sendJSON(res, 410, { error: '短信验证码仅用于首次注册，请使用密码登录' });
+      if (path === '/enterprise/auth/sms/request' && method === 'POST') {
+        if (!smsSender) {
+          sendJSON(res, 503, { error: '短信登录暂不可用，请稍后重试' });
+          return;
+        }
+        const body = await readBody(req);
+        const rawPhone = typeof body.phone === 'string' ? body.phone : '';
+        let phone: string;
+        try {
+          phone = db.normalizePhone(rawPhone);
+        } catch {
+          sendJSON(res, 400, { error: '请输入正确的中国大陆手机号' });
+          return;
+        }
+        const account = db.findActiveAccountByPhone(phone);
+        if (!account) {
+          sendJSON(res, 404, { error: '该手机号尚未注册或账号已停用' });
+          return;
+        }
+        const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+        const issued = db.createSmsLoginChallenge(account.id, code);
+        if (!issued.ok) {
+          res.setHeader('Retry-After', String(issued.retryAfterSeconds));
+          sendJSON(res, 429, {
+            error: issued.reason === 'cooldown'
+              ? '验证码发送过于频繁，请稍后再试'
+              : '本小时验证码发送次数已达上限',
+            retryAfterSeconds: issued.retryAfterSeconds,
+          });
+          return;
+        }
+        let sent = false;
+        try {
+          sent = await smsSender.sendVerificationCode(phone.slice(3), code);
+        } catch {
+          sent = false;
+        }
+        if (!sent) {
+          db.discardSmsLoginChallenge(issued.challengeId);
+          sendJSON(res, 502, { error: '验证码发送失败，请稍后重试' });
+          return;
+        }
+        sendJSON(res, 200, {
+          ...issued,
+          message: '验证码已发送，5 分钟内有效',
+        });
+        return;
+      }
+
+      if (path === '/enterprise/auth/sms/verify' && method === 'POST') {
+        const body = await readBody(req);
+        const challengeId = typeof body.challengeId === 'string' ? body.challengeId : '';
+        const code = typeof body.code === 'string' ? body.code.trim() : '';
+        if (!challengeId.startsWith('sms_') || !/^\d{6}$/.test(code)) {
+          sendJSON(res, 400, { error: '请输入 6 位短信验证码' });
+          return;
+        }
+        const verified = db.verifySmsLoginChallenge(challengeId, code);
+        if (!verified.ok) {
+          sendJSON(res, 401, {
+            error: verified.reason === 'locked'
+              ? '验证码错误次数过多，请重新获取'
+              : '验证码错误或已失效',
+            attemptsRemaining: verified.attemptsRemaining,
+          });
+          return;
+        }
+        const session = db.createAuthSession(verified.account.id);
+        sendJSON(res, 200, {
+          account: verified.account,
+          token: session.token,
+          expiresAt: session.expiresAt,
+        });
         return;
       }
 
@@ -811,13 +886,13 @@ function makeHandler(
           return;
         }
         const body = await readBody(req);
-        const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
-        const invite = db.resolveOrganizationInviteWithDefaults(inviteCode);
-        if (!invite) {
+        const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
+        const invite = inviteCode ? db.resolveOrganizationInviteWithDefaults(inviteCode) : null;
+        if (inviteCode && !invite) {
           sendJSON(res, 403, { error: '企业邀请码无效或已过期，请联系管理员重新生成' });
           return;
         }
-        const organization = invite.organization;
+        const organization = invite?.organization ?? db.getOrganization(db.DEFAULT_ORGANIZATION_ID)!;
         const rawPhone = typeof body.phone === 'string' ? body.phone : '';
         let phone: string;
         try {
@@ -833,12 +908,12 @@ function makeHandler(
         }
         const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
         const issued = db.createSmsRegistrationChallenge(phone, code, organization.id, {
-          organizationInviteId: invite.inviteId,
-          department: invite.defaultDepartment,
-          departmentId: invite.departmentId,
-          positionId: invite.positionId,
-          positionTitle: invite.positionTitle,
-          role: invite.defaultRole,
+          organizationInviteId: invite?.inviteId ?? null,
+          department: invite?.defaultDepartment ?? null,
+          departmentId: invite?.departmentId ?? null,
+          positionId: invite?.positionId ?? null,
+          positionTitle: invite?.positionTitle ?? null,
+          role: invite?.defaultRole ?? null,
         });
         if (!issued.ok) {
           res.setHeader('Retry-After', String(issued.retryAfterSeconds));
@@ -865,7 +940,8 @@ function makeHandler(
         sendJSON(res, 200, {
           ...issued,
           message: '验证码已发送，5 分钟内有效',
-          organization: { id: organization.id, name: organization.name },
+          registrationMode: invite ? 'enterprise' : 'personal',
+          organization: invite ? { id: organization.id, name: organization.name } : null,
         });
         return;
       }
@@ -896,17 +972,23 @@ function makeHandler(
         }
         let account: db.AccountView;
         try {
-          account = db.createSelfRegisteredAccount({
-            organizationId: verified.organizationId,
-            phone: verified.phone,
-            name,
-            password,
-            department: verified.department,
-            role: verified.role,
-            positionId: verified.positionId,
-            positionTitle: verified.positionTitle,
-            organizationInviteId: verified.organizationInviteId,
-          });
+          account = verified.organizationInviteId
+            ? db.createSelfRegisteredAccount({
+              organizationId: verified.organizationId,
+              phone: verified.phone,
+              name,
+              password,
+              department: verified.department,
+              role: verified.role,
+              positionId: verified.positionId,
+              positionTitle: verified.positionTitle,
+              organizationInviteId: verified.organizationInviteId,
+            })
+            : db.createPersonalRegisteredAccount({
+              phone: verified.phone,
+              name,
+              password,
+            });
         } catch (error) {
           const conflict = accountConflictMessage(error) || (error instanceof Error ? error.message : null);
           if (conflict === '手机号已绑定其他账号' || conflict === '该手机号已注册，请直接登录') {
@@ -1044,6 +1126,34 @@ function makeHandler(
           if (conflict) sendJSON(res, 409, { error: conflict });
           else if (inputError) sendJSON(res, 400, { error: inputError });
           else throw error;
+        }
+        return;
+      }
+
+      if (path.startsWith('/enterprise/accounts/') && method === 'DELETE') {
+        const accountId = decodeURIComponent(path.slice('/enterprise/accounts/'.length));
+        const organizationId = adminPrincipal!.organizationId;
+        if (!accountId || !db.getAccount(accountId, organizationId)) {
+          sendJSON(res, 404, { error: 'Account not found' });
+          return;
+        }
+        const actorAccountId = adminPrincipal!.kind === 'account'
+          ? adminPrincipal!.account.id
+          : 'platform-admin';
+        try {
+          sendJSON(res, 200, db.deleteAccount(accountId, organizationId, actorAccountId));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '删除账号失败';
+          if (
+            message === '不能删除当前登录账号'
+            || message === '企业至少需要保留一名可登录管理员'
+          ) {
+            sendJSON(res, 409, { error: message });
+          } else if (message === 'Account not found') {
+            sendJSON(res, 404, { error: message });
+          } else {
+            throw error;
+          }
         }
         return;
       }
@@ -1742,6 +1852,21 @@ function makeHandler(
         return;
       }
 
+      // ===== Platform multi-organization admin web app =====
+      // 平台令牌只能由操作者在浏览器内手动输入，并仅保存在当前标签页的 sessionStorage。
+      if (path === '/enterprise/admin/platform' && method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+        });
+        res.end(platformAdminHTML());
+        return;
+      }
+
       // ===== Admin Dashboard HTML =====
       if (path === '/enterprise/dashboard' && method === 'GET') {
         res.writeHead(200, {
@@ -1791,7 +1916,7 @@ function adminAccountsHTML(): string {
 <style>
 :root{--ink:#18221e;--muted:#66716c;--line:#dce3df;--line-strong:#c9d3ce;--paper:#f4f6f5;--panel:#fff;--subtle:#edf2ef;--accent:#176a4b;--accent-hover:#11563c;--accent-soft:#e5f1eb;--danger:#aa3f35;--danger-soft:#faece9;--nav:#14231d;--nav-line:#2d4038;--radius:10px;--shadow:0 18px 48px rgba(26,42,34,.16)}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;line-height:1.5}button,input,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}.sr-only{position:absolute;left:0;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid #0b5f42!important;outline-offset:2px}.rail button:focus-visible{outline-color:#8eeec7!important}.brand{font-size:23px;font-weight:800;letter-spacing:-.04em}.brand-mark{color:#69d5ab;margin-left:3px}.eyebrow{font-size:11px;letter-spacing:.13em;color:var(--accent);font-weight:750;text-transform:uppercase}
-.login{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,.82fr)}.login-story{padding:54px clamp(36px,7vw,92px);background:var(--nav);color:#f4f8f6;display:flex;flex-direction:column;justify-content:space-between}.login-story .brand{font-size:28px}.story-copy{max-width:650px;margin:72px 0}.story-copy h1{font-size:clamp(38px,5vw,66px);line-height:1.05;letter-spacing:-.055em;margin:14px 0 22px}.story-copy p{color:#aebdb6;font-size:16px;line-height:1.8;max-width:570px}.signal{display:flex;gap:10px;align-items:center;color:#9fb0a8;font-size:13px}.signal b{width:8px;height:8px;border-radius:50%;background:#65d6ad}.login-side{display:grid;place-items:center;padding:42px;min-width:0;overflow:auto}.login-card{width:min(420px,100%)}.login-mobile-brand{display:none}.login-card h2{font-size:31px;letter-spacing:-.035em;margin:13px 0 8px}.login-card>p{color:var(--muted);line-height:1.7;margin:0 0 28px}
+.login{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,.82fr)}.login-story{padding:54px clamp(36px,7vw,92px);background:var(--nav);color:#f4f8f6;display:flex;flex-direction:column;justify-content:space-between}.login-story .brand{font-size:28px}.story-copy{max-width:650px;margin:72px 0}.story-copy h1{font-size:clamp(38px,5vw,66px);line-height:1.05;letter-spacing:-.055em;margin:14px 0 22px}.story-copy p{color:#aebdb6;font-size:16px;line-height:1.8;max-width:570px}.signal{display:flex;gap:10px;align-items:center;color:#9fb0a8;font-size:13px}.signal b{width:8px;height:8px;border-radius:50%;background:#65d6ad}.login-side{display:grid;place-items:center;padding:42px;min-width:0;overflow:auto}.login-card{width:min(420px,100%)}.login-mobile-brand{display:none}.login-card h2{font-size:31px;letter-spacing:-.035em;margin:13px 0 8px}.login-card>p{color:var(--muted);line-height:1.7;margin:0 0 28px}.platform-link{display:block;text-align:center;margin-top:18px;color:var(--accent);font-weight:700;text-decoration:none}.platform-link:hover{text-decoration:underline}
 .field{display:grid;gap:7px;margin:15px 0}.field label,.field-title{font-size:12px;font-weight:700;color:#46534d}.field input,.field select,.search{width:100%;height:44px;border:1px solid var(--line-strong);border-radius:8px;padding:0 12px;background:#fff;color:var(--ink);outline:none}.field input:focus,.field select:focus,.search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,106,75,.1)}.password-wrap{position:relative}.password-wrap input{padding-right:68px}.password-toggle{position:absolute;right:6px;top:6px;height:32px;min-width:54px;border:0;border-radius:6px;background:transparent;color:var(--accent);font-size:12px;font-weight:750}.password-toggle:hover{background:var(--accent-soft)}.primary,.secondary,.danger,.ghost-dark,.edit,.template-button,.tag-choice{border-radius:8px;font-weight:700;transition:background-color .14s,border-color .14s,color .14s}.primary{border:1px solid var(--accent);background:var(--accent);color:#fff;padding:11px 17px}.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}.primary:disabled,.danger:disabled{opacity:.5;cursor:default}.secondary{border:1px solid var(--line-strong);background:#fff;color:var(--ink);padding:10px 15px}.secondary:hover,.edit:hover{border-color:#9caaa3;background:#f8faf9}.danger{border:1px solid var(--danger);background:var(--danger);color:#fff;padding:10px 15px}.login-card .primary{width:100%;height:47px;margin-top:8px}.error{color:var(--danger);background:var(--danger-soft);border:1px solid #edcbc5;padding:10px 12px;border-radius:8px;margin-top:13px;line-height:1.5}
 .admin{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr)}.rail{background:var(--nav);color:#edf5f1;padding:26px 19px 20px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.rail .brand{padding:0 9px;margin-bottom:38px}.nav-label{font-size:10px;color:#7f958b;letter-spacing:.12em;margin:8px 11px}.nav-item{display:flex;align-items:center;gap:10px;padding:10px 11px;border:1px solid var(--nav-line);border-radius:8px;background:#20372e;color:#f0f6f3;font-weight:700}.nav-dot{width:7px;height:7px;background:#65d6ad;border-radius:50%}.rail-foot{margin-top:auto;border-top:1px solid var(--nav-line);padding:17px 9px 0}.rail-user{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rail-meta{color:#8fa198;font-size:12px;margin-top:3px}.ghost-dark{border:1px solid #435950;background:transparent;color:#cfdbd5;padding:8px 11px;margin-top:14px;width:100%}.ghost-dark:hover{background:#263d34;border-color:#5a7066}
 .workspace{padding:31px clamp(24px,4vw,58px) 56px;min-width:0}.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}.topbar h1{font-size:30px;letter-spacing:-.035em;margin:0 0 5px}.topbar p{color:var(--muted);margin:0}.summary-strip{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:17px;overflow:hidden}.summary-item{padding:15px 18px;border-left:1px solid var(--line)}.summary-item:first-child{border-left:0}.summary-item strong{display:block;font-size:23px;line-height:1.2;letter-spacing:-.025em}.summary-item span{display:block;color:var(--muted);font-size:12px;margin-top:4px}.toolbar{display:flex;align-items:center;gap:14px;margin-bottom:11px}.search-wrap{flex:1}.result-count{color:var(--muted);font-size:12px;white-space:nowrap}.table-wrap{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:auto}.accounts{width:100%;border-collapse:collapse;min-width:820px}.accounts th{text-align:left;font-size:11px;letter-spacing:.045em;color:#53605a;background:#edf2ef;padding:11px 14px;border-bottom:1px solid var(--line)}.accounts td{padding:13px 14px;border-top:1px solid #ebefed;vertical-align:middle}.accounts tbody tr:first-child td{border-top:0}.accounts tr:hover td{background:#fafcfb}.name{font-weight:750}.sub{font-size:12px;color:var(--muted);margin-top:3px}.tag{display:inline-block;background:var(--accent-soft);color:#245e49;border:1px solid #d3e6dc;border-radius:999px;padding:3px 8px;font-size:11px;margin:2px 3px 2px 0}.badge{display:inline-block;white-space:nowrap;font-size:11px;border-radius:999px;padding:4px 8px;background:#edf1ef;color:#3f4b45}.badge.ok{background:var(--accent-soft);color:#245e49}.badge.off{background:var(--danger-soft);color:var(--danger)}.edit{border:1px solid var(--line-strong);background:#fff;padding:6px 10px;color:var(--ink)}.empty{text-align:center;color:var(--muted);padding:44px!important}
@@ -1802,11 +1927,11 @@ function adminAccountsHTML(): string {
 </style></head><body>
 <main id="loginView" class="login">
   <section class="login-story"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="story-copy"><div class="eyebrow" style="color:#65d6ad">ENTERPRISE IDENTITY</div><h1>让每个数字同事，都有清晰的身份。</h1><p>集中维护企业成员、部门、职责标签与管理权限。手机号验证码只用于首次注册，之后使用账号或手机号和密码登录。</p></div><div class="signal"><b></b> 企业身份服务在线</div></section>
-  <section class="login-side"><form id="loginForm" class="login-card" aria-busy="false"><div class="login-mobile-brand brand">otto<span class="brand-mark">✦</span></div><div class="eyebrow">ADMIN CONSOLE</div><h2>管理员登录</h2><p>使用管理员账号或手机号进入企业身份目录。普通成员无法访问此页面。</p><div class="field"><label for="username">账号或手机号</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></div><div class="field"><label for="password">密码</label><div class="password-wrap"><input id="password" name="password" type="password" autocomplete="current-password" minlength="8" required><button id="togglePassword" class="password-toggle" type="button" aria-controls="password" aria-pressed="false">显示</button></div></div><button id="loginButton" class="primary" type="submit">进入管理后台</button><div id="loginStatus" class="sr-only" aria-live="polite"></div><div id="loginError" class="error hidden" role="alert"></div></form></section>
+  <section class="login-side"><form id="loginForm" class="login-card" aria-busy="false"><div class="login-mobile-brand brand">otto<span class="brand-mark">✦</span></div><div class="eyebrow">ADMIN CONSOLE</div><h2>管理员登录</h2><p>使用管理员账号或手机号进入企业身份目录。普通成员无法访问此页面。</p><div class="field"><label for="username">账号或手机号</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></div><div class="field"><label for="password">密码</label><div class="password-wrap"><input id="password" name="password" type="password" autocomplete="current-password" minlength="8" required><button id="togglePassword" class="password-toggle" type="button" aria-controls="password" aria-pressed="false">显示</button></div></div><button id="loginButton" class="primary" type="submit">进入管理后台</button><div id="loginStatus" class="sr-only" aria-live="polite"></div><div id="loginError" class="error hidden" role="alert"></div><a class="platform-link" href="/enterprise/admin/platform">平台多企业管理</a></form></section>
 </main>
 <main id="adminView" class="admin hidden">
   <aside class="rail"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="nav-label">企业管理</div><div class="nav-item"><span class="nav-dot"></span>成员与用量</div><div class="rail-foot"><div><div id="railUser" class="rail-user"></div><div id="railMeta" class="rail-meta">企业管理员</div></div><button id="logoutButton" class="ghost-dark" type="button">退出登录</button></div></aside>
-  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/admin/credits">积分管理</a> <a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
+  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/admin/platform">多企业管理</a> <a class="secondary" href="/enterprise/admin/credits">积分管理</a> <a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
     <div class="ops-grid">
       <section class="ops-card" aria-labelledby="inviteTitle"><div class="ops-head"><div><div class="eyebrow">MEMBER ONBOARDING</div><h2 id="inviteTitle">企业成员引入链接</h2><p>成员点击后由 Otto 打开首次注册并自动填入企业信息；精确有效 7 天，生成新链接会立即废止旧链接。</p></div><span id="inviteBadge" class="badge off">尚未生成</span></div><div class="invite-row"><div><input id="inviteCode" class="invite-code" aria-label="当前企业邀请码" value="••••-••••" readonly><div class="invite-meta"><span id="inviteCountdown" class="sub">等待管理员生成</span></div><input id="inviteLinkPreview" class="invite-link-preview hidden" aria-label="当前企业引入链接" value="" readonly></div><div class="invite-actions"><button id="copyInviteLink" class="primary" type="button" disabled>复制企业引入链接</button><button id="copyInvite" class="copy" type="button" disabled>复制邀请码</button><button id="issueInvite" class="secondary" type="button">生成引入链接</button></div></div><div id="inviteError" class="error hidden" role="alert"></div></section>
       <section class="ops-card" aria-labelledby="usageTitle"><div class="ops-head"><div><div class="eyebrow">AI CONSUMPTION</div><h2 id="usageTitle">近 30 天 Token</h2><p>按登录账号汇总模型返回的用量。</p></div><span class="badge">客户端回传</span></div><div id="totalTokens" class="token-number">0</div><div class="token-split"><span>输入 <b id="inputTokens">0</b></span><span>输出 <b id="outputTokens">0</b></span><span>请求 <b id="requestCount">0</b></span></div><div class="token-note">用于企业内部用量观察，不等同于模型供应商的计费账单。</div></section>
@@ -1831,7 +1956,7 @@ function adminAccountsHTML(): string {
   </div></section>
   <section class="form-section"><div class="section-head"><strong>预设标签</strong><span>可多选，也可输入自定义标签</span></div><div id="tagPresets" class="preset-tags" aria-label="预设标签"></div><div class="field"><label for="editTags">自定义标签（用逗号分隔）</label><input id="editTags" placeholder="例如：产品, 审批, 夜班"></div></section>
   <section class="form-section"><div class="section-head"><strong>登录与权限</strong><span>新增账号必须设置密码</span></div><div class="form-grid"><div class="field wide"><label for="editPassword">登录密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password" aria-describedby="passwordHint"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">账号状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editAdmin" type="checkbox"> 允许访问管理员后台</label></div></section>
-  <div id="formError" class="error hidden" role="alert"></div><div id="saveStatus" class="sr-only" role="status" aria-live="polite"></div><div class="drawer-actions"><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div>
+  <div id="formError" class="error hidden" role="alert"></div><div id="saveStatus" class="sr-only" role="status" aria-live="polite"></div><div class="drawer-actions"><button id="deleteAccount" class="danger hidden" type="button">删除账号</button><span style="flex:1"></span><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div>
 </form></div>
 <div id="logoutModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><div class="modal-kicker">SECURITY CHECK</div><h2 id="logoutTitle">确认退出管理员后台</h2><p>退出后需要重新输入管理员用户名和密码。未保存的账号修改不会保留。</p><div class="modal-actions"><button id="cancelLogout" class="secondary" type="button">取消</button><button id="confirmLogout" class="danger" type="button">确认退出</button></div></section></div>
 <div id="inviteModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="inviteConfirmTitle"><div class="modal-kicker">POSITION ONBOARDING</div><h2 id="inviteConfirmTitle">生成新的岗位邀请码？</h2><p>新链接将在生成时开始计时，7 天后失效。当前仍有效的链接会立即作废，已发出的旧链接将无法用于首次注册。</p><div class="field"><label for="inviteDepartment">新成员默认加入部门</label><input id="inviteDepartment" list="departmentPresetList" placeholder="不指定则为未分配部门"></div><div class="field"><label for="invitePosition">职位 / 岗位</label><input id="invitePosition" placeholder="例如：品牌运营"></div><div class="field"><label for="inviteRole">角色权限</label><input id="inviteRole" placeholder="默认：成员"></div><div class="field"><label for="inviteMaxUses">可注册人数</label><input id="inviteMaxUses" type="number" min="1" max="10000" placeholder="不填则不限"></div><div class="modal-actions"><button id="cancelInvite" class="secondary" type="button">取消</button><button id="confirmInvite" class="primary" type="button">确认生成</button></div></section></div>
@@ -1855,6 +1980,7 @@ let inviteTimer=null;
 let authEpoch=0;
 let editorEpoch=0;
 let isSaving=false;
+let deleteArmed=false;
 let activeOverlay=null;
 let overlayReturnFocus=null;
 const $=id=>document.getElementById(id);
@@ -1878,6 +2004,7 @@ function renderUsage(){const summary=usageSummary||{};$('totalTokens').textConte
 function registrationInviteLink(){return currentInvite&&typeof currentInvite.link==='string'?currentInvite.link:''}
 function renderInvite(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}const active=currentInvite&&currentInvite.status==='active'&&new Date(currentInvite.expiresAt).getTime()>Date.now();const link=active?registrationInviteLink():'';$('inviteCode').value=currentInvite?currentInvite.code:'••••-••••';$('copyInvite').disabled=!active;$('copyInviteLink').disabled=!active;$('inviteLinkPreview').value=link;$('inviteLinkPreview').classList.toggle('hidden',!link);if(currentInvite&&$('inviteDepartment'))$('inviteDepartment').value=currentInvite.defaultDepartment||'';if(currentInvite&&$('invitePosition'))$('invitePosition').value=currentInvite.positionTitle||'';if(currentInvite&&$('inviteRole'))$('inviteRole').value=currentInvite.defaultRole||'';if(currentInvite&&$('inviteMaxUses'))$('inviteMaxUses').value=currentInvite.maxUses||'';$('issueInvite').textContent=currentInvite?'生成新邀请码':'生成岗位邀请码';$('inviteBadge').className='badge '+(active?'ok':'off');$('inviteBadge').textContent=active?'有效 7 天':currentInvite?'已失效':'尚未生成';function tick(){if(!currentInvite)return;const left=new Date(currentInvite.expiresAt).getTime()-Date.now();if(left<=0){currentInvite.status='expired';renderInvite();return}const h=Math.floor(left/3600000);const m=Math.floor((left%3600000)/60000);const s=Math.floor((left%60000)/1000);$('inviteCountdown').textContent='剩余 '+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+' · 到期 '+new Date(currentInvite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 岗位 '+[currentInvite.defaultDepartment||'未分配部门',currentInvite.positionTitle||'未指定职位',currentInvite.defaultRole||'成员'].join(' / ')+(currentInvite.maxUses?' · '+currentInvite.usedCount+'/'+currentInvite.maxUses:'')}if(active){tick();inviteTimer=setInterval(tick,1000)}else $('inviteCountdown').textContent=currentInvite?'已到期，请手动生成新的岗位邀请码':'等待管理员生成'}
 function resetWorkspace(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}accounts=[];currentInvite=null;usageSummary=null;$('searchInput').value='';showError('pageError','');showError('inviteError','');render();renderInvite();renderUsage()}
+function resetDeleteButton(){deleteArmed=false;$('deleteAccount').textContent='删除账号'}
 function setEditorPending(pending){const form=$('accountForm');form.setAttribute('aria-busy',pending?'true':'false');form.querySelectorAll('button,input,select').forEach(control=>{if(pending){control.dataset.pendingDisabled=control.disabled?'true':'false';control.disabled=true}else if(Object.prototype.hasOwnProperty.call(control.dataset,'pendingDisabled')){control.disabled=control.dataset.pendingDisabled==='true';delete control.dataset.pendingDisabled}});$('saveAccount').textContent=pending?'正在保存…':'保存账号';$('saveStatus').textContent=pending?'正在保存账号':''}
 function closeAllOverlays(){$('drawerWrap').classList.add('hidden');$('logoutModal').classList.add('hidden');$('inviteModal').classList.add('hidden');$('adminView').inert=false;activeOverlay=null;overlayReturnFocus=null;editorEpoch+=1;if(isSaving){isSaving=false;setEditorPending(false)}}
 function expireAdminSession(message,expectedToken){if(expectedToken!==undefined&&token!==expectedToken)return false;authEpoch+=1;token='';currentAdmin=null;sessionStorage.removeItem(KEY);setLoginPending(false);closeAllOverlays();resetWorkspace();showLogin(message||'');focusSoon($('username'));return true}
@@ -1889,8 +2016,8 @@ function focusableElements(container){return Array.from(container.querySelectorA
 function openOverlay(id,initialFocus,trigger){if(activeOverlay)return;activeOverlay=$(id);overlayReturnFocus=trigger||document.activeElement;$('adminView').inert=true;activeOverlay.classList.remove('hidden');focusSoon(initialFocus)}
 function closeOverlay(id,restoreFocus){const overlay=$(id);if(overlay.classList.contains('hidden'))return;overlay.classList.add('hidden');$('adminView').inert=false;activeOverlay=null;const target=overlayReturnFocus;overlayReturnFocus=null;if(restoreFocus!==false)focusSoon(target&&target.isConnected?target:$('organizationTitle'))}
 function trapFocus(event){if(event.key!=='Tab'||!activeOverlay)return;const focusables=focusableElements(activeOverlay);if(!focusables.length){event.preventDefault();return}const first=focusables[0];const last=focusables[focusables.length-1];if(event.shiftKey&&(document.activeElement===first||!activeOverlay.contains(document.activeElement))){event.preventDefault();last.focus()}else if(!event.shiftKey&&(document.activeElement===last||!activeOverlay.contains(document.activeElement))){event.preventDefault();first.focus()}}
-function openEditor(account,trigger){if(isSaving||activeOverlay)return;editorEpoch+=1;const editing=!!account;$('drawerTitle').textContent=editing?'编辑账号':'新增账号';$('accountId').value=editing?account.id:'';$('editUsername').value=editing?account.username:'';$('editName').value=editing?account.name:'';$('editPhone').value=editing?(account.phone||'').replace('+86',''):'';$('editRole').value=editing?(account.role||''):'';$('editDepartment').value=editing?(account.department||''):'';$('editTags').value=editing?(account.tags||[]).join(', '):'';$('editPassword').value='';$('editPassword').required=!editing;$('passwordHint').textContent=editing?'留空表示不修改密码':'至少 8 位，建议混合字母、数字和符号';$('editStatus').value=editing?account.status:'active';$('editAdmin').checked=editing&&account.isAdmin;clearTemplateSelection();updateTagPresetState();showError('formError','');openOverlay('drawerWrap',$('editUsername'),trigger)}
-function closeEditor(restoreFocus,force){if(isSaving&&!force)return;editorEpoch+=1;closeOverlay('drawerWrap',restoreFocus!==false)}
+function openEditor(account,trigger){if(isSaving||activeOverlay)return;editorEpoch+=1;const editing=!!account;$('drawerTitle').textContent=editing?'编辑账号':'新增账号';$('accountId').value=editing?account.id:'';$('editUsername').value=editing?account.username:'';$('editName').value=editing?account.name:'';$('editPhone').value=editing?(account.phone||'').replace('+86',''):'';$('editRole').value=editing?(account.role||''):'';$('editDepartment').value=editing?(account.department||''):'';$('editTags').value=editing?(account.tags||[]).join(', '):'';$('editPassword').value='';$('editPassword').required=!editing;$('passwordHint').textContent=editing?'留空表示不修改密码':'至少 8 位，建议混合字母、数字和符号';$('editStatus').value=editing?account.status:'active';$('editAdmin').checked=editing&&account.isAdmin;resetDeleteButton();$('deleteAccount').classList.toggle('hidden',!editing||!currentAdmin||account.id===currentAdmin.id);clearTemplateSelection();updateTagPresetState();showError('formError','');openOverlay('drawerWrap',$('editUsername'),trigger)}
+function closeEditor(restoreFocus,force){if(isSaving&&!force)return;editorEpoch+=1;resetDeleteButton();closeOverlay('drawerWrap',restoreFocus!==false)}
 function openLogout(){openOverlay('logoutModal',$('cancelLogout'),$('logoutButton'))}
 function closeLogout(force){if($('confirmLogout').disabled&&!force)return;closeOverlay('logoutModal',true)}
 async function logout(){const requestToken=token;const button=$('confirmLogout');button.disabled=true;$('cancelLogout').disabled=true;button.textContent='正在退出';try{await api('/enterprise/auth/logout',{method:'POST'})}catch{}finally{button.disabled=false;$('cancelLogout').disabled=false;button.textContent='确认退出';closeOverlay('logoutModal',false);expireAdminSession('',requestToken)}}
@@ -1908,10 +2035,55 @@ $('loginForm').addEventListener('submit',async event=>{event.preventDefault();co
 $('logoutButton').addEventListener('click',openLogout);$('cancelLogout').addEventListener('click',()=>closeLogout(false));$('confirmLogout').addEventListener('click',logout);$('logoutModal').addEventListener('click',event=>{if(event.target===$('logoutModal'))closeLogout(false)});
 $('issueInvite').addEventListener('click',openInviteConfirm);$('cancelInvite').addEventListener('click',()=>closeInviteConfirm(false));$('confirmInvite').addEventListener('click',issueInvite);$('inviteModal').addEventListener('click',event=>{if(event.target===$('inviteModal'))closeInviteConfirm(false)});$('copyInvite').addEventListener('click',copyInvite);$('copyInviteLink').addEventListener('click',copyInviteLink);
 $('searchInput').addEventListener('input',render);$('createButton').addEventListener('click',event=>openEditor(null,event.currentTarget));$('closeDrawer').addEventListener('click',()=>closeEditor(true,false));$('cancelEdit').addEventListener('click',()=>closeEditor(true,false));$('drawerWrap').addEventListener('click',event=>{if(event.target===$('drawerWrap'))closeEditor(true,false)});
+$('deleteAccount').addEventListener('click',async()=>{const id=$('accountId').value;if(!id||isSaving)return;if(!deleteArmed){deleteArmed=true;$('deleteAccount').textContent='再次点击确认删除';showError('formError','删除后该账号会立即退出，历史审计记录仍会保留。');return}const requestEditor=editorEpoch;const requestToken=token;isSaving=true;setEditorPending(true);showError('formError','');try{await api('/enterprise/accounts/'+encodeURIComponent(id),{method:'DELETE'});if(requestEditor!==editorEpoch||requestToken!==token)return;isSaving=false;setEditorPending(false);closeEditor(false,true);const organizationId=currentAdmin&&currentAdmin.organizationId;await (organizationId?loadWorkspaceWithFeedback(authEpoch,organizationId):Promise.resolve(false));focusSoon($('organizationTitle'))}catch(error){if(requestEditor!==editorEpoch||requestToken!==token)return;if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}resetDeleteButton();showError('formError',error.message);$('formError').tabIndex=-1;focusSoon($('formError'))}finally{if(requestEditor===editorEpoch){isSaving=false;setEditorPending(false)}}});
 $('accountForm').addEventListener('submit',async event=>{event.preventDefault();showError('formError','');const requestEditor=editorEpoch;const requestToken=token;const id=$('accountId').value;const password=$('editPassword').value;const body={username:$('editUsername').value.trim(),name:$('editName').value.trim(),phone:$('editPhone').value.trim()||null,role:$('editRole').value.trim(),department:$('editDepartment').value.trim(),tags:tags($('editTags').value),status:$('editStatus').value,isAdmin:$('editAdmin').checked};if(password)body.password=password;if(!id&&!password){showError('formError','新增账号必须设置密码');focusSoon($('editPassword'));return}isSaving=true;setEditorPending(true);try{await api(id?'/enterprise/accounts/'+encodeURIComponent(id):'/enterprise/accounts',{method:id?'PATCH':'POST',body:JSON.stringify(body)});if(requestEditor!==editorEpoch||requestToken!==token)return;isSaving=false;setEditorPending(false);closeEditor(false,true);const organizationId=currentAdmin&&currentAdmin.organizationId;const loaded=organizationId?await loadWorkspaceWithFeedback(authEpoch,organizationId):false;if(loaded&&currentAdmin){const target=id?Array.from(document.querySelectorAll('button[data-id]')).find(button=>button.dataset.id===id):$('createButton');focusSoon(target||$('organizationTitle'))}}catch(error){if(requestEditor!==editorEpoch||requestToken!==token)return;if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}showError('formError',error.message);$('formError').tabIndex=-1;focusSoon($('formError'))}finally{if(requestEditor===editorEpoch){isSaving=false;setEditorPending(false)}}});
 document.addEventListener('keydown',event=>{if(event.key==='Tab'){trapFocus(event);return}if(event.key!=='Escape')return;if(activeOverlay===$('inviteModal'))closeInviteConfirm(false);else if(activeOverlay===$('logoutModal'))closeLogout(false);else if(activeOverlay===$('drawerWrap'))closeEditor(true,false)});
 async function restoreSession(){if(!token){showLogin('');focusSoon($('username'));return}const requestToken=token;const epoch=beginAuth();try{const data=await api('/enterprise/auth/me');if(epoch!==authEpoch||requestToken!==token)return;if(!data.account.isAdmin){const error=new Error('该账号没有管理员权限');error.status=403;throw error}currentAdmin=data.account;resetWorkspace();showAdmin();await loadWorkspaceWithFeedback(epoch,currentAdmin.organizationId)}catch(error){if(epoch!==authEpoch||requestToken!==token)return;expireAdminSession('登录已失效，请重新登录',requestToken)}}
 restoreSession();
+</script></body></html>`;
+}
+
+function platformAdminHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Otto 平台企业管理</title>
+<style>
+:root{--ink:#17211d;--muted:#66716c;--line:#d8e0dc;--paper:#f3f6f4;--panel:#fff;--accent:#176a4b;--accent-dark:#10553b;--accent-soft:#e7f2ec;--danger:#a53e35;--danger-soft:#faece9;--nav:#14231d;--shadow:0 22px 60px rgba(18,35,27,.14)}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}button,input{font:inherit}button{cursor:pointer}.hidden{display:none!important}a{color:inherit}.shell{min-height:100vh;display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr)}.rail{background:var(--nav);color:#eef6f2;padding:36px 30px;display:flex;flex-direction:column}.brand{font-size:26px;font-weight:850;letter-spacing:-.05em}.brand b{color:#69d5ab}.rail-copy{margin:auto 0}.eyebrow{font-size:11px;letter-spacing:.13em;font-weight:800;color:#60cda3}.rail h1{font-size:36px;line-height:1.08;letter-spacing:-.045em;margin:13px 0}.rail p{color:#a5b7ae}.rail a{color:#d6e5de;text-decoration:none;border:1px solid #40564d;border-radius:8px;padding:9px 12px;text-align:center}.workspace{padding:38px clamp(24px,5vw,70px) 64px;min-width:0}.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}.topbar h2{font-size:31px;letter-spacing:-.04em;margin:4px 0}.topbar p{color:var(--muted);margin:0}.status{display:inline-flex;align-items:center;gap:7px;background:var(--accent-soft);color:#245f49;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:750}.status:before{content:'';width:7px;height:7px;border-radius:50%;background:#2c9369}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(18,35,27,.04);padding:22px;margin-bottom:16px}.card h3{font-size:18px;margin:0 0 5px}.card>p{color:var(--muted);margin:0 0 18px}.token-row{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:10px}.field{display:grid;gap:6px}.field label{font-size:12px;font-weight:750;color:#46534d}.field input{height:44px;border:1px solid #c8d3cd;border-radius:8px;padding:0 12px;outline:none}.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,106,75,.11)}.primary,.secondary{height:44px;border-radius:8px;padding:0 15px;font-weight:750}.primary{border:1px solid var(--accent);background:var(--accent);color:#fff}.primary:hover{background:var(--accent-dark)}.secondary{border:1px solid #c8d3cd;background:#fff;color:var(--ink)}.primary:disabled,.secondary:disabled{opacity:.5;cursor:default}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.wide{grid-column:1/-1}.form-actions{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:18px}.error,.notice{padding:10px 12px;border-radius:8px;margin-top:13px}.error{color:var(--danger);background:var(--danger-soft);border:1px solid #ecc8c2}.notice{color:#245f49;background:var(--accent-soft);border:1px solid #cfe3d8}.organization-list{display:grid;gap:10px}.organization{border:1px solid var(--line);border-radius:10px;padding:15px 17px;display:flex;align-items:center;justify-content:space-between;gap:18px}.organization strong{display:block;font-size:15px}.organization small{display:block;color:var(--muted);margin-top:3px}.badge{background:var(--accent-soft);color:#245f49;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:750}.empty{color:var(--muted);padding:22px 0;text-align:center}.count{color:var(--muted);font-size:12px}
+@media(max-width:820px){.shell{display:block}.rail{min-height:auto;padding:22px 24px;gap:24px}.rail-copy{margin:20px 0}.rail h1{font-size:30px}.workspace{padding:25px 16px 44px}.topbar{align-items:flex-start;flex-direction:column}.token-row{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.organization{align-items:flex-start;flex-direction:column}}
+</style></head><body>
+<main class="shell">
+  <aside class="rail"><div class="brand">otto<b>✦</b></div><div class="rail-copy"><div class="eyebrow">PLATFORM CONTROL</div><h1>平台企业管理</h1><p>创建多个相互隔离的企业，为每个企业设置首位管理员，并随时查看组织清单。</p></div><a href="/enterprise/admin">返回企业管理员登录</a></aside>
+  <section class="workspace">
+    <header class="topbar"><div><div class="eyebrow">MULTI-ORGANIZATION</div><h2>企业总览</h2><p>平台令牌只保存在当前标签页，关闭标签页后自动清除。</p></div><span id="authStatus" class="status hidden">平台身份已验证</span></header>
+    <section class="card"><h3>验证平台身份</h3><p>输入服务器部署时配置的管理令牌。企业管理员账号不能访问此页面。</p><form id="tokenForm" class="token-row"><div class="field"><label for="platformToken">平台管理令牌</label><input id="platformToken" type="password" autocomplete="off" required></div><button id="openPlatform" class="primary" type="submit">打开企业总览</button><button id="clearToken" class="secondary" type="button">清除令牌</button></form><div id="tokenError" class="error hidden" role="alert"></div></section>
+    <div id="platformWorkspace" class="hidden">
+      <section class="card"><h3>创建企业</h3><p>每次提交都会创建一套独立企业空间、首位管理员和企业邀请码。</p><form id="organizationForm"><div class="grid">
+        <div class="field"><label for="organizationName">企业名称</label><input id="organizationName" maxlength="80" required placeholder="例如：星河科技"></div>
+        <div class="field"><label for="organizationSlug">企业标识</label><input id="organizationSlug" maxlength="48" pattern="[a-z0-9-]+" placeholder="可选，例如：galaxy-tech"></div>
+        <div class="field"><label for="adminUsername">首位管理员用户名</label><input id="adminUsername" autocomplete="off" required></div>
+        <div class="field"><label for="adminName">首位企业管理员姓名</label><input id="adminName" autocomplete="name" required></div>
+        <div class="field"><label for="adminPhone">管理员手机号</label><input id="adminPhone" inputmode="tel" autocomplete="tel" placeholder="可选"></div>
+        <div class="field"><label for="adminPassword">管理员初始密码</label><input id="adminPassword" type="password" minlength="8" autocomplete="new-password" required></div>
+      </div><div class="form-actions"><span id="createStatus" class="count" role="status" aria-live="polite"></span><button id="createOrganization" class="primary" type="submit">创建企业</button></div><div id="createError" class="error hidden" role="alert"></div><div id="createNotice" class="notice hidden" role="status"></div></form></section>
+      <section class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:16px"><div><h3>已创建企业</h3><p style="margin:0;color:var(--muted)">企业之间账号、邀请码和数据完全隔离。</p></div><span id="organizationCount" class="count">0 个企业</span></div><div id="organizationList" class="organization-list" style="margin-top:17px"></div><div id="listError" class="error hidden" role="alert"></div></section>
+    </div>
+  </section>
+</main>
+<script>
+const KEY='otto.enterprise.platform.session';
+let token=sessionStorage.getItem(KEY)||'';
+const $=id=>document.getElementById(id);
+function show(id,message){const element=$(id);element.textContent=message||'';element.classList.toggle('hidden',!message)}
+function setAuthenticated(authenticated){$('platformWorkspace').classList.toggle('hidden',!authenticated);$('authStatus').classList.toggle('hidden',!authenticated);$('platformToken').value='';if(!authenticated){$('organizationList').replaceChildren();$('organizationCount').textContent='0 个企业'}}
+async function api(path,options){const response=await fetch(path,Object.assign({},options||{},{headers:Object.assign({'content-type':'application/json'},options&&options.headers||{},token?{authorization:'Bearer '+token}:{})}));const data=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(data.error||('请求失败 '+response.status));error.status=response.status;throw error}return data}
+function renderOrganizations(organizations){const list=$('organizationList');list.replaceChildren();$('organizationCount').textContent=organizations.length+' 个企业';if(!organizations.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='还没有企业，请先创建第一家企业';list.append(empty);return}organizations.forEach(organization=>{const row=document.createElement('article');row.className='organization';const copy=document.createElement('div');const name=document.createElement('strong');name.textContent=String(organization.name||'未命名企业');const meta=document.createElement('small');meta.textContent=String(organization.slug||'')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});copy.append(name,meta);const badge=document.createElement('span');badge.className='badge';badge.textContent=organization.status==='active'?'正常运行':String(organization.status||'未知');row.append(copy,badge);list.append(row)})}
+async function loadOrganizations(){show('listError','');const data=await api('/enterprise/organizations');renderOrganizations(data.organizations||[]);setAuthenticated(true)}
+function clearPlatformSession(message){token='';sessionStorage.removeItem(KEY);setAuthenticated(false);if(message)show('tokenError',message)}
+$('tokenForm').addEventListener('submit',async event=>{event.preventDefault();show('tokenError','');const supplied=$('platformToken').value.trim();if(supplied)token=supplied;$('openPlatform').disabled=true;$('openPlatform').textContent='正在验证…';try{await loadOrganizations();sessionStorage.setItem(KEY,token)}catch(error){clearPlatformSession(error.message||'平台令牌验证失败')}finally{$('openPlatform').disabled=false;$('openPlatform').textContent='打开企业总览'}});
+$('clearToken').addEventListener('click',()=>{clearPlatformSession('');$('platformToken').focus()});
+$('organizationForm').addEventListener('submit',async event=>{event.preventDefault();show('createError','');show('createNotice','');const button=$('createOrganization');button.disabled=true;$('createStatus').textContent='正在创建企业…';const body={name:$('organizationName').value.trim(),admin:{username:$('adminUsername').value.trim(),name:$('adminName').value.trim(),phone:$('adminPhone').value.trim()||null,password:$('adminPassword').value}};const slug=$('organizationSlug').value.trim();if(slug)body.slug=slug;try{const data=await api('/enterprise/organizations',{method:'POST',body:JSON.stringify(body)});$('organizationForm').reset();show('createNotice','企业「'+data.organization.name+'」已创建；首位管理员 @'+data.admin.username+'；邀请码 '+data.invite.code);await loadOrganizations()}catch(error){if(error.status===401||error.status===403){clearPlatformSession('平台令牌已失效，请重新验证');$('platformToken').focus()}else show('createError',error.message)}finally{button.disabled=false;$('createStatus').textContent=''}});
+if(token){loadOrganizations().catch(()=>clearPlatformSession('平台令牌已失效，请重新验证'))}else setAuthenticated(false);
 </script></body></html>`;
 }
 

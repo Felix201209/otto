@@ -211,6 +211,96 @@ describe('短信验证码登录挑战', () => {
   });
 });
 
+describe('个人注册与账号删除', () => {
+  it('无企业邀请码注册时创建独立个人空间，不与其他个人账号共享组织数据', async () => {
+    const db = await freshDb();
+    const first = db.createPersonalRegisteredAccount({
+      phone: '13800138000',
+      name: '个人用户一',
+      password: 'personal-password-1',
+    });
+    const second = db.createPersonalRegisteredAccount({
+      phone: '13900139000',
+      name: '个人用户二',
+      password: 'personal-password-2',
+    });
+
+    expect(first).toMatchObject({
+      accountType: 'personal',
+      name: '个人用户一',
+      isAdmin: false,
+    });
+    expect(second.accountType).toBe('personal');
+    expect(first.organizationId).not.toBe(second.organizationId);
+    expect(db.listAccounts(first.organizationId).map((account) => account.id)).toEqual([first.id]);
+    expect(db.listAccounts(second.organizationId).map((account) => account.id)).toEqual([second.id]);
+  });
+
+  it('逻辑删除账号后立刻撤销会话、移出目录并释放手机号，同时保留审计所需墓碑', async () => {
+    const db = await freshDb();
+    const admin = db.createAccount({
+      username: 'delete-admin',
+      password: 'delete-admin-password',
+      name: '删除管理员',
+      isAdmin: true,
+    });
+    const staff = db.createAccount({
+      username: 'delete-staff',
+      password: 'delete-staff-password',
+      name: '待删除员工',
+      phone: '13800138000',
+    });
+    const session = db.createAuthSession(staff.id);
+
+    expect(db.deleteAccount(staff.id, admin.organizationId, admin.id)).toMatchObject({
+      id: staff.id,
+      deleted: true,
+    });
+    expect(db.getAccount(staff.id, admin.organizationId)).toBeNull();
+    expect(db.listAccounts(admin.organizationId).map((account) => account.id)).not.toContain(staff.id);
+    expect(db.getAccountBySession(session.token)).toBeNull();
+    expect(db.findAccountByPhone('13800138000')).toBeNull();
+
+    const tombstone = db.getDB().prepare(
+      'SELECT username, phone, name, is_admin, status, deleted_at FROM accounts WHERE id = ?',
+    ).get(staff.id) as Record<string, unknown>;
+    expect(tombstone).toMatchObject({
+      phone: null,
+      name: '已删除账号',
+      is_admin: 0,
+      status: 'disabled',
+    });
+    expect(tombstone.username).toBe(`deleted_${staff.id}`);
+    expect(tombstone.deleted_at).toEqual(expect.any(String));
+  });
+
+  it('拒绝管理员删除自己、跨企业账号或企业最后一名可登录管理员', async () => {
+    const db = await freshDb();
+    const admin = db.createAccount({
+      username: 'sole-admin',
+      password: 'sole-admin-password',
+      name: '唯一管理员',
+      isAdmin: true,
+    });
+    const otherOrganization = db.createOrganization({ name: '其他企业' });
+    const outsider = db.createAccount({
+      organizationId: otherOrganization.id,
+      username: 'other-staff',
+      password: 'other-staff-password',
+      name: '其他企业员工',
+    });
+
+    expect(() => db.deleteAccount(admin.id, admin.organizationId, admin.id))
+      .toThrow('不能删除当前登录账号');
+    expect(() => db.deleteAccount(outsider.id, admin.organizationId, admin.id))
+      .toThrow('Account not found');
+
+    const platformActor = 'platform-admin';
+    expect(() => db.deleteAccount(admin.id, admin.organizationId, platformActor))
+      .toThrow('企业至少需要保留一名可登录管理员');
+  });
+});
+
 describe('IT 工单按标签真实投递', () => {
   it('只给同时具备 IT 与报修标签的 active 账号生成收件记录', async () => {
     const db = await freshDb();

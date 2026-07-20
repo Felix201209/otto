@@ -9,6 +9,7 @@ export interface EnterpriseAccount {
   id: string;
   organizationId: string;
   organizationName: string;
+  accountType?: 'personal' | 'enterprise';
   employeeId: string | null;
   username: string;
   phone: string | null;
@@ -67,7 +68,15 @@ export interface SmsChallenge {
   expiresAt: string;
   retryAfterSeconds: number;
   message: string;
-  organization: { id: string; name: string };
+  registrationMode?: 'personal' | 'enterprise';
+  organization: { id: string; name: string } | null;
+}
+
+export interface SmsLoginChallenge {
+  challengeId: string;
+  expiresAt: string;
+  retryAfterSeconds: number;
+  message: string;
 }
 
 export interface TokenUsageRecordInput {
@@ -227,6 +236,7 @@ export class EnterpriseClient {
   private compatibleServerUrl = '';
   private compatibleCapabilities = new Set<string>();
   private authOperationGeneration = 0;
+  private pendingRegistrationMode: 'personal' | 'enterprise' | null = null;
 
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
@@ -331,29 +341,80 @@ export class EnterpriseClient {
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
     this.currentAccount = result.account;
+    this.pendingRegistrationMode = null;
+    return { account: result.account, expiresAt: result.expiresAt };
+  }
+
+  async requestLoginCode(serverUrl: string, phone: string): Promise<SmsLoginChallenge> {
+    const targetServerUrl = normalizeServerUrl(serverUrl);
+    const generation = this.beginAuthOperation(targetServerUrl);
+    await this.assertCompatibleServer(targetServerUrl, ['sms_login']);
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    const challenge = await this.request<SmsLoginChallenge>('/enterprise/auth/sms/request', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: null,
+    });
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    return challenge;
+  }
+
+  async loginWithSms(input: {
+    challengeId: string;
+    code: string;
+  }): Promise<{ account: EnterpriseAccount; expiresAt: string }> {
+    const targetServerUrl = this.serverUrl;
+    if (!targetServerUrl) throw new Error('请先填写企业服务器地址');
+    const generation = this.beginAuthOperation(targetServerUrl);
+    await this.assertCompatibleServer(targetServerUrl, ['sms_login']);
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    const result = await this.request<{
+      account: EnterpriseAccount;
+      token: string;
+      expiresAt: string;
+    }>('/enterprise/auth/sms/verify', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, {
+      serverUrl: targetServerUrl,
+      authorizationToken: null,
+    });
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    this.token = result.token;
+    this.currentAccount = result.account;
+    this.pendingRegistrationMode = null;
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
   async requestRegistrationCode(
     serverUrl: string,
     phone: string,
-    inviteCode: string,
+    inviteCode = '',
   ): Promise<SmsChallenge> {
     const targetServerUrl = normalizeServerUrl(serverUrl);
     const generation = this.beginAuthOperation(targetServerUrl);
     await this.assertCompatibleServer(
       targetServerUrl,
-      ['sms_registration', 'organization_invites', 'position_invites'],
+      inviteCode.trim()
+        ? ['sms_registration', 'organization_invites', 'position_invites']
+        : ['sms_registration', 'personal_registration'],
     );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     const challenge = await this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
       method: 'POST',
-      body: JSON.stringify({ phone, inviteCode }),
+      body: JSON.stringify({
+        phone,
+        ...(inviteCode.trim() ? { inviteCode } : {}),
+      }),
     }, {
       serverUrl: targetServerUrl,
       authorizationToken: null,
     });
     this.assertAuthOperationCurrent(generation, targetServerUrl);
+    this.pendingRegistrationMode = challenge.registrationMode
+      ?? (inviteCode.trim() ? 'enterprise' : 'personal');
     return challenge;
   }
 
@@ -371,7 +432,9 @@ export class EnterpriseClient {
     const generation = this.beginAuthOperation(targetServerUrl);
     await this.assertCompatibleServer(
       targetServerUrl,
-      ['sms_registration', 'organization_invites', 'position_invites'],
+      this.pendingRegistrationMode === 'enterprise'
+        ? ['sms_registration', 'organization_invites', 'position_invites']
+        : ['sms_registration', 'personal_registration'],
     );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     const result = await this.request<{
@@ -388,6 +451,7 @@ export class EnterpriseClient {
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
     this.currentAccount = result.account;
+    this.pendingRegistrationMode = null;
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
@@ -468,6 +532,14 @@ export class EnterpriseClient {
       else this.currentAccount = account;
     }
     return account;
+  }
+
+  async deleteAccount(id: string): Promise<{ id: string; deleted: true }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['account_deletion']);
+    return this.request(`/enterprise/accounts/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
   }
 
   async recordTokenUsage(input: TokenUsageRecordInput): Promise<{

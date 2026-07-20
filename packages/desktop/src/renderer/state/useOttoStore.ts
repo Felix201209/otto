@@ -535,6 +535,7 @@ export interface OttoActions {
   launchExpert(title: string, kickoff: string): void;
   /** v1.7：只提交白名单 profile id，由 server 注入 system prompt；不自动发用户消息。 */
   launchAgentProfile(title: string, agentProfileId: string): void;
+  /** 新建绑定 profile 的会话，并在服务端确认会话后发送一次真实用户任务。 */
   launchAgentProfileWithPrompt(
     title: string,
     agentProfileId: string,
@@ -807,7 +808,10 @@ export function useOttoStore(): UseOttoStore {
       dispatch({ kind: 'local_error', message: '未连接，无法启动 Agent' });
       return;
     }
-    profileLaunchRef.current = { agentProfileId: cleanAgentProfileId, source: 'local' };
+    profileLaunchRef.current = {
+      agentProfileId: cleanAgentProfileId,
+      source: 'local',
+    };
     transport.send({
       type: 'create_session',
       payload: { title, agentProfileId: cleanAgentProfileId },

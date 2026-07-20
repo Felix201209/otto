@@ -52,4 +52,20 @@ describe('resolveCentralEnterpriseIdentity', () => {
     expect(view.identityLabel).not.toContain('CEO');
     expect(view.identityLabel).not.toContain('admin');
   });
+
+  it('普通注册账号进入个人版目录，不显示企业成员身份或企业管理专家', () => {
+    const view = resolveCentralEnterpriseIdentity(account({
+      accountType: 'personal',
+      organizationName: 'Felix的个人空间',
+      isAdmin: false,
+      role: '个人用户',
+      department: null,
+      positionTitle: null,
+    }));
+
+    expect(view.edition).toBe('personal');
+    expect(view.profiles[0]?.id).toBe('otto-personal');
+    expect(view.identityLabel).toBe('Felix · 个人空间');
+    expect(view.identityLabel).not.toContain('企业成员');
+  });
 });

@@ -47,6 +47,18 @@ beforeEach(() => {
       return () => { invalidatedHandler = null; };
     }),
     enterprisePasswordLogin: vi.fn(),
+    enterpriseSmsLoginRequest: vi.fn(async () => ({
+      serverUrl: 'https://enterprise.otto.test',
+      challengeId: 'sms_login_1',
+      message: '验证码已发送',
+      expiresAt: '2099-01-01',
+      retryAfterSeconds: 60,
+    })),
+    enterpriseSmsLoginVerify: vi.fn(async () => ({
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+      expiresAt: '2099-01-01',
+    })),
     enterpriseRegistrationRequest: vi.fn(),
     enterpriseRegister: vi.fn(async () => ({
       serverUrl: 'https://enterprise.otto.test',
@@ -115,6 +127,30 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.registrationIntent).toBeNull();
     expect(view.result.current.state.status).toBe('signed-in');
     expect(view.result.current.state.account?.organizationId).toBe('org_acme');
+  });
+
+  it('短信验证码登录成功后进入账号，并清除企业邀请意图', async () => {
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
+
+    let challenge!: Awaited<ReturnType<typeof view.result.current.actions.requestLoginCode>>;
+    await act(async () => {
+      challenge = await view.result.current.actions.requestLoginCode({
+        serverUrl: 'https://enterprise.otto.test',
+        phone: '13800138000',
+      });
+    });
+    expect(challenge.challengeId).toBe('sms_login_1');
+
+    await act(async () => {
+      await view.result.current.actions.loginWithSms({
+        challengeId: challenge.challengeId,
+        code: '042731',
+      });
+    });
+    expect(view.result.current.state.status).toBe('signed-in');
+    expect(view.result.current.state.account?.id).toBe(ACCOUNT.id);
+    expect(view.result.current.state.registrationIntent).toBeNull();
   });
 
   it('恢复会话断网时仍保留服务器地址，让用户无需重启即可重试', async () => {

@@ -98,11 +98,11 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
   });
 
-  it('credit_balance 迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
+  it('v3 账号生命周期迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
     const first = await freshDb();
     first.getDB();
     first.closeEnterpriseDatabase();
@@ -112,12 +112,17 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 2,
+        schemaVersion: 3,
       });
-      const columns = reopened.getDB()
+      const organizationColumns = reopened.getDB()
         .prepare('PRAGMA table_info(organizations)')
         .all() as Array<{ name: string }>;
-      expect(columns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
+      const accountColumns = reopened.getDB()
+        .prepare('PRAGMA table_info(accounts)')
+        .all() as Array<{ name: string }>;
+      expect(organizationColumns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
+      expect(accountColumns.filter((column) => column.name === 'account_type')).toHaveLength(1);
+      expect(accountColumns.filter((column) => column.name === 'deleted_at')).toHaveLength(1);
     } finally {
       reopened.closeEnterpriseDatabase();
     }
@@ -128,18 +133,18 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 3;
+      PRAGMA user_version = 4;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 3.*current version 2/i);
+    expect(() => db.getDB()).toThrow(/schema version 4.*current version 3/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
       expect(
         (reopened.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
-      ).toBe(3);
+      ).toBe(4);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string }).id,
       ).toBe('preserve-me');
@@ -256,6 +261,43 @@ describe('企业成员直聊', () => {
     const outsider = db.createAccount({ organizationId: otherOrg.id, username: 'outsider', password: 'outsider-password-123', name: 'Outsider' });
     expect(() => db.sendDirectMessage({ organizationId: db.DEFAULT_ORGANIZATION_ID, senderAccountId: alice.id, recipientAccountId: alice.id, content: 'self' })).toThrow('不能给自己');
     expect(() => db.sendDirectMessage({ organizationId: db.DEFAULT_ORGANIZATION_ID, senderAccountId: alice.id, recipientAccountId: outsider.id, content: 'cross tenant' })).toThrow('不存在或已停用');
+  });
+
+  it('A2A 收件箱只返回尚未由当前 Otto 回复的请求', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'atoa-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'atoa-bob', password: 'bob-password-123', name: 'Bob' });
+    const request = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: 'OTTO_ATOA_REQUEST {"v":1,"id":"client-1","question":"方便开会吗？"}',
+    });
+
+    expect(db.listPendingAtoaRequests({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      requestPrefix: 'OTTO_ATOA_REQUEST ',
+      responsePrefix: 'OTTO_ATOA_RESPONSE ',
+    })).toEqual([
+      expect.objectContaining({
+        id: request.id,
+        peerAccountId: alice.id,
+      }),
+    ]);
+
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: `OTTO_ATOA_RESPONSE {"v":1,"requestId":"${request.id}","answer":"可以先约 15:00。"}`,
+    });
+    expect(db.listPendingAtoaRequests({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      requestPrefix: 'OTTO_ATOA_REQUEST ',
+      responsePrefix: 'OTTO_ATOA_RESPONSE ',
+    })).toEqual([]);
   });
 });
 

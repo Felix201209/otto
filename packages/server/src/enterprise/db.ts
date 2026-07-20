@@ -28,7 +28,7 @@ const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.ot
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 2;
+export const ENTERPRISE_SCHEMA_VERSION = 3;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -258,6 +258,7 @@ function initSchema(d: Database): void {
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
+      account_type TEXT NOT NULL DEFAULT 'enterprise',
       employee_id TEXT UNIQUE,
       username TEXT NOT NULL COLLATE NOCASE UNIQUE,
       phone TEXT,
@@ -269,6 +270,7 @@ function initSchema(d: Database): void {
       position_title TEXT,
       is_admin INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (employee_id) REFERENCES employees(id),
@@ -519,6 +521,9 @@ function initSchema(d: Database): void {
   ensureTextColumn('sms_registration_challenges', 'role');
   ensureTextColumn('accounts', 'position_id');
   ensureTextColumn('accounts', 'position_title');
+  ensureTextColumn('accounts', 'account_type');
+  ensureTextColumn('accounts', 'deleted_at');
+  d.exec("UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL");
   const ensureIntegerColumn = (table: string, column: string, ddl: string): void => {
     const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) {
@@ -925,6 +930,7 @@ export interface AccountView {
   id: string;
   organizationId: string;
   organizationName: string;
+  accountType: 'personal' | 'enterprise';
   employeeId: string | null;
   username: string;
   phone: string | null;
@@ -943,6 +949,7 @@ export interface AccountView {
 interface AccountRow {
   id: string;
   organization_id: string;
+  account_type: 'personal' | 'enterprise' | null;
   employee_id: string | null;
   username: string;
   phone: string | null;
@@ -954,6 +961,7 @@ interface AccountRow {
   position_title: string | null;
   is_admin: number;
   status: 'active' | 'disabled';
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1020,6 +1028,7 @@ function toAccountView(row: AccountRow): AccountView {
     id: row.id,
     organizationId: row.organization_id,
     organizationName: organization?.name || '未知企业',
+    accountType: row.account_type === 'personal' ? 'personal' : 'enterprise',
     employeeId: row.employee_id,
     username: row.username,
     phone: row.phone,
@@ -1049,6 +1058,7 @@ function replaceAccountTags(accountId: string, organizationId: string, tags: str
 
 export function createAccount(input: {
   organizationId?: string;
+  accountType?: 'personal' | 'enterprise';
   username: string;
   password: string;
   name: string;
@@ -1076,11 +1086,12 @@ export function createAccount(input: {
   try {
     getDB().prepare(
     `INSERT INTO accounts
-       (id, organization_id, employee_id, username, phone, password_hash, name, role, department, position_id, position_title, is_admin, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, account_type, employee_id, username, phone, password_hash, name, role, department, position_id, position_title, is_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       organizationId,
+      input.accountType ?? 'enterprise',
       input.employeeId || null,
       username,
       normalizeOptionalPhone(input.phone),
@@ -1152,14 +1163,17 @@ export function provisionOrganization(input: {
 
 export function getAccount(id: string, organizationId?: string): AccountView | null {
   const row = (organizationId
-    ? getDB().prepare('SELECT * FROM accounts WHERE id = ? AND organization_id = ?').get(id, organizationId)
-    : getDB().prepare('SELECT * FROM accounts WHERE id = ?').get(id)) as AccountRow | undefined;
+    ? getDB().prepare(
+      'SELECT * FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL',
+    ).get(id, organizationId)
+    : getDB().prepare('SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL').get(id)
+  ) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
 }
 
 export function listAccounts(organizationId = DEFAULT_ORGANIZATION_ID): AccountView[] {
   return (getDB().prepare(
-    'SELECT * FROM accounts WHERE organization_id = ? ORDER BY name, username',
+    'SELECT * FROM accounts WHERE organization_id = ? AND deleted_at IS NULL ORDER BY name, username',
   ).all(organizationId) as AccountRow[])
     .map(toAccountView);
 }
@@ -1290,12 +1304,12 @@ export function listPendingAtoaRequests(input: {
 export function authenticateAccount(identifier: string, password: string): AccountView | null {
   const normalized = normalizeUsername(identifier);
   let row = getDB().prepare(
-    'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE',
+    'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE AND deleted_at IS NULL',
   ).get(normalized) as AccountRow | undefined;
   if (!row) {
     try {
       row = getDB().prepare(
-        'SELECT * FROM accounts WHERE phone = ?',
+        'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
       ).get(normalizePhone(identifier)) as AccountRow | undefined;
     } catch {
       // 不是手机号时继续按“账号或密码错误”处理，避免泄露账号是否存在。
@@ -1310,7 +1324,7 @@ export function authenticateAccount(identifier: string, password: string): Accou
 export function findAccountByPhone(phone: string): AccountView | null {
   const normalized = normalizePhone(phone);
   const row = getDB().prepare(
-    'SELECT * FROM accounts WHERE phone = ?',
+    'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
   ).get(normalized) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
 }
@@ -1370,6 +1384,47 @@ export function createSelfRegisteredAccount(input: {
     database.exec('ROLLBACK TO SAVEPOINT create_self_registered_account');
     database.exec('RELEASE SAVEPOINT create_self_registered_account');
     // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
+    if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+    throw error;
+  }
+}
+
+/**
+ * 普通注册创建独立个人空间。企业邀请码注册继续走 createSelfRegisteredAccount，
+ * 两条路径不能共用默认企业，否则互不认识的个人用户会看到彼此数据。
+ */
+export function createPersonalRegisteredAccount(input: {
+  phone: string;
+  name: string;
+  password: string;
+}): AccountView {
+  const normalized = normalizePhone(input.phone);
+  if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+  const name = input.name.trim();
+  if (!name) throw new Error('name required');
+  const digits = normalized.slice(3);
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const organization = createOrganization({
+      name: `${name.slice(0, 60)}的个人空间`,
+      slug: `personal-${randomBytes(8).toString('hex')}`,
+    });
+    const account = createAccount({
+      organizationId: organization.id,
+      accountType: 'personal',
+      username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
+      password: input.password,
+      name,
+      phone: normalized,
+      role: '个人用户',
+      tags: [],
+      isAdmin: false,
+    });
+    database.exec('COMMIT');
+    return account;
+  } catch (error) {
+    database.exec('ROLLBACK');
     if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
     throw error;
   }
@@ -1468,6 +1523,73 @@ export function updateAccount(id: string, patch: {
   }
 }
 
+/**
+ * 账号使用逻辑删除：保留工单/用量/审计引用，清除可登录凭据和直接身份字段。
+ * 这样既满足管理端“删除账号”，也不会因历史外键导致删除一半后失败。
+ */
+export function deleteAccount(
+  id: string,
+  organizationId: string,
+  actorAccountId: string,
+): { id: string; deleted: true } {
+  if (id === actorAccountId) throw new Error('不能删除当前登录账号');
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const current = getAccount(id, organizationId);
+    if (!current) throw new Error('Account not found');
+    if (current.isAdmin && current.status === 'active') {
+      const other = database.prepare(
+        `SELECT 1 FROM accounts
+         WHERE organization_id = ? AND id <> ? AND is_admin = 1
+           AND status = 'active' AND deleted_at IS NULL
+         LIMIT 1`,
+      ).get(organizationId, id);
+      if (!other) throw new Error('企业至少需要保留一名可登录管理员');
+    }
+
+    database.prepare(
+      `UPDATE accounts SET
+         employee_id = NULL,
+         username = ?,
+         phone = NULL,
+         password_hash = ?,
+         name = '已删除账号',
+         role = NULL,
+         department = NULL,
+         position_id = NULL,
+         position_title = NULL,
+         is_admin = 0,
+         status = 'disabled',
+         deleted_at = datetime('now'),
+         updated_at = datetime('now')
+       WHERE id = ? AND organization_id = ? AND deleted_at IS NULL`,
+    ).run(
+      `deleted_${id}`,
+      passwordHash(randomBytes(32).toString('base64url')),
+      id,
+      organizationId,
+    );
+    database.prepare(
+      'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
+    ).run(id, organizationId);
+    database.prepare(
+      "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
+    ).run(id);
+    logAudit(
+      'account_delete',
+      current.employeeId,
+      `Account ${current.username} deleted by ${actorAccountId}`,
+      organizationId,
+    );
+    database.exec('COMMIT');
+    return { id, deleted: true };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export function createAuthSession(accountId: string, ttlMs = 30 * 24 * 60 * 60 * 1000): {
   token: string;
   expiresAt: string;
@@ -1492,7 +1614,7 @@ export function getAccountBySession(token: string): AccountView | null {
      JOIN accounts a ON a.id = s.account_id
      JOIN organizations o ON o.id = a.organization_id
      WHERE s.token_hash = ? AND s.revoked_at IS NULL
-       AND a.status = 'active' AND o.status = 'active'`,
+       AND a.status = 'active' AND a.deleted_at IS NULL AND o.status = 'active'`,
   ).get(tokenHash(token)) as AccountRow | undefined;
   if (!row) return null;
   const session = getDB().prepare(

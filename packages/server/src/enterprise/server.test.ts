@@ -424,18 +424,23 @@ describe('受保护 vs 公开路由边界', () => {
       status: 'ok',
       db: 'connected',
       service: 'otto-enterprise',
-      apiVersion: 2,
+      apiVersion: 3,
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 2,
+      schemaVersion: 3,
       capabilities: [
         'password_auth',
+        'sms_login',
         'sms_registration',
+        'personal_registration',
         'organization_invites',
         'usage_summary',
         'admin_console',
+        'account_deletion',
+        'multi_organization',
         'direct_messages',
+        'atoa',
         'position_invites',
         'park_service_push',
       ],
@@ -686,6 +691,31 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('function expireAdminSession');
     expect(html).toContain('href="/enterprise/admin/credits"');
     expect(html).toContain('积分管理');
+    expect(html).toContain('id="deleteAccount"');
+    expect(html).toContain("method:'DELETE'");
+    expect(html).toContain('删除账号');
+    expect(html).toContain('href="/enterprise/admin/platform"');
+    expect(html).toContain('多企业管理');
+    expect(html).not.toContain(ADMIN_TOKEN);
+  });
+
+  it('平台管理页通过手动令牌创建并列出多个企业，不在 HTML 中泄露平台令牌', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const res = await fetch(`${base}/enterprise/admin/platform`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+
+    const html = await res.text();
+    expect(html).toContain('平台企业管理');
+    expect(html).toContain('id="platformToken"');
+    expect(html).toContain('id="organizationForm"');
+    expect(html).toContain("api('/enterprise/organizations'");
+    expect(html).toContain("method:'POST'");
+    expect(html).toContain('首位企业管理员');
+    expect(html).toContain('sessionStorage');
     expect(html).not.toContain(ADMIN_TOKEN);
   });
 
@@ -1121,7 +1151,80 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
   }, 20_000);
 
-  it('短信验证码只用于首次注册，注册时保存姓名和密码，之后用手机号密码登录', async () => {
+  it('A2A 收件箱经过成员鉴权返回待处理请求，并在回复后移出收件箱', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'atoa-route-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const bob = db.createAccount({
+      username: 'atoa-route-bob',
+      password: 'bob-password',
+      name: 'Bob',
+    });
+    const login = async (identifier: string, password: string): Promise<string> => {
+      const response = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+    const aliceToken = await login('atoa-route-alice', 'alice-password');
+    const bobToken = await login('atoa-route-bob', 'bob-password');
+
+    const sent = await fetch(`${base}/enterprise/messages/${bob.id}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${aliceToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: 'OTTO_ATOA_REQUEST {"v":1,"id":"route-1","question":"今天方便评审吗？"}',
+      }),
+    });
+    expect(sent.status).toBe(201);
+    const requestMessage = (await sent.json()) as { message: { id: string } };
+
+    const unauthenticated = await fetch(`${base}/enterprise/atoa/inbox`);
+    expect(unauthenticated.status).toBe(401);
+
+    const inbox = await fetch(`${base}/enterprise/atoa/inbox`, {
+      headers: { authorization: `Bearer ${bobToken}` },
+    });
+    expect(inbox.status).toBe(200);
+    await expect(inbox.json()).resolves.toMatchObject({
+      requests: [
+        expect.objectContaining({
+          id: requestMessage.message.id,
+          peerAccountId: alice.id,
+        }),
+      ],
+    });
+
+    const replied = await fetch(`${base}/enterprise/messages/${alice.id}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${bobToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: `OTTO_ATOA_RESPONSE {"v":1,"requestId":"${requestMessage.message.id}","answer":"可以，15:00 开始。"}`,
+      }),
+    });
+    expect(replied.status).toBe(201);
+
+    const afterReply = await fetch(`${base}/enterprise/atoa/inbox`, {
+      headers: { authorization: `Bearer ${bobToken}` },
+    });
+    expect(afterReply.status).toBe(200);
+    await expect(afterReply.json()).resolves.toEqual({ requests: [] });
+  }, 30_000);
+
+  it('企业邀请注册保存姓名和密码，之后支持手机号加密码或验证码登录', async () => {
     const sent: Array<{ phone: string; code: string }> = [];
     const sender = {
       async sendVerificationCode(phone: string, code: string): Promise<boolean> {
@@ -1225,12 +1328,74 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(loggedIn.account.id).toBe(registered.account.id);
     expect(loggedIn.token).toEqual(expect.any(String));
 
-    const deprecatedSmsLogin = await fetch(`${base}/enterprise/auth/sms/request`, {
+    const smsLoginRequest = await fetch(`${base}/enterprise/auth/sms/request`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '13700137000' }),
     });
-    expect(deprecatedSmsLogin.status).toBe(410);
-    expect(await deprecatedSmsLogin.json()).toEqual({ error: '短信验证码仅用于首次注册，请使用密码登录' });
+    expect(smsLoginRequest.status).toBe(200);
+    const smsLoginChallenge = await smsLoginRequest.json();
+    expect(smsLoginChallenge.challengeId).toMatch(/^sms_/);
+    expect(sent).toHaveLength(2);
+
+    const smsLoginVerify = await fetch(`${base}/enterprise/auth/sms/verify`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        challengeId: smsLoginChallenge.challengeId,
+        code: sent[1]?.code,
+      }),
+    });
+    expect(smsLoginVerify.status).toBe(200);
+    await expect(smsLoginVerify.json()).resolves.toMatchObject({
+      account: { id: registered.account.id },
+      token: expect.any(String),
+    });
+  });
+
+  it('普通注册无需企业邀请码，并给每个账号创建互相隔离的个人空间', async () => {
+    const sent: Array<{ phone: string; code: string }> = [];
+    const { base } = await startIsolated(ADMIN_TOKEN, {
+      async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+        sent.push({ phone, code });
+        return true;
+      },
+    });
+
+    const registerPersonal = async (phone: string, name: string) => {
+      const request = await fetch(`${base}/enterprise/auth/register/sms/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      expect(request.status).toBe(200);
+      const challenge = await request.json();
+      expect(challenge).toMatchObject({
+        challengeId: expect.stringMatching(/^smsreg_/),
+        registrationMode: 'personal',
+        organization: null,
+      });
+      const sentCode = sent.at(-1)?.code;
+      const verify = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          code: sentCode,
+          name,
+          password: 'personal-password-1',
+        }),
+      });
+      expect(verify.status).toBe(200);
+      return verify.json();
+    };
+
+    const first = await registerPersonal('13500135000', '个人一号');
+    const second = await registerPersonal('13600136000', '个人二号');
+    expect(first.account).toMatchObject({
+      accountType: 'personal',
+      organizationName: '个人一号的个人空间',
+    });
+    expect(second.account.accountType).toBe('personal');
+    expect(first.account.organizationId).not.toBe(second.account.organizationId);
   });
 
   it('短信服务未配置时注册入口返回 503', async () => {
@@ -1314,6 +1479,54 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(list.status).toBe(200);
     expect((await list.json()).accounts).toHaveLength(3);
+  });
+
+  it('管理员可删除本企业其他账号，删除后旧会话失效且目录不再返回', async () => {
+    const { base } = await seedAccount(ADMIN_TOKEN, {
+      username: 'delete-admin',
+      password: 'delete-admin-password',
+      name: '删除管理员',
+      isAdmin: true,
+    });
+    const db = await import('./db.js');
+    const staff = db.createAccount({
+      username: 'delete-staff',
+      password: 'delete-staff-password',
+      name: '待删除员工',
+    });
+    const staffSession = db.createAuthSession(staff.id);
+    const loginResponse = await fetch(`${base}/enterprise/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: 'delete-admin',
+        password: 'delete-admin-password',
+      }),
+    });
+    const adminSession = (await loginResponse.json()) as { token: string; account: { id: string } };
+
+    const deleted = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${adminSession.token}` },
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toEqual({ deleted: true, id: staff.id });
+
+    const list = await fetch(`${base}/enterprise/accounts`, {
+      headers: { authorization: `Bearer ${adminSession.token}` },
+    });
+    expect(((await list.json()) as { accounts: Array<{ id: string }> }).accounts)
+      .not.toContainEqual(expect.objectContaining({ id: staff.id }));
+    expect((await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${staffSession.token}` },
+    })).status).toBe(401);
+
+    const selfDelete = await fetch(`${base}/enterprise/accounts/${adminSession.account.id}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${adminSession.token}` },
+    });
+    expect(selfDelete.status).toBe(409);
+    await expect(selfDelete.json()).resolves.toEqual({ error: '不能删除当前登录账号' });
   });
 
   it('新增账号支持 disabled，并明确拒绝非法 status 而不是静默创建 active 账号', async () => {
@@ -2121,6 +2334,30 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       admin: { organizationId: expect.any(String), username: 'gamma.owner', isAdmin: true },
       invite: { status: 'active', validHours: 168 },
     });
+
+    const secondProvision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Delta 物流',
+        slug: 'delta',
+        admin: {
+          username: 'delta.owner',
+          password: 'delta-owner-password',
+          name: 'Delta 管理员',
+        },
+      }),
+    });
+    expect(secondProvision.status).toBe(201);
+    const organizations = await fetch(`${base}/enterprise/organizations`, {
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+    });
+    expect(organizations.status).toBe(200);
+    expect(((await organizations.json()) as {
+      organizations: Array<{ slug: string }>;
+    }).organizations.map((organization) => organization.slug)).toEqual(
+      expect.arrayContaining(['gamma', 'delta']),
+    );
 
     const ownerToken = await login(base, 'gamma.owner', 'gamma-owner-password');
     const denied = await fetch(`${base}/enterprise/organizations`, {
