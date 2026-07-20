@@ -3,7 +3,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ProductWorkspaceSnapshot } from 'otto-server';
+import type { ProductWorkspaceSnapshot, ScheduleItemInfo } from 'otto-server';
 import type {
   EnterpriseAccount,
   EnterpriseDirectMessage,
@@ -11,15 +11,18 @@ import type {
 } from '../../preload/index.js';
 import { buildAtoaRequest, displayDirectMessageContent } from '../atoaProtocol.js';
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
-import { IconChevronDown } from './icons.js';
+import { IconChevronDown, IconPlus } from './icons.js';
+import { AtoaConsultDialog } from './AtoaConsultDialog.js';
 
 export function OrganizationTree({
   workspace,
+  schedules = [],
   enterpriseAccount,
   openRequest = 0,
   onAskOttoFromDirectChat,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
+  schedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
   /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
   openRequest?: number;
@@ -41,6 +44,7 @@ export function OrganizationTree({
     const result = new Map<string, EnterpriseOrganizationView['members'][number]>();
     for (const member of orgView?.members ?? []) {
       if (member.status !== 'active') continue;
+      if (member.id === enterpriseAccount?.id) continue;
       result.set(normalizeChatKey(member.id), member);
       result.set(normalizeChatKey(member.username), member);
       result.set(normalizeChatKey(member.name), member);
@@ -132,6 +136,7 @@ export function OrganizationTree({
               {(() => {
                 const deptMap = new Map<string, EnterpriseOrganizationView['members']>();
                 for (const member of orgView.members) {
+                  if (member.status !== 'active') continue;
                   const dept = member.department || '未分配部门';
                   if (!deptMap.has(dept)) deptMap.set(dept, []);
                   deptMap.get(dept)!.push(member);
@@ -140,15 +145,33 @@ export function OrganizationTree({
                   <div key={dept} className="otto-orgtree__department">
                     <div className="otto-orgtree__department-name">{dept}</div>
                     {members.map((member) => (
-                      <button
-                        key={member.id}
-                        type="button"
-                        className="otto-orgtree__member otto-orgtree__member-button"
-                        onClick={() => setChatMember(member)}
-                      >
-                        <span>{member.name}</span>
-                        <span>{member.isAdmin ? '管理员' : member.role || '成员'}</span>
-                      </button>
+                      member.id === enterpriseAccount?.id ? (
+                        <div
+                          key={member.id}
+                          className="otto-orgtree__member"
+                          aria-label={`${member.name}（我）`}
+                        >
+                          <span>{member.name}</span>
+                          <span>
+                            {member.positionTitle ||
+                              (member.isAdmin ? '管理员' : member.role || '成员')}
+                          </span>
+                          <small>我</small>
+                        </div>
+                      ) : (
+                        <button
+                          key={member.id}
+                          type="button"
+                          className="otto-orgtree__member otto-orgtree__member-button"
+                          onClick={() => setChatMember(member)}
+                        >
+                          <span>{member.name}</span>
+                          <span>
+                            {member.positionTitle ||
+                              (member.isAdmin ? '管理员' : member.role || '成员')}
+                          </span>
+                        </button>
+                      )
                     ))}
                   </div>
                 ));
@@ -168,6 +191,8 @@ export function OrganizationTree({
       {chatMember ? (
         <DirectMessagePanel
           member={chatMember}
+          currentAccount={enterpriseAccount}
+          schedules={schedules}
           onClose={() => setChatMember(null)}
           onAskOtto={onAskOttoFromDirectChat}
         />
@@ -182,8 +207,16 @@ export interface DirectChatOttoRequest {
   question?: string;
 }
 
-function DirectMessagePanel({ member, onClose, onAskOtto }: {
+function DirectMessagePanel({
+  member,
+  currentAccount,
+  schedules,
+  onClose,
+  onAskOtto,
+}: {
   member: EnterpriseOrganizationView['members'][number];
+  currentAccount?: EnterpriseAccount;
+  schedules: readonly ScheduleItemInfo[];
   onClose: () => void;
   onAskOtto?: (input: DirectChatOttoRequest) => void;
 }): React.JSX.Element {
@@ -192,6 +225,8 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [askingPeerOtto, setAskingPeerOtto] = useState(false);
+  const [collaborationMenuOpen, setCollaborationMenuOpen] = useState(false);
+  const [consultOpen, setConsultOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -281,6 +316,34 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
         >
           问对方 Otto
         </button>
+        {currentAccount ? (
+          <div className="otto-direct-chat__a2a-menu">
+            <button
+              type="button"
+              className="otto-direct-chat__plus"
+              aria-label="更多 Otto 协作"
+              aria-expanded={collaborationMenuOpen}
+              onClick={() => setCollaborationMenuOpen((value) => !value)}
+            >
+              <IconPlus size={15} />
+            </button>
+            {collaborationMenuOpen ? (
+              <div className="otto-direct-chat__a2a-popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setCollaborationMenuOpen(false);
+                    setConsultOpen(true);
+                  }}
+                >
+                  <strong>双方 Otto 协商</strong>
+                  <small>会议时间、合作计划与双方日程</small>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
       </header>
       <div className="otto-direct-chat__messages">
@@ -304,6 +367,20 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
         />
         <button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button>
       </form>
+      {consultOpen && currentAccount ? (
+        <AtoaConsultDialog
+          account={currentAccount}
+          member={member}
+          schedules={schedules}
+          initialQuestion={draft}
+          onClose={() => setConsultOpen(false)}
+          onSent={(message) => {
+            setMessages((current) => [...current, message]);
+            setDraft('');
+            setError('');
+          }}
+        />
+      ) : null}
     </div>
   );
 }

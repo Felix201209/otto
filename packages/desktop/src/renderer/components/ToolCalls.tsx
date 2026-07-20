@@ -39,6 +39,8 @@ export type RespondQuestionFn = (
   callId: string,
   outcome: 'approved' | 'rejected' | 'always_approve',
   payload?: ToolConfirmationResponsePayload,
+  /** 普通问答省略；执行型确认带上原始工具，供 App 的可信中继复核。 */
+  tool?: ToolCall,
 ) => void;
 
 type ToolKind = 'edit' | 'exec' | 'generic';
@@ -382,7 +384,7 @@ function ConfirmationCard({
   const respond = (outcome: 'approved' | 'rejected'): void => {
     if (!onRespond || sent) return;
     setSent(true);
-    onRespond(tool.id, outcome);
+    onRespond(tool.id, outcome, undefined, tool);
   };
   return (
     <div className="otto-tool otto-ask otto-confirm">

@@ -11,10 +11,38 @@
 
 import type React from 'react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen, within } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
 import { Sidebar } from './Sidebar.js';
 import type { SessionGroup } from '../state/useOttoStore.js';
+
+const PERSONAL_ACCOUNT = {
+  id: 'acc_personal',
+  organizationId: 'personal_acc_personal',
+  organizationName: 'Felix 的个人空间',
+  accountType: 'personal' as const,
+  employeeId: null,
+  username: 'felix',
+  phone: '+8613800138000',
+  name: 'Felix',
+  role: null,
+  department: null,
+  positionId: null,
+  positionTitle: null,
+  isAdmin: false,
+  status: 'active' as const,
+  tags: [],
+  createdAt: '2026-07-20',
+  updatedAt: '2026-07-20',
+};
+
+const ENTERPRISE_ACCOUNT = {
+  ...PERSONAL_ACCOUNT,
+  organizationId: 'org_acme',
+  organizationName: '星河科技',
+  accountType: 'enterprise' as const,
+  department: '产品部',
+};
 
 function makeSession(over: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -78,6 +106,93 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('第二个任务')).toBeNull();
+  });
+
+  it('个人版账号也始终显示账户区和退出登录入口', async () => {
+    const onLogout = vi.fn(async () => undefined);
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onLogout,
+    });
+
+    expect(screen.getByText('Felix')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    expect(screen.getByRole('dialog', { name: '确认退出登录' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '确认退出' }));
+    await waitFor(() => expect(onLogout).toHaveBeenCalledOnce());
+    await waitFor(() => expect(
+      screen.queryByRole('dialog', { name: '确认退出登录' }),
+    ).toBeNull());
+  });
+
+  it('个人版可在客户端内提交企业邀请码升级，成功后关闭弹窗', async () => {
+    const onJoinEnterprise = vi.fn(async () => undefined);
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onJoinEnterprise,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '升级企业版' }));
+    const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
+    expect(within(dialog).getByText(/原个人空间对话不会自动带入企业/)).toBeTruthy();
+    const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
+    fireEvent.change(invite, { target: { value: 'abcd-efgh' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
+
+    await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledWith({
+      inviteCode: 'ABCD-EFGH',
+    }));
+    await waitFor(() => expect(
+      screen.queryByRole('dialog', { name: '升级为企业版' }),
+    ).toBeNull());
+  });
+
+  it('邀请码升级失败时显示真实错误并保留输入，修正后可原地重试', async () => {
+    const onJoinEnterprise = vi.fn()
+      .mockRejectedValueOnce(new Error('企业邀请码无效或已失效'))
+      .mockResolvedValueOnce(undefined);
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onJoinEnterprise,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '升级企业版' }));
+    const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
+    const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
+    fireEvent.change(invite, { target: { value: 'ABCD-EFGH' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
+
+    expect((await within(dialog).findByRole('alert')).textContent)
+      .toBe('企业邀请码无效或已失效');
+    expect((invite as HTMLInputElement).value).toBe('ABCD-EFGH');
+    fireEvent.change(invite, { target: { value: 'WXYZ-2345' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
+
+    await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(
+      screen.queryByRole('dialog', { name: '升级为企业版' }),
+    ).toBeNull());
+  });
+
+  it('企业版账号不显示重复升级入口', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: '星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-20',
+      },
+      members: [],
+      employeeCount: 0,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+    renderSidebar({
+      enterpriseAccount: ENTERPRISE_ACCOUNT,
+      onJoinEnterprise: vi.fn(),
+    });
+
+    expect(screen.queryByRole('button', { name: '升级企业版' })).toBeNull();
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
   });
 });
 

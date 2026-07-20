@@ -98,6 +98,7 @@ import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voice
 import { transcribeAudio } from './voiceService.js';
 import {
   EnterpriseClient,
+  EnterpriseJoinStateUncertainError,
   type AccountCreateInput,
   type AccountUpdateInput,
   type EnterpriseKnowledgeRecordInput,
@@ -106,9 +107,11 @@ import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
   EnterpriseAuthOperationQueue,
+  failClosedUncertainEnterpriseJoin,
   logoutAndClearEnterpriseIdentity,
   refreshEnterpriseIdentityLease,
   restoreAndSyncEnterpriseSession,
+  syncJoinedEnterpriseAccount,
   syncVerifiedEnterpriseAccount,
 } from './enterprise-auth-sync.js';
 import {
@@ -126,6 +129,7 @@ import {
 } from './enterprise-network-policy.js';
 import { INTERNAL_TEST_ACCESS_ENABLED } from './internal-test-access.js';
 import { resolveVideoEditorIndex } from './video-editor-resource.js';
+import { buildRendererCsp } from './renderer-csp.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -232,6 +236,7 @@ const IPC = {
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
   enterpriseRegister: 'otto:enterprise-register',
+  enterpriseJoinOrganization: 'otto:enterprise-join-organization',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
@@ -863,19 +868,8 @@ function applyCsp(): void {
       ?? (Number.isFinite(configuredPort) && configuredPort > 0
         ? configuredPort
         : CSP_FALLBACK_PORT);
-    const csp = [
-      "default-src 'self'",
-      // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self' data:",
-      // 仅允许连本地 server（HTTP 拉历史 + WS 实时）。
-      `connect-src 'self' http://${host}:${port} ws://${host}:${port}`,
-      "script-src 'self'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "frame-src 'none'",
-    ].join('; ');
+    // HTTPS 只用于员工头像图片；脚本和网络请求仍严格限制在自身与本地 server。
+    const csp = buildRendererCsp(host, port);
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -1055,6 +1049,36 @@ function registerIpc(): void {
         (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
         saveEnterpriseSession,
       );
+      return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    });
+  });
+  ipcMain.handle(IPC.enterpriseJoinOrganization, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('企业邀请码格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.inviteCode !== 'string') throw new Error('企业邀请码为必填项');
+    return enterpriseAuthOperations.run(async () => {
+      let result;
+      try {
+        result = await enterpriseClient.joinOrganization(body.inviteCode as string);
+      } catch (error) {
+        if (error instanceof EnterpriseJoinStateUncertainError) {
+          return failClosedUncertainEnterpriseJoin(
+            error,
+            enterpriseClient,
+            (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+            saveEnterpriseSession,
+          );
+        }
+        throw error;
+      }
+      await syncJoinedEnterpriseAccount(
+        result.account,
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+      saveEnterpriseSession();
       return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
     });
   });

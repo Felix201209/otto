@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   EnterpriseClient,
+  EnterpriseJoinStateUncertainError,
   logoutAndPersistEnterpriseSession,
 } from './enterprise-client.js';
 
@@ -51,7 +52,9 @@ const API_V2_HEALTH = {
     'account_deletion',
     'multi_organization',
     'direct_messages',
+    'atoa',
     'position_invites',
+    'personal_enterprise_upgrade',
     'park_service_push',
   ],
 };
@@ -163,6 +166,158 @@ describe('EnterpriseClient', () => {
     expect(challenge.registrationMode).toBe('personal');
     expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string))
       .toEqual({ phone: '13800138000' });
+  });
+
+  it('个人账号登录后用 Bearer 会话提交邀请码，并用服务端返回值刷新当前身份', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const upgradedAccount = {
+      ...ACCOUNT,
+      accountType: 'enterprise' as const,
+      department: '产品部',
+      positionTitle: '产品经理',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount, token: 'personal-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: upgradedAccount,
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.joinOrganization('ABCD-EFGH')).resolves.toEqual({
+      account: upgradedAccount,
+    });
+    expect(client.authenticatedAccountSnapshot()).toEqual(upgradedAccount);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/auth/join-organization');
+    const request = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(request.method).toBe('POST');
+    expect(request.headers).toMatchObject({ authorization: 'Bearer personal-token' });
+    expect(JSON.parse(request.body as string)).toEqual({ inviteCode: 'ABCD-EFGH' });
+  });
+
+  it('加入企业已提交但响应断线时，用原 Bearer 会话对账并提交企业身份', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const upgradedAccount = {
+      ...ACCOUNT,
+      organizationId: 'org_product',
+      organizationName: '产品企业',
+      accountType: 'enterprise' as const,
+      department: '产品部',
+      positionId: 'position_pm',
+      positionTitle: '产品经理',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount, token: 'personal-token', expiresAt: '2099-01-01',
+      }))
+      .mockRejectedValueOnce(new Error('socket disconnected after commit'))
+      .mockResolvedValueOnce(jsonResponse(200, { account: upgradedAccount }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.joinOrganization('ABCD-EFGH')).resolves.toEqual({
+      account: upgradedAccount,
+    });
+    expect(client.authenticatedAccountSnapshot()).toEqual(upgradedAccount);
+    expect(fetchMock.mock.calls[3]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/auth/me');
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).headers)
+      .toMatchObject({ authorization: 'Bearer personal-token' });
+  });
+
+  it('加入企业请求断线但服务端确认仍为个人账号时，保留个人会话供安全重试', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount, token: 'personal-token', expiresAt: '2099-01-01',
+      }))
+      .mockRejectedValueOnce(new Error('socket disconnected before commit'))
+      .mockResolvedValueOnce(jsonResponse(200, { account: personalAccount }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.joinOrganization('ABCD-EFGH'))
+      .rejects.toThrow('无法连接企业服务器：socket disconnected before commit');
+    expect(client.authenticatedAccountSnapshot()).toEqual(personalAccount);
+  });
+
+  it('加入企业响应断线且无法读取当前身份时，返回可识别的不确定状态错误', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount, token: 'personal-token', expiresAt: '2099-01-01',
+      }))
+      .mockRejectedValueOnce(new Error('join response lost'))
+      .mockRejectedValueOnce(new Error('auth me unavailable'));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.joinOrganization('ABCD-EFGH'))
+      .rejects.toBeInstanceOf(EnterpriseJoinStateUncertainError);
+    expect(client.authenticatedAccountSnapshot()).toEqual(personalAccount);
+  });
+
+  it('企业账号不能从客户端重复加入另一企业', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: { ...ACCOUNT, accountType: 'enterprise' },
+        token: 'member-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.joinOrganization('ABCD-EFGH'))
+      .rejects.toThrow('当前账号已经属于企业');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('支持手机号验证码登录并保存会话', async () => {
@@ -361,6 +516,14 @@ describe('EnterpriseClient', () => {
     const requests = [{
       id: 'msg_atoa_1',
       peerAccountId: 'acc_2',
+      peer: {
+        id: 'acc_2',
+        username: 'staff02',
+        name: '员工二号',
+        department: '产品部',
+        positionTitle: '产品经理',
+        role: 'member',
+      },
       content: 'OTTO_ATOA_REQUEST {"v":1,"id":"request-1","question":"现在方便吗？"}',
       createdAt: '2026-07-19T12:00:00.000Z',
     }];

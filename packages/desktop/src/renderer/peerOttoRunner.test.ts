@@ -20,6 +20,34 @@ describe('真实企业 A2A 本机 Agent 执行器', () => {
     expect(prompt).toContain('不能替员工做承诺');
   });
 
+  it('双方 Otto 协商时明确比较发起方提案与接收方授权资料', () => {
+    const prompt = buildPeerOttoPrompt(
+      '为项目评审协商时间和合作计划',
+      '日程：16:00 后有空。',
+      {
+        mode: 'consult',
+        initiatorProposal: '发起方 Otto 建议 15:00 开会并先审接口。',
+      },
+    );
+    expect(prompt).toContain('双方 Otto 协商');
+    expect(prompt).toContain('发起方 Otto 提案');
+    expect(prompt).toContain('15:00 开会');
+    expect(prompt).toContain('16:00 后有空');
+    expect(prompt).toContain('不能擅自承诺');
+  });
+
+  it('发起协商时由自己的 Otto 先基于本方授权资料形成提案', () => {
+    const prompt = buildPeerOttoPrompt(
+      '协商项目评审时间',
+      '我的日程：15:00 有复盘，16:00 后可用。',
+      { mode: 'consult_initiator' },
+    );
+    expect(prompt).toContain('协商的发起方 Otto');
+    expect(prompt).toContain('形成一份有界提案');
+    expect(prompt).toContain('16:00 后可用');
+    expect(prompt).toContain('不要声称已经发送');
+  });
+
   it('确认框与模型只使用同一份规范化问题，不发送未展示尾部', () => {
     const visible = '已展示问题'.repeat(300);
     const normalized = normalizePeerOttoQuestion(`  ${visible}未展示尾部  `);

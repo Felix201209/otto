@@ -749,6 +749,13 @@ h6.otto-prose__h {
 .otto-sidebar-account__logout { min-width: 34px; min-height: 28px; padding: 0 6px; border: 1px solid transparent !important; border-radius: 7px; background: transparent; color: var(--otto-text-tertiary); font: 650 9px var(--otto-font); cursor: pointer; }
 .otto-sidebar-account__logout:hover { border-color: color-mix(in srgb, var(--otto-danger) 18%, transparent) !important; color: var(--otto-danger); background: color-mix(in srgb, var(--otto-danger) 7%, transparent); }
 .otto-sidebar-account__logout:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
+.otto-viewall--upgrade { color: color-mix(in srgb, var(--otto-accent) 88%, var(--otto-text)); }
+.otto-viewall--upgrade:hover { background: color-mix(in srgb, var(--otto-accent) 9%, transparent); }
+.otto-join-enterprise { width: min(420px, calc(100vw - 32px)); }
+.otto-join-enterprise__field { display: grid; gap: 7px; margin-top: 18px; color: var(--otto-text-secondary); font: 700 11px var(--otto-font); }
+.otto-join-enterprise__field input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--otto-border); border-radius: 9px; outline: none; background: var(--otto-surface); color: var(--otto-text); font: 750 15px/1 var(--otto-font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.otto-join-enterprise__field input:focus { border-color: var(--otto-accent); box-shadow: var(--otto-shadow-focus); }
+.otto-join-enterprise__error { margin-top: 10px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--otto-danger) 28%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--otto-danger) 8%, transparent); color: var(--otto-danger); font: 650 10px/1.45 var(--otto-font); }
 
 .otto-account-page { --identity-night: #07110f; --identity-lime: #a8ffcf; flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 35px clamp(26px,4vw,62px) 56px; color: var(--otto-text); background: var(--otto-bg); }
 .otto-account-hero { max-width: 1180px; margin: 0 auto 25px; display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }
@@ -817,7 +824,7 @@ h6.otto-prose__h {
 .otto-account-table tbody .otto-account-table__row:last-child > td { border-bottom: 0; }
 .otto-account-table__header > th { height: 38px; color: var(--otto-text-tertiary); background: var(--otto-surface-raised); font: 700 9.5px/1 var(--otto-font-mono); letter-spacing: .11em; text-transform: uppercase; }
 .otto-account-table__identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.otto-account-table__avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; color: #10241d; background: #dff8e9; font-size: 11px; font-weight: 850; }
+.otto-account-table__avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; object-fit: cover; color: #10241d; background: #dff8e9; font-size: 11px; font-weight: 850; }
 .otto-account-table__row strong, .otto-account-table__row small { display: block; min-width: 0; }
 .otto-account-table__row strong { color: var(--otto-text); font-size: 12px; }
 .otto-account-table__row small { margin-top: 4px; color: var(--otto-text-tertiary); font-size: 10.5px; }
@@ -6367,6 +6374,31 @@ h6.otto-prose__h {
 .otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }
 .otto-direct-chat__otto { margin-left:auto; margin-right:8px; border:1px solid var(--otto-border) !important; border-radius:8px; background:var(--otto-bg) !important; color:var(--otto-text) !important; font-size:12px !important; line-height:1; padding:7px 9px; }
 .otto-direct-chat__otto:hover { border-color:var(--otto-accent); color:var(--otto-accent) !important; }
+.otto-direct-chat__a2a-menu { position: relative; }
+.otto-direct-chat__plus { display: grid; place-items: center; width: 28px; height: 28px; padding: 0 !important; border: 1px solid var(--otto-border) !important; border-radius: 8px; background: var(--otto-bg) !important; }
+.otto-direct-chat__a2a-popover {
+  position: absolute;
+  z-index: 4;
+  top: 34px;
+  right: 0;
+  width: 230px;
+  padding: 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: 11px;
+  background: var(--otto-surface);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .24);
+}
+.otto-direct-chat__a2a-popover button {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 10px !important;
+  border-radius: 8px !important;
+  text-align: left;
+}
+.otto-direct-chat__a2a-popover button:hover { background: var(--otto-accent-soft) !important; }
+.otto-direct-chat__a2a-popover strong { color: var(--otto-text); font-size: 12px; }
+.otto-direct-chat__a2a-popover small { color: var(--otto-text-secondary); font-size: 10px; line-height: 1.4; }
 .otto-direct-chat__messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:12px; }
 .otto-direct-chat__messages p { color:var(--otto-text-tertiary); text-align:center; }
 .otto-direct-chat__message { max-width:80%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
@@ -6376,6 +6408,126 @@ h6.otto-prose__h {
 .otto-direct-chat form { display:flex; gap:8px; padding:10px; border-top:1px solid var(--otto-border); }
 .otto-direct-chat form input { flex:1; min-width:0; border:1px solid var(--otto-border); border-radius:8px; background:var(--otto-bg); color:var(--otto-text); padding:8px; }
 .otto-direct-chat form button { border:0; border-radius:8px; padding:0 12px; background:var(--otto-accent); color:white; cursor:pointer; }
+
+.otto-a2a-permission-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 24, .62);
+  backdrop-filter: blur(5px);
+}
+.otto-a2a-permission {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--otto-border);
+  border-radius: 18px;
+  background: var(--otto-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .38);
+}
+.otto-a2a-permission header h2 { margin: 4px 0 0; font-size: 20px; }
+.otto-a2a-permission header p { margin: 4px 0 0; color: var(--otto-text-secondary); font-size: 12px; }
+.otto-a2a-permission__eyebrow { color: var(--otto-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.otto-a2a-permission__question,
+.otto-a2a-permission__proposal {
+  margin-top: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: 11px;
+  background: var(--otto-bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.otto-a2a-permission__proposal strong { display: block; margin-bottom: 5px; font-size: 11px; color: var(--otto-text-secondary); }
+.otto-a2a-permission__proposal p { margin: 0; }
+.otto-a2a-permission__notice { margin: 16px 0 10px; color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; }
+.otto-a2a-permission__sources { display: grid; gap: 8px; }
+.otto-a2a-permission__sources label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.otto-a2a-permission__sources label:has(input:checked) {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-a2a-permission__sources input { margin-top: 2px; accent-color: var(--otto-accent); }
+.otto-a2a-permission__sources span { display: grid; gap: 3px; }
+.otto-a2a-permission__sources strong { font-size: 12px; }
+.otto-a2a-permission__sources small { color: var(--otto-text-secondary); font-size: 10px; }
+.otto-a2a-permission footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.otto-a2a-permission footer button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  cursor: pointer;
+}
+.otto-a2a-permission footer button:disabled { opacity: .45; cursor: not-allowed; }
+.otto-a2a-permission footer .is-primary { border-color: var(--otto-accent); background: var(--otto-accent); color: #fff; }
+.otto-a2a-permission footer .is-danger { margin-right: auto; color: var(--otto-danger); }
+
+.otto-a2a-consult-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 245;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 24, .64);
+  backdrop-filter: blur(5px);
+}
+.otto-a2a-consult {
+  width: min(600px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--otto-border);
+  border-radius: 18px;
+  background: var(--otto-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .4);
+}
+.otto-a2a-consult header { display: flex; align-items: flex-start; justify-content: space-between; }
+.otto-a2a-consult header span { color: var(--otto-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.otto-a2a-consult header h2 { margin: 5px 0 0; font-size: 20px; }
+.otto-a2a-consult header > button { border: 0; background: transparent; color: var(--otto-text-secondary); font-size: 22px; cursor: pointer; }
+.otto-a2a-consult__goal { display: grid; gap: 7px; margin-top: 18px; font-size: 12px; }
+.otto-a2a-consult__goal textarea {
+  min-height: 90px;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  font: inherit;
+}
+.otto-a2a-consult fieldset { margin: 14px 0 0; padding: 12px; border: 1px solid var(--otto-border); border-radius: 10px; }
+.otto-a2a-consult legend { padding: 0 5px; color: var(--otto-text-secondary); font-size: 11px; }
+.otto-a2a-consult fieldset > small { display: block; margin-top: 9px; color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-a2a-consult__sources { display: flex; flex-wrap: wrap; gap: 8px; }
+.otto-a2a-consult__sources label { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 8px; background: var(--otto-bg); font-size: 11px; cursor: pointer; }
+.otto-a2a-consult__sources input { accent-color: var(--otto-accent); }
+.otto-a2a-consult__proposal { margin-top: 14px; padding: 13px; border: 1px solid var(--otto-accent); border-radius: 10px; background: var(--otto-accent-soft); }
+.otto-a2a-consult__proposal strong { font-size: 11px; }
+.otto-a2a-consult__proposal p { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.55; }
+.otto-a2a-consult__error { color: var(--otto-danger); font-size: 11px; }
+.otto-a2a-consult footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.otto-a2a-consult footer button { min-height: 34px; padding: 0 12px; border: 1px solid var(--otto-border); border-radius: 9px; background: var(--otto-bg); color: var(--otto-text); cursor: pointer; }
+.otto-a2a-consult footer button:disabled { opacity: .45; cursor: not-allowed; }
+.otto-a2a-consult footer .is-primary { border-color: var(--otto-accent); background: var(--otto-accent); color: #fff; }
 
 .otto-right-panel { position: relative; width: 304px; min-width: 304px; transition: width .18s ease, min-width .18s ease; }
 .otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }

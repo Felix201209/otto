@@ -21,7 +21,11 @@ describe('退出登录二次确认', () => {
     );
 
     expect(screen.getByRole('dialog', { name: '确认退出登录' })).toBeTruthy();
-    expect(screen.getByText('退出后需要重新输入账号或手机号和密码。')).toBeTruthy();
+    expect(
+      screen.getByText(
+        '退出后需要重新登录；本机对话、模型/API 密钥、知识库和 Skill 都会保留。',
+      ),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();

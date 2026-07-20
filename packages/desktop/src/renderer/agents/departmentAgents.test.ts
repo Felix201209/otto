@@ -71,6 +71,13 @@ describe('fixed Agent profile catalog', () => {
       scope: 'base',
       department: null,
     });
+    expect(ENTERPRISE_WORK_PROFILE.systemPrompt).toContain(
+      'enterprise_collaboration',
+    );
+    expect(ENTERPRISE_WORK_PROFILE.systemPrompt).toContain('先查询企业成员目录');
+    expect(ENTERPRISE_WORK_PROFILE.systemPrompt).not.toContain(
+      '不发起多 Agent 交流',
+    );
     expect(PERSONAL_OTTO_PROFILE).not.toBe(ENTERPRISE_CEO_PROFILE);
     expect(PERSONAL_OTTO_PROFILE).not.toBe(ENTERPRISE_WORK_PROFILE);
     expect(ENTERPRISE_CEO_PROFILE).not.toBe(ENTERPRISE_WORK_PROFILE);

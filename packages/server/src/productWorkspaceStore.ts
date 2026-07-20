@@ -23,6 +23,7 @@ import {
 
 export interface WorkspaceMember {
   userId: string;
+  username?: string;
   displayName: string;
   companyId: string;
   departmentId?: string;
@@ -109,6 +110,18 @@ export interface ProductWorkspaceStoreOptions {
   now?: () => Date;
 }
 
+export interface AuthenticatedEnterpriseOrganizationMember {
+  id: string;
+  username: string;
+  name: string;
+  role: string | null;
+  department: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  isAdmin: boolean;
+  status: 'active' | 'disabled';
+}
+
 /**
  * 已由中心企业服务认证的账号。role/tags 仅保留作输入兼容，绝不参与
  * 本地授权；授权唯一依据是中心服务签发的 isAdmin。
@@ -129,6 +142,7 @@ export interface AuthenticatedEnterpriseAccount {
   department?: string | null;
   positionId?: string | null;
   positionTitle?: string | null;
+  organizationMembers?: AuthenticatedEnterpriseOrganizationMember[];
 }
 
 export type EnterpriseIdentityState =
@@ -152,6 +166,105 @@ function cleanText(value: string, label: string): string {
   const clean = value.trim();
   if (!clean) throw new Error(`${label}不能为空`);
   return clean;
+}
+
+const ENTERPRISE_DIRECTORY_MEMBER_LIMIT = 200;
+
+function cleanBoundedDirectoryText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string {
+  if (typeof value !== 'string') throw new Error(`${label}必须是字符串`);
+  const clean = Array.from(value, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127 ? ' ' : character;
+  }).join('').trim();
+  if (!clean) throw new Error(`${label}不能为空`);
+  if (clean.length > maxLength) {
+    throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  }
+  return clean;
+}
+
+function cleanNullableDirectoryText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string | null {
+  if (value === null) return null;
+  return cleanBoundedDirectoryText(value, label, maxLength);
+}
+
+function normalizeAuthenticatedOrganizationMembers(
+  value: unknown,
+): AuthenticatedEnterpriseOrganizationMember[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error('中心组织成员目录必须是数组');
+  if (value.length > ENTERPRISE_DIRECTORY_MEMBER_LIMIT) {
+    throw new Error(
+      `中心组织成员目录不能超过 ${ENTERPRISE_DIRECTORY_MEMBER_LIMIT} 人`,
+    );
+  }
+  const seen = new Set<string>();
+  const members: AuthenticatedEnterpriseOrganizationMember[] = [];
+  value.forEach((raw, index) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new Error(`中心组织成员目录第 ${index + 1} 项必须是对象`);
+    }
+    const member = raw as Record<string, unknown>;
+    if (typeof member.isAdmin !== 'boolean') {
+      throw new Error(`中心组织成员目录第 ${index + 1} 项 isAdmin 必须是布尔值`);
+    }
+    if (member.status !== 'active' && member.status !== 'disabled') {
+      throw new Error(`中心组织成员目录第 ${index + 1} 项 status 无效`);
+    }
+    const id = cleanBoundedDirectoryText(
+      member.id,
+      `中心组织成员目录第 ${index + 1} 项 ID`,
+      128,
+    );
+    const normalized: AuthenticatedEnterpriseOrganizationMember = {
+      id,
+      username: cleanBoundedDirectoryText(
+        member.username,
+        `中心组织成员目录第 ${index + 1} 项账号`,
+        128,
+      ),
+      name: cleanBoundedDirectoryText(
+        member.name,
+        `中心组织成员目录第 ${index + 1} 项姓名`,
+        160,
+      ),
+      role: cleanNullableDirectoryText(
+        member.role,
+        `中心组织成员目录第 ${index + 1} 项角色`,
+        64,
+      ),
+      department: cleanNullableDirectoryText(
+        member.department,
+        `中心组织成员目录第 ${index + 1} 项部门`,
+        160,
+      ),
+      positionId: cleanNullableDirectoryText(
+        member.positionId,
+        `中心组织成员目录第 ${index + 1} 项职位 ID`,
+        128,
+      ),
+      positionTitle: cleanNullableDirectoryText(
+        member.positionTitle,
+        `中心组织成员目录第 ${index + 1} 项职位`,
+        160,
+      ),
+      isAdmin: member.isAdmin,
+      status: member.status,
+    };
+    if (normalized.status === 'active' && !seen.has(id)) {
+      seen.add(id);
+      members.push(normalized);
+    }
+  });
+  return members;
 }
 
 function defaultRoot(): string {
@@ -196,6 +309,41 @@ export class ProductWorkspaceStore {
         role,
         ...(account.positionId ? { positionId: account.positionId } : {}),
       });
+      const currentMember: WorkspaceMember = {
+        userId: account.id,
+        displayName: account.name,
+        companyId: account.organizationId,
+        ...(account.department
+          ? { departmentName: account.department }
+          : {}),
+        ...(account.positionId
+          ? { positionId: account.positionId }
+          : {}),
+        ...(account.positionTitle
+          ? { positionTitle: account.positionTitle }
+          : {}),
+        role,
+      };
+      const directoryMembers = (account.organizationMembers ?? [])
+        .filter((member) => member.id !== account.id)
+        .map(
+          (member): WorkspaceMember => ({
+            userId: member.id,
+            username: member.username,
+            displayName: member.name,
+            companyId: account.organizationId,
+            ...(member.department
+              ? { departmentName: member.department }
+              : {}),
+            ...(member.positionId
+              ? { positionId: member.positionId }
+              : {}),
+            ...(member.positionTitle
+              ? { positionTitle: member.positionTitle }
+              : {}),
+            role: member.isAdmin ? 'company_admin' : 'member',
+          }),
+        );
       return JSON.parse(
         JSON.stringify({
           schemaVersion: 1,
@@ -208,23 +356,7 @@ export class ProductWorkspaceStore {
                 },
               }
             : {}),
-          members: [
-            {
-              userId: account.id,
-              displayName: account.name,
-              companyId: account.organizationId,
-              ...(account.department
-                ? { departmentName: account.department }
-                : {}),
-              ...(account.positionId
-                ? { positionId: account.positionId }
-                : {}),
-              ...(account.positionTitle
-                ? { positionTitle: account.positionTitle }
-                : {}),
-              role,
-            },
-          ],
+          members: [currentMember, ...directoryMembers],
           friends: this.state.friends,
           credits: this.state.credits,
         }),
@@ -293,6 +425,13 @@ export class ProductWorkspaceStore {
       ...(account.positionTitle?.trim()
         ? { positionTitle: account.positionTitle.trim() }
         : {}),
+      ...(account.organizationMembers !== undefined
+        ? {
+            organizationMembers: normalizeAuthenticatedOrganizationMembers(
+              account.organizationMembers,
+            ),
+          }
+        : {}),
     };
     return this.snapshot();
   }
@@ -326,6 +465,19 @@ export class ProductWorkspaceStore {
         department: account.department ?? null,
         positionId: account.positionId ?? null,
         positionTitle: account.positionTitle ?? null,
+        organizationMembers: [...(account.organizationMembers ?? [])]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((member) => ({
+            id: member.id,
+            username: member.username,
+            name: member.name,
+            role: member.role,
+            department: member.department,
+            positionId: member.positionId,
+            positionTitle: member.positionTitle,
+            isAdmin: member.isAdmin,
+            status: member.status,
+          })),
       }),
     };
   }

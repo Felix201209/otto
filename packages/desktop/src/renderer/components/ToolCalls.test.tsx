@@ -182,7 +182,12 @@ describe('ToolCalls · 敏感操作确认卡', () => {
     expect(screen.getByText('高风险操作')).toBeTruthy();
     expect(screen.getByText('rm -rf build')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '允许执行' }));
-    expect(onRespond).toHaveBeenCalledWith('danger-1', 'approved');
+    expect(onRespond).toHaveBeenCalledWith(
+      'danger-1',
+      'approved',
+      undefined,
+      tool,
+    );
   });
 });
 

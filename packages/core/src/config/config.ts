@@ -64,6 +64,7 @@ import { WebAutomationTool } from '../tools/web-automation.js';
 import { MultiChannelTool } from '../tools/multi-channel.js';
 import { MemoryManagerTool } from '../tools/memory-manager.js';
 import { FeishuProjectCollabTool } from '../tools/feishu-project-collab.js';
+import { EnterpriseCollaborationTool } from '../tools/enterprise-collaboration.js';
 import { KnowledgeBaseTool } from '../tools/knowledge-base.js';
 import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
@@ -1308,6 +1309,7 @@ export class Config {
     registerCoreTool(MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
     registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
     registerCoreTool(FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
+    registerCoreTool(EnterpriseCollaborationTool); // 企业树成员、私聊与经授权的 Otto-to-Otto 协作
     // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
     // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
     registerCoreTool(VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）

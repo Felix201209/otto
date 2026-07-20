@@ -221,8 +221,8 @@ try {
       supportedArchitectures: ['linux-x64', 'linux-arm64'],
     },
     database: {
-      schemaFrom: [2, 3],
-      schemaTo: 3,
+      schemaFrom: [2, 3, 4],
+      schemaTo: 4,
       futureSchemaPolicy: 'reject',
     },
     files: fileHashes,

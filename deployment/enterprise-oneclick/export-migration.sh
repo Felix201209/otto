@@ -86,8 +86,8 @@ SOURCE_SCHEMA="$("$NODE_PATH" -e \
   "const x=require(process.argv[1]);console.log(x.userVersion)" \
   "${TEMP_DIR}/inspection.json")"
 case "$SOURCE_SCHEMA" in
-  2|3) ;;
-  *) otto_die "本迁入包只支持导出 schema 2 或 3，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5 ;;
+  2|3|4) ;;
+  *) otto_die "本迁入包只支持导出 schema 2、3 或 4，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5 ;;
 esac
 
 "$NODE_PATH" --input-type=module - \

@@ -21,7 +21,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
-import type { MessageSource } from 'otto-server';
+import type {
+  MessageSource,
+  ToolCall,
+  ToolConfirmationResponsePayload,
+} from 'otto-server';
 import {
   useOttoStore,
   groupSessions,
@@ -55,16 +59,23 @@ import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
 import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
+  EnterpriseDirectMessage,
+  EnterpriseOrganizationView,
 } from '../preload/index.js';
 import type { DirectChatOttoRequest } from './components/OrganizationTree.js';
+import { askLocalPeerOtto } from './peerOttoRunner.js';
 import {
-  buildAtoaResponse,
-  parseAtoaMessage,
-} from './atoaProtocol.js';
-import {
-  askLocalPeerOtto,
-  normalizePeerOttoQuestion,
-} from './peerOttoRunner.js';
+  AtoaPermissionDialog,
+  type AtoaPermissionRequest,
+} from './components/AtoaPermissionDialog.js';
+import type {
+  AtoaPeerIdentity,
+  AtoaPermissionDecision,
+} from './enterpriseAtoaCoordinator.js';
+import { processEnterpriseAtoaRequest } from './enterpriseAtoaCoordinator.js';
+import { collectAuthorizedAtoaContext } from './a2aContext.js';
+import { AtoaConsultDialog } from './components/AtoaConsultDialog.js';
+import { executeEnterpriseCollaborationRelay } from './enterpriseCollaborationRelay.js';
 import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
@@ -81,6 +92,11 @@ const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+
+type PendingToolConsult = {
+  member: EnterpriseOrganizationView['members'][number];
+  question: string;
+};
 
 export function App(): React.JSX.Element {
   const auth = useEnterpriseAuth();
@@ -118,14 +134,25 @@ export function App(): React.JSX.Element {
       />
     );
   }
-  return <OttoWorkspaceApp account={auth.state.account} onLogout={auth.actions.logout} />;
+  return (
+    <OttoWorkspaceApp
+      // 同一账号从个人空间加入企业后，organizationId 会原子变化。强制重建
+      // 工作区 store，避免继续订阅旧个人空间会话并弹出跨组织拒绝提示。
+      key={`${auth.state.account.id}:${auth.state.account.organizationId}`}
+      account={auth.state.account}
+      onJoinEnterprise={auth.actions.joinEnterprise}
+      onLogout={auth.actions.logout}
+    />
+  );
 }
 
 function OttoWorkspaceApp({
   account,
+  onJoinEnterprise,
   onLogout,
 }: {
   account: EnterpriseAccount;
+  onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => Promise<void>;
 }): React.JSX.Element {
   const { state, actions } = useOttoStore();
@@ -142,6 +169,72 @@ function OttoWorkspaceApp({
     [account, autoProfileRevision],
   );
   const edition = centralIdentity.edition;
+  const permissionResolver = useRef<
+    ((decision: AtoaPermissionDecision) => void) | null
+  >(null);
+  const [pendingAtoaPermission, setPendingAtoaPermission] =
+    useState<AtoaPermissionRequest | null>(null);
+  const requestAtoaPermission = useCallback(
+    (request: AtoaPermissionRequest): Promise<AtoaPermissionDecision> =>
+      new Promise((resolve) => {
+        // 服务器一次只 claim 一条；若界面状态异常叠加，旧请求按拒绝收口。
+        permissionResolver.current?.({ kind: 'deny' });
+        permissionResolver.current = resolve;
+        setPendingAtoaPermission(request);
+      }),
+    [],
+  );
+  const completeAtoaPermission = useCallback(
+    (decision: AtoaPermissionDecision): void => {
+      const resolve = permissionResolver.current;
+      permissionResolver.current = null;
+      setPendingAtoaPermission(null);
+      resolve?.(decision);
+    },
+    [],
+  );
+  const toolConsultResolver = useRef<{
+    resolve: (message: EnterpriseDirectMessage) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+  const [pendingToolConsult, setPendingToolConsult] =
+    useState<PendingToolConsult | null>(null);
+  const requestToolConsult = useCallback(
+    (
+      member: EnterpriseOrganizationView['members'][number],
+      question: string,
+    ): Promise<EnterpriseDirectMessage> =>
+      new Promise((resolve, reject) => {
+        toolConsultResolver.current?.reject(
+          new Error('已有一项双方 Otto 协商等待处理'),
+        );
+        toolConsultResolver.current = { resolve, reject };
+        setPendingToolConsult({ member, question });
+      }),
+    [],
+  );
+  const finishToolConsult = useCallback(
+    (message: EnterpriseDirectMessage): void => {
+      toolConsultResolver.current?.resolve(message);
+      toolConsultResolver.current = null;
+      setPendingToolConsult(null);
+    },
+    [],
+  );
+  const cancelToolConsult = useCallback((): void => {
+    toolConsultResolver.current?.reject(new Error('用户取消了双方 Otto 协商'));
+    toolConsultResolver.current = null;
+    setPendingToolConsult(null);
+  }, []);
+  useEffect(
+    () => () => {
+      toolConsultResolver.current?.reject(
+        new Error('账号已切换，双方 Otto 协商已取消'),
+      );
+      toolConsultResolver.current = null;
+    },
+    [account.id],
+  );
 
   // 企业 A2A 收件箱只在真实客户端本地轮询。请求已被服务端按回复去重；
   // 本地集合用于避免同一轮询周期重复处理，发送失败则释放以便下轮重试。
@@ -153,45 +246,36 @@ function OttoWorkspaceApp({
     let cancelled = false;
 
     const handleRequest = async (
-      request: EnterpriseAtoaInboxMessage,
+      request: EnterpriseAtoaInboxMessage & { peer?: AtoaPeerIdentity },
     ): Promise<void> => {
       if (processing.has(request.id)) return;
-      const parsed = parseAtoaMessage(request.content);
-      if (parsed?.kind !== 'request') return;
-      const approvedQuestion = normalizePeerOttoQuestion(parsed.payload.question);
       processing.add(request.id);
       try {
-        const approved = window.confirm([
-          '一位企业同事请求让你的 Otto 回答下面的问题：',
-          '',
-          approvedQuestion,
-          '',
-          '是否允许当前配置模型回答？该模型可能由第三方云服务处理。本次不会把工作日志或文件内容作为回答上下文，且服务器会强制禁用全部工具。',
-        ].join('\n'));
-        let answer = '对方暂未授权其 Otto 自动回答这个问题，请直接在员工私聊中联系本人。';
-        if (approved) {
-          try {
-            answer = await askLocalPeerOtto({
-              question: approvedQuestion,
-              workContext: '本次未提供员工工作日志、文件或其他私有上下文。',
+        await processEnterpriseAtoaRequest({
+          request,
+          requestPermission: requestAtoaPermission,
+          collectContext: (sources) =>
+            collectAuthorizedAtoaContext({
+              sources,
+              peerAccountId: request.peerAccountId,
+              currentAccountId: account.id,
+              currentAccountName: account.name,
+              peerName: request.peer?.name ?? '企业同事',
+              listMessages: window.otto.enterpriseMessagesList,
+              listKnowledge: () => window.otto.enterpriseKnowledgeList(),
+              workLogRecent: window.otto.workLogRecent,
+              schedules: product.state.schedules,
+            }),
+          askOtto: (input) =>
+            askLocalPeerOtto({
+              ...input,
               requestId: `a2a-${request.id}`,
               clientMessageId: `a2a-reply-${request.id}`,
               signal: abortController.signal,
-            });
-          } catch {
-            if (cancelled || abortController.signal.aborted) return;
-            // 给同一私聊写入一次明确失败回执，避免每 8 秒重复弹窗和烧模型费用。
-            answer = '对方 Otto 本次未能完成回答，请直接在员工私聊中联系本人或稍后重新发起。';
-          }
-        }
-        await window.otto.enterpriseMessageSend(
-          request.peerAccountId,
-          buildAtoaResponse({
-            requestId: request.id,
-            question: parsed.payload.question,
-            answer,
-          }),
-        );
+            }),
+          sendMessage: window.otto.enterpriseMessageSend,
+          signal: abortController.signal,
+        });
       } catch {
         processing.delete(request.id);
         throw new Error('A2A 回复发送失败');
@@ -223,9 +307,17 @@ function OttoWorkspaceApp({
     return () => {
       cancelled = true;
       abortController.abort();
+      permissionResolver.current?.({ kind: 'deny' });
+      permissionResolver.current = null;
       window.clearInterval(timer);
     };
-  }, [account.accountType, account.id]);
+  }, [
+    account.accountType,
+    account.id,
+    account.name,
+    product.state.schedules,
+    requestAtoaPermission,
+  ]);
 
   // profile.json 涉及本机文件系统，只允许 main 读取；renderer 接收纯数据，
   // 避免把 otto-core 及 Node 内置模块打进 sandbox bundle。
@@ -528,6 +620,45 @@ function OttoWorkspaceApp({
     );
   }, [account.department, account.name, actions]);
 
+  const handleToolConfirmation = useCallback(
+    (
+      callId: string,
+      outcome: 'approved' | 'rejected' | 'always_approve',
+      payload?: ToolConfirmationResponsePayload,
+      tool?: ToolCall,
+    ): void => {
+      if (
+        outcome !== 'approved' ||
+        tool?.confirmationDetails?.rootCommand !== 'enterprise_collaboration'
+      ) {
+        actions.respondToolConfirmation(callId, outcome, payload);
+        return;
+      }
+
+      void executeEnterpriseCollaborationRelay(tool.parameters, account, {
+        getOrganizationView: window.otto.enterpriseOrganizationView,
+        listMessages: window.otto.enterpriseMessagesList,
+        sendMessage: window.otto.enterpriseMessageSend,
+        requestConsult: requestToolConsult,
+      })
+        .then((result) => {
+          actions.respondToolConfirmation(callId, 'approved', {
+            newContent: JSON.stringify(result),
+          });
+        })
+        .catch((reason: unknown) => {
+          const error =
+            reason instanceof Error ? reason.message : String(reason);
+          // 用户已批准工具本身；把真实失败作为 JSON 结果交回 Core/Agent，
+          // 绝不让 Agent 把失败说成成功。
+          actions.respondToolConfirmation(callId, 'approved', {
+            newContent: JSON.stringify({ ok: false, error }),
+          });
+        });
+    },
+    [account, actions, requestToolConsult],
+  );
+
   const openModelSettings = (): void => {
     setMainView('settings');
   };
@@ -575,9 +706,11 @@ function OttoWorkspaceApp({
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
         productWorkspace={product.state.workspace}
-        enterpriseAccount={edition === 'enterprise' ? account : undefined}
+        productSchedules={product.state.schedules}
+        enterpriseAccount={account}
         organizationOpenRequest={organizationOpenRequest}
         onAskOttoFromDirectChat={handleAskOttoFromDirectChat}
+        onJoinEnterprise={onJoinEnterprise}
         onLogout={onLogout}
       />
 
@@ -626,7 +759,7 @@ function OttoWorkspaceApp({
               onCancel={actions.cancel}
               onSetModel={actions.setModel}
               onRegenerate={handleRegenerate}
-              onRespondQuestion={actions.respondToolConfirmation}
+              onRespondQuestion={handleToolConfirmation}
               onOpenSetup={openModelSettings}
               onToggleAgents={() => setShowRightPanel(v => !v)}
               onNewChat={handleNewChat}
@@ -752,6 +885,24 @@ function OttoWorkspaceApp({
             />
           </div>
         </div>
+      ) : null}
+
+      {pendingAtoaPermission ? (
+        <AtoaPermissionDialog
+          request={pendingAtoaPermission}
+          onDecision={completeAtoaPermission}
+        />
+      ) : null}
+
+      {pendingToolConsult ? (
+        <AtoaConsultDialog
+          account={account}
+          member={pendingToolConsult.member}
+          schedules={product.state.schedules}
+          initialQuestion={pendingToolConsult.question}
+          onClose={cancelToolConsult}
+          onSent={finishToolConsult}
+        />
       ) : null}
 
       {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}

@@ -146,8 +146,10 @@ export interface EnterpriseAccount {
   name: string;
   role: string | null;
   department: string | null;
+  departmentId?: string | null;
   positionId: string | null;
   positionTitle: string | null;
+  avatarUrl?: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -173,6 +175,10 @@ export interface EnterpriseAccountCreateInput {
   feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
 }
@@ -185,6 +191,10 @@ export interface EnterpriseAccountUpdateInput {
   feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
@@ -284,6 +294,10 @@ export interface EnterpriseOrganizationView {
     name: string;
     role: string | null;
     department: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    avatarUrl?: string | null;
     isAdmin: boolean;
     status: 'active' | 'disabled';
   }>;
@@ -301,6 +315,15 @@ export interface EnterpriseDirectMessage {
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
   peerAccountId: string;
+  /** 由企业服务端按 peerAccountId 查询的可信身份，不解析消息正文中的自报字段。 */
+  peer: {
+    id: string;
+    username: string;
+    name: string;
+    department: string | null;
+    positionTitle: string | null;
+    role: string | null;
+  };
 }
 
 export interface EnterpriseRepairNotification {
@@ -376,6 +399,7 @@ const IPC = {
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
   enterpriseRegister: 'otto:enterprise-register',
+  enterpriseJoinOrganization: 'otto:enterprise-join-organization',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
@@ -561,6 +585,9 @@ export interface OttoBridge {
     name: string;
     password: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
+  enterpriseJoinOrganization(input: {
+    inviteCode: string;
+  }): Promise<{ serverUrl: string; account: EnterpriseAccount }>;
   enterpriseLogout(): Promise<void>;
   /** 接入企业：提交配对令牌，完成本地 Otto 与企业服务器的连接。 */
   enterprisePair(token: string): Promise<{
@@ -1058,6 +1085,14 @@ const bridge: OttoBridge = {
       serverUrl: string;
       account: EnterpriseAccount;
       expiresAt: string;
+    }>;
+  },
+  enterpriseJoinOrganization(input: {
+    inviteCode: string;
+  }): Promise<{ serverUrl: string; account: EnterpriseAccount }> {
+    return ipcRenderer.invoke(IPC.enterpriseJoinOrganization, input) as Promise<{
+      serverUrl: string;
+      account: EnterpriseAccount;
     }>;
   },
   enterpriseLogout(): Promise<void> {

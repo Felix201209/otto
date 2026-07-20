@@ -406,8 +406,8 @@ NODE
   IMPORT_SCHEMA="$("$NODE_PATH" -e \
     "const x=JSON.parse(process.argv[1]);console.log(x.userVersion)" "$IMPORT_INFO")"
   case "$IMPORT_SCHEMA" in
-    2|3) ;;
-    *) otto_die "本迁入包只接受 schema 2 或 3，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5 ;;
+    2|3|4) ;;
+    *) otto_die "本迁入包只接受 schema 2、3 或 4，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5 ;;
   esac
   EXPECTED_DB_SHA="$("$NODE_PATH" -e \
     "const x=require(process.argv[1]);console.log(x.database.sha256)" "$MIGRATION_MANIFEST")"

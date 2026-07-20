@@ -750,6 +750,46 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(syncedBody.ok).toBe(true);
     expect(syncedBody.data?.context.role).toBe('member');
 
+    const withDirectory = await fetch(
+      `${baseUrl}/internal/enterprise-identity`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${server.controlToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          account: authenticatedAccount({
+            organizationMembers: [
+              {
+                id: 'central-account-2',
+                username: 'staff02',
+                name: '周二',
+                role: 'member',
+                department: '销售部',
+                positionId: 'position-sales',
+                positionTitle: '销售经理',
+                isAdmin: false,
+                status: 'active',
+              },
+            ],
+          }),
+        }),
+      },
+    );
+    expect(withDirectory.status).toBe(200);
+    const withDirectoryBody = (await withDirectory.json()) as ApiResponse<{
+      members: Array<{ userId: string; displayName: string }>;
+    }>;
+    expect(withDirectoryBody.data?.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: 'central-account-2',
+          displayName: '周二',
+        }),
+      ]),
+    );
+
     const invalid = await fetch(`${baseUrl}/internal/enterprise-identity`, {
       method: 'POST',
       headers: {
@@ -759,6 +799,61 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
       body: JSON.stringify({ account: { id: 'broken', isAdmin: false } }),
     });
     expect(invalid.status).toBe(400);
+
+    for (const organizationMembers of [
+      Array.from({ length: 201 }, (_, index) => ({
+        id: `member-${index}`,
+        username: `member-${index}`,
+        name: `成员 ${index}`,
+        role: null,
+        department: null,
+        positionId: null,
+        positionTitle: null,
+        isAdmin: false,
+        status: 'active',
+      })),
+      [
+        {
+          id: 'member-broken',
+          username: 'member-broken',
+          name: '成员',
+          role: null,
+          department: null,
+          positionId: null,
+          positionTitle: null,
+          isAdmin: 'false',
+          status: 'active',
+        },
+      ],
+      [
+        {
+          id: 'x'.repeat(129),
+          username: 'too-long',
+          name: '成员',
+          role: null,
+          department: null,
+          positionId: null,
+          positionTitle: null,
+          isAdmin: false,
+          status: 'active',
+        },
+      ],
+    ]) {
+      const rejected = await fetch(
+        `${baseUrl}/internal/enterprise-identity`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${server.controlToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            account: authenticatedAccount({ organizationMembers }),
+          }),
+        },
+      );
+      expect(rejected.status).toBe(400);
+    }
 
     const cleared = await fetch(`${baseUrl}/internal/enterprise-identity`, {
       method: 'POST',

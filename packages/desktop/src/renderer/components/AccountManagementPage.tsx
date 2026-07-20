@@ -16,6 +16,8 @@ export interface AccountDraft {
   name: string;
   phone: string;
   feishuOpenId: string;
+  avatarUrl: string;
+  positionTitle: string;
   role: string;
   department: string;
   tags: string;
@@ -24,7 +26,8 @@ export interface AccountDraft {
 }
 
 const EMPTY_DRAFT: AccountDraft = {
-  username: '', password: '', name: '', phone: '', feishuOpenId: '', role: '', department: '', tags: '',
+  username: '', password: '', name: '', phone: '', feishuOpenId: '', avatarUrl: '',
+  positionTitle: '', role: '', department: '', tags: '',
   isAdmin: false, status: 'active',
 };
 
@@ -39,10 +42,10 @@ export const ACCOUNT_DEPARTMENT_PRESETS = [
 ] as const;
 
 const ACCOUNT_TEMPLATES = [
-  { id: 'member', label: '普通成员', role: '成员', department: '', tags: ['普通成员'], isAdmin: false },
-  { id: 'department-lead', label: '部门负责人', role: '部门负责人', department: '', tags: ['部门负责人', '审批'], isAdmin: false },
-  { id: 'it-support', label: '维修工作人员', role: 'IT 支持', department: 'IT部', tags: ['IT', '报修', '维修工作人员', '技术支持'], isAdmin: false },
-  { id: 'administrator', label: '系统管理员', role: '系统管理员', department: 'IT部', tags: ['IT', '系统管理员'], isAdmin: true },
+  { id: 'member', label: '普通成员', positionTitle: '普通成员', role: '成员', department: '', tags: ['普通成员'], isAdmin: false },
+  { id: 'department-lead', label: '部门负责人', positionTitle: '部门负责人', role: '部门负责人', department: '', tags: ['部门负责人', '审批'], isAdmin: false },
+  { id: 'it-support', label: '维修工作人员', positionTitle: 'IT 支持', role: 'IT 支持', department: 'IT部', tags: ['IT', '报修', '维修工作人员', '技术支持'], isAdmin: false },
+  { id: 'administrator', label: '系统管理员', positionTitle: '系统管理员', role: '系统管理员', department: 'IT部', tags: ['IT', '系统管理员'], isAdmin: true },
 ] as const;
 
 export type AccountTemplateId = typeof ACCOUNT_TEMPLATES[number]['id'];
@@ -74,6 +77,7 @@ export function applyAccountTemplate(draft: AccountDraft, templateId: AccountTem
   if (!template) return draft;
   return {
     ...draft,
+    positionTitle: template.positionTitle,
     role: template.role,
     department: template.department || draft.department,
     tags: template.tags.join('，'),
@@ -105,6 +109,33 @@ function formatLastUsedAt(value: string | null): string {
     minute: '2-digit',
     hour12: false,
   })}`;
+}
+
+function AccountAvatar({ account }: { account: EnterpriseAccount }): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const avatarUrl = account.avatarUrl?.trim() || null;
+  const initial = Array.from(account.name.trim())[0]?.toLocaleUpperCase('zh-CN') || '?';
+
+  useEffect(() => {
+    setFailed(false);
+  }, [avatarUrl]);
+
+  if (avatarUrl && !failed) {
+    return (
+      <img
+        className="otto-account-table__avatar"
+        src={avatarUrl}
+        alt={`${account.name}头像`}
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <span className="otto-account-table__avatar" aria-label={`${account.name}头像占位`}>
+      {initial}
+    </span>
+  );
 }
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
@@ -234,7 +265,8 @@ export function AccountManagementPage({
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return accounts;
     return accounts.filter((account) => [
-      account.name, account.username, account.phone, account.role, account.department, ...account.tags,
+      account.name, account.username, account.phone, account.positionTitle,
+      account.role, account.department, ...account.tags,
     ].filter(Boolean).some((value) => String(value).toLocaleLowerCase().includes(needle)));
   }, [accounts, query]);
   const departmentOptions = useMemo(() => {
@@ -272,6 +304,8 @@ export function AccountManagementPage({
       name: account.name,
       phone: account.phone?.replace(/^\+86/, '') ?? '',
       feishuOpenId: account.feishuOpenId ?? '',
+      avatarUrl: account.avatarUrl ?? '',
+      positionTitle: account.positionTitle ?? '',
       role: account.role ?? '',
       department: account.department ?? '',
       tags: account.tags.join('，'),
@@ -321,6 +355,8 @@ export function AccountManagementPage({
         name: draft.name.trim(),
         phone: draft.phone.trim() || null,
         feishuOpenId: draft.feishuOpenId.trim() || null,
+        avatarUrl: draft.avatarUrl.trim() || null,
+        positionTitle: draft.positionTitle.trim() || null,
         role: draft.role.trim() || null,
         department: draft.department.trim() || null,
         tags: tagsFromText(draft.tags),
@@ -631,7 +667,7 @@ export function AccountManagementPage({
       <section className="otto-account-directory">
         <header>
           <div><h2>成员目录</h2><p>账号状态与权限变更实时同步到登录网关。</p></div>
-          <label className="otto-account-search"><span aria-hidden>⌕</span><input aria-label="搜索账号" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、手机、部门或标签" /></label>
+          <label className="otto-account-search"><span aria-hidden>⌕</span><input aria-label="搜索账号" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、手机、职位、部门或标签" /></label>
         </header>
 
         {error && !editing ? <div className="otto-account-page__error" role="alert">{error}</div> : null}
@@ -652,8 +688,14 @@ export function AccountManagementPage({
               {!loading && filtered.length === 0 ? <tr><td className="otto-account-table__empty" colSpan={6}>没有匹配的成员</td></tr> : null}
               {filtered.map((account) => (
                 <tr className="otto-account-table__row" key={account.id}>
-                  <td><div className="otto-account-table__identity"><span className="otto-account-table__avatar">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>@{account.username} · {maskedPhone(account.phone)}</small></div></div></td>
-                  <td><strong>{account.role || '未设置岗位'}</strong><small>{account.department || '未分配部门'}</small></td>
+                  <td><div className="otto-account-table__identity"><AccountAvatar account={account} /><div><strong>{account.name}</strong><small>@{account.username} · {maskedPhone(account.phone)}</small></div></div></td>
+                  <td>
+                    <strong>{account.positionTitle || account.role || '未设置职位'}</strong>
+                    <small>
+                      {account.department || '未分配部门'}
+                      {account.positionTitle && account.role ? ` · 角色：${account.role}` : ''}
+                    </small>
+                  </td>
                   <td><div className="otto-account-table__tags">{account.tags.length ? account.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>暂无标签</small>}</div></td>
                   <td>
                     <div className="otto-account-table__usage">
@@ -701,9 +743,11 @@ export function AccountManagementPage({
             <div className="otto-account-editor__grid">
               <label><span>登录账号</span><input ref={initialFocusRef} aria-label="登录账号" value={draft.username} onChange={(e) => setDraft((v) => ({ ...v, username: e.target.value }))} required /></label>
               <label><span>显示名称</span><input aria-label="显示名称" value={draft.name} onChange={(e) => setDraft((v) => ({ ...v, name: e.target.value }))} required /></label>
+              <label><span>头像 URL</span><input aria-label="头像 URL" type="url" value={draft.avatarUrl} onChange={(e) => setDraft((v) => ({ ...v, avatarUrl: e.target.value }))} placeholder="https://… 或 data:image/…" /></label>
               <label><span>手机号码</span><input aria-label="手机号码" inputMode="tel" value={draft.phone} onChange={(e) => setDraft((v) => ({ ...v, phone: e.target.value }))} placeholder="用于短信验证码登录" /></label>
               <label><span>飞书 open_id</span><input aria-label="飞书 open_id" value={draft.feishuOpenId} onChange={(e) => setDraft((v) => ({ ...v, feishuOpenId: e.target.value }))} placeholder="例如：ou_xxx，用于报修通知" /></label>
               <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
+              <label><span>职位 / 岗位</span><input aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value }))} placeholder="例如：品牌运营" /></label>
               <label><span>角色</span><input aria-label="角色" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value }))} placeholder="例如：桌面支持" /></label>
               <label><span>部门</span><input aria-label="部门" list="otto-account-departments" value={draft.department} onChange={(e) => setDraft((v) => ({ ...v, department: e.target.value }))} placeholder="选择或输入部门" /><datalist id="otto-account-departments">{ACCOUNT_DEPARTMENT_PRESETS.map((department) => <option key={department} value={department} />)}</datalist></label>
               <div className="otto-account-editor__field is-wide"><span>职责标签</span><div className="otto-account-tag-presets" aria-label="预设标签">{ACCOUNT_TAG_PRESETS.map((tag) => { const selected = tagsFromText(draft.tags).includes(tag); return <button key={tag} type="button" className={selected ? 'is-selected' : ''} aria-pressed={selected} onClick={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, tag) }))}>{tag}</button>; })}</div><input aria-label="账号标签" value={draft.tags} onChange={(e) => setDraft((v) => ({ ...v, tags: e.target.value }))} placeholder="也可输入自定义标签，用逗号分隔" /><small>标签参与专家权限、工单和任务路由。</small></div>

@@ -3,15 +3,19 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { EnterpriseAccount, EnterpriseSessionResult } from './enterprise-client.js';
 import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.js';
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
   EnterpriseAuthOperationQueue,
+  failClosedUncertainEnterpriseJoin,
   logoutAndClearEnterpriseIdentity,
   refreshEnterpriseIdentityLease,
   restoreAndSyncEnterpriseSession,
+  syncJoinedEnterpriseAccount,
   syncVerifiedEnterpriseAccount,
 } from './enterprise-auth-sync.js';
 
@@ -47,7 +51,64 @@ const LOCAL_ACCOUNT = {
   positionTitle: '工程师',
 };
 
+const ORGANIZATION_VIEW = {
+  organization: {
+    id: 'org_1',
+    name: 'Otto 企业',
+    status: 'active' as const,
+    createdAt: '2026-07-01T00:00:00.000Z',
+  },
+  members: [
+    {
+      id: 'acc_1',
+      username: 'staff01',
+      name: '远端目录里的旧姓名',
+      role: 'member',
+      department: '旧部门',
+      positionId: 'old-position',
+      positionTitle: '旧职位',
+      isAdmin: false,
+      status: 'active' as const,
+    },
+    {
+      id: 'acc_2',
+      username: '  staff02  ',
+      name: '  员工二号  ',
+      role: 'member',
+      department: '  销售部  ',
+      positionId: '  pos_sales  ',
+      positionTitle: '  销售经理  ',
+      isAdmin: false,
+      status: 'active' as const,
+    },
+    {
+      id: 'acc_disabled',
+      username: 'disabled',
+      name: '停用员工',
+      role: 'member',
+      department: null,
+      positionId: null,
+      positionTitle: null,
+      isAdmin: false,
+      status: 'disabled' as const,
+    },
+  ],
+  employeeCount: 3,
+};
+
 describe('enterprise auth identity synchronization', () => {
+  it('主进程退出处理只清企业身份，不删除本机对话、模型、知识库或 Skill', () => {
+    const source = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
+    const handlerStart = source.indexOf('ipcMain.handle(IPC.enterpriseLogout');
+    const handlerEnd = source.indexOf('ipcMain.handle(IPC.enterprisePair', handlerStart);
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+
+    const logoutHandler = source.slice(handlerStart, handlerEnd);
+    expect(logoutHandler).toContain('logoutAndClearEnterpriseIdentity');
+    expect(logoutHandler).not.toMatch(/\brmSync\b|promises\.rm|\bunlink\b|\.otto-user/);
+  });
+
   it('从远端请求开始就串行化认证事务，旧退出不能在新登录后补写本机清理', async () => {
     const queue = new EnterpriseAuthOperationQueue();
     const order: string[] = [];
@@ -117,6 +178,104 @@ describe('enterprise auth identity synchronization', () => {
     expect(client.logout).not.toHaveBeenCalled();
   });
 
+  it('登录时从中心组织树同步最多 200 个 active 成员并规整有界字段', async () => {
+    const members = [
+      ...ORGANIZATION_VIEW.members,
+      ...Array.from({ length: 205 }, (_, index) => ({
+        id: `acc_extra_${index}`,
+        username: `extra_${index}`,
+        name: `成员 ${index}`,
+        role: 'member',
+        department: null,
+        positionId: null,
+        positionTitle: null,
+        isAdmin: false,
+        status: 'active' as const,
+      })),
+    ];
+    const getOrganizationView = vi.fn(async () => ({
+      ...ORGANIZATION_VIEW,
+      members,
+      employeeCount: members.length,
+    }));
+    const synchronize = vi.fn(
+      async (_account: AuthenticatedEnterpriseAccountInput | null) => undefined,
+    );
+
+    await authenticateAndSyncEnterpriseAccount(
+      async () => ({ account: ACCOUNT }),
+      { logout: vi.fn(async () => undefined), getOrganizationView },
+      synchronize,
+      vi.fn(),
+    );
+
+    expect(getOrganizationView).toHaveBeenCalledOnce();
+    const synced = synchronize.mock.calls[0]?.[0];
+    expect(synced?.organizationMembers).toHaveLength(200);
+    expect(synced?.organizationMembers).toContainEqual({
+      id: 'acc_2',
+      username: 'staff02',
+      name: '员工二号',
+      role: 'member',
+      department: '销售部',
+      positionId: 'pos_sales',
+      positionTitle: '销售经理',
+      isAdmin: false,
+      status: 'active',
+    });
+    expect(
+      synced?.organizationMembers?.some(
+        (member) => member.id === 'acc_disabled',
+      ),
+    ).toBe(false);
+  });
+
+  it('中心组织树读取失败时仍同步真实当前账号，但不伪造同事目录', async () => {
+    const synchronize = vi.fn(
+      async (_account: AuthenticatedEnterpriseAccountInput | null) => undefined,
+    );
+
+    await authenticateAndSyncEnterpriseAccount(
+      async () => ({ account: ACCOUNT }),
+      {
+        logout: vi.fn(async () => undefined),
+        getOrganizationView: vi.fn(async () => {
+          throw new Error('组织树暂不可达');
+        }),
+      },
+      synchronize,
+      vi.fn(),
+    );
+
+    expect(synchronize).toHaveBeenCalledWith({
+      ...LOCAL_ACCOUNT,
+      leaseExpiresAt: expect.any(String),
+    });
+  });
+
+  it('恢复会话和租约刷新都会重新读取中心组织树，不沿用旧目录', async () => {
+    const getOrganizationView = vi.fn(async () => ORGANIZATION_VIEW);
+    const client = {
+      logout: vi.fn(async () => undefined),
+      getOrganizationView,
+    };
+    const synchronize = vi.fn(
+      async (_account: AuthenticatedEnterpriseAccountInput | null) => undefined,
+    );
+    const session: EnterpriseSessionResult = {
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+    };
+
+    await restoreAndSyncEnterpriseSession(session, client, synchronize, vi.fn());
+    await refreshEnterpriseIdentityLease(session, client, synchronize, vi.fn());
+
+    expect(getOrganizationView).toHaveBeenCalledTimes(2);
+    expect(synchronize.mock.calls[0]?.[0]?.organizationMembers).toEqual(
+      synchronize.mock.calls[1]?.[0]?.organizationMembers,
+    );
+  });
+
   it('登录后的本机身份同步失败会清中心 token、持久化退出态并保持登录页', async () => {
     const synchronize = vi.fn()
       .mockRejectedValueOnce(new Error('旧版本本机 OttoServer，请重启'))
@@ -138,6 +297,50 @@ describe('enterprise auth identity synchronization', () => {
       leaseExpiresAt: expect.any(String),
     });
     expect(synchronize).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it('加入企业已在中心提交后若本机同步失败，返回可识别的重新登录错误并完成回滚', async () => {
+    const synchronize = vi.fn()
+      .mockRejectedValueOnce(new Error('本机控制面不可用'))
+      .mockResolvedValueOnce(undefined);
+    const logout = vi.fn(async () => undefined);
+    const persist = vi.fn();
+
+    await expect(syncJoinedEnterpriseAccount(
+      ACCOUNT,
+      { logout },
+      synchronize,
+      persist,
+    )).rejects.toThrow('企业已成功加入，但本机身份同步失败，请重新登录以完成企业切换');
+
+    expect(logout).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledOnce();
+    expect(synchronize).toHaveBeenNthCalledWith(1, {
+      ...LOCAL_ACCOUNT,
+      leaseExpiresAt: expect.any(String),
+    });
+    expect(synchronize).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it('加入企业结果无法对账时，即使远端登出失败也清空本机身份并要求重新登录', async () => {
+    const synchronize = vi.fn(async () => undefined);
+    const logout = vi.fn(async () => {
+      throw new Error('中心服务仍不可达');
+    });
+    const persist = vi.fn();
+
+    await expect(failClosedUncertainEnterpriseJoin(
+      new Error('无法确认企业升级结果'),
+      { logout },
+      synchronize,
+      persist,
+    )).rejects.toThrow(
+      '企业已成功加入，但本机身份同步失败，请重新登录以完成企业切换：无法确认企业升级结果',
+    );
+
+    expect(logout).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledOnce();
+    expect(synchronize).toHaveBeenCalledWith(null);
   });
 
   it('恢复会话必须先同步本机身份；同步失败返回未登录和明确错误', async () => {

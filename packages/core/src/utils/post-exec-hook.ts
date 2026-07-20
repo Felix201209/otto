@@ -56,6 +56,9 @@ export function enableAutoLearning(registry: any, config: Config): void {
   let count = 0;
 
   for (const tool of tools) {
+    // 企业私聊/A2A 参数可能包含对方问题或获准范围。该工具承诺仅做
+    // 内存 confirmation relay，不能再被全局学习钩子持久化到文件。
+    if (tool.name === 'enterprise_collaboration') continue;
     if (tool.Name === 'memory_manager') continue;
 
     const originalExecute = tool.execute.bind(tool) as (...args: any[]) => Promise<ToolResult>;

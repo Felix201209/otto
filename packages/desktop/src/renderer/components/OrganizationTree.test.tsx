@@ -174,6 +174,44 @@ describe('OrganizationTree', () => {
     expect(screen.getByText('工程师')).toBeTruthy();
   });
 
+  it('远程组织树优先显示邀请码分配的职位，而不是泛化角色', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: '星河科技',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_2',
+        username: 'brand.operator',
+        name: '小周',
+        role: '成员',
+        department: '市场部',
+        positionId: 'pos_brand',
+        positionTitle: '品牌运营',
+        avatarUrl: null,
+        isAdmin: true,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+
+    expect(await screen.findByText('品牌运营')).toBeTruthy();
+    expect(screen.queryByText('成员')).toBeNull();
+    expect(screen.queryByText('管理员')).toBeNull();
+  });
+
   it('组织架构请求失败时结束 loading 并显示明确错误', async () => {
     const enterpriseOrganizationView = vi.fn(async () => {
       throw new Error('服务器暂不可用');
@@ -499,5 +537,53 @@ describe('OrganizationTree', () => {
     expect(enterpriseMessageSend.mock.calls[0][0]).toBe('acc_2');
     expect(enterpriseMessageSend.mock.calls[0][1]).toContain('OTTO_ATOA_REQUEST ');
     expect(await screen.findByText(/向对方 Otto 提问：Are you free now\?/)).toBeTruthy();
+  });
+
+  it('把低频双方 Otto 协商折叠在加号里，并在发送前打开资料选择与提案预览流程', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [
+        {
+          id: 'acc_2',
+          username: 'bob',
+          name: 'Bob',
+          role: 'Manager',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+        },
+      ],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList: vi.fn(async () => []),
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByText('Bob'));
+    await screen.findByText('还没有消息，开始聊聊吧。');
+
+    expect(screen.queryByRole('menuitem', { name: /双方 Otto 协商/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '更多 Otto 协作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /双方 Otto 协商/ }));
+
+    expect(
+      screen.getByRole('dialog', { name: '双方 Otto 协商' }),
+    ).toBeTruthy();
+    expect(screen.getByText(/默认不选/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '让我的 Otto 生成提案' })).toBeTruthy();
   });
 });
