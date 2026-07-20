@@ -372,9 +372,11 @@ function initSchema(d: Database): void {
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       created_by_account_id TEXT NOT NULL,
+      service_id TEXT NOT NULL DEFAULT 'repair',
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       target_tags TEXT NOT NULL,
+      form_data TEXT,
       category TEXT,
       location TEXT,
       urgency TEXT,
@@ -391,6 +393,31 @@ function initSchema(d: Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS park_publications (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('announcement', 'satisfaction')),
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_by_account_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS park_publication_recipients (
+      organization_id TEXT NOT NULL,
+      publication_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      read_at TEXT,
+      submitted_at TEXT,
+      response_data TEXT,
+      PRIMARY KEY (publication_id, account_id),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (publication_id) REFERENCES park_publications(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS ticket_deliveries (
@@ -473,6 +500,10 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_park_publications_org_created
+      ON park_publications(organization_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_park_publication_recipients_account
+      ON park_publication_recipients(account_id, publication_id);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
@@ -532,6 +563,8 @@ function initSchema(d: Database): void {
     'it_tickets',
     'ticket_deliveries',
     'ticket_notifications',
+    'park_publications',
+    'park_publication_recipients',
   ]) ensureOrganizationColumn(table);
 
   const ticketColumns = d.prepare('PRAGMA table_info(it_tickets)').all() as Array<{ name: string }>;
@@ -541,10 +574,12 @@ function initSchema(d: Database): void {
     }
   };
   for (const name of [
+    'service_id', 'form_data',
     'category', 'location', 'urgency', 'contact', 'contact_phone',
     'response_type', 'response_text', 'response_at', 'accepted_at',
     'completed_at', 'closed_at',
   ]) ensureTicketColumn(name);
+  d.exec("UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''");
   d.exec("UPDATE it_tickets SET status = '待接单' WHERE status = 'open'");
 
   // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
@@ -2644,8 +2679,10 @@ export function verifySmsLoginChallenge(
 
 export interface TicketView {
   id: string;
+  serviceId: string;
   title: string;
   description: string;
+  formData: Record<string, string>;
   targetTags: string[];
   status: string;
   category: string | null;
@@ -2658,9 +2695,9 @@ export interface TicketView {
   responseAt: string | null;
   createdAt: string;
   updatedAt: string;
-  creator: Pick<AccountView, 'id' | 'name' | 'username' | 'phone' | 'feishuOpenId'>;
+  creator: Pick<AccountView, 'id' | 'name' | 'username'>;
   recipientCount: number;
-  recipients: AccountView[];
+  recipients: Array<Pick<AccountView, 'id' | 'name'>>;
   deliveryStatus?: string;
   readAt?: string | null;
   isCreator?: boolean;
@@ -2678,9 +2715,11 @@ interface TicketRow {
   id: string;
   organization_id: string;
   created_by_account_id: string;
+  service_id: string | null;
   title: string;
   description: string;
   target_tags: string;
+  form_data: string | null;
   category: string | null;
   location: string | null;
   urgency: string | null;
@@ -2703,23 +2742,38 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
     `SELECT account_id, status, read_at FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
   ).all(id, row.organization_id) as Array<{ account_id: string; status: string; read_at: string | null }>;
-  const recipients = deliveries
+  const recipientAccounts = deliveries
     .map((delivery) => getAccount(delivery.account_id, row.organization_id))
     .filter((account): account is AccountView => account !== null);
+  const viewer = viewerAccountId ? getAccount(viewerAccountId, row.organization_id) : null;
+  const canSeeRecipients = viewer?.isAdmin || viewerAccountId === creator.id;
   const viewerDelivery = viewerAccountId
     ? deliveries.find((delivery) => delivery.account_id === viewerAccountId)
     : undefined;
-  const notifications = getDB().prepare(
+  const notifications = viewer?.isAdmin ? getDB().prepare(
     `SELECT channel, event, status, detail, created_at FROM ticket_notifications
      WHERE ticket_id = ? ORDER BY created_at`,
   ).all(id) as Array<{
     channel: 'otto' | 'sms' | 'feishu'; event: string;
     status: 'sent' | 'failed' | 'skipped'; detail: string | null; created_at: string;
-  }>;
+  }> : [];
+  let formData: Record<string, string> = {};
+  try {
+    const parsed = row.form_data ? JSON.parse(row.form_data) as unknown : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      formData = Object.fromEntries(Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ));
+    }
+  } catch {
+    formData = {};
+  }
   return {
     id: row.id,
+    serviceId: row.service_id || 'repair',
     title: row.title,
     description: row.description,
+    formData,
     targetTags: JSON.parse(row.target_tags) as string[],
     status: row.status,
     category: row.category,
@@ -2736,11 +2790,11 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
       id: creator.id,
       name: creator.name,
       username: creator.username,
-      phone: creator.phone,
-      feishuOpenId: creator.feishuOpenId,
     },
-    recipientCount: recipients.length,
-    recipients,
+    recipientCount: recipientAccounts.length,
+    recipients: canSeeRecipients
+      ? recipientAccounts.map((recipient) => ({ id: recipient.id, name: recipient.name }))
+      : [],
     deliveryStatus: viewerDelivery?.status,
     readAt: viewerDelivery?.read_at,
     isCreator: viewerAccountId === creator.id,
@@ -2771,9 +2825,11 @@ export function getTicketForAccount(id: string, accountId: string): TicketView |
 
 export function createTicket(input: {
   createdByAccountId: string;
+  serviceId?: string;
   title: string;
   description: string;
   targetTags?: string[];
+  formData?: Record<string, string>;
   category?: string;
   location?: string;
   urgency?: string;
@@ -2808,11 +2864,12 @@ export function createTicket(input: {
   const id = `ticket_${randomUUID()}`;
   getDB().prepare(
     `INSERT INTO it_tickets
-       (id, organization_id, created_by_account_id, title, description, target_tags,
+       (id, organization_id, created_by_account_id, service_id, title, description, target_tags, form_data,
         category, location, urgency, contact, contact_phone, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
   ).run(
-    id, creator.organizationId, creator.id, title, description, JSON.stringify(targetTags),
+    id, creator.organizationId, creator.id, input.serviceId?.trim() || 'repair',
+    title, description, JSON.stringify(targetTags), JSON.stringify(input.formData ?? {}),
     input.category?.trim() || null, input.location?.trim() || null,
     input.urgency?.trim() || null, input.contact?.trim() || null,
     input.contactPhone?.trim() || null,
@@ -2829,6 +2886,21 @@ export function createTicket(input: {
     creator.organizationId,
   );
   return ticketView(id, creator.id);
+}
+
+/** 通知只能在服务端使用完整账号资料，绝不把手机号或飞书 open_id 返回给普通客户端。 */
+export function getTicketNotificationRecipients(ticketId: string): AccountView[] {
+  const row = getDB().prepare(
+    'SELECT organization_id FROM it_tickets WHERE id = ?',
+  ).get(ticketId) as { organization_id: string } | undefined;
+  if (!row) return [];
+  const deliveries = getDB().prepare(
+    `SELECT account_id FROM ticket_deliveries
+     WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
+  ).all(ticketId, row.organization_id) as Array<{ account_id: string }>;
+  return deliveries
+    .map(({ account_id: accountId }) => getAccount(accountId, row.organization_id))
+    .filter((account): account is AccountView => account !== null);
 }
 
 export function listTicketInbox(accountId: string): TicketView[] {
@@ -2901,12 +2973,13 @@ export function updateTicket(input: {
       ).run(responseType, responseText, nextStatus, nextStatus, input.ticketId, account.organizationId);
     } else if (input.action === 'accept') {
       if (!['待接单', '待派单'].includes(current.status)) throw new Error('Ticket cannot be accepted');
+      const acceptedStatus = current.serviceId === 'repair' ? '维修中' : '处理中';
       getDB().prepare(
-        `UPDATE it_tickets SET status = '维修中', accepted_at = datetime('now'), updated_at = datetime('now')
+        `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
          WHERE id = ? AND organization_id = ?`,
-      ).run(input.ticketId, account.organizationId);
+      ).run(acceptedStatus, input.ticketId, account.organizationId);
     } else if (input.action === 'complete') {
-      if (current.status !== '维修中') throw new Error('Ticket is not in repair');
+      if (!['维修中', '处理中'].includes(current.status)) throw new Error('Ticket is not being processed');
       getDB().prepare(
         `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
          WHERE id = ? AND organization_id = ?`,
@@ -2948,6 +3021,230 @@ export function recordTicketNotification(input: {
     input.status,
     input.detail ?? null,
   );
+}
+
+export interface ParkPublicationView {
+  id: string;
+  kind: 'announcement' | 'satisfaction';
+  title: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+  submittedAt: string | null;
+  responseData: Record<string, string> | null;
+}
+
+export interface ParkSurveyResultView {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  submittedCount: number;
+  responses: Array<{
+    accountId: string;
+    accountName: string;
+    submittedAt: string;
+    responseData: Record<string, string>;
+  }>;
+}
+
+interface ParkPublicationRow {
+  id: string;
+  kind: 'announcement' | 'satisfaction';
+  title: string;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+  submitted_at: string | null;
+  response_data: string | null;
+}
+
+function publicationView(row: ParkPublicationRow): ParkPublicationView {
+  let responseData: Record<string, string> | null = null;
+  try {
+    const value = row.response_data ? JSON.parse(row.response_data) as unknown : null;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      responseData = Object.fromEntries(Object.entries(value).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ));
+    }
+  } catch {
+    responseData = null;
+  }
+  return {
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
+    body: row.body,
+    createdAt: row.created_at,
+    readAt: row.read_at,
+    submittedAt: row.submitted_at,
+    responseData,
+  };
+}
+
+export function createParkPublication(input: {
+  createdByAccountId: string;
+  kind: 'announcement' | 'satisfaction';
+  title: string;
+  body: string;
+  recipientAccountId?: string | null;
+}): { publication: ParkPublicationView; recipientCount: number } {
+  const creator = getAccount(input.createdByAccountId);
+  if (!creator?.isAdmin) throw new Error('Only enterprise administrators can publish park content');
+  const title = input.title.trim();
+  const body = input.body.trim();
+  if (!title || !body) throw new Error('title and body required');
+  const recipients = input.recipientAccountId
+    ? [getAccount(input.recipientAccountId, creator.organizationId)].filter(
+      (account): account is AccountView => account !== null && account.status === 'active',
+    )
+    : (getDB().prepare(
+      `SELECT * FROM accounts
+       WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL
+       ORDER BY name, username`,
+    ).all(creator.organizationId) as AccountRow[]).map(toAccountView);
+  if (recipients.length === 0) throw new Error('No active recipients');
+  const id = `park_publication_${randomUUID()}`;
+  getDB().prepare(
+    `INSERT INTO park_publications
+      (id, organization_id, kind, title, body, created_by_account_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, creator.organizationId, input.kind, title, body, creator.id);
+  const insertRecipient = getDB().prepare(
+    `INSERT INTO park_publication_recipients
+      (organization_id, publication_id, account_id) VALUES (?, ?, ?)`,
+  );
+  for (const recipient of recipients) {
+    insertRecipient.run(creator.organizationId, id, recipient.id);
+  }
+  logAudit(
+    'park_publication_create',
+    creator.employeeId,
+    `${input.kind} ${id} delivered to ${recipients.length} account(s)`,
+    creator.organizationId,
+  );
+  return {
+    publication: listParkPublications(creator.id).find((item) => item.id === id)
+      ?? { id, kind: input.kind, title, body, createdAt: new Date().toISOString(), readAt: null, submittedAt: null, responseData: null },
+    recipientCount: recipients.length,
+  };
+}
+
+export function listParkPublications(accountId: string): ParkPublicationView[] {
+  const account = getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  const rows = getDB().prepare(
+    `SELECT p.id, p.kind, p.title, p.body, p.created_at,
+            r.read_at, r.submitted_at, r.response_data
+     FROM park_publication_recipients r
+     JOIN park_publications p ON p.id = r.publication_id
+     WHERE r.account_id = ? AND r.organization_id = ? AND p.organization_id = ?
+     ORDER BY p.created_at DESC`,
+  ).all(account.id, account.organizationId, account.organizationId) as ParkPublicationRow[];
+  return rows.map(publicationView);
+}
+
+/** 管理员查看本企业问卷回收情况；实名由账号表提供，不信任客户端自填姓名。 */
+export function listParkSurveyResults(accountId: string): ParkSurveyResultView[] {
+  const account = getAccount(accountId);
+  if (!account?.isAdmin) throw new Error('Only enterprise administrators can view survey results');
+  const publications = getDB().prepare(
+    `SELECT p.id, p.title, p.body, p.created_at,
+            COUNT(r.account_id) AS recipient_count,
+            SUM(CASE WHEN r.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS submitted_count
+     FROM park_publications p
+     LEFT JOIN park_publication_recipients r
+       ON r.publication_id = p.id AND r.organization_id = p.organization_id
+     WHERE p.organization_id = ? AND p.kind = 'satisfaction'
+     GROUP BY p.id, p.title, p.body, p.created_at
+     ORDER BY p.created_at DESC`,
+  ).all(account.organizationId) as Array<{
+    id: string; title: string; body: string; created_at: string;
+    recipient_count: number; submitted_count: number;
+  }>;
+  const responseRows = getDB().prepare(
+    `SELECT r.account_id, a.name AS account_name, r.submitted_at, r.response_data
+     FROM park_publication_recipients r
+     JOIN accounts a ON a.id = r.account_id AND a.organization_id = r.organization_id
+     WHERE r.publication_id = ? AND r.organization_id = ? AND r.submitted_at IS NOT NULL
+     ORDER BY r.submitted_at DESC`,
+  );
+  return publications.map((publication) => {
+    const rows = responseRows.all(publication.id, account.organizationId) as Array<{
+      account_id: string; account_name: string; submitted_at: string; response_data: string | null;
+    }>;
+    return {
+      id: publication.id,
+      title: publication.title,
+      body: publication.body,
+      createdAt: publication.created_at,
+      recipientCount: Number(publication.recipient_count) || 0,
+      submittedCount: Number(publication.submitted_count) || 0,
+      responses: rows.map((row) => {
+        let responseData: Record<string, string> = {};
+        try {
+          const value = row.response_data ? JSON.parse(row.response_data) as unknown : null;
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            responseData = Object.fromEntries(Object.entries(value).filter(
+              (entry): entry is [string, string] => typeof entry[1] === 'string',
+            ));
+          }
+        } catch {
+          responseData = {};
+        }
+        responseData.submittedBy = row.account_name;
+        return {
+          accountId: row.account_id,
+          accountName: row.account_name,
+          submittedAt: row.submitted_at,
+          responseData,
+        };
+      }),
+    };
+  });
+}
+
+export function markParkPublicationRead(id: string, accountId: string): ParkPublicationView {
+  const account = getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  const changed = getDB().prepare(
+    `UPDATE park_publication_recipients
+     SET read_at = COALESCE(read_at, datetime('now'))
+     WHERE publication_id = ? AND account_id = ? AND organization_id = ?`,
+  ).run(id, account.id, account.organizationId);
+  if (changed.changes === 0) throw new Error('Publication not found or not assigned');
+  const publication = listParkPublications(account.id).find((item) => item.id === id);
+  if (!publication) throw new Error('Publication not found');
+  return publication;
+}
+
+export function submitParkSurvey(
+  id: string,
+  accountId: string,
+  responseData: Record<string, string>,
+): ParkPublicationView {
+  const account = getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  const publication = getDB().prepare(
+    'SELECT kind FROM park_publications WHERE id = ? AND organization_id = ?',
+  ).get(id, account.organizationId) as { kind: string } | undefined;
+  if (publication?.kind !== 'satisfaction') throw new Error('Survey not found');
+  const normalized = Object.fromEntries(Object.entries(responseData)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]));
+  normalized.submittedBy = account.name;
+  const changed = getDB().prepare(
+    `UPDATE park_publication_recipients
+     SET read_at = COALESCE(read_at, datetime('now')), submitted_at = datetime('now'), response_data = ?
+     WHERE publication_id = ? AND account_id = ? AND organization_id = ? AND submitted_at IS NULL`,
+  ).run(JSON.stringify(normalized), id, account.id, account.organizationId);
+  if (changed.changes === 0) throw new Error('问卷不存在或已经提交，不能重复修改');
+  const result = listParkPublications(account.id).find((item) => item.id === id);
+  if (!result) throw new Error('Survey not found');
+  logAudit('park_survey_submit', account.employeeId, `Survey ${id} submitted`, account.organizationId);
+  return result;
 }
 
 // ============================================================

@@ -10,6 +10,10 @@ import {
   SELF_DEVELOPMENT_PROFILE,
   type AgentProfile,
 } from '../agents/departmentAgents.js';
+import type {
+  CustomAgentDefinition,
+  CustomAgentDraft,
+} from '../customAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
@@ -71,7 +75,11 @@ export interface RightPanelProps {
   enterpriseRole?: CentralEnterpriseRole;
   workspace?: ProductWorkspaceSnapshot | null;
   profiles?: readonly AgentProfile[];
+  customAgents?: readonly CustomAgentDefinition[];
   onLaunchAgentProfile?: (profile: AgentProfile) => void;
+  onCreateCustomAgent?: (draft: CustomAgentDraft) => void | Promise<void>;
+  onLaunchCustomAgent?: (agent: CustomAgentDefinition) => void;
+  onDeleteCustomAgent?: (agentId: string) => void;
   onOpenAgents?: () => void;
   onOpenSkillZone?: () => void;
   onSelectDate?: (date: string) => void;
@@ -104,7 +112,11 @@ export function RightPanel({
   enterpriseRole,
   workspace = null,
   profiles: providedProfiles,
+  customAgents = [],
   onLaunchAgentProfile = () => undefined,
+  onCreateCustomAgent = () => undefined,
+  onLaunchCustomAgent = () => undefined,
+  onDeleteCustomAgent = () => undefined,
   onOpenAgents = () => undefined,
   onOpenSkillZone = () => undefined,
   onSelectDate = () => undefined,
@@ -127,6 +139,11 @@ export function RightPanel({
   const [noteText, setNoteText] = useState('');
   const [parkOpen, setParkOpen] = useState(true);
   const [developmentOpen, setDevelopmentOpen] = useState(true);
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
+  const [customAgentName, setCustomAgentName] = useState('');
+  const [customAgentInstructions, setCustomAgentInstructions] = useState('');
+  const [customAgentError, setCustomAgentError] = useState('');
+  const [customAgentBusy, setCustomAgentBusy] = useState(false);
   const [collabOpen, setCollabOpen] = useState(false);
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
@@ -202,6 +219,35 @@ export function RightPanel({
   );
   const todayEntries = workSummary ? worklogByDate[workSummary.date] ?? [] : [];
   const todayResults = todayEntries.filter((entry) => entry.entryType === 'work_result');
+  const closeCreateAgent = (): void => {
+    if (customAgentBusy) return;
+    setCreateAgentOpen(false);
+    setCustomAgentError('');
+  };
+  const submitCustomAgent = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ): Promise<void> => {
+    event.preventDefault();
+    setCustomAgentBusy(true);
+    setCustomAgentError('');
+    try {
+      await onCreateCustomAgent({
+        name: customAgentName,
+        instructions: customAgentInstructions,
+      });
+      setCustomAgentName('');
+      setCustomAgentInstructions('');
+      setCreateAgentOpen(false);
+    } catch (error) {
+      setCustomAgentError(
+        error instanceof Error && error.message
+          ? error.message
+          : '创建智能体失败，请重试',
+      );
+    } finally {
+      setCustomAgentBusy(false);
+    }
+  };
 
   if (collapsed) {
     return (
@@ -301,6 +347,62 @@ export function RightPanel({
                 ) : null}
               </>
             ) : null}
+
+            <div className="otto-right-panel__waist" role="separator" />
+            <div className="otto-custom-agents__head">
+              <div>
+                <strong>我的智能体</strong>
+                <span>按当前账号保存，不会扩展账号权限</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomAgentError('');
+                  setCreateAgentOpen(true);
+                }}
+              >
+                创建智能体
+              </button>
+            </div>
+            {customAgents.length > 0 ? (
+              <div className="otto-custom-agent-list">
+                {customAgents.map((agent) => (
+                  <article key={agent.id} className="otto-custom-agent-card">
+                    <button
+                      type="button"
+                      className="otto-custom-agent-card__launch"
+                      aria-label={`启动${agent.name}`}
+                      onClick={() => onLaunchCustomAgent(agent)}
+                    >
+                      <span className="otto-custom-agent-card__mark" aria-hidden>
+                        {agent.name.slice(0, 1)}
+                      </span>
+                      <span>
+                        <strong>{agent.name}</strong>
+                        <small>{agent.instructions}</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="otto-custom-agent-card__delete"
+                      aria-label={`删除${agent.name}`}
+                      title={`删除${agent.name}`}
+                      onClick={() => {
+                        if (window.confirm(`确定删除自定义智能体“${agent.name}”吗？`)) {
+                          onDeleteCustomAgent(agent.id);
+                        }
+                      }}
+                    >
+                      ×
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="otto-custom-agents__empty">
+                创建专属职责的工作智能体，之后可从这里继续启动。
+              </div>
+            )}
 
             <div className="otto-right-panel__waist" role="separator" />
             <div className="otto-right-panel__head">
@@ -464,6 +566,67 @@ export function RightPanel({
           </div>
         ) : null}
       </div>
+
+      {createAgentOpen ? (
+        <div className="otto-custom-agent-dialog__backdrop" role="presentation">
+          <section
+            className="otto-custom-agent-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="创建智能体"
+          >
+            <div className="otto-custom-agent-dialog__head">
+              <div>
+                <strong>创建智能体</strong>
+                <span>定义工作职责，权限仍以当前登录账号为准</span>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭创建智能体"
+                disabled={customAgentBusy}
+                onClick={closeCreateAgent}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={(event) => void submitCustomAgent(event)}>
+              <label>
+                <span>智能体名称</span>
+                <input
+                  autoFocus
+                  maxLength={40}
+                  value={customAgentName}
+                  onChange={(event) => setCustomAgentName(event.target.value)}
+                  placeholder="例如：招投标助手"
+                />
+              </label>
+              <label>
+                <span>职责说明</span>
+                <textarea
+                  maxLength={2_000}
+                  rows={5}
+                  value={customAgentInstructions}
+                  onChange={(event) => setCustomAgentInstructions(event.target.value)}
+                  placeholder="说明它负责什么、交付格式和边界"
+                />
+              </label>
+              {customAgentError ? (
+                <div className="otto-custom-agent-dialog__error" role="alert">
+                  {customAgentError}
+                </div>
+              ) : null}
+              <div className="otto-custom-agent-dialog__actions">
+                <button type="button" disabled={customAgentBusy} onClick={closeCreateAgent}>
+                  取消
+                </button>
+                <button type="submit" disabled={customAgentBusy}>
+                  {customAgentBusy ? '创建中…' : '创建并启动'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {mode === 'enterprise' ? (
         <div className="otto-right-panel__bottom-actions">

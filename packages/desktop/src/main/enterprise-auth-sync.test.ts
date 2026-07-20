@@ -109,6 +109,25 @@ describe('enterprise auth identity synchronization', () => {
     expect(logoutHandler).not.toMatch(/\brmSync\b|promises\.rm|\bunlink\b|\.otto-user/);
   });
 
+  it('协议与工作区服务不暴露可由退出流程触发的整库销毁入口', () => {
+    const protocolSource = readFileSync(
+      resolve(__dirname, '../../../server/src/protocol.ts'),
+      'utf8',
+    );
+    const workspaceSource = readFileSync(
+      resolve(__dirname, '../../../server/src/productWorkspaceStore.ts'),
+      'utf8',
+    );
+    const serverSource = readFileSync(
+      resolve(__dirname, '../../../server/src/server.ts'),
+      'utf8',
+    );
+
+    expect(protocolSource).not.toContain('destroy_product_workspace');
+    expect(workspaceSource).not.toContain('destroyAllUserData');
+    expect(serverSource).not.toContain('destroyAllUserData');
+  });
+
   it('从远端请求开始就串行化认证事务，旧退出不能在新登录后补写本机清理', async () => {
     const queue = new EnterpriseAuthOperationQueue();
     const order: string[] = [];

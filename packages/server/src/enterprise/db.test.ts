@@ -109,7 +109,7 @@ describe('数据库 readiness', () => {
     });
   });
 
-  it('从真实 v3 列布局升级到 v4，保留账号与员工关联且重复初始化不重复添加列', async () => {
+  it('从真实 v3 列布局升级到 v4，保留账号员工关联和园区服务列且可重复初始化', async () => {
     const first = await freshDb();
     const organization = first.createOrganization({ name: '迁移企业', slug: 'migration-v3' });
     const employeeId = 'emp_v3_preserved';
@@ -228,6 +228,11 @@ describe('数据库 readiness', () => {
         accountType: 'personal',
         employeeId: null,
       });
+      const ticketColumns = reopened.getDB()
+        .prepare('PRAGMA table_info(it_tickets)')
+        .all() as Array<{ name: string }>;
+      expect(ticketColumns.filter((column) => column.name === 'service_id')).toHaveLength(1);
+      expect(ticketColumns.filter((column) => column.name === 'form_data')).toHaveLength(1);
 
       const employeeIdsBeforeReopen = reopened.listEmployees(undefined, organization.id)
         .map((employee) => employee.id)

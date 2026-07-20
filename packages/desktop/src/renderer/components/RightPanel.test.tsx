@@ -13,6 +13,7 @@ import {
 import type { ProductWorkspaceSnapshot } from 'otto-server';
 import { RightPanel } from './RightPanel.js';
 import { BASE_AGENT_PROFILES } from '../agents/departmentAgents.js';
+import type { CustomAgentDefinition } from '../customAgents.js';
 
 afterEach(() => {
   cleanup();
@@ -121,6 +122,50 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
+  it('在右边栏创建、保存并立即启动自定义智能体，不混入固定 9 Agent', async () => {
+    installBridge();
+    const create = vi.fn();
+    const launch = vi.fn();
+    const saved: CustomAgentDefinition = {
+      id: 'custom-bid',
+      name: '招投标助手',
+      instructions: '整理标书要求并生成检查清单。',
+      createdAt: '2026-07-20T16:00:00.000Z',
+    };
+
+    const { container } = render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="member"
+        workspace={enterpriseWorkspace()}
+        customAgents={[saved]}
+        onCreateCustomAgent={create}
+        onLaunchCustomAgent={launch}
+      />,
+    );
+
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
+    fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
+    expect(screen.getByRole('dialog', { name: '创建智能体' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('智能体名称'), {
+      target: { value: '客户成功助手' },
+    });
+    fireEvent.change(screen.getByLabelText('职责说明'), {
+      target: { value: '跟进客户风险与续费待办。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启动' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith({
+      name: '客户成功助手',
+      instructions: '跟进客户风险与续费待办。',
+    }));
+    expect(screen.queryByRole('dialog', { name: '创建智能体' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '启动招投标助手' }));
+    expect(launch).toHaveBeenCalledWith(saved);
+  });
+
   it('keeps the fixed 9 enterprise Agents out of personal mode', () => {
     installBridge();
 

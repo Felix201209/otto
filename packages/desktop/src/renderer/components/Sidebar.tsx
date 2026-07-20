@@ -34,7 +34,7 @@ import {
   IconSparkle,
   IconSettings,
 } from './icons.js';
-import { OrganizationTree, type DirectChatOttoRequest } from './OrganizationTree.js';
+import { OrganizationTree } from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
@@ -91,7 +91,6 @@ interface SidebarProps {
   productSchedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
   organizationOpenRequest?: number;
-  onAskOttoFromDirectChat?: (input: DirectChatOttoRequest) => void;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -113,7 +112,6 @@ export function Sidebar({
   productSchedules = [],
   enterpriseAccount,
   organizationOpenRequest = 0,
-  onAskOttoFromDirectChat,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -164,7 +162,6 @@ export function Sidebar({
             ? undefined
             : enterpriseAccount}
           openRequest={organizationOpenRequest}
-          onAskOttoFromDirectChat={onAskOttoFromDirectChat}
         />
 
         <section className="otto-conversations" aria-label="对话任务">

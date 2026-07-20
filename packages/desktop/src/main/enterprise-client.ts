@@ -205,8 +205,10 @@ export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
 
 export interface EnterpriseRepairTicket {
   id: string;
+  serviceId: string;
   title: string;
   description: string;
+  formData: Record<string, string>;
   targetTags: string[];
   status: string;
   category: string | null;
@@ -219,9 +221,9 @@ export interface EnterpriseRepairTicket {
   responseAt: string | null;
   createdAt: string;
   updatedAt: string;
-  creator: Pick<EnterpriseAccount, 'id' | 'name' | 'username' | 'phone' | 'feishuOpenId'>;
+  creator: Pick<EnterpriseAccount, 'id' | 'name' | 'username'>;
   recipientCount: number;
-  recipients: EnterpriseAccount[];
+  recipients: Array<Pick<EnterpriseAccount, 'id' | 'name'>>;
   deliveryStatus?: string;
   readAt?: string | null;
   isCreator?: boolean;
@@ -232,6 +234,32 @@ export interface EnterpriseRepairTicket {
     status: 'sent' | 'failed' | 'skipped';
     detail: string | null;
     createdAt: string;
+  }>;
+}
+
+export interface EnterpriseParkPublication {
+  id: string;
+  kind: 'announcement' | 'satisfaction';
+  title: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+  submittedAt: string | null;
+  responseData: Record<string, string> | null;
+}
+
+export interface EnterpriseParkSurveyResult {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  submittedCount: number;
+  responses: Array<{
+    accountId: string;
+    accountName: string;
+    submittedAt: string;
+    responseData: Record<string, string>;
   }>;
 }
 
@@ -798,13 +826,45 @@ export class EnterpriseClient {
     recipientAccountId: string;
     serviceId: string;
     note?: string | null;
-  }): Promise<{ message: EnterpriseDirectMessage }> {
+  }): Promise<{ message?: EnterpriseDirectMessage; publication?: EnterpriseParkPublication; recipientCount?: number }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['park_service_push']);
     return this.request('/enterprise/park-services/push', {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  }
+
+  async listParkPublications(): Promise<EnterpriseParkPublication[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['park_services_v2']);
+    return (await this.request<{ publications: EnterpriseParkPublication[] }>(
+      '/enterprise/park-services/publications',
+    )).publications;
+  }
+
+  async listParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['park_services_v2']);
+    return (await this.request<{ surveys: EnterpriseParkSurveyResult[] }>(
+      '/enterprise/park-services/survey-results',
+    )).surveys;
+  }
+
+  async readParkPublication(id: string): Promise<EnterpriseParkPublication> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ publication: EnterpriseParkPublication }>(
+      `/enterprise/park-services/publications/${encodeURIComponent(id)}/read`,
+      { method: 'POST' },
+    )).publication;
+  }
+
+  async submitParkSurvey(id: string, responseData: Record<string, string>): Promise<EnterpriseParkPublication> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return (await this.request<{ publication: EnterpriseParkPublication }>(
+      `/enterprise/park-services/publications/${encodeURIComponent(id)}/submit`,
+      { method: 'POST', body: JSON.stringify({ responseData }) },
+    )).publication;
   }
 
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
@@ -853,9 +913,11 @@ export class EnterpriseClient {
   }
 
   async submitTicket(input: {
+    serviceId?: string;
     title: string;
     description: string;
     targetTags?: string[];
+    formData?: Record<string, string>;
     category?: string;
     location?: string;
     urgency?: string;

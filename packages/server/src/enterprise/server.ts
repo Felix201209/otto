@@ -78,6 +78,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/accounts',
   '/enterprise/organization/invite',
   '/enterprise/park-services/push',
+  '/enterprise/park-services/survey-results',
   '/enterprise/usage/summary',
   '/enterprise/organizations',
 ]);
@@ -181,6 +182,7 @@ const ENTERPRISE_CAPABILITIES = [
   'position_invites',
   'park_service_push',
   'park_repair_v1',
+  'park_services_v2',
 ] as const;
 
 interface DeploymentInfo {
@@ -625,6 +627,15 @@ function makeHandler(
 
     if (method === 'OPTIONS') {
       res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (path === '/' && method === 'GET') {
+      res.writeHead(302, {
+        Location: '/enterprise/admin',
+        'Cache-Control': 'no-store',
+      });
       res.end();
       return;
     }
@@ -1303,8 +1314,8 @@ function makeHandler(
         const note = typeof body.note === 'string' && body.note.trim()
           ? body.note.trim().slice(0, 500)
           : null;
-        if (!recipientAccountId || !serviceId) {
-          sendJSON(res, 400, { error: 'recipientAccountId and serviceId required' });
+        if (!serviceId) {
+          sendJSON(res, 400, { error: 'serviceId required' });
           return;
         }
         if (!PARK_SERVICE_PUSH_TEMPLATES[serviceId]) {
@@ -1312,6 +1323,24 @@ function makeHandler(
           return;
         }
         try {
+          if (serviceId === 'announcement' || serviceId === 'satisfaction') {
+            const service = PARK_SERVICE_PUSH_TEMPLATES[serviceId]!;
+            const result = db.createParkPublication({
+              createdByAccountId: principal.account.id,
+              kind: serviceId,
+              title: service.name,
+              body: note || service.detail,
+              recipientAccountId: recipientAccountId && recipientAccountId !== 'all'
+                ? recipientAccountId
+                : null,
+            });
+            sendJSON(res, 201, { ...result, service });
+            return;
+          }
+          if (!recipientAccountId || recipientAccountId === 'all') {
+            sendJSON(res, 400, { error: '请选择要接收这项办理提醒的成员' });
+            return;
+          }
           const message = db.sendDirectMessage({
             organizationId: principal.organizationId,
             senderAccountId: principal.account.id,
@@ -1325,6 +1354,62 @@ function makeHandler(
           });
         } catch (error) {
           sendJSON(res, 400, { error: error instanceof Error ? error.message : '园区服务推送失败' });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park-services/publications' && method === 'GET') {
+        const account = db.getAccountBySession(extractToken(req));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        sendJSON(res, 200, { publications: db.listParkPublications(account.id) });
+        return;
+      }
+
+      if (path === '/enterprise/park-services/survey-results' && method === 'GET') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: '请使用企业管理员账号查看问卷回收结果' });
+          return;
+        }
+        sendJSON(res, 200, { surveys: db.listParkSurveyResults(principal.account.id) });
+        return;
+      }
+
+      const publicationAction = path.match(
+        /^\/enterprise\/park-services\/publications\/([^/]+)\/(read|submit)$/,
+      );
+      if (publicationAction && method === 'POST') {
+        const account = db.getAccountBySession(extractToken(req));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        let publicationId = '';
+        try { publicationId = decodeURIComponent(publicationAction[1]!); } catch { /* invalid id */ }
+        if (!publicationId) {
+          sendJSON(res, 400, { error: '园区内容编号不正确' });
+          return;
+        }
+        try {
+          if (publicationAction[2] === 'read') {
+            sendJSON(res, 200, { publication: db.markParkPublicationRead(publicationId, account.id) });
+            return;
+          }
+          const body = await readBody(req);
+          const responseData = body.responseData && typeof body.responseData === 'object'
+            && !Array.isArray(body.responseData)
+            ? Object.fromEntries(Object.entries(body.responseData).filter(
+              (entry): entry is [string, string] => typeof entry[1] === 'string',
+            ))
+            : {};
+          sendJSON(res, 200, {
+            publication: db.submitParkSurvey(publicationId, account.id, responseData),
+          });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
         }
         return;
       }
@@ -1614,6 +1699,11 @@ function makeHandler(
           return;
         }
         const body = await readBody(req);
+        const hasLegacyRepairFields = ['category', 'location', 'urgency', 'contact', 'contactPhone']
+          .some((key) => typeof body[key] === 'string');
+        const serviceId = typeof body.serviceId === 'string' && body.serviceId.trim()
+          ? body.serviceId.trim()
+          : hasLegacyRepairFields ? 'repair' : 'it';
         const title = typeof body.title === 'string' ? body.title : '';
         const description = typeof body.description === 'string' ? body.description : '';
         if (!title.trim() || !description.trim()) {
@@ -1624,18 +1714,35 @@ function makeHandler(
           sendJSON(res, 400, { error: '工单标题或描述过长' });
           return;
         }
-        const isParkRepair = ['category', 'location', 'urgency', 'contact', 'contactPhone']
-          .some((key) => typeof body[key] === 'string');
-        const targetTags = isParkRepair
+        const parkRequestIds = new Set([
+          'renovation', 'parking', 'network-phone', 'meeting-room',
+          'electric-card', 'repair', 'vehicle-visit',
+        ]);
+        if (!parkRequestIds.has(serviceId) && serviceId !== 'it') {
+          sendJSON(res, 400, { error: '园区服务类型不正确' });
+          return;
+        }
+        const isParkRequest = parkRequestIds.has(serviceId);
+        const targetTags = serviceId === 'repair'
           ? ['维修工作人员']
+          : isParkRequest
+            ? ['客服人员']
           : Array.isArray(body.targetTags)
             ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
             : ['IT', '报修'];
+        const formData = body.formData && typeof body.formData === 'object'
+          && !Array.isArray(body.formData)
+          ? Object.fromEntries(Object.entries(body.formData).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+          ).map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]))
+          : {};
         const ticket = db.createTicket({
           createdByAccountId: account.id,
+          serviceId,
           title,
           description,
           targetTags,
+          formData,
           category: typeof body.category === 'string' ? body.category : undefined,
           location: typeof body.location === 'string' ? body.location : undefined,
           urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
@@ -1644,10 +1751,12 @@ function makeHandler(
         });
         await sendRepairNotifications({
           ticket,
-          recipients: ticket.recipients,
+          recipients: db.getTicketNotificationRecipients(ticket.id),
           event: 'ticket_created',
-          title: `Otto 新报修 · ${ticket.title}`,
-          body: `${ticket.location || '位置未填写'} · ${ticket.description} · ${ticket.urgency || '普通'}`,
+          title: serviceId === 'repair' ? `Otto 新报修 · ${ticket.title}` : `Otto 新园区申请 · ${ticket.title}`,
+          body: serviceId === 'repair'
+            ? `${ticket.location || '位置未填写'} · ${ticket.description} · ${ticket.urgency || '普通'}`
+            : ticket.description,
           smsSender: repairSmsSender,
           feishuSender: repairFeishuSender,
         });
@@ -1707,17 +1816,17 @@ function makeHandler(
             responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
           });
           const recipients = action === 'confirm'
-            ? ticket.recipients
+            ? db.getTicketNotificationRecipients(ticket.id)
             : [db.getAccount(ticket.creator.id, account.organizationId)].filter(
               (item): item is db.AccountView => item !== null,
             );
           const title = action === 'respond'
-            ? `Otto 维修回复 · ${ticket.title}`
+            ? `Otto 办理回复 · ${ticket.title}`
             : action === 'accept'
-              ? `Otto 工单已接单 · ${ticket.title}`
+              ? `Otto 申请已受理 · ${ticket.title}`
               : action === 'complete'
-                ? `Otto 待验收 · ${ticket.title}`
-                : `Otto 工单已验收 · ${ticket.title}`;
+                ? `Otto 待确认 · ${ticket.title}`
+                : `Otto 办理已确认 · ${ticket.title}`;
           const detail = action === 'respond'
             ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
             : `工单 ${ticket.id} 当前状态：${ticket.status}`;
@@ -2368,6 +2477,7 @@ function adminAccountsHTML(): string {
     <button class="template-button" type="button" data-account-template="member" aria-pressed="false"><b>普通成员</b><span>基础协作与日常任务</span></button>
     <button class="template-button" type="button" data-account-template="lead" aria-pressed="false"><b>部门负责人</b><span>部门管理与审批职责</span></button>
     <button class="template-button" type="button" data-account-template="it" aria-pressed="false"><b>维修工作人员</b><span>自动接收园区报修</span></button>
+    <button class="template-button" type="button" data-account-template="service" aria-pressed="false"><b>园区客服人员</b><span>自动接收六类园区申请</span></button>
     <button class="template-button" type="button" data-account-template="finance" aria-pressed="false"><b>财务审批</b><span>财务流程与审批职责</span></button>
     <button class="template-button" type="button" data-account-template="admin" aria-pressed="false"><b>系统管理员</b><span>完整后台管理权限</span></button>
   </div></section>
@@ -2380,7 +2490,7 @@ function adminAccountsHTML(): string {
     <div class="field wide"><label for="editAvatarUrl">头像地址</label><input id="editAvatarUrl" autocomplete="url" placeholder="https://... 或小于 512KB 的 data:image"><small class="sub">支持 HTTPS 或 PNG/JPEG/WebP/GIF data:image</small></div>
   </div></section>
   <section class="form-section"><div class="section-head"><strong>预设标签</strong><span>可多选，也可输入自定义标签</span></div><div id="tagPresets" class="preset-tags" aria-label="预设标签"></div><div class="field"><label for="editTags">自定义标签（用逗号分隔）</label><input id="editTags" placeholder="例如：产品, 审批, 夜班"></div></section>
-  <section class="form-section"><div class="section-head"><strong>登录与权限</strong><span>新增账号必须设置密码</span></div><div class="form-grid"><div class="field wide"><label for="editPassword">登录密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password" aria-describedby="passwordHint"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">账号状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editRepairWorker" type="checkbox"> 设为维修工作人员（自动接收报修）</label><label><input id="editAdmin" type="checkbox"> 允许访问管理员后台</label></div></section>
+  <section class="form-section"><div class="section-head"><strong>登录与权限</strong><span>新增账号必须设置密码</span></div><div class="form-grid"><div class="field wide"><label for="editPassword">登录密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password" aria-describedby="passwordHint"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">账号状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editRepairWorker" type="checkbox"> 设为维修工作人员（自动接收报修）</label><label><input id="editServiceWorker" type="checkbox"> 设为园区客服人员（自动接收六类申请）</label><label><input id="editAdmin" type="checkbox"> 允许访问管理员后台</label></div></section>
   <div id="formError" class="error hidden" role="alert"></div><div id="saveStatus" class="sr-only" role="status" aria-live="polite"></div><div class="drawer-actions"><button id="deleteAccount" class="danger hidden" type="button">删除账号</button><span style="flex:1"></span><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div>
 </form></div>
 <div id="logoutModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><div class="modal-kicker">SECURITY CHECK</div><h2 id="logoutTitle">确认退出管理员后台</h2><p>退出后需要重新输入管理员用户名和密码。未保存的账号修改不会保留。</p><div class="modal-actions"><button id="cancelLogout" class="secondary" type="button">取消</button><button id="confirmLogout" class="danger" type="button">确认退出</button></div></section></div>
@@ -2388,11 +2498,12 @@ function adminAccountsHTML(): string {
 <script>
 const KEY='otto.enterprise.admin.session';
 const departmentPresets=['总经办','人力资源部','财务部','法务部','销售部','市场部','产品部','研发部','设计部','IT部','客户成功部','采购部'];
-const tagPresets=['普通成员','部门负责人','行政','人事','财务','审批','法务','销售','市场','产品','研发','设计','IT','报修','维修工作人员','客户支持','采购','数据','夜班'];
+const tagPresets=['普通成员','部门负责人','行政','人事','财务','审批','法务','销售','市场','产品','研发','设计','IT','报修','维修工作人员','客服人员','客户支持','采购','数据','夜班'];
 const accountTemplates={
   member:{role:'成员',department:'',tags:['普通成员'],isAdmin:false},
   lead:{role:'部门负责人',department:'',tags:['部门负责人','审批'],isAdmin:false},
   it:{role:'IT 支持',department:'IT部',tags:['IT','报修','维修工作人员'],isAdmin:false},
+  service:{role:'园区客服',department:'客户成功部',tags:['客服人员','客户支持'],isAdmin:false},
   finance:{role:'财务审批',department:'财务部',tags:['财务','审批'],isAdmin:false},
   admin:{role:'系统管理员',department:'IT部',tags:['系统管理员','IT'],isAdmin:true}
 };
@@ -2421,7 +2532,7 @@ function showLogin(message){$('adminView').classList.add('hidden');$('loginView'
 function showAdmin(){showError('loginError','');$('loginView').classList.add('hidden');$('adminView').classList.remove('hidden');$('railUser').textContent=currentAdmin.name+' · '+currentAdmin.username;$('railMeta').textContent=currentAdmin.organizationName+' · 企业管理员';$('organizationTitle').textContent=currentAdmin.organizationName;focusSoon($('organizationTitle'))}
 function tags(value){return Array.from(new Set(String(value||'').split(/[,，]/).map(s=>s.trim()).filter(Boolean)))}
 function number(value){return new Intl.NumberFormat('zh-CN').format(Number(value)||0)}
-function setTags(values){const normalized=tags(values.join(', '));$('editTags').value=normalized.join(', ');$('editRepairWorker').checked=normalized.includes('维修工作人员');updateTagPresetState()}
+function setTags(values){const normalized=tags(values.join(', '));$('editTags').value=normalized.join(', ');$('editRepairWorker').checked=normalized.includes('维修工作人员');$('editServiceWorker').checked=normalized.includes('客服人员');updateTagPresetState()}
 function updateTagPresetState(){const selected=new Set(tags($('editTags').value));document.querySelectorAll('[data-tag-preset]').forEach(button=>button.setAttribute('aria-pressed',selected.has(button.dataset.tagPreset)?'true':'false'))}
 function renderPresets(){$('departmentPresetList').innerHTML=departmentPresets.map(item=>'<option value="'+esc(item)+'"></option>').join('');$('tagPresets').innerHTML=tagPresets.map(item=>'<button class="tag-choice" type="button" data-tag-preset="'+esc(item)+'" aria-pressed="false">'+esc(item)+'</button>').join('');document.querySelectorAll('[data-tag-preset]').forEach(button=>button.addEventListener('click',()=>{const selected=tags($('editTags').value);const index=selected.indexOf(button.dataset.tagPreset);if(index>=0)selected.splice(index,1);else selected.push(button.dataset.tagPreset);setTags(selected);clearTemplateSelection()}))}
 function render(){const q=$('searchInput').value.trim().toLowerCase();const rows=accounts.filter(account=>!q||[account.name,account.username,account.phone,account.feishuOpenId,account.role,account.department,account.positionTitle].concat(account.tags||[]).some(value=>String(value||'').toLowerCase().includes(q)));$('allCount').textContent=String(accounts.length);$('activeCount').textContent=String(accounts.filter(account=>account.status==='active').length);$('smsCount').textContent=String(accounts.filter(account=>account.phone).length);$('itCount').textContent=String(accounts.filter(account=>(account.tags||[]).includes('维修工作人员')).length);$('resultCount').textContent=rows.length+' 个账号';$('accountRows').innerHTML=rows.length?rows.map(account=>'<tr><td><div class="name">'+esc(account.name)+'</div><div class="sub">@'+esc(account.username)+(account.phone?' · '+esc(account.phone):' · 未绑定手机')+(account.feishuOpenId?' · 飞书已绑定':'')+'</div></td><td>'+esc(account.positionTitle||account.role||'未设置职位')+'<div class="sub">'+esc(account.department||'未分配部门')+(account.positionTitle&&account.role?' · '+esc(account.role):'')+'</div></td><td>'+((account.tags||[]).map(tag=>'<span class="tag">'+esc(tag)+'</span>').join('')||'<span class="sub">无标签</span>')+'</td><td><div class="name mono">'+number(account.usage&&account.usage.totalTokens)+'</div><div class="sub">'+number(account.usage&&account.usage.requestCount)+' 次请求</div></td><td>'+(account.isAdmin?'<span class="badge">管理员</span>':'<span class="sub">普通成员</span>')+'</td><td><span class="badge '+(account.status==='active'?'ok':'off')+'">'+(account.status==='active'?'可登录':'已停用')+'</span></td><td><button class="edit" type="button" data-id="'+esc(account.id)+'" aria-label="编辑 '+esc(account.name)+'（@'+esc(account.username)+'）">编辑</button></td></tr>').join(''):'<tr><td class="empty" colspan="7">没有匹配账号，请调整搜索条件</td></tr>';document.querySelectorAll('button[data-id]').forEach(button=>button.addEventListener('click',()=>openEditor(accounts.find(account=>account.id===button.dataset.id),button)))}
@@ -2454,8 +2565,9 @@ async function copyInvite(){if(!currentInvite||currentInvite.status!=='active')r
 async function copyInviteLink(){const link=registrationInviteLink();if(!link||!currentInvite||currentInvite.status!=='active')return;showError('inviteError','');try{await navigator.clipboard.writeText(link);const button=$('copyInviteLink');button.textContent='已复制引入链接';setTimeout(()=>{button.textContent='复制企业引入链接'},1500)}catch{selectInviteFallback('inviteLinkPreview','复制失败，已选中企业引入链接，可手动复制')}}
 renderPresets();
 document.querySelectorAll('[data-account-template]').forEach(button=>button.addEventListener('click',()=>applyTemplate(button.dataset.accountTemplate,button)));
-['editRole','editDepartment','editPositionTitle','editTags','editAdmin'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='editTags'){$('editRepairWorker').checked=tags($('editTags').value).includes('维修工作人员');updateTagPresetState()}clearTemplateSelection()}));
+['editRole','editDepartment','editPositionTitle','editTags','editAdmin'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='editTags'){$('editRepairWorker').checked=tags($('editTags').value).includes('维修工作人员');$('editServiceWorker').checked=tags($('editTags').value).includes('客服人员');updateTagPresetState()}clearTemplateSelection()}));
 $('editRepairWorker').addEventListener('change',()=>{const selected=tags($('editTags').value).filter(tag=>tag!=='维修工作人员');if($('editRepairWorker').checked)selected.push('维修工作人员');setTags(selected);clearTemplateSelection()});
+$('editServiceWorker').addEventListener('change',()=>{const selected=tags($('editTags').value).filter(tag=>tag!=='客服人员');if($('editServiceWorker').checked)selected.push('客服人员');setTags(selected);clearTemplateSelection()});
 $('togglePassword').addEventListener('click',()=>{setPasswordVisible($('password').type!=='text');$('password').focus()});
 $('loginForm').addEventListener('submit',async event=>{event.preventDefault();const epoch=beginAuth();showError('loginError','');setLoginPending(true);try{const data=await api('/enterprise/auth/admin/login',{method:'POST',body:JSON.stringify({identifier:$('username').value.trim(),password:$('password').value})});if(epoch!==authEpoch)return;token=data.token;currentAdmin=data.account;sessionStorage.setItem(KEY,token);$('password').value='';setPasswordVisible(false);resetWorkspace();showAdmin();await loadWorkspaceWithFeedback(epoch,currentAdmin.organizationId)}catch(error){if(epoch!==authEpoch)return;$('password').value='';setPasswordVisible(false);expireAdminSession(error&&error.message?error.message:'登录失败，请稍后重试');focusSoon($('password'))}finally{if(epoch===authEpoch)setLoginPending(false)}});
 $('logoutButton').addEventListener('click',openLogout);$('cancelLogout').addEventListener('click',()=>closeLogout(false));$('confirmLogout').addEventListener('click',logout);$('logoutModal').addEventListener('click',event=>{if(event.target===$('logoutModal'))closeLogout(false)});

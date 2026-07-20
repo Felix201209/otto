@@ -2,12 +2,13 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   EnterpriseAccount,
   EnterpriseAccountCreateInput,
   EnterpriseAccountUpdateInput,
   EnterpriseOrganizationInviteContext,
+  EnterpriseParkSurveyResult,
 } from '../../preload/index.js';
 
 export interface AccountDraft {
@@ -33,7 +34,7 @@ const EMPTY_DRAFT: AccountDraft = {
 
 export const ACCOUNT_TAG_PRESETS = [
   '普通成员', '部门负责人', '行政', '人事', '财务', '审批', '法务', '销售',
-  '市场', '产品', '研发', '设计', 'IT', '报修', '维修工作人员', '技术支持', '客户支持', '采购', '数据',
+  '市场', '产品', '研发', '设计', 'IT', '报修', '维修工作人员', '客服人员', '技术支持', '客户支持', '采购', '数据',
 ] as const;
 
 export const ACCOUNT_DEPARTMENT_PRESETS = [
@@ -45,6 +46,7 @@ const ACCOUNT_TEMPLATES = [
   { id: 'member', label: '普通成员', positionTitle: '普通成员', role: '成员', department: '', tags: ['普通成员'], isAdmin: false },
   { id: 'department-lead', label: '部门负责人', positionTitle: '部门负责人', role: '部门负责人', department: '', tags: ['部门负责人', '审批'], isAdmin: false },
   { id: 'it-support', label: '维修工作人员', positionTitle: 'IT 支持', role: 'IT 支持', department: 'IT部', tags: ['IT', '报修', '维修工作人员', '技术支持'], isAdmin: false },
+  { id: 'park-service', label: '园区客服人员', positionTitle: '园区客服', role: '园区客服', department: '客户成功部', tags: ['客服人员', '客户支持'], isAdmin: false },
   { id: 'administrator', label: '系统管理员', positionTitle: '系统管理员', role: '系统管理员', department: 'IT部', tags: ['IT', '系统管理员'], isAdmin: true },
 ] as const;
 
@@ -53,13 +55,6 @@ export type AccountTemplateId = typeof ACCOUNT_TEMPLATES[number]['id'];
 const PARK_SERVICE_OPTIONS = [
   { id: 'announcement', label: '园区公告' },
   { id: 'satisfaction', label: '满意度调查' },
-  { id: 'renovation', label: '装修申请' },
-  { id: 'parking', label: '停车位办理' },
-  { id: 'network-phone', label: '网络 / 电话业务' },
-  { id: 'meeting-room', label: '会议室预订' },
-  { id: 'electric-card', label: '电卡充电' },
-  { id: 'repair', label: '客户报修' },
-  { id: 'vehicle-visit', label: '来访车辆登记' },
 ] as const;
 
 function tagsFromText(value: string): string[] {
@@ -180,11 +175,13 @@ export function AccountManagementPage({
   const [inviteRole, setInviteRole] = useState('');
   const [inviteMaxUses, setInviteMaxUses] = useState('');
   const [parkPushRecipientId, setParkPushRecipientId] = useState('');
-  const [parkPushServiceId, setParkPushServiceId] = useState<typeof PARK_SERVICE_OPTIONS[number]['id']>('repair');
+  const [parkPushServiceId, setParkPushServiceId] = useState<typeof PARK_SERVICE_OPTIONS[number]['id']>('announcement');
   const [parkPushNote, setParkPushNote] = useState('');
   const [parkPushBusy, setParkPushBusy] = useState(false);
   const [parkPushMessage, setParkPushMessage] = useState<string | null>(null);
   const [parkPushError, setParkPushError] = useState<string | null>(null);
+  const [parkSurveyResults, setParkSurveyResults] = useState<EnterpriseParkSurveyResult[]>([]);
+  const [parkSurveyError, setParkSurveyError] = useState<string | null>(null);
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
@@ -280,6 +277,19 @@ export function AccountManagementPage({
     () => accounts.filter((account) => account.status === 'active'),
     [accounts],
   );
+  const refreshParkSurveyResults = useCallback(async (): Promise<void> => {
+    if (!currentAccount.isAdmin) return;
+    try {
+      setParkSurveyResults(await window.otto.enterpriseParkSurveyResults());
+      setParkSurveyError(null);
+    } catch (cause) {
+      setParkSurveyError(errorMessage(cause));
+    }
+  }, [currentAccount.isAdmin]);
+
+  useEffect(() => {
+    void refreshParkSurveyResults();
+  }, [refreshParkSurveyResults]);
 
   const openCreate = (): void => {
     if (loading) return;
@@ -450,15 +460,17 @@ export function AccountManagementPage({
     setParkPushMessage(null);
     try {
       const recipient = parkPushRecipients.find((account) => account.id === parkPushRecipientId);
-      if (!recipient) throw new Error('请选择要接收园区服务的 Otto 用户');
       const service = PARK_SERVICE_OPTIONS.find((item) => item.id === parkPushServiceId);
       await window.otto.enterpriseParkServicePush({
-        recipientAccountId: recipient.id,
+        recipientAccountId: parkPushRecipientId || 'all',
         serviceId: parkPushServiceId,
         note: parkPushNote.trim() || null,
       });
-      setParkPushMessage(`已把「${service?.label ?? '宏创园区服务'}」推送给 ${recipient.name}`);
+      setParkPushMessage(
+        `已发布「${service?.label ?? '园区内容'}」${recipient ? `给 ${recipient.name}` : '给全部成员'}`,
+      );
       setParkPushNote('');
+      await refreshParkSurveyResults();
     } catch (cause) {
       setParkPushError(errorMessage(cause));
     } finally {
@@ -469,6 +481,7 @@ export function AccountManagementPage({
   const activeCount = accounts.filter((item) => item.status === 'active').length;
   const smsCount = accounts.filter((item) => item.phone).length;
   const repairWorkerCount = accounts.filter((item) => item.tags.includes('维修工作人员')).length;
+  const serviceWorkerCount = accounts.filter((item) => item.tags.includes('客服人员')).length;
   const inviteIsActive = inviteContext?.invite?.status === 'active'
     && Date.parse(inviteContext.invite.expiresAt) > now;
 
@@ -596,24 +609,24 @@ export function AccountManagementPage({
       ) : null}
 
       {currentAccount.isAdmin ? (
-        <section className="otto-account-invite otto-account-park-push" aria-label="宏创园区服务推送">
+        <section className="otto-account-invite otto-account-park-push" aria-label="园区公告与调查发布">
           <header>
             <div>
               <span>PARK SERVICE PUSH</span>
-              <h2>宏创园区服务推送</h2>
-              <p>管理员选择服务和 Otto 用户后，系统会通过企业内私聊把服务办理卡片推送给指定成员。</p>
+              <h2>园区公告与调查发布</h2>
+              <p>可发布给全部成员，也可选择一名成员。其他七项服务由用户主动提交申请。</p>
             </div>
             <button
               type="button"
               onClick={() => void pushParkService()}
               disabled={parkPushBusy || parkPushRecipients.length === 0}
             >
-              {parkPushBusy ? '正在推送…' : '推送给用户'}
+              {parkPushBusy ? '正在发布…' : '发布内容'}
             </button>
           </header>
           <div className="otto-account-invite__position-grid">
             <label>
-              <span>宏创园区服务</span>
+              <span>发布类型</span>
               <select
                 aria-label="选择宏创园区服务"
                 value={parkPushServiceId}
@@ -626,14 +639,14 @@ export function AccountManagementPage({
               </select>
             </label>
             <label>
-              <span>推送到 Otto 用户</span>
+              <span>接收范围</span>
               <select
                 aria-label="选择接收服务的 Otto 用户"
                 value={parkPushRecipientId}
                 disabled={parkPushBusy}
                 onChange={(event) => setParkPushRecipientId(event.target.value)}
               >
-                <option value="">请选择成员</option>
+                <option value="">全部成员</option>
                 {parkPushRecipients.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name} / {account.department || '未分配部门'} / @{account.username}
@@ -642,18 +655,31 @@ export function AccountManagementPage({
               </select>
             </label>
             <label>
-              <span>管理员备注</span>
+              <span>{parkPushServiceId === 'announcement' ? '公告正文' : '调查说明'}</span>
               <input
                 aria-label="宏创园区服务推送备注"
                 value={parkPushNote}
                 disabled={parkPushBusy}
                 onChange={(event) => setParkPushNote(event.target.value)}
-                placeholder="例如：请今天下班前处理"
+                placeholder={parkPushServiceId === 'announcement'
+                  ? '填写公告正文，例如：今天下午 14:00–16:00 停水'
+                  : parkPushServiceId === 'satisfaction'
+                    ? '填写本次调查说明'
+                    : '例如：请今天下班前处理'}
               />
             </label>
           </div>
           {parkPushMessage ? <div className="otto-account-invite__loading" role="status">{parkPushMessage}</div> : null}
           {parkPushError ? <div className="otto-account-invite__error" role="alert">{parkPushError}</div> : null}
+          <div className="otto-account-survey-results" aria-label="满意度问卷回收结果">
+            <div className="otto-account-survey-results__head"><strong>问卷回收</strong><span>实名提交，提交后不可修改</span></div>
+            {parkSurveyError ? <div className="otto-account-invite__error" role="alert">{parkSurveyError}</div> : null}
+            {!parkSurveyError && parkSurveyResults.length === 0 ? <div className="otto-account-invite__loading">尚未发布满意度调查</div> : null}
+            {parkSurveyResults.map((survey) => <article key={survey.id} className="otto-account-survey-result">
+              <header><div><strong>{survey.title}</strong><span>{survey.body}</span></div><b>{survey.submittedCount} / {survey.recipientCount} 已提交</b></header>
+              {survey.responses.length ? <div className="otto-account-survey-result__responses">{survey.responses.map((response) => <div key={response.accountId}><strong>{response.accountName} · {response.responseData.score || '-'} 分</strong><span>{response.responseData.focus || '未填写关注项'}</span><p>{response.responseData.feedback || '未填写建议'}</p><time>{new Date(response.submittedAt).toLocaleString('zh-CN')}</time></div>)}</div> : <p className="otto-account-survey-result__empty">等待成员提交</p>}
+            </article>)}
+          </div>
         </section>
       ) : null}
 
@@ -662,6 +688,7 @@ export function AccountManagementPage({
         <article><span>可登录</span><strong>{activeCount}</strong><small>{accounts.length - activeCount} 个已停用</small></article>
         <article><span>手机已登记</span><strong>{smsCount}<i>/{accounts.length || 0}</i></strong><small>{smsCount === accounts.length && accounts.length > 0 ? '已全部登记' : '仍有账号未登记手机'}</small></article>
         <article><span>维修工作人员</span><strong>{repairWorkerCount}</strong><small>报修将自动投递</small></article>
+        <article><span>园区客服人员</span><strong>{serviceWorkerCount}</strong><small>六类申请自动投递</small></article>
       </section>
 
       <section className="otto-account-directory">
@@ -753,6 +780,7 @@ export function AccountManagementPage({
               <div className="otto-account-editor__field is-wide"><span>职责标签</span><div className="otto-account-tag-presets" aria-label="预设标签">{ACCOUNT_TAG_PRESETS.map((tag) => { const selected = tagsFromText(draft.tags).includes(tag); return <button key={tag} type="button" className={selected ? 'is-selected' : ''} aria-pressed={selected} onClick={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, tag) }))}>{tag}</button>; })}</div><input aria-label="账号标签" value={draft.tags} onChange={(e) => setDraft((v) => ({ ...v, tags: e.target.value }))} placeholder="也可输入自定义标签，用逗号分隔" /><small>标签参与专家权限、工单和任务路由。</small></div>
               {editing !== 'new' ? <label><span>账号状态</span><select aria-label="账号状态" value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as AccountDraft['status'] }))}><option value="active">可登录</option><option value="disabled">停用</option></select></label> : null}
               <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('维修工作人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '维修工作人员') }))} /><span>设为维修工作人员（新报修自动投递）</span></label>
+              <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('客服人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '客服人员') }))} /><span>设为园区客服人员（六类服务申请自动投递）</span></label>
               <label className="otto-account-editor__check"><input type="checkbox" checked={draft.isAdmin} onChange={(e) => setDraft((v) => ({ ...v, isAdmin: e.target.checked }))} /><span>授予身份管理权限</span></label>
             </div>
             {error ? <div className="otto-account-page__error" role="alert">{error}</div> : null}

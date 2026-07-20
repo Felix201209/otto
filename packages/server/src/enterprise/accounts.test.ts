@@ -331,3 +331,139 @@ describe('IT 工单按标签真实投递', () => {
     expect(db.listTicketInbox(requester.id)).toEqual([]);
   });
 });
+
+describe('园区服务服务器流程', () => {
+  it('六类申请可投递给多名客服，并只向有权限的人返回最少必要资料', async () => {
+    const db = await freshDb();
+    const admin = db.createAccount({
+      username: 'park-admin', password: 'park-admin-password', name: '园区管理员', isAdmin: true,
+    });
+    const requester = db.createAccount({
+      username: 'park-user', password: 'park-user-password', name: '申请人', tags: ['普通成员'],
+    });
+    const first = db.createAccount({
+      username: 'service-1', password: 'service-password-1', name: '客服一号',
+      phone: '13800138001', feishuOpenId: 'ou_service_1', tags: ['客服人员'],
+    });
+    const second = db.createAccount({
+      username: 'service-2', password: 'service-password-2', name: '客服二号',
+      phone: '13800138002', feishuOpenId: 'ou_service_2', tags: ['客服人员'],
+    });
+    const ticket = db.createTicket({
+      createdByAccountId: requester.id,
+      serviceId: 'renovation',
+      title: '装修管理 · A 座 1203 室',
+      description: '装修区域：A 座 1203 室',
+      targetTags: ['客服人员'],
+      formData: { area: 'A 座 1203 室', content: '办公室装修' },
+    });
+
+    expect(ticket).toMatchObject({
+      serviceId: 'renovation',
+      recipientCount: 2,
+      formData: { area: 'A 座 1203 室', content: '办公室装修' },
+    });
+    expect(ticket.recipients.map((item) => item.id).sort()).toEqual([first.id, second.id].sort());
+    expect(ticket.recipients[0]).not.toHaveProperty('phone');
+    expect(ticket.creator).not.toHaveProperty('phone');
+
+    const workerView = db.getTicketForAccount(ticket.id, first.id)!;
+    expect(workerView.isRecipient).toBe(true);
+    expect(workerView.recipients).toEqual([]);
+    expect(workerView.notifications).toEqual([]);
+
+    const deliveryAccounts = db.getTicketNotificationRecipients(ticket.id);
+    expect(deliveryAccounts.map((item) => item.id).sort()).toEqual([first.id, second.id].sort());
+    expect(deliveryAccounts.find((item) => item.id === first.id)).toMatchObject({
+      phone: '+8613800138001', feishuOpenId: 'ou_service_1',
+    });
+
+    db.recordTicketNotification({
+      ticketId: ticket.id,
+      recipientAccountId: first.id,
+      channel: 'feishu',
+      event: 'ticket_created',
+      status: 'sent',
+    });
+    expect(db.getTicketForAccount(ticket.id, requester.id)!.notifications).toEqual([]);
+    expect(db.getTicketForAccount(ticket.id, admin.id)!.notifications).toHaveLength(1);
+  });
+
+  it('非报修申请使用“处理中”，完成后由提交人确认', async () => {
+    const db = await freshDb();
+    const requester = db.createAccount({
+      username: 'meeting-user', password: 'meeting-user-password', name: '会议申请人',
+    });
+    const worker = db.createAccount({
+      username: 'meeting-service', password: 'meeting-service-password', name: '园区客服', tags: ['客服人员'],
+    });
+    const ticket = db.createTicket({
+      createdByAccountId: requester.id,
+      serviceId: 'meeting-room',
+      title: '会议室预约 · 7 月 21 日',
+      description: '14:00 至 16:00，10 人',
+      targetTags: ['客服人员'],
+      formData: { date: '2026-07-21', time: '14:00–16:00', attendees: '10' },
+    });
+
+    expect(db.updateTicket({ ticketId: ticket.id, accountId: worker.id, action: 'accept' }).status)
+      .toBe('处理中');
+    expect(db.updateTicket({ ticketId: ticket.id, accountId: worker.id, action: 'complete' }).status)
+      .toBe('待验收');
+    expect(db.updateTicket({ ticketId: ticket.id, accountId: requester.id, action: 'confirm' }).status)
+      .toBe('已完成');
+  });
+
+  it('公告可发给全部成员，实名问卷每人只能提交一次且不能修改', async () => {
+    const db = await freshDb();
+    const admin = db.createAccount({
+      username: 'survey-admin', password: 'survey-admin-password', name: '园区管理员', isAdmin: true,
+    });
+    const user = db.createAccount({
+      username: 'survey-user', password: 'survey-user-password', name: '实名员工',
+    });
+    const other = db.createAccount({
+      username: 'survey-other', password: 'survey-other-password', name: '其他员工',
+    });
+
+    const announcement = db.createParkPublication({
+      createdByAccountId: admin.id,
+      kind: 'announcement',
+      title: '下午临时停水通知',
+      body: '今天 14:00–16:00 园区停水，请提前准备。',
+    });
+    expect(announcement.recipientCount).toBe(3);
+    expect(db.listParkPublications(user.id)[0]).toMatchObject({
+      title: '下午临时停水通知', readAt: null,
+    });
+    expect(db.markParkPublicationRead(announcement.publication.id, user.id).readAt).toBeTruthy();
+
+    const survey = db.createParkPublication({
+      createdByAccountId: admin.id,
+      kind: 'satisfaction',
+      title: '第三季度满意度调查',
+      body: '请评价本季度园区服务。',
+      recipientAccountId: user.id,
+    });
+    expect(survey.recipientCount).toBe(1);
+    expect(db.listParkPublications(other.id).some((item) => item.id === survey.publication.id)).toBe(false);
+    const submitted = db.submitParkSurvey(survey.publication.id, user.id, {
+      score: '4', focus: '网络响应', feedback: '希望加强巡检', submittedBy: '试图冒用别人的姓名',
+    });
+    expect(submitted).toMatchObject({
+      submittedAt: expect.any(String),
+      responseData: { score: '4', focus: '网络响应', feedback: '希望加强巡检', submittedBy: '实名员工' },
+    });
+    expect(db.listParkSurveyResults(admin.id)[0]).toMatchObject({
+      recipientCount: 1,
+      submittedCount: 1,
+      responses: [expect.objectContaining({
+        accountName: '实名员工',
+        responseData: expect.objectContaining({ submittedBy: '实名员工' }),
+      })],
+    });
+    expect(() => db.submitParkSurvey(survey.publication.id, user.id, {
+      score: '5', feedback: '尝试修改', submittedBy: user.name,
+    })).toThrow(/已经提交|不能重复修改/);
+  });
+});
