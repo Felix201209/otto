@@ -98,11 +98,11 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
   });
 
-  it('v3 账号生命周期迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
+  it('v4 园区服务迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
     const first = await freshDb();
     first.getDB();
     first.closeEnterpriseDatabase();
@@ -112,7 +112,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 3,
+        schemaVersion: 4,
       });
       const organizationColumns = reopened.getDB()
         .prepare('PRAGMA table_info(organizations)')
@@ -123,6 +123,11 @@ describe('数据库 readiness', () => {
       expect(organizationColumns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'account_type')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'deleted_at')).toHaveLength(1);
+      const ticketColumns = reopened.getDB()
+        .prepare('PRAGMA table_info(it_tickets)')
+        .all() as Array<{ name: string }>;
+      expect(ticketColumns.filter((column) => column.name === 'service_id')).toHaveLength(1);
+      expect(ticketColumns.filter((column) => column.name === 'form_data')).toHaveLength(1);
     } finally {
       reopened.closeEnterpriseDatabase();
     }
@@ -133,18 +138,18 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 4;
+      PRAGMA user_version = 5;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 4.*current version 3/i);
+    expect(() => db.getDB()).toThrow(/schema version 5.*current version 4/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
       expect(
         (reopened.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
-      ).toBe(4);
+      ).toBe(5);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string }).id,
       ).toBe('preserve-me');

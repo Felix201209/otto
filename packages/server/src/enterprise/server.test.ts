@@ -434,7 +434,7 @@ describe('受保护 vs 公开路由边界', () => {
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 3,
+      schemaVersion: 4,
       capabilities: [
         'password_auth',
         'sms_login',
@@ -642,6 +642,14 @@ describe('公网企业引入链接与公开落地页', () => {
 });
 
 describe('report/dashboard 路由基本可达', () => {
+  it('根路径会跳转到管理员后台，避免本地预览误入 Not found', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const res = await fetch(`${base}/`, { redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/enterprise/admin');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
   it('admin 网页无需静态 token 即可打开，并提供管理员账号登录与完整账号编辑入口', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const favicon = await fetch(`${base}/favicon.ico`);
@@ -1848,8 +1856,103 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect((await replied.json()).ticket).toMatchObject({
       responseType: '远程指导', responseText: '请先检查墙面开关', status: '维修中',
     });
-    expect(smsSend).toHaveBeenCalledWith('+8613800138000', expect.stringContaining('维修回复'), expect.stringContaining('检查墙面开关'));
-    expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('维修回复'), expect.stringContaining('检查墙面开关'));
+    expect(smsSend).toHaveBeenCalledWith('+8613800138000', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
+    expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
+  });
+
+  it('园区公告、实名问卷和客服申请通过 HTTP 接口形成真实闭环', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'park.http.admin', password: 'park-http-admin-password', name: '园区管理员', isAdmin: true,
+    });
+    db.createAccount({
+      username: 'park.http.user', password: 'park-http-user-password', name: '实名员工', tags: ['普通成员'],
+    });
+    db.createAccount({
+      username: 'park.http.service1', password: 'park-http-service1-password', name: '客服一号', tags: ['客服人员'],
+    });
+    db.createAccount({
+      username: 'park.http.service2', password: 'park-http-service2-password', name: '客服二号', tags: ['客服人员'],
+    });
+    const login = async (identifier: string, password: string): Promise<string> => {
+      const response = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()).token;
+    };
+    const adminToken = await login('park.http.admin', 'park-http-admin-password');
+    const userToken = await login('park.http.user', 'park-http-user-password');
+    const serviceToken = await login('park.http.service1', 'park-http-service1-password');
+
+    const published = await fetch(`${base}/enterprise/park-services/push`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ recipientAccountId: 'all', serviceId: 'announcement', note: '今天下午 14:00–16:00 停水' }),
+    });
+    expect(published.status).toBe(201);
+    expect((await published.json()).recipientCount).toBe(4);
+    const publications = await fetch(`${base}/enterprise/park-services/publications`, {
+      headers: { authorization: `Bearer ${userToken}` },
+    });
+    expect((await publications.json()).publications).toEqual([
+      expect.objectContaining({ kind: 'announcement', body: '今天下午 14:00–16:00 停水' }),
+    ]);
+
+    const user = db.authenticateAccount('park.http.user', 'park-http-user-password')!;
+    const surveyResponse = await fetch(`${base}/enterprise/park-services/push`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ recipientAccountId: user.id, serviceId: 'satisfaction', note: '请评价本季度园区服务' }),
+    });
+    const survey = (await surveyResponse.json()).publication;
+    const submitSurvey = () => fetch(`${base}/enterprise/park-services/publications/${survey.id}/submit`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ responseData: { score: '4', feedback: '希望加强巡检', submittedBy: '实名员工' } }),
+    });
+    expect((await submitSurvey()).status).toBe(200);
+    expect((await submitSurvey()).status).toBe(400);
+    const surveyResultsResponse = await fetch(`${base}/enterprise/park-services/survey-results`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(surveyResultsResponse.status).toBe(200);
+    expect((await surveyResultsResponse.json()).surveys[0]).toMatchObject({
+      recipientCount: 1,
+      submittedCount: 1,
+      responses: [expect.objectContaining({
+        accountName: '实名员工',
+        responseData: expect.objectContaining({ submittedBy: '实名员工' }),
+      })],
+    });
+
+    const request = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: 'meeting-room', title: '会议室预约 · 7 月 21 日',
+        description: '14:00 至 16:00，10 人',
+        formData: { date: '2026-07-21', time: '14:00–16:00', attendees: '10' },
+      }),
+    });
+    expect(request.status).toBe(201);
+    const ticket = (await request.json()).ticket;
+    expect(ticket).toMatchObject({ serviceId: 'meeting-room', recipientCount: 2, status: '待接单' });
+    expect(ticket.recipients[0]).not.toHaveProperty('phone');
+
+    const staffTickets = await fetch(`${base}/enterprise/tickets`, {
+      headers: { authorization: `Bearer ${serviceToken}` },
+    });
+    const staffTicket = (await staffTickets.json()).tickets[0];
+    expect(staffTicket).toMatchObject({ id: ticket.id, isRecipient: true, recipients: [], notifications: [] });
+    const accepted = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${serviceToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'accept' }),
+    });
+    expect((await accepted.json()).ticket.status).toBe('处理中');
   });
 });
 

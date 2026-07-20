@@ -85,6 +85,15 @@ beforeEach(() => {
       enterpriseAccountCreate: vi.fn(async () => CREATED_ACCOUNT),
       enterpriseAccountUpdate: vi.fn(async (_id, input) => ({ ...ADMIN, ...input })),
       enterpriseAccountDelete: vi.fn(async (id) => ({ id, deleted: true as const })),
+      enterpriseParkServicePush: vi.fn(async () => ({ recipientCount: 1 })),
+      enterpriseParkSurveyResults: vi.fn(async () => [{
+        id: 'survey-1', title: '第三季度满意度调查', body: '请评价园区服务',
+        createdAt: '2026-07-20T08:00:00Z', recipientCount: 3, submittedCount: 1,
+        responses: [{
+          accountId: 'survey-user', accountName: '实名员工', submittedAt: '2026-07-20T09:00:00Z',
+          responseData: { score: '4', focus: '网络响应', feedback: '希望加强巡检', submittedBy: '实名员工' },
+        }],
+      }]),
     } as unknown as Window['otto'],
   });
 });
@@ -167,6 +176,28 @@ describe('企业引入链接', () => {
     await waitFor(() => expect(
       (screen.getByRole('button', { name: '生成新引入链接' }) as HTMLButtonElement).disabled,
     ).toBe(false));
+  });
+});
+
+describe('园区内容发布', () => {
+  it('管理员只发布公告和问卷，其他七项服务由用户主动申请', async () => {
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
+    const type = within(panel).getByLabelText('选择宏创园区服务') as HTMLSelectElement;
+    expect(Array.from(type.options).map((option) => option.textContent)).toEqual(['园区公告', '满意度调查']);
+    expect(within(panel).queryByText('装修申请')).toBeNull();
+    expect(await within(panel).findByText('实名员工 · 4 分')).toBeTruthy();
+    expect(within(panel).getByText('1 / 3 已提交')).toBeTruthy();
+
+    fireEvent.change(within(panel).getByLabelText('宏创园区服务推送备注'), {
+      target: { value: '今天下午 14:00–16:00 停水' },
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: '发布内容' }));
+    await waitFor(() => expect(window.otto.enterpriseParkServicePush).toHaveBeenCalledWith({
+      recipientAccountId: 'all',
+      serviceId: 'announcement',
+      note: '今天下午 14:00–16:00 停水',
+    }));
   });
 });
 

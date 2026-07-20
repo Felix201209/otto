@@ -246,6 +246,10 @@ const IPC = {
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
+  enterpriseParkPublications: 'otto:enterprise-park-publications',
+  enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
+  enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
+  enterpriseParkSurveySubmit: 'otto:enterprise-park-survey-submit',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
@@ -1213,6 +1217,29 @@ function registerIpc(): void {
       note: typeof body.note === 'string' ? body.note : null,
     });
   });
+  ipcMain.handle(IPC.enterpriseParkPublications, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkPublications();
+  });
+  ipcMain.handle(IPC.enterpriseParkSurveyResults, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkSurveyResults();
+  });
+  ipcMain.handle(IPC.enterpriseParkPublicationRead, async (_event, id: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id) throw new Error('园区内容编号不正确');
+    return enterpriseClient.readParkPublication(id);
+  });
+  ipcMain.handle(IPC.enterpriseParkSurveySubmit, async (_event, id: unknown, input: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id || !input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('问卷提交内容不正确');
+    }
+    const responseData = Object.fromEntries(Object.entries(input).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ));
+    return enterpriseClient.submitParkSurvey(id, responseData);
+  });
   ipcMain.handle(IPC.enterpriseOrganizationInviteGet, async () => {
     loadEnterpriseSession();
     return enterpriseClient.getOrganizationInvite();
@@ -1245,10 +1272,16 @@ function registerIpc(): void {
       throw new Error('工单标题和描述均为必填项');
     }
     return enterpriseClient.submitTicket({
+      serviceId: typeof body.serviceId === 'string' ? body.serviceId : undefined,
       title: body.title,
       description: body.description,
       targetTags: Array.isArray(body.targetTags)
         ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
+        : undefined,
+      formData: body.formData && typeof body.formData === 'object' && !Array.isArray(body.formData)
+        ? Object.fromEntries(Object.entries(body.formData).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ))
         : undefined,
       category: typeof body.category === 'string' ? body.category : undefined,
       location: typeof body.location === 'string' ? body.location : undefined,
