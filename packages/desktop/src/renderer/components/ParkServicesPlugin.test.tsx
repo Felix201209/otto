@@ -49,6 +49,7 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter') {
     organizationId: 'org-1', organizationName: '测试园区', employeeId: null,
     username: kind, phone: '+8613800138000', feishuOpenId: 'ou_test',
     name: kind === 'worker' ? '维修张工' : '报修员工', role: '成员', department: 'IT部',
+    positionId: null, positionTitle: null,
     isAdmin: false, status: 'active' as const,
     tags: kind === 'worker' ? ['维修工作人员'] : ['普通成员'],
     createdAt: '2026-07-20', updatedAt: '2026-07-20',
