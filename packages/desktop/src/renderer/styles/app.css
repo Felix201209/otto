@@ -6373,9 +6373,19 @@ h6.otto-prose__h {
 .otto-direct-chat__message.is-peer { align-self:flex-start; background:var(--otto-bg); border:1px solid var(--otto-border); }
 .otto-direct-chat__message.is-me { align-self:flex-end; background:var(--otto-accent-soft); }
 .otto-direct-chat__error { padding:6px 12px; color:var(--otto-danger); font-size:11px; }
-.otto-direct-chat form { display:flex; gap:8px; padding:10px; border-top:1px solid var(--otto-border); }
-.otto-direct-chat form input { flex:1; min-width:0; border:1px solid var(--otto-border); border-radius:8px; background:var(--otto-bg); color:var(--otto-text); padding:8px; }
-.otto-direct-chat form button { border:0; border-radius:8px; padding:0 12px; background:var(--otto-accent); color:white; cursor:pointer; }
+.otto-direct-chat form { display:grid; grid-template-columns:auto auto auto 1fr auto; gap:8px; padding:10px; border-top:1px solid var(--otto-border); }
+.otto-direct-chat form input { grid-column:1 / -1; min-width:0; border:1px solid var(--otto-border); border-radius:8px; background:var(--otto-bg); color:var(--otto-text); padding:9px 10px; }
+.otto-direct-chat form button { min-height:32px; border:0; border-radius:8px; padding:0 12px; background:var(--otto-accent); color:white; cursor:pointer; font-size:12px; }
+.otto-direct-chat form button:disabled { cursor:default; opacity:.55; }
+.otto-direct-chat__tool,
+.otto-direct-chat__otto-action { display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid var(--otto-border) !important; background:var(--otto-bg) !important; color:var(--otto-text) !important; }
+.otto-direct-chat__tool { width:32px; padding:0 !important; }
+.otto-direct-chat__otto-action:hover:not(:disabled),
+.otto-direct-chat__tool:hover:not(:disabled) { border-color:var(--otto-accent) !important; color:var(--otto-accent) !important; }
+.otto-direct-chat__a2a-menu { position:relative; }
+.otto-direct-chat__a2a-pop { position:absolute; left:0; bottom:calc(100% + 8px); width:168px; padding:6px; border:1px solid var(--otto-border-strong); border-radius:10px; background:var(--otto-surface); box-shadow:var(--otto-shadow-pop); z-index:60; }
+.otto-direct-chat__a2a-pop button { width:100%; display:flex; align-items:center; gap:7px; justify-content:flex-start; padding:8px 9px; background:transparent; color:var(--otto-text); }
+.otto-direct-chat__a2a-pop button:hover:not(:disabled) { background:var(--otto-accent-soft); }
 
 .otto-right-panel { position: relative; width: 304px; min-width: 304px; transition: width .18s ease, min-width .18s ease; }
 .otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }

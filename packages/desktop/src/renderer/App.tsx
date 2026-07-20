@@ -18,7 +18,7 @@
  * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为空 TODO）。
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
 import type { MessageSource } from 'otto-server';
@@ -56,7 +56,6 @@ import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
 } from '../preload/index.js';
-import type { DirectChatOttoRequest } from './components/OrganizationTree.js';
 import {
   buildAtoaResponse,
   parseAtoaMessage,
@@ -159,21 +158,30 @@ function OttoWorkspaceApp({
       const parsed = parseAtoaMessage(request.content);
       if (parsed?.kind !== 'request') return;
       const approvedQuestion = normalizePeerOttoQuestion(parsed.payload.question);
+      const requestMode = parsed.payload.mode ?? 'answer';
       processing.add(request.id);
       try {
-        const approved = window.confirm([
-          '一位企业同事请求让你的 Otto 回答下面的问题：',
+        const scopeChoice = window.prompt([
+          requestMode === 'consult'
+            ? '一位企业同事想发起双方 Otto 协商：'
+            : '一位企业同事请求让你的 Otto 回答下面的问题：',
           '',
           approvedQuestion,
           '',
-          '是否允许当前配置模型回答？该模型可能由第三方云服务处理。本次不会把工作日志或文件内容作为回答上下文，且服务器会强制禁用全部工具。',
-        ].join('\n'));
+          '输入 1 允许（使用我的 Otto 可用资料，默认）',
+          '输入 2 允许但仅基于当前聊天',
+          '留空或取消则不回答',
+        ].join('\n'), '1');
+        const approved = scopeChoice === '1' || scopeChoice === '2';
+        const contextScope = scopeChoice === '2' ? 'current_chat' : 'otto_context';
         let answer = '对方暂未授权其 Otto 自动回答这个问题，请直接在员工私聊中联系本人。';
         if (approved) {
           try {
             answer = await askLocalPeerOtto({
               question: approvedQuestion,
-              workContext: '本次未提供员工工作日志、文件或其他私有上下文。',
+              workContext: contextScope === 'current_chat'
+                ? '本次授权范围已缩小为：仅当前一对一聊天内容。'
+                : '本次授权范围：使用我的 Otto 可用资料，并优先结合当前一对一聊天上下文回答。',
               requestId: `a2a-${request.id}`,
               clientMessageId: `a2a-reply-${request.id}`,
               signal: abortController.signal,
@@ -190,6 +198,8 @@ function OttoWorkspaceApp({
             requestId: request.id,
             question: parsed.payload.question,
             answer,
+            mode: requestMode,
+            contextScope,
           }),
         );
       } catch {
@@ -492,42 +502,6 @@ function OttoWorkspaceApp({
     actions.launchAgentProfile(profile.name, profile.id);
   };
 
-  const handleAskOttoFromDirectChat = useCallback(({
-    member,
-    messages,
-    question,
-  }: DirectChatOttoRequest): void => {
-    const transcript = messages.slice(-40).map((message) => {
-      const speaker = message.senderAccountId === member.id
-        ? member.name
-        : account.name;
-      const createdAt = message.createdAt
-        ? new Date(message.createdAt).toLocaleString('zh-CN', { hour12: false })
-        : '';
-      return `- ${createdAt} ${speaker}: ${message.content}`;
-    }).join('\n');
-    const cleanQuestion = question?.trim()
-      || '请基于这段聊天记录总结背景、待办、风险和下一步建议。';
-    const prompt = [
-      '你正在被企业一对一聊天调用。请只基于下面聊天记录和用户问题提供帮助。',
-      `当前用户：${account.name}${account.department ? `（${account.department}）` : ''}`,
-      `聊天对象：${member.name}${member.department ? `（${member.department}）` : ''}`,
-      '',
-      '聊天记录：',
-      transcript || '（当前还没有可用聊天记录）',
-      '',
-      `用户希望 Otto 处理的问题：${cleanQuestion}`,
-      '',
-      '请先说明你理解到的上下文，再给出可执行建议；如需发送给对方的内容，请单独给出可复制版本。不要编造聊天记录之外的信息。',
-    ].join('\n');
-    setMainView('chat');
-    actions.launchAgentProfileWithPrompt(
-      `Otto 协助：${member.name}`,
-      'otto-enterprise-work',
-      prompt,
-    );
-  }, [account.department, account.name, actions]);
-
   const openModelSettings = (): void => {
     setMainView('settings');
   };
@@ -577,7 +551,6 @@ function OttoWorkspaceApp({
         productWorkspace={product.state.workspace}
         enterpriseAccount={edition === 'enterprise' ? account : undefined}
         organizationOpenRequest={organizationOpenRequest}
-        onAskOttoFromDirectChat={handleAskOttoFromDirectChat}
         onLogout={onLogout}
       />
 

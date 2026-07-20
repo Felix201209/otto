@@ -8,7 +8,22 @@ import type { ProductWorkspaceSnapshot } from 'otto-server';
 import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
 import { OrganizationTree } from './OrganizationTree.js';
 
-afterEach(cleanup);
+const askLocalPeerOttoMock = vi.hoisted(() => vi.fn(async () => '本机 Otto 给出的建议。'));
+
+vi.mock('../peerOttoRunner.js', async () => {
+  const actual = await vi.importActual<typeof import('../peerOttoRunner.js')>(
+    '../peerOttoRunner.js',
+  );
+  return {
+    ...actual,
+    askLocalPeerOtto: askLocalPeerOttoMock,
+  };
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 const workspace: ProductWorkspaceSnapshot = {
   schemaVersion: 1,
@@ -370,14 +385,24 @@ describe('OrganizationTree', () => {
       employeeCount: 2,
     }));
     const enterpriseMessagesList = vi.fn(async () => messages);
-    Object.assign(window.otto, { enterpriseOrganizationView, enterpriseMessagesList });
-    const onAskOttoFromDirectChat = vi.fn();
+    const enterpriseMessageSend = vi.fn(async (_peerAccountId: string, content: string) => ({
+      id: 'dm_own_otto',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_2',
+      content,
+      createdAt: '2026-07-19T09:10:00.000Z',
+      readAt: null,
+    }));
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+      enterpriseMessageSend,
+    });
 
     render(
       <OrganizationTree
         workspace={personalWorkspace}
         enterpriseAccount={authenticatedEnterpriseAccount}
-        onAskOttoFromDirectChat={onAskOttoFromDirectChat}
       />,
     );
 
@@ -385,14 +410,25 @@ describe('OrganizationTree', () => {
     fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
     fireEvent.click(await screen.findByText('Bob'));
     expect(await screen.findByText('Please help review the proposal today.')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Please help review the proposal today.' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: '问 Otto' }));
 
-    expect(onAskOttoFromDirectChat).toHaveBeenCalledWith({
-      member: expect.objectContaining({ id: 'acc_2', name: 'Bob' }),
-      messages,
-      question: undefined,
-    });
+    await waitFor(() => expect(askLocalPeerOttoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: 'Please help review the proposal today.',
+      }),
+    ));
+    expect(enterpriseMessageSend).toHaveBeenCalledWith(
+      'acc_2',
+      expect.stringContaining('我问了自己的 Otto（基于：我的 Otto 可用资料）'),
+    );
+    expect(enterpriseMessageSend).toHaveBeenCalledWith(
+      'acc_2',
+      expect.stringContaining('本机 Otto 给出的建议。'),
+    );
   });
 
   it('uses @otto as a direct-chat shortcut instead of sending it as a message', async () => {
@@ -415,19 +451,24 @@ describe('OrganizationTree', () => {
       employeeCount: 1,
     }));
     const enterpriseMessagesList = vi.fn(async () => []);
-    const enterpriseMessageSend = vi.fn();
+    const enterpriseMessageSend = vi.fn(async (_peerAccountId: string, content: string) => ({
+      id: 'dm_own_otto',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_2',
+      content,
+      createdAt: '2026-07-19T09:10:00.000Z',
+      readAt: null,
+    }));
     Object.assign(window.otto, {
       enterpriseOrganizationView,
       enterpriseMessagesList,
       enterpriseMessageSend,
     });
-    const onAskOttoFromDirectChat = vi.fn();
 
     render(
       <OrganizationTree
         workspace={personalWorkspace}
         enterpriseAccount={authenticatedEnterpriseAccount}
-        onAskOttoFromDirectChat={onAskOttoFromDirectChat}
       />,
     );
 
@@ -439,12 +480,15 @@ describe('OrganizationTree', () => {
     fireEvent.change(input, { target: { value: '@otto summarize action items' } });
     fireEvent.submit(input.closest('form')!);
 
-    expect(enterpriseMessageSend).not.toHaveBeenCalled();
-    expect(onAskOttoFromDirectChat).toHaveBeenCalledWith({
-      member: expect.objectContaining({ id: 'acc_2', name: 'Bob' }),
-      messages: [],
-      question: 'summarize action items',
-    });
+    await waitFor(() => expect(askLocalPeerOttoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: 'summarize action items',
+      }),
+    ));
+    expect(enterpriseMessageSend).toHaveBeenCalledWith(
+      'acc_2',
+      expect.stringContaining('我问了自己的 Otto'),
+    );
   });
 
   it('sends a peer Otto request as a structured direct message', async () => {

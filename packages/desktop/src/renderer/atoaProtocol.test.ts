@@ -23,12 +23,14 @@ describe('企业 A2A 消息协议', () => {
       payload: {
         v: 1,
         id: 'request-1',
+        mode: 'answer',
+        contextScope: 'otto_context',
       },
     });
     expect(parsed?.kind === 'request' && parsed.payload.question.length).toBe(1200);
     const display = displayDirectMessageContent(content);
+    expect(display).toContain('默认范围：Otto 可用资料');
     expect(display).toContain('等待对方确认后由其 Otto 回答');
-    expect(display).not.toContain('本机工作数据');
   });
 
   it('回复使用服务端消息 id 对账，并在聊天里隐藏协议前缀', () => {
@@ -49,7 +51,28 @@ describe('企业 A2A 消息协议', () => {
       },
     });
     expect(displayDirectMessageContent(content)).toBe(
-      '对方 Otto 回复：\n建议先发一个 15:00 的候选时间。',
+      '对方 Otto 回复（基于：Otto 可用资料）：\n建议先发一个 15:00 的候选时间。',
+    );
+  });
+
+  it('协商请求默认用 Otto 可用资料，也可以缩小到当前聊天', () => {
+    const request = buildAtoaRequest('一起整理第一版方案', {
+      id: 'consult-1',
+      mode: 'consult',
+      contextScope: 'current_chat',
+    });
+    expect(displayDirectMessageContent(request)).toContain('发起双方 Otto 协商');
+    expect(displayDirectMessageContent(request)).toContain('默认范围：仅当前聊天');
+
+    const response = buildAtoaResponse({
+      requestId: 'consult-1',
+      question: '一起整理第一版方案',
+      answer: '建议保留问自己、问对方、双方协商三个入口。',
+      mode: 'consult',
+      contextScope: 'current_chat',
+    });
+    expect(displayDirectMessageContent(response)).toBe(
+      '双方 Otto 协商结果（基于：仅当前聊天）：\n建议保留问自己、问对方、双方协商三个入口。',
     );
   });
 

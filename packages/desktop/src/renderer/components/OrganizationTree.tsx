@@ -11,19 +11,23 @@ import type {
 } from '../../preload/index.js';
 import { buildAtoaRequest, displayDirectMessageContent } from '../atoaProtocol.js';
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
-import { IconChevronDown } from './icons.js';
+import { askLocalPeerOtto } from '../peerOttoRunner.js';
+import {
+  IconAgent,
+  IconChevronDown,
+  IconPlus,
+  IconSparkle,
+} from './icons.js';
 
 export function OrganizationTree({
   workspace,
   enterpriseAccount,
   openRequest = 0,
-  onAskOttoFromDirectChat,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
   enterpriseAccount?: EnterpriseAccount;
   /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
   openRequest?: number;
-  onAskOttoFromDirectChat?: (input: DirectChatOttoRequest) => void;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
@@ -168,30 +172,26 @@ export function OrganizationTree({
       {chatMember ? (
         <DirectMessagePanel
           member={chatMember}
+          account={enterpriseAccount}
           onClose={() => setChatMember(null)}
-          onAskOtto={onAskOttoFromDirectChat}
         />
       ) : null}
     </section>
   );
 }
 
-export interface DirectChatOttoRequest {
+function DirectMessagePanel({ member, account, onClose }: {
   member: EnterpriseOrganizationView['members'][number];
-  messages: EnterpriseDirectMessage[];
-  question?: string;
-}
-
-function DirectMessagePanel({ member, onClose, onAskOtto }: {
-  member: EnterpriseOrganizationView['members'][number];
+  account?: EnterpriseAccount;
   onClose: () => void;
-  onAskOtto?: (input: DirectChatOttoRequest) => void;
 }): React.JSX.Element {
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [askingOwnOtto, setAskingOwnOtto] = useState(false);
   const [askingPeerOtto, setAskingPeerOtto] = useState(false);
+  const [a2aMenuOpen, setA2aMenuOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -208,16 +208,59 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
     return () => { active = false; window.clearInterval(timer); };
   }, [member.id]);
 
-  const askOtto = (question?: string) => {
-    onAskOtto?.({
-      member,
-      messages,
-      question: question?.trim() || undefined,
-    });
+  const buildTranscriptContext = (): string => {
+    const myName = account?.name || '我';
+    const transcript = messages.slice(-40).map((message) => {
+      const speaker = message.senderAccountId === member.id ? member.name : myName;
+      const createdAt = message.createdAt
+        ? new Date(message.createdAt).toLocaleString('zh-CN', { hour12: false })
+        : '';
+      return `- ${createdAt} ${speaker}: ${message.content}`;
+    }).join('\n');
+    return [
+      '当前是在企业一对一聊天窗口中公开询问自己的 Otto，回答会发送给对方可见。',
+      '默认授权范围：使用我的 Otto 可用资料，并结合下面当前聊天记录。',
+      '',
+      '当前聊天记录：',
+      transcript || '（当前还没有可用聊天记录）',
+    ].join('\n');
   };
 
-  const askPeerOtto = async (question?: string) => {
-    const content = buildAtoaRequest(question?.trim() || draft.trim());
+  const askOtto = async (question?: string) => {
+    const cleanQuestion = (question?.trim() || draft.trim()).slice(0, 1200);
+    if (!cleanQuestion || askingOwnOtto) return;
+    setAskingOwnOtto(true);
+    try {
+      const answer = await askLocalPeerOtto({
+        question: cleanQuestion,
+        workContext: buildTranscriptContext(),
+        requestId: `own-a2a-${crypto.randomUUID()}`,
+        clientMessageId: `own-a2a-message-${crypto.randomUUID()}`,
+      });
+      const content = [
+        `我问了自己的 Otto（基于：我的 Otto 可用资料）：${cleanQuestion}`,
+        '',
+        'Otto：',
+        answer,
+      ].join('\n');
+      const message = await window.otto.enterpriseMessageSend(member.id, content);
+      setMessages((current) => [...current, message]);
+      setDraft('');
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAskingOwnOtto(false);
+    }
+  };
+
+  const askPeerOtto = async (question?: string, mode: 'answer' | 'consult' = 'answer') => {
+    const cleanQuestion = question?.trim() || draft.trim();
+    if (!cleanQuestion || askingPeerOtto) return;
+    const content = buildAtoaRequest(cleanQuestion, {
+      mode,
+      contextScope: 'otto_context',
+    });
     setAskingPeerOtto(true);
     try {
       const message = await window.otto.enterpriseMessageSend(member.id, content);
@@ -237,9 +280,7 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
     if (!content || sending) return;
     const ottoShortcut = content.match(/^@otto(?:\s+|$)([\s\S]*)$/i);
     if (ottoShortcut) {
-      askOtto(ottoShortcut[1] || undefined);
-      setDraft('');
-      setError('');
+      await askOtto(ottoShortcut[1] || undefined);
       return;
     }
     const peerOttoShortcut = content.match(/^@peer-otto(?:\s+|$)([\s\S]*)$/i);
@@ -264,23 +305,6 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
     <div className="otto-direct-chat" role="dialog" aria-label={`与 ${member.name} 聊天`}>
       <header>
         <strong>{member.name}</strong>
-        {onAskOtto ? (
-          <button
-            type="button"
-            className="otto-direct-chat__otto"
-            onClick={() => askOtto(draft)}
-          >
-            问 Otto
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="otto-direct-chat__otto"
-          disabled={askingPeerOtto}
-          onClick={() => void askPeerOtto(draft)}
-        >
-          问对方 Otto
-        </button>
         <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
       </header>
       <div className="otto-direct-chat__messages">
@@ -302,6 +326,51 @@ function DirectMessagePanel({ member, onClose, onAskOtto }: {
           placeholder="输入消息"
           aria-label="消息内容"
         />
+        <div className="otto-direct-chat__a2a-menu">
+          <button
+            type="button"
+            className="otto-direct-chat__tool"
+            aria-label="更多协作"
+            aria-haspopup="menu"
+            aria-expanded={a2aMenuOpen}
+            onClick={() => setA2aMenuOpen((open) => !open)}
+          >
+            <IconPlus size={15} />
+          </button>
+          {a2aMenuOpen ? (
+            <div className="otto-direct-chat__a2a-pop" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!draft.trim() || askingPeerOtto}
+                onClick={() => {
+                  setA2aMenuOpen(false);
+                  void askPeerOtto(draft, 'consult');
+                }}
+              >
+                <IconSparkle size={14} />
+                <span>双方 Otto 协商</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="otto-direct-chat__otto-action"
+          disabled={!draft.trim() || askingOwnOtto}
+          onClick={() => void askOtto(draft)}
+        >
+          <IconAgent size={14} />
+          {askingOwnOtto ? '询问中' : '问 Otto'}
+        </button>
+        <button
+          type="button"
+          className="otto-direct-chat__otto-action"
+          disabled={!draft.trim() || askingPeerOtto}
+          onClick={() => void askPeerOtto(draft)}
+        >
+          问对方 Otto
+        </button>
         <button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button>
       </form>
     </div>
