@@ -43,7 +43,7 @@ if (
   || body.apiVersion !== 2
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== 2
+  || body.schemaVersion !== 3
   || body.db !== 'connected'
   || missing.length > 0
 ) {

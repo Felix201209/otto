@@ -8,7 +8,7 @@
 
 - 只支持 `amd64/x86_64` 与 `arm64/aarch64`。
 - 默认面向全新服务器。完全相同 build 重跑时只验收、不重启；检测到不同的现有 Otto 安装会拒绝覆盖。
-- 这是“当前服务器原样迁入新机器”的包，数据导入只接受当前生产 schema v2；旧 schema 必须先在旧服务器走单独的受控升级，不能把迁入流程顺手当升级流程。
+- 这是“当前服务器原样迁入新机器”的包，数据导入接受生产 schema v2 或 v3，并在隔离副本上统一迁移到 v3；更旧 schema 必须先在旧服务器走单独的受控升级。
 - 数据导出使用 SQLite Online Backup API，不直接复制正在写入的 `data.db`。
 - 导入先在隔离目录迁移，再在 `127.0.0.1:17777` 启动 canary；schema、外键、数据行数和 health 全部通过后才安装。
 - 服务只监听 `127.0.0.1:7778`，公网必须经过 HTTPS 反向代理。
@@ -137,7 +137,7 @@ sudo ./install.sh \
 2. 下载 Node.js `v22.23.1` 并核对官方 SHA-256；
 3. 校验最小 release 文件集合和每个文件的 SHA-256；
 4. 校验迁移数据库 `quick_check`、外键和 schema；
-5. 在隔离副本上迁移到 schema v2，并逐表对账；
+5. 在隔离副本上迁移到 schema v3，并逐表对账；
 6. 启动 `127.0.0.1:17777` canary；
 7. 安装专用 `otto-enterprise` 用户、只读 release 和 0600 运行配置；
 8. 启动 systemd 服务；
@@ -167,7 +167,7 @@ curl --fail --show-error \
 
 - `status: ok`
 - `apiVersion: 2`
-- `schemaVersion: 2`
+- `schemaVersion: 3`
 - `db: connected`
 - `sms.configured: true`
 - `capabilities` 同时包含 `direct_messages`、`position_invites`、`park_service_push`

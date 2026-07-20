@@ -405,8 +405,10 @@ NODE
   IMPORT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "$MIGRATION_DB")"
   IMPORT_SCHEMA="$("$NODE_PATH" -e \
     "const x=JSON.parse(process.argv[1]);console.log(x.userVersion)" "$IMPORT_INFO")"
-  [ "$IMPORT_SCHEMA" = "2" ] \
-    || otto_die "本迁入包只接受当前生产 schema 2，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5
+  case "$IMPORT_SCHEMA" in
+    2|3) ;;
+    *) otto_die "本迁入包只接受 schema 2 或 3，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5 ;;
+  esac
   EXPECTED_DB_SHA="$("$NODE_PATH" -e \
     "const x=require(process.argv[1]);console.log(x.database.sha256)" "$MIGRATION_MANIFEST")"
   ACTUAL_DB_SHA="$("$NODE_PATH" -e \

@@ -85,8 +85,10 @@ otto_log "创建在线一致性快照（服务无需停止）"
 SOURCE_SCHEMA="$("$NODE_PATH" -e \
   "const x=require(process.argv[1]);console.log(x.userVersion)" \
   "${TEMP_DIR}/inspection.json")"
-[ "$SOURCE_SCHEMA" = "2" ] \
-  || otto_die "本迁入包只支持导出当前生产 schema 2，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5
+case "$SOURCE_SCHEMA" in
+  2|3) ;;
+  *) otto_die "本迁入包只支持导出 schema 2 或 3，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5 ;;
+esac
 
 "$NODE_PATH" --input-type=module - \
   "${TEMP_DIR}/inspection.json" "${TEMP_DIR}/migration/manifest.json" <<'NODE'

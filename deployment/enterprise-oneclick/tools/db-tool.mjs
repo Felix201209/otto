@@ -13,7 +13,7 @@ import {
 import path from 'node:path';
 
 const MAX_DATABASE_BYTES = 20 * 1024 * 1024 * 1024;
-const EXPECTED_SCHEMA_VERSION = 2;
+const EXPECTED_SCHEMA_VERSION = 3;
 
 function fail(message, code = 5) {
   process.stderr.write(`[Otto DB] ${message}\n`);

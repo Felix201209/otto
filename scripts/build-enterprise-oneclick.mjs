@@ -126,6 +126,7 @@ try {
     'src/enterprise/server.js',
     'src/enterprise/db.js',
     'src/enterprise/credits.js',
+    'src/enterprise/repairNotifications.js',
     'src/enterprise/publicInvite.js',
     'src/enterprise/publicInvitePage.js',
     'src/enterprise/localAgentPage.js',
@@ -216,8 +217,8 @@ try {
       supportedArchitectures: ['linux-x64', 'linux-arm64'],
     },
     database: {
-      schemaFrom: [2],
-      schemaTo: 2,
+      schemaFrom: [2, 3],
+      schemaTo: 3,
       futureSchemaPolicy: 'reject',
     },
     files: fileHashes,
