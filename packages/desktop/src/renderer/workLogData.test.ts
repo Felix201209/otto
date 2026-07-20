@@ -105,10 +105,10 @@ describe('桌面工作日志数据闭环', () => {
     expect(report.markdown).toContain('# 市场竞品调研报告');
     expect(report.markdown).toContain('建议优先突出企业知识沉淀');
     expect(report.path).toContain(
-      path.join('summaries', '2026-07-10-市场竞品调研报告.md'),
+      path.join('summaries', '2026-07-10-市场竞品调研报告.html'),
     );
     await expect(fs.readFile(report.path, 'utf8')).resolves.toBe(
-      report.markdown,
+      report.html,
     );
   });
 });
