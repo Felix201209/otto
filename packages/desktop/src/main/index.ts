@@ -37,6 +37,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   safeStorage,
   session,
   shell,
@@ -248,7 +249,11 @@ const IPC = {
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
   enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
+  enterpriseTicketList: 'otto:enterprise-ticket-list',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
+  enterpriseTicketRead: 'otto:enterprise-ticket-read',
+  enterpriseTicketAction: 'otto:enterprise-ticket-action',
+  parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
 } as const;
 
@@ -1223,6 +1228,10 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.ticketInbox();
   });
+  ipcMain.handle(IPC.enterpriseTicketList, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listTickets();
+  });
   ipcMain.handle(IPC.enterpriseTicketSubmit, async (_e, input: unknown) => {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object') throw new Error('工单信息格式不正确');
@@ -1236,7 +1245,46 @@ function registerIpc(): void {
       targetTags: Array.isArray(body.targetTags)
         ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
         : undefined,
+      category: typeof body.category === 'string' ? body.category : undefined,
+      location: typeof body.location === 'string' ? body.location : undefined,
+      urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
+      contact: typeof body.contact === 'string' ? body.contact : undefined,
+      contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
     });
+  });
+  ipcMain.handle(IPC.enterpriseTicketRead, async (_e, id: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id) throw new Error('工单编号不正确');
+    return enterpriseClient.readTicket(id);
+  });
+  ipcMain.handle(IPC.enterpriseTicketAction, async (_e, id: unknown, input: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id || !input || typeof input !== 'object') {
+      throw new Error('工单操作格式不正确');
+    }
+    const body = input as Record<string, unknown>;
+    if (!['respond', 'accept', 'complete', 'confirm'].includes(String(body.action))) {
+      throw new Error('工单操作不正确');
+    }
+    return enterpriseClient.updateTicket(id, {
+      action: body.action as 'respond' | 'accept' | 'complete' | 'confirm',
+      responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
+      responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
+    });
+  });
+  ipcMain.handle(IPC.parkNativeNotify, (_e, title: unknown, body: unknown) => {
+    if (typeof title !== 'string' || typeof body !== 'string' || !Notification.isSupported()) {
+      return false;
+    }
+    const notification = new Notification({ title: title.slice(0, 80), body: body.slice(0, 240) });
+    notification.on('click', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+    notification.show();
+    return true;
   });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
   ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));

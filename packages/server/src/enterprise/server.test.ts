@@ -32,6 +32,10 @@ const ENV_KEYS = [
   'GITHUB_SHA',
   'OTTO_ENTERPRISE_TRUST_PROXY_HOPS',
   'OTTO_ENTERPRISE_TRUSTED_PROXIES',
+  'ALIYUN_SMS_NOTIFICATION_TEMPLATE_ID',
+  'OTTO_ENTERPRISE_FEISHU_APP_ID',
+  'OTTO_ENTERPRISE_FEISHU_APP_SECRET',
+  'OTTO_ENTERPRISE_FEISHU_DOMAIN',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
@@ -52,6 +56,8 @@ async function startIsolated(
     host: '127.0.0.1',
     adminToken,
     smsSender,
+    repairSmsSender: null,
+    repairFeishuSender: null,
     ...serverOptions,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -443,6 +449,7 @@ describe('受保护 vs 公开路由边界', () => {
         'atoa',
         'position_invites',
         'park_service_push',
+        'park_repair_v1',
       ],
     });
     expect(body.uptime).toEqual(expect.any(Number));
@@ -1765,6 +1772,69 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${itTwoToken}` },
     });
     expect((await inboxTwo.json()).tickets).toHaveLength(0);
+  });
+
+  it('园区报修自动投递管理员指定的维修人员，并真实调用短信与飞书通道完成表单闭环', async () => {
+    const smsSend = vi.fn(async () => true);
+    const feishuSend = vi.fn(async () => true);
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      repairSmsSender: { channel: 'sms', send: smsSend },
+      repairFeishuSender: { channel: 'feishu', send: feishuSend },
+    });
+    const db = await import('./db.js');
+    db.createAccount({
+      username: 'repair.reporter', password: 'reporter-password', name: '报修员工',
+      phone: '13800138000', feishuOpenId: 'ou_reporter', tags: ['普通成员'],
+    });
+    db.createAccount({
+      username: 'repair.worker', password: 'worker-password', name: '维修张工',
+      phone: '13900139000', feishuOpenId: 'ou_worker',
+      tags: ['维修工作人员', 'IT', '报修'],
+    });
+    const login = async (identifier: string, password: string): Promise<string> => {
+      const response = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      return (await response.json()).token;
+    };
+    const reporterToken = await login('repair.reporter', 'reporter-password');
+    const workerToken = await login('repair.worker', 'worker-password');
+    const submitted = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: '某某会议室 · 水电报修', description: '灯坏了',
+        targetTags: ['维修工作人员'], category: '水电', location: '某某会议室',
+        urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
+      }),
+    });
+    expect(submitted.status).toBe(201);
+    const ticket = (await submitted.json()).ticket;
+    expect(ticket).toMatchObject({ recipientCount: 1, status: '待接单', location: '某某会议室' });
+    expect(smsSend).toHaveBeenCalledWith('+8613900139000', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
+    expect(feishuSend).toHaveBeenCalledWith('ou_worker', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
+
+    const read = await fetch(`${base}/enterprise/tickets/${ticket.id}/read`, {
+      method: 'POST', headers: { authorization: `Bearer ${workerToken}` },
+    });
+    expect((await read.json()).ticket.readAt).toBeTruthy();
+    const accepted = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'accept' }),
+    });
+    expect((await accepted.json()).ticket.status).toBe('维修中');
+    const replied = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'respond', responseType: '远程指导', responseText: '请先检查墙面开关' }),
+    });
+    expect((await replied.json()).ticket).toMatchObject({
+      responseType: '远程指导', responseText: '请先检查墙面开关', status: '维修中',
+    });
+    expect(smsSend).toHaveBeenCalledWith('+8613800138000', expect.stringContaining('维修回复'), expect.stringContaining('检查墙面开关'));
+    expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('维修回复'), expect.stringContaining('检查墙面开关'));
   });
 });
 

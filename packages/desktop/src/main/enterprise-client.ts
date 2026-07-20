@@ -13,6 +13,7 @@ export interface EnterpriseAccount {
   employeeId: string | null;
   username: string;
   phone: string | null;
+  feishuOpenId?: string | null;
   name: string;
   role: string | null;
   department: string | null;
@@ -40,6 +41,7 @@ export interface AccountCreateInput {
   password: string;
   name: string;
   phone?: string | null;
+  feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
   tags?: string[];
@@ -51,6 +53,7 @@ export interface AccountUpdateInput {
   password?: string;
   name?: string;
   phone?: string | null;
+  feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
   tags?: string[];
@@ -175,6 +178,38 @@ export interface EnterpriseDirectMessage {
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
   peerAccountId: string;
+}
+
+export interface EnterpriseRepairTicket {
+  id: string;
+  title: string;
+  description: string;
+  targetTags: string[];
+  status: string;
+  category: string | null;
+  location: string | null;
+  urgency: string | null;
+  contact: string | null;
+  contactPhone: string | null;
+  responseType: string | null;
+  responseText: string | null;
+  responseAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  creator: Pick<EnterpriseAccount, 'id' | 'name' | 'username' | 'phone' | 'feishuOpenId'>;
+  recipientCount: number;
+  recipients: EnterpriseAccount[];
+  deliveryStatus?: string;
+  readAt?: string | null;
+  isCreator?: boolean;
+  isRecipient?: boolean;
+  notifications: Array<{
+    channel: 'otto' | 'sms' | 'feishu';
+    event: string;
+    status: 'sent' | 'failed' | 'skipped';
+    detail: string | null;
+    createdAt: string;
+  }>;
 }
 
 export interface EnterpriseSessionResult {
@@ -668,14 +703,45 @@ export class EnterpriseClient {
     });
   }
 
-  async ticketInbox(): Promise<unknown[]> {
-    return (await this.request<{ tickets: unknown[] }>('/enterprise/tickets/inbox')).tickets;
+  async ticketInbox(): Promise<EnterpriseRepairTicket[]> {
+    return (await this.request<{ tickets: EnterpriseRepairTicket[] }>('/enterprise/tickets/inbox')).tickets;
   }
 
-  async submitTicket(input: { title: string; description: string; targetTags?: string[] }): Promise<unknown> {
-    return (await this.request<{ ticket: unknown }>('/enterprise/tickets', {
+  async listTickets(): Promise<EnterpriseRepairTicket[]> {
+    return (await this.request<{ tickets: EnterpriseRepairTicket[] }>('/enterprise/tickets')).tickets;
+  }
+
+  async submitTicket(input: {
+    title: string;
+    description: string;
+    targetTags?: string[];
+    category?: string;
+    location?: string;
+    urgency?: string;
+    contact?: string;
+    contactPhone?: string;
+  }): Promise<EnterpriseRepairTicket> {
+    return (await this.request<{ ticket: EnterpriseRepairTicket }>('/enterprise/tickets', {
       method: 'POST', body: JSON.stringify(input),
     })).ticket;
+  }
+
+  async readTicket(id: string): Promise<EnterpriseRepairTicket> {
+    return (await this.request<{ ticket: EnterpriseRepairTicket }>(
+      `/enterprise/tickets/${encodeURIComponent(id)}/read`,
+      { method: 'POST' },
+    )).ticket;
+  }
+
+  async updateTicket(id: string, input: {
+    action: 'respond' | 'accept' | 'complete' | 'confirm';
+    responseType?: string;
+    responseText?: string;
+  }): Promise<EnterpriseRepairTicket> {
+    return (await this.request<{ ticket: EnterpriseRepairTicket }>(
+      `/enterprise/tickets/${encodeURIComponent(id)}/action`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )).ticket;
   }
 
   private setServerUrl(serverUrl: string): void {

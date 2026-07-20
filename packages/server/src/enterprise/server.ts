@@ -56,6 +56,11 @@ import {
 } from './publicInvite.js';
 import { sendPublicInvitePage } from './publicInvitePage.js';
 import { sendLocalAgentPage } from './localAgentPage.js';
+import {
+  createRepairFeishuSenderFromEnv,
+  createRepairSmsSenderFromEnv,
+  type RepairNotificationSender,
+} from './repairNotifications.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
@@ -109,6 +114,10 @@ export interface EnterpriseServerOptions {
   adminToken?: string;
   /** 验证码发送器；测试可注入，显式 null 表示关闭。 */
   smsSender?: VerificationSmsSender | null;
+  /** 园区报修通知短信；与验证码模板分离，测试可注入。 */
+  repairSmsSender?: RepairNotificationSender | null;
+  /** 园区报修飞书私聊；测试可注入。 */
+  repairFeishuSender?: RepairNotificationSender | null;
   /** 部署版本；不传则读 OTTO_APP_VERSION。 */
   appVersion?: string;
   /** 构建提交；不传则读 OTTO_BUILD_COMMIT / GITHUB_SHA。 */
@@ -169,6 +178,7 @@ const ENTERPRISE_CAPABILITIES = [
   'atoa',
   'position_invites',
   'park_service_push',
+  'park_repair_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -500,7 +510,70 @@ function accountInputMessage(error: unknown): string | null {
   if (message === '账号状态必须是 active 或 disabled') return message;
   if (message === 'username required') return '账号不能为空';
   if (message === 'name required') return '姓名不能为空';
+  if (message === '飞书 open_id 格式不正确') return message;
   return null;
+}
+
+async function sendRepairNotifications(input: {
+  ticket: db.TicketView;
+  recipients: db.AccountView[];
+  event: string;
+  title: string;
+  body: string;
+  smsSender: RepairNotificationSender | null;
+  feishuSender: RepairNotificationSender | null;
+}): Promise<void> {
+  const withTimeout = async (task: Promise<boolean>): Promise<boolean> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        task,
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 8_000); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  await Promise.all(input.recipients.flatMap((recipient) => {
+    db.recordTicketNotification({
+      ticketId: input.ticket.id,
+      recipientAccountId: recipient.id,
+      channel: 'otto',
+      event: input.event,
+      status: 'sent',
+      detail: '企业工单收件箱已投递',
+    });
+    const sendChannel = async (
+      channel: 'sms' | 'feishu',
+      sender: RepairNotificationSender | null,
+      recipientId: string | null,
+    ): Promise<void> => {
+      if (!sender || !recipientId) {
+        db.recordTicketNotification({
+          ticketId: input.ticket.id,
+          recipientAccountId: recipient.id,
+          channel,
+          event: input.event,
+          status: 'skipped',
+          detail: sender ? '接收人未配置该通道账号' : '服务器未配置该通知通道',
+        });
+        return;
+      }
+      const sent = await withTimeout(sender.send(recipientId, input.title, input.body));
+      db.recordTicketNotification({
+        ticketId: input.ticket.id,
+        recipientAccountId: recipient.id,
+        channel,
+        event: input.event,
+        status: sent ? 'sent' : 'failed',
+        detail: sent ? '供应商已接收' : '供应商发送失败或超时',
+      });
+    };
+    return [
+      sendChannel('sms', input.smsSender, recipient.phone),
+      sendChannel('feishu', input.feishuSender, recipient.feishuOpenId),
+    ];
+  }));
 }
 
 function withPublicInviteLink(
@@ -515,6 +588,8 @@ function withPublicInviteLink(
 function makeHandler(
   adminToken: string,
   smsSender: VerificationSmsSender | null,
+  repairSmsSender: RepairNotificationSender | null,
+  repairFeishuSender: RepairNotificationSender | null,
   publicBaseUrl: string,
   loginRateLimiter: LoginRateLimiter,
   deploymentInfo: DeploymentInfo,
@@ -639,6 +714,10 @@ function makeHandler(
             runtimeVersion: process.version,
             db: 'connected',
             sms: { configured: smsSender !== null },
+            repairNotifications: {
+              sms: repairSmsSender !== null,
+              feishu: repairFeishuSender !== null,
+            },
           });
         } catch {
           sendJSON(res, 503, {
@@ -1073,6 +1152,7 @@ function makeHandler(
             password,
             name,
             phone: typeof body.phone === 'string' ? body.phone : null,
+            feishuOpenId: typeof body.feishuOpenId === 'string' ? body.feishuOpenId : null,
             role: typeof body.role === 'string' ? body.role : null,
             department: typeof body.department === 'string' ? body.department : null,
             tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === 'string') : [],
@@ -1109,6 +1189,9 @@ function makeHandler(
             password: typeof body.password === 'string' && body.password ? body.password : undefined,
             name: typeof body.name === 'string' ? body.name : undefined,
             phone: typeof body.phone === 'string' || body.phone === null ? body.phone : undefined,
+            feishuOpenId: typeof body.feishuOpenId === 'string' || body.feishuOpenId === null
+              ? body.feishuOpenId
+              : undefined,
             role: typeof body.role === 'string' || body.role === null ? body.role : undefined,
             department: typeof body.department === 'string' || body.department === null
               ? body.department
@@ -1347,7 +1430,7 @@ function makeHandler(
         return;
       }
 
-      // ===== IT ticket routing: persist one delivery for every matching account =====
+      // ===== 园区报修：服务器持久化、自动投递、表单回复与多渠道通知 =====
       if (path === '/enterprise/tickets' && method === 'POST') {
         const account = db.getAccountBySession(extractToken(req));
         if (!account) {
@@ -1361,16 +1444,48 @@ function makeHandler(
           sendJSON(res, 400, { error: 'title and description required' });
           return;
         }
-        const targetTags = Array.isArray(body.targetTags)
-          ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
-          : ['IT', '报修'];
+        if (title.length > 200 || description.length > 2000) {
+          sendJSON(res, 400, { error: '工单标题或描述过长' });
+          return;
+        }
+        const isParkRepair = ['category', 'location', 'urgency', 'contact', 'contactPhone']
+          .some((key) => typeof body[key] === 'string');
+        const targetTags = isParkRepair
+          ? ['维修工作人员']
+          : Array.isArray(body.targetTags)
+            ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
+            : ['IT', '报修'];
         const ticket = db.createTicket({
           createdByAccountId: account.id,
           title,
           description,
           targetTags,
+          category: typeof body.category === 'string' ? body.category : undefined,
+          location: typeof body.location === 'string' ? body.location : undefined,
+          urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
+          contact: typeof body.contact === 'string' ? body.contact : undefined,
+          contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
         });
-        sendJSON(res, 201, { ticket });
+        await sendRepairNotifications({
+          ticket,
+          recipients: ticket.recipients,
+          event: 'ticket_created',
+          title: `Otto 新报修 · ${ticket.title}`,
+          body: `${ticket.location || '位置未填写'} · ${ticket.description} · ${ticket.urgency || '普通'}`,
+          smsSender: repairSmsSender,
+          feishuSender: repairFeishuSender,
+        });
+        sendJSON(res, 201, { ticket: db.getTicketForAccount(ticket.id, account.id) });
+        return;
+      }
+
+      if (path === '/enterprise/tickets' && method === 'GET') {
+        const account = db.getAccountBySession(extractToken(req));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        sendJSON(res, 200, { tickets: db.listTicketsForAccount(account.id) });
         return;
       }
 
@@ -1381,6 +1496,68 @@ function makeHandler(
           return;
         }
         sendJSON(res, 200, { tickets: db.listTicketInbox(account.id) });
+        return;
+      }
+
+      const ticketAction = path.match(/^\/enterprise\/tickets\/([^/]+)\/(read|action)$/);
+      if (ticketAction && method === 'POST') {
+        const account = db.getAccountBySession(extractToken(req));
+        if (!account) {
+          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+          return;
+        }
+        let ticketId = '';
+        try { ticketId = decodeURIComponent(ticketAction[1]!); } catch { /* invalid id */ }
+        if (!ticketId || !db.getTicketForAccount(ticketId, account.id)) {
+          sendJSON(res, 404, { error: '工单不存在或无权查看' });
+          return;
+        }
+        try {
+          if (ticketAction[2] === 'read') {
+            sendJSON(res, 200, { ticket: db.markTicketRead(ticketId, account.id) });
+            return;
+          }
+          const body = await readBody(req);
+          const action = typeof body.action === 'string' ? body.action : '';
+          if (!['respond', 'accept', 'complete', 'confirm'].includes(action)) {
+            sendJSON(res, 400, { error: '工单操作不正确' });
+            return;
+          }
+          const ticket = db.updateTicket({
+            ticketId,
+            accountId: account.id,
+            action: action as 'respond' | 'accept' | 'complete' | 'confirm',
+            responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
+            responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
+          });
+          const recipients = action === 'confirm'
+            ? ticket.recipients
+            : [db.getAccount(ticket.creator.id, account.organizationId)].filter(
+              (item): item is db.AccountView => item !== null,
+            );
+          const title = action === 'respond'
+            ? `Otto 维修回复 · ${ticket.title}`
+            : action === 'accept'
+              ? `Otto 工单已接单 · ${ticket.title}`
+              : action === 'complete'
+                ? `Otto 待验收 · ${ticket.title}`
+                : `Otto 工单已验收 · ${ticket.title}`;
+          const detail = action === 'respond'
+            ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
+            : `工单 ${ticket.id} 当前状态：${ticket.status}`;
+          await sendRepairNotifications({
+            ticket,
+            recipients,
+            event: `ticket_${action}`,
+            title,
+            body: detail,
+            smsSender: repairSmsSender,
+            feishuSender: repairFeishuSender,
+          });
+          sendJSON(res, 200, { ticket: db.getTicketForAccount(ticket.id, account.id) });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
         return;
       }
 
@@ -1936,7 +2113,7 @@ function adminAccountsHTML(): string {
       <section class="ops-card" aria-labelledby="inviteTitle"><div class="ops-head"><div><div class="eyebrow">MEMBER ONBOARDING</div><h2 id="inviteTitle">企业成员引入链接</h2><p>成员点击后由 Otto 打开首次注册并自动填入企业信息；精确有效 7 天，生成新链接会立即废止旧链接。</p></div><span id="inviteBadge" class="badge off">尚未生成</span></div><div class="invite-row"><div><input id="inviteCode" class="invite-code" aria-label="当前企业邀请码" value="••••-••••" readonly><div class="invite-meta"><span id="inviteCountdown" class="sub">等待管理员生成</span></div><input id="inviteLinkPreview" class="invite-link-preview hidden" aria-label="当前企业引入链接" value="" readonly></div><div class="invite-actions"><button id="copyInviteLink" class="primary" type="button" disabled>复制企业引入链接</button><button id="copyInvite" class="copy" type="button" disabled>复制邀请码</button><button id="issueInvite" class="secondary" type="button">生成引入链接</button></div></div><div id="inviteError" class="error hidden" role="alert"></div></section>
       <section class="ops-card" aria-labelledby="usageTitle"><div class="ops-head"><div><div class="eyebrow">AI CONSUMPTION</div><h2 id="usageTitle">近 30 天 Token</h2><p>按登录账号汇总模型返回的用量。</p></div><span class="badge">客户端回传</span></div><div id="totalTokens" class="token-number">0</div><div class="token-split"><span>输入 <b id="inputTokens">0</b></span><span>输出 <b id="outputTokens">0</b></span><span>请求 <b id="requestCount">0</b></span></div><div class="token-note">用于企业内部用量观察，不等同于模型供应商的计费账单。</div></section>
     </div>
-    <div class="summary-strip" aria-label="账号摘要"><div class="summary-item"><strong id="allCount">0</strong><span>全部账号</span></div><div class="summary-item"><strong id="activeCount">0</strong><span>可登录</span></div><div class="summary-item"><strong id="smsCount">0</strong><span>已绑定手机</span></div><div class="summary-item"><strong id="itCount">0</strong><span>IT 报修接收人</span></div></div>
+    <div class="summary-strip" aria-label="账号摘要"><div class="summary-item"><strong id="allCount">0</strong><span>全部账号</span></div><div class="summary-item"><strong id="activeCount">0</strong><span>可登录</span></div><div class="summary-item"><strong id="smsCount">0</strong><span>已绑定手机</span></div><div class="summary-item"><strong id="itCount">0</strong><span>维修工作人员</span></div></div>
     <div class="toolbar"><div class="search-wrap"><input id="searchInput" class="search" aria-label="搜索账号" placeholder="搜索姓名、账号、手机号、部门或标签"></div><div id="resultCount" class="result-count" role="status" aria-live="polite" aria-atomic="true">0 个账号</div></div>
     <div class="table-wrap"><table class="accounts"><thead><tr><th scope="col">账号</th><th scope="col">角色 / 部门</th><th scope="col">职责标签</th><th scope="col">30 天 Token</th><th scope="col">权限</th><th scope="col">状态</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody id="accountRows"></tbody></table></div><div id="pageError" class="error hidden" role="alert"></div>
   </section>
@@ -1945,17 +2122,18 @@ function adminAccountsHTML(): string {
   <section class="form-section" aria-labelledby="templateTitle"><div class="section-head"><strong id="templateTitle">账户模板</strong><span>选择后仍可继续调整</span></div><div class="template-grid">
     <button class="template-button" type="button" data-account-template="member" aria-pressed="false"><b>普通成员</b><span>基础协作与日常任务</span></button>
     <button class="template-button" type="button" data-account-template="lead" aria-pressed="false"><b>部门负责人</b><span>部门管理与审批职责</span></button>
-    <button class="template-button" type="button" data-account-template="it" aria-pressed="false"><b>IT 支持</b><span>接收报修与技术支持</span></button>
+    <button class="template-button" type="button" data-account-template="it" aria-pressed="false"><b>维修工作人员</b><span>自动接收园区报修</span></button>
     <button class="template-button" type="button" data-account-template="finance" aria-pressed="false"><b>财务审批</b><span>财务流程与审批职责</span></button>
     <button class="template-button" type="button" data-account-template="admin" aria-pressed="false"><b>系统管理员</b><span>完整后台管理权限</span></button>
   </div></section>
   <section class="form-section"><div class="section-head"><strong>基本信息</strong><span>姓名与手机号用于识别成员</span></div><div class="form-grid">
     <div class="field"><label for="editUsername">用户名</label><input id="editUsername" autocomplete="off" required></div><div class="field"><label for="editName">姓名</label><input id="editName" autocomplete="off" required></div>
     <div class="field wide"><label for="editPhone">手机号码</label><input id="editPhone" inputmode="tel" autocomplete="tel" pattern="(?:\\+?86(?: |-)?)?1[3-9](?:(?: |-)?[0-9]){9}" aria-describedby="phoneHint" placeholder="13800138000"><small id="phoneHint" class="sub">中国大陆手机号，可留空</small></div>
+    <div class="field wide"><label for="editFeishuOpenId">飞书 open_id</label><input id="editFeishuOpenId" autocomplete="off" placeholder="ou_xxx"><small class="sub">用于向该维修人员发送飞书私聊通知</small></div>
     <div class="field"><label for="editRole">角色</label><input id="editRole" placeholder="例如：产品经理"></div><div class="field"><label for="editDepartment">部门</label><input id="editDepartment" list="departmentPresetList" placeholder="选择或输入部门"><datalist id="departmentPresetList"></datalist></div>
   </div></section>
   <section class="form-section"><div class="section-head"><strong>预设标签</strong><span>可多选，也可输入自定义标签</span></div><div id="tagPresets" class="preset-tags" aria-label="预设标签"></div><div class="field"><label for="editTags">自定义标签（用逗号分隔）</label><input id="editTags" placeholder="例如：产品, 审批, 夜班"></div></section>
-  <section class="form-section"><div class="section-head"><strong>登录与权限</strong><span>新增账号必须设置密码</span></div><div class="form-grid"><div class="field wide"><label for="editPassword">登录密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password" aria-describedby="passwordHint"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">账号状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editAdmin" type="checkbox"> 允许访问管理员后台</label></div></section>
+  <section class="form-section"><div class="section-head"><strong>登录与权限</strong><span>新增账号必须设置密码</span></div><div class="form-grid"><div class="field wide"><label for="editPassword">登录密码</label><input id="editPassword" type="password" minlength="8" autocomplete="new-password" aria-describedby="passwordHint"><small id="passwordHint" class="sub">至少 8 位</small></div><div class="field"><label for="editStatus">账号状态</label><select id="editStatus"><option value="active">可登录</option><option value="disabled">已停用</option></select></div></div><div class="checkline"><label><input id="editRepairWorker" type="checkbox"> 设为维修工作人员（自动接收报修）</label><label><input id="editAdmin" type="checkbox"> 允许访问管理员后台</label></div></section>
   <div id="formError" class="error hidden" role="alert"></div><div id="saveStatus" class="sr-only" role="status" aria-live="polite"></div><div class="drawer-actions"><button id="deleteAccount" class="danger hidden" type="button">删除账号</button><span style="flex:1"></span><button id="cancelEdit" class="secondary" type="button">取消</button><button id="saveAccount" class="primary" type="submit">保存账号</button></div>
 </form></div>
 <div id="logoutModal" class="modal-backdrop hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><div class="modal-kicker">SECURITY CHECK</div><h2 id="logoutTitle">确认退出管理员后台</h2><p>退出后需要重新输入管理员用户名和密码。未保存的账号修改不会保留。</p><div class="modal-actions"><button id="cancelLogout" class="secondary" type="button">取消</button><button id="confirmLogout" class="danger" type="button">确认退出</button></div></section></div>
@@ -1963,11 +2141,11 @@ function adminAccountsHTML(): string {
 <script>
 const KEY='otto.enterprise.admin.session';
 const departmentPresets=['总经办','人力资源部','财务部','法务部','销售部','市场部','产品部','研发部','设计部','IT部','客户成功部','采购部'];
-const tagPresets=['普通成员','部门负责人','行政','人事','财务','审批','法务','销售','市场','产品','研发','设计','IT','报修','客户支持','采购','数据','夜班'];
+const tagPresets=['普通成员','部门负责人','行政','人事','财务','审批','法务','销售','市场','产品','研发','设计','IT','报修','维修工作人员','客户支持','采购','数据','夜班'];
 const accountTemplates={
   member:{role:'成员',department:'',tags:['普通成员'],isAdmin:false},
   lead:{role:'部门负责人',department:'',tags:['部门负责人','审批'],isAdmin:false},
-  it:{role:'IT 支持',department:'IT部',tags:['IT','报修'],isAdmin:false},
+  it:{role:'IT 支持',department:'IT部',tags:['IT','报修','维修工作人员'],isAdmin:false},
   finance:{role:'财务审批',department:'财务部',tags:['财务','审批'],isAdmin:false},
   admin:{role:'系统管理员',department:'IT部',tags:['系统管理员','IT'],isAdmin:true}
 };
@@ -1996,10 +2174,10 @@ function showLogin(message){$('adminView').classList.add('hidden');$('loginView'
 function showAdmin(){showError('loginError','');$('loginView').classList.add('hidden');$('adminView').classList.remove('hidden');$('railUser').textContent=currentAdmin.name+' · '+currentAdmin.username;$('railMeta').textContent=currentAdmin.organizationName+' · 企业管理员';$('organizationTitle').textContent=currentAdmin.organizationName;focusSoon($('organizationTitle'))}
 function tags(value){return Array.from(new Set(String(value||'').split(/[,，]/).map(s=>s.trim()).filter(Boolean)))}
 function number(value){return new Intl.NumberFormat('zh-CN').format(Number(value)||0)}
-function setTags(values){$('editTags').value=tags(values.join(', ')).join(', ');updateTagPresetState()}
+function setTags(values){const normalized=tags(values.join(', '));$('editTags').value=normalized.join(', ');$('editRepairWorker').checked=normalized.includes('维修工作人员');updateTagPresetState()}
 function updateTagPresetState(){const selected=new Set(tags($('editTags').value));document.querySelectorAll('[data-tag-preset]').forEach(button=>button.setAttribute('aria-pressed',selected.has(button.dataset.tagPreset)?'true':'false'))}
 function renderPresets(){$('departmentPresetList').innerHTML=departmentPresets.map(item=>'<option value="'+esc(item)+'"></option>').join('');$('tagPresets').innerHTML=tagPresets.map(item=>'<button class="tag-choice" type="button" data-tag-preset="'+esc(item)+'" aria-pressed="false">'+esc(item)+'</button>').join('');document.querySelectorAll('[data-tag-preset]').forEach(button=>button.addEventListener('click',()=>{const selected=tags($('editTags').value);const index=selected.indexOf(button.dataset.tagPreset);if(index>=0)selected.splice(index,1);else selected.push(button.dataset.tagPreset);setTags(selected);clearTemplateSelection()}))}
-function render(){const q=$('searchInput').value.trim().toLowerCase();const rows=accounts.filter(account=>!q||[account.name,account.username,account.phone,account.role,account.department].concat(account.tags||[]).some(value=>String(value||'').toLowerCase().includes(q)));$('allCount').textContent=String(accounts.length);$('activeCount').textContent=String(accounts.filter(account=>account.status==='active').length);$('smsCount').textContent=String(accounts.filter(account=>account.phone).length);$('itCount').textContent=String(accounts.filter(account=>(account.tags||[]).includes('IT')&&(account.tags||[]).includes('报修')).length);$('resultCount').textContent=rows.length+' 个账号';$('accountRows').innerHTML=rows.length?rows.map(account=>'<tr><td><div class="name">'+esc(account.name)+'</div><div class="sub">@'+esc(account.username)+(account.phone?' · '+esc(account.phone):' · 未绑定手机')+'</div></td><td>'+esc(account.role||'未设置角色')+'<div class="sub">'+esc(account.department||'未分配部门')+'</div></td><td>'+((account.tags||[]).map(tag=>'<span class="tag">'+esc(tag)+'</span>').join('')||'<span class="sub">无标签</span>')+'</td><td><div class="name mono">'+number(account.usage&&account.usage.totalTokens)+'</div><div class="sub">'+number(account.usage&&account.usage.requestCount)+' 次请求</div></td><td>'+(account.isAdmin?'<span class="badge">管理员</span>':'<span class="sub">普通成员</span>')+'</td><td><span class="badge '+(account.status==='active'?'ok':'off')+'">'+(account.status==='active'?'可登录':'已停用')+'</span></td><td><button class="edit" type="button" data-id="'+esc(account.id)+'" aria-label="编辑 '+esc(account.name)+'（@'+esc(account.username)+'）">编辑</button></td></tr>').join(''):'<tr><td class="empty" colspan="7">没有匹配账号，请调整搜索条件</td></tr>';document.querySelectorAll('button[data-id]').forEach(button=>button.addEventListener('click',()=>openEditor(accounts.find(account=>account.id===button.dataset.id),button)))}
+function render(){const q=$('searchInput').value.trim().toLowerCase();const rows=accounts.filter(account=>!q||[account.name,account.username,account.phone,account.feishuOpenId,account.role,account.department].concat(account.tags||[]).some(value=>String(value||'').toLowerCase().includes(q)));$('allCount').textContent=String(accounts.length);$('activeCount').textContent=String(accounts.filter(account=>account.status==='active').length);$('smsCount').textContent=String(accounts.filter(account=>account.phone).length);$('itCount').textContent=String(accounts.filter(account=>(account.tags||[]).includes('维修工作人员')).length);$('resultCount').textContent=rows.length+' 个账号';$('accountRows').innerHTML=rows.length?rows.map(account=>'<tr><td><div class="name">'+esc(account.name)+'</div><div class="sub">@'+esc(account.username)+(account.phone?' · '+esc(account.phone):' · 未绑定手机')+(account.feishuOpenId?' · 飞书已绑定':'')+'</div></td><td>'+esc(account.role||'未设置角色')+'<div class="sub">'+esc(account.department||'未分配部门')+'</div></td><td>'+((account.tags||[]).map(tag=>'<span class="tag">'+esc(tag)+'</span>').join('')||'<span class="sub">无标签</span>')+'</td><td><div class="name mono">'+number(account.usage&&account.usage.totalTokens)+'</div><div class="sub">'+number(account.usage&&account.usage.requestCount)+' 次请求</div></td><td>'+(account.isAdmin?'<span class="badge">管理员</span>':'<span class="sub">普通成员</span>')+'</td><td><span class="badge '+(account.status==='active'?'ok':'off')+'">'+(account.status==='active'?'可登录':'已停用')+'</span></td><td><button class="edit" type="button" data-id="'+esc(account.id)+'" aria-label="编辑 '+esc(account.name)+'（@'+esc(account.username)+'）">编辑</button></td></tr>').join(''):'<tr><td class="empty" colspan="7">没有匹配账号，请调整搜索条件</td></tr>';document.querySelectorAll('button[data-id]').forEach(button=>button.addEventListener('click',()=>openEditor(accounts.find(account=>account.id===button.dataset.id),button)))}
 function renderUsage(){const summary=usageSummary||{};$('totalTokens').textContent=number(summary.totalTokens);$('inputTokens').textContent=number(summary.totalInputTokens);$('outputTokens').textContent=number(summary.totalOutputTokens);$('requestCount').textContent=number(summary.requestCount)}
 function registrationInviteLink(){return currentInvite&&typeof currentInvite.link==='string'?currentInvite.link:''}
 function renderInvite(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}const active=currentInvite&&currentInvite.status==='active'&&new Date(currentInvite.expiresAt).getTime()>Date.now();const link=active?registrationInviteLink():'';$('inviteCode').value=currentInvite?currentInvite.code:'••••-••••';$('copyInvite').disabled=!active;$('copyInviteLink').disabled=!active;$('inviteLinkPreview').value=link;$('inviteLinkPreview').classList.toggle('hidden',!link);if(currentInvite&&$('inviteDepartment'))$('inviteDepartment').value=currentInvite.defaultDepartment||'';if(currentInvite&&$('invitePosition'))$('invitePosition').value=currentInvite.positionTitle||'';if(currentInvite&&$('inviteRole'))$('inviteRole').value=currentInvite.defaultRole||'';if(currentInvite&&$('inviteMaxUses'))$('inviteMaxUses').value=currentInvite.maxUses||'';$('issueInvite').textContent=currentInvite?'生成新邀请码':'生成岗位邀请码';$('inviteBadge').className='badge '+(active?'ok':'off');$('inviteBadge').textContent=active?'有效 7 天':currentInvite?'已失效':'尚未生成';function tick(){if(!currentInvite)return;const left=new Date(currentInvite.expiresAt).getTime()-Date.now();if(left<=0){currentInvite.status='expired';renderInvite();return}const h=Math.floor(left/3600000);const m=Math.floor((left%3600000)/60000);const s=Math.floor((left%60000)/1000);$('inviteCountdown').textContent='剩余 '+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+' · 到期 '+new Date(currentInvite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 岗位 '+[currentInvite.defaultDepartment||'未分配部门',currentInvite.positionTitle||'未指定职位',currentInvite.defaultRole||'成员'].join(' / ')+(currentInvite.maxUses?' · '+currentInvite.usedCount+'/'+currentInvite.maxUses:'')}if(active){tick();inviteTimer=setInterval(tick,1000)}else $('inviteCountdown').textContent=currentInvite?'已到期，请手动生成新的岗位邀请码':'等待管理员生成'}
@@ -2016,7 +2194,7 @@ function focusableElements(container){return Array.from(container.querySelectorA
 function openOverlay(id,initialFocus,trigger){if(activeOverlay)return;activeOverlay=$(id);overlayReturnFocus=trigger||document.activeElement;$('adminView').inert=true;activeOverlay.classList.remove('hidden');focusSoon(initialFocus)}
 function closeOverlay(id,restoreFocus){const overlay=$(id);if(overlay.classList.contains('hidden'))return;overlay.classList.add('hidden');$('adminView').inert=false;activeOverlay=null;const target=overlayReturnFocus;overlayReturnFocus=null;if(restoreFocus!==false)focusSoon(target&&target.isConnected?target:$('organizationTitle'))}
 function trapFocus(event){if(event.key!=='Tab'||!activeOverlay)return;const focusables=focusableElements(activeOverlay);if(!focusables.length){event.preventDefault();return}const first=focusables[0];const last=focusables[focusables.length-1];if(event.shiftKey&&(document.activeElement===first||!activeOverlay.contains(document.activeElement))){event.preventDefault();last.focus()}else if(!event.shiftKey&&(document.activeElement===last||!activeOverlay.contains(document.activeElement))){event.preventDefault();first.focus()}}
-function openEditor(account,trigger){if(isSaving||activeOverlay)return;editorEpoch+=1;const editing=!!account;$('drawerTitle').textContent=editing?'编辑账号':'新增账号';$('accountId').value=editing?account.id:'';$('editUsername').value=editing?account.username:'';$('editName').value=editing?account.name:'';$('editPhone').value=editing?(account.phone||'').replace('+86',''):'';$('editRole').value=editing?(account.role||''):'';$('editDepartment').value=editing?(account.department||''):'';$('editTags').value=editing?(account.tags||[]).join(', '):'';$('editPassword').value='';$('editPassword').required=!editing;$('passwordHint').textContent=editing?'留空表示不修改密码':'至少 8 位，建议混合字母、数字和符号';$('editStatus').value=editing?account.status:'active';$('editAdmin').checked=editing&&account.isAdmin;resetDeleteButton();$('deleteAccount').classList.toggle('hidden',!editing||!currentAdmin||account.id===currentAdmin.id);clearTemplateSelection();updateTagPresetState();showError('formError','');openOverlay('drawerWrap',$('editUsername'),trigger)}
+function openEditor(account,trigger){if(isSaving||activeOverlay)return;editorEpoch+=1;const editing=!!account;$('drawerTitle').textContent=editing?'编辑账号':'新增账号';$('accountId').value=editing?account.id:'';$('editUsername').value=editing?account.username:'';$('editName').value=editing?account.name:'';$('editPhone').value=editing?(account.phone||'').replace('+86',''):'';$('editFeishuOpenId').value=editing?(account.feishuOpenId||''):'';$('editRole').value=editing?(account.role||''):'';$('editDepartment').value=editing?(account.department||''):'';setTags(editing?(account.tags||[]):[]);$('editPassword').value='';$('editPassword').required=!editing;$('passwordHint').textContent=editing?'留空表示不修改密码':'至少 8 位，建议混合字母、数字和符号';$('editStatus').value=editing?account.status:'active';$('editAdmin').checked=editing&&account.isAdmin;resetDeleteButton();$('deleteAccount').classList.toggle('hidden',!editing||!currentAdmin||account.id===currentAdmin.id);clearTemplateSelection();updateTagPresetState();showError('formError','');openOverlay('drawerWrap',$('editUsername'),trigger)}
 function closeEditor(restoreFocus,force){if(isSaving&&!force)return;editorEpoch+=1;resetDeleteButton();closeOverlay('drawerWrap',restoreFocus!==false)}
 function openLogout(){openOverlay('logoutModal',$('cancelLogout'),$('logoutButton'))}
 function closeLogout(force){if($('confirmLogout').disabled&&!force)return;closeOverlay('logoutModal',true)}
@@ -2029,14 +2207,15 @@ async function copyInvite(){if(!currentInvite||currentInvite.status!=='active')r
 async function copyInviteLink(){const link=registrationInviteLink();if(!link||!currentInvite||currentInvite.status!=='active')return;showError('inviteError','');try{await navigator.clipboard.writeText(link);const button=$('copyInviteLink');button.textContent='已复制引入链接';setTimeout(()=>{button.textContent='复制企业引入链接'},1500)}catch{selectInviteFallback('inviteLinkPreview','复制失败，已选中企业引入链接，可手动复制')}}
 renderPresets();
 document.querySelectorAll('[data-account-template]').forEach(button=>button.addEventListener('click',()=>applyTemplate(button.dataset.accountTemplate,button)));
-['editRole','editDepartment','editTags','editAdmin'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='editTags')updateTagPresetState();clearTemplateSelection()}));
+['editRole','editDepartment','editTags','editAdmin'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='editTags'){$('editRepairWorker').checked=tags($('editTags').value).includes('维修工作人员');updateTagPresetState()}clearTemplateSelection()}));
+$('editRepairWorker').addEventListener('change',()=>{const selected=tags($('editTags').value).filter(tag=>tag!=='维修工作人员');if($('editRepairWorker').checked)selected.push('维修工作人员');setTags(selected);clearTemplateSelection()});
 $('togglePassword').addEventListener('click',()=>{setPasswordVisible($('password').type!=='text');$('password').focus()});
 $('loginForm').addEventListener('submit',async event=>{event.preventDefault();const epoch=beginAuth();showError('loginError','');setLoginPending(true);try{const data=await api('/enterprise/auth/admin/login',{method:'POST',body:JSON.stringify({identifier:$('username').value.trim(),password:$('password').value})});if(epoch!==authEpoch)return;token=data.token;currentAdmin=data.account;sessionStorage.setItem(KEY,token);$('password').value='';setPasswordVisible(false);resetWorkspace();showAdmin();await loadWorkspaceWithFeedback(epoch,currentAdmin.organizationId)}catch(error){if(epoch!==authEpoch)return;$('password').value='';setPasswordVisible(false);expireAdminSession(error&&error.message?error.message:'登录失败，请稍后重试');focusSoon($('password'))}finally{if(epoch===authEpoch)setLoginPending(false)}});
 $('logoutButton').addEventListener('click',openLogout);$('cancelLogout').addEventListener('click',()=>closeLogout(false));$('confirmLogout').addEventListener('click',logout);$('logoutModal').addEventListener('click',event=>{if(event.target===$('logoutModal'))closeLogout(false)});
 $('issueInvite').addEventListener('click',openInviteConfirm);$('cancelInvite').addEventListener('click',()=>closeInviteConfirm(false));$('confirmInvite').addEventListener('click',issueInvite);$('inviteModal').addEventListener('click',event=>{if(event.target===$('inviteModal'))closeInviteConfirm(false)});$('copyInvite').addEventListener('click',copyInvite);$('copyInviteLink').addEventListener('click',copyInviteLink);
 $('searchInput').addEventListener('input',render);$('createButton').addEventListener('click',event=>openEditor(null,event.currentTarget));$('closeDrawer').addEventListener('click',()=>closeEditor(true,false));$('cancelEdit').addEventListener('click',()=>closeEditor(true,false));$('drawerWrap').addEventListener('click',event=>{if(event.target===$('drawerWrap'))closeEditor(true,false)});
 $('deleteAccount').addEventListener('click',async()=>{const id=$('accountId').value;if(!id||isSaving)return;if(!deleteArmed){deleteArmed=true;$('deleteAccount').textContent='再次点击确认删除';showError('formError','删除后该账号会立即退出，历史审计记录仍会保留。');return}const requestEditor=editorEpoch;const requestToken=token;isSaving=true;setEditorPending(true);showError('formError','');try{await api('/enterprise/accounts/'+encodeURIComponent(id),{method:'DELETE'});if(requestEditor!==editorEpoch||requestToken!==token)return;isSaving=false;setEditorPending(false);closeEditor(false,true);const organizationId=currentAdmin&&currentAdmin.organizationId;await (organizationId?loadWorkspaceWithFeedback(authEpoch,organizationId):Promise.resolve(false));focusSoon($('organizationTitle'))}catch(error){if(requestEditor!==editorEpoch||requestToken!==token)return;if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}resetDeleteButton();showError('formError',error.message);$('formError').tabIndex=-1;focusSoon($('formError'))}finally{if(requestEditor===editorEpoch){isSaving=false;setEditorPending(false)}}});
-$('accountForm').addEventListener('submit',async event=>{event.preventDefault();showError('formError','');const requestEditor=editorEpoch;const requestToken=token;const id=$('accountId').value;const password=$('editPassword').value;const body={username:$('editUsername').value.trim(),name:$('editName').value.trim(),phone:$('editPhone').value.trim()||null,role:$('editRole').value.trim(),department:$('editDepartment').value.trim(),tags:tags($('editTags').value),status:$('editStatus').value,isAdmin:$('editAdmin').checked};if(password)body.password=password;if(!id&&!password){showError('formError','新增账号必须设置密码');focusSoon($('editPassword'));return}isSaving=true;setEditorPending(true);try{await api(id?'/enterprise/accounts/'+encodeURIComponent(id):'/enterprise/accounts',{method:id?'PATCH':'POST',body:JSON.stringify(body)});if(requestEditor!==editorEpoch||requestToken!==token)return;isSaving=false;setEditorPending(false);closeEditor(false,true);const organizationId=currentAdmin&&currentAdmin.organizationId;const loaded=organizationId?await loadWorkspaceWithFeedback(authEpoch,organizationId):false;if(loaded&&currentAdmin){const target=id?Array.from(document.querySelectorAll('button[data-id]')).find(button=>button.dataset.id===id):$('createButton');focusSoon(target||$('organizationTitle'))}}catch(error){if(requestEditor!==editorEpoch||requestToken!==token)return;if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}showError('formError',error.message);$('formError').tabIndex=-1;focusSoon($('formError'))}finally{if(requestEditor===editorEpoch){isSaving=false;setEditorPending(false)}}});
+$('accountForm').addEventListener('submit',async event=>{event.preventDefault();showError('formError','');const requestEditor=editorEpoch;const requestToken=token;const id=$('accountId').value;const password=$('editPassword').value;const body={username:$('editUsername').value.trim(),name:$('editName').value.trim(),phone:$('editPhone').value.trim()||null,feishuOpenId:$('editFeishuOpenId').value.trim()||null,role:$('editRole').value.trim(),department:$('editDepartment').value.trim(),tags:tags($('editTags').value),status:$('editStatus').value,isAdmin:$('editAdmin').checked};if(password)body.password=password;if(!id&&!password){showError('formError','新增账号必须设置密码');focusSoon($('editPassword'));return}isSaving=true;setEditorPending(true);try{await api(id?'/enterprise/accounts/'+encodeURIComponent(id):'/enterprise/accounts',{method:id?'PATCH':'POST',body:JSON.stringify(body)});if(requestEditor!==editorEpoch||requestToken!==token)return;isSaving=false;setEditorPending(false);closeEditor(false,true);const organizationId=currentAdmin&&currentAdmin.organizationId;const loaded=organizationId?await loadWorkspaceWithFeedback(authEpoch,organizationId):false;if(loaded&&currentAdmin){const target=id?Array.from(document.querySelectorAll('button[data-id]')).find(button=>button.dataset.id===id):$('createButton');focusSoon(target||$('organizationTitle'))}}catch(error){if(requestEditor!==editorEpoch||requestToken!==token)return;if(isAuthorizationError(error)){expireAdminSession('登录已失效，请重新登录',error.requestToken);return}showError('formError',error.message);$('formError').tabIndex=-1;focusSoon($('formError'))}finally{if(requestEditor===editorEpoch){isSaving=false;setEditorPending(false)}}});
 document.addEventListener('keydown',event=>{if(event.key==='Tab'){trapFocus(event);return}if(event.key!=='Escape')return;if(activeOverlay===$('inviteModal'))closeInviteConfirm(false);else if(activeOverlay===$('logoutModal'))closeLogout(false);else if(activeOverlay===$('drawerWrap'))closeEditor(true,false)});
 async function restoreSession(){if(!token){showLogin('');focusSoon($('username'));return}const requestToken=token;const epoch=beginAuth();try{const data=await api('/enterprise/auth/me');if(epoch!==authEpoch||requestToken!==token)return;if(!data.account.isAdmin){const error=new Error('该账号没有管理员权限');error.status=403;throw error}currentAdmin=data.account;resetWorkspace();showAdmin();await loadWorkspaceWithFeedback(epoch,currentAdmin.organizationId)}catch(error){if(epoch!==authEpoch||requestToken!==token)return;expireAdminSession('登录已失效，请重新登录',requestToken)}}
 restoreSession();
@@ -2277,6 +2456,12 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const smsSender = opts.smsSender === undefined
     ? (hasSmsEnv ? createAliyunLoginSmsFromEnv() : null)
     : opts.smsSender;
+  const repairSmsSender = opts.repairSmsSender === undefined
+    ? createRepairSmsSenderFromEnv()
+    : opts.repairSmsSender;
+  const repairFeishuSender = opts.repairFeishuSender === undefined
+    ? createRepairFeishuSenderFromEnv()
+    : opts.repairFeishuSender;
   const version = opts.appVersion?.trim()
     || process.env.OTTO_APP_VERSION?.trim()
     || 'unknown';
@@ -2303,6 +2488,8 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const server = createServer(makeHandler(
     adminToken,
     smsSender,
+    repairSmsSender,
+    repairFeishuSender,
     publicBaseUrl,
     loginRateLimiter,
     {

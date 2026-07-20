@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCOUNT_TAG_PRESETS,
@@ -98,12 +98,12 @@ async function readyCreateButton(): Promise<HTMLButtonElement> {
 describe('企业账号模板与标签预设', () => {
   it('套用 IT 支持模板时一次填好角色、部门与职责标签', () => {
     expect(applyAccountTemplate({
-      username: '', password: '', name: '', phone: '', role: '', department: '', tags: '',
+      username: '', password: '', name: '', phone: '', feishuOpenId: '', role: '', department: '', tags: '',
       isAdmin: false, status: 'active',
     }, 'it-support')).toMatchObject({
       role: 'IT 支持',
       department: 'IT部',
-      tags: 'IT，报修，技术支持',
+      tags: 'IT，报修，维修工作人员，技术支持',
       isAdmin: false,
     });
   });
@@ -172,7 +172,7 @@ describe('企业引入链接', () => {
 
 describe('企业账号目录', () => {
   it('初始目录仍在加载时锁定新增入口，避免晚到 GET 覆盖新建成员', async () => {
-    const pending = deferred<typeof ADMIN[]>();
+    const pending = deferred<Array<typeof ADMIN>>();
     Object.assign(window.otto, { enterpriseAccounts: vi.fn(() => pending.promise) });
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
 
@@ -253,6 +253,42 @@ describe('企业账号目录', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(await screen.findByText('新成员')).toBeTruthy();
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('管理员可指定维修工作人员，并保存短信与飞书通知地址', async () => {
+    const create = vi.fn(async () => CREATED_ACCOUNT);
+    Object.assign(window.otto, { enterpriseAccountCreate: create });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    fireEvent.click(await readyCreateButton());
+    fireEvent.click(within(screen.getByLabelText('账户模板'))
+      .getByRole('button', { name: '维修工作人员' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '登录账号' }), {
+      target: { value: 'repair.worker' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '维修张师傅' },
+    });
+    fireEvent.change(screen.getByLabelText('手机号码'), {
+      target: { value: '13800138001' },
+    });
+    fireEvent.change(screen.getByLabelText('飞书 open_id'), {
+      target: { value: 'ou_repair_worker' },
+    });
+    fireEvent.change(screen.getByLabelText('初始密码'), {
+      target: { value: 'password123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存身份' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'repair.worker',
+      name: '维修张师傅',
+      phone: '13800138001',
+      feishuOpenId: 'ou_repair_worker',
+      role: 'IT 支持',
+      department: 'IT部',
+      tags: expect.arrayContaining(['报修', '维修工作人员']),
+    })));
   });
 
   it('更新失败后保留修改并允许重试，不会把旧账号数据写回表格', async () => {

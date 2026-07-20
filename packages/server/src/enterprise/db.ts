@@ -262,6 +262,7 @@ function initSchema(d: Database): void {
       employee_id TEXT UNIQUE,
       username TEXT NOT NULL COLLATE NOCASE UNIQUE,
       phone TEXT,
+      feishu_open_id TEXT,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT,
@@ -369,7 +370,18 @@ function initSchema(d: Database): void {
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       target_tags TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'open',
+      category TEXT,
+      location TEXT,
+      urgency TEXT,
+      contact TEXT,
+      contact_phone TEXT,
+      response_type TEXT,
+      response_text TEXT,
+      response_at TEXT,
+      accepted_at TEXT,
+      completed_at TEXT,
+      closed_at TEXT,
+      status TEXT NOT NULL DEFAULT '待接单',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
@@ -386,6 +398,21 @@ function initSchema(d: Database): void {
       PRIMARY KEY (ticket_id, account_id),
       FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ticket_notifications (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      recipient_account_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('otto', 'sms', 'feishu')),
+      event TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('sent', 'failed', 'skipped')),
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
@@ -439,6 +466,8 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_redeem_codes_code ON redeem_codes(code);
 
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
+      ON ticket_notifications(ticket_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
@@ -467,6 +496,9 @@ function initSchema(d: Database): void {
   if (!accountColumns.some((column) => column.name === 'phone')) {
     d.exec('ALTER TABLE accounts ADD COLUMN phone TEXT');
   }
+  if (!accountColumns.some((column) => column.name === 'feishu_open_id')) {
+    d.exec('ALTER TABLE accounts ADD COLUMN feishu_open_id TEXT');
+  }
   d.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_phone_unique
       ON accounts(phone) WHERE phone IS NOT NULL;
@@ -494,7 +526,21 @@ function initSchema(d: Database): void {
     'sms_registration_challenges',
     'it_tickets',
     'ticket_deliveries',
+    'ticket_notifications',
   ]) ensureOrganizationColumn(table);
+
+  const ticketColumns = d.prepare('PRAGMA table_info(it_tickets)').all() as Array<{ name: string }>;
+  const ensureTicketColumn = (name: string, definition = 'TEXT'): void => {
+    if (!ticketColumns.some((column) => column.name === name)) {
+      d.exec(`ALTER TABLE it_tickets ADD COLUMN ${name} ${definition}`);
+    }
+  };
+  for (const name of [
+    'category', 'location', 'urgency', 'contact', 'contact_phone',
+    'response_type', 'response_text', 'response_at', 'accepted_at',
+    'completed_at', 'closed_at',
+  ]) ensureTicketColumn(name);
+  d.exec("UPDATE it_tickets SET status = '待接单' WHERE status = 'open'");
 
   // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
   // 否则最早期的单组织 knowledge 表会因缺少该列而无法启动迁移。
@@ -543,6 +589,10 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_knowledge_organization ON knowledge(organization_id, department);
     CREATE INDEX IF NOT EXISTS idx_audit_organization ON audit_logs(organization_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
+      ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
+      ON ticket_notifications(recipient_account_id, created_at);
     PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
   `);
 }
@@ -934,6 +984,7 @@ export interface AccountView {
   employeeId: string | null;
   username: string;
   phone: string | null;
+  feishuOpenId: string | null;
   name: string;
   role: string | null;
   department: string | null;
@@ -953,6 +1004,7 @@ interface AccountRow {
   employee_id: string | null;
   username: string;
   phone: string | null;
+  feishu_open_id: string | null;
   password_hash: string;
   name: string;
   role: string | null;
@@ -982,6 +1034,13 @@ export function normalizePhone(phone: string): string {
 function normalizeOptionalPhone(phone: string | null | undefined): string | null {
   if (phone == null || !phone.trim()) return null;
   return normalizePhone(phone);
+}
+
+function normalizeOptionalFeishuOpenId(value: string | null | undefined): string | null {
+  if (value == null || !value.trim()) return null;
+  const openId = value.trim();
+  if (!/^ou_[A-Za-z0-9_-]+$/.test(openId)) throw new Error('飞书 open_id 格式不正确');
+  return openId;
 }
 
 function normalizeTags(tags: string[] | undefined): string[] {
@@ -1032,6 +1091,7 @@ function toAccountView(row: AccountRow): AccountView {
     employeeId: row.employee_id,
     username: row.username,
     phone: row.phone,
+    feishuOpenId: row.feishu_open_id,
     name: row.name,
     role: row.role,
     department: row.department,
@@ -1063,6 +1123,7 @@ export function createAccount(input: {
   password: string;
   name: string;
   phone?: string | null;
+  feishuOpenId?: string | null;
   employeeId?: string | null;
   role?: string | null;
   department?: string | null;
@@ -1086,8 +1147,8 @@ export function createAccount(input: {
   try {
     getDB().prepare(
     `INSERT INTO accounts
-       (id, organization_id, account_type, employee_id, username, phone, password_hash, name, role, department, position_id, position_title, is_admin, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, account_type, employee_id, username, phone, feishu_open_id, password_hash, name, role, department, position_id, position_title, is_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       organizationId,
@@ -1095,6 +1156,7 @@ export function createAccount(input: {
       input.employeeId || null,
       username,
       normalizeOptionalPhone(input.phone),
+      normalizeOptionalFeishuOpenId(input.feishuOpenId),
       passwordHash(input.password),
       name,
       input.role?.trim() || null,
@@ -1435,6 +1497,7 @@ export function updateAccount(id: string, patch: {
   password?: string;
   name?: string;
   phone?: string | null;
+  feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
   tags?: string[];
@@ -1470,6 +1533,9 @@ export function updateAccount(id: string, patch: {
       set('username', username);
     }
     if (patch.phone !== undefined) set('phone', normalizeOptionalPhone(patch.phone));
+    if (patch.feishuOpenId !== undefined) {
+      set('feishu_open_id', normalizeOptionalFeishuOpenId(patch.feishuOpenId));
+    }
     if (patch.password !== undefined) {
       assertAccountPassword(patch.password);
       set('password_hash', passwordHash(patch.password));
@@ -1957,9 +2023,125 @@ export interface TicketView {
   description: string;
   targetTags: string[];
   status: string;
+  category: string | null;
+  location: string | null;
+  urgency: string | null;
+  contact: string | null;
+  contactPhone: string | null;
+  responseType: string | null;
+  responseText: string | null;
+  responseAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  creator: Pick<AccountView, 'id' | 'name' | 'username' | 'phone' | 'feishuOpenId'>;
   recipientCount: number;
   recipients: AccountView[];
+  deliveryStatus?: string;
+  readAt?: string | null;
+  isCreator?: boolean;
+  isRecipient?: boolean;
+  notifications: Array<{
+    channel: 'otto' | 'sms' | 'feishu';
+    event: string;
+    status: 'sent' | 'failed' | 'skipped';
+    detail: string | null;
+    createdAt: string;
+  }>;
+}
+
+interface TicketRow {
+  id: string;
+  organization_id: string;
+  created_by_account_id: string;
+  title: string;
+  description: string;
+  target_tags: string;
+  category: string | null;
+  location: string | null;
+  urgency: string | null;
+  contact: string | null;
+  contact_phone: string | null;
+  response_type: string | null;
+  response_text: string | null;
+  response_at: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function ticketView(id: string, viewerAccountId?: string): TicketView {
+  const row = getDB().prepare('SELECT * FROM it_tickets WHERE id = ?').get(id) as TicketRow | undefined;
+  if (!row) throw new Error('Ticket not found');
+  const creator = getAccount(row.created_by_account_id, row.organization_id);
+  if (!creator) throw new Error('Ticket creator not found');
+  const deliveries = getDB().prepare(
+    `SELECT account_id, status, read_at FROM ticket_deliveries
+     WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
+  ).all(id, row.organization_id) as Array<{ account_id: string; status: string; read_at: string | null }>;
+  const recipients = deliveries
+    .map((delivery) => getAccount(delivery.account_id, row.organization_id))
+    .filter((account): account is AccountView => account !== null);
+  const viewerDelivery = viewerAccountId
+    ? deliveries.find((delivery) => delivery.account_id === viewerAccountId)
+    : undefined;
+  const notifications = getDB().prepare(
+    `SELECT channel, event, status, detail, created_at FROM ticket_notifications
+     WHERE ticket_id = ? ORDER BY created_at`,
+  ).all(id) as Array<{
+    channel: 'otto' | 'sms' | 'feishu'; event: string;
+    status: 'sent' | 'failed' | 'skipped'; detail: string | null; created_at: string;
+  }>;
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    targetTags: JSON.parse(row.target_tags) as string[],
+    status: row.status,
+    category: row.category,
+    location: row.location,
+    urgency: row.urgency,
+    contact: row.contact,
+    contactPhone: row.contact_phone,
+    responseType: row.response_type,
+    responseText: row.response_text,
+    responseAt: row.response_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    creator: {
+      id: creator.id,
+      name: creator.name,
+      username: creator.username,
+      phone: creator.phone,
+      feishuOpenId: creator.feishuOpenId,
+    },
+    recipientCount: recipients.length,
+    recipients,
+    deliveryStatus: viewerDelivery?.status,
+    readAt: viewerDelivery?.read_at,
+    isCreator: viewerAccountId === creator.id,
+    isRecipient: Boolean(viewerDelivery),
+    notifications: notifications.map((notification) => ({
+      channel: notification.channel,
+      event: notification.event,
+      status: notification.status,
+      detail: notification.detail,
+      createdAt: notification.created_at,
+    })),
+  };
+}
+
+export function getTicketForAccount(id: string, accountId: string): TicketView | null {
+  const account = getAccount(accountId);
+  if (!account) return null;
+  const row = getDB().prepare(
+    'SELECT organization_id, created_by_account_id FROM it_tickets WHERE id = ?',
+  ).get(id) as { organization_id: string; created_by_account_id: string } | undefined;
+  if (!row || row.organization_id !== account.organizationId) return null;
+  const delivery = getDB().prepare(
+    'SELECT 1 FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+  ).get(id, accountId);
+  if (!account.isAdmin && row.created_by_account_id !== accountId && !delivery) return null;
+  return ticketView(id, accountId);
 }
 
 export function createTicket(input: {
@@ -1967,6 +2149,11 @@ export function createTicket(input: {
   title: string;
   description: string;
   targetTags?: string[];
+  category?: string;
+  location?: string;
+  urgency?: string;
+  contact?: string;
+  contactPhone?: string;
 }): TicketView {
   const creator = getAccount(input.createdByAccountId);
   if (!creator) throw new Error('Account not found');
@@ -1996,9 +2183,15 @@ export function createTicket(input: {
   const id = `ticket_${randomUUID()}`;
   getDB().prepare(
     `INSERT INTO it_tickets
-       (id, organization_id, created_by_account_id, title, description, target_tags)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, creator.organizationId, creator.id, title, description, JSON.stringify(targetTags));
+       (id, organization_id, created_by_account_id, title, description, target_tags,
+        category, location, urgency, contact, contact_phone, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
+  ).run(
+    id, creator.organizationId, creator.id, title, description, JSON.stringify(targetTags),
+    input.category?.trim() || null, input.location?.trim() || null,
+    input.urgency?.trim() || null, input.contact?.trim() || null,
+    input.contactPhone?.trim() || null,
+  );
   const deliver = getDB().prepare(
     `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
      VALUES (?, ?, ?)`,
@@ -2010,57 +2203,126 @@ export function createTicket(input: {
     `Ticket ${id} delivered to ${recipients.length} account(s)`,
     creator.organizationId,
   );
-  const row = getDB().prepare('SELECT created_at, status FROM it_tickets WHERE id = ?').get(id) as {
-    created_at: string;
-    status: string;
-  };
-  return {
-    id,
-    title,
-    description,
-    targetTags,
-    status: row.status,
-    createdAt: row.created_at,
-    recipientCount: recipients.length,
-    recipients,
-  };
+  return ticketView(id, creator.id);
 }
 
-export function listTicketInbox(accountId: string): Array<{
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  deliveryStatus: string;
-  createdAt: string;
-  creatorName: string;
-}> {
-  const rows = getDB().prepare(
-    `SELECT t.id, t.title, t.description, t.status,
-            d.status AS delivery_status, t.created_at, a.name AS creator_name
-     FROM ticket_deliveries d
+export function listTicketInbox(accountId: string): TicketView[] {
+  const ids = getDB().prepare(
+    `SELECT t.id FROM ticket_deliveries d
      JOIN it_tickets t ON t.id = d.ticket_id
-     JOIN accounts a ON a.id = t.created_by_account_id
      WHERE d.account_id = ? AND d.organization_id = t.organization_id
-     ORDER BY t.created_at DESC`,
-  ).all(accountId) as Array<{
-    id: string;
-    title: string;
-    description: string;
-    status: string;
-    delivery_status: string;
-    created_at: string;
-    creator_name: string;
-  }>;
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    status: row.status,
-    deliveryStatus: row.delivery_status,
-    createdAt: row.created_at,
-    creatorName: row.creator_name,
-  }));
+     ORDER BY t.updated_at DESC, t.created_at DESC`,
+  ).all(accountId) as Array<{ id: string }>;
+  return ids.map(({ id }) => ticketView(id, accountId));
+}
+
+export function listTicketsForAccount(accountId: string): TicketView[] {
+  const account = getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  const ids = (account.isAdmin
+    ? getDB().prepare(
+      `SELECT id FROM it_tickets WHERE organization_id = ? ORDER BY updated_at DESC, created_at DESC`,
+    ).all(account.organizationId)
+    : getDB().prepare(
+      `SELECT DISTINCT t.id FROM it_tickets t
+       LEFT JOIN ticket_deliveries d ON d.ticket_id = t.id AND d.account_id = ?
+       WHERE t.organization_id = ? AND (t.created_by_account_id = ? OR d.account_id = ?)
+       ORDER BY t.updated_at DESC, t.created_at DESC`,
+    ).all(account.id, account.organizationId, account.id, account.id)) as Array<{ id: string }>;
+  return ids.map(({ id }) => ticketView(id, account.id));
+}
+
+export function markTicketRead(ticketId: string, accountId: string): TicketView {
+  const account = getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  const changed = getDB().prepare(
+    `UPDATE ticket_deliveries SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
+     WHERE ticket_id = ? AND account_id = ? AND organization_id = ?`,
+  ).run(ticketId, account.id, account.organizationId);
+  if (changed.changes === 0) throw new Error('Ticket delivery not found');
+  return ticketView(ticketId, accountId);
+}
+
+export function updateTicket(input: {
+  ticketId: string;
+  accountId: string;
+  action: 'respond' | 'accept' | 'complete' | 'confirm';
+  responseType?: string;
+  responseText?: string;
+}): TicketView {
+  const account = getAccount(input.accountId);
+  if (!account) throw new Error('Account not found');
+  const current = ticketView(input.ticketId, input.accountId);
+  const isRecipient = Boolean(current.isRecipient);
+  if (input.action === 'confirm') {
+    if (!current.isCreator) throw new Error('Only ticket creator can confirm');
+    if (current.status !== '待验收') throw new Error('Ticket is not awaiting acceptance');
+    getDB().prepare(
+      `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND organization_id = ?`,
+    ).run(input.ticketId, account.organizationId);
+  } else {
+    if (!isRecipient) throw new Error('Only assigned repair workers can update');
+    if (input.action === 'respond') {
+      const responseType = input.responseType?.trim() || '';
+      const responseText = input.responseText?.trim() || '';
+      if (!responseType || !responseText) throw new Error('responseType and responseText required');
+      if (responseType.length > 50 || responseText.length > 2000) throw new Error('Repair response is too long');
+      const nextStatus = responseType === '已完成维修' ? '待验收' : current.status;
+      getDB().prepare(
+        `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
+          status = ?, completed_at = CASE WHEN ? = '待验收' THEN datetime('now') ELSE completed_at END,
+          updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+      ).run(responseType, responseText, nextStatus, nextStatus, input.ticketId, account.organizationId);
+    } else if (input.action === 'accept') {
+      if (!['待接单', '待派单'].includes(current.status)) throw new Error('Ticket cannot be accepted');
+      getDB().prepare(
+        `UPDATE it_tickets SET status = '维修中', accepted_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ? AND organization_id = ?`,
+      ).run(input.ticketId, account.organizationId);
+    } else if (input.action === 'complete') {
+      if (current.status !== '维修中') throw new Error('Ticket is not in repair');
+      getDB().prepare(
+        `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ? AND organization_id = ?`,
+      ).run(input.ticketId, account.organizationId);
+    }
+  }
+  logAudit(
+    `ticket_${input.action}`,
+    account.employeeId,
+    `Ticket ${input.ticketId} ${input.action}`,
+    account.organizationId,
+  );
+  return ticketView(input.ticketId, input.accountId);
+}
+
+export function recordTicketNotification(input: {
+  ticketId: string;
+  recipientAccountId: string;
+  channel: 'otto' | 'sms' | 'feishu';
+  event: string;
+  status: 'sent' | 'failed' | 'skipped';
+  detail?: string | null;
+}): void {
+  const ticket = getDB().prepare(
+    'SELECT organization_id FROM it_tickets WHERE id = ?',
+  ).get(input.ticketId) as { organization_id: string } | undefined;
+  if (!ticket) throw new Error('Ticket not found');
+  getDB().prepare(
+    `INSERT INTO ticket_notifications
+      (id, organization_id, ticket_id, recipient_account_id, channel, event, status, detail)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    `ticket_notice_${randomUUID()}`,
+    ticket.organization_id,
+    input.ticketId,
+    input.recipientAccountId,
+    input.channel,
+    input.event,
+    input.status,
+    input.detail ?? null,
+  );
 }
 
 // ============================================================

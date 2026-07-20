@@ -7,13 +7,13 @@
 /**
  * 宏创 AI 园区服务入口。
  *
- * 没有园区服务端时，内置服务会进入「本地演示工单」：每个业务都有预设申请信息、
- * 服务角色和可逐步播放的状态流转。这样演示的业务路径与客户服务流程文档一致，
- * 同时不把任何演示数据伪装成已提交到真实园区系统。
+ * 客户报修已接入企业服务器：按管理员指定的维修工作人员自动投递，并用结构化
+ * 处理表完成接单、回复、维修、验收。其余园区服务暂保留既有演示流程。
  */
 
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { insertComposerDraft } from './Composer.js';
+import type { EnterpriseAccount, EnterpriseRepairTicket } from '../../preload/index.js';
 import {
   IconBuilding,
   IconCalendarCheck,
@@ -283,35 +283,6 @@ function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkSer
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
 const LOCAL_DEMO_SERVICE_IDS = new Set(['announcement', 'satisfaction']);
-const REPAIR_TICKET_STORAGE_KEY = 'otto:local-repair-ticket';
-const REPAIR_TICKET_EVENT = 'otto:local-repair-ticket-updated';
-
-interface RepairTicket {
-  id: string;
-  category: string;
-  location: string;
-  issue: string;
-  urgency: string;
-  contact: string;
-  phone: string;
-  status: '待派单' | '待接单' | '维修中' | '待验收' | '已完成';
-  createdAt: string;
-  responseType?: string;
-  responseText?: string;
-  responseAt?: string;
-}
-
-function readRepairTicket(): RepairTicket | null {
-  try {
-    const raw = window.localStorage.getItem(REPAIR_TICKET_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as RepairTicket : null;
-  } catch { return null; }
-}
-
-function writeRepairTicket(ticket: RepairTicket): void {
-  try { window.localStorage.setItem(REPAIR_TICKET_STORAGE_KEY, JSON.stringify(ticket)); } catch { /* preview may disable storage */ }
-  window.dispatchEvent(new CustomEvent(REPAIR_TICKET_EVENT, { detail: ticket }));
-}
 
 export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
@@ -507,63 +478,145 @@ function SatisfactionDemo({ onBack, onSendToOtto }: {
 }
 
 function RepairDemo({ onBack }: { onBack: () => void }): React.JSX.Element {
-  const [mode, setMode] = useState<'reporter' | 'technician'>('reporter');
-  const [ticket, setTicket] = useState<RepairTicket | null>(() => readRepairTicket());
-  const [notice, setNotice] = useState(false);
-  const [responseNotice, setResponseNotice] = useState(false);
-  const [form, setForm] = useState({ category: '水电', otherCategory: '', location: '某某会议室', issue: '灯坏了', urgency: '普通', contact: '演示报修人', phone: '13800000000' });
+  const [account, setAccount] = useState<EnterpriseAccount | null>(null);
+  const [tickets, setTickets] = useState<EnterpriseRepairTicket[]>([]);
+  const [view, setView] = useState<'reporter' | 'technician'>('reporter');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<EnterpriseRepairTicket | null>(null);
+  const [form, setForm] = useState({ category: '水电', otherCategory: '', location: '某某会议室', issue: '灯坏了', urgency: '普通', contact: '', phone: '' });
   const [response, setResponse] = useState({ type: '远程指导', text: '请先确认墙面开关已打开，再把检查结果填回 Otto。' });
-  const responseIdRef = useRef<string | undefined>(undefined);
+  const initialViewChosen = useRef(false);
 
-  useEffect(() => {
-    const onTicket = (event: Event): void => {
-      const next = (event as CustomEvent<RepairTicket>).detail ?? readRepairTicket();
-      if (!next) return;
-      setTicket(next);
-      if (mode === 'technician' && next.status === '待派单') setNotice(true);
-      if (mode === 'reporter' && next.responseText && next.responseAt !== responseIdRef.current) { responseIdRef.current = next.responseAt; setResponseNotice(true); }
-    };
-    const onStorage = (event: StorageEvent): void => { if (event.key === REPAIR_TICKET_STORAGE_KEY) onTicket(event); };
-    window.addEventListener(REPAIR_TICKET_EVENT, onTicket);
-    window.addEventListener('storage', onStorage);
-    return () => { window.removeEventListener(REPAIR_TICKET_EVENT, onTicket); window.removeEventListener('storage', onStorage); };
-  }, [mode]);
-
-  // 同一台演示设备切换回报修人端时，也要像跨设备事件一样弹出新回复提醒。
-  useEffect(() => {
-    if (mode === 'reporter' && ticket?.responseText && ticket.responseAt !== responseIdRef.current) {
-      responseIdRef.current = ticket.responseAt;
-      setResponseNotice(true);
+  const message = (cause: unknown): string => {
+    const value = cause instanceof Error ? cause.message : String(cause);
+    return value.replace(/^Error invoking remote method '[^']+':\s*/, '').replace(/^Error:\s*/, '');
+  };
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!window.otto?.enterpriseSession || !window.otto?.enterpriseTicketList) {
+      setError('当前 Otto 版本不支持服务器报修，请更新后重试。');
+      setLoading(false);
+      return;
     }
-  }, [mode, ticket]);
+    try {
+      const session = await window.otto.enterpriseSession();
+      setAccount(session.account);
+      if (!session.account) {
+        setError('请先登录企业账号并连接企业服务器。');
+        setTickets([]);
+        return;
+      }
+      const next = await window.otto.enterpriseTicketList();
+      setTickets(next);
+      setError(null);
+      const pending = next.find((ticket) => ticket.isRecipient && ticket.status !== '已完成');
+      if (pending && session.account.tags.includes('维修工作人员')) {
+        setSelectedId((current) => current ?? pending.id);
+        if (!initialViewChosen.current) setView('technician');
+      }
+      initialViewChosen.current = true;
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const updateStatus = (status: RepairTicket['status']): void => {
-    if (!ticket) return;
-    const next = { ...ticket, status };
-    setTicket(next); writeRepairTicket(next); setNotice(false);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!account) return;
+    setForm((current) => ({
+      ...current,
+      contact: current.contact || account.name,
+      phone: current.phone || account.phone?.replace(/^\+86/, '') || '',
+    }));
+  }, [account]);
+
+  const assignedTickets = tickets.filter((ticket) => ticket.isRecipient);
+  const ownTickets = tickets.filter((ticket) => ticket.isCreator);
+  const activeTicket = tickets.find((ticket) => ticket.id === selectedId)
+    ?? (view === 'technician' ? assignedTickets[0] : ownTickets[0])
+    ?? null;
+  const isRepairWorker = Boolean(account?.tags.includes('维修工作人员'));
+
+  const replaceTicket = (next: EnterpriseRepairTicket): void => {
+    setTickets((current) => [next, ...current.filter((ticket) => ticket.id !== next.id)]);
+    setSelectedId(next.id);
   };
 
-  const submitTicket = (event: React.FormEvent<HTMLFormElement>): void => {
+  const submitTicket = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    const next: RepairTicket = { ...form, category: form.category === '其他' ? form.otherCategory.trim() || '其他' : form.category, id: `DEMO-REPAIR-${Date.now().toString().slice(-6)}`, status: '待派单', createdAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) };
-    setTicket(next); writeRepairTicket(next);
+    setBusy(true);
+    setError(null);
+    try {
+      const category = form.category === '其他' ? form.otherCategory.trim() || '其他' : form.category;
+      const next = await window.otto.enterpriseTicketSubmit({
+        title: `${form.location} · ${category}报修`,
+        description: form.issue,
+        targetTags: ['维修工作人员'],
+        category,
+        location: form.location,
+        urgency: form.urgency,
+        contact: form.contact,
+        contactPhone: form.phone,
+      });
+      setReceipt(next);
+      replaceTicket(next);
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const submitResponse = (event: React.FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    if (!ticket) return;
-    const next = { ...ticket, responseType: response.type, responseText: response.text, responseAt: new Date().toISOString(), status: response.type === '安排上门' ? '待接单' as const : ticket.status };
-    setTicket(next); writeRepairTicket(next); setNotice(false);
+  const action = async (
+    ticket: EnterpriseRepairTicket,
+    value: 'respond' | 'accept' | 'complete' | 'confirm',
+  ): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await window.otto.enterpriseTicketAction(ticket.id, {
+        action: value,
+        ...(value === 'respond' ? { responseType: response.type, responseText: response.text } : {}),
+      });
+      replaceTicket(next);
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const field = (key: keyof typeof form, label: string, placeholder?: string): React.JSX.Element => <label className="otto-park-form__field">{label}<input value={form[key]} placeholder={placeholder} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /></label>;
+  const openAssigned = async (ticket: EnterpriseRepairTicket): Promise<void> => {
+    setSelectedId(ticket.id);
+    if (!ticket.readAt) {
+      try { replaceTicket(await window.otto.enterpriseTicketRead(ticket.id)); } catch { /* poll will retry */ }
+    }
+  };
+
+  const field = (key: keyof typeof form, label: string, placeholder?: string): React.JSX.Element => (
+    <label className="otto-park-form__field">{label}<input required value={form[key]} placeholder={placeholder} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /></label>
+  );
+
+  if (loading) return <div className="otto-park-demo"><div className="otto-park-repair__empty">正在连接企业报修服务器…</div></div>;
+  if (!account) return <div className="otto-park-demo"><div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button></div><div className="otto-park-repair__empty">{error || '请先登录企业账号。'}</div></div>;
 
   return <div className="otto-park-demo">
-    <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className={`otto-park-demo__status ${ticket?.status === '已完成' ? 'is-done' : ''}`}>{ticket ? ticket.status : '待填写'}</span></div>
-    <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">双设备本地演示 · 企业端 / 维修端</div><h3>客户报修 · 申请表与维修回复表</h3><p>企业端提交报修表，维修端填写处理回复；新提交和新回复都会在对方 Otto 右下角弹窗。</p></div><div className="otto-park-repair__roles" role="group" aria-label="演示设备角色"><button type="button" className={mode === 'reporter' ? 'is-active' : ''} onClick={() => setMode('reporter')}>企业端（报修人）</button><button type="button" className={mode === 'technician' ? 'is-active' : ''} onClick={() => { setMode('technician'); if (ticket?.status === '待派单') setNotice(true); }}>维修端（张工）</button></div></div>
-    {mode === 'reporter' ? <form className="otto-park-request-form" onSubmit={submitTicket} aria-label="客户报修申请表"><div className="otto-park-form__guide"><strong>Otto 填报提示</strong><span>可以先说“某某会议室的灯坏了”，然后在提交前确认下面的字段。</span></div><div className="otto-park-form__grid">{field('location', '故障位置', '例如：A 座 1203 室会议室')}<label className="otto-park-form__field">报修类别<select value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}><option>水电</option><option>网络</option><option>空调</option><option>门禁</option><option>其他</option></select></label>{form.category === '其他' ? field('otherCategory', '请填写其他类别', '例如：玻璃门损坏') : null}{field('issue', '故障描述', '例如：灯坏了，不亮')}<label className="otto-park-form__field">紧急程度<select value={form.urgency} onChange={(event) => setForm((current) => ({ ...current, urgency: event.target.value }))}><option>普通</option><option>紧急</option><option>影响办公</option></select></label>{field('contact', '现场联系人')}{field('phone', '联系电话')}</div><button type="submit" className="otto-park-demo__primary">提交报修申请</button>{ticket ? <div className="otto-park-form__receipt">已提交工单 {ticket.id}，等待维修人员处理。</div> : null}</form> : <div className="otto-park-technician-form"><div className="otto-park-form__guide"><strong>维修人员处理表</strong><span>先查看工单，再选择处理方式并回传给报修人。</span></div>{ticket ? <><div className="otto-park-request-summary"><div><span>工单</span><strong>{ticket.id}</strong></div><div><span>类别</span><strong>{ticket.category}</strong></div><div><span>位置</span><strong>{ticket.location}</strong></div><div><span>描述</span><strong>{ticket.issue}</strong></div></div><form className="otto-park-response-form" onSubmit={submitResponse} aria-label="维修回复表"><label className="otto-park-form__field">处理方式<select value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))}><option>远程指导</option><option>暂时没空</option><option>安排上门</option><option>需要补充信息</option><option>已完成维修</option></select></label><label className="otto-park-form__field">给报修人的说明<textarea rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} /></label><button type="submit" className="otto-park-demo__primary">发送维修回复</button></form><div className="otto-park-demo__actions"><button type="button" className="otto-park-demo__secondary" onClick={() => updateStatus('维修中')} disabled={ticket.status !== '待派单' && ticket.status !== '待接单'}>接单并处理</button><button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('待验收')} disabled={ticket.status !== '维修中'}>提交维修完成</button>{ticket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" onClick={() => updateStatus('已完成')}>确认企业验收</button> : null}</div></> : <div className="otto-park-repair__empty">等待报修人提交工单。</div>}</div>}
-    {notice && ticket ? <div className="otto-park-notice-overlay" role="alertdialog" aria-modal="false" aria-label="Otto 待处理提醒"><div className="otto-park-notice"><div className="otto-park-notice__eyebrow">Otto 待处理提醒 · 本地模拟</div><h3>收到新的客户报修申请</h3><p className="otto-park-notice__owner">责任人：<strong>网络维修主管张工</strong></p><p className="otto-park-notice__detail">{ticket.location} · {ticket.issue} · {ticket.urgency}</p><div className="otto-park-notice__actions"><button type="button" className="otto-park-demo__primary" onClick={() => { setNotice(false); updateStatus('待接单'); }}>打开维修处理表</button><button type="button" className="otto-park-demo__secondary" onClick={() => setNotice(false)}>稍后处理</button></div></div></div> : null}
-    {responseNotice && ticket?.responseText ? <div className="otto-park-notice-overlay" role="alertdialog" aria-modal="false" aria-label="维修人员回复提醒"><div className="otto-park-notice"><div className="otto-park-notice__eyebrow">Otto 回复提醒 · 本地模拟</div><h3>维修人员已返回处理表</h3><p className="otto-park-notice__detail">处理方式：{ticket.responseType}</p><p className="otto-park-notice__detail">{ticket.responseText}</p><div className="otto-park-notice__actions"><button type="button" className="otto-park-demo__primary" onClick={() => setResponseNotice(false)}>查看并确认</button><button type="button" className="otto-park-demo__secondary" onClick={() => setResponseNotice(false)}>稍后查看</button></div></div></div> : null}
+    <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className={`otto-park-demo__status ${activeTicket?.status === '已完成' ? 'is-done' : ''}`}>{activeTicket?.status || '服务器已连接'}</span></div>
+    <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">企业服务器 · {account.organizationName}</div><h3>客户报修 · 申请表与维修回复表</h3><p>当前账号：{account.name}。工单、处理回复和通知状态都会保存到企业服务器。</p></div>{isRepairWorker ? <div className="otto-park-repair__roles" role="group" aria-label="报修工作区"><button type="button" className={view === 'reporter' ? 'is-active' : ''} onClick={() => setView('reporter')}>我要报修</button><button type="button" className={view === 'technician' ? 'is-active' : ''} onClick={() => setView('technician')}>维修工作台（{assignedTickets.filter((ticket) => ticket.status !== '已完成').length}）</button></div> : null}</div>
+    {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
+    {view === 'reporter' ? <>
+      <form className="otto-park-request-form" onSubmit={(event) => { void submitTicket(event); }} aria-label="客户报修申请表"><div className="otto-park-form__guide"><strong>Otto 填报提示</strong><span>例如“某某会议室的灯坏了”，确认字段后提交。服务器会自动投递给全部维修工作人员。</span></div><div className="otto-park-form__grid">{field('location', '故障位置', '例如：A 座 1203 室会议室')}<label className="otto-park-form__field">报修类别<select aria-label="报修类别" value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}><option>水电</option><option>网络</option><option>空调</option><option>门禁</option><option>其他</option></select></label>{form.category === '其他' ? field('otherCategory', '请填写其他类别', '例如：玻璃门损坏') : null}{field('issue', '故障描述', '例如：灯坏了，不亮')}<label className="otto-park-form__field">紧急程度<select value={form.urgency} onChange={(event) => setForm((current) => ({ ...current, urgency: event.target.value }))}><option>普通</option><option>紧急</option><option>影响办公</option></select></label>{field('contact', '现场联系人')}{field('phone', '联系电话')}</div><button type="submit" className="otto-park-demo__primary" disabled={busy}>{busy ? '正在提交…' : '提交报修申请'}</button>{receipt ? <div className="otto-park-form__receipt">已提交工单 {receipt.id}，已投递 {receipt.recipientCount} 名维修工作人员。{receipt.recipientCount === 0 ? '请联系管理员先指定维修工作人员。' : ''}</div> : null}</form>
+      {ownTickets.length ? <div className="otto-park-technician-form"><div className="otto-park-form__guide"><strong>我的报修进度</strong><span>维修人员的处理表会在这里同步，并通过 Otto、短信和飞书提醒。</span></div><div className="otto-park-repair__roles">{ownTickets.slice(0, 6).map((ticket) => <button key={ticket.id} type="button" className={activeTicket?.id === ticket.id ? 'is-active' : ''} onClick={() => setSelectedId(ticket.id)}>{ticket.location || ticket.title} · {ticket.status}</button>)}</div>{activeTicket?.isCreator ? <><div className="otto-park-request-summary"><div><span>工单</span><strong>{activeTicket.id}</strong></div><div><span>状态</span><strong>{activeTicket.status}</strong></div><div><span>维修回复</span><strong>{activeTicket.responseType || '等待处理'}</strong></div><div><span>说明</span><strong>{activeTicket.responseText || '暂无'}</strong></div></div>{activeTicket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" disabled={busy} onClick={() => { void action(activeTicket, 'confirm'); }}>确认企业验收</button> : null}</> : null}</div> : null}
+    </> : <div className="otto-park-technician-form"><div className="otto-park-form__guide"><strong>维修人员处理表</strong><span>这里仅显示服务器分配给当前账号的工单。选择工单后接单、回复或提交维修完成。</span></div>{assignedTickets.length ? <><div className="otto-park-repair__roles">{assignedTickets.map((ticket) => <button key={ticket.id} type="button" className={activeTicket?.id === ticket.id ? 'is-active' : ''} onClick={() => { void openAssigned(ticket); }}>{ticket.location || ticket.title} · {ticket.status}{!ticket.readAt ? ' · 新' : ''}</button>)}</div>{activeTicket?.isRecipient ? <><div className="otto-park-request-summary"><div><span>工单</span><strong>{activeTicket.id}</strong></div><div><span>报修人</span><strong>{activeTicket.creator.name}</strong></div><div><span>类别</span><strong>{activeTicket.category || '其他'}</strong></div><div><span>位置</span><strong>{activeTicket.location || '未填写'}</strong></div><div><span>描述</span><strong>{activeTicket.description}</strong></div><div><span>紧急程度</span><strong>{activeTicket.urgency || '普通'}</strong></div></div><form className="otto-park-response-form" onSubmit={(event) => { event.preventDefault(); void action(activeTicket, 'respond'); }} aria-label="维修回复表"><label className="otto-park-form__field">处理方式<select value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))}><option>远程指导</option><option>暂时没空</option><option>安排上门</option><option>需要补充信息</option><option>已完成维修</option></select></label><label className="otto-park-form__field">给报修人的说明<textarea required rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} /></label><button type="submit" className="otto-park-demo__primary" disabled={busy}>发送维修回复</button></form><div className="otto-park-demo__actions"><button type="button" className="otto-park-demo__secondary" onClick={() => { void action(activeTicket, 'accept'); }} disabled={busy || !['待派单', '待接单'].includes(activeTicket.status)}>接单并处理</button><button type="button" className="otto-park-demo__primary" onClick={() => { void action(activeTicket, 'complete'); }} disabled={busy || activeTicket.status !== '维修中'}>提交维修完成</button></div></> : null}</> : <div className="otto-park-repair__empty">当前没有分配给你的报修工单。</div>}</div>}
   </div>;
 }
 
@@ -635,7 +688,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [actors, setActors] = useState<ParkActorDirectory>({});
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
+  const [backgroundTicket, setBackgroundTicket] = useState<EnterpriseRepairTicket | null>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const notifiedTicketKeys = useRef(new Set<string>());
   const uid = useId();
   const titleId = `${uid}-title`;
 
@@ -685,6 +740,41 @@ export function ParkServicesPlugin(): React.JSX.Element {
     return () => window.removeEventListener(PARK_OPEN_EVENT, onOpen);
   }, []);
 
+  useEffect(() => {
+    if (!window.otto?.enterpriseSession || !window.otto?.enterpriseTicketList) return undefined;
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      try {
+        const session = await window.otto.enterpriseSession();
+        if (cancelled || !session.account) return;
+        const tickets = await window.otto.enterpriseTicketList();
+        if (cancelled) return;
+        const candidate = tickets.find((ticket) => ticket.isRecipient && !ticket.readAt)
+          ?? tickets.find((ticket) => ticket.isCreator && ticket.responseAt)
+          ?? tickets.find((ticket) => ticket.isCreator && ticket.status === '待验收');
+        if (!candidate) return;
+        const key = candidate.isRecipient && !candidate.readAt
+          ? `assigned:${candidate.id}`
+          : `updated:${candidate.id}:${candidate.updatedAt}`;
+        if (notifiedTicketKeys.current.has(key)) return;
+        notifiedTicketKeys.current.add(key);
+        setBackgroundTicket(candidate);
+        const title = candidate.isRecipient && !candidate.readAt
+          ? 'Otto 待处理提醒 · 新报修'
+          : 'Otto 报修进度提醒';
+        const body = candidate.isRecipient && !candidate.readAt
+          ? `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`
+          : `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
+        void window.otto.parkNativeNotify?.(title, body);
+      } catch {
+        // 未登录、服务器暂不可达时安静重试；报修页打开后会显示具体错误。
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
   const close = (): void => { setSelected(null); setOpen(false); };
   const pick = (service: ParkService): void => {
     // 企业通过 park-services.json 配置的临时服务没有本地流程定义，保持原有
@@ -701,7 +791,17 @@ export function ParkServicesPlugin(): React.JSX.Element {
     close();
   };
 
-  return open ? (
+  const openBackgroundTicket = (): void => {
+    const repair = services.find((service) => service.id === 'repair');
+    if (repair) {
+      setSelected(repair);
+      setOpen(true);
+    }
+    setBackgroundTicket(null);
+  };
+
+  return <>
+  {open ? (
     <div
       className="otto-park-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
@@ -712,14 +812,14 @@ export function ParkServicesPlugin(): React.JSX.Element {
         <div className="otto-park-dialog__head">
           <span className="otto-park-dialog__headicon" aria-hidden><IconBuilding size={19} /></span>
           <div className="otto-park-dialog__headtext">
-            <h2 className="otto-park-dialog__title" id={titleId}>{selected ? `${selected.name} · 本地演示` : brand}</h2>
+            <h2 className="otto-park-dialog__title" id={titleId}>{selected ? `${selected.name}${selected.id === 'repair' ? ' · 企业服务器' : ' · 本地演示'}` : brand}</h2>
             <div className="otto-park-dialog__subtitle">
               {selected?.id === 'announcement'
                 ? '园区端发布消息后，Otto 作为企业接收端在右下角提醒，点击即可查看。'
                 : selected?.id === 'satisfaction'
                   ? '园区发布调查问卷，员工填写并提交，形成双向反馈闭环。'
                   : selected?.id === 'repair'
-                    ? '报修人提交申请表；维修人员通过处理表回复，双方通过 Otto 弹窗接收。'
+                    ? '报修保存到企业服务器并自动投递维修人员；处理回复通过 Otto、短信和飞书送达。'
                   : selected
                     ? '先提交申请表；责任人通过 Otto 弹窗返回结构化处理结果。'
                     : '9 项服务 · 3 列 × 3 行。选择任一服务即可查看完整本地演示流程。'}
@@ -745,5 +845,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         )}
       </div>
     </div>
-  ) : <></>;
+  ) : null}
+  {backgroundTicket ? <button type="button" className="otto-park-toast otto-park-toast--result" onClick={openBackgroundTicket} aria-label="打开报修通知"><span>Otto 企业报修</span><strong>{backgroundTicket.isRecipient && !backgroundTicket.readAt ? '收到新的客户报修申请' : '报修工单已有新进展'}</strong><em>{backgroundTicket.location || backgroundTicket.title} · {backgroundTicket.status} · 点击查看</em></button> : null}
+  </>;
 }

@@ -10,13 +10,20 @@
  * 无障碍属性、企业定制覆盖。
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, fireEvent, screen, cleanup, act } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/react';
 import { ParkServicesPlugin, openParkServices } from './ParkServicesPlugin.js';
+import type { EnterpriseRepairTicket } from '../../preload/index.js';
 
 afterEach(() => {
   cleanup();
   window.localStorage.removeItem('otto:local-repair-ticket');
+  if (window.otto) {
+    for (const key of [
+      'enterpriseSession', 'enterpriseTicketList', 'enterpriseTicketSubmit',
+      'enterpriseTicketAction', 'enterpriseTicketRead', 'parkNativeNotify',
+    ]) delete (window.otto as unknown as Record<string, unknown>)[key];
+  }
 });
 
 /** 监听 Composer 注入事件（insertComposerDraft 派发的 CustomEvent）。 */
@@ -34,6 +41,69 @@ function openDialog(): void {
   act(() => {
     openParkServices();
   });
+}
+
+function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter') {
+  const account = {
+    id: kind === 'worker' ? 'worker-1' : 'reporter-1',
+    organizationId: 'org-1', organizationName: '测试园区', employeeId: null,
+    username: kind, phone: '+8613800138000', feishuOpenId: 'ou_test',
+    name: kind === 'worker' ? '维修张工' : '报修员工', role: '成员', department: 'IT部',
+    isAdmin: false, status: 'active' as const,
+    tags: kind === 'worker' ? ['维修工作人员'] : ['普通成员'],
+    createdAt: '2026-07-20', updatedAt: '2026-07-20',
+  };
+  let tickets: EnterpriseRepairTicket[] = kind === 'worker' ? [{
+    id: 'ticket-1', title: '某某会议室 · 水电报修', description: '灯坏了',
+    targetTags: ['维修工作人员'], status: '待接单', category: '水电', location: '某某会议室',
+    urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
+    responseType: null, responseText: null, responseAt: null,
+    createdAt: '2026-07-20', updatedAt: '2026-07-20',
+    creator: { id: 'reporter-1', name: '报修员工', username: 'reporter', phone: '+8613800138000', feishuOpenId: 'ou_reporter' },
+    recipientCount: 1, recipients: [account], deliveryStatus: 'delivered', readAt: null,
+    isCreator: false, isRecipient: true, notifications: [],
+  }] : [];
+  const submit = vi.fn(async (input: {
+    title: string; description: string; targetTags?: string[]; category?: string;
+    location?: string; urgency?: string; contact?: string; contactPhone?: string;
+  }) => {
+    const ticket = {
+      id: 'ticket-new', ...input, status: '待接单', responseType: null, responseText: null,
+      responseAt: null, createdAt: '2026-07-20', updatedAt: '2026-07-20',
+      creator: { id: account.id, name: account.name, username: account.username, phone: account.phone, feishuOpenId: account.feishuOpenId },
+      recipientCount: 1, recipients: [], isCreator: true, isRecipient: false, notifications: [],
+    } as EnterpriseRepairTicket;
+    tickets = [ticket];
+    return ticket;
+  });
+  const action = vi.fn(async (id: string, input: {
+    action: 'respond' | 'accept' | 'complete' | 'confirm';
+    responseType?: string; responseText?: string;
+  }) => {
+    const current = tickets.find((ticket) => ticket.id === id)!;
+    const status = input.action === 'accept' ? '维修中'
+      : input.action === 'complete' || input.responseType === '已完成维修' ? '待验收'
+        : input.action === 'confirm' ? '已完成' : current.status;
+    const next = {
+      ...current, status, updatedAt: `${Date.now()}`,
+      ...(input.action === 'respond' ? { responseType: input.responseType, responseText: input.responseText, responseAt: '2026-07-20T01:00:00Z' } : {}),
+    };
+    tickets = tickets.map((ticket) => ticket.id === id ? next : ticket);
+    return next;
+  });
+  Object.assign(window.otto, {
+    enterpriseSession: vi.fn(async () => ({ serverUrl: 'https://enterprise.test', account })),
+    enterpriseTicketList: vi.fn(async () => tickets),
+    enterpriseTicketSubmit: submit,
+    enterpriseTicketAction: action,
+    enterpriseTicketRead: vi.fn(async (id: string) => {
+      const next = { ...tickets.find((ticket) => ticket.id === id)!, readAt: '2026-07-20' };
+      tickets = tickets.map((ticket) => ticket.id === id ? next : ticket);
+      return next;
+    }),
+    parkNativeNotify: vi.fn(async () => true),
+  });
+  return { submit, action };
 }
 
 describe('ParkServicesPlugin', () => {
@@ -101,55 +171,56 @@ describe('ParkServicesPlugin', () => {
     expect(screen.getByText('4 分 · 会议室环境 · 已进入满意度汇总')).toBeTruthy();
   });
 
-  it('报修演示使用申请表，并可切换维修端', () => {
+  it('报修通过企业服务器提交并自动投递维修工作人员', async () => {
+    const bridge = installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    const requestForm = screen.getByLabelText('客户报修申请表');
+    const requestForm = await screen.findByLabelText('客户报修申请表');
     expect(screen.getByText('Otto 填报提示')).toBeTruthy();
     fireEvent.submit(requestForm);
-    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
-    expect(screen.getByText('网络维修主管张工')).toBeTruthy();
-    expect(screen.getByText('某某会议室')).toBeTruthy();
+    expect(await screen.findByText(/已提交工单 ticket-new/)).toBeTruthy();
+    expect(bridge.submit).toHaveBeenCalledWith(expect.objectContaining({ targetTags: ['维修工作人员'] }));
   });
 
-  it('报修类别选择其他时允许填写自定义类别', () => {
+  it('服务器报修类别选择其他时允许填写自定义类别', async () => {
+    const bridge = installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
+    await screen.findByLabelText('客户报修申请表');
     fireEvent.change(screen.getByLabelText('报修类别'), { target: { value: '其他' } });
     fireEvent.change(screen.getByLabelText('请填写其他类别'), { target: { value: '玻璃门损坏' } });
     fireEvent.submit(screen.getByLabelText('客户报修申请表'));
-    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
-    expect(screen.getByText('玻璃门损坏')).toBeTruthy();
+    await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith(expect.objectContaining({ category: '玻璃门损坏' })));
   });
 
-  it('维修端收到 Otto 待处理提醒并可推进维修状态', () => {
+  it('被管理员指定的维修人员能收到工单并推进状态', async () => {
+    const bridge = installRepairBridge('worker');
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    fireEvent.submit(screen.getByLabelText('客户报修申请表'));
-    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
-    expect(screen.getByRole('alertdialog', { name: 'Otto 待处理提醒' }).textContent).toContain('收到新的客户报修申请');
-    fireEvent.click(screen.getByRole('button', { name: '打开维修处理表' }));
+    fireEvent.click(await screen.findByRole('button', { name: /维修工作台/ }));
+    expect(screen.getByText('灯坏了')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '接单并处理' }));
+    await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', { action: 'accept' }));
     fireEvent.click(screen.getByRole('button', { name: '提交维修完成' }));
-    fireEvent.click(screen.getByRole('button', { name: '确认企业验收' }));
-    expect(screen.getByText('已完成')).toBeTruthy();
+    await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', { action: 'complete' }));
   });
 
-  it('维修端填写回复表，企业端收到回复弹窗', () => {
+  it('维修人员使用结构化回复表，不增加聊天窗口', async () => {
+    const bridge = installRepairBridge('worker');
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(screen.getByText('客户报修'));
-    fireEvent.submit(screen.getByLabelText('客户报修申请表'));
-    fireEvent.click(screen.getByRole('button', { name: '维修端（张工）' }));
-    fireEvent.click(screen.getByRole('button', { name: '打开维修处理表' }));
+    fireEvent.click(await screen.findByRole('button', { name: /维修工作台/ }));
     fireEvent.change(screen.getByLabelText('处理方式'), { target: { value: '远程指导' } });
     fireEvent.change(screen.getByLabelText('给报修人的说明'), { target: { value: '请先检查开关' } });
     fireEvent.submit(screen.getByLabelText('维修回复表'));
-    fireEvent.click(screen.getByRole('button', { name: '企业端（报修人）' }));
-    expect(screen.getByRole('alertdialog', { name: '维修人员回复提醒' }).textContent).toContain('请先检查开关');
+    await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', {
+      action: 'respond', responseType: '远程指导', responseText: '请先检查开关',
+    }));
+    expect(screen.queryByPlaceholderText('输入消息')).toBeNull();
   });
 
   it('其他园区服务使用各自的申请字段和处理选项', () => {
