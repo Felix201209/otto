@@ -428,6 +428,7 @@ export interface OttoBridge {
     date: string;
     title: string;
     markdown: string;
+    html?: string;
     path: string;
     message: string;
   }>;
@@ -832,6 +833,7 @@ const bridge: OttoBridge = {
     date: string;
     title: string;
     markdown: string;
+    html?: string;
     path: string;
     message: string;
   }> {
@@ -840,6 +842,7 @@ const bridge: OttoBridge = {
       date: string;
       title: string;
       markdown: string;
+      html?: string;
       path: string;
       message: string;
     }>;
