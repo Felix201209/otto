@@ -304,7 +304,7 @@ export function RightPanel({
 
             <div className="otto-right-panel__waist" role="separator" />
             <div className="otto-right-panel__head">
-              {mode === 'personal' ? '基础 Otto 与通用专家' : '企业专家'}
+              {mode === 'personal' ? '个人 Otto' : '9 位企业工作 Agent'}
             </div>
             <div className="otto-profile-list">
               {profiles.slice(0, 12).map((profile) => (

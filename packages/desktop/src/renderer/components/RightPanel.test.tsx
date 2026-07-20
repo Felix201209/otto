@@ -121,7 +121,7 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
-  it('shows only the fixed 9 Agents in personal mode', () => {
+  it('keeps the fixed 9 enterprise Agents out of personal mode', () => {
     installBridge();
 
     const { container } = render(<RightPanel busy={false} />);
@@ -129,6 +129,9 @@ describe('RightPanel fixed Agent catalog', () => {
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
+    expect(screen.queryByText('PPT 创作专家')).toBeNull();
+    expect(screen.queryByText('会议 Agent')).toBeNull();
+    expect(screen.queryByText('品牌营销文案')).toBeNull();
     expect(screen.queryByText('企业AI自主开发')).toBeNull();
     expect(screen.queryByText('开发 AI 智能体')).toBeNull();
     expect(screen.queryByText('自主开发')).toBeNull();
@@ -136,7 +139,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
     expect(screen.getByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeTruthy();
     expect(screen.queryByText('访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮')).toBeNull();
-    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
+    expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(1);
   });
 
   it('launches the independent development AI without counting it among the fixed 9 cards', () => {

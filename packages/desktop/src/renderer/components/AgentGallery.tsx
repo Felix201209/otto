@@ -40,6 +40,7 @@ export function AgentGallery({
       ? getEnterpriseAgentProfiles('company_owner')
       : getPersonalAgentProfiles()
   );
+  const enterpriseMode = mode === 'enterprise';
   const firstCardRef = useRef<HTMLButtonElement>(null);
 
   // 打开即聚焦第一张卡片（键盘可直接 Enter 启动）。
@@ -64,9 +65,13 @@ export function AgentGallery({
       <header className="otto-agents__head">
         <IconAgent size={20} className="otto-agents__headicon" />
         <div className="otto-agents__headtext">
-          <div className="otto-agents__title">专家</div>
+          <div className="otto-agents__title">
+            {enterpriseMode ? '企业工作 Agent 目录' : '个人 Otto'}
+          </div>
           <div className="otto-agents__subtitle">
-            选择一位专家开始，它会在独立会话中按对应方法协助你
+            {enterpriseMode
+              ? '选择一位企业工作 Agent，在独立会话中完成对应工作'
+              : '使用个人 Otto 开始独立工作会话'}
           </div>
         </div>
         <button
@@ -118,7 +123,7 @@ export function AgentGallery({
         </div>
 
         <div className="otto-agents__foot">
-          共 {visibleProfiles.length} 位专家 · 点击即可开始新对话
+          共 {visibleProfiles.length} 位 {enterpriseMode ? '企业工作 Agent' : 'Agent'} · 点击即可开始新对话
         </div>
       </div>
     </section>

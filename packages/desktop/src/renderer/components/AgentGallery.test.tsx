@@ -21,18 +21,18 @@ function renderGallery(mode: 'personal' | 'enterprise' = 'personal') {
 }
 
 describe('AgentGallery', () => {
-  it('renders the fixed 9-Agent catalog', () => {
+  it('keeps the enterprise 9-Agent catalog out of personal mode', () => {
     renderGallery();
 
     for (const profile of BASE_AGENT_PROFILES) {
       expect(screen.getByText(profile.name)).toBeTruthy();
     }
-    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
-    expect(screen.getByText('会议 Agent')).toBeTruthy();
-    expect(screen.getByText('Word 公文撰写')).toBeTruthy();
-    expect(screen.getByText('Excel 数据表格')).toBeTruthy();
-    expect(screen.getByText('市场竞品调研')).toBeTruthy();
-    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位专家 · 点击即可开始新对话`)).toBeTruthy();
+    expect(screen.queryByText('PPT 创作专家')).toBeNull();
+    expect(screen.queryByText('会议 Agent')).toBeNull();
+    expect(screen.queryByText('Word 公文撰写')).toBeNull();
+    expect(screen.queryByText('Excel 数据表格')).toBeNull();
+    expect(screen.queryByText('市场竞品调研')).toBeNull();
+    expect(screen.getByText(`共 ${BASE_AGENT_PROFILES.length} 位 Agent · 点击即可开始新对话`)).toBeTruthy();
   });
 
   it('does not render department Agents', () => {
@@ -45,7 +45,7 @@ describe('AgentGallery', () => {
   });
 
   it('launches only the selected profile', () => {
-    const { onLaunch } = renderGallery();
+    const { onLaunch } = renderGallery('enterprise');
 
     fireEvent.click(screen.getByText('PPT 创作专家'));
     fireEvent.click(screen.getByText('Excel 数据表格'));

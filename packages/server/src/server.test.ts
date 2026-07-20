@@ -398,54 +398,29 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     client.close();
   });
 
-  it('Agent profile 只传 id，并按个人/CEO/部门身份隔离', async () => {
+  it('Agent profile 只传 id，并把固定 9 个工作 Agent 全部隔离到企业身份', async () => {
     const client = await connectWs(baseUrl);
     client.send({
       type: 'create_session',
       payload: { title: '会议', agentProfileId: 'meeting' },
     });
-    const created = await client.waitFor((f) => f.type === 'session_upsert');
-    if (created.type !== 'session_upsert') throw new Error('unreachable');
-    expect(created.payload.session).toMatchObject({
-      agentProfileId: 'meeting',
-      agentProfileName: '会议 Agent',
-      productEdition: 'personal',
-    });
+    const personalMeetingDenied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('个人版'),
+    );
+    expect(personalMeetingDenied.type).toBe('error');
 
     client.send({
       type: 'create_session',
       payload: { title: '做一份演示', agentProfileId: 'ppt' },
     });
-    const personalExpert = await client.waitFor(
-      (f) => f.type === 'session_upsert' && f.payload.session.agentProfileId === 'ppt',
+    const personalPptDenied = await client.waitFor(
+      (f) => f.type === 'error'
+        && f.payload.code === 'forbidden_agent_profile'
+        && f.payload.message.includes('个人版'),
     );
-    if (personalExpert.type !== 'session_upsert') throw new Error('unreachable');
-    expect(personalExpert.payload.session).toMatchObject({
-      agentProfileName: 'PPT 创作专家',
-      productEdition: 'personal',
-      messageCount: 1,
-    });
-    client.send({
-      type: 'get_history',
-      payload: { sessionId: personalExpert.payload.session.sessionId },
-    });
-    const expertGreeting = await client.waitFor(
-      (f) => f.type === 'history'
-        && f.payload.sessionId === personalExpert.payload.session.sessionId,
-    );
-    if (expertGreeting.type !== 'history') throw new Error('unreachable');
-    expect(expertGreeting.payload.messages).toHaveLength(1);
-    expect(expertGreeting.payload.messages[0]).toMatchObject({
-      role: 'assistant',
-      source: 'local',
-      content: [{
-        type: 'text',
-        value: expect.stringContaining('Hello，我是 PPT 创作专家'),
-      }],
-    });
-    expect(expertGreeting.payload.messages[0].content[0]).toMatchObject({
-      value: expect.stringContaining('我可以帮你'),
-    });
+    expect(personalPptDenied.type).toBe('error');
 
     client.send({
       type: 'create_session',

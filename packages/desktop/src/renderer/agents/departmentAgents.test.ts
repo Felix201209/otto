@@ -31,18 +31,21 @@ const COMMON_EXPERT_IDS = [
 ];
 
 describe('fixed Agent profile catalog', () => {
-  it('keeps exactly 9 visible Agents for every identity with the matching foundation first', () => {
-    const expectedByIdentity = [
-      [getPersonalAgentProfiles(), 'otto-personal'],
-      [getEnterpriseAgentProfiles('company_owner'), 'otto-enterprise-work'],
-      [getEnterpriseAgentProfiles('company_admin'), 'otto-enterprise-work'],
-      [getEnterpriseAgentProfiles('manager'), 'otto-enterprise-work'],
-      [getEnterpriseAgentProfiles('member', 'marketing'), 'otto-enterprise-work'],
+  it('keeps the fixed 9 Agents enterprise-only and personal mode on Otto', () => {
+    expect(getPersonalAgentProfiles().map((profile) => profile.id)).toEqual([
+      'otto-personal',
+    ]);
+
+    const enterpriseCatalogs = [
+      getEnterpriseAgentProfiles('company_owner'),
+      getEnterpriseAgentProfiles('company_admin'),
+      getEnterpriseAgentProfiles('manager'),
+      getEnterpriseAgentProfiles('member', 'marketing'),
     ] as const;
 
-    for (const [profiles, foundationId] of expectedByIdentity) {
+    for (const profiles of enterpriseCatalogs) {
       expect(profiles.map((profile) => profile.id)).toEqual([
-        foundationId,
+        'otto-enterprise-work',
         ...COMMON_EXPERT_IDS,
       ]);
       expect(profiles).toHaveLength(9);
@@ -101,10 +104,7 @@ describe('fixed Agent profile catalog', () => {
       systemPrompt: 'Generated system prompt that should not enter the fixed catalog.',
     }]);
 
-    expect(getPersonalAgentProfiles().map((profile) => profile.id)).toEqual([
-      'otto-personal',
-      ...COMMON_EXPERT_IDS,
-    ]);
+    expect(getPersonalAgentProfiles().map((profile) => profile.id)).toEqual(['otto-personal']);
     expect(getEnterpriseAgentProfiles('company_owner').map((profile) => profile.id)).toEqual([
       'otto-enterprise-work',
       ...COMMON_EXPERT_IDS,
@@ -137,10 +137,7 @@ describe('fixed Agent profile catalog', () => {
       },
     ]);
 
-    expect(getPersonalAgentProfiles().map((profile) => profile.id)).toEqual([
-      'otto-personal',
-      ...COMMON_EXPERT_IDS,
-    ]);
+    expect(getPersonalAgentProfiles().map((profile) => profile.id)).toEqual(['otto-personal']);
   });
 
   it('keeps ids stable and system prompts private', () => {

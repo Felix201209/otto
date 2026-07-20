@@ -43,7 +43,7 @@ function expectIdentityProfiles(
 }
 
 describe('服务端 Agent profile 白名单', () => {
-  it('保留一个历史 CEO profile，但当前目录只使用个人/企业工作基础 Agent和8位专家', () => {
+  it('保留一个历史 CEO profile，但固定 9 个工作 Agent 全部属于企业版', () => {
     expect(BUILTIN_AGENT_PROFILES).toHaveLength(12);
     expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'base')).toHaveLength(12);
     expect(BUILTIN_AGENT_PROFILES.filter((item) => item.scope === 'department')).toHaveLength(0);
@@ -63,12 +63,12 @@ describe('服务端 Agent profile 白名单', () => {
       edition: 'enterprise',
     });
     for (const id of COMMON_EXPERT_IDS) {
-      expect(resolveAgentProfile(id)).toMatchObject({ scope: 'base', edition: 'both' });
+      expect(resolveAgentProfile(id)).toMatchObject({ scope: 'base', edition: 'enterprise' });
     }
   });
 
-  it('每种产品身份严格只允许匹配的基础 Agent 加 8 位通用专家', () => {
-    expectIdentityProfiles(allowedProfileIds('personal', 'member'), 'otto-personal');
+  it('个人只允许 Otto，四种企业角色都允许固定 9 个企业工作 Agent', () => {
+    expect(allowedProfileIds('personal', 'member')).toEqual(['otto-personal']);
     expectIdentityProfiles(
       allowedProfileIds('enterprise', 'company_owner'),
       'otto-enterprise-work',

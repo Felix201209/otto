@@ -91,7 +91,7 @@ function baseExpertProfile(
   return { ...spec, scope: 'base', department: null };
 }
 
-/** The eight fixed base experts. */
+/** The eight fixed enterprise work experts. */
 export const COMMON_EXPERT_PROFILES: readonly AgentProfile[] = [
   baseExpertProfile({
     id: 'ppt',
@@ -175,12 +175,12 @@ export const COMMON_EXPERT_PROFILES: readonly AgentProfile[] = [
   }),
 ];
 
-/** Personal UI catalog: personal Otto plus the eight common experts. */
+/** Personal UI catalog: enterprise work Agents must never leak into this list. */
 export const BASE_AGENT_PROFILES: readonly AgentProfile[] = [
   PERSONAL_OTTO_PROFILE,
-  ...COMMON_EXPERT_PROFILES,
 ];
 
+/** The fixed 9 enterprise work Agents: one general work Agent plus eight experts. */
 const ENTERPRISE_WORK_AGENT_PROFILES: readonly AgentProfile[] = [
   ENTERPRISE_WORK_PROFILE,
   ...COMMON_EXPERT_PROFILES,

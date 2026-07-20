@@ -222,7 +222,8 @@ const commonExpertProfiles = commonExpertSpecs.map<ServerAgentProfile>(
     id,
     name,
     scope: 'base',
-    edition: 'both',
+    edition: 'enterprise',
+    roles: ['company_owner', 'company_admin', 'manager', 'member'],
     skills,
     ...(EXPERT_EMBEDDED[id] ? { embeddedSkills: EXPERT_EMBEDDED[id] } : {}),
     systemPrompt: CUSTOM_PROMPTS[id]
