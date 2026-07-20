@@ -1067,6 +1067,11 @@ function registerIpc(): void {
         saveEnterpriseSession,
       );
     });
+    // 注销后完全重置本机所有用户数据（企业身份、会话历史、知识库、Skill 等）
+    try {
+      const userDir = path.join(os.homedir(), '.otto-user');
+      fs.rmSync(userDir, { recursive: true, force: true });
+    } catch { /* 目录不存在或权限不足，忽略 */ }
   });
   ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
     if (typeof token !== 'string' || token.trim().length === 0) {

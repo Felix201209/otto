@@ -2618,6 +2618,12 @@ export class OttoServer {
         });
         return;
       }
+      case 'destroy_product_workspace': {
+        this.productWorkspace.destroyAllUserData();
+        const workspace = this.productWorkspace.snapshot();
+        this.broadcastAll({ type: 'product_workspace', payload: workspace });
+        return;
+      }
       case 'join_enterprise': {
         try {
           const workspace = this.productWorkspace.acceptInvite(

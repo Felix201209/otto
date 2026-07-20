@@ -382,6 +382,30 @@ export class ProductWorkspaceStore {
     return this.snapshot();
   }
 
+  /** 完全销毁本机所有用户数据——注销/退出企业时调用。 */
+  destroyAllUserData(): void {
+    try {
+      // 递归删除整个 rootDir（默认 ~/.otto-user/）
+      // 这会清除 product-workspace.json、会话历史、知识库、Skill、记忆等全部数据
+      fs.rmSync(this.rootDir, { recursive: true, force: true });
+    } catch {
+      // rootDir 已不存在或权限不足，忽略
+    }
+    // 重建目录并创建全新的空白个人版状态
+    fs.mkdirSync(this.rootDir, { recursive: true });
+    this.state = {
+      schemaVersion: 1,
+      personalUserId: randomUUID(),
+      personalDisplayName: undefined,
+      context: createPersonalContext({ userId: this.state.personalUserId || randomUUID() }),
+      members: [],
+      friends: [],
+      credits: { balance: 0, frozen: 0, status: 'design-preview' },
+      redemptions: [],
+    };
+    this.save();
+  }
+
   issueInvite(input: IssueInviteInput): IssuedWorkspaceInvite {
     this.assertLocalIdentityMutable();
     if (!this.state.context.capabilities.includes('invite:issue')) {
