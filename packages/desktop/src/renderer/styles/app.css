@@ -1830,7 +1830,6 @@ h6.otto-prose__h {
   cursor: not-allowed;
 }
 
-.otto-voice-btn.is-recording { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); animation: otto-voice-pulse 1.2s ease-in-out infinite; }
 .otto-composer__voice-error { padding: 0 14px 8px; color: #ef4444; font-size: 11px; }
 @keyframes otto-voice-pulse { 50% { opacity: .55; } }
 .otto-voice-recorder { min-height: 76px; padding: 12px 14px 12px 24px; display: flex; align-items: center; gap: 12px; }
@@ -6415,6 +6414,13 @@ h6.otto-prose__h {
 .otto-worklog-panel__head strong { font-size: 11px; color: var(--otto-text); }
 .otto-worklog-panel__head span { font-size: 8.5px; color: var(--otto-text-tertiary); }
 .otto-worklog-panel__head button { border: 0; background: transparent; color: var(--otto-accent); font-size: 9px; cursor: pointer; }
+.otto-enterprise-memory-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.otto-enterprise-memory-card { border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-surface); padding: 10px; }
+.otto-enterprise-memory-card__meta,
+.otto-enterprise-memory-card__foot { display: flex; flex-wrap: wrap; gap: 6px; color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-enterprise-memory-card__meta span { border: 1px solid var(--otto-border); border-radius: 999px; padding: 2px 6px; background: var(--otto-bg); }
+.otto-enterprise-memory-card p { margin: 8px 0; color: var(--otto-text); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.otto-enterprise-memory-card__foot { justify-content: space-between; }
 .otto-worklog-panel__hero { padding: 12px; border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--otto-accent) 16%, var(--otto-surface)), var(--otto-surface)); border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border)); }
 .otto-worklog-panel__hero > div { display: flex; align-items: baseline; gap: 5px; }
 .otto-worklog-panel__hero strong { color: var(--otto-accent); font-size: 26px; line-height: 1; }

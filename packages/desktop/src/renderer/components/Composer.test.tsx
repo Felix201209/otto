@@ -421,35 +421,11 @@ describe('模型菜单 provider 分组与勾选', () => {
 });
 
 describe('语音录音配件', () => {
-  it('未启用语音配置时按钮仍可点击，并立即进入波形计时录音条', async () => {
-    const start = vi.fn();
-    class FakeMediaRecorder {
-      mimeType = 'audio/webm';
-      ondataavailable: ((event: { data: Blob }) => void) | null = null;
-      onstop: (() => void) | null = null;
-      constructor(_stream: MediaStream) {}
-      start = start;
-      stop = vi.fn();
-    }
-    Object.defineProperty(window, 'MediaRecorder', { value: FakeMediaRecorder, configurable: true });
-    Object.defineProperty(navigator, 'mediaDevices', {
-      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })) },
-      configurable: true,
-    });
-    (window as unknown as { otto: unknown }).otto = {
-      voiceGetConfig: async () => ({ enabled: false }),
-      voiceTranscribe: vi.fn(),
-    };
+  it('输入栏不再展示语音输入图标入口', () => {
     render(
       <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
     );
-    const button = await screen.findByRole('button', { name: '语音输入' });
-    expect((button as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(button);
-    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('group', { name: '语音录音中' })).toBeTruthy();
-    expect(screen.getByLabelText('录音时长').textContent).toBe('0:00');
-    expect(screen.getByRole('button', { name: '停止录音' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '语音输入' })).toBeNull();
   });
 });
 

@@ -45,7 +45,6 @@ import {
   IconSettings,
   IconStop,
   IconClose,
-  IconMicrophone,
 } from './icons.js';
 
 async function blobToWav(blob: Blob): Promise<Uint8Array> {
@@ -281,9 +280,8 @@ export function Composer({
   const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const [, setVoiceProcessing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceWave, setVoiceWave] = useState<number[]>(() => Array.from({ length: 34 }, (_, i) => 8 + (i % 5) * 3));
@@ -296,10 +294,6 @@ export function Composer({
   const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  React.useEffect(() => {
-    void window.otto?.voiceGetConfig?.().then((c) => setVoiceEnabled(c.enabled)).catch(() => setVoiceEnabled(false));
-  }, []);
 
   const stopVoiceMeter = (): void => {
     if (voiceTimerRef.current !== null) window.clearInterval(voiceTimerRef.current);
@@ -956,17 +950,6 @@ export function Composer({
             disabled={disabled || attaching}
           >
             <IconPaperclip size={17} />
-          </button>
-
-          <button
-            type="button"
-            className={`otto-attach otto-voice-btn${recording ? ' is-recording' : ''}`}
-            title={!voiceEnabled ? '语音输入（可直接录音，停止后如缺配置会提示）' : voiceProcessing ? '正在识别…' : '语音输入'}
-            aria-label="语音输入"
-            onClick={toggleVoice}
-            disabled={disabled || voiceProcessing}
-          >
-            <IconMicrophone size={17} />
           </button>
 
           <div className="otto-authorization">
