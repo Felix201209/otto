@@ -71,8 +71,12 @@ const HISTORY: Record<string, Frame[]> = {
 };
 
 const MODELS: Frame[] = [
-  { id: 'claude-opus-4', displayName: 'claude-opus-4' },
-  { id: 'claude-sonnet-4', displayName: 'claude-sonnet-4' },
+  { id: 'claude-opus-4', displayName: 'Claude Opus 4' },
+  { id: 'claude-sonnet-4', displayName: 'Claude Sonnet 4' },
+  { id: 'gpt-5', displayName: 'GPT-5' },
+  { id: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
+  { id: 'deepseek-v4', displayName: 'DeepSeek V4' },
+  { id: 'glm-5', displayName: 'GLM-5' },
 ];
 
 const mockBridge = {
