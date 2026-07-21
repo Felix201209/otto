@@ -111,7 +111,8 @@ type Action =
   | { kind: 'system_note'; markdown: string }
   | { kind: 'local_error'; message: string }
   | { kind: 'clear_error' }
-  | { kind: 'pending_create'; clientRequestId: string };
+  | { kind: 'pending_create'; clientRequestId: string }
+  | { kind: 'set_optimistic_model'; model: string; sessionId: string };
 
 function upsertSession(
   state: OttoState,
@@ -291,6 +292,15 @@ function reducer(state: OttoState, action: Action): OttoState {
     case 'pending_create':
       return { ...state, pendingCreateRequestId: action.clientRequestId };
 
+    case 'set_optimistic_model': {
+      // 乐观更新：不等服务器回 models_list，立即更新前端状态。
+      const sessions = { ...state.sessions };
+      if (sessions[action.sessionId]) {
+        sessions[action.sessionId] = { ...sessions[action.sessionId], model: action.model };
+      }
+      return { ...state, sessions, currentModel: action.model };
+    }
+
     case 'frame':
       return applyFrame(state, action.frame);
 
@@ -444,19 +454,22 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     }
 
     case 'models_list': {
-      const retainedCurrent = state.currentModel
-        ? frame.payload.models.some(
-            (model) =>
-              model.id === state.currentModel && model.enabled !== false,
-          )
+      // 服务器确认的 current 始终优先（set_model/handleSetModel 发回的权威值）。
+      // 仅在服务器未指定 current 时，才回退到前端保留的旧值（保留逻辑：旧值仍有效则保留，否则置 null）。
+      const serverCurrent = frame.payload.current;
+      const retainedCurrent =
+        serverCurrent === undefined &&
+        state.currentModel &&
+        frame.payload.models.some(
+          (model) => model.id === state.currentModel && model.enabled !== false,
+        )
           ? state.currentModel
-          : null
-        : null;
+          : null;
       return {
         ...state,
         models: frame.payload.models,
         modelsLoaded: true,
-        currentModel: frame.payload.current ?? retainedCurrent,
+        currentModel: serverCurrent ?? retainedCurrent,
       };
     }
 
@@ -893,6 +906,8 @@ export function useOttoStore(): UseOttoStore {
   const setModel = useCallback((model: string) => {
     const sessionId = activeRef.current;
     if (!sessionId) return;
+    // 乐观更新：不等服务器确认，立即更新 UI
+    dispatch({ kind: 'set_optimistic_model', model, sessionId });
     transport.send({ type: 'set_model', payload: { sessionId, model } });
   }, []);
 

@@ -101,6 +101,7 @@ import {
   loadPreferredModel,
   replaceCustomModel,
   saveCustomModel,
+  savePreferredModel,
 } from './customModels.js';
 import {
   loadUserSettingsSubset,
@@ -1104,6 +1105,9 @@ export class OttoServer {
       await this.store.getRuntime(sessionId)?.setModel(model);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[model-switch] FAILED session=${sessionId} model=${model} error=${message}`,
+      );
       return this.send(
         conn.socket,
         errorFrame(
@@ -1114,6 +1118,12 @@ export class OttoServer {
       );
     }
     this.store.patchSessionModel(sessionId, model);
+    // 持久化模型偏好：确保重启/多窗口 models_list 广播使用最新模型
+    savePreferredModel(model);
+    // 模型切换成功日志
+    console.log(
+      `[model-switch] session=${sessionId} model=${model}`,
+    );
     // 回发带 current 的 models_list，让 renderer 模型药丸/菜单勾号反映真实生效模型。
     this.send(conn.socket, {
       type: 'models_list',

@@ -130,6 +130,15 @@ export function loadPreferredModel(): string | undefined {
 }
 
 /**
+ * 仅更新 `_metadata.preferredModel`，不修改模型列表。
+ * 用于运行时模型切换（set_model 帧）的持久化。
+ */
+export function savePreferredModel(modelId: string): void {
+  const models = loadCustomModels();
+  saveCustomModels(models, modelId);
+}
+
+/**
  * 加载自定义模型配置（只读）。
  * 文件不存在 / 格式非法 / 校验失败的条目都会被安全跳过，返回干净列表。
  */
