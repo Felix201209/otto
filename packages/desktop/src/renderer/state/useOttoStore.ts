@@ -651,10 +651,12 @@ export function useOttoStore(): UseOttoStore {
           ?.map((c: { type: string; value?: string; values?: string[] }) =>
             c.type === 'text' ? c.value : c.type === 'file_reference' ? '[文件]' : '')
           .join(' ')?.slice(0, 200) ?? '';
+        const session = sessionsRef.current[msg.sessionId];
+        const sender = session?.title || undefined;
         void window.otto.notificationShow({
           sessionId: msg.sessionId,
           source: msg.source!,
-          sender: undefined,
+          sender,
           preview: preview || '(非文本消息)',
         });
       }
