@@ -411,7 +411,28 @@ describe('enterprise auth identity synchronization', () => {
     expect(synchronize).toHaveBeenCalledWith(null);
   });
 
-  it('退出即使中心 logout 失败也会持久化退出态并清本机身份', async () => {
+  it('退出不等待中心响应，立即持久化退出态并清本机身份', async () => {
+    let finishRemoteLogout!: () => void;
+    const remoteLogout = new Promise<void>((resolve) => {
+      finishRemoteLogout = resolve;
+    });
+    const logout = vi.fn(() => remoteLogout);
+    const persist = vi.fn();
+    const synchronize = vi.fn(async () => undefined);
+
+    await expect(logoutAndClearEnterpriseIdentity(
+      { logout },
+      synchronize,
+      persist,
+    )).resolves.toBeUndefined();
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(synchronize).toHaveBeenCalledWith(null);
+    finishRemoteLogout();
+    await remoteLogout;
+  });
+
+  it('中心 logout 后台失败也不会把客户端卡在已登录状态', async () => {
     const logoutError = new Error('中心服务暂不可达');
     const logout = vi.fn(async () => { throw logoutError; });
     const persist = vi.fn();
@@ -421,7 +442,7 @@ describe('enterprise auth identity synchronization', () => {
       { logout },
       synchronize,
       persist,
-    )).rejects.toThrow('中心服务暂不可达');
+    )).resolves.toBeUndefined();
 
     expect(persist).toHaveBeenCalledOnce();
     expect(synchronize).toHaveBeenCalledWith(null);

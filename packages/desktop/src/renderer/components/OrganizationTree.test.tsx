@@ -363,6 +363,71 @@ describe('OrganizationTree', () => {
     expect(screen.queryByText('北辰科技')).toBeNull();
   });
 
+  it('CEO 保存职位后按修订号重新读取服务端组织树', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme', name: '星河科技', status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [],
+      employeeCount: 0,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    const { rerender } = render(
+      <OrganizationTree
+        workspace={null}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        refreshRevision={0}
+      />,
+    );
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+
+    rerender(
+      <OrganizationTree
+        workspace={null}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        refreshRevision={1}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledTimes(2));
+  });
+
+  it('员工收到后台身份更新后按 updatedAt 重新读取服务端组织树', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme', name: '星河科技', status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [],
+      employeeCount: 0,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    const { rerender } = render(
+      <OrganizationTree
+        workspace={null}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+
+    rerender(
+      <OrganizationTree
+        workspace={null}
+        enterpriseAccount={{
+          ...authenticatedEnterpriseAccount,
+          department: '产品部',
+          positionTitle: '产品经理',
+          updatedAt: '2026-07-20T12:00:00.000Z',
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledTimes(2));
+  });
+
   it('本机企业成员只有内测假身份时不调用远程接口', () => {
     const enterpriseOrganizationView = vi.fn();
     Object.assign(window.otto, { enterpriseOrganizationView });

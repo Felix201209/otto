@@ -4,9 +4,10 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EnterpriseAccount } from '../../preload/index.js';
 import { useEnterpriseAuth } from './useEnterpriseAuth.js';
 
-const ACCOUNT = {
+const ACCOUNT: EnterpriseAccount = {
   id: 'acc_1',
   organizationId: 'org_acme',
   organizationName: '星河科技',
@@ -16,6 +17,8 @@ const ACCOUNT = {
   name: '员工一号',
   role: null,
   department: null,
+  positionId: null,
+  positionTitle: null,
   isAdmin: false,
   status: 'active' as const,
   tags: [],
@@ -39,11 +42,13 @@ const UPGRADED_ACCOUNT = {
 
 let intentHandler: ((intent: { inviteCode: string; serverUrl?: string }) => void) | null = null;
 let invalidatedHandler: (() => void) | null = null;
+let accountUpdatedHandler: ((account: typeof ACCOUNT) => void) | null = null;
 let bridge: Record<string, ReturnType<typeof vi.fn>>;
 
 beforeEach(() => {
   intentHandler = null;
   invalidatedHandler = null;
+  accountUpdatedHandler = null;
   bridge = {
     enterpriseSession: vi.fn(async () => ({
       serverUrl: 'https://enterprise.otto.test',
@@ -59,6 +64,10 @@ beforeEach(() => {
     onEnterpriseSessionInvalidated: vi.fn((handler: () => void) => {
       invalidatedHandler = handler;
       return () => { invalidatedHandler = null; };
+    }),
+    onEnterpriseAccountUpdated: vi.fn((handler: (account: typeof ACCOUNT) => void) => {
+      accountUpdatedHandler = handler;
+      return () => { accountUpdatedHandler = null; };
     }),
     enterprisePasswordLogin: vi.fn(),
     enterpriseSmsLoginRequest: vi.fn(async () => ({
@@ -271,6 +280,50 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.status).toBe('signed-out');
     expect(view.result.current.state.account).toBeNull();
     expect(view.result.current.state.error).toBe('登录已失效，请重新登录');
+  });
+
+  it('后台身份刷新后立即更新员工部门与职位，不要求退出重登', async () => {
+    bridge.enterpriseSession.mockResolvedValueOnce({
+      serverUrl: 'https://enterprise.otto.test',
+      account: ACCOUNT,
+    });
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
+
+    act(() => accountUpdatedHandler?.({
+      ...ACCOUNT,
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
+    }));
+
+    expect(view.result.current.state.account).toMatchObject({
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
+    });
+  });
+
+  it('忽略同一账号较旧的后台身份事件，避免延迟事件覆盖新职位', async () => {
+    bridge.enterpriseSession.mockResolvedValueOnce({
+      serverUrl: 'https://enterprise.otto.test',
+      account: { ...ACCOUNT, updatedAt: '2026-07-20T12:00:00.000Z' },
+    });
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
+
+    act(() => accountUpdatedHandler?.({
+      ...ACCOUNT,
+      department: '旧部门',
+      positionTitle: '旧职位',
+      updatedAt: '2026-07-20T11:59:00.000Z',
+    }));
+
+    expect(view.result.current.state.account).toMatchObject({
+      department: null,
+      positionTitle: null,
+      updatedAt: '2026-07-20T12:00:00.000Z',
+    });
   });
 
   it('会话失效事件发生后，较早发起的登录响应不能把过期界面重新登录', async () => {

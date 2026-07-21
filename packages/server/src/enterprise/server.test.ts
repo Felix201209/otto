@@ -720,6 +720,8 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain("avatarUrl:$('editAvatarUrl').value.trim()||null");
     expect(html).toContain("method:'DELETE'");
     expect(html).toContain('删除账号');
+    expect(html).toContain('data-delete-id');
+    expect(html).toContain('deleteAccountFromRow');
     expect(html).toContain('href="/enterprise/admin/platform"');
     expect(html).toContain('多企业管理');
     expect(html).not.toContain(ADMIN_TOKEN);

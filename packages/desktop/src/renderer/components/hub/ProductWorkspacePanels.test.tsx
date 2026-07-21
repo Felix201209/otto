@@ -98,7 +98,13 @@ const centralMember: EnterpriseAccount = {
 describe('OrganizationPanel', () => {
   it('中心账号存在时只显示中心身份，并隐藏全部本机自声明入口', () => {
     const { value } = product(enterprise());
-    render(<OrganizationPanel product={value} enterpriseAccount={centralMember} />);
+    render(
+      <OrganizationPanel
+        product={value}
+        enterpriseAccount={centralMember}
+        onManageAccounts={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText('中心企业')).toBeTruthy();
     expect(screen.getByText('中心成员')).toBeTruthy();
@@ -112,6 +118,22 @@ describe('OrganizationPanel', () => {
     expect(screen.queryByText('生成职位邀请链接')).toBeNull();
     expect(screen.queryByText(/本机成员总览/)).toBeNull();
     expect(screen.queryByText(/总分公司关系/)).toBeNull();
+    expect(screen.queryByRole('button', { name: '管理员工职位' })).toBeNull();
+  });
+
+  it('中心企业管理员可从企业与身份页直达真实员工职位管理', () => {
+    const { value } = product(enterprise());
+    const onManageAccounts = vi.fn();
+    render(
+      <OrganizationPanel
+        product={value}
+        enterpriseAccount={{ ...centralMember, isAdmin: true }}
+        onManageAccounts={onManageAccounts}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '管理员工职位' }));
+    expect(onManageAccounts).toHaveBeenCalledOnce();
   });
 
   it('个人版管理者建档会提交企业信息并构建框架', () => {

@@ -154,9 +154,11 @@ export function formatInviteRemaining(expiresAt: string, now = Date.now()): stri
 export function AccountManagementPage({
   currentAccount,
   onBack,
+  onOrganizationChanged,
 }: {
   currentAccount: EnterpriseAccount;
   onBack: () => void;
+  onOrganizationChanged?: () => void;
 }): React.JSX.Element {
   const [accounts, setAccounts] = useState<EnterpriseAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -164,6 +166,7 @@ export function AccountManagementPage({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<EnterpriseAccount | 'new' | null>(null);
+  const [editorMode, setEditorMode] = useState<'identity' | 'assignment'>('identity');
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [draft, setDraft] = useState<AccountDraft>(EMPTY_DRAFT);
   const [inviteContext, setInviteContext] = useState<EnterpriseOrganizationInviteContext | null>(null);
@@ -297,6 +300,7 @@ export function AccountManagementPage({
       ? document.activeElement
       : null;
     setEditing('new');
+    setEditorMode('identity');
     setDeleteArmed(false);
     setDraft(EMPTY_DRAFT);
     setError(null);
@@ -307,6 +311,31 @@ export function AccountManagementPage({
       ? document.activeElement
       : null;
     setEditing(account);
+    setEditorMode('identity');
+    setDeleteArmed(false);
+    setDraft({
+      username: account.username,
+      password: '',
+      name: account.name,
+      phone: account.phone?.replace(/^\+86/, '') ?? '',
+      feishuOpenId: account.feishuOpenId ?? '',
+      avatarUrl: account.avatarUrl ?? '',
+      positionTitle: account.positionTitle ?? '',
+      role: account.role ?? '',
+      department: account.department ?? '',
+      tags: account.tags.join('，'),
+      isAdmin: account.isAdmin,
+      status: account.status,
+    });
+    setError(null);
+  };
+
+  const openAssignment = (account: EnterpriseAccount): void => {
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setEditing(account);
+    setEditorMode('assignment');
     setDeleteArmed(false);
     setDraft({
       username: account.username,
@@ -378,16 +407,23 @@ export function AccountManagementPage({
         saved = await window.otto.enterpriseAccountCreate(input);
         setAccounts((list) => [...list, saved]);
       } else if (editing) {
-        const input: EnterpriseAccountUpdateInput = {
-          ...common,
-          status: draft.status,
-          ...(draft.password ? { password: draft.password } : {}),
-        };
+        const input: EnterpriseAccountUpdateInput = editorMode === 'assignment'
+          ? {
+            department: draft.department.trim() || null,
+            positionTitle: draft.positionTitle.trim() || null,
+            role: draft.role.trim() || null,
+          }
+          : {
+            ...common,
+            status: draft.status,
+            ...(draft.password ? { password: draft.password } : {}),
+          };
         saved = await window.otto.enterpriseAccountUpdate(editing.id, input);
         setAccounts((list) => list.map((item) => item.id === saved.id ? saved : item));
       } else {
         return;
       }
+      onOrganizationChanged?.();
       setEditing(null);
       setDeleteArmed(false);
     } catch (cause) {
@@ -409,6 +445,7 @@ export function AccountManagementPage({
     try {
       await window.otto.enterpriseAccountDelete(editing.id);
       setAccounts((list) => list.filter((account) => account.id !== editing.id));
+      onOrganizationChanged?.();
       setEditing(null);
       setDeleteArmed(false);
     } catch (cause) {
@@ -732,7 +769,12 @@ export function AccountManagementPage({
                     </div>
                   </td>
                   <td><div className="otto-account-table__state">{account.isAdmin ? <span className="is-admin">管理员</span> : <span>成员</span>}<span className={account.status === 'active' ? 'is-active' : 'is-disabled'}>{account.status === 'active' ? '可登录' : '已停用'}</span>{account.tags.includes('维修工作人员') ? <span className="is-admin">维修人员</span> : null}{account.phone ? <span className="is-sms">短信</span> : null}{account.feishuOpenId ? <span className="is-sms">飞书</span> : null}</div></td>
-                  <td><button type="button" onClick={() => openEdit(account)} aria-label={`编辑 ${account.name}`}>编辑</button></td>
+                  <td>
+                    <div className="otto-account-table__actions">
+                      <button type="button" className="is-primary" onClick={() => openAssignment(account)} aria-label={`安排职位 ${account.name}`}>安排职位</button>
+                      <button type="button" onClick={() => openEdit(account)} aria-label={`编辑 ${account.name}`}>编辑身份</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -748,12 +790,12 @@ export function AccountManagementPage({
             className="otto-account-editor"
             role="dialog"
             aria-modal="true"
-            aria-label={editing === 'new' ? '新增账号' : '编辑账号'}
+            aria-label={editorMode === 'assignment' ? '安排员工职位' : editing === 'new' ? '新增账号' : '编辑账号'}
             tabIndex={-1}
             onKeyDown={handleEditorKeyDown}
           >
-            <header><div><span>{editing === 'new' ? 'NEW IDENTITY' : 'IDENTITY DETAIL'}</span><h2>{editing === 'new' ? '添加企业成员' : '编辑成员身份'}</h2><p>账号、手机和角色决定成员如何进入 Otto 及能访问的空间。</p></div><button type="button" onClick={closeEditor} disabled={saving} aria-label="关闭">×</button></header>
-            <section className="otto-account-templates" aria-label="账户模板">
+            <header><div><span>{editorMode === 'assignment' ? 'POSITION ASSIGNMENT' : editing === 'new' ? 'NEW IDENTITY' : 'IDENTITY DETAIL'}</span><h2>{editorMode === 'assignment' ? `安排 ${editing === 'new' ? '' : editing.name} 的职位` : editing === 'new' ? '添加企业成员' : '编辑成员身份'}</h2><p>{editorMode === 'assignment' ? '任命会同步到企业组织树、员工档案和该员工下一次身份读取。' : '账号、手机和角色决定成员如何进入 Otto 及能访问的空间。'}</p></div><button type="button" onClick={closeEditor} disabled={saving} aria-label="关闭">×</button></header>
+            {editorMode === 'identity' ? <section className="otto-account-templates" aria-label="账户模板">
               <div><strong>账户模板</strong><small>先选一个最接近的岗位，再按需调整</small></div>
               <div>
                 {ACCOUNT_TEMPLATES.map((template) => (
@@ -766,26 +808,30 @@ export function AccountManagementPage({
                   </button>
                 ))}
               </div>
-            </section>
+            </section> : null}
             <div className="otto-account-editor__grid">
-              <label><span>登录账号</span><input ref={initialFocusRef} aria-label="登录账号" value={draft.username} onChange={(e) => setDraft((v) => ({ ...v, username: e.target.value }))} required /></label>
-              <label><span>显示名称</span><input aria-label="显示名称" value={draft.name} onChange={(e) => setDraft((v) => ({ ...v, name: e.target.value }))} required /></label>
-              <label><span>头像 URL</span><input aria-label="头像 URL" type="url" value={draft.avatarUrl} onChange={(e) => setDraft((v) => ({ ...v, avatarUrl: e.target.value }))} placeholder="https://… 或 data:image/…" /></label>
-              <label><span>手机号码</span><input aria-label="手机号码" inputMode="tel" value={draft.phone} onChange={(e) => setDraft((v) => ({ ...v, phone: e.target.value }))} placeholder="用于短信验证码登录" /></label>
-              <label><span>飞书 open_id</span><input aria-label="飞书 open_id" value={draft.feishuOpenId} onChange={(e) => setDraft((v) => ({ ...v, feishuOpenId: e.target.value }))} placeholder="例如：ou_xxx，用于报修通知" /></label>
-              <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
-              <label><span>职位 / 岗位</span><input aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value }))} placeholder="例如：品牌运营" /></label>
+              {editorMode === 'identity' ? <>
+                <label><span>登录账号</span><input ref={initialFocusRef} aria-label="登录账号" value={draft.username} onChange={(e) => setDraft((v) => ({ ...v, username: e.target.value }))} required /></label>
+                <label><span>显示名称</span><input aria-label="显示名称" value={draft.name} onChange={(e) => setDraft((v) => ({ ...v, name: e.target.value }))} required /></label>
+                <label><span>头像 URL</span><input aria-label="头像 URL" type="url" value={draft.avatarUrl} onChange={(e) => setDraft((v) => ({ ...v, avatarUrl: e.target.value }))} placeholder="https://… 或 data:image/…" /></label>
+                <label><span>手机号码</span><input aria-label="手机号码" inputMode="tel" value={draft.phone} onChange={(e) => setDraft((v) => ({ ...v, phone: e.target.value }))} placeholder="用于短信验证码登录" /></label>
+                <label><span>飞书 open_id</span><input aria-label="飞书 open_id" value={draft.feishuOpenId} onChange={(e) => setDraft((v) => ({ ...v, feishuOpenId: e.target.value }))} placeholder="例如：ou_xxx，用于报修通知" /></label>
+                <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
+              </> : null}
+              <label><span>职位 / 岗位</span><input ref={editorMode === 'assignment' ? initialFocusRef : undefined} aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value }))} placeholder="例如：品牌运营" required={editorMode === 'assignment'} /></label>
               <label><span>角色</span><input aria-label="角色" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value }))} placeholder="例如：桌面支持" /></label>
               <label><span>部门</span><input aria-label="部门" list="otto-account-departments" value={draft.department} onChange={(e) => setDraft((v) => ({ ...v, department: e.target.value }))} placeholder="选择或输入部门" /><datalist id="otto-account-departments">{ACCOUNT_DEPARTMENT_PRESETS.map((department) => <option key={department} value={department} />)}</datalist></label>
-              <div className="otto-account-editor__field is-wide"><span>职责标签</span><div className="otto-account-tag-presets" aria-label="预设标签">{ACCOUNT_TAG_PRESETS.map((tag) => { const selected = tagsFromText(draft.tags).includes(tag); return <button key={tag} type="button" className={selected ? 'is-selected' : ''} aria-pressed={selected} onClick={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, tag) }))}>{tag}</button>; })}</div><input aria-label="账号标签" value={draft.tags} onChange={(e) => setDraft((v) => ({ ...v, tags: e.target.value }))} placeholder="也可输入自定义标签，用逗号分隔" /><small>标签参与专家权限、工单和任务路由。</small></div>
-              {editing !== 'new' ? <label><span>账号状态</span><select aria-label="账号状态" value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as AccountDraft['status'] }))}><option value="active">可登录</option><option value="disabled">停用</option></select></label> : null}
-              <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('维修工作人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '维修工作人员') }))} /><span>设为维修工作人员（新报修自动投递）</span></label>
-              <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('客服人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '客服人员') }))} /><span>设为园区客服人员（六类服务申请自动投递）</span></label>
-              <label className="otto-account-editor__check"><input type="checkbox" checked={draft.isAdmin} onChange={(e) => setDraft((v) => ({ ...v, isAdmin: e.target.checked }))} /><span>授予身份管理权限</span></label>
+              {editorMode === 'identity' ? <>
+                <div className="otto-account-editor__field is-wide"><span>职责标签</span><div className="otto-account-tag-presets" aria-label="预设标签">{ACCOUNT_TAG_PRESETS.map((tag) => { const selected = tagsFromText(draft.tags).includes(tag); return <button key={tag} type="button" className={selected ? 'is-selected' : ''} aria-pressed={selected} onClick={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, tag) }))}>{tag}</button>; })}</div><input aria-label="账号标签" value={draft.tags} onChange={(e) => setDraft((v) => ({ ...v, tags: e.target.value }))} placeholder="也可输入自定义标签，用逗号分隔" /><small>标签参与专家权限、工单和任务路由。</small></div>
+                {editing !== 'new' ? <label><span>账号状态</span><select aria-label="账号状态" value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as AccountDraft['status'] }))}><option value="active">可登录</option><option value="disabled">停用</option></select></label> : null}
+                <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('维修工作人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '维修工作人员') }))} /><span>设为维修工作人员（新报修自动投递）</span></label>
+                <label className="otto-account-editor__check"><input type="checkbox" checked={tagsFromText(draft.tags).includes('客服人员')} onChange={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, '客服人员') }))} /><span>设为园区客服人员（六类服务申请自动投递）</span></label>
+                <label className="otto-account-editor__check"><input type="checkbox" checked={draft.isAdmin} onChange={(e) => setDraft((v) => ({ ...v, isAdmin: e.target.checked }))} /><span>授予身份管理权限</span></label>
+              </> : null}
             </div>
             {error ? <div className="otto-account-page__error" role="alert">{error}</div> : null}
             <footer>
-              {editing !== 'new' && editing.id !== currentAccount.id ? (
+              {editorMode === 'identity' && editing !== 'new' && editing.id !== currentAccount.id ? (
                 <button
                   type="button"
                   className="is-danger"
@@ -796,9 +842,9 @@ export function AccountManagementPage({
                 </button>
               ) : null}
               <button type="button" onClick={closeEditor} disabled={saving}>取消</button>
-              <button type="button" className="is-primary" onClick={() => void save()} disabled={saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : '保存身份'}</button>
+              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.positionTitle.trim() : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
             </footer>
-            {editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
+            {editorMode === 'identity' && editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>
         </div>
       ) : null}

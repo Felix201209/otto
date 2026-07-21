@@ -426,6 +426,7 @@ const IPC = {
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
+  enterpriseAccountUpdated: 'otto:enterprise-account-updated',
   enterpriseRegister: 'otto:enterprise-register',
   enterpriseJoinOrganization: 'otto:enterprise-join-organization',
   enterpriseLogout: 'otto:enterprise-logout',
@@ -611,6 +612,7 @@ export interface OttoBridge {
     handler: (intent: EnterpriseRegistrationIntent) => void,
   ): () => void;
   onEnterpriseSessionInvalidated(handler: () => void): () => void;
+  onEnterpriseAccountUpdated(handler: (account: EnterpriseAccount) => void): () => void;
   enterpriseRegister(input: {
     challengeId: string;
     code: string;
@@ -1116,6 +1118,13 @@ const bridge: OttoBridge = {
     const listener = (): void => handler();
     ipcRenderer.on(IPC.enterpriseSessionInvalidated, listener);
     return () => ipcRenderer.removeListener(IPC.enterpriseSessionInvalidated, listener);
+  },
+  onEnterpriseAccountUpdated(handler: (account: EnterpriseAccount) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, account: EnterpriseAccount): void => {
+      handler(account);
+    };
+    ipcRenderer.on(IPC.enterpriseAccountUpdated, listener);
+    return () => ipcRenderer.removeListener(IPC.enterpriseAccountUpdated, listener);
   },
   enterpriseRegister(input: {
     challengeId: string;

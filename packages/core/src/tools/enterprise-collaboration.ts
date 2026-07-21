@@ -25,13 +25,17 @@ export type EnterpriseCollaborationAction =
   | 'list_messages'
   | 'send_message'
   | 'ask_peer_otto'
-  | 'consult_peer_otto';
+  | 'consult_peer_otto'
+  | 'assign_member_position';
 
 export interface EnterpriseCollaborationParams {
   action: EnterpriseCollaborationAction;
   recipientAccountId?: string;
   content?: string;
   question?: string;
+  department?: string;
+  positionTitle?: string;
+  role?: string;
 }
 
 interface RelayState {
@@ -46,6 +50,7 @@ const ACTIONS: readonly EnterpriseCollaborationAction[] = [
   'send_message',
   'ask_peer_otto',
   'consult_peer_otto',
+  'assign_member_position',
 ];
 
 const RECIPIENT_ACCOUNT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -59,6 +64,7 @@ Required workflow:
 3. Call send_message with recipientAccountId and content for an ordinary employee-to-employee message.
 4. Call ask_peer_otto with recipientAccountId and question only when the user asks another employee's Otto. The recipient controls permission and may allow all four permitted categories (current direct chat, enterprise knowledge, work logs, and schedules), allow only selected categories, or deny the request. This scope does not include files, API keys, or other chats. Respect the returned scope; never bypass it.
 5. Call consult_peer_otto with recipientAccountId and question only for the lower-frequency two-Otto negotiation flow, such as comparing schedules, agreeing on a meeting time, or producing a cooperation plan. The client performs the real negotiation.
+6. If and only if the authenticated user is an enterprise administrator, call assign_member_position with a list_members recipientAccountId, department, positionTitle, and optional role to make a real organization assignment. The client rechecks the administrator identity and same-organization member immediately before updating the account. Never claim success unless the client returns the updated member.
 
 When answering about the current user's own information, answer normally instead of calling ask_peer_otto. This tool is a structured confirmation relay: it does not access the network or filesystem and does not invent or hand-build A2A protocol messages. Every action must be executed by the client confirmation UI, and only the client's real JSON result may be treated as the outcome.`;
 
@@ -100,6 +106,21 @@ export class EnterpriseCollaborationTool extends BaseTool<
             description:
               'Question or negotiation goal (1-4000 characters). Used only by ask_peer_otto and consult_peer_otto.',
           },
+          department: {
+            type: Type.STRING,
+            description:
+              'Department name (1-160 characters). Used only by assign_member_position.',
+          },
+          positionTitle: {
+            type: Type.STRING,
+            description:
+              'Position title (1-160 characters). Used only by assign_member_position.',
+          },
+          role: {
+            type: Type.STRING,
+            description:
+              'Optional organization role label (1-160 characters). Used only by assign_member_position.',
+          },
         },
         required: ['action'],
       },
@@ -127,7 +148,15 @@ export class EnterpriseCollaborationTool extends BaseTool<
 
     const unknownFields = Object.keys(raw).filter(
       (key) =>
-        !['action', 'recipientAccountId', 'content', 'question'].includes(key),
+        ![
+          'action',
+          'recipientAccountId',
+          'content',
+          'question',
+          'department',
+          'positionTitle',
+          'role',
+        ].includes(key),
     );
     if (unknownFields.length > 0) {
       return `不接受未知参数：${unknownFields.join(', ')}`;
@@ -158,6 +187,27 @@ export class EnterpriseCollaborationTool extends BaseTool<
       if (questionError) return questionError;
     } else if (raw.question !== undefined) {
       return `${action} 不接受 question`;
+    }
+
+    if (action === 'assign_member_position') {
+      const departmentError = this.validateAssignmentText(
+        raw.department,
+        'department',
+      );
+      if (departmentError) return departmentError;
+      const positionError = this.validateAssignmentText(
+        raw.positionTitle,
+        'positionTitle',
+      );
+      if (positionError) return positionError;
+      if (raw.role !== undefined) {
+        const roleError = this.validateAssignmentText(raw.role, 'role');
+        if (roleError) return roleError;
+      }
+    } else {
+      for (const field of ['department', 'positionTitle', 'role'] as const) {
+        if (raw[field] !== undefined) return `${action} 不接受 ${field}`;
+      }
     }
 
     return null;
@@ -275,6 +325,20 @@ export class EnterpriseCollaborationTool extends BaseTool<
       value.length > MAX_TEXT_LENGTH
     ) {
       return `${field} 长度必须为 1 到 ${MAX_TEXT_LENGTH} 个字符`;
+    }
+    return null;
+  }
+
+  private validateAssignmentText(
+    value: unknown,
+    field: 'department' | 'positionTitle' | 'role',
+  ): string | null {
+    if (
+      typeof value !== 'string'
+      || value.trim().length < 1
+      || value.trim().length > 160
+    ) {
+      return `${field} 长度必须为 1 到 160 个字符`;
     }
     return null;
   }

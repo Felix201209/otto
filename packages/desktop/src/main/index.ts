@@ -101,6 +101,7 @@ import {
   EnterpriseJoinStateUncertainError,
   type AccountCreateInput,
   type AccountUpdateInput,
+  type EnterpriseAccount,
   type EnterpriseKnowledgeRecordInput,
 } from './enterprise-client.js';
 import {
@@ -235,6 +236,7 @@ const IPC = {
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
+  enterpriseAccountUpdated: 'otto:enterprise-account-updated',
   enterpriseRegister: 'otto:enterprise-register',
   enterpriseJoinOrganization: 'otto:enterprise-join-organization',
   enterpriseLogout: 'otto:enterprise-logout',
@@ -366,17 +368,26 @@ function startEnterpriseIdentityRefresh(): void {
     void enterpriseAuthOperations.run(async () => {
       if (!enterpriseClient.snapshot().token) return;
       const session = await enterpriseClient.getSession();
-      await refreshEnterpriseIdentityLease(
+      const outcome = await refreshEnterpriseIdentityLease(
         session,
         enterpriseClient,
         (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
         saveEnterpriseSession,
       );
+      if (outcome === 'refreshed' && session.account) {
+        notifyEnterpriseAccountUpdated(session.account);
+      }
     }).catch((error) => {
       console.warn('[otto-desktop] 刷新企业身份短租约失败:', error);
     });
   }, ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS);
   enterpriseIdentityRefreshTimer.unref?.();
+}
+
+function notifyEnterpriseAccountUpdated(account: EnterpriseAccount): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.enterpriseAccountUpdated, account);
+  }
 }
 
 function stopEnterpriseIdentityRefresh(): void {
@@ -1151,6 +1162,8 @@ function registerIpc(): void {
             (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
             saveEnterpriseSession,
           );
+          const current = enterpriseClient.authenticatedAccountSnapshot();
+          if (current) notifyEnterpriseAccountUpdated(current);
         }
         return updated;
       }),

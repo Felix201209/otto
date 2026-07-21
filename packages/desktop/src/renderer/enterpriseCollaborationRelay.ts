@@ -7,6 +7,7 @@
 
 import type {
   EnterpriseAccount,
+  EnterpriseAccountUpdateInput,
   EnterpriseDirectMessage,
   EnterpriseOrganizationView,
 } from '../preload/index.js';
@@ -29,6 +30,13 @@ export type EnterpriseCollaborationRelayParams =
       action: 'consult_peer_otto';
       recipientAccountId: string;
       question: string;
+    }
+  | {
+      action: 'assign_member_position';
+      recipientAccountId: string;
+      department: string;
+      positionTitle: string;
+      role?: string;
     };
 
 type Member = EnterpriseOrganizationView['members'][number];
@@ -44,6 +52,10 @@ export interface EnterpriseCollaborationRelayDependencies {
     member: Member,
     question: string,
   ): Promise<EnterpriseDirectMessage>;
+  updateAccount(
+    accountId: string,
+    input: Pick<EnterpriseAccountUpdateInput, 'department' | 'positionTitle' | 'role'>,
+  ): Promise<EnterpriseAccount>;
 }
 const RECIPIENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const ACTIONS = new Set([
@@ -52,7 +64,33 @@ const ACTIONS = new Set([
   'send_message',
   'ask_peer_otto',
   'consult_peer_otto',
+  'assign_member_position',
 ]);
+
+const ACTION_FIELDS: Record<EnterpriseCollaborationRelayParams['action'], ReadonlySet<string>> = {
+  list_members: new Set(['action']),
+  list_messages: new Set(['action', 'recipientAccountId']),
+  send_message: new Set(['action', 'recipientAccountId', 'content']),
+  ask_peer_otto: new Set(['action', 'recipientAccountId', 'question']),
+  consult_peer_otto: new Set(['action', 'recipientAccountId', 'question']),
+  assign_member_position: new Set([
+    'action',
+    'recipientAccountId',
+    'department',
+    'positionTitle',
+    'role',
+  ]),
+};
+
+function assignmentText(
+  value: unknown,
+  field: 'department' | 'positionTitle' | 'role',
+): string {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 160) {
+    throw new Error(`${field} 长度必须为 1 到 160 个字符`);
+  }
+  return value.trim();
+}
 
 function parseParams(value: unknown): EnterpriseCollaborationRelayParams {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -63,6 +101,12 @@ function parseParams(value: unknown): EnterpriseCollaborationRelayParams {
     throw new Error('enterprise_collaboration action 无效');
   }
   const action = raw.action as EnterpriseCollaborationRelayParams['action'];
+  const unknownFields = Object.keys(raw).filter(
+    (field) => !ACTION_FIELDS[action].has(field),
+  );
+  if (unknownFields.length > 0) {
+    throw new Error(`enterprise_collaboration 不接受未知字段：${unknownFields.join(', ')}`);
+  }
   if (action === 'list_members') return { action };
 
   if (
@@ -86,6 +130,17 @@ function parseParams(value: unknown): EnterpriseCollaborationRelayParams {
       action,
       recipientAccountId: raw.recipientAccountId,
       content: raw.content.trim(),
+    };
+  }
+  if (action === 'assign_member_position') {
+    return {
+      action,
+      recipientAccountId: raw.recipientAccountId,
+      department: assignmentText(raw.department, 'department'),
+      positionTitle: assignmentText(raw.positionTitle, 'positionTitle'),
+      ...(raw.role === undefined
+        ? {}
+        : { role: assignmentText(raw.role, 'role') }),
     };
   }
   if (
@@ -186,6 +241,21 @@ export async function executeEnterpriseCollaborationRelay(
     params.recipientAccountId,
     deps,
   );
+  if (params.action === 'assign_member_position') {
+    if (!account.isAdmin) {
+      throw new Error('assign_member_position 仅企业管理员可执行');
+    }
+    const updated = await deps.updateAccount(member.id, {
+      department: params.department,
+      positionTitle: params.positionTitle,
+      ...(params.role === undefined ? {} : { role: params.role }),
+    });
+    return {
+      ok: true,
+      action: params.action,
+      member: publicMember(updated),
+    };
+  }
   if (params.action === 'list_messages') {
     return {
       ok: true,

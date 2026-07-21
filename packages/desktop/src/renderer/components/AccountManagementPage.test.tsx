@@ -352,6 +352,50 @@ describe('企业账号目录', () => {
     })));
   });
 
+  it('CEO 可从成员目录直接安排员工职位，并只提交组织任命字段', async () => {
+    const employee = {
+      ...CREATED_ACCOUNT,
+      department: null,
+      positionTitle: null,
+      role: '成员',
+    };
+    const update = vi.fn(async (_id, input) => ({ ...employee, ...input }));
+    const onOrganizationChanged = vi.fn();
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [ADMIN, employee]),
+      enterpriseAccountUpdate: update,
+    });
+    render(
+      <AccountManagementPage
+        currentAccount={ADMIN}
+        onBack={() => undefined}
+        onOrganizationChanged={onOrganizationChanged}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '安排职位 新成员' }));
+    expect(screen.getByRole('dialog', { name: '安排员工职位' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '职位 / 岗位' }), {
+      target: { value: '产品经理' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '角色' }), {
+      target: { value: '产品负责人' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: '部门' }), {
+      target: { value: '产品部' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存职位' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith('acc_new', {
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
+    }));
+    expect(await screen.findByText('产品经理')).toBeTruthy();
+    expect(screen.getByText('产品部 · 角色：产品负责人')).toBeTruthy();
+    expect(onOrganizationChanged).toHaveBeenCalledOnce();
+  });
+
   it('CEO 管理中心二次确认后删除其他账号，并立即从成员目录移除', async () => {
     const remove = vi.fn(async (id: string) => ({ id, deleted: true as const }));
     Object.assign(window.otto, {

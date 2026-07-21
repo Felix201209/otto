@@ -1,4 +1,4 @@
-# Otto Enterprise v1.9.1 新服务器迁移包
+# Otto Enterprise v1.9.2 新服务器迁移包
 
 这是一套面向 Ubuntu 22.04/24.04 的“上传、填配置、执行一条安装命令”迁移包。它会安装固定并校验过 SHA-256 的 Node.js 22 LTS、最小企业服务、systemd 单元，并可选配置 Caddy HTTPS。
 
@@ -78,7 +78,7 @@ sudo systemctl start otto-enterprise
 先在压缩包所在目录校验外层压缩包：
 
 ```bash
-sha256sum -c otto-enterprise-oneclick-v1.9.1-*.tar.gz.sha256
+sha256sum -c otto-enterprise-oneclick-v1.9.2-*.tar.gz.sha256
 ```
 
 `.sha256` 与压缩包放在同一渠道只能证明两者一致，不能证明发送者身份。至少通过另一条可信渠道核对 64 位摘要。
@@ -86,8 +86,8 @@ sha256sum -c otto-enterprise-oneclick-v1.9.1-*.tar.gz.sha256
 校验成功后再解压：
 
 ```bash
-tar -xzf otto-enterprise-oneclick-v1.9.1-*.tar.gz
-cd otto-enterprise-oneclick-v1.9.1-*
+tar -xzf otto-enterprise-oneclick-v1.9.2-*.tar.gz
+cd otto-enterprise-oneclick-v1.9.2-*
 ```
 
 ## 三、填写配置

@@ -104,6 +104,24 @@ export function useEnterpriseAuth(): {
       setBusy(false);
       setStatus('signed-out');
     });
+    const unsubscribeAccountUpdated = window.otto.onEnterpriseAccountUpdated((updatedAccount) => {
+      if (!initializedRef.current || !signedInRef.current) return;
+      setAccount((current) => {
+        if (!current
+          || current.id !== updatedAccount.id
+          || current.organizationId !== updatedAccount.organizationId) {
+          return current;
+        }
+        const currentUpdatedAt = Date.parse(current.updatedAt);
+        const nextUpdatedAt = Date.parse(updatedAccount.updatedAt);
+        if (Number.isFinite(currentUpdatedAt)
+          && Number.isFinite(nextUpdatedAt)
+          && nextUpdatedAt < currentUpdatedAt) {
+          return current;
+        }
+        return updatedAccount;
+      });
+    });
 
     void Promise.all([
       window.otto.enterpriseSession(),
@@ -140,6 +158,7 @@ export function useEnterpriseAuth(): {
       cancelled = true;
       unsubscribeIntent();
       unsubscribeInvalidated();
+      unsubscribeAccountUpdated();
     };
   }, []);
 

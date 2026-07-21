@@ -381,6 +381,7 @@ function OttoWorkspaceApp({
   const [showRightPanel, setShowRightPanel] = useState(true);
   // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页。
   const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
+  const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
@@ -677,6 +678,7 @@ function OttoWorkspaceApp({
         listMessages: window.otto.enterpriseMessagesList,
         sendMessage: window.otto.enterpriseMessageSend,
         requestConsult: requestToolConsult,
+        updateAccount: window.otto.enterpriseAccountUpdate,
       })
         .then((result) => {
           actions.respondToolConfirmation(callId, 'approved', {
@@ -746,6 +748,7 @@ function OttoWorkspaceApp({
         productSchedules={product.state.schedules}
         enterpriseAccount={account}
         organizationOpenRequest={organizationOpenRequest}
+        organizationRefreshRevision={organizationRefreshRevision}
         onJoinEnterprise={onJoinEnterprise}
         onLogout={onLogout}
       />
@@ -761,7 +764,11 @@ function OttoWorkspaceApp({
           onDeleteModel={handleDeleteModel}
         />
       ) : mainView === 'accounts' && edition === 'enterprise' && account.isAdmin ? (
-        <AccountManagementPage currentAccount={account} onBack={() => setMainView('chat')} />
+        <AccountManagementPage
+          currentAccount={account}
+          onBack={() => setMainView('chat')}
+          onOrganizationChanged={() => setOrganizationRefreshRevision((value) => value + 1)}
+        />
       ) : mainView === 'agents' ? (
         <AgentGallery
           mode={edition}
@@ -922,6 +929,7 @@ function OttoWorkspaceApp({
               product={product}
               models={state.models}
               enterpriseAccount={account}
+              onManageAccounts={account.isAdmin ? () => setMainView('accounts') : undefined}
             />
           </div>
         </div>

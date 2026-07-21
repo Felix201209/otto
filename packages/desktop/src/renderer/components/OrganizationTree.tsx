@@ -20,12 +20,15 @@ export function OrganizationTree({
   schedules = [],
   enterpriseAccount,
   openRequest = 0,
+  refreshRevision = 0,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
   schedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
   /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
   openRequest?: number;
+  /** 企业管理员提交成员/职位变化后递增，强制重读服务端组织目录。 */
+  refreshRevision?: number;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
@@ -95,6 +98,8 @@ export function OrganizationTree({
   }, [
     hasAuthenticatedOrganization,
     enterpriseAccount?.organizationId,
+    enterpriseAccount?.updatedAt,
+    refreshRevision,
   ]);
 
   if (!hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization) return null;

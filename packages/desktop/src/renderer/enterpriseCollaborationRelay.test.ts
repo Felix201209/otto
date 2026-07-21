@@ -77,6 +77,23 @@ const dependencies = () => ({
     createdAt: '2026-07-20T01:00:00.000Z',
     readAt: null,
   })),
+  updateAccount: vi.fn(async (id: string, input: {
+    department: string;
+    positionTitle: string;
+    role?: string | null;
+  }) => ({
+    ...organization.members.find((member) => member.id === id)!,
+    organizationId: 'org-1',
+    organizationName: 'Otto 企业',
+    accountType: 'enterprise' as const,
+    employeeId: null,
+    phone: null,
+    positionId: null,
+    tags: [],
+    createdAt: '2026-07-20T00:00:00.000Z',
+    updatedAt: '2026-07-20T02:00:00.000Z',
+    ...input,
+  })),
 });
 
 describe('enterprise_collaboration renderer 真实中继', () => {
@@ -175,6 +192,63 @@ describe('enterprise_collaboration renderer 真实中继', () => {
       status: 'waiting_for_peer_permission',
       message: { id: 'consult-1' },
     });
+  });
+
+  it('企业管理员可通过真实账号更新接口安排同组织成员的部门与职位', async () => {
+    const deps = dependencies();
+    const result = await executeEnterpriseCollaborationRelay(
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'peer-1',
+        department: '产品部',
+        positionTitle: '产品经理',
+        role: '产品负责人',
+      },
+      { ...account, isAdmin: true },
+      deps,
+    );
+
+    expect(deps.updateAccount).toHaveBeenCalledWith('peer-1', {
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'assign_member_position',
+      member: {
+        id: 'peer-1',
+        department: '产品部',
+        positionTitle: '产品经理',
+        role: '产品负责人',
+      },
+    });
+  });
+
+  it('非管理员不能任命职位，非法字段也不会到达账号更新接口', async () => {
+    const deps = dependencies();
+    await expect(executeEnterpriseCollaborationRelay(
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'peer-1',
+        department: '产品部',
+        positionTitle: '产品经理',
+      },
+      account,
+      deps,
+    )).rejects.toThrow('仅企业管理员');
+    await expect(executeEnterpriseCollaborationRelay(
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'peer-1',
+        department: '产品部',
+        positionTitle: '产品经理',
+        isAdmin: true,
+      },
+      { ...account, isAdmin: true },
+      deps,
+    )).rejects.toThrow('未知字段');
+    expect(deps.updateAccount).not.toHaveBeenCalled();
   });
 
   it('个人账号和非法参数 fail closed，不调用任何企业 IPC', async () => {

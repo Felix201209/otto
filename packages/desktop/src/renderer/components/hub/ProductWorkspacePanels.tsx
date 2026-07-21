@@ -11,9 +11,11 @@ import { Card, Empty, Panel } from './HubUI.js';
 export function OrganizationPanel({
   product,
   enterpriseAccount,
+  onManageAccounts,
 }: {
   product: UseProductWorkspace;
   enterpriseAccount?: EnterpriseAccount;
+  onManageAccounts?: () => void;
 }): React.JSX.Element {
   const { state, actions } = product;
   const workspace = state.workspace;
@@ -46,6 +48,11 @@ export function OrganizationPanel({
       <Panel
         title="企业与身份"
         desc="身份信息来自当前已登录的中心企业账号。"
+        actions={enterpriseAccount.isAdmin && onManageAccounts ? (
+          <button type="button" className="otto-hub__btn otto-hub__btn--primary" onClick={onManageAccounts}>
+            管理员工职位
+          </button>
+        ) : undefined}
       >
         <Card>
           <div className="otto-product-identity">

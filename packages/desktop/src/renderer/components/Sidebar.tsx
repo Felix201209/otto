@@ -91,6 +91,7 @@ interface SidebarProps {
   productSchedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
   organizationOpenRequest?: number;
+  organizationRefreshRevision?: number;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -112,6 +113,7 @@ export function Sidebar({
   productSchedules = [],
   enterpriseAccount,
   organizationOpenRequest = 0,
+  organizationRefreshRevision = 0,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -162,6 +164,7 @@ export function Sidebar({
             ? undefined
             : enterpriseAccount}
           openRequest={organizationOpenRequest}
+          refreshRevision={organizationRefreshRevision}
         />
 
         <section className="otto-conversations" aria-label="对话任务">

@@ -258,6 +258,7 @@ const bridge = {
   enterprisePasswordLogin(): Promise<any> { return Promise.resolve({ serverUrl: 'http://127.0.0.1:7637', account: { id: 'browser-dev', organizationId: 'local', organizationName: '本地开发', employeeId: null, username: 'dev', phone: null, name: '开发者', role: null, department: null, isAdmin: false, status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, expiresAt: new Date(Date.now() + 86400000).toISOString() }); },
   enterpriseRegistrationRequest(): Promise<any> { return Promise.resolve({}); },
   enterpriseRegistrationIntent(): Promise<any> { return Promise.resolve(null); },
+  onEnterpriseAccountUpdated(): () => void { return () => {}; },
   onEnterpriseRegistrationIntent(): () => void { return () => {}; },
   onEnterpriseSessionInvalidated(): () => void { return () => {}; },
   enterpriseRegister(): Promise<any> { return Promise.resolve({}); },

@@ -836,8 +836,8 @@ h6.otto-prose__h {
 .otto-account-table__row > th:nth-child(2), .otto-account-table__row > td:nth-child(2) { width: 14%; }
 .otto-account-table__row > th:nth-child(3), .otto-account-table__row > td:nth-child(3) { width: 17%; }
 .otto-account-table__row > th:nth-child(4), .otto-account-table__row > td:nth-child(4) { width: 20%; }
-.otto-account-table__row > th:nth-child(5), .otto-account-table__row > td:nth-child(5) { width: 19%; }
-.otto-account-table__row > th:last-child, .otto-account-table__row > td:last-child { width: 8%; padding-right: 18px; text-align: right; }
+.otto-account-table__row > th:nth-child(5), .otto-account-table__row > td:nth-child(5) { width: 16%; }
+.otto-account-table__row > th:last-child, .otto-account-table__row > td:last-child { width: 11%; padding-right: 18px; text-align: right; }
 .otto-account-table tbody .otto-account-table__row:last-child > td { border-bottom: 0; }
 .otto-account-table__header > th { height: 38px; color: var(--otto-text-tertiary); background: var(--otto-surface-raised); font: 700 9.5px/1 var(--otto-font-mono); letter-spacing: .11em; text-transform: uppercase; }
 .otto-account-table__identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -854,7 +854,9 @@ h6.otto-prose__h {
 .otto-account-table__state .is-active { color: var(--otto-success); }
 .otto-account-table__state .is-disabled { color: var(--otto-danger); }
 .otto-account-table__state .is-sms { color: #156b4a; background: #e5f8ee; }
-.otto-account-table__row > td > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
+.otto-account-table__actions { display: grid; justify-items: end; gap: 5px; }
+.otto-account-table__actions > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
+.otto-account-table__actions > button.is-primary { padding: 5px 8px; border-radius: 7px; color: #effff5; background: #10241d; white-space: nowrap; }
 .otto-account-table .otto-account-table__empty { height: 120px; padding: 35px 20px; text-align: center; color: var(--otto-text-tertiary); font-size: 12px; }
 
 .otto-account-editor__overlay { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(3,13,10,.55); backdrop-filter: blur(10px); }

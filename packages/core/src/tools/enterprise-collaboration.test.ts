@@ -44,6 +44,7 @@ describe('EnterpriseCollaborationTool', () => {
       'send_message',
       'ask_peer_otto',
       'consult_peer_otto',
+      'assign_member_position',
     ]);
     expect(tool.description).toContain('list_members');
     expect(tool.description).toContain('enterprise tree');
@@ -54,6 +55,8 @@ describe('EnterpriseCollaborationTool', () => {
     expect(tool.description).toContain('work logs');
     expect(tool.description).toContain('schedules');
     expect(tool.description).toContain('does not include files, API keys, or other chats');
+    expect(tool.description).toContain('enterprise administrator');
+    expect(tool.description).toContain('assign_member_position');
     expect(tool.description).not.toContain('allow full access');
   });
 
@@ -74,6 +77,13 @@ describe('EnterpriseCollaborationTool', () => {
       action: 'consult_peer_otto',
       recipientAccountId: 'acc_peer-1',
       question: '请协商双方下周都可行的会议时间。',
+    },
+    {
+      action: 'assign_member_position',
+      recipientAccountId: 'acc_peer-1',
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
     },
   ] as EnterpriseCollaborationParams[])(
     '每个合法 action 都必须经过带 warning 的客户端执行中继：$action',
@@ -197,6 +207,33 @@ describe('EnterpriseCollaborationTool', () => {
         question: 'x'.repeat(4001),
       },
       'question',
+    ],
+    [
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'acc_peer-1',
+        department: '产品部',
+      },
+      'positionTitle',
+    ],
+    [
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'acc_peer-1',
+        department: 'x'.repeat(161),
+        positionTitle: '产品经理',
+      },
+      'department',
+    ],
+    [
+      {
+        action: 'assign_member_position',
+        recipientAccountId: 'acc_peer-1',
+        department: '产品部',
+        positionTitle: '产品经理',
+        question: '不应混用',
+      },
+      '不接受 question',
     ],
     [
       {

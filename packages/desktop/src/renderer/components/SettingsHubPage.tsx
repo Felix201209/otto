@@ -128,6 +128,7 @@ interface SettingsHubPageProps {
   product: UseProductWorkspace;
   models: ModelInfo[];
   enterpriseAccount: EnterpriseAccount;
+  onManageAccounts?: () => void;
 }
 
 export function SettingsHubPage({
@@ -139,6 +140,7 @@ export function SettingsHubPage({
   product,
   models,
   enterpriseAccount,
+  onManageAccounts,
 }: SettingsHubPageProps): React.JSX.Element {
   const [tab, setTab] = useState<TabId>(() => resolveInitialSettingsTab(initialTab));
   const [showAdvanced, setShowAdvanced] = useState(
@@ -259,7 +261,11 @@ export function SettingsHubPage({
           <div className="otto-hub__scroll">
             {tab === 'prefs' ? <PrefsPanel data={data} /> : null}
             {tab === 'organization' ? (
-              <OrganizationPanel product={product} enterpriseAccount={enterpriseAccount} />
+              <OrganizationPanel
+                product={product}
+                enterpriseAccount={enterpriseAccount}
+                onManageAccounts={onManageAccounts}
+              />
             ) : null}
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}

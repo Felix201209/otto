@@ -282,19 +282,23 @@ export async function refreshEnterpriseIdentityLease(
   return 'signed-out';
 }
 
-/** 用户主动退出：中心登出、退出态落盘和本机身份清理三个步骤均会执行。 */
+/**
+ * 用户主动退出：先让 EnterpriseClient 同步清空内存 token，再立即落盘退出态并
+ * 清理本机身份。中心 session 撤销使用旧 token 在后台 best-effort 完成，网络
+ * 不可达时也不能把客户端卡在已登录界面，或让旧 token 留在本机持久化状态。
+ */
 export async function logoutAndClearEnterpriseIdentity(
   client: EnterpriseLogoutClient,
   synchronize: EnterpriseIdentitySynchronizer,
   persistSession: () => void,
 ): Promise<void> {
-  let logoutError: unknown;
   let persistError: unknown;
   let synchronizeError: unknown;
   try {
-    await client.logout();
-  } catch (error) {
-    logoutError = error;
+    const remoteLogout = client.logout();
+    void remoteLogout.catch(() => undefined);
+  } catch {
+    // 即使实现同步抛错，本机退出也必须继续；远端 session 会按 TTL 失效。
   }
   try {
     persistSession();
@@ -309,7 +313,6 @@ export async function logoutAndClearEnterpriseIdentity(
   // 本机未清理是更高优先级的授权风险；其次是不安全的凭据落盘失败。
   if (synchronizeError) throw synchronizeError;
   if (persistError) throw persistError;
-  if (logoutError) throw logoutError;
 }
 
 /** EnterpriseClient 已因 401 清 token 后调用；先落盘，再清本机授权。 */
