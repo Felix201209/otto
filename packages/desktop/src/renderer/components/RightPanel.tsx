@@ -86,8 +86,6 @@ export interface RightPanelProps {
   onRefreshAutoSkills?: () => void;
   onConfirmAutoSkill?: (candidateId: string) => void;
   onRejectAutoSkill?: (candidateId: string) => void;
-  /** v1.6 兼容 prop；新目录不再发送 kickoff。 */
-  onLaunchExpert?: (expert: never) => void;
 }
 
 function visibleProfiles(

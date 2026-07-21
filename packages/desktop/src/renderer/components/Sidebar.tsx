@@ -93,6 +93,8 @@ interface SidebarProps {
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  /** 未读会话 ID 列表（桌面通知闪烁点数据源）。 */
+  unreadSessions?: string[];
 }
 
 export function Sidebar({
@@ -112,6 +114,7 @@ export function Sidebar({
   onViewAll,
   onRename,
   onDelete,
+  unreadSessions,
 }: SidebarProps): React.JSX.Element {
   const [sessionsOpen, setSessionsOpen] = useState(true);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
@@ -179,6 +182,7 @@ export function Sidebar({
                         key={s.sessionId}
                         session={s}
                         active={s.sessionId === activeSessionId}
+                        unread={unreadSessions?.includes(s.sessionId) ?? false}
                         onSelect={onSelect}
                         onRename={onRename}
                         onDelete={onDelete}
@@ -294,6 +298,7 @@ type ItemMode = 'idle' | 'menu' | 'rename' | 'confirm';
 function SessionItem({
   session,
   active,
+  unread,
   onSelect,
   onRename,
   onDelete,
@@ -303,6 +308,7 @@ function SessionItem({
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  unread?: boolean;
 }): React.JSX.Element {
   const [mode, setMode] = useState<ItemMode>('idle');
   const [draft, setDraft] = useState(session.title);
@@ -391,6 +397,7 @@ function SessionItem({
         }
       }}
     >
+      {unread ? <span className="otto-session__unread" aria-label="未读消息" /> : null}
       <div className="otto-session__top">
         <span
           className="otto-session__title"

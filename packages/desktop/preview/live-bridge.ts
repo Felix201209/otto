@@ -196,6 +196,24 @@ const bridge = {
   },
   onNotificationUnreadChanged(_cb: (unread: string[]) => void): () => void { return () => {}; },
   onNotificationSessionOpen(_cb: (sessionId: string) => void): () => void { return () => {}; },
+  // ── 企业功能 stubs（浏览器预览不支持，需 Electron 桌面端）──
+  enterpriseSmsLoginRequest(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseSmsLoginVerify(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseAccountDelete(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterprisePair(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseMessagesList(): Promise<any> { return Promise.resolve([]); },
+  enterpriseMessageSend(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseAtoaInbox(): Promise<any> { return Promise.resolve([]); },
+  enterpriseParkServicePush(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseParkPublications(): Promise<any> { return Promise.resolve([]); },
+  enterpriseParkSurveyResults(): Promise<any> { return Promise.resolve([]); },
+  enterpriseParkPublicationRead(): Promise<any> { return Promise.resolve({ id: '', title: '', content: '', publishedAt: '', serviceId: '' }); },
+  enterpriseParkSurveySubmit(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseTicketList(): Promise<any> { return Promise.resolve([]); },
+  enterpriseTicketRead(): Promise<any> { return Promise.resolve({ id: '', title: '', description: '', status: '', createdAt: '' }); },
+  enterpriseTicketAction(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  parkNativeNotify(): Promise<boolean> { return Promise.resolve(false); },
+  openVideoEditor(): Promise<{ ok: boolean }> { return Promise.resolve({ ok: false }); },
   async selectFiles(): Promise<string[]> {
     // 浏览器环境：使用 input[type=file] 回退，无法获取真实路径
     return new Promise((resolve) => {

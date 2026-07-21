@@ -552,6 +552,7 @@ function OttoWorkspaceApp({
         enterpriseAccount={edition === 'enterprise' ? account : undefined}
         organizationOpenRequest={organizationOpenRequest}
         onLogout={onLogout}
+        unreadSessions={state.unreadSessions}
       />
 
       {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
