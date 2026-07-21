@@ -18,7 +18,7 @@
  * 命令本地执行（新建/清空/开模型菜单/开设置），不经过 onSend 发给模型。
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from 'otto-server';
 import * as transport from '../transport.js';
 import type { Attachment } from '../state/useOttoStore.js';
@@ -280,6 +280,9 @@ export function Composer({
   const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const [recording, setRecording] = useState(false);
   const [, setVoiceProcessing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -504,10 +507,107 @@ export function Composer({
     setDraftSessionId(sessionId);
   }
 
-  const pickFiles = () => {
+  const pickFiles = useCallback(() => {
     setAttachError(null);
-    fileInputRef.current?.click();
-  };
+    // 优先使用原生文件选择器（获取完整路径）
+    if (window.otto?.selectFiles) {
+      void (async () => {
+        try {
+          const paths = await window.otto.selectFiles();
+          if (paths.length === 0) return;
+          setAttaching(true);
+          const added: Attachment[] = [];
+          const addedSizes: Record<string, number> = {};
+          let firstError: string | null = null;
+          for (const filePath of paths) {
+            try {
+              const result = await window.otto.readFilePath(filePath);
+              const ext = result.fileName.split('.').pop()?.toLowerCase() ?? '';
+              const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+              if (imgExts.includes(ext)) {
+                const attachment: Attachment = {
+                  id: `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                  fileName: result.fileName,
+                  data: result.data,
+                  mimeType: result.mimeType,
+                  originalSize: result.size,
+                  compressedSize: result.size,
+                  filePath: result.filePath,
+                } as any;
+                added.push(attachment);
+              } else {
+                added.push({
+                  fileName: result.fileName,
+                  filePath: result.filePath,
+                });
+              }
+              addedSizes[result.filePath] = result.size;
+            } catch (err) {
+              if (!firstError) firstError = err instanceof Error ? err.message : '文件读取失败';
+            }
+          }
+          if (added.length > 0) {
+            setAttachments((prev) => [...prev, ...added]);
+            setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
+          }
+          setAttachError(firstError);
+        } catch {
+          // 原生对话框被取消
+        } finally {
+          setAttaching(false);
+        }
+      })();
+    } else {
+      fileInputRef.current?.click();
+    }
+  }, [attachments.length]);
+
+  // 拖拽文件进入
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setDragOver(true);
+    }
+  }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }, []);
+
+  const onDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (room <= 0) {
+      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
+      return;
+    }
+    setAttaching(true);
+    let firstError: string | null = null;
+    const added: Attachment[] = [];
+    const addedSizes: Record<string, number> = {};
+    for (const file of files.slice(0, room)) {
+      try {
+        const attachment = await fileToAttachment(file);
+        added.push(attachment);
+        addedSizes[attachmentKey(attachment)] = file.size;
+      } catch (err) {
+        if (!firstError) firstError = err instanceof Error ? err.message : '附件处理失败';
+      }
+    }
+    if (added.length > 0) {
+      setAttachments((prev) => [...prev, ...added]);
+      setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
+    }
+    setAttachError(firstError ?? (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null));
+    setAttaching(false);
+  }, [attachments.length]);
 
   // 选中附件 → 图片走压缩 pipeline，文件走直传 pipeline。
   // 超出张数上限的截断并提示；单张失败记录首个错误但不阻断其余成功项。
@@ -791,7 +891,44 @@ export function Composer({
       : '请先输入内容';
 
   return (
-    <div className={`otto-composer${disabled ? ' is-disabled' : ''}`}>
+    <div
+      ref={composerRef}
+      className={`otto-composer${disabled ? ' is-disabled' : ''}${dragOver ? ' is-dragover' : ''}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
+      {/* 右键菜单 */}
+      {contextMenu ? (
+        <>
+          <div
+            className="otto-context-overlay"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          />
+          <div
+            className="otto-context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button type="button" onClick={() => { navigator.clipboard.readText().then((t) => setText((prev) => prev + t)).catch(() => {}); setContextMenu(null); }}>
+              粘贴
+            </button>
+            <button type="button" onClick={() => { if (taRef.current) { taRef.current.select(); document.execCommand('copy'); } setContextMenu(null); }}>
+              复制
+            </button>
+            <button type="button" onClick={() => { if (taRef.current) { taRef.current.select(); document.execCommand('cut'); } setContextMenu(null); }}>
+              剪切
+            </button>
+            <button type="button" onClick={() => { pickFiles(); setContextMenu(null); }}>
+              选择文件…
+            </button>
+          </div>
+        </>
+      ) : null}
       <div className="otto-composer__inner">
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">
@@ -831,8 +968,15 @@ export function Composer({
                       {displayName}
                     </span>
                     <span className="otto-attachment__meta">
-                      {typeLabel} · {formatAttachmentSize(size)}
+                      {typeLabel}{size != null ? ` · ${formatAttachmentSize(size)}` : ''}
                     </span>
+                    {'filePath' in attachment && (attachment as any).filePath && (attachment as any).filePath !== attachment.fileName ? (
+                      <span className="otto-attachment__path" title={(attachment as any).filePath}>
+                        {(attachment as any).filePath.length > 50
+                          ? `…${(attachment as any).filePath.slice(-47)}`
+                          : (attachment as any).filePath}
+                      </span>
+                    ) : null}
                   </div>
                   <button
                     type="button"

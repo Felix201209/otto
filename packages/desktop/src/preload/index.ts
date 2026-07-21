@@ -381,6 +381,8 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  selectFiles: 'otto:select-files',
+  readFilePath: 'otto:read-file-path',
   openVideoEditor: 'otto:open-video-editor',
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
@@ -463,6 +465,22 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  /**
+   * 原生文件选择器：打开系统文件对话框，返回完整路径数组。
+   * 用户主动授权选择，不受浏览器沙箱限制。
+   */
+  selectFiles(): Promise<string[]>;
+  /**
+   * 读取指定路径的文件，返回 Base64 + 元数据。
+   * 仅限用户 home 目录内文件（安全边界）。
+   */
+  readFilePath(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    size: number;
+    mimeType: string;
+    data: string;
+  }>;
   /** 打开内置视频编辑器窗口。 */
   openVideoEditor(): Promise<{ ok: boolean }>;
   /**
@@ -863,6 +881,26 @@ const bridge: OttoBridge = {
 
   openPath(path: string): Promise<void> {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
+  },
+
+  selectFiles(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC.selectFiles) as Promise<string[]>;
+  },
+
+  readFilePath(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    size: number;
+    mimeType: string;
+    data: string;
+  }> {
+    return ipcRenderer.invoke(IPC.readFilePath, filePath) as Promise<{
+      filePath: string;
+      fileName: string;
+      size: number;
+      mimeType: string;
+      data: string;
+    }>;
   },
   openVideoEditor(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean }>;

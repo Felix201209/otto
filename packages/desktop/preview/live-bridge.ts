@@ -186,6 +186,25 @@ const bridge = {
   onMenu(_handler: MenuHandler): () => void { return () => {}; },
   openExternal(_url: string): Promise<void> { return Promise.resolve(); },
   openPath(_path: string): Promise<void> { return Promise.resolve(); },
+  async selectFiles(): Promise<string[]> {
+    // 浏览器环境：使用 input[type=file] 回退，无法获取真实路径
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.xml,.md,.zip,.log';
+      input.onchange = () => {
+        const files = Array.from(input.files ?? []);
+        resolve(files.map((f) => (f as any).path ?? f.name));
+        input.remove();
+      };
+      input.oncancel = () => { resolve([]); input.remove(); };
+      input.click();
+    });
+  },
+  async readFilePath(_filePath: string): Promise<{ filePath: string; fileName: string; size: number; mimeType: string; data: string }> {
+    throw new Error('浏览器环境不支持读取任意路径文件，请使用文件选择器');
+  },
   async writeClipboard(text: string): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(text);

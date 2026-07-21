@@ -84,6 +84,25 @@ interface FeishuStatusInfo {
   status?: FeishuHealthStatusLocal;
 }
 
+/** 根据文件扩展名返回 MIME 类型（用于 readFilePath IPC）。 */
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+    '.pdf': 'application/pdf', '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
+    '.xml': 'application/xml', '.md': 'text/markdown', '.zip': 'application/zip',
+    '.log': 'text/plain',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
@@ -195,6 +214,8 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  selectFiles: 'otto:select-files',
+  readFilePath: 'otto:read-file-path',
   saveTextFile: 'otto:save-text-file',
   openVideoEditor: 'otto:open-video-editor',
   feishuStart: 'otto:feishu-start',
@@ -1709,6 +1730,73 @@ function registerIpc(): void {
       return result.filePath;
     },
   );
+
+  // 原生文件选择器：返回完整路径数组（用户授权选择，不在沙箱内）
+  ipcMain.handle(IPC.selectFiles, async () => {
+    const win = mainWindow;
+    const result = await (win
+      ? dialog.showOpenDialog(win, {
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            {
+              name: '所有支持的文件',
+              extensions: [
+                'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
+                'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+                'txt', 'csv', 'json', 'xml', 'md', 'zip', 'log',
+              ],
+            },
+          ],
+        })
+      : dialog.showOpenDialog({
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            {
+              name: '所有支持的文件',
+              extensions: [
+                'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
+                'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+                'txt', 'csv', 'json', 'xml', 'md', 'zip', 'log',
+              ],
+            },
+          ],
+        }));
+    if (result.canceled || result.filePaths.length === 0) return [];
+    return result.filePaths;
+  });
+
+  // 读取任意路径文件（用户已通过 selectFiles 授权），返回 Base64 + 元数据
+  ipcMain.handle(IPC.readFilePath, async (_e, filePath: unknown) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      throw new Error('文件路径无效');
+    }
+    const resolved = path.resolve(filePath);
+    // 安全检查：只允许读取 home 目录内的文件
+    let home: string;
+    try {
+      home = fs.realpathSync(app.getPath('home'));
+      const real = fs.realpathSync(resolved);
+      if (real !== home && !real.startsWith(home + path.sep)) {
+        throw new Error('无权访问该路径');
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === '无权访问该路径') throw err;
+      throw new Error('文件路径无效或不可读');
+    }
+    const stat = await fs.promises.stat(resolved);
+    if (stat.size > 50 * 1024 * 1024) {
+      throw new Error('文件过大（超过 50MB）');
+    }
+    const buffer = await fs.promises.readFile(resolved);
+    const base64 = buffer.toString('base64');
+    return {
+      filePath: resolved,
+      fileName: path.basename(resolved),
+      size: stat.size,
+      mimeType: getMimeType(resolved),
+      data: base64,
+    };
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
