@@ -8,6 +8,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import JSZip from 'jszip';
 import { DoctorService, formatDoctorReport, type DoctorReport } from './doctor.js';
+import { redactSensitiveText } from '../utils/redaction.js';
 
 export interface DiagnosticModelSummary {
   displayName?: string;
@@ -23,6 +24,8 @@ export interface DiagnosticBundleOptions {
   models?: DiagnosticModelSummary[];
   doctorReport?: DoctorReport;
   extraLogPaths?: string[];
+  maxFiles?: number;
+  maxTotalBytes?: number;
 }
 
 export interface DiagnosticBundleResult {
@@ -48,35 +51,55 @@ function isSecretPath(filePath: string): boolean {
 
 /** 只保留排障信息，移除常见 token/key/password 字段和疑似密钥值。 */
 export function redactDiagnosticText(input: string): string {
-  return input
-    .replace(/("(?:apiKey|api_key|appSecret|app_secret|accessToken|refreshToken|token|password|secret)"\s*:\s*")(.*?)(")/gi, '$1[REDACTED]$3')
-    .replace(/((?:api[_-]?key|app[_-]?secret|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)([^\s,;]+)/gi, '$1[REDACTED]')
-    .replace(/\b(sk-[A-Za-z0-9_-]{8,}|ark-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{12,})\b/g, '[REDACTED]');
+  return redactSensitiveText(input);
 }
 
-async function addFile(zip: JSZip, sourcePath: string, targetPath: string): Promise<boolean> {
+interface CollectionBudget {
+  fileCount: number;
+  totalBytes: number;
+  readonly maxFiles: number;
+  readonly maxTotalBytes: number;
+}
+
+async function addFile(
+  zip: JSZip,
+  sourcePath: string,
+  targetPath: string,
+  budget: CollectionBudget,
+): Promise<boolean> {
   if (isSecretPath(sourcePath)) return false;
   try {
-    const stat = await fs.stat(sourcePath);
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return false;
+    const stat = await fs.lstat(sourcePath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 2 * 1024 * 1024) return false;
+    if (budget.fileCount >= budget.maxFiles || budget.totalBytes + stat.size > budget.maxTotalBytes) return false;
     const content = await fs.readFile(sourcePath, 'utf8');
     zip.file(targetPath, redactDiagnosticText(content));
+    budget.fileCount += 1;
+    budget.totalBytes += stat.size;
     return true;
   } catch {
     return false;
   }
 }
 
-async function collectFiles(root: string, prefix: string, zip: JSZip): Promise<number> {
+async function collectFiles(
+  root: string,
+  prefix: string,
+  zip: JSZip,
+  budget: CollectionBudget,
+): Promise<number> {
   let count = 0;
+  if (budget.fileCount >= budget.maxFiles || budget.totalBytes >= budget.maxTotalBytes) return 0;
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
     for (const entry of entries) {
+      if (budget.fileCount >= budget.maxFiles || budget.totalBytes >= budget.maxTotalBytes) break;
       const source = path.join(root, entry.name);
       if (entry.name === 'secrets' || isSecretPath(source)) continue;
+      if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        count += await collectFiles(source, `${prefix}/${entry.name}`, zip);
-      } else if (await addFile(zip, source, `${prefix}/${entry.name}`)) {
+        count += await collectFiles(source, `${prefix}/${entry.name}`, zip, budget);
+      } else if (await addFile(zip, source, `${prefix}/${entry.name}`, budget)) {
         count += 1;
       }
     }
@@ -92,6 +115,12 @@ export async function createDiagnosticBundle(options: DiagnosticBundleOptions = 
   const report = options.doctorReport ?? await new DoctorService().check();
   const zip = new JSZip();
   let fileCount = 0;
+  const budget: CollectionBudget = {
+    fileCount: 0,
+    totalBytes: 0,
+    maxFiles: Math.max(1, options.maxFiles ?? 200),
+    maxTotalBytes: Math.max(1024, options.maxTotalBytes ?? 20 * 1024 * 1024),
+  };
 
   let models = (options.models ?? []).map((model) => ({
     displayName: model.displayName,
@@ -121,22 +150,36 @@ export async function createDiagnosticBundle(options: DiagnosticBundleOptions = 
     node: process.version,
     ottoVersion: process.env.OTTO_VERSION ?? 'unknown',
   }, null, 2));
-  zip.file('model-config.json', JSON.stringify({ models }, null, 2));
+  zip.file(
+    'model-config.json',
+    redactDiagnosticText(JSON.stringify({ models }, null, 2)),
+  );
   zip.file('dependency-report.txt', formatDoctorReport(report));
 
-  fileCount += await collectFiles(path.join(homeDir, '.otto-user', 'logs'), 'otto-user/logs', zip);
-  fileCount += await collectFiles(path.join(homeDir, '.otto-user', 'audit'), 'otto-user/audit', zip);
+  fileCount += await collectFiles(path.join(homeDir, '.otto-user', 'logs'), 'otto-user/logs', zip, budget);
+  fileCount += await collectFiles(path.join(homeDir, '.otto-user', 'audit'), 'otto-user/audit', zip, budget);
   const desktopLogCandidates = process.platform === 'darwin'
     ? [path.join(homeDir, 'Library', 'Logs', 'Otto')]
     : process.platform === 'win32'
       ? [path.join(process.env.APPDATA ?? homeDir, 'Otto', 'logs')]
       : [path.join(homeDir, '.config', 'Otto', 'logs')];
   for (const logDir of desktopLogCandidates) {
-    fileCount += await collectFiles(logDir, 'desktop/logs', zip);
+    fileCount += await collectFiles(logDir, 'desktop/logs', zip, budget);
   }
   for (const logPath of options.extraLogPaths ?? []) {
-    if (await addFile(zip, logPath, `extra/${path.basename(logPath)}`)) fileCount += 1;
+    if (await addFile(zip, logPath, `extra/${path.basename(logPath)}`, budget)) fileCount += 1;
   }
+  if (await addFile(
+    zip,
+    path.join(homeDir, '.otto-user', 'memory', 'knowledge-capture', 'status.json'),
+    'runtime/knowledge-capture-status.json',
+    budget,
+  )) fileCount += 1;
+  zip.file('bundle-manifest.json', JSON.stringify({
+    includedFiles: fileCount,
+    includedSourceBytes: budget.totalBytes,
+    limits: { maxFiles: budget.maxFiles, maxTotalBytes: budget.maxTotalBytes },
+  }, null, 2));
 
   await fs.mkdir(outputDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[.:]/g, '-');

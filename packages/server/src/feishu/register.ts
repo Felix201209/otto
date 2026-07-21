@@ -28,16 +28,24 @@ import type { SessionRuntime, SessionStore } from '../sessions.js';
 import type { FeishuHealthStatus, ServerToClient } from '../protocol.js';
 import { FeishuAdapter, type FeishuGatewayFactory } from './feishuAdapter.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
+import { isFeishuAutoReplyEnabledForOpenId } from '../enterprise/db.js';
 
 /** registerFeishu 的依赖注入（server 提供存储 + 广播能力）。 */
 export interface FeishuRegisterDeps {
   store: SessionStore;
+  /** 由 server 按当前中心企业身份取得/创建飞书会话。 */
+  getOrCreateSession?: (
+    chatId: string,
+    title?: string,
+  ) => ReturnType<SessionStore['createSession']>;
   /** 把一帧广播给某会话的所有订阅者（= store.publish 的薄封装）。 */
   broadcast: (sessionId: string, frame: ServerToClient) => void;
   /** 飞书首条消息到达时，为对应隔离会话懒创建真实 core runtime。 */
   ensureRuntime: (
     sessionId: string,
   ) => Promise<SessionRuntime | undefined>;
+  /** 企业配置可按飞书 open_id 关闭自动回答。 */
+  shouldAutoReply?: (senderOpenId: string) => boolean | Promise<boolean>;
   /** 仅显式测试/开发模式允许 mock；生产缺省 false。 */
   mock?: boolean;
   /** 可选凭证注入（测试用）；缺省 adapter 内部 loadCredentials() 读盘。 */
@@ -78,8 +86,10 @@ export async function registerFeishu(
 ): Promise<FeishuRegistration> {
   const adapter = new FeishuAdapter({
     store: deps.store,
+    getOrCreateSession: deps.getOrCreateSession,
     broadcast: deps.broadcast,
     ensureRuntime: deps.ensureRuntime,
+    shouldAutoReply: deps.shouldAutoReply ?? isFeishuAutoReplyEnabledForOpenId,
     mock: deps.mock,
     credentials: deps.credentials,
     gatewayFactory: deps.gatewayFactory,

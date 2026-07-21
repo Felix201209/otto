@@ -8,7 +8,8 @@
  * 软件更新服务（main 进程副作用层）。纯逻辑在 update-core.ts，sha256 在
  * update-verify.ts；本文件负责网络、文件、进度推送与安装器拉起。
  *
- * 更新源（公开仓 Felix201209/otto-releases，只放安装包 + 清单）：
+ * 更新源：可选 OTTO_UPDATE_MANIFEST_URL 企业 HTTPS 镜像，其后是公开仓
+ * Felix201209/otto-releases（只放安装包 + 清单）：
  *   主：GET releases/latest/download/latest.json（匿名、跟随重定向、免 API 限流）；
  *   兜底：GET api.github.com/.../releases/latest（主 URL 404/超时时），并优先从
  *   release 资产里再取 latest.json 拿完整清单——API 的 assets 不带 sha256，
@@ -17,7 +18,8 @@
  * 诚实契约：网络失败 / 清单坏掉 → status 'check-failed'（结构化错误，不抛裸异常），
  * 绝不伪装成「已是最新」。
  *
- * 安全：下载 URL 只允许 https + GitHub 资产域白名单（update-core.isAllowedAssetUrl，
+ * 安全：下载 URL 只允许 https + GitHub 资产域白名单，或显式配置的 HTTPS
+ * 镜像精确同源（update-core.isAllowedAssetUrl，
  * 清单解析、下载前、以及**重定向后的最终 URL**三重把关——审查 H1）；下载完成必须
  * sha256 校验（无签名时的唯一完整性防线），不匹配删文件报错；写盘有体积硬上限
  * （审查 M1，均见 update-download.ts）；安装（shell.openPath）前对文件**再重验一次**
@@ -47,15 +49,12 @@ import {
 } from './update-core.js';
 import { computeFileSha256, verifyBeforeInstall } from './update-verify.js';
 import { downloadToFile } from './update-download.js';
-
-/** 主更新源：latest.json 直链（自建服务器，免 GitHub 被墙）。 */
-const PRIMARY_MANIFEST_URL =
-  'http://59.110.154.44/otto-releases/latest.json';
-/** 兜底：GitHub Releases API。 */
-const FALLBACK_API_URL =
-  'https://api.github.com/repos/Felix201209/otto-releases/releases/latest';
-/** 资产缺失时引导用户手动下载的发布页。 */
-const RELEASE_PAGE_URL = 'https://github.com/Felix201209/otto-releases/releases/latest';
+import {
+  FALLBACK_RELEASE_API_URL,
+  PRIMARY_MANIFEST_URL,
+  RELEASE_PAGE_URL,
+  resolveManifestUrls,
+} from './update-sources.js';
 
 /** 检查更新的单次请求超时（任务书定 15s）。 */
 const CHECK_TIMEOUT_MS = 15_000;
@@ -144,6 +143,8 @@ export class UpdateService {
   /** 最近一次「有新版」的检查结果（downloadUpdate 只信它，不接受 renderer 传 URL）。 */
   private lastAvailable: Extract<UpdateCheckResult, { status: 'update-available' }> | null =
     null;
+  /** 最近一次有效清单明确授权的镜像 origin；与 lastAvailable 同生命周期。 */
+  private allowedAssetOrigins: string[] = [];
   /** 进行中的下载（单例守护：同一时间只允许一个）。 */
   private downloading: { controller: AbortController; partPath: string } | null = null;
   /**
@@ -160,35 +161,56 @@ export class UpdateService {
   ) {}
 
   /**
-   * 检查更新：主 URL → 兜底 API（可再跳 release 内的 latest.json 取完整清单）。
+   * 检查更新：可选企业 HTTPS 镜像 → GitHub latest.json → Releases API 兜底。
    * 永远返回结构化结果；失败 = 'check-failed'，与「已是最新」严格区分。
    */
   async checkForUpdate(): Promise<UpdateCheckResult> {
+    // 新一轮检查一开始就清掉旧可下载态，防止本次失败后还能下载上次资产。
+    this.lastAvailable = null;
+    this.allowedAssetOrigins = [];
     const currentVersion = app.getVersion();
     const assetKey = platformAssetKey(process.platform, process.arch);
 
-    // 1) 主源：latest.json 直链。GitHub 偶发 5xx/超时（实测撞过 504），
-    // 带退避重试三次再降级——降级路径拿不到 sha256 时只能给「打开发布页」，
-    // 体验差一截，值得多试几次。
-    const primary = await fetchJsonWithRetry(PRIMARY_MANIFEST_URL, CHECK_TIMEOUT_MS, 3);
-    if (primary.ok) {
-      const parsed = parseManifest(primary.json);
-      if (parsed.ok) {
-        return this.remember(
-          resolveCheckOutcome(parsed.manifest, currentVersion, assetKey, RELEASE_PAGE_URL),
-        );
+    // 1) 完整清单源。企业部署可用 OTTO_UPDATE_MANIFEST_URL 指向自己的 HTTPS 镜像；
+    // 配置非法就忽略，镜像失败/清单不合法继续尝试 GitHub，绝不再硬编码未部署路由。
+    const manifestErrors: string[] = [];
+    const manifestUrls = resolveManifestUrls(process.env.OTTO_UPDATE_MANIFEST_URL);
+    for (const manifestUrl of manifestUrls) {
+      const result = await fetchJsonWithRetry(
+        manifestUrl,
+        CHECK_TIMEOUT_MS,
+        manifestUrl === PRIMARY_MANIFEST_URL ? 2 : 1,
+      );
+      const sourceName = (() => {
+        try { return new URL(manifestUrl).hostname; } catch { return '更新源'; }
+      })();
+      if (!result.ok) {
+        manifestErrors.push(`${sourceName}：${result.error}`);
+        continue;
       }
-      // 主源拿到了内容但清单坏了：如实报失败（不再让 API 兜底掩盖发版脚本的问题）。
-      return { status: 'check-failed', currentVersion, message: parsed.error };
+      const sourceAllowedOrigins = manifestUrl === PRIMARY_MANIFEST_URL
+        ? []
+        : [new URL(manifestUrl).origin];
+      const parsed = parseManifest(result.json, sourceAllowedOrigins);
+      if (!parsed.ok) {
+        manifestErrors.push(`${sourceName}：${parsed.error}`);
+        continue;
+      }
+      return this.remember(
+        resolveCheckOutcome(parsed.manifest, currentVersion, assetKey, RELEASE_PAGE_URL),
+        sourceAllowedOrigins,
+      );
     }
 
-    // 2) 兜底：Releases API（主源 404/超时/网络失败时）。
-    const fallback = await fetchJson(FALLBACK_API_URL, CHECK_TIMEOUT_MS);
+    // 2) 兜底：Releases API（所有完整清单源失败时）。
+    const fallback = await fetchJson(FALLBACK_RELEASE_API_URL, CHECK_TIMEOUT_MS);
     if (!fallback.ok) {
       return {
         status: 'check-failed',
         currentVersion,
-        message: `主源失败（${primary.error}）；兜底 API 也失败（${fallback.error}）`,
+        message:
+          `更新清单均失败（${manifestErrors.join('；')}）；` +
+          `兜底 API 也失败（${fallback.error}）`,
       };
     }
     const release = parseGithubRelease(fallback.json);
@@ -234,8 +256,14 @@ export class UpdateService {
   }
 
   /** 缓存「有新版」结果供 downloadUpdate 使用；其它状态则清掉旧缓存。 */
-  private remember(result: UpdateCheckResult): UpdateCheckResult {
+  private remember(
+    result: UpdateCheckResult,
+    allowedAssetOrigins: readonly string[] = [],
+  ): UpdateCheckResult {
     this.lastAvailable = result.status === 'update-available' ? result : null;
+    this.allowedAssetOrigins = result.status === 'update-available'
+      ? [...allowedAssetOrigins]
+      : [];
     return result;
   }
 
@@ -256,8 +284,8 @@ export class UpdateService {
       return { ok: false, error: '当前没有可下载的更新，请先检查更新' };
     }
     // 纵深防御：清单解析时已过白名单，下载前再验一次（防中间态被改）。
-    if (!isAllowedAssetUrl(asset.url)) {
-      return { ok: false, error: '安装包下载地址不在允许的 GitHub 域名内，已拒绝下载' };
+    if (!isAllowedAssetUrl(asset.url, this.allowedAssetOrigins)) {
+      return { ok: false, error: '安装包下载地址不在允许的更新源内，已拒绝下载' };
     }
 
     // basename 防清单里的 name 携带路径穿越（如 ../../xx）。
@@ -289,6 +317,7 @@ export class UpdateService {
     try {
       const outcome = await downloadToFile({
         url: asset.url,
+        allowedAssetOrigins: this.allowedAssetOrigins,
         expectedSha256: asset.sha256,
         expectedSize: asset.size,
         partPath,

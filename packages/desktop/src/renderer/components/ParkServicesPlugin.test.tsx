@@ -23,6 +23,7 @@ afterEach(() => {
       'enterpriseSession', 'enterpriseTicketList', 'enterpriseTicketSubmit',
       'enterpriseTicketAction', 'enterpriseTicketRead', 'parkNativeNotify',
       'enterpriseParkPublications', 'enterpriseParkPublicationRead', 'enterpriseParkSurveySubmit',
+      'enterpriseParkView', 'parkConfig',
     ]) delete (window.otto as unknown as Record<string, unknown>)[key];
   }
 });
@@ -155,6 +156,34 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByText('餐饮服务')).toBeNull();
     expect(document.querySelectorAll('.otto-park-service')).toHaveLength(9);
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
+  });
+
+  it('中心接口返回 null 时表示未加入园区，不回退本机配置也不允许事件打开', async () => {
+    const enterpriseParkView = vi.fn(async () => null);
+    const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
+    Object.assign(window.otto, { enterpriseParkView, parkConfig });
+    render(<ParkServicesPlugin />);
+
+    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
+    openDialog();
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(parkConfig).not.toHaveBeenCalled();
+  });
+
+  it('中心园区请求失败时 fail closed，不展示陈旧本机品牌', async () => {
+    const enterpriseParkView = vi.fn(async () => {
+      throw new Error('园区服务暂时不可用');
+    });
+    const parkConfig = vi.fn(async () => ({ brandName: '陈旧宏创园区服务' }));
+    Object.assign(window.otto, { enterpriseParkView, parkConfig });
+    render(<ParkServicesPlugin />);
+
+    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
+    openDialog();
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(parkConfig).not.toHaveBeenCalled();
   });
 
   it('普通用户只看到真实申请表，不出现后台人员或模拟入口', async () => {
@@ -293,7 +322,7 @@ describe('ParkServicesPlugin', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     const labelledBy = dialog.getAttribute('aria-labelledby')!;
-    expect(document.getElementById(labelledBy)?.textContent).toBe('宏创AI园区服务');
+    expect(document.getElementById(labelledBy)?.textContent).toBe('园区服务');
   });
 
   it('企业定制：parkConfig 的 brandName/services 覆盖内置默认', async () => {

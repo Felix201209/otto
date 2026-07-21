@@ -350,7 +350,7 @@ export function OttoAvatar({ size = 30, className }: IconProps): React.JSX.Eleme
   );
 }
 
-// ── 宏创AI园区服务（ParkServicesPlugin）─────────────────────────────────
+// ── 园区服务（ParkServicesPlugin）─────────────────────────────────
 
 /** 园区/办公楼：主楼 + 副楼 + 窗格。 */
 export function IconBuilding({ size, className }: IconProps): React.JSX.Element {

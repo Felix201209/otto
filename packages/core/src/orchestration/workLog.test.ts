@@ -79,6 +79,33 @@ describe('WorkLogger 工作结果日志', () => {
     });
   });
 
+  it('落盘前统一脱敏工作结果中的凭证', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-worklog-redact-'));
+    tempDirs.push(root);
+    const now = new Date(2026, 6, 21, 10, 0, 0);
+    const logger = new WorkLogger(root, () => now);
+
+    await logger.log({
+      toolName: 'shell',
+      action: 'call https://alice:plain-password@example.test',
+      category: 'shell',
+      success: true,
+      taskTitle: 'rotate api_key=query-secret',
+      userInput: 'Authorization: Bearer bearer-secret',
+      details: 'password=details-secret',
+    });
+
+    const raw = await fs.readFile(
+      path.join(root, 'daily', '2026-07-21.jsonl'),
+      'utf8',
+    );
+    expect(raw).not.toContain('plain-password');
+    expect(raw).not.toContain('query-secret');
+    expect(raw).not.toContain('bearer-secret');
+    expect(raw).not.toContain('details-secret');
+    expect(raw).toContain('[REDACTED]');
+  });
+
   it('finds relevant prior work results without returning unrelated logs', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-worklog-'));
     tempDirs.push(root);

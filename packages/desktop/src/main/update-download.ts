@@ -57,6 +57,8 @@ export type FetchLike = (
 
 export interface DownloadJob {
   url: string;
+  /** 显式配置的 HTTPS 镜像精确同源；默认仅放行 GitHub 资产域。 */
+  allowedAssetOrigins?: readonly string[];
   expectedSha256: string;
   /** 清单标称体积（进度 total 兜底 + M1 硬上限基数）。 */
   expectedSize: number;
@@ -116,10 +118,11 @@ export async function downloadToFile(job: DownloadJob): Promise<DownloadOutcome>
     if (!res.ok || !res.body) {
       return { ok: false, error: `下载失败：更新源返回 HTTP ${res.status}` };
     }
-    // H1：重定向后的最终 URL 必须仍在 GitHub 白名单内，否则一个字节都不写盘。
+    // H1：重定向后的最终 URL 必须仍在 GitHub 白名单或显式镜像同源内，
+    // 否则一个字节都不写盘。
     // res.url 为空（非标准实现/测试 mock）时回退请求 URL 判定。
     const finalUrl = res.url || job.url;
-    if (!isAllowedAssetUrl(finalUrl)) {
+    if (!isAllowedAssetUrl(finalUrl, job.allowedAssetOrigins)) {
       return {
         ok: false,
         error: `下载被重定向到允许名单之外的地址（${finalUrl}），已拒绝写盘`,

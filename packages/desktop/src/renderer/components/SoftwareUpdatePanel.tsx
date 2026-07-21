@@ -106,6 +106,13 @@ export function SoftwareUpdatePanel({
             >
               重试
             </button>
+            <button
+              type="button"
+              className="otto-hub__btn"
+              onClick={() => actions.openReleasePage()}
+            >
+              前往发布页
+            </button>
           </div>
         </div>
       ) : null}
@@ -220,6 +227,13 @@ export function SoftwareUpdatePanel({
               onClick={actions.download}
             >
               重试下载
+            </button>
+            <button
+              type="button"
+              className="otto-hub__btn"
+              onClick={() => actions.openReleasePage(state.releasePageUrl ?? undefined)}
+            >
+              手动下载
             </button>
           </div>
         </div>

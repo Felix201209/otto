@@ -111,6 +111,19 @@ describe('isAllowedAssetUrl：https + GitHub 域白名单（纵深防御）', ()
     expect(isAllowedAssetUrl('ftp://github.com/a')).toBe(false);
     expect(isAllowedAssetUrl('not a url')).toBe(false);
   });
+
+  it('放行显式配置的 HTTPS 镜像同源，但不放行子域或 HTTP', () => {
+    const allowedOrigins = ['https://updates.example.com'];
+    expect(
+      isAllowedAssetUrl('https://updates.example.com/releases/Otto.exe', allowedOrigins),
+    ).toBe(true);
+    expect(
+      isAllowedAssetUrl('https://evil.updates.example.com/Otto.exe', allowedOrigins),
+    ).toBe(false);
+    expect(
+      isAllowedAssetUrl('http://updates.example.com/Otto.exe', allowedOrigins),
+    ).toBe(false);
+  });
 });
 
 // ── latest.json 解析 ────────────────────────────────────────────────────
@@ -176,6 +189,24 @@ describe('parseManifest：latest.json 解析与校验', () => {
     expect(r.manifest.assets['win-x64']).toBeUndefined();
     expect(r.manifest.assets['mac-arm64']).toBeUndefined();
     expect(r.manifest.assets['linux-x64']).toBeDefined();
+  });
+
+  it('镜像资产默认被剔除，只有清单源同源显式放行时才接受', () => {
+    const json = sampleManifestJson() as {
+      assets: Record<string, Record<string, unknown>>;
+    };
+    json.assets['win-x64'].url = 'https://updates.example.com/releases/Otto.exe';
+
+    const withoutMirrorGrant = parseManifest(json);
+    expect(withoutMirrorGrant.ok).toBe(true);
+    if (!withoutMirrorGrant.ok) return;
+    expect(withoutMirrorGrant.manifest.assets['win-x64']).toBeUndefined();
+
+    const withMirrorGrant = parseManifest(json, ['https://updates.example.com']);
+    expect(withMirrorGrant.ok).toBe(true);
+    if (!withMirrorGrant.ok) return;
+    expect(withMirrorGrant.manifest.assets['win-x64']?.url)
+      .toBe('https://updates.example.com/releases/Otto.exe');
   });
 });
 

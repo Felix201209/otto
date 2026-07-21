@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 import {
   type BrowserProcessHandle,
   ChromeHtmlToImageRenderer,
+  createCachedDependencyPreflight,
   type DocumentCommandRunner,
   findLocalBrowserExecutable,
   GenerateDocumentTool,
@@ -77,6 +78,30 @@ describe('GenerateDocumentTool', () => {
   it('has display name', () => { expect(tool.displayName).toBe('GenerateDocument'); });
   it('has Pencil icon', () => { expect(tool.icon).toBe('pencil'); });
 
+  it('caches successful dependency preflight but refreshes missing dependencies quickly', async () => {
+    let now = 0;
+    const backend = vi.fn(async () => null as string | null);
+    const cached = createCachedDependencyPreflight(backend, () => now, {
+      successTtlMs: 60_000,
+      failureTtlMs: 1_000,
+    });
+
+    await cached(['typst']);
+    await cached(['typst']);
+    expect(backend).toHaveBeenCalledTimes(1);
+    now = 60_001;
+    await cached(['typst']);
+    expect(backend).toHaveBeenCalledTimes(2);
+
+    backend.mockResolvedValueOnce('typst missing');
+    await cached(['pandoc']);
+    await cached(['pandoc']);
+    expect(backend).toHaveBeenCalledTimes(3);
+    now += 1_001;
+    await cached(['pandoc']);
+    expect(backend).toHaveBeenCalledTimes(4);
+  });
+
   // --- Validation ---
   it('rejects empty content', () => {
     expect(tool.validateToolParams({ content: '', format: 'report', output_format: 'pdf' })).toContain('content');
@@ -131,9 +156,9 @@ describe('GenerateDocumentTool', () => {
   it('docx output uses bundled doc-writer and emits staged progress', async () => {
     const out = path.join(tmpDir, 'doc.docx');
     const updates: string[] = [];
-    const commands: Array<{ file: string; args: readonly string[] }> = [];
-    const runner: DocumentCommandRunner = vi.fn(async (file, args) => {
-      commands.push({ file, args });
+    const commands: Array<{ file: string; args: readonly string[]; env?: NodeJS.ProcessEnv }> = [];
+    const runner: DocumentCommandRunner = vi.fn(async (file, args, options) => {
+      commands.push({ file, args, env: options.env });
       fs.writeFileSync(out, Buffer.from('PK fake docx'));
     });
     const docxTool = new GenerateDocumentTool(
@@ -141,6 +166,11 @@ describe('GenerateDocumentTool', () => {
       new ChromeHtmlToImageRenderer(null),
       runner,
       vi.fn(async () => null),
+      vi.fn(() => ({
+        executable: '/Applications/Otto.app/Contents/Resources/runtime/darwin-arm64/python/bin/python3',
+        source: 'bundled',
+        pythonSitePackages: '/Applications/Otto.app/Contents/Resources/runtime/darwin-arm64/python/site-packages',
+      })),
     );
 
     const result = await docxTool.execute(
@@ -158,9 +188,11 @@ describe('GenerateDocumentTool', () => {
 
     expect(result.llmContent).toContain('generate_document OK');
     expect(commands).toHaveLength(1);
-    expect(commands[0].file).toMatch(/python/);
+    expect(commands[0].file).toContain('/runtime/darwin-arm64/python/bin/python3');
     expect(commands[0].args[0]).toContain('create_docx.py');
     expect(commands[0].args[2]).toBe(out);
+    expect(commands[0].env?.PYTHONPATH).toContain('/runtime/darwin-arm64/python/site-packages');
+    expect(commands[0].env?.PYTHONNOUSERSITE).toBe('1');
     expect(updates.join('\n')).toContain('预检 Python 公文依赖');
     expect(updates.join('\n')).toContain('导出 DOCX 文件');
   });
@@ -168,7 +200,6 @@ describe('GenerateDocumentTool', () => {
   // --- Doctor preflight: engine binaries checked BEFORE rendering ---
   const typstAvailable = hasBin('typst');
   const marpAvailable = hasBin('marp') || hasBin('marp-cli');
-  const pandocAvailable = hasBin('pandoc');
 
   it.runIf(!typstAvailable)('report->pdf fails loud with typst install command when typst is missing', async () => {
     const out = path.join(tmpDir, 'r.pdf');
@@ -319,22 +350,30 @@ describe('GenerateDocumentTool', () => {
     expect(r.llmContent).toContain('@marp-team/marp-cli');
   });
 
-  it.runIf(!pandocAvailable)('article->docx fails loud with pandoc install command when pandoc is missing', async () => {
+  it('article->docx fails loud with the Python dependency repair when bundled runtime is unavailable', async () => {
     const out = path.join(tmpDir, 'a.docx');
-    const r = await tool.execute(
+    const docxTool = new GenerateDocumentTool(
+      createMockConfig(),
+      new ChromeHtmlToImageRenderer(null),
+      vi.fn(),
+      vi.fn(async (names) => names.includes('python-docx') ? 'python-docx 未安装：pip install python-docx' : null),
+    );
+    const r = await docxTool.execute(
       { content: '# Article\n\nText', format: 'article', output_format: 'docx', title: 'A', output_path: out },
       new AbortController().signal,
     );
     expect(r.llmContent).toContain('FAIL');
-    expect(r.llmContent.toLowerCase()).toContain('pandoc');
-    expect(r.llmContent).toContain('brew install pandoc');
+    expect(r.llmContent.toLowerCase()).toContain('python-docx');
+    expect(r.llmContent).toContain('pip install python-docx');
   });
 
   it('passes Marp, Typst, and Pandoc paths as structured argv', async () => {
     const commandRunner = vi.fn(async (file: string, args: string[]) => {
       const outputPath = file === 'typst'
         ? args[2]
-        : args[args.indexOf('-o') + 1];
+        : /python(?:3|\.exe)?$/i.test(file)
+          ? args[2]
+          : args[args.indexOf('-o') + 1];
       fs.writeFileSync(outputPath, `rendered by ${file}`);
     });
     const dependencyPreflight = vi.fn(async () => null);

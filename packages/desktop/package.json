@@ -13,14 +13,16 @@
     "build": "npm run build:main && npm run build:preload && npm run build:renderer",
     "dev:renderer": "webpack-cli --config webpack.config.cjs --mode development --watch",
     "start": "electron .",
-    "dist": "npm run build && electron-builder --mac --dir",
-    "dist:dmg": "npm run build && electron-builder --mac dmg --arm64 --x64",
-    "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64",
+    "runtime:verify:mac": "node scripts/verify-document-runtime.mjs --target darwin-arm64 --target darwin-x64",
+    "runtime:verify:win": "node scripts/verify-document-runtime.mjs --target win32-x64",
+    "dist": "npm run runtime:verify:mac && npm run build && electron-builder --mac --dir",
+    "dist:dmg": "npm run runtime:verify:mac && npm run build && electron-builder --mac dmg --arm64 --x64",
+    "dist:win": "npm run runtime:verify:win && node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
+    "dist:all": "npm run runtime:verify:mac && npm run runtime:verify:win && npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
     "release": "node scripts/make-delivery-zip.mjs --build"
   },
   "dependencies": {
@@ -104,12 +106,20 @@
       "gatekeeperAssess": false,
       "extraResources": [
         {
+          "from": "build/icon.png",
+          "to": "app-icon.png"
+        },
+        {
           "from": "../../node_modules/@vscode/ripgrep/bin/rg",
           "to": "ripgrep/rg"
         },
         {
           "from": "../../resources/video-editor",
           "to": "video-editor"
+        },
+        {
+          "from": "vendor/runtime/darwin-${arch}",
+          "to": "runtime/darwin-${arch}"
         }
       ]
     },
@@ -140,12 +150,20 @@
       "icon": "build/icon.png",
       "extraResources": [
         {
+          "from": "build/icon.png",
+          "to": "app-icon.png"
+        },
+        {
           "from": "vendor/win/ripgrep/rg.exe",
           "to": "ripgrep/rg.exe"
         },
         {
           "from": "../../resources/video-editor",
           "to": "video-editor"
+        },
+        {
+          "from": "vendor/runtime/win32-${arch}",
+          "to": "runtime/win32-${arch}"
         }
       ]
     },

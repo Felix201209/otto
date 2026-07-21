@@ -135,15 +135,35 @@ export function platformAssetKey(platform: string, arch: string): string | null 
 /**
  * 只允许 https 且 host 为 GitHub 本体 / GitHub 资产域。清单虽是自家发的，
  * 但若清单被替换 / 篡改塞进恶意 URL，这里直接拒绝——sha256 校验之外的第二道闸。
+ * 企业镜像只能通过 extraAllowedOrigins 显式放行，且必须是 HTTPS
+ * 精确同源（不做子域通配）。
  */
-export function isAllowedAssetUrl(raw: string): boolean {
+export function isAllowedAssetUrl(
+  raw: string,
+  extraAllowedOrigins: readonly string[] = [],
+): boolean {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
     return false;
   }
-  if (u.protocol !== 'https:') return false;
+  if (u.protocol !== 'https:' || u.username || u.password) return false;
+  for (const candidate of extraAllowedOrigins) {
+    try {
+      const allowed = new URL(candidate);
+      if (
+        allowed.protocol === 'https:'
+        && !allowed.username
+        && !allowed.password
+        && u.origin === allowed.origin
+      ) {
+        return true;
+      }
+    } catch {
+      // 非法的额外来源只忽略，不放宽默认 GitHub 白名单。
+    }
+  }
   const host = u.hostname.toLowerCase();
   if (host === 'github.com' || host === 'www.github.com' || host === 'api.github.com') {
     return true;
@@ -162,7 +182,10 @@ type ManifestParseResult =
   | { ok: false; error: string };
 
 /** 逐字段校验一条资产；不合法（含 URL 不在白名单）返回 null → 上层剔除。 */
-function parseAsset(value: unknown): UpdateAssetInfo | null {
+function parseAsset(
+  value: unknown,
+  extraAllowedOrigins: readonly string[],
+): UpdateAssetInfo | null {
   if (typeof value !== 'object' || value === null) return null;
   const a = value as Record<string, unknown>;
   if (
@@ -177,7 +200,7 @@ function parseAsset(value: unknown): UpdateAssetInfo | null {
   ) {
     return null;
   }
-  if (!isAllowedAssetUrl(a.url)) return null;
+  if (!isAllowedAssetUrl(a.url, extraAllowedOrigins)) return null;
   return { name: a.name, url: a.url, size: a.size, sha256: a.sha256.toLowerCase() };
 }
 
@@ -185,7 +208,10 @@ function parseAsset(value: unknown): UpdateAssetInfo | null {
  * 解析 latest.json（unknown → 结构化清单）。version 缺失/不合法 → 整体失败；
  * 单条资产不合法（缺 sha256、URL 不在白名单等）→ 只剔除该条，不拖垮其它平台。
  */
-export function parseManifest(json: unknown): ManifestParseResult {
+export function parseManifest(
+  json: unknown,
+  extraAllowedOrigins: readonly string[] = [],
+): ManifestParseResult {
   if (typeof json !== 'object' || json === null) {
     return { ok: false, error: '更新清单不是合法的 JSON 对象' };
   }
@@ -196,7 +222,7 @@ export function parseManifest(json: unknown): ManifestParseResult {
   const assets: Record<string, UpdateAssetInfo> = {};
   if (typeof j.assets === 'object' && j.assets !== null) {
     for (const [key, value] of Object.entries(j.assets as Record<string, unknown>)) {
-      const asset = parseAsset(value);
+      const asset = parseAsset(value, extraAllowedOrigins);
       if (asset) assets[key] = asset;
     }
   }

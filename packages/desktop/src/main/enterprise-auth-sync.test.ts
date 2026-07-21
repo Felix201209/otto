@@ -106,7 +106,22 @@ describe('enterprise auth identity synchronization', () => {
 
     const logoutHandler = source.slice(handlerStart, handlerEnd);
     expect(logoutHandler).toContain('logoutAndClearEnterpriseIdentity');
+    expect(logoutHandler).toContain('fileAccessGrants.clear()');
+    expect(logoutHandler).toContain('notificationService.clearAll()');
     expect(logoutHandler).not.toMatch(/\brmSync\b|promises\.rm|\bunlink\b|\.otto-user/);
+  });
+
+  it('取消更新只取消下载，不清附件授权或未读通知', () => {
+    const source = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
+    const handlerStart = source.indexOf('ipcMain.handle(IPC.updateCancel');
+    const handlerEnd = source.indexOf('ipcMain.handle(IPC.updateInstall', handlerStart);
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+
+    const cancelHandler = source.slice(handlerStart, handlerEnd);
+    expect(cancelHandler).toContain('updateService.cancelDownload()');
+    expect(cancelHandler).not.toContain('fileAccessGrants.clear()');
+    expect(cancelHandler).not.toContain('notificationService.clearAll()');
   });
 
   it('协议与工作区服务不暴露可由退出流程触发的整库销毁入口', () => {

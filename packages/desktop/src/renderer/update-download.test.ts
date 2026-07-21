@@ -94,6 +94,18 @@ describe('downloadToFile：正常链路', () => {
     // 收尾必推一帧 100%（transferred == total == 15）。
     expect(frames[frames.length - 1]).toEqual([15, 15]);
   });
+
+  it('显式配置的 HTTPS 镜像可在同源内完成下载', async () => {
+    const job = mkJob({
+      url: 'https://updates.example.com/releases/Otto.exe',
+      allowedAssetOrigins: ['https://updates.example.com'],
+      fetchImpl: (async () =>
+        mkResponse({ url: 'https://updates.example.com/assets/Otto.exe' })) as FetchLike,
+    });
+    const outcome = await downloadToFile(job);
+    expect(outcome).toEqual({ ok: true, filePath: job.finalPath });
+    expect(fs.readFileSync(job.finalPath, 'utf-8')).toBe('installer bytes');
+  });
 });
 
 describe('downloadToFile：H1 重定向逃逸白名单', () => {

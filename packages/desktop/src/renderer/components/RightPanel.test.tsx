@@ -14,9 +14,11 @@ import type { ProductWorkspaceSnapshot } from 'otto-server';
 import { RightPanel } from './RightPanel.js';
 import { BASE_AGENT_PROFILES } from '../agents/departmentAgents.js';
 import type { CustomAgentDefinition } from '../customAgents.js';
+import { clearEnterpriseOrganizationFeaturesCache } from '../state/enterpriseOrganizationFeatures.js';
 
 afterEach(() => {
   cleanup();
+  clearEnterpriseOrganizationFeaturesCache();
   delete (window as unknown as { otto?: unknown }).otto;
 });
 
@@ -37,8 +39,19 @@ interface TestWorkLogDay {
 
 function installBridge(
   recent: TestWorkLogDay[] | (() => Promise<TestWorkLogDay[]>) = [],
+  knowledgeEnabled = false,
 ) {
   const openPath = vi.fn(async () => undefined);
+  const enterpriseKnowledgeList = vi.fn(async () => []);
+  const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
+    enterprise_tree: true,
+    park_service: true,
+    feishu_auto_reply: true,
+    tui_sync: true,
+    direct_messages: true,
+    atoa: true,
+    knowledge: knowledgeEnabled,
+  }));
   const workLogReport = vi.fn(async () => ({
     ok: true,
     date: '2026-07-10',
@@ -56,11 +69,17 @@ function installBridge(
       totalActions: 0,
       workResults: 0,
     }),
-    enterpriseKnowledgeList: async () => [],
+    enterpriseKnowledgeList,
+    enterpriseOrganizationFeaturesGet,
     workLogReport,
     openPath,
   };
-  return { openPath, workLogReport };
+  return {
+    openPath,
+    workLogReport,
+    enterpriseKnowledgeList,
+    enterpriseOrganizationFeaturesGet,
+  };
 }
 
 function enterpriseWorkspace(): ProductWorkspaceSnapshot {
@@ -305,7 +324,10 @@ describe('RightPanel fixed Agent catalog', () => {
 
     render(<RightPanel busy={false} />);
 
-    const parkCard = (await screen.findByText('宏创AI园区服务')).closest('button');
+    await screen.findAllByText('园区服务');
+    const parkCard = document.querySelector<HTMLButtonElement>(
+      '.otto-expert-card[title*="装修管理"]',
+    );
     expect(parkCard).toBeTruthy();
     expect(parkCard?.getAttribute('title')).toContain('装修管理');
     fireEvent.click(parkCard!);
@@ -350,8 +372,56 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
   });
 
-  it('keeps enterprise tabs, Skill Zone, and collaboration in fixed-catalog mode', () => {
+  it('中心返回未加入园区时不用旧本机品牌显示园区入口', async () => {
     installBridge();
+    const enterpriseParkView = vi.fn(async () => null);
+    const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
+    Object.assign(window.otto, { enterpriseParkView, parkConfig });
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: '旧本机宏创园区服务' })).toBeNull();
+    expect(parkConfig).not.toHaveBeenCalled();
+  });
+
+  it('已加入园区时使用中心返回的动态品牌', async () => {
+    installBridge();
+    const parkConfig = vi.fn(async () => ({ brandName: '旧本机品牌' }));
+    Object.assign(window.otto, {
+      parkConfig,
+      enterpriseParkView: vi.fn(async () => ({
+        id: 'park_star',
+        name: '星火产业园',
+        slug: 'star-park',
+        brandName: '星火智慧园区服务',
+        adminOrganizationId: 'org-park',
+        status: 'active' as const,
+        createdAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:00:00.000Z',
+      })),
+    });
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
+    expect(parkConfig).not.toHaveBeenCalled();
+  });
+
+  it('keeps enterprise tabs, Skill Zone, and collaboration in fixed-catalog mode', async () => {
+    installBridge([], true);
     const openSkillZone = vi.fn();
     render(
       <RightPanel
@@ -362,9 +432,11 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      '专家', '工具', '企业记忆', '笔记', '工作日志',
-    ]);
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+        '专家', '工具', '企业记忆', '笔记', '工作日志',
+      ]);
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
     expect(openSkillZone).toHaveBeenCalledTimes(1);
 
@@ -376,7 +448,7 @@ describe('RightPanel fixed Agent catalog', () => {
   });
 
   it('loads and displays real enterprise memory entries', async () => {
-    installBridge();
+    installBridge([], true);
     (window as unknown as { otto: { enterpriseKnowledgeList: () => Promise<unknown[]> } }).otto.enterpriseKnowledgeList = vi.fn(async () => [
       {
         id: 'k1',
@@ -399,13 +471,51 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: '企业记忆' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
 
     expect(await screen.findByText('客户部署必须先完成企业邀请码校验。')).toBeTruthy();
     expect(screen.getByText('研发部')).toBeTruthy();
     expect(screen.getByText('solution')).toBeTruthy();
     expect(screen.getByText('86%')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
+  });
+
+  it('组织未启用知识功能时隐藏企业记忆且不调用 list', async () => {
+    const bridge = installBridge([], false);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
+    expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
+  });
+
+  it('已启用后刷新功能快照失败时 fail closed 隐藏入口', async () => {
+    const bridge = installBridge([], true);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    const memoryTab = await screen.findByRole('tab', { name: '企业记忆' });
+    bridge.enterpriseOrganizationFeaturesGet.mockRejectedValueOnce(
+      new Error('组织功能快照暂时不可用'),
+    );
+    fireEvent.click(memoryTab);
+
+    await waitFor(() => {
+      expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
+    });
+    expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
 
   it('shows the authenticated central organization before stale local company data', () => {

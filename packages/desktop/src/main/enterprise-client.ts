@@ -158,11 +158,84 @@ export interface EnterpriseOrganizationInviteContext {
   invite: EnterpriseOrganizationInvite | null;
 }
 
+export interface EnterpriseOrganizationFeatures {
+  enterprise_tree: boolean;
+  park_service: boolean;
+  feishu_auto_reply: boolean;
+  tui_sync: boolean;
+  direct_messages: boolean;
+  atoa: boolean;
+  knowledge: boolean;
+}
+
+export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
+
+export interface EnterpriseOrganizationPosition {
+  id: string;
+  organizationId: string;
+  departmentId: string;
+  title: string;
+  roleMapping: EnterprisePositionRoleMapping;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseOrganizationDepartment {
+  id: string;
+  organizationId: string;
+  name: string;
+  memberCount: number;
+  positions: EnterpriseOrganizationPosition[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseParkService {
+  parkId: string;
+  id: string;
+  name: string;
+  enabled: boolean;
+  config: Record<string, string>;
+  updatedAt: string;
+}
+
+export interface EnterprisePark {
+  id: string;
+  name: string;
+  slug: string;
+  brandName: string;
+  adminOrganizationId: string;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+  isAdminOrganization?: boolean;
+  services?: EnterpriseParkService[];
+}
+
+export interface EnterpriseParkInvite {
+  id: string;
+  parkId: string;
+  code: string;
+  status: 'active' | 'expired' | 'revoked';
+  usedCount: number;
+  maxUses: number | null;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface EnterpriseParkSpecialist {
+  parkId: string;
+  serviceId: string;
+  accountId: string;
+  name: string;
+}
+
 export interface EnterpriseOrganizationView {
   organization: {
     id: string;
     name: string;
     status: 'active' | 'disabled';
+    parkId?: string | null;
     createdAt: string;
   } | null;
   members: Array<{
@@ -179,6 +252,9 @@ export interface EnterpriseOrganizationView {
     status: 'active' | 'disabled';
   }>;
   employeeCount: number;
+  structure?: EnterpriseOrganizationDepartment[];
+  features?: EnterpriseOrganizationFeatures;
+  park?: EnterprisePark | null;
 }
 
 export interface EnterpriseDirectMessage {
@@ -188,6 +264,16 @@ export interface EnterpriseDirectMessage {
   content: string;
   createdAt: string;
   readAt: string | null;
+}
+
+export interface EnterpriseUnreadMessageNotification {
+  id: string;
+  source: 'enterprise';
+  title: string;
+  senderAccountId: string;
+  senderName: string;
+  preview: string;
+  createdAt: string;
 }
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
@@ -730,7 +816,9 @@ export class EnterpriseClient {
     ) {
       const sessionWasRevoked = input.password !== undefined
         || (input.status !== undefined && input.status !== previous.status)
-        || (input.isAdmin !== undefined && input.isAdmin !== previous.isAdmin);
+        || (input.isAdmin !== undefined && input.isAdmin !== previous.isAdmin)
+        || input.departmentId !== undefined
+        || input.positionId !== undefined;
       if (sessionWasRevoked) this.invalidateSession();
       else this.currentAccount = account;
     }
@@ -797,12 +885,161 @@ export class EnterpriseClient {
     return this.request('/enterprise/organization/view');
   }
 
+  async getOrganizationFeatures(): Promise<EnterpriseOrganizationFeatures> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['organization_feature_switches_v1']);
+    return (await this.request<{ features: EnterpriseOrganizationFeatures }>(
+      '/enterprise/organization/features',
+    )).features;
+  }
+
+  async updateOrganizationFeatures(
+    patch: Partial<EnterpriseOrganizationFeatures>,
+  ): Promise<EnterpriseOrganizationFeatures> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['organization_feature_switches_v1']);
+    return (await this.request<{ features: EnterpriseOrganizationFeatures }>(
+      '/enterprise/organization/features',
+      { method: 'PATCH', body: JSON.stringify(patch) },
+    )).features;
+  }
+
+  async listOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['organization_structure_v1']);
+    return (await this.request<{ structure: EnterpriseOrganizationDepartment[] }>(
+      '/enterprise/organization/departments',
+    )).structure;
+  }
+
+  async createOrganizationDepartment(name: string): Promise<EnterpriseOrganizationDepartment> {
+    return (await this.request<{ department: EnterpriseOrganizationDepartment }>(
+      '/enterprise/organization/departments',
+      { method: 'POST', body: JSON.stringify({ name }) },
+    )).department;
+  }
+
+  async updateOrganizationDepartment(id: string, name: string): Promise<EnterpriseOrganizationDepartment> {
+    return (await this.request<{ department: EnterpriseOrganizationDepartment }>(
+      `/enterprise/organization/departments/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify({ name }) },
+    )).department;
+  }
+
+  async deleteOrganizationDepartment(id: string): Promise<void> {
+    await this.request(`/enterprise/organization/departments/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async createOrganizationPosition(input: {
+    departmentId: string;
+    title: string;
+    roleMapping: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition> {
+    return (await this.request<{ position: EnterpriseOrganizationPosition }>(
+      '/enterprise/organization/positions',
+      { method: 'POST', body: JSON.stringify(input) },
+    )).position;
+  }
+
+  async updateOrganizationPosition(id: string, input: {
+    title?: string;
+    roleMapping?: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition> {
+    return (await this.request<{ position: EnterpriseOrganizationPosition }>(
+      `/enterprise/organization/positions/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )).position;
+  }
+
+  async deleteOrganizationPosition(id: string): Promise<void> {
+    await this.request(`/enterprise/organization/positions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getParkView(): Promise<EnterprisePark | null> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['park_membership_v1']);
+    return (await this.request<{ park: EnterprisePark | null }>('/enterprise/park/view')).park;
+  }
+
+  async registerPark(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark> {
+    return (await this.request<{ park: EnterprisePark }>('/enterprise/park/manage', {
+      method: 'POST', body: JSON.stringify(input),
+    })).park;
+  }
+
+  async joinPark(inviteCode: string): Promise<EnterprisePark> {
+    return (await this.request<{ park: EnterprisePark }>('/enterprise/park/join', {
+      method: 'POST', body: JSON.stringify({ inviteCode }),
+    })).park;
+  }
+
+  async issueParkInvite(maxUses?: number | null): Promise<EnterpriseParkInvite> {
+    return (await this.request<{ invite: EnterpriseParkInvite }>('/enterprise/park/invite', {
+      method: 'POST', body: JSON.stringify({ maxUses: maxUses ?? null }),
+    })).invite;
+  }
+
+  async listParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
+    return (await this.request<{ specialists: EnterpriseParkSpecialist[] }>(
+      '/enterprise/park/specialists',
+    )).specialists;
+  }
+
+  async setParkSpecialist(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist> {
+    return (await this.request<{ specialist: EnterpriseParkSpecialist }>(
+      '/enterprise/park/specialists',
+      { method: 'POST', body: JSON.stringify({ serviceId, accountId }) },
+    )).specialist;
+  }
+
+  async removeParkSpecialist(serviceId: string, accountId: string): Promise<void> {
+    await this.request('/enterprise/park/specialists', {
+      method: 'DELETE', body: JSON.stringify({ serviceId, accountId }),
+    });
+  }
+
+  async listParkServices(): Promise<EnterpriseParkService[]> {
+    return (await this.request<{ services: EnterpriseParkService[] }>(
+      '/enterprise/park/services',
+    )).services;
+  }
+
+  async updateParkService(input: {
+    serviceId: string;
+    name?: string;
+    enabled?: boolean;
+    config?: Record<string, string>;
+  }): Promise<EnterpriseParkService> {
+    return (await this.request<{ service: EnterpriseParkService }>(
+      '/enterprise/park/services',
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )).service;
+  }
+
   async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
     return (await this.request<{ messages: EnterpriseDirectMessage[] }>(
       `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
     )).messages;
+  }
+
+  async listUnreadDirectMessageNotifications(): Promise<EnterpriseUnreadMessageNotification[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['unread_message_notifications_v1']);
+    try {
+      return (await this.request<{ notifications: EnterpriseUnreadMessageNotification[] }>(
+        '/enterprise/messages/unread',
+      )).notifications;
+    } catch (error) {
+      // 管理员主动关闭企业消息是正常配置态；后台轮询不应弹错误或重试刷屏。
+      if (error instanceof EnterpriseRequestError && error.status === 403) return [];
+      throw error;
+    }
   }
 
   async sendDirectMessage(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {

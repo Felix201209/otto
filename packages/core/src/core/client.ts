@@ -52,6 +52,15 @@ import {
   type LoopContext,
 } from '../utils/goalContinuationPrompt.js';
 import { GoalAchievedTool } from '../tools/goal-achieved.js';
+import { getWorkLogger } from '../orchestration/workLog.js';
+import { getKnowledgeCapturePipeline } from '../orchestration/knowledgeCapturePipeline.js';
+import { injectRelevantSessionMemory } from '../services/sessionMemoryInjection.js';
+import {
+  buildCheckpointRecoveryHistory,
+  SessionCheckpointService,
+  type SessionCheckpointRecord,
+} from '../services/sessionCheckpoint.js';
+import { TaskWatchdog } from '../services/taskWatchdog.js';
 
 import { OttoServerAdapter } from './OttoServerAdapter.js';
 
@@ -59,6 +68,38 @@ function isThinkingSupported(_model: string) {
   // ✅ 服务端内部决定模型 - 客户端总是尝试启用thinking
   // 如果服务端选择的模型不支持，会被忽略，不会出错
   return true; // 让服务端处理thinking支持判断
+}
+
+function extractPartListText(value: PartListUnion): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  return (value as Array<string | Record<string, unknown>>)
+    .map((part) => typeof part === 'string' ? part : (typeof part.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+export function extractUserVisibleModelResponseText(responses: unknown[]): string {
+  const pieces: string[] = [];
+  for (const response of responses) {
+    if (!response || typeof response !== 'object') continue;
+    const record = response as Record<string, unknown>;
+    const candidates = Array.isArray(record.candidates) ? record.candidates : [];
+    if (candidates.length === 0) {
+      if (record.thought !== true && typeof record.text === 'string') pieces.push(record.text);
+      continue;
+    }
+    for (const candidate of candidates) {
+      const parts = (candidate as {
+        content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+      })?.content?.parts ?? [];
+      for (const part of parts) {
+        if (part.thought !== true && typeof part.text === 'string') pieces.push(part.text);
+      }
+    }
+  }
+  return pieces.join('\n').trim();
 }
 
 /**
@@ -118,7 +159,17 @@ export class OttoClient {
   private readonly compressionService: CompressionService;
   private readonly microCompactService: MicroCompactService;
   private readonly postCompactRestoration: PostCompactRestorationService;
+  private readonly knowledgeCapture = getKnowledgeCapturePipeline();
+  private readonly sessionCheckpoint = new SessionCheckpointService();
+  private readonly taskWatchdog: TaskWatchdog;
   private lastPromptId?: string;
+  private memoryInjectionPromptId?: string;
+  private capturePromptId?: string;
+  private captureRequestText = '';
+  private captureStartedAt = 0;
+  private restoredCheckpoint?: SessionCheckpointRecord;
+  private runtimeInvocationFailed = false;
+  private runtimeInvocationFailureReason = 'turn_incomplete';
   private isCompressing: boolean = false; // 压缩互斥锁，防止重入
 
   // 上次请求的Token使用量
@@ -193,6 +244,17 @@ export class OttoClient {
       totalCharBudget: 50000,
     });
 
+    this.taskWatchdog = new TaskWatchdog({
+      timeoutMs: 10 * 60_000,
+      onStall: async () => {
+        if (this.config.getEnvironmentContextDisabled()) return;
+        await this.sessionCheckpoint.markStalled(
+          this.config.getSessionId(),
+          this.config.getProjectRoot(),
+        );
+      },
+    });
+
     // 初始化智能压缩阈值（使用与CompressionService相同的逻辑）
     //this.compressionThreshold = compressionTokenThreshold * tokenLimit(this.config.getModel(), this.config);
   }
@@ -214,12 +276,28 @@ export class OttoClient {
       this.config.getSessionId(),
     );
     this.chat = await this.startChat();
+    await this.restoreRuntimeCheckpoint();
   }
 
   /**
    * 结束会话并触发 SessionEnd 钩子
    */
   async endSession(reason: string = 'user_exit'): Promise<void> {
+    this.taskWatchdog.stop();
+    if (!this.config.getEnvironmentContextDisabled()) {
+      await Promise.allSettled([
+        this.sessionCheckpoint.markSessionEnded(
+          this.config.getSessionId(),
+          this.config.getProjectRoot(),
+          reason,
+        ),
+        this.knowledgeCapture.captureSessionEnd({
+          sessionId: this.config.getSessionId(),
+          projectRoot: this.config.getProjectRoot(),
+          reason,
+        }),
+      ]);
+    }
     try {
       const { SessionEndReason } = await import('../hooks/types.js');
       // 映射字符串原因为枚举
@@ -233,6 +311,29 @@ export class OttoClient {
     } catch (hookError) {
       logger.warn(`[OttoClient] SessionEnd hook execution failed: ${hookError}`);
     }
+  }
+
+  /** Explicit recovery entry used by CLI/Desktop diagnostics and tests. */
+  async restoreRuntimeCheckpoint(): Promise<boolean> {
+    if (this.config.getEnvironmentContextDisabled() || !this.chat) return false;
+    const checkpoint = await this.sessionCheckpoint.restoreLatest(
+      this.config.getSessionId(),
+      this.config.getProjectRoot(),
+    );
+    if (!checkpoint || checkpoint.history.length === 0) return false;
+    this.setHistory(buildCheckpointRecoveryHistory(checkpoint));
+    this.restoredCheckpoint = checkpoint;
+    await this.sessionCheckpoint.markRecoveryApplied(checkpoint.sessionId);
+    logger.info(`[OttoClient] Restored runtime checkpoint for ${checkpoint.sessionId} (${checkpoint.state}, turn=${checkpoint.turnCount}).`);
+    return true;
+  }
+
+  async getRuntimeCheckpointStatus(): Promise<SessionCheckpointRecord | null> {
+    return this.sessionCheckpoint.getStatus(this.config.getSessionId());
+  }
+
+  wasRuntimeCheckpointRestored(): boolean {
+    return this.restoredCheckpoint !== undefined;
   }
 
   getContentGenerator(): ContentGenerator {
@@ -927,7 +1028,36 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
     prompt_id: string,
     turns: number = this.MAX_TURNS,
     originalModel?: string,
+    continuationDepth: number = 0,
   ): AsyncGenerator<ServerOttoStreamEvent, Turn> {
+    const runtimeEnabled = !this.config.getEnvironmentContextDisabled();
+    const ownsRuntimeCheckpoint = continuationDepth === 0;
+    let turnCompleted = false;
+    let interruptionReason = 'turn_incomplete';
+    if (ownsRuntimeCheckpoint) {
+      this.runtimeInvocationFailed = false;
+      this.runtimeInvocationFailureReason = 'turn_incomplete';
+    }
+    const isNewRuntimePrompt = this.capturePromptId !== prompt_id;
+    if (isNewRuntimePrompt) {
+      this.capturePromptId = prompt_id;
+      this.captureRequestText = extractPartListText(request);
+      this.captureStartedAt = Date.now();
+      if (runtimeEnabled) {
+        await this.sessionCheckpoint.markTurnStarted({
+          sessionId: this.config.getSessionId(),
+          projectRoot: this.config.getProjectRoot(),
+          history: this.getHistory(),
+          turnCount: this.sessionTurnCount + 1,
+          pendingRequest: request,
+        }).catch((error) => logger.warn(`[OttoClient] Failed to save turn checkpoint: ${getErrorMessage(error)}`));
+      }
+    }
+    if (runtimeEnabled && ownsRuntimeCheckpoint) {
+      this.taskWatchdog.start({ sessionId: this.config.getSessionId(), promptId: prompt_id });
+    }
+
+    try {
     // 🪝 触发 BeforeAgent 钩子
     try {
       const beforeAgentResult = await this.config.getHookSystem()
@@ -979,6 +1109,30 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       console.log('[sendMessageStream] Waiting for ongoing compression to complete...');
       await this.waitForCompressionComplete(signal);
       console.log('[sendMessageStream] Compression wait completed, proceeding');
+    }
+
+    if (runtimeEnabled && this.memoryInjectionPromptId !== prompt_id) {
+      this.memoryInjectionPromptId = prompt_id;
+      try {
+        const workLogger = getWorkLogger();
+        const memory = await injectRelevantSessionMemory(
+          request,
+          {
+            searchRelevantExperience: workLogger.searchRelevantExperience.bind(workLogger),
+            searchKnowledge: this.knowledgeCapture.searchKnowledge.bind(this.knowledgeCapture),
+          },
+          {
+            sessionId: this.config.getSessionId(),
+            projectRoot: this.config.getProjectRoot(),
+          },
+        );
+        request = memory.request;
+        if (memory.matchCount > 0) {
+          logger.info(`[OttoClient] Injected ${memory.matchCount} related durable memory item(s).`);
+        }
+      } catch (error) {
+        logger.warn(`[OttoClient] Session memory injection failed: ${getErrorMessage(error)}`);
+      }
     }
 
 
@@ -1107,19 +1261,30 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
       // Add feedback to chat history so AI understands why it was stopped
       this.addLoopDetectionFeedbackToHistory(loopType);
+      this.runtimeInvocationFailed = true;
+      this.runtimeInvocationFailureReason = 'loop_detected';
       return turn;
     }
 
     const resultStream = turn.run(request, signal);
     let lastFinishReason: string | undefined;
     for await (const event of resultStream) {
+      if (runtimeEnabled) this.taskWatchdog.touch(`stream:${event.type}`);
       if (this.loopDetector.addAndCheck(event)) {
         const loopType = this.loopDetector.getDetectedLoopType();
         logger.info(`[STOP-DEBUG] sendMessageStream: LOOP DETECTED, type=${loopType}, turn will be stopped`);
         yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
         // Add feedback to chat history so AI understands why it was stopped
         this.addLoopDetectionFeedbackToHistory(loopType);
+        interruptionReason = 'loop_detected';
+        this.runtimeInvocationFailed = true;
+        this.runtimeInvocationFailureReason = interruptionReason;
         return turn;
+      }
+
+      if (event.type === OttoEventType.Error) {
+        this.runtimeInvocationFailed = true;
+        this.runtimeInvocationFailureReason = 'model_stream_error';
       }
 
       // 记录 Finished 事件的 finishReason
@@ -1162,6 +1327,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
         // Model was switched (likely due to quota error fallback)
         // Don't continue with recursive call to prevent unwanted Flash execution
         logger.info(`[STOP-DEBUG] sendMessageStream: MODEL SWITCHED during call (${initialModel} → ${currentModel}), stopping recursion`);
+        turnCompleted = !this.runtimeInvocationFailed;
         return turn;
       }
 
@@ -1182,13 +1348,18 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
         const nextRequest = [{ text: 'Please continue.' }];
         // This recursive call's events will be yielded out, and the final
         // turn object will be from the recursive call.
-        return yield* this.sendMessageStream(
+        const continuedTurn = yield* this.sendMessageStream(
           nextRequest,
           signal,
           prompt_id,
           boundedTurns - 1,
           initialModel,
+          continuationDepth + 1,
         );
+        turnCompleted = !signal?.aborted
+          && !this.runtimeInvocationFailed
+          && continuedTurn.pendingToolCalls.length === 0;
+        return continuedTurn;
       } else {
         logger.info(`[STOP-DEBUG] sendMessageStream: nextSpeaker is NOT model, ENDING conversation turn. nextSpeaker=${nextSpeakerCheck?.next_speaker || 'null/undefined'}`);
       }
@@ -1212,7 +1383,53 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       logger.warn(`[OttoClient] AfterAgent hook execution failed: ${hookError}`);
     }
 
+    if (runtimeEnabled) {
+      const responseText = extractUserVisibleModelResponseText(turn.getDebugResponses());
+      if (responseText) {
+        await this.knowledgeCapture.captureAfterAgent({
+          promptId: prompt_id,
+          sessionId: this.config.getSessionId(),
+          projectRoot: this.config.getProjectRoot(),
+          requestText: this.captureRequestText,
+          responseText,
+          durationMs: this.captureStartedAt ? Date.now() - this.captureStartedAt : undefined,
+        }).catch((error) => logger.warn(`[OttoClient] Knowledge capture failed: ${getErrorMessage(error)}`));
+      }
+    }
+
+    turnCompleted = !signal?.aborted
+      && !this.runtimeInvocationFailed
+      && turn.pendingToolCalls.length === 0;
+    if (turn.pendingToolCalls.length > 0) interruptionReason = 'pending_tool_execution';
     return turn;
+    } catch (error) {
+      interruptionReason = signal?.aborted
+        ? 'aborted'
+        : `turn_error: ${getErrorMessage(error)}`;
+      this.runtimeInvocationFailed = true;
+      this.runtimeInvocationFailureReason = interruptionReason;
+      throw error;
+    } finally {
+      if (runtimeEnabled && ownsRuntimeCheckpoint) {
+        if (turnCompleted) {
+          await this.sessionCheckpoint.markTurnReady({
+            sessionId: this.config.getSessionId(),
+            projectRoot: this.config.getProjectRoot(),
+            history: this.getHistory(),
+            turnCount: this.sessionTurnCount,
+          }).catch((error) => logger.warn(`[OttoClient] Failed to finalize turn checkpoint: ${getErrorMessage(error)}`));
+        } else {
+          await this.sessionCheckpoint.markTurnInterrupted(
+            this.config.getSessionId(),
+            this.config.getProjectRoot(),
+            signal?.aborted
+              ? 'aborted'
+              : (this.runtimeInvocationFailed ? this.runtimeInvocationFailureReason : interruptionReason),
+          ).catch((error) => logger.warn(`[OttoClient] Failed to preserve interrupted turn checkpoint: ${getErrorMessage(error)}`));
+        }
+        this.taskWatchdog.stop();
+      }
+    }
   }
 
   // generateEmbedding 方法已移除 - 功能未被使用且已从服务端清理

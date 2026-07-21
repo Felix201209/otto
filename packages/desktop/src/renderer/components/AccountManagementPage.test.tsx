@@ -35,6 +35,34 @@ const INVITE = {
   validHours: 168 as const,
 };
 
+const ORGANIZATION_STRUCTURE = [{
+  id: 'dept_product',
+  organizationId: 'org_acme',
+  name: '产品部',
+  memberCount: 1,
+  createdAt: '2026-07-14',
+  updatedAt: '2026-07-14',
+  positions: [{
+    id: 'pos_product_manager',
+    organizationId: 'org_acme',
+    departmentId: 'dept_product',
+    title: '产品经理',
+    roleMapping: 'department_admin' as const,
+    createdAt: '2026-07-14',
+    updatedAt: '2026-07-14',
+  }],
+}];
+
+const FEATURES = {
+  enterprise_tree: true,
+  park_service: true,
+  feishu_auto_reply: true,
+  tui_sync: true,
+  direct_messages: true,
+  atoa: true,
+  knowledge: true,
+};
+
 const clipboardWrite = vi.fn(async () => undefined);
 
 function deferred<T>(): {
@@ -86,6 +114,18 @@ beforeEach(() => {
       enterpriseAccountCreate: vi.fn(async () => CREATED_ACCOUNT),
       enterpriseAccountUpdate: vi.fn(async (_id, input) => ({ ...ADMIN, ...input })),
       enterpriseAccountDelete: vi.fn(async (id) => ({ id, deleted: true as const })),
+      enterpriseOrganizationFeaturesGet: vi.fn(async () => FEATURES),
+      enterpriseOrganizationFeaturesUpdate: vi.fn(async (patch) => ({ ...FEATURES, ...patch })),
+      enterpriseOrganizationDepartments: vi.fn(async () => ORGANIZATION_STRUCTURE),
+      enterpriseOrganizationDepartmentCreate: vi.fn(async () => ORGANIZATION_STRUCTURE[0]),
+      enterpriseOrganizationDepartmentUpdate: vi.fn(async () => ORGANIZATION_STRUCTURE[0]),
+      enterpriseOrganizationDepartmentDelete: vi.fn(async () => undefined),
+      enterpriseOrganizationPositionCreate: vi.fn(async () => ORGANIZATION_STRUCTURE[0].positions[0]),
+      enterpriseOrganizationPositionUpdate: vi.fn(async () => ORGANIZATION_STRUCTURE[0].positions[0]),
+      enterpriseOrganizationPositionDelete: vi.fn(async () => undefined),
+      enterpriseParkView: vi.fn(async () => null),
+      enterpriseParkRegister: vi.fn(async () => null),
+      enterpriseParkJoin: vi.fn(async () => null),
       enterpriseParkServicePush: vi.fn(async () => ({ recipientCount: 1 })),
       enterpriseParkSurveyResults: vi.fn(async () => [{
         id: 'survey-1', title: '第三季度满意度调查', body: '请评价园区服务',
@@ -109,7 +149,7 @@ describe('企业账号模板与标签预设', () => {
   it('套用 IT 支持模板时一次填好角色、部门与职责标签', () => {
     expect(applyAccountTemplate({
       username: '', password: '', name: '', phone: '', feishuOpenId: '', avatarUrl: '',
-      positionTitle: '', role: '', department: '', tags: '',
+      positionTitle: '', positionId: '', role: '', department: '', departmentId: '', tags: '',
       isAdmin: false, status: 'active',
     }, 'it-support')).toMatchObject({
       positionTitle: 'IT 支持',
@@ -186,13 +226,13 @@ describe('园区内容发布', () => {
   it('管理员只发布公告和问卷，其他七项服务由用户主动申请', async () => {
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
     const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
-    const type = within(panel).getByLabelText('选择宏创园区服务') as HTMLSelectElement;
+    const type = within(panel).getByLabelText('选择园区服务类型') as HTMLSelectElement;
     expect(Array.from(type.options).map((option) => option.textContent)).toEqual(['园区公告', '满意度调查']);
     expect(within(panel).queryByText('装修申请')).toBeNull();
     expect(await within(panel).findByText('实名员工 · 4 分')).toBeTruthy();
     expect(within(panel).getByText('1 / 3 已提交')).toBeTruthy();
 
-    fireEvent.change(within(panel).getByLabelText('宏创园区服务推送备注'), {
+    fireEvent.change(within(panel).getByLabelText('园区服务推送备注'), {
       target: { value: '今天下午 14:00–16:00 停水' },
     });
     fireEvent.click(within(panel).getByRole('button', { name: '发布内容' }));
@@ -202,9 +242,46 @@ describe('园区内容发布', () => {
       note: '今天下午 14:00–16:00 停水',
     }));
   });
+
+  it('有中心园区时无障碍文案使用动态品牌', async () => {
+    vi.mocked(window.otto.enterpriseParkView).mockResolvedValueOnce({
+      id: 'park_star',
+      name: '星火产业园',
+      slug: 'star-park',
+      brandName: '星火智慧园区服务',
+      adminOrganizationId: 'org_acme',
+      status: 'active',
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    });
+
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
+    expect(await within(panel).findByLabelText('选择星火智慧园区服务类型')).toBeTruthy();
+    expect(within(panel).getByLabelText('星火智慧园区服务推送备注')).toBeTruthy();
+  });
 });
 
 describe('企业账号目录', () => {
+  it('企业配置面板写入失败时保留自定义部门输入', async () => {
+    const createDepartment = vi.fn(async () => {
+      throw new Error('部门名称已存在');
+    });
+    Object.assign(window.otto, {
+      enterpriseOrganizationDepartmentCreate: createDepartment,
+    });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    const panel = await screen.findByRole('region', { name: '企业组织与园区配置' });
+    const input = within(panel).getByLabelText('新部门') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '产业合作部' } });
+    fireEvent.click(within(panel).getByRole('button', { name: '新增部门' }));
+
+    expect((await within(panel).findByRole('alert')).textContent).toContain('部门名称已存在');
+    expect(input.value).toBe('产业合作部');
+    expect(createDepartment).toHaveBeenCalledWith('产业合作部');
+  });
+
   it('初始目录仍在加载时锁定新增入口，避免晚到 GET 覆盖新建成员', async () => {
     const pending = deferred<Array<typeof ADMIN>>();
     Object.assign(window.otto, { enterpriseAccounts: vi.fn(() => pending.promise) });
@@ -352,14 +429,19 @@ describe('企业账号目录', () => {
     })));
   });
 
-  it('CEO 可从成员目录直接安排员工职位，并只提交组织任命字段', async () => {
+  it('CEO 可从成员目录按真实部门/职位 ID 安排员工', async () => {
     const employee = {
       ...CREATED_ACCOUNT,
       department: null,
       positionTitle: null,
       role: '成员',
     };
-    const update = vi.fn(async (_id, input) => ({ ...employee, ...input }));
+    const update = vi.fn(async (_id, input) => ({
+      ...employee,
+      ...input,
+      role: '部门管理员',
+      isAdmin: false,
+    }));
     const onOrganizationChanged = vi.fn();
     Object.assign(window.otto, {
       enterpriseAccounts: vi.fn(async () => [ADMIN, employee]),
@@ -375,24 +457,24 @@ describe('企业账号目录', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '安排职位 新成员' }));
     expect(screen.getByRole('dialog', { name: '安排员工职位' })).toBeTruthy();
-    fireEvent.change(screen.getByRole('textbox', { name: '职位 / 岗位' }), {
-      target: { value: '产品经理' },
+    fireEvent.change(screen.getByRole('combobox', { name: '安排职位部门' }), {
+      target: { value: 'dept_product' },
     });
-    fireEvent.change(screen.getByRole('textbox', { name: '角色' }), {
-      target: { value: '产品负责人' },
+    fireEvent.change(screen.getByRole('combobox', { name: '安排真实职位' }), {
+      target: { value: 'pos_product_manager' },
     });
-    fireEvent.change(screen.getByRole('combobox', { name: '部门' }), {
-      target: { value: '产品部' },
-    });
+    expect((screen.getByRole('textbox', { name: '职位权限映射' }) as HTMLInputElement).value)
+      .toBe('部门管理员');
     fireEvent.click(screen.getByRole('button', { name: '保存职位' }));
 
     await waitFor(() => expect(update).toHaveBeenCalledWith('acc_new', {
       department: '产品部',
+      departmentId: 'dept_product',
       positionTitle: '产品经理',
-      role: '产品负责人',
+      positionId: 'pos_product_manager',
     }));
     expect(await screen.findByText('产品经理')).toBeTruthy();
-    expect(screen.getByText('产品部 · 角色：产品负责人')).toBeTruthy();
+    expect(screen.getByText('产品部 · 角色：部门管理员')).toBeTruthy();
     expect(onOrganizationChanged).toHaveBeenCalledOnce();
   });
 

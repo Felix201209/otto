@@ -249,6 +249,20 @@ describe('个人注册与账号删除', () => {
       password: 'delete-staff-password',
       name: '待删除员工',
       phone: '13800138000',
+      feishuOpenId: 'ou_deleted_staff',
+    });
+    const worker = db.createAccount({
+      username: 'delete-ticket-worker',
+      password: 'delete-ticket-worker-password',
+      name: '历史工单处理人',
+      tags: ['IT', '报修'],
+    });
+    const historicalTicket = db.createTicket({
+      createdByAccountId: staff.id,
+      serviceId: 'it',
+      title: '删除前创建的工单',
+      description: '账号删除后仍需保留历史',
+      targetTags: ['IT', '报修'],
     });
     const session = db.createAuthSession(staff.id);
 
@@ -262,16 +276,23 @@ describe('个人注册与账号删除', () => {
     expect(db.findAccountByPhone('13800138000')).toBeNull();
 
     const tombstone = db.getDB().prepare(
-      'SELECT username, phone, name, is_admin, status, deleted_at FROM accounts WHERE id = ?',
+      'SELECT username, phone, feishu_open_id, name, is_admin, status, deleted_at FROM accounts WHERE id = ?',
     ).get(staff.id) as Record<string, unknown>;
     expect(tombstone).toMatchObject({
       phone: null,
+      feishu_open_id: null,
       name: '已删除账号',
       is_admin: 0,
       status: 'disabled',
     });
     expect(tombstone.username).toBe(`deleted_${staff.id}`);
     expect(tombstone.deleted_at).toEqual(expect.any(String));
+    expect(db.listTicketInbox(worker.id)).toContainEqual(expect.objectContaining({
+      id: historicalTicket.id,
+      creator: { id: staff.id, name: '已删除账号', username: '已删除账号' },
+    }));
+    expect(db.listTicketsForAccount(admin.id).map((ticket) => ticket.id))
+      .toContain(historicalTicket.id);
   });
 
   it('拒绝管理员删除自己、跨企业账号或企业最后一名可登录管理员', async () => {
@@ -330,9 +351,207 @@ describe('IT 工单按标签真实投递', () => {
     expect(db.listTicketInbox(itRepair.id).map((item) => item.title)).toEqual(['电脑无法联网']);
     expect(db.listTicketInbox(requester.id)).toEqual([]);
   });
+
+  it('已加入园区且关闭园区服务时，IT 工单仍只投递给本企业 IT', async () => {
+    const db = await freshDb();
+    const parkOrganization = db.createOrganization({ name: '园区运营方', slug: 'it-route-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'it-route-park-admin',
+      password: 'park-admin-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const tenantOrganization = db.createOrganization({ name: '园区入驻企业', slug: 'it-route-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'it-route-tenant-admin',
+      password: 'tenant-admin-password',
+      name: '企业管理员',
+      isAdmin: true,
+    });
+    const requester = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'it-route-requester',
+      password: 'requester-password',
+      name: '报修员工',
+    });
+    const localIt = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'it-route-local-it',
+      password: 'local-it-password',
+      name: '本企业 IT',
+      tags: ['IT', '报修'],
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '测试园区',
+    });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+    });
+    db.updateOrganizationFeatures(tenantOrganization.id, { park_service: false });
+
+    const ticket = db.createTicket({
+      createdByAccountId: requester.id,
+      serviceId: 'it',
+      title: '电脑无法开机',
+      description: '按下电源键没有反应',
+      targetTags: ['IT', '报修'],
+    });
+
+    expect(ticket.parkId).toBeNull();
+    expect(ticket.recipients).toEqual([{ id: localIt.id, name: '本企业 IT' }]);
+    expect(db.listTicketInbox(localIt.id).map((item) => item.id)).toContain(ticket.id);
+    expect(db.listTicketInbox(parkAdmin.id).map((item) => item.id)).not.toContain(ticket.id);
+  });
 });
 
 describe('园区服务服务器流程', () => {
+  it('未加入产业园或任一侧关闭园区服务时拒绝新建园区工单', async () => {
+    const db = await freshDb();
+    const standalone = db.createAccount({
+      username: 'standalone-park-user',
+      password: 'standalone-password',
+      name: '未入园员工',
+    });
+    expect(() => db.createTicket({
+      createdByAccountId: standalone.id,
+      serviceId: 'repair',
+      title: '空调报修',
+      description: '未入园请求',
+    })).toThrow('企业尚未加入产业园');
+
+    const parkOrganization = db.createOrganization({ name: '开关园区方', slug: 'create-guard-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'create-guard-park-admin',
+      password: 'park-admin-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const tenantOrganization = db.createOrganization({ name: '开关入驻方', slug: 'create-guard-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'create-guard-tenant-admin',
+      password: 'tenant-admin-password',
+      name: '企业管理员',
+      isAdmin: true,
+    });
+    const tenantMember = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'create-guard-tenant-member',
+      password: 'tenant-member-password',
+      name: '企业员工',
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '开关测试园区',
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+    });
+    db.updateOrganizationFeatures(parkOrganization.id, { park_service: false });
+
+    expect(() => db.createTicket({
+      createdByAccountId: tenantMember.id,
+      serviceId: 'repair',
+      title: '空调报修',
+      description: '园区管理方已关闭服务',
+    })).toThrow('园区服务功能已由管理员关闭');
+  });
+
+  it('园区邀请码可让整个企业加入，并把跨企业报修投递给园区专员', async () => {
+    const db = await freshDb();
+    const parkOrganization = db.createOrganization({ name: '宏创园区运营方', slug: 'hongchuang-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'park-owner-admin',
+      password: 'park-owner-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const specialist = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'park-repair-specialist',
+      password: 'park-repair-password',
+      name: '园区维修专员',
+    });
+    const tenantOrganization = db.createOrganization({ name: '入驻企业', slug: 'tenant-company' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'tenant-admin',
+      password: 'tenant-admin-password',
+      name: '企业管理员',
+      isAdmin: true,
+    });
+    const tenantMember = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'tenant-member',
+      password: 'tenant-member-password',
+      name: '报修员工',
+    });
+
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '宏创园区',
+      brandName: '宏创园区服务',
+    });
+    expect(db.listParkServices(park.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'repair', name: '物业报修', enabled: true }),
+      expect.objectContaining({ id: 'meeting-room', name: '会议室预约', enabled: true }),
+    ]));
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+      maxUses: 3,
+    });
+    expect(db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+    }).id).toBe(park.id);
+    const fallbackTicket = db.createTicket({
+      createdByAccountId: tenantMember.id,
+      serviceId: 'meeting-room',
+      title: '会议室预约',
+      description: '需要预约明天下午会议室',
+      targetTags: ['客服人员'],
+    });
+    expect(fallbackTicket.recipients).toEqual([{ id: parkAdmin.id, name: '园区管理员' }]);
+    expect(db.listTicketInbox(parkAdmin.id).map((item) => item.id)).toContain(fallbackTicket.id);
+    db.setParkServiceSpecialist({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+      serviceId: 'repair',
+      accountId: specialist.id,
+    });
+
+    const ticket = db.createTicket({
+      createdByAccountId: tenantMember.id,
+      serviceId: 'repair',
+      title: '空调无法启动',
+      description: 'A 座 3 层空调无响应',
+      targetTags: ['维修工作人员'],
+    });
+    expect(ticket.recipients).toEqual([{ id: specialist.id, name: '园区维修专员' }]);
+    expect(db.listTicketInbox(specialist.id)[0]).toMatchObject({ id: ticket.id, isRecipient: true });
+    expect(db.updateTicket({ ticketId: ticket.id, accountId: specialist.id, action: 'accept' }).status)
+      .toBe('维修中');
+  });
+
   it('六类申请可投递给多名客服，并只向有权限的人返回最少必要资料', async () => {
     const db = await freshDb();
     const admin = db.createAccount({
@@ -349,6 +568,19 @@ describe('园区服务服务器流程', () => {
       username: 'service-2', password: 'service-password-2', name: '客服二号',
       phone: '13800138002', feishuOpenId: 'ou_service_2', tags: ['客服人员'],
     });
+    const park = db.createPark({
+      adminOrganizationId: admin.organizationId,
+      actorAccountId: admin.id,
+      name: '自营园区',
+    });
+    for (const specialist of [first, second]) {
+      db.setParkServiceSpecialist({
+        parkId: park.id,
+        actorAccountId: admin.id,
+        serviceId: 'renovation',
+        accountId: specialist.id,
+      });
+    }
     const ticket = db.createTicket({
       createdByAccountId: requester.id,
       serviceId: 'renovation',
@@ -391,11 +623,25 @@ describe('园区服务服务器流程', () => {
 
   it('非报修申请使用“处理中”，完成后由提交人确认', async () => {
     const db = await freshDb();
+    const admin = db.createAccount({
+      username: 'meeting-admin', password: 'meeting-admin-password', name: '园区管理员', isAdmin: true,
+    });
     const requester = db.createAccount({
       username: 'meeting-user', password: 'meeting-user-password', name: '会议申请人',
     });
     const worker = db.createAccount({
       username: 'meeting-service', password: 'meeting-service-password', name: '园区客服', tags: ['客服人员'],
+    });
+    const park = db.createPark({
+      adminOrganizationId: admin.organizationId,
+      actorAccountId: admin.id,
+      name: '会议园区',
+    });
+    db.setParkServiceSpecialist({
+      parkId: park.id,
+      actorAccountId: admin.id,
+      serviceId: 'meeting-room',
+      accountId: worker.id,
     });
     const ticket = db.createTicket({
       createdByAccountId: requester.id,

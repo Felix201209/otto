@@ -19,6 +19,7 @@ import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
+import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
 import {
   IconBuilding,
   IconChevron,
@@ -73,6 +74,8 @@ export interface RightPanelProps {
   mode?: 'personal' | 'enterprise';
   /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
   enterpriseRole?: CentralEnterpriseRole;
+  /** 中心会话签发的组织 id，用于按租户缓存功能开关。 */
+  enterpriseOrganizationId?: string | null;
   workspace?: ProductWorkspaceSnapshot | null;
   profiles?: readonly AgentProfile[];
   customAgents?: readonly CustomAgentDefinition[];
@@ -108,6 +111,7 @@ export function RightPanel({
   busy,
   mode = 'personal',
   enterpriseRole,
+  enterpriseOrganizationId: authenticatedOrganizationId,
   workspace = null,
   profiles: providedProfiles,
   customAgents = [],
@@ -126,11 +130,22 @@ export function RightPanel({
   onConfirmAutoSkill = () => undefined,
   onRejectAutoSkill = () => undefined,
 }: RightPanelProps): React.JSX.Element {
+  const authenticatedOrganization = (workspace as AuthenticatedWorkspaceSnapshot | null)
+    ?.authenticatedOrganization;
+  const enterpriseOrganizationId = mode === 'enterprise'
+    ? authenticatedOrganizationId?.trim()
+      || authenticatedOrganization?.id
+      || workspace?.context.companyId
+      || null
+    : null;
+  const [enterpriseKnowledgeEnabled, setEnterpriseKnowledgeEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise'
-      ? ['agents', 'tools', 'memory', 'notes', 'worklog']
+      ? enterpriseKnowledgeEnabled
+        ? ['agents', 'tools', 'memory', 'notes', 'worklog']
+        : ['agents', 'tools', 'notes', 'worklog']
       : ['agents', 'tools', 'notes', 'worklog'],
-    [mode],
+    [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
@@ -163,9 +178,23 @@ export function RightPanel({
     () => providedProfiles ?? visibleProfiles(mode, enterpriseRole),
     [enterpriseRole, mode, providedProfiles],
   );
-  const authenticatedOrganization = (workspace as AuthenticatedWorkspaceSnapshot | null)
-    ?.authenticatedOrganization;
   const parkBrand = useParkBrand();
+
+  useEffect(() => {
+    let cancelled = false;
+    setEnterpriseKnowledgeEnabled(false);
+    setKnowledgeItems([]);
+    setKnowledgeError('');
+    if (!enterpriseOrganizationId) return () => { cancelled = true; };
+    void getEnterpriseOrganizationFeatures(enterpriseOrganizationId, { force: true })
+      .then((features) => {
+        if (!cancelled) setEnterpriseKnowledgeEnabled(features.knowledge);
+      })
+      .catch(() => {
+        if (!cancelled) setEnterpriseKnowledgeEnabled(false);
+      });
+    return () => { cancelled = true; };
+  }, [enterpriseOrganizationId]);
 
   useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab('agents');
@@ -188,28 +217,38 @@ export function RightPanel({
   }, []);
 
   const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
-    if (mode !== 'enterprise') return;
+    if (mode !== 'enterprise' || !enterpriseOrganizationId) return;
     setKnowledgeLoading(true);
     setKnowledgeError('');
     try {
+      const features = await getEnterpriseOrganizationFeatures(
+        enterpriseOrganizationId,
+        { force: true },
+      );
+      setEnterpriseKnowledgeEnabled(features.knowledge);
+      if (!features.knowledge) {
+        setKnowledgeItems([]);
+        return;
+      }
       const entries = await window.otto.enterpriseKnowledgeList();
       setKnowledgeItems(entries);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      setEnterpriseKnowledgeEnabled(false);
       setKnowledgeError(message || '企业记忆加载失败');
       setKnowledgeItems([]);
     } finally {
       setKnowledgeLoading(false);
     }
-  }, [mode]);
+  }, [enterpriseOrganizationId, mode]);
 
   useEffect(() => {
     if (activeTab === 'worklog') void refreshWorkLog();
   }, [activeTab, refreshWorkLog]);
 
   useEffect(() => {
-    if (activeTab === 'memory' && mode === 'enterprise') void refreshEnterpriseKnowledge();
-  }, [activeTab, mode, refreshEnterpriseKnowledge]);
+    if (activeTab === 'memory' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
+  }, [activeTab, enterpriseKnowledgeEnabled, refreshEnterpriseKnowledge]);
 
   const worklogByDate = useMemo(
     () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
@@ -279,13 +318,13 @@ export function RightPanel({
             <div className="otto-right-panel__head">
               常用入口
             </div>
-            <button
+            {parkBrand ? <><button
               type="button"
               className="otto-right-panel__grouphead"
               onClick={() => setParkOpen((value) => !value)}
               aria-expanded={parkOpen}
             >
-              <span>园区 AI 服务</span>
+              <span>园区服务</span>
               <IconChevronDown
                 size={14}
                 className={`otto-right-panel__grouphead-chev${parkOpen ? '' : ' is-collapsed'}`}
@@ -308,7 +347,7 @@ export function RightPanel({
                   </span>
                 </button>
               </div>
-            ) : null}
+            ) : null}</> : null}
 
             {mode === 'enterprise' ? (
               <>
@@ -467,7 +506,7 @@ export function RightPanel({
           </div>
         ) : null}
 
-        {activeTab === 'memory' ? (
+        {activeTab === 'memory' && enterpriseKnowledgeEnabled ? (
           <div>
             <div className="otto-worklog-panel__head">
               <div>

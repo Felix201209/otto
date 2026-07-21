@@ -11,6 +11,8 @@ import mime from 'mime-types';
 import Jimp from 'jimp';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
+import { createHash } from 'node:crypto';
+import os from 'node:os';
 // Note: Dynamic import for pdf-parse to avoid initialization issues
 
 // Constants for text file processing
@@ -479,7 +481,7 @@ async function extractWordContent(filePath: string): Promise<string> {
 /**
  * Multi-library PDF text extraction with pure JavaScript fallbacks
  */
-async function extractPdfText(filePath: string): Promise<string> {
+async function extractPdfTextUncached(filePath: string): Promise<string> {
   const fileName = path.basename(filePath);
 
   // Method 1: Try pdf2json first (better for complex PDFs, zero dependencies)
@@ -513,6 +515,97 @@ async function extractPdfText(filePath: string): Promise<string> {
 
 文件确实存在且可访问，但内容无法自动提取。`;
     }
+  }
+}
+
+export interface PdfTextCacheOptions {
+  cacheDir?: string;
+  extractor?: (filePath: string) => Promise<string>;
+}
+
+export interface PdfTextCacheResult {
+  text: string;
+  cacheHit: boolean;
+}
+
+const pdfExtractionsInFlight = new Map<string, Promise<PdfTextCacheResult>>();
+
+function resolvePdfTextCacheDir(): string {
+  const explicit = process.env['OTTO_PDF_TEXT_CACHE_DIR']?.trim();
+  if (explicit) return explicit;
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  if (userDir) return path.join(userDir, 'cache', 'pdf-text');
+  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) {
+    return path.join(os.tmpdir(), 'otto-pdf-text-cache-tests', String(process.pid));
+  }
+  return path.join(os.homedir(), '.otto-user', 'cache', 'pdf-text');
+}
+
+async function pdfCacheKey(filePath: string): Promise<string> {
+  const stats = await fs.promises.stat(filePath, { bigint: true });
+  const contentHash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) {
+    contentHash.update(chunk as Buffer);
+  }
+  return createHash('sha256')
+    .update(JSON.stringify({
+      version: 2,
+      path: path.resolve(filePath),
+      size: stats.size.toString(),
+      mtimeNs: stats.mtimeNs.toString(),
+      content: contentHash.digest('hex'),
+    }))
+    .digest('hex');
+}
+
+/**
+ * Persistent PDF text cache shared by CLI and Desktop. The key includes a real
+ * content digest as well as metadata: filesystems can preserve or coarsen mtime,
+ * so path/size/mtime alone is not a safe invalidation boundary. The in-flight
+ * map also prevents two attachment readers from parsing the same large PDF at
+ * once.
+ */
+export async function extractPdfTextWithCache(
+  filePath: string,
+  options: PdfTextCacheOptions = {},
+): Promise<PdfTextCacheResult> {
+  const cacheDir = options.cacheDir ?? resolvePdfTextCacheDir();
+  const key = await pdfCacheKey(filePath);
+  const cachePath = path.join(cacheDir, `${key}.json`);
+  try {
+    const cached = JSON.parse(await fs.promises.readFile(cachePath, 'utf8')) as { text?: unknown };
+    if (typeof cached.text === 'string') return { text: cached.text, cacheHit: true };
+  } catch {
+    // Missing/corrupt cache entries are normal misses.
+  }
+
+  const inFlightKey = `${cacheDir}\0${key}`;
+  const active = pdfExtractionsInFlight.get(inFlightKey);
+  if (active) return active;
+
+  const extraction = (async (): Promise<PdfTextCacheResult> => {
+    const extractor = options.extractor ?? extractPdfTextUncached;
+    const text = await extractor(filePath);
+    if (!text.startsWith('PDF文件解析失败:') && Buffer.byteLength(text, 'utf8') <= 8 * 1024 * 1024) {
+      await fs.promises.mkdir(cacheDir, { recursive: true, mode: 0o700 }).catch(() => undefined);
+      if (process.platform !== 'win32') await fs.promises.chmod(cacheDir, 0o700).catch(() => undefined);
+      const tempPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
+      await fs.promises.writeFile(tempPath, JSON.stringify({ version: 1, text }), {
+        encoding: 'utf8',
+        mode: 0o600,
+      }).catch(() => undefined);
+      if (fs.existsSync(tempPath)) {
+        await fs.promises.rename(tempPath, cachePath).catch(() => undefined);
+        if (process.platform !== 'win32') await fs.promises.chmod(cachePath, 0o600).catch(() => undefined);
+      }
+    }
+    return { text, cacheHit: false };
+  })();
+  pdfExtractionsInFlight.set(inFlightKey, extraction);
+  try {
+    return await extraction;
+  } finally {
+    pdfExtractionsInFlight.delete(inFlightKey);
   }
 }
 
@@ -875,7 +968,8 @@ export async function processSingleFileContent(
       }
       case 'pdf': {
         try {
-          const extractedText = await extractPdfText(filePath);
+          const extraction = await extractPdfTextWithCache(filePath);
+          const extractedText = extraction.text;
           const lines = extractedText.split('\n');
           const originalLineCount = lines.length;
 
@@ -912,7 +1006,7 @@ export async function processSingleFileContent(
             : `${endLine} lines`;
           return {
             llmContent: llmTextContent, // Return as plain text, not inlineData
-            returnDisplay: `Read PDF as text: ${relativePathForDisplay} (${displayInfo})`,
+            returnDisplay: `Read PDF as text: ${relativePathForDisplay} (${displayInfo}${extraction.cacheHit ? ', cached' : ''})`,
             isTruncated,
             originalLineCount,
             linesShown: [actualStartLine + 1, endLine],

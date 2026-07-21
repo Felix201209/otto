@@ -47,6 +47,7 @@ import type {
   FeishuHealthStatus,
   MessageContent,
   ServerToClient,
+  SessionSummary,
 } from '../protocol.js';
 
 /**
@@ -101,6 +102,11 @@ export type FeishuGatewayFactory = (
 /** 适配器依赖（由 registerFeishu 注入，源自 server.start）。 */
 export interface FeishuAdapterDeps {
   store: SessionStore;
+  /**
+   * 取得当前身份可用的飞书会话。生产 server 用它在首条
+   * 消息时绑定中心账号/组织；独立 adapter 测试仍可回退 store 默认实现。
+   */
+  getOrCreateSession?: (chatId: string, title?: string) => SessionSummary;
   /** 把一帧广播给某会话订阅者（= store.publish 的薄封装）。 */
   broadcast: (sessionId: string, frame: ServerToClient) => void;
   /**
@@ -112,6 +118,8 @@ export interface FeishuAdapterDeps {
   ensureRuntime?: (
     sessionId: string,
   ) => Promise<SessionRuntime | undefined>;
+  /** 企业功能开关；返回 false 时授权用户也只收到停用提示，不触发 runtime。 */
+  shouldAutoReply?: (senderOpenId: string) => boolean | Promise<boolean>;
   /** 仅供显式测试/开发模式使用；生产缺省 false，绝不把 mock 冒充 AI 回复。 */
   mock?: boolean;
   /** 可选凭证注入（测试用）；缺省走 loadCredentials() 读盘。 */
@@ -126,7 +134,11 @@ export interface FeishuAdapterDeps {
 export class FeishuAdapter {
   private readonly store: SessionStore;
   private readonly broadcast: FeishuAdapterDeps['broadcast'];
+  private readonly getOrCreateSession: NonNullable<
+    FeishuAdapterDeps['getOrCreateSession']
+  >;
   private readonly ensureRuntime: FeishuAdapterDeps['ensureRuntime'];
+  private readonly shouldAutoReply: FeishuAdapterDeps['shouldAutoReply'];
   private readonly mock: boolean;
   private gateway: FeishuGatewayLike | null = null;
   private creds: FeishuCredentials | null = null;
@@ -181,7 +193,11 @@ export class FeishuAdapter {
   constructor(deps: FeishuAdapterDeps) {
     this.store = deps.store;
     this.broadcast = deps.broadcast;
+    this.getOrCreateSession =
+      deps.getOrCreateSession
+      ?? ((chatId, title) => this.store.getOrCreateFeishuSession(chatId, title));
     this.ensureRuntime = deps.ensureRuntime;
+    this.shouldAutoReply = deps.shouldAutoReply;
     this.mock = deps.mock ?? false;
     this.injectedCreds = deps.credentials;
     this.gatewayFactory =
@@ -510,14 +526,30 @@ export class FeishuAdapter {
       return null;
     }
 
+    if (this.shouldAutoReply && !(await this.shouldAutoReply(msg.senderOpenId))) {
+      if (this.gateway) {
+        await this.gateway
+          .sendMarkdown(
+            msg.chatId,
+            '⏸️ 当前企业已关闭飞书自动回答，请联系企业管理员开启。',
+            msg.messageId,
+          )
+          .catch(() => undefined);
+      }
+      return null;
+    }
+
     // TODO(Issue #3 增强): 生命周期 / /bind / /restart / slash 命令拦截。
     //   cli feishuCommand 在这里拦截 `/feishu start|stop`、`/bind`、`/restart`、
     //   slash 命令。server 版暂不迁这些强 CLI 耦合命令（它们依赖 CommandService /
     //   进程自重启），先让普通对话走通。命中这些前缀时当前按普通消息透传给 core。
 
     // 映射飞书会话 → server 唯一会话源（source:'feishu'）。
-    const wasNew = !this.store.getSession(this.peekFeishuSessionId(msg.chatId));
-    const session = this.store.getOrCreateFeishuSession(msg.chatId);
+    const previousSessionId = this.peekFeishuSessionId(msg.chatId);
+    const session = this.getOrCreateSession(msg.chatId);
+    // 身份变更后同一 chatId 会映射到新租户会话，此时也必须
+    // 按新会话广播，不得因历史 feishuChatId 存在而跳过。
+    const wasNew = previousSessionId !== session.sessionId;
 
     // 新飞书会话：广播 session_upsert，让 app 会话列表实时出现飞书会话。
     if (wasNew) {

@@ -13,9 +13,17 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { homedir } from 'os';
+import { redactSensitiveText } from '../utils/redaction.js';
 
-/** 审计日志根目录 */
-const AUDIT_DIR = path.join(homedir(), '.otto-user', 'audit');
+/** 审计日志根目录（运行时解析，便于企业/测试隔离） */
+function resolveDefaultAuditDir(): string {
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  return userDir ? path.join(userDir, 'audit') : path.join(homedir(), '.otto-user', 'audit');
+}
+
+export function redactAuditText(input: string): string {
+  return redactSensitiveText(input);
+}
 
 /** 单条审计记录 */
 export interface AuditEntry {
@@ -67,10 +75,18 @@ export interface AuditQueryParams {
 export class AuditLogger {
   private initialized = false;
 
+  constructor(
+    private readonly auditDir = resolveDefaultAuditDir(),
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
   /** 确保目录存在 */
   private async ensureDir(): Promise<void> {
     if (this.initialized) return;
-    await fs.mkdir(AUDIT_DIR, { recursive: true }).catch(() => {});
+    await fs.mkdir(this.auditDir, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') {
+      await fs.chmod(this.auditDir, 0o700).catch(() => undefined);
+    }
     this.initialized = true;
   }
 
@@ -82,24 +98,29 @@ export class AuditLogger {
 
     const fullEntry: AuditEntry = {
       ...entry,
-      timestamp: new Date().toISOString(),
+      inputSummary: redactAuditText(entry.inputSummary),
+      outputSummary: redactAuditText(entry.outputSummary),
+      timestamp: this.now().toISOString(),
       riskLevel: entry.riskLevel || this.inferRiskLevel(entry.toolName, entry.action),
     };
 
     const date = fullEntry.timestamp.split('T')[0];
-    const filePath = path.join(AUDIT_DIR, `audit-${date}.jsonl`);
+    const filePath = path.join(this.auditDir, `audit-${date}.jsonl`);
     const line = JSON.stringify(fullEntry) + '\n';
 
-    await fs.appendFile(filePath, line, 'utf-8').catch((err) => {
+    await fs.appendFile(filePath, line, { encoding: 'utf-8', mode: 0o600 }).catch((err) => {
       console.warn(`[AuditLog] Failed to write: ${err instanceof Error ? err.message : String(err)}`);
     });
+    if (process.platform !== 'win32') {
+      await fs.chmod(filePath, 0o600).catch(() => undefined);
+    }
   }
 
   /**
    * 读取某天的审计日志。
    */
   async readDay(date: string): Promise<AuditEntry[]> {
-    const filePath = path.join(AUDIT_DIR, `audit-${date}.jsonl`);
+    const filePath = path.join(this.auditDir, `audit-${date}.jsonl`);
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return content

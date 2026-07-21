@@ -146,6 +146,7 @@ export function attachmentToDataUrl(att: ImageAttachment): string {
  */
 export async function fileToFileAttachment(
   file: File,
+  resolvedPath?: string,
 ): Promise<FileAttachment> {
   if (!isSupportedFile(file)) {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
@@ -160,8 +161,12 @@ export async function fileToFileAttachment(
     );
   }
 
-  // 对于 Electron 桌面端：file 对象可能带有 path 属性
-  const filePath = (file as File & { path?: string }).path || file.name;
+  // Electron 32+ 移除了非标准 File.path。Composer 通过 preload 的
+  // webUtils.getPathForFile(file) 传入真实路径；保留旧属性仅兼容旧 Electron。
+  const filePath =
+    resolvedPath?.trim() ||
+    (file as File & { path?: string }).path ||
+    file.name;
 
   return {
     fileName: file.name,
@@ -174,9 +179,13 @@ export async function fileToFileAttachment(
  */
 export async function fileToAttachment(
   file: File,
+  resolvedPath?: string,
 ): Promise<Attachment> {
   if (isSupportedImage(file)) {
-    return fileToImageAttachment(file);
+    const image = await fileToImageAttachment(file);
+    return resolvedPath
+      ? ({ ...image, filePath: resolvedPath } as ImageAttachment)
+      : image;
   }
-  return fileToFileAttachment(file);
+  return fileToFileAttachment(file, resolvedPath);
 }

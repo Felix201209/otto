@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/react';
 import type { ToolCall } from 'otto-server';
-import { ToolCallsCard } from './ToolCalls.js';
+import { buildToolCompletionSummary, ToolCallsCard } from './ToolCalls.js';
 
 /** 造一张待作答的 ask_user_question 工具卡。 */
 function questionCard(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -40,6 +40,44 @@ function questionCard(overrides: Partial<ToolCall> = {}): ToolCall {
     ...overrides,
   };
 }
+
+describe('ToolCalls · 空正文的确定性总结', () => {
+  it('统计完成/失败数量，并生成可读工具名与目标', () => {
+    const summary = buildToolCompletionSummary([
+      {
+        id: 'read-1',
+        toolName: 'read_file',
+        parameters: { absolute_path: '/tmp/report.pdf' },
+        status: 'success' as ToolCall['status'],
+      },
+      {
+        id: 'exec-1',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm run build' },
+        status: 'error' as ToolCall['status'],
+      },
+    ]);
+
+    expect(summary).toContain('本轮共处理 2 项操作');
+    expect(summary).toContain('完成 1 项，失败 1 项');
+    expect(summary).toContain('读取文件（/tmp/report.pdf）');
+    expect(summary).toContain('终端运行（npm run build）');
+  });
+
+  it('最多列出 3 个关键步骤，避免长工具链刷屏', () => {
+    const tools = Array.from({ length: 4 }, (_, index): ToolCall => ({
+      id: `tool-${index + 1}`,
+      toolName: 'read_file',
+      parameters: { absolute_path: `/tmp/file-${index + 1}.txt` },
+      status: 'success' as ToolCall['status'],
+    }));
+
+    const summary = buildToolCompletionSummary(tools);
+    expect(summary).toContain('file-1.txt');
+    expect(summary).toContain('file-3.txt');
+    expect(summary).not.toContain('file-4.txt');
+  });
+});
 
 describe('ToolCalls · AskUserQuestion 问答卡', () => {
   it('渲染问题与选项，选中后提交回传正确 answers', () => {

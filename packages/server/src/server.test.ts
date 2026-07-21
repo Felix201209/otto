@@ -1164,6 +1164,105 @@ describe('OttoServer WS（mock 模式）', () => {
     c.close();
   });
 
+  it('未订阅的新飞书会话也向桌面全局通知一次，且不泄漏会话消息流', async () => {
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+
+    const session = server.store.createSession({
+      source: 'feishu',
+      title: '项目群',
+      feishuChatId: 'oc_new_member',
+    });
+    const message = server.store.appendMessage(session.sessionId, {
+      id: 'feishu-message-1',
+      role: 'user',
+      content: [{ type: 'text', value: '新成员发来消息' }],
+      source: 'feishu',
+    });
+    server.store.publish(session.sessionId, {
+      type: 'message_start',
+      payload: { message },
+    });
+
+    const notification = await c.waitFor(
+      (frame) => frame.type === 'external_inbound_notification',
+    );
+    expect(notification).toEqual({
+      type: 'external_inbound_notification',
+      payload: {
+        messageId: 'feishu-message-1',
+        sessionId: session.sessionId,
+        source: 'feishu',
+        sender: '项目群',
+        preview: '新成员发来消息',
+      },
+    });
+    expect(c.frames.filter((frame) => frame.type === 'external_inbound_notification')).toHaveLength(1);
+    expect(c.frames.filter((frame) => frame.type === 'message_start')).toHaveLength(0);
+    expect(c.frames).toContainEqual({
+      type: 'session_upsert',
+      payload: { session: server.store.getSession(session.sessionId) },
+    });
+    c.close();
+  });
+
+  it('当前企业身份不广播 legacy 或其他租户会话的入站通知', async () => {
+    server.setAuthenticatedEnterpriseAccount({
+      id: 'notification-account',
+      organizationId: 'notification-org',
+      organizationName: '当前企业',
+      name: '当前成员',
+      isAdmin: false,
+      leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+      role: 'member',
+      tags: [],
+    });
+    const c = await connectWs(baseUrl);
+    await c.waitFor((f) => f.type === 'welcome');
+
+    const forbiddenSessions = [
+      server.store.createSession({
+        source: 'feishu',
+        title: '未绑定旧会话',
+        feishuChatId: 'oc_legacy_forbidden',
+      }),
+      server.store.createSession({
+        source: 'feishu',
+        title: '其他租户会话',
+        feishuChatId: 'oc_other_tenant',
+        enterpriseAccountId: 'other-account',
+        enterpriseOrganizationId: 'other-org',
+      }),
+    ];
+    for (const [index, session] of forbiddenSessions.entries()) {
+      const message = server.store.appendMessage(session.sessionId, {
+        id: `forbidden-external-${index}`,
+        role: 'user',
+        content: [{ type: 'text', value: '不应泄漏的内容' }],
+        source: 'feishu',
+      });
+      server.store.publish(session.sessionId, {
+        type: 'message_start',
+        payload: { message },
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(
+      c.frames.filter((frame) => frame.type === 'external_inbound_notification'),
+    ).toHaveLength(0);
+    expect(
+      c.frames.filter(
+        (frame) =>
+          frame.type === 'session_upsert'
+          && forbiddenSessions.some(
+            (session) => session.sessionId === frame.payload.session.sessionId,
+          ),
+      ),
+    ).toHaveLength(0);
+    c.close();
+  });
+
   it('create_session → 广播 session_upsert', async () => {
     const c = await connectWs(baseUrl);
     await c.waitFor((f) => f.type === 'welcome');
@@ -2043,6 +2142,47 @@ describe('OttoServer set_model 真实生效语义', () => {
           frame.type === 'models_list' && frame.payload.current === targetId,
       ),
     ).toBe(false);
+    client.close();
+  });
+
+  it('偏好落盘失败时仍确认已经真实切换的 runtime 与会话模型', async () => {
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    const { oldId, targetId } = await modelIds(client);
+    const session = store.createSession({ title: '偏好落盘失败', model: oldId });
+    const setModel = vi.fn(async () => undefined);
+    store.attachRuntime(session.sessionId, fakeRuntime(setModel));
+
+    // saveCustomModels 固定先写 custom-models.json.tmp；同名目录让落盘稳定失败，
+    // 模拟磁盘/权限故障，又不依赖当前进程是否以高权限运行。
+    fs.mkdirSync(path.join(tmpHome, '.otto-user', 'custom-models.json.tmp'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    client.send({
+      type: 'set_model',
+      payload: { sessionId: session.sessionId, model: targetId },
+    });
+    const confirmed = await client.waitFor(
+      (frame) =>
+        frame.type === 'models_list' && frame.payload.current === targetId,
+    );
+
+    expect(confirmed).toMatchObject({
+      type: 'models_list',
+      payload: { current: targetId },
+    });
+    expect(setModel).toHaveBeenCalledWith(targetId);
+    expect(store.getSession(session.sessionId)?.model).toBe(targetId);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('[model-switch] preference persistence failed'),
+    );
+    expect(
+      client.frames.some(
+        (frame) =>
+          frame.type === 'error' && frame.payload.code === 'model_switch_failed',
+      ),
+    ).toBe(false);
+    warn.mockRestore();
     client.close();
   });
 });

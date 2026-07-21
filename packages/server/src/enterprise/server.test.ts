@@ -434,11 +434,11 @@ describe('受保护 vs 公开路由边界', () => {
       status: 'ok',
       db: 'connected',
       service: 'otto-enterprise',
-      apiVersion: 3,
+      apiVersion: 4,
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 4,
+      schemaVersion: 5,
       capabilities: [
         'password_auth',
         'sms_login',
@@ -456,6 +456,11 @@ describe('受保护 vs 公开路由边界', () => {
         'park_service_push',
         'park_repair_v1',
         'park_services_v2',
+        'organization_structure_v1',
+        'organization_feature_switches_v1',
+        'park_membership_v1',
+        'park_specialist_routing_v1',
+        'unread_message_notifications_v1',
       ],
     });
     expect(body.uptime).toEqual(expect.any(Number));
@@ -1135,6 +1140,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       password: 'member-password',
       name: '接收成员',
     });
+    const park = db.createPark({
+      adminOrganizationId: admin.organizationId,
+      actorAccountId: admin.id,
+      name: '滨江科技园',
+      brandName: '滨江企业服务',
+    });
+    db.updateParkService({
+      parkId: park.id,
+      actorAccountId: admin.id,
+      serviceId: 'repair',
+      name: '设施报修',
+    });
     const pushBody = JSON.stringify({
       recipientAccountId: member.id,
       serviceId: 'repair',
@@ -1169,7 +1186,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       message: {
         senderAccountId: admin.id,
         recipientAccountId: member.id,
-        content: expect.stringContaining('【宏创AI园区服务】客户报修'),
+        content: expect.stringContaining('【滨江企业服务】设施报修'),
       },
       recipient: { id: member.id, name: '接收成员' },
     });
@@ -1279,6 +1296,9 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       }),
     });
     expect(replied.status).toBe(201);
+    expect(db.getDB().prepare(
+      'SELECT read_at FROM direct_messages WHERE id = ?',
+    ).get(requestMessage.message.id)).toEqual({ read_at: expect.any(String) });
 
     const afterReply = await fetch(`${base}/enterprise/atoa/inbox`, {
       headers: { authorization: `Bearer ${bobToken}` },
@@ -1532,7 +1552,9 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const createdBody = await created.json();
     expect(createdBody.account.tags).toEqual(['IT', '报修']);
     expect(createdBody.account).toMatchObject({
-      role: '普通成员',
+      // 职位的权限映射是权威来源：即使请求携带旧的自由文本角色，
+      // member 职位也必须收口为“成员”，避免显示角色与实际权限分裂。
+      role: '成员',
       department: 'IT',
       positionId: 'position_desktop_support',
       positionTitle: '桌面支持',
@@ -1878,11 +1900,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       repairFeishuSender: { channel: 'feishu', send: feishuSend },
     });
     const db = await import('./db.js');
-    db.createAccount({
+    const reporter = db.createAccount({
       username: 'repair.reporter', password: 'reporter-password', name: '报修员工',
       phone: '13800138000', feishuOpenId: 'ou_reporter', tags: ['普通成员'],
     });
-    db.createAccount({
+    const worker = db.createAccount({
       username: 'repair.worker', password: 'worker-password', name: '维修张工',
       phone: '13900139000', feishuOpenId: 'ou_worker',
       tags: ['维修工作人员', 'IT', '报修'],
@@ -1896,6 +1918,29 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     };
     const reporterToken = await login('repair.reporter', 'reporter-password');
     const workerToken = await login('repair.worker', 'worker-password');
+    const blockedBeforeJoining = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serviceId: 'repair', title: '未入园报修', description: '不应落成本企业工单' }),
+    });
+    expect(blockedBeforeJoining.status).toBe(403);
+    expect(await blockedBeforeJoining.json()).toEqual({ error: '企业尚未加入产业园' });
+
+    const parkAdmin = db.createAccount({
+      username: 'repair.park.admin', password: 'park-admin-password', name: '园区管理员', isAdmin: true,
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkAdmin.organizationId,
+      actorAccountId: parkAdmin.id,
+      name: '报修测试园区',
+    });
+    db.setParkServiceSpecialist({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+      serviceId: 'repair',
+      accountId: worker.id,
+    });
+    expect(db.getParkForOrganization(reporter.organizationId)?.id).toBe(park.id);
     const submitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
       headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
@@ -1933,21 +1978,289 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
   });
 
+  it('跨企业园区专员和管理员兜底处理工单后向创建者发送全部进度回执', async () => {
+    const smsSend = vi.fn(async () => true);
+    const feishuSend = vi.fn(async () => true);
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      repairSmsSender: { channel: 'sms', send: smsSend },
+      repairFeishuSender: { channel: 'feishu', send: feishuSend },
+    });
+    const db = await import('./db.js');
+    const parkOrganization = db.createOrganization({ name: '园区运营企业', slug: 'receipt-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'receipt.park.admin',
+      password: 'receipt-park-admin-password',
+      name: '园区管理员',
+      phone: '13900139000',
+      feishuOpenId: 'ou_receipt_park_admin',
+      isAdmin: true,
+    });
+    const specialist = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'receipt.specialist',
+      password: 'receipt-specialist-password',
+      name: '园区维修专员',
+      phone: '13700137000',
+      feishuOpenId: 'ou_receipt_specialist',
+    });
+    const tenantOrganization = db.createOrganization({ name: '园区入驻企业', slug: 'receipt-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'receipt.tenant.admin',
+      password: 'receipt-tenant-admin-password',
+      name: '入驻企业管理员',
+      isAdmin: true,
+    });
+    const reporter = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'receipt.reporter',
+      password: 'receipt-reporter-password',
+      name: '跨企业报修人',
+      phone: '13800138000',
+      feishuOpenId: 'ou_receipt_reporter',
+    });
+    const unrelated = db.createAccount({
+      username: 'receipt.unrelated',
+      password: 'receipt-unrelated-password',
+      name: '无关企业成员',
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '回执测试园区',
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+    });
+    db.setParkServiceSpecialist({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+      serviceId: 'repair',
+      accountId: specialist.id,
+    });
+    const reporterToken = db.createAuthSession(reporter.id).token;
+    const specialistToken = db.createAuthSession(specialist.id).token;
+    const parkAdminToken = db.createAuthSession(parkAdmin.id).token;
+
+    const submitted = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serviceId: 'repair', title: '空调故障', description: '空调无法启动' }),
+    });
+    expect(submitted.status).toBe(201);
+    const specialistTicket = (await submitted.json()).ticket;
+    expect(specialistTicket.recipients).toEqual([{ id: specialist.id, name: '园区维修专员' }]);
+    smsSend.mockClear();
+    feishuSend.mockClear();
+
+    const specialistActions = [
+      { action: 'accept' },
+      { action: 'respond', responseType: '现场处理', responseText: '工程师已到场' },
+      { action: 'complete' },
+    ];
+    for (const action of specialistActions) {
+      const response = await fetch(`${base}/enterprise/tickets/${specialistTicket.id}/action`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${specialistToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(action),
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(smsSend).toHaveBeenCalledTimes(3);
+    expect(feishuSend).toHaveBeenCalledTimes(3);
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613800138000', expect.any(String), expect.any(String),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_receipt_reporter', expect.any(String), expect.any(String),
+    );
+
+    const fallbackSubmitted = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: 'meeting-room',
+        title: '会议室预约',
+        description: '预约明天下午会议室',
+      }),
+    });
+    expect(fallbackSubmitted.status).toBe(201);
+    const fallbackTicket = (await fallbackSubmitted.json()).ticket;
+    expect(fallbackTicket.recipients).toEqual([{ id: parkAdmin.id, name: '园区管理员' }]);
+    smsSend.mockClear();
+    feishuSend.mockClear();
+    const fallbackAccepted = await fetch(`${base}/enterprise/tickets/${fallbackTicket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'accept' }),
+    });
+    expect(fallbackAccepted.status).toBe(200);
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613800138000', expect.stringContaining('已受理'), expect.any(String),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_receipt_reporter', expect.stringContaining('已受理'), expect.any(String),
+    );
+    expect(db.getTicketCreatorForAccount(specialistTicket.id, unrelated.id)).toBeNull();
+  }, 30_000);
+
+  it('关闭园区服务后精确阻断既有园区工单，企业内部 IT 工单仍可读写', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const parkOrganization = db.createOrganization({ name: '关闭测试园区方', slug: 'disabled-ticket-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'disabled.ticket.park.admin',
+      password: 'disabled-ticket-park-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const tenantOrganization = db.createOrganization({ name: '关闭测试入驻方', slug: 'disabled-ticket-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'disabled.ticket.tenant.admin',
+      password: 'disabled-ticket-tenant-password',
+      name: '企业管理员',
+      isAdmin: true,
+    });
+    const reporter = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'disabled.ticket.reporter',
+      password: 'disabled-ticket-reporter-password',
+      name: '企业报修人',
+    });
+    const localIt = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'disabled.ticket.local.it',
+      password: 'disabled-ticket-local-it-password',
+      name: '本企业 IT',
+      tags: ['IT', '报修'],
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '关闭测试园区',
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+    });
+    const parkTicket = db.createTicket({
+      createdByAccountId: reporter.id,
+      serviceId: 'repair',
+      title: '园区空调报修',
+      description: '关闭开关前已创建',
+      targetTags: ['维修工作人员'],
+    });
+    const itTicket = db.createTicket({
+      createdByAccountId: reporter.id,
+      serviceId: 'it',
+      title: '企业电脑报修',
+      description: '企业内部 IT 工单',
+      targetTags: ['IT', '报修'],
+    });
+    db.updateOrganizationFeatures(tenantOrganization.id, { park_service: false });
+    const reporterToken = db.createAuthSession(reporter.id).token;
+    const parkAdminToken = db.createAuthSession(parkAdmin.id).token;
+    const localItToken = db.createAuthSession(localIt.id).token;
+
+    const list = await fetch(`${base}/enterprise/tickets`, {
+      headers: { authorization: `Bearer ${reporterToken}` },
+    });
+    expect(list.status).toBe(200);
+    expect((await list.json()).tickets.map((ticket: { id: string }) => ticket.id)).toEqual([itTicket.id]);
+    const parkInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${parkAdminToken}` },
+    });
+    expect(parkInbox.status).toBe(200);
+    expect((await parkInbox.json()).tickets).toEqual([]);
+
+    for (const suffix of ['read', 'action']) {
+      const blocked = await fetch(`${base}/enterprise/tickets/${parkTicket.id}/${suffix}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+        body: suffix === 'action' ? JSON.stringify({ action: 'accept' }) : undefined,
+      });
+      expect(blocked.status).toBe(403);
+      expect(await blocked.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+    }
+
+    const itInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${localItToken}` },
+    });
+    expect((await itInbox.json()).tickets.map((ticket: { id: string }) => ticket.id)).toEqual([itTicket.id]);
+    const itRead = await fetch(`${base}/enterprise/tickets/${itTicket.id}/read`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${localItToken}` },
+    });
+    expect(itRead.status).toBe(200);
+    const itAccepted = await fetch(`${base}/enterprise/tickets/${itTicket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${localItToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'accept' }),
+    });
+    expect(itAccepted.status).toBe(200);
+    expect((await itAccepted.json()).ticket.status).toBe('处理中');
+
+    db.updateOrganizationFeatures(tenantOrganization.id, { park_service: true });
+    db.updateOrganizationFeatures(parkOrganization.id, { park_service: false });
+    const blockedNewTicket = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serviceId: 'repair', title: '管理方关闭后的新工单', description: '必须拒绝' }),
+    });
+    expect(blockedNewTicket.status).toBe(403);
+    expect(await blockedNewTicket.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+    const managementInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${parkAdminToken}` },
+    });
+    expect(managementInbox.status).toBe(200);
+    expect((await managementInbox.json()).tickets).toEqual([]);
+    for (const suffix of ['read', 'action']) {
+      const blocked = await fetch(`${base}/enterprise/tickets/${parkTicket.id}/${suffix}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+        body: suffix === 'action' ? JSON.stringify({ action: 'accept' }) : undefined,
+      });
+      expect(blocked.status).toBe(403);
+      expect(await blocked.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+    }
+  }, 30_000);
+
   it('园区公告、实名问卷和客服申请通过 HTTP 接口形成真实闭环', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    db.createAccount({
+    const admin = db.createAccount({
       username: 'park.http.admin', password: 'park-http-admin-password', name: '园区管理员', isAdmin: true,
     });
     db.createAccount({
       username: 'park.http.user', password: 'park-http-user-password', name: '实名员工', tags: ['普通成员'],
     });
-    db.createAccount({
+    const firstService = db.createAccount({
       username: 'park.http.service1', password: 'park-http-service1-password', name: '客服一号', tags: ['客服人员'],
     });
-    db.createAccount({
+    const secondService = db.createAccount({
       username: 'park.http.service2', password: 'park-http-service2-password', name: '客服二号', tags: ['客服人员'],
     });
+    const park = db.createPark({
+      adminOrganizationId: admin.organizationId,
+      actorAccountId: admin.id,
+      name: 'HTTP 测试园区',
+    });
+    for (const specialist of [firstService, secondService]) {
+      db.setParkServiceSpecialist({
+        parkId: park.id,
+        actorAccountId: admin.id,
+        serviceId: 'meeting-room',
+        accountId: specialist.id,
+      });
+    }
     const login = async (identifier: string, password: string): Promise<string> => {
       const response = await fetch(`${base}/enterprise/auth/login`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -2386,7 +2699,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       organizationName: 'Alpha 科技',
       name: 'Alpha 新员工',
     });
-  });
+  }, 30_000);
 
   it('已登录个人账号可原子消费企业邀请码并保留当前会话，重复和并发加入 fail closed', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
@@ -2814,6 +3127,77 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(adminPayload).toContain('全员可见制度');
     expect(adminPayload).toContain('法务部合同底线');
     expect(adminPayload).toContain('销售部客户名单');
+  }, 30_000);
+
+  it('关闭企业知识功能后禁止知识读写，入职与召回也不泄露知识但保留任务历史', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const organization = db.createOrganization({ name: '知识关闭企业', slug: 'knowledge-disabled' });
+    const member = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.disabled.member',
+      password: 'knowledge-disabled-password',
+      name: '知识关闭成员',
+      department: '研发部',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      department: '研发部',
+      category: 'secret',
+      content: '关闭后不得泄露的知识',
+    });
+    db.logTask({
+      employee_id: member.employeeId!,
+      task_type: '部署检查',
+      result: '任务历史仍应保留',
+    });
+    db.updateOrganizationFeatures(organization.id, { knowledge: false });
+    const token = db.createAuthSession(member.id).token;
+    const headers = { authorization: `Bearer ${token}` };
+
+    const featureSnapshot = await fetch(`${base}/enterprise/organization/features`, { headers });
+    expect(featureSnapshot.status).toBe(200);
+    await expect(featureSnapshot.json()).resolves.toMatchObject({ features: { knowledge: false } });
+    const memberPatch = await fetch(`${base}/enterprise/organization/features`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ knowledge: true }),
+    });
+    expect(memberPatch.status).toBe(403);
+    expect(db.getOrganizationFeatures(organization.id).knowledge).toBe(false);
+
+    const list = await fetch(`${base}/enterprise/knowledge`, { headers });
+    expect(list.status).toBe(403);
+    expect(await list.json()).toEqual({ error: '企业知识功能已由管理员关闭' });
+    const add = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ content: '不应写入的新知识' }),
+    });
+    expect(add.status).toBe(403);
+    expect(db.getKnowledge(undefined, undefined, organization.id).map((item) => item.content))
+      .toEqual(['关闭后不得泄露的知识']);
+
+    const onboard = await fetch(`${base}/enterprise/onboard`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ employee_id: member.employeeId, role: '工程师' }),
+    });
+    expect(onboard.status).toBe(200);
+    await expect(onboard.json()).resolves.toMatchObject({
+      inherited_knowledge: [],
+      total_knowledge_items: 0,
+    });
+
+    const recall = await fetch(
+      `${base}/enterprise/recall?employee_id=${encodeURIComponent(member.employeeId!)}&task_type=${encodeURIComponent('部署')}`,
+      { headers },
+    );
+    expect(recall.status).toBe(200);
+    const recallPayload = await recall.json();
+    expect(recallPayload.knowledge).toEqual([]);
+    expect(JSON.stringify(recallPayload.history)).toContain('任务历史仍应保留');
+    expect(JSON.stringify(recallPayload)).not.toContain('关闭后不得泄露的知识');
   }, 30_000);
 
   it('A2A 选择企业知识作为上下文时，接收方仍只能取得全局和本人部门知识', async () => {

@@ -263,6 +263,31 @@ describe('InMemorySessionStore', () => {
   });
 
   describe('subscribe / publish / unsubscribe', () => {
+    it('全局订阅者在会话无普通订阅时仍收到真实入站帧，且每次 publish 只收一次', () => {
+      const s = store.createSession({ source: 'feishu' });
+      const globalFrames: ServerToClient[] = [];
+      const unsubscribe = store.subscribeAll((frame) => globalFrames.push(frame));
+      const frame: ServerToClient = {
+        type: 'message_start',
+        payload: {
+          message: {
+            id: 'external-1',
+            sessionId: s.sessionId,
+            role: 'user',
+            content: [{ type: 'text', value: '飞书来信' }],
+            timestamp: 1,
+            source: 'feishu',
+          },
+        },
+      };
+
+      store.publish(s.sessionId, frame);
+      expect(globalFrames).toEqual([frame]);
+      unsubscribe();
+      store.publish(s.sessionId, frame);
+      expect(globalFrames).toEqual([frame]);
+    });
+
     it('广播给所有订阅者', () => {
       const s = store.createSession();
       const a: ServerToClient[] = [];

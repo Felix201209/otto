@@ -472,4 +472,94 @@ describe('附件预览卡片', () => {
     fireEvent.click(remove);
     expect(screen.queryByText(displayName)).toBeNull();
   });
+
+  it('拖入外部卷文件时通过 webUtils 保留真实路径并随消息发送', async () => {
+    const onSend = vi.fn();
+    const externalPath = '/Volumes/Portable/客户资料/园区方案.pdf';
+    Object.assign(window.otto, {
+      authorizeFileForAttachment: vi.fn(async () => externalPath),
+    });
+    const { container } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const file = new File([new Uint8Array(2048)], '园区方案.pdf', {
+      type: 'application/pdf',
+    });
+
+    fireEvent.drop(container.querySelector('.otto-composer') as Element, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    });
+
+    expect(await screen.findByTitle(externalPath)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(onSend).toHaveBeenCalledWith('', [
+      { fileName: '园区方案.pdf', filePath: externalPath },
+    ]);
+  });
+
+  it('拖入文件若无法由 preload/main 授权，不会附加或发送裸路径', async () => {
+    const onSend = vi.fn();
+    Object.assign(window.otto, {
+      authorizeFileForAttachment: vi.fn(async () => {
+        throw new Error('文件未获得授权');
+      }),
+    });
+    const { container } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const file = new File(['x'], '机密.pdf', { type: 'application/pdf' });
+
+    fireEvent.drop(container.querySelector('.otto-composer') as Element, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    });
+
+    expect(await screen.findByText('文件未获得授权')).toBeTruthy();
+    expect(screen.queryByText('机密')).toBeNull();
+    expect(screen.getByRole('button', { name: '发送' }).getAttribute('disabled')).not.toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('右键粘贴使用系统剪贴板并插入当前输入位置', async () => {
+    const read = vi.fn(async () => [{
+      types: ['text/plain'],
+      getType: vi.fn(async () => new Blob(['粘贴内容'], { type: 'text/plain' })),
+    }]);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { read, readText: vi.fn(), writeText: vi.fn() },
+    });
+    const { container } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.contextMenu(container.querySelector('.otto-composer') as Element, {
+      clientX: 20,
+      clientY: 30,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '粘贴' }));
+
+    await waitFor(() => {
+      expect((container.querySelector('.otto-composer__textarea') as HTMLTextAreaElement).value)
+        .toBe('粘贴内容');
+    });
+    expect(read).toHaveBeenCalledOnce();
+  });
 });

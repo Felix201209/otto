@@ -105,11 +105,11 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
     });
   });
 
-  it('从真实 v3 列布局升级到 v4，保留账号员工关联和园区服务列且可重复初始化', async () => {
+  it('从真实 v3 列布局升级到 v5，保留账号员工关联和园区服务列且可重复初始化', async () => {
     const first = await freshDb();
     const organization = first.createOrganization({ name: '迁移企业', slug: 'migration-v3' });
     const employeeId = 'emp_v3_preserved';
@@ -165,7 +165,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 4,
+        schemaVersion: 5,
       });
       const organizationColumns = reopened.getDB()
         .prepare('PRAGMA table_info(organizations)')
@@ -174,6 +174,7 @@ describe('数据库 readiness', () => {
         .prepare('PRAGMA table_info(accounts)')
         .all() as Array<{ name: string }>;
       expect(organizationColumns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
+      expect(organizationColumns.filter((column) => column.name === 'park_id')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'account_type')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'deleted_at')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'department_id')).toHaveLength(1);
@@ -233,6 +234,7 @@ describe('数据库 readiness', () => {
         .all() as Array<{ name: string }>;
       expect(ticketColumns.filter((column) => column.name === 'service_id')).toHaveLength(1);
       expect(ticketColumns.filter((column) => column.name === 'form_data')).toHaveLength(1);
+      expect(ticketColumns.filter((column) => column.name === 'park_id')).toHaveLength(1);
 
       const employeeIdsBeforeReopen = reopened.listEmployees(undefined, organization.id)
         .map((employee) => employee.id)
@@ -256,24 +258,246 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 5;
+      PRAGMA user_version = 6;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 5.*current version 4/i);
+    expect(() => db.getDB()).toThrow(/schema version 6.*current version 5/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
       expect(
         (reopened.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
-      ).toBe(5);
+      ).toBe(6);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string }).id,
       ).toBe('preserve-me');
     } finally {
       reopened.close();
     }
+  });
+});
+
+describe('企业组织结构与功能配置', () => {
+  it('支持自定义部门、岗位映射与重命名，并同步既有成员', async () => {
+    const db = await freshDb();
+    const department = db.createOrganizationDepartment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      name: '客户成功中心',
+    });
+    const position = db.createOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+      title: '客户成功专员',
+      roleMapping: 'member',
+    });
+    const account = db.createAccount({
+      username: 'custom-department-member',
+      password: 'custom-department-password',
+      name: '自定义部门成员',
+      department: department.name,
+      departmentId: department.id,
+      positionId: position.id,
+      positionTitle: position.title,
+      role: '成员',
+      isAdmin: false,
+    });
+
+    const renamed = db.updateOrganizationDepartment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+      name: '客户体验中心',
+    });
+    expect(renamed.name).toBe('客户体验中心');
+    expect(db.getAccount(account.id)).toMatchObject({
+      department: '客户体验中心',
+      departmentId: department.id,
+      positionId: position.id,
+      positionTitle: '客户成功专员',
+    });
+    expect(db.listOrganizationStructure(db.DEFAULT_ORGANIZATION_ID)).toEqual([
+      expect.objectContaining({
+        id: department.id,
+        name: '客户体验中心',
+        positions: [expect.objectContaining({ id: position.id, roleMapping: 'member' })],
+      }),
+    ]);
+    expect(() => db.deleteOrganizationDepartment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+    })).toThrow(/仍有成员|仍有岗位/);
+  });
+
+  it('功能开关按企业持久化且不会影响其他租户', async () => {
+    const db = await freshDb();
+    const other = db.createOrganization({ name: '功能隔离企业' });
+    expect(db.getOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID).park_service).toBe(true);
+    expect(db.updateOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID, {
+      park_service: false,
+      direct_messages: false,
+      feishu_auto_reply: false,
+      enterprise_tree: false,
+      tui_sync: false,
+    })).toMatchObject({
+      park_service: false,
+      direct_messages: false,
+      feishu_auto_reply: false,
+      enterprise_tree: false,
+      tui_sync: false,
+    });
+    expect(db.getOrganizationFeatures(other.id)).toMatchObject({
+      park_service: true,
+      direct_messages: true,
+      feishu_auto_reply: true,
+      enterprise_tree: true,
+      tui_sync: true,
+    });
+  });
+
+  it('功能开关与审计日志原子提交，审计失败时回滚全部配置', async () => {
+    const db = await freshDb();
+    const before = db.getOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID);
+    db.getDB().exec(`
+      CREATE TRIGGER fail_feature_audit
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.event = 'organization_features_update'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced feature audit failure');
+      END;
+    `);
+
+    expect(() => db.updateOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID, {
+      knowledge: false,
+      park_service: false,
+    })).toThrow(/forced feature audit failure/);
+    expect(db.getOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID)).toEqual(before);
+    expect(db.getDB().prepare(
+      'SELECT COUNT(*) AS count FROM organization_features WHERE organization_id = ?',
+    ).get(db.DEFAULT_ORGANIZATION_ID)).toEqual({ count: 0 });
+  });
+
+  it('职位权限映射可双向升降权，单纯重命名不会改变映射', async () => {
+    const db = await freshDb();
+    db.createAccount({
+      username: 'mapping-safety-admin',
+      password: 'mapping-safety-password',
+      name: '保底管理员',
+      isAdmin: true,
+    });
+    const department = db.createOrganizationDepartment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      name: '运营部',
+    });
+    const position = db.createOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+      title: '运营负责人',
+      roleMapping: 'enterprise_admin',
+    });
+    const mapped = db.createAccount({
+      username: 'mapped-position-member',
+      password: 'mapped-position-password',
+      name: '映射成员',
+      department: department.name,
+      departmentId: department.id,
+      positionId: position.id,
+      positionTitle: position.title,
+      role: '成员',
+      isAdmin: false,
+    });
+    expect(mapped).toMatchObject({ isAdmin: true, role: '企业管理员' });
+
+    db.updateOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      positionId: position.id,
+      title: '运营总监',
+    });
+    expect(db.getAccount(mapped.id)).toMatchObject({
+      isAdmin: true,
+      role: '企业管理员',
+      positionTitle: '运营总监',
+    });
+
+    db.updateOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      positionId: position.id,
+      roleMapping: 'department_admin',
+    });
+    expect(db.getAccount(mapped.id)).toMatchObject({
+      isAdmin: false,
+      role: '部门管理员',
+    });
+  });
+
+  it('按真实部门和职位 ID 任命时强制双向权限映射并撤销旧会话', async () => {
+    const db = await freshDb();
+    const guard = db.createAccount({
+      username: 'assignment-guard-admin',
+      password: 'assignment-guard-password',
+      name: '保底管理员',
+      isAdmin: true,
+      role: '企业管理员',
+    });
+    const target = db.createAccount({
+      username: 'assignment-target',
+      password: 'assignment-target-password',
+      name: '待任命成员',
+      isAdmin: false,
+      role: '自由文本角色',
+    });
+    const department = db.createOrganizationDepartment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      name: '产品部',
+    });
+    const adminPosition = db.createOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+      title: '产品总监',
+      roleMapping: 'enterprise_admin',
+    });
+    const memberPosition = db.createOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      departmentId: department.id,
+      title: '产品经理',
+      roleMapping: 'member',
+    });
+    const oldSession = db.createAuthSession(target.id);
+
+    expect(db.updateAccount(target.id, {
+      department: department.name,
+      departmentId: department.id,
+      positionTitle: adminPosition.title,
+      positionId: adminPosition.id,
+      // 职位映射必须压过前端同时传入的冲突字段。
+      role: '成员',
+      isAdmin: false,
+    })).toMatchObject({
+      departmentId: department.id,
+      positionId: adminPosition.id,
+      role: '企业管理员',
+      isAdmin: true,
+    });
+    expect(db.getAccountBySession(oldSession.token)).toBeNull();
+
+    expect(db.updateAccount(target.id, {
+      department: department.name,
+      departmentId: department.id,
+      positionTitle: memberPosition.title,
+      positionId: memberPosition.id,
+    })).toMatchObject({
+      positionId: memberPosition.id,
+      role: '成员',
+      isAdmin: false,
+    });
+
+    expect(() => db.updateAccount(guard.id, {
+      department: department.name,
+      departmentId: department.id,
+      positionTitle: memberPosition.title,
+      positionId: memberPosition.id,
+    })).toThrow('企业至少需要保留一名可登录管理员');
+    expect(db.getAccount(guard.id)).toMatchObject({ isAdmin: true, role: '企业管理员' });
   });
 });
 
@@ -349,6 +573,42 @@ describe('企业 Token 用量时间窗口', () => {
 });
 
 describe('企业成员直聊', () => {
+  it('未读收件箱可重复查询且不会把消息提前标记已读', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'unread-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'unread-bob', password: 'bob-password-123', name: 'Bob' });
+    const message = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: '新的企业内部消息',
+    });
+
+    const first = db.listUnreadDirectMessageNotifications({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+    });
+    const second = db.listUnreadDirectMessageNotifications({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+    });
+    expect(first).toEqual([expect.objectContaining({
+      id: message.id,
+      source: 'enterprise',
+      title: 'Alice 发来消息',
+      senderAccountId: alice.id,
+      preview: '新的企业内部消息',
+    })]);
+    expect(second).toEqual(first);
+    expect(db.listUnreadDirectMessageNotifications({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      limit: Number.NaN,
+    })).toEqual(first);
+    expect(db.getDB().prepare('SELECT read_at FROM direct_messages WHERE id = ?').get(message.id))
+      .toEqual({ read_at: null });
+  });
+
   it('只在同一企业的双方之间持久化、按时间读取并标记已读', async () => {
     const db = await freshDb();
     const alice = db.createAccount({ username: 'chat-alice', password: 'alice-password-123', name: 'Alice' });
@@ -535,6 +795,73 @@ describe('企业成员直聊', () => {
     });
     expect(pending()).toEqual([]);
   });
+
+  it('A2A 成功响应只精确标记对应原请求已读，不误标其它请求或普通消息', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'atoa-read-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'atoa-read-bob', password: 'bob-password-123', name: 'Bob' });
+    const charlie = db.createAccount({ username: 'atoa-read-charlie', password: 'charlie-password-123', name: 'Charlie' });
+    const answeredRequest = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: buildAtoaRequest('请评审第一份方案', { id: 'read-request-1' }),
+    });
+    const pendingRequest = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: buildAtoaRequest('请评审第二份方案', { id: 'read-request-2' }),
+    });
+    const ordinaryMessage = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: '这是一条普通未读消息',
+    });
+    const otherPeerRequest = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: charlie.id,
+      recipientAccountId: bob.id,
+      content: buildAtoaRequest('Charlie 的独立请求', { id: 'read-request-3' }),
+    });
+    const responseContent = buildAtoaResponse({
+      requestId: answeredRequest.id,
+      question: '请评审第一份方案',
+      answer: '第一份方案已通过。',
+    });
+
+    expect(db.markAtoaRequestReadFromResponse({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      responderAccountId: bob.id,
+      peerAccountId: alice.id,
+      responseContent,
+      requestPrefix: ATOA_REQUEST_PREFIX,
+      responsePrefix: ATOA_RESPONSE_PREFIX,
+    })).toBe(answeredRequest.id);
+    expect(db.markAtoaRequestReadFromResponse({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      responderAccountId: bob.id,
+      peerAccountId: charlie.id,
+      responseContent,
+      requestPrefix: ATOA_REQUEST_PREFIX,
+      responsePrefix: ATOA_RESPONSE_PREFIX,
+    })).toBeNull();
+
+    const rows = db.getDB().prepare(
+      'SELECT id, read_at FROM direct_messages WHERE id IN (?, ?, ?, ?)',
+    ).all(
+      answeredRequest.id,
+      pendingRequest.id,
+      ordinaryMessage.id,
+      otherPeerRequest.id,
+    ) as Array<{ id: string; read_at: string | null }>;
+    const readAt = new Map(rows.map((row) => [row.id, row.read_at]));
+    expect(readAt.get(answeredRequest.id)).not.toBeNull();
+    expect(readAt.get(pendingRequest.id)).toBeNull();
+    expect(readAt.get(ordinaryMessage.id)).toBeNull();
+    expect(readAt.get(otherPeerRequest.id)).toBeNull();
+  });
 });
 
 describe('企业邀请码原子更新', () => {
@@ -564,6 +891,11 @@ describe('企业邀请码原子更新', () => {
       departmentId: first.departmentId,
       positionId: first.positionId,
     });
+    db.updateOrganizationPosition({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      positionId: first.positionId!,
+      roleMapping: 'enterprise_admin',
+    });
     const account = db.createSelfRegisteredAccount({
       organizationId: db.DEFAULT_ORGANIZATION_ID,
       phone: '13800138001',
@@ -582,12 +914,15 @@ describe('企业邀请码原子更新', () => {
       positionTitle: '开发工程师',
       positionId: first.positionId,
       employeeId: expect.stringMatching(/^emp_/),
+      role: '企业管理员',
+      isAdmin: true,
     });
     expect(db.getEmployee(account.employeeId!, db.DEFAULT_ORGANIZATION_ID)).toMatchObject({
       department: '研发部',
       department_id: first.departmentId,
       position_title: '开发工程师',
       position_id: first.positionId,
+      role: '企业管理员',
     });
 
     const second = db.issueOrganizationInvite(
@@ -638,6 +973,124 @@ describe('企业邀请码原子更新', () => {
       position_title: '开发工程师',
       position_id: updated.positionId,
     });
+  });
+
+  it('个人账号加入企业时以职位当前权限映射为账号与员工权限真值', async () => {
+    const db = await freshDb();
+    const organization = db.createOrganization({ name: '职位权限企业', slug: 'join-role-mapping' });
+    const department = db.createOrganizationDepartment({
+      organizationId: organization.id,
+      name: '管理部',
+    });
+    const position = db.createOrganizationPosition({
+      organizationId: organization.id,
+      departmentId: department.id,
+      title: '企业负责人',
+      roleMapping: 'enterprise_admin',
+    });
+    const invite = db.issueOrganizationInvite(organization.id, Date.now(), null, {
+      departmentId: department.id,
+      defaultDepartment: department.name,
+      positionId: position.id,
+      positionTitle: position.title,
+      defaultRole: '成员',
+      maxUses: 1,
+    });
+    const personal = db.createPersonalRegisteredAccount({
+      phone: '13700137000',
+      name: '待升级负责人',
+      password: 'personal-admin-password',
+    });
+
+    const joined = db.joinOrganizationWithInvite(personal.id, invite.code);
+
+    expect(joined).toMatchObject({
+      organizationId: organization.id,
+      departmentId: department.id,
+      department: '管理部',
+      positionId: position.id,
+      positionTitle: '企业负责人',
+      role: '企业管理员',
+      isAdmin: true,
+    });
+    expect(db.getEmployee(joined.employeeId!, organization.id)).toMatchObject({
+      department_id: department.id,
+      position_id: position.id,
+      role: '企业管理员',
+    });
+  });
+
+  it('个人账号加入企业时拒绝邀请码引用已删除职位并原子保留个人身份', async () => {
+    const db = await freshDb();
+    const organization = db.createOrganization({ name: '删除职位企业', slug: 'join-deleted-position' });
+    const department = db.createOrganizationDepartment({
+      organizationId: organization.id,
+      name: '产品部',
+    });
+    const position = db.createOrganizationPosition({
+      organizationId: organization.id,
+      departmentId: department.id,
+      title: '产品经理',
+    });
+    const invite = db.issueOrganizationInvite(organization.id, Date.now(), null, {
+      departmentId: department.id,
+      defaultDepartment: department.name,
+      positionId: position.id,
+      positionTitle: position.title,
+      maxUses: 1,
+    });
+    db.deleteOrganizationPosition({ organizationId: organization.id, positionId: position.id });
+    const personal = db.createPersonalRegisteredAccount({
+      phone: '13600136000',
+      name: '删除职位受邀人',
+      password: 'deleted-position-password',
+    });
+
+    expect(() => db.joinOrganizationWithInvite(personal.id, invite.code)).toThrow('职位不存在');
+    expect(db.getAccount(personal.id)).toMatchObject({ accountType: 'personal' });
+    expect(db.getOrganizationInvite(organization.id)?.usedCount).toBe(0);
+    expect(db.listEmployees(undefined, organization.id)).toEqual([]);
+  });
+
+  it('个人账号加入企业时拒绝职位与邀请码部门不一致并原子回滚', async () => {
+    const db = await freshDb();
+    const organization = db.createOrganization({ name: '跨部门职位企业', slug: 'join-cross-department' });
+    const product = db.createOrganizationDepartment({
+      organizationId: organization.id,
+      name: '产品部',
+    });
+    const engineering = db.createOrganizationDepartment({
+      organizationId: organization.id,
+      name: '研发部',
+    });
+    const position = db.createOrganizationPosition({
+      organizationId: organization.id,
+      departmentId: product.id,
+      title: '产品经理',
+      roleMapping: 'department_admin',
+    });
+    const invite = db.issueOrganizationInvite(organization.id, Date.now(), null, {
+      departmentId: product.id,
+      defaultDepartment: product.name,
+      positionId: position.id,
+      positionTitle: position.title,
+      maxUses: 1,
+    });
+    db.getDB().prepare(
+      `UPDATE organization_invites
+       SET department_id = ?, default_department = ? WHERE id = ?`,
+    ).run(engineering.id, engineering.name, invite.id);
+    const personal = db.createPersonalRegisteredAccount({
+      phone: '13500135000',
+      name: '跨部门受邀人',
+      password: 'cross-department-password',
+    });
+
+    expect(() => db.joinOrganizationWithInvite(personal.id, invite.code))
+      .toThrow('职位与部门不一致');
+    expect(db.getAccount(personal.id)).toMatchObject({ accountType: 'personal' });
+    expect(db.getOrganizationInvite(organization.id)?.usedCount).toBe(0);
+    expect(db.listEmployees(undefined, organization.id)).toEqual([]);
   });
 
   it('审计写入失败时回滚新邀请码，并保持旧邀请码继续有效', async () => {
@@ -820,9 +1273,10 @@ describe('企业邀请码原子更新', () => {
 
   it('账号创建失败时回滚账号和已占用的邀请码名额', async () => {
     const db = await freshDb();
+    const now = Date.now();
     const invite = db.issueOrganizationInvite(
       db.DEFAULT_ORGANIZATION_ID,
-      2_000_000,
+      now,
       null,
       { maxUses: 1 },
     );
@@ -844,7 +1298,7 @@ describe('企业邀请码原子更新', () => {
     })).toThrow(/forced account audit failure/);
 
     expect(db.findAccountByPhone('13700137000')).toBeNull();
-    expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 2_001_000))
+    expect(db.getOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, now + 1_000))
       .toMatchObject({ id: invite.id, maxUses: 1, usedCount: 0 });
   });
 });

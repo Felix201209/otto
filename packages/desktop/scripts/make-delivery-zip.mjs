@@ -40,6 +40,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WINDOWS_RIPGREP_INTEGRITY } from './ripgrep-integrity.mjs';
+import { verifyBundledRuntimeTargets } from './verify-document-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = path.resolve(__dirname, '..');
@@ -273,6 +274,12 @@ async function inspectWindowsRipgrep() {
 
 async function build(sourceCommit) {
   log('BUILD', '开始编译服务端与桌面端...');
+
+  verifyBundledRuntimeTargets([
+    { platform: 'darwin', arch: 'arm64' },
+    { platform: 'darwin', arch: 'x64' },
+    { platform: 'win32', arch: 'x64' },
+  ]);
 
   // desktop 通过 file:../server 读取 otto-server/dist。必须先从当前 HEAD
   // 重建 server（tsc -b 会同步 project reference），禁止把旧 dist 打进新版本。

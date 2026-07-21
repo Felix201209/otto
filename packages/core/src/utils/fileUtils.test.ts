@@ -14,7 +14,7 @@ import {
   type Mock,
 } from 'vitest';
 
-import * as actualNodeFs from 'node:fs'; // For setup/teardown
+import actualNodeFs from 'node:fs'; // For setup/teardown
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -24,6 +24,7 @@ import {
   isWithinRoot,
   isBinaryFile,
   detectFileType,
+  extractPdfTextWithCache,
   processSingleFileContent,
 } from './fileUtils.js';
 
@@ -46,7 +47,11 @@ describe('fileUtils', () => {
   let directoryPath: string;
 
   beforeEach(() => {
-    vi.resetAllMocks(); // Reset all mocks, including mime.lookup
+    // `resetAllMocks()` also replaces methods on the real `node:fs` namespace
+    // imported below with no-op mocks under Vitest. That made append/write based
+    // cache invalidation tests silently leave the source file unchanged.
+    vi.clearAllMocks();
+    mockMimeLookup.mockReset();
 
     tempRootDir = actualNodeFs.mkdtempSync(
       path.join(os.tmpdir(), 'fileUtils-test-'),
@@ -136,6 +141,57 @@ describe('fileUtils', () => {
       const pathToCheckSuper = path.resolve('/project/root');
       const rootSuper = path.resolve('/project/root/sub');
       expect(isWithinRoot(pathToCheckSuper, rootSuper)).toBe(false);
+    });
+  });
+
+  describe('PDF text cache', () => {
+    it('reuses extracted text and invalidates when the source changes', async () => {
+      const pdfPath = path.join(tempRootDir, 'cached.pdf');
+      const cacheDir = path.join(tempRootDir, 'pdf-cache');
+      actualNodeFs.writeFileSync(pdfPath, 'pdf-v1');
+      const extractor = vi.fn(async () => '已解析的 PDF 正文');
+
+      const first = await extractPdfTextWithCache(pdfPath, { cacheDir, extractor });
+      const second = await extractPdfTextWithCache(pdfPath, { cacheDir, extractor });
+      actualNodeFs.appendFileSync(pdfPath, '-changed');
+      const third = await extractPdfTextWithCache(pdfPath, { cacheDir, extractor });
+
+      expect(first.cacheHit).toBe(false);
+      expect(second).toEqual({ text: '已解析的 PDF 正文', cacheHit: true });
+      expect(third.cacheHit).toBe(false);
+      expect(extractor).toHaveBeenCalledTimes(2);
+    });
+
+    it('coalesces concurrent extraction for the same PDF', async () => {
+      const pdfPath = path.join(tempRootDir, 'concurrent.pdf');
+      actualNodeFs.writeFileSync(pdfPath, 'pdf');
+      let resolveExtraction!: (value: string) => void;
+      const extractor = vi.fn(() => new Promise<string>((resolve) => { resolveExtraction = resolve; }));
+      const options = { cacheDir: path.join(tempRootDir, 'pdf-cache'), extractor };
+      const first = extractPdfTextWithCache(pdfPath, options);
+      const second = extractPdfTextWithCache(pdfPath, options);
+      await vi.waitFor(() => expect(extractor).toHaveBeenCalledTimes(1));
+      resolveExtraction('正文');
+
+      expect(await first).toEqual({ text: '正文', cacheHit: false });
+      expect((await second).text).toBe('正文');
+      expect(extractor).toHaveBeenCalledTimes(1);
+    });
+
+    it('invalidates when content changes but path, size, and mtime are preserved', async () => {
+      const pdfPath = path.join(tempRootDir, 'same-metadata.pdf');
+      const cacheDir = path.join(tempRootDir, 'pdf-cache');
+      const fixedTime = new Date('2026-01-01T00:00:00.000Z');
+      actualNodeFs.writeFileSync(pdfPath, 'content-a');
+      actualNodeFs.utimesSync(pdfPath, fixedTime, fixedTime);
+      const extractor = vi.fn(async () => '正文');
+
+      expect((await extractPdfTextWithCache(pdfPath, { cacheDir, extractor })).cacheHit).toBe(false);
+      actualNodeFs.writeFileSync(pdfPath, 'content-b');
+      actualNodeFs.utimesSync(pdfPath, fixedTime, fixedTime);
+
+      expect((await extractPdfTextWithCache(pdfPath, { cacheDir, extractor })).cacheHit).toBe(false);
+      expect(extractor).toHaveBeenCalledTimes(2);
     });
   });
 

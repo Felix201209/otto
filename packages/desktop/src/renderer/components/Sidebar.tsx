@@ -133,6 +133,7 @@ export function Sidebar({
   const [logoutBusy, setLogoutBusy] = useState(false);
   const sessionGroups = relativeSessionGroups(groups);
   const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
+  const unreadCount = unreadSessions?.length ?? 0;
 
   return (
     <aside className="otto-sidebar">
@@ -143,6 +144,14 @@ export function Sidebar({
           otto
           <IconSparkle size={12} className="otto-brand__sparkle" />
         </span>
+        {unreadCount > 0 ? (
+          <span
+            className="otto-brand__unread"
+            role="status"
+            aria-label={`${unreadCount} 条未读消息`}
+            title={`${unreadCount} 条未读消息`}
+          />
+        ) : null}
         <button
           type="button"
           className="otto-iconbtn"

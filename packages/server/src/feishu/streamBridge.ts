@@ -28,7 +28,11 @@
  *     chat_complete 时整段 sendMarkdown 一次性发出。
  */
 
-import type { ServerToClient } from '../protocol.js';
+import {
+  ToolCallStatus,
+  type ServerToClient,
+  type ToolCall,
+} from '../protocol.js';
 import type { SessionStore, Unsubscribe } from '../sessions.js';
 
 /**
@@ -59,6 +63,47 @@ export interface FeishuStreamSink {
 
 /** 飞书流式卡刷新节流间隔（对齐 cli 的 MIN_UPDATE_INTERVAL）。 */
 const MIN_PUSH_INTERVAL_MS = 1500;
+
+const TERMINAL_TOOL_STATUSES = new Set<ToolCallStatus>([
+  ToolCallStatus.Success,
+  ToolCallStatus.Error,
+  ToolCallStatus.Canceled,
+  ToolCallStatus.BackgroundRunning,
+]);
+
+function toolNames(toolCalls: ToolCall[]): string {
+  const names = Array.from(new Set(toolCalls.map((call) => (
+    call.displayName?.trim() || call.toolName.trim() || '未命名操作'
+  ))));
+  const visible = names.slice(0, 4).join('、');
+  return names.length > 4 ? `${visible}等 ${names.length} 类` : visible;
+}
+
+function toolProgressSummary(toolCalls: ToolCall[], complete: boolean): string {
+  const names = toolNames(toolCalls);
+  if (!complete) {
+    const awaiting = toolCalls.filter(
+      (call) => call.status === ToolCallStatus.WaitingForConfirmation,
+    ).length;
+    return awaiting > 0
+      ? `🛠️ 正在处理 ${toolCalls.length} 项操作：${names}。其中 ${awaiting} 项等待确认。`
+      : `🛠️ 正在处理 ${toolCalls.length} 项操作：${names}。`;
+  }
+  const succeeded = toolCalls.filter((call) => call.status === ToolCallStatus.Success).length;
+  const failed = toolCalls.filter((call) => call.status === ToolCallStatus.Error).length;
+  const canceled = toolCalls.filter((call) => call.status === ToolCallStatus.Canceled).length;
+  const background = toolCalls.filter(
+    (call) => call.status === ToolCallStatus.BackgroundRunning,
+  ).length;
+  const details = [
+    succeeded > 0 ? `成功 ${succeeded} 项` : '',
+    failed > 0 ? `失败 ${failed} 项` : '',
+    canceled > 0 ? `取消 ${canceled} 项` : '',
+    background > 0 ? `转入后台 ${background} 项` : '',
+  ].filter(Boolean).join('，');
+  const icon = failed > 0 || canceled > 0 ? '⚠️' : '✅';
+  return `${icon} 本轮已处理 ${toolCalls.length} 项操作：${names}（${details}）。`;
+}
 
 /** 单条 assistant 流的回推状态机（一条 assistant 消息 = 一张飞书流式卡）。 */
 interface OutboundStream {
@@ -102,6 +147,10 @@ export function bridgeSessionToFeishu(
   // 整个会话共用一条回推队列：工具多轮会产生多条 assistant 流，如果每条流
   // 各排各的，上一条尚未定稿时下一条就可能先起卡，导致旧结果晚于新话题出现。
   let outboundTail: Promise<void> = Promise.resolve();
+  // 同一 assistant 工具批次只回推一次“处理中”和一次“已完成”，
+  // 忽略 liveOutput 等高频字段变化，避免飞书消息刷屏。
+  const toolSummaryPhase = new Map<string, 'working' | 'complete'>();
+  const replyToByMessageId = new Map<string, string | undefined>();
 
   /**
    * 回推失败上报：向会话订阅者广播一帧 feishu_push_result(ok:false)，
@@ -154,6 +203,30 @@ export function bridgeSessionToFeishu(
         if (m.sessionId !== sessionId) return;
         if (m.role !== 'assistant') return;
         active = startStream(m.id, getReplyToMessageId());
+        replyToByMessageId.set(m.id, active.replyToMessageId);
+        return;
+      }
+
+      case 'tool_calls_update': {
+        const { sessionId: sid, messageId, toolCalls } = frame.payload;
+        if (sid !== sessionId || toolCalls.length === 0) return;
+        const complete = toolCalls.every((call) => TERMINAL_TOOL_STATUSES.has(call.status));
+        const phase = complete ? 'complete' : 'working';
+        const summaryId = messageId || `tools-${toolCalls.map((call) => call.id).join('-')}`;
+        if (toolSummaryPhase.get(summaryId) === phase) return;
+        toolSummaryPhase.set(summaryId, phase);
+        const replyToMessageId = messageId
+          ? replyToByMessageId.get(messageId) ?? active?.replyToMessageId
+          : active?.replyToMessageId;
+        const text = toolProgressSummary(toolCalls, complete);
+        enqueueOutbound(summaryId, async () => {
+          const sent = await gateway.sendMarkdown(
+            feishuChatId,
+            text,
+            replyToMessageId ?? getReplyToMessageId(),
+          );
+          if (sent === null) reportPushFailure(summaryId, '飞书工具摘要发送失败');
+        });
         return;
       }
 
@@ -278,8 +351,7 @@ export function bridgeSessionToFeishu(
       }
 
       default:
-        // 其余帧（tool_calls_update / session_status / history …）暂不回推飞书。
-        // TODO(Issue #3 增强): 工具调用进度也可回推成飞书卡片状态行。
+        // 其余帧（session_status / history …）不回推飞书。
         return;
     }
   };

@@ -37,7 +37,6 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
-  Notification,
   safeStorage,
   session,
   shell,
@@ -106,7 +105,12 @@ function getMimeType(filePath: string): string {
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
-import { NotificationService, type NotificationPayload } from './notification-service.js';
+import {
+  EnterpriseNotificationIdentityBoundary,
+  NotificationService,
+  type NotificationPayload,
+} from './notification-service.js';
+import { FileAccessGrantStore } from './file-access-grants.js';
 import {
   generateAndSaveWorkReport,
   localDateKey,
@@ -123,6 +127,8 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseKnowledgeRecordInput,
+  type EnterpriseOrganizationFeatures,
+  type EnterprisePositionRoleMapping,
 } from './enterprise-client.js';
 import {
   authenticateAndSyncEnterpriseAccount,
@@ -208,6 +214,13 @@ const serverManager = new ServerManager({
 });
 /** 桌面通知服务：OS 原生 toast + 未读闪烁点管理。 */
 const notificationService = new NotificationService();
+/** 原生文件选择授权账本：允许任意磁盘，但拒绝 renderer 凭空传入的路径。 */
+const fileAccessGrants = new FileAccessGrantStore();
+/** 身份提交统一边界：跨账号、跨组织和失效退出时先清旧账号通知与文件授权。 */
+const enterpriseNotificationIdentityBoundary = new EnterpriseNotificationIdentityBoundary(
+  () => notificationService.clearAll(),
+  () => fileAccessGrants.clear(),
+);
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
@@ -226,6 +239,8 @@ const IPC = {
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
   selectFiles: 'otto:select-files',
+  grantBrowserFile: 'otto:grant-browser-file',
+  authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
   saveTextFile: 'otto:save-text-file',
   openVideoEditor: 'otto:open-video-editor',
@@ -277,10 +292,29 @@ const IPC = {
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
+  enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
+  enterpriseOrganizationFeaturesUpdate: 'otto:enterprise-organization-features-update',
+  enterpriseOrganizationDepartments: 'otto:enterprise-organization-departments',
+  enterpriseOrganizationDepartmentCreate: 'otto:enterprise-organization-department-create',
+  enterpriseOrganizationDepartmentUpdate: 'otto:enterprise-organization-department-update',
+  enterpriseOrganizationDepartmentDelete: 'otto:enterprise-organization-department-delete',
+  enterpriseOrganizationPositionCreate: 'otto:enterprise-organization-position-create',
+  enterpriseOrganizationPositionUpdate: 'otto:enterprise-organization-position-update',
+  enterpriseOrganizationPositionDelete: 'otto:enterprise-organization-position-delete',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
+  enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
+  enterpriseParkView: 'otto:enterprise-park-view',
+  enterpriseParkRegister: 'otto:enterprise-park-register',
+  enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
+  enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
+  enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
+  enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
+  enterpriseParkServices: 'otto:enterprise-park-services',
+  enterpriseParkServiceUpdate: 'otto:enterprise-park-service-update',
   enterpriseParkPublications: 'otto:enterprise-park-publications',
   enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
   enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
@@ -296,6 +330,7 @@ const IPC = {
   writeClipboard: 'otto:write-clipboard',
   notificationShow: 'otto:notification-show',
   notificationMarkRead: 'otto:notification-mark-read',
+  notificationGetUnread: 'otto:notification-get-unread',
   notificationUnreadChanged: 'otto:notification-unread-changed',
   notificationCheckPermission: 'otto:notification-check-permission',
   notificationSessionOpen: 'otto:notification-session-open',
@@ -303,12 +338,20 @@ const IPC = {
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
 const enterpriseAuthOperations = new EnterpriseAuthOperationQueue();
+function synchronizeAuthenticatedEnterpriseAccount(
+  account: import('./enterprise-identity.js').AuthenticatedEnterpriseAccountInput | null,
+): Promise<void> {
+  return enterpriseNotificationIdentityBoundary.synchronize(
+    account,
+    (next) => serverManager.setAuthenticatedEnterpriseAccount(next),
+  );
+}
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   // 任一受保护接口返回 401 都会走这里：立即持久化清 token，并通知 renderer
   // 退出过期管理员界面。错误登录时 token 本来为空，不会触发此回调。
   if (enterpriseSessionLoaded) {
     void enterpriseAuthOperations.run(() => clearInvalidatedEnterpriseIdentity(
-      (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+      synchronizeAuthenticatedEnterpriseAccount,
       saveEnterpriseSession,
     )).catch((error) => {
       console.warn('[otto-desktop] 清理失效企业会话或本机身份失败:', error);
@@ -404,7 +447,7 @@ function startEnterpriseIdentityRefresh(): void {
       const outcome = await refreshEnterpriseIdentityLease(
         session,
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       if (outcome === 'refreshed' && session.account) {
@@ -673,6 +716,8 @@ function loadSavedThemeSource(): 'system' | 'light' | 'dark' {
 
 function loadIcon(): NativeImage {
   const iconPaths = [
+    // electron-builder 将它作为 extraResource 放在 app.asar 外，macOS/Windows 都可读。
+    path.join(process.resourcesPath, 'app-icon.png'),
     path.join(RENDERER_DIR, 'icon.png'),
     path.join(__dirname, '..', '..', 'build', 'icon.png'),
     path.join(process.resourcesPath, 'build', 'icon.png'),
@@ -691,13 +736,35 @@ function loadIcon(): NativeImage {
 
 function loadTrayIcon(): NativeImage {
   if (process.platform === 'darwin') {
-    const template = nativeImage.createFromDataURL(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAPklEQVR42mNg+M8ABUwgauf/ZJEYASZQRLMAs6IRYAKRKIYB5iYwI+gYIkDUQs1DEBtBbqRhgAMDAAMEATRlPZEIvE5AAAAABJRU5ErkJggg==',
-    );
+    const template = loadIcon().resize({ width: 18, height: 18 });
     template.setTemplateImage(true);
     return template;
   }
   return loadIcon().resize({ width: 16, height: 16 });
+}
+
+/** 同步系统级未读提示：macOS Dock/菜单栏、Windows 任务栏覆盖图标与托盘说明。 */
+function updateUnreadIndicators(unread: readonly string[]): void {
+  const count = unread.length;
+  if (tray && !tray.isDestroyed()) {
+    tray.setToolTip(count > 0 ? `Otto · ${count} 条未读消息` : 'Otto');
+    if (process.platform === 'darwin') {
+      tray.setTitle(count > 0 ? ' •' : '');
+    }
+  }
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setBadge(count > 0 ? String(count) : '');
+  }
+  if (
+    process.platform === 'win32' &&
+    mainWindow &&
+    !mainWindow.isDestroyed()
+  ) {
+    mainWindow.setOverlayIcon(
+      count > 0 ? loadIcon().resize({ width: 16, height: 16 }) : null,
+      count > 0 ? `${count} 条未读消息` : '',
+    );
+  }
 }
 
 function showMainWindow(): void {
@@ -718,6 +785,7 @@ function createTray(): void {
 
   tray = new Tray(loadTrayIcon());
   tray.setToolTip('Otto');
+  updateUnreadIndicators(notificationService.getUnreadSessions());
 
   const updateMenu = (): void => {
     const status = tracer.getSummary();
@@ -810,7 +878,10 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+    updateUnreadIndicators(notificationService.getUnreadSessions());
+  });
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
     event.preventDefault();
@@ -1043,7 +1114,7 @@ function registerIpc(): void {
       const result = await restoreAndSyncEnterpriseSession(
         await enterpriseClient.getSession(),
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       if (before && !enterpriseClient.snapshot().token) saveEnterpriseSession();
@@ -1068,7 +1139,7 @@ function registerIpc(): void {
           body.password as string,
         ),
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
@@ -1104,7 +1175,7 @@ function registerIpc(): void {
           code: body.code as string,
         }),
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
@@ -1145,7 +1216,7 @@ function registerIpc(): void {
           password: body.password as string,
         }),
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
@@ -1165,7 +1236,7 @@ function registerIpc(): void {
           return failClosedUncertainEnterpriseJoin(
             error,
             enterpriseClient,
-            (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+            synchronizeAuthenticatedEnterpriseAccount,
             saveEnterpriseSession,
           );
         }
@@ -1174,7 +1245,7 @@ function registerIpc(): void {
       await syncJoinedEnterpriseAccount(
         result.account,
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
       saveEnterpriseSession();
@@ -1186,9 +1257,11 @@ function registerIpc(): void {
       loadEnterpriseSession();
       await logoutAndClearEnterpriseIdentity(
         enterpriseClient,
-        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        synchronizeAuthenticatedEnterpriseAccount,
         saveEnterpriseSession,
       );
+      fileAccessGrants.clear();
+      notificationService.clearAll();
     });
   });
   ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
@@ -1243,7 +1316,7 @@ function registerIpc(): void {
           await syncVerifiedEnterpriseAccount(
             enterpriseClient.authenticatedAccountSnapshot(),
             enterpriseClient,
-            (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+            synchronizeAuthenticatedEnterpriseAccount,
             saveEnterpriseSession,
           );
           const current = enterpriseClient.authenticatedAccountSnapshot();
@@ -1305,10 +1378,88 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.getOrganizationView();
   });
+  ipcMain.handle(IPC.enterpriseOrganizationFeaturesGet, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getOrganizationFeatures();
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationFeaturesUpdate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('功能开关格式不正确');
+    }
+    const allowed = new Set([
+      'enterprise_tree', 'park_service', 'feishu_auto_reply', 'tui_sync',
+      'direct_messages', 'atoa', 'knowledge',
+    ]);
+    const patch = Object.fromEntries(Object.entries(input).filter(
+      (entry): entry is [keyof EnterpriseOrganizationFeatures, boolean] => (
+        allowed.has(entry[0]) && typeof entry[1] === 'boolean'
+      ),
+    ));
+    return enterpriseClient.updateOrganizationFeatures(patch);
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationDepartments, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listOrganizationDepartments();
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationDepartmentCreate, async (_event, name: unknown) => {
+    loadEnterpriseSession();
+    if (typeof name !== 'string' || !name.trim()) throw new Error('部门名称不能为空');
+    return enterpriseClient.createOrganizationDepartment(name);
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationDepartmentUpdate, async (_event, id: unknown, name: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id || typeof name !== 'string' || !name.trim()) {
+      throw new Error('部门信息不正确');
+    }
+    return enterpriseClient.updateOrganizationDepartment(id, name);
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationDepartmentDelete, async (_event, id: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id) throw new Error('部门信息不正确');
+    await enterpriseClient.deleteOrganizationDepartment(id);
+    return true;
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationPositionCreate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.departmentId !== 'string' || typeof body.title !== 'string'
+      || !['member', 'department_admin', 'enterprise_admin'].includes(String(body.roleMapping))) {
+      throw new Error('职位信息不正确');
+    }
+    return enterpriseClient.createOrganizationPosition({
+      departmentId: body.departmentId,
+      title: body.title,
+      roleMapping: body.roleMapping as EnterprisePositionRoleMapping,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationPositionUpdate, async (_event, id: unknown, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof id !== 'string' || !id
+      || (body.roleMapping !== undefined
+        && !['member', 'department_admin', 'enterprise_admin'].includes(String(body.roleMapping)))) {
+      throw new Error('职位信息不正确');
+    }
+    return enterpriseClient.updateOrganizationPosition(id, {
+      title: typeof body.title === 'string' ? body.title : undefined,
+      roleMapping: body.roleMapping as EnterprisePositionRoleMapping | undefined,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseOrganizationPositionDelete, async (_event, id: unknown) => {
+    loadEnterpriseSession();
+    if (typeof id !== 'string' || !id) throw new Error('职位信息不正确');
+    await enterpriseClient.deleteOrganizationPosition(id);
+    return true;
+  });
   ipcMain.handle(IPC.enterpriseMessagesList, async (_event, peerAccountId: unknown) => {
     loadEnterpriseSession();
     if (typeof peerAccountId !== 'string' || !peerAccountId) throw new Error('成员信息不正确');
     return enterpriseClient.listDirectMessages(peerAccountId);
+  });
+  ipcMain.handle(IPC.enterpriseMessagesUnread, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listUnreadDirectMessageNotifications();
   });
   ipcMain.handle(IPC.enterpriseMessageSend, async (_event, peerAccountId: unknown, content: unknown) => {
     loadEnterpriseSession();
@@ -1331,6 +1482,71 @@ function registerIpc(): void {
       recipientAccountId: body.recipientAccountId,
       serviceId: body.serviceId,
       note: typeof body.note === 'string' ? body.note : null,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseParkView, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getParkView();
+  });
+  ipcMain.handle(IPC.enterpriseParkRegister, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.name !== 'string' || !body.name.trim()) throw new Error('产业园名称不能为空');
+    return enterpriseClient.registerPark({
+      name: body.name,
+      slug: typeof body.slug === 'string' ? body.slug : undefined,
+      brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseParkJoin, async (_event, inviteCode: unknown) => {
+    loadEnterpriseSession();
+    if (typeof inviteCode !== 'string' || !inviteCode.trim()) throw new Error('产业园邀请码不能为空');
+    return enterpriseClient.joinPark(inviteCode);
+  });
+  ipcMain.handle(IPC.enterpriseParkInviteIssue, async (_event, maxUses: unknown) => {
+    loadEnterpriseSession();
+    if (maxUses !== null && maxUses !== undefined && typeof maxUses !== 'number') {
+      throw new Error('邀请码使用次数不正确');
+    }
+    return enterpriseClient.issueParkInvite(maxUses as number | null | undefined);
+  });
+  ipcMain.handle(IPC.enterpriseParkSpecialists, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkSpecialists();
+  });
+  ipcMain.handle(IPC.enterpriseParkSpecialistSet, async (_event, serviceId: unknown, accountId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof serviceId !== 'string' || !serviceId || typeof accountId !== 'string' || !accountId) {
+      throw new Error('园区服务专员信息不正确');
+    }
+    return enterpriseClient.setParkSpecialist(serviceId, accountId);
+  });
+  ipcMain.handle(IPC.enterpriseParkSpecialistRemove, async (_event, serviceId: unknown, accountId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof serviceId !== 'string' || !serviceId || typeof accountId !== 'string' || !accountId) {
+      throw new Error('园区服务专员信息不正确');
+    }
+    await enterpriseClient.removeParkSpecialist(serviceId, accountId);
+    return true;
+  });
+  ipcMain.handle(IPC.enterpriseParkServices, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkServices();
+  });
+  ipcMain.handle(IPC.enterpriseParkServiceUpdate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.serviceId !== 'string' || !body.serviceId) throw new Error('园区服务信息不正确');
+    const config = body.config && typeof body.config === 'object' && !Array.isArray(body.config)
+      ? Object.fromEntries(Object.entries(body.config).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ))
+      : undefined;
+    return enterpriseClient.updateParkService({
+      serviceId: body.serviceId,
+      name: typeof body.name === 'string' ? body.name : undefined,
+      enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      config,
     });
   });
   ipcMain.handle(IPC.enterpriseParkPublications, async () => {
@@ -1427,18 +1643,16 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle(IPC.parkNativeNotify, (_e, title: unknown, body: unknown) => {
-    if (typeof title !== 'string' || typeof body !== 'string' || !Notification.isSupported()) {
+    if (typeof title !== 'string' || typeof body !== 'string') {
       return false;
     }
-    const notification = new Notification({ title: title.slice(0, 80), body: body.slice(0, 240) });
-    notification.on('click', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+    notificationService.show({
+      sessionId: 'park:service',
+      source: 'park',
+      title,
+      preview: body.slice(0, 240),
     });
-    notification.show();
-    return true;
+    return notificationService.checkPermission();
   });
   // ── 通知系统 IPC 代理 ──
   ipcMain.handle(IPC.notificationShow, (_e, payload: unknown) => {
@@ -1450,15 +1664,18 @@ function registerIpc(): void {
     if (typeof sessionId !== 'string') return;
     notificationService.markRead(sessionId);
   });
+  ipcMain.handle(IPC.notificationGetUnread, () => notificationService.getUnreadSessions());
   ipcMain.handle(IPC.notificationCheckPermission, () => notificationService.checkPermission());
   // 通知点击跳转回调：push 给 renderer
   notificationService.registerCallbacks({
     onUnreadChange: (unread) => {
+      updateUnreadIndicators(unread);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.notificationUnreadChanged, unread);
       }
     },
     onNotificationClick: (sessionId) => {
+      showMainWindow();
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.notificationSessionOpen, sessionId);
       }
@@ -1557,8 +1774,8 @@ function registerIpc(): void {
     createVideoEditorWindow();
     return Promise.resolve({ ok: true });
   });
-  // 园区服务定制（不同企业不同品牌名/服务清单）：读 ~/.otto-user/park-services.json。
-  // 文件不存在/解析失败 → null，renderer 用内置默认（宏创AI园区服务）。
+  // 旧版园区服务定制兼容：新版企业账号以服务端园区配置为准。
+  // 文件不存在或解析失败时返回 null，由 renderer fail closed。
   // ── 外观主题（跟随系统/浅色/深色）：nativeTheme.themeSource + userData 持久化 ──
   ipcMain.handle(IPC.themeGet, () => nativeTheme.themeSource);
   ipcMain.handle(IPC.themeSet, (_e, v: unknown) => {
@@ -1894,38 +2111,51 @@ function registerIpc(): void {
           ],
         }));
     if (result.canceled || result.filePaths.length === 0) return [];
-    return result.filePaths;
+    return fileAccessGrants.grant(result.filePaths);
   });
 
-  // 读取任意路径文件（用户已通过 selectFiles 授权），返回 Base64 + 元数据
+  // 拖拽/隐藏 input 的 File 路径由可信 preload 通过 webUtils 提取后送到这里。
+  // renderer 只能传 File 对象给 contextBridge，没有任意字符串 grant API。
+  ipcMain.handle(IPC.grantBrowserFile, (_e, filePath: unknown) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      throw new Error('无法获取所选文件的真实路径');
+    }
+    const [granted] = fileAccessGrants.grant([filePath]);
+    if (!granted) throw new Error('文件未获得授权');
+    return granted;
+  });
+
+  // preload 在 send_user_message 真正写入 WS 前调用。renderer 无 ipcRenderer，
+  // 也拿不到 server endpoint/clientToken，因此不能绕过此复核直发裸路径。
+  ipcMain.handle(IPC.authorizeMessageFiles, (_e, filePaths: unknown) => {
+    if (
+      !Array.isArray(filePaths) ||
+      filePaths.length === 0 ||
+      filePaths.length > 6 ||
+      filePaths.some((value) => typeof value !== 'string' || value.length === 0)
+    ) {
+      throw new Error('附件路径格式无效');
+    }
+    return fileAccessGrants.resolveAll(
+      filePaths as string[],
+      50 * 1024 * 1024,
+    );
+  });
+
+  // 读取用户本进程中通过原生选择器明确授权的文件，返回 Base64 + 元数据。
+  // 授权不再限定 home：外部卷、其它盘符与网络盘都可选；未选择路径仍 fail closed。
   ipcMain.handle(IPC.readFilePath, async (_e, filePath: unknown) => {
     if (typeof filePath !== 'string' || filePath.length === 0) {
       throw new Error('文件路径无效');
     }
-    const resolved = path.resolve(filePath);
-    // 安全检查：只允许读取 home 目录内的文件
-    let home: string;
-    try {
-      home = fs.realpathSync(app.getPath('home'));
-      const real = fs.realpathSync(resolved);
-      if (real !== home && !real.startsWith(home + path.sep)) {
-        throw new Error('无权访问该路径');
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message === '无权访问该路径') throw err;
-      throw new Error('文件路径无效或不可读');
-    }
-    const stat = await fs.promises.stat(resolved);
-    if (stat.size > 50 * 1024 * 1024) {
-      throw new Error('文件过大（超过 50MB）');
-    }
-    const buffer = await fs.promises.readFile(resolved);
+    const granted = fileAccessGrants.resolve(filePath, 50 * 1024 * 1024);
+    const buffer = await fs.promises.readFile(granted.filePath);
     const base64 = buffer.toString('base64');
     return {
-      filePath: resolved,
-      fileName: path.basename(resolved),
-      size: stat.size,
-      mimeType: getMimeType(resolved),
+      filePath: granted.filePath,
+      fileName: path.basename(granted.filePath),
+      size: granted.size,
+      mimeType: getMimeType(granted.filePath),
       data: base64,
     };
   });
@@ -1964,6 +2194,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // Windows 通知中心/任务栏用稳定 AUMID 绑定 Otto；缺失时 toast 可能不显示应用图标，
+    // 甚至在部分系统上直接不出现。
+    if (process.platform === 'win32') app.setAppUserModelId('ai.otto.desktop');
     if (process.defaultApp && process.argv[1]) {
       app.setAsDefaultProtocolClient('otto', process.execPath, [path.resolve(process.argv[1])]);
     } else {
@@ -2013,6 +2246,8 @@ if (!gotLock) {
     // 即使进程赶在异步清理完成前退出，下次下载同一资产会截断重写同名 .part，
     // 且 sha256 校验兜底完整性，残留无危害。
     updateService.cancelDownload();
+    fileAccessGrants.clear();
+    notificationService.clearAll();
     // detached server 仅用户主动退出托盘时才杀。
     // 关窗不杀：server + 飞书守护继续运行。
     void serverManager.shutdown(isQuitting)

@@ -75,6 +75,7 @@ import { processEnterpriseAtoaRequest } from './enterpriseAtoaCoordinator.js';
 import { collectAuthorizedAtoaContext } from './a2aContext.js';
 import { AtoaConsultDialog } from './components/AtoaConsultDialog.js';
 import { executeEnterpriseCollaborationRelay } from './enterpriseCollaborationRelay.js';
+import { EnterpriseUnreadNotificationTracker } from './enterpriseUnreadNotifications.js';
 import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
@@ -96,6 +97,8 @@ import {
 
 /** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
+/** 企业私聊后台未读轮询；只取摘要，不把消息提前标已读。 */
+const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
@@ -162,7 +165,11 @@ function OttoWorkspaceApp({
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => Promise<void>;
 }): React.JSX.Element {
-  const { state, actions } = useOttoStore();
+  const { state, actions } = useOttoStore({
+    enterpriseOrganizationId: account.accountType === 'personal'
+      ? null
+      : account.organizationId,
+  });
   // 设置与诊断中心（P0）的独立数据源：settings/mcp/context/doctor/todos。
   const settingsData = useSettingsData();
   // 软件更新状态机：SettingsHub「软件更新」tab 与 Sidebar 入口小圆点共享一份。
@@ -261,6 +268,41 @@ function OttoWorkspaceApp({
     [account.id],
   );
 
+  // 企业私聊不走本地 server 的 message_start 帧，所以独立轮询服务端只读未读摘要。
+  // 同一成员多条消息聚合为一个系统 toast/持久闪烁点；打开真实私聊后
+  // listMessages 在后端标已读，下一次轮询才清本地点。网络错误保留已有未读，不误报为已读。
+  useEffect(() => {
+    if (account.accountType === 'personal') return undefined;
+    let cancelled = false;
+    let polling = false;
+    const tracker = new EnterpriseUnreadNotificationTracker({
+      show: (payload) => window.otto.notificationShow(payload),
+      markRead: (sessionId) => window.otto.notificationMarkRead(sessionId),
+    });
+
+    const poll = async (): Promise<void> => {
+      if (polling || cancelled) return;
+      polling = true;
+      try {
+        const notifications = await window.otto.enterpriseMessagesUnread();
+        if (!cancelled) await tracker.reconcile(notifications);
+      } catch {
+        // 401 会由主进程的会话失效通道回到登录页；临时网络错误
+        // 不应阻断正常对话，也不应清掉已有未读。功能关闭的 403 已在 main 客户端层静默返回 []。
+      } finally {
+        polling = false;
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), ENTERPRISE_UNREAD_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      void tracker.clear();
+    };
+  }, [account.accountType, account.id, account.organizationId]);
+
   // 企业 A2A 收件箱只在真实客户端本地轮询。请求已被服务端按回复去重；
   // 本地集合用于避免同一轮询周期重复处理，发送失败则释放以便下轮重试。
   useEffect(() => {
@@ -275,6 +317,15 @@ function OttoWorkspaceApp({
     ): Promise<void> => {
       if (processing.has(request.id)) return;
       processing.add(request.id);
+      const notificationId = `enterprise:atoa:${request.id}`;
+      // ATOA 走中心企业收件箱，不会产生本地 message_start 帧；必须在这里单独接入
+      // OS 原生通知与未读徽标，否则“双方 Otto 协作”在后台完全无感。
+      void window.otto.notificationShow({
+        sessionId: notificationId,
+        source: 'atoa',
+        sender: request.peer?.name ?? '企业同事',
+        preview: '你的 Otto 收到一条企业协作请求，等待授权处理',
+      }).catch(() => undefined);
       try {
         await processEnterpriseAtoaRequest({
           request,
@@ -301,6 +352,8 @@ function OttoWorkspaceApp({
           sendMessage: window.otto.enterpriseMessageSend,
           signal: abortController.signal,
         });
+        // processEnterpriseAtoaRequest 会等待用户在授权弹窗中明确处理；走到这里即已读。
+        void window.otto.notificationMarkRead(notificationId).catch(() => undefined);
       } catch {
         processing.delete(request.id);
         throw new Error('A2A 回复发送失败');
@@ -839,6 +892,7 @@ function OttoWorkspaceApp({
             busy={busy}
             mode={edition}
             enterpriseRole={centralIdentity.role}
+            enterpriseOrganizationId={account.organizationId}
             workspace={product.state.workspace}
             profiles={centralIdentity.profiles}
             customAgents={customAgents}

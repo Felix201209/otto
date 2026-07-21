@@ -28,6 +28,7 @@ import type {
   SlashCommandInfo,
   ToolConfirmationResponsePayload,
 } from 'otto-server';
+import { getEnterpriseOrganizationFeatures } from './enterpriseOrganizationFeatures.js';
 
 // ── 状态形状 ──────────────────────────────────────────────────────────────
 
@@ -85,6 +86,17 @@ export interface OttoState {
   pendingCreateRequestId: string | null;
   /** 未读会话 ID 列表（桌面通知未读闪烁点数据源）。 */
   unreadSessions: string[];
+  /**
+   * 等待服务端确认的模型切换。点击后 UI 先乐观更新；旧 get_models 回包不得覆盖它，
+   * 只有 set_model 对应的 models_list(current=目标模型) 才算确认。失败/超时则用这里
+   * 保存的稳定值回滚，避免“界面跳回旧模型但实际已切换”或假成功。
+   */
+  pendingModelSwitch?: {
+    sessionId: string;
+    model: string;
+    previousModel: string | null;
+    previousSessionModel?: string;
+  };
 }
 
 const initialState: OttoState = {
@@ -116,6 +128,7 @@ type Action =
   | { kind: 'clear_error' }
   | { kind: 'pending_create'; clientRequestId: string }
   | { kind: 'set_optimistic_model'; model: string; sessionId: string }
+  | { kind: 'model_switch_timeout'; model: string; sessionId: string }
   | { kind: 'set_unread'; sessions: string[] };
 
 function upsertSession(
@@ -126,7 +139,13 @@ function upsertSession(
   const sessionIds = state.sessionIds.includes(session.sessionId)
     ? state.sessionIds
     : [...state.sessionIds, session.sessionId];
-  return { ...state, sessions, sessionIds };
+  const pending = state.pendingModelSwitch;
+  const currentModel = state.activeSessionId === session.sessionId
+    ? pending?.sessionId === session.sessionId
+      ? pending.model
+      : session.model ?? state.currentModel
+    : state.currentModel;
+  return { ...state, sessions, sessionIds, currentModel };
 }
 
 /**
@@ -158,12 +177,18 @@ function reconcileSessions(
   if (!activeSessionId || !liveIds.has(activeSessionId)) {
     activeSessionId = sessionIds.length > 0 ? sessionIds[0] : null;
   }
+  const activeModel = activeSessionId
+    ? state.pendingModelSwitch?.sessionId === activeSessionId
+      ? state.pendingModelSwitch.model
+      : sessions[activeSessionId]?.model
+    : undefined;
   return {
     ...state,
     sessions,
     sessionIds,
     messages,
     activeSessionId,
+    currentModel: activeModel ?? state.currentModel,
     sessionsLoaded: true,
   };
 }
@@ -263,13 +288,60 @@ function cancelInFlightToolCalls(
   });
 }
 
+/** 回滚仍在等待确认的模型切换；请求已被新选择/确认替代时保持原状态。 */
+function rollbackPendingModelSwitch(
+  state: OttoState,
+  sessionId: string,
+  model: string | null,
+  message?: string,
+): OttoState {
+  const pending = state.pendingModelSwitch;
+  if (
+    !pending ||
+    pending.sessionId !== sessionId ||
+    (model !== null && pending.model !== model)
+  ) {
+    return message ? { ...state, lastError: message } : state;
+  }
+  const sessions = { ...state.sessions };
+  const session = sessions[sessionId];
+  if (session) {
+    sessions[sessionId] = {
+      ...session,
+      model: pending.previousSessionModel,
+    };
+  }
+  const activeModel = state.activeSessionId
+    ? sessions[state.activeSessionId]?.model
+    : undefined;
+  return {
+    ...state,
+    sessions,
+    currentModel:
+      state.activeSessionId === sessionId
+        ? pending.previousSessionModel ?? pending.previousModel ?? null
+        : activeModel ?? state.currentModel,
+    pendingModelSwitch: undefined,
+    ...(message ? { lastError: message } : {}),
+  };
+}
+
 function reducer(state: OttoState, action: Action): OttoState {
   switch (action.kind) {
     case 'connection':
       return { ...state, connection: action.value };
 
-    case 'select':
-      return { ...state, activeSessionId: action.sessionId };
+    case 'select': {
+      const pending = state.pendingModelSwitch;
+      return {
+        ...state,
+        activeSessionId: action.sessionId,
+        currentModel:
+          pending?.sessionId === action.sessionId
+            ? pending.model
+            : state.sessions[action.sessionId]?.model ?? state.currentModel,
+      };
+    }
 
     case 'optimistic_user':
       return appendMessage(state, action.message);
@@ -299,11 +371,37 @@ function reducer(state: OttoState, action: Action): OttoState {
     case 'set_optimistic_model': {
       // 乐观更新：不等服务器回 models_list，立即更新前端状态。
       const sessions = { ...state.sessions };
+      const existing =
+        state.pendingModelSwitch?.sessionId === action.sessionId
+          ? state.pendingModelSwitch
+          : undefined;
+      const previousSessionModel = existing
+        ? existing.previousSessionModel
+        : sessions[action.sessionId]?.model;
+      const previousModel = existing ? existing.previousModel : state.currentModel;
       if (sessions[action.sessionId]) {
         sessions[action.sessionId] = { ...sessions[action.sessionId], model: action.model };
       }
-      return { ...state, sessions, currentModel: action.model };
+      return {
+        ...state,
+        sessions,
+        currentModel: action.model,
+        pendingModelSwitch: {
+          sessionId: action.sessionId,
+          model: action.model,
+          previousModel,
+          previousSessionModel,
+        },
+      };
     }
+
+    case 'model_switch_timeout':
+      return rollbackPendingModelSwitch(
+        state,
+        action.sessionId,
+        action.model,
+        '模型切换超时，已恢复到上一个模型，请重试',
+      );
 
     case 'set_unread':
       return { ...state, unreadSessions: action.sessions };
@@ -339,7 +437,12 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       // PR 1: 本端创建的新会话——比对 clientRequestId 精确选中
       const updated = upsertSession(state, frame.payload.session);
       if (state.pendingCreateRequestId === frame.payload.clientRequestId) {
-        return { ...updated, activeSessionId: frame.payload.session.sessionId, pendingCreateRequestId: null };
+        return {
+          ...updated,
+          activeSessionId: frame.payload.session.sessionId,
+          currentModel: frame.payload.session.model ?? updated.currentModel,
+          pendingCreateRequestId: null,
+        };
       }
       return { ...updated, pendingCreateRequestId: null };
     }
@@ -461,9 +564,41 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
     }
 
     case 'models_list': {
+      const pending = state.pendingModelSwitch;
+      if (pending) {
+        // 首次连接的 get_models 与 set_model 会并行返回。旧回包若晚到，current 仍是
+        // 上一个模型，不能覆盖刚点击的乐观值；只接受明确命中目标模型的确认帧。
+        const confirmed = frame.payload.current === pending.model;
+        const pendingModelSwitch = confirmed ? undefined : pending;
+        const sessions = confirmed && state.sessions[pending.sessionId]
+          ? {
+              ...state.sessions,
+              [pending.sessionId]: {
+                ...state.sessions[pending.sessionId],
+                model: pending.model,
+              },
+            }
+          : state.sessions;
+        const activeModel = state.activeSessionId
+          ? state.activeSessionId === pending.sessionId
+            ? pending.model
+            : sessions[state.activeSessionId]?.model
+          : undefined;
+        return {
+          ...state,
+          sessions,
+          models: frame.payload.models,
+          modelsLoaded: true,
+          currentModel: activeModel ?? state.currentModel,
+          pendingModelSwitch,
+        };
+      }
       // 服务器确认的 current 始终优先（set_model/handleSetModel 发回的权威值）。
       // 仅在服务器未指定 current 时，才回退到前端保留的旧值（保留逻辑：旧值仍有效则保留，否则置 null）。
       const serverCurrent = frame.payload.current;
+      const sessionCurrent = state.activeSessionId
+        ? state.sessions[state.activeSessionId]?.model
+        : undefined;
       const retainedCurrent =
         serverCurrent === undefined &&
         state.currentModel &&
@@ -476,17 +611,29 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
         ...state,
         models: frame.payload.models,
         modelsLoaded: true,
-        currentModel: serverCurrent ?? retainedCurrent,
+        currentModel: sessionCurrent ?? serverCurrent ?? retainedCurrent,
       };
     }
 
     case 'error':
       // 收口在途消息再落错误：否则流式中途报错时那条 assistant 占位永远 isStreaming=true，
       // busy 卡死、发送键锁在「停止」，用户无法继续对话（见 settleInFlight 注释）。
-      return {
-        ...settleInFlight(state, frame.payload.sessionId),
-        lastError: frame.payload.message,
-      };
+      return frame.payload.sessionId &&
+        (frame.payload.code === 'unknown_model' ||
+          frame.payload.code === 'model_switch_failed')
+        ? settleInFlight(
+            rollbackPendingModelSwitch(
+              state,
+              frame.payload.sessionId,
+              null,
+              frame.payload.message,
+            ),
+            frame.payload.sessionId,
+          )
+        : {
+            ...settleInFlight(state, frame.payload.sessionId),
+            lastError: frame.payload.message,
+          };
 
     case 'feishu_push_result':
       // 同步状态指示（Issue #6）：失败时浮一条错误。
@@ -599,10 +746,19 @@ export interface UseOttoStore {
   actions: OttoActions;
 }
 
+export interface UseOttoStoreOptions {
+  /** 只有已认证企业账号传入；个人空间保持本地知识但不上传组织。 */
+  enterpriseOrganizationId?: string | null;
+}
+
 let clientMsgSeq = 0;
 
-export function useOttoStore(): UseOttoStore {
+export function useOttoStore(
+  options: UseOttoStoreOptions = {},
+): UseOttoStore {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const enterpriseOrganizationIdRef = useRef<string | null>(null);
+  enterpriseOrganizationIdRef.current = options.enterpriseOrganizationId?.trim() || null;
   // reducer 在闭包里读不到最新 activeSessionId，用 ref 兜底动作里取值。
   const activeRef = useRef<string | null>(null);
   activeRef.current = state.activeSessionId;
@@ -638,28 +794,6 @@ export function useOttoStore(): UseOttoStore {
 
     const unsubFrame = transport.onFrame((frame) => {
       dispatch({ kind: 'frame', frame });
-      // 🔔 通知：收到非本地来源的消息时弹 OS 原生通知
-      if (
-        frame.type === 'message_start' &&
-        frame.payload.message.role === 'user' &&
-        frame.payload.message.source &&
-        frame.payload.message.source !== 'local' &&
-        frame.payload.message.source !== 'tui'
-      ) {
-        const msg = frame.payload.message;
-        const preview = msg.content
-          ?.map((c: { type: string; value?: string; values?: string[] }) =>
-            c.type === 'text' ? c.value : c.type === 'file_reference' ? '[文件]' : '')
-          .join(' ')?.slice(0, 200) ?? '';
-        const session = sessionsRef.current[msg.sessionId];
-        const sender = session?.title || undefined;
-        void window.otto.notificationShow({
-          sessionId: msg.sessionId,
-          source: msg.source!,
-          sender,
-          preview: preview || '(非文本消息)',
-        });
-      }
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;
         try {
@@ -680,19 +814,24 @@ export function useOttoStore(): UseOttoStore {
         }
       }
       if (frame.type === 'knowledge_activity' && frame.payload.action === 'auto_capture') {
-        for (const entry of frame.payload.captured ?? []) {
-          try {
-            // 组织知识同步同样是旁路：只上传 core 已脱敏、去重并确认写入的条目；
-            // 未登录或企业服务暂不可用时不能阻断聊天和个人本地知识库。
-            void window.otto.enterpriseKnowledgeRecord({
-              sourceId: entry.id,
-              category: entry.category,
-              content: entry.content,
-              confidence: entry.confidence ?? 0.8,
-            }).catch(() => undefined);
-          } catch {
-            // preload 桥在异常启动阶段不可用时保持主链路可用。
-          }
+        const captured = frame.payload.captured ?? [];
+        const organizationId = enterpriseOrganizationIdRef.current;
+        if (organizationId && captured.length > 0) {
+          // 写前强制刷新中心组织功能开关：knowledge=false 时客户端不发起任何组织知识写入。
+          // 获取失败也 fail closed，但 reducer 已保留 core 的个人本地捕获结果。
+          void getEnterpriseOrganizationFeatures(organizationId, { force: true })
+            .then((features) => {
+              if (!features.knowledge) return;
+              for (const entry of captured) {
+                void window.otto.enterpriseKnowledgeRecord({
+                  sourceId: entry.id,
+                  category: entry.category,
+                  content: entry.content,
+                  confidence: entry.confidence ?? 0.8,
+                }).catch(() => undefined);
+              }
+            })
+            .catch(() => undefined);
         }
       }
       // 专家启动：create_session 之后广播的首个「id 未见过」的 session_upsert 即新会话。
@@ -774,11 +913,27 @@ export function useOttoStore(): UseOttoStore {
 
   // ── 桌面通知订阅：未读闪烁 + 点击跳转 ──
   useEffect(() => {
+    let cancelled = false;
     const unsubUnread = window.otto.onNotificationUnreadChanged?.((unread) => {
       dispatch({ kind: 'set_unread', sessions: unread });
     }) ?? (() => {});
 
+    // renderer 崩溃重载/窗口重建后，main 的未读集合仍在；先拉快照，避免闪烁点丢失。
+    void window.otto.notificationGetUnread?.()
+      .then((unread) => {
+        if (!cancelled) dispatch({ kind: 'set_unread', sessions: unread });
+      })
+      .catch(() => undefined);
+
     const unsubClick = window.otto.onNotificationSessionOpen?.((sessionId) => {
+      // 企业私聊/A2A/园区通知使用非聊天会话的合成 id；
+      // 不能把 activeSessionId 切到一个不存在的本地 server 会话。
+      // 企业通知需等真正打开私聊/处理 A2A 后才清未读；点 toast 只聚焦窗口。
+      if (sessionId.startsWith('enterprise:')) return;
+      if (sessionId.startsWith('park:')) {
+        void window.otto.notificationMarkRead(sessionId);
+        return;
+      }
       dispatch({ kind: 'select', sessionId });
       transport.send({ type: 'subscribe', payload: { sessionId } });
       transport.send({ type: 'get_history', payload: { sessionId } });
@@ -787,10 +942,27 @@ export function useOttoStore(): UseOttoStore {
     }) ?? (() => {});
 
     return () => {
+      cancelled = true;
       unsubUnread();
       unsubClick();
     };
   }, []);
+
+  // set_model 正常只需一次本地 runtime 切换；若 12 秒仍没收到带目标 current 的
+  // models_list，继续显示乐观值会构成假成功。按请求的 session+model 精确回滚，旧计时器
+  // 即使在快速连续切换后触发也不会误伤新选择。
+  useEffect(() => {
+    const pending = state.pendingModelSwitch;
+    if (!pending) return undefined;
+    const timer = window.setTimeout(() => {
+      dispatch({
+        kind: 'model_switch_timeout',
+        sessionId: pending.sessionId,
+        model: pending.model,
+      });
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [state.pendingModelSwitch]);
 
   // 专家开场消息发送：等新会话被选中（activeSessionId 命中 kickoffRef）且连接就绪。
   // 声明顺序刻意排在上面的「订阅 + 拉历史」effect 之后——同一次 commit 里 effect 按声明
@@ -831,6 +1003,8 @@ export function useOttoStore(): UseOttoStore {
 
   const selectSession = useCallback((sessionId: string) => {
     dispatch({ kind: 'select', sessionId });
+    // 从侧栏直接进入会话也是真正“已读”，不能只在点击系统弹窗时清点。
+    void window.otto.notificationMarkRead?.(sessionId).catch(() => undefined);
   }, []);
 
   const createSession = useCallback((title?: string) => {
@@ -955,6 +1129,12 @@ export function useOttoStore(): UseOttoStore {
   const setModel = useCallback((model: string) => {
     const sessionId = activeRef.current;
     if (!sessionId) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，模型未切换' });
+      return;
+    }
+    const sessionModel = sessionsRef.current[sessionId]?.model ?? currentModelRef.current;
+    if (model === sessionModel) return;
     // 乐观更新：不等服务器确认，立即更新 UI
     dispatch({ kind: 'set_optimistic_model', model, sessionId });
     transport.send({ type: 'set_model', payload: { sessionId, model } });

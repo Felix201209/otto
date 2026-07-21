@@ -370,7 +370,7 @@ export function ChatView({
         </button>
       ) : null}
 
-      {/* 园区服务插件：常驻挂载（右侧面板「园区 AI 服务」入口经事件打开弹窗）。 */}
+      {/* 园区服务插件：常驻挂载（右侧面板「园区服务」入口经事件打开弹窗）。 */}
       <ParkServicesPlugin />
 
       <Composer

@@ -166,17 +166,15 @@ describe('GoalAchievedTool', () => {
       expect(result.summary).toBe('goal achieved');
     });
 
-    it('tells the model not to produce an unrequested wrap-up summary', async () => {
-      // The instruction clause matters: without it, models commonly emit
-      // a 2-screen wrap-up the user didn't ask for. We want a brief ack
-      // and then "wait for next instruction".
+    it('requires a concise user-facing outcome and verification summary', async () => {
       const result = await tool.execute(
         { reason: 'all done' },
         abortSignal,
       );
       expect(String(result.llmContent)).toMatch(
-        /not produce an unrequested wrap-up|wait for the user/i,
+        /concise outcome summary|result, and verification/i,
       );
+      expect(String(result.llmContent)).toMatch(/wait for the next instruction/i);
     });
   });
 

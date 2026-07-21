@@ -11,6 +11,8 @@ import {
   MemoryManagerTool,
   getCoreSystemPrompt,
   getAutoMemoryEngine,
+  getKnowledgeCapturePipeline,
+  formatKnowledgeCaptureStatus,
 } from 'otto-core';
 import { getEncoding } from 'js-tiktoken';
 import { MessageType } from '../types.js';
@@ -106,6 +108,27 @@ async function runProjectMemoryAction(
  * 企业用户和既有脚本仍依赖原子命令名。集中在这里追加可以让两套入口共存。
  */
 const autoMemoryCommands: SlashCommand[] = [
+  {
+    name: 'capture-status',
+    description: '查看自动知识沉淀运行状态',
+    kind: CommandKind.BUILT_IN,
+    action: async (): Promise<SlashCommandActionReturn> => {
+      try {
+        const status = await getKnowledgeCapturePipeline().getStatus();
+        return {
+          type: 'message',
+          messageType: status.lastError ? 'error' : 'info',
+          content: formatKnowledgeCaptureStatus(status),
+        };
+      } catch (error) {
+        return {
+          type: 'message',
+          messageType: 'error',
+          content: `获取自动知识沉淀状态失败: ${getErrorMessage(error)}`,
+        };
+      }
+    },
+  },
   {
     name: 'stats',
     description: '查看记忆引擎统计信息',

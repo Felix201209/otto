@@ -103,6 +103,7 @@ import {
   saveCustomModel,
   savePreferredModel,
 } from './customModels.js';
+import { externalInboundNotificationFromFrame } from './externalInboundNotification.js';
 import {
   loadUserSettingsSubset,
   patchUserSettings,
@@ -367,6 +368,8 @@ export class OttoServer {
   private workflowUnsub?: () => void;
   /** Agent 通过 local_schedule 改动后，实时推送桌面日历。 */
   private scheduleUnsub?: () => void;
+  /** SessionStore 全局外部入站观察者；与当前会话 subscribe 无关。 */
+  private externalInboundUnsub?: () => void;
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
   private readonly productWorkspace: ProductWorkspaceStore;
@@ -405,6 +408,25 @@ export class OttoServer {
         this.isWebSocketRequestAllowed(info.req),
     });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
+
+    // 桌面通知不能依赖 UI 当前订阅哪个会话。监听唯一 publish 入口，
+    // 只把真实外部 user 入站转为独立全局帧；当前会话的 message_start
+    // 仍只经原订阅链渲染，因此不重复 append。
+    this.externalInboundUnsub?.();
+    this.externalInboundUnsub = this.store.subscribeAll((frame) => {
+      const sessionId = frame.type === 'message_start'
+        ? frame.payload.message.sessionId
+        : undefined;
+      const session = sessionId ? this.store.getSession(sessionId) : undefined;
+      // 全局通知也必须遵守会话租户边界。否则身份切换后，旧/
+      // 其他企业会话的标题与摘要会绕过订阅授权广播给当前用户。
+      if (!session || this.sessionAuthorizationError(session)) return;
+      const notification = externalInboundNotificationFromFrame(frame, session);
+      if (!notification) return;
+      // 新飞书会话也要先进桌面会话列表，否则点 toast 无可打开的条目。
+      this.broadcastAll({ type: 'session_upsert', payload: { session } });
+      this.broadcastAll(notification);
+    });
 
     await new Promise<void>((resolve, reject) => {
       this.http!.once('error', reject);
@@ -519,6 +541,8 @@ export class OttoServer {
       // appendMessage(source:'feishu') + publish；app→飞书回推走 registration.pushToFeishu。
       this.feishu = await registerFeishu({
         store: this.store,
+        getOrCreateSession: (chatId, title) =>
+          this.getOrCreateFeishuSessionForCurrentIdentity(chatId, title),
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
         ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
         mock: this.mock,
@@ -572,6 +596,8 @@ export class OttoServer {
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    this.externalInboundUnsub?.();
+    this.externalInboundUnsub = undefined;
     if (this.enterpriseLeaseTimer) {
       clearTimeout(this.enterpriseLeaseTimer);
       this.enterpriseLeaseTimer = undefined;
@@ -898,6 +924,29 @@ export class OttoServer {
     });
   }
 
+  /**
+   * 飞书 chatId 在同一中心身份内幂等复用；身份切换后不复用旧租户
+   * 会话，而是建立并索引一个绑定当前账号/组织的新会话。
+   */
+  private getOrCreateFeishuSessionForCurrentIdentity(
+    chatId: string,
+    title?: string,
+  ): SessionSummary {
+    const existing = this.store
+      .listSessions()
+      .find(
+        (session) =>
+          session.feishuChatId === chatId
+          && !this.sessionAuthorizationError(session),
+      );
+    if (existing) return existing;
+    return this.createSessionForCurrentIdentity({
+      source: 'feishu',
+      feishuChatId: chatId,
+      title: title ?? `飞书会话 ${chatId.slice(0, 8)}`,
+    });
+  }
+
   private createEphemeralSessionForCurrentIdentity(
     init: Partial<SessionSummary> = {},
   ): SessionSummary {
@@ -1118,8 +1167,18 @@ export class OttoServer {
       );
     }
     this.store.patchSessionModel(sessionId, model);
-    // 持久化模型偏好：确保重启/多窗口 models_list 广播使用最新模型
-    savePreferredModel(model);
+    // runtime 与会话摘要已经真实切换后，偏好落盘只能是 best-effort：磁盘满、
+    // 只读目录等故障不能阻止下面的权威确认帧，否则 renderer 会在超时后回滚到
+    // 旧模型，造成“界面是旧模型、实际 runtime 已是新模型”的假状态。
+    try {
+      savePreferredModel(model);
+    } catch (error) {
+      console.warn(
+        `[model-switch] preference persistence failed session=${sessionId} model=${model} error=${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     // 模型切换成功日志
     console.log(
       `[model-switch] session=${sessionId} model=${model}`,
@@ -2209,6 +2268,8 @@ export class OttoServer {
       if (!this.feishu) {
         this.feishu = await registerFeishu({
           store: this.store,
+          getOrCreateSession: (chatId, title) =>
+            this.getOrCreateFeishuSessionForCurrentIdentity(chatId, title),
           broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
           ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
           mock: this.mock,
@@ -3861,8 +3922,8 @@ function browserBridgeScript(clientToken: string): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.9.1'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.1', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.9.2'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.2', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),

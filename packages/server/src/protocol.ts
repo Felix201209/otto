@@ -885,6 +885,22 @@ export type MessageStartMsg = Envelope<
   { message: OttoMessage }
 >;
 
+/**
+ * 外部真实入站的独立通知帧。它与会话 subscribe 无关，只给 desktop
+ * preload 转交 main NotificationService，不参与消息渲染，避免当前会话收到
+ * message_start + 全局通知后重复 append。
+ */
+export type ExternalInboundNotificationMsg = Envelope<
+  'external_inbound_notification',
+  {
+    messageId: string;
+    sessionId: string;
+    source: MessageSource;
+    sender?: string;
+    preview: string;
+  }
+>;
+
 /** 流式文本增量。 */
 export type ChatChunkMsg = Envelope<
   'chat_chunk',
@@ -1307,6 +1323,7 @@ export type ServerToClient =
   | SessionCreatedMsg
   | HistoryMsg
   | MessageStartMsg
+  | ExternalInboundNotificationMsg
   | ChatChunkMsg
   | ChatReasoningMsg
   | ChatCompleteMsg

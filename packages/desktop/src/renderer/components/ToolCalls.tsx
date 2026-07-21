@@ -247,12 +247,80 @@ function resolveTool(tc: ToolCall): ResolvedTool {
   }
 
   // —— 通用 —— //
+  const target =
+    tc.description ??
+    str(p.absolute_path) ??
+    str(p.file_path) ??
+    str(p.path) ??
+    str(p.url) ??
+    str(p.query) ??
+    str(p.command) ??
+    '';
   return {
     kind: 'generic',
     label: tc.displayName ?? tc.toolName,
-    target: tc.description ?? '',
+    target,
     output: tc.liveOutput ?? str(tc.result?.data),
   };
+}
+
+const SUMMARY_TOOL_LABELS: Readonly<Record<string, string>> = {
+  read_file: '读取文件',
+  read_many_files: '批量读取文件',
+  write_file: '写入文件',
+  edit_file: '编辑文件',
+  apply_patch: '修改文件',
+  list_directory: '查看目录',
+  glob: '搜索文件',
+  search_files: '搜索文件',
+  run_shell_command: '终端运行',
+  shell: '终端运行',
+  bash: '终端运行',
+  exec: '终端运行',
+  web_fetch: '获取网页',
+  web_search: '搜索网页',
+};
+
+/**
+ * 将工具名与目标收敛成适合聊天正文的单行摘要：
+ * 不把多行命令/长 URL 整段倒进对话，也避免空正文时只剩「N 项过程」。
+ */
+function compactSummaryText(value: string, maxLength = 80): string {
+  const compact = value.replace(/\s+/gu, ' ').trim();
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 1)}…`;
+}
+
+/**
+ * 当模型最终没有返回正文时，由 UI 生成确定性的最小交付总结。
+ * 最多列出 3 个关键步骤，防止长工具链刷屏。
+ */
+export function buildToolCompletionSummary(
+  toolCalls: readonly ToolCall[],
+): string {
+  if (toolCalls.length === 0) return '';
+
+  const completed = toolCalls.filter((tool) => tool.status === 'success').length;
+  const failed = toolCalls.filter(
+    (tool) => tool.status === 'error' || tool.status === 'cancelled',
+  ).length;
+  const pending = toolCalls.length - completed - failed;
+  const counts = [`完成 ${completed} 项`, `失败 ${failed} 项`];
+  if (pending > 0) counts.push(`待处理 ${pending} 项`);
+
+  const steps = toolCalls.slice(0, 3).map((tool) => {
+    const resolved = resolveTool(tool);
+    const mappedLabel = SUMMARY_TOOL_LABELS[(tool.toolName ?? '').toLowerCase()];
+    const label = compactSummaryText(
+      mappedLabel ?? tool.displayName ?? resolved.label ?? tool.toolName,
+      24,
+    );
+    const target = compactSummaryText(resolved.target);
+    return target && target !== label ? `${label}（${target}）` : label;
+  }).filter(Boolean);
+
+  const detail = steps.length > 0 ? `关键步骤：${steps.join('；')}。` : '';
+  return `本轮共处理 ${toolCalls.length} 项操作：${counts.join('，')}。${detail}`;
 }
 
 /** 状态图标语义位：驱动渲染选哪个图标，避免用 running/error 双布尔反推。 */

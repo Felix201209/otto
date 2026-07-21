@@ -17,7 +17,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { OttoMessage } from 'otto-server';
 import { Prose, contentToText } from './Prose.js';
 import { attachmentToDataUrl } from '../lib/image.js';
-import { ToolCallsCard, type RespondQuestionFn } from './ToolCalls.js';
+import {
+  buildToolCompletionSummary,
+  ToolCallsCard,
+  type RespondQuestionFn,
+} from './ToolCalls.js';
 import { OttoSecondaryMark } from './OttoSecondaryMark.js';
 import {
   IconCheckCheck,
@@ -203,6 +207,11 @@ function BotMessage({
   const responding = Boolean(
     message.isStreaming || message.isReasoning || message.isProcessingTools,
   );
+  const fallbackSummary =
+    !text && !responding && tools.length > 0
+      ? buildToolCompletionSummary(tools)
+      : '';
+  const displayText = text || fallbackSummary;
 
   return (
     <div className="otto-msg-bot">
@@ -225,15 +234,15 @@ function BotMessage({
           />
         ) : null}
 
-        {text ? (
-          <Prose text={text} streaming={message.isStreaming} />
+        {displayText ? (
+          <Prose text={displayText} streaming={message.isStreaming} />
         ) : message.isStreaming && tools.length === 0 ? (
           <TypingIndicator />
         ) : null}
 
         {!message.isStreaming ? (
           <MessageActions
-            onCopy={() => onCopy(text)}
+            onCopy={() => onCopy(displayText)}
             onRegenerate={() => onRegenerate(message.id)}
           />
         ) : null}

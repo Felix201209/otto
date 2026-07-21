@@ -154,6 +154,58 @@ describe('Message 动作行', () => {
     expect(screen.getByText('find-skills')).toBeTruthy();
   });
 
+  it('工具已结束但模型正文为空时，显示确定性中文过程总结', () => {
+    render(
+      <Message
+        message={botMessage({
+          content: [],
+          associatedToolCalls: [
+            {
+              id: 'read-1',
+              toolName: 'read_file',
+              parameters: { absolute_path: '/tmp/report.pdf' },
+              status: 'success' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+            },
+            {
+              id: 'exec-1',
+              toolName: 'run_shell_command',
+              parameters: { command: 'npm run build' },
+              status: 'error' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+            },
+          ],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+
+    const summary = screen.getByText(/本轮共处理 2 项操作/);
+    expect(summary.textContent).toContain('完成 1 项，失败 1 项');
+    expect(summary.textContent).toContain('report.pdf');
+    expect(summary.textContent).toContain('npm run build');
+  });
+
+  it('模型已有真实正文时不重复插入过程总结', () => {
+    render(
+      <Message
+        message={botMessage({
+          content: [{ type: 'text', value: '文件已读取，重点如下。' }],
+          associatedToolCalls: [{
+            id: 'read-1',
+            toolName: 'read_file',
+            parameters: { absolute_path: '/tmp/report.pdf' },
+            status: 'success' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+          }],
+        })}
+        onCopy={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('文件已读取，重点如下。')).toBeTruthy();
+    expect(screen.queryByText(/本轮共处理/)).toBeNull();
+  });
+
   it('Skill 执行时展开显示，执行完成后自动隐藏且仍可手动展开', () => {
     const tool = {
       id: 'skill-1',

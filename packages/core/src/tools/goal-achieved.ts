@@ -260,7 +260,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
       `- The "no-stop" discipline no longer applies.\n` +
       `- Subsequent context compressions will not re-inject the original goal prompt.\n` +
       `- System safety rails (no rm -rf, no PowerShell, no batch-kill of node processes, etc.) STAY ON — those are independent of goal mode.\n\n` +
-      `Switch into normal conversational posture. Do not produce an unrequested wrap-up summary; the user can ask for one if they want it. Wait for the user's next instruction.`;
+      `Switch into normal conversational posture. Give the user a concise outcome summary (what completed, the result, and verification), then wait for the next instruction. Do not expose internal reasoning or dump raw logs.`;
 
     return {
       llmContent: llmAck,

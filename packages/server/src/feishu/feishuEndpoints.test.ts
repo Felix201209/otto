@@ -192,7 +192,7 @@ describe('飞书运行期启停端点', () => {
     expect(fake.connectCalls()).toBe(1);
   });
 
-  it('飞书首条消息 → server 懒建真实 runtime，不回 mock', async () => {
+  it('中心企业身份下飞书首条消息绑定当前租户并驱动真实 runtime', async () => {
     const fake = makeFakeGateway();
     let factoryCalls = 0;
     let runCalls = 0;
@@ -243,6 +243,16 @@ describe('飞书运行期启停端点', () => {
       },
       feishuDeps: { credentials: CREDS, gatewayFactory: () => fake.gw },
     });
+    server.setAuthenticatedEnterpriseAccount({
+      id: 'central-feishu-account',
+      organizationId: 'central-feishu-org',
+      organizationName: '飞书企业',
+      name: '企业成员',
+      isAdmin: false,
+      leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+      role: 'member',
+      tags: [],
+    });
     baseUrl = await startServer(server);
     await new Promise((r) => setTimeout(r, 20));
 
@@ -259,6 +269,14 @@ describe('飞书运行期启停端点', () => {
 
     expect(factoryCalls).toBe(1);
     expect(runCalls).toBe(1);
+    expect(server.store.listSessions()).toEqual([
+      expect.objectContaining({
+        source: 'feishu',
+        feishuChatId: 'oc_first_real',
+        enterpriseAccountId: 'central-feishu-account',
+        enterpriseOrganizationId: 'central-feishu-org',
+      }),
+    ]);
     expect(fake.finalized).toContain('server 真实回复');
     expect(fake.finalized.join('\n')).not.toContain('mock');
   });

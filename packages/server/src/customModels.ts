@@ -26,6 +26,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   generateCustomModelId,
   validateCustomModelConfig,
@@ -42,31 +43,43 @@ export function customModelsFilePath(): string {
   return path.join(os.homedir(), SETTINGS_DIR_NAME, CUSTOM_MODELS_FILE);
 }
 
-/** 已是 `{file:...}` / `{env:...}` 引用形态的 key（无需二次写文件，原样透传）。 */
+/** 已是 `{file:...}` / `{env:...}` / `$VAR` / `${VAR}` 引用形态的 key。 */
 function isKeyReference(key: string): boolean {
   const t = key.trim();
-  return (
-    t === '${CODEX_OAUTH}' ||
-    /^\{file:[^}]+\}$/.test(t) ||
-    /^\{env:[^}]+\}$/.test(t)
-  );
+  return /^\{(file|env):[^}]+\}$/.test(t)
+    || /^(?:\$\{[^}]+\}|\$\w+)$/.test(t);
 }
 
 /**
- * 把明文 API key 写进 `~/.otto-user/secrets/<safe-name>`（0600，目录 0700），
+ * 把明文 API key 写进 `~/.otto-user/secrets/<safe-name>.<name-hash>.<key-hash>`（0600，目录 0700），
  * 返回 `{file:绝对路径}` 引用 —— 对齐 CLI 的 0600 secret 文件 + {file:} 安全模型，
  * 让明文 key 永不落进 world-readable 的 custom-models.json。
  *
- * 文件名由 **displayName**（saveCustomModel 的去重键）派生并安全化：
+ * 文件名由 **displayName + key 内容** 派生、安全化并加稳定哈希：
  * 不能按 provider（协议名 openai/anthropic…）命名，否则两个都走 openai 协议的
- * 不同真实供应商会写到同一 secret 文件互相覆盖 key。覆盖同名模型时复用同一路径。
+ * 不同真实供应商或清洗后同名的模型会互相覆盖。key 也必须参与版本标识，确保先写
+ * 新 secret、再原子切换配置引用时，即使配置提交失败也绝不污染旧引用指向的内容。
  */
 function writeApiKeySecret(displayName: string, key: string): string {
   const dir = path.join(os.homedir(), SETTINGS_DIR_NAME, SECRETS_DIR_NAME);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // mode 选项只对新建文件/目录生效；旧版若已以 0755/0644 存在，
+  // 必须显式 chmod 才能真正收紧。
+  try { fs.chmodSync(dir, 0o700); } catch { /* Windows/只读卷上 best effort */ }
   const safe = displayName.replace(/[^\w.-]/g, '_') || 'model';
-  const secretPath = path.join(dir, safe);
+  // 防止不同 displayName 清洗后落到同一路径，也让同一模型的不同 key
+  // 各自拥有不可变版本；配置原子提交前不会触碰旧引用。
+  const nameIdentity = createHash('sha256')
+    .update(displayName, 'utf8')
+    .digest('hex')
+    .slice(0, 12);
+  const keyVersion = createHash('sha256')
+    .update(key.trim(), 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  const secretPath = path.join(dir, `${safe}.${nameIdentity}.${keyVersion}`);
   fs.writeFileSync(secretPath, key.trim() + '\n', { mode: 0o600 });
+  fs.chmodSync(secretPath, 0o600);
   return `{file:${secretPath}}`;
 }
 
@@ -121,6 +134,7 @@ export function loadPreferredModel(): string | undefined {
   const filePath = customModelsFilePath();
   try {
     if (!fs.existsSync(filePath)) return undefined;
+    try { fs.chmodSync(filePath, 0o600); } catch { /* 读取仍可继续 */ }
     const parsed = parseModelsFile(fs.readFileSync(filePath, 'utf-8'));
     const pref = parsed?._metadata?.preferredModel;
     return typeof pref === 'string' && pref.length > 0 ? pref : undefined;
@@ -148,6 +162,8 @@ export function loadCustomModels(): CustomModelConfig[] {
   try {
     if (!fs.existsSync(filePath)) return [];
     raw = fs.readFileSync(filePath, 'utf-8');
+    // 即使文件已经没有明文 key，也要修复旧版留下的宽权限。
+    try { fs.chmodSync(filePath, 0o600); } catch { /* 校验/读取继续 */ }
   } catch {
     return [];
   }
@@ -158,12 +174,31 @@ export function loadCustomModels(): CustomModelConfig[] {
   }
 
   const valid: CustomModelConfig[] = [];
+  let migratedPlaintext = false;
   for (const candidate of parsed.models) {
     // 逐条校验：复用 core 的 validateCustomModelConfig（与 CLI 同源）。
     const errors = validateCustomModelConfig(candidate as CustomModelConfig);
     if (errors.length === 0) {
-      valid.push(candidate as CustomModelConfig);
+      const model = candidate as CustomModelConfig;
+      if (isKeyReference(model.apiKey)) {
+        valid.push(model);
+      } else {
+        // 旧版 desktop/server 会把 key 直接写进 custom-models.json。
+        // 加载时立即迁移：先写 0600 secret，再原子重写配置为 {file:}。
+        valid.push({
+          ...model,
+          apiKey: writeApiKeySecret(model.displayName, model.apiKey),
+        });
+        migratedPlaintext = true;
+      }
     }
+  }
+  if (migratedPlaintext) {
+    const preferred = parsed._metadata?.preferredModel;
+    saveCustomModels(
+      valid,
+      typeof preferred === 'string' && preferred ? preferred : undefined,
+    );
   }
   return valid;
 }
@@ -171,8 +206,9 @@ export function loadCustomModels(): CustomModelConfig[] {
 /** 确保配置目录存在（与 CLI ensureDirectoryExists 同义）。 */
 function ensureDirectoryExists(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+    fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
   }
+  try { fs.chmodSync(dirPath, 0o700); } catch { /* Windows/只读卷上 best effort */ }
 }
 
 /**
@@ -210,8 +246,10 @@ export function saveCustomModels(
   };
   const jsonContent = JSON.stringify(data, null, 2);
   const tempFilePath = filePath + '.tmp';
-  fs.writeFileSync(tempFilePath, jsonContent, 'utf-8');
+  fs.writeFileSync(tempFilePath, jsonContent, { encoding: 'utf-8', mode: 0o600 });
+  fs.chmodSync(tempFilePath, 0o600);
   fs.renameSync(tempFilePath, filePath);
+  fs.chmodSync(filePath, 0o600);
 }
 
 /**
@@ -231,26 +269,34 @@ export function saveCustomModel(
     throw new Error(errors.join('; '));
   }
 
-  // 安全：把明文 API key 提取成 0600 secret 文件，config 里只存 {file:} 引用，
-  // 让明文 key 永不落进 world-readable 的 custom-models.json（对齐 CLI 安全模型）。
-  // 用户若本就粘的是 {file:}/{env:} 引用，则原样透传，不二次写文件。
+  const models = loadCustomModels();
+  const sameNameIndexes = models
+    .map((candidate, index) => candidate.displayName === model.displayName ? index : -1)
+    .filter((index) => index >= 0);
+  if (sameNameIndexes.length > 1) {
+    throw new Error('自定义模型显示名称冲突，请先修复重复配置');
+  }
+  const existingIndex = sameNameIndexes[0] ?? -1;
+  const id = generateCustomModelId(model);
+  const identityConflict = models.findIndex(
+    (candidate, index) => index !== existingIndex && generateCustomModelId(candidate) === id,
+  );
+  if (identityConflict >= 0) {
+    throw new Error(`模型标识 ${id} 已存在，请修改供应商、接口地址或模型 ID`);
+  }
+
+  // 所有冲突校验必须先于 secret 写入，避免失败的保存请求覆盖另一模型密钥。
   const toSave: CustomModelConfig = isKeyReference(model.apiKey)
     ? model
     : {
         ...model,
         apiKey: writeApiKeySecret(model.displayName, model.apiKey),
       };
-
-  const models = loadCustomModels();
-  const existingIndex = models.findIndex(
-    (m) => m.displayName === toSave.displayName,
-  );
   const next =
     existingIndex >= 0
       ? models.map((m, i) => (i === existingIndex ? toSave : m))
       : [...models, toSave];
 
-  const id = generateCustomModelId(toSave);
   // makeActive → 把该模型设为「当前生效模型」（单一事实源，createCoreConfig 优先用）；
   // 否则保留既有 preferredModel（非激活式保存不应抹掉用户已选的生效模型）。
   const preferred = makeActive ? id : loadPreferredModel();
@@ -265,8 +311,14 @@ export function replaceCustomModel(
   makeActive = false,
 ): string {
   const models = loadCustomModels();
-  const index = models.findIndex((m) => generateCustomModelId(m) === replaceId);
-  if (index < 0) throw new Error('要编辑的模型不存在（可能已被删除）');
+  const matchingIndexes = models
+    .map((model, index) => generateCustomModelId(model) === replaceId ? index : -1)
+    .filter((index) => index >= 0);
+  if (matchingIndexes.length === 0) throw new Error('要编辑的模型不存在（可能已被删除）');
+  if (matchingIndexes.length > 1) {
+    throw new Error('模型标识冲突，无法安全确定要编辑的配置');
+  }
+  const index = matchingIndexes[0]!;
 
   const previous = models[index];
   const merged: CustomModelConfig = {
@@ -275,10 +327,27 @@ export function replaceCustomModel(
   };
   const errors = validateCustomModelConfig(merged);
   if (errors.length > 0) throw new Error(errors.join('; '));
+  const displayNameConflict = models.findIndex(
+    (candidate, candidateIndex) => (
+      candidateIndex !== index && candidate.displayName === merged.displayName
+    ),
+  );
+  if (displayNameConflict >= 0) {
+    throw new Error(`显示名称 ${merged.displayName} 已存在`);
+  }
+  const newId = generateCustomModelId(merged);
+  const identityConflict = models.findIndex(
+    (candidate, candidateIndex) => (
+      candidateIndex !== index && generateCustomModelId(candidate) === newId
+    ),
+  );
+  if (identityConflict >= 0) {
+    throw new Error(`模型标识 ${newId} 已存在，请修改供应商、接口地址或模型 ID`);
+  }
+  // 冲突校验完成后才允许写 secret，失败编辑绝不能覆盖另一模型的凭证。
   const toSave: CustomModelConfig = isKeyReference(merged.apiKey)
     ? merged
     : { ...merged, apiKey: writeApiKeySecret(merged.displayName, merged.apiKey) };
-  const newId = generateCustomModelId(toSave);
   const preferred = loadPreferredModel();
   saveCustomModels(
     models.map((m, i) => (i === index ? toSave : m)),
@@ -315,8 +384,14 @@ export function listModelInfos(): ModelInfo[] {
  */
 export function deleteCustomModel(infoId: string): boolean {
   const models = loadCustomModels();
-  const rest = models.filter((m) => generateCustomModelId(m) !== infoId);
-  if (rest.length === models.length) return false;
+  const matchingIndexes = models
+    .map((model, index) => generateCustomModelId(model) === infoId ? index : -1)
+    .filter((index) => index >= 0);
+  if (matchingIndexes.length === 0) return false;
+  if (matchingIndexes.length > 1) {
+    throw new Error('模型标识冲突，删除已停止；请先修复重复配置');
+  }
+  const rest = models.filter((_model, index) => index !== matchingIndexes[0]);
   const preferred = loadPreferredModel();
   saveCustomModels(rest, preferred === infoId ? undefined : preferred);
   return true;

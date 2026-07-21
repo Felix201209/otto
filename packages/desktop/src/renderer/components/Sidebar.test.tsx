@@ -108,6 +108,12 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.queryByText('第二个任务')).toBeNull();
   });
 
+  it('企业合成会话未读也在 Otto 品牌区保留闪烁点', () => {
+    renderSidebar({ unreadSessions: ['enterprise:message:alice'] });
+
+    expect(screen.getByRole('status', { name: '1 条未读消息' })).toBeTruthy();
+  });
+
   it('个人版账号也始终显示账户区和退出登录入口', async () => {
     const onLogout = vi.fn(async () => undefined);
     renderSidebar({

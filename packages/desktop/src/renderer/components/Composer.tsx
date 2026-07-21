@@ -73,6 +73,16 @@ async function blobToWav(blob: Blob): Promise<Uint8Array> {
   } finally { void context.close(); }
 }
 
+function readBlobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') return blob.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('读取剪贴板文字失败'));
+    reader.readAsText(blob);
+  });
+}
+
 /**
  * 模型菜单超过此数量才显示搜索框 + 按 provider 分组。BYO-key 用户接多个
  * provider 后列表会很长，少量模型时平铺更省事，无需搜索噪声。
@@ -83,6 +93,12 @@ function attachmentKey(attachment: Attachment): string {
   return 'id' in attachment
     ? attachment.id
     : `file-${attachment.filePath}-${attachment.fileName}`;
+}
+
+/** 图片协议本身不要求路径，但桌面端会为用户明确选择/拖入的图片保留路径用于展示。 */
+function attachmentLocalPath(attachment: Attachment): string | null {
+  const value = (attachment as Attachment & { filePath?: string }).filePath;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 function attachmentTypeLabel(fileName: string): string {
@@ -507,6 +523,49 @@ export function Composer({
     setDraftSessionId(sessionId);
   }
 
+  /** 浏览器 File（拖拽/隐藏 input/剪贴板图片）统一走同一条校验与路径解析。 */
+  const addBrowserFiles = useCallback(async (files: readonly File[]): Promise<void> => {
+    if (files.length === 0) return;
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (room <= 0) {
+      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
+      return;
+    }
+    setAttaching(true);
+    let firstError: string | null = null;
+    const added: Attachment[] = [];
+    const addedSizes: Record<string, number> = {};
+    for (const file of files.slice(0, room)) {
+      try {
+        // Electron 43 已移除 File.path；可信 preload 用 webUtils 提取路径，
+        // 再交 main 进程授权账本登记。renderer 始终拿不到裸 grant IPC。
+        // 剪贴板图片没有本地路径，但图片会转为内联 base64，可安全降级。
+        let resolvedPath = '';
+        try {
+          resolvedPath = await window.otto.authorizeFileForAttachment(file);
+        } catch (error) {
+          if (!file.type.toLowerCase().startsWith('image/')) throw error;
+        }
+        const attachment = await fileToAttachment(file, resolvedPath);
+        added.push(attachment);
+        addedSizes[attachmentKey(attachment)] = file.size;
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof Error ? err.message : '附件处理失败';
+        }
+      }
+    }
+    if (added.length > 0) {
+      setAttachments((prev) => [...prev, ...added]);
+      setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
+    }
+    setAttachError(
+      firstError ??
+        (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null),
+    );
+    setAttaching(false);
+  }, [attachments.length]);
+
   const pickFiles = useCallback(() => {
     setAttachError(null);
     // 优先使用原生文件选择器（获取完整路径）
@@ -515,11 +574,16 @@ export function Composer({
         try {
           const paths = await window.otto.selectFiles();
           if (paths.length === 0) return;
+          const room = MAX_ATTACHMENTS - attachments.length;
+          if (room <= 0) {
+            setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
+            return;
+          }
           setAttaching(true);
           const added: Attachment[] = [];
           const addedSizes: Record<string, number> = {};
           let firstError: string | null = null;
-          for (const filePath of paths) {
+          for (const filePath of paths.slice(0, room)) {
             try {
               const result = await window.otto.readFilePath(filePath);
               const ext = result.fileName.split('.').pop()?.toLowerCase() ?? '';
@@ -533,7 +597,7 @@ export function Composer({
                   originalSize: result.size,
                   compressedSize: result.size,
                   filePath: result.filePath,
-                } as any;
+                } as Attachment & { filePath: string };
                 added.push(attachment);
               } else {
                 added.push({
@@ -550,7 +614,10 @@ export function Composer({
             setAttachments((prev) => [...prev, ...added]);
             setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
           }
-          setAttachError(firstError);
+          setAttachError(
+            firstError ??
+              (paths.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null),
+          );
         } catch {
           // 原生对话框被取消
         } finally {
@@ -583,31 +650,8 @@ export function Composer({
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length === 0) return;
-    const room = MAX_ATTACHMENTS - attachments.length;
-    if (room <= 0) {
-      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
-      return;
-    }
-    setAttaching(true);
-    let firstError: string | null = null;
-    const added: Attachment[] = [];
-    const addedSizes: Record<string, number> = {};
-    for (const file of files.slice(0, room)) {
-      try {
-        const attachment = await fileToAttachment(file);
-        added.push(attachment);
-        addedSizes[attachmentKey(attachment)] = file.size;
-      } catch (err) {
-        if (!firstError) firstError = err instanceof Error ? err.message : '附件处理失败';
-      }
-    }
-    if (added.length > 0) {
-      setAttachments((prev) => [...prev, ...added]);
-      setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
-    }
-    setAttachError(firstError ?? (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null));
-    setAttaching(false);
-  }, [attachments.length]);
+    await addBrowserFiles(files);
+  }, [addBrowserFiles]);
 
   // 选中附件 → 图片走压缩 pipeline，文件走直传 pipeline。
   // 超出张数上限的截断并提示；单张失败记录首个错误但不阻断其余成功项。
@@ -617,35 +661,7 @@ export function Composer({
     const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // 允许连选同一文件
     if (files.length === 0) return;
-    const room = MAX_ATTACHMENTS - attachments.length;
-    if (room <= 0) {
-      setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
-      return;
-    }
-    setAttaching(true);
-    let firstError: string | null = null;
-    const added: Attachment[] = [];
-    const addedSizes: Record<string, number> = {};
-    for (const file of files.slice(0, room)) {
-      try {
-        const attachment = await fileToAttachment(file);
-        added.push(attachment);
-        addedSizes[attachmentKey(attachment)] = file.size;
-      } catch (err) {
-        if (!firstError) {
-          firstError = err instanceof Error ? err.message : '附件处理失败';
-        }
-      }
-    }
-    if (added.length > 0) {
-      setAttachments((prev) => [...prev, ...added]);
-      setAttachmentSizes((prev) => ({ ...prev, ...addedSizes }));
-    }
-    setAttachError(
-      firstError ??
-        (files.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null),
-    );
-    setAttaching(false);
+    await addBrowserFiles(files);
   };
 
   const removeAttachment = (key: string): void => {
@@ -873,6 +889,83 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   };
 
+  const insertTextAtCursor = useCallback((value: string): void => {
+    if (!value) return;
+    const el = taRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? start;
+    const next = text.slice(0, start) + value + text.slice(end);
+    setText(next);
+    setSlashDismissed(false);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const caret = start + value.length;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    });
+  }, [text]);
+
+  /** 右键“粘贴”同时支持文字与剪贴板图片；系统不开放 read() 时退回 readText()。 */
+  const pasteFromClipboard = useCallback(async (): Promise<void> => {
+    try {
+      const clipboard = navigator.clipboard as Clipboard & {
+        read?: () => Promise<Array<{
+          types: readonly string[];
+          getType(type: string): Promise<Blob>;
+        }>>;
+      };
+      if (clipboard.read) {
+        const items = await clipboard.read();
+        const files: File[] = [];
+        const textParts: string[] = [];
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              const ext = type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+              files.push(new File([blob], `clipboard-${Date.now()}.${ext}`, { type }));
+            } else if (type === 'text/plain') {
+              textParts.push(await readBlobText(await item.getType(type)));
+            }
+          }
+        }
+        if (files.length > 0) await addBrowserFiles(files);
+        if (textParts.length > 0) insertTextAtCursor(textParts.join(''));
+        return;
+      }
+      insertTextAtCursor(await clipboard.readText());
+    } catch (error) {
+      setAttachError(
+        error instanceof Error ? `无法读取剪贴板：${error.message}` : '无法读取剪贴板',
+      );
+    }
+  }, [addBrowserFiles, insertTextAtCursor]);
+
+  const copyOrCutSelection = useCallback(async (cut: boolean): Promise<void> => {
+    const el = taRef.current;
+    const start = el?.selectionStart ?? 0;
+    const end = el?.selectionEnd ?? text.length;
+    const value = start === end ? text : text.slice(start, end);
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      if (cut) {
+        const next = start === end ? '' : text.slice(0, start) + text.slice(end);
+        setText(next);
+        requestAnimationFrame(() => {
+          if (!el) return;
+          const caret = start === end ? 0 : start;
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        });
+      }
+    } catch {
+      setAttachError('无法访问系统剪贴板，请检查 Otto 的剪贴板权限');
+    }
+  }, [text]);
+
   // 反映真实生效模型：优先 currentModel（来自 models_list/currentModel 帧）对应的 displayName，
   // 否则回退到首个可用模型的名字，最后才用「选择模型」占位。
   // 不再硬编码具体模型名（如 'claude-opus-4'）——BYO-key 用户可能根本没配 Claude。
@@ -914,13 +1007,13 @@ export function Composer({
             className="otto-context-menu"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button type="button" onClick={() => { navigator.clipboard.readText().then((t) => setText((prev) => prev + t)).catch(() => {}); setContextMenu(null); }}>
+            <button type="button" onClick={() => { void pasteFromClipboard(); setContextMenu(null); }}>
               粘贴
             </button>
-            <button type="button" onClick={() => { if (taRef.current) { taRef.current.select(); document.execCommand('copy'); } setContextMenu(null); }}>
+            <button type="button" onClick={() => { void copyOrCutSelection(false); setContextMenu(null); }}>
               复制
             </button>
-            <button type="button" onClick={() => { if (taRef.current) { taRef.current.select(); document.execCommand('cut'); } setContextMenu(null); }}>
+            <button type="button" onClick={() => { void copyOrCutSelection(true); setContextMenu(null); }}>
               剪切
             </button>
             <button type="button" onClick={() => { pickFiles(); setContextMenu(null); }}>
@@ -935,6 +1028,7 @@ export function Composer({
             {attachments.map((attachment) => {
               const key = attachmentKey(attachment);
               const image = isImageAttachment(attachment);
+              const localPath = attachmentLocalPath(attachment);
               const typeLabel = attachmentTypeLabel(attachment.fileName);
               const typeKey = attachmentTypeKey(attachment.fileName);
               const displayName = attachmentFileName(attachment.fileName);
@@ -970,11 +1064,11 @@ export function Composer({
                     <span className="otto-attachment__meta">
                       {typeLabel}{size != null ? ` · ${formatAttachmentSize(size)}` : ''}
                     </span>
-                    {'filePath' in attachment && (attachment as any).filePath && (attachment as any).filePath !== attachment.fileName ? (
-                      <span className="otto-attachment__path" title={(attachment as any).filePath}>
-                        {(attachment as any).filePath.length > 50
-                          ? `…${(attachment as any).filePath.slice(-47)}`
-                          : (attachment as any).filePath}
+                    {localPath && localPath !== attachment.fileName ? (
+                      <span className="otto-attachment__path" title={localPath}>
+                        {localPath.length > 50
+                          ? `…${localPath.slice(-47)}`
+                          : localPath}
                       </span>
                     ) : null}
                   </div>
@@ -1048,6 +1142,12 @@ export function Composer({
           value={text}
           onChange={autoGrow}
           onKeyDown={onKeyDown}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files ?? []);
+            if (files.length === 0) return;
+            event.preventDefault();
+            void addBrowserFiles(files);
+          }}
           aria-expanded={slashVisible}
           aria-controls={slashVisible ? 'otto-slashmenu' : undefined}
           // 生成中仍可输入下一条；仅无会话（disabled）时锁死。
@@ -1088,8 +1188,8 @@ export function Composer({
           <button
             type="button"
             className="otto-attach"
-            title="添加图片"
-            aria-label="添加图片"
+            title="添加文件或图片"
+            aria-label="添加文件或图片"
             onClick={pickFiles}
             disabled={disabled || attaching}
           >

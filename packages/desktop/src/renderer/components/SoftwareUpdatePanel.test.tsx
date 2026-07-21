@@ -128,7 +128,7 @@ describe('SoftwareUpdatePanel：有新版 → 下载 → 完成', () => {
     expect(await screen.findByText(/完成后请重新启动 Otto/)).toBeTruthy();
   });
 
-  it('sha256 校验失败：显示失败原因 + 重试下载（文件已被 main 删除）', async () => {
+  it('sha256 校验失败：先给应用内重试，再提供发布页作最后兜底', async () => {
     installOttoMock({
       updateDownload: vi.fn(async (): Promise<UpdateDownloadResult> => ({
         ok: false,
@@ -141,6 +141,10 @@ describe('SoftwareUpdatePanel：有新版 → 下载 → 完成', () => {
     expect(await screen.findByText('下载失败')).toBeTruthy();
     expect(screen.getByText(/sha256 校验不通过/)).toBeTruthy();
     expect(screen.getByText('重试下载')).toBeTruthy();
+    fireEvent.click(screen.getByText('手动下载'));
+    expect(
+      (window.otto.openExternal as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0],
+    ).toContain('otto-releases/releases/latest');
   });
 });
 
@@ -159,6 +163,10 @@ describe('SoftwareUpdatePanel：检查失败 ≠ 已是最新（诚实契约）'
     expect(screen.getByText(/无法连接 GitHub/)).toBeTruthy();
     expect(screen.getByText('重试')).toBeTruthy();
     expect(screen.queryByText(/已是最新/)).toBeNull();
+    fireEvent.click(screen.getByText('前往发布页'));
+    expect(
+      (window.otto.openExternal as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0],
+    ).toContain('otto-releases/releases/latest');
   });
 
   it('已是最新：明确显示最新版本号，绝不出现失败文案', async () => {

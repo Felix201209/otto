@@ -7,7 +7,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { homedir } from 'os';
-import { CustomModelConfig, validateCustomModelConfig } from 'otto-core';
+import { createHash } from 'node:crypto';
+import {
+  generateCustomModelId,
+  type CustomModelConfig,
+  validateCustomModelConfig,
+} from 'otto-core';
 import stripJsonComments from 'strip-json-comments';
 
 const SETTINGS_DIRECTORY_NAME = '.otto-user';
@@ -45,7 +50,8 @@ function ensureDirectoryExists(dirPath: string): void {
 }
 
 /**
- * 把 API key 写进 ~/.otto-user/secrets/<name>（目录 0700、文件 0600），返回文件路径。
+ * 把 API key 写进 ~/.otto-user/secrets/<name>.<name-hash>.<key-hash>
+ * （目录 0700、文件 0600），返回文件路径。
  * 配置里只存 {file:...} 引用，明文 key 不落进 custom-models.json。
  * 非交互 setup（modelSetupCli）与交互式向导的保存路径共用这一份逻辑。
  */
@@ -58,7 +64,18 @@ export function writeSecretFile(name: string, key: string): string {
     // 目录已存在时 mkdirSync 的 mode 不生效，chmod 兜底；失败（Windows 等）忽略
   }
   const safe = name.replace(/[^\w.-]/g, '_') || 'model';
-  const filePath = path.join(dir, safe);
+  // 仅清洗字符会让 "Acme/Model" 与 "Acme_Model"（以及大小写不敏感
+  // 文件系统上的同名变体）碰撞。key 也参与版本标识：先写新 secret、
+  // 再原子切换配置引用时，即使配置提交失败也不会覆盖旧 secret。
+  const nameIdentity = createHash('sha256')
+    .update(name, 'utf8')
+    .digest('hex')
+    .slice(0, 12);
+  const keyVersion = createHash('sha256')
+    .update(key.trim(), 'utf8')
+    .digest('hex')
+    .slice(0, 24);
+  const filePath = path.join(dir, `${safe}.${nameIdentity}.${keyVersion}`);
   fs.writeFileSync(filePath, key.trim() + '\n', { mode: 0o600 });
   try {
     fs.chmodSync(filePath, 0o600);
@@ -75,12 +92,13 @@ export function writeSecretFile(name: string, key: string): string {
  */
 function isApiKeyReference(value: string): boolean {
   const trimmed = (value || '').trim();
-  return /^\{(file|env):[^}]+\}$/.test(trimmed) || /\$\{[^}]+\}|\$\w+/.test(trimmed);
+  return /^\{(file|env):[^}]+\}$/.test(trimmed)
+    || /^(?:\$\{[^}]+\}|\$\w+)$/.test(trimmed);
 }
 
 /**
  * 落盘前收口：明文 apiKey 一律先写 0600 secret 文件，配置里改存 {file:...} 引用。
- * 已是引用的原样返回。文件名用 displayName（配置主键），不同模型互不覆盖。
+ * 已是引用的原样返回。文件名用 displayName + 稳定哈希，不同模型互不覆盖。
  */
 function withSecuredApiKey(model: CustomModelConfig): CustomModelConfig {
   if (!model.apiKey || isApiKeyReference(model.apiKey)) {
@@ -128,7 +146,17 @@ export function loadCustomModels(): CustomModelConfig[] {
       }
     }
 
-    return validModels;
+    // 旧版本允许明文 key 直接存在 JSON 里。加载时完成一次性
+    // 迁移：先把 key 写入 0600 secrets，再原子重写配置。返回值也是
+    // 引用，确保后续组件不会把明文再传播到日志/诊断包。
+    const securedModels = validModels.map(withSecuredApiKey);
+    const migrated = securedModels.some((model, index) => model.apiKey !== validModels[index].apiKey);
+    if (migrated) {
+      persistCustomModels(filePath, securedModels);
+      console.log(`[CustomModels] Migrated plaintext API key(s) to ${path.join(getSettingsDir(), 'secrets')}`);
+    }
+
+    return securedModels;
   } catch (error) {
     console.error('[CustomModels] Failed to load custom models:', error);
     return [];
@@ -155,31 +183,51 @@ export function saveCustomModels(models: CustomModelConfig[]): void {
       }
     }
 
+    // CLI 与 Desktop/Server 共用 custom-models.json，而桌面操作以协议 model ID
+    // 定位条目。不同显示名若生成相同 ID，会造成切换、编辑和删除歧义。
+    const identities = new Set<string>();
+    for (const model of models) {
+      const identity = generateCustomModelId(model);
+      if (identities.has(identity)) {
+        throw new Error(`模型标识 ${identity} 重复，请修改供应商、接口地址或模型 ID`);
+      }
+      identities.add(identity);
+    }
+
     // 明文 key 收口：落盘前统一转成 0600 secret 文件 + {file:...} 引用，
     // custom-models.json 里不出现明文 API key（交互式向导等所有保存路径生效）。
     // 读取侧不变：旧配置里已存在的明文 apiKey 照常可用（resolveEnvVar 原样返回）。
     const securedModels = models.map(withSecuredApiKey);
 
-    // 准备数据
-    const data = {
-      models: securedModels,
-      _metadata: {
-        version: '1.0',
-        lastModified: new Date().toISOString(),
-      }
-    };
-
-    const jsonContent = JSON.stringify(data, null, 2);
-
-    // 原子写入：先写临时文件（0600），再重命名（覆盖后权限随临时文件收紧）
-    const tempFilePath = filePath + '.tmp';
-    fs.writeFileSync(tempFilePath, jsonContent, { encoding: 'utf-8', mode: 0o600 });
-    fs.renameSync(tempFilePath, filePath);
+    persistCustomModels(filePath, securedModels);
 
     console.log(`[CustomModels] Successfully saved ${models.length} custom model(s) to ${filePath}`);
   } catch (error) {
     console.error('[CustomModels] Failed to save custom models:', error);
     throw error;
+  }
+}
+
+function persistCustomModels(filePath: string, models: CustomModelConfig[]): void {
+  ensureDirectoryExists(path.dirname(filePath));
+  const data = {
+    models,
+    _metadata: {
+      version: '1.1',
+      lastModified: new Date().toISOString(),
+      apiKeyStorage: 'reference',
+    },
+  };
+  const tempFilePath = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tempFilePath, JSON.stringify(data, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  fs.renameSync(tempFilePath, filePath);
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Windows / 只读文件系统忽略 POSIX 权限位。
   }
 }
 

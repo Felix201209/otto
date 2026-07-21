@@ -35,6 +35,7 @@ import { getRealtimeWatcher } from '../orchestration/autoSkillGenerator.js';
 import { getHabitAnalyzer } from '../orchestration/habitAnalyzer.js';
 import { getAuditLogger } from '../orchestration/auditLog.js';
 import { getSkillShareManager } from '../orchestration/skillShare.js';
+import { getKnowledgeCapturePipeline } from '../orchestration/knowledgeCapturePipeline.js';
 
 // Re-export ToolExecutionContext for convenience
 export { ToolExecutionContext } from './toolSchedulerAdapter.js';
@@ -67,6 +68,15 @@ function feedAutoSkillSignals(record: {
       toolName: record.toolName,
     });
   } catch { /* Habit analysis must never affect tool execution. */ }
+}
+
+function summarizeToolPayload(value: unknown, maxLength = 600): string {
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    return (serialized ?? '').slice(0, maxLength);
+  } catch {
+    return '[unserializable tool payload]';
+  }
 }
 
 /**
@@ -1168,6 +1178,21 @@ export class ToolExecutionEngine {
         });
       } catch { /* 工作日志失败不影响主流程 */ }
 
+      // 🧠 Real post-execution capture. This lifecycle edge runs regardless of
+      // whether the model explicitly decides to invoke a memory tool.
+      try {
+        await getKnowledgeCapturePipeline().captureToolExecution({
+          sessionId: this.config?.getSessionId?.(),
+          projectRoot: this.config?.getProjectRoot?.(),
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          success: true,
+          inputSummary: summarizeToolPayload(reqInfo.args),
+          outputSummary: summarizeToolPayload(toolResult.llmContent),
+          durationMs: toolCall.startTime ? Date.now() - toolCall.startTime : undefined,
+        });
+      } catch { /* 知识沉淀失败不影响工具执行 */ }
+
       // 📊 记录 Skill 使用统计（用于排行榜使用率）
       try {
         const skillMgr = getSkillShareManager(this.config);
@@ -1236,6 +1261,19 @@ export class ToolExecutionEngine {
           details,
         });
       } catch { /* 工作日志失败不影响主流程 */ }
+
+      try {
+        await getKnowledgeCapturePipeline().captureToolExecution({
+          sessionId: this.config?.getSessionId?.(),
+          projectRoot: this.config?.getProjectRoot?.(),
+          toolName: reqInfo.name,
+          action: describeAction(reqInfo.name, reqInfo.args),
+          success: false,
+          inputSummary: summarizeToolPayload(reqInfo.args),
+          outputSummary: response.error?.message,
+          durationMs: toolCall.startTime ? Date.now() - toolCall.startTime : undefined,
+        });
+      } catch { /* 知识沉淀失败不影响工具执行 */ }
 
       // 📊 记录 Skill 使用统计（失败也计）
       try {

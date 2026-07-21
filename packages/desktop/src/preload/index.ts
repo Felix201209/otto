@@ -22,7 +22,7 @@
  *   - 连接状态变化经 onConnectionChange 通知 renderer 做 UI 指示。
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   ClientToServer,
   FeishuConfigPublic,
@@ -35,6 +35,11 @@ import {
   serverEndpointChanged,
   serverWebSocketUrl,
 } from './server-endpoint.js';
+import {
+  authorizeOutboundFileReferences,
+  hasOutboundPathReference,
+  sendAuthorizedFileFrame,
+} from './outbound-file-authorization.js';
 
 /**
  * 飞书守护状态（main 从 server /health 透传；renderer 徽标据此渲染）。
@@ -52,14 +57,14 @@ export type { FeishuConfigPublic, FeishuConfigSaveRequest };
 
 /**
  * 园区服务插件的企业定制配置（~/.otto-user/park-services.json）。
- * 全部可选：缺失字段用内置默认（宏创AI园区服务）。
+ * 仅供旧版 preload 兼容；新版企业账号以服务端园区配置为准。
  */
 export interface ParkServicesConfig {
   /** 品牌全称：入口悬浮钮 tooltip 与对话框标题（如「XX智慧园区服务」）。 */
   brandName?: string;
   /** 园区简称：注入请求模板里的园区称呼（如「XX园区」）。 */
   parkName?: string;
-  /** 完全覆盖内置服务清单（图标由内置轮换分配）。 */
+  /** 完全覆盖兼容服务清单（图标由内置轮换分配）。 */
   services?: Array<{ name: string; desc: string; prompt: string }>;
 }
 
@@ -281,11 +286,84 @@ export interface EnterpriseOrganizationInviteContext {
   invite: EnterpriseOrganizationInvite | null;
 }
 
+export interface EnterpriseOrganizationFeatures {
+  enterprise_tree: boolean;
+  park_service: boolean;
+  feishu_auto_reply: boolean;
+  tui_sync: boolean;
+  direct_messages: boolean;
+  atoa: boolean;
+  knowledge: boolean;
+}
+
+export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
+
+export interface EnterpriseOrganizationPosition {
+  id: string;
+  organizationId: string;
+  departmentId: string;
+  title: string;
+  roleMapping: EnterprisePositionRoleMapping;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseOrganizationDepartment {
+  id: string;
+  organizationId: string;
+  name: string;
+  memberCount: number;
+  positions: EnterpriseOrganizationPosition[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseParkService {
+  parkId: string;
+  id: string;
+  name: string;
+  enabled: boolean;
+  config: Record<string, string>;
+  updatedAt: string;
+}
+
+export interface EnterprisePark {
+  id: string;
+  name: string;
+  slug: string;
+  brandName: string;
+  adminOrganizationId: string;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+  isAdminOrganization?: boolean;
+  services?: EnterpriseParkService[];
+}
+
+export interface EnterpriseParkInvite {
+  id: string;
+  parkId: string;
+  code: string;
+  status: 'active' | 'expired' | 'revoked';
+  usedCount: number;
+  maxUses: number | null;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface EnterpriseParkSpecialist {
+  parkId: string;
+  serviceId: string;
+  accountId: string;
+  name: string;
+}
+
 export interface EnterpriseOrganizationView {
   organization: {
     id: string;
     name: string;
     status: 'active' | 'disabled';
+    parkId?: string | null;
     createdAt: string;
   } | null;
   members: Array<{
@@ -302,6 +380,9 @@ export interface EnterpriseOrganizationView {
     status: 'active' | 'disabled';
   }>;
   employeeCount: number;
+  structure?: EnterpriseOrganizationDepartment[];
+  features?: EnterpriseOrganizationFeatures;
+  park?: EnterprisePark | null;
 }
 
 export interface EnterpriseDirectMessage {
@@ -311,6 +392,16 @@ export interface EnterpriseDirectMessage {
   content: string;
   createdAt: string;
   readAt: string | null;
+}
+
+export interface EnterpriseUnreadMessageNotification {
+  id: string;
+  source: 'enterprise';
+  title: string;
+  senderAccountId: string;
+  senderName: string;
+  preview: string;
+  createdAt: string;
 }
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
@@ -405,6 +496,8 @@ const IPC = {
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
   selectFiles: 'otto:select-files',
+  grantBrowserFile: 'otto:grant-browser-file',
+  authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
   openVideoEditor: 'otto:open-video-editor',
   saveTextFile: 'otto:save-text-file',
@@ -418,6 +511,7 @@ const IPC = {
   updateProgress: 'otto:update-progress',
   notificationUnreadChanged: 'otto:notification-unread-changed',
   notificationMarkRead: 'otto:notification-mark-read',
+  notificationGetUnread: 'otto:notification-get-unread',
   notificationShow: 'otto:notification-show',
   notificationCheckPermission: 'otto:notification-check-permission',
   notificationSessionOpen: 'otto:notification-session-open',
@@ -446,10 +540,29 @@ const IPC = {
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
+  enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
+  enterpriseOrganizationFeaturesUpdate: 'otto:enterprise-organization-features-update',
+  enterpriseOrganizationDepartments: 'otto:enterprise-organization-departments',
+  enterpriseOrganizationDepartmentCreate: 'otto:enterprise-organization-department-create',
+  enterpriseOrganizationDepartmentUpdate: 'otto:enterprise-organization-department-update',
+  enterpriseOrganizationDepartmentDelete: 'otto:enterprise-organization-department-delete',
+  enterpriseOrganizationPositionCreate: 'otto:enterprise-organization-position-create',
+  enterpriseOrganizationPositionUpdate: 'otto:enterprise-organization-position-update',
+  enterpriseOrganizationPositionDelete: 'otto:enterprise-organization-position-delete',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
+  enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
+  enterpriseParkView: 'otto:enterprise-park-view',
+  enterpriseParkRegister: 'otto:enterprise-park-register',
+  enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
+  enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
+  enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
+  enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
+  enterpriseParkServices: 'otto:enterprise-park-services',
+  enterpriseParkServiceUpdate: 'otto:enterprise-park-service-update',
   enterpriseParkPublications: 'otto:enterprise-park-publications',
   enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
   enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
@@ -516,8 +629,18 @@ export interface OttoBridge {
    */
   selectFiles(): Promise<string[]>;
   /**
+   * Electron 32+ 不再提供 File.path；通过 webUtils 恢复用户拖入/浏览器选择文件的
+   * 真实本地路径。只接受浏览器 File 对象，不能用任意字符串伪造路径。
+   */
+  getPathForFile(file: File): string;
+  /**
+   * 拖拽/隐藏 input 附件的可信授权入口。路径仅由 preload 的
+   * webUtils.getPathForFile(File) 提取，renderer 不能传入裸路径。
+   */
+  authorizeFileForAttachment(file: File): Promise<string>;
+  /**
    * 读取指定路径的文件，返回 Base64 + 元数据。
-   * 仅限用户 home 目录内文件（安全边界）。
+   * 仅限本进程中经原生选择器明确授权的文件；可位于任意已挂载磁盘。
    */
   readFilePath(filePath: string): Promise<{
     filePath: string;
@@ -619,6 +742,8 @@ export interface OttoBridge {
   notificationShow(payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void>;
   /** 通知：标记会话已读 */
   notificationMarkRead(sessionId: string): Promise<void>;
+  /** 通知：读取 main 进程当前未读快照（renderer 重载后恢复闪烁点）。 */
+  notificationGetUnread(): Promise<string[]>;
   /** 通知：检查权限 */
   notificationCheckPermission(): Promise<boolean>;
   /** 通知：订阅未读变更（从主进程推送） */
@@ -698,7 +823,24 @@ export interface OttoBridge {
     department?: string;
   }): Promise<EnterpriseKnowledgeItem[]>;
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
+  enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
+  enterpriseOrganizationFeaturesUpdate(patch: Partial<EnterpriseOrganizationFeatures>): Promise<EnterpriseOrganizationFeatures>;
+  enterpriseOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]>;
+  enterpriseOrganizationDepartmentCreate(name: string): Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationDepartmentUpdate(id: string, name: string): Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationDepartmentDelete(id: string): Promise<boolean>;
+  enterpriseOrganizationPositionCreate(input: {
+    departmentId: string;
+    title: string;
+    roleMapping: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition>;
+  enterpriseOrganizationPositionUpdate(id: string, input: {
+    title?: string;
+    roleMapping?: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition>;
+  enterpriseOrganizationPositionDelete(id: string): Promise<boolean>;
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
+  enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]>;
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage>;
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]>;
   enterpriseParkServicePush(input: {
@@ -710,6 +852,20 @@ export interface OttoBridge {
     publication?: EnterpriseParkPublication;
     recipientCount?: number;
   }>;
+  enterpriseParkView(): Promise<EnterprisePark | null>;
+  enterpriseParkRegister(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark>;
+  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark>;
+  enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
+  enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
+  enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist>;
+  enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean>;
+  enterpriseParkServices(): Promise<EnterpriseParkService[]>;
+  enterpriseParkServiceUpdate(input: {
+    serviceId: string;
+    name?: string;
+    enabled?: boolean;
+    config?: Record<string, string>;
+  }): Promise<EnterpriseParkService>;
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]>;
   enterpriseParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]>;
   enterpriseParkPublicationRead(id: string): Promise<EnterpriseParkPublication>;
@@ -777,6 +933,12 @@ function notifyConnection(connected: boolean): void {
 }
 
 function dispatchFrame(frame: ServerToClient): void {
+  if (frame.type === 'external_inbound_notification') {
+    // 不经 renderer React 生命周期：窗口隐藏、切在其它会话或 UI 重载时，
+    // preload 仍会把全局入站帧直接交给 main NotificationService。
+    void ipcRenderer.invoke(IPC.notificationShow, frame.payload).catch(() => undefined);
+    return;
+  }
   for (const h of frameHandlers) {
     try {
       h(frame);
@@ -795,6 +957,21 @@ function flushQueue(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   while (sendQueue.length > 0) {
     const frame = sendQueue.shift()!;
+    if (hasOutboundPathReference(frame)) {
+      // 防御旧队列/未来回归：路径引用必须针对当前连接重新走 main 授权，绝不
+      // 在重连、登出或账号切换后复用队列里的裸 realpath。
+      if (frame.type === 'send_user_message') {
+        dispatchFrame({
+          type: 'error',
+          payload: {
+            sessionId: frame.payload.sessionId,
+            code: 'file_access_denied',
+            message: '连接已变化，附件授权已失效，请重新发送',
+          },
+        });
+      }
+      continue;
+    }
     ws.send(JSON.stringify(frame));
   }
 }
@@ -899,13 +1076,45 @@ const bridge: OttoBridge = {
   },
 
   send(frame: ClientToServer): void {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(frame));
-    } else {
-      // 连接前（或重连中）排队，open 后 flush —— 对齐 webview
-      // multiSessionMessageService 的 ready 前排队行为。
-      sendQueue.push(frame);
+    const sendOrQueue = (authorized: ClientToServer): void => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(authorized));
+      } else {
+        // 连接前（或重连中）排队，open 后 flush —— 对齐 webview
+        // multiSessionMessageService 的 ready 前排队行为。
+        sendQueue.push(authorized);
+      }
+    };
+    if (frame.type !== 'send_user_message') {
+      sendOrQueue(frame);
+      return;
     }
+    if (!hasOutboundPathReference(frame)) {
+      sendOrQueue(frame);
+      return;
+    }
+    void authorizeOutboundFileReferences(
+      frame,
+      (filePaths) => ipcRenderer.invoke(
+        IPC.authorizeMessageFiles,
+        filePaths,
+      ) as Promise<string[]>,
+    ).then((authorized) => {
+      sendAuthorizedFileFrame(
+        authorized,
+        Boolean(ws && ws.readyState === WebSocket.OPEN),
+        (readyFrame) => ws!.send(JSON.stringify(readyFrame)),
+      );
+    }).catch((error: unknown) => {
+      dispatchFrame({
+        type: 'error',
+        payload: {
+          sessionId: frame.payload.sessionId,
+          code: 'file_access_denied',
+          message: error instanceof Error ? error.message : '附件未获得授权，消息未发送',
+        },
+      });
+    });
   },
 
   onFrame(handler: FrameHandler): () => void {
@@ -948,6 +1157,25 @@ const bridge: OttoBridge = {
 
   selectFiles(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.selectFiles) as Promise<string[]>;
+  },
+
+  getPathForFile(file: File): string {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
+  },
+
+  async authorizeFileForAttachment(file: File): Promise<string> {
+    let filePath = '';
+    try {
+      filePath = webUtils.getPathForFile(file);
+    } catch {
+      filePath = '';
+    }
+    if (!filePath) throw new Error('无法获取所选文件的真实路径');
+    return ipcRenderer.invoke(IPC.grantBrowserFile, filePath) as Promise<string>;
   },
 
   readFilePath(filePath: string): Promise<{
@@ -1132,6 +1360,9 @@ const bridge: OttoBridge = {
   notificationMarkRead(sessionId: string): Promise<void> {
     return ipcRenderer.invoke(IPC.notificationMarkRead, sessionId) as Promise<void>;
   },
+  notificationGetUnread(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC.notificationGetUnread) as Promise<string[]>;
+  },
   notificationCheckPermission(): Promise<boolean> {
     return ipcRenderer.invoke(IPC.notificationCheckPermission) as Promise<boolean>;
   },
@@ -1302,8 +1533,47 @@ const bridge: OttoBridge = {
       EnterpriseOrganizationView
     >;
   },
+  enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationFeaturesGet) as Promise<EnterpriseOrganizationFeatures>;
+  },
+  enterpriseOrganizationFeaturesUpdate(
+    patch: Partial<EnterpriseOrganizationFeatures>,
+  ): Promise<EnterpriseOrganizationFeatures> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationFeaturesUpdate, patch) as Promise<EnterpriseOrganizationFeatures>;
+  },
+  enterpriseOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartments) as Promise<EnterpriseOrganizationDepartment[]>;
+  },
+  enterpriseOrganizationDepartmentCreate(name: string): Promise<EnterpriseOrganizationDepartment> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentCreate, name) as Promise<EnterpriseOrganizationDepartment>;
+  },
+  enterpriseOrganizationDepartmentUpdate(id: string, name: string): Promise<EnterpriseOrganizationDepartment> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentUpdate, id, name) as Promise<EnterpriseOrganizationDepartment>;
+  },
+  enterpriseOrganizationDepartmentDelete(id: string): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentDelete, id) as Promise<boolean>;
+  },
+  enterpriseOrganizationPositionCreate(input: {
+    departmentId: string;
+    title: string;
+    roleMapping: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionCreate, input) as Promise<EnterpriseOrganizationPosition>;
+  },
+  enterpriseOrganizationPositionUpdate(id: string, input: {
+    title?: string;
+    roleMapping?: EnterprisePositionRoleMapping;
+  }): Promise<EnterpriseOrganizationPosition> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionUpdate, id, input) as Promise<EnterpriseOrganizationPosition>;
+  },
+  enterpriseOrganizationPositionDelete(id: string): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionDelete, id) as Promise<boolean>;
+  },
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
     return ipcRenderer.invoke(IPC.enterpriseMessagesList, peerAccountId) as Promise<EnterpriseDirectMessage[]>;
+  },
+  enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]> {
+    return ipcRenderer.invoke(IPC.enterpriseMessagesUnread) as Promise<EnterpriseUnreadMessageNotification[]>;
   },
   enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
     return ipcRenderer.invoke(IPC.enterpriseMessageSend, peerAccountId, content) as Promise<EnterpriseDirectMessage>;
@@ -1325,6 +1595,40 @@ const bridge: OttoBridge = {
       publication?: EnterpriseParkPublication;
       recipientCount?: number;
     }>;
+  },
+  enterpriseParkView(): Promise<EnterprisePark | null> {
+    return ipcRenderer.invoke(IPC.enterpriseParkView) as Promise<EnterprisePark | null>;
+  },
+  enterpriseParkRegister(input: {
+    name: string; slug?: string; brandName?: string;
+  }): Promise<EnterprisePark> {
+    return ipcRenderer.invoke(IPC.enterpriseParkRegister, input) as Promise<EnterprisePark>;
+  },
+  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark> {
+    return ipcRenderer.invoke(IPC.enterpriseParkJoin, inviteCode) as Promise<EnterprisePark>;
+  },
+  enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite> {
+    return ipcRenderer.invoke(IPC.enterpriseParkInviteIssue, maxUses ?? null) as Promise<EnterpriseParkInvite>;
+  },
+  enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
+    return ipcRenderer.invoke(IPC.enterpriseParkSpecialists) as Promise<EnterpriseParkSpecialist[]>;
+  },
+  enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist> {
+    return ipcRenderer.invoke(IPC.enterpriseParkSpecialistSet, serviceId, accountId) as Promise<EnterpriseParkSpecialist>;
+  },
+  enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.enterpriseParkSpecialistRemove, serviceId, accountId) as Promise<boolean>;
+  },
+  enterpriseParkServices(): Promise<EnterpriseParkService[]> {
+    return ipcRenderer.invoke(IPC.enterpriseParkServices) as Promise<EnterpriseParkService[]>;
+  },
+  enterpriseParkServiceUpdate(input: {
+    serviceId: string;
+    name?: string;
+    enabled?: boolean;
+    config?: Record<string, string>;
+  }): Promise<EnterpriseParkService> {
+    return ipcRenderer.invoke(IPC.enterpriseParkServiceUpdate, input) as Promise<EnterpriseParkService>;
   },
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkPublications) as Promise<EnterpriseParkPublication[]>;

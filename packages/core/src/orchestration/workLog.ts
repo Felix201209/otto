@@ -17,6 +17,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { homedir, tmpdir } from 'os';
+import { redactSensitiveText } from '../utils/redaction.js';
 
 /** 工作日志根目录 */
 /** 运行时解析，尊重企业/测试隔离目录；不要在模块加载时冻结 HOME。 */
@@ -203,7 +204,10 @@ export class WorkLogger {
   private async ensureDirs(): Promise<void> {
     if (this.initialized) return;
     for (const dir of [this.worklogDir, this.dailyDir, this.summariesDir, this.weeklyDir]) {
-      await fs.mkdir(dir, { recursive: true }).catch(() => {});
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {});
+      if (process.platform !== 'win32') {
+        await fs.chmod(dir, 0o700).catch(() => undefined);
+      }
     }
     this.initialized = true;
   }
@@ -218,6 +222,14 @@ export class WorkLogger {
     const createdAt = this.now();
     const fullEntry: WorkLogEntry = {
       ...entry,
+      action: redactSensitiveText(entry.action),
+      details: entry.details ? redactSensitiveText(entry.details) : undefined,
+      taskTitle: entry.taskTitle
+        ? redactSensitiveText(entry.taskTitle)
+        : undefined,
+      userInput: entry.userInput
+        ? redactSensitiveText(entry.userInput)
+        : undefined,
       timestamp: createdAt.toISOString(),
       entryType: entry.entryType ?? 'tool',
     };
@@ -226,9 +238,12 @@ export class WorkLogger {
     const filePath = path.join(this.dailyDir, `${date}.jsonl`);
     const line = JSON.stringify(fullEntry) + '\n';
 
-    await fs.appendFile(filePath, line, 'utf-8').catch((err) => {
+    await fs.appendFile(filePath, line, { encoding: 'utf-8', mode: 0o600 }).catch((err) => {
       console.warn(`[WorkLog] Failed to write log: ${err instanceof Error ? err.message : String(err)}`);
     });
+    if (process.platform !== 'win32') {
+      await fs.chmod(filePath, 0o600).catch(() => undefined);
+    }
   }
 
   /**

@@ -12,6 +12,7 @@ import { MessageType } from '../types.js';
 import { LoadedSettings } from '../../config/settings.js';
 import {
   getErrorMessage,
+  getKnowledgeCapturePipeline,
   loadServerHierarchicalMemory,
   type FileDiscoveryService,
 } from 'otto-core';
@@ -26,6 +27,19 @@ vi.mock('otto-core', async (importOriginal) => {
       return String(error);
     }),
     loadServerHierarchicalMemory: vi.fn(),
+    getKnowledgeCapturePipeline: vi.fn(() => ({
+      getStatus: vi.fn(async () => ({
+        version: 1,
+        toolEvents: 3,
+        agentEvents: 2,
+        sessionEvents: 1,
+        knowledgeRecords: 4,
+        deduplicatedKnowledge: 1,
+      })),
+    })),
+    formatKnowledgeCaptureStatus: vi.fn((status) => (
+      `自动知识沉淀状态\n工具事件 ${status.toolEvents} · 对话成果 ${status.agentEvents}`
+    )),
   };
 });
 
@@ -34,7 +48,7 @@ const mockLoadServerHierarchicalMemory = loadServerHierarchicalMemory as Mock;
 describe('memoryCommand', () => {
   let mockContext: CommandContext;
 
-  const getSubCommand = (name: 'show' | 'add' | 'refresh' | 'project'): SlashCommand => {
+  const getSubCommand = (name: 'show' | 'add' | 'refresh' | 'project' | 'capture-status'): SlashCommand => {
     const subCommand = memoryCommand.subCommands?.find(
       (cmd) => cmd.name === name,
     );
@@ -53,6 +67,7 @@ describe('memoryCommand', () => {
         'project',
         'refresh',
         'stats',
+        'capture-status',
         'merge',
         'split',
         'compress',
@@ -61,6 +76,20 @@ describe('memoryCommand', () => {
         'clean',
       ]),
     );
+  });
+
+  it('reports the real automatic capture pipeline status', async () => {
+    const command = getSubCommand('capture-status');
+    if (!command.action) throw new Error('Command has no action');
+
+    const result = await command.action(createMockCommandContext(), '');
+
+    expect(getKnowledgeCapturePipeline).toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      type: 'message',
+      messageType: 'info',
+      content: expect.stringContaining('工具事件 3'),
+    }));
   });
 
   describe('/memory show', () => {

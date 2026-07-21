@@ -27,6 +27,15 @@ let _capturedConnHandler: ((connected: boolean) => void) | null = null;
 const sendSpy = vi.fn();
 const usageSpy = vi.fn(async () => ({ recorded: true, source: 'client_reported' as const }));
 const knowledgeSpy = vi.fn(async () => ({ status: 'added' as const, added: true }));
+const organizationFeaturesSpy = vi.fn(async () => ({
+  enterprise_tree: true,
+  park_service: true,
+  feishu_auto_reply: true,
+  tui_sync: true,
+  direct_messages: true,
+  atoa: true,
+  knowledge: true,
+}));
 
 vi.mock('../transport.js', () => ({
   connect: vi.fn(async () => true),
@@ -50,10 +59,11 @@ vi.mock('../transport.js', () => ({
 
 import { useOttoStore, groupSessions } from './useOttoStore.js';
 import type { OttoState } from './useOttoStore.js';
+import { clearEnterpriseOrganizationFeaturesCache } from './enterpriseOrganizationFeatures.js';
 
 /** 渲染 hook 并返回推帧函数 + result。 */
-function setup() {
-  const view = renderHook(() => useOttoStore());
+function setup(enterpriseOrganizationId?: string) {
+  const view = renderHook(() => useOttoStore({ enterpriseOrganizationId }));
   const push = (frame: ServerToClient) => {
     act(() => {
       capturedHandler?.(frame);
@@ -94,11 +104,23 @@ beforeEach(() => {
   usageSpy.mockResolvedValue({ recorded: true, source: 'client_reported' });
   knowledgeSpy.mockReset();
   knowledgeSpy.mockResolvedValue({ status: 'added', added: true });
+  organizationFeaturesSpy.mockReset();
+  organizationFeaturesSpy.mockResolvedValue({
+    enterprise_tree: true,
+    park_service: true,
+    feishu_auto_reply: true,
+    tui_sync: true,
+    direct_messages: true,
+    atoa: true,
+    knowledge: true,
+  });
+  clearEnterpriseOrganizationFeaturesCache();
   Object.defineProperty(window, 'otto', {
     configurable: true,
     value: {
       enterpriseUsageRecord: usageSpy,
       enterpriseKnowledgeRecord: knowledgeSpy,
+      enterpriseOrganizationFeaturesGet: organizationFeaturesSpy,
     },
   });
 });
@@ -355,8 +377,8 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.lastError).toBeNull();
   });
 
-  it('knowledge_activity 只把本次新捕获条目主动同步到组织知识库', () => {
-    const { push } = setup();
+  it('knowledge_activity 只把本次新捕获条目主动同步到已启用的组织知识库', async () => {
+    const { push } = setup('org-enabled');
     push({
       type: 'knowledge_activity',
       payload: {
@@ -381,13 +403,46 @@ describe('applyFrame 各帧分支', () => {
       },
     } as ServerToClient);
 
-    expect(knowledgeSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(knowledgeSpy).toHaveBeenCalledTimes(1));
     expect(knowledgeSpy).toHaveBeenCalledWith({
       sourceId: 'kb_123',
       category: 'solution',
       content: '合同审查先核对违约条款。',
       confidence: 0.9,
     });
+  });
+
+  it('组织 knowledge=false 时保留个人本地捕获但不上传企业知识', async () => {
+    organizationFeaturesSpy.mockResolvedValueOnce({
+      enterprise_tree: true,
+      park_service: true,
+      feishu_auto_reply: true,
+      tui_sync: true,
+      direct_messages: true,
+      atoa: true,
+      knowledge: false,
+    });
+    const { view, push } = setup('org-disabled');
+    push({
+      type: 'knowledge_activity',
+      payload: {
+        action: 'auto_capture',
+        sessionId: 's1',
+        written: 1,
+        captured: [{
+          id: 'kb_local_only',
+          category: 'solution',
+          content: '这条仍然已经由 core 写入个人本地知识。',
+          tags: [],
+          createdAt: '2026-07-21T00:00:00.000Z',
+        }],
+        recent: [],
+      },
+    } as ServerToClient);
+
+    await waitFor(() => expect(organizationFeaturesSpy).toHaveBeenCalledOnce());
+    expect(knowledgeSpy).not.toHaveBeenCalled();
+    expect(view.result.current.state.lastError).toBeNull();
   });
 
   it('chat_complete(cancelled)：工具执行阶段取消也清掉 isProcessingTools，停止按钮不再卡住', () => {
@@ -608,6 +663,196 @@ describe('applyFrame 各帧分支', () => {
     expect(view.result.current.state.currentModel).toBeNull();
   });
 
+  it('模型切换：旧 models_list 回包不得把乐观选择跳回上一个模型', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 's1', model: 'old-model' })] },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+          { id: 'new-model', displayName: '新模型', provider: 'otto' },
+        ],
+        current: 'old-model',
+      },
+    });
+
+    act(() => view.result.current.actions.setModel('new-model'));
+    expect(view.result.current.state.currentModel).toBe('new-model');
+
+    // 首次 get_models 的旧响应可能晚于点击返回；在 set_model 的确认到达前必须忽略旧 current。
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+          { id: 'new-model', displayName: '新模型', provider: 'otto' },
+        ],
+        current: 'old-model',
+      },
+    });
+    expect(view.result.current.state.currentModel).toBe('new-model');
+
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+          { id: 'new-model', displayName: '新模型', provider: 'otto' },
+        ],
+        current: 'new-model',
+      },
+    });
+    expect(view.result.current.state.currentModel).toBe('new-model');
+    expect(view.result.current.state.pendingModelSwitch).toBeUndefined();
+  });
+
+  it('模型确认会修复 pending 期间被旧会话快照覆盖的 session.model', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: {
+        sessions: [
+          makeSession({ sessionId: 'a', model: 'old-model' }),
+          makeSession({ sessionId: 'b', model: 'model-b' }),
+        ],
+      },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+          { id: 'new-model', displayName: '新模型', provider: 'otto' },
+          { id: 'model-b', displayName: 'B', provider: 'otto' },
+        ],
+        current: 'old-model',
+      },
+    });
+
+    act(() => view.result.current.actions.setModel('new-model'));
+    // pending 期间到达的旧 sessions_list / session_upsert 会携带服务端切换前摘要。
+    push({
+      type: 'sessions_list',
+      payload: {
+        sessions: [
+          makeSession({ sessionId: 'a', model: 'old-model' }),
+          makeSession({ sessionId: 'b', model: 'model-b' }),
+        ],
+      },
+    });
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'a', model: 'old-model' }) },
+    });
+    expect(view.result.current.state.currentModel).toBe('new-model');
+    expect(view.result.current.state.sessions['a'].model).toBe('old-model');
+
+    push({
+      type: 'models_list',
+      payload: { models: view.result.current.state.models, current: 'new-model' },
+    });
+    expect(view.result.current.state.pendingModelSwitch).toBeUndefined();
+    expect(view.result.current.state.sessions['a'].model).toBe('new-model');
+
+    act(() => view.result.current.actions.selectSession('b'));
+    expect(view.result.current.state.currentModel).toBe('model-b');
+    act(() => view.result.current.actions.selectSession('a'));
+    expect(view.result.current.state.currentModel).toBe('new-model');
+  });
+
+  it('会话切换时模型药丸同步各自 session.model，两个会话不串', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: {
+        sessions: [
+          makeSession({ sessionId: 'a', model: 'model-a' }),
+          makeSession({ sessionId: 'b', model: 'model-b' }),
+        ],
+      },
+    });
+    expect(view.result.current.state.activeSessionId).toBe('a');
+    expect(view.result.current.state.currentModel).toBe('model-a');
+
+    act(() => view.result.current.actions.selectSession('b'));
+    expect(view.result.current.state.currentModel).toBe('model-b');
+    act(() => view.result.current.actions.selectSession('a'));
+    expect(view.result.current.state.currentModel).toBe('model-a');
+  });
+
+  it('非当前会话的 pending 确认不覆盖当前会话模型', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: {
+        sessions: [
+          makeSession({ sessionId: 'a', model: 'model-a' }),
+          makeSession({ sessionId: 'b', model: 'model-b' }),
+        ],
+      },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'model-a', displayName: 'A', provider: 'otto' },
+          { id: 'model-a-new', displayName: 'A2', provider: 'otto' },
+          { id: 'model-b', displayName: 'B', provider: 'otto' },
+        ],
+        current: 'model-a',
+      },
+    });
+    act(() => view.result.current.actions.setModel('model-a-new'));
+    act(() => view.result.current.actions.selectSession('b'));
+    expect(view.result.current.state.currentModel).toBe('model-b');
+
+    push({
+      type: 'models_list',
+      payload: {
+        models: view.result.current.state.models,
+        current: 'model-a-new',
+      },
+    });
+    expect(view.result.current.state.pendingModelSwitch).toBeUndefined();
+    expect(view.result.current.state.currentModel).toBe('model-b');
+  });
+
+  it.each(['unknown_model', 'model_switch_failed'])(
+    '模型切换：服务端返回 %s 时回滚 UI 与会话摘要',
+    (code) => {
+      const { view, push } = setup();
+      push({
+        type: 'sessions_list',
+        payload: { sessions: [makeSession({ sessionId: 's1', model: 'old-model' })] },
+      });
+      push({
+        type: 'models_list',
+        payload: {
+          models: [
+            { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+            { id: 'new-model', displayName: '新模型', provider: 'otto' },
+          ],
+          current: 'old-model',
+        },
+      });
+
+      act(() => view.result.current.actions.setModel('new-model'));
+      push({
+        type: 'error',
+        payload: { sessionId: 's1', code, message: '模型切换失败' },
+      });
+
+      expect(view.result.current.state.currentModel).toBe('old-model');
+      expect(view.result.current.state.sessions['s1'].model).toBe('old-model');
+      expect(view.result.current.state.pendingModelSwitch).toBeUndefined();
+      expect(view.result.current.state.lastError).toBe('模型切换失败');
+    },
+  );
+
   it('error：写 lastError', () => {
     const { view, push } = setup();
     push({ type: 'error', payload: { code: 'x', message: '出错了' } });
@@ -797,6 +1042,7 @@ describe('groupSessions selector', () => {
       lastError: null,
       queuedCounts: {},
       pendingCreateRequestId: null,
+      unreadSessions: [],
     };
   }
 

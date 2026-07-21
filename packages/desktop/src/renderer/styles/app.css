@@ -67,6 +67,16 @@
   transform: translateY(-2px);
 }
 
+.otto-brand__unread {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--otto-accent);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--otto-accent) 65%, transparent);
+  animation: otto-unread-pulse 2s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
 .otto-iconbtn {
   margin-left: auto;
   display: inline-flex;
@@ -5362,7 +5372,7 @@ h6.otto-prose__h {
   color: #ef4444;
 }
 
-/* ── 宏创AI园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
+/* ── 园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
 /* 入口小钮：默认弱化只露图标，不抢聊天注意力；hover 提亮并横向展开标签。 */
 .otto-park-fab {
   position: absolute;
@@ -5416,7 +5426,7 @@ h6.otto-prose__h {
 }
 .otto-park-fab:hover .otto-park-fab__label,
 .otto-park-fab:focus-visible .otto-park-fab__label {
-  /* 装得下完整品牌名（默认「宏创AI园区服务」，企业配置可能更长）。 */
+  /* 装得下企业配置的完整园区服务品牌名。 */
   max-width: 180px;
   opacity: 1;
   margin-left: 6px;

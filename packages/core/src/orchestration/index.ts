@@ -66,6 +66,20 @@ export type {
 export { AuditLogger, getAuditLogger } from './auditLog.js';
 export type { AuditEntry, AuditQueryParams } from './auditLog.js';
 
+// 自动知识沉淀（真实工具/对话生命周期入口）
+export {
+  KnowledgeCapturePipeline,
+  getKnowledgeCapturePipeline,
+  formatKnowledgeCaptureStatus,
+} from './knowledgeCapturePipeline.js';
+export type {
+  KnowledgeCaptureStatus,
+  CapturedKnowledgeRecord,
+  CapturedKnowledgeType,
+  KnowledgeSearchOptions,
+  KnowledgeSearchResult as CapturedKnowledgeSearchResult,
+} from './knowledgeCapturePipeline.js';
+
 // 企业组织架构同步
 export { EnterpriseSync, getEnterpriseSync, normalizeRole, getDepartmentFromRole, inferUserRole, createLicenseForUser, checkUserPermission, getRoleLabel } from './enterpriseSync.js';
 export type { EnterpriseConfig, UserRole } from './enterpriseSync.js';

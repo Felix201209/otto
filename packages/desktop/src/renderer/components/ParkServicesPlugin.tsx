@@ -5,7 +5,7 @@
  */
 
 /**
- * 宏创 AI 园区服务入口。
+ * 产业园服务入口。
  *
  * 九项园区服务均使用企业服务器：公告和问卷由管理员发布；七类申请按职责标签
  * 自动投递，并用结构化处理表完成受理、回复、办理和验收。
@@ -42,8 +42,8 @@ interface ParkService {
   steps?: WorkflowStep[];
 }
 
-const DEFAULT_BRAND = '宏创AI园区服务';
-const DEFAULT_PARK = '宏创园区';
+const DEFAULT_BRAND = '园区服务';
+const DEFAULT_PARK = '产业园';
 
 const ICON_POOL: IconComponent[] = [
   IconBuilding,
@@ -287,13 +287,31 @@ export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
 }
 
-export function useParkBrand(): string {
-  const [brand, setBrand] = useState(DEFAULT_BRAND);
+export function useParkBrand(): string | null {
+  // 新版 preload 有中心园区查询时先隐藏，等服务端确认开关；
+  // 旧版客户端没有该 API 时保留原有本机配置兼容行为。
+  const [brand, setBrand] = useState<string | null>(() => (
+    typeof window.otto?.enterpriseParkView === 'function' ? null : DEFAULT_BRAND
+  ));
   useEffect(() => {
     let cancelled = false;
-    void window.otto?.parkConfig?.().then((cfg) => {
-      if (!cancelled && cfg?.brandName) setBrand(cfg.brandName);
-    });
+    void (async () => {
+      const enterpriseParkView = window.otto?.enterpriseParkView;
+      if (typeof enterpriseParkView === 'function') {
+        try {
+          const park = await enterpriseParkView();
+          if (!cancelled) {
+            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : null);
+          }
+        } catch {
+          if (!cancelled) setBrand(null);
+        }
+        return;
+      }
+      // 只有旧 preload 根本没有中心园区 API 时，才保留本机配置兼容。
+      const cfg = await window.otto?.parkConfig?.().catch(() => null);
+      if (!cancelled) setBrand(cfg?.brandName || DEFAULT_BRAND);
+    })();
     return () => { cancelled = true; };
   }, []);
   return brand;
@@ -455,6 +473,9 @@ function ServiceDemo({ service, onBack, focusTicket }: { service: ParkService; o
 }
 
 export function ParkServicesPlugin(): React.JSX.Element {
+  const [parkEnabled, setParkEnabled] = useState<boolean | null>(() => (
+    typeof window.otto?.enterpriseParkView === 'function' ? null : true
+  ));
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
@@ -471,21 +492,71 @@ export function ParkServicesPlugin(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void window.otto?.parkConfig?.().then((cfg) => {
+    void (async () => {
+      const enterpriseParkView = window.otto?.enterpriseParkView;
+      if (typeof enterpriseParkView === 'function') {
+        try {
+          const park = await enterpriseParkView();
+          if (!park || park.status !== 'active') {
+            if (!cancelled) {
+              setParkEnabled(false);
+              setOpen(false);
+              setServices([]);
+            }
+            return;
+          }
+          if (!cancelled) {
+            setParkEnabled(true);
+            setBrand(park.brandName || DEFAULT_BRAND);
+            const defaults = defaultServices(park.name || DEFAULT_PARK);
+            if (park.services?.length) {
+              const configured = new Map(park.services.map((service) => [service.id, service]));
+              setServices(defaults
+                .filter((service) => configured.get(service.id)?.enabled !== false)
+                .map((service) => {
+                  const persisted = configured.get(service.id);
+                  return {
+                    ...service,
+                    name: persisted?.name || service.name,
+                    desc: persisted?.config.desc || service.desc,
+                    prompt: persisted?.config.prompt || service.prompt,
+                  };
+                }));
+            } else {
+              setServices(defaults);
+            }
+          }
+        } catch {
+          if (!cancelled) {
+            setParkEnabled(false);
+            setOpen(false);
+            setServices([]);
+          }
+        }
+        return;
+      }
+      // 旧 preload 兼容：没有 enterpriseParkView 时才允许本机园区配置。
+      const cfg = await window.otto?.parkConfig?.().catch(() => null);
       if (cancelled || !cfg) return;
+      setParkEnabled(true);
       if (cfg.brandName) setBrand(cfg.brandName);
       if (cfg.services && cfg.services.length > 0) {
-        setServices(cfg.services.map((s, i) => ({
-          id: `custom-${i}`, icon: ICON_POOL[i % ICON_POOL.length], name: s.name, desc: s.desc, prompt: s.prompt,
+        setServices(cfg.services.map((service, index) => ({
+          id: `custom-${index}`,
+          icon: ICON_POOL[index % ICON_POOL.length],
+          name: service.name,
+          desc: service.desc,
+          prompt: service.prompt,
         })));
       } else if (cfg.parkName) {
         setServices(defaultServices(cfg.parkName));
       }
-    });
+    })();
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
+    if (parkEnabled !== true) return undefined;
     if (!window.otto?.enterpriseParkPublications) return undefined;
     let cancelled = false;
     const poll = async (): Promise<void> => {
@@ -509,19 +580,25 @@ export function ParkServicesPlugin(): React.JSX.Element {
     void poll();
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
+  }, [parkEnabled]);
 
   useEffect(() => {
     if (open && !selected) firstItemRef.current?.focus();
   }, [open, selected]);
 
   useEffect(() => {
-    const onOpen = (): void => { setSelected(null); setFocusTicket(null); setOpen(true); };
+    const onOpen = (): void => {
+      if (parkEnabled !== true) return;
+      setSelected(null);
+      setFocusTicket(null);
+      setOpen(true);
+    };
     window.addEventListener(PARK_OPEN_EVENT, onOpen);
     return () => window.removeEventListener(PARK_OPEN_EVENT, onOpen);
-  }, []);
+  }, [parkEnabled]);
 
   useEffect(() => {
+    if (parkEnabled !== true) return undefined;
     if (!window.otto?.enterpriseSession || !window.otto?.enterpriseTicketList) return undefined;
     let cancelled = false;
     const poll = async (): Promise<void> => {
@@ -566,7 +643,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     void poll();
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
+  }, [parkEnabled]);
 
   const close = (): void => { setSelected(null); setFocusTicket(null); setOpen(false); };
   const pick = (service: ParkService): void => {
@@ -606,6 +683,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
     }
     setBackgroundPublication(null);
   };
+
+  if (parkEnabled !== true) return <></>;
 
   return <>
   {open ? (

@@ -12,12 +12,14 @@ beforeEach(() => {
     value: {
       ...existing,
       send: vi.fn(),
+      authorizeFileForAttachment: vi.fn(async (file: File) => `/tmp/${file.name}`),
       enterpriseOrganizationView: vi.fn(async () => ({
         organization: null,
         members: [],
         employeeCount: 0,
       })),
       enterpriseMessagesList: vi.fn(async () => []),
+      enterpriseMessagesUnread: vi.fn(async () => []),
       enterpriseMessageSend: vi.fn(async (_peerAccountId: string, content: string) => ({
         id: 'msg_test',
         senderAccountId: 'me',

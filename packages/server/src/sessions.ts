@@ -118,6 +118,11 @@ export interface SessionStore {
 
   /** 订阅会话广播。 */
   subscribe(sessionId: string, fn: Subscriber): Unsubscribe;
+  /**
+   * 订阅所有 publish 帧，用于与当前会话订阅无关的桌面外部入站通知。
+   * 不回放历史，每次 publish 最多调用一次每个全局订阅者。
+   */
+  subscribeAll(fn: Subscriber): Unsubscribe;
   /** 向某会话的所有订阅者推一帧（同时是 desktop 实时更新的入口）。 */
   publish(sessionId: string, frame: ServerToClient): void;
 
@@ -154,6 +159,7 @@ export class InMemorySessionStore implements SessionStore {
   private readonly feishuIndex = new Map<string, string>();
   /** 会话淘汰监听者（FeishuAdapter 订阅以摘除回推桥）。 */
   private readonly evictListeners = new Set<(sessionId: string) => void>();
+  private readonly globalSubscribers = new Set<Subscriber>();
   private readonly maxSessions: number;
   private readonly maxMessagesPerSession: number;
 
@@ -418,6 +424,13 @@ export class InMemorySessionStore implements SessionStore {
     };
   }
 
+  subscribeAll(fn: Subscriber): Unsubscribe {
+    this.globalSubscribers.add(fn);
+    return () => {
+      this.globalSubscribers.delete(fn);
+    };
+  }
+
   publish(sessionId: string, frame: ServerToClient): void {
     const s = this.sessions.get(sessionId);
     if (!s) return;
@@ -426,6 +439,13 @@ export class InMemorySessionStore implements SessionStore {
         fn(frame);
       } catch {
         // 单个订阅者抛错不影响其余广播。
+      }
+    }
+    for (const fn of this.globalSubscribers) {
+      try {
+        fn(frame);
+      } catch {
+        // 全局通知旁路不得干扰会话正常广播。
       }
     }
   }

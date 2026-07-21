@@ -19,6 +19,14 @@ describe('prompts', () => {
   });
 
   describe('getCoreSystemPrompt - Environment Differences', () => {
+    it('requires a user-facing outcome summary after tool work', () => {
+      const prompt = getCoreSystemPrompt(undefined, false);
+      expect(prompt).toContain('Task completion feedback');
+      expect(prompt).toContain('what was completed');
+      expect(prompt).toContain('verification');
+      expect(prompt).toContain('Never finish with only a task count');
+    });
+
     it('should include VSCode-specific instructions when isVSCode is true', () => {
       const prompt = getCoreSystemPrompt(undefined, true);
       expect(prompt).toContain('interactive VSCode assistant');

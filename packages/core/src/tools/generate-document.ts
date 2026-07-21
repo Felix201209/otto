@@ -16,6 +16,13 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { DoctorService, CommandRunner } from '../services/doctor.js';
+import {
+  buildBundledPythonEnvironment,
+  resolveDocumentRuntime,
+  type DocumentRuntimeKind,
+  type DocumentRuntimeResolution,
+  type ResolveDocumentRuntimeOptions,
+} from '../services/bundledRuntime.js';
 
 type ExecFileCallback = (
   error: NodeJS.ErrnoException | null,
@@ -38,6 +45,7 @@ export interface RunDocumentCommandOptions {
   signal?: AbortSignal;
   timeout?: number;
   maxBuffer?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 let cachedWindowsConsoleEncoding: string | undefined;
@@ -130,6 +138,7 @@ export function runDocumentCommand(
         timeout: options.timeout ?? 30_000,
         maxBuffer: options.maxBuffer ?? 50 * 1024 * 1024,
         signal: options.signal,
+        env: options.env,
       },
       (error, stdout, stderr) => {
         if (!error) {
@@ -151,7 +160,39 @@ export function runDocumentCommand(
 
 export type DocumentCommandRunner = typeof runDocumentCommand;
 export type DependencyPreflight = (names: string[]) => Promise<string | null>;
+export type DocumentRuntimeResolver = (
+  kind: DocumentRuntimeKind,
+  options?: ResolveDocumentRuntimeOptions,
+) => DocumentRuntimeResolution;
 type ProgressReporter = (output: string) => void;
+
+export function createCachedDependencyPreflight(
+  backend: DependencyPreflight,
+  now: () => number = Date.now,
+  options: { successTtlMs?: number; failureTtlMs?: number } = {},
+): DependencyPreflight {
+  const successTtlMs = options.successTtlMs ?? 5 * 60_000;
+  const failureTtlMs = options.failureTtlMs ?? 10_000;
+  const cache = new Map<string, { result: string | null; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<string | null>>();
+  return async (names: string[]): Promise<string | null> => {
+    const normalized = [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort();
+    const key = normalized.join('\0');
+    const cached = cache.get(key);
+    if (cached && cached.expiresAt > now()) return cached.result;
+    const active = inFlight.get(key);
+    if (active) return active;
+    const request = backend(normalized).then((result) => {
+      cache.set(key, {
+        result,
+        expiresAt: now() + (result === null ? successTtlMs : failureTtlMs),
+      });
+      return result;
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, request);
+    return request;
+  };
+}
 
 export interface HtmlToImageRenderRequest {
   htmlPath: string;
@@ -653,8 +694,38 @@ export function normalizeSlidesMarkdown(content: string): string {
  * 安装命令）；全部就绪返回 null。marp 的 spec 会同时探测 marp/marp-cli。
  */
 async function preflightBinaries(names: string[]): Promise<string | null> {
-  const wanted = new Set(names);
-  const binAliases = new Set<string>([...names, 'marp-cli']);
+  const remaining = new Set(names);
+  const pythonModules = [
+    ['python-docx', 'docx'],
+    ['jinja2', 'jinja2'],
+    ['markdown', 'markdown'],
+  ] as const;
+  const python = resolveDocumentRuntime('python');
+  if (python.source === 'bundled' && (
+    remaining.has('python3')
+    || pythonModules.some(([packageName]) => remaining.has(packageName))
+  )) {
+    const imports = pythonModules
+      .filter(([packageName]) => remaining.has(packageName))
+      .map(([, importName]) => importName);
+    try {
+      if (imports.length > 0) {
+        await runDocumentCommand(
+          python.executable,
+          ['-c', imports.map((name) => `import ${name}`).join('; ')],
+          { env: buildBundledPythonEnvironment(python), timeout: 10_000 },
+        );
+      }
+      remaining.delete('python3');
+      for (const [packageName] of pythonModules) remaining.delete(packageName);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `内置 Python 运行时缺少必需模块（${imports.join(', ')}）：${detail}`;
+    }
+  }
+  if (remaining.size === 0) return null;
+  const wanted = remaining;
+  const binAliases = new Set<string>([...remaining, 'marp-cli']);
   const gatedRunner: CommandRunner = (command, timeoutMs) => {
     const touches = [...binAliases].some((n) =>
       new RegExp('(^|\\s|/)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)').test(command),
@@ -676,6 +747,8 @@ async function preflightBinaries(names: string[]): Promise<string | null> {
     .join('；');
 }
 
+const cachedDependencyPreflight = createCachedDependencyPreflight(preflightBinaries);
+
 export interface GenerateDocumentToolParams {
   content: string;
   format: 'report'|'slides'|'letter'|'resume'|'article'|'table';
@@ -690,7 +763,8 @@ export class GenerateDocumentTool extends BaseTool<GenerateDocumentToolParams, T
     private readonly config: Config,
     private readonly htmlRenderer: HtmlToImageRenderer = new ChromeHtmlToImageRenderer(),
     private readonly commandRunner: DocumentCommandRunner = runDocumentCommand,
-    private readonly dependencyPreflight: DependencyPreflight = preflightBinaries,
+    private readonly dependencyPreflight: DependencyPreflight = cachedDependencyPreflight,
+    private readonly runtimeResolver: DocumentRuntimeResolver = resolveDocumentRuntime,
   ) {
     const desc = `Generates polished documents from markdown content.
 
@@ -1822,9 +1896,13 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     ].filter(Boolean).join('\n');
     fs.writeFileSync(mdFile, frontMatter + content, 'utf8');
     progress.step('body', '生成 Word 正文');
-    const python = process.platform === 'win32' ? 'python' : 'python3';
+    const python = this.runtimeResolver('python');
     progress.step('export', '导出 DOCX 文件');
-    await this.commandRunner(python, [script, mdFile, outPath], { signal });
+    await this.commandRunner(
+      python.executable,
+      [script, mdFile, outPath],
+      { signal, env: buildBundledPythonEnvironment(python) },
+    );
   }
 
   private md2typst(md: string, format: string, title: string, author: string): string {

@@ -90,6 +90,37 @@ describe('loadCustomModels', () => {
     expect(models[0].displayName).toBe('My GPT');
   });
 
+  it('读取旧版明文 key 时就地迁移到 0600 secret，配置仅留引用且也是 0600', () => {
+    writeModelsFile(JSON.stringify({
+      models: [{ ...VALID_MODEL, apiKey: 'legacy-plain-secret' }],
+      _metadata: { preferredModel: 'custom:openai:gpt-4o@https://api.openai.com/v1' },
+    }));
+    const configPath = customModelsFilePath();
+    fs.chmodSync(configPath, 0o644);
+
+    const models = loadCustomModels();
+    const secretPath = models[0].apiKey.match(/^\{file:(.+)\}$/)?.[1];
+
+    expect(secretPath).toBeTruthy();
+    expect(fs.readFileSync(secretPath!, 'utf-8').trim()).toBe('legacy-plain-secret');
+    expect(fs.readFileSync(configPath, 'utf-8')).not.toContain('legacy-plain-secret');
+    expect(fs.statSync(secretPath!).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(loadPreferredModel()).toBe(
+      'custom:openai:gpt-4o@https://api.openai.com/v1',
+    );
+  });
+
+  it('已经使用 key 引用的旧松散权限配置，读取时也收紧到 0600', () => {
+    writeModelsFile(JSON.stringify({
+      models: [{ ...VALID_MODEL, apiKey: '{env:OTTO_API_KEY}' }],
+    }));
+    fs.chmodSync(customModelsFilePath(), 0o666);
+
+    expect(loadCustomModels()).toHaveLength(1);
+    expect(fs.statSync(customModelsFilePath()).mode & 0o777).toBe(0o600);
+  });
+
   it('带注释的 JSON 被 stripJsonCommentsLoose 救活', () => {
     const raw = `{
   // 这是用户手写的注释
@@ -152,9 +183,86 @@ describe('saveCustomModel Codex OAuth', () => {
     });
 
     expect(loadCustomModels()[0].apiKey).toBe('${CODEX_OAUTH}');
-    expect(
-      fs.existsSync(path.join(tmpHome, '.otto-user', 'secrets', 'Codex__ChatGPT_OAuth_')),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.otto-user', 'secrets'))).toBe(false);
+  });
+
+  it('旧式 $VAR 引用原样保留，不被当成明文写入 secret 文件', () => {
+    saveCustomModel({ ...VALID_MODEL, displayName: 'Legacy env', apiKey: '$OTTO_API_KEY' });
+
+    expect(loadCustomModels()[0].apiKey).toBe('$OTTO_API_KEY');
+    expect(fs.existsSync(path.join(tmpHome, '.otto-user', 'secrets'))).toBe(false);
+  });
+
+  it('仅整串 $VAR 才是引用，包含 $NAME 片段的真实 key 仍迁入 secret 文件', () => {
+    const plaintextKey = 'sk-live-$ABC-suffix';
+    saveCustomModel({ ...VALID_MODEL, displayName: 'Dollar key', apiKey: plaintextKey });
+
+    const savedKey = loadCustomModels()[0].apiKey;
+    const secretPath = savedKey.match(/^\{file:(.+)\}$/)?.[1];
+    expect(secretPath).toBeTruthy();
+    expect(fs.readFileSync(secretPath!, 'utf-8').trim()).toBe(plaintextKey);
+    expect(fs.readFileSync(customModelsFilePath(), 'utf-8')).not.toContain(plaintextKey);
+  });
+
+  it('清洗后同名的模型使用不同 secret 文件，密钥不会互相覆盖', () => {
+    saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'Acme/Model',
+      modelId: 'slash-model',
+      apiKey: 'sk-slash',
+    });
+    saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'Acme_Model',
+      modelId: 'underscore-model',
+      apiKey: 'sk-underscore',
+    });
+
+    const [slash, underscore] = loadCustomModels();
+    const slashPath = slash.apiKey.match(/^\{file:(.+)\}$/)?.[1];
+    const underscorePath = underscore.apiKey.match(/^\{file:(.+)\}$/)?.[1];
+    expect(slashPath).toBeTruthy();
+    expect(underscorePath).toBeTruthy();
+    expect(slashPath).not.toBe(underscorePath);
+    expect(fs.readFileSync(slashPath!, 'utf-8').trim()).toBe('sk-slash');
+    expect(fs.readFileSync(underscorePath!, 'utf-8').trim()).toBe('sk-underscore');
+  });
+
+  it('不同显示名不能保存成同一个协议模型 ID，失败前不写第二份密钥', () => {
+    const id = saveCustomModel({ ...VALID_MODEL, displayName: 'Primary', apiKey: 'sk-primary' });
+    const primaryPath = loadCustomModels()[0].apiKey.match(/^\{file:(.+)\}$/)?.[1];
+
+    expect(() => saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'Alias',
+      apiKey: 'sk-alias',
+    })).toThrow(/模型标识.*已存在/);
+    expect(loadCustomModels()).toHaveLength(1);
+    expect(loadCustomModels()[0].displayName).toBe('Primary');
+    expect(fs.readFileSync(primaryPath!, 'utf-8').trim()).toBe('sk-primary');
+    expect(listModelInfos().map((model) => model.id)).toEqual([id]);
+  });
+
+  it('同名模型更新时配置写失败，不覆盖旧配置引用或旧 secret 内容', () => {
+    saveCustomModel({ ...VALID_MODEL, displayName: 'Atomic', apiKey: 'sk-old' });
+    const configPath = customModelsFilePath();
+    const before = fs.readFileSync(configPath, 'utf-8');
+    const oldReference = loadCustomModels()[0].apiKey;
+    const oldSecretPath = oldReference.match(/^\{file:(.+)\}$/)?.[1];
+    expect(oldSecretPath).toBeTruthy();
+
+    // saveCustomModels 固定先写 <config>.tmp；用目录占位，稳定模拟磁盘/权限写失败。
+    fs.mkdirSync(configPath + '.tmp');
+
+    expect(() => saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'Atomic',
+      baseUrl: 'https://new.example.com/v1',
+      apiKey: 'sk-new',
+    })).toThrow();
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+    expect(loadCustomModels()[0].apiKey).toBe(oldReference);
+    expect(fs.readFileSync(oldSecretPath!, 'utf-8').trim()).toBe('sk-old');
   });
 });
 
@@ -192,6 +300,21 @@ describe('deleteCustomModel', () => {
     );
     expect(deleteCustomModel(drop)).toBe(true);
     expect(loadPreferredModel()).toBe(keep);
+  });
+
+  it('旧配置若存在重复协议模型 ID，删除操作 fail closed 而不会一次删多条', () => {
+    writeModelsFile(JSON.stringify({
+      models: [
+        { ...VALID_MODEL, displayName: 'Legacy A', apiKey: '{env:KEY_A}' },
+        { ...VALID_MODEL, displayName: 'Legacy B', apiKey: '{env:KEY_B}' },
+      ],
+    }));
+    const before = fs.readFileSync(customModelsFilePath(), 'utf-8');
+    const duplicateId = listModelInfos()[0].id;
+
+    expect(() => deleteCustomModel(duplicateId)).toThrow(/模型标识冲突/);
+    expect(fs.readFileSync(customModelsFilePath(), 'utf-8')).toBe(before);
+    expect(loadCustomModels()).toHaveLength(2);
   });
 });
 
@@ -233,12 +356,41 @@ describe('replaceCustomModel', () => {
     const oldId = saveCustomModel(VALID_MODEL, false);
     const oldKey = loadCustomModels()[0].apiKey;
     replaceCustomModel(oldId, { ...VALID_MODEL, apiKey: 'sk-new' }, false);
-    expect(loadCustomModels()[0].apiKey).toBe(oldKey);
-    const secretPath = oldKey.match(/^\{file:(.+)\}$/)?.[1];
-    expect(secretPath && fs.readFileSync(secretPath, 'utf-8').trim()).toBe('sk-new');
+    const newKey = loadCustomModels()[0].apiKey;
+    expect(newKey).not.toBe(oldKey);
+    const oldSecretPath = oldKey.match(/^\{file:(.+)\}$/)?.[1];
+    const newSecretPath = newKey.match(/^\{file:(.+)\}$/)?.[1];
+    expect(oldSecretPath && fs.readFileSync(oldSecretPath, 'utf-8').trim()).toBe('sk-test');
+    expect(newSecretPath && fs.readFileSync(newSecretPath, 'utf-8').trim()).toBe('sk-new');
     expect(() =>
       replaceCustomModel('custom:missing', { ...VALID_MODEL, apiKey: '' }, false),
     ).toThrow(/不存在/);
     expect(loadCustomModels()).toHaveLength(1);
+  });
+
+  it('改名或模型身份撞到另一条时在写密钥前 fail closed', () => {
+    const firstId = saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'First',
+      modelId: 'first-model',
+      apiKey: 'sk-first',
+    });
+    saveCustomModel({
+      ...VALID_MODEL,
+      displayName: 'Second',
+      modelId: 'second-model',
+      apiKey: 'sk-second',
+    });
+    const before = loadCustomModels();
+    const secondSecret = before[1].apiKey.match(/^\{file:(.+)\}$/)?.[1];
+
+    expect(() => replaceCustomModel(firstId, {
+      ...VALID_MODEL,
+      displayName: 'Second',
+      modelId: 'second-model',
+      apiKey: 'sk-attacker',
+    })).toThrow(/显示名称.*已存在|模型标识.*已存在/);
+    expect(fs.readFileSync(secondSecret!, 'utf-8').trim()).toBe('sk-second');
+    expect(loadCustomModels().map((model) => model.displayName)).toEqual(['First', 'Second']);
   });
 });

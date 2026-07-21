@@ -193,6 +193,32 @@ describe('FeishuAdapter 双向链路', () => {
     expect(log.markdowns[0].text).toContain('🛡️');
   });
 
+  it('企业关闭飞书自动回答后 fail closed，不落会话也不触发 runtime', async () => {
+    const fake = makeFakeGateway(log);
+    let runtimeCalls = 0;
+    const adapter = new FeishuAdapter({
+      store,
+      broadcast: (sessionId, frame) => store.publish(sessionId, frame),
+      credentials: CREDS,
+      gatewayFactory: () => fake.gw,
+      shouldAutoReply: async () => false,
+      ensureRuntime: async () => {
+        runtimeCalls += 1;
+        return undefined;
+      },
+    });
+    await adapter.start();
+
+    await fake.fireMessage(makeMsg());
+    await flush();
+
+    expect(runtimeCalls).toBe(0);
+    expect(store.listSessions()).toHaveLength(0);
+    expect(log.markdowns).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('关闭飞书自动回答') }),
+    ]);
+  });
+
   it('接了 runtime → runtime.run 被调用，其流式帧回推飞书', async () => {
     const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
     await adapter.start();

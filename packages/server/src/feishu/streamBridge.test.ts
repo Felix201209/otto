@@ -18,6 +18,7 @@ import {
   type FeishuStreamSink,
 } from './streamBridge.js';
 import { InMemorySessionStore } from '../sessions.js';
+import { ToolCallStatus } from '../protocol.js';
 
 /** 等桥内串行队列（enqueue promise 链）落定。 */
 async function flush(): Promise<void> {
@@ -181,6 +182,69 @@ describe('bridgeSessionToFeishu', () => {
     await flush();
 
     expect(markdowns).toHaveLength(0);
+  });
+
+  it('工具批次只发一次过程摘要和一次完成摘要', async () => {
+    const sess = store.getOrCreateFeishuSession('oc_bridge_tools');
+    bridgeSessionToFeishu(
+      store,
+      makeNoCardSink(),
+      sess.sessionId,
+      'oc_bridge_tools',
+      () => 'om_origin_tools',
+    );
+    const assistant = store.appendMessage(sess.sessionId, {
+      role: 'assistant',
+      content: [{ type: 'text', value: '' }],
+      source: 'local',
+      isStreaming: true,
+    });
+    store.publish(sess.sessionId, {
+      type: 'message_start',
+      payload: { message: assistant },
+    });
+    const baseCall = {
+      id: 'call-1',
+      toolName: 'read_file',
+      displayName: '读取文件',
+      parameters: {},
+      status: ToolCallStatus.Executing,
+    };
+    store.publish(sess.sessionId, {
+      type: 'tool_calls_update',
+      payload: {
+        sessionId: sess.sessionId,
+        messageId: assistant.id,
+        toolCalls: [baseCall],
+      },
+    });
+    // liveOutput 变化不应刷出第二条“处理中”。
+    store.publish(sess.sessionId, {
+      type: 'tool_calls_update',
+      payload: {
+        sessionId: sess.sessionId,
+        messageId: assistant.id,
+        toolCalls: [{ ...baseCall, liveOutput: '50%' }],
+      },
+    });
+    store.publish(sess.sessionId, {
+      type: 'tool_calls_update',
+      payload: {
+        sessionId: sess.sessionId,
+        messageId: assistant.id,
+        toolCalls: [{ ...baseCall, status: ToolCallStatus.Success }],
+      },
+    });
+    await flush();
+
+    expect(markdowns).toHaveLength(2);
+    expect(markdowns[0]).toMatchObject({
+      chatId: 'oc_bridge_tools',
+      replyTo: 'om_origin_tools',
+    });
+    expect(markdowns[0].text).toContain('正在处理 1 项操作：读取文件');
+    expect(markdowns[1].text).toContain('本轮已处理 1 项操作：读取文件');
+    expect(markdowns[1].text).toContain('成功 1 项');
   });
 
   it('不同 assistant 流共用回推队列，后一条不能越过前一条定稿', async () => {

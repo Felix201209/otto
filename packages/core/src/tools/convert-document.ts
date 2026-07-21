@@ -13,6 +13,7 @@ import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { DoctorService, CommandRunner } from '../services/doctor.js';
+import { resolveDocumentRuntime } from '../services/bundledRuntime.js';
 
 const execAsync = promisify(exec);
 
@@ -24,6 +25,13 @@ const execAsync = promisify(exec);
  */
 async function preflightBinaries(names: string[]): Promise<string | null> {
   const wanted = new Set(names);
+  if (
+    wanted.has('libreoffice')
+    && resolveDocumentRuntime('libreoffice').source === 'bundled'
+  ) {
+    wanted.delete('libreoffice');
+  }
+  if (wanted.size === 0) return null;
   // 允许目标 spec 名以及其候选 bin（如 libreoffice→soffice、ghostscript→gs）都被放行。
   const binAliases = new Set<string>([...names, 'soffice', 'gs', 'gswin64c']);
   const gatedRunner: CommandRunner = (command, timeoutMs) => {
@@ -176,8 +184,8 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
     if (engMissing) throw new Error('convert_document needs ' + eng + ': ' + engMissing);
 
     if (eng === 'libreoffice') {
-      const loCmd = process.platform === 'win32' ? 'soffice' : 'libreoffice';
-      await execAsync(`${loCmd} --headless --convert-to ${fmt} --outdir "${dir}" "${ip}"${options?' '+options:''}`, { maxBuffer:50*1024*1024 });
+      const loCmd = resolveDocumentRuntime('libreoffice').executable;
+      await execAsync(`${JSON.stringify(loCmd)} --headless --convert-to ${fmt} --outdir "${dir}" "${ip}"${options?' '+options:''}`, { maxBuffer:50*1024*1024 });
       const loName = path.basename(ip!, path.extname(ip!))+'.'+fmt;
       const loPath = path.join(dir, loName);
       if (p.output_path && path.resolve(loPath) !== path.resolve(p.output_path) && fs.existsSync(loPath)) {

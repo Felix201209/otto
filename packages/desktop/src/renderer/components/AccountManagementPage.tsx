@@ -7,9 +7,12 @@ import type {
   EnterpriseAccount,
   EnterpriseAccountCreateInput,
   EnterpriseAccountUpdateInput,
+  EnterpriseOrganizationDepartment,
   EnterpriseOrganizationInviteContext,
+  EnterpriseOrganizationFeatures,
   EnterpriseParkSurveyResult,
 } from '../../preload/index.js';
+import { EnterpriseAdministrationPanel } from './EnterpriseAdministrationPanel.js';
 
 export interface AccountDraft {
   username: string;
@@ -19,8 +22,10 @@ export interface AccountDraft {
   feishuOpenId: string;
   avatarUrl: string;
   positionTitle: string;
+  positionId: string;
   role: string;
   department: string;
+  departmentId: string;
   tags: string;
   isAdmin: boolean;
   status: 'active' | 'disabled';
@@ -28,7 +33,7 @@ export interface AccountDraft {
 
 const EMPTY_DRAFT: AccountDraft = {
   username: '', password: '', name: '', phone: '', feishuOpenId: '', avatarUrl: '',
-  positionTitle: '', role: '', department: '', tags: '',
+  positionTitle: '', positionId: '', role: '', department: '', departmentId: '', tags: '',
   isAdmin: false, status: 'active',
 };
 
@@ -73,8 +78,10 @@ export function applyAccountTemplate(draft: AccountDraft, templateId: AccountTem
   return {
     ...draft,
     positionTitle: template.positionTitle,
+    positionId: '',
     role: template.role,
     department: template.department || draft.department,
+    departmentId: '',
     tags: template.tags.join('，'),
     isAdmin: template.isAdmin,
   };
@@ -183,15 +190,35 @@ export function AccountManagementPage({
   const [parkPushBusy, setParkPushBusy] = useState(false);
   const [parkPushMessage, setParkPushMessage] = useState<string | null>(null);
   const [parkPushError, setParkPushError] = useState<string | null>(null);
+  const [parkServiceBrand, setParkServiceBrand] = useState('园区服务');
   const [parkSurveyResults, setParkSurveyResults] = useState<EnterpriseParkSurveyResult[]>([]);
   const [parkSurveyError, setParkSurveyError] = useState<string | null>(null);
+  const [configurationFeatures, setConfigurationFeatures] = useState<EnterpriseOrganizationFeatures | null>(null);
+  const [organizationDepartments, setOrganizationDepartments] = useState<EnterpriseOrganizationDepartment[]>([]);
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
   const initialFocusRef = useRef<HTMLInputElement>(null);
+  const assignmentFocusRef = useRef<HTMLSelectElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const invite = inviteContext?.invite;
+
+  useEffect(() => {
+    let cancelled = false;
+    setParkServiceBrand('园区服务');
+    if (!currentAccount.isAdmin || typeof window.otto.enterpriseParkView !== 'function') {
+      return () => { cancelled = true; };
+    }
+    void window.otto.enterpriseParkView()
+      .then((park) => {
+        if (!cancelled) setParkServiceBrand(park?.brandName?.trim() || '园区服务');
+      })
+      .catch(() => {
+        if (!cancelled) setParkServiceBrand('园区服务');
+      });
+    return () => { cancelled = true; };
+  }, [currentAccount.id, currentAccount.isAdmin, currentAccount.organizationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -245,16 +272,34 @@ export function AccountManagementPage({
     }
   }, [invite]);
 
+  const refreshOrganizationStructure = useCallback(async (): Promise<void> => {
+    if (!currentAccount.isAdmin || !window.otto.enterpriseOrganizationDepartments) {
+      setOrganizationDepartments([]);
+      return;
+    }
+    try {
+      setOrganizationDepartments(await window.otto.enterpriseOrganizationDepartments());
+    } catch {
+      // enterprise_tree 关闭时服务端返回 403；安排入口保持 fail-closed。
+      setOrganizationDepartments([]);
+    }
+  }, [currentAccount.isAdmin]);
+
+  useEffect(() => {
+    void refreshOrganizationStructure();
+  }, [refreshOrganizationStructure]);
+
   useEffect(() => {
     if (!editing) return undefined;
     const content = contentRef.current;
-    initialFocusRef.current?.focus();
+    if (editorMode === 'assignment') assignmentFocusRef.current?.focus();
+    else initialFocusRef.current?.focus();
     return () => {
       content?.removeAttribute('inert');
       restoreFocusRef.current?.focus();
       restoreFocusRef.current = null;
     };
-  }, [editing]);
+  }, [editing, editorMode]);
 
   useEffect(() => {
     if (editing) contentRef.current?.setAttribute('inert', '');
@@ -276,6 +321,14 @@ export function AccountManagementPage({
     }
     return [...result];
   }, [accounts]);
+  const assignmentDepartment = useMemo(
+    () => organizationDepartments.find((department) => department.id === draft.departmentId) ?? null,
+    [draft.departmentId, organizationDepartments],
+  );
+  const assignmentPosition = useMemo(
+    () => assignmentDepartment?.positions.find((position) => position.id === draft.positionId) ?? null,
+    [assignmentDepartment, draft.positionId],
+  );
   const parkPushRecipients = useMemo(
     () => accounts.filter((account) => account.status === 'active'),
     [accounts],
@@ -321,8 +374,10 @@ export function AccountManagementPage({
       feishuOpenId: account.feishuOpenId ?? '',
       avatarUrl: account.avatarUrl ?? '',
       positionTitle: account.positionTitle ?? '',
+      positionId: account.positionId ?? '',
       role: account.role ?? '',
       department: account.department ?? '',
+      departmentId: account.departmentId ?? '',
       tags: account.tags.join('，'),
       isAdmin: account.isAdmin,
       status: account.status,
@@ -331,6 +386,12 @@ export function AccountManagementPage({
   };
 
   const openAssignment = (account: EnterpriseAccount): void => {
+    const matchedDepartment = organizationDepartments.find((department) => (
+      department.id === account.departmentId || department.name === account.department
+    ));
+    const matchedPosition = matchedDepartment?.positions.find((position) => (
+      position.id === account.positionId || position.title === account.positionTitle
+    ));
     restoreFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -344,9 +405,11 @@ export function AccountManagementPage({
       phone: account.phone?.replace(/^\+86/, '') ?? '',
       feishuOpenId: account.feishuOpenId ?? '',
       avatarUrl: account.avatarUrl ?? '',
-      positionTitle: account.positionTitle ?? '',
+      positionTitle: matchedPosition?.title ?? account.positionTitle ?? '',
+      positionId: matchedPosition?.id ?? '',
       role: account.role ?? '',
-      department: account.department ?? '',
+      department: matchedDepartment?.name ?? account.department ?? '',
+      departmentId: matchedDepartment?.id ?? '',
       tags: account.tags.join('，'),
       isAdmin: account.isAdmin,
       status: account.status,
@@ -410,8 +473,9 @@ export function AccountManagementPage({
         const input: EnterpriseAccountUpdateInput = editorMode === 'assignment'
           ? {
             department: draft.department.trim() || null,
+            departmentId: draft.departmentId || null,
             positionTitle: draft.positionTitle.trim() || null,
-            role: draft.role.trim() || null,
+            positionId: draft.positionId || null,
           }
           : {
             ...common,
@@ -646,6 +710,20 @@ export function AccountManagementPage({
       ) : null}
 
       {currentAccount.isAdmin ? (
+        <EnterpriseAdministrationPanel
+          accounts={accounts}
+          onChanged={() => {
+            void window.otto.enterpriseAccounts().then(setAccounts).catch((cause: unknown) => {
+              setError(errorMessage(cause));
+            });
+            void refreshOrganizationStructure();
+            onOrganizationChanged?.();
+          }}
+          onFeaturesLoaded={setConfigurationFeatures}
+        />
+      ) : null}
+
+      {currentAccount.isAdmin && configurationFeatures?.park_service === true ? (
         <section className="otto-account-invite otto-account-park-push" aria-label="园区公告与调查发布">
           <header>
             <div>
@@ -665,7 +743,7 @@ export function AccountManagementPage({
             <label>
               <span>发布类型</span>
               <select
-                aria-label="选择宏创园区服务"
+                aria-label={`选择${parkServiceBrand}类型`}
                 value={parkPushServiceId}
                 disabled={parkPushBusy}
                 onChange={(event) => setParkPushServiceId(event.target.value as typeof PARK_SERVICE_OPTIONS[number]['id'])}
@@ -694,7 +772,7 @@ export function AccountManagementPage({
             <label>
               <span>{parkPushServiceId === 'announcement' ? '公告正文' : '调查说明'}</span>
               <input
-                aria-label="宏创园区服务推送备注"
+                aria-label={`${parkServiceBrand}推送备注`}
                 value={parkPushNote}
                 disabled={parkPushBusy}
                 onChange={(event) => setParkPushNote(event.target.value)}
@@ -818,9 +896,38 @@ export function AccountManagementPage({
                 <label><span>飞书 open_id</span><input aria-label="飞书 open_id" value={draft.feishuOpenId} onChange={(e) => setDraft((v) => ({ ...v, feishuOpenId: e.target.value }))} placeholder="例如：ou_xxx，用于报修通知" /></label>
                 <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
               </> : null}
-              <label><span>职位 / 岗位</span><input ref={editorMode === 'assignment' ? initialFocusRef : undefined} aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value }))} placeholder="例如：品牌运营" required={editorMode === 'assignment'} /></label>
-              <label><span>角色</span><input aria-label="角色" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value }))} placeholder="例如：桌面支持" /></label>
-              <label><span>部门</span><input aria-label="部门" list="otto-account-departments" value={draft.department} onChange={(e) => setDraft((v) => ({ ...v, department: e.target.value }))} placeholder="选择或输入部门" /><datalist id="otto-account-departments">{ACCOUNT_DEPARTMENT_PRESETS.map((department) => <option key={department} value={department} />)}</datalist></label>
+              {editorMode === 'assignment' ? <>
+                <label><span>所属部门</span><select ref={assignmentFocusRef} aria-label="安排职位部门" value={draft.departmentId} onChange={(event) => {
+                  const department = organizationDepartments.find((item) => item.id === event.target.value);
+                  setDraft((value) => ({
+                    ...value,
+                    departmentId: department?.id ?? '',
+                    department: department?.name ?? '',
+                    positionId: '',
+                    positionTitle: '',
+                    role: '',
+                    isAdmin: false,
+                  }));
+                }} required><option value="">请选择真实部门</option>{organizationDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+                <label><span>职位 / 岗位</span><select aria-label="安排真实职位" value={draft.positionId} disabled={!assignmentDepartment} onChange={(event) => {
+                  const position = assignmentDepartment?.positions.find((item) => item.id === event.target.value);
+                  setDraft((value) => ({
+                    ...value,
+                    positionId: position?.id ?? '',
+                    positionTitle: position?.title ?? '',
+                    role: position?.roleMapping === 'enterprise_admin'
+                      ? '企业管理员'
+                      : position?.roleMapping === 'department_admin' ? '部门管理员' : '成员',
+                    isAdmin: position?.roleMapping === 'enterprise_admin',
+                  }));
+                }} required><option value="">请选择真实职位</option>{(assignmentDepartment?.positions ?? []).map((position) => <option key={position.id} value={position.id}>{position.title}</option>)}</select></label>
+                <label><span>权限映射</span><input aria-label="职位权限映射" value={assignmentPosition ? (assignmentPosition.roleMapping === 'enterprise_admin' ? '企业管理员' : assignmentPosition.roleMapping === 'department_admin' ? '部门管理员' : '成员') : ''} readOnly placeholder="由职位目录决定" /></label>
+                {organizationDepartments.length === 0 ? <div className="otto-account-page__error" role="alert">企业树未启用或尚未建立部门职位，请先在上方“部门与职位管理”中创建。</div> : null}
+              </> : <>
+                <label><span>职位 / 岗位</span><input aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value, positionId: '' }))} placeholder="例如：品牌运营" /></label>
+                <label><span>角色</span><input aria-label="角色" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value }))} placeholder="例如：桌面支持" /></label>
+                <label><span>部门</span><input aria-label="部门" list="otto-account-departments" value={draft.department} onChange={(e) => setDraft((v) => ({ ...v, department: e.target.value, departmentId: '' }))} placeholder="选择或输入部门" /><datalist id="otto-account-departments">{ACCOUNT_DEPARTMENT_PRESETS.map((department) => <option key={department} value={department} />)}</datalist></label>
+              </>}
               {editorMode === 'identity' ? <>
                 <div className="otto-account-editor__field is-wide"><span>职责标签</span><div className="otto-account-tag-presets" aria-label="预设标签">{ACCOUNT_TAG_PRESETS.map((tag) => { const selected = tagsFromText(draft.tags).includes(tag); return <button key={tag} type="button" className={selected ? 'is-selected' : ''} aria-pressed={selected} onClick={() => setDraft((v) => ({ ...v, tags: toggleAccountTag(v.tags, tag) }))}>{tag}</button>; })}</div><input aria-label="账号标签" value={draft.tags} onChange={(e) => setDraft((v) => ({ ...v, tags: e.target.value }))} placeholder="也可输入自定义标签，用逗号分隔" /><small>标签参与专家权限、工单和任务路由。</small></div>
                 {editing !== 'new' ? <label><span>账号状态</span><select aria-label="账号状态" value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as AccountDraft['status'] }))}><option value="active">可登录</option><option value="disabled">停用</option></select></label> : null}
@@ -842,7 +949,7 @@ export function AccountManagementPage({
                 </button>
               ) : null}
               <button type="button" onClick={closeEditor} disabled={saving}>取消</button>
-              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.positionTitle.trim() : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
+              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.departmentId || !draft.positionId : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
             </footer>
             {editorMode === 'identity' && editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>
