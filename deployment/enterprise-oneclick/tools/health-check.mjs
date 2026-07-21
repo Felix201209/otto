@@ -27,6 +27,7 @@ try {
 const requiredCapabilities = [
   'password_auth',
   'sms_registration',
+  'personal_enterprise_upgrade',
   'organization_invites',
   'usage_summary',
   'admin_console',
@@ -45,7 +46,7 @@ if (
   || body.apiVersion !== 3
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== 3
+  || body.schemaVersion !== 4
   || body.db !== 'connected'
   || missing.length > 0
 ) {

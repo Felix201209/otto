@@ -17,6 +17,7 @@ const ADMIN = {
   employeeId: null, username: 'admin', phone: '+8613800138000', name: '管理员',
   role: '企业管理员', department: 'IT部', isAdmin: true, status: 'active' as const,
   positionId: null, positionTitle: null,
+  avatarUrl: null,
   tags: ['企业管理员'], createdAt: '2026-07-14', updatedAt: '2026-07-14',
   usage: {
     accountId: 'acc_admin', inputTokens: 700, outputTokens: 534, totalTokens: 1234,
@@ -107,9 +108,11 @@ async function readyCreateButton(): Promise<HTMLButtonElement> {
 describe('企业账号模板与标签预设', () => {
   it('套用 IT 支持模板时一次填好角色、部门与职责标签', () => {
     expect(applyAccountTemplate({
-      username: '', password: '', name: '', phone: '', feishuOpenId: '', role: '', department: '', tags: '',
+      username: '', password: '', name: '', phone: '', feishuOpenId: '', avatarUrl: '',
+      positionTitle: '', role: '', department: '', tags: '',
       isAdmin: false, status: 'active',
     }, 'it-support')).toMatchObject({
+      positionTitle: 'IT 支持',
       role: 'IT 支持',
       department: 'IT部',
       tags: 'IT，报修，维修工作人员，技术支持',
@@ -241,9 +244,156 @@ describe('企业账号目录', () => {
 
     expect(await screen.findByRole('table', { name: '账号列表' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '成员' })).toBeTruthy();
-    expect(screen.getByRole('cell', { name: /1,234 tokens/ })).toBeTruthy();
+    expect(await screen.findByRole('cell', { name: /1,234 tokens/ })).toBeTruthy();
     expect(screen.getByText('7 次请求')).toBeTruthy();
     expect(screen.getByText(/最后使用/).getAttribute('title')).toBe('2026-07-15T08:30:00.000Z');
+  });
+
+  it('显示真实员工头像，缺少头像时回退为姓名首字，并优先展示职位', async () => {
+    const executive = {
+      ...ADMIN,
+      avatarUrl: 'https://assets.example.com/admin.png',
+      positionTitle: '首席执行官',
+      role: '企业管理员',
+    };
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [executive, CREATED_ACCOUNT]),
+    });
+    render(<AccountManagementPage currentAccount={executive} onBack={() => undefined} />);
+
+    const image = await screen.findByRole('img', { name: '管理员头像' });
+    expect(image.getAttribute('src')).toBe('https://assets.example.com/admin.png');
+    expect(screen.getByText('首席执行官')).toBeTruthy();
+    expect(screen.getByLabelText('新成员头像占位').textContent).toBe('新');
+  });
+
+  it('职位参与成员搜索，不会把职位数据存了却在管理页查不到', async () => {
+    const operator = {
+      ...CREATED_ACCOUNT,
+      id: 'acc_brand',
+      username: 'brand.operator',
+      name: '小周',
+      role: '成员',
+      positionTitle: '品牌运营',
+      department: '市场部',
+    };
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [ADMIN, operator]),
+    });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    await screen.findByRole('button', { name: '编辑 小周' });
+
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索账号' }), {
+      target: { value: '品牌运营' },
+    });
+
+    expect(screen.getByRole('button', { name: '编辑 小周' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '编辑 管理员' })).toBeNull();
+  });
+
+  it('新增成员会把头像地址和职位提交到真实账号接口', async () => {
+    const create = vi.fn(async (_input) => CREATED_ACCOUNT);
+    Object.assign(window.otto, { enterpriseAccountCreate: create });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    fireEvent.click(await readyCreateButton());
+    fireEvent.change(screen.getByRole('textbox', { name: '登录账号' }), {
+      target: { value: 'brand.operator' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '小周' },
+    });
+    fireEvent.change(screen.getByLabelText('头像 URL'), {
+      target: { value: 'https://assets.example.com/zhou.png' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '职位 / 岗位' }), {
+      target: { value: '品牌运营' },
+    });
+    fireEvent.change(screen.getByLabelText('初始密码'), {
+      target: { value: 'password123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存身份' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      avatarUrl: 'https://assets.example.com/zhou.png',
+      positionTitle: '品牌运营',
+    })));
+  });
+
+  it('编辑成员时回填并更新头像地址与职位', async () => {
+    const existing = {
+      ...ADMIN,
+      avatarUrl: 'https://assets.example.com/old.png',
+      positionTitle: '总经理',
+    };
+    const update = vi.fn(async (_id, input) => ({ ...existing, ...input }));
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [existing]),
+      enterpriseAccountUpdate: update,
+    });
+    render(<AccountManagementPage currentAccount={existing} onBack={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑 管理员' }));
+    expect((screen.getByLabelText('头像 URL') as HTMLInputElement).value)
+      .toBe('https://assets.example.com/old.png');
+    expect((screen.getByRole('textbox', { name: '职位 / 岗位' }) as HTMLInputElement).value)
+      .toBe('总经理');
+    fireEvent.change(screen.getByLabelText('头像 URL'), {
+      target: { value: 'https://assets.example.com/new.png' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '职位 / 岗位' }), {
+      target: { value: '首席执行官' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存身份' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith('acc_admin', expect.objectContaining({
+      avatarUrl: 'https://assets.example.com/new.png',
+      positionTitle: '首席执行官',
+    })));
+  });
+
+  it('CEO 可从成员目录直接安排员工职位，并只提交组织任命字段', async () => {
+    const employee = {
+      ...CREATED_ACCOUNT,
+      department: null,
+      positionTitle: null,
+      role: '成员',
+    };
+    const update = vi.fn(async (_id, input) => ({ ...employee, ...input }));
+    const onOrganizationChanged = vi.fn();
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [ADMIN, employee]),
+      enterpriseAccountUpdate: update,
+    });
+    render(
+      <AccountManagementPage
+        currentAccount={ADMIN}
+        onBack={() => undefined}
+        onOrganizationChanged={onOrganizationChanged}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '安排职位 新成员' }));
+    expect(screen.getByRole('dialog', { name: '安排员工职位' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '职位 / 岗位' }), {
+      target: { value: '产品经理' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '角色' }), {
+      target: { value: '产品负责人' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: '部门' }), {
+      target: { value: '产品部' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存职位' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith('acc_new', {
+      department: '产品部',
+      positionTitle: '产品经理',
+      role: '产品负责人',
+    }));
+    expect(await screen.findByText('产品经理')).toBeTruthy();
+    expect(screen.getByText('产品部 · 角色：产品负责人')).toBeTruthy();
+    expect(onOrganizationChanged).toHaveBeenCalledOnce();
   });
 
   it('CEO 管理中心二次确认后删除其他账号，并立即从成员目录移除', async () => {

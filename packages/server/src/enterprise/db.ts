@@ -196,6 +196,9 @@ function initSchema(d: Database): void {
       name TEXT NOT NULL,
       role TEXT,
       department TEXT,
+      department_id TEXT,
+      position_id TEXT,
+      position_title TEXT,
       invite_code TEXT,
       status TEXT DEFAULT 'active',
       personality TEXT,
@@ -267,8 +270,10 @@ function initSchema(d: Database): void {
       name TEXT NOT NULL,
       role TEXT,
       department TEXT,
+      department_id TEXT,
       position_id TEXT,
       position_title TEXT,
+      avatar_url TEXT,
       is_admin INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
       deleted_at TEXT,
@@ -602,9 +607,15 @@ function initSchema(d: Database): void {
   ensureTextColumn('sms_registration_challenges', 'role');
   ensureTextColumn('accounts', 'position_id');
   ensureTextColumn('accounts', 'position_title');
+  ensureTextColumn('accounts', 'department_id');
+  ensureTextColumn('accounts', 'avatar_url');
+  ensureTextColumn('employees', 'department_id');
+  ensureTextColumn('employees', 'position_id');
+  ensureTextColumn('employees', 'position_title');
   ensureTextColumn('accounts', 'account_type');
   ensureTextColumn('accounts', 'deleted_at');
   d.exec("UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL");
+  backfillEnterpriseAccountEmployees(d);
   const ensureIntegerColumn = (table: string, column: string, ddl: string): void => {
     const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) {
@@ -630,6 +641,160 @@ function initSchema(d: Database): void {
       ON ticket_notifications(recipient_account_id, created_at);
     PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
   `);
+}
+
+/**
+ * v4 之前的邀请码注册可能只创建了账号，或只把岗位写进 accounts。这里每次启动
+ * 幂等对账，既修复已跑过早期 v4 的库，也不要求管理员手工重做员工档案。
+ */
+function backfillEnterpriseAccountEmployees(d: Database): void {
+  interface MigrationAccountRow {
+    id: string;
+    organization_id: string;
+    employee_id: string | null;
+    name: string;
+    role: string | null;
+    department: string | null;
+    department_id: string | null;
+    position_id: string | null;
+    position_title: string | null;
+    status: 'active' | 'disabled';
+    created_at: string;
+  }
+  interface MigrationEmployeeRow {
+    id: string;
+    organization_id: string;
+  }
+
+  const accounts = d.prepare(
+    `SELECT id, organization_id, employee_id, name, role, department, department_id,
+            position_id, position_title, status, created_at
+     FROM accounts
+     WHERE account_type = 'enterprise' AND deleted_at IS NULL`,
+  ).all() as MigrationAccountRow[];
+  const findEmployee = d.prepare(
+    'SELECT id, organization_id FROM employees WHERE id = ?',
+  );
+  const insertEmployee = d.prepare(
+    `INSERT INTO employees
+       (id, organization_id, name, role, department, department_id, position_id,
+        position_title, status, onboarded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const bindAccount = d.prepare(
+    'UPDATE accounts SET employee_id = ? WHERE id = ? AND organization_id = ?',
+  );
+  const syncAccountAssignments = d.prepare(
+    `UPDATE accounts SET department_id = ?, position_id = ?
+     WHERE id = ? AND organization_id = ?`,
+  );
+  const syncEmployee = d.prepare(
+    `UPDATE employees
+     SET name = ?,
+         role = COALESCE(?, role),
+         department = COALESCE(?, department),
+         department_id = COALESCE(?, department_id),
+         position_id = COALESCE(?, position_id),
+         position_title = COALESCE(?, position_title)
+     WHERE id = ? AND organization_id = ?`,
+  );
+  const syncAccount = d.prepare(
+    `UPDATE accounts
+     SET role = COALESCE(role, (SELECT role FROM employees WHERE id = ?)),
+         department = COALESCE(department, (SELECT department FROM employees WHERE id = ?)),
+         department_id = COALESCE(
+           department_id,
+           (SELECT department_id FROM employees WHERE id = ?)
+         ),
+         position_id = COALESCE(position_id, (SELECT position_id FROM employees WHERE id = ?)),
+         position_title = COALESCE(
+           position_title,
+           (SELECT position_title FROM employees WHERE id = ?)
+         )
+     WHERE id = ? AND organization_id = ?`,
+  );
+
+  d.exec('SAVEPOINT backfill_enterprise_account_employees');
+  try {
+    for (const account of accounts) {
+      const departmentId = account.department_id
+        ?? (account.department
+          ? stableAssignmentId(
+              'dept',
+              account.organization_id,
+              normalizeAssignmentName(account.department),
+            )
+          : null);
+      const positionId = account.position_id
+        ?? (account.position_title
+          ? stableAssignmentId(
+              'pos',
+              account.organization_id,
+              departmentId,
+              normalizeAssignmentName(account.position_title),
+            )
+          : null);
+      if (
+        departmentId !== account.department_id
+        || positionId !== account.position_id
+      ) {
+        syncAccountAssignments.run(
+          departmentId,
+          positionId,
+          account.id,
+          account.organization_id,
+        );
+        account.department_id = departmentId;
+        account.position_id = positionId;
+      }
+      const linked = account.employee_id
+        ? findEmployee.get(account.employee_id) as MigrationEmployeeRow | undefined
+        : undefined;
+      let employeeId = linked?.organization_id === account.organization_id
+        ? linked.id
+        : null;
+      if (!employeeId) {
+        employeeId = `emp_${randomUUID()}`;
+        insertEmployee.run(
+          employeeId,
+          account.organization_id,
+          account.name,
+          account.role,
+          account.department,
+          account.department_id,
+          account.position_id,
+          account.position_title,
+          account.status === 'active' ? 'active' : 'offboarded',
+          account.created_at,
+        );
+        bindAccount.run(employeeId, account.id, account.organization_id);
+      }
+      syncEmployee.run(
+        account.name,
+        account.role,
+        account.department,
+        account.department_id,
+        account.position_id,
+        account.position_title,
+        employeeId,
+        account.organization_id,
+      );
+      syncAccount.run(
+        employeeId,
+        employeeId,
+        employeeId,
+        employeeId,
+        employeeId,
+        account.id,
+        account.organization_id,
+      );
+    }
+    d.exec('RELEASE SAVEPOINT backfill_enterprise_account_employees');
+  } catch (error) {
+    d.exec('ROLLBACK TO SAVEPOINT backfill_enterprise_account_employees');
+    d.exec('RELEASE SAVEPOINT backfill_enterprise_account_employees');
+    throw error;
+  }
 }
 
 // ============================================================
@@ -896,6 +1061,143 @@ function normalizeOptionalText(value: string | null | undefined, label: string, 
   return clean;
 }
 
+function normalizeAssignmentName(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
+}
+
+function stableAssignmentId(
+  prefix: 'dept' | 'pos',
+  organizationId: string,
+  ...parts: Array<string | null>
+): string {
+  const digest = createHash('sha256')
+    .update([organizationId, ...parts.map((part) => part ?? '')].join('\0'))
+    .digest('hex')
+    .slice(0, 20);
+  return `${prefix}_${digest}`;
+}
+
+interface AssignmentIdentity {
+  department: string | null;
+  departmentId: string | null;
+  positionTitle: string | null;
+  positionId: string | null;
+}
+
+/**
+ * 中心企业服务没有另一套“只存在于前端”的组织节点。部门/职位显示名与 ID 在
+ * 这里成对归一：已有真实 ID 会复用；旧调用方只传显示名时生成稳定租户内 ID。
+ * 同一 ID 不允许在同一企业中指向不同名称，避免邀请码把员工挂到伪造节点。
+ */
+function resolveAssignmentIdentity(
+  database: Database,
+  organizationId: string,
+  input: {
+    department?: string | null;
+    departmentId?: string | null;
+    positionTitle?: string | null;
+    positionId?: string | null;
+  },
+): AssignmentIdentity {
+  const department = normalizeOptionalText(input.department, '部门名称');
+  const requestedDepartmentId = normalizeOptionalText(input.departmentId, '部门 ID', 120);
+  const positionTitle = normalizeOptionalText(input.positionTitle, '职位名称');
+  const requestedPositionId = normalizeOptionalText(input.positionId, '职位 ID', 120);
+  if (!department && requestedDepartmentId) throw new Error('设置部门 ID 时必须同时提供部门名称');
+  if (!positionTitle && requestedPositionId) throw new Error('设置职位 ID 时必须同时提供职位名称');
+
+  const departmentRows = database.prepare(
+    `SELECT department_id AS id, department AS name FROM accounts
+       WHERE organization_id = ? AND deleted_at IS NULL
+     UNION ALL
+     SELECT department_id AS id, department AS name FROM employees
+       WHERE organization_id = ?
+     UNION ALL
+     SELECT department_id AS id, default_department AS name FROM organization_invites
+       WHERE organization_id = ?`,
+  ).all(organizationId, organizationId, organizationId) as Array<{
+    id: string | null;
+    name: string | null;
+  }>;
+  const normalizedDepartment = department ? normalizeAssignmentName(department) : null;
+  const existingDepartment = normalizedDepartment
+    ? departmentRows.find((row) => (
+        row.id
+        && row.name
+        && normalizeAssignmentName(row.name) === normalizedDepartment
+      ))
+    : undefined;
+  if (
+    requestedDepartmentId
+    && existingDepartment?.id
+    && existingDepartment.id !== requestedDepartmentId
+  ) {
+    throw new Error('该部门名称已绑定其他部门 ID');
+  }
+  if (requestedDepartmentId) {
+    const conflicting = departmentRows.find((row) => (
+      row.id === requestedDepartmentId
+      && row.name
+      && normalizeAssignmentName(row.name) !== normalizedDepartment
+    ));
+    if (conflicting) throw new Error('该部门 ID 已绑定其他部门名称');
+  }
+  const departmentId = department
+    ? requestedDepartmentId
+      ?? existingDepartment?.id
+      ?? stableAssignmentId('dept', organizationId, normalizedDepartment)
+    : null;
+
+  const positionRows = database.prepare(
+    `SELECT position_id AS id, position_title AS title, department_id
+       FROM accounts WHERE organization_id = ? AND deleted_at IS NULL
+     UNION ALL
+     SELECT position_id AS id, position_title AS title, department_id
+       FROM employees WHERE organization_id = ?
+     UNION ALL
+     SELECT position_id AS id, position_title AS title, department_id
+       FROM organization_invites WHERE organization_id = ?`,
+  ).all(organizationId, organizationId, organizationId) as Array<{
+    id: string | null;
+    title: string | null;
+    department_id: string | null;
+  }>;
+  const normalizedPosition = positionTitle ? normalizeAssignmentName(positionTitle) : null;
+  const existingPosition = normalizedPosition
+    ? positionRows.find((row) => (
+        row.id
+        && row.title
+        && row.department_id === departmentId
+        && normalizeAssignmentName(row.title) === normalizedPosition
+      ))
+    : undefined;
+  if (
+    requestedPositionId
+    && existingPosition?.id
+    && existingPosition.id !== requestedPositionId
+  ) {
+    throw new Error('该职位名称已绑定其他职位 ID');
+  }
+  if (requestedPositionId) {
+    const conflicting = positionRows.find((row) => (
+      row.id === requestedPositionId
+      && (
+        row.department_id !== departmentId
+        || !row.title
+        || normalizeAssignmentName(row.title) !== normalizedPosition
+      )
+    ));
+    if (conflicting) throw new Error('该职位 ID 已绑定其他部门或职位名称');
+  }
+  const positionId = positionTitle
+    ? requestedPositionId
+      ?? existingPosition?.id
+      ?? stableAssignmentId('pos', organizationId, departmentId, normalizedPosition)
+    : null;
+
+  return { department, departmentId, positionTitle, positionId };
+}
+
 export function issueOrganizationInvite(
   organizationId: string,
   now = Date.now(),
@@ -913,10 +1215,12 @@ export function issueOrganizationInvite(
     const nonce = randomBytes(24).toString('base64url');
     const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
     const options = typeof input === 'string' ? { defaultDepartment: input } : input ?? {};
-    const cleanDepartment = normalizeOptionalText(options.defaultDepartment, '部门名称');
-    const departmentId = normalizeOptionalText(options.departmentId, '部门 ID', 120);
-    const positionId = normalizeOptionalText(options.positionId, '职位 ID', 120);
-    const positionTitle = normalizeOptionalText(options.positionTitle, '职位名称');
+    const assignment = resolveAssignmentIdentity(database, organizationId, {
+      department: options.defaultDepartment,
+      departmentId: options.departmentId,
+      positionId: options.positionId,
+      positionTitle: options.positionTitle,
+    });
     const defaultRole = normalizeOptionalText(options.defaultRole, '角色');
     const maxUses = options.maxUses == null ? null : Math.floor(Number(options.maxUses));
     if (maxUses != null && (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)) {
@@ -934,10 +1238,10 @@ export function issueOrganizationInvite(
       now,
       expiresAtMs,
       createdByAccountId || null,
-      cleanDepartment,
-      departmentId,
-      positionId,
-      positionTitle,
+      assignment.department,
+      assignment.departmentId,
+      assignment.positionId,
+      assignment.positionTitle,
       defaultRole,
       maxUses,
     );
@@ -948,8 +1252,12 @@ export function issueOrganizationInvite(
     logAudit(
       'organization_invite_issue',
       null,
-      [cleanDepartment, positionTitle, defaultRole].filter(Boolean).length
-        ? `Position invite issued for ${[cleanDepartment, positionTitle, defaultRole].filter(Boolean).join(' / ')}`
+      [assignment.department, assignment.positionTitle, defaultRole].filter(Boolean).length
+        ? `Position invite issued for ${[
+          assignment.department,
+          assignment.positionTitle,
+          defaultRole,
+        ].filter(Boolean).join(' / ')}`
         : 'Registration invite issued for 7 days',
       organizationId,
     );
@@ -1060,8 +1368,10 @@ export interface AccountView {
   name: string;
   role: string | null;
   department: string | null;
+  departmentId: string | null;
   positionId: string | null;
   positionTitle: string | null;
+  avatarUrl: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -1081,8 +1391,10 @@ interface AccountRow {
   name: string;
   role: string | null;
   department: string | null;
+  department_id: string | null;
   position_id: string | null;
   position_title: string | null;
+  avatar_url: string | null;
   is_admin: number;
   status: 'active' | 'disabled';
   deleted_at: string | null;
@@ -1113,6 +1425,26 @@ function normalizeOptionalFeishuOpenId(value: string | null | undefined): string
   const openId = value.trim();
   if (!/^ou_[A-Za-z0-9_-]+$/.test(openId)) throw new Error('飞书 open_id 格式不正确');
   return openId;
+}
+
+function normalizeOptionalAvatarUrl(value: string | null | undefined): string | null {
+  if (value == null || !value.trim()) return null;
+  const avatarUrl = value.trim();
+  if (/^https:\/\//i.test(avatarUrl)) {
+    if (avatarUrl.length > 2_000) throw new Error('头像地址不能超过 2000 个字符');
+    try {
+      if (new URL(avatarUrl).protocol !== 'https:') throw new Error();
+    } catch {
+      throw new Error('头像地址格式不正确');
+    }
+    return avatarUrl;
+  }
+  const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(avatarUrl);
+  if (!match) throw new Error('头像仅支持 HTTPS 或 PNG、JPEG、WebP、GIF 格式的 data:image');
+  if (avatarUrl.length > 700_000 || Buffer.from(match[2]!, 'base64').byteLength > 512 * 1024) {
+    throw new Error('头像数据不能超过 512KB');
+  }
+  return avatarUrl;
 }
 
 function normalizeTags(tags: string[] | undefined): string[] {
@@ -1167,8 +1499,10 @@ function toAccountView(row: AccountRow): AccountView {
     name: row.name,
     role: row.role,
     department: row.department,
+    departmentId: row.department_id,
     positionId: row.position_id,
     positionTitle: row.position_title,
+    avatarUrl: row.avatar_url,
     isAdmin: row.is_admin === 1,
     status: row.status,
     tags: tagsForAccount(row.id, row.organization_id),
@@ -1199,8 +1533,10 @@ export function createAccount(input: {
   employeeId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
   positionId?: string | null;
   positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
@@ -1215,38 +1551,69 @@ export function createAccount(input: {
   if (status !== 'active' && status !== 'disabled') {
     throw new Error('账号状态必须是 active 或 disabled');
   }
+  const database = getDB();
+  const accountType = input.accountType ?? 'enterprise';
+  const assignment = resolveAssignmentIdentity(database, organizationId, {
+    department: input.department,
+    departmentId: input.departmentId,
+    positionId: input.positionId,
+    positionTitle: input.positionTitle,
+  });
   const id = `acc_${randomUUID()}`;
+  let employeeId = input.employeeId || null;
+  database.exec('SAVEPOINT create_account');
   try {
-    getDB().prepare(
+    if (accountType === 'enterprise' && !employeeId) {
+      employeeId = `emp_${randomUUID()}`;
+      createEmployee({
+        id: employeeId,
+        organizationId,
+        name,
+        role: input.role?.trim() || undefined,
+        department: assignment.department || undefined,
+        departmentId: assignment.departmentId || undefined,
+        positionId: assignment.positionId || undefined,
+        positionTitle: assignment.positionTitle || undefined,
+      });
+    }
+    database.prepare(
     `INSERT INTO accounts
-       (id, organization_id, account_type, employee_id, username, phone, feishu_open_id, password_hash, name, role, department, position_id, position_title, is_admin, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, account_type, employee_id, username, phone, feishu_open_id, password_hash,
+        name, role, department, department_id, position_id, position_title, avatar_url, is_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       organizationId,
-      input.accountType ?? 'enterprise',
-      input.employeeId || null,
+      accountType,
+      employeeId,
       username,
       normalizeOptionalPhone(input.phone),
       normalizeOptionalFeishuOpenId(input.feishuOpenId),
       passwordHash(input.password),
       name,
       input.role?.trim() || null,
-      input.department?.trim() || null,
-      input.positionId?.trim() || null,
-      input.positionTitle?.trim() || null,
+      assignment.department,
+      assignment.departmentId,
+      assignment.positionId,
+      assignment.positionTitle,
+      normalizeOptionalAvatarUrl(input.avatarUrl),
       input.isAdmin ? 1 : 0,
       status,
     );
+    replaceAccountTags(id, organizationId, input.tags ?? []);
+    logAudit('account_create', employeeId, `Preset account ${username} created`, organizationId);
+    const created = getAccount(id, organizationId);
+    if (!created) throw new Error('账号创建失败');
+    database.exec('RELEASE SAVEPOINT create_account');
+    return created;
   } catch (error) {
+    database.exec('ROLLBACK TO SAVEPOINT create_account');
+    database.exec('RELEASE SAVEPOINT create_account');
     if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
       throw new Error('手机号已绑定其他账号');
     }
     throw error;
   }
-  replaceAccountTags(id, organizationId, input.tags ?? []);
-  logAudit('account_create', input.employeeId || null, `Preset account ${username} created`, organizationId);
-  return getAccount(id)!;
 }
 
 /**
@@ -1415,7 +1782,7 @@ export function listPendingAtoaRequests(input: {
     limit,
   ) as DirectMessageRow[];
   const responses = getDB().prepare(
-    `SELECT content FROM direct_messages
+    `SELECT sender_account_id, recipient_account_id, content FROM direct_messages
      WHERE organization_id = ?
        AND sender_account_id = ?
        AND content LIKE ?
@@ -1425,14 +1792,76 @@ export function listPendingAtoaRequests(input: {
     input.organizationId,
     input.accountId,
     `${input.responsePrefix}%`,
-  ) as Array<{ content: string }>;
+  ) as Array<{
+    sender_account_id: string;
+    recipient_account_id: string;
+    content: string;
+  }>;
   return requests
-    .filter((request) => !responses.some((response) => response.content.includes(request.id)))
+    .filter((request) => !responses.some((response) => (
+      response.sender_account_id === input.accountId &&
+      response.recipient_account_id === request.sender_account_id &&
+      parseAtoaResponseRequestId(response.content, input.responsePrefix) === request.id
+    )))
     .reverse()
     .map((request) => ({
       ...toDirectMessageView(request),
       peerAccountId: request.sender_account_id,
     }));
+}
+
+const ATOA_RESPONSE_SOURCES = new Set([
+  'current_chat',
+  'enterprise_knowledge',
+  'work_logs',
+  'schedules',
+]);
+
+function isAtoaResponseText(
+  value: unknown,
+  maxLength: number,
+): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.length <= maxLength
+  );
+}
+
+function parseAtoaResponseRequestId(
+  content: string,
+  responsePrefix: string,
+): string | null {
+  if (!content.startsWith(responsePrefix)) return null;
+  try {
+    const parsed = JSON.parse(content.slice(responsePrefix.length)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const response = parsed as Record<string, unknown>;
+    const mode = response.mode === undefined ? 'answer' : response.mode;
+    const sources = response.grantedSources === undefined
+      ? []
+      : response.grantedSources;
+    if (
+      response.v !== 1 ||
+      !isAtoaResponseText(response.requestId, 200) ||
+      !isAtoaResponseText(response.question, 1200) ||
+      !isAtoaResponseText(response.answer, 2400) ||
+      !isAtoaResponseText(response.createdAt, 64) ||
+      !Number.isFinite(Date.parse(response.createdAt)) ||
+      (mode !== 'answer' && mode !== 'consult') ||
+      !Array.isArray(sources) ||
+      sources.length > ATOA_RESPONSE_SOURCES.size ||
+      sources.some(
+        (source) =>
+          typeof source !== 'string' || !ATOA_RESPONSE_SOURCES.has(source),
+      )
+    ) {
+      return null;
+    }
+    return response.requestId;
+  } catch {
+    return null;
+  }
 }
 
 export function authenticateAccount(identifier: string, password: string): AccountView | null {
@@ -1474,6 +1903,7 @@ export function createSelfRegisteredAccount(input: {
   name: string;
   password: string;
   department?: string | null;
+  departmentId?: string | null;
   role?: string | null;
   positionId?: string | null;
   positionTitle?: string | null;
@@ -1487,14 +1917,28 @@ export function createSelfRegisteredAccount(input: {
   const database = getDB();
   database.exec('SAVEPOINT create_self_registered_account');
   try {
+    const employeeId = `emp_${randomUUID()}`;
+    createEmployee({
+      id: employeeId,
+      organizationId: input.organizationId,
+      name: input.name,
+      role: input.role?.trim() || '成员',
+      department: input.department?.trim() || undefined,
+      departmentId: input.departmentId?.trim() || undefined,
+      positionId: input.positionId?.trim() || undefined,
+      positionTitle: input.positionTitle?.trim() || undefined,
+    });
     const account = createAccount({
       organizationId: input.organizationId,
+      accountType: 'enterprise',
+      employeeId,
       username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
       password: input.password,
       name: input.name,
       phone: normalized,
       role: input.role?.trim() || '成员',
       department: input.department?.trim() || null,
+      departmentId: input.departmentId?.trim() || null,
       positionId: input.positionId?.trim() || null,
       positionTitle: input.positionTitle?.trim() || null,
       tags: ['普通成员'],
@@ -1564,6 +2008,94 @@ export function createPersonalRegisteredAccount(input: {
   }
 }
 
+/**
+ * 将已登录的个人账号原子升级为邀请码所属企业成员。
+ * 旧个人 organization 及其数据保留为隔离容器；只迁移账号身份，
+ * 并且邀请名额、员工目录和会话租户要么全部成功，要么全部回滚。
+ */
+export function joinOrganizationWithInvite(
+  accountId: string,
+  inviteCode: string,
+  now = Date.now(),
+): AccountView {
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const current = getAccount(accountId);
+    if (!current) throw new Error('账号不存在或已失效');
+    if (current.accountType !== 'personal') {
+      throw new Error('只有个人版账号可加入企业');
+    }
+    const invite = resolveOrganizationInviteWithDefaults(inviteCode, now);
+    if (!invite) throw new Error('企业邀请码无效、已过期或名额已用完');
+
+    const employeeId = `emp_${randomUUID()}`;
+    createEmployee({
+      id: employeeId,
+      organizationId: invite.organization.id,
+      name: current.name,
+      role: invite.defaultRole || '成员',
+      department: invite.defaultDepartment || undefined,
+      departmentId: invite.departmentId || undefined,
+      positionId: invite.positionId || undefined,
+      positionTitle: invite.positionTitle || undefined,
+      invite_code: normalizeOrganizationInviteCode(inviteCode),
+    });
+
+    const reserved = database.prepare(
+      `UPDATE organization_invites
+       SET used_count = used_count + 1
+       WHERE id = ? AND organization_id = ?
+         AND revoked_at_ms IS NULL AND expires_at_ms > ?
+         AND (max_uses IS NULL OR used_count < max_uses)`,
+    ).run(invite.inviteId, invite.organization.id, now);
+    if (Number(reserved.changes) !== 1) {
+      throw new Error('企业邀请码无效、已过期或名额已用完');
+    }
+
+    const moved = database.prepare(
+      `UPDATE accounts
+       SET organization_id = ?, account_type = 'enterprise', employee_id = ?,
+           role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?,
+           is_admin = 0, updated_at = datetime('now')
+       WHERE id = ? AND organization_id = ? AND account_type = 'personal'
+         AND deleted_at IS NULL AND status = 'active'`,
+    ).run(
+      invite.organization.id,
+      employeeId,
+      invite.defaultRole || '成员',
+      invite.defaultDepartment,
+      invite.departmentId,
+      invite.positionId,
+      invite.positionTitle,
+      current.id,
+      current.organizationId,
+    );
+    if (Number(moved.changes) !== 1) throw new Error('只有个人版账号可加入企业');
+
+    database.prepare(
+      'UPDATE auth_sessions SET organization_id = ? WHERE account_id = ? AND revoked_at IS NULL',
+    ).run(invite.organization.id, current.id);
+    // 标签是企业内身份，不得把旧个人空间标签带进新租户；
+    // account_tags 的历史主键也不含 organization_id，需先清理再建立企业标签。
+    database.prepare('DELETE FROM account_tags WHERE account_id = ?').run(current.id);
+    replaceAccountTags(current.id, invite.organization.id, ['普通成员']);
+    logAudit(
+      'personal_account_join_organization',
+      employeeId,
+      `Personal account ${current.username} joined by organization invite`,
+      invite.organization.id,
+    );
+    const upgraded = getAccount(current.id, invite.organization.id);
+    if (!upgraded) throw new Error('企业账号升级失败');
+    database.exec('COMMIT');
+    return upgraded;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export function updateAccount(id: string, patch: {
   username?: string;
   password?: string;
@@ -1572,6 +2104,10 @@ export function updateAccount(id: string, patch: {
   feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
@@ -1618,7 +2154,27 @@ export function updateAccount(id: string, patch: {
       set('name', name);
     }
     if (patch.role !== undefined) set('role', patch.role?.trim() || null);
-    if (patch.department !== undefined) set('department', patch.department?.trim() || null);
+    const assignmentChanged = [
+      patch.department,
+      patch.departmentId,
+      patch.positionId,
+      patch.positionTitle,
+    ].some((value) => value !== undefined);
+    if (assignmentChanged) {
+      const assignment = resolveAssignmentIdentity(database, current.organizationId, {
+        department: patch.department !== undefined ? patch.department : current.department,
+        departmentId: patch.departmentId !== undefined ? patch.departmentId : undefined,
+        positionTitle: patch.positionTitle !== undefined
+          ? patch.positionTitle
+          : current.positionTitle,
+        positionId: patch.positionId !== undefined ? patch.positionId : undefined,
+      });
+      set('department', assignment.department);
+      set('department_id', assignment.departmentId);
+      set('position_id', assignment.positionId);
+      set('position_title', assignment.positionTitle);
+    }
+    if (patch.avatarUrl !== undefined) set('avatar_url', normalizeOptionalAvatarUrl(patch.avatarUrl));
     if (patch.isAdmin !== undefined) set('is_admin', patch.isAdmin ? 1 : 0);
     if (patch.status !== undefined) set('status', patch.status);
     if (assignments.length > 0) {
@@ -1646,13 +2202,37 @@ export function updateAccount(id: string, patch: {
       ).run(id);
     }
 
+    const updated = getAccount(id, organizationId)!;
+    if (current.employeeId && [
+      patch.name,
+      patch.role,
+      patch.department,
+      patch.departmentId,
+      patch.positionId,
+      patch.positionTitle,
+    ].some((value) => value !== undefined)) {
+      database.prepare(
+        `UPDATE employees
+         SET name = ?, role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?
+         WHERE id = ? AND organization_id = ?`,
+      ).run(
+        updated.name,
+        updated.role,
+        updated.department,
+        updated.departmentId,
+        updated.positionId,
+        updated.positionTitle,
+        current.employeeId,
+        current.organizationId,
+      );
+    }
+
     logAudit(
       'account_update',
       current.employeeId,
       `Preset account ${current.username} updated`,
       current.organizationId,
     );
-    const updated = getAccount(id, organizationId)!;
     database.exec('COMMIT');
     return updated;
   } catch (error) {
@@ -1695,8 +2275,10 @@ export function deleteAccount(
          name = '已删除账号',
          role = NULL,
          department = NULL,
+         department_id = NULL,
          position_id = NULL,
          position_title = NULL,
+         avatar_url = NULL,
          is_admin = 0,
          status = 'disabled',
          deleted_at = datetime('now'),
@@ -1714,6 +2296,12 @@ export function deleteAccount(
     database.prepare(
       "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
     ).run(id);
+    if (current.employeeId) {
+      database.prepare(
+        `UPDATE employees SET status = 'offboarded', offboarded_at = datetime('now')
+         WHERE id = ? AND organization_id = ?`,
+      ).run(current.employeeId, organizationId);
+    }
     logAudit(
       'account_delete',
       current.employeeId,
@@ -2813,27 +3401,39 @@ export function getOrganizationUsageSummary(
 export function createEmployee(emp: {
   id: string; name: string; role?: string;
   department?: string; invite_code?: string; personality?: string;
+  departmentId?: string; positionId?: string; positionTitle?: string;
   organizationId?: string;
 }): void {
   const organizationId = emp.organizationId || DEFAULT_ORGANIZATION_ID;
   if (!getOrganization(organizationId)) throw new Error('Organization not found');
-  getDB().prepare(
+  const database = getDB();
+  const assignment = resolveAssignmentIdentity(database, organizationId, {
+    department: emp.department,
+    departmentId: emp.departmentId,
+    positionId: emp.positionId,
+    positionTitle: emp.positionTitle,
+  });
+  database.prepare(
     `INSERT INTO employees
-       (id, organization_id, name, role, department, invite_code, personality)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, organization_id, name, role, department, department_id, position_id, position_title,
+        invite_code, personality)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     emp.id,
     organizationId,
     emp.name,
     emp.role || null,
-    emp.department || null,
+    assignment.department,
+    assignment.departmentId,
+    assignment.positionId,
+    assignment.positionTitle,
     emp.invite_code || null,
     emp.personality || null,
   );
   logAudit(
     'onboard',
     emp.id,
-    `Employee ${emp.name} onboarded to ${emp.department || 'unassigned'}`,
+    `Employee ${emp.name} onboarded to ${assignment.department || 'unassigned'}`,
     organizationId,
   );
 }
@@ -3050,6 +3650,35 @@ export function searchKnowledge(
   const params: any[] = [organizationId, `%${query}%`, `%${query}%`];
   if (department) { sql += ' AND department = ?'; params.push(department); }
   sql += ' ORDER BY confidence DESC LIMIT 20';
+  return getDB().prepare(sql).all(...params);
+}
+
+/**
+ * 普通成员的知识可见域：本企业中未绑定部门的全局知识，加上本人当前部门知识。
+ * 调用方不能传入任意目标部门；无部门成员只能读取全局知识。
+ */
+export function getMemberKnowledge(
+  memberDepartment: string | null | undefined,
+  query = '',
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any[] {
+  const department = memberDepartment?.trim() || null;
+  const cleanQuery = query.trim();
+  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
+  const params: any[] = [organizationId];
+  if (department) {
+    sql += ' AND (department IS NULL OR department = ?)';
+    params.push(department);
+  } else {
+    sql += ' AND department IS NULL';
+  }
+  if (cleanQuery) {
+    sql += ' AND (content LIKE ? OR category LIKE ?)';
+    params.push(`%${cleanQuery}%`, `%${cleanQuery}%`);
+    sql += ' ORDER BY confidence DESC LIMIT 20';
+  } else {
+    sql += ' ORDER BY created_at DESC';
+  }
   return getDB().prepare(sql).all(...params);
 }
 

@@ -29,6 +29,9 @@ const MIGRATE_CHECK = path.resolve(
 const HEALTH_CHECK = path.resolve(
   'deployment/enterprise-oneclick/tools/health-check.mjs',
 );
+const VERIFY_RELEASE = path.resolve(
+  'deployment/enterprise-oneclick/tools/verify-release.mjs',
+);
 const ENV_EXAMPLE = path.resolve(
   'deployment/enterprise-oneclick/config/enterprise.env.example',
 );
@@ -105,26 +108,29 @@ describe('enterprise one-click service layout', () => {
 });
 
 describe('enterprise one-click schema contract', () => {
-  it('declares v2/v3 migration input and v3 output consistently', () => {
+  it('declares v2/v3/v4 migration input and v4 output consistently', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
     const migrationCheck = readFileSync(MIGRATE_CHECK, 'utf8');
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
+    const verifyRelease = readFileSync(VERIFY_RELEASE, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
-    expect(bundle).toContain('schemaFrom: [2, 3]');
-    expect(bundle).toContain('schemaTo: 3');
+    expect(bundle).toContain('schemaFrom: [2, 3, 4]');
+    expect(bundle).toContain('schemaTo: 4');
     expect(bundle).toContain("'src/enterprise/repairNotifications.js',");
-    expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 3');
-    expect(migrationCheck).toContain('readiness.schemaVersion !== 3');
+    expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 4');
+    expect(migrationCheck).toContain('readiness.schemaVersion !== 4');
     expect(healthCheck).toContain('body.apiVersion !== 3');
-    expect(healthCheck).toContain('body.schemaVersion !== 3');
-    expect(installer).toContain('2|3) ;;');
-    expect(exporter).toContain('2|3) ;;');
+    expect(healthCheck).toContain('body.schemaVersion !== 4');
+    expect(verifyRelease).toContain('const EXPECTED_SCHEMA_FROM = [2, 3, 4]');
+    expect(verifyRelease).toContain('manifest.database.schemaTo !== 4');
+    expect(installer).toContain('2|3|4) ;;');
+    expect(exporter).toContain('2|3|4) ;;');
   });
 
-  it('accepts a current v3 database and rejects a future v4 database', () => {
+  it('accepts v3/v4 databases and rejects a future v5 database', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-schema-'));
     try {
       const createDatabase = (schemaVersion) => {
@@ -139,29 +145,200 @@ describe('enterprise one-click schema contract', () => {
         return target;
       };
 
-      const v3 = spawnSync(
-        process.execPath,
-        [DB_TOOL, 'inspect', createDatabase(3)],
-        { encoding: 'utf8' },
-      );
-      expect(v3.status, v3.stderr).toBe(0);
-      expect(JSON.parse(v3.stdout)).toMatchObject({
-        userVersion: 3,
-        quickCheck: 'ok',
-        foreignKeyCheck: 'ok',
-        rowCounts: { sample: 1 },
-      });
+      for (const schemaVersion of [3, 4]) {
+        const inspected = spawnSync(
+          process.execPath,
+          [DB_TOOL, 'inspect', createDatabase(schemaVersion)],
+          { encoding: 'utf8' },
+        );
+        expect(inspected.status, inspected.stderr).toBe(0);
+        expect(JSON.parse(inspected.stdout)).toMatchObject({
+          userVersion: schemaVersion,
+          quickCheck: 'ok',
+          foreignKeyCheck: 'ok',
+          rowCounts: { sample: 1 },
+        });
+      }
 
-      const v4 = spawnSync(
+      const v5 = spawnSync(
         process.execPath,
-        [DB_TOOL, 'inspect', createDatabase(4)],
+        [DB_TOOL, 'inspect', createDatabase(5)],
         { encoding: 'utf8' },
       );
-      expect(v4.status).toBe(5);
-      expect(v4.stderr).toContain('高于部署包支持的 3');
+      expect(v5.status).toBe(5);
+      expect(v5.stderr).toContain('高于部署包支持的 4');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
+  });
+
+  it('backs up v3 before migration and verifies that v4 preserves every row', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-upgrade-'));
+    try {
+      const source = path.join(sandbox, 'source-v3.db');
+      const backup = path.join(sandbox, 'backup-v3.db');
+      const migrated = path.join(sandbox, 'migrated-v4.db');
+      const sourceDatabase = new DatabaseSync(source);
+      sourceDatabase.exec(`
+        CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+        INSERT INTO accounts (id, name) VALUES
+          ('account-1', '保留账号一'),
+          ('account-2', '保留账号二');
+        PRAGMA user_version = 3;
+      `);
+      sourceDatabase.close();
+
+      const backupResult = spawnSync(
+        process.execPath,
+        [DB_TOOL, 'backup', source, backup],
+        { encoding: 'utf8' },
+      );
+      expect(backupResult.status, backupResult.stderr).toBe(0);
+      expect(JSON.parse(backupResult.stdout)).toMatchObject({
+        userVersion: 3,
+        rowCounts: { accounts: 2 },
+      });
+
+      const copyResult = spawnSync(
+        process.execPath,
+        [DB_TOOL, 'backup', backup, migrated],
+        { encoding: 'utf8' },
+      );
+      expect(copyResult.status, copyResult.stderr).toBe(0);
+      const migratedDatabase = new DatabaseSync(migrated);
+      migratedDatabase.exec('PRAGMA user_version = 4;');
+      migratedDatabase.close();
+
+      const comparison = spawnSync(
+        process.execPath,
+        [DB_TOOL, 'compare', backup, migrated],
+        { encoding: 'utf8' },
+      );
+      expect(comparison.status, comparison.stderr).toBe(0);
+      expect(JSON.parse(comparison.stdout)).toMatchObject({
+        before: { userVersion: 3, rowCounts: { accounts: 2 } },
+        after: { userVersion: 4, rowCounts: { accounts: 2 } },
+        preservedTables: 1,
+      });
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a release manifest that still declares a v3 target', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-manifest-'));
+    try {
+      const manifest = {
+        format: 'otto-enterprise-release-v1',
+        version: '1.9.0-test',
+        buildCommit: '0'.repeat(40),
+        sourceCommit: '1'.repeat(40),
+        database: {
+          schemaFrom: [2, 3, 4],
+          schemaTo: 4,
+          futureSchemaPolicy: 'reject',
+        },
+        files: {},
+      };
+      const manifestPath = path.join(sandbox, 'manifest.json');
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+
+      const valid = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(JSON.parse(valid.stdout)).toMatchObject({
+        ok: true,
+        database: {
+          schemaFrom: [2, 3, 4],
+          schemaTo: 4,
+          futureSchemaPolicy: 'reject',
+        },
+      });
+
+      manifest.database.schemaTo = 3;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const stale = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(stale.status).toBe(3);
+      expect(stale.stderr).toContain('manifest.json 格式不正确');
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts only a completed v4 migration readiness result', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-readiness-'));
+    try {
+      const release = path.join(sandbox, 'release');
+      const data = path.join(sandbox, 'data');
+      const databaseModule = path.join(release, 'src', 'enterprise', 'db.js');
+      mkdirSync(path.dirname(databaseModule), { recursive: true });
+      mkdirSync(data, { recursive: true });
+      writeFileSync(
+        path.join(release, 'package.json'),
+        `${JSON.stringify({ type: 'module' })}\n`,
+      );
+      const writeDatabaseModule = (schemaVersion) => {
+        writeFileSync(
+          databaseModule,
+          [
+            `export const getDatabaseReadiness = () => ({ ready: true, schemaVersion: ${schemaVersion} });`,
+            'export const closeEnterpriseDatabase = () => {};',
+            '',
+          ].join('\n'),
+        );
+      };
+
+      writeDatabaseModule(4);
+      const ready = spawnSync(
+        process.execPath,
+        [MIGRATE_CHECK, release, data],
+        { encoding: 'utf8' },
+      );
+      expect(ready.status, ready.stderr).toBe(0);
+      expect(JSON.parse(ready.stdout)).toEqual({
+        ready: true,
+        schemaVersion: 4,
+      });
+
+      writeDatabaseModule(3);
+      const stale = spawnSync(
+        process.execPath,
+        [MIGRATE_CHECK, release, data],
+        { encoding: 'utf8' },
+      );
+      expect(stale.status).toBe(5);
+      expect(stale.stderr).toContain('"schemaVersion":3');
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates only an isolated copy and compares rows before installing it', () => {
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const stageCopy = installer.indexOf(
+      'cp "$MIGRATION_DB" "${CANARY_DIR}/data.db"',
+    );
+    const migration = installer.indexOf(
+      '"${SCRIPT_DIR}/tools/migrate-check.mjs"',
+    );
+    const rowComparison = installer.indexOf(
+      'compare "$MIGRATION_DB" "${CANARY_DIR}/data.db"',
+    );
+    const finalInstall = installer.indexOf(
+      '"${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"',
+    );
+
+    expect(stageCopy).toBeGreaterThan(-1);
+    expect(migration).toBeGreaterThan(stageCopy);
+    expect(rowComparison).toBeGreaterThan(migration);
+    expect(finalInstall).toBeGreaterThan(rowComparison);
   });
 });
 
@@ -192,11 +369,11 @@ describe('enterprise one-click runtime configuration contract', () => {
 });
 
 describe('enterprise one-click health contract', () => {
-  it('requires A2A and park repair capabilities in canary and acceptance docs', () => {
+  it('requires upgrade, A2A and park repair capabilities in canary and acceptance docs', () => {
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
     const readme = readFileSync(README, 'utf8');
 
-    for (const capability of ['atoa', 'park_repair_v1']) {
+    for (const capability of ['personal_enterprise_upgrade', 'atoa', 'park_repair_v1']) {
       expect(healthCheck).toContain(`  '${capability}',`);
       expect(readme).toContain(`\`${capability}\``);
     }

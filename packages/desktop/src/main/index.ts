@@ -118,17 +118,21 @@ import { loadVoiceConfig, saveVoiceConfig, type VoiceConfigInput } from './voice
 import { transcribeAudio } from './voiceService.js';
 import {
   EnterpriseClient,
+  EnterpriseJoinStateUncertainError,
   type AccountCreateInput,
   type AccountUpdateInput,
+  type EnterpriseAccount,
   type EnterpriseKnowledgeRecordInput,
 } from './enterprise-client.js';
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
   EnterpriseAuthOperationQueue,
+  failClosedUncertainEnterpriseJoin,
   logoutAndClearEnterpriseIdentity,
   refreshEnterpriseIdentityLease,
   restoreAndSyncEnterpriseSession,
+  syncJoinedEnterpriseAccount,
   syncVerifiedEnterpriseAccount,
 } from './enterprise-auth-sync.js';
 import {
@@ -146,6 +150,7 @@ import {
 } from './enterprise-network-policy.js';
 import { INTERNAL_TEST_ACCESS_ENABLED } from './internal-test-access.js';
 import { resolveVideoEditorIndex } from './video-editor-resource.js';
+import { buildRendererCsp } from './renderer-csp.js';
 
 /** 与 packages/server/src/protocol.ts 的 DEFAULT_HOST/DEFAULT_PORT 保持一致的字面量
  * （仅用作 CSP 的兜底默认值；真实值在 ensureEndpoint() 拿到后覆盖）。 */
@@ -259,7 +264,9 @@ const IPC = {
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
   enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
+  enterpriseAccountUpdated: 'otto:enterprise-account-updated',
   enterpriseRegister: 'otto:enterprise-register',
+  enterpriseJoinOrganization: 'otto:enterprise-join-organization',
   enterpriseLogout: 'otto:enterprise-logout',
   enterpriseAccounts: 'otto:enterprise-accounts',
   enterpriseAccountCreate: 'otto:enterprise-account-create',
@@ -394,17 +401,26 @@ function startEnterpriseIdentityRefresh(): void {
     void enterpriseAuthOperations.run(async () => {
       if (!enterpriseClient.snapshot().token) return;
       const session = await enterpriseClient.getSession();
-      await refreshEnterpriseIdentityLease(
+      const outcome = await refreshEnterpriseIdentityLease(
         session,
         enterpriseClient,
         (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
         saveEnterpriseSession,
       );
+      if (outcome === 'refreshed' && session.account) {
+        notifyEnterpriseAccountUpdated(session.account);
+      }
     }).catch((error) => {
       console.warn('[otto-desktop] 刷新企业身份短租约失败:', error);
     });
   }, ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS);
   enterpriseIdentityRefreshTimer.unref?.();
+}
+
+function notifyEnterpriseAccountUpdated(account: EnterpriseAccount): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.enterpriseAccountUpdated, account);
+  }
 }
 
 function stopEnterpriseIdentityRefresh(): void {
@@ -949,19 +965,8 @@ function applyCsp(): void {
       ?? (Number.isFinite(configuredPort) && configuredPort > 0
         ? configuredPort
         : CSP_FALLBACK_PORT);
-    const csp = [
-      "default-src 'self'",
-      // renderer 由 webpack 内联样式（style-loader）→ 需要 'unsafe-inline' 样式。
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self' data:",
-      // 仅允许连本地 server（HTTP 拉历史 + WS 实时）。
-      `connect-src 'self' http://${host}:${port} ws://${host}:${port}`,
-      "script-src 'self'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "frame-src 'none'",
-    ].join('; ');
+    // HTTPS 只用于员工头像图片；脚本和网络请求仍严格限制在自身与本地 server。
+    const csp = buildRendererCsp(host, port);
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -1146,6 +1151,36 @@ function registerIpc(): void {
       return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
     });
   });
+  ipcMain.handle(IPC.enterpriseJoinOrganization, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('企业邀请码格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.inviteCode !== 'string') throw new Error('企业邀请码为必填项');
+    return enterpriseAuthOperations.run(async () => {
+      let result;
+      try {
+        result = await enterpriseClient.joinOrganization(body.inviteCode as string);
+      } catch (error) {
+        if (error instanceof EnterpriseJoinStateUncertainError) {
+          return failClosedUncertainEnterpriseJoin(
+            error,
+            enterpriseClient,
+            (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+            saveEnterpriseSession,
+          );
+        }
+        throw error;
+      }
+      await syncJoinedEnterpriseAccount(
+        result.account,
+        enterpriseClient,
+        (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
+        saveEnterpriseSession,
+      );
+      saveEnterpriseSession();
+      return { ...result, serverUrl: enterpriseClient.snapshot().serverUrl };
+    });
+  });
   ipcMain.handle(IPC.enterpriseLogout, async () => {
     await enterpriseAuthOperations.run(async () => {
       loadEnterpriseSession();
@@ -1155,11 +1190,6 @@ function registerIpc(): void {
         saveEnterpriseSession,
       );
     });
-    // 注销后完全重置本机所有用户数据（企业身份、会话历史、知识库、Skill 等）
-    try {
-      const userDir = path.join(os.homedir(), '.otto-user');
-      fs.rmSync(userDir, { recursive: true, force: true });
-    } catch { /* 目录不存在或权限不足，忽略 */ }
   });
   ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
     if (typeof token !== 'string' || token.trim().length === 0) {
@@ -1216,6 +1246,8 @@ function registerIpc(): void {
             (account) => serverManager.setAuthenticatedEnterpriseAccount(account),
             saveEnterpriseSession,
           );
+          const current = enterpriseClient.authenticatedAccountSnapshot();
+          if (current) notifyEnterpriseAccountUpdated(current);
         }
         return updated;
       }),

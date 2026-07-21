@@ -12,6 +12,16 @@ import type {
 
 type AuthStatus = 'loading' | 'signed-out' | 'signed-in';
 
+// main 与 renderer 属于独立 TypeScript rootDir，IPC 只传递 Error.message。
+// 这里使用稳定的人类可读前缀识别“中心已提交”的升级失败，避免保留旧个人身份。
+const ENTERPRISE_JOIN_REAUTH_REQUIRED_MESSAGE =
+  '企业已成功加入，但本机身份同步失败，请重新登录以完成企业切换';
+
+function isEnterpriseJoinReauthRequired(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(ENTERPRISE_JOIN_REAUTH_REQUIRED_MESSAGE);
+}
+
 export function friendlyAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const withoutIpcPrefix = message.replace(/^Error invoking remote method '[^']+':\s*/, '');
@@ -40,6 +50,7 @@ export function useEnterpriseAuth(): {
       inviteCode?: string;
     }): Promise<EnterpriseSmsChallenge>;
     register(input: { challengeId: string; code: string; name: string; password: string }): Promise<void>;
+    joinEnterprise(input: { inviteCode: string }): Promise<void>;
     logout(): Promise<void>;
     clearError(): void;
   };
@@ -93,6 +104,24 @@ export function useEnterpriseAuth(): {
       setBusy(false);
       setStatus('signed-out');
     });
+    const unsubscribeAccountUpdated = window.otto.onEnterpriseAccountUpdated((updatedAccount) => {
+      if (!initializedRef.current || !signedInRef.current) return;
+      setAccount((current) => {
+        if (!current
+          || current.id !== updatedAccount.id
+          || current.organizationId !== updatedAccount.organizationId) {
+          return current;
+        }
+        const currentUpdatedAt = Date.parse(current.updatedAt);
+        const nextUpdatedAt = Date.parse(updatedAccount.updatedAt);
+        if (Number.isFinite(currentUpdatedAt)
+          && Number.isFinite(nextUpdatedAt)
+          && nextUpdatedAt < currentUpdatedAt) {
+          return current;
+        }
+        return updatedAccount;
+      });
+    });
 
     void Promise.all([
       window.otto.enterpriseSession(),
@@ -129,6 +158,7 @@ export function useEnterpriseAuth(): {
       cancelled = true;
       unsubscribeIntent();
       unsubscribeInvalidated();
+      unsubscribeAccountUpdated();
     };
   }, []);
 
@@ -251,6 +281,39 @@ export function useEnterpriseAuth(): {
     }
   }, []);
 
+  const joinEnterprise = useCallback(async (input: {
+    inviteCode: string;
+  }): Promise<void> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.otto.enterpriseJoinOrganization(input);
+      if (epoch !== authEpochRef.current) return;
+      setServerUrl(result.serverUrl);
+      setAccount(result.account);
+      setRegistrationIntent(null);
+      signedInRef.current = true;
+      setStatus('signed-in');
+    } catch (cause) {
+      if (epoch === authEpochRef.current) {
+        setError(friendlyAuthError(cause));
+        if (isEnterpriseJoinReauthRequired(cause)) {
+          signedInRef.current = false;
+          setAccount(null);
+          setStatus('signed-out');
+        } else {
+          setStatus('signed-in');
+        }
+      }
+      throw cause;
+    } finally {
+      if (epoch === authEpochRef.current) setBusy(false);
+    }
+  }, []);
+
   const logout = useCallback(async (): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;
@@ -280,12 +343,13 @@ export function useEnterpriseAuth(): {
       loginWithSms,
       requestRegistrationCode,
       register,
+      joinEnterprise,
       logout,
       clearError,
     },
   }), [
     status, busy, serverUrl, account, registrationIntent, error,
     loginWithPassword, requestLoginCode, loginWithSms,
-    requestRegistrationCode, register, logout, clearError,
+    requestRegistrationCode, register, joinEnterprise, logout, clearError,
   ]);
 }

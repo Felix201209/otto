@@ -2628,12 +2628,6 @@ export class OttoServer {
         });
         return;
       }
-      case 'destroy_product_workspace': {
-        this.productWorkspace.destroyAllUserData();
-        const workspace = this.productWorkspace.snapshot();
-        this.broadcastAll({ type: 'product_workspace', payload: workspace });
-        return;
-      }
       case 'join_enterprise': {
         try {
           const workspace = this.productWorkspace.acceptInvite(
@@ -3867,8 +3861,8 @@ function browserBridgeScript(clientToken: string): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.9.0'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.0', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.9.1'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.1', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),
@@ -3984,6 +3978,11 @@ function parseEnterpriseIdentitySyncBody(
     return { ok: false, error: 'account 必须是对象或 null' };
   }
   const input = wrapped.account as Record<string, unknown>;
+  const cleanIdentityText = (value: string): string =>
+    Array.from(value, (character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127 ? ' ' : character;
+    }).join('').trim();
   const requiredText = (
     key: 'id' | 'organizationId' | 'name',
   ): string | undefined => {
@@ -4039,6 +4038,101 @@ function parseEnterpriseIdentitySyncBody(
   ) {
     return { ok: false, error: 'account.tags 必须是字符串数组' };
   }
+  let organizationMembers:
+    | NonNullable<AuthenticatedEnterpriseAccount['organizationMembers']>
+    | undefined;
+  if (input.organizationMembers !== undefined) {
+    if (!Array.isArray(input.organizationMembers)) {
+      return { ok: false, error: 'account.organizationMembers 必须是数组' };
+    }
+    if (input.organizationMembers.length > 200) {
+      return {
+        ok: false,
+        error: 'account.organizationMembers 不能超过 200 人',
+      };
+    }
+    organizationMembers = [];
+    for (let index = 0; index < input.organizationMembers.length; index += 1) {
+      const raw = input.organizationMembers[index];
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        return {
+          ok: false,
+          error: `account.organizationMembers[${index}] 必须是对象`,
+        };
+      }
+      const member = raw as Record<string, unknown>;
+      const requiredMemberText = (
+        key: 'id' | 'username' | 'name',
+        maxLength: number,
+      ): string | undefined => {
+        const value = member[key];
+        if (typeof value !== 'string') return undefined;
+        const clean = cleanIdentityText(value);
+        return clean && clean.length <= maxLength ? clean : undefined;
+      };
+      const memberId = requiredMemberText('id', 128);
+      const username = requiredMemberText('username', 128);
+      const memberName = requiredMemberText('name', 160);
+      if (!memberId || !username || !memberName) {
+        return {
+          ok: false,
+          error:
+            `account.organizationMembers[${index}].id、username、name ` +
+            '必须是长度合规的非空字符串',
+        };
+      }
+      if (typeof member.isAdmin !== 'boolean') {
+        return {
+          ok: false,
+          error: `account.organizationMembers[${index}].isAdmin 必须是布尔值`,
+        };
+      }
+      if (member.status !== 'active' && member.status !== 'disabled') {
+        return {
+          ok: false,
+          error: `account.organizationMembers[${index}].status 无效`,
+        };
+      }
+      const nullableMemberText = (
+        key: 'role' | 'department' | 'positionId' | 'positionTitle',
+        maxLength: number,
+      ): string | null | false => {
+        const value = member[key];
+        if (value === null) return null;
+        if (typeof value !== 'string') return false;
+        const clean = cleanIdentityText(value);
+        return clean && clean.length <= maxLength ? clean : false;
+      };
+      const memberRole = nullableMemberText('role', 64);
+      const memberDepartment = nullableMemberText('department', 160);
+      const memberPositionId = nullableMemberText('positionId', 128);
+      const memberPositionTitle = nullableMemberText('positionTitle', 160);
+      if (
+        memberRole === false ||
+        memberDepartment === false ||
+        memberPositionId === false ||
+        memberPositionTitle === false
+      ) {
+        return {
+          ok: false,
+          error:
+            `account.organizationMembers[${index}] 的 role、department、` +
+            'positionId、positionTitle 必须是长度合规的字符串或 null',
+        };
+      }
+      organizationMembers.push({
+        id: memberId,
+        username,
+        name: memberName,
+        role: memberRole,
+        department: memberDepartment,
+        positionId: memberPositionId,
+        positionTitle: memberPositionTitle,
+        isAdmin: member.isAdmin,
+        status: member.status,
+      });
+    }
+  }
 
   return {
     ok: true,
@@ -4066,6 +4160,7 @@ function parseEnterpriseIdentitySyncBody(
       input.positionTitle === null
         ? { positionTitle: input.positionTitle }
         : {}),
+      ...(organizationMembers !== undefined ? { organizationMembers } : {}),
     },
   };
 }

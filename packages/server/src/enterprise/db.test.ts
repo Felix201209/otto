@@ -11,6 +11,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Database } from '../sqlite-compat.js';
+import {
+  ATOA_DIRECT_MESSAGE_MAX_LENGTH,
+  ATOA_REQUEST_PREFIX,
+  ATOA_RESPONSE_PREFIX,
+  buildAtoaRequest,
+  buildAtoaResponse,
+} from '../../../desktop/src/renderer/atoaProtocol.js';
 
 type DbModule = typeof import('./db.js');
 
@@ -102,10 +109,56 @@ describe('数据库 readiness', () => {
     });
   });
 
-  it('v4 园区服务迁移可重复初始化，同一数据库重启后不重复添加列', async () => {
+  it('从真实 v3 列布局升级到 v4，保留账号员工关联和园区服务列且可重复初始化', async () => {
     const first = await freshDb();
-    first.getDB();
+    const organization = first.createOrganization({ name: '迁移企业', slug: 'migration-v3' });
+    const employeeId = 'emp_v3_preserved';
+    first.createEmployee({
+      id: employeeId,
+      organizationId: organization.id,
+      name: '历史员工',
+      role: '成员',
+      department: '研发部',
+    });
+    const account = first.createAccount({
+      organizationId: organization.id,
+      employeeId,
+      username: 'v3-preserved',
+      password: 'v3-preserved-password',
+      name: '历史员工',
+      role: '成员',
+      department: '研发部',
+      positionId: 'position_engineer',
+      positionTitle: '工程师',
+    });
+    const unlinkedAccount = first.createAccount({
+      organizationId: organization.id,
+      username: 'v3-unlinked',
+      password: 'v3-unlinked-password',
+      name: '未关联员工',
+      role: '成员',
+      department: '产品部',
+      positionId: 'position_product_manager',
+      positionTitle: '产品经理',
+    });
+    const personalAccount = first.createPersonalRegisteredAccount({
+      phone: '13800138000',
+      name: '个人用户',
+      password: 'personal-password',
+    });
     first.closeEnterpriseDatabase();
+
+    // 真实模拟上一版 v3：保留完整业务表与数据，只移除 v4 才新增的列。
+    const legacy = new Database(path.join(tmpDir, 'data.db'));
+    legacy.exec(`
+      ALTER TABLE accounts DROP COLUMN department_id;
+      ALTER TABLE accounts DROP COLUMN avatar_url;
+      ALTER TABLE employees DROP COLUMN department_id;
+      ALTER TABLE employees DROP COLUMN position_id;
+      ALTER TABLE employees DROP COLUMN position_title;
+      PRAGMA user_version = 3;
+    `);
+    legacy.close();
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
@@ -123,11 +176,76 @@ describe('数据库 readiness', () => {
       expect(organizationColumns.filter((column) => column.name === 'credit_balance')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'account_type')).toHaveLength(1);
       expect(accountColumns.filter((column) => column.name === 'deleted_at')).toHaveLength(1);
+      expect(accountColumns.filter((column) => column.name === 'department_id')).toHaveLength(1);
+      expect(accountColumns.filter((column) => column.name === 'avatar_url')).toHaveLength(1);
+      const employeeColumns = reopened.getDB()
+        .prepare('PRAGMA table_info(employees)')
+        .all() as Array<{ name: string }>;
+      expect(employeeColumns.filter((column) => column.name === 'department_id')).toHaveLength(1);
+      expect(employeeColumns.filter((column) => column.name === 'position_id')).toHaveLength(1);
+      expect(employeeColumns.filter((column) => column.name === 'position_title')).toHaveLength(1);
+      const migratedLinkedAccount = reopened.getAccount(account.id, organization.id);
+      expect(migratedLinkedAccount).toMatchObject({
+        id: account.id,
+        employeeId,
+        department: '研发部',
+        departmentId: expect.stringMatching(/^dept_[a-f0-9]{20}$/),
+        positionId: 'position_engineer',
+        positionTitle: '工程师',
+      });
+      const migratedLinkedEmployee = reopened.getEmployee(employeeId, organization.id);
+      expect(migratedLinkedEmployee).toMatchObject({
+        id: employeeId,
+        organization_id: organization.id,
+        name: '历史员工',
+        department: '研发部',
+        department_id: expect.stringMatching(/^dept_[a-f0-9]{20}$/),
+        position_id: 'position_engineer',
+        position_title: '工程师',
+      });
+      expect(migratedLinkedEmployee.department_id).toBe(migratedLinkedAccount!.departmentId);
+      const migratedUnlinkedAccount = reopened.getAccount(unlinkedAccount.id, organization.id);
+      expect(migratedUnlinkedAccount).toMatchObject({
+        id: unlinkedAccount.id,
+        accountType: 'enterprise',
+        department: '产品部',
+        positionId: 'position_product_manager',
+        positionTitle: '产品经理',
+        employeeId: expect.stringMatching(/^emp_/),
+      });
+      expect(reopened.getEmployee(
+        migratedUnlinkedAccount!.employeeId!,
+        organization.id,
+      )).toMatchObject({
+        organization_id: organization.id,
+        name: '未关联员工',
+        department: '产品部',
+        position_id: 'position_product_manager',
+        position_title: '产品经理',
+      });
+      expect(reopened.getAccount(personalAccount.id, personalAccount.organizationId)).toMatchObject({
+        id: personalAccount.id,
+        accountType: 'personal',
+        employeeId: null,
+      });
       const ticketColumns = reopened.getDB()
         .prepare('PRAGMA table_info(it_tickets)')
         .all() as Array<{ name: string }>;
       expect(ticketColumns.filter((column) => column.name === 'service_id')).toHaveLength(1);
       expect(ticketColumns.filter((column) => column.name === 'form_data')).toHaveLength(1);
+
+      const employeeIdsBeforeReopen = reopened.listEmployees(undefined, organization.id)
+        .map((employee) => employee.id)
+        .sort();
+      reopened.closeEnterpriseDatabase();
+      vi.resetModules();
+      const reopenedAgain: DbModule = await import('./db.js');
+      expect(reopenedAgain.listEmployees(undefined, organization.id)
+        .map((employee) => employee.id)
+        .sort()).toEqual(employeeIdsBeforeReopen);
+      expect(reopenedAgain.getAccount(unlinkedAccount.id, organization.id)?.employeeId)
+        .toBe(migratedUnlinkedAccount!.employeeId);
+      reopenedAgain.closeEnterpriseDatabase();
     } finally {
       reopened.closeEnterpriseDatabase();
     }
@@ -268,6 +386,45 @@ describe('企业成员直聊', () => {
     expect(() => db.sendDirectMessage({ organizationId: db.DEFAULT_ORGANIZATION_ID, senderAccountId: alice.id, recipientAccountId: outsider.id, content: 'cross tenant' })).toThrow('不存在或已停用');
   });
 
+  it('真实私聊数据库接受经过最终序列化裁剪的 A2A 请求和回复', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'atoa-boundary-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'atoa-boundary-bob', password: 'bob-password-123', name: 'Bob' });
+    const requestContent = buildAtoaRequest(`${'问题😀\n'.repeat(1200)}`, {
+      id: 'boundary-request',
+      mode: 'consult',
+      requestedSources: ['current_chat', 'enterprise_knowledge', 'work_logs', 'schedules'],
+      initiatorProposal: `${'候选方案😀\n'.repeat(1200)}`,
+    });
+
+    expect(requestContent.length).toBeLessThanOrEqual(ATOA_DIRECT_MESSAGE_MAX_LENGTH);
+    expect(new TextEncoder().encode(requestContent).byteLength)
+      .toBeLessThanOrEqual(ATOA_DIRECT_MESSAGE_MAX_LENGTH);
+    const request = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: requestContent,
+    });
+
+    const responseContent = buildAtoaResponse({
+      requestId: request.id,
+      question: `${'问题😀\n'.repeat(1200)}`,
+      answer: `${'协商结论😀\n'.repeat(1200)}`,
+      mode: 'consult',
+      grantedSources: ['current_chat', 'enterprise_knowledge', 'work_logs', 'schedules'],
+    });
+    expect(responseContent.length).toBeLessThanOrEqual(ATOA_DIRECT_MESSAGE_MAX_LENGTH);
+    expect(new TextEncoder().encode(responseContent).byteLength)
+      .toBeLessThanOrEqual(ATOA_DIRECT_MESSAGE_MAX_LENGTH);
+    expect(() => db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: responseContent,
+    })).not.toThrow();
+  });
+
   it('A2A 收件箱只返回尚未由当前 Otto 回复的请求', async () => {
     const db = await freshDb();
     const alice = db.createAccount({ username: 'atoa-alice', password: 'alice-password-123', name: 'Alice' });
@@ -276,7 +433,7 @@ describe('企业成员直聊', () => {
       organizationId: db.DEFAULT_ORGANIZATION_ID,
       senderAccountId: alice.id,
       recipientAccountId: bob.id,
-      content: 'OTTO_ATOA_REQUEST {"v":1,"id":"client-1","question":"方便开会吗？"}',
+      content: buildAtoaRequest('方便开会吗？', { id: 'client-1' }),
     });
 
     expect(db.listPendingAtoaRequests({
@@ -295,7 +452,11 @@ describe('企业成员直聊', () => {
       organizationId: db.DEFAULT_ORGANIZATION_ID,
       senderAccountId: bob.id,
       recipientAccountId: alice.id,
-      content: `OTTO_ATOA_RESPONSE {"v":1,"requestId":"${request.id}","answer":"可以先约 15:00。"}`,
+      content: buildAtoaResponse({
+        requestId: request.id,
+        question: '方便开会吗？',
+        answer: '可以先约 15:00。',
+      }),
     });
     expect(db.listPendingAtoaRequests({
       organizationId: db.DEFAULT_ORGANIZATION_ID,
@@ -304,9 +465,181 @@ describe('企业成员直聊', () => {
       responsePrefix: 'OTTO_ATOA_RESPONSE ',
     })).toEqual([]);
   });
+
+  it('A2A pending 只由反向同伴发出的合法精确 response 消除', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({ username: 'atoa-strict-alice', password: 'alice-password-123', name: 'Alice' });
+    const bob = db.createAccount({ username: 'atoa-strict-bob', password: 'bob-password-123', name: 'Bob' });
+    const charlie = db.createAccount({ username: 'atoa-strict-charlie', password: 'charlie-password-123', name: 'Charlie' });
+    const request = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: buildAtoaRequest('请给出评审建议', { id: 'strict-client-request' }),
+    });
+    const pending = () => db.listPendingAtoaRequests({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      requestPrefix: ATOA_REQUEST_PREFIX,
+      responsePrefix: ATOA_RESPONSE_PREFIX,
+    });
+
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: `${ATOA_RESPONSE_PREFIX}{bad-json-${request.id}`,
+    });
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: `${ATOA_RESPONSE_PREFIX}${JSON.stringify({
+        requestId: request.id,
+      })}`,
+    });
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: buildAtoaResponse({
+        requestId: `prefix-${request.id}-suffix`,
+        question: '请给出评审建议',
+        answer: '这不是精确 requestId。',
+      }),
+    });
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: charlie.id,
+      content: buildAtoaResponse({
+        requestId: request.id,
+        question: '请给出评审建议',
+        answer: '这是发给另一位成员的回复。',
+      }),
+    });
+
+    expect(pending()).toEqual([
+      expect.objectContaining({ id: request.id, peerAccountId: alice.id }),
+    ]);
+
+    db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: bob.id,
+      recipientAccountId: alice.id,
+      content: buildAtoaResponse({
+        requestId: request.id,
+        question: '请给出评审建议',
+        answer: '这是合法精确回复。',
+      }),
+    });
+    expect(pending()).toEqual([]);
+  });
 });
 
 describe('企业邀请码原子更新', () => {
+  it('只填写部门和职位名称时生成稳定组织节点 ID，并写入账号与员工档案', async () => {
+    const db = await freshDb();
+    const now = Date.now();
+    const first = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      now,
+      null,
+      {
+        defaultDepartment: '研发部',
+        positionTitle: '开发工程师',
+        defaultRole: '成员',
+        maxUses: 2,
+      },
+    );
+    expect(first).toMatchObject({
+      defaultDepartment: '研发部',
+      departmentId: expect.stringMatching(/^dept_[a-f0-9]{20}$/),
+      positionTitle: '开发工程师',
+      positionId: expect.stringMatching(/^pos_[a-f0-9]{20}$/),
+    });
+
+    const resolved = db.resolveOrganizationInviteWithDefaults(first.code, now + 1);
+    expect(resolved).toMatchObject({
+      departmentId: first.departmentId,
+      positionId: first.positionId,
+    });
+    const account = db.createSelfRegisteredAccount({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      phone: '13800138001',
+      name: '岗位员工',
+      password: 'registered-password',
+      department: resolved!.defaultDepartment,
+      departmentId: resolved!.departmentId,
+      role: resolved!.defaultRole,
+      positionId: resolved!.positionId,
+      positionTitle: resolved!.positionTitle,
+      organizationInviteId: resolved!.inviteId,
+    });
+    expect(account).toMatchObject({
+      department: '研发部',
+      departmentId: first.departmentId,
+      positionTitle: '开发工程师',
+      positionId: first.positionId,
+      employeeId: expect.stringMatching(/^emp_/),
+    });
+    expect(db.getEmployee(account.employeeId!, db.DEFAULT_ORGANIZATION_ID)).toMatchObject({
+      department: '研发部',
+      department_id: first.departmentId,
+      position_title: '开发工程师',
+      position_id: first.positionId,
+    });
+
+    const second = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+      now + 2,
+      null,
+      {
+        defaultDepartment: ' 研发部 ',
+        positionTitle: ' 开发工程师 ',
+      },
+    );
+    expect(second.departmentId).toBe(first.departmentId);
+    expect(second.positionId).toBe(first.positionId);
+  });
+
+  it('管理员直接创建和调岗账号时同步稳定部门职位 ID 与员工档案', async () => {
+    const db = await freshDb();
+    const created = db.createAccount({
+      username: 'assignment-member',
+      password: 'assignment-password',
+      name: '岗位成员',
+      department: '产品部',
+      positionTitle: '产品经理',
+    });
+    expect(created).toMatchObject({
+      employeeId: expect.stringMatching(/^emp_/),
+      departmentId: expect.stringMatching(/^dept_[a-f0-9]{20}$/),
+      positionId: expect.stringMatching(/^pos_[a-f0-9]{20}$/),
+    });
+    expect(db.getEmployee(created.employeeId!, db.DEFAULT_ORGANIZATION_ID)).toMatchObject({
+      department: '产品部',
+      department_id: created.departmentId,
+      position_title: '产品经理',
+      position_id: created.positionId,
+    });
+
+    const updated = db.updateAccount(created.id, {
+      department: '研发部',
+      positionTitle: '开发工程师',
+    }, db.DEFAULT_ORGANIZATION_ID);
+    expect(updated.departmentId).toMatch(/^dept_[a-f0-9]{20}$/);
+    expect(updated.positionId).toMatch(/^pos_[a-f0-9]{20}$/);
+    expect(updated.departmentId).not.toBe(created.departmentId);
+    expect(updated.positionId).not.toBe(created.positionId);
+    expect(db.getEmployee(created.employeeId!, db.DEFAULT_ORGANIZATION_ID)).toMatchObject({
+      department: '研发部',
+      department_id: updated.departmentId,
+      position_title: '开发工程师',
+      position_id: updated.positionId,
+    });
+  });
+
   it('审计写入失败时回滚新邀请码，并保持旧邀请码继续有效', async () => {
     const db = await freshDb();
     const oldInvite = db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID, 1_000);

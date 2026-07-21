@@ -749,6 +749,13 @@ h6.otto-prose__h {
 .otto-sidebar-account__logout { min-width: 34px; min-height: 28px; padding: 0 6px; border: 1px solid transparent !important; border-radius: 7px; background: transparent; color: var(--otto-text-tertiary); font: 650 9px var(--otto-font); cursor: pointer; }
 .otto-sidebar-account__logout:hover { border-color: color-mix(in srgb, var(--otto-danger) 18%, transparent) !important; color: var(--otto-danger); background: color-mix(in srgb, var(--otto-danger) 7%, transparent); }
 .otto-sidebar-account__logout:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
+.otto-viewall--upgrade { color: color-mix(in srgb, var(--otto-accent) 88%, var(--otto-text)); }
+.otto-viewall--upgrade:hover { background: color-mix(in srgb, var(--otto-accent) 9%, transparent); }
+.otto-join-enterprise { width: min(420px, calc(100vw - 32px)); }
+.otto-join-enterprise__field { display: grid; gap: 7px; margin-top: 18px; color: var(--otto-text-secondary); font: 700 11px var(--otto-font); }
+.otto-join-enterprise__field input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--otto-border); border-radius: 9px; outline: none; background: var(--otto-surface); color: var(--otto-text); font: 750 15px/1 var(--otto-font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.otto-join-enterprise__field input:focus { border-color: var(--otto-accent); box-shadow: var(--otto-shadow-focus); }
+.otto-join-enterprise__error { margin-top: 10px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--otto-danger) 28%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--otto-danger) 8%, transparent); color: var(--otto-danger); font: 650 10px/1.45 var(--otto-font); }
 
 .otto-account-page { --identity-night: #07110f; --identity-lime: #a8ffcf; flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 35px clamp(26px,4vw,62px) 56px; color: var(--otto-text); background: var(--otto-bg); }
 .otto-account-hero { max-width: 1180px; margin: 0 auto 25px; display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }
@@ -829,12 +836,12 @@ h6.otto-prose__h {
 .otto-account-table__row > th:nth-child(2), .otto-account-table__row > td:nth-child(2) { width: 14%; }
 .otto-account-table__row > th:nth-child(3), .otto-account-table__row > td:nth-child(3) { width: 17%; }
 .otto-account-table__row > th:nth-child(4), .otto-account-table__row > td:nth-child(4) { width: 20%; }
-.otto-account-table__row > th:nth-child(5), .otto-account-table__row > td:nth-child(5) { width: 19%; }
-.otto-account-table__row > th:last-child, .otto-account-table__row > td:last-child { width: 8%; padding-right: 18px; text-align: right; }
+.otto-account-table__row > th:nth-child(5), .otto-account-table__row > td:nth-child(5) { width: 16%; }
+.otto-account-table__row > th:last-child, .otto-account-table__row > td:last-child { width: 11%; padding-right: 18px; text-align: right; }
 .otto-account-table tbody .otto-account-table__row:last-child > td { border-bottom: 0; }
 .otto-account-table__header > th { height: 38px; color: var(--otto-text-tertiary); background: var(--otto-surface-raised); font: 700 9.5px/1 var(--otto-font-mono); letter-spacing: .11em; text-transform: uppercase; }
 .otto-account-table__identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.otto-account-table__avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; color: #10241d; background: #dff8e9; font-size: 11px; font-weight: 850; }
+.otto-account-table__avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; object-fit: cover; color: #10241d; background: #dff8e9; font-size: 11px; font-weight: 850; }
 .otto-account-table__row strong, .otto-account-table__row small { display: block; min-width: 0; }
 .otto-account-table__row strong { color: var(--otto-text); font-size: 12px; }
 .otto-account-table__row small { margin-top: 4px; color: var(--otto-text-tertiary); font-size: 10.5px; }
@@ -847,7 +854,9 @@ h6.otto-prose__h {
 .otto-account-table__state .is-active { color: var(--otto-success); }
 .otto-account-table__state .is-disabled { color: var(--otto-danger); }
 .otto-account-table__state .is-sms { color: #156b4a; background: #e5f8ee; }
-.otto-account-table__row > td > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
+.otto-account-table__actions { display: grid; justify-items: end; gap: 5px; }
+.otto-account-table__actions > button { border: 0; color: var(--otto-accent); background: transparent; font-size: 11px; cursor: pointer; }
+.otto-account-table__actions > button.is-primary { padding: 5px 8px; border-radius: 7px; color: #effff5; background: #10241d; white-space: nowrap; }
 .otto-account-table .otto-account-table__empty { height: 120px; padding: 35px 20px; text-align: center; color: var(--otto-text-tertiary); font-size: 12px; }
 
 .otto-account-editor__overlay { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(3,13,10,.55); backdrop-filter: blur(10px); }
@@ -6465,6 +6474,31 @@ h6.otto-prose__h {
 .otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }
 .otto-direct-chat__otto { margin-left:auto; margin-right:8px; border:1px solid var(--otto-border) !important; border-radius:8px; background:var(--otto-bg) !important; color:var(--otto-text) !important; font-size:12px !important; line-height:1; padding:7px 9px; }
 .otto-direct-chat__otto:hover { border-color:var(--otto-accent); color:var(--otto-accent) !important; }
+.otto-direct-chat__a2a-menu { position: relative; }
+.otto-direct-chat__plus { display: grid; place-items: center; width: 28px; height: 28px; padding: 0 !important; border: 1px solid var(--otto-border) !important; border-radius: 8px; background: var(--otto-bg) !important; }
+.otto-direct-chat__a2a-popover {
+  position: absolute;
+  z-index: 4;
+  top: 34px;
+  right: 0;
+  width: 230px;
+  padding: 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: 11px;
+  background: var(--otto-surface);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .24);
+}
+.otto-direct-chat__a2a-popover button {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 10px !important;
+  border-radius: 8px !important;
+  text-align: left;
+}
+.otto-direct-chat__a2a-popover button:hover { background: var(--otto-accent-soft) !important; }
+.otto-direct-chat__a2a-popover strong { color: var(--otto-text); font-size: 12px; }
+.otto-direct-chat__a2a-popover small { color: var(--otto-text-secondary); font-size: 10px; line-height: 1.4; }
 .otto-direct-chat__messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:12px; }
 .otto-direct-chat__messages p { color:var(--otto-text-tertiary); text-align:center; }
 .otto-direct-chat__message { max-width:80%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
@@ -6485,6 +6519,126 @@ h6.otto-prose__h {
 .otto-direct-chat__a2a-pop button { width:100%; display:flex; align-items:center; gap:7px; justify-content:flex-start; padding:8px 9px; background:transparent; color:var(--otto-text); }
 .otto-direct-chat__a2a-pop button:hover:not(:disabled) { background:var(--otto-accent-soft); }
 
+.otto-a2a-permission-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 24, .62);
+  backdrop-filter: blur(5px);
+}
+.otto-a2a-permission {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--otto-border);
+  border-radius: 18px;
+  background: var(--otto-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .38);
+}
+.otto-a2a-permission header h2 { margin: 4px 0 0; font-size: 20px; }
+.otto-a2a-permission header p { margin: 4px 0 0; color: var(--otto-text-secondary); font-size: 12px; }
+.otto-a2a-permission__eyebrow { color: var(--otto-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.otto-a2a-permission__question,
+.otto-a2a-permission__proposal {
+  margin-top: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: 11px;
+  background: var(--otto-bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.otto-a2a-permission__proposal strong { display: block; margin-bottom: 5px; font-size: 11px; color: var(--otto-text-secondary); }
+.otto-a2a-permission__proposal p { margin: 0; }
+.otto-a2a-permission__notice { margin: 16px 0 10px; color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; }
+.otto-a2a-permission__sources { display: grid; gap: 8px; }
+.otto-a2a-permission__sources label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.otto-a2a-permission__sources label:has(input:checked) {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-a2a-permission__sources input { margin-top: 2px; accent-color: var(--otto-accent); }
+.otto-a2a-permission__sources span { display: grid; gap: 3px; }
+.otto-a2a-permission__sources strong { font-size: 12px; }
+.otto-a2a-permission__sources small { color: var(--otto-text-secondary); font-size: 10px; }
+.otto-a2a-permission footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.otto-a2a-permission footer button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  cursor: pointer;
+}
+.otto-a2a-permission footer button:disabled { opacity: .45; cursor: not-allowed; }
+.otto-a2a-permission footer .is-primary { border-color: var(--otto-accent); background: var(--otto-accent); color: #fff; }
+.otto-a2a-permission footer .is-danger { margin-right: auto; color: var(--otto-danger); }
+
+.otto-a2a-consult-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 245;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 24, .64);
+  backdrop-filter: blur(5px);
+}
+.otto-a2a-consult {
+  width: min(600px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--otto-border);
+  border-radius: 18px;
+  background: var(--otto-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .4);
+}
+.otto-a2a-consult header { display: flex; align-items: flex-start; justify-content: space-between; }
+.otto-a2a-consult header span { color: var(--otto-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.otto-a2a-consult header h2 { margin: 5px 0 0; font-size: 20px; }
+.otto-a2a-consult header > button { border: 0; background: transparent; color: var(--otto-text-secondary); font-size: 22px; cursor: pointer; }
+.otto-a2a-consult__goal { display: grid; gap: 7px; margin-top: 18px; font-size: 12px; }
+.otto-a2a-consult__goal textarea {
+  min-height: 90px;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  font: inherit;
+}
+.otto-a2a-consult fieldset { margin: 14px 0 0; padding: 12px; border: 1px solid var(--otto-border); border-radius: 10px; }
+.otto-a2a-consult legend { padding: 0 5px; color: var(--otto-text-secondary); font-size: 11px; }
+.otto-a2a-consult fieldset > small { display: block; margin-top: 9px; color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-a2a-consult__sources { display: flex; flex-wrap: wrap; gap: 8px; }
+.otto-a2a-consult__sources label { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 8px; background: var(--otto-bg); font-size: 11px; cursor: pointer; }
+.otto-a2a-consult__sources input { accent-color: var(--otto-accent); }
+.otto-a2a-consult__proposal { margin-top: 14px; padding: 13px; border: 1px solid var(--otto-accent); border-radius: 10px; background: var(--otto-accent-soft); }
+.otto-a2a-consult__proposal strong { font-size: 11px; }
+.otto-a2a-consult__proposal p { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.55; }
+.otto-a2a-consult__error { color: var(--otto-danger); font-size: 11px; }
+.otto-a2a-consult footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.otto-a2a-consult footer button { min-height: 34px; padding: 0 12px; border: 1px solid var(--otto-border); border-radius: 9px; background: var(--otto-bg); color: var(--otto-text); cursor: pointer; }
+.otto-a2a-consult footer button:disabled { opacity: .45; cursor: not-allowed; }
+.otto-a2a-consult footer .is-primary { border-color: var(--otto-accent); background: var(--otto-accent); color: #fff; }
+
 .otto-right-panel { position: relative; width: 304px; min-width: 304px; transition: width .18s ease, min-width .18s ease; }
 .otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }
 .otto-right-panel__edge { position: absolute; left: -13px; top: 56px; z-index: 5; width: 26px; height: 34px; border-radius: 12px; border: 1px solid var(--otto-border); background: var(--otto-surface); color: var(--otto-text-secondary); box-shadow: var(--otto-shadow-sm); cursor: pointer; }
@@ -6498,6 +6652,152 @@ h6.otto-prose__h {
 .otto-profile-card > span:last-child { display: flex; flex-direction: column; min-width: 0; }
 .otto-profile-card strong { font-size: 11px; }
 .otto-profile-card small { color: var(--otto-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; margin-top: 2px; }
+.otto-custom-agents__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.otto-custom-agents__head > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.otto-custom-agents__head strong { font-size: 11px; color: var(--otto-text); }
+.otto-custom-agents__head span { color: var(--otto-text-tertiary); font-size: 8.5px; }
+.otto-custom-agents__head > button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--otto-accent);
+  border-radius: 8px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.otto-custom-agents__empty {
+  margin-top: 7px;
+  padding: 9px;
+  border: 1px dashed var(--otto-border);
+  border-radius: 9px;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+  line-height: 1.45;
+}
+.otto-custom-agent-list { display: grid; gap: 7px; margin-top: 8px; }
+.otto-custom-agent-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-surface);
+  overflow: hidden;
+}
+.otto-custom-agent-card:hover { border-color: var(--otto-accent); }
+.otto-custom-agent-card__launch {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 28px 8px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--otto-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-custom-agent-card__mark {
+  flex: 0 0 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.otto-custom-agent-card__launch > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.otto-custom-agent-card__launch strong { font-size: 11px; }
+.otto-custom-agent-card__launch small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-custom-agent-card__delete {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+.otto-custom-agent-card__delete:hover { background: color-mix(in srgb, var(--otto-danger) 14%, transparent); color: var(--otto-danger); }
+.otto-custom-agent-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 24, .64);
+  backdrop-filter: blur(5px);
+}
+.otto-custom-agent-dialog {
+  width: min(440px, calc(100vw - 48px));
+  padding: 20px;
+  border: 1px solid var(--otto-border);
+  border-radius: 16px;
+  background: var(--otto-surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .4);
+}
+.otto-custom-agent-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.otto-custom-agent-dialog__head > div { display: grid; gap: 4px; }
+.otto-custom-agent-dialog__head strong { font-size: 17px; color: var(--otto-text); }
+.otto-custom-agent-dialog__head span { color: var(--otto-text-secondary); font-size: 10px; }
+.otto-custom-agent-dialog__head > button {
+  border: 0;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  font-size: 22px;
+  cursor: pointer;
+}
+.otto-custom-agent-dialog form { display: grid; gap: 13px; margin-top: 18px; }
+.otto-custom-agent-dialog label { display: grid; gap: 6px; color: var(--otto-text); font-size: 11px; font-weight: 700; }
+.otto-custom-agent-dialog input,
+.otto-custom-agent-dialog textarea {
+  width: 100%;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  padding: 9px 10px;
+  font: inherit;
+  font-weight: 400;
+  box-sizing: border-box;
+}
+.otto-custom-agent-dialog textarea { resize: vertical; min-height: 98px; line-height: 1.5; }
+.otto-custom-agent-dialog input:focus,
+.otto-custom-agent-dialog textarea:focus { outline: 2px solid var(--otto-accent-soft); border-color: var(--otto-accent); }
+.otto-custom-agent-dialog__error { color: var(--otto-danger); font-size: 10px; }
+.otto-custom-agent-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.otto-custom-agent-dialog__actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  cursor: pointer;
+}
+.otto-custom-agent-dialog__actions button[type="submit"] {
+  border-color: var(--otto-accent);
+  background: var(--otto-accent);
+  color: #fff;
+}
+.otto-custom-agent-dialog button:disabled { opacity: .5; cursor: not-allowed; }
 .otto-auto-skill { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--otto-border); display: grid; gap: 7px; }
 .otto-auto-skill__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .otto-auto-skill__head > div { display: flex; flex-direction: column; gap: 2px; }

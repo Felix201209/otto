@@ -578,10 +578,6 @@ export type SwitchToPersonalMsg = Envelope<
   'switch_to_personal',
   Record<string, never>
 >;
-export type DestroyProductWorkspaceMsg = Envelope<
-  'destroy_product_workspace',
-  Record<string, never>
->;
 export type JoinEnterpriseMsg = Envelope<
   'join_enterprise',
   { link: string; userId: string; displayName: string }
@@ -720,7 +716,6 @@ export type ClientToServer =
   | GetProductWorkspaceMsg
   | ConfigureEnterpriseMsg
   | SwitchToPersonalMsg
-  | DestroyProductWorkspaceMsg
   | JoinEnterpriseMsg
   | CreateEnterpriseInviteMsg
   | AddFriendMsg
@@ -1752,7 +1747,6 @@ export function validateClientPayload(msg: {
     case 'list_slash_commands':
     case 'get_product_workspace':
     case 'switch_to_personal':
-    case 'destroy_product_workspace':
     case 'get_pending_auto_skills':
     case 'scan_pending_auto_skills':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;

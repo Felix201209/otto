@@ -12,6 +12,10 @@ import { request as httpRequest, type Server } from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  buildAtoaRequest,
+  buildAtoaResponse,
+} from '../../../desktop/src/renderer/atoaProtocol.js';
 
 type ServerModule = typeof import('./server.js');
 type DatabaseModule = typeof import('./db.js');
@@ -440,6 +444,7 @@ describe('受保护 vs 公开路由边界', () => {
         'sms_login',
         'sms_registration',
         'personal_registration',
+        'personal_enterprise_upgrade',
         'organization_invites',
         'usage_summary',
         'admin_console',
@@ -450,6 +455,7 @@ describe('受保护 vs 公开路由边界', () => {
         'position_invites',
         'park_service_push',
         'park_repair_v1',
+        'park_services_v2',
       ],
     });
     expect(body.uptime).toEqual(expect.any(Number));
@@ -707,8 +713,15 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('href="/enterprise/admin/credits"');
     expect(html).toContain('积分管理');
     expect(html).toContain('id="deleteAccount"');
+    expect(html).toContain('id="editPositionTitle"');
+    expect(html).toContain('id="editAvatarUrl"');
+    expect(html).toContain("account.positionTitle||account.role");
+    expect(html).toContain("positionTitle:$('editPositionTitle').value.trim()||null");
+    expect(html).toContain("avatarUrl:$('editAvatarUrl').value.trim()||null");
     expect(html).toContain("method:'DELETE'");
     expect(html).toContain('删除账号');
+    expect(html).toContain('data-delete-id');
+    expect(html).toContain('deleteAccountFromRow');
     expect(html).toContain('href="/enterprise/admin/platform"');
     expect(html).toContain('多企业管理');
     expect(html).not.toContain(ADMIN_TOKEN);
@@ -736,6 +749,14 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('企业工作台');
     expect(html).toContain('成员账号');
     expect(html).toContain('部门成员目录');
+    expect(html).toContain('id="platformInviteDepartment"');
+    expect(html).toContain('id="platformInvitePosition"');
+    expect(html).toContain('id="platformInviteRole"');
+    expect(html).toContain('id="platformInviteMaxUses"');
+    expect(html).toContain("body:JSON.stringify(body)");
+    expect(html).toContain("value=invite&&invite.defaultDepartment||''");
+    expect(html).toContain("account.positionTitle||account.role");
+    expect(html).not.toContain("body:'{}'");
     expect(html).toContain('/enterprise/platform/organizations/');
     expect(html).toContain('platformRequestEpoch');
     expect(html).not.toContain('<iframe');
@@ -1207,7 +1228,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        content: 'OTTO_ATOA_REQUEST {"v":1,"id":"route-1","question":"今天方便评审吗？"}',
+        content: buildAtoaRequest('今天方便评审吗？', { id: 'route-1' }),
       }),
     });
     expect(sent.status).toBe(201);
@@ -1225,6 +1246,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         expect.objectContaining({
           id: requestMessage.message.id,
           peerAccountId: alice.id,
+          peer: {
+            id: alice.id,
+            username: 'atoa-route-alice',
+            name: 'Alice',
+            department: null,
+            positionTitle: null,
+            role: null,
+          },
         }),
       ],
     });
@@ -1242,7 +1271,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        content: `OTTO_ATOA_RESPONSE {"v":1,"requestId":"${requestMessage.message.id}","answer":"可以，15:00 开始。"}`,
+        content: buildAtoaResponse({
+          requestId: requestMessage.message.id,
+          question: '今天方便评审吗？',
+          answer: '可以，15:00 开始。',
+        }),
       }),
     });
     expect(replied.status).toBe(201);
@@ -1489,20 +1522,42 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         username: 'it01', password: 'it-password-1', name: 'IT 一号',
-        role: '桌面支持', department: 'IT', tags: ['IT', '报修'],
+        role: '普通成员', department: 'IT',
+        positionId: 'position_desktop_support', positionTitle: '桌面支持',
+        avatarUrl: 'https://cdn.example.com/avatar/it01.png',
+        tags: ['IT', '报修'],
       }),
     });
     expect(created.status).toBe(201);
     const createdBody = await created.json();
     expect(createdBody.account.tags).toEqual(['IT', '报修']);
+    expect(createdBody.account).toMatchObject({
+      role: '普通成员',
+      department: 'IT',
+      positionId: 'position_desktop_support',
+      positionTitle: '桌面支持',
+      avatarUrl: 'https://cdn.example.com/avatar/it01.png',
+    });
 
     const updated = await fetch(`${base}/enterprise/accounts/${createdBody.account.id}`, {
       method: 'PATCH',
       headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'IT 值班', tags: ['IT', '报修', '夜班'] }),
+      body: JSON.stringify({
+        name: 'IT 值班',
+        positionId: 'position_on_call',
+        positionTitle: '值班工程师',
+        avatarUrl: 'data:image/png;base64,AA==',
+        tags: ['IT', '报修', '夜班'],
+      }),
     });
     expect(updated.status).toBe(200);
-    expect((await updated.json()).account.tags).toEqual(['IT', '夜班', '报修']);
+    const updatedAccount = (await updated.json()).account;
+    expect(updatedAccount.tags).toEqual(['IT', '夜班', '报修']);
+    expect(updatedAccount).toMatchObject({
+      positionId: 'position_on_call',
+      positionTitle: '值班工程师',
+      avatarUrl: 'data:image/png;base64,AA==',
+    });
 
     const list = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminSession}` },
@@ -1519,10 +1574,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       isAdmin: true,
     });
     const db = await import('./db.js');
+    db.createEmployee({ id: 'delete-employee', name: '待删除员工' });
     const staff = db.createAccount({
       username: 'delete-staff',
       password: 'delete-staff-password',
       name: '待删除员工',
+      employeeId: 'delete-employee',
     });
     const staffSession = db.createAuthSession(staff.id);
     const loginResponse = await fetch(`${base}/enterprise/auth/admin/login`, {
@@ -1547,6 +1604,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(((await list.json()) as { accounts: Array<{ id: string }> }).accounts)
       .not.toContainEqual(expect.objectContaining({ id: staff.id }));
+    expect(db.listEmployees().map((employee) => employee.id)).not.toContain('delete-employee');
+    expect(db.getEmployee('delete-employee')).toMatchObject({ status: 'offboarded' });
     expect((await fetch(`${base}/enterprise/auth/me`, {
       headers: { authorization: `Bearer ${staffSession.token}` },
     })).status).toBe(401);
@@ -1671,6 +1730,20 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(shortPassword.status).toBe(400);
     expect(await shortPassword.json()).toEqual({ error: '登录密码至少需要 8 位' });
+
+    const unsafeAvatar = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ avatarUrl: 'javascript:alert(1)' }),
+    });
+    expect(unsafeAvatar.status).toBe(400);
+    expect(await unsafeAvatar.json()).toEqual({
+      error: '头像仅支持 HTTPS 或 PNG、JPEG、WebP、GIF 格式的 data:image',
+    });
+    const svgAvatar = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
+      method: 'PATCH', headers, body: JSON.stringify({
+        avatarUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      }),
+    });
+    expect(svgAvatar.status).toBe(400);
 
     expect(db.getAccount(staff.id)?.phone).toBe('+8613800138000');
     const oldPassword = await fetch(`${base}/enterprise/auth/login`, {
@@ -2195,19 +2268,35 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       }),
     });
     expect(register.status).toBe(200);
-    const registered = (await register.json()).account as {
+    const registrationPayload = await register.json() as {
+      token: string;
+      account: {
+      id: string;
       organizationId: string;
       organizationName: string;
+      employeeId: string | null;
       name: string;
       department: string | null;
       role: string | null;
       positionId: string | null;
       positionTitle: string | null;
+      };
     };
+    const registered = registrationPayload.account;
     expect(registered.department).toBe('研发部');
     expect(registered.role).toBe('成员');
     expect(registered.positionId).toBe('pos_brand');
     expect(registered.positionTitle).toBe('品牌运营');
+    expect(registered.employeeId).toEqual(expect.stringMatching(/^emp_/));
+    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(expect.objectContaining({
+      id: registered.employeeId,
+      organization_id: alpha.id,
+      name: 'Alpha 新员工',
+      department: '研发部',
+      role: '成员',
+      position_id: 'pos_brand',
+      position_title: '品牌运营',
+    }));
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
       username: 'alpha.invite.admin',
@@ -2236,6 +2325,55 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       positionId: 'pos_brand',
       positionTitle: '品牌运营',
     }));
+    const employees = await fetch(`${base}/enterprise/employees`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(employees.status).toBe(200);
+    await expect(employees.json()).resolves.toEqual({
+      employees: expect.arrayContaining([expect.objectContaining({
+        id: registered.employeeId,
+        organization_id: alpha.id,
+        department: '研发部',
+        role: '成员',
+        position_id: 'pos_brand',
+        position_title: '品牌运营',
+      }), expect.objectContaining({
+        id: alphaAdmin.employeeId,
+        organization_id: alpha.id,
+        name: 'Alpha 邀请管理员',
+      })]),
+    });
+    const memberOrganizationView = await fetch(`${base}/enterprise/organization/view`, {
+      headers: { authorization: `Bearer ${registrationPayload.token}` },
+    });
+    expect(memberOrganizationView.status).toBe(200);
+    await expect(memberOrganizationView.json()).resolves.toMatchObject({
+      employeeCount: 2,
+      members: expect.arrayContaining([expect.objectContaining({
+        id: expect.any(String),
+        department: '研发部',
+        role: '成员',
+        positionId: 'pos_brand',
+        positionTitle: '品牌运营',
+      }), expect.objectContaining({
+        id: alphaAdmin.id,
+        name: 'Alpha 邀请管理员',
+        isAdmin: true,
+      })]),
+    });
+    const reassigned = await fetch(`${base}/enterprise/accounts/${registered.id}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ positionId: 'pos_growth', positionTitle: '增长运营' }),
+    });
+    expect(reassigned.status).toBe(200);
+    await expect(reassigned.json()).resolves.toMatchObject({
+      account: { positionId: 'pos_growth', positionTitle: '增长运营' },
+    });
+    expect(db.getEmployee(registered.employeeId!, alpha.id)).toMatchObject({
+      position_id: 'pos_growth',
+      position_title: '增长运营',
+    });
     expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
     const exhausted = await fetch(`${base}/enterprise/auth/register/sms/request`, {
       method: 'POST',
@@ -2248,6 +2386,113 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       organizationName: 'Alpha 科技',
       name: 'Alpha 新员工',
     });
+  });
+
+  it('已登录个人账号可原子消费企业邀请码并保留当前会话，重复和并发加入 fail closed', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha-upgrade' });
+    const invite = db.issueOrganizationInvite(alpha.id, Date.now(), null, {
+      defaultDepartment: '产品部',
+      departmentId: 'dept_product',
+      positionId: 'position_pm',
+      positionTitle: '产品经理',
+      defaultRole: '成员',
+      maxUses: 1,
+    });
+    const personal = db.createPersonalRegisteredAccount({
+      phone: '13100131000',
+      name: '个人升级用户',
+      password: 'personal-upgrade-password',
+    });
+    const oldPersonalOrganizationId = personal.organizationId;
+    db.updateAccount(personal.id, { tags: ['个人偏好'] }, oldPersonalOrganizationId);
+    const session = db.createAuthSession(personal.id);
+
+    const upgraded = await fetch(`${base}/enterprise/auth/join-organization`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ inviteCode: invite.code }),
+    });
+    expect(upgraded.status).toBe(200);
+    const upgradedAccount = (await upgraded.json()).account;
+    expect(upgradedAccount).toMatchObject({
+      id: personal.id,
+      accountType: 'enterprise',
+      organizationId: alpha.id,
+      organizationName: 'Alpha 科技',
+      departmentId: 'dept_product',
+      department: '产品部',
+      positionId: 'position_pm',
+      positionTitle: '产品经理',
+      role: '成员',
+      employeeId: expect.stringMatching(/^emp_/),
+      tags: ['普通成员'],
+    });
+    expect(db.getOrganization(oldPersonalOrganizationId)).not.toBeNull();
+    expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
+    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(expect.objectContaining({
+      id: upgradedAccount.employeeId,
+      department_id: 'dept_product',
+      department: '产品部',
+      position_id: 'position_pm',
+      position_title: '产品经理',
+    }));
+
+    const sameSession = await fetch(`${base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(sameSession.status).toBe(200);
+    await expect(sameSession.json()).resolves.toMatchObject({
+      account: { id: personal.id, organizationId: alpha.id, accountType: 'enterprise' },
+    });
+    const repeated = await fetch(`${base}/enterprise/auth/join-organization`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ inviteCode: invite.code }),
+    });
+    expect(repeated.status).toBe(409);
+    expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
+
+    const raceInvite = db.issueOrganizationInvite(alpha.id, Date.now(), null, {
+      defaultDepartment: '研发部',
+      departmentId: 'dept_rd',
+      positionId: 'position_engineer',
+      positionTitle: '研发工程师',
+      defaultRole: '成员',
+      maxUses: 1,
+    });
+    const racers = [
+      db.createPersonalRegisteredAccount({
+        phone: '13200132000', name: '并发用户一', password: 'race-user-password-1',
+      }),
+      db.createPersonalRegisteredAccount({
+        phone: '13300133000', name: '并发用户二', password: 'race-user-password-2',
+      }),
+    ];
+    const racerSessions = racers.map((account) => db.createAuthSession(account.id));
+    const raceResults = await Promise.all(racerSessions.map((item) => fetch(
+      `${base}/enterprise/auth/join-organization`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${item.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ inviteCode: raceInvite.code }),
+      },
+    )));
+    expect(raceResults.map((response) => response.status).sort()).toEqual([200, 403]);
+    expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
+    const racedAccounts = racers.map((account) => db.getAccount(account.id)!);
+    expect(racedAccounts.filter((account) => account.accountType === 'enterprise')).toHaveLength(1);
+    expect(racedAccounts.filter((account) => account.accountType === 'personal')).toHaveLength(1);
   });
 
   it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 7 天邀请码', async () => {
@@ -2499,6 +2744,143 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       confidence: 0.9,
     });
   });
+
+  it('普通成员只能读取全局知识和本人部门知识，department query 不能跨部门越权', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const organization = db.createOrganization({ name: '知识边界企业', slug: 'knowledge-boundary' });
+    const legal = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.legal',
+      password: 'knowledge-legal-password',
+      name: '法务成员',
+      department: '法务部',
+    });
+    const admin = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.admin',
+      password: 'knowledge-admin-password',
+      name: '企业管理员',
+      department: '管理层',
+      isAdmin: true,
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      category: 'policy',
+      content: '全员可见制度',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      department: '法务部',
+      category: 'legal',
+      content: '法务部合同底线',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      department: '销售部',
+      category: 'sales',
+      content: '销售部客户名单',
+    });
+    const legalToken = await login(base, legal.username, 'knowledge-legal-password');
+    const adminToken = await login(base, admin.username, 'knowledge-admin-password');
+
+    const memberList = await fetch(`${base}/enterprise/knowledge`, {
+      headers: { authorization: `Bearer ${legalToken}` },
+    });
+    expect(memberList.status).toBe(200);
+    const memberPayload = JSON.stringify(await memberList.json());
+    expect(memberPayload).toContain('全员可见制度');
+    expect(memberPayload).toContain('法务部合同底线');
+    expect(memberPayload).not.toContain('销售部客户名单');
+
+    const crossDepartment = await fetch(
+      `${base}/enterprise/knowledge?department=${encodeURIComponent('销售部')}`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(crossDepartment.status).toBe(403);
+    expect(await crossDepartment.json()).toEqual({ error: '无权读取其他部门知识' });
+
+    const crossDepartmentSearch = await fetch(
+      `${base}/enterprise/knowledge?q=${encodeURIComponent('客户')}&department=${encodeURIComponent('销售部')}`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(crossDepartmentSearch.status).toBe(403);
+
+    const adminList = await fetch(`${base}/enterprise/knowledge`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(adminList.status).toBe(200);
+    const adminPayload = JSON.stringify(await adminList.json());
+    expect(adminPayload).toContain('全员可见制度');
+    expect(adminPayload).toContain('法务部合同底线');
+    expect(adminPayload).toContain('销售部客户名单');
+  }, 30_000);
+
+  it('A2A 选择企业知识作为上下文时，接收方仍只能取得全局和本人部门知识', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const organization = db.createOrganization({ name: 'A2A 知识企业', slug: 'atoa-knowledge' });
+    const sales = db.createAccount({
+      organizationId: organization.id,
+      username: 'atoa.sales',
+      password: 'atoa-sales-password',
+      name: '销售同事',
+      department: '销售部',
+    });
+    const legal = db.createAccount({
+      organizationId: organization.id,
+      username: 'atoa.legal',
+      password: 'atoa-legal-password',
+      name: '法务同事',
+      department: '法务部',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      category: 'global',
+      content: 'A2A 全员协作规范',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      department: '法务部',
+      category: 'legal',
+      content: 'A2A 法务审查清单',
+    });
+    db.addKnowledge({
+      organizationId: organization.id,
+      department: '销售部',
+      category: 'sales',
+      content: 'A2A 销售客户机密',
+    });
+    const salesToken = await login(base, sales.username, 'atoa-sales-password');
+    const legalToken = await login(base, legal.username, 'atoa-legal-password');
+
+    const sent = await fetch(`${base}/enterprise/messages/${legal.id}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${salesToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: 'OTTO_ATOA_REQUEST {"v":1,"id":"knowledge-scope","question":"审查方案","requestedSources":["enterprise_knowledge"]}',
+      }),
+    });
+    expect(sent.status).toBe(201);
+    const inbox = await fetch(`${base}/enterprise/atoa/inbox`, {
+      headers: { authorization: `Bearer ${legalToken}` },
+    });
+    expect(inbox.status).toBe(200);
+    expect(JSON.stringify(await inbox.json())).toContain('enterprise_knowledge');
+
+    // A2A context collector 使用的就是当前账号会话下的 knowledge GET。
+    const contextKnowledge = await fetch(`${base}/enterprise/knowledge`, {
+      headers: { authorization: `Bearer ${legalToken}` },
+    });
+    expect(contextKnowledge.status).toBe(200);
+    const contextPayload = JSON.stringify(await contextKnowledge.json());
+    expect(contextPayload).toContain('A2A 全员协作规范');
+    expect(contextPayload).toContain('A2A 法务审查清单');
+    expect(contextPayload).not.toContain('A2A 销售客户机密');
+  }, 30_000);
 
   it('平台令牌可创建新企业及首位管理员，企业管理员不能创建其他企业', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);

@@ -17,7 +17,11 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type { ProductWorkspaceSnapshot, SessionSummary } from 'otto-server';
+import type {
+  ProductWorkspaceSnapshot,
+  ScheduleItemInfo,
+  SessionSummary,
+} from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
@@ -32,6 +36,7 @@ import {
 } from './icons.js';
 import { OrganizationTree } from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
+import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 
 function formatTime(ts: number): string {
@@ -83,12 +88,15 @@ interface SidebarProps {
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
   productWorkspace?: ProductWorkspaceSnapshot | null;
+  productSchedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
   organizationOpenRequest?: number;
+  organizationRefreshRevision?: number;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
   onOpenAccounts?: () => void;
+  onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => void | Promise<void>;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
@@ -104,12 +112,15 @@ export function Sidebar({
   accountManagementActive = false,
   updateBadge = false,
   productWorkspace = null,
+  productSchedules = [],
   enterpriseAccount,
   organizationOpenRequest = 0,
+  organizationRefreshRevision = 0,
   onSelect,
   onNewChat,
   onOpenHub,
   onOpenAccounts,
+  onJoinEnterprise,
   onLogout,
   onViewAll,
   onRename,
@@ -118,6 +129,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const [sessionsOpen, setSessionsOpen] = useState(true);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [joinEnterpriseOpen, setJoinEnterpriseOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const sessionGroups = relativeSessionGroups(groups);
   const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
@@ -150,8 +162,12 @@ export function Sidebar({
       <div className="otto-sidebar__workspace">
         <OrganizationTree
           workspace={productWorkspace}
-          enterpriseAccount={enterpriseAccount}
+          schedules={productSchedules}
+          enterpriseAccount={enterpriseAccount?.accountType === 'personal'
+            ? undefined
+            : enterpriseAccount}
           openRequest={organizationOpenRequest}
+          refreshRevision={organizationRefreshRevision}
         />
 
         <section className="otto-conversations" aria-label="对话任务">
@@ -197,7 +213,9 @@ export function Sidebar({
       </div>
 
       <div className="otto-sidebar__footer">
-        {enterpriseAccount?.isAdmin && onOpenAccounts ? (
+        {enterpriseAccount?.accountType !== 'personal'
+          && enterpriseAccount?.isAdmin
+          && onOpenAccounts ? (
           <button
             type="button"
             className={'otto-viewall otto-viewall--accounts' + (accountManagementActive ? ' is-active' : '')}
@@ -235,6 +253,18 @@ export function Sidebar({
           ) : null}
           <IconChevron size={15} className="otto-viewall__chev" />
         </button>
+        {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
+          <button
+            type="button"
+            className="otto-viewall otto-viewall--upgrade"
+            onClick={() => setJoinEnterpriseOpen(true)}
+            title="使用企业邀请码升级"
+          >
+            <span className="otto-viewall__accounticon" aria-hidden>↗</span>
+            升级企业版
+            <IconChevron size={15} className="otto-viewall__chev" />
+          </button>
+        ) : null}
         {enterpriseAccount ? (
           <div className="otto-sidebar-account">
             <span className="otto-sidebar-account__avatar">
@@ -274,6 +304,16 @@ export function Sidebar({
                 setLogoutBusy(false);
               }
             })();
+          }}
+        />
+      ) : null}
+      {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
+        <JoinEnterpriseDialog
+          open={joinEnterpriseOpen}
+          onCancel={() => setJoinEnterpriseOpen(false)}
+          onConfirm={async (input) => {
+            await onJoinEnterprise(input);
+            setJoinEnterpriseOpen(false);
           }}
         />
       ) : null}

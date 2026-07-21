@@ -17,8 +17,10 @@ export interface EnterpriseAccount {
   name: string;
   role: string | null;
   department: string | null;
+  departmentId?: string | null;
   positionId: string | null;
   positionTitle: string | null;
+  avatarUrl?: string | null;
   isAdmin: boolean;
   status: 'active' | 'disabled';
   tags: string[];
@@ -44,6 +46,10 @@ export interface AccountCreateInput {
   feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
 }
@@ -56,6 +62,10 @@ export interface AccountUpdateInput {
   feishuOpenId?: string | null;
   role?: string | null;
   department?: string | null;
+  departmentId?: string | null;
+  positionId?: string | null;
+  positionTitle?: string | null;
+  avatarUrl?: string | null;
   tags?: string[];
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
@@ -161,6 +171,10 @@ export interface EnterpriseOrganizationView {
     name: string;
     role: string | null;
     department: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    avatarUrl?: string | null;
     isAdmin: boolean;
     status: 'active' | 'disabled';
   }>;
@@ -178,6 +192,15 @@ export interface EnterpriseDirectMessage {
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
   peerAccountId: string;
+  /** 由企业服务端按 peerAccountId 查询并回传，不能来自消息正文。 */
+  peer: {
+    id: string;
+    username: string;
+    name: string;
+    department: string | null;
+    positionTitle: string | null;
+    role: string | null;
+  };
 }
 
 export interface EnterpriseRepairTicket {
@@ -266,6 +289,17 @@ const ENTERPRISE_AUTH_SUPERSEDED_ERROR = '认证操作已被新的请求替代�
 class EnterpriseRequestError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
+  }
+}
+
+/**
+ * 加入企业是不可重复提交。POST 的响应丢失且 `/auth/me` 也不可用时，调用方
+ * 无法安全判断账号仍为个人还是已经入企，必须清掉本地会话并要求重新登录。
+ */
+export class EnterpriseJoinStateUncertainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EnterpriseJoinStateUncertainError';
   }
 }
 
@@ -565,6 +599,112 @@ export class EnterpriseClient {
     });
   }
 
+  async joinOrganization(inviteCode: string): Promise<{ account: EnterpriseAccount }> {
+    if (!this.token || !this.currentAccount) throw new Error('登录已失效，请重新登录');
+    if (this.currentAccount.accountType !== 'personal') {
+      throw new Error('当前账号已经属于企业');
+    }
+    const normalizedInviteCode = inviteCode.trim().toUpperCase();
+    if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(normalizedInviteCode)) {
+      throw new Error('请输入有效的 8 位企业邀请码');
+    }
+    const requestGeneration = this.authOperationGeneration;
+    const requestToken = this.token;
+    const requestServerUrl = this.serverUrl;
+    const personalAccountId = this.currentAccount.id;
+    await this.assertCompatibleServer(this.serverUrl, ['personal_enterprise_upgrade']);
+    let joinError: unknown;
+    try {
+      const result = await this.request<{ account: EnterpriseAccount }>(
+        '/enterprise/auth/join-organization',
+        {
+          method: 'POST',
+          body: JSON.stringify({ inviteCode: normalizedInviteCode }),
+        },
+        {
+          serverUrl: requestServerUrl,
+          authorizationToken: requestToken,
+          preserveSessionOnUnauthorized: true,
+        },
+      );
+      if (!this.isSessionSnapshotCurrent(
+        requestGeneration,
+        requestServerUrl,
+        requestToken,
+      )) {
+        throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
+      }
+      if (
+        result?.account?.id === personalAccountId
+        && result.account.accountType === 'enterprise'
+      ) {
+        this.currentAccount = result.account;
+        return result;
+      }
+      joinError = new EnterpriseJoinStateUncertainError(
+        '企业服务器返回的升级身份不完整',
+      );
+    } catch (error) {
+      if (!this.isSessionSnapshotCurrent(
+        requestGeneration,
+        requestServerUrl,
+        requestToken,
+      )) {
+        throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
+      }
+      joinError = error;
+    }
+
+    let reconciliation: { account: EnterpriseAccount };
+    try {
+      reconciliation = await this.request<{ account: EnterpriseAccount }>(
+        '/enterprise/auth/me',
+        {},
+        {
+          serverUrl: requestServerUrl,
+          authorizationToken: requestToken,
+          preserveSessionOnUnauthorized: true,
+        },
+      );
+    } catch (error) {
+      if (!this.isSessionSnapshotCurrent(
+        requestGeneration,
+        requestServerUrl,
+        requestToken,
+      )) {
+        throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
+      }
+      const joinMessage = joinError instanceof Error ? joinError.message : String(joinError);
+      const reconciliationMessage = error instanceof Error ? error.message : String(error);
+      throw new EnterpriseJoinStateUncertainError(
+        `无法确认企业升级结果：${joinMessage}；身份对账失败：${reconciliationMessage}`,
+      );
+    }
+    if (!this.isSessionSnapshotCurrent(
+      requestGeneration,
+      requestServerUrl,
+      requestToken,
+    )) {
+      throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
+    }
+    if (
+      reconciliation.account?.id === personalAccountId
+      && reconciliation.account.accountType === 'enterprise'
+    ) {
+      this.currentAccount = reconciliation.account;
+      return { account: reconciliation.account };
+    }
+    if (
+      reconciliation.account?.id === personalAccountId
+      && reconciliation.account.accountType === 'personal'
+    ) {
+      throw joinError;
+    }
+    throw new EnterpriseJoinStateUncertainError(
+      '身份对账返回了与当前会话不一致的账号',
+    );
+  }
+
   async listAccounts(): Promise<EnterpriseAccount[]> {
     return (await this.request<{ accounts: EnterpriseAccount[] }>('/enterprise/accounts')).accounts;
   }
@@ -676,6 +816,7 @@ export class EnterpriseClient {
 
   async listAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['atoa']);
     return (await this.request<{ requests: EnterpriseAtoaInboxMessage[] }>(
       '/enterprise/atoa/inbox',
     )).requests;

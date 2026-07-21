@@ -95,6 +95,12 @@ describe('服务端 Agent profile 白名单', () => {
       toolFree: true,
       roles: ['company_owner', 'company_admin', 'manager', 'member'],
     });
+    expect(resolveAgentProfile('otto-enterprise-a2a')?.systemPrompt).toContain(
+      '发起方提案',
+    );
+    expect(resolveAgentProfile('otto-enterprise-a2a')?.systemPrompt).toContain(
+      '接收方回答',
+    );
   });
 
   it('三个基础身份使用独立白名单项并锁定 edition 与角色边界', () => {
@@ -158,6 +164,15 @@ describe('服务端 Agent profile 白名单', () => {
           positionTitle: '研发工程师',
           role: 'member',
         },
+        {
+          userId: 'central-account-2',
+          username: 'zhou.er',
+          displayName: '周二',
+          companyId: 'central-org-1',
+          departmentName: '销售部',
+          positionTitle: '销售经理',
+          role: 'member',
+        },
       ],
     });
 
@@ -170,6 +185,16 @@ describe('服务端 Agent profile 白名单', () => {
     expect(prompt).not.toContain('本机错误企业');
     expect(prompt).not.toContain('本机错误部门');
     expect(prompt).not.toContain('本机错误职位');
+    expect(prompt).toContain('ID=central-account-2');
+    expect(prompt).toContain('姓名=周二');
+    expect(prompt).toContain('部门=销售部');
+    expect(prompt).toContain('职位=销售经理');
+    expect(prompt).toContain('enterprise_collaboration');
+    expect(prompt).toContain('必须先获得用户确认');
+    expect(prompt).toContain('尊重对方的隐私授权范围');
+    expect(prompt).toContain('当前私聊、企业知识、工作日志和日程四类');
+    expect(prompt).toContain('不包括文件、API 密钥或其他聊天');
+    expect(prompt).toContain('不得声称已经发送');
   });
 
   it('会议 Agent 使用 system prompt，未知或客户端自造 profile 不会被接受', () => {

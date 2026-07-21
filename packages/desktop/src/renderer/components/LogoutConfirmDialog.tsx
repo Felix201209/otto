@@ -27,7 +27,7 @@ export function LogoutConfirmDialog({
     <ConfirmDialog
       open={open}
       title="确认退出登录"
-      message="退出后需要重新输入账号或手机号和密码。"
+      message="退出后需要重新登录；本机对话、模型/API 密钥、知识库和 Skill 都会保留。"
       confirmText={busy ? '正在退出…' : '确认退出'}
       cancelText="取消"
       danger

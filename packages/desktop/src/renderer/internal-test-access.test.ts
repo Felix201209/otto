@@ -10,7 +10,7 @@ import {
   resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
 
-describe('v1.9.0 企业认证访问模式', () => {
+describe('v1.9.1 企业认证访问模式', () => {
   it('交付版默认恢复真实登录，同时保留可逆的本地测试身份', () => {
     expect(INTERNAL_TEST_ACCESS_ENABLED).toBe(false);
     expect(INTERNAL_TEST_ACCOUNT).toMatchObject({

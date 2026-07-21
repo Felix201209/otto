@@ -172,6 +172,98 @@ describe('ProductWorkspaceStore', () => {
     expect(new ProductWorkspaceStore({ rootDir }).snapshot()).toEqual(local);
   });
 
+  it('中心认证快照包含 active 同事目录，且当前账号字段始终以认证账号为准', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    const snapshot = store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        department: '产品与研发部',
+        positionTitle: '研发工程师',
+        organizationMembers: [
+          {
+            id: 'central-account-1',
+            username: 'stale-self',
+            name: '目录中的旧姓名',
+            role: 'member',
+            department: '旧部门',
+            positionId: 'old-position',
+            positionTitle: '旧职位',
+            isAdmin: true,
+            status: 'active',
+          },
+          {
+            id: 'central-account-2',
+            username: 'staff02',
+            name: '周二',
+            role: 'member',
+            department: '销售部',
+            positionId: 'position-sales',
+            positionTitle: '销售经理',
+            isAdmin: false,
+            status: 'active',
+          },
+          {
+            id: 'central-account-disabled',
+            username: 'disabled',
+            name: '停用员工',
+            role: 'member',
+            department: null,
+            positionId: null,
+            positionTitle: null,
+            isAdmin: false,
+            status: 'disabled',
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.members).toEqual([
+      expect.objectContaining({
+        userId: 'central-account-1',
+        displayName: '林一',
+        departmentName: '产品与研发部',
+        positionTitle: '研发工程师',
+        role: 'member',
+      }),
+      expect.objectContaining({
+        userId: 'central-account-2',
+        username: 'staff02',
+        displayName: '周二',
+        departmentName: '销售部',
+        positionTitle: '销售经理',
+        role: 'member',
+      }),
+    ]);
+    expect(snapshot.members).toHaveLength(2);
+  });
+
+  it('中心身份指纹包含目录，目录成员变化会触发运行时身份刷新', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({ organizationMembers: [] }),
+    );
+    const first = store.enterpriseIdentityState().fingerprint;
+
+    store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        organizationMembers: [
+          {
+            id: 'central-account-2',
+            username: 'staff02',
+            name: '周二',
+            role: 'member',
+            department: '销售部',
+            positionId: null,
+            positionTitle: '销售经理',
+            isAdmin: false,
+            status: 'active',
+          },
+        ],
+      }),
+    );
+
+    expect(store.enterpriseIdentityState().fingerprint).not.toBe(first);
+  });
+
   it('中心认证身份存在时拒绝所有本机企业身份变更', () => {
     const store = new ProductWorkspaceStore({ rootDir });
     store.setAuthenticatedEnterpriseAccount(authenticatedAccount());

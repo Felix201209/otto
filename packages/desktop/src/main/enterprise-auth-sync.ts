@@ -8,11 +8,19 @@
 import type {
   EnterpriseAccount,
   EnterpriseClient,
+  EnterpriseOrganizationView,
   EnterpriseSessionResult,
 } from './enterprise-client.js';
-import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.js';
+import type {
+  AuthenticatedEnterpriseAccountInput,
+  AuthenticatedEnterpriseOrganizationMemberInput,
+} from './enterprise-identity.js';
 
-type EnterpriseLogoutClient = Pick<EnterpriseClient, 'logout'>;
+export const ENTERPRISE_JOIN_REAUTH_REQUIRED_MESSAGE =
+  '企业已成功加入，但本机身份同步失败，请重新登录以完成企业切换';
+
+type EnterpriseLogoutClient = Pick<EnterpriseClient, 'logout'> &
+  Partial<Pick<EnterpriseClient, 'getOrganizationView'>>;
 export type EnterpriseIdentitySynchronizer = (
   account: AuthenticatedEnterpriseAccountInput | null,
 ) => Promise<void>;
@@ -37,7 +45,77 @@ export class EnterpriseAuthOperationQueue {
   }
 }
 
-function localAccount(account: EnterpriseAccount): AuthenticatedEnterpriseAccountInput {
+const ENTERPRISE_DIRECTORY_MEMBER_LIMIT = 200;
+
+function boundedDirectoryText(
+  value: unknown,
+  maxLength: number,
+  required = false,
+): string | null | undefined {
+  if (value === null && !required) return null;
+  if (typeof value !== 'string') return required ? undefined : null;
+  const clean = Array.from(value, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127 ? ' ' : character;
+  }).join('').trim();
+  if (!clean) return required ? undefined : null;
+  if (clean.length > maxLength) {
+    return required ? undefined : clean.slice(0, maxLength);
+  }
+  return clean;
+}
+
+function organizationMembersFromView(
+  account: EnterpriseAccount,
+  view: EnterpriseOrganizationView,
+): AuthenticatedEnterpriseOrganizationMemberInput[] | undefined {
+  if (
+    !view.organization ||
+    view.organization.id !== account.organizationId ||
+    view.organization.status !== 'active'
+  ) {
+    return undefined;
+  }
+  const members: AuthenticatedEnterpriseOrganizationMemberInput[] = [];
+  for (const member of view.members) {
+    if (member.status !== 'active') continue;
+    const id = boundedDirectoryText(member.id, 128, true);
+    const username = boundedDirectoryText(member.username, 128, true);
+    const name = boundedDirectoryText(member.name, 160, true);
+    if (!id || !username || !name) continue;
+    members.push({
+      id,
+      username,
+      name,
+      role: boundedDirectoryText(member.role, 64) ?? null,
+      department: boundedDirectoryText(member.department, 160) ?? null,
+      positionId: boundedDirectoryText(member.positionId, 128) ?? null,
+      positionTitle: boundedDirectoryText(member.positionTitle, 160) ?? null,
+      isAdmin: member.isAdmin,
+      status: 'active',
+    });
+    if (members.length >= ENTERPRISE_DIRECTORY_MEMBER_LIMIT) break;
+  }
+  return members;
+}
+
+async function localAccount(
+  account: EnterpriseAccount,
+  client: EnterpriseLogoutClient,
+): Promise<AuthenticatedEnterpriseAccountInput> {
+  let organizationMembers:
+    | AuthenticatedEnterpriseOrganizationMemberInput[]
+    | undefined;
+  if (client.getOrganizationView) {
+    try {
+      organizationMembers = organizationMembersFromView(
+        account,
+        await client.getOrganizationView(),
+      );
+    } catch {
+      // 当前账号来自已认证会话，仍可同步；目录不可达时保持未知，绝不伪造同事。
+    }
+  }
   return {
     id: account.id,
     organizationId: account.organizationId,
@@ -49,6 +127,7 @@ function localAccount(account: EnterpriseAccount): AuthenticatedEnterpriseAccoun
     department: account.department,
     positionId: account.positionId,
     positionTitle: account.positionTitle,
+    ...(organizationMembers ? { organizationMembers } : {}),
     leaseExpiresAt: new Date(Date.now() + ENTERPRISE_IDENTITY_LEASE_MS).toISOString(),
   };
 }
@@ -94,7 +173,7 @@ export async function authenticateAndSyncEnterpriseAccount<
 ): Promise<TResult> {
   const result = await authenticate();
   try {
-    await synchronize(localAccount(result.account));
+    await synchronize(await localAccount(result.account, client));
     persistSession();
     return result;
   } catch (error) {
@@ -114,7 +193,9 @@ export async function restoreAndSyncEnterpriseSession(
   persistSession: () => void,
 ): Promise<EnterpriseSessionResult> {
   try {
-    await synchronize(session.account ? localAccount(session.account) : null);
+    await synchronize(
+      session.account ? await localAccount(session.account, client) : null,
+    );
     return session;
   } catch (error) {
     await rollbackFailedAuthentication(client, synchronize, persistSession);
@@ -137,11 +218,46 @@ export async function syncVerifiedEnterpriseAccount(
   persistSession: () => void,
 ): Promise<void> {
   try {
-    await synchronize(account ? localAccount(account) : null);
+    await synchronize(account ? await localAccount(account, client) : null);
   } catch (error) {
     await rollbackFailedAuthentication(client, synchronize, persistSession);
     throw new Error(`企业账号变更未能安全应用：${errorMessage(error)}`);
   }
+}
+
+/**
+ * 加入企业是中心服务已经提交的不可重复阶段。后续本机身份同步失败时仍执行安全
+ * 回滚，但向 renderer 返回专用错误，要求清掉旧个人身份并重新登录完成对账。
+ */
+export async function syncJoinedEnterpriseAccount(
+  account: EnterpriseAccount,
+  client: EnterpriseLogoutClient,
+  synchronize: EnterpriseIdentitySynchronizer,
+  persistSession: () => void,
+): Promise<void> {
+  try {
+    await syncVerifiedEnterpriseAccount(account, client, synchronize, persistSession);
+  } catch (error) {
+    throw new Error(`${ENTERPRISE_JOIN_REAUTH_REQUIRED_MESSAGE}：${errorMessage(error)}`);
+  }
+}
+
+/**
+ * 加入企业请求的提交结果无法与中心对账时 fail closed：远端 logout 即使失败，
+ * EnterpriseClient 也会先清 token；随后持久化退出态并清本机控制面身份。
+ */
+export async function failClosedUncertainEnterpriseJoin(
+  cause: unknown,
+  client: EnterpriseLogoutClient,
+  synchronize: EnterpriseIdentitySynchronizer,
+  persistSession: () => void,
+): Promise<never> {
+  try {
+    await logoutAndClearEnterpriseIdentity(client, synchronize, persistSession);
+  } catch {
+    // 清 token、持久化退出态、清本机身份均已分别尝试；保留原始不确定状态原因。
+  }
+  throw new Error(`${ENTERPRISE_JOIN_REAUTH_REQUIRED_MESSAGE}：${errorMessage(cause)}`);
 }
 
 /**
@@ -166,19 +282,23 @@ export async function refreshEnterpriseIdentityLease(
   return 'signed-out';
 }
 
-/** 用户主动退出：中心登出、退出态落盘和本机身份清理三个步骤均会执行。 */
+/**
+ * 用户主动退出：先让 EnterpriseClient 同步清空内存 token，再立即落盘退出态并
+ * 清理本机身份。中心 session 撤销使用旧 token 在后台 best-effort 完成，网络
+ * 不可达时也不能把客户端卡在已登录界面，或让旧 token 留在本机持久化状态。
+ */
 export async function logoutAndClearEnterpriseIdentity(
   client: EnterpriseLogoutClient,
   synchronize: EnterpriseIdentitySynchronizer,
   persistSession: () => void,
 ): Promise<void> {
-  let logoutError: unknown;
   let persistError: unknown;
   let synchronizeError: unknown;
   try {
-    await client.logout();
-  } catch (error) {
-    logoutError = error;
+    const remoteLogout = client.logout();
+    void remoteLogout.catch(() => undefined);
+  } catch {
+    // 即使实现同步抛错，本机退出也必须继续；远端 session 会按 TTL 失效。
   }
   try {
     persistSession();
@@ -193,7 +313,6 @@ export async function logoutAndClearEnterpriseIdentity(
   // 本机未清理是更高优先级的授权风险；其次是不安全的凭据落盘失败。
   if (synchronizeError) throw synchronizeError;
   if (persistError) throw persistError;
-  if (logoutError) throw logoutError;
 }
 
 /** EnterpriseClient 已因 401 清 token 后调用；先落盘，再清本机授权。 */
