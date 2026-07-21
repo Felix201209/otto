@@ -80,8 +80,25 @@ function sessionsDir(): string {
   return path.join(os.homedir(), '.otto-user', 'sessions');
 }
 
+/** 固定日志目录：~/.otto-user/logs/ */
+function logsDir(): string {
+  return path.join(os.homedir(), '.otto-user', 'logs');
+}
+
+function serverLogPath(): string {
+  return path.join(logsDir(), 'otto-server.log');
+}
+
 /** 一次健康探测的超时（ms）。 */
 const HEALTH_TIMEOUT_MS = 1500;
+/** 定期健康检查间隔（ms）。 */
+const HEALTH_CHECK_INTERVAL_MS = 30_000;
+/** 连续失败多少次触发自动重启。 */
+const MAX_HEALTH_FAILURES = 3;
+/** 自动重启最大次数（防止无限重启循环）。 */
+const MAX_RESTART_COUNT = 3;
+/** 端口冲突时最多尝试多少个端口。 */
+const MAX_PORT_RETRIES = 10;
 
 /**
  * server 的归属：
@@ -157,6 +174,12 @@ export class ServerManager {
    * 不检查就会留下一个没人管的孤儿 server。
    */
   private shuttingDown = false;
+  /** 健康检查定时器。 */
+  private healthCheckTimer?: ReturnType<typeof setInterval>;
+  /** 健康检查连续失败计数。 */
+  private consecutiveHealthFailures = 0;
+  /** 已自动重启的次数（防无限循环）。 */
+  private restartCount = 0;
   private readonly dependencies: ServerManagerDependencies;
   private readonly localEnterpriseServerUrl: string | null;
 
@@ -235,6 +258,10 @@ export class ServerManager {
     // 3) 同时拉起 enterprise-server（管理员登录 / 看板功能依赖）。
     // 静默失败：企业后台是辅助功能，不影响主对话。
     if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
+    // 4) 启动定期健康检查（仅 embedded 模式需要，discovered 的由别的进程负责）。
+    if (this.ownership === 'embedded') {
+      this.startHealthCheck();
+    }
     return {
       endpoint: publicServerEndpoint(embeddedEp),
       ownership: 'embedded',
@@ -271,6 +298,8 @@ export class ServerManager {
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.stopHealthCheck();
+    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] SHUTDOWN 正在停止 Otto server…\n`); } catch {}
     // listen 尚未完成时 enterpriseSrv 还没有赋值；必须显式中止并等待启动路径收尾。
     this.enterpriseListenAbort?.abort();
     if (this.enterpriseEnsurePromise) {
@@ -312,6 +341,99 @@ export class ServerManager {
     }
   }
 
+  // ─── 健康检查与自动重启 ────────────────────────────────────────
+
+  /** 启动定期健康检查（仅 embedded server）。 */
+  private startHealthCheck(): void {
+    if (this.healthCheckTimer) return;
+    this.consecutiveHealthFailures = 0;
+    this.healthCheckTimer = setInterval(() => {
+      void this.runHealthCheck();
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  private stopHealthCheck(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = undefined;
+    }
+  }
+
+  private async runHealthCheck(): Promise<void> {
+    if (!this.embedded || !this.currentEndpointRecord) return;
+    const { host, port } = this.currentEndpointRecord;
+    try {
+      const mod = await this.dependencies.loadOttoServer();
+      const healthy = await this.dependencies.probeHealth(
+        host, port, mod.HTTP_ROUTES.health,
+      );
+      if (healthy) {
+        this.consecutiveHealthFailures = 0;
+        // 健康恢复后重置重启计数（给后续故障一个新的重启机会）
+        this.restartCount = 0;
+        return;
+      }
+    } catch {
+      // probeHealth 自己吞异常，到这里就是 unhealthy
+    }
+    this.consecutiveHealthFailures++;
+    console.warn(
+      `[ServerManager] 健康检查失败 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`,
+    );
+    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] HEALTH_FAIL #${this.consecutiveHealthFailures}\n`); } catch {}
+    if (this.consecutiveHealthFailures >= MAX_HEALTH_FAILURES) {
+      await this.restartEmbeddedServer();
+    }
+  }
+
+  /** 自动重启内嵌 server（带退避和上限）。 */
+  private async restartEmbeddedServer(): Promise<void> {
+    if (!this.embedded || !this.currentEndpointRecord) return;
+    this.restartCount++;
+    if (this.restartCount > MAX_RESTART_COUNT) {
+      const msg = `[ServerManager] 已重启 ${MAX_RESTART_COUNT} 次依然不健康，停止自动重启。请手动排查。`;
+      console.error(msg);
+      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+      this.stopHealthCheck();
+      return;
+    }
+    // 退避：1s → 3s → 5s
+    const backoffMs = [1000, 3000, 5000][this.restartCount - 1] ?? 5000;
+    console.warn(
+      `[ServerManager] ${backoffMs / 1000}s 后尝试第 ${this.restartCount} 次重启…`,
+    );
+    await new Promise((r) => setTimeout(r, backoffMs));
+    if (this.shuttingDown) return;
+
+    try {
+      await this.embedded.stop();
+    } catch { /* 旧实例可能已无法响应 */ }
+    try {
+      const mod = await this.dependencies.loadOttoServer();
+      mod.clearEndpoint();
+    } catch {}
+    this.embedded = undefined;
+    this.currentEndpointRecord = undefined;
+    this.consecutiveHealthFailures = 0;
+
+    // 重新拉起
+    try {
+      const mod = await this.dependencies.loadOttoServer();
+      const port = resolvePort(mod.DEFAULT_PORT);
+      const ep = await this.startEmbedded(port, mod);
+      this.ownership = 'embedded';
+      this.currentEndpointRecord = ep;
+      this.startHealthCheck();
+      const restartMsg = `[ServerManager] server 已成功重启于端口 ${ep.port}`;
+      console.log(restartMsg);
+      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${restartMsg}\n`); } catch {}
+    } catch (err) {
+      const failMsg = `[ServerManager] 自动重启失败: ${(err as Error)?.message ?? String(err)}`;
+      console.error(failMsg);
+      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${failMsg}\n`); } catch {}
+    }
+  }
+
   // ──────────────────────────────────────────────────────────────────────
 
   /** 已进入退出流程时抛错，令 ensure 调用方终止后续动作。 */
@@ -326,19 +448,35 @@ export class ServerManager {
     port: number,
     mod: typeof import('otto-server'),
   ): Promise<ServerEndpointRecord> {
-    // 用户已 setup 飞书凭证时启用飞书网关，让桌面 app 的飞书双向同步真正激活
-    // （adapter 对无凭证已 fail-soft，这里仅在凭证文件存在时开）。Issue #3/#6。
     const enableFeishu = feishuCredentialsExist();
-    // 聊天记录落盘（被动保存）：内嵌 server 用文件持久化会话/消息，重启后原样恢复
-    // （否则 InMemorySessionStore 一退出全丢）。落 ~/.otto-user/sessions/。
     const store = new mod.PersistentSessionStore(sessionsDir());
+    // 确保日志目录存在并设置固定日志路径
+    try { fs.mkdirSync(logsDir(), { recursive: true }); } catch {}
+    process.env.OTTO_LOG_DIR = logsDir();
     const server = new mod.OttoServer({
       host: mod.DEFAULT_HOST,
       port,
       enableFeishu,
       store,
     }) as TrustedOttoServer;
-    await server.start();
+    try {
+      await server.start();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
+        // 端口冲突：自动 +1 重试，最多 MAX_PORT_RETRIES 次
+        const nextPort = port + 1;
+        if (nextPort - resolvePort(mod.DEFAULT_PORT) > MAX_PORT_RETRIES) {
+          throw new Error(
+            `端口 ${port}~${nextPort - 1} 均被占用，请关闭占用端口的进程后重试`,
+          );
+        }
+        console.warn(`[ServerManager] 端口 ${port} 被占用，尝试 ${nextPort}…`);
+        try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] WARN 端口 ${port} 被占用，尝试 ${nextPort}\n`); } catch {}
+        return this.startEmbedded(nextPort, mod);
+      }
+      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ERROR server启动失败: ${(err as Error)?.message ?? String(err)}\n`); } catch {}
+      throw err;
+    }
     // listen 完成时若已进入退出流程（shutdown 与 ensure 竞态：shutdown 先跑完、
     // 这里才 listen 成功），立即停掉刚起的 server 并清理端点文件，不留孤儿。
     if (this.shuttingDown) {
@@ -359,6 +497,13 @@ export class ServerManager {
       port: boundPort,
       clientToken,
     } = server.endpoint;
+    const logMsg = `[ServerManager] otto-server 已就绪 → http://${host}:${boundPort} | 飞书:${enableFeishu ? '已启用' : '未启用'} | 日志: ${serverLogPath()}`;
+    const logFile = serverLogPath();
+    try { fs.mkdirSync(logsDir(), { recursive: true }); } catch {}
+    try {
+      fs.appendFileSync(logFile, `[${new Date().toISOString()}] STARTED ${logMsg}\n`);
+    } catch {}
+    console.log(logMsg);
     const { controlToken } = server;
     // 内嵌 server 由本进程写端点文件。
     const publicEndpoint = mod.writeEndpoint(
