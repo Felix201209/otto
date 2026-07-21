@@ -83,6 +83,8 @@ export interface OttoState {
   queuedCounts: Record<string, number>;
   /** 待关联的 clientRequestId（create_session 后等 session_created 回包用）。 */
   pendingCreateRequestId: string | null;
+  /** 未读会话 ID 列表（桌面通知未读闪烁点数据源）。 */
+  unreadSessions: string[];
 }
 
 const initialState: OttoState = {
@@ -99,6 +101,7 @@ const initialState: OttoState = {
   lastError: null,
   queuedCounts: {},
   pendingCreateRequestId: null,
+  unreadSessions: [],
 };
 
 // ── reducer action ────────────────────────────────────────────────────────
@@ -112,7 +115,8 @@ type Action =
   | { kind: 'local_error'; message: string }
   | { kind: 'clear_error' }
   | { kind: 'pending_create'; clientRequestId: string }
-  | { kind: 'set_optimistic_model'; model: string; sessionId: string };
+  | { kind: 'set_optimistic_model'; model: string; sessionId: string }
+  | { kind: 'set_unread'; sessions: string[] };
 
 function upsertSession(
   state: OttoState,
@@ -300,6 +304,9 @@ function reducer(state: OttoState, action: Action): OttoState {
       }
       return { ...state, sessions, currentModel: action.model };
     }
+
+    case 'set_unread':
+      return { ...state, unreadSessions: action.sessions };
 
     case 'frame':
       return applyFrame(state, action.frame);
@@ -762,6 +769,26 @@ export function useOttoStore(): UseOttoStore {
       transport.send({ type: 'unsubscribe', payload: { sessionId: id } });
     };
   }, [state.activeSessionId, state.connection]);
+
+  // ── 桌面通知订阅：未读闪烁 + 点击跳转 ──
+  useEffect(() => {
+    const unsubUnread = window.otto.onNotificationUnreadChanged?.((unread) => {
+      dispatch({ kind: 'set_unread', sessions: unread });
+    }) ?? (() => {});
+
+    const unsubClick = window.otto.onNotificationSessionOpen?.((sessionId) => {
+      dispatch({ kind: 'select', sessionId });
+      transport.send({ type: 'subscribe', payload: { sessionId } });
+      transport.send({ type: 'get_history', payload: { sessionId } });
+      // 点击通知后标记该会话已读
+      void window.otto.notificationMarkRead(sessionId);
+    }) ?? (() => {});
+
+    return () => {
+      unsubUnread();
+      unsubClick();
+    };
+  }, []);
 
   // 专家开场消息发送：等新会话被选中（activeSessionId 命中 kickoffRef）且连接就绪。
   // 声明顺序刻意排在上面的「订阅 + 拉历史」effect 之后——同一次 commit 里 effect 按声明

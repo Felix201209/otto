@@ -106,6 +106,7 @@ function getMimeType(filePath: string): string {
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
+import { NotificationService, type NotificationPayload } from './notification-service.js';
 import {
   generateAndSaveWorkReport,
   localDateKey,
@@ -200,6 +201,8 @@ const serverManager = new ServerManager({
     tracer.updateStatus(status);
   },
 });
+/** 桌面通知服务：OS 原生 toast + 未读闪烁点管理。 */
+const notificationService = new NotificationService();
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
@@ -283,6 +286,11 @@ const IPC = {
   enterpriseTicketAction: 'otto:enterprise-ticket-action',
   parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
+  notificationShow: 'otto:notification-show',
+  notificationMarkRead: 'otto:notification-mark-read',
+  notificationUnreadChanged: 'otto:notification-unread-changed',
+  notificationCheckPermission: 'otto:notification-check-permission',
+  notificationSessionOpen: 'otto:notification-session-open',
 } as const;
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
@@ -1398,6 +1406,30 @@ function registerIpc(): void {
     });
     notification.show();
     return true;
+  });
+  // ── 通知系统 IPC 代理 ──
+  ipcMain.handle(IPC.notificationShow, (_e, payload: unknown) => {
+    const p = payload as NotificationPayload;
+    if (!p || typeof p.sessionId !== 'string' || typeof p.preview !== 'string') return;
+    notificationService.show(p);
+  });
+  ipcMain.handle(IPC.notificationMarkRead, (_e, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') return;
+    notificationService.markRead(sessionId);
+  });
+  ipcMain.handle(IPC.notificationCheckPermission, () => notificationService.checkPermission());
+  // 通知点击跳转回调：push 给 renderer
+  notificationService.registerCallbacks({
+    onUnreadChange: (unread) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.notificationUnreadChanged, unread);
+      }
+    },
+    onNotificationClick: (sessionId) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.notificationSessionOpen, sessionId);
+      }
+    },
   });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
   ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));

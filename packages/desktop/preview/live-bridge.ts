@@ -186,6 +186,16 @@ const bridge = {
   onMenu(_handler: MenuHandler): () => void { return () => {}; },
   openExternal(_url: string): Promise<void> { return Promise.resolve(); },
   openPath(_path: string): Promise<void> { return Promise.resolve(); },
+  // 通知系统（浏览器预览：stub）
+  async notificationShow(_payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void> {
+    // 浏览器 Notification API（需用户授权）
+  },
+  async notificationMarkRead(_sessionId: string): Promise<void> {},
+  async notificationCheckPermission(): Promise<boolean> {
+    return 'Notification' in window && Notification.permission === 'granted';
+  },
+  onNotificationUnreadChanged(_cb: (unread: string[]) => void): () => void { return () => {}; },
+  onNotificationSessionOpen(_cb: (sessionId: string) => void): () => void { return () => {}; },
   async selectFiles(): Promise<string[]> {
     // 浏览器环境：使用 input[type=file] 回退，无法获取真实路径
     return new Promise((resolve) => {
