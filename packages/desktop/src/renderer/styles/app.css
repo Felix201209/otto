@@ -6454,6 +6454,8 @@ h6.otto-prose__h {
 .otto-orgtree__department { position: relative; padding: 5px 0 5px 12px; border-left: 1px solid var(--otto-border-strong); }
 .otto-orgtree__department::before { content: ''; position: absolute; width: 8px; border-top: 1px solid var(--otto-border-strong); left: 0; top: 13px; }
 .otto-orgtree__department-name { font-size: 10.5px; color: var(--otto-text-secondary); font-weight: 700; }
+.otto-orgtree__department-toggle { width: 100%; min-height: 22px; border: 0; background: transparent; padding: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; text-align: left; }
+.otto-orgtree__department-toggle:hover { color: var(--otto-accent-hover); }
 .otto-orgtree__member { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 10px; }
 .otto-orgtree__member span:last-child, .otto-orgtree__vacant { color: var(--otto-text-tertiary); font-size: 9px; }
 .otto-orgtree__member-button { width: 100%; border: 0; padding: 4px 2px; background: transparent; color: inherit; cursor: pointer; text-align: left; }

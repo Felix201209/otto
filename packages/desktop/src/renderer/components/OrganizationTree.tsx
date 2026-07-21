@@ -19,6 +19,8 @@ import {
   IconSparkle,
 } from './icons.js';
 
+const ORGANIZATION_REFRESH_MS = 10_000;
+
 export function OrganizationTree({
   workspace,
   enterpriseAccount,
@@ -76,23 +78,34 @@ export function OrganizationTree({
     if (!hasAuthenticatedOrganization) return;
 
     let cancelled = false;
-    setOrgLoading(true);
-    setOrgError(null);
-    setOrgView(null);
-    void window.otto.enterpriseOrganizationView()
-      .then((view) => {
-        if (!cancelled) setOrgView(view);
-      })
-      .catch((error: unknown) => {
+    const loadOrganization = async (showLoading: boolean): Promise<void> => {
+      if (showLoading) {
+        setOrgLoading(true);
+        setOrgView(null);
+      }
+      try {
+        const view = await window.otto.enterpriseOrganizationView();
+        if (cancelled) return;
+        setOrgView(view);
+        setOrgError(null);
+      } catch (error: unknown) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         setOrgError(`组织信息加载失败：${message}`);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setOrgLoading(false);
-      });
+      }
+    };
 
-    return () => { cancelled = true; };
+    void loadOrganization(true);
+    const timer = window.setInterval(() => {
+      void loadOrganization(false);
+    }, ORGANIZATION_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [
     hasAuthenticatedOrganization,
     enterpriseAccount?.organizationId,
@@ -141,8 +154,7 @@ export function OrganizationTree({
                   deptMap.get(dept)!.push(member);
                 }
                 return [...deptMap.entries()].map(([dept, members]) => (
-                  <div key={dept} className="otto-orgtree__department">
-                    <div className="otto-orgtree__department-name">{dept}</div>
+                  <DepartmentSection key={dept} name={dept}>
                     {members.map((member) => (
                       <button
                         key={member.id}
@@ -154,7 +166,7 @@ export function OrganizationTree({
                         <span>{member.isAdmin ? '管理员' : member.role || '成员'}</span>
                       </button>
                     ))}
-                  </div>
+                  </DepartmentSection>
                 ));
               })()}
             </div>
@@ -381,6 +393,33 @@ type Organization = NonNullable<
   ProductWorkspaceSnapshot['managerWorkspace']
 >['organization'];
 
+function DepartmentSection({
+  name,
+  children,
+}: {
+  name: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div className="otto-orgtree__department">
+      <button
+        type="button"
+        className="otto-orgtree__department-name otto-orgtree__department-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <IconChevronDown
+          size={11}
+          className={'otto-orgtree__chevron' + (expanded ? '' : ' is-collapsed')}
+        />
+        <span>{name}</span>
+      </button>
+      {expanded ? children : null}
+    </div>
+  );
+}
+
 function normalizeChatKey(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase();
 }
@@ -419,8 +458,7 @@ function CompanyBranch({
             (position) => position.departmentId === department.id,
           );
           return (
-            <div key={department.id} className="otto-orgtree__department">
-              <div className="otto-orgtree__department-name">{department.name}</div>
+            <DepartmentSection key={department.id} name={department.name}>
               {members.map((member) => {
                 const chatMember = chatMemberByWorkspaceKey.get(normalizeChatKey(member.userId))
                   ?? chatMemberByWorkspaceKey.get(normalizeChatKey(member.displayName));
@@ -452,7 +490,7 @@ function CompanyBranch({
                     </div>
                   ))
                 : null}
-            </div>
+            </DepartmentSection>
           );
         })}
         {departments.length === 0 ? (

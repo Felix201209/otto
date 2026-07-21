@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
 import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
@@ -21,6 +21,7 @@ vi.mock('../peerOttoRunner.js', async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
 });
@@ -340,6 +341,119 @@ describe('OrganizationTree', () => {
     expect(enterpriseOrganizationView).not.toHaveBeenCalled();
     expect(screen.getByText('已通过链接加入；组织详情将在企业服务同步后显示。'))
       .toBeTruthy();
+  });
+
+  it('真实企业组织树会定时刷新，新成员无需重启即可出现', async () => {
+    vi.useFakeTimers();
+    const organization = {
+      id: 'org_acme',
+      name: 'Acme',
+      status: 'active' as const,
+      createdAt: '2026-07-13T00:00:00.000Z',
+    };
+    const enterpriseOrganizationView = vi.fn()
+      .mockResolvedValueOnce({
+        organization,
+        members: [{
+          id: 'acc_1',
+          username: 'alice',
+          name: 'Alice',
+          role: 'Engineer',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+        }],
+        employeeCount: 1,
+      })
+      .mockResolvedValue({
+        organization,
+        members: [{
+          id: 'acc_1',
+          username: 'alice',
+          name: 'Alice',
+          role: 'Engineer',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+        }, {
+          id: 'acc_2',
+          username: 'bob',
+          name: 'Bob',
+          role: 'Designer',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+        }],
+        employeeCount: 2,
+      });
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    try {
+      render(
+        <OrganizationTree
+          workspace={personalWorkspace}
+          enterpriseAccount={authenticatedEnterpriseAccount}
+        />,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(enterpriseOrganizationView).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+      expect(screen.getByText('Alice')).toBeTruthy();
+      expect(screen.queryByText('Bob')).toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Bob')).toBeTruthy();
+      expect(enterpriseOrganizationView).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('真实企业组织树支持自定义部门名称，并可折叠部门节点', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'Skunkworks Lab',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    const department = await screen.findByRole('button', { name: 'Skunkworks Lab' });
+    expect(screen.getByText('Alice')).toBeTruthy();
+    expect(department.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(department);
+
+    expect(department.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Alice')).toBeNull();
   });
 
   it('can ask Otto from a direct chat with recent messages', async () => {
