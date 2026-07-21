@@ -23,14 +23,28 @@ import {
   writeEndpoint,
 } from './endpoint.js';
 import { DEFAULT_HOST, DEFAULT_PORT } from './protocol.js';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join as pathJoin } from 'node:path';
+
+/** 飞书凭证文件是否存在。与 desktop ServerManager 使用同一检测逻辑。 */
+function feishuCredentialsExist(): boolean {
+  try {
+    return existsSync(pathJoin(homedir(), '.otto-user', 'feishu-credentials.json'));
+  } catch {
+    return false;
+  }
+}
 
 async function cmdStart(): Promise<void> {
   const port = Number(process.env.OTTO_SERVER_PORT ?? DEFAULT_PORT);
-  const server = new OttoServer({ host: DEFAULT_HOST, port });
+  const enableFeishu = feishuCredentialsExist();
+  console.log(`[otto-server] feishu gateway: ${enableFeishu ? 'enabled' : 'disabled (no credentials)'}`);
+  const server = new OttoServer({ host: DEFAULT_HOST, port, enableFeishu });
   await server.start();
   const { host, port: boundPort, clientToken } = server.endpoint;
   writeEndpoint(host, boundPort, clientToken, server.controlToken);
-   
+
   console.log(
     `[otto-server] listening on http://${host}:${boundPort} ` +
       `(ws ${host}:${boundPort}/ws，受 clientToken 保护)`,
@@ -42,7 +56,7 @@ async function cmdStart(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-     
+
     console.log('\n[otto-server] shutting down…');
     await server.stop();
     clearEndpoint();
@@ -55,13 +69,13 @@ async function cmdStart(): Promise<void> {
 function cmdStatus(): void {
   const ep = readEndpoint();
   if (!ep) {
-     
+
     console.log('[otto-server] 未发现运行中的 server（无端点文件）。');
     process.exitCode = 1;
     return;
   }
   const alive = isAlive(ep.pid);
-   
+
   console.log(
     alive
       ? `[otto-server] 运行中 PID ${ep.pid} @ http://${ep.host}:${ep.port}（协议 v${ep.protocolVersion}）`
@@ -73,7 +87,7 @@ function cmdStatus(): void {
 function cmdStop(): void {
   const ep = readEndpoint();
   if (!ep || !isAlive(ep.pid)) {
-     
+
     console.log('[otto-server] 没有运行中的 server 可停止。');
     clearEndpoint();
     return;
@@ -81,10 +95,10 @@ function cmdStop(): void {
   try {
     process.kill(ep.pid, 'SIGTERM');
     clearEndpoint();
-     
+
     console.log(`[otto-server] 已向 PID ${ep.pid} 发送 SIGTERM。`);
   } catch (e) {
-     
+
     console.error(`[otto-server] 停止失败: ${(e as Error).message}`);
     process.exitCode = 1;
   }
@@ -112,7 +126,7 @@ async function main(): Promise<void> {
       cmdStop();
       break;
     default:
-       
+
       console.error(`未知命令: ${cmd}（用 start | stop | status）`);
       process.exitCode = 2;
   }
