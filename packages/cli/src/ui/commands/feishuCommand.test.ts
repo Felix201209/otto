@@ -16,6 +16,7 @@ import {
   decideFeishuAutoReply,
   buildFeishuProcessingReceipt,
   appendFeishuProcessSummary,
+  buildFeishuMemoryHitNotice,
 } from './feishuCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import * as credentials from '../../services/feishu/credentials.js';
@@ -121,6 +122,11 @@ describe('feishuCommand', () => {
     expect(summary).toContain('本次处理总结');
     expect(summary).toContain('调用了 read_many_files、run_shell_command');
     expect(summary).toContain('还差什么');
+  });
+
+  it('should expose a concise Feishu memory hit notice', () => {
+    expect(buildFeishuMemoryHitNotice(3)).toBe('已参考 3 条相关历史经验。');
+    expect(buildFeishuMemoryHitNotice(0)).toBe('');
   });
 
   it('should handle stop when not running', async () => {

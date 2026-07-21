@@ -154,6 +154,7 @@ function makeFakeConfig(stream: () => AsyncGenerator<unknown>): Config {
     }),
     getModel: () => 'test-model',
     getMaxSessionTurns: () => 10,
+    getProjectRoot: () => 'D:\\work\\otto-demo',
   };
   return fake as unknown as Config;
 }
@@ -535,6 +536,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       userInput: '调研三家企业 AI 竞品并给出结论',
       details: '已完成三家竞品的价格与定位对比。',
       sessionId: session.sessionId,
+      projectRoot: 'D:\\work\\otto-demo',
       success: true,
     });
   });

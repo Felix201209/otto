@@ -177,6 +177,11 @@ function injectRelevantExperience(
   return message;
 }
 
+export function buildFeishuMemoryHitNotice(matchCount: number): string {
+  if (matchCount <= 0) return '';
+  return `已参考 ${matchCount} 条相关历史经验。`;
+}
+
 interface TaskToolArgs {
   description?: string;
   max_turns?: number;
@@ -3697,6 +3702,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
       } else {
         currentMessage = messageTextForAI;
       }
+      const originalUserQueryForMemory = messageTextForAI;
 
       // 🤖 显式派发轨：`@cc` / `@codex` 前缀，或本群默认执行方为 claude-code / codex 时，
       //    将消息改写为强制派发指令，让 agent loop 调用 delegate_to_agent 工具
@@ -3727,7 +3733,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
       try {
         const matches = await getWorkLogger().searchRelevantExperience(
-          messageTextForAI,
+          originalUserQueryForMemory,
           {
             sessionId: config.getSessionId?.(),
             projectRoot: config.getProjectRoot?.(),
@@ -3738,6 +3744,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
         if (matches.length > 0) {
           const experienceBlock = formatRelevantExperience(matches);
           currentMessage = injectRelevantExperience(currentMessage, experienceBlock);
+          const hitNotice = buildFeishuMemoryHitNotice(matches.length);
+          if (hitNotice) {
+            blocks.push({ type: 'text', content: `*${hitNotice}*` });
+          }
           dlog(`[Feishu Memory] Found ${matches.length} related historical experience item(s) for context injection.`);
           tuiContext?.addItem({
             type: 'info',

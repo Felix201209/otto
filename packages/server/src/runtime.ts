@@ -253,6 +253,7 @@ export interface WorkResultLogEntry {
   success: boolean;
   details?: string;
   sessionId?: string;
+  projectRoot?: string;
   entryType: 'work_result';
   taskTitle: string;
   userInput: string;
@@ -1304,6 +1305,7 @@ export class CoreSessionRuntime implements SessionRuntime {
         userInput: userInput.slice(0, 2_000),
         details,
         sessionId: this.sessionId,
+        projectRoot: this.config.getProjectRoot?.(),
       });
       try {
         getRealtimeWatcher()?.record?.(taskTitle, userInput.slice(0, 500));
