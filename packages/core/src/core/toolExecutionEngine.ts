@@ -1156,6 +1156,8 @@ export class ToolExecutionEngine {
           category,
           success: true,
           details,
+          sessionId: this.config?.getSessionId?.(),
+          projectRoot: this.config?.getProjectRoot?.(),
         }).catch(() => {});
         feedAutoSkillSignals({
           toolName: reqInfo.name,
@@ -1223,6 +1225,8 @@ export class ToolExecutionEngine {
           category,
           success: false,
           details,
+          sessionId: this.config?.getSessionId?.(),
+          projectRoot: this.config?.getProjectRoot?.(),
         }).catch(() => {});
         feedAutoSkillSignals({
           toolName: reqInfo.name,

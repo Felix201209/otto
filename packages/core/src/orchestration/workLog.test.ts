@@ -78,4 +78,118 @@ describe('WorkLogger 工作结果日志', () => {
       details: '已完成三家竞品的功能、价格和定位对比。',
     });
   });
+
+  it('finds relevant prior work results without returning unrelated logs', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-worklog-'));
+    tempDirs.push(root);
+    const now = new Date(2026, 6, 21, 10, 0, 0);
+    const logger = new WorkLogger(root, () => now);
+
+    await logger.log({
+      toolName: 'otto_work_result',
+      action: 'Fixed session memory injection',
+      category: 'memory',
+      success: true,
+      entryType: 'work_result',
+      taskTitle: 'session memory injection',
+      userInput: 'inject related worklog memory for new sessions',
+      details: 'Added lightweight retrieval, recency scoring, and capped context injection.',
+      sessionId: 'chat-1',
+    });
+    await logger.log({
+      toolName: 'calendar_create',
+      action: 'Created team calendar event',
+      category: 'calendar',
+      success: true,
+      details: 'Weekly sync meeting',
+      sessionId: 'chat-2',
+    });
+
+    const matches = await logger.searchRelevantExperience(
+      'new session memory injection retrieval',
+      { sessionId: 'chat-1', now, limit: 3 },
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].scope).toBe('session');
+    expect(matches[0].entry.taskTitle).toBe('session memory injection');
+  });
+
+  it('applies recency decay when ranking matching worklog entries', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-worklog-'));
+    tempDirs.push(root);
+    const newest = new Date(2026, 6, 21, 10, 0, 0);
+    const older = new Date(2026, 6, 15, 10, 0, 0);
+    const newestLogger = new WorkLogger(root, () => newest);
+    const olderLogger = new WorkLogger(root, () => older);
+
+    await olderLogger.log({
+      toolName: 'otto_work_result',
+      action: 'Older memory retrieval fix',
+      category: 'memory',
+      success: true,
+      entryType: 'work_result',
+      taskTitle: 'older memory retrieval',
+      userInput: 'memory retrieval injection',
+      details: 'Older related implementation.',
+    });
+    await newestLogger.log({
+      toolName: 'otto_work_result',
+      action: 'Newest memory retrieval fix',
+      category: 'memory',
+      success: true,
+      entryType: 'work_result',
+      taskTitle: 'newest memory retrieval',
+      userInput: 'memory retrieval injection',
+      details: 'Newest related implementation.',
+    });
+
+    const matches = await newestLogger.searchRelevantExperience(
+      'memory retrieval injection',
+      { now: newest, days: 10, limit: 2 },
+    );
+
+    expect(matches).toHaveLength(2);
+    expect(matches[0].entry.taskTitle).toBe('newest memory retrieval');
+  });
+
+  it('marks project matches separately from global history', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-worklog-'));
+    tempDirs.push(root);
+    const now = new Date(2026, 6, 21, 10, 0, 0);
+    const logger = new WorkLogger(root, () => now);
+
+    await logger.log({
+      toolName: 'otto_work_result',
+      action: 'Implemented project scoped memory recall',
+      category: 'memory',
+      success: true,
+      entryType: 'work_result',
+      taskTitle: 'project scoped memory recall',
+      userInput: 'memory recall',
+      details: 'Project specific retrieval fix.',
+      projectRoot: '/repo/current',
+    });
+    await logger.log({
+      toolName: 'otto_work_result',
+      action: 'Implemented global memory recall',
+      category: 'memory',
+      success: true,
+      entryType: 'work_result',
+      taskTitle: 'global memory recall',
+      userInput: 'memory recall',
+      details: 'Global retrieval fix.',
+      projectRoot: '/repo/other',
+    });
+
+    const matches = await logger.searchRelevantExperience(
+      'memory recall',
+      { now, projectRoot: '/repo/current/', limit: 2 },
+    );
+
+    expect(matches.map((m) => m.scope)).toContain('project');
+    expect(matches.find((m) => m.scope === 'project')?.entry.taskTitle).toBe(
+      'project scoped memory recall',
+    );
+  });
 });

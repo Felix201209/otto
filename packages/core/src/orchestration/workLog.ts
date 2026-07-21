@@ -50,6 +50,7 @@ export interface WorkLogEntry {
   details?: string;        // 操作详情摘要
   userId?: string;
   sessionId?: string;
+  projectRoot?: string;
   /** tool = 底层操作流水；work_result = 一轮对话最终形成的业务成果。 */
   entryType?: 'tool' | 'work_result';
   /** 业务成果标题，供日报与日历直接展示。 */
@@ -104,6 +105,80 @@ export interface WeeklyReport {
   highlights: string[];
   busiestDay: { date: string; count: number };
   quietestDay: { date: string; count: number };
+}
+
+export interface WorkLogSearchOptions {
+  days?: number;
+  limit?: number;
+  sessionId?: string;
+  projectRoot?: string;
+  minScore?: number;
+  now?: Date;
+}
+
+export interface WorkLogSearchResult {
+  entry: WorkLogEntry;
+  score: number;
+  date: string;
+  scope: 'session' | 'project' | 'global';
+}
+
+const DEFAULT_SEARCH_DAYS = 30;
+const DEFAULT_SEARCH_LIMIT = 5;
+const DEFAULT_MIN_SEARCH_SCORE = 0.08;
+
+function tokenizeForSearch(text: string): Set<string> {
+  const normalized = (text || '').toLowerCase();
+  const tokens = new Set<string>();
+  for (const match of normalized.matchAll(/[\p{L}\p{N}_-]{2,}/gu)) {
+    const token = match[0];
+    tokens.add(token);
+    if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(token)) {
+      for (let size = 2; size <= 3; size++) {
+        for (let i = 0; i <= token.length - size; i++) {
+          tokens.add(token.slice(i, i + size));
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
+function searchableText(entry: WorkLogEntry): string {
+  return [
+    entry.taskTitle,
+    entry.userInput,
+    entry.action,
+    entry.details,
+    entry.projectRoot,
+    entry.toolName,
+    entry.category,
+  ].filter(Boolean).join('\n');
+}
+
+function normalizeProjectRoot(projectRoot: string | undefined): string | undefined {
+  return projectRoot?.trim().replace(/[/\\]+$/, '').toLowerCase();
+}
+
+function resolveSearchScope(
+  entry: WorkLogEntry,
+  options: WorkLogSearchOptions,
+): WorkLogSearchResult['scope'] {
+  if (options.sessionId && entry.sessionId === options.sessionId) {
+    return 'session';
+  }
+  const expectedProject = normalizeProjectRoot(options.projectRoot);
+  const actualProject = normalizeProjectRoot(entry.projectRoot);
+  if (expectedProject && actualProject && expectedProject === actualProject) {
+    return 'project';
+  }
+  return 'global';
+}
+
+function addDays(date: Date, days: number): Date {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
 }
 
 /**
@@ -188,6 +263,59 @@ export class WorkLogger {
     }
 
     return result;
+  }
+
+  async searchRelevantExperience(
+    query: string,
+    options: WorkLogSearchOptions = {},
+  ): Promise<WorkLogSearchResult[]> {
+    const queryTokens = tokenizeForSearch(query);
+    if (queryTokens.size === 0) {
+      return [];
+    }
+
+    const days = Math.max(1, options.days ?? DEFAULT_SEARCH_DAYS);
+    const limit = Math.max(1, options.limit ?? DEFAULT_SEARCH_LIMIT);
+    const minScore = options.minScore ?? DEFAULT_MIN_SEARCH_SCORE;
+    const now = options.now ?? this.now();
+    const results: WorkLogSearchResult[] = [];
+
+    for (let offset = 0; offset < days; offset++) {
+      const date = formatLocalDate(addDays(now, -offset));
+      const entries = await this.readDay(date);
+      if (entries.length === 0) continue;
+
+      const recencyBoost = Math.max(0.2, 1 - offset / Math.max(days, 1));
+      for (const entry of entries) {
+        const entryTokens = tokenizeForSearch(searchableText(entry));
+        if (entryTokens.size === 0) continue;
+
+        let overlap = 0;
+        for (const token of queryTokens) {
+          if (entryTokens.has(token)) overlap++;
+        }
+        if (overlap === 0) continue;
+
+        const similarity = overlap / Math.sqrt(queryTokens.size * entryTokens.size);
+        const scope = resolveSearchScope(entry, options);
+        const scopeBoost = scope === 'session' ? 1.25 : scope === 'project' ? 1.12 : 1;
+        const resultBoost = entry.entryType === 'work_result' ? 1.2 : 1;
+        const successBoost = entry.success ? 1 : 0.75;
+        const score = similarity * recencyBoost * scopeBoost * resultBoost * successBoost;
+        if (score < minScore) continue;
+
+        results.push({
+          entry,
+          score,
+          date,
+          scope,
+        });
+      }
+    }
+
+    return results
+      .sort((a, b) => b.score - a.score || b.entry.timestamp.localeCompare(a.entry.timestamp))
+      .slice(0, limit);
   }
 
   /**

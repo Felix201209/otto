@@ -53,7 +53,14 @@ export {
   formatLocalDate,
   resolveDefaultWorklogDir,
 } from './workLog.js';
-export type { WorkLogEntry, DailySummary, WeeklyReport, LogCategory } from './workLog.js';
+export type {
+  WorkLogEntry,
+  DailySummary,
+  WeeklyReport,
+  LogCategory,
+  WorkLogSearchResult,
+  WorkLogSearchOptions,
+} from './workLog.js';
 
 // 审计日志
 export { AuditLogger, getAuditLogger } from './auditLog.js';

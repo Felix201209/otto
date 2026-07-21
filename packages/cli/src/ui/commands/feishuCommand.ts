@@ -88,6 +88,8 @@ import {
   launchRelaunchHelper,
   type RelaunchInstallMode,
   runSideQuestion,
+  getWorkLogger,
+  type WorkLogSearchResult,
 } from 'otto-core';
 import { CommandService } from '../../services/CommandService.js';
 import { McpPromptLoader } from '../../services/McpPromptLoader.js';
@@ -119,6 +121,60 @@ interface TokenUsageLike {
   outputTokens?: number;
   cacheReadInputTokens?: number;
   creditsUsage?: number;
+}
+
+const WORKLOG_MEMORY_DAYS = 30;
+const WORKLOG_MEMORY_LIMIT = 5;
+const WORKLOG_MEMORY_CHAR_BUDGET = 1800;
+
+function compactOneLine(value: string | undefined, max = 180): string {
+  const text = (value || '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function formatRelevantExperience(matches: WorkLogSearchResult[]): string {
+  const lines = [
+    `## Related historical experience`,
+    `Found ${matches.length} related item(s). Use these as hints only; prefer the current request when they conflict.`,
+  ];
+
+  for (const match of matches) {
+    const entry = match.entry;
+    const title = compactOneLine(entry.taskTitle || entry.action || entry.toolName, 120);
+    const summary = compactOneLine(entry.details || entry.userInput || entry.action, 220);
+    const scope = match.scope;
+    lines.push(`- [${scope} ${match.date}] ${title}${summary ? `: ${summary}` : ''}`);
+  }
+
+  const block = lines.join('\n');
+  return block.length > WORKLOG_MEMORY_CHAR_BUDGET
+    ? `${block.slice(0, WORKLOG_MEMORY_CHAR_BUDGET - 1)}...`
+    : block;
+}
+
+function injectRelevantExperience(
+  message: PartListUnion,
+  experienceBlock: string,
+): PartListUnion {
+  const prefix = `${experienceBlock}\n\n--- Current user request ---\n`;
+  if (typeof message === 'string') {
+    return `${prefix}${message}`;
+  }
+  if (Array.isArray(message)) {
+    const parts = [...message];
+    const firstTextIndex = parts.findIndex(
+      (part) => typeof part !== 'string' && typeof part.text === 'string',
+    );
+    if (firstTextIndex >= 0) {
+      const first = parts[firstTextIndex];
+      if (typeof first !== 'string') {
+        parts[firstTextIndex] = { ...first, text: `${prefix}${first.text || ''}` };
+      }
+      return parts;
+    }
+    return [{ text: prefix }, ...parts];
+  }
+  return message;
 }
 
 interface TaskToolArgs {
@@ -3554,6 +3610,29 @@ async function handleStart(context?: CommandContext): Promise<string> {
         }
       } catch (e: unknown) {
         dwarn(`[Feishu] Delegation routing check failed: ${unknownErrorMessage(e)}`);
+      }
+
+      try {
+        const matches = await getWorkLogger().searchRelevantExperience(
+          messageTextForAI,
+          {
+            sessionId: config.getSessionId?.(),
+            projectRoot: config.getProjectRoot?.(),
+            days: WORKLOG_MEMORY_DAYS,
+            limit: WORKLOG_MEMORY_LIMIT,
+          },
+        );
+        if (matches.length > 0) {
+          const experienceBlock = formatRelevantExperience(matches);
+          currentMessage = injectRelevantExperience(currentMessage, experienceBlock);
+          dlog(`[Feishu Memory] Found ${matches.length} related historical experience item(s) for context injection.`);
+          tuiContext?.addItem({
+            type: 'info',
+            text: `Found ${matches.length} related historical experience item(s).`,
+          }, Date.now());
+        }
+      } catch (e: unknown) {
+        dwarn(`[Feishu Memory] Failed to search worklog experience: ${unknownErrorMessage(e)}`);
       }
 
       const MAX_TURNS = 100;
