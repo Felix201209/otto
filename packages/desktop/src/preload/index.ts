@@ -393,6 +393,11 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  notificationUnreadChanged: 'otto:notification-unread-changed',
+  notificationMarkRead: 'otto:notification-mark-read',
+  notificationShow: 'otto:notification-show',
+  notificationCheckPermission: 'otto:notification-check-permission',
+  notificationSessionOpen: 'otto:notification-session-open',
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
@@ -566,6 +571,18 @@ export interface OttoBridge {
    * 三态结果：有新版 / 已是最新 / 检查失败——失败绝不冒充最新。
    */
   updateCheck(): Promise<UpdateCheckResult>;
+  /**
+   * 通知：弹OS原生通知
+   */
+  notificationShow(payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void>;
+  /** 通知：标记会话已读 */
+  notificationMarkRead(sessionId: string): Promise<void>;
+  /** 通知：检查权限 */
+  notificationCheckPermission(): Promise<boolean>;
+  /** 通知：订阅未读变更（从主进程推送） */
+  onNotificationUnreadChanged(cb: (unread: string[]) => void): () => void;
+  /** 通知：点击通知跳转会话 */
+  onNotificationSessionOpen(cb: (sessionId: string) => void): () => void;
   /**
    * 下载最近一次检查到的新版安装包（main 只信自己缓存的检查结果，
    * renderer 不传 URL）。下载完成 main 已做 sha256 校验，失败会删文件报错。
@@ -1054,6 +1071,25 @@ const bridge: OttoBridge = {
     return () => {
       ipcRenderer.removeListener(IPC.updateProgress, listener);
     };
+  },
+  notificationShow(payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void> {
+    return ipcRenderer.invoke(IPC.notificationShow, payload) as Promise<void>;
+  },
+  notificationMarkRead(sessionId: string): Promise<void> {
+    return ipcRenderer.invoke(IPC.notificationMarkRead, sessionId) as Promise<void>;
+  },
+  notificationCheckPermission(): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.notificationCheckPermission) as Promise<boolean>;
+  },
+  onNotificationUnreadChanged(cb: (unread: string[]) => void): () => void {
+    const listener = (_e: Electron.IpcRendererEvent, unread: string[]): void => cb(unread);
+    ipcRenderer.on(IPC.notificationUnreadChanged, listener);
+    return () => ipcRenderer.removeListener(IPC.notificationUnreadChanged, listener);
+  },
+  onNotificationSessionOpen(cb: (sessionId: string) => void): () => void {
+    const listener = (_e: Electron.IpcRendererEvent, sessionId: string): void => cb(sessionId);
+    ipcRenderer.on(IPC.notificationSessionOpen, listener);
+    return () => ipcRenderer.removeListener(IPC.notificationSessionOpen, listener);
   },
   voiceGetConfig(): Promise<VoicePublicConfig> {
     return ipcRenderer.invoke(IPC.voiceGetConfig) as Promise<VoicePublicConfig>;
