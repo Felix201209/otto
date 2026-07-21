@@ -196,6 +196,9 @@ const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
 /** server 生命周期管理器（发现/拉起/探活/退出清理）。 */
 const serverManager = new ServerManager({
   enterpriseServerUrl: DEFAULT_ENTERPRISE_SERVER_URL,
+  onHealthChange: (status) => {
+    tracer.updateStatus(status);
+  },
 });
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;

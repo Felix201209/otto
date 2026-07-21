@@ -631,6 +631,26 @@ export function useOttoStore(): UseOttoStore {
 
     const unsubFrame = transport.onFrame((frame) => {
       dispatch({ kind: 'frame', frame });
+      // 🔔 通知：收到非本地来源的消息时弹 OS 原生通知
+      if (
+        frame.type === 'message_start' &&
+        frame.payload.message.role === 'user' &&
+        frame.payload.message.source &&
+        frame.payload.message.source !== 'local' &&
+        frame.payload.message.source !== 'tui'
+      ) {
+        const msg = frame.payload.message;
+        const preview = msg.content
+          ?.map((c: { type: string; value?: string; values?: string[] }) =>
+            c.type === 'text' ? c.value : c.type === 'file_reference' ? '[文件]' : '')
+          .join(' ')?.slice(0, 200) ?? '';
+        void window.otto.notificationShow({
+          sessionId: msg.sessionId,
+          source: msg.source!,
+          sender: undefined,
+          preview: preview || '(非文本消息)',
+        });
+      }
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;
         try {
