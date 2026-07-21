@@ -5,7 +5,7 @@ import { exec, execFile, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import pptxgen from 'pptxgenjs';
 import iconv from 'iconv-lite';
 import {
@@ -151,6 +151,7 @@ export function runDocumentCommand(
 
 export type DocumentCommandRunner = typeof runDocumentCommand;
 export type DependencyPreflight = (names: string[]) => Promise<string | null>;
+type ProgressReporter = (output: string) => void;
 
 export interface HtmlToImageRenderRequest {
   htmlPath: string;
@@ -523,6 +524,17 @@ const defaultBrowserRunner: BrowserRunner = (executable, args, signal) => (
   runBrowserScreenshotProcess(executable, args, signal)
 );
 
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+function findBundledDocWriterScript(): string | null {
+  const candidates = [
+    path.resolve(moduleDir, '../../skills-seed/doc-writer/scripts/create_docx.py'),
+    path.resolve(moduleDir, '../../../skills-seed/doc-writer/scripts/create_docx.py'),
+    path.resolve(moduleDir, '../../../../skills-seed/doc-writer/scripts/create_docx.py'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
 /** 使用本机 Chromium 浏览器把本地 HTML 截成固定尺寸 PNG；不调用 Python。 */
 export class ChromeHtmlToImageRenderer implements HtmlToImageRenderer {
   constructor(
@@ -710,6 +722,9 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
         },
         required: ['content','format','output_format'],
       },
+      true,
+      false,
+      true,
     );
   }
 
@@ -734,7 +749,11 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     return { type:'exec', title:'Confirm: '+this.getDescription(p), command:'generate_document', rootCommand:'generate_document', onConfirm: async ()=>{}};
   }
 
-  async execute(p: GenerateDocumentToolParams, signal: AbortSignal): Promise<ToolResult> {
+  async execute(
+    p: GenerateDocumentToolParams,
+    signal: AbortSignal,
+    updateOutput?: ProgressReporter,
+  ): Promise<ToolResult> {
     const logLabel = 'generate_document.'+(p.output_format || p.format);
     console.time(logLabel);
     const err = this.validateToolParams(p);
@@ -746,8 +765,10 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'generated_'+Date.now()+'.'+output_format);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-doc-'));
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const progress = new DocumentProgress(updateOutput);
 
     try {
+      progress.step('read', '读取输入内容');
       if (format === 'slides') {
         await this.genSlides(
           content,
@@ -757,18 +778,29 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
           titleStr,
           template_options || '',
           signal,
+          progress,
         );
       } else if (output_format === 'markdown') {
+        progress.step('parse', '解析 Markdown 正文');
+        progress.step('structure', '生成文档结构');
+        progress.step('body', '生成 Markdown 正文');
         fs.writeFileSync(outPath, '# '+titleStr+'\n'+(authorStr?'**'+authorStr+'**\n':'')+'\n'+content);
+        progress.step('export', '导出 Markdown 文件');
+      } else if (output_format === 'docx') {
+        await this.genDocx(content, outPath, tmpDir, titleStr, authorStr, format, signal, progress);
       } else if (output_format === 'pdf' && ['report','article','letter','resume'].includes(format)) {
-        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr, signal);
+        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr, signal, progress);
       } else {
-        await this.genPandoc(content, outPath, tmpDir, titleStr, authorStr, output_format, format, signal);
+        await this.genPandoc(content, outPath, tmpDir, titleStr, authorStr, output_format, format, signal, progress);
       }
 
       const sz = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
       const label = path.basename(outPath)+' ('+format+', '+sz+' bytes)';
-      return { llmContent: 'generate_document OK: '+label, returnDisplay: 'generate_document OK: '+label };
+      progress.step('done', '生成完成');
+      return {
+        llmContent: 'generate_document OK: '+label+'\n'+progress.summary(),
+        returnDisplay: 'generate_document OK: '+label+'\n\n'+progress.summary(),
+      };
     } catch (e: unknown) {
       const m = e instanceof Error ? e.message : String(e);
       if (m.includes('not found') || m.includes('command not found')) {
@@ -793,18 +825,24 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     title: string,
     templateOptions: string,
     signal: AbortSignal,
+    progress: DocumentProgress,
   ): Promise<void> {
+    progress.step('parse', '解析幻灯片 Markdown');
     const slides = normalizeSlidesMarkdown(content);
+    progress.step('structure', '生成幻灯片结构');
     if (fmt === 'pptx') {
-      await this.genPptx(slides, outPath, title, tmpDir, templateOptions, signal);
+      await this.genPptx(slides, outPath, title, tmpDir, templateOptions, signal, progress);
       return;
     }
 
     // PDF/HTML slides render via Marp. Fail loud if missing.
+    progress.step('preflight', '预检 Marp 依赖');
     const missing = await this.dependencyPreflight(['marp']);
     if (missing) throw new Error('generate_document/slides needs marp: ' + missing);
     const mdFile = path.join(tmpDir, 'slides.md');
+    progress.step('body', '生成幻灯片正文');
     fs.writeFileSync(mdFile, '---\nmarp: true\ntheme: default\npaginate: true\ntitle: '+title+'\n---\n\n'+slides);
+    progress.step('export', `导出 ${fmt.toUpperCase()} 文件`);
     await this.commandRunner(
       'marp',
       [mdFile, '-o', outPath, '--allow-local-files'],
@@ -819,6 +857,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     tmpDir: string,
     templateOptions: string,
     signal: AbortSignal,
+    progress: DocumentProgress,
   ): Promise<void> {
     // pptxgenjs ESM default export has no construct signature in strict TypeScript
     // but is constructable at runtime per official documentation.
@@ -832,6 +871,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
     const baseTheme = this.resolveSlideTheme(templateOptions, documentTitle);
 
+    progress.step('structure', '生成 PPTX 页面结构');
     const sections = content
       .split(/^\s*---\s*$/m)
       .map((sec) => this.parseSlideSection(sec, documentTitle))
@@ -846,6 +886,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
     for (let idx = 0; idx < sections.length; idx += 1) {
       if (signal.aborted) throw new Error('PPT 本地生成已取消');
+      progress.step('body', `生成第 ${idx + 1}/${sections.length} 页`);
       const sec = sections[idx];
       const pgNum = String(idx + 1).padStart(2, '0');
 
@@ -868,6 +909,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       if (sec.notes.length > 0) slide.addNotes(sec.notes.join('\n'));
     }
 
+    progress.step('export', '写入 PPTX 文件');
     await presentation.writeFile({ fileName: outPath, compression: true });
   }
 
@@ -1703,23 +1745,86 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       Number.parseInt(normalized.slice(4, 6), 16),
     ];
   }
-  private async genTypst(content: string, format: string, outPath: string, tmpDir: string, title: string, author: string, signal: AbortSignal): Promise<void> {
+  private async genTypst(
+    content: string,
+    format: string,
+    outPath: string,
+    tmpDir: string,
+    title: string,
+    author: string,
+    signal: AbortSignal,
+    progress: DocumentProgress,
+  ): Promise<void> {
     // Doctor preflight: typst-rendered PDFs (report/article/letter/resume) need typst.
+    progress.step('preflight', '预检 Typst 依赖');
     const missing = await this.dependencyPreflight(['typst']);
     if (missing) throw new Error('generate_document (' + format + ' -> pdf) needs typst: ' + missing);
+    progress.step('parse', '解析 Markdown 正文');
     const typFile = path.join(tmpDir, 'doc.typ');
+    progress.step('structure', '生成 Typst 文档结构');
     fs.writeFileSync(typFile, this.md2typst(content, format, title, author));
+    progress.step('body', '生成 PDF 正文');
+    progress.step('export', '导出 PDF 文件');
     await this.commandRunner('typst', ['compile', typFile, outPath], { signal });
   }
-  private async genPandoc(content: string, outPath: string, tmpDir: string, title: string, author: string, fmt: string, format: string, signal: AbortSignal): Promise<void> {
+  private async genPandoc(
+    content: string,
+    outPath: string,
+    tmpDir: string,
+    title: string,
+    author: string,
+    fmt: string,
+    format: string,
+    signal: AbortSignal,
+    progress: DocumentProgress,
+  ): Promise<void> {
     // Doctor preflight: docx/html and table PDFs render via pandoc. Fail loud if missing.
+    progress.step('preflight', '预检 Pandoc 依赖');
     const missing = await this.dependencyPreflight(['pandoc']);
     if (missing) throw new Error('generate_document (' + format + ' -> ' + fmt + ') needs pandoc: ' + missing);
+    progress.step('parse', '解析 Markdown 正文');
     const mdFile = path.join(tmpDir, 'doc.md');
+    progress.step('structure', '生成 Pandoc 文档结构');
     fs.writeFileSync(mdFile, '# '+title+'\n'+(author?'**'+author+'**\n':'')+'\n'+content);
     const args = [mdFile, '-o', outPath, '-f', 'markdown', '-t', fmt, '--standalone'];
     if (format === 'report') args.push('--toc', '--number-sections');
+    progress.step('body', '生成文档正文');
+    progress.step('export', `导出 ${fmt.toUpperCase()} 文件`);
     await this.commandRunner('pandoc', args, { signal });
+  }
+
+  private async genDocx(
+    content: string,
+    outPath: string,
+    tmpDir: string,
+    title: string,
+    author: string,
+    format: string,
+    signal: AbortSignal,
+    progress: DocumentProgress,
+  ): Promise<void> {
+    progress.step('preflight', '预检 Python 公文依赖');
+    const missing = await this.dependencyPreflight(['python3', 'python-docx', 'jinja2', 'markdown']);
+    if (missing) throw new Error('generate_document (' + format + ' -> docx) needs doc-writer runtime: ' + missing);
+    const script = findBundledDocWriterScript();
+    if (!script) throw new Error('generate_document docx needs bundled doc-writer script: create_docx.py not found');
+
+    progress.step('parse', '解析 Markdown 正文');
+    const mdFile = path.join(tmpDir, 'doc.md');
+    progress.step('structure', '生成 Word 公文结构');
+    const frontMatter = [
+      '---',
+      `title: "${title.replace(/"/g, '\\"')}"`,
+      author ? `author: "${author.replace(/"/g, '\\"')}"` : '',
+      'toc: false',
+      '---',
+      '',
+    ].filter(Boolean).join('\n');
+    fs.writeFileSync(mdFile, frontMatter + content, 'utf8');
+    progress.step('body', '生成 Word 正文');
+    const python = process.platform === 'win32' ? 'python' : 'python3';
+    progress.step('export', '导出 DOCX 文件');
+    await this.commandRunner(python, [script, mdFile, outPath], { signal });
   }
 
   private md2typst(md: string, format: string, title: string, author: string): string {
@@ -1757,4 +1862,24 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     return preamble + '\n' + s;
   }
   private te(s: string): string { return s.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,' '); }
+}
+
+class DocumentProgress {
+  private readonly entries: Array<{ stage: string; label: string }> = [];
+
+  constructor(private readonly updateOutput?: ProgressReporter) {}
+
+  step(stage: string, label: string): void {
+    this.entries.push({ stage, label });
+    this.updateOutput?.(this.summary());
+  }
+
+  summary(): string {
+    return [
+      '公文生成进度：',
+      ...this.entries.map((entry, index) =>
+        `${index + 1}. ${entry.label}`,
+      ),
+    ].join('\n');
+  }
 }

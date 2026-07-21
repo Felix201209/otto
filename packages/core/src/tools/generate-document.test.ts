@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 import {
   type BrowserProcessHandle,
   ChromeHtmlToImageRenderer,
+  type DocumentCommandRunner,
   findLocalBrowserExecutable,
   GenerateDocumentTool,
   type HtmlToImageRenderer,
@@ -113,13 +114,55 @@ describe('GenerateDocumentTool', () => {
   // --- markdown output needs no external tool (pure fs write) ---
   it('markdown output writes a file with zero dependencies', async () => {
     const out = path.join(tmpDir, 'doc.md');
+    const updates: string[] = [];
     const r = await tool.execute(
       { content: '# Hello\n\nWorld', format: 'article', output_format: 'markdown', title: 'T', output_path: out },
       new AbortController().signal,
+      (output) => updates.push(output),
     );
     expect(r.llmContent).toContain('generate_document OK');
+    expect(String(r.returnDisplay)).toContain('读取输入内容');
+    expect(String(r.returnDisplay)).toContain('导出 Markdown 文件');
+    expect(updates.at(-1)).toContain('导出 Markdown 文件');
     expect(fs.existsSync(out)).toBe(true);
     expect(fs.readFileSync(out, 'utf8')).toContain('# T');
+  });
+
+  it('docx output uses bundled doc-writer and emits staged progress', async () => {
+    const out = path.join(tmpDir, 'doc.docx');
+    const updates: string[] = [];
+    const commands: Array<{ file: string; args: readonly string[] }> = [];
+    const runner: DocumentCommandRunner = vi.fn(async (file, args) => {
+      commands.push({ file, args });
+      fs.writeFileSync(out, Buffer.from('PK fake docx'));
+    });
+    const docxTool = new GenerateDocumentTool(
+      createMockConfig(),
+      new ChromeHtmlToImageRenderer(null),
+      runner,
+      vi.fn(async () => null),
+    );
+
+    const result = await docxTool.execute(
+      {
+        content: '## 正文\n\n- 第一条',
+        format: 'report',
+        output_format: 'docx',
+        title: '公文测试',
+        author: 'Otto',
+        output_path: out,
+      },
+      new AbortController().signal,
+      (output) => updates.push(output),
+    );
+
+    expect(result.llmContent).toContain('generate_document OK');
+    expect(commands).toHaveLength(1);
+    expect(commands[0].file).toMatch(/python/);
+    expect(commands[0].args[0]).toContain('create_docx.py');
+    expect(commands[0].args[2]).toBe(out);
+    expect(updates.join('\n')).toContain('预检 Python 公文依赖');
+    expect(updates.join('\n')).toContain('导出 DOCX 文件');
   });
 
   // --- Doctor preflight: engine binaries checked BEFORE rendering ---
@@ -338,16 +381,11 @@ describe('GenerateDocumentTool', () => {
     );
     expect(commandRunner).toHaveBeenNthCalledWith(
       3,
-      'pandoc',
+      expect.stringMatching(/python/),
       [
+        expect.stringContaining('create_docx.py'),
         expect.stringMatching(/doc\.md$/),
-        '-o',
         docxOut,
-        '-f',
-        'markdown',
-        '-t',
-        'docx',
-        '--standalone',
       ],
       expect.objectContaining({ signal }),
     );
