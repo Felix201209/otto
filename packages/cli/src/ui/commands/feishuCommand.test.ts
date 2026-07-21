@@ -13,6 +13,9 @@ import {
   safeTruncateForLog,
   interceptFeishuLifecycleCommand,
   normalizeAskUserQuestionArgs,
+  decideFeishuAutoReply,
+  buildFeishuProcessingReceipt,
+  appendFeishuProcessSummary,
 } from './feishuCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import * as credentials from '../../services/feishu/credentials.js';
@@ -67,6 +70,57 @@ describe('feishuCommand', () => {
     const result = await helpCmd?.action!(context, '');
     expect(result?.type).toBe('message');
     expect(result?.content).toMatch(/feishu/i);
+  });
+
+  it('should auto-handle private Feishu messages', () => {
+    const decision = decideFeishuAutoReply({
+      chatType: 'p2p',
+      rawText: '今天要做什么',
+      cleanedText: '今天要做什么',
+    });
+
+    expect(decision).toEqual({
+      shouldHandle: true,
+      reason: 'private',
+      text: '今天要做什么',
+    });
+  });
+
+  it('should ignore normal group messages unless Otto is mentioned or a command is used', () => {
+    expect(decideFeishuAutoReply({
+      chatType: 'group',
+      rawText: '大家看一下这个需求',
+      cleanedText: '大家看一下这个需求',
+      mentions: [],
+    })).toMatchObject({ shouldHandle: false, reason: 'ignored_group' });
+
+    expect(decideFeishuAutoReply({
+      chatType: 'group',
+      rawText: '@Otto 帮我看一下这个需求',
+      cleanedText: '帮我看一下这个需求',
+      mentions: [{ key: '@Otto', openId: 'ou_bot' }],
+      botName: 'Otto',
+      botOpenId: 'ou_bot',
+    })).toMatchObject({ shouldHandle: true, reason: 'bot_mention' });
+
+    expect(decideFeishuAutoReply({
+      chatType: 'group',
+      rawText: '/bind D:\\work\\demo',
+      cleanedText: '/bind D:\\work\\demo',
+      mentions: [],
+    })).toMatchObject({ shouldHandle: true, reason: 'slash_command' });
+  });
+
+  it('should build readable Feishu processing feedback and final summary', () => {
+    const receipt = buildFeishuProcessingReceipt('private');
+    expect(receipt).toContain('已收到');
+    expect(receipt).toContain('读取资料');
+    expect(receipt).toContain('汇总结果');
+
+    const summary = appendFeishuProcessSummary('这是回答', ['read_many_files', 'run_shell_command']);
+    expect(summary).toContain('本次处理总结');
+    expect(summary).toContain('调用了 read_many_files、run_shell_command');
+    expect(summary).toContain('还差什么');
   });
 
   it('should handle stop when not running', async () => {

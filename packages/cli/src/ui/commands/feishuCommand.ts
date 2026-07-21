@@ -1024,6 +1024,8 @@ interface QueuedMessage {
   reject: (err: unknown) => void;
   /** 排队提示消息的 message_id，用于后续更新/撤回 */
   queueTipMessageId?: string | null;
+  /** 已接收提示消息的 message_id；进入处理后保留，作为用户可见的过程起点 */
+  receiptMessageId?: string | null;
 }
 
 // 群聊独立的队列容器
@@ -2699,6 +2701,86 @@ function stripBotMention(text: string, botName?: string): string {
   return cleaned.trim();
 }
 
+export type FeishuAutoReplyTriggerReason =
+  | 'private'
+  | 'bot_mention'
+  | 'slash_command'
+  | 'ignored_group';
+
+export interface FeishuAutoReplyDecision {
+  shouldHandle: boolean;
+  reason: FeishuAutoReplyTriggerReason;
+  text: string;
+}
+
+export function decideFeishuAutoReply(input: {
+  chatType: FeishuMessage['chatType'];
+  rawText: string;
+  cleanedText: string;
+  mentions?: Array<{ key?: string; openId?: string }>;
+  botName?: string;
+  botOpenId?: string;
+}): FeishuAutoReplyDecision {
+  const rawText = input.rawText.trim();
+  const cleanedText = input.cleanedText.trim();
+  const botName = input.botName?.trim().toLowerCase();
+  const botOpenId = input.botOpenId?.trim();
+  const mentions = input.mentions || [];
+
+  if (input.chatType === 'p2p') {
+    return { shouldHandle: true, reason: 'private', text: cleanedText };
+  }
+
+  if (cleanedText.startsWith('/')) {
+    return { shouldHandle: true, reason: 'slash_command', text: cleanedText };
+  }
+
+  const strippedLeadingMention = rawText !== cleanedText && /^@/.test(rawText);
+  const mentionedByOpenId = !!botOpenId && mentions.some(m => m.openId === botOpenId);
+  const mentionedByName = !!botName && mentions.some(m => (m.key || '').toLowerCase().includes(botName));
+  const mentionedByKnownAlias = mentions.some(m => /otto|智能体/i.test(m.key || ''));
+
+  if (strippedLeadingMention || mentionedByOpenId || mentionedByName || mentionedByKnownAlias) {
+    return { shouldHandle: true, reason: 'bot_mention', text: cleanedText };
+  }
+
+  return { shouldHandle: false, reason: 'ignored_group', text: cleanedText };
+}
+
+export function buildFeishuProcessingReceipt(reason: FeishuAutoReplyTriggerReason): string {
+  const triggerLabel =
+    reason === 'private'
+      ? '私聊自动触发'
+      : reason === 'slash_command'
+        ? '命令触发'
+        : '群聊 @ 触发';
+
+  return [
+    `✅ 已收到（${triggerLabel}），我会开始处理。`,
+    '',
+    '过程会尽量用人能看懂的方式更新：读取资料 → 分析问题 → 调用工具（如需要） → 汇总结果。',
+  ].join('\n');
+}
+
+export function appendFeishuProcessSummary(
+  markdown: string,
+  executedToolNames: string[],
+): string {
+  const base = markdown.trim() || '（无回复）';
+  if (base.includes('**本次处理总结**')) {
+    return base;
+  }
+
+  const uniqueToolNames = Array.from(new Set(
+    executedToolNames.map(name => name.trim()).filter(Boolean),
+  ));
+  const toolLine = uniqueToolNames.length > 0
+    ? `调用了 ${uniqueToolNames.slice(0, 4).join('、')}${uniqueToolNames.length > 4 ? ` 等 ${uniqueToolNames.length} 个工具` : ''}。`
+    : '没有调用额外工具。';
+
+  return `${base}\n\n---\n**本次处理总结**\n- 做了什么：已读取本次问题并完成分析，${toolLine}\n- 结果是什么：见上方回复。\n- 还差什么：如上方已列出待补充信息，请继续补充；否则本轮已完成。`;
+}
+
 /**
  * 启动网关（从已保存的凭证）
  */
@@ -2744,7 +2826,8 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
   // 设置消息处理 — 使用主会话的 agent 模式（带工具执行能力）
   gateway.onMessage = async (msg: FeishuMessage): Promise<string | null> => {
-    let messageText = typeof msg.text === 'string' ? msg.text.trim() : '';
+    const rawMessageText = typeof msg.text === 'string' ? msg.text.trim() : '';
+    let messageText = rawMessageText;
     if (!messageText) {
       return null;
     }
@@ -2752,6 +2835,22 @@ async function handleStart(context?: CommandContext): Promise<string> {
     // 🧹 清理消息文本中由于群聊 @ 产生的提及前缀，使群内斜杠命令（如 /new, /bind）能够正常拦截执行
     messageText = stripBotMention(messageText, creds.botName);
     if (!messageText) {
+      return null;
+    }
+
+    const autoReplyDecision = decideFeishuAutoReply({
+      chatType: msg.chatType,
+      rawText: rawMessageText,
+      cleanedText: messageText,
+      mentions: msg.mentions,
+      botName: creds.botName,
+      botOpenId: creds.botOpenId,
+    });
+    if (!autoReplyDecision.shouldHandle) {
+      dlog(
+        `[Feishu] Ignored non-trigger group/topic message in chat ${msg.chatId}: ` +
+        safeTruncateForLog(messageText, 80),
+      );
       return null;
     }
 
@@ -3290,14 +3389,21 @@ async function handleStart(context?: CommandContext): Promise<string> {
             const isProcessing = isProcessingQueues.get(msg.chatId) || false;
 
             let queueTipMessageId: string | null = null;
+            let receiptMessageId: string | null = null;
             if (isProcessing || queue.length > 0) {
               const queuePosition = queue.length + 1;
               const queueTip = `⏳ *当前项目任务正在执行中，您的新请求已放入项目队列排队（当前排在第 ${queuePosition} 位）...*`;
               queueTipMessageId = await gateway.sendMessage(msg.chatId, queueTip, msg.messageId);
+            } else {
+              receiptMessageId = await gateway.sendMessage(
+                msg.chatId,
+                buildFeishuProcessingReceipt('slash_command'),
+                msg.messageId,
+              );
             }
 
             return new Promise<string | null>((resolve, reject) => {
-              queue!.push({ msg: fakeMsg, resolve, reject, queueTipMessageId });
+              queue!.push({ msg: fakeMsg, resolve, reject, queueTipMessageId, receiptMessageId });
               const richErr = initErrorMsg || (debugTrail.length ? `trail=[${debugTrail.join('|')}]` : '');
               processMessageQueueForChat(gateway, currentConfig, currentClient, creds, msg.chatId, richErr);
             });
@@ -3358,14 +3464,21 @@ async function handleStart(context?: CommandContext): Promise<string> {
     const isProcessing = isProcessingQueues.get(msg.chatId) || false;
 
     let queueTipMessageId: string | null = null;
+    let receiptMessageId: string | null = null;
     if (isProcessing || queue.length > 0) {
       const queuePosition = queue.length + 1;
       const queueTip = `⏳ *当前项目任务正在执行中，您的新请求已放入项目队列排队（当前排在第 ${queuePosition} 位）...*`;
       queueTipMessageId = await gateway.sendMessage(msg.chatId, queueTip, msg.messageId);
+    } else {
+      receiptMessageId = await gateway.sendMessage(
+        msg.chatId,
+        buildFeishuProcessingReceipt(autoReplyDecision.reason),
+        msg.messageId,
+      );
     }
 
     return new Promise<string | null>((resolve, reject) => {
-      queue!.push({ msg, resolve, reject, queueTipMessageId });
+      queue!.push({ msg, resolve, reject, queueTipMessageId, receiptMessageId });
       const richErr = initErrorMsg || (debugTrail.length ? `trail=[${debugTrail.join('|')}]` : '');
       processMessageQueueForChat(gateway, currentConfig, currentClient, creds, msg.chatId, richErr);
     });
@@ -3639,6 +3752,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
 
       // Get initial footer metrics
       const initialFooterMetrics = await getFeishuStatusMetrics(config, geminiClient);
+      const executedToolNames: string[] = [];
 
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         const stream = geminiClient.sendMessageStream(
@@ -3770,7 +3884,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
           blocks.push({ type: 'text', content: responseText });
         }
 
-        const currentFinalMarkdown = renderCurrentDisplay(blocks);
+        const renderedFinalMarkdown = renderCurrentDisplay(blocks);
+        const currentFinalMarkdown = toolCallRequests.length === 0
+          ? appendFeishuProcessSummary(renderedFinalMarkdown, executedToolNames)
+          : renderedFinalMarkdown;
 
         // 结束流式输出，做最终的、无中间提示的更新
         if (activeCardId && streaming) {
@@ -3836,6 +3953,7 @@ async function handleStart(context?: CommandContext): Promise<string> {
         }
 
         // 有工具执行
+        executedToolNames.push(...toolCallRequests.map(r => r.name || 'unknown'));
         const toolNames = toolCallRequests.map(r => r.name || 'unknown').join(', ');
         // 注：工具调用不再回显主 TUI，改由飞书仪表板 message log 展示。
         emitFeishuMessageLog(msg.chatId, `🔧 ${toolNames}`, 'tool');
@@ -4333,17 +4451,21 @@ async function handleStart(context?: CommandContext): Promise<string> {
       }
 
       // 达到最大轮数
+      const limitMarkdown = appendFeishuProcessSummary(
+        `${renderCurrentDisplay(blocks)}\n\n*（工具调用次数已达到上限）*`,
+        executedToolNames,
+      );
       if (activeCardId && streaming) {
         const interruptedFooterMetrics = await getFeishuStatusMetrics(config, geminiClient, lastRequestTokenUsage);
         interruptedFooterMetrics.status = '已中断';
-        await streaming.finalize(renderCurrentDisplay(blocks) + '\n\n*（工具调用次数已达到上限）*', interruptedFooterMetrics);
+        await streaming.finalize(limitMarkdown, interruptedFooterMetrics);
         streaming = null;
       } else if (activeCardId && !streaming) {
         const interruptedFooterMetrics = await getFeishuStatusMetrics(config, geminiClient, lastRequestTokenUsage);
         interruptedFooterMetrics.status = '已中断';
-        await gateway.updateCard(activeCardId, 'Otto (已中断)', renderCurrentDisplay(blocks) + '\n\n*（工具调用次数已达到上限）*', interruptedFooterMetrics);
+        await gateway.updateCard(activeCardId, 'Otto (已中断)', limitMarkdown, interruptedFooterMetrics);
       } else {
-        await gateway.sendMessage(msg.chatId, '（工具调用次数已达到上限）', msg.messageId);
+        await gateway.sendMessage(msg.chatId, limitMarkdown, msg.messageId);
       }
       return null;
     } catch (err: unknown) {
