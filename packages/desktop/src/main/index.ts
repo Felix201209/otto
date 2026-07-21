@@ -1919,6 +1919,7 @@ if (!gotLock) {
   app.on('window-all-closed', () => {
     // Windows/Linux 关闭主窗口后常驻系统托盘，避免 Otto 服务随窗口关闭而退出。
     // 真正退出走应用菜单或托盘「退出 Otto」。
+    // detached server 故意留活：飞书守护不受窗口关闭影响。
     if (process.platform === 'darwin') return;
   });
 
@@ -1934,8 +1935,9 @@ if (!gotLock) {
     // 即使进程赶在异步清理完成前退出，下次下载同一资产会截断重写同名 .part，
     // 且 sha256 校验兜底完整性，残留无危害。
     updateService.cancelDownload();
-    // 仅内嵌 server 随 app 退出而停；discovered（headless/CLI 已在跑）故意留活。
-    void serverManager.shutdown()
+    // detached server 仅用户主动退出托盘时才杀。
+    // 关窗不杀：server + 飞书守护继续运行。
+    void serverManager.shutdown(isQuitting)
       .catch((error) => {
         console.warn('[otto-desktop] 退出清理 server 失败:', error);
       })

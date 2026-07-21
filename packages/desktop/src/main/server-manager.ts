@@ -7,10 +7,12 @@
 /**
  * ServerManager —— 主进程侧的「确保有一个可用 otto-server」逻辑（Issue #4 + #9）。
  *
- * 策略（embedded-only，产品决定）：
+ * 策略（detached-first）：
  *   1. 先读端点文件发现已运行的 server；探活（pid 存活 + /health 应答）通过即复用
  *      （headless / CLI 已在跑时直接连上它，不重复拉起）。
- *   2. 没有可用的现存 server → **直接同进程内嵌** OttoServer 跑起来（随 app 退出而停）。
+ *   2. 没有可用的现存 server → 以 detached 子进程拉起 server，
+ *      关窗不杀 server（飞书继续活），仅托盘「退出 Otto」才 SIGTERM。
+ *   3. 开发/非打包形态无法走 detached 时，回退同进程内嵌（embedded）。
  *
  * 历史：曾尝试以 detached 子进程跑 server bin 实现「app 关了 server 仍活」，但打包形态下
  * 该路径必失败（process.execPath 是 Electron 二进制，缺 ELECTRON_RUN_AS_NODE 不会当 node
@@ -28,6 +30,7 @@
  * 同样，enterprise-server 也是 ESM，经 loadEnterpriseServer() 动态 import。
  */
 
+import * as childProcess from 'node:child_process';
 import * as http from 'node:http';
 import type { Server as HttpServer } from 'node:http';
 import * as fs from 'node:fs';
@@ -103,9 +106,10 @@ const MAX_PORT_RETRIES = 10;
 /**
  * server 的归属：
  * - 'discovered'：复用了别的进程已起的 server（app 不负责其生命周期）。
- * - 'embedded'：本进程内嵌拉起（随 app 退出而停）。
+ * - 'detached'：本进程以 detached 子进程拉起（关窗不杀，显式退出才停）。
+ * - 'embedded'：本进程内嵌拉起（开发回退路径，随 app 退出而停）。
  */
-export type ServerOwnership = 'discovered' | 'embedded';
+export type ServerOwnership = 'discovered' | 'detached' | 'embedded';
 
 export interface EnsuredServer {
   endpoint: ServerEndpoint;
@@ -155,6 +159,8 @@ export interface ServerManagerOptions {
 export class ServerManager {
   /** 仅当本进程内嵌拉起时持有，用于 before-quit 时停掉。 */
   private embedded?: TrustedOttoServer;
+  /** 仅当本进程以 detached 子进程拉起时持有。 */
+  private detachedChild?: childProcess.ChildProcess;
   /** 最近一次确保成功的内部端点记录；可含控制令牌，绝不返回 renderer。 */
   private currentEndpointRecord?: ServerEndpointRecord;
   /** 主服务 ensure 中的共享 Promise，避免启动期 IPC 与 app ready 重复拉起。 */
@@ -213,22 +219,26 @@ export class ServerManager {
   /** 单次主服务发现/拉起；并发折叠由 ensure() 负责。 */
   private async ensureOnce(): Promise<EnsuredServer> {
     this.throwIfShuttingDown();
-    // 同一 manager 已经内嵌拉起时直接复用，不能把自己的端点误判成 discovered。
-    if (this.embedded && this.currentEndpointRecord) {
-      this.ownership = 'embedded';
-      return {
-        endpoint: publicServerEndpoint(this.currentEndpointRecord),
-        ownership: 'embedded',
-      };
+    // 同一 manager 已经拉起时直接复用。
+    if (this.currentEndpointRecord) {
+      const isAlive = this.ownership === 'embedded'
+        ? (this.embedded != null)
+        : this.ownership === 'detached'
+          ? (this.detachedChild?.exitCode === null)
+          : true;
+      if (isAlive) {
+        return {
+          endpoint: publicServerEndpoint(this.currentEndpointRecord),
+          ownership: this.ownership,
+        };
+      }
     }
     const mod = await this.dependencies.loadOttoServer();
     this.throwIfShuttingDown();
-    // 1) 发现并探活已运行的 server（headless / CLI 已在跑时直接复用）。
+    // 1) 发现并探活已运行的 server（headless / CLI / detached 已在跑时直接复用）。
     const readEndpointRecord = (mod as typeof mod & {
       readEndpointRecord?: () => ServerEndpointRecord | undefined;
     }).readEndpointRecord;
-    // 新 server 通过 trusted-only API 读取令牌；旧模块只剩公开端点，后续身份
-    // 同步会因缺 token 明确 fail closed，而不是退回不受保护的控制方式。
     const discovered = readEndpointRecord?.() ?? mod.readEndpoint();
     if (discovered && this.dependencies.pidAlive(discovered.pid)) {
       const healthy = await this.dependencies.probeHealth(
@@ -240,8 +250,7 @@ export class ServerManager {
       if (healthy) {
         this.ownership = 'discovered';
         this.currentEndpointRecord = discovered;
-        // 主服务由 CLI/headless 进程持有时，桌面端仍必须单独保证企业后台可用。
-        // 旧实现从这里提前返回，导致管理员登录/邀请码接口从未启动。
+        this.onHealthChange?.('服务运行中');
         if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
         return {
           endpoint: publicServerEndpoint(discovered),
@@ -249,27 +258,145 @@ export class ServerManager {
         };
       }
     }
-    // 端点文件陈旧（进程没了或不应答）→ 清掉，避免误导后续读取。
     if (discovered && !this.dependencies.pidAlive(discovered.pid)) {
       mod.clearEndpoint();
     }
 
-    // 2) 没有现成 server → 直接同进程内嵌拉起（embedded-only，见文件头说明）。
+    // 2) 没有现成 server → detached 优先，失败则回退嵌入式。
     const port = resolvePort(mod.DEFAULT_PORT);
-    const embeddedEp = await this.startEmbedded(port, mod);
-    this.ownership = 'embedded';
-    this.currentEndpointRecord = embeddedEp;
-    // 3) 同时拉起 enterprise-server（管理员登录 / 看板功能依赖）。
-    // 静默失败：企业后台是辅助功能，不影响主对话。
-    if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
-    // 4) 启动定期健康检查（仅 embedded 模式需要，discovered 的由别的进程负责）。
-    if (this.ownership === 'embedded') {
+    try {
+      const detachedEp = await this.startDetached(port);
+      this.ownership = 'detached';
+      this.currentEndpointRecord = detachedEp;
+      if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
       this.startHealthCheck();
+      this.onHealthChange?.('服务运行中');
+      return {
+        endpoint: publicServerEndpoint(detachedEp),
+        ownership: 'detached',
+      };
+    } catch (detachedErr) {
+      console.warn('[ServerManager] detached 启动失败，回退内嵌:', (detachedErr as Error)?.message ?? String(detachedErr));
+      // 回退：同进程内嵌
+      const embeddedEp = await this.startEmbedded(port, mod);
+      this.ownership = 'embedded';
+      this.currentEndpointRecord = embeddedEp;
+      if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
+      this.startHealthCheck();
+      this.onHealthChange?.('服务运行中');
+      return {
+        endpoint: publicServerEndpoint(embeddedEp),
+        ownership: 'embedded',
+      };
     }
-    return {
-      endpoint: publicServerEndpoint(embeddedEp),
-      ownership: 'embedded',
+  }
+
+  /**
+   * 以 detached 子进程拉起 otto-server。
+   * 使用 process.execPath + ELECTRON_RUN_AS_NODE=1 打包形态可用。
+   * 开发形态：直接 node bin.js。
+   */
+  private async startDetached(
+    port: number,
+  ): Promise<ServerEndpointRecord> {
+    const nodeExec = process.execPath;
+    const argv0 = process.argv0;
+    const mod = await this.dependencies.loadOttoServer();
+
+    // 查找 bin.js 路径
+    let binPath: string;
+    try {
+      // 打包/开发形态：尝试通过 otto-server 模块解析
+      const serverPkg = path.dirname(
+        require.resolve('otto-server/package.json'),
+      );
+      binPath = path.join(serverPkg, 'dist', 'bin.js');
+      if (!fs.existsSync(binPath)) {
+        // 二次尝试：直接用 argv0 (node) 运行，开发环境
+        throw new Error('bin.js not found via require.resolve');
+      }
+    } catch {
+      // 终极回退：找 node 二进制
+      binPath = path.join(path.dirname(process.execPath), 'bin.js');
+    }
+
+    // 通过 writeEndpoint 写一个临时文件让 bin.js 的 writeEndpoint 覆盖
+    // 实际上我们读到的是 bin.js 启动后写的端点
+
+    const env: Record<string, string> = {
+      ...process.env,
+      OTTO_SERVER_PORT: String(port),
     };
+
+    let spawnArgs: string[];
+    let spawnOpts: childProcess.SpawnOptions;
+
+    if (nodeExec.endsWith('Electron') || nodeExec.includes('electron')) {
+      // 打包形态：Electron 主二进制 + ELECTRON_RUN_AS_NODE
+      env.ELECTRON_RUN_AS_NODE = '1';
+      spawnArgs = [binPath, 'start'];
+      spawnOpts = {
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      };
+    } else {
+      // 开发形态：直接用 node 跑
+      spawnArgs = [binPath, 'start'];
+      spawnOpts = {
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: true, // Windows 开发环境需要 shell
+      };
+    }
+
+    const child = childProcess.spawn(process.execPath, spawnArgs, spawnOpts);
+    this.detachedChild = child;
+    child.unref(); // 不计入父进程事件循环引用
+
+    // 监听子进程退出
+    child.on('exit', (code, signal) => {
+      console.warn(`[ServerManager] detached server 退出 code=${code} signal=${signal}`);
+      if (this.detachedChild === child) {
+        this.detachedChild = undefined;
+      }
+    });
+
+    // 收集启动输出用于诊断
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); });
+    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+    // 等 server 写端点文件（轮询最多 15 秒）
+    const timeoutMs = 15000;
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.shuttingDown) {
+        try { child.kill('SIGTERM'); } catch {}
+        throw new Error('app 正在退出，已停掉刚拉起的 detached server');
+      }
+      const ep = mod.readEndpointRecord?.() ?? mod.readEndpoint();
+      if (ep && this.dependencies.pidAlive(ep.pid)) {
+        const healthy = await this.dependencies.probeHealth(
+          ep.host, ep.port, mod.HTTP_ROUTES.health,
+        );
+        if (healthy) {
+          console.log(`[ServerManager] detached server 就绪 → http://${ep.host}:${ep.port}`);
+          return ep;
+        }
+      }
+      if (child.exitCode !== null) {
+        throw new Error(
+          `detached server 异常退出 code=${child.exitCode} stderr=${stderr.slice(-200)}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    throw new Error(
+      `detached server 启动超时 (${timeoutMs}ms) stdout=${stdout.slice(-200)} stderr=${stderr.slice(-200)}`,
+    );
   }
 
   /**
@@ -300,54 +427,59 @@ export class ServerManager {
    * app 退出清理：只在内嵌时停 server（discovered 的 server 故意留活）。
    * 先置 shuttingDown，让还在跑的 ensure()/startEmbedded() 在完成点自行终止。
    */
-  async shutdown(): Promise<void> {
+  async shutdown(forceKill = false): Promise<void> {
     this.shuttingDown = true;
     this.stopHealthCheck();
-    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] SHUTDOWN 正在停止 Otto server…\n`); } catch {}
-    // listen 尚未完成时 enterpriseSrv 还没有赋值；必须显式中止并等待启动路径收尾。
+
+    const logPrefix = forceKill ? 'FORCE_SHUTDOWN' : 'SHUTDOWN';
+    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${logPrefix} 进程退出\n`); } catch {}
+
     this.enterpriseListenAbort?.abort();
     if (this.enterpriseEnsurePromise) {
-      try {
-        await this.enterpriseEnsurePromise;
-      } catch {
-        // ensureEnterprise 会降级处理；退出路径再兜底吞掉。
-      }
+      try { await this.enterpriseEnsurePromise; } catch {}
     }
-    // 停 enterprise-server（内嵌时才有）。
     if (this.enterpriseSrv) {
       try {
         await new Promise<void>((resolve) => {
           this.enterpriseSrv!.close(() => resolve());
-          // 兜底：3 秒后无论如何 resolve
           setTimeout(resolve, 3000);
         });
-      } catch {
-        // 退出路径，吞掉。
-      }
+      } catch {}
       this.enterpriseSrv = undefined;
       this.enterpriseOwnership = 'unavailable';
     }
-    // 判 this.embedded 而非 ownership：embedded 只在本进程拉起时赋值，
-    // 且 ownership 的赋值晚于拉起完成，退出竞态窗口内以 embedded 为准。
     if (this.embedded) {
-      try {
-        await this.embedded.stop();
-      } catch {
-        // 退出路径，吞掉。
-      } finally {
-        // loadOttoServer 此时必已完成过一次（embedded 存在即说明 ensure 跑过），
-        // 缓存命中不会真的再 import()。
-        const mod = await this.dependencies.loadOttoServer();
-        mod.clearEndpoint();
+      try { await this.embedded.stop(); } catch {} finally {
+        try { const mod = await this.dependencies.loadOttoServer(); mod.clearEndpoint(); } catch {}
         this.embedded = undefined;
         this.currentEndpointRecord = undefined;
       }
+    }
+    if (this.detachedChild) {
+      if (forceKill) {
+        console.log('[ServerManager] 强制停止 detached server…');
+        try {
+          const mod = await this.dependencies.loadOttoServer();
+          const ep = mod.readEndpoint();
+          if (ep?.pid && this.dependencies.pidAlive(ep.pid)) {
+            process.kill(ep.pid, 'SIGTERM');
+            await new Promise((r) => setTimeout(r, 2000));
+            if (this.dependencies.pidAlive(ep.pid)) process.kill(ep.pid, 'SIGKILL');
+          }
+          mod.clearEndpoint();
+        } catch {}
+        try { this.detachedChild.kill('SIGTERM'); } catch {}
+      } else {
+        console.log('[ServerManager] detached server 留活（飞书继续运行）');
+      }
+      this.detachedChild = undefined;
+      this.currentEndpointRecord = undefined;
     }
   }
 
   // ─── 健康检查与自动重启 ────────────────────────────────────────
 
-  /** 启动定期健康检查（仅 embedded server）。 */
+  /** 启动定期健康检查（embedded 和 detached 模式）。 */
   private startHealthCheck(): void {
     if (this.healthCheckTimer) return;
     this.consecutiveHealthFailures = 0;
@@ -364,7 +496,7 @@ export class ServerManager {
   }
 
   private async runHealthCheck(): Promise<void> {
-    if (!this.embedded || !this.currentEndpointRecord) return;
+    if (!this.currentEndpointRecord) return;
     const { host, port } = this.currentEndpointRecord;
     try {
       const mod = await this.dependencies.loadOttoServer();
@@ -388,13 +520,13 @@ export class ServerManager {
     );
     try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] HEALTH_FAIL #${this.consecutiveHealthFailures}\n`); } catch {}
     if (this.consecutiveHealthFailures >= MAX_HEALTH_FAILURES) {
-      await this.restartEmbeddedServer();
+      await this.restartServer();
     }
   }
 
-  /** 自动重启内嵌 server（带退避和上限）。 */
-  private async restartEmbeddedServer(): Promise<void> {
-    if (!this.embedded || !this.currentEndpointRecord) return;
+  /** 自动重启 server（embedded 或 detached，带退避和上限）。 */
+  private async restartServer(): Promise<void> {
+    if (!this.currentEndpointRecord) return;
     this.restartCount++;
     if (this.restartCount > MAX_RESTART_COUNT) {
       const msg = `[ServerManager] 已重启 ${MAX_RESTART_COUNT} 次依然不健康，停止自动重启。请手动排查。`;
@@ -403,34 +535,47 @@ export class ServerManager {
       this.stopHealthCheck();
       return;
     }
-    // 退避：1s → 3s → 5s
     const backoffMs = [1000, 3000, 5000][this.restartCount - 1] ?? 5000;
-    console.warn(
-      `[ServerManager] ${backoffMs / 1000}s 后尝试第 ${this.restartCount} 次重启…`,
-    );
+    console.warn(`[ServerManager] ${backoffMs / 1000}s 后尝试第 ${this.restartCount} 次重启…`);
     await new Promise((r) => setTimeout(r, backoffMs));
     if (this.shuttingDown) return;
 
-    try {
-      await this.embedded.stop();
-    } catch { /* 旧实例可能已无法响应 */ }
+    // 停旧实例
+    if (this.embedded) {
+      try { await this.embedded.stop(); } catch {}
+    }
+    if (this.detachedChild) {
+      try { this.detachedChild.kill('SIGTERM'); } catch {}
+      this.detachedChild = undefined;
+    }
     try {
       const mod = await this.dependencies.loadOttoServer();
+      const ep = mod.readEndpoint();
+      if (ep?.pid && this.dependencies.pidAlive(ep.pid)) {
+        process.kill(ep.pid, 'SIGTERM');
+        await new Promise((r) => setTimeout(r, 1000));
+      }
       mod.clearEndpoint();
     } catch {}
     this.embedded = undefined;
     this.currentEndpointRecord = undefined;
     this.consecutiveHealthFailures = 0;
 
-    // 重新拉起
+    // 重新拉起：detached 优先
     try {
       const mod = await this.dependencies.loadOttoServer();
       const port = resolvePort(mod.DEFAULT_PORT);
-      const ep = await this.startEmbedded(port, mod);
-      this.ownership = 'embedded';
-      this.currentEndpointRecord = ep;
+      try {
+        const ep = await this.startDetached(port);
+        this.ownership = 'detached';
+        this.currentEndpointRecord = ep;
+      } catch {
+        const ep = await this.startEmbedded(port, mod);
+        this.ownership = 'embedded';
+        this.currentEndpointRecord = ep;
+      }
       this.startHealthCheck();
-      const restartMsg = `[ServerManager] server 已成功重启于端口 ${ep.port}`;
+      const restartMsg = `[ServerManager] server 已成功重启于端口 ${this.currentEndpointRecord.port}`;
       console.log(restartMsg);
       try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${restartMsg}\n`); } catch {}
     } catch (err) {
