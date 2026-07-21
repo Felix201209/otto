@@ -658,23 +658,21 @@ function loadIcon(): NativeImage {
       if (!image.isEmpty()) return image;
     }
   }
-  return nativeImage.createEmpty();
+  // 内嵌后备图标（32x32 PNG）
+  return nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAPklEQVR42mNg+M8ABUwgauf/ZJEYASZQRLMAs6IRYAKRKIYB5iYwI+gYIkDUQs1DEBtBbqRhgAMDAAMEATRlPZEIvE5AAAAABJRU5ErkJggg==',
+  );
 }
 
 function loadTrayIcon(): NativeImage {
-  const icon = loadIcon();
-  if (!icon.isEmpty()) {
-    return process.platform === 'darwin'
-      ? icon.resize({ width: 18, height: 18 })
-      : icon.resize({ width: 16, height: 16 });
+  if (process.platform === 'darwin') {
+    const template = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAPklEQVR42mNg+M8ABUwgauf/ZJEYASZQRLMAs6IRYAKRKIYB5iYwI+gYIkDUQs1DEBtBbqRhgAMDAAMEATRlPZEIvE5AAAAABJRU5ErkJggg==',
+    );
+    template.setTemplateImage(true);
+    return template;
   }
-  const fallback = nativeImage.createFromDataURL(
-    'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#111827"/><circle cx="16" cy="16" r="9" fill="#60a5fa"/><circle cx="16" cy="16" r="4" fill="#ffffff"/></svg>',
-      ),
-  );
-  return fallback.resize({ width: process.platform === 'darwin' ? 18 : 16, height: process.platform === 'darwin' ? 18 : 16 });
+  return loadIcon().resize({ width: 16, height: 16 });
 }
 
 function showMainWindow(): void {
@@ -690,24 +688,75 @@ function showMainWindow(): void {
 
 function createTray(): void {
   if (tray) return;
+
+  tracer.state.status = '正在启动…';
+
   tray = new Tray(loadTrayIcon());
   tray.setToolTip('Otto');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    {
-      label: '打开 Otto',
-      click: showMainWindow,
-    },
-    {
-      label: '退出 Otto',
-      click: () => {
-        isQuitting = true;
-        app.quit();
+
+  const updateMenu = (): void => {
+    const status = tracer.getSummary();
+    const restarting = (tray as any).__restarting === true;
+
+    const template: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: '打开 Otto',
+        click: showMainWindow,
       },
-    },
-  ]));
+      { type: 'separator' },
+      {
+        label: status,
+        enabled: false,
+      },
+      {
+        label: restarting ? '正在重启…' : '重启 Otto 服务',
+        enabled: !restarting,
+        click: async () => {
+          (tray as any).__restarting = true;
+          updateMenu();
+          tracer.updateStatus('正在重启…');
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC.endpointChanged, null);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            endpoint = undefined;
+            await ensureEndpoint();
+          } catch {
+            tracer.updateStatus('重启失败');
+          } finally {
+            (tray as any).__restarting = false;
+            updateMenu();
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '退出 Otto',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ];
+    tray!.setContextMenu(Menu.buildFromTemplate(template));
+  };
+
+  updateMenu();
+  setInterval(() => {
+    if (tray && !tray.isDestroyed()) updateMenu();
+  }, 2000);
+
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
 }
+
+// ── 托盘状态追踪器 ──
+const tracer: { state: { status: string }; updateStatus(status: string): void; getSummary(): string } = {
+  state: { status: '正在启动…' },
+  updateStatus(status: string) { this.state.status = status; },
+  getSummary() { return this.state.status; },
+};
 
 function createWindow(): BrowserWindow {
   enterpriseIntentRendererReady = false;
@@ -929,8 +978,10 @@ function applyCsp(): void {
 /** 确保 server 可用并把端点缓存下来；失败不抛（renderer 显示「未连接」）。 */
 async function ensureEndpoint(): Promise<void> {
   try {
+    tracer.updateStatus('正在连接服务…');
     const ensured = await serverManager.ensure();
     endpoint = ensured.endpoint;
+    tracer.updateStatus('服务运行中');
     console.log(
       `[otto-desktop] server ${ensured.ownership} @ http://${endpoint.host}:${endpoint.port}`,
     );

@@ -148,6 +148,8 @@ export interface ServerManagerOptions {
    */
   enterpriseServerUrl?: string | null;
   dependencies?: ServerManagerDependencies;
+  /** 健康状态变更回调（用于托盘图标/窗口状态提示）。 */
+  onHealthChange?: (status: string) => void;
 }
 
 export class ServerManager {
@@ -182,10 +184,12 @@ export class ServerManager {
   private restartCount = 0;
   private readonly dependencies: ServerManagerDependencies;
   private readonly localEnterpriseServerUrl: string | null;
+  private readonly onHealthChange?: (status: string) => void;
 
   constructor(options: ServerManagerOptions = {}) {
     this.dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
     this.localEnterpriseServerUrl = loopbackServerUrl(options.enterpriseServerUrl);
+    this.onHealthChange = options.onHealthChange;
     if (!this.localEnterpriseServerUrl && options.enterpriseServerUrl) {
       this.enterpriseOwnership = 'external';
     }
@@ -371,12 +375,14 @@ export class ServerManager {
         this.consecutiveHealthFailures = 0;
         // 健康恢复后重置重启计数（给后续故障一个新的重启机会）
         this.restartCount = 0;
+        this.onHealthChange?.('服务运行中');
         return;
       }
     } catch {
       // probeHealth 自己吞异常，到这里就是 unhealthy
     }
     this.consecutiveHealthFailures++;
+    this.onHealthChange?.(`心跳异常 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`);
     console.warn(
       `[ServerManager] 健康检查失败 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`,
     );
