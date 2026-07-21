@@ -45,7 +45,7 @@ export const PROTOCOL_VERSION = '1' as const;
  * - 'feishu'：飞书网关收到的消息
  * - 'tui'：Ink 终端（P1，目前只读）
  */
-export type MessageSource = 'local' | 'feishu' | 'tui';
+export type MessageSource = 'local' | 'feishu' | 'tui' | 'atoa' | 'enterprise' | 'park';
 
 /**
  * 统一信封。所有 WS 帧都是这个形状（与 webview `{ type, payload }` 对齐）。
