@@ -569,6 +569,8 @@ export interface OttoBridge {
     path: string;
     message: string;
   }>;
+  /** 一键生成脱敏诊断包并保存到桌面。 */
+  createDiagnosticBundle(): Promise<{ ok: boolean; path: string; fileCount: number; message: string }>;
   /** 部门共享 Skill 列表。 */
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 公司 Skill 市场。 */
@@ -1049,6 +1051,14 @@ const bridge: OttoBridge = {
       markdown: string;
       html?: string;
       path: string;
+      message: string;
+    }>;
+  },
+  createDiagnosticBundle(): Promise<{ ok: boolean; path: string; fileCount: number; message: string }> {
+    return ipcRenderer.invoke('otto:create-diagnostic-bundle') as Promise<{
+      ok: boolean;
+      path: string;
+      fileCount: number;
       message: string;
     }>;
   },

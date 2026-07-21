@@ -19,6 +19,7 @@ import { Panel, Card, Badge, Empty } from './HubUI.js';
 
 export function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
   const { state, actions } = data;
+  const [bundleState, setBundleState] = React.useState<'idle' | 'working' | 'done' | 'error'>('idle');
   const report = state.doctorReport;
   // 缺失的排前面：体检的读者关心的是「缺什么」，就绪项只是背景。
   const checks = report
@@ -30,14 +31,32 @@ export function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Elem
       title="依赖体检"
       desc="检查文档 / 媒体 / 浏览器等能力所需的外部依赖是否就绪。"
       actions={
-        <button
-          type="button"
-          className="otto-hub__btn otto-hub__btn--primary"
-          onClick={actions.runDoctor}
-          disabled={state.doctorRunning}
-        >
-          {state.doctorRunning ? '体检中…' : '开始体检'}
-        </button>
+        <>
+          <button
+            type="button"
+            className="otto-hub__btn"
+            onClick={async () => {
+              setBundleState('working');
+              try {
+                await window.otto.createDiagnosticBundle();
+                setBundleState('done');
+              } catch {
+                setBundleState('error');
+              }
+            }}
+            disabled={bundleState === 'working'}
+          >
+            {bundleState === 'working' ? '打包中…' : bundleState === 'done' ? '已保存诊断包' : bundleState === 'error' ? '重新导出诊断包' : '导出诊断包'}
+          </button>
+          <button
+            type="button"
+            className="otto-hub__btn otto-hub__btn--primary"
+            onClick={actions.runDoctor}
+            disabled={state.doctorRunning}
+          >
+            {state.doctorRunning ? '体检中…' : '开始体检'}
+          </button>
+        </>
       }
     >
       {!report ? (

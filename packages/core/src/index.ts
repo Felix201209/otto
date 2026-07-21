@@ -101,6 +101,7 @@ export * from './services/fileOperationQueue.js';
 export * from './services/backgroundTaskManager.js';
 export * from './services/backgroundModeSignal.js';
 export * from './services/doctor.js';
+export * from './services/diagnosticBundle.js';
 export { formatClaudeCodeTaskResult, isAcpDelegateTask } from './tools/delegate-agent.js';
 export {
   CacheSafeParamsStore,

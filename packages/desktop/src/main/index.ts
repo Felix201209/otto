@@ -237,6 +237,7 @@ const IPC = {
   workLogToday: 'otto:worklog-today',
   workLogRecent: 'otto:worklog-recent',
   workLogReport: 'otto:worklog-report',
+  createDiagnosticBundle: 'otto:create-diagnostic-bundle',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
   setLocalTestUrl: 'otto:set-local-test-url',
@@ -1638,6 +1639,19 @@ function registerIpc(): void {
   ipcMain.handle(IPC.workLogReport, async () => {
     const worklogRoot = worklogRootDir();
     return generateAndSaveWorkReport(worklogRoot, localDateKey(new Date()));
+  });
+
+  ipcMain.handle(IPC.createDiagnosticBundle, async () => {
+    const core = await import('otto-core');
+    const result = await core.createDiagnosticBundle();
+    if (result.ok) {
+      try {
+        await shell.showItemInFolder(result.path);
+      } catch {
+        // 打开文件夹失败不影响诊断包生成结果。
+      }
+    }
+    return result;
   });
 
   // 部门共享 Skill 列表

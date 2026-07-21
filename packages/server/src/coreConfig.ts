@@ -10,8 +10,8 @@
  * server 每个会话 = 一个 core Config 实例。CLI 的 loadCliConfig 牵入大量
  * 终端/设置依赖（yargs/Ink 邻近），不适合 server 直接复用。这里只用
  * otto-core 顶层导出的 Config + ConfigParameters，构造一个最小可跑对话的
- * headless Config：注入 BYO-key 自定义模型，开 YOLO 审批（无人值守，工具
- * 不交互确认，与 nonInteractiveCli/ACP 的 headless 取向一致）。
+ * headless Config：注入 BYO-key 自定义模型。服务端默认使用安全审批模式，
+ * 高风险工具通过 tool_confirmation_request 交给客户端确认。
  *
  * initialize() / refreshAuth() 由 CoreSessionRuntime.initialize() 负责调用，
  * 本文件只负责「new Config(params)」这一步，保持职责单一。
@@ -113,9 +113,9 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     targetDir: cwd,
     cwd,
     debugMode: false,
-    // YOLO：headless 无人确认，非危险工具直接执行（对齐 ACP/nonInteractive 默认）。
-    // 危险工具的确认未来经 tool_confirmation_request 帧上抛（见 server.ts TODO）。
-    approvalMode: ApprovalMode.YOLO,
+    // 安全默认：需要确认的操作上抛给客户端；只有 CLI 显式 --yolo 等
+    // 无人值守入口才允许自动授权。
+    approvalMode: ApprovalMode.DEFAULT,
     model: resolvedModel,
     customModels,
     userRules: opts.userRules,

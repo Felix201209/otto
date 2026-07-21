@@ -74,6 +74,12 @@ interface BinarySpec {
   hints: Partial<Record<'darwin' | 'win32' | 'linux', string>>;
 }
 
+interface PythonModuleSpec {
+  name: string;
+  importName: string;
+  category: string;
+}
+
 const DEFAULT_TIMEOUT_MS = 5000;
 
 /**
@@ -112,6 +118,16 @@ const defaultResolver: ModuleResolver = (moduleName) => {
 
 /** 被探测的二进制依赖清单。顺序即报告展示顺序（按能力聚类）。 */
 const BINARY_SPECS: BinarySpec[] = [
+  {
+    name: 'python3',
+    category: '公文生成运行时',
+    bins: ['python3', 'python'],
+    hints: {
+      darwin: 'brew install python',
+      win32: 'winget install Python.Python.3.12',
+      linux: 'sudo apt-get install -y python3',
+    },
+  },
   {
     name: 'pandoc',
     category: '文档转换/生成',
@@ -224,6 +240,12 @@ const BINARY_SPECS: BinarySpec[] = [
   },
 ];
 
+const PYTHON_MODULE_SPECS: PythonModuleSpec[] = [
+  { name: 'python-docx', importName: 'docx', category: 'Word 公文生成' },
+  { name: 'jinja2', importName: 'jinja2', category: '公文模板渲染' },
+  { name: 'markdown', importName: 'markdown', category: 'Markdown 正文解析' },
+];
+
 /** playwright 走 node 模块解析而非 PATH，单列。 */
 const PLAYWRIGHT_MODULE_CANDIDATES = ['playwright', 'playwright-core'];
 
@@ -245,8 +267,11 @@ export class DoctorService {
       specs.map((s) => this.probeBinary(s)),
     );
     const playwrightCheck = this.probePlaywright();
+    const pythonModuleChecks = await Promise.all(
+      PYTHON_MODULE_SPECS.map((spec) => this.probePythonModule(spec)),
+    );
 
-    const checks = [...binaryChecks, playwrightCheck];
+    const checks = [...binaryChecks, playwrightCheck, ...pythonModuleChecks];
     const missing = checks.filter((c) => !c.present);
     const affectedCapabilities = Array.from(
       new Set(missing.map((c) => c.category)),
@@ -321,6 +346,21 @@ export class DoctorService {
       present: false,
       installHint: 'npm i playwright   (然后 npx playwright install)',
     };
+  }
+
+  private async probePythonModule(spec: PythonModuleSpec): Promise<DoctorCheck> {
+    const python = this.platform === 'win32' ? 'python' : 'python3';
+    try {
+      await this.runner(`${python} -c "import ${spec.importName}"`, DEFAULT_TIMEOUT_MS);
+      return { name: spec.name, category: spec.category, present: true };
+    } catch {
+      return {
+        name: spec.name,
+        category: spec.category,
+        present: false,
+        installHint: `python -m pip install ${spec.name}`,
+      };
+    }
   }
 
   /** 定位命令。默认用 `which <bin>`（Windows 用 `where`）；未命中返回 undefined。 */

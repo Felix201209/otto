@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createCoreConfig } from './coreConfig.js';
+import { ApprovalMode } from 'otto-core';
 
 const PERSONAL_MODEL = {
   displayName: '个人模型',
@@ -15,6 +16,15 @@ const PERSONAL_MODEL = {
 };
 
 describe('createCoreConfig v1.7 模式隔离', () => {
+  it('服务端默认使用安全审批模式，不默认开启 YOLO', () => {
+    const config = createCoreConfig({
+      sessionId: 'safe-default-session',
+      customModels: [],
+    });
+
+    expect(config.getApprovalMode()).toBe(ApprovalMode.DEFAULT);
+  });
+
   it('内部测试阶段遇到旧 Otto 托管模型 id 时回退个人 BYOK', () => {
     const config = createCoreConfig({
       sessionId: 'enterprise-session',
