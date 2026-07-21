@@ -48,10 +48,10 @@ import {
 import { computeFileSha256, verifyBeforeInstall } from './update-verify.js';
 import { downloadToFile } from './update-download.js';
 
-/** 主更新源：latest release 的 latest.json 直链（匿名 + 302 跟随，免 API 限流）。 */
+/** 主更新源：latest.json 直链（自建服务器，免 GitHub 被墙）。 */
 const PRIMARY_MANIFEST_URL =
-  'https://github.com/Felix201209/otto-releases/releases/latest/download/latest.json';
-/** 兜底：GitHub Releases API（匿名，60 次/小时限流，仅主 URL 失败时才碰）。 */
+  'http://59.110.154.44/otto-releases/latest.json';
+/** 兜底：GitHub Releases API。 */
 const FALLBACK_API_URL =
   'https://api.github.com/repos/Felix201209/otto-releases/releases/latest';
 /** 资产缺失时引导用户手动下载的发布页。 */
