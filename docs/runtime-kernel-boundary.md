@@ -15,7 +15,7 @@ The kernel owns these lifecycle-critical concerns:
 
 - **File**: `packages/core/src/core/turn.ts`
 - Defines `Turn` — the state machine for a single LLM round-trip (request → stream → tool calls → response).
-- Enumerates `OttoEventType` (Content, ToolCallRequest, ToolCallResponse, ToolCallConfirmation, UserCancelled, Error, ChatCompressed, Thought, Reasoning, MaxSessionTurns, Finished, LoopDetected, TokenUsage).
+- Enumerates `OttoEventType` (Content, ToolCallRequest, ToolCallResponse, ToolCallConfirmation, UserCancelled, Error, ChatCompressed, Thought, Reasoning, MemoryContext, MaxSessionTurns, Finished, LoopDetected, TokenUsage).
 - Carries structured error types (`OttoErrorEventValue`), tool call request/response shapes, and confirmation outcome enums.
 - **Entry point**: The `Turn` class is instantiated by `client.ts` per user message.
 - **File**: `packages/core/src/core/turnStateMachine.ts` — deterministic turn state model
@@ -152,8 +152,8 @@ The kernel owns these lifecycle-critical concerns:
   - Budget enforcement: max 5 entries, total < 500 tokens.
   - Project-scope vs global-scope differentiation via heuristic (tags, path patterns).
 - Wired into `OttoClient.sendMessageStream()` — on first turn (`sessionTurnCount === 1`), the injector searches memory and prepends the summary to the user message context.
-- The injection is non-blocking: failures are caught and logged without interrupting the turn.
-- Console output: `Found N relevant memories (X project, Y global)` on successful injection.
+- Emits `OttoEventType.MemoryContext` before the model call so UI surfaces can show "found N related memories" instead of hiding the behavior in logs.
+- The injection is fail-safe: failures are caught and logged without interrupting the turn.
 - **Types**: `MemoryInjection`.
 
 ---

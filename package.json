@@ -42,6 +42,7 @@
     "auth:docker": "gcloud auth configure-docker us-west1-docker.pkg.dev",
     "auth": "npm run auth:npm && npm run auth:docker",
     "generate": "node scripts/generate-git-commit-info.js",
+    "doctor": "node scripts/doctor.cjs",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspaces",
     "build:sandbox": "node scripts/build_sandbox.js --skip-npm-install-build",
