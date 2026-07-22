@@ -23,6 +23,14 @@ import { CompressionService } from '../services/compressionService.js';
 import { SceneManager, SceneType } from './sceneManager.js';
 import { t } from '../utils/simpleI18n.js';
 import { AgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
+import { getAgentResourceBudget } from './agentResourceBudget.js';
+import {
+  AgentMemorySnapshot,
+  AgentMemoryReport,
+  buildAgentMemoryReport,
+  estimateHistoryChars,
+  readProcessMemorySnapshot,
+} from './agentMemoryStats.js';
 
 // ─── SubAgent 超时与内存保护常量 ───
 
@@ -71,6 +79,7 @@ export interface SubAgentResult {
     outputTokens: number;
     totalTokens: number;
   };
+  memoryUsage?: AgentMemoryReport;
 }
 
 /**
@@ -110,6 +119,8 @@ export class SubAgent {
 
   // 🎯 AbortSignal监听器清理函数
   private abortListener: (() => void) | null = null;
+  private memoryStart?: AgentMemorySnapshot;
+  private readonly historyMaxChars = getAgentResourceBudget().subAgentHistoryMaxChars;
 
   /**
    * 检查AbortSignal状态，如果已被触发则抛出错误
@@ -198,6 +209,7 @@ export class SubAgent {
       currentTurn: 0,
       isRunning: true,
     };
+    this.memoryStart = readProcessMemorySnapshot();
 
     // 简化：SubAgent 状态通过工具调用状态体现，无需中央注册
 
@@ -401,6 +413,7 @@ export class SubAgent {
     await this.processAndStorePendingToolResults(aiResponse, responseAnalysis.toolCount);
 
     await this.tryCompressHistory();
+    this.enforceHistoryBudget();
 
     return null; // 继续下一轮对话，携带工具结果
   }
@@ -814,6 +827,7 @@ export class SubAgent {
       filesCreated: stats.filesCreated,
       commandsRun: stats.commandsRun,
       tokenUsage: this.context.tokenUsage,
+      memoryUsage: this.buildMemoryReport(),
     };
   }
 
@@ -834,6 +848,7 @@ export class SubAgent {
       filesCreated: stats.filesCreated,
       commandsRun: stats.commandsRun,
       tokenUsage: this.context.tokenUsage,
+      memoryUsage: this.buildMemoryReport(),
     };
   }
 
@@ -877,7 +892,25 @@ export class SubAgent {
       filesCreated: stats.filesCreated,
       commandsRun: stats.commandsRun,
       tokenUsage: this.context.tokenUsage,
+      memoryUsage: this.buildMemoryReport(),
     };
+  }
+
+  private buildMemoryReport(): AgentMemoryReport {
+    return buildAgentMemoryReport({
+      start: this.memoryStart ?? readProcessMemorySnapshot(),
+      history: this.getHistorySnapshot(),
+      pendingToolResultParts: this.pendingToolResults.length,
+    });
+  }
+
+  private getHistorySnapshot(): Content[] {
+    if (!this.subAgentChat) return [];
+    try {
+      return this.subAgentChat.getHistory();
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -996,6 +1029,36 @@ export class SubAgent {
   /**
    * 获取适配器实例
    */
+  private enforceHistoryBudget(): void {
+    if (!this.subAgentChat) return;
+
+    const currentHistory = this.subAgentChat.getHistory();
+    const historyChars = estimateHistoryChars(currentHistory);
+    if (historyChars <= this.historyMaxChars) return;
+
+    const keepHead = Math.min(2, currentHistory.length);
+    const preservedHead = currentHistory.slice(0, keepHead);
+    const keptTail: Content[] = [];
+    let retainedChars = estimateHistoryChars(preservedHead);
+
+    for (let index = currentHistory.length - 1; index >= keepHead; index--) {
+      const message = currentHistory[index];
+      const messageChars = estimateHistoryChars([message]);
+      if (keptTail.length > 0 && retainedChars + messageChars > this.historyMaxChars) {
+        break;
+      }
+      keptTail.unshift(message);
+      retainedChars += messageChars;
+    }
+
+    const truncatedHistory = [...preservedHead, ...keptTail];
+    this.subAgentChat.setHistory(truncatedHistory);
+    this.log(
+      `SubAgent history budget enforced: ${currentHistory.length} -> ${truncatedHistory.length} messages, ` +
+      `${historyChars} -> ${estimateHistoryChars(truncatedHistory)} chars (max ${this.historyMaxChars})`,
+    );
+  }
+
   getAdapter(): SubAgentAdapter {
     return this.adapter;
   }

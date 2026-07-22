@@ -11,6 +11,7 @@ import { SubAgent } from './subAgent.js';
 import { getBuiltInAgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
 import { WorkflowRegistry } from './workflowRegistry.js';
 import { getAgentResourceBudget } from './agentResourceBudget.js';
+import type { AgentMemoryReport } from './agentMemoryStats.js';
 
 /**
  * Options passed to agent.run() inside a workflow script.
@@ -54,6 +55,8 @@ export interface WorkflowAgentRunResult {
   data?: unknown;
   /** Token usage for this sub-agent run. */
   tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  /** Lightweight process memory footprint for this sub-agent run. */
+  memoryUsage?: AgentMemoryReport;
 }
 
 /**
@@ -234,6 +237,7 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
       result: result.summary,
       data,
       tokenUsage: result.tokenUsage,
+      memoryUsage: result.memoryUsage,
     };
   }
 

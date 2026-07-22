@@ -394,6 +394,24 @@ export interface SubAgentDisplay {
       outputTokens: number;
       totalTokens: number;
     };
+    memoryUsage?: {
+      durationMs: number;
+      historyChars: number;
+      historyMessages: number;
+      pendingToolResultParts: number;
+      delta: {
+        rssBytes: number;
+        heapUsedBytes: number;
+        externalBytes: number;
+        arrayBuffersBytes: number;
+      };
+      end: {
+        rssBytes: number;
+        heapUsedBytes: number;
+        externalBytes: number;
+        arrayBuffersBytes: number;
+      };
+    };
   };
   showDetailedProcess: boolean;
   startTime: number;

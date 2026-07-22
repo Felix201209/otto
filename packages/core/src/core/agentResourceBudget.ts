@@ -16,6 +16,7 @@ export interface AgentResourceBudget {
   workflowDefaultMaxAgents: number;
   workflowMaxAgentsCeiling: number;
   workflowContextMaxChars: number;
+  subAgentHistoryMaxChars: number;
   subAgentOverallTimeoutMs: number;
 }
 
@@ -63,6 +64,7 @@ export function getAgentResourceBudget(
       workflowDefaultMaxAgents: 24,
       workflowMaxAgentsCeiling: 96,
       workflowContextMaxChars: 12000,
+      subAgentHistoryMaxChars: 60000,
       subAgentOverallTimeoutMs: 20 * MINUTE_MS,
     },
     standard: {
@@ -72,6 +74,7 @@ export function getAgentResourceBudget(
       workflowDefaultMaxAgents: 48,
       workflowMaxAgentsCeiling: 160,
       workflowContextMaxChars: 16000,
+      subAgentHistoryMaxChars: 90000,
       subAgentOverallTimeoutMs: 25 * MINUTE_MS,
     },
     high: {
@@ -81,6 +84,7 @@ export function getAgentResourceBudget(
       workflowDefaultMaxAgents: 64,
       workflowMaxAgentsCeiling: 256,
       workflowContextMaxChars: 20000,
+      subAgentHistoryMaxChars: 120000,
       subAgentOverallTimeoutMs: 30 * MINUTE_MS,
     },
   };
@@ -114,6 +118,11 @@ export function getAgentResourceBudget(
       parsePositiveInt(env.OTTO_WORKFLOW_CONTEXT_MAX_CHARS) ?? defaults.workflowContextMaxChars,
       4000,
       40000,
+    ),
+    subAgentHistoryMaxChars: clamp(
+      parsePositiveInt(env.OTTO_SUBAGENT_HISTORY_MAX_CHARS) ?? defaults.subAgentHistoryMaxChars,
+      20000,
+      240000,
     ),
     subAgentOverallTimeoutMs: clamp(
       parsePositiveInt(env.OTTO_SUBAGENT_TIMEOUT_MS) ?? defaults.subAgentOverallTimeoutMs,

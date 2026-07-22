@@ -411,6 +411,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         totalToolCalls: currentDisplayData.stats.totalToolCalls,
         successfulToolCalls: currentDisplayData.stats.successfulToolCalls,
         tokenUsage: result.tokenUsage || currentDisplayData.stats.tokenUsage,
+        memoryUsage: result.memoryUsage,
       };
 
       currentDisplayData = {

@@ -15,6 +15,7 @@ describe('getAgentResourceBudget', () => {
     expect(budget.taskMaxConcurrency).toBe(1);
     expect(budget.workflowDefaultMaxConcurrency).toBe(2);
     expect(budget.workflowDefaultMaxAgents).toBeLessThan(50);
+    expect(budget.subAgentHistoryMaxChars).toBe(60000);
   });
 
   it('keeps high-device defaults bounded instead of allowing runaway fan-out', () => {
@@ -24,6 +25,7 @@ describe('getAgentResourceBudget', () => {
     expect(budget.workflowDefaultMaxConcurrency).toBe(4);
     expect(budget.workflowMaxConcurrencyCeiling).toBe(8);
     expect(budget.workflowDefaultMaxAgents).toBe(64);
+    expect(budget.subAgentHistoryMaxChars).toBe(120000);
   });
 
   it('clamps environment overrides to profile ceilings', () => {
@@ -33,6 +35,7 @@ describe('getAgentResourceBudget', () => {
         OTTO_TASK_MAX_CONCURRENCY: '99',
         OTTO_WORKFLOW_MAX_CONCURRENCY: '99',
         OTTO_WORKFLOW_MAX_AGENTS: '9999',
+        OTTO_SUBAGENT_HISTORY_MAX_CHARS: '999999',
       },
       16 * 1024 * 1024 * 1024,
       8,
@@ -41,5 +44,6 @@ describe('getAgentResourceBudget', () => {
     expect(budget.taskMaxConcurrency).toBe(6);
     expect(budget.workflowDefaultMaxConcurrency).toBe(6);
     expect(budget.workflowDefaultMaxAgents).toBe(160);
+    expect(budget.subAgentHistoryMaxChars).toBe(240000);
   });
 });
