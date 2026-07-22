@@ -18,6 +18,12 @@ The kernel owns these lifecycle-critical concerns:
 - Enumerates `OttoEventType` (Content, ToolCallRequest, ToolCallResponse, ToolCallConfirmation, UserCancelled, Error, ChatCompressed, Thought, Reasoning, MaxSessionTurns, Finished, LoopDetected, TokenUsage).
 - Carries structured error types (`OttoErrorEventValue`), tool call request/response shapes, and confirmation outcome enums.
 - **Entry point**: The `Turn` class is instantiated by `client.ts` per user message.
+- **File**: `packages/core/src/core/turnStateMachine.ts` — deterministic turn state model
+  - Defines `TurnState` enum: `created → planning → (awaiting_permission | executing_tool) → observing_result → writing_memory → checkpointing → (completed | failed | cancelled)`.
+  - `TurnStateMachine` class enforces valid transitions at runtime via `transition()`, throwing `InvalidTransitionError` on invalid moves.
+  - `isTerminal()` identifies completed/failed/cancelled as terminal states.
+  - `describeTransition(from, to)` helper for audit logging.
+  - The `Turn` class accepts an optional `TurnStateMachine` via constructor injection and calls `safeTransition()` at key lifecycle points (turn start, tool execution, completion, error, cancellation). This is opt-in and non-breaking — callers without a state machine continue to work unchanged.
 
 ### 2. State Transitions (Tool Execution)
 
@@ -120,6 +126,21 @@ The kernel owns these lifecycle-critical concerns:
 - **File**: `packages/core/src/core/workflowAgentBridge.ts`
 - Bridges workflow steps → agent execution with context propagation.
 
+### 15. Memory Subsystem
+
+- **File**: `packages/core/src/memory/memorySubsystem.ts`
+- `MemorySubsystem` interface — unified API for capture, search, stats, rebuild, clear.
+- `createMemorySubsystem(opts)` — factory that wraps autoMerge + knowledgeCapture + localKnowledgeStore.
+  - `capture(event: MemoryEvent)` — record a memory-worthy event with source provenance.
+  - `search(query, opts?)` — simple substring FTS, zero external deps, returns `MemorySearchResult[]` with provenance.
+  - `getStats()` — `MemoryStats` with autoMerge/knowledgeEntries breakdown + lastUpdated.
+  - `rebuild()` — rescan global.md + entries.jsonl, rerun maintenance cycle.
+  - `clear()` — wipe in-memory event list (does not delete source files).
+- **Disabled mode**: `{ disabled: true }` makes all ops no-ops — kernel can disable memory via config flag.
+- **Types**: `MemoryEvent`, `MemorySearchResult`, `SearchOptions`, `MemoryStats`.
+- The kernel calls `capture()` after significant turns and `search()` when context retrieval is needed.
+- Search is intentionally simple (substring + scoring) — no external vector DB or embedding API required.
+
 ---
 
 ## What Must NOT Live in the Kernel
@@ -140,8 +161,8 @@ These concerns belong outside the kernel boundary. Kernel files **must not impor
 
 ### Memory Ranking / Scoring
 
-- `packages/core/src/memory/` — Mem0 adapter, codebase memory, org memory.
-- The kernel uses memory but does not rank or score; ranking logic is in `memoryProvider.ts`, `mem0Adapter.ts`.
+- `packages/core/src/memory/` — Mem0 adapter, codebase memory, org memory, autoMerge engine.
+- The kernel calls `MemorySubsystem` for capture/search; ranking/scoring/memory internals (autoMerge merge/split/compress, knowledgeCapture pipeline, mem0Adapter) are **not kernel code** — they live behind the `MemorySubsystem` interface.
 
 ### Document Workflows
 
