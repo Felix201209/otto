@@ -64,6 +64,10 @@ The kernel owns these lifecycle-critical concerns:
 - **File**: `packages/core/src/components/componentManifest.ts`
 - Defines the versioned manifest contract for external tools, connectors, runtimes, agent profiles, themes, and GUI shells.
 - Organization/vendor components must not claim kernel-owned paths. Kernel updates should remain upstream-owned; organization-specific behavior belongs in components.
+- **File**: `packages/core/src/kernel/kernelDistributionManifest.ts`
+- Defines the signed compiled-kernel distribution contract for enterprise/private deployments.
+- Rule: locked enterprise kernels must be source-free compiled artifacts with SHA-256 integrity, detached signature, signing-key identity, component API version, and performance budget.
+- Rule: describe the guarantee as tamper-evident and reverse-engineering resistant; never promise that local software is impossible to inspect or crack.
 - **Architecture guide**: `docs/enterprise-component-architecture.md`
 
 ### 3c. Product UX Contract

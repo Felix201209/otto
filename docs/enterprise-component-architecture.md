@@ -14,6 +14,47 @@ Otto should support organizations that want their own private agent without forc
 
 The kernel should be boring and stable. Components should be where organizations express local policy, integrations, branding, and distribution needs.
 
+## Locked kernel distribution
+
+Enterprise distributions should consume the Otto kernel as a compiled, signed artifact. This gives organizations a stable update path without turning every deployment into a private fork.
+
+Kernel distribution manifests use `KernelDistributionManifest` from `packages/core/src/kernel/kernelDistributionManifest.ts`.
+
+Minimum shape:
+
+```json
+{
+  "manifestVersion": 1,
+  "kernelVersion": "2.0.0",
+  "sourceCommit": "ffd69a433bd7924f9cf60b64d539ab7a818353c7",
+  "channel": "lts",
+  "artifact": {
+    "format": "native-binary",
+    "path": "dist/otto-kernel.exe",
+    "sha256": "<64-char-sha256>",
+    "signature": "ed25519:<detached-signature>",
+    "publicKeyId": "otto-kernel-prod-2026",
+    "sourceIncluded": false
+  },
+  "performanceBudget": {
+    "coldStartMs": 1200,
+    "registryReadyMs": 500,
+    "maxIdleRssMb": 180,
+    "maxSubAgentRssDeltaMb": 80,
+    "maxToolSchemaChars": 120000
+  },
+  "componentApiVersion": 1,
+  "generatedAt": "2026-07-22T11:00:00.000Z"
+}
+```
+
+Security wording must stay honest:
+
+- Do say: tamper-evident, signed, source-free enterprise artifact, reverse-engineering resistant.
+- Do not say: impossible to inspect, impossible to crack, mathematically unbreakable.
+
+Any local software can be reverse engineered with enough effort. The product guarantee is that official enterprise kernels are signed compiled artifacts and unauthorized modification is detectable.
+
 ## Component manifest
 
 Optional components use the versioned `OttoComponentManifest` contract from `packages/core/src/components/componentManifest.ts`.
@@ -42,6 +83,7 @@ Rules:
 - Private deployments should update the kernel from upstream instead of carrying long-lived core forks.
 - Local integrations belong in components, connectors, MCP servers, bundled runtimes, or GUI shells.
 - GUI customization should prefer routes, layout slots, and tokens over edits to kernel or server session logic.
+- Kernel updates are accepted only through signed compiled artifacts that pass integrity, component API, and performance budget validation.
 
 ## Distribution guidance
 
