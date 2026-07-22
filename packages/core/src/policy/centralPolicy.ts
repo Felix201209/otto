@@ -19,6 +19,7 @@
 import { Config, ApprovalMode } from '../config/config.js';
 import { PolicyEngine, PolicyDecision } from './policy-engine.js';
 import { getAuditLogger, AuditLogger } from '../orchestration/auditLog.js';
+import { isHighRisk } from './highRiskTools.js';
 
 // ---------------------------------------------------------------------------
 // Re-export PolicyDecision so callers don't need to reach into policy-engine
@@ -139,9 +140,34 @@ export class CentralPolicy {
       }
     }
 
-    // --- Approval-mode gating via PolicyEngine ---
+    // --- High-risk tool check ---
+    // High-risk tools (shell, delete_file, send_message, etc.) always
+    // require AskUser. Even in AUTO_EDIT mode, high-risk tools are NOT
+    // auto-allowed. In YOLO mode, feature flags still apply.
     const approvalMode = this.config.getApprovalMode();
+    const highRisk = isHighRisk(toolName);
 
+    if (highRisk && approvalMode !== ApprovalMode.YOLO) {
+      return this.auditAndReturn(
+        PolicyDecision.AskUser,
+        `High-risk tool "${toolName}" requires user confirmation in ${approvalMode} mode`,
+        toolName,
+        context,
+      );
+    }
+
+    if (highRisk && approvalMode === ApprovalMode.YOLO) {
+      // YOLO + high-risk: still allowed, but feature flags must already pass.
+      // Write an audit entry noting the elevated permission.
+      return this.auditAndReturn(
+        PolicyDecision.Allow,
+        `High-risk tool "${toolName}" allowed under YOLO mode (explicit opt-in)`,
+        toolName,
+        context,
+      );
+    }
+
+    // --- Approval-mode gating via PolicyEngine ---
     // Sync the engine's internal mode with config so PolicyEngine.check()
     // respects the current mode.
     this.engine.setApprovalMode(approvalMode);
