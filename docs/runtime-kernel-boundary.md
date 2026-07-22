@@ -1,7 +1,7 @@
 # Otto Runtime Kernel Boundary
 
 > **Status**: Living document — update when kernel modules change.
-> **Last updated**: 2026-07-22
+> **Last updated**: 2026-07-22 (updated for session memory injection)
 
 ## Purpose
 
@@ -141,6 +141,21 @@ The kernel owns these lifecycle-critical concerns:
 - The kernel calls `capture()` after significant turns and `search()` when context retrieval is needed.
 - Search is intentionally simple (substring + scoring) — no external vector DB or embedding API required.
 
+### 16. Session Memory Injection
+
+- **File**: `packages/core/src/memory/sessionMemoryInjector.ts`
+- `SessionMemoryInjector` class — automatic memory context injection on new session.
+  - `inject(sessionId, userMessage)` — searches MemorySubsystem for relevant entries based on keyword extraction from user message.
+  - Uses simple keyword extraction (word splitting + stop-word filtering).
+  - Returns `MemoryInjection`: { entries, summary, tokenCount, totalFound, projectCount, globalCount }.
+  - Time-decay weighting: older entries scored lower via half-life model (14-day half-life).
+  - Budget enforcement: max 5 entries, total < 500 tokens.
+  - Project-scope vs global-scope differentiation via heuristic (tags, path patterns).
+- Wired into `OttoClient.sendMessageStream()` — on first turn (`sessionTurnCount === 1`), the injector searches memory and prepends the summary to the user message context.
+- The injection is non-blocking: failures are caught and logged without interrupting the turn.
+- Console output: `Found N relevant memories (X project, Y global)` on successful injection.
+- **Types**: `MemoryInjection`.
+
 ---
 
 ## What Must NOT Live in the Kernel
@@ -238,6 +253,7 @@ Supporting kernel-side modules that are **part of the kernel boundary** but not 
 | `orchestration/workLog.ts` | Work log auto-recording | Injected into `ToolExecutionEngine` |
 | `orchestration/skillShare.ts` | Skill sharing | Injected into `ToolExecutionEngine` |
 | `hooks/hookEventHandler.ts` | Hook lifecycle | Injected into `ToolExecutionEngine` via `HookEventHandler` |
+| `memory/sessionMemoryInjector.ts` | Session memory injection on session start | Called by `OttoClient.sendMessageStream()` on first turn |
 
 ---
 
