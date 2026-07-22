@@ -917,6 +917,17 @@ export class RemoteSession {
         break;
       }
 
+      case OttoEventType.MemoryContext: {
+        const count = event.value?.matchCount ?? 0;
+        if (count > 0) {
+          const message = isChineseLocale()
+            ? `找到 ${count} 条相关历史经验，已注入本轮上下文`
+            : `Found ${count} related historical item(s) and added them to this turn`;
+          this.sendMessage(MessageFactory.createStatus('running', message));
+        }
+        break;
+      }
+
       case OttoEventType.UserCancelled:
         // 用户取消
         remoteLogger.info('RemoteSession', `用户取消操作: ${this.sessionId}`);

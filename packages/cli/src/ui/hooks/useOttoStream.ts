@@ -27,6 +27,7 @@ ServerOttoChatCompressedEvent,
 OttoEventType as ServerOttoEventType,
 ServerOttoFinishedEvent,
 ServerOttoLoopDetectedEvent,
+ServerOttoMemoryContextEvent,
 SessionManager,
 ThoughtSummary,
 type Tool,
@@ -1453,6 +1454,39 @@ export const useOttoStream = (
     );
   }, [addItem]);
 
+  const handleMemoryContextEvent = useCallback(
+    (eventValue: ServerOttoMemoryContextEvent['value']) => {
+      if (!eventValue || eventValue.matchCount <= 0) return;
+      const items = Array.isArray(eventValue.items) ? eventValue.items : [];
+      const visibleItems = items.slice(0, 5);
+      const lines = [
+        isChineseLocale()
+          ? `找到 ${eventValue.matchCount} 条相关历史经验，已注入本轮上下文：`
+          : `Found ${eventValue.matchCount} related historical item(s) and added them to this turn:`,
+        ...visibleItems.map((item, index) => {
+          const source = [item.source, item.date].filter(Boolean).join(' · ');
+          const summary = item.summary ? ` — ${item.summary}` : '';
+          return `${index + 1}. [${source || 'memory'}] ${item.title || 'Untitled'}${summary}`;
+        }),
+      ];
+      if (items.length > visibleItems.length) {
+        lines.push(
+          isChineseLocale()
+            ? `…另有 ${items.length - visibleItems.length} 条已隐藏。`
+            : `…${items.length - visibleItems.length} more hidden.`,
+        );
+      }
+      addItem(
+        {
+          type: 'info',
+          text: lines.join('\n'),
+        },
+        Date.now(),
+      );
+    },
+    [addItem],
+  );
+
   const processGeminiStreamEvents = useCallback(
     async (
       stream: AsyncIterable<OttoEvent>,
@@ -1506,6 +1540,9 @@ export const useOttoStream = (
           case ServerOttoEventType.ChatCompressed:
             handleChatCompressionEvent(event.value);
             break;
+          case ServerOttoEventType.MemoryContext:
+            handleMemoryContextEvent(event.value);
+            break;
           case ServerOttoEventType.ToolCallConfirmation:
           case ServerOttoEventType.ToolCallResponse:
             // do nothing
@@ -1549,6 +1586,7 @@ export const useOttoStream = (
       handleErrorEvent,
       scheduleToolCalls,
       handleChatCompressionEvent,
+      handleMemoryContextEvent,
       handleFinishedEvent,
       handleMaxSessionTurnsEvent,
     ],

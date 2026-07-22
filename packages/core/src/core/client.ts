@@ -995,7 +995,6 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       console.log('[sendMessageStream] Compression wait completed, proceeding');
     }
 
-
     this.checkCompression();
     // 基于响应的智能压缩：检查是否需要在本次对话前进行压缩
     // 只有当 needsCompression 标记为 true 时才尝试压缩，否则不触发压缩流程和 PreCompress 钩子
@@ -1127,6 +1126,21 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
               `[OttoClient] Found ${injection.totalFound} relevant memories ` +
               `(${injection.projectCount} project, ${injection.globalCount} global)`,
             );
+            yield {
+              type: OttoEventType.MemoryContext,
+              value: {
+                matchCount: injection.totalFound,
+                items: injection.entries.map((entry) => ({
+                  source: this.memoryInjector?.isProjectScope(entry)
+                    ? 'project'
+                    : 'global',
+                  title: entry.entry.content.slice(0, 80),
+                  summary: entry.entry.content.slice(0, 180),
+                  date: entry.entry.timestamp.slice(0, 10),
+                  score: entry.score,
+                })),
+              },
+            };
             if (injection.summary) {
               // 将记忆摘要注入为首条 user message 的上下文前缀
               request = [

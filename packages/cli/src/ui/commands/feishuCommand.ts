@@ -3882,6 +3882,10 @@ async function handleStart(context?: CommandContext): Promise<string> {
             case OttoEventType.ChatCompressed:
               tuiContext?.addItem({ type: 'info', text: t('feishu.tui.context_compressed') }, Date.now());
               break;
+            case OttoEventType.MemoryContext:
+              // Memory hits are already injected into the model context; Feishu cards
+              // keep the main answer stream uncluttered for now.
+              break;
             case OttoEventType.Error:
               throw new Error(event.value?.error?.message || 'unknown error');
             default:

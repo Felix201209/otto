@@ -45,7 +45,20 @@ export interface SessionMemoryContext {
 export interface SessionMemoryInjectionResult {
   request: PartListUnion;
   matchCount: number;
+  summaries: SessionMemoryMatchSummary[];
 }
+
+export interface SessionMemoryMatchSummary {
+  source: string;
+  title: string;
+  summary: string;
+  date?: string;
+  score?: number;
+}
+
+type KnowledgeSearchResult = Awaited<
+  ReturnType<NonNullable<RelevantExperienceSearcher['searchKnowledge']>>
+>;
 
 function compact(value: string | undefined, maxLength: number): string {
   const text = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -86,9 +99,7 @@ function requestText(request: PartListUnion): string | null {
 
 function formatMatches(
   matches: WorkLogSearchResult[],
-  knowledge: Awaited<
-    ReturnType<NonNullable<RelevantExperienceSearcher['searchKnowledge']>>
-  >,
+  knowledge: KnowledgeSearchResult,
 ): string {
   const lines = [
     MEMORY_MARKER,
@@ -138,6 +149,31 @@ function formatMatches(
   return lines.join('\n');
 }
 
+function summarizeMatches(
+  matches: WorkLogSearchResult[],
+  knowledge: KnowledgeSearchResult,
+): SessionMemoryMatchSummary[] {
+  return [
+    ...matches.map((match) => {
+      const { entry } = match;
+      return {
+        source: match.scope,
+        date: match.date,
+        score: match.score,
+        title: compact(entry.taskTitle || entry.action || entry.toolName, 120),
+        summary: compact(entry.details || entry.userInput || entry.action, 180),
+      };
+    }),
+    ...knowledge.map((match) => ({
+      source: match.record.type,
+      date: match.record.updatedAt.slice(0, 10),
+      score: match.score,
+      title: compact(match.record.title, 120),
+      summary: compact(match.record.content, 180),
+    })),
+  ];
+}
+
 function prependMemory(request: PartListUnion, block: string): PartListUnion {
   const prefix = `${block}\n\n${CURRENT_REQUEST_MARKER}\n`;
   if (typeof request === 'string') return `${prefix}${request}`;
@@ -163,7 +199,7 @@ export async function injectRelevantSessionMemory(
   context: SessionMemoryContext,
 ): Promise<SessionMemoryInjectionResult> {
   const query = requestText(request);
-  if (!query) return { request, matchCount: 0 };
+  if (!query) return { request, matchCount: 0, summaries: [] };
   const [matches, knowledge] = await Promise.all([
     searcher.searchRelevantExperience(query, {
       sessionId: context.sessionId,
@@ -177,9 +213,10 @@ export async function injectRelevantSessionMemory(
     }) ?? Promise.resolve([]),
   ]);
   const matchCount = matches.length + knowledge.length;
-  if (matchCount === 0) return { request, matchCount: 0 };
+  if (matchCount === 0) return { request, matchCount: 0, summaries: [] };
   return {
     request: prependMemory(request, formatMatches(matches, knowledge)),
     matchCount,
+    summaries: summarizeMatches(matches, knowledge),
   };
 }

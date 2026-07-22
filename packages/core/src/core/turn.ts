@@ -63,6 +63,7 @@ export enum OttoEventType {
   Finished = 'finished',
   LoopDetected = 'loop_detected',
   TokenUsage = 'token_usage',
+  MemoryContext = 'memory_context',
 }
 
 export interface StructuredError {
@@ -211,6 +212,24 @@ export type ServerOttoTokenUsageEvent = {
   value: TokenUsageInfo;
 };
 
+export interface MemoryContextItem {
+  source: string;
+  title: string;
+  summary: string;
+  date?: string;
+  score?: number;
+}
+
+export interface MemoryContextEventPayload {
+  matchCount: number;
+  items: MemoryContextItem[];
+}
+
+export type ServerOttoMemoryContextEvent = {
+  type: OttoEventType.MemoryContext;
+  value: MemoryContextEventPayload;
+};
+
 // The original union type, now composed of the individual types
 export type ServerOttoStreamEvent =
   | ServerOttoContentEvent
@@ -225,7 +244,8 @@ export type ServerOttoStreamEvent =
   | ServerOttoMaxSessionTurnsEvent
   | ServerOttoFinishedEvent
   | ServerOttoLoopDetectedEvent
-  | ServerOttoTokenUsageEvent;
+  | ServerOttoTokenUsageEvent
+  | ServerOttoMemoryContextEvent;
 
 // A turn manages the agentic loop turn within the server context.
 export class Turn {

@@ -39,6 +39,13 @@ describe('injectRelevantSessionMemory', () => {
       expect.objectContaining({ sessionId: 's1', projectRoot: '/workspace' }),
     );
     expect(result.matchCount).toBe(1);
+    expect(result.summaries).toEqual([
+      expect.objectContaining({
+        source: 'project',
+        date: '2026-07-20',
+        score: 0.9,
+      }),
+    ]);
     expect(result.request).toContain('Related historical experience');
     expect(result.request).toContain('模型切换状态修复');
     expect(result.request).toContain('Current user request');
@@ -131,7 +138,9 @@ describe('injectRelevantSessionMemory', () => {
     );
 
     expect(toolResult.request).toEqual(functionResponse);
+    expect(toolResult.summaries).toEqual([]);
     expect(existingResult.request).toBe(existing);
+    expect(existingResult.summaries).toEqual([]);
     expect(searchRelevantExperience).not.toHaveBeenCalled();
   });
 
@@ -172,6 +181,13 @@ describe('injectRelevantSessionMemory', () => {
 
     expect(searchKnowledge).toHaveBeenCalled();
     expect(result.matchCount).toBe(1);
+    expect(result.summaries).toEqual([
+      expect.objectContaining({
+        source: 'decision',
+        date: '2026-07-21',
+        score: 0.8,
+      }),
+    ]);
     expect(result.request).toContain('"source":"decision"');
     expect(result.request).toContain('失败时回滚');
   });
