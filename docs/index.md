@@ -39,6 +39,7 @@ The CLI and VS Code extension communicate with AI models through the core librar
 - **[Core Introduction](./core/index.md)** - Overview of the core package
 - **[Tools API](./core/tools-api.md)** - Tool system architecture and APIs
 - **[Memport](./core/memport.md)** - Memory management port
+- **[Agent Runtime Engineering Wiki](./agent-runtime-engineering-wiki.md)** - Model-neutral engineering contract for mature agent runtime behavior
 
 ### 🛠️ Tools Documentation
 - **[Tools Overview](./tools/index.md)** - Available tools and their purposes
