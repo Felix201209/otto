@@ -51,6 +51,7 @@ export * from './core/coreToolScheduler.js';
 export * from './core/nonInteractiveToolExecutor.js';
 export * from './tools/task.js';
 export * from './core/subAgent.js';
+export * from './core/agentResourceBudget.js';
 export * from './core/proxyAuth.js';
 export * from './core/toolSchedulerAdapter.js';
 export { ToolExecutionEngine } from './core/toolExecutionEngine.js';

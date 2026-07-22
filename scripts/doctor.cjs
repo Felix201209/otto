@@ -9,6 +9,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
@@ -16,6 +17,17 @@ const isWindows = process.platform === 'win32';
 const binSuffix = isWindows ? '.cmd' : '';
 
 const checks = [];
+const SOURCE_SIZE_BUDGET_MB = Number(process.env.OTTO_DOCTOR_SOURCE_SIZE_BUDGET_MB || 50);
+const SOURCE_SIZE_EXCLUDES = new Set([
+  '.git',
+  'node_modules',
+  'bundle',
+  'dist',
+  'release',
+  'coverage',
+  '.otto',
+  '.agents',
+]);
 
 function addCheck(name, ok, detail, fix) {
   checks.push({ name, ok, detail, fix });
@@ -43,6 +55,31 @@ function parseMajor(version) {
   return match ? Number(match[1]) : NaN;
 }
 
+function directorySizeBytes(dir, topLevelStats = new Map(), topLevelName = '') {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SOURCE_SIZE_EXCLUDES.has(entry.name)) continue;
+    const fullPath = path.join(dir, entry.name);
+    const topName = topLevelName || entry.name;
+    try {
+      if (entry.isDirectory()) {
+        total += directorySizeBytes(fullPath, topLevelStats, topName);
+      } else if (entry.isFile()) {
+        const size = fs.statSync(fullPath).size;
+        total += size;
+        topLevelStats.set(topName, (topLevelStats.get(topName) || 0) + size);
+      }
+    } catch {
+      // Ignore files that disappear during the scan; doctor should stay lightweight.
+    }
+  }
+  return total;
+}
+
+function formatMb(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
 const rootPackage = readJson('package.json');
 const nodeVersion = process.version;
 const nodeMajor = parseMajor(nodeVersion);
@@ -54,6 +91,14 @@ function detectNpmVersion() {
 }
 
 const npmVersion = detectNpmVersion();
+const topLevelStats = new Map();
+const sourcePayloadBytes = directorySizeBytes(root, topLevelStats);
+const topSourceContributors = [...topLevelStats.entries()]
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 5)
+  .map(([name, size]) => `${name} ${formatMb(size)}`)
+  .join(', ');
+const totalMemoryGb = os.totalmem() / 1024 / 1024 / 1024;
 
 addCheck(
   'Node.js version',
@@ -74,6 +119,20 @@ addCheck(
   fs.existsSync(path.join(root, 'package-lock.json')),
   'package-lock.json is required for reproducible installs',
   'Restore package-lock.json before installing dependencies.',
+);
+
+addCheck(
+  'source payload size',
+  sourcePayloadBytes <= SOURCE_SIZE_BUDGET_MB * 1024 * 1024,
+  `${formatMb(sourcePayloadBytes)} (budget: ${SOURCE_SIZE_BUDGET_MB} MB; top: ${topSourceContributors || 'none'})`,
+  'Remove stale generated assets/dead code or raise OTTO_DOCTOR_SOURCE_SIZE_BUDGET_MB with a release note.',
+);
+
+addCheck(
+  'host memory profile',
+  totalMemoryGb >= 4,
+  `${totalMemoryGb.toFixed(1)} GB RAM detected`,
+  'Use OTTO_AGENT_PROFILE=low and keep max_concurrency at 1 on very small devices.',
 );
 
 const expectedWorkspaces = ['packages/cli', 'packages/core', 'packages/server', 'packages/desktop'];

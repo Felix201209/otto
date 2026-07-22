@@ -21,6 +21,7 @@ import { WorkflowAgentBridge } from '../core/workflowAgentBridge.js';
 import { runWorkflowScript, extractMeta } from '../core/workflowRunner.js';
 import { ToolExecutionContext } from '../core/toolSchedulerAdapter.js';
 import { WorkflowRegistry } from '../core/workflowRegistry.js';
+import { getAgentResourceBudget } from '../core/agentResourceBudget.js';
 
 export interface WorkflowToolParams {
   /**
@@ -58,7 +59,7 @@ export interface WorkflowToolParams {
 
   /**
    * Maximum number of sub-agents that may run concurrently.
-   * Defaults to 6. Set lower to reduce API quota pressure.
+   * Defaults to the current device budget. Set lower to reduce API and memory pressure.
    */
   max_concurrency?: number;
 
@@ -170,15 +171,15 @@ IMPORTANT — sub-agent output discipline:
           },
           max_concurrency: {
             type: Type.NUMBER,
-            description: 'Maximum parallel sub-agents. Default: 6. Lower to reduce API pressure.',
+            description: 'Maximum parallel sub-agents. Default follows the current device budget. Lower to reduce API and memory pressure.',
             minimum: 1,
-            maximum: 16,
+            maximum: getAgentResourceBudget().workflowMaxConcurrencyCeiling,
           },
           max_agents: {
             type: Type.NUMBER,
-            description: 'Hard limit on total sub-agents this workflow may spawn. Default: 1000.',
+            description: 'Hard limit on total sub-agents this workflow may spawn. Default follows the current device budget.',
             minimum: 1,
-            maximum: 1000,
+            maximum: getAgentResourceBudget().workflowMaxAgentsCeiling,
           },
         },
         required: ['script', 'description'],
@@ -191,6 +192,7 @@ IMPORTANT — sub-agent output discipline:
   }
 
   validateToolParams(params: WorkflowToolParams): string | null {
+    const budget = getAgentResourceBudget();
     if (!params.script?.trim()) {
       return 'script is required and must not be empty.';
     }
@@ -199,9 +201,15 @@ IMPORTANT — sub-agent output discipline:
     }
     if (
       params.max_concurrency !== undefined &&
-      (params.max_concurrency < 1 || params.max_concurrency > 16)
+      (params.max_concurrency < 1 || params.max_concurrency > budget.workflowMaxConcurrencyCeiling)
     ) {
-      return 'max_concurrency must be between 1 and 16.';
+      return `max_concurrency must be between 1 and ${budget.workflowMaxConcurrencyCeiling} for the current ${budget.deviceClass} resource profile.`;
+    }
+    if (
+      params.max_agents !== undefined &&
+      (params.max_agents < 1 || params.max_agents > budget.workflowMaxAgentsCeiling)
+    ) {
+      return `max_agents must be between 1 and ${budget.workflowMaxAgentsCeiling} for the current ${budget.deviceClass} resource profile.`;
     }
     // Sanity check: script must contain some form of export default
     if (!/export\s+default/.test(params.script)) {

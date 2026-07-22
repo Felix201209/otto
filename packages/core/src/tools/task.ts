@@ -29,6 +29,7 @@ import {
   getBuiltInAgentDefinition,
   resolveAgentTools,
 } from '../agents/agentDefinition.js';
+import { getAgentResourceBudget } from '../core/agentResourceBudget.js';
 
 // Type alias for easier usage within this module
 type SubAgentDisplayData = SubAgentDisplay;
@@ -103,6 +104,8 @@ export interface TaskToolParams {
  */
 export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
   static readonly Name: string = 'task';
+  private static activeSubAgents = 0;
+  private static readonly waitQueue: Array<() => void> = [];
 
 
 
@@ -171,6 +174,45 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     }
 
     return null;
+  }
+
+  private async acquireSubAgentSlot(signal: AbortSignal): Promise<() => void> {
+    const budget = getAgentResourceBudget();
+    const limit = budget.taskMaxConcurrency;
+
+    if (TaskTool.activeSubAgents < limit) {
+      TaskTool.activeSubAgents++;
+      return () => TaskTool.releaseSubAgentSlot();
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const start = () => {
+        signal.removeEventListener('abort', onAbort);
+        TaskTool.activeSubAgents++;
+        resolve();
+      };
+      const onAbort = () => {
+        const index = TaskTool.waitQueue.indexOf(start);
+        if (index >= 0) TaskTool.waitQueue.splice(index, 1);
+        reject(new Error(`SubAgent start cancelled while waiting for a resource slot (max ${limit} concurrent task agents).`));
+      };
+
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      TaskTool.waitQueue.push(start);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    return () => TaskTool.releaseSubAgentSlot();
+  }
+
+  private static releaseSubAgentSlot(): void {
+    TaskTool.activeSubAgents = Math.max(TaskTool.activeSubAgents - 1, 0);
+    const next = TaskTool.waitQueue.shift();
+    if (next) next();
   }
 
   async shouldConfirmExecute(
@@ -265,7 +307,19 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     // 发送初始状态
     wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
 
+    let releaseSubAgentSlot: (() => void) | undefined;
     try {
+      const budget = getAgentResourceBudget();
+      if (TaskTool.activeSubAgents >= budget.taskMaxConcurrency) {
+        currentDisplayData = {
+          ...currentDisplayData,
+          status: 'starting',
+          summary: `Waiting for an agent resource slot (max ${budget.taskMaxConcurrency} concurrent task agent${budget.taskMaxConcurrency === 1 ? '' : 's'} on the ${budget.deviceClass} profile).`,
+        };
+        wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
+      }
+      releaseSubAgentSlot = await this.acquireSubAgentSlot(signal);
+
       // 获取已初始化的 OttoClient
       const geminiClient = this.config.getOttoClient();
       if (!geminiClient) {
@@ -313,7 +367,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
 
       // 执行任务
       // 🛡️ 整体超时保护：SubAgent 执行最多 30 分钟，防止无限运行导致 OOM 或卡死
-      const SUBAGENT_OVERALL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+      const SUBAGENT_OVERALL_TIMEOUT_MS = getAgentResourceBudget().subAgentOverallTimeoutMs;
       // 将 timeoutId 提取为独立变量，避免在 Promise executor 内部引用尚未赋值的
       // const 变量（TDZ ReferenceError），导致整体超时保护完全失效。
       let overallTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -406,6 +460,8 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         llmContent: `Task Failed: ${errorMessage}`,
         returnDisplay: currentDisplayData,
       };
+    } finally {
+      releaseSubAgentSlot?.();
     }
   }
 

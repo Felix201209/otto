@@ -10,6 +10,7 @@ import { OttoClient } from './client.js';
 import { SubAgent } from './subAgent.js';
 import { getBuiltInAgentDefinition, resolveAgentTools } from '../agents/agentDefinition.js';
 import { WorkflowRegistry } from './workflowRegistry.js';
+import { getAgentResourceBudget } from './agentResourceBudget.js';
 
 /**
  * Options passed to agent.run() inside a workflow script.
@@ -81,11 +82,6 @@ export interface WorkflowAgentAPI {
 }
 
 const DEFAULT_MAX_TURNS = 15;
-const DEFAULT_MAX_CONCURRENCY = 6;
-const DEFAULT_MAX_AGENTS = 1000;
-/** Per-agent hard deadline: 30 minutes. Prevents a single hung agent from blocking the workflow forever. */
-const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
-
 /**
  * Implements WorkflowAgentAPI. Each call to run() spins up a fresh SubAgent instance.
  * Context is serialized and appended to the prompt so the sub-agent can consume it
@@ -94,6 +90,8 @@ const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
 export class WorkflowAgentBridge implements WorkflowAgentAPI {
   private readonly maxConcurrency: number;
   private readonly maxAgents: number;
+  private readonly maxContextChars: number;
+  private readonly agentTimeoutMs: number;
   /** Cumulative total of agents spawned in this workflow (lifetime limit). */
   private totalAgentCount: number = 0;
   /** Current phase index. The workflow script should update this before each phase. */
@@ -110,13 +108,24 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
     private readonly abortSignal: AbortSignal,
     /** Optional callback for forwarding sub-agent output events upstream. */
     private readonly onUpdate?: (agentId: string, output: string) => void,
-    maxConcurrency: number = DEFAULT_MAX_CONCURRENCY,
+    maxConcurrency?: number,
     /** Workflow ID for registry tracking. */
     private readonly workflowId?: string,
-    maxAgents: number = DEFAULT_MAX_AGENTS,
+    maxAgents?: number,
+    maxContextChars?: number,
+    agentTimeoutMs?: number,
   ) {
-    this.maxConcurrency = maxConcurrency;
-    this.maxAgents = maxAgents;
+    const budget = getAgentResourceBudget();
+    this.maxConcurrency = Math.min(
+      Math.max(maxConcurrency ?? budget.workflowDefaultMaxConcurrency, 1),
+      budget.workflowMaxConcurrencyCeiling,
+    );
+    this.maxAgents = Math.min(
+      Math.max(maxAgents ?? budget.workflowDefaultMaxAgents, 1),
+      budget.workflowMaxAgentsCeiling,
+    );
+    this.maxContextChars = maxContextChars ?? budget.workflowContextMaxChars;
+    this.agentTimeoutMs = agentTimeoutMs ?? budget.subAgentOverallTimeoutMs;
   }
 
   async run(options: WorkflowAgentRunOptions): Promise<WorkflowAgentRunResult> {
@@ -176,10 +185,10 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
     // Hard abort is left to the user via the global AbortSignal.
     const warningTimer = setTimeout(() => {
       console.warn(
-        `[WorkflowAgentBridge] Agent "${label}" has been running for ${DEFAULT_AGENT_TIMEOUT_MS / 60000}min. ` +
+        `[WorkflowAgentBridge] Agent "${label}" has been running for ${Math.round(this.agentTimeoutMs / 60000)}min. ` +
         `It is still alive — this is a warning only. Use Ctrl+C to abort if needed.`
       );
-    }, DEFAULT_AGENT_TIMEOUT_MS);
+    }, this.agentTimeoutMs);
 
     let result: Awaited<ReturnType<typeof subAgent.executeTask>>;
     try {
@@ -303,24 +312,24 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
    * Claude Code's own guidance: sub-agents should return 1k-2k token summaries, not raw data.
    */
   private buildPrompt(options: WorkflowAgentRunOptions): string {
-    // ~20k chars ≈ 5k tokens — enough for rich structured summaries, hard cap against raw-content blowup
-    const MAX_CONTEXT_CHARS = 20000;
+    // Enough for rich structured summaries, hard capped against raw-content blowup.
+    const maxContextChars = this.maxContextChars;
 
     let prompt = options.prompt;
 
     // Append structured context from previous steps
     if (options.context !== undefined && options.context !== null) {
       let contextJson = JSON.stringify(options.context, null, 2);
-      if (contextJson.length > MAX_CONTEXT_CHARS) {
+      if (contextJson.length > maxContextChars) {
         const originalLen = contextJson.length;
-        contextJson = contextJson.slice(0, MAX_CONTEXT_CHARS);
+        contextJson = contextJson.slice(0, maxContextChars);
         // Trim to last complete line to avoid broken JSON mid-string
         const lastNewline = contextJson.lastIndexOf('\n');
-        if (lastNewline > MAX_CONTEXT_CHARS * 0.8) {
+        if (lastNewline > maxContextChars * 0.8) {
           contextJson = contextJson.slice(0, lastNewline);
         }
-        contextJson += `\n... [context truncated: ${originalLen} chars → ${MAX_CONTEXT_CHARS} chars max. Sub-agents should return distilled JSON summaries, not raw file contents.]`;
-        console.warn(`[WorkflowAgentBridge] context truncated from ${originalLen} to ${MAX_CONTEXT_CHARS} chars for agent: "${options.label ?? options.prompt.slice(0, 60)}"`);
+        contextJson += `\n... [context truncated: ${originalLen} chars → ${maxContextChars} chars max. Sub-agents should return distilled JSON summaries, not raw file contents.]`;
+        console.warn(`[WorkflowAgentBridge] context truncated from ${originalLen} to ${maxContextChars} chars for agent: "${options.label ?? options.prompt.slice(0, 60)}"`);
       }
       prompt += `\n\n<workflow_context>\n${contextJson}\n</workflow_context>`;
     }

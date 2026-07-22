@@ -111,6 +111,17 @@ The kernel owns these lifecycle-critical concerns:
 
 ### 13. Sub-Agent Lifecycle
 
+- **File**: `packages/core/src/core/agentResourceBudget.ts`
+- Defines the device-aware resource budget for direct task agents and workflow agents.
+- Defaults are conservative: low-profile devices run one direct task agent and two workflow agents; high-profile devices still default to four workflow agents, not unlimited fan-out.
+- Supported overrides:
+  - `OTTO_AGENT_PROFILE=low|standard|high`
+  - `OTTO_TASK_MAX_CONCURRENCY`
+  - `OTTO_WORKFLOW_MAX_CONCURRENCY`
+  - `OTTO_WORKFLOW_MAX_AGENTS`
+  - `OTTO_WORKFLOW_CONTEXT_MAX_CHARS`
+  - `OTTO_SUBAGENT_TIMEOUT_MS`
+- Rule: new multi-agent features must consume this budget helper instead of inventing local constants.
 - **File**: `packages/core/src/core/subAgent.ts`
 - Spawns, manages, and collects results from sub-agents.
 - Enforces timeout budgets (`TURN_TIMEOUT_MS`, `TOOL_COMPLETION_TIMEOUT_MS`).
