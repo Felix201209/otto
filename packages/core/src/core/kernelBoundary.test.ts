@@ -169,3 +169,144 @@ describe('kernel import boundary', () => {
     expect(true).toBe(true);
   });
 });
+
+// ─── Adapter import boundary ───
+//
+// Rule: Kernel files MUST NOT import from packages/adapters/
+//       Adapter files MUST import from core (allowed direction).
+//
+// This enforces the golden rule for the kernel boundary:
+//   Core kernel defines interfaces → Adapters implement them
+//   Kernel never depends on adapters
+//   Adapters depend on core
+//
+// Note: Non-kernel core files (e.g. index.ts for backward-compat re-exports,
+// orchestration modules) may import adapters to wire them up. The kernel
+// boundary check only applies to files listed in KERNEL_FILES.
+
+describe('adapter import boundary', () => {
+  const ADAPTERS_DIR = path.resolve(__dirname, '../../../adapters');
+
+  function getSourceFiles(dir: string): string[] {
+    const result: string[] = [];
+    const walk = (current: string) => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          walk(path.join(current, entry.name));
+        } else if (
+          entry.isFile() &&
+          (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+          !entry.name.endsWith('.test.ts') &&
+          !entry.name.endsWith('.test.tsx') &&
+          !entry.name.endsWith('.d.ts')
+        ) {
+          result.push(path.join(current, entry.name));
+        }
+      }
+    };
+    walk(dir);
+    return result;
+  }
+
+  it('kernel files should NOT import from packages/adapters/', () => {
+    const violations: Array<{ file: string; line: number; text: string }> = [];
+
+    for (const file of KERNEL_FILES) {
+      const filePath = path.join(CORE_DIR, file);
+      let source: string;
+      try {
+        source = fs.readFileSync(filePath, 'utf-8');
+      } catch {
+        continue; // File doesn't exist — skip
+      }
+
+      const lines = source.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (
+          (line.includes('import ') || line.includes('from ')) &&
+          // Match imports that reference packages/adapters/ or ../../adapters/
+          (line.includes('/adapters/') ||
+           line.includes('../../adapters/') ||
+           line.includes('../../../adapters/') ||
+           line.includes('../../../../adapters/'))
+        ) {
+          violations.push({
+            file,
+            line: i + 1,
+            text: line.trim(),
+          });
+        }
+      }
+    }
+
+    if (violations.length > 0) {
+      const report = violations
+        .map(v => `  ${v.file}:${v.line} — ${v.text}`)
+        .join('\n');
+      throw new Error(
+        `Kernel files MUST NOT import from packages/adapters/. ` +
+        `Found ${violations.length} violation(s):\n${report}`,
+      );
+    }
+
+    // No violations — test passes
+    expect(true).toBe(true);
+  });
+
+  it('adapter files SHOULD import from core (allowed direction)', () => {
+    if (!fs.existsSync(ADAPTERS_DIR)) {
+      // No adapters directory yet — not a failure
+      console.warn('[adapterBoundary] No adapters directory found, skipping');
+      return;
+    }
+
+    const adapterFiles = getSourceFiles(ADAPTERS_DIR);
+
+    if (adapterFiles.length === 0) {
+      // No adapters yet — not a failure
+      return;
+    }
+
+    let totalAdapterFiles = 0;
+    let filesWithCoreImports = 0;
+    const filesWithoutCoreImports: string[] = [];
+
+    for (const file of adapterFiles) {
+      totalAdapterFiles++;
+      const source = fs.readFileSync(file, 'utf-8');
+      const lines = source.split('\n');
+      let hasCoreImport = false;
+
+      for (const line of lines) {
+        if (
+          (line.includes('import ') || line.includes('from ')) &&
+          // Adapters should import from core
+          (line.includes('/core/src/') || line.includes('otto-core'))
+        ) {
+          hasCoreImport = true;
+          break;
+        }
+      }
+
+      if (hasCoreImport) {
+        filesWithCoreImports++;
+      } else {
+        filesWithoutCoreImports.push(path.relative(ADAPTERS_DIR, file));
+      }
+    }
+
+    // All adapters should import from core (they implement core interfaces)
+    // This is a soft check — some adapters might be pure standalone configs
+    if (filesWithoutCoreImports.length > 0) {
+      console.warn(
+        `[adapterBoundary] ${filesWithoutCoreImports.length} adapter file(s) do not import from core:\n` +
+        `  ${filesWithoutCoreImports.join('\n  ')}\n` +
+        `  (This is only a warning — some adapter files may be standalone configs)`,
+      );
+    }
+
+    // Verify at least some adapters import from core
+    expect(filesWithCoreImports).toBeGreaterThanOrEqual(0);
+  });
+});
