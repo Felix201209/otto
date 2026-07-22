@@ -38,6 +38,7 @@ export interface ParkServiceSpecialist {
 }
 
 export interface ParkServiceRequest {
+  id: string;
   parkId: string;
   enterpriseId: string;
   type: string;
@@ -345,6 +346,7 @@ interface ParkServiceRequestRow {
 
 function toServiceRequest(row: ParkServiceRequestRow): ParkServiceRequest {
   return {
+    id: row.id,
     parkId: row.park_id,
     enterpriseId: row.enterprise_id,
     type: row.type,
