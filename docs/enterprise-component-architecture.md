@@ -41,7 +41,8 @@ Minimum shape:
     "registryReadyMs": 500,
     "maxIdleRssMb": 180,
     "maxSubAgentRssDeltaMb": 80,
-    "maxToolSchemaChars": 120000
+    "maxToolSchemaChars": 120000,
+    "maxDistributionMb": 10
   },
   "componentApiVersion": 1,
   "generatedAt": "2026-07-22T11:00:00.000Z"
@@ -54,6 +55,24 @@ Security wording must stay honest:
 - Do not say: impossible to inspect, impossible to crack, mathematically unbreakable.
 
 Any local software can be reverse engineered with enough effort. The product guarantee is that official enterprise kernels are signed compiled artifacts and unauthorized modification is detectable.
+
+## Rust native hot-path takeover
+
+The native core takeover is intentionally narrow. Rust owns the paths that must stay small, predictable, and fast across many concurrent agents:
+
+| Hot path | Rust module | Old TypeScript fallback |
+| --- | --- | --- |
+| Agent pool and memory accounting | `otto-native/src/agent_pool.rs` | `packages/core/src/core/subAgent.ts`, `packages/core/src/core/agentResourceBudget.ts` |
+| Session storage and bounded history | `otto-native/src/session_store.rs` | `packages/core/src/services/sessionManager.ts` |
+| Tokenizer and schema/history budget counting | `otto-native/src/tokenizer.rs` | `packages/core/src/core/tokenLimits.ts` callers |
+
+`packages/core/src/native/nativeHotPaths.ts` is the source-of-truth method list. `packages/core/src/native/nativeCoreBridge.ts` controls runtime selection:
+
+- `OTTO_NATIVE_CORE=auto`: prefer Rust when present, otherwise use the safe TypeScript fallback.
+- `OTTO_NATIVE_CORE=required`: enterprise/release mode; fail fast if the Rust binary is missing.
+- `OTTO_NATIVE_CORE=off`: development escape hatch for comparing behavior.
+
+The release distribution budget is 10MB. Optional tools, GUI shells, connectors, and organization-specific integrations must stay outside the kernel artifact unless they are required for all distributions.
 
 ## Component manifest
 
@@ -94,4 +113,4 @@ For state-owned enterprise and private deployments:
 - Treat components as separately reviewable artifacts with explicit permissions.
 - Prefer additive components over patching existing core files.
 
-If a requested change requires modifying the kernel, it should answer: “Would every Otto distribution benefit from this?” If not, it probably belongs in a component.
+If a requested change requires modifying the kernel, it should answer: "Would every Otto distribution benefit from this?" If not, it probably belongs in a component.

@@ -55,6 +55,8 @@ export * from './core/agentResourceBudget.js';
 export * from './core/agentMemoryStats.js';
 export * from './components/componentManifest.js';
 export * from './kernel/kernelDistributionManifest.js';
+export * from './native/nativeCoreBridge.js';
+export * from './native/nativeHotPaths.js';
 export * from './ux/agentExperienceContract.js';
 export * from './core/proxyAuth.js';
 export * from './core/toolSchedulerAdapter.js';

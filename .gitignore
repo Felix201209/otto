@@ -87,6 +87,7 @@ remote-client/build
 
 # Build artifacts
 *.tgz
+otto-native/target/
 
 packages/cli/clipboard/
 

@@ -31,6 +31,7 @@ const VALID_MANIFEST: KernelDistributionManifest = {
     maxIdleRssMb: 150,
     maxSubAgentRssDeltaMb: 60,
     maxToolSchemaChars: 90000,
+    maxDistributionMb: 10,
   },
   componentApiVersion: 1,
   generatedAt: '2026-07-22T11:00:00.000Z',
@@ -97,10 +98,12 @@ describe('kernelDistributionManifest', () => {
         maxIdleRssMb: ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxIdleRssMb + 1,
         maxSubAgentRssDeltaMb: ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxSubAgentRssDeltaMb + 1,
         maxToolSchemaChars: ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxToolSchemaChars + 1,
+        maxDistributionMb: ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxDistributionMb + 1,
       },
     });
 
     expect(result.ok).toBe(true);
-    expect(result.warnings).toHaveLength(5);
+    expect(result.warnings).toHaveLength(6);
+    expect(result.warnings.join('\n')).toContain('maxDistributionMb');
   });
 });

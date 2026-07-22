@@ -1,163 +1,61 @@
-# otto-rust-core
+# Otto
 
-Otto 的高性能 Rust 核心层，提供 Session 存储、加密、Token 计算和 Agent 内存池管理。
+Otto is an agent runtime that is being moved toward a lightweight native-core architecture.
 
-## 功能模块
+Current `1.9.2` releases still enter through the Node/TypeScript CLI bundle (`bundle/otto.js`). The Rust crate under `otto-native/` is the native hot-path core and is now treated as the preferred runtime for the three areas that most affect low-resource multi-agent performance:
 
-| 模块 | 功能 | 性能提升 |
-|------|------|----------|
-| **SessionStore** | sled 嵌入式 KV + LRU 缓存 | 写入 10x，内存 -60% |
-| **EncryptionStore** | AES-256-GCM 加密存储 | 新增安全特性 |
-| **Tokenizer** | tiktoken 本地 token 计数 | 零延迟，离线可用 |
-| **AgentPool** | 内存池化 + LRU 淘汰 | 并发 agent 内存 -50% |
+- `agent_pool`: sub-agent concurrency, memory accounting, idle cleanup, and pending-log buffering.
+- `session_store`: session persistence, metadata listing, cache-aware reads, and bounded history.
+- `tokenizer`: local token counting, truncation, and tokenizer capability discovery.
 
-## 架构
+The product goal is deliberately small: keep the kernel compact, keep external components independent, and make GUI or distribution-specific changes possible without rewriting the kernel.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Node.js Application                   │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │           @otto/native (JavaScript)              │    │
-│  │  SessionStore | EncryptionStore | Tokenizer | ... │    │
-│  └─────────────────────────────────────────────────┘    │
-│                         │ stdin/stdout                   │
-│                         ▼                                │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │              otto-native (Rust)                  │    │
-│  │  sled | aes-gcm | tiktoken-rs | lru | parking_lot│    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-```
+## Native core policy
 
-## 快速开始
+Runtime selection is controlled by `OTTO_NATIVE_CORE`:
 
-### 编译 Rust 二进制
+- `auto` (default): use the Rust native core when an `otto-native` binary is present; otherwise fall back to the TypeScript implementation.
+- `required`: require the Rust binary and fail fast if it is missing.
+- `off`: disable the Rust bridge and use the TypeScript fallback.
+
+Set `OTTO_NATIVE_CORE_BINARY` to point at a specific signed native binary.
+
+Enterprise distributions should use `OTTO_NATIVE_CORE=required` and a signed native artifact manifest. The manifest budget currently requires the release distribution to stay at or below 10MB.
+
+## Build the Rust native core
 
 ```bash
-# Windows (需要 MinGW-w64 或 MSVC)
+cd otto-native
 cargo build --release
-
-# Linux
-cargo build --release --target x86_64-unknown-linux-gnu
-
-# macOS
-cargo build --release --target x86_64-apple-darwin
 ```
 
-### Node.js 使用
+Expected binary locations include:
 
-```javascript
-const { SessionStore, EncryptionStore, Tokenizer, AgentPool } = require('./src/index');
+- `otto-native/bin/otto-native`
+- `otto-native/bin/otto-native.exe`
+- `otto-native/target/release/otto-native`
+- `otto-native/target/release/otto-native.exe`
 
-// Session Store
-const store = new SessionStore('./sessions.db', 100);
-await store.save('session-1', 'My Session', [
-  { role: 'user', content: 'Hello', timestamp: Date.now() }
-]);
-const loaded = await store.load('session-1');
+## Verify the repository
 
-// Encryption Store
-const key = EncryptionStore.generateKey();
-const encStore = new EncryptionStore('./encrypted.db', key);
-await encStore.save('secret', 'sensitive data');
-const decrypted = await encStore.load('secret');
-
-// Tokenizer
-const tokenizer = new Tokenizer('gpt-4');
-const count = await tokenizer.count('Hello, world!');
-const truncated = await tokenizer.truncate('Long text...', 100);
-
-// Agent Pool
-const pool = new AgentPool(256, 10); // 256MB max, 10 agents max
-await pool.register('agent-1', 50); // 50MB initial
-await pool.addLog('agent-1', 'Processing...');
-const stats = await pool.stats();
+```bash
+npm run doctor
+npm run test --workspace packages/core
+npm run typecheck --workspace packages/core
 ```
 
-## API 参考
+For release-size verification, place compiled artifacts in `bundle/` or `otto-native/bin/`, or set `OTTO_DOCTOR_RELEASE_ARTIFACT_DIR` to the release artifact directory before running `npm run doctor`.
 
-### SessionStore
+## Architecture notes
 
-```typescript
-class SessionStore {
-  constructor(dbPath: string, cacheSize?: number, binaryPath?: string);
-  
-  async save(id: string, title: string, messages: Message[]): Promise<void>;
-  async load(id: string): Promise<SessionData | null>;
-  async delete(id: string): Promise<boolean>;
-  async list(): Promise<SessionMeta[]>;
-  async sizeBytes(): Promise<number>;
-  async close(): Promise<void>;
-}
-```
+- The TypeScript layer owns product orchestration, policies, adapters, and user-facing experience.
+- The Rust native core owns the bounded hot paths that must stay fast on low-memory machines.
+- Optional tools, enterprise connectors, and GUI variants should remain external components rather than kernel code.
+- Old source-heavy implementations should only remain as safe fallbacks while their Rust replacement is incomplete.
 
-### EncryptionStore
+See:
 
-```typescript
-class EncryptionStore {
-  constructor(dbPath: string, key: string, binaryPath?: string);
-  
-  static generateKey(): string; // 生成 64 位 hex 密钥
-  async save(id: string, data: string): Promise<void>;
-  async load(id: string): Promise<string | null>;
-  async delete(id: string): Promise<boolean>;
-  async listIds(): Promise<string[]>;
-  async close(): Promise<void>;
-}
-```
-
-### Tokenizer
-
-```typescript
-class Tokenizer {
-  constructor(model: string, binaryPath?: string);
-  
-  async count(text: string): Promise<number>;
-  async truncate(text: string, maxTokens: number): Promise<string>;
-  static supportedModels(binaryPath?: string): Promise<string[]>;
-  async close(): Promise<void>;
-}
-```
-
-### AgentPool
-
-```typescript
-class AgentPool {
-  constructor(maxMemoryMb?: number, maxAgents?: number, binaryPath?: string);
-  
-  async register(id: string, memoryMb?: number): Promise<boolean>;
-  async unregister(id: string): Promise<boolean>;
-  async updateMemory(id: string, memoryMb: number): Promise<boolean>;
-  async addLog(id: string, log: string): Promise<boolean>;
-  async drainPending(id: string): Promise<string[]>;
-  async stats(): Promise<{ current_memory_mb: number; max_memory_mb: number; agent_count: number }>;
-  async listAgents(): Promise<AgentInfo[]>;
-  async cleanupIdle(idleSeconds?: number): Promise<number>;
-  async close(): Promise<void>;
-}
-```
-
-## 性能基准
-
-| 操作 | JS 实现 | Rust 实现 | 提升 |
-|------|---------|-----------|------|
-| Session 写入 | ~50ms | ~5ms | **10x** |
-| Session 读取 | ~30ms | ~3ms | **10x** |
-| Token 计数 | ~200ms (网络) | ~1ms (本地) | **200x** |
-| 内存占用 | ~80MB | ~30MB | **60%↓** |
-
-## 依赖
-
-### Rust
-- `sled` - 嵌入式 KV 数据库
-- `aes-gcm` - AES-256-GCM 加密
-- `tiktoken-rs` - Token 计算
-- `lru` - LRU 缓存
-- `parking_lot` - 高性能锁
-
-### Node.js
-- 无外部依赖（纯 stdlib）
-
-## 许可证
-
-MIT
+- `packages/core/src/native/nativeHotPaths.ts`
+- `packages/core/src/native/nativeCoreBridge.ts`
+- `packages/core/src/kernel/kernelDistributionManifest.ts`
+- `docs/enterprise-component-architecture.md`

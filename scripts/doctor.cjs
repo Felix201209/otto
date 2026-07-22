@@ -18,6 +18,12 @@ const binSuffix = isWindows ? '.cmd' : '';
 
 const checks = [];
 const SOURCE_SIZE_BUDGET_MB = Number(process.env.OTTO_DOCTOR_SOURCE_SIZE_BUDGET_MB || 50);
+const DISTRIBUTION_SIZE_BUDGET_MB = Number(process.env.OTTO_DOCTOR_DISTRIBUTION_SIZE_BUDGET_MB || 10);
+const DISTRIBUTION_ARTIFACT_PATHS = [
+  process.env.OTTO_DOCTOR_RELEASE_ARTIFACT_DIR,
+  'bundle',
+  path.join('otto-native', 'bin'),
+].filter(Boolean);
 const SOURCE_SIZE_EXCLUDES = new Set([
   '.git',
   'node_modules',
@@ -106,6 +112,24 @@ function directorySizeBytes(dir, topLevelStats = new Map(), topLevelName = '') {
   return total;
 }
 
+function directoryRawSizeBytes(dir) {
+  let total = 0;
+  if (!fs.existsSync(dir)) return 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        total += directoryRawSizeBytes(fullPath);
+      } else if (entry.isFile()) {
+        total += fs.statSync(fullPath).size;
+      }
+    } catch {
+      // Ignore files that disappear during the scan; doctor should stay lightweight.
+    }
+  }
+  return total;
+}
+
 function formatMb(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
@@ -163,6 +187,19 @@ const topSourceContributors = [...topLevelStats.entries()]
   .join(', ');
 const totalMemoryGb = os.totalmem() / 1024 / 1024 / 1024;
 const mojibakeFindings = findMojibakeMarkers();
+const distributionArtifacts = DISTRIBUTION_ARTIFACT_PATHS
+  .map((relativePath) => ({
+    relativePath,
+    fullPath: path.resolve(root, relativePath),
+  }))
+  .filter((artifact) => fs.existsSync(artifact.fullPath));
+const distributionPayloadBytes = distributionArtifacts.reduce(
+  (total, artifact) => total + directoryRawSizeBytes(artifact.fullPath),
+  0,
+);
+const distributionDetails = distributionArtifacts.length === 0
+  ? `no release artifact found; budget: ${DISTRIBUTION_SIZE_BUDGET_MB} MB`
+  : `${formatMb(distributionPayloadBytes)} (budget: ${DISTRIBUTION_SIZE_BUDGET_MB} MB; paths: ${distributionArtifacts.map((artifact) => artifact.relativePath).join(', ')})`;
 
 addCheck(
   'Node.js version',
@@ -190,6 +227,13 @@ addCheck(
   sourcePayloadBytes <= SOURCE_SIZE_BUDGET_MB * 1024 * 1024,
   `${formatMb(sourcePayloadBytes)} (budget: ${SOURCE_SIZE_BUDGET_MB} MB; top: ${topSourceContributors || 'none'})`,
   'Remove stale generated assets/dead code or raise OTTO_DOCTOR_SOURCE_SIZE_BUDGET_MB with a release note.',
+);
+
+addCheck(
+  'release distribution size',
+  distributionArtifacts.length === 0 || distributionPayloadBytes <= DISTRIBUTION_SIZE_BUDGET_MB * 1024 * 1024,
+  distributionDetails,
+  'Move optional components out of the core artifact or rebuild the Rust native distribution under 10MB.',
 );
 
 addCheck(

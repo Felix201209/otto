@@ -13,6 +13,7 @@ export interface KernelPerformanceBudget {
   maxIdleRssMb: number;
   maxSubAgentRssDeltaMb: number;
   maxToolSchemaChars: number;
+  maxDistributionMb: number;
 }
 
 export interface KernelDistributionManifest {
@@ -52,6 +53,7 @@ export const ENTERPRISE_KERNEL_PERFORMANCE_FLOOR: KernelPerformanceBudget = {
   maxIdleRssMb: 180,
   maxSubAgentRssDeltaMb: 80,
   maxToolSchemaChars: 120000,
+  maxDistributionMb: 10,
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -131,6 +133,7 @@ export function validateKernelDistributionManifest(
     const maxIdleRssMb = validatePositiveNumber(budget.maxIdleRssMb, 'performanceBudget.maxIdleRssMb', errors);
     const maxSubAgentRssDeltaMb = validatePositiveNumber(budget.maxSubAgentRssDeltaMb, 'performanceBudget.maxSubAgentRssDeltaMb', errors);
     const maxToolSchemaChars = validatePositiveNumber(budget.maxToolSchemaChars, 'performanceBudget.maxToolSchemaChars', errors);
+    const maxDistributionMb = validatePositiveNumber(budget.maxDistributionMb, 'performanceBudget.maxDistributionMb', errors);
 
     if (coldStartMs && coldStartMs > ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.coldStartMs) {
       warnings.push(`coldStartMs exceeds enterprise floor (${ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.coldStartMs}ms)`);
@@ -146,6 +149,9 @@ export function validateKernelDistributionManifest(
     }
     if (maxToolSchemaChars && maxToolSchemaChars > ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxToolSchemaChars) {
       warnings.push(`maxToolSchemaChars exceeds enterprise floor (${ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxToolSchemaChars})`);
+    }
+    if (maxDistributionMb && maxDistributionMb > ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxDistributionMb) {
+      warnings.push(`maxDistributionMb exceeds enterprise floor (${ENTERPRISE_KERNEL_PERFORMANCE_FLOOR.maxDistributionMb}MB)`);
     }
   }
 
