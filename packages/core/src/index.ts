@@ -187,8 +187,7 @@ export * from './tools/write-file.js';
 export * from './tools/web-fetch.js';
 export * from './tools/memoryTool.js';
 export * from './memory/memoryProvider.js';
-// Backward-compat: mem0Adapter moved to packages/adapters/mem0/
-export * from '../../../adapters/mem0/index.js';
+export * from './memory/mem0Adapter.js';
 export * from './memory/codebaseMemoryTypes.js';
 export * from './memory/codebaseMemoryProvider.js';
 export * from './memory/orgMemoryTypes.js';

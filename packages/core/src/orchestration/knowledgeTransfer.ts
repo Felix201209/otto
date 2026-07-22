@@ -10,7 +10,7 @@
  */
 
 import type { Config } from '../config/config.js';
-import { Mem0Adapter, type Mem0Memory } from '../../../adapters/mem0/index.js';
+import { Mem0Adapter, type Mem0Memory } from '../memory/mem0Adapter.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { homedir } from 'os';

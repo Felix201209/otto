@@ -83,7 +83,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/ws": "^8.5.10",
     "typescript": "^5.3.3",
-    "vitest": "^3.1.1"
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=20"

@@ -55,7 +55,7 @@ export enum TurnState {
 //   completed, failed, cancelled
 
 const VALID_TRANSITIONS: ReadonlyMap<TurnState, ReadonlySet<TurnState>> =
-  new Map([
+  new Map<TurnState, ReadonlySet<TurnState>>([
     [
       TurnState.CREATED,
       new Set([TurnState.PLANNING]),
