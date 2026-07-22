@@ -635,10 +635,6 @@ const ToolInfo: React.FC<ToolInfoProps> = ({
       }
     }
   }, [emphasis]);
-  if (normalizedToolName?.includes('sequentialthinking')) {
-    console.log('🖼️ [ToolInfo] RENDERING with displayDescription:', displayDescription.substring(0, 100));
-  }
-
   // 计算文本区域的可用宽度：
   // terminalWidth 是 ToolMessage 接收到的宽度 (由 ToolGroupMessage 计算给出)
   // 减去左边状态指示器的宽度 STATUS_INDICATOR_WIDTH(3)
