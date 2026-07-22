@@ -68,4 +68,3 @@ export function validateNativeHotPathCoverage(methods: readonly string[]): strin
   const available = new Set(methods);
   return REQUIRED_NATIVE_HOT_PATH_METHODS.filter((method) => !available.has(method));
 }
-

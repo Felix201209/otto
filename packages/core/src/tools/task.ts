@@ -30,6 +30,7 @@ import {
   resolveAgentTools,
 } from '../agents/agentDefinition.js';
 import { getAgentResourceBudget } from '../core/agentResourceBudget.js';
+import { getNativeAgentPoolRuntime } from '../native/nativeAgentPoolRuntime.js';
 
 // Type alias for easier usage within this module
 type SubAgentDisplayData = SubAgentDisplay;
@@ -176,13 +177,13 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     return null;
   }
 
-  private async acquireSubAgentSlot(signal: AbortSignal): Promise<() => void> {
+  private async acquireSubAgentSlot(agentId: string, signal: AbortSignal): Promise<(memoryBytes?: number) => Promise<void>> {
     const budget = getAgentResourceBudget();
     const limit = budget.taskMaxConcurrency;
 
     if (TaskTool.activeSubAgents < limit) {
       TaskTool.activeSubAgents++;
-      return () => TaskTool.releaseSubAgentSlot();
+      return await TaskTool.registerSubAgentSlotWithNativeCore(agentId);
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -206,10 +207,33 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
       signal.addEventListener('abort', onAbort, { once: true });
     });
 
-    return () => TaskTool.releaseSubAgentSlot();
+    return await TaskTool.registerSubAgentSlotWithNativeCore(agentId);
   }
 
-  private static releaseSubAgentSlot(): void {
+  private static async registerSubAgentSlotWithNativeCore(agentId: string): Promise<(memoryBytes?: number) => Promise<void>> {
+    try {
+      const registration = await getNativeAgentPoolRuntime().register(agentId);
+      if (registration.status === 'native' && !registration.registered) {
+        throw new Error('Rust native agent_pool rejected the sub-agent registration.');
+      }
+    } catch (error) {
+      TaskTool.releaseLocalSubAgentSlot();
+      throw error;
+    }
+
+    return async (memoryBytes?: number) => {
+      try {
+        if (memoryBytes !== undefined) {
+          await getNativeAgentPoolRuntime().updateMemory(agentId, memoryBytes);
+        }
+        await getNativeAgentPoolRuntime().unregister(agentId);
+      } finally {
+        TaskTool.releaseLocalSubAgentSlot();
+      }
+    };
+  }
+
+  private static releaseLocalSubAgentSlot(): void {
     TaskTool.activeSubAgents = Math.max(TaskTool.activeSubAgents - 1, 0);
     const next = TaskTool.waitQueue.shift();
     if (next) next();
@@ -307,7 +331,8 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     // 发送初始状态
     wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
 
-    let releaseSubAgentSlot: (() => void) | undefined;
+    let releaseSubAgentSlot: ((memoryBytes?: number) => Promise<void>) | undefined;
+    let finalNativeMemoryBytes: number | undefined;
     try {
       const budget = getAgentResourceBudget();
       if (TaskTool.activeSubAgents >= budget.taskMaxConcurrency) {
@@ -318,7 +343,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         };
         wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
       }
-      releaseSubAgentSlot = await this.acquireSubAgentSlot(signal);
+      releaseSubAgentSlot = await this.acquireSubAgentSlot(agentId, signal);
 
       // 获取已初始化的 OttoClient
       const geminiClient = this.config.getOttoClient();
@@ -413,6 +438,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         tokenUsage: result.tokenUsage || currentDisplayData.stats.tokenUsage,
         memoryUsage: result.memoryUsage,
       };
+      finalNativeMemoryBytes = result.memoryUsage?.end.rssBytes;
 
       currentDisplayData = {
         ...currentDisplayData,
@@ -462,7 +488,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         returnDisplay: currentDisplayData,
       };
     } finally {
-      releaseSubAgentSlot?.();
+      await releaseSubAgentSlot?.(finalNativeMemoryBytes);
     }
   }
 

@@ -74,6 +74,11 @@ The native core takeover is intentionally narrow. Rust owns the paths that must 
 
 The release distribution budget is 10MB. Optional tools, GUI shells, connectors, and organization-specific integrations must stay outside the kernel artifact unless they are required for all distributions.
 
+Current migration status:
+
+- `agent_pool` is wired into `TaskTool` through `packages/core/src/native/nativeAgentPoolRuntime.ts`.
+- `session_store` and `tokenizer` remain on compatibility fallbacks until their persisted data and token-count tests are strong enough for a hard swap.
+
 ## Component manifest
 
 Optional components use the versioned `OttoComponentManifest` contract from `packages/core/src/components/componentManifest.ts`.

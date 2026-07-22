@@ -8,6 +8,8 @@ Current `1.9.2` releases still enter through the Node/TypeScript CLI bundle (`bu
 - `session_store`: session persistence, metadata listing, cache-aware reads, and bounded history.
 - `tokenizer`: local token counting, truncation, and tokenizer capability discovery.
 
+`agent_pool` is wired into the Task tool sub-agent lifecycle: each task sub-agent is registered with the native pool, final RSS memory is reported back, and the agent is unregistered on completion. In `auto` mode this remains transparent when the native binary is absent; in `required` mode it is a hard release dependency.
+
 The product goal is deliberately small: keep the kernel compact, keep external components independent, and make GUI or distribution-specific changes possible without rewriting the kernel.
 
 ## Native core policy
@@ -52,6 +54,7 @@ For release-size verification, place compiled artifacts in `bundle/` or `otto-na
 - The Rust native core owns the bounded hot paths that must stay fast on low-memory machines.
 - Optional tools, enterprise connectors, and GUI variants should remain external components rather than kernel code.
 - Old source-heavy implementations should only remain as safe fallbacks while their Rust replacement is incomplete.
+- `session_store` and `tokenizer` still have TypeScript fallback call sites; migrate them incrementally after compatibility tests cover their persisted formats and token-count behavior.
 
 See:
 
