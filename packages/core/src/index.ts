@@ -44,6 +44,7 @@ export * from './core/prompts.js';
 export * from './core/tokenLimits.js';
 export * from './core/modelConfig.js';
 export * from './core/turn.js';
+export * from './core/turnCheckpoint.js';
 export * from './core/invalidStreamError.js';
 export * from './core/ottoRequest.js';
 export * from './core/coreToolScheduler.js';
