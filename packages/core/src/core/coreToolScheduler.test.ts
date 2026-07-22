@@ -5,7 +5,10 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   CoreToolScheduler,
   ToolCall,
@@ -24,6 +27,17 @@ import {
 import { Part, PartListUnion } from '@google/genai';
 
 import { ModifiableTool, ModifyContext } from '../tools/modifiable-tool.js';
+import { resetAuditLoggerForTesting } from '../orchestration/auditLog.js';
+
+const tempRoots: string[] = [];
+
+afterEach(async () => {
+  delete process.env.OTTO_USER_DIR;
+  resetAuditLoggerForTesting();
+  await Promise.all(
+    tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+  );
+});
 
 const waitUntil = async (cb: () => boolean, timeout = 5000) => {
   const start = Date.now();
@@ -111,6 +125,80 @@ class MockModifiableTool
 }
 
 describe('CoreToolScheduler', () => {
+  it('writes an audit record when a confirmation is denied', async () => {
+    const auditRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-audit-confirm-'));
+    tempRoots.push(auditRoot);
+    process.env.OTTO_USER_DIR = auditRoot;
+    resetAuditLoggerForTesting();
+
+    const mockTool = new MockTool('run_shell_command');
+    mockTool.shouldConfirm = true;
+    const toolRegistry = {
+      getTool: () => mockTool,
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+      discovery: {} as any,
+      registerTool: () => {},
+      getToolByName: () => mockTool,
+      getToolByDisplayName: () => mockTool,
+      getTools: () => [],
+      discoverTools: async () => {},
+      getAllTools: () => [],
+      getToolsByServer: () => [],
+    };
+
+    const scheduler = new CoreToolScheduler({
+      config: {
+        getSessionId: () => 'audit-session',
+        getUsageStatisticsEnabled: () => true,
+        getDebugMode: () => false,
+        getApprovalMode: () => 'default',
+      } as unknown as Config,
+      toolRegistry: Promise.resolve(toolRegistry as any),
+      onAllToolCallsComplete: vi.fn(),
+      onToolCallsUpdate: vi.fn(),
+      getPreferredEditor: () => 'vscode',
+    });
+
+    const abortController = new AbortController();
+    const schedulePromise = scheduler.schedule(
+      [
+        {
+          callId: 'audit-call',
+          name: 'run_shell_command',
+          args: { command: 'rm -rf ./target' },
+          isClientInitiated: false,
+          prompt_id: 'prompt-id-audit',
+        },
+      ],
+      abortController.signal,
+    );
+
+    await waitUntil(() => {
+      const calls = scheduler.getToolCalls();
+      return calls.length > 0 && calls[0].status === 'awaiting_approval';
+    });
+    await scheduler.handleConfirmationResponse(
+      'audit-call',
+      ToolConfirmationOutcome.Cancel,
+      undefined,
+      abortController.signal,
+    );
+    await schedulePromise;
+
+    const auditDir = path.join(auditRoot, 'audit');
+    const [auditFile] = await fs.readdir(auditDir);
+    const raw = await fs.readFile(path.join(auditDir, auditFile), 'utf8');
+    const entry = JSON.parse(raw.trim());
+
+    expect(entry.sessionId).toBe('audit-session');
+    expect(entry.toolName).toBe('run_shell_command');
+    expect(entry.action).toContain('confirmation:cancel');
+    expect(entry.success).toBe(false);
+    expect(entry.riskLevel).toBe('high');
+    expect(entry.inputSummary).toContain('rm -rf ./target');
+  });
+
   it('should cancel a tool call if the signal is aborted before confirmation', async () => {
     const mockTool = new MockTool();
     mockTool.shouldConfirm = true;

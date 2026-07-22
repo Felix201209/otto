@@ -338,6 +338,38 @@ export class ToolExecutionEngine {
     )[0];
   }
 
+  private async logConfirmationDecision(
+    waitingCall: WaitingToolCall,
+    outcome: ToolConfirmationOutcome,
+    payload?: ToolConfirmationPayload,
+  ): Promise<void> {
+    try {
+      const details = waitingCall.confirmationDetails as Record<string, unknown>;
+      const auditor = getAuditLogger();
+      await auditor.log({
+        sessionId: this.config?.getSessionId?.() || 'unknown',
+        userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+        toolName: waitingCall.request.name,
+        action: `confirmation:${outcome}:${describeAction(waitingCall.request.name, waitingCall.request.args)}`,
+        category: inferCategory(waitingCall.request.name, waitingCall.request.args),
+        success: outcome !== ToolConfirmationOutcome.Cancel,
+        inputSummary: summarizeToolPayload({
+          confirmationType: details.type,
+          title: details.title,
+          command: details.command,
+          rootCommand: details.rootCommand,
+          args: waitingCall.request.args,
+          payload,
+        }),
+        outputSummary: `confirmation outcome: ${outcome}`,
+        source: process.env.TERM_PROGRAM === 'vscode' ? 'desktop' : 'terminal',
+        riskLevel: 'high',
+      });
+    } catch {
+      // Confirmation audit must be best-effort and never block user flow.
+    }
+  }
+
   /**
    * 🎯 统一确认处理 - 不再区分runtime vs 工具前确认
    * 内置确认逻辑，通过适配器统一处理
@@ -879,6 +911,8 @@ export class ToolExecutionEngine {
     if (!toolCall || toolCall.status !== 'awaiting_approval') return;
 
     const waitingCall = toolCall as WaitingToolCall;
+
+    await this.logConfirmationDecision(waitingCall, outcome, payload);
 
     // 🎯 调用原始确认逻辑，避免递归
     const confirmationDetails = waitingCall.confirmationDetails as any;

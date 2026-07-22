@@ -269,3 +269,7 @@ export function getAuditLogger(): AuditLogger {
   }
   return globalAuditLogger;
 }
+
+export function resetAuditLoggerForTesting(): void {
+  globalAuditLogger = null;
+}
