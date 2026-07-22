@@ -41,11 +41,17 @@ The kernel owns these lifecycle-critical concerns:
   All UI callbacks (`onToolStatusChanged`, `onOutputUpdate`, `onAllToolsComplete`, `onToolCallsUpdate`, `getPreferredEditor`, `onPreToolExecution`) flow through this adapter.
   `MainAgentAdapter` and `SubAgentAdapter` are concrete implementations.
 
-### 4. Permission Checks
+### 4. Central Policy Gate
 
-- **File**: `packages/core/src/core/confirmationBridge.ts`
-- `ToolCallConfirmationDetails` and `ToolConfirmationOutcome` — the kernel-level contract for tool approval.
-- The kernel does **not** render UI; it exposes the confirmation surface through `ToolSchedulerAdapter`.
+- **File**: `packages/core/src/policy/centralPolicy.ts`
+- `CentralPolicy.canExecute(toolName, context)` — the **single policy decision point** for all risky behavior.
+- Wraps `PolicyEngine` (approval-mode gating), feature flags (from project config), and audit logging.
+- Deny-by-default: missing config or disabled flag → `PolicyDecision.Deny`.
+- Injected into `ToolExecutionEngine` and called **before** any tool validation or execution.
+- **File**: `packages/core/src/policy/policy-engine.ts`
+- `PolicyEngine` — in-memory session policy engine (allow/deny/ask-user).
+- **File**: `packages/core/src/policy/policy-updater.ts`
+- `createPolicyUpdater` / `updatePolicy` — persist "always allow" decisions via the MessageBus.
 
 ### 5. Checkpoint Hooks
 
@@ -204,7 +210,10 @@ Supporting kernel-side modules that are **part of the kernel boundary** but not 
 
 | File | Role | Why kernel? |
 |---|---|---|
-| `orchestration/auditLog.ts` | Audit event emission | Injected into `ToolExecutionEngine` |
+| `policy/centralPolicy.ts` | Single policy decision point (feature flags + approval + audit) | Injected into `ToolExecutionEngine` as the first gate |
+| `policy/policy-engine.ts` | In-memory session policy engine | Used by `CentralPolicy` for approval-mode gating |
+| `policy/policy-updater.ts` | Persist "always allow" decisions | Used by ACP layer to update persistent policy |
+| `orchestration/auditLog.ts` | Audit event emission | Injected into `CentralPolicy` and `ToolExecutionEngine` |
 | `orchestration/workLog.ts` | Work log auto-recording | Injected into `ToolExecutionEngine` |
 | `orchestration/skillShare.ts` | Skill sharing | Injected into `ToolExecutionEngine` |
 | `hooks/hookEventHandler.ts` | Hook lifecycle | Injected into `ToolExecutionEngine` via `HookEventHandler` |
