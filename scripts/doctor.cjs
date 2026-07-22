@@ -28,6 +28,36 @@ const SOURCE_SIZE_EXCLUDES = new Set([
   '.otto',
   '.agents',
 ]);
+const MOJIBAKE_SCAN_ROOTS = [
+  'docs',
+  'packages/core/src/core',
+  'packages/core/src/tools',
+  'packages/core/src/agents',
+  'packages/core/src/config',
+  'packages/cli/src/ui/components/messages',
+];
+const MOJIBAKE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.md']);
+const MOJIBAKE_MARKERS = [
+  '�',
+  'ï¿½',
+  'Ã',
+  'Â',
+  'â€',
+  '鈥',
+  '鉁',
+  '鉂',
+  '馃',
+  '鑷',
+  '鍥',
+  '涓€',
+  '鏃',
+  '闃',
+  '杩',
+  '浠',
+  '瀛',
+  '宸',
+  '绋',
+];
 
 function addCheck(name, ok, detail, fix) {
   checks.push({ name, ok, detail, fix });
@@ -80,6 +110,39 @@ function formatMb(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
+function collectFiles(dir, files = []) {
+  if (!fs.existsSync(dir)) return files;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SOURCE_SIZE_EXCLUDES.has(entry.name)) collectFiles(fullPath, files);
+    } else if (entry.isFile() && MOJIBAKE_FILE_EXTENSIONS.has(path.extname(entry.name))) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function findMojibakeMarkers() {
+  const findings = [];
+  for (const relativeRoot of MOJIBAKE_SCAN_ROOTS) {
+    const scanRoot = path.join(root, relativeRoot);
+    for (const file of collectFiles(scanRoot)) {
+      let text = '';
+      try {
+        text = fs.readFileSync(file, 'utf8');
+      } catch {
+        continue;
+      }
+      const marker = MOJIBAKE_MARKERS.find((candidate) => text.includes(candidate));
+      if (marker) {
+        findings.push(`${path.relative(root, file)} (${marker})`);
+      }
+    }
+  }
+  return findings;
+}
+
 const rootPackage = readJson('package.json');
 const nodeVersion = process.version;
 const nodeMajor = parseMajor(nodeVersion);
@@ -99,6 +162,7 @@ const topSourceContributors = [...topLevelStats.entries()]
   .map(([name, size]) => `${name} ${formatMb(size)}`)
   .join(', ');
 const totalMemoryGb = os.totalmem() / 1024 / 1024 / 1024;
+const mojibakeFindings = findMojibakeMarkers();
 
 addCheck(
   'Node.js version',
@@ -133,6 +197,15 @@ addCheck(
   totalMemoryGb >= 4,
   `${totalMemoryGb.toFixed(1)} GB RAM detected`,
   'Use OTTO_AGENT_PROFILE=low and keep max_concurrency at 1 on very small devices.',
+);
+
+addCheck(
+  'agent-critical text encoding',
+  mojibakeFindings.length === 0,
+  mojibakeFindings.length === 0
+    ? 'no mojibake markers found in docs/core/tools/prompts'
+    : mojibakeFindings.slice(0, 8).join(', '),
+  'Rewrite the affected agent-facing comments/docs/prompts as valid UTF-8 before changing behavior.',
 );
 
 const expectedWorkspaces = ['packages/cli', 'packages/core', 'packages/server', 'packages/desktop'];
