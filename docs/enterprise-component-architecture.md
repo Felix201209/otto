@@ -77,7 +77,8 @@ The release distribution budget is 10MB. Optional tools, GUI shells, connectors,
 Current migration status:
 
 - `agent_pool` is wired into `TaskTool` through `packages/core/src/native/nativeAgentPoolRuntime.ts`.
-- `session_store` and `tokenizer` remain on compatibility fallbacks until their persisted data and token-count tests are strong enough for a hard swap.
+- `tokenizer` has a native runtime wrapper in `packages/core/src/native/nativeTokenizerRuntime.ts`; old token-count fallbacks should migrate to it after call-site compatibility tests are added.
+- `session_store` remains on compatibility fallbacks until persisted data tests are strong enough for a hard swap.
 
 ## Component manifest
 

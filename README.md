@@ -54,7 +54,8 @@ For release-size verification, place compiled artifacts in `bundle/` or `otto-na
 - The Rust native core owns the bounded hot paths that must stay fast on low-memory machines.
 - Optional tools, enterprise connectors, and GUI variants should remain external components rather than kernel code.
 - Old source-heavy implementations should only remain as safe fallbacks while their Rust replacement is incomplete.
-- `session_store` and `tokenizer` still have TypeScript fallback call sites; migrate them incrementally after compatibility tests cover their persisted formats and token-count behavior.
+- `tokenizer` has a native runtime wrapper in `packages/core/src/native/nativeTokenizerRuntime.ts`; migrate old token-count fallbacks after call-site compatibility tests are added.
+- `session_store` still has TypeScript fallback call sites; migrate it after persisted-format compatibility tests are strong enough for a hard swap.
 
 See:
 
