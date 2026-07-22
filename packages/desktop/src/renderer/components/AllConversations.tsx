@@ -58,6 +58,7 @@ function IconTrash(): React.JSX.Element {
 interface AllConversationsProps {
   sessions: SessionSummary[];
   activeSessionId: string | null;
+  unreadSessions?: string[];
   onSelect: (id: string) => void;
   onClose: () => void;
   onDelete: (id: string) => void;
@@ -66,6 +67,7 @@ interface AllConversationsProps {
 export function AllConversations({
   sessions,
   activeSessionId,
+  unreadSessions = [],
   onSelect,
   onClose,
   onDelete,
@@ -171,11 +173,14 @@ export function AllConversations({
                 : '没有匹配的对话'}
             </div>
           ) : (
-            filtered.map((s, i) => (
+            filtered.map((s, i) => {
+              const unread = unreadSessions.includes(s.sessionId);
+              return (
               <div
                 key={s.sessionId}
                 role="button"
                 tabIndex={-1}
+                data-unread={unread ? 'true' : undefined}
                 aria-current={
                   s.sessionId === activeSessionId ? 'true' : undefined
                 }
@@ -194,6 +199,13 @@ export function AllConversations({
                 }}
               >
                 <div className="otto-allconv__itemtop">
+                  {unread ? (
+                    <span
+                      className="otto-allconv__unread"
+                      aria-label="未读消息"
+                      title="未读消息"
+                    />
+                  ) : null}
                   <span className="otto-allconv__title">
                     {s.title || '未命名对话'}
                   </span>
@@ -222,7 +234,8 @@ export function AllConversations({
                   <SourceBadge source={s.source} />
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
 

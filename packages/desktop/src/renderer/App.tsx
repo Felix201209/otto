@@ -935,6 +935,7 @@ function OttoWorkspaceApp({
         <AllConversations
           sessions={selectSortedSessions(state)}
           activeSessionId={state.activeSessionId}
+          unreadSessions={state.unreadSessions}
           onSelect={(id) => {
             setMainView('chat');
             actions.selectSession(id);

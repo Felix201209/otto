@@ -6,6 +6,7 @@
 
 import path from 'path';
 import os from 'os';
+import fs from 'fs-extra';
 import { MessageType } from '../types.js';
 import {
   type CommandContext,
@@ -295,6 +296,153 @@ export function formatSkill(skill: Skill): string {
     lines.push(`   ${t('skill.label.tools')}${skill.metadata.allowedTools.join(', ')}`);
   }
   return lines.join('\n');
+}
+
+function safePackageName(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'shared-skill';
+}
+
+function parseSkillShareArgs(args?: string): string[] {
+  return (args || '').trim().split(/\s+/).filter(Boolean);
+}
+
+async function findShareableSkill(loader: SkillLoader, selector: string): Promise<Skill | null> {
+  const skills = await loader.loadEnabledSkills(SkillLoadLevel.METADATA);
+  return skills.find((skill) =>
+    skill.id === selector ||
+    skill.name === selector ||
+    skill.location?.relativePath === selector ||
+    path.basename(skill.path) === selector
+  ) ?? null;
+}
+
+async function exportSkillPackage(context: CommandContext, args?: string): Promise<void> {
+  const parts = parseSkillShareArgs(args);
+  const selector = parts[0];
+  if (!selector) {
+    context.ui.addItem({
+      type: MessageType.ERROR,
+      text: 'Usage: /skill export <skill-id-or-name> [output-dir]',
+    }, Date.now());
+    return;
+  }
+
+  const { loader } = await initSkillsSystem();
+  const skill = await findShareableSkill(loader, selector);
+  if (!skill) {
+    context.ui.addItem({
+      type: MessageType.ERROR,
+      text: `Skill "${selector}" not found. Run /skill list to see available skills.`,
+    }, Date.now());
+    return;
+  }
+
+  const sourceSkillFile = path.join(skill.path, 'SKILL.md');
+  if (!(await fs.pathExists(sourceSkillFile))) {
+    context.ui.addItem({
+      type: MessageType.ERROR,
+      text: `Skill "${skill.name}" cannot be exported because SKILL.md was not found at ${sourceSkillFile}.`,
+    }, Date.now());
+    return;
+  }
+
+  const outputRoot = parts[1] ? path.resolve(parts[1]) : path.resolve(process.cwd(), 'otto-skill-shares');
+  const packageName = `${safePackageName(skill.name)}-${new Date().toISOString().slice(0, 10)}`;
+  const packagePath = path.join(outputRoot, packageName);
+  const packageSkillPath = path.join(packagePath, 'skill');
+
+  if (await fs.pathExists(packagePath)) {
+    throw new Error(`Share package already exists: ${packagePath}`);
+  }
+
+  await fs.ensureDir(packageSkillPath);
+  await fs.copy(skill.path, packageSkillPath, {
+    filter: (src) => !src.includes(`${path.sep}.git${path.sep}`),
+  });
+
+  const manifest = {
+    schemaVersion: 1,
+    packageType: 'otto.skill.share',
+    exportedAt: new Date().toISOString(),
+    source: {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      marketplaceId: skill.marketplaceId,
+      pluginId: skill.pluginId,
+      location: skill.location,
+    },
+    skillDir: 'skill',
+  };
+
+  await fs.writeJson(path.join(packagePath, 'manifest.json'), manifest, { spaces: 2 });
+
+  context.ui.addItem({
+    type: MessageType.INFO,
+    text: `Skill exported: ${skill.name}\nPackage: ${packagePath}\nShare this folder or zip it for another Otto install.`,
+  }, Date.now());
+}
+
+async function importSkillPackage(context: CommandContext, args?: string): Promise<void> {
+  const parts = parseSkillShareArgs(args);
+  const packageDirArg = parts[0];
+  if (!packageDirArg) {
+    context.ui.addItem({
+      type: MessageType.ERROR,
+      text: 'Usage: /skill import <package-dir> [--project] [--force]',
+    }, Date.now());
+    return;
+  }
+
+  const packagePath = path.resolve(packageDirArg);
+  const manifestPath = path.join(packagePath, 'manifest.json');
+  if (!(await fs.pathExists(manifestPath))) {
+    throw new Error(`Invalid skill package: manifest.json not found in ${packagePath}`);
+  }
+
+  const manifest = await fs.readJson(manifestPath) as {
+    packageType?: string;
+    source?: { name?: string };
+    skillDir?: string;
+  };
+  if (manifest.packageType !== 'otto.skill.share') {
+    throw new Error('Invalid skill package: packageType must be "otto.skill.share".');
+  }
+
+  const skillDirName = manifest.skillDir || 'skill';
+  const sourceSkillPath = path.join(packagePath, skillDirName);
+  const sourceSkillFile = path.join(sourceSkillPath, 'SKILL.md');
+  if (!(await fs.pathExists(sourceSkillFile))) {
+    throw new Error(`Invalid skill package: ${skillDirName}/SKILL.md not found.`);
+  }
+
+  const targetRoot = parts.includes('--project')
+    ? path.join(process.cwd(), PROJECT_DIR_PREFIX, 'skills')
+    : SkillsPaths.SKILLS_ROOT;
+  const targetName = safePackageName(manifest.source?.name || path.basename(packagePath));
+  const targetPath = path.join(targetRoot, targetName);
+  const force = parts.includes('--force');
+
+  if ((await fs.pathExists(targetPath)) && !force) {
+    throw new Error(`Skill already exists at ${targetPath}. Re-run with --force to replace it.`);
+  }
+
+  await fs.ensureDir(targetRoot);
+  if (force) {
+    await fs.remove(targetPath);
+  }
+  await fs.copy(sourceSkillPath, targetPath);
+  resetSkillsSystem();
+  clearSkillsContextCache();
+
+  context.ui.addItem({
+    type: MessageType.INFO,
+    text: `Skill imported: ${targetName}\nInstalled to: ${targetPath}\nRun /skill list to confirm it is available.`,
+  }, Date.now());
 }
 
 export const skillCommand: SlashCommand = {
@@ -1168,6 +1316,52 @@ export const skillCommand: SlashCommand = {
       kind: CommandKind.BUILT_IN,
       completion: handlePluginInstallCompletion,
       action: handlePluginInstallAction,
+    },
+
+    // ========================================================================
+    // /skill export
+    // ========================================================================
+    {
+      name: 'export',
+      description: 'Export a local skill as a shareable folder package',
+      kind: CommandKind.BUILT_IN,
+
+      action: async (context: CommandContext, args?: string) => {
+        try {
+          await exportSkillPackage(context, args);
+        } catch (error) {
+          context.ui.addItem(
+            {
+              type: MessageType.ERROR,
+              text: `Failed to export skill: ${error instanceof Error ? error.message : String(error)}`,
+            },
+            Date.now(),
+          );
+        }
+      },
+    },
+
+    // ========================================================================
+    // /skill import
+    // ========================================================================
+    {
+      name: 'import',
+      description: 'Import a shared skill folder package',
+      kind: CommandKind.BUILT_IN,
+
+      action: async (context: CommandContext, args?: string) => {
+        try {
+          await importSkillPackage(context, args);
+        } catch (error) {
+          context.ui.addItem(
+            {
+              type: MessageType.ERROR,
+              text: `Failed to import skill: ${error instanceof Error ? error.message : String(error)}`,
+            },
+            Date.now(),
+          );
+        }
+      },
     },
 
     // ========================================================================

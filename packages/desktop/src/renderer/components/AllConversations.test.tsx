@@ -82,6 +82,28 @@ describe('AllConversations：键盘导航', () => {
   });
 });
 
+describe('AllConversations unread indicators', () => {
+  it('shows an unread red-dot marker for unread sessions', () => {
+    const sessions = [
+      makeSession({ sessionId: 'a', title: 'A' }),
+      makeSession({ sessionId: 'b', title: 'B' }),
+    ];
+    render(
+      <AllConversations
+        sessions={sessions}
+        activeSessionId="a"
+        unreadSessions={['b']}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('未读消息')).toBeTruthy();
+    expect(document.querySelector('[data-unread="true"]')).toBeTruthy();
+  });
+});
+
 describe('AllConversations：每行删除二次确认（弹窗）', () => {
   it('点删除按钮弹出确认弹窗；确认后回调 onDelete，面板不关', () => {
     const { onDelete, onClose } = renderPanel();

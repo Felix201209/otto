@@ -267,6 +267,43 @@ function isToolCallInFlight(status: ToolCallStatus): boolean {
 }
 
 /** 取消终态把仍在执行/等待的卡片一并收口，避免按钮恢复后卡片继续永久转圈。 */
+function maybeShowChatNotification(
+  frame: ServerToClient,
+  activeSessionId: string | null,
+  sessions: Record<string, SessionSummary>,
+): void {
+  if (frame.type === 'chat_complete') {
+    const { sessionId, messageId, text, finishReason } = frame.payload;
+    if (finishReason === 'cancelled') return;
+    if (!sessionId || sessionId === activeSessionId) return;
+    const session = sessions[sessionId];
+    const preview = text?.trim()
+      ? text.trim().slice(0, 180)
+      : 'Otto 已完成后台对话。';
+    void window.otto.notificationShow?.({
+      messageId: `chat-complete:${messageId}`,
+      sessionId,
+      source: 'tui',
+      title: session?.title || 'Otto 对话已完成',
+      preview,
+    }).catch(() => undefined);
+    return;
+  }
+
+  if (frame.type === 'error' && frame.payload.sessionId) {
+    const { sessionId, code, message } = frame.payload;
+    if (sessionId === activeSessionId) return;
+    const session = sessions[sessionId];
+    void window.otto.notificationShow?.({
+      messageId: `chat-error:${code}:${message}`,
+      sessionId,
+      source: 'tui',
+      title: session?.title || 'Otto 对话需要注意',
+      preview: message,
+    }).catch(() => undefined);
+  }
+}
+
 function cancelInFlightToolCalls(
   toolCalls: OttoMessage['associatedToolCalls'],
 ): OttoMessage['associatedToolCalls'] {
@@ -793,6 +830,7 @@ export function useOttoStore(
     let cancelled = false;
 
     const unsubFrame = transport.onFrame((frame) => {
+      maybeShowChatNotification(frame, activeRef.current, sessionsRef.current);
       dispatch({ kind: 'frame', frame });
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;

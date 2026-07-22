@@ -2734,6 +2734,15 @@ h6.otto-prose__h {
   justify-content: space-between;
   gap: 10px;
 }
+.otto-allconv__unread {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--otto-danger);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.13);
+  transform: translateY(-1px);
+}
 .otto-allconv__title {
   font-size: 14px;
   font-weight: 500;
