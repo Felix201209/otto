@@ -47,6 +47,10 @@ The kernel owns these lifecycle-critical concerns:
   All UI callbacks (`onToolStatusChanged`, `onOutputUpdate`, `onAllToolsComplete`, `onToolCallsUpdate`, `getPreferredEditor`, `onPreToolExecution`) flow through this adapter.
   `MainAgentAdapter` and `SubAgentAdapter` are concrete implementations.
 
+- **File**: `packages/core/src/tools/toolStatusSummary.ts`
+- Owns deterministic, user-visible summaries for tool and tool-group status.
+- Rule: UI surfaces may localize or style these summaries, but must not reimplement tool-result parsing rules independently.
+
 ### 4. Central Policy Gate
 
 - **File**: `packages/core/src/policy/centralPolicy.ts`

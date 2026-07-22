@@ -6,8 +6,14 @@
 
 /// <reference types="vitest" />
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      'otto-core': fileURLToPath(new URL('../core/src/tools/toolStatusSummary.ts', import.meta.url)),
+    },
+  },
   test: {
     include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)', 'config.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/cypress/**'],
