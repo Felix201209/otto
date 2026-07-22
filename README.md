@@ -1,68 +1,170 @@
 # Otto
 
-Otto is an agent runtime that is being moved toward a lightweight native-core architecture.
+Otto 是一个正在走向成熟形态的 agent 产品：核心要轻、边界要稳、组件要独立、低资源设备也要能开多个子 agent。
 
-Current `1.9.2` releases still enter through the Node/TypeScript CLI bundle (`bundle/otto.js`). The Rust crate under `otto-native/` is the native hot-path core and is now treated as the preferred runtime for the three areas that most affect low-resource multi-agent performance:
+这份 README 优先给维护者和后续 agent 看。先说清楚当前状态，避免任何模型一上来就误判架构。
 
-- `agent_pool`: sub-agent concurrency, memory accounting, idle cleanup, and pending-log buffering.
-- `session_store`: session persistence, metadata listing, cache-aware reads, and bounded history.
-- `tokenizer`: local token counting, truncation, and tokenizer capability discovery.
+## 当前内核状态
 
-`agent_pool` is wired into the Task tool sub-agent lifecycle: each task sub-agent is registered with the native pool, final RSS memory is reported back, and the agent is unregistered on completion. In `auto` mode this remains transparent when the native binary is absent; in `required` mode it is a hard release dependency.
+当前 `1.9.2` 版本的主入口仍然是 Node/TypeScript CLI bundle：
 
-The product goal is deliberately small: keep the kernel compact, keep external components independent, and make GUI or distribution-specific changes possible without rewriting the kernel.
+- npm bin: `bundle/otto.js`
+- 开发入口: `scripts/start.js`
+- 核心 TypeScript 包: `packages/core`
+- Rust 原生核心目录: `otto-native`
 
-## Native core policy
+也就是说：Otto 现在不是完全 Rust-only。Rust 已经成为热路径接管方向，并且已经有 core bridge 和 runtime wrapper；但部分旧 TypeScript 调用点仍作为兼容 fallback 存在。
 
-Runtime selection is controlled by `OTTO_NATIVE_CORE`:
+当前 Rust 接管进度：
 
-- `auto` (default): use the Rust native core when an `otto-native` binary is present; otherwise fall back to the TypeScript implementation.
-- `required`: require the Rust binary and fail fast if it is missing.
-- `off`: disable the Rust bridge and use the TypeScript fallback.
+| 热路径 | 当前状态 | 主要文件 |
+| --- | --- | --- |
+| `agent_pool` | 已接入真实 Task 子 agent 生命周期 | `packages/core/src/native/nativeAgentPoolRuntime.ts`, `packages/core/src/tools/task.ts`, `otto-native/src/agent_pool.rs` |
+| `tokenizer` | 已有 native runtime wrapper，旧 token fallback 调用点待迁移 | `packages/core/src/native/nativeTokenizerRuntime.ts`, `otto-native/src/tokenizer.rs` |
+| `session_store` | 已有 native runtime wrapper，旧会话持久化调用点待格式兼容测试后迁移 | `packages/core/src/native/nativeSessionStoreRuntime.ts`, `otto-native/src/session_store.rs` |
 
-Set `OTTO_NATIVE_CORE_BINARY` to point at a specific signed native binary.
+`agent_pool` 现在已经会在 Task 子 agent 启动时注册到 Rust 原生池，结束时上报最终 RSS 内存并注销。`tokenizer` 和 `session_store` 的 Rust wrapper 已准备好，但不能粗暴替换旧调用点：token 计数会影响压缩边界，会话存储会影响用户历史数据，必须先补兼容测试。
 
-Enterprise distributions should use `OTTO_NATIVE_CORE=required` and a signed native artifact manifest. The manifest budget currently requires the release distribution to stay at or below 10MB.
+## 原生核心策略
 
-## Build the Rust native core
+Rust 原生核心由 `OTTO_NATIVE_CORE` 控制：
+
+- `auto`：默认模式。有 `otto-native` 二进制就优先使用 Rust；没有就安全回退到 TypeScript。
+- `required`：企业/发行模式。找不到 Rust 二进制或 Rust 调用失败时直接报错，禁止悄悄退回旧内核。
+- `off`：开发对照模式。禁用 Rust bridge，只走 TypeScript fallback。
+
+如需指定签名后的原生核心二进制：
+
+```bash
+OTTO_NATIVE_CORE_BINARY=/path/to/otto-native
+```
+
+企业发行版应该使用：
+
+```bash
+OTTO_NATIVE_CORE=required
+```
+
+这样可以保证发行包实际运行的是被锁定的 native hot-path core，而不是“看起来有 Rust、实际又回到旧 JS”的混合状态。
+
+## 内存保护策略
+
+Otto 的目标不是无限堆功能，而是在普通设备上稳定运行多个 agent。因此默认策略偏保守：
+
+- 根据设备内存和 CPU 自动选择 `low / standard / high` 资源 profile。
+- 限制 Task 子 agent 并发数，避免多个模型循环同时撑爆内存。
+- 子 agent 有最大运行时长，超时会取消并返回已有部分结果。
+- 子 agent 历史会按字符预算截断，避免长对话无限膨胀。
+- 工具结果、执行日志、pending result 都有上限或清理路径。
+- Task 子 agent 会向 native `agent_pool` 上报最终 RSS，用于后续更精确的淘汰和预算控制。
+
+常用环境变量：
+
+```bash
+OTTO_AGENT_PROFILE=low
+OTTO_TASK_MAX_CONCURRENCY=1
+OTTO_SUBAGENT_HISTORY_MAX_CHARS=60000
+OTTO_SUBAGENT_TIMEOUT_MS=1200000
+```
+
+维护原则：优先让 95% 的设备流畅运行，再给高端机器打开更高并发。不要把高配开发机上的体验当成默认产品预算。
+
+## 易维护组件边界
+
+Otto 的成熟方向是“轻内核 + 独立组件”，而不是把所有功能塞进 core。
+
+| 层级 | 应该放什么 | 不应该做什么 |
+| --- | --- | --- |
+| Kernel | turn lifecycle、tool execution、policy gate、model routing、资源预算、native bridge | 放组织定制逻辑、GUI 品牌代码、私有连接器 |
+| Components | 私有工具包、内网连接器、知识源、审批流、文档运行时 | 修改 kernel 状态机或抢占 kernel-owned path |
+| GUI shell | 路由、主题 token、布局、品牌、政府/企业入口 | 把业务策略写死进 core |
+| Native core | agent pool、session store、tokenizer 等低层热路径 | 承担产品编排、用户体验、外部集成 |
+
+组件 manifest 使用：
+
+- `packages/core/src/components/componentManifest.ts`
+- `docs/enterprise-component-architecture.md`
+
+组件不应声明或修改 kernel-owned 路径，例如：
+
+- `packages/core/src/core/*`
+- `packages/core/src/policy/*`
+- `packages/core/src/config/config.ts`
+- `packages/core/src/tools/tool-registry.ts`
+
+判断一个改动该不该进内核，只问一句：所有 Otto 发行版都会受益吗？如果不是，它大概率应该是组件。
+
+## 发行与 10MB 预算
+
+企业内核发行应该是签名、可校验、source-free 的编译产物。这里的安全表述必须诚实：
+
+- 可以说：防篡改、签名校验、不随包分发源码、提高逆向成本。
+- 不要说：无法破解、无法查看、数学上不可逆。
+
+发行 manifest 在这里：
+
+- `packages/core/src/kernel/kernelDistributionManifest.ts`
+
+当前企业发行预算：
+
+- cold start: `<= 1200ms`
+- registry ready: `<= 500ms`
+- idle RSS: `<= 180MB`
+- sub-agent RSS delta: `<= 80MB`
+- tool schema chars: `<= 120000`
+- release distribution size: `<= 10MB`
+
+`npm run doctor` 会检查发行产物体积。如果当前开发检出没有 `bundle/` 或 `otto-native/bin/`，doctor 会显示“未发现发行产物，但 10MB 预算已生效”。
+
+## 构建 Rust 原生核心
 
 ```bash
 cd otto-native
 cargo build --release
 ```
 
-Expected binary locations include:
+常见二进制位置：
 
 - `otto-native/bin/otto-native`
 - `otto-native/bin/otto-native.exe`
 - `otto-native/target/release/otto-native`
 - `otto-native/target/release/otto-native.exe`
 
-## Verify the repository
+注意：Windows GNU target 需要可用的 linker，例如 MinGW `gcc.exe`。如果本机没有工具链，Rust 测试会在链接阶段失败。
+
+## 验证仓库
+
+推荐最小验证：
 
 ```bash
 npm run doctor
-npm run test --workspace packages/core
+npm run test --workspace packages/core -- nativeCoreBridge.test.ts nativeAgentPoolRuntime.test.ts nativeTokenizerRuntime.test.ts nativeSessionStoreRuntime.test.ts
 npm run typecheck --workspace packages/core
 ```
 
-For release-size verification, place compiled artifacts in `bundle/` or `otto-native/bin/`, or set `OTTO_DOCTOR_RELEASE_ARTIFACT_DIR` to the release artifact directory before running `npm run doctor`.
+Rust 工具链齐全时再跑：
 
-## Architecture notes
+```bash
+cd otto-native
+cargo test
+```
 
-- The TypeScript layer owns product orchestration, policies, adapters, and user-facing experience.
-- The Rust native core owns the bounded hot paths that must stay fast on low-memory machines.
-- Optional tools, enterprise connectors, and GUI variants should remain external components rather than kernel code.
-- Old source-heavy implementations should only remain as safe fallbacks while their Rust replacement is incomplete.
-- `tokenizer` has a native runtime wrapper in `packages/core/src/native/nativeTokenizerRuntime.ts`; migrate old token-count fallbacks after call-site compatibility tests are added.
-- `session_store` has a native runtime wrapper in `packages/core/src/native/nativeSessionStoreRuntime.ts`; migrate old persisted-session call sites after format compatibility tests are strong enough for a hard swap.
+## 后续维护优先级
 
-See:
+1. 给 `tokenizer` 的旧 token fallback 调用点补兼容测试，然后迁移到 `NativeTokenizerRuntime`。
+2. 给 `session_store` 补旧会话格式兼容测试，再迁移到 `NativeSessionStoreRuntime`。
+3. 保持 `agent_pool` 的 Rust 路径为 Task 子 agent 默认路径，并用 #74 的低资源 benchmark 验证多 agent 内存占用。
+4. 清理陈年死代码、乱码文档和生成产物，但不要一次性大扫除到影响行为。
+5. 所有新功能先问边界：属于 kernel、native core、component、GUI shell，还是外部连接器？
 
-- `packages/core/src/native/nativeHotPaths.ts`
+## 关键入口
+
 - `packages/core/src/native/nativeCoreBridge.ts`
+- `packages/core/src/native/nativeHotPaths.ts`
 - `packages/core/src/native/nativeAgentPoolRuntime.ts`
 - `packages/core/src/native/nativeTokenizerRuntime.ts`
 - `packages/core/src/native/nativeSessionStoreRuntime.ts`
 - `packages/core/src/kernel/kernelDistributionManifest.ts`
+- `packages/core/src/components/componentManifest.ts`
 - `docs/enterprise-component-architecture.md`
+- `docs/product-ux-contracts.md`
