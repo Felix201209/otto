@@ -51,6 +51,14 @@ The kernel owns these lifecycle-critical concerns:
 - Owns deterministic, user-visible summaries for tool and tool-group status.
 - Rule: UI surfaces may localize or style these summaries, but must not reimplement tool-result parsing rules independently.
 
+### 3a. Tool Registry Load Boundary
+
+- **File**: `packages/core/src/config/config.ts`
+- `Config.createToolRegistry()` owns default tool registration, but optional heavy tools must stay behind dynamic imports.
+- Heavy optional tools include PPT generation, document conversion/generation, data analysis, desktop/web automation, multi-channel integrations, enterprise collaboration, and voice bridge.
+- Rule: when a tool is only useful for a specialized workflow or requires large optional runtime dependencies, do not add a static import in `config.ts`; register it with the lazy registration helper after `coreTools` / `excludeTools` filtering.
+- Rule: low-resource agent profiles should prefer explicit `coreTools` allow-lists so excluded lazy tools are never imported.
+
 ### 4. Central Policy Gate
 
 - **File**: `packages/core/src/policy/centralPolicy.ts`

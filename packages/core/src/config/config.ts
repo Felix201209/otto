@@ -42,8 +42,6 @@ import { ListSkillsTool } from '../tools/list-skills.js';
 import { GetSkillDetailsTool } from '../tools/get-skill-details.js';
 // Old LSP tools imports removed
 
-import { PptOutlineTool } from '../tools/ppt/pptOutlineTool.js';
-import { PptGenerateTool } from '../tools/ppt/pptGenerateTool.js';
 import { CodeSearchTool } from '../tools/codesearch.js';
 import { LspTool } from '../tools/lsp.js';
 import { MultiEditTool } from '../tools/multiedit.js';
@@ -53,23 +51,9 @@ import { AskUserQuestionTool } from '../tools/ask-user-question.js';
 import { LocalTimeTool } from '../tools/local-time.js';
 import { LocalScheduleTool } from '../tools/local-schedule.js';
 import { LarkCliTool } from '../tools/lark-cli.js';
-// —— Otto Enterprise 能力工具（桌面/文档/数据/诊断/浏览器/知识沉淀）——
-import { DesktopAutomationTool } from '../tools/desktop-automation.js';
-import { VideoEditorTool } from '../tools/video-editor.js';
-import { ConvertDocumentTool } from '../tools/convert-document.js';
-import { GenerateDocumentTool } from '../tools/generate-document.js';
-import { AnalyzeDataTool } from '../tools/analyze-data.js';
-import { DiagnoseSystemTool } from '../tools/diagnose-system.js';
-import { WebAutomationTool } from '../tools/web-automation.js';
-import { MultiChannelTool } from '../tools/multi-channel.js';
-import { MemoryManagerTool } from '../tools/memory-manager.js';
-import { FeishuProjectCollabTool } from '../tools/feishu-project-collab.js';
-import { EnterpriseCollaborationTool } from '../tools/enterprise-collaboration.js';
 import { KnowledgeBaseTool } from '../tools/knowledge-base.js';
-import { VoiceBridgeTool } from '../tools/voice-bridge.js';
 import { DelegateToAgentTool } from '../tools/delegate-agent.js';
 import { CheckDelegateStatusTool } from '../tools/delegate-status.js';
-import { DoctorTool } from '../tools/doctor.js';
 import { ProjectSettingsManager } from './projectSettings.js';
 import { generateCustomModelId } from '../types/customModel.js';
 import { OttoClient } from '../core/client.js';
@@ -1225,11 +1209,7 @@ export class Config {
   async createToolRegistry(): Promise<ToolRegistry> {
     const registry = new ToolRegistry(this);
 
-    // helper to create & register core tools that are enabled
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const registerCoreTool = (ToolClass: any, ...args: unknown[]) => {
-      const className = ToolClass.name;
-      const toolName = ToolClass.Name || className;
+    const isCoreToolEnabled = (className: string, toolName: string) => {
       const coreTools = this.getCoreTools();
       const excludeTools = this.getExcludeTools();
 
@@ -1253,9 +1233,30 @@ export class Config {
         isEnabled = false;
       }
 
-      if (isEnabled) {
+      return isEnabled;
+    };
+
+    // helper to create & register core tools that are enabled
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const registerCoreTool = (ToolClass: any, ...args: unknown[]) => {
+      const className = ToolClass.name;
+      const toolName = ToolClass.Name || className;
+
+      if (isCoreToolEnabled(className, toolName)) {
         registry.registerTool(new ToolClass(...args));
       }
+    };
+
+    const registerLazyCoreTool = async (
+      className: string,
+      toolName: string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      loadToolClass: () => Promise<any>,
+      ...args: unknown[]
+    ) => {
+      if (!isCoreToolEnabled(className, toolName)) return;
+      const ToolClass = await loadToolClass();
+      registry.registerTool(new ToolClass(...args));
     };
 
     registerCoreTool(LSTool, this);
@@ -1284,8 +1285,18 @@ export class Config {
 
     // Old individual LSP tools registration removed in favor of unified LspTool
 
-    registerCoreTool(PptOutlineTool, this);
-    registerCoreTool(PptGenerateTool, this);
+    await registerLazyCoreTool(
+      'PptOutlineTool',
+      'ppt_outline',
+      async () => (await import('../tools/ppt/pptOutlineTool.js')).PptOutlineTool,
+      this,
+    );
+    await registerLazyCoreTool(
+      'PptGenerateTool',
+      'ppt_generate',
+      async () => (await import('../tools/ppt/pptGenerateTool.js')).PptGenerateTool,
+      this,
+    );
     registerCoreTool(CodeSearchTool, this);
     registerCoreTool(LspTool, this);
     registerCoreTool(MultiEditTool, this);
@@ -1304,21 +1315,21 @@ export class Config {
 
     // —— Otto Enterprise 九大能力：把「AI 办公同事」落到实处 ——
     // 这些工具对系统二进制/依赖均做优雅降级（缺依赖时 fail-loud，不崩）。
-    registerCoreTool(DesktopAutomationTool, this); // 桌面自动化（窗口/键鼠/脚本）
-    registerCoreTool(VideoEditorTool, this); // 视频编辑器（OpenReel集成）
-    registerCoreTool(ConvertDocumentTool, this); // 文档格式转换（pandoc/LibreOffice）
-    registerCoreTool(GenerateDocumentTool, this); // 文档生成（Typst/Marp）
-    registerCoreTool(AnalyzeDataTool, this); // 数据分析出图（DuckDB/gnuplot）
-    registerCoreTool(DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
-    registerCoreTool(WebAutomationTool, this);
-    registerCoreTool(MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
-    registerCoreTool(MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
-    registerCoreTool(FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
-    registerCoreTool(EnterpriseCollaborationTool); // 企业树成员、私聊与经授权的 Otto-to-Otto 协作
+    await registerLazyCoreTool('DesktopAutomationTool', 'desktop_automation', async () => (await import('../tools/desktop-automation.js')).DesktopAutomationTool, this); // 桌面自动化（窗口/键鼠/脚本）
+    await registerLazyCoreTool('VideoEditorTool', 'video_editor', async () => (await import('../tools/video-editor.js')).VideoEditorTool, this); // 视频编辑器（OpenReel集成）
+    await registerLazyCoreTool('ConvertDocumentTool', 'convert_document', async () => (await import('../tools/convert-document.js')).ConvertDocumentTool, this); // 文档格式转换（pandoc/LibreOffice）
+    await registerLazyCoreTool('GenerateDocumentTool', 'generate_document', async () => (await import('../tools/generate-document.js')).GenerateDocumentTool, this); // 文档生成（Typst/Marp）
+    await registerLazyCoreTool('AnalyzeDataTool', 'analyze_data', async () => (await import('../tools/analyze-data.js')).AnalyzeDataTool, this); // 数据分析出图（DuckDB/gnuplot）
+    await registerLazyCoreTool('DiagnoseSystemTool', 'diagnose_system', async () => (await import('../tools/diagnose-system.js')).DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
+    await registerLazyCoreTool('WebAutomationTool', 'web_automation', async () => (await import('../tools/web-automation.js')).WebAutomationTool, this);
+    await registerLazyCoreTool('MultiChannelTool', 'multi_channel', async () => (await import('../tools/multi-channel.js')).MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
+    await registerLazyCoreTool('MemoryManagerTool', 'memory_manager', async () => (await import('../tools/memory-manager.js')).MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
+    await registerLazyCoreTool('FeishuProjectCollabTool', 'feishu_project_collab', async () => (await import('../tools/feishu-project-collab.js')).FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
+    await registerLazyCoreTool('EnterpriseCollaborationTool', 'enterprise_collaboration', async () => (await import('../tools/enterprise-collaboration.js')).EnterpriseCollaborationTool); // 企业树成员、私聊与经授权的 Otto-to-Otto 协作
     // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
     // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
-    registerCoreTool(VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
-    registerCoreTool(DoctorTool, this); // 依赖体检（一次性自检上述能力所需的外部二进制/模块）
+    await registerLazyCoreTool('VoiceBridgeTool', 'voice_bridge', async () => (await import('../tools/voice-bridge.js')).VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
+    await registerLazyCoreTool('DoctorTool', 'doctor', async () => (await import('../tools/doctor.js')).DoctorTool, this); // 依赖体检（一次性自检上述能力所需的外部二进制/模块）
 
     // Delegate-to-external-agent (ACP client). Drives the user's local Claude
     // Code; gracefully reports a readable error if the bridge isn't installed.
