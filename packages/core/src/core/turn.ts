@@ -26,6 +26,7 @@ import {
 import { OttoChat } from './ottoChat.js';
 import { SceneType } from './sceneManager.js';
 import { validateAndFixFunctionCall } from '../utils/functionCallValidator.js';
+import { TurnStateMachine, TurnState, describeTransition } from './turnStateMachine.js';
 
 // Define a structure for tools passed to the server
 export interface ServerTool {
@@ -225,17 +226,25 @@ export class Turn {
   readonly pendingToolCalls: ToolCallRequestInfo[];
   private debugResponses: GenerateContentResponse[];
   private config: any; // Config reference for hook access
+  /**
+   * Optional deterministic state machine tracking the turn lifecycle.
+   * When set, transitions are enforced at key points in the turn flow.
+   * This is opt-in to avoid breaking existing callers that don't wire a machine.
+   */
+  public stateMachine?: TurnStateMachine;
 
   constructor(
     private readonly chat: OttoChat,
     private readonly prompt_id: string,
     private readonly modelName?: string,
     configParam?: any,
+    stateMachine?: TurnStateMachine,
   ) {
     this.pendingToolCalls = [];
     this.debugResponses = [];
     // Get config from parameter or try to extract from chat
     this.config = configParam;
+    this.stateMachine = stateMachine;
   }
 
   /**
@@ -244,12 +253,32 @@ export class Turn {
   getDebugResponses(): GenerateContentResponse[] {
     return this.debugResponses;
   }
+
+  /**
+   * Attempt a state machine transition. Silently no-ops when no
+   * stateMachine is wired or the transition would be invalid.
+   * This keeps the state tracking strictly opt-in and non-breaking.
+   */
+  private safeTransition(to: TurnState): void {
+    if (!this.stateMachine) return;
+    try {
+      this.stateMachine.transition(to);
+    } catch (e) {
+      // Log but don't crash — state tracking is observability, not control flow
+      console.warn(
+        `[Turn] State transition rejected: ${describeTransition(this.stateMachine.current, to)}`,
+      );
+    }
+  }
   // The run method yields simpler events suitable for server logic
   async *run(
     req: PartListUnion,
     signal: AbortSignal,
   ): AsyncGenerator<ServerOttoStreamEvent> {
     try {
+      // State machine: turn is now planning
+      this.safeTransition(TurnState.PLANNING);
+
       // 🪝 触发 BeforeModel 钩子
       if (this.config) {
         try {
@@ -296,6 +325,7 @@ export class Turn {
 
       for await (const resp of responseStream) {
         if (signal?.aborted) {
+          this.safeTransition(TurnState.CANCELLED);
           yield { type: OttoEventType.UserCancelled };
           // Do not add resp to debugResponses if aborted before processing
           return;
@@ -349,6 +379,13 @@ export class Turn {
 
         // Handle function calls (requesting tool execution)
         const functionCalls = resp.functionCalls ?? [];
+        if (
+          functionCalls.length > 0 &&
+          this.stateMachine &&
+          this.stateMachine.canTransitionTo(TurnState.EXECUTING_TOOL)
+        ) {
+          this.safeTransition(TurnState.EXECUTING_TOOL);
+        }
         for (const fnCall of functionCalls) {
           // 🛡️ 防御：跳过明显残缺的 functionCall（无 name 或 name 为空）。
           // 流式合并失败时（OttoServerAdapter.mergeStreamContent 兜底之外
@@ -508,6 +545,11 @@ export class Turn {
             value: finishReason as FinishReason,
             errorDetails,
           };
+
+          // State machine: turn completed successfully
+          if (finishReason === 'STOP') {
+            this.safeTransition(TurnState.COMPLETED);
+          }
         }
 
         // Emit token usage info at the end (usually comes with finishReason)
@@ -538,7 +580,7 @@ export class Turn {
         throw error;
       }
       if (signal.aborted) {
-
+        this.safeTransition(TurnState.CANCELLED);
         yield { type: OttoEventType.UserCancelled };
         // Regular cancellation error, fail gracefully.
         return;
@@ -558,6 +600,7 @@ export class Turn {
         typeof (error as { status: unknown }).status === 'number'
           ? (error as { status: number }).status
           : undefined;
+      this.safeTransition(TurnState.FAILED);
       const structuredError: StructuredError = {
         message: getErrorMessage(error),
         status,
