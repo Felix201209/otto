@@ -97,6 +97,7 @@ import { MCPOAuthConfig } from '../mcp/oauth-provider.js';
 import { IdeClient } from '../ide/ide-client.js';
 import { enableAutoLearning } from '../utils/post-exec-hook.js';
 import { HookSystem } from '../hooks/hookSystem.js';
+import { resolveSecret } from './secretResolver.js';
 
 // Re-export OAuth config type
 export type { MCPOAuthConfig };
@@ -1075,7 +1076,10 @@ export class Config {
 
   /** 搜索 API key；按 provider 分别支持 ARK_API_KEY / OTTO_BOCHA_API_KEY 环境变量。 */
   getSearchApiKey(): string | undefined {
-    if (this.searchApiKey) return this.searchApiKey;
+    if (this.searchApiKey) {
+      // Resolve secret references ($ENV: / $KEYCHAIN:) before returning
+      return resolveSecret(this.searchApiKey);
+    }
     return this.getSearchProvider() === 'volcengine'
       ? process.env.ARK_API_KEY ?? undefined
       : process.env.OTTO_BOCHA_API_KEY ?? undefined;
