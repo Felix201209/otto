@@ -4,6 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Otto Core — the runtime kernel and shared library.
+ *
+ * ## Kernel Boundary
+ *
+ * The kernel boundary is documented in {@link ../../docs/runtime-kernel-boundary.md | docs/runtime-kernel-boundary.md}.
+ *
+ * Quick rules:
+ * - Kernel files live under `src/core/` (client, turn, toolExecutionEngine, …)
+ * - Kernel files MUST NOT import from `react`, `ink`, `electron`, `../ui/`, `../../desktop/`, `../../cli/`, `../../server/`, `../ide/`, or `../lsp/`
+ * - The boundary is enforced by {@link ./core/kernelBoundary.test.ts | kernelBoundary.test.ts}
+ *
+ * @module otto-core
+ */
+
 // Export config
 export * from './config/config.js';
 export * from './config/agent-loop-context.js';
@@ -96,6 +111,8 @@ export * from './services/fileDiscoveryService.js';
 export * from './services/fileSystemService.js';
 export * from './services/gitService.js';
 export * from './services/sessionManager.js';
+export { TaskWatchdog, getTaskWatchdog, resetTaskWatchdog } from './services/taskWatchdog.js';
+export type { WatchdogConfig, WatchdogState, WatchdogStatus, WatchdogCallbacks } from './services/taskWatchdog.js';
 export * from './services/mcpResponseGuard.js';
 export * from './services/fileOperationQueue.js';
 export * from './services/backgroundTaskManager.js';
@@ -210,6 +227,16 @@ export type {
   ContextBridge,
   SessionManagerConfig,
 } from './sessions/index.js';
+export {
+  SessionCheckpointService,
+  getCheckpointService,
+  resetCheckpointService,
+} from './sessions/sessionCheckpointService.js';
+export type {
+  SessionCheckpoint,
+  CheckpointStatus,
+  ResumeResult,
+} from './sessions/sessionCheckpointService.js';
 
 // 任务插入引擎
 export * from './insertion/index.js';
@@ -256,6 +283,7 @@ export type { AliyunSmsConfig, SmsSendResult } from './services/aliyunSmsSender.
 export * from './tools/knowledge-base.js';
 export * from './knowledge/localKnowledgeStore.js';
 export * from './knowledge/knowledgeCapture.js';
+export * from './knowledge/knowledgeCapturePipeline.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';
