@@ -410,6 +410,7 @@ export class Config {
     this.projectSettingsManager = new ProjectSettingsManager(this.cwd);
     const projectSettings = this.projectSettingsManager.load();
 
+    // Security: default is ask-user. YOLO must be explicitly opted in.
     // 项目级配置默认优先于一般参数配置
     // 但如果命令行明确传入了 YOLO 模式（-y），它应具有最高优先级覆盖项目配置
     const projectApprovalMode = ProjectSettingsManager.toApprovalMode(projectSettings.yolo);

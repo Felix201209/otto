@@ -31,6 +31,7 @@ export enum PolicyDecision {
  * rest of the runtime.
  */
 export class PolicyEngine {
+  // Security: default is ask-user. YOLO must be explicitly opted in.
   private approvalMode: ApprovalMode = ApprovalMode.DEFAULT;
   private readonly alwaysAllow = new Set<string>();
 
