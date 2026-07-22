@@ -142,10 +142,14 @@ export class KnowledgeCapture {
    * 判断本轮对话是否值得自动沉淀知识。
    *
    * 规则：
+   *  - 总消息数必须 > 3（太少的内容只是开场寒暄）
    *  - 有明确决策、偏好表达、解决方案描述、调研结论 → true
    *  - 只有闲聊 / 没有真实成功结果且对话太短（<3 轮交换）→ false
    */
   shouldCapture(messages: SimpleMessage[]): boolean {
+    // 消息太少（比如只有一两句寒暄），不值得沉淀
+    if (messages.length <= 3) return false;
+
     if (messages.length === 0) return false;
 
     // 过滤出实质性消息（tool 结果只算成功的；user/assistant 纯文本）
@@ -517,10 +521,25 @@ export class KnowledgeCapture {
 
   // ── 5. 内容指纹 ──────────────────────────────────────────────────────
 
-  /** 生成内容指纹：sha256 前 16 hex */
+  /**
+   * 生成内容指纹：sha256 前 16 hex。
+   *
+   * 对内容做稳健归一化后再哈希：
+   *   1. 转小写
+   *   2. 所有空白字符（空格、换行、制表符等）折叠为单个空格
+   *   3. 去除首尾空白
+   *
+   * 这样 "Hello   World" 和 "hello
+world" 会生成相同的指纹，
+   * 避免因格式化差异导致去重失效。
+   */
   fingerprint(content: string): string {
+    const normalized = content
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
     return createHash('sha256')
-      .update(content.trim().toLowerCase())
+      .update(normalized)
       .digest('hex')
       .slice(0, 16);
   }
