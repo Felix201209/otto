@@ -20,6 +20,10 @@ import { Config, ApprovalMode } from '../config/config.js';
 import { PolicyEngine, PolicyDecision } from './policy-engine.js';
 import { getAuditLogger, AuditLogger } from '../orchestration/auditLog.js';
 import { isHighRisk } from './highRiskTools.js';
+import {
+  FeatureFlagManager,
+  type FeatureFlag,
+} from '../config/featureFlags.js';
 
 // ---------------------------------------------------------------------------
 // Re-export PolicyDecision so callers don't need to reach into policy-engine
@@ -66,27 +70,39 @@ export interface PolicyDecisionResult {
  * corresponding tool is denied at the policy gate regardless of approval
  * mode.
  */
-const TOOL_FEATURE_FLAG_MAP: Record<string, string> = {
-  // 飞书能力
-  'lark_cli': 'feishu_integration',
-  'feishu_project_collab': 'feishu_integration',
+const TOOL_FEATURE_FLAG_MAP: Record<string, FeatureFlag> = {
+  // 飞书自动回复
+  'lark_cli': 'feishu_auto_reply',
+  'feishu_project_collab': 'feishu_auto_reply',
 
-  // 桌面自动化
-  'desktop_automation': 'desktop_automation',
-  'web_automation': 'web_automation',
+  // 桌面自动化 → park_service
+  'desktop_automation': 'park_service',
+  'web_automation': 'park_service',
 
-  // 文件操作（危险）
-  'run_shell_command': 'shell_access',
-  'shell': 'shell_access',
+  // TUI 同步
+  'tui_sync': 'tui_sync',
 
-  // 消息发送
-  'multi_channel_send': 'messaging',
+  // 知识沉淀闭环
+  'memory_manager': 'knowledge_loop',
+  'knowledge_base': 'knowledge_loop',
+
+  // 经验检索注入
+  'memory_injection': 'memory_injection',
+
+  // 崩溃恢复
+  'checkpoint': 'checkpoints',
+
+  // 审计日志
+  'audit': 'audit_log',
+
+  // 多渠道消息
+  'multi_channel_send': 'feishu_auto_reply',
 
   // 语音
-  'voice_bridge': 'voice_input',
+  'voice_bridge': 'park_service',
 
-  // AI 图片生成
-  'image_generator': 'image_generation',
+  // 企业组织树
+  'enterprise_tree': 'enterprise_tree',
 };
 
 // ---------------------------------------------------------------------------
@@ -97,11 +113,20 @@ export class CentralPolicy {
   private readonly engine: PolicyEngine;
   private readonly config: Config;
   private readonly auditor: AuditLogger;
+  private readonly featureFlags: FeatureFlagManager;
 
   constructor(config: Config) {
     this.engine = new PolicyEngine();
     this.config = config;
     this.auditor = getAuditLogger();
+    this.featureFlags = new FeatureFlagManager(
+      config.getProjectSettingsManager(),
+    );
+  }
+
+  /** 获取 FeatureFlagManager 供外部查询/变更。 */
+  getFeatureFlagManager(): FeatureFlagManager {
+    return this.featureFlags;
   }
 
   /**
@@ -189,14 +214,20 @@ export class CentralPolicy {
   // -----------------------------------------------------------------------
 
   /**
-   * Look up a boolean feature flag from config.
+   * Look up a boolean feature flag via FeatureFlagManager.
    *
-   * Feature flags are stored in project settings (`otto.json`).
-   * If the flag is absent we treat it as **disabled** (deny-by-default).
+   * Feature flags are stored in project settings (settings.json).
+   * When a flag matches a FeatureFlag key, we query the manager.
+   * Fallback for legacy keys: read raw config, deny-by-default.
    */
   private isFeatureEnabled(flagKey: string): boolean {
+    // Typed flags first
+    if (flagKey in { park_service: 1, feishu_auto_reply: 1, enterprise_tree: 1, tui_sync: 1, knowledge_loop: 1, memory_injection: 1, checkpoints: 1, audit_log: 1 }) {
+      return this.featureFlags.isEnabled(flagKey as FeatureFlag);
+    }
+    // Legacy fallback
     try {
-      const settings = (this.config as any).getProjectSettingsManager?.()?.load?.();
+      const settings = this.config.getProjectSettingsManager().getSettings();
       if (!settings || !settings.featureFlags) return false;
       return settings.featureFlags[flagKey] === true;
     } catch {
