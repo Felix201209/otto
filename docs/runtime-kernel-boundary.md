@@ -144,6 +144,10 @@ The kernel owns these lifecycle-critical concerns:
 - Spawns, manages, and collects results from sub-agents.
 - Enforces timeout budgets (`TURN_TIMEOUT_MS`, `TOOL_COMPLETION_TIMEOUT_MS`).
 - Emits `memoryUsage` in `SubAgentResult` and enforces the history character budget after compression attempts.
+- **File**: `packages/core/src/agents/agentDefinition.ts`
+- Owns built-in sub-agent tool profiles.
+- Rule: the default `code-analysis` sub-agent must stay on the lightweight read-only analysis toolset (`list_directory`, `glob`, `search_file_content`, `read_file`, `read_many_files`, `lsp`, `codesearch`) instead of wildcard inheritance.
+- Rule: user-facing main-agent tools remain fully registered and instant after registry creation; full sub-agent access must be an explicit agent type such as `workflow-orchestrator`, not the default.
 - **File**: `packages/core/src/core/subAgentAdapter.ts`
 - UI adapter for sub-agent tool execution (no-op logging, parent-agent forwarding).
 

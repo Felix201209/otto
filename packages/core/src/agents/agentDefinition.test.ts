@@ -10,6 +10,7 @@ import { Type } from '@google/genai';
 import {
   BUILT_IN_AGENT_TYPES,
   DEFAULT_SUBAGENT_AGENT_TYPE,
+  READ_ONLY_ANALYSIS_TOOLS,
   getBuiltInAgentDefinition,
   resolveAgentTools,
 } from './agentDefinition.js';
@@ -44,6 +45,22 @@ describe('built-in agent definitions', () => {
   it('exposes the default code-analysis agent for backwards compatibility', () => {
     expect(DEFAULT_SUBAGENT_AGENT_TYPE).toBe('code-analysis');
     expect(BUILT_IN_AGENT_TYPES).toContain('code-analysis');
+  });
+
+  it('keeps the default code-analysis agent on the lightweight read-only toolset', () => {
+    const agent = getBuiltInAgentDefinition('code-analysis', READ_ONLY_ANALYSIS_TOOLS, 8);
+
+    expect(agent?.tools).toEqual(READ_ONLY_ANALYSIS_TOOLS);
+    expect(agent?.tools).not.toContain('*');
+    expect(agent?.tools).not.toContain('write_file');
+    expect(agent?.tools).not.toContain('run_shell_command');
+    expect(agent?.tools).not.toContain('ppt_generate');
+  });
+
+  it('keeps explicit workflow orchestrators full-access for advanced flows', () => {
+    const agent = getBuiltInAgentDefinition('workflow-orchestrator', ['read_file', 'write_file'], 8);
+
+    expect(agent?.tools).toEqual(['*']);
   });
 
   it('provides code-explorer, code-reviewer, and test-planner agents', () => {
@@ -110,5 +127,26 @@ describe('resolveAgentTools', () => {
     );
 
     expect(result.resolvedTools).toEqual([readTool]);
+  });
+
+  it('resolves the default code-analysis agent without inheriting every sub-agent tool', () => {
+    const readTool = new TestTool('read_file', true);
+    const grepTool = new TestTool('search_file_content', true);
+    const writeTool = new TestTool('write_file', true);
+    const pptTool = new TestTool('ppt_generate', true);
+    const taskTool = new TestTool('task', false);
+    const agent = getBuiltInAgentDefinition('code-analysis', [], 8)!;
+
+    const result = resolveAgentTools(
+      agent,
+      [readTool, grepTool, writeTool, pptTool, taskTool],
+    );
+
+    expect(result.resolvedTools).toEqual([grepTool, readTool]);
+    expect(result.invalidTools).toEqual(
+      READ_ONLY_ANALYSIS_TOOLS.filter(
+        (toolName) => toolName !== 'read_file' && toolName !== 'search_file_content',
+      ),
+    );
   });
 });

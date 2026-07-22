@@ -38,7 +38,7 @@ export interface ResolvedAgentTools {
   resolvedTools: Tool[];
 }
 
-const READ_ONLY_ANALYSIS_TOOLS = [
+export const READ_ONLY_ANALYSIS_TOOLS = [
   'list_directory',
   'glob',
   'search_file_content',
@@ -136,7 +136,7 @@ export function createDefaultCodeAnalysisAgent(
       availableTools,
       maxTurns,
     ),
-    tools: ['*'],
+    tools: READ_ONLY_ANALYSIS_TOOLS,
     maxTurns,
   };
 }
