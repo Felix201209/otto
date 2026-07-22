@@ -59,6 +59,7 @@ export interface IndividualToolCallDisplay {
   name: string;
   toolId: string; // 原始 tool 名称，如 'run_shell_command'
   description: string;
+  summary?: string;
   resultDisplay: ToolResultDisplay | undefined;
   status: ToolCallStatus;
   confirmationDetails: ToolCallConfirmationDetails | undefined;

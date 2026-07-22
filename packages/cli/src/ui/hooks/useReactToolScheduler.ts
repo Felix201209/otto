@@ -623,6 +623,7 @@ function mapSingleToolCallToDisplay(
         ...baseDisplayProperties,
         status: finalStatus,
         resultDisplay: trackedCall.response.resultDisplay,
+        summary: trackedCall.response.summary,
         confirmationDetails: undefined,
       };
     }

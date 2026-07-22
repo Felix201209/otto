@@ -226,6 +226,7 @@ const createErrorResponse = (
     },
   },
   resultDisplay: error.message,
+  summary: error.message,
 });
 
 /**
@@ -1127,6 +1128,7 @@ export class ToolExecutionEngine {
         callId: reqInfo.callId,
         responseParts,
         resultDisplay: toolResult.returnDisplay,
+        summary: toolResult.summary,
         error: undefined,
       };
 

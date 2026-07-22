@@ -12,6 +12,7 @@ import { SHELL_COMMAND_NAME } from '../../constants.js';
 import { IndividualToolCallDisplay,ToolCallStatus } from '../../types.js';
 import { getLocalizedToolName,tp } from '../../utils/i18n.js';
 import { ToolConfirmationMessage } from './ToolConfirmationMessage.js';
+import { summarizeToolGroupConversation } from './toolConversationSummary.js';
 import { selectAggregatedToolGroup } from './toolGroupAggregate.js';
 import { ToolMessage } from './ToolMessage.js';
 
@@ -98,6 +99,10 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
     () => selectAggregatedToolGroup(toolCalls),
     [toolCalls],
   );
+  const groupSummary = useMemo(
+    () => summarizeToolGroupConversation(toolCalls),
+    [toolCalls],
+  );
 
   let countToolCallsWithResults = 0;
   for (const tool of toolCalls) {
@@ -143,7 +148,7 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
             </Text>
             <Text color={Colors.Gray}>
               {'  '}
-              {tp('tool.aggregate.reading_files', {
+              {groupSummary || tp('tool.aggregate.reading_files', {
                 count: aggregated.items.length,
               })}
             </Text>
@@ -166,6 +171,7 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
                 name={tool.name}
                 toolId={tool.toolId}
                 description={tool.description}
+                summary={tool.summary}
                 resultDisplay={tool.resultDisplay}
                 status={tool.status}
                 confirmationDetails={tool.confirmationDetails}

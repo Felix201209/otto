@@ -193,6 +193,7 @@ const createErrorResponse = (
     },
   },
   resultDisplay: error.message,
+  summary: error.message,
 });
 
 

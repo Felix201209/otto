@@ -205,7 +205,7 @@ describe('<ToolMessage />', () => {
       const output = sanitizeOutput(lastFrame());
       expect(output).toContain('ReadFile');
       expect(output).toContain('src/app.ts');
-      expect(output).toContain('(3 lines read)');
+      expect(output).toContain('Read src/app.ts (3 lines)');
     });
 
     it('shows compact line count for a completed read_file when format is (42 lines)', () => {
@@ -223,7 +223,7 @@ describe('<ToolMessage />', () => {
       const output = sanitizeOutput(lastFrame());
       expect(output).toContain('ReadFile');
       expect(output).toContain('src/app.ts');
-      expect(output).toContain('(42 lines read)');
+      expect(output).toContain('Read src/app.ts (42 lines)');
     });
 
     it('shows compact line count for a completed read_file when format is read lines: 1-100', () => {
@@ -241,7 +241,7 @@ describe('<ToolMessage />', () => {
       const output = sanitizeOutput(lastFrame());
       expect(output).toContain('ReadFile');
       expect(output).toContain('src/app.ts');
-      expect(output).toContain('(100 lines read)');
+      expect(output).toContain('Read src/app.ts (100 lines)');
     });
 
     it('shows compact match count for a completed search_file_content', () => {
@@ -258,7 +258,7 @@ describe('<ToolMessage />', () => {
       );
       const output = sanitizeOutput(lastFrame());
       expect(output).toContain('SearchText');
-      expect(output).toContain('(12 matches found)');
+      expect(output).toContain('Searched pattern; found 12 matches');
     });
 
     it('shows compact file count for a completed read_many_files', () => {
@@ -275,7 +275,7 @@ describe('<ToolMessage />', () => {
       );
       const output = sanitizeOutput(lastFrame());
       expect(output).toContain('ReadManyFiles');
-      expect(output).toContain('(5 files read)');
+      expect(output).toContain('Read 5 files');
     });
 
     it('hides the result body for a completed read_file (one-line summary)', () => {
@@ -294,8 +294,8 @@ describe('<ToolMessage />', () => {
       // Title stays visible...
       expect(output).toContain('ReadFile');
       expect(output).toContain('src/app.ts');
-      // ...but the result body is collapsed away.
-      expect(output).not.toContain('(42 lines)');
+      // ...but the raw result body is collapsed away.
+      expect(output).toContain('Read src/app.ts (42 lines)');
       expect(output).not.toContain('└ (42 lines)');
     });
 
@@ -324,7 +324,9 @@ describe('<ToolMessage />', () => {
         />,
         StreamingState.Idle,
       );
-      expect(sanitizeOutput(lastFrame())).toContain('File not found.');
+      const output = sanitizeOutput(lastFrame());
+      expect(output).toContain('Needs attention:');
+      expect(output).toContain('File not found.');
     });
 
     it('does not collapse a non-read tool result', () => {

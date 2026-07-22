@@ -28,6 +28,7 @@ import { GoalRejectedDisplayRenderer } from './GoalRejectedDisplayRenderer.js';
 import { McpThinkingDisplayRenderer } from './McpThinkingDisplayRenderer.js';
 import { SubAgentDisplayRenderer } from './SubAgentDisplayRenderer.js';
 import { TodoSummaryLine } from './TodoDisplayRenderer.js';
+import { summarizeToolConversation } from './toolConversationSummary.js';
 import { shouldCollapseToolResult } from './toolResultCollapse.js';
 
 const STATIC_HEIGHT = 1;
@@ -199,6 +200,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   name,
   toolId,
   description,
+  summary,
   resultDisplay,
   status,
   confirmationDetails: _confirmationDetails,
@@ -215,6 +217,14 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
     (status === ToolCallStatus.Executing || status === ToolCallStatus.Pending);
   const shouldSimplifyDiff = smallWindowConfig.sizeLevel === WindowSizeLevel.SMALL ||
     smallWindowConfig.sizeLevel === WindowSizeLevel.TINY;
+  const conversationSummary = summarizeToolConversation({
+    toolId,
+    name,
+    description,
+    status,
+    resultDisplay,
+    summary,
+  });
 
   // 🎯 已完成的读取/搜索/列目录类工具：标题行已说明动作+目标，
   //    结果体（行数、文件清单等）是冗余确认，完成后收起，只保留标题一行。
@@ -357,9 +367,10 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           name={name}
           status={status}
           description={description}
+          conversationSummary={conversationSummary}
           emphasis={emphasis}
           terminalWidth={terminalWidth - 1} // 减去 paddingRight={1} 的一列
-          compactResultText={compactResultText} // 🎯 传递精简结果
+          compactResultText={conversationSummary ? undefined : compactResultText} // 🎯 传递精简结果
         />
         {emphasis === 'high' ? <TrailingIndicator /> : null}
       </Box>
@@ -579,6 +590,7 @@ const ToolStatusIndicator: React.FC<ToolStatusIndicatorProps> = ({
 type ToolInfoProps = {
   name: string;
   description: string;
+  conversationSummary: string;
   status: ToolCallStatus;
   emphasis: TextEmphasis;
   terminalWidth: number;
@@ -587,13 +599,14 @@ type ToolInfoProps = {
 const ToolInfo: React.FC<ToolInfoProps> = ({
   name,
   description,
+  conversationSummary,
   status,
   emphasis,
   terminalWidth,
   compactResultText, // 🎯 新增：接收精简结果文本
 }) => {
   // Special handling for Sequential thinking tool - show summary instead of full thought
-  let displayDescription = description;
+  let displayDescription = conversationSummary || description;
   const normalizedToolName = name?.toLowerCase().replace(/[_-]/g, '');
   if (normalizedToolName?.includes('sequentialthinking') && description?.includes('thought')) {
     try {
