@@ -78,7 +78,7 @@ Current migration status:
 
 - `agent_pool` is wired into `TaskTool` through `packages/core/src/native/nativeAgentPoolRuntime.ts`.
 - `tokenizer` has a native runtime wrapper in `packages/core/src/native/nativeTokenizerRuntime.ts`; old token-count fallbacks should migrate to it after call-site compatibility tests are added.
-- `session_store` remains on compatibility fallbacks until persisted data tests are strong enough for a hard swap.
+- `session_store` has a native runtime wrapper in `packages/core/src/native/nativeSessionStoreRuntime.ts`; old persisted-session call sites should migrate to it after format compatibility tests are strong enough for a hard swap.
 
 ## Component manifest
 
