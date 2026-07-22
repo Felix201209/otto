@@ -17,11 +17,9 @@ import type {
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
-import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
 import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
 import {
-  IconBuilding,
   IconChevron,
   IconChevronDown,
   IconTerminal,
@@ -150,7 +148,6 @@ export function RightPanel({
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
   const [noteText, setNoteText] = useState('');
-  const [parkOpen, setParkOpen] = useState(true);
   const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [customAgentName, setCustomAgentName] = useState('');
@@ -178,8 +175,6 @@ export function RightPanel({
     () => providedProfiles ?? visibleProfiles(mode, enterpriseRole),
     [enterpriseRole, mode, providedProfiles],
   );
-  const parkBrand = useParkBrand();
-
   useEffect(() => {
     let cancelled = false;
     setEnterpriseKnowledgeEnabled(false);
@@ -318,37 +313,6 @@ export function RightPanel({
             <div className="otto-right-panel__head">
               常用入口
             </div>
-            {parkBrand ? <><button
-              type="button"
-              className="otto-right-panel__grouphead"
-              onClick={() => setParkOpen((value) => !value)}
-              aria-expanded={parkOpen}
-            >
-              <span>园区服务</span>
-              <IconChevronDown
-                size={14}
-                className={`otto-right-panel__grouphead-chev${parkOpen ? '' : ' is-collapsed'}`}
-              />
-            </button>
-            {parkOpen ? (
-              <div className="otto-expert-list">
-                <button
-                  type="button"
-                  className="otto-expert-card"
-                  onClick={openParkServices}
-                  title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
-                >
-                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                    <IconBuilding size={17} />
-                  </span>
-                  <span className="otto-expert-card__body">
-                    <span className="otto-expert-card__name">{parkBrand}</span>
-                    <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
-                  </span>
-                </button>
-              </div>
-            ) : null}</> : null}
-
             {mode === 'enterprise' ? (
               <>
                 <div className="otto-right-panel__waist" role="separator" />

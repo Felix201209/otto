@@ -201,7 +201,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByText('自主开发')).toBeNull();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
-    expect(screen.getByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeTruthy();
+    expect(screen.queryByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeNull();
     expect(screen.queryByText('访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮')).toBeNull();
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(1);
   });
@@ -317,21 +317,13 @@ describe('RightPanel fixed Agent catalog', () => {
       .toContain('is-pop-right');
   });
 
-  it('keeps the park service entry wired to the park-services event', async () => {
+  it('hides the park service entry from the right panel', () => {
     installBridge();
-    const parkOpen = vi.fn();
-    window.addEventListener('otto:open-park-services', parkOpen, { once: true });
 
     render(<RightPanel busy={false} />);
 
-    await screen.findAllByText('园区服务');
-    const parkCard = document.querySelector<HTMLButtonElement>(
-      '.otto-expert-card[title*="装修管理"]',
-    );
-    expect(parkCard).toBeTruthy();
-    expect(parkCard?.getAttribute('title')).toContain('装修管理');
-    fireEvent.click(parkCard!);
-    expect(parkOpen).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('园区服务')).toBeNull();
+    expect(document.querySelector('.otto-expert-card[title*="装修管理"]')).toBeNull();
   });
 
   it('keeps the Feishu status and multi-channel shortcuts in the tools tab', () => {
@@ -372,9 +364,18 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
   });
 
-  it('中心返回未加入园区时不用旧本机品牌显示园区入口', async () => {
+  it('即使已加入园区也不在右侧面板显示园区入口', () => {
     installBridge();
-    const enterpriseParkView = vi.fn(async () => null);
+    const enterpriseParkView = vi.fn(async () => ({
+      id: 'park_star',
+      name: '星火产业园',
+      slug: 'star-park',
+      brandName: '星火智慧园区服务',
+      adminOrganizationId: 'org-park',
+      status: 'active' as const,
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    }));
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
     Object.assign(window.otto, { enterpriseParkView, parkConfig });
 
@@ -386,37 +387,10 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
+    expect(screen.queryByText('园区服务')).toBeNull();
+    expect(screen.queryByText('星火智慧园区服务')).toBeNull();
     expect(screen.queryByRole('button', { name: '旧本机宏创园区服务' })).toBeNull();
-    expect(parkConfig).not.toHaveBeenCalled();
-  });
-
-  it('已加入园区时使用中心返回的动态品牌', async () => {
-    installBridge();
-    const parkConfig = vi.fn(async () => ({ brandName: '旧本机品牌' }));
-    Object.assign(window.otto, {
-      parkConfig,
-      enterpriseParkView: vi.fn(async () => ({
-        id: 'park_star',
-        name: '星火产业园',
-        slug: 'star-park',
-        brandName: '星火智慧园区服务',
-        adminOrganizationId: 'org-park',
-        status: 'active' as const,
-        createdAt: '2026-07-21T00:00:00.000Z',
-        updatedAt: '2026-07-21T00:00:00.000Z',
-      })),
-    });
-
-    render(
-      <RightPanel
-        busy={false}
-        mode="enterprise"
-        workspace={enterpriseWorkspace()}
-      />,
-    );
-
-    expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
+    expect(enterpriseParkView).not.toHaveBeenCalled();
     expect(parkConfig).not.toHaveBeenCalled();
   });
 
