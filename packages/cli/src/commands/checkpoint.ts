@@ -7,6 +7,7 @@
 
 import type { CommandModule } from 'yargs';
 import { cleanCommand } from './checkpoint/clean.js';
+import { recoverCommand } from './checkpoint/recover.js';
 import { t } from '../ui/utils/i18n.js';
 
 export const checkpointCommand: CommandModule = {
@@ -16,6 +17,7 @@ export const checkpointCommand: CommandModule = {
   builder: (yargs) =>
     yargs
       .command(cleanCommand)
+      .command(recoverCommand)
       .demandCommand(1, t('checkpoint.command.require.subcommand'))
       .version(false)
       .help(),
