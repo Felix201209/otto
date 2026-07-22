@@ -344,7 +344,7 @@ export class ToolExecutionEngine {
     payload?: ToolConfirmationPayload,
   ): Promise<void> {
     try {
-      const details = waitingCall.confirmationDetails as Record<string, unknown>;
+      const details = waitingCall.confirmationDetails as unknown as Record<string, unknown>;
       const auditor = getAuditLogger();
       await auditor.log({
         sessionId: this.config?.getSessionId?.() || 'unknown',

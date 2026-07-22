@@ -39,6 +39,7 @@ diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);
 
 let sdk: NodeSDK | undefined;
 let telemetryInitialized = false;
+type NodeSDKOptions = NonNullable<ConstructorParameters<typeof NodeSDK>[0]>;
 
 export function isTelemetrySdkInitialized(): boolean {
   return telemetryInitialized;
@@ -85,7 +86,7 @@ export function initializeTelemetry(config: Config): void {
         exporter: new OTLPMetricExporter({
           url: `${otlpEndpoint}/v1/metrics`,
         }),
-      }),
+      }) as unknown as NodeSDKOptions['metricReader'],
       logRecordProcessor: new BatchLogRecordProcessor(
         new OTLPLogExporter({
           url: `${otlpEndpoint}/v1/logs`,

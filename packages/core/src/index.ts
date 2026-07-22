@@ -284,7 +284,15 @@ export type { AliyunSmsConfig, SmsSendResult } from './services/aliyunSmsSender.
 export * from './tools/knowledge-base.js';
 export * from './knowledge/localKnowledgeStore.js';
 export * from './knowledge/knowledgeCapture.js';
-export * from './knowledge/knowledgeCapturePipeline.js';
+export {
+  KnowledgeCapturePipeline as LocalKnowledgeCapturePipeline,
+  getKnowledgeCapturePipeline as getLocalKnowledgeCapturePipeline,
+  resetKnowledgeCapturePipeline as resetLocalKnowledgeCapturePipeline,
+} from './knowledge/knowledgeCapturePipeline.js';
+export type {
+  KnowledgeCaptureStats as LocalKnowledgeCaptureStats,
+  PipelineRunResult as LocalPipelineRunResult,
+} from './knowledge/knowledgeCapturePipeline.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';

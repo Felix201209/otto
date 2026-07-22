@@ -80,6 +80,7 @@ remote-client/build
 .ottocode
 .deepvcode
 .npmrc
+!.npmrc
 
 # Temporary backup during publish
 .publish-backup
