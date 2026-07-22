@@ -27,6 +27,12 @@ import { OttoChat } from './ottoChat.js';
 import { SceneType } from './sceneManager.js';
 import { validateAndFixFunctionCall } from '../utils/functionCallValidator.js';
 import { TurnStateMachine, TurnState, describeTransition } from './turnStateMachine.js';
+import {
+  TurnCheckpointManager,
+  TurnCheckpoint,
+  CompletedToolEntry,
+  classifyTool,
+} from './turnCheckpoint.js';
 
 // Define a structure for tools passed to the server
 export interface ServerTool {
@@ -232,6 +238,17 @@ export class Turn {
    * This is opt-in to avoid breaking existing callers that don't wire a machine.
    */
   public stateMachine?: TurnStateMachine;
+  /**
+   * Optional checkpoint manager for crash recovery.
+   * When set, the turn saves progress after each tool execution and can
+   * skip re-execution of already-completed irreversible tools on resume.
+   */
+  public checkpointManager?: TurnCheckpointManager;
+  /**
+   * The turn ID (unique per execution). Used as the key for checkpoint files.
+   * Auto-generated if not provided.
+   */
+  public readonly turnId: string;
 
   constructor(
     private readonly chat: OttoChat,
@@ -239,12 +256,15 @@ export class Turn {
     private readonly modelName?: string,
     configParam?: any,
     stateMachine?: TurnStateMachine,
+    checkpointManager?: TurnCheckpointManager,
   ) {
     this.pendingToolCalls = [];
     this.debugResponses = [];
     // Get config from parameter or try to extract from chat
     this.config = configParam;
     this.stateMachine = stateMachine;
+    this.checkpointManager = checkpointManager;
+    this.turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
   /**
@@ -270,6 +290,81 @@ export class Turn {
       );
     }
   }
+
+  // ── Checkpoint methods ──────────────────────────────────────────────
+
+  /**
+   * Check whether a tool with the given name+callId was already executed
+   * and should be skipped on resume (i.e., it is NEVER_REPLAYED).
+   *
+   * Returns false when no checkpoint manager is wired.
+   */
+  async shouldSkipToolOnResume(
+    toolName: string,
+    callId: string,
+  ): Promise<boolean> {
+    if (!this.checkpointManager) return false;
+
+    const existing = await this.checkpointManager.load(this.prompt_id);
+    if (!existing) return false;
+
+    return this.checkpointManager.shouldSkipTool(existing, toolName, callId);
+  }
+
+  /**
+   * Record that a tool has completed successfully.
+   * Saves a new checkpoint snapshot so that on crash recovery this tool
+   * is known to have run.
+   *
+   * Should be called by the tool execution layer after each tool completes.
+   */
+  async recordToolCompletion(
+    toolName: string,
+    callId: string,
+    resultSummary?: string,
+  ): Promise<void> {
+    if (!this.checkpointManager) return;
+
+    const entry: CompletedToolEntry = {
+      name: toolName,
+      callId,
+      completedAt: new Date().toISOString(),
+      resultSummary: resultSummary
+        ? resultSummary.slice(0, 2048)
+        : undefined,
+      replayClass: classifyTool(toolName),
+    };
+
+    const checkpoint: TurnCheckpoint = {
+      turnId: this.turnId,
+      sessionId: this.prompt_id,
+      state: this.stateMachine?.current ?? TurnState.EXECUTING_TOOL,
+      completedTools: [entry],
+      lastToolResult: resultSummary?.slice(0, 2048),
+      timestamp: new Date().toISOString(),
+    };
+
+    await this.checkpointManager.save(checkpoint);
+  }
+
+  /**
+   * Mark the turn as completed and clear its checkpoint.
+   * Called when the turn finishes successfully (finishReason === STOP).
+   */
+  async finalizeCheckpoint(): Promise<void> {
+    if (!this.checkpointManager) return;
+    await this.checkpointManager.clear(this.turnId);
+  }
+
+  /**
+   * Load the last incomplete checkpoint for a session.
+   * Returns null if no checkpoint manager is wired or no checkpoint exists.
+   */
+  async loadCheckpoint(): Promise<TurnCheckpoint | null> {
+    if (!this.checkpointManager) return null;
+    return this.checkpointManager.load(this.prompt_id);
+  }
+
   // The run method yields simpler events suitable for server logic
   async *run(
     req: PartListUnion,
@@ -549,6 +644,10 @@ export class Turn {
           // State machine: turn completed successfully
           if (finishReason === 'STOP') {
             this.safeTransition(TurnState.COMPLETED);
+            // Clear checkpoint — turn is done, no recovery needed
+            this.finalizeCheckpoint().catch((e) =>
+              console.warn('[Turn] Failed to finalize checkpoint:', e),
+            );
           }
         }
 
