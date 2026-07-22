@@ -59,6 +59,20 @@ The kernel owns these lifecycle-critical concerns:
 - Rule: when a tool is only useful for a specialized workflow or requires large optional runtime dependencies, do not add a static import in `config.ts`; register it with the lazy registration helper after `coreTools` / `excludeTools` filtering.
 - Rule: low-resource agent profiles should prefer explicit `coreTools` allow-lists so excluded lazy tools are never imported.
 
+### 3b. Component Manifest Boundary
+
+- **File**: `packages/core/src/components/componentManifest.ts`
+- Defines the versioned manifest contract for external tools, connectors, runtimes, agent profiles, themes, and GUI shells.
+- Organization/vendor components must not claim kernel-owned paths. Kernel updates should remain upstream-owned; organization-specific behavior belongs in components.
+- **Architecture guide**: `docs/enterprise-component-architecture.md`
+
+### 3c. Product UX Contract
+
+- **File**: `packages/core/src/ux/agentExperienceContract.ts`
+- Defines stable product semantics for tool readiness, agent activity labels, and unread-dot behavior.
+- Rule: performance optimizations may change load timing and sub-agent profiles, but must not make user-facing tools feel missing or first-use slow after session setup.
+- **UX guide**: `docs/product-ux-contracts.md`
+
 ### 4. Central Policy Gate
 
 - **File**: `packages/core/src/policy/centralPolicy.ts`

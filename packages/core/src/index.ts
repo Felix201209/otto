@@ -53,6 +53,8 @@ export * from './tools/task.js';
 export * from './core/subAgent.js';
 export * from './core/agentResourceBudget.js';
 export * from './core/agentMemoryStats.js';
+export * from './components/componentManifest.js';
+export * from './ux/agentExperienceContract.js';
 export * from './core/proxyAuth.js';
 export * from './core/toolSchedulerAdapter.js';
 export { ToolExecutionEngine } from './core/toolExecutionEngine.js';
