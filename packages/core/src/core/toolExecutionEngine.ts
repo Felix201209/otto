@@ -34,6 +34,8 @@ import { getWorkLogger, inferCategory, describeAction } from '../orchestration/w
 import { getRealtimeWatcher } from '../orchestration/autoSkillGenerator.js';
 import { getHabitAnalyzer } from '../orchestration/habitAnalyzer.js';
 import { getAuditLogger } from '../orchestration/auditLog.js';
+import { createCentralPolicy, CentralPolicy } from '../policy/centralPolicy.js';
+import { PolicyDecision } from '../policy/policy-engine.js';
 import { getSkillShareManager } from '../orchestration/skillShare.js';
 import { getKnowledgeCapturePipeline } from '../orchestration/knowledgeCapturePipeline.js';
 
@@ -252,6 +254,9 @@ export class ToolExecutionEngine {
   // 📁 文件操作队列 - 确保同一文件的编辑操作顺序执行
   private fileOperationQueue: FileOperationQueue;
 
+  // 🛡️ 中央策略门控 - 所有工具执行前的唯一决策点
+  private centralPolicy: CentralPolicy;
+
   // 用于 Promise 驱动的完成检测，避免轮询竞态条件
   private completionResolvers: Array<(calls: CompletedEngineToolCall[]) => void> = [];
 
@@ -270,6 +275,9 @@ export class ToolExecutionEngine {
     });
     // 📁 初始化文件操作队列
     this.fileOperationQueue = new FileOperationQueue();
+
+    // 🛡️ 初始化中央策略(策略引擎 + 特性开关 + 审计)
+    this.centralPolicy = createCentralPolicy(this.config);
   }
 
   /**
@@ -663,6 +671,30 @@ export class ToolExecutionEngine {
             agentContext,
           };
         }
+
+        // 🛡️ 中央策略门控 — 所有工具执行前的唯一决策点
+        const policyResult = this.centralPolicy.canExecute(reqInfo.name, {
+          sessionId: this.config.getSessionId(),
+          userId: (this.config as any)?.getFeishuUser?.() ||
+            (typeof require !== 'undefined' ? require('os').userInfo().username : 'system'),
+          source: context.agentType === 'sub' ? 'subagent' :
+            process.env.TERM_PROGRAM === 'vscode' ? 'desktop' : 'terminal',
+          toolArgs: reqInfo.args as Record<string, unknown>,
+        });
+
+        if (policyResult.decision === PolicyDecision.Deny) {
+          return {
+            status: 'error',
+            request: reqInfo,
+            response: createErrorResponse(
+              reqInfo,
+              new Error(policyResult.reason),
+            ),
+            durationMs: 0,
+            agentContext,
+          };
+        }
+
         return {
           status: 'validating',
           request: reqInfo,
