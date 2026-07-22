@@ -35,6 +35,7 @@ vi.mock('otto-core', async (importOriginal) => {
         sessionEvents: 1,
         knowledgeRecords: 4,
         deduplicatedKnowledge: 1,
+        knowledgeByType: { bugfix: 2, decision: 1, preference: 1 },
       })),
     })),
     formatKnowledgeCaptureStatus: vi.fn((status) => (
@@ -48,7 +49,7 @@ const mockLoadServerHierarchicalMemory = loadServerHierarchicalMemory as Mock;
 describe('memoryCommand', () => {
   let mockContext: CommandContext;
 
-  const getSubCommand = (name: 'show' | 'add' | 'refresh' | 'project' | 'capture-status'): SlashCommand => {
+  const getSubCommand = (name: 'show' | 'add' | 'refresh' | 'project' | 'status' | 'capture-status'): SlashCommand => {
     const subCommand = memoryCommand.subCommands?.find(
       (cmd) => cmd.name === name,
     );
@@ -66,6 +67,7 @@ describe('memoryCommand', () => {
         'add',
         'project',
         'refresh',
+        'status',
         'stats',
         'capture-status',
         'merge',
@@ -79,12 +81,25 @@ describe('memoryCommand', () => {
   });
 
   it('reports the real automatic capture pipeline status', async () => {
-    const command = getSubCommand('capture-status');
+    const command = getSubCommand('status');
     if (!command.action) throw new Error('Command has no action');
 
     const result = await command.action(createMockCommandContext(), '');
 
     expect(getKnowledgeCapturePipeline).toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      type: 'message',
+      messageType: 'info',
+      content: expect.stringContaining('工具事件 3'),
+    }));
+  });
+
+  it('keeps capture-status as a backwards-compatible alias', async () => {
+    const command = getSubCommand('capture-status');
+    if (!command.action) throw new Error('Command has no action');
+
+    const result = await command.action(createMockCommandContext(), '');
+
     expect(result).toEqual(expect.objectContaining({
       type: 'message',
       messageType: 'info',

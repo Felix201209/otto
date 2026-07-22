@@ -107,27 +107,35 @@ async function runProjectMemoryAction(
  * 这些能力是对原 `/memory show|add|project|refresh` 的扩展，不能替换旧命令；
  * 企业用户和既有脚本仍依赖原子命令名。集中在这里追加可以让两套入口共存。
  */
+async function knowledgeCaptureStatusAction(): Promise<SlashCommandActionReturn> {
+  try {
+    const status = await getKnowledgeCapturePipeline().getStatus();
+    return {
+      type: 'message',
+      messageType: status.lastError ? 'error' : 'info',
+      content: formatKnowledgeCaptureStatus(status),
+    };
+  } catch (error) {
+    return {
+      type: 'message',
+      messageType: 'error',
+      content: `获取自动知识沉淀状态失败: ${getErrorMessage(error)}`,
+    };
+  }
+}
+
 const autoMemoryCommands: SlashCommand[] = [
+  {
+    name: 'status',
+    description: '查看自动知识沉淀运行状态',
+    kind: CommandKind.BUILT_IN,
+    action: knowledgeCaptureStatusAction,
+  },
   {
     name: 'capture-status',
     description: '查看自动知识沉淀运行状态',
     kind: CommandKind.BUILT_IN,
-    action: async (): Promise<SlashCommandActionReturn> => {
-      try {
-        const status = await getKnowledgeCapturePipeline().getStatus();
-        return {
-          type: 'message',
-          messageType: status.lastError ? 'error' : 'info',
-          content: formatKnowledgeCaptureStatus(status),
-        };
-      } catch (error) {
-        return {
-          type: 'message',
-          messageType: 'error',
-          content: `获取自动知识沉淀状态失败: ${getErrorMessage(error)}`,
-        };
-      }
-    },
+    action: knowledgeCaptureStatusAction,
   },
   {
     name: 'stats',

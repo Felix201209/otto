@@ -17,11 +17,13 @@ export interface KnowledgeCaptureStatus {
   version: 1;
   updatedAt?: string;
   lastEventAt?: string;
+  lastCapturedAt?: string;
   toolEvents: number;
   agentEvents: number;
   sessionEvents: number;
   knowledgeRecords: number;
   deduplicatedKnowledge: number;
+  knowledgeByType: Partial<Record<CapturedKnowledgeType, number>>;
   lastError?: string;
 }
 
@@ -72,7 +74,14 @@ export type CapturedKnowledgeType =
   | 'decision'
   | 'bugfix'
   | 'best_practice'
-  | 'preference';
+  | 'preference'
+  | 'fact';
+
+export type CapturedKnowledgeSource =
+  | 'after_agent'
+  | 'worklog'
+  | 'session'
+  | 'user';
 
 export interface CapturedKnowledgeRecord {
   version: 1;
@@ -81,18 +90,23 @@ export interface CapturedKnowledgeRecord {
   type: CapturedKnowledgeType;
   title: string;
   content: string;
+  summary: string;
   keywords: string[];
-  source: 'after_agent';
+  tags: string[];
+  source: CapturedKnowledgeSource;
+  confidence: number;
   sessionId?: string;
   projectRoot?: string;
   createdAt: string;
   updatedAt: string;
+  lastUsedAt?: string;
+  useCount: number;
   occurrences: number;
 }
 
 interface KnowledgeIndexEntry extends Omit<
   CapturedKnowledgeRecord,
-  'version' | 'source' | 'content'
+  'version' | 'content'
 > {
   file: string;
 }
@@ -122,20 +136,33 @@ function normalizeKnowledgeIndex(value: unknown): KnowledgeIndex {
         !Array.isArray(entry.keywords) ||
         typeof entry.createdAt !== 'string' ||
         typeof entry.updatedAt !== 'string' ||
-        typeof entry.occurrences !== 'number' ||
         typeof entry.file !== 'string' ||
         path.basename(entry.file) !== entry.file
       )
         return [];
+      const type = normalizeKnowledgeType(entry.type);
+      if (!type) return [];
       return [
         {
           id: entry.id,
           contentHash: entry.contentHash,
-          type: entry.type as CapturedKnowledgeType,
+          type,
           title: entry.title,
+          summary:
+            typeof entry.summary === 'string'
+              ? entry.summary
+              : compact(entry.title, 240),
           keywords: entry.keywords.filter(
             (keyword): keyword is string => typeof keyword === 'string',
           ),
+          tags: Array.isArray(entry.tags)
+            ? entry.tags.filter((tag): tag is string => typeof tag === 'string')
+            : [],
+          source: normalizeKnowledgeSource(entry.source) ?? 'after_agent',
+          confidence:
+            typeof entry.confidence === 'number'
+              ? Math.min(1, Math.max(0, entry.confidence))
+              : 0.7,
           sessionId:
             typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
           projectRoot:
@@ -144,7 +171,18 @@ function normalizeKnowledgeIndex(value: unknown): KnowledgeIndex {
               : undefined,
           createdAt: entry.createdAt,
           updatedAt: entry.updatedAt,
-          occurrences: entry.occurrences,
+          lastUsedAt:
+            typeof entry.lastUsedAt === 'string'
+              ? entry.lastUsedAt
+              : undefined,
+          useCount:
+            typeof entry.useCount === 'number'
+              ? Math.max(0, entry.useCount)
+              : 0,
+          occurrences:
+            typeof entry.occurrences === 'number'
+              ? Math.max(1, entry.occurrences)
+              : 1,
           file: entry.file,
         },
       ];
@@ -199,7 +237,31 @@ function emptyStatus(): KnowledgeCaptureStatus {
     sessionEvents: 0,
     knowledgeRecords: 0,
     deduplicatedKnowledge: 0,
+    knowledgeByType: {},
   };
+}
+
+function normalizeKnowledgeType(
+  value: unknown,
+): CapturedKnowledgeType | undefined {
+  return value === 'decision' ||
+    value === 'bugfix' ||
+    value === 'best_practice' ||
+    value === 'preference' ||
+    value === 'fact'
+    ? value
+    : undefined;
+}
+
+function normalizeKnowledgeSource(
+  value: unknown,
+): CapturedKnowledgeSource | undefined {
+  return value === 'after_agent' ||
+    value === 'worklog' ||
+    value === 'session' ||
+    value === 'user'
+    ? value
+    : undefined;
 }
 
 function knowledgeTokens(value: string): string[] {
@@ -217,20 +279,44 @@ function knowledgeTokens(value: string): string[] {
   return [...tokens].slice(0, 80);
 }
 
-function extractKnowledgeCandidates(input: AgentCaptureInput): Array<{
+interface KnowledgeCandidate {
   type: CapturedKnowledgeType;
   title: string;
   content: string;
-}> {
+  source: CapturedKnowledgeSource;
+  confidence: number;
+}
+
+function candidateSummary(content: string): string {
+  return compact(content.replace(/^[^：:]{1,180}[：:]\s*/u, ''), 260);
+}
+
+function candidateTags(candidate: Pick<KnowledgeCandidate, 'title' | 'content' | 'type'>): string[] {
+  return [
+    candidate.type,
+    ...knowledgeTokens(`${candidate.title}\n${candidate.content}`).slice(0, 8),
+  ].slice(0, 10);
+}
+
+function extractKnowledgeCandidates(input: {
+  requestText: string;
+  responseText: string;
+  source: CapturedKnowledgeSource;
+}): KnowledgeCandidate[] {
   const request = taskTitle(input.requestText);
   const response = compact(input.responseText, 1_200);
-  const candidates: Array<{
-    type: CapturedKnowledgeType;
-    title: string;
-    content: string;
-  }> = [];
-  if (/(?:请记住|以后|偏好|希望|习惯|always|prefer)/i.test(input.requestText)) {
-    candidates.push({ type: 'preference', title: request, content: request });
+  const candidates: KnowledgeCandidate[] = [];
+  const rememberRequest = /(?:请记住|记住|以后|偏好|希望|习惯|always|prefer)/i.test(
+    input.requestText,
+  );
+  if (rememberRequest) {
+    candidates.push({
+      type: 'preference',
+      title: request,
+      content: request,
+      source: 'user',
+      confidence: 0.92,
+    });
   }
   const sentences = response
     .split(/(?<=[。！？.!?])\s*/u)
@@ -244,6 +330,8 @@ function extractKnowledgeCandidates(input: AgentCaptureInput): Array<{
         type: 'bugfix',
         title: request,
         content: `${request}：${sentence}`,
+        source: input.source,
+        confidence: 0.86,
       });
     }
     if (/(决定|采用|选择|方案|改为|\bdecision\b|\bchose\b)/i.test(sentence)) {
@@ -251,6 +339,8 @@ function extractKnowledgeCandidates(input: AgentCaptureInput): Array<{
         type: 'decision',
         title: request,
         content: `${request}：${sentence}`,
+        source: input.source,
+        confidence: 0.84,
       });
     }
     if (
@@ -262,13 +352,21 @@ function extractKnowledgeCandidates(input: AgentCaptureInput): Array<{
         type: 'best_practice',
         title: request,
         content: `${request}：${sentence}`,
+        source: input.source,
+        confidence: 0.78,
+      });
+    }
+    if (/(确认|记录|事实|结论|原因是|\bfact\b|\bconfirmed\b)/i.test(sentence)) {
+      candidates.push({
+        type: 'fact',
+        title: request,
+        content: `${request}：${sentence}`,
+        source: input.source,
+        confidence: 0.72,
       });
     }
   }
-  const unique = new Map<
-    string,
-    { type: CapturedKnowledgeType; title: string; content: string }
-  >();
+  const unique = new Map<string, KnowledgeCandidate>();
   for (const candidate of candidates) {
     unique.set(
       `${candidate.type}\0${candidate.content.toLowerCase()}`,
@@ -320,7 +418,20 @@ export class KnowledgeCapturePipeline {
         inputSummary: compact(input.inputSummary, 600),
         outputSummary: compact(input.outputSummary, 600),
       });
-      await this.incrementStatus('toolEvents');
+      const knowledgeResult = input.success
+        ? await this.storeKnowledgeCandidates(
+            extractKnowledgeCandidates({
+              requestText: input.action,
+              responseText: [
+                input.inputSummary,
+                input.outputSummary,
+              ].filter(Boolean).join('。'),
+              source: 'worklog',
+            }),
+            input,
+          )
+        : await this.currentKnowledgeCount();
+      await this.incrementStatus('toolEvents', knowledgeResult);
     });
   }
 
@@ -354,7 +465,14 @@ export class KnowledgeCapturePipeline {
         taskTitle: title,
         userInput,
       });
-      const knowledgeResult = await this.storeKnowledge(input);
+      const knowledgeResult = await this.storeKnowledgeCandidates(
+        extractKnowledgeCandidates({
+          requestText: input.requestText,
+          responseText: input.responseText,
+          source: 'after_agent',
+        }),
+        input,
+      );
       await this.appendEvent({
         kind: 'agent',
         ...input,
@@ -375,7 +493,8 @@ export class KnowledgeCapturePipeline {
         ...input,
         reason: compact(input.reason, 120),
       });
-      await this.incrementStatus('sessionEvents');
+      const knowledgeResult = await this.storeSessionKnowledge(input);
+      await this.incrementStatus('sessionEvents', knowledgeResult);
     });
   }
 
@@ -490,6 +609,10 @@ export class KnowledgeCapturePipeline {
     if (knowledge) {
       status.knowledgeRecords = knowledge.total;
       status.deduplicatedKnowledge += knowledge.deduplicated;
+      if (knowledge.created > 0 || knowledge.deduplicated > 0) {
+        status.lastCapturedAt = timestamp;
+      }
+      status.knowledgeByType = await this.knowledgeCountsByType();
     }
     status.updatedAt = timestamp;
     status.lastEventAt = timestamp;
@@ -548,13 +671,93 @@ export class KnowledgeCapturePipeline {
     return { version: 1, records: [] };
   }
 
-  private async storeKnowledge(
-    input: AgentCaptureInput,
+  private async currentKnowledgeCount(): Promise<{
+    created: number;
+    deduplicated: number;
+    total: number;
+  }> {
+    const index = await this.readKnowledgeIndex();
+    return { created: 0, deduplicated: 0, total: index.records.length };
+  }
+
+  private async knowledgeCountsByType(): Promise<
+    Partial<Record<CapturedKnowledgeType, number>>
+  > {
+    const index = await this.readKnowledgeIndex();
+    const counts: Partial<Record<CapturedKnowledgeType, number>> = {};
+    for (const record of index.records) {
+      counts[record.type] = (counts[record.type] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  private async storeSessionKnowledge(
+    input: SessionCaptureInput,
   ): Promise<{ created: number; deduplicated: number; total: number }> {
-    const candidates = extractKnowledgeCandidates(input);
+    const events = await this.readCaptureEvents();
+    const relevant = events.filter((event) => {
+      if (event.kind === 'session_end') return false;
+      if (input.sessionId && event.sessionId !== input.sessionId) return false;
+      if (input.projectRoot && event.projectRoot !== input.projectRoot) return false;
+      return true;
+    });
+    const responseText = relevant
+      .map((event) => {
+        if (event.kind === 'agent') return event.responseText;
+        if (event.kind === 'tool') {
+          return [
+            event.action,
+            event.outputSummary,
+          ].filter(Boolean).join('。');
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .slice(-12)
+      .join('。');
+    if (!responseText) return this.currentKnowledgeCount();
+    return this.storeKnowledgeCandidates(
+      extractKnowledgeCandidates({
+        requestText: `会话结束：${input.reason}`,
+        responseText,
+        source: 'session',
+      }),
+      input,
+    );
+  }
+
+  private async readCaptureEvents(): Promise<CaptureEvent[]> {
+    try {
+      const files = (await fs.readdir(this.eventsDir))
+        .filter((file) => file.endsWith('.jsonl'))
+        .sort()
+        .slice(-7);
+      const events: CaptureEvent[] = [];
+      for (const file of files) {
+        const lines = (await fs.readFile(path.join(this.eventsDir, file), 'utf8'))
+          .split('\n')
+          .filter(Boolean);
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line) as CaptureEvent;
+            events.push(parsed);
+          } catch {
+            // Ignore a single corrupt event line; later records are still useful.
+          }
+        }
+      }
+      return events;
+    } catch {
+      return [];
+    }
+  }
+
+  private async storeKnowledgeCandidates(
+    candidates: KnowledgeCandidate[],
+    input: { sessionId?: string; projectRoot?: string },
+  ): Promise<{ created: number; deduplicated: number; total: number }> {
     if (candidates.length === 0) {
-      const index = await this.readKnowledgeIndex();
-      return { created: 0, deduplicated: 0, total: index.records.length };
+      return this.currentKnowledgeCount();
     }
     await this.ensureDirs();
     const index = await this.readKnowledgeIndex();
@@ -578,14 +781,20 @@ export class KnowledgeCapturePipeline {
             contentHash,
             type: existing.type,
             title: existing.title,
+            summary:
+              existingRecord?.summary ?? existing.summary ?? compact(candidate.content, 260),
             content:
               existingRecord?.content ?? compact(candidate.content, 1_200),
             keywords: existing.keywords,
-            source: 'after_agent',
+            tags: existing.tags,
+            source: existing.source,
+            confidence: Math.max(existing.confidence, candidate.confidence),
             sessionId: input.sessionId,
             projectRoot: existing.projectRoot,
             createdAt: existing.createdAt,
             updatedAt: timestamp,
+            lastUsedAt: timestamp,
+            useCount: existing.useCount + 1,
             occurrences: existing.occurrences + 1,
           }
         : {
@@ -594,15 +803,19 @@ export class KnowledgeCapturePipeline {
             contentHash,
             type: candidate.type,
             title: compact(candidate.title, 160),
+            summary: candidateSummary(candidate.content),
             content: compact(candidate.content, 1_200),
             keywords: knowledgeTokens(
               `${candidate.title}\n${candidate.content}`,
             ),
-            source: 'after_agent',
+            tags: candidateTags(candidate),
+            source: candidate.source,
+            confidence: candidate.confidence,
             sessionId: input.sessionId,
             projectRoot: input.projectRoot,
             createdAt: timestamp,
             updatedAt: timestamp,
+            useCount: 0,
             occurrences: 1,
           };
       await this.writeJsonAtomic(path.join(this.knowledgeDir, file), record);
@@ -611,11 +824,17 @@ export class KnowledgeCapturePipeline {
         contentHash: record.contentHash,
         type: record.type,
         title: record.title,
+        summary: record.summary,
         keywords: record.keywords,
+        tags: record.tags,
+        source: record.source,
+        confidence: record.confidence,
         sessionId: record.sessionId,
         projectRoot: record.projectRoot,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
+        lastUsedAt: record.lastUsedAt,
+        useCount: record.useCount,
         occurrences: record.occurrences,
         file,
       };
@@ -673,11 +892,14 @@ export class KnowledgeCapturePipeline {
 export function formatKnowledgeCaptureStatus(
   status: KnowledgeCaptureStatus,
 ): string {
+  const byType = status.knowledgeByType ?? {};
   return [
     '自动知识沉淀状态',
     `工具事件 ${status.toolEvents} · 对话成果 ${status.agentEvents} · 会话收尾 ${status.sessionEvents}`,
     `可检索知识 ${status.knowledgeRecords} 条 · 内容去重 ${status.deduplicatedKnowledge} 次`,
-    status.lastEventAt ? `最后沉淀：${status.lastEventAt}` : '尚无沉淀记录',
+    `按类型：decision ${byType.decision ?? 0} · bugfix ${byType.bugfix ?? 0} · best_practice ${byType.best_practice ?? 0} · preference ${byType.preference ?? 0} · fact ${byType.fact ?? 0}`,
+    status.lastCapturedAt ? `最后沉淀：${status.lastCapturedAt}` : '尚无沉淀记录',
+    status.lastEventAt ? `最后事件：${status.lastEventAt}` : '尚无事件记录',
     status.lastError ? `最近错误：${status.lastError}` : '运行状态：正常',
   ].join('\n');
 }

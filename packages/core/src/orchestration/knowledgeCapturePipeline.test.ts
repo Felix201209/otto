@@ -152,6 +152,14 @@ describe('KnowledgeCapturePipeline', () => {
       ),
     ).toBe(true);
     expect(
+      index.records.every(
+        (record: { summary?: string; source?: string; confidence?: number }) =>
+          Boolean(record.summary) &&
+          Boolean(record.source) &&
+          typeof record.confidence === 'number',
+      ),
+    ).toBe(true);
+    expect(
       index.records.some(
         (record: { occurrences: number }) => record.occurrences === 2,
       ),
@@ -166,6 +174,55 @@ describe('KnowledgeCapturePipeline', () => {
     const status = await pipeline.getStatus();
     expect(status.knowledgeRecords).toBe(index.records.length);
     expect(status.deduplicatedKnowledge).toBeGreaterThan(0);
+    expect(status.knowledgeByType.bugfix).toBeGreaterThan(0);
+  });
+
+  it('captures reusable knowledge from worklog/tool events and session end', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-capture-'));
+    tempDirs.push(root);
+    const now = new Date('2026-07-21T12:00:00.000Z');
+    const pipeline = new KnowledgeCapturePipeline({
+      rootDir: root,
+      now: () => now,
+      workLogger: { log: vi.fn(async () => undefined) },
+    });
+
+    await pipeline.captureToolExecution({
+      sessionId: 's1',
+      projectRoot: '/workspace/otto',
+      toolName: 'shell',
+      action: '修复 PDF 解析缓存',
+      success: true,
+      outputSummary: '已修复 PDF 缓存命中逻辑，并通过缓存测试。',
+    });
+    await pipeline.captureSessionEnd({
+      sessionId: 's1',
+      projectRoot: '/workspace/otto',
+      reason: 'user_exit',
+    });
+
+    const index = JSON.parse(
+      await fs.readFile(path.join(root, 'memory-index.json'), 'utf8'),
+    );
+    expect(
+      index.records.some(
+        (record: { source: string }) => record.source === 'worklog',
+      ),
+    ).toBe(true);
+    expect(
+      index.records.some(
+        (record: { source: string }) => record.source === 'session',
+      ),
+    ).toBe(true);
+    expect(
+      (await pipeline.searchKnowledge('PDF 缓存')).map((match) => match.record.source),
+    ).toEqual(expect.arrayContaining(['worklog', 'session']));
+    const status = await pipeline.getStatus();
+    expect(status.toolEvents).toBe(1);
+    expect(status.sessionEvents).toBe(1);
+    expect(status.knowledgeRecords).toBe(index.records.length);
+    expect(status.lastCapturedAt).toBe(now.toISOString());
+    expect(formatKnowledgeCaptureStatus(status)).toContain('按类型');
   });
 
   it('reads the legacy knowledge/index.json and migrates new writes to memory-index.json', async () => {
