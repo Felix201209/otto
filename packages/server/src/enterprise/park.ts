@@ -55,7 +55,7 @@ export interface ParkServiceRequest {
 function ensureParkSchema(): void {
   const db = getDB();
   db.exec(`
-    CREATE TABLE IF NOT EXISTS parks (
+    CREATE TABLE IF NOT EXISTS simple_parks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       address TEXT NOT NULL DEFAULT '',
@@ -63,7 +63,7 @@ function ensureParkSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE TABLE IF NOT EXISTS park_invite_codes (
+    CREATE TABLE IF NOT EXISTS simple_park_invite_codes (
       code TEXT PRIMARY KEY,
       park_id TEXT NOT NULL,
       created_by TEXT NOT NULL,
@@ -71,27 +71,27 @@ function ensureParkSchema(): void {
       max_uses INTEGER NOT NULL DEFAULT 100,
       used_count INTEGER NOT NULL DEFAULT 0,
       active INTEGER NOT NULL DEFAULT 1,
-      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
+      FOREIGN KEY (park_id) REFERENCES simple_parks(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS park_memberships (
+    CREATE TABLE IF NOT EXISTS simple_park_memberships (
       park_id TEXT NOT NULL,
       enterprise_id TEXT NOT NULL,
       joined_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (park_id, enterprise_id),
-      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
+      FOREIGN KEY (park_id) REFERENCES simple_parks(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS park_service_specialists (
+    CREATE TABLE IF NOT EXISTS simple_park_service_specialists (
       park_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       service_types TEXT NOT NULL DEFAULT '[]',
       assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (park_id, user_id),
-      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
+      FOREIGN KEY (park_id) REFERENCES simple_parks(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS park_service_requests (
+    CREATE TABLE IF NOT EXISTS simple_park_service_requests (
       id TEXT PRIMARY KEY,
       park_id TEXT NOT NULL,
       enterprise_id TEXT NOT NULL,
@@ -101,15 +101,15 @@ function ensureParkSchema(): void {
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending','assigned','in_progress','resolved')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
+      FOREIGN KEY (park_id) REFERENCES simple_parks(id) ON DELETE CASCADE
     );
 
-    CREATE INDEX IF NOT EXISTS idx_park_memberships_enterprise
-      ON park_memberships(enterprise_id);
-    CREATE INDEX IF NOT EXISTS idx_park_service_requests_status
-      ON park_service_requests(park_id, status);
-    CREATE INDEX IF NOT EXISTS idx_park_invite_codes_active
-      ON park_invite_codes(park_id, active);
+    CREATE INDEX IF NOT EXISTS idx_simple_park_memberships_enterprise
+      ON simple_park_memberships(enterprise_id);
+    CREATE INDEX IF NOT EXISTS idx_simple_park_service_requests_status
+      ON simple_park_service_requests(park_id, status);
+    CREATE INDEX IF NOT EXISTS idx_simple_park_invite_codes_active
+      ON simple_park_invite_codes(park_id, active);
   `);
 }
 
@@ -148,7 +148,7 @@ export function createPark(input: {
   const id = `park_${randomUUID()}`;
   const adminUserIds = input.adminUserIds ?? [];
   getDB().prepare(
-    `INSERT INTO parks (id, name, address, admin_user_ids)
+    `INSERT INTO simple_parks (id, name, address, admin_user_ids)
      VALUES (?, ?, ?, ?)`,
   ).run(id, name, input.address?.trim() || '', JSON.stringify(adminUserIds));
   return getPark(id)!;
@@ -156,13 +156,13 @@ export function createPark(input: {
 
 export function getPark(id: string): Park | null {
   ensureParkSchema();
-  const row = getDB().prepare('SELECT * FROM parks WHERE id = ?').get(id) as ParkRow | undefined;
+  const row = getDB().prepare('SELECT * FROM simple_parks WHERE id = ?').get(id) as ParkRow | undefined;
   return row ? toPark(row) : null;
 }
 
 export function listParks(): Park[] {
   ensureParkSchema();
-  return (getDB().prepare('SELECT * FROM parks ORDER BY name').all() as ParkRow[]).map(toPark);
+  return (getDB().prepare('SELECT * FROM simple_parks ORDER BY name').all() as ParkRow[]).map(toPark);
 }
 
 // ============================================================
@@ -215,11 +215,11 @@ export function createInviteCode(input: {
     || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const maxUses = input.maxUses ?? 100;
   getDB().prepare(
-    `INSERT INTO park_invite_codes (code, park_id, created_by, expires_at, max_uses)
+    `INSERT INTO simple_park_invite_codes (code, park_id, created_by, expires_at, max_uses)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(code, input.parkId, input.createdBy, expiresAt, maxUses);
   const row = getDB().prepare(
-    'SELECT * FROM park_invite_codes WHERE code = ?',
+    'SELECT * FROM simple_park_invite_codes WHERE code = ?',
   ).get(code) as ParkInviteCodeRow;
   return toParkInviteCode(row);
 }
@@ -231,7 +231,7 @@ export function validateInviteCode(code: string): {
 } {
   ensureParkSchema();
   const row = getDB().prepare(
-    'SELECT * FROM park_invite_codes WHERE code = ?',
+    'SELECT * FROM simple_park_invite_codes WHERE code = ?',
   ).get(code) as ParkInviteCodeRow | undefined;
   if (!row) return { valid: false, error: '邀请码不存在' };
   if (!row.active) return { valid: false, error: '邀请码已失效' };
@@ -256,7 +256,7 @@ export function useInviteCode(code: string, enterpriseId: string): {
 
   // Check if enterprise is already a member
   const existing = getDB().prepare(
-    'SELECT 1 FROM park_memberships WHERE park_id = ? AND enterprise_id = ?',
+    'SELECT 1 FROM simple_park_memberships WHERE park_id = ? AND enterprise_id = ?',
   ).get(parkId, enterpriseId);
   if (existing) {
     return { success: false, error: '企业已是该园区成员' };
@@ -264,10 +264,10 @@ export function useInviteCode(code: string, enterpriseId: string): {
 
   const db = getDB();
   db.prepare(
-    'UPDATE park_invite_codes SET used_count = used_count + 1 WHERE code = ?',
+    'UPDATE simple_park_invite_codes SET used_count = used_count + 1 WHERE code = ?',
   ).run(code);
   db.prepare(
-    'INSERT INTO park_memberships (park_id, enterprise_id) VALUES (?, ?)',
+    'INSERT INTO simple_park_memberships (park_id, enterprise_id) VALUES (?, ?)',
   ).run(parkId, enterpriseId);
   return { success: true, parkId };
 }
@@ -305,11 +305,11 @@ export function assignSpecialist(input: {
   const serviceTypes = [...new Set(input.serviceTypes.map((s) => s.trim()).filter(Boolean))];
   if (serviceTypes.length === 0) throw new Error('至少指定一种服务类型');
   getDB().prepare(
-    `INSERT OR REPLACE INTO park_service_specialists (park_id, user_id, service_types, assigned_at)
+    `INSERT OR REPLACE INTO simple_park_service_specialists (park_id, user_id, service_types, assigned_at)
      VALUES (?, ?, ?, datetime('now'))`,
   ).run(input.parkId, input.userId, JSON.stringify(serviceTypes));
   const row = getDB().prepare(
-    'SELECT * FROM park_service_specialists WHERE park_id = ? AND user_id = ?',
+    'SELECT * FROM simple_park_service_specialists WHERE park_id = ? AND user_id = ?',
   ).get(input.parkId, input.userId) as ParkServiceSpecialistRow;
   return toSpecialist(row);
 }
@@ -317,14 +317,14 @@ export function assignSpecialist(input: {
 export function getSpecialists(parkId: string): ParkServiceSpecialist[] {
   ensureParkSchema();
   return (getDB().prepare(
-    'SELECT * FROM park_service_specialists WHERE park_id = ? ORDER BY assigned_at',
+    'SELECT * FROM simple_park_service_specialists WHERE park_id = ? ORDER BY assigned_at',
   ).all(parkId) as ParkServiceSpecialistRow[]).map(toSpecialist);
 }
 
 export function removeSpecialist(parkId: string, userId: string): boolean {
   ensureParkSchema();
   const result = getDB().prepare(
-    'DELETE FROM park_service_specialists WHERE park_id = ? AND user_id = ?',
+    'DELETE FROM simple_park_service_specialists WHERE park_id = ? AND user_id = ?',
   ).run(parkId, userId) as { changes?: number | bigint };
   return Number(result.changes ?? 0) > 0;
 }
@@ -369,11 +369,11 @@ export function createServiceRequest(input: {
   if (!type || !description) throw new Error('服务类型和描述不能为空');
   const id = `sr_${randomUUID()}`;
   getDB().prepare(
-    `INSERT INTO park_service_requests (id, park_id, enterprise_id, type, description)
+    `INSERT INTO simple_park_service_requests (id, park_id, enterprise_id, type, description)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(id, input.parkId, input.enterpriseId, type, description);
   const row = getDB().prepare(
-    'SELECT * FROM park_service_requests WHERE id = ?',
+    'SELECT * FROM simple_park_service_requests WHERE id = ?',
   ).get(id) as ParkServiceRequestRow;
   return toServiceRequest(row);
 }
@@ -381,14 +381,14 @@ export function createServiceRequest(input: {
 export function routeServiceRequest(requestId: string): ParkServiceRequest | null {
   ensureParkSchema();
   const row = getDB().prepare(
-    'SELECT * FROM park_service_requests WHERE id = ?',
+    'SELECT * FROM simple_park_service_requests WHERE id = ?',
   ).get(requestId) as ParkServiceRequestRow | undefined;
   if (!row) return null;
   if (row.status !== 'pending') return toServiceRequest(row);
 
   // Find matching specialist by service type
   const specialists = getDB().prepare(
-    'SELECT * FROM park_service_specialists WHERE park_id = ?',
+    'SELECT * FROM simple_park_service_specialists WHERE park_id = ?',
   ).all(row.park_id) as ParkServiceSpecialistRow[];
 
   const matching = specialists.filter((s) => {
@@ -401,7 +401,7 @@ export function routeServiceRequest(requestId: string): ParkServiceRequest | nul
     // Assign to first matching specialist
     const specialist = matching[0]!;
     getDB().prepare(
-      `UPDATE park_service_requests
+      `UPDATE simple_park_service_requests
        SET assigned_to = ?, status = 'assigned'
        WHERE id = ?`,
     ).run(specialist.user_id, requestId);
@@ -410,14 +410,14 @@ export function routeServiceRequest(requestId: string): ParkServiceRequest | nul
     const park = getPark(row.park_id);
     const fallbackUser = park?.adminUserIds[0] ?? null;
     getDB().prepare(
-      `UPDATE park_service_requests
+      `UPDATE simple_park_service_requests
        SET assigned_to = ?, status = 'assigned'
        WHERE id = ?`,
     ).run(fallbackUser, requestId);
   }
 
   const updated = getDB().prepare(
-    'SELECT * FROM park_service_requests WHERE id = ?',
+    'SELECT * FROM simple_park_service_requests WHERE id = ?',
   ).get(requestId) as ParkServiceRequestRow;
   return toServiceRequest(updated);
 }
@@ -425,14 +425,14 @@ export function routeServiceRequest(requestId: string): ParkServiceRequest | nul
 export function resolveServiceRequest(requestId: string): ParkServiceRequest | null {
   ensureParkSchema();
   const row = getDB().prepare(
-    'SELECT * FROM park_service_requests WHERE id = ?',
+    'SELECT * FROM simple_park_service_requests WHERE id = ?',
   ).get(requestId) as ParkServiceRequestRow | undefined;
   if (!row) return null;
   getDB().prepare(
-    `UPDATE park_service_requests SET status = 'resolved' WHERE id = ?`,
+    `UPDATE simple_park_service_requests SET status = 'resolved' WHERE id = ?`,
   ).run(requestId);
   const updated = getDB().prepare(
-    'SELECT * FROM park_service_requests WHERE id = ?',
+    'SELECT * FROM simple_park_service_requests WHERE id = ?',
   ).get(requestId) as ParkServiceRequestRow;
   return toServiceRequest(updated);
 }
@@ -444,10 +444,10 @@ export function getParkServiceRequests(
   ensureParkSchema();
   const rows = status
     ? getDB().prepare(
-      'SELECT * FROM park_service_requests WHERE park_id = ? AND status = ? ORDER BY created_at DESC',
+      'SELECT * FROM simple_park_service_requests WHERE park_id = ? AND status = ? ORDER BY created_at DESC',
     ).all(parkId, status) as ParkServiceRequestRow[]
     : getDB().prepare(
-      'SELECT * FROM park_service_requests WHERE park_id = ? ORDER BY created_at DESC',
+      'SELECT * FROM simple_park_service_requests WHERE park_id = ? ORDER BY created_at DESC',
     ).all(parkId) as ParkServiceRequestRow[];
   return rows.map(toServiceRequest);
 }
