@@ -17,6 +17,7 @@
  */
 
 import { getCheckpointService, type SessionCheckpoint } from '../sessions/sessionCheckpointService.js';
+import { getMemoryPressureMonitor } from './memoryPressureMonitor.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -288,10 +289,12 @@ export class TaskWatchdog {
   }
 
   private checkMemory(): void {
-    const memMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
-    if (memMB > this.config.lowMemoryThresholdMB && !this.lowMemoryMode) {
+    const snapshot = getMemoryPressureMonitor().check();
+    const memMB = Math.round(snapshot.rssBytes / 1024 / 1024);
+    const underPressure = snapshot.level !== 'normal' || memMB > this.config.lowMemoryThresholdMB;
+    if (underPressure && !this.lowMemoryMode) {
       this.enableLowMemoryMode();
-    } else if (memMB < this.config.lowMemoryThresholdMB * 0.8 && this.lowMemoryMode) {
+    } else if (!underPressure && memMB < this.config.lowMemoryThresholdMB * 0.8 && this.lowMemoryMode) {
       this.disableLowMemoryMode();
     }
   }

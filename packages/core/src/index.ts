@@ -138,6 +138,7 @@ export * from './services/diagnosticBundle.js';
 export * from './services/bundledRuntime.js';
 export * from './services/sessionCheckpoint.js';
 export * from './services/taskWatchdog.js';
+export * from './services/memoryPressureMonitor.js';
 export { formatClaudeCodeTaskResult, isAcpDelegateTask } from './tools/delegate-agent.js';
 export {
   CacheSafeParamsStore,

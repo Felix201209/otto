@@ -31,6 +31,7 @@ import {
 } from '../agents/agentDefinition.js';
 import { getAgentResourceBudget } from '../core/agentResourceBudget.js';
 import { getNativeAgentPoolRuntime } from '../native/nativeAgentPoolRuntime.js';
+import { getMemoryPressureMonitor } from '../services/memoryPressureMonitor.js';
 
 // Type alias for easier usage within this module
 type SubAgentDisplayData = SubAgentDisplay;
@@ -179,7 +180,9 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
 
   private async acquireSubAgentSlot(agentId: string, signal: AbortSignal): Promise<(memoryBytes?: number) => Promise<void>> {
     const budget = getAgentResourceBudget();
-    const limit = budget.taskMaxConcurrency;
+    const monitor = getMemoryPressureMonitor();
+    const pressure = monitor.check();
+    const limit = monitor.getTaskConcurrencyLimit(budget.taskMaxConcurrency);
 
     if (TaskTool.activeSubAgents < limit) {
       TaskTool.activeSubAgents++;
@@ -195,7 +198,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
       const onAbort = () => {
         const index = TaskTool.waitQueue.indexOf(start);
         if (index >= 0) TaskTool.waitQueue.splice(index, 1);
-        reject(new Error(`SubAgent start cancelled while waiting for a resource slot (max ${limit} concurrent task agents).`));
+        reject(new Error(`SubAgent start cancelled while waiting for a resource slot (max ${limit} concurrent task agents, memory pressure: ${pressure.level}).`));
       };
 
       if (signal.aborted) {
@@ -335,11 +338,14 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     let finalNativeMemoryBytes: number | undefined;
     try {
       const budget = getAgentResourceBudget();
-      if (TaskTool.activeSubAgents >= budget.taskMaxConcurrency) {
+      const monitor = getMemoryPressureMonitor();
+      const pressure = monitor.check();
+      const concurrencyLimit = monitor.getTaskConcurrencyLimit(budget.taskMaxConcurrency);
+      if (TaskTool.activeSubAgents >= concurrencyLimit) {
         currentDisplayData = {
           ...currentDisplayData,
           status: 'starting',
-          summary: `Waiting for an agent resource slot (max ${budget.taskMaxConcurrency} concurrent task agent${budget.taskMaxConcurrency === 1 ? '' : 's'} on the ${budget.deviceClass} profile).`,
+          summary: `Waiting for an agent resource slot (max ${concurrencyLimit} concurrent task agent${concurrencyLimit === 1 ? '' : 's'} on the ${budget.deviceClass} profile${pressure.level === 'normal' ? '' : `, memory pressure: ${pressure.level}`}).`,
         };
         wrappedUpdateOutput(createSubAgentUpdateMessage(currentDisplayData));
       }

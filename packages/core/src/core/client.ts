@@ -62,6 +62,11 @@ import {
   buildCheckpointRecoveryHistory,
   SessionCheckpointService,
 } from '../services/sessionCheckpoint.js';
+import {
+  getMemoryPressureMonitor,
+  type MemoryPressureLevel,
+  type MemoryPressureSnapshot,
+} from '../services/memoryPressureMonitor.js';
 
 import { OttoServerAdapter } from './OttoServerAdapter.js';
 
@@ -141,6 +146,8 @@ export class OttoClient {
   private activeLoopContext: LoopContext | null = null;
   private memoryInjector?: SessionMemoryInjector;
   private readonly checkpointService = new SessionCheckpointService();
+  private memoryPressureUnsubscribe?: () => void;
+  private lastMemoryPressureCheckpointAt = 0;
 
   /**
    * Knowledge capture is registered via the module-level singleton
@@ -209,6 +216,7 @@ export class OttoClient {
     }
 
     this.chat = await this.startChat();
+    this.startMemoryPressureProtection();
     await this.restoreRuntimeCheckpoint();
   }
 
@@ -238,6 +246,8 @@ export class OttoClient {
     } catch (checkpointError) {
       logger.warn(`[OttoClient] Session checkpoint end failed: ${checkpointError}`);
     }
+    this.memoryPressureUnsubscribe?.();
+    this.memoryPressureUnsubscribe = undefined;
   }
 
   getContentGenerator(): ContentGenerator {
@@ -768,6 +778,64 @@ export class OttoClient {
       });
   }
 
+  private startMemoryPressureProtection(): void {
+    if (this.memoryPressureUnsubscribe) return;
+    const monitor = getMemoryPressureMonitor();
+    this.memoryPressureUnsubscribe = monitor.subscribe((snapshot) => {
+      void this.handleMemoryPressure(snapshot);
+    });
+    monitor.start();
+  }
+
+  private async handleMemoryPressure(snapshot: MemoryPressureSnapshot): Promise<void> {
+    if (snapshot.level === 'normal') {
+      this.compressionThreshold = 0.8;
+      return;
+    }
+
+    logger.warn(
+      `[OttoClient] Memory pressure ${snapshot.level}: ${snapshot.reason}; ` +
+      `rss=${Math.round(snapshot.rssBytes / 1024 / 1024)}MB, ` +
+      `free=${Math.round(snapshot.freeSystemRatio * 100)}%`,
+    );
+
+    this.needsCompression = true;
+    this.compressionThreshold = snapshot.level === 'critical' ? 0.55 : Math.min(this.compressionThreshold, 0.7);
+
+    if (snapshot.level === 'critical') {
+      const fallback = this.runMicroCompactFallback();
+      if (fallback.applied) {
+        logger.warn(`[OttoClient] Low-memory micro compact cleared ${fallback.clearedCount} tool results.`);
+      }
+    }
+
+    await this.saveMemoryPressureCheckpoint(snapshot.level);
+  }
+
+  private async saveMemoryPressureCheckpoint(level: MemoryPressureLevel): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastMemoryPressureCheckpointAt < 30_000) return;
+    const chat = this.chat;
+    if (!chat) return;
+    this.lastMemoryPressureCheckpointAt = now;
+    try {
+      await this.checkpointService.markTurnStarted({
+        sessionId: this.config.getSessionId(),
+        projectRoot: this.config.getTargetDir(),
+        history: chat.getHistory(true),
+        turnCount: this.sessionTurnCount,
+        pendingRequest: [{ text: `Runtime memory pressure checkpoint: ${level}` }],
+      });
+      await this.checkpointService.markTurnInterrupted(
+        this.config.getSessionId(),
+        this.config.getTargetDir(),
+        `memory_pressure:${level}`,
+      );
+    } catch (err) {
+      logger.debug(`[OttoClient] Memory pressure checkpoint skipped: ${err}`);
+    }
+  }
+
   setHistory(history: Content[]) {
     // 🛡️ /session select / IDE companion 等路径会直接通过此入口注入历史，
     //    在历史本身已经损坏的情况下（中断、截断、压缩失误），下一次 sendMessage
@@ -1058,6 +1126,11 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       return new Turn(this.getChat(), prompt_id, this.config.getModel());
     }
 
+    const memoryPressureAtTurnStart = getMemoryPressureMonitor().check();
+    if (memoryPressureAtTurnStart.level !== 'normal') {
+      await this.handleMemoryPressure(memoryPressureAtTurnStart);
+    }
+
     // Track the original model from the first call to detect model switching
     const initialModel = originalModel || this.config.getModel();
 
@@ -1271,6 +1344,10 @@ ${injection.summary}]` },
           tokenInfo.inputTokens,
           tokenInfo.outputTokens
         );
+        const pressure = getMemoryPressureMonitor().check();
+        if (pressure.level !== 'normal') {
+          void this.handleMemoryPressure(pressure);
+        }
 
         // 更新微压缩的时间戳（收到响应=助手刚活动过）
         this.microCompactService.updateLastAssistantMessageTime();
