@@ -43,11 +43,22 @@ export type RespondQuestionFn = (
   tool?: ToolCall,
 ) => void;
 
-type ToolKind = 'edit' | 'exec' | 'generic';
+type ToolKind =
+  | 'edit'
+  | 'exec'
+  | 'read'
+  | 'search'
+  | 'web'
+  | 'document'
+  | 'skill'
+  | 'audio'
+  | 'agent'
+  | 'generic';
 
 interface ResolvedTool {
   kind: ToolKind;
   label: string;
+  action: string;
   /** 编辑文件路径 / 终端命令 / 工具描述。 */
   target: string;
   diff?: string;
@@ -74,6 +85,58 @@ const EXEC_TOOLS = new Set([
   'run_command',
   'execute',
 ]);
+
+const READ_TOOLS = new Set([
+  'read_file',
+  'read_many_files',
+  'list_directory',
+  'list_dir',
+  'ls',
+]);
+const SEARCH_TOOLS = new Set([
+  'glob',
+  'search_files',
+  'search_file_content',
+  'grep',
+  'rg',
+  'find',
+]);
+const WEB_TOOLS = new Set([
+  'web_fetch',
+  'web_search',
+  'web_search_query',
+  'fetch_url',
+]);
+const SKILL_TOOLS = new Set([
+  'find-skills',
+  'use_skill',
+  'read_skill',
+  'skill',
+]);
+const AUDIO_TOOLS = new Set([
+  'audio_reader',
+  'transcribe_audio',
+  'whisper',
+  'meeting_transcribe',
+]);
+const AGENT_TOOLS = new Set([
+  'task',
+  'subagent',
+  'multi_agent',
+  'workflow',
+]);
+
+const DOCUMENT_TOOL_PATTERNS = [
+  'doc',
+  'word',
+  'ppt',
+  'pdf',
+  'excel',
+  'spreadsheet',
+  'presentation',
+  'slides',
+  'document',
+];
 
 /**
  * lark-cli 目前会输出三类授权入口：设备码页、CLI 配置页、旧版 authen 页。
@@ -204,8 +267,16 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+function normalizeToolName(toolName?: string): string {
+  return (toolName ?? '').trim().toLowerCase();
+}
+
+function isDocumentTool(name: string): boolean {
+  return DOCUMENT_TOOL_PATTERNS.some((pattern) => name.includes(pattern));
+}
+
 function resolveTool(tc: ToolCall): ResolvedTool {
-  const name = (tc.toolName || '').toLowerCase();
+  const name = normalizeToolName(tc.toolName);
   const d: ToolCallConfirmationDetails = tc.confirmationDetails ?? {};
   const p = tc.parameters ?? {};
 
@@ -223,7 +294,8 @@ function resolveTool(tc: ToolCall): ResolvedTool {
       tc.toolName;
     return {
       kind: 'edit',
-      label: '编辑文件',
+      label: '修改文件',
+      action: '修改文件',
       target: filePath ?? '',
       diff: d.fileDiff ?? str(p.diff) ?? str(p.patch),
     };
@@ -240,8 +312,103 @@ function resolveTool(tc: ToolCall): ResolvedTool {
       tc.toolName;
     return {
       kind: 'exec',
-      label: '终端运行',
+      label: '运行检查',
+      action: '执行本地命令',
       target: command ?? '',
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (READ_TOOLS.has(name)) {
+    const target =
+      str(p.absolute_path) ??
+      str(p.file_path) ??
+      str(p.path) ??
+      str(p.directory) ??
+      str(p.dir) ??
+      tc.description ??
+      '';
+    return {
+      kind: 'read',
+      label: name === 'list_directory' || name === 'list_dir' || name === 'ls'
+        ? '查看目录'
+        : '查看文件',
+      action: '查看相关资料',
+      target,
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (SEARCH_TOOLS.has(name)) {
+    const target =
+      str(p.pattern) ??
+      str(p.query) ??
+      str(p.path) ??
+      str(p.include) ??
+      tc.description ??
+      '';
+    return {
+      kind: 'search',
+      label: '查找内容',
+      action: '查找相关内容',
+      target,
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (WEB_TOOLS.has(name)) {
+    const target = str(p.url) ?? str(p.query) ?? str(p.prompt) ?? tc.description ?? '';
+    return {
+      kind: 'web',
+      label: name.includes('search') ? '查找资料' : '读取网页',
+      action: name.includes('search') ? '查找网上资料' : '读取网页内容',
+      target,
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (SKILL_TOOLS.has(name)) {
+    return {
+      kind: 'skill',
+      label: '加载能力',
+      action: '准备合适的处理方式',
+      target: tc.description ?? str(p.name) ?? str(p.skill) ?? '',
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (AUDIO_TOOLS.has(name) || name.includes('transcrib')) {
+    return {
+      kind: 'audio',
+      label: '处理音频',
+      action: '转写音频内容',
+      target: str(p.path) ?? str(p.file_path) ?? str(p.fileName) ?? tc.description ?? '',
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (AGENT_TOOLS.has(name)) {
+    return {
+      kind: 'agent',
+      label: '协同分析',
+      action: '安排更细的分析任务',
+      target: str(p.description) ?? str(p.prompt) ?? tc.description ?? '',
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
+
+  if (isDocumentTool(name)) {
+    return {
+      kind: 'document',
+      label: '处理文档',
+      action: '整理文档内容',
+      target:
+        str(p.path) ??
+        str(p.file_path) ??
+        str(p.filename) ??
+        str(p.title) ??
+        tc.description ??
+        '',
       output: tc.liveOutput ?? str(tc.result?.data),
     };
   }
@@ -258,28 +425,12 @@ function resolveTool(tc: ToolCall): ResolvedTool {
     '';
   return {
     kind: 'generic',
-    label: tc.displayName ?? tc.toolName,
+    label: '处理步骤',
+    action: tc.description ? '处理当前步骤' : '继续处理',
     target,
     output: tc.liveOutput ?? str(tc.result?.data),
   };
 }
-
-const SUMMARY_TOOL_LABELS: Readonly<Record<string, string>> = {
-  read_file: '读取文件',
-  read_many_files: '批量读取文件',
-  write_file: '写入文件',
-  edit_file: '编辑文件',
-  apply_patch: '修改文件',
-  list_directory: '查看目录',
-  glob: '搜索文件',
-  search_files: '搜索文件',
-  run_shell_command: '终端运行',
-  shell: '终端运行',
-  bash: '终端运行',
-  exec: '终端运行',
-  web_fetch: '获取网页',
-  web_search: '搜索网页',
-};
 
 /**
  * 将工具名与目标收敛成适合聊天正文的单行摘要：
@@ -291,6 +442,101 @@ function compactSummaryText(value: string, maxLength = 80): string {
   return `${compact.slice(0, maxLength - 1)}…`;
 }
 
+function basename(value: string): string {
+  const clean = value.trim().replace(/^["']|["']$/gu, '');
+  return clean.split(/[\\/]/u).filter(Boolean).pop() ?? clean;
+}
+
+function describeFileTarget(value: string): string {
+  const name = basename(value);
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf')) return `PDF：${name}`;
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return `Word 文档：${name}`;
+  if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) return `PPT：${name}`;
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) {
+    return `表格：${name}`;
+  }
+  if (/\.(ts|tsx|js|jsx|py|go|rs|java|cs|cpp|c|h|css|scss|html|json|md)$/iu.test(lower)) {
+    return `代码文件：${name}`;
+  }
+  return name || value;
+}
+
+function describeCommand(command: string): { action: string; target: string } {
+  const compact = compactSummaryText(command, 90);
+  const lower = compact.toLowerCase();
+  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|vitest|jest)\b/u.test(lower)) {
+    return { action: '运行测试', target: compact };
+  }
+  if (/\b(vitest|jest|pytest|cargo test|go test)\b/u.test(lower)) {
+    return { action: '运行测试', target: compact };
+  }
+  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(typecheck|tsc|lint|check)\b/u.test(lower)) {
+    return { action: '检查代码质量', target: compact };
+  }
+  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|package|dist)\b/u.test(lower)) {
+    return { action: '构建项目', target: compact };
+  }
+  if (/^git\s+status\b/u.test(lower)) return { action: '检查提交状态', target: compact };
+  if (/^git\s+(diff|show|log)\b/u.test(lower)) return { action: '查看代码变更', target: compact };
+  if (/^git\s+(push|pull|fetch)\b/u.test(lower)) return { action: '同步代码仓库', target: compact };
+  if (/^git\s+(commit|add)\b/u.test(lower)) return { action: '整理提交内容', target: compact };
+  return { action: '执行本地命令', target: compact };
+}
+
+function refineResolvedTool(tool: ResolvedTool): ResolvedTool {
+  if (!tool.target) return tool;
+  if (tool.kind === 'read' || tool.kind === 'edit' || tool.kind === 'document') {
+    return { ...tool, target: describeFileTarget(tool.target) };
+  }
+  if (tool.kind === 'exec') {
+    const command = describeCommand(tool.target);
+    return { ...tool, label: command.action, action: command.action, target: command.target };
+  }
+  return tool;
+}
+
+function toolErrorText(tool: ToolCall): string {
+  const error =
+    str(tool.result?.error) ??
+    (tool.result?.success === false ? str(tool.result?.data) : undefined) ??
+    (tool.status === 'cancelled' ? '已取消' : undefined) ??
+    '';
+  return compactSummaryText(error, 96);
+}
+
+function summarizeToolAction(tool: ToolCall): string {
+  const resolved = refineResolvedTool(resolveTool(tool));
+  const target = compactSummaryText(resolved.target, 56);
+  return target ? `${resolved.action}（${target}）` : resolved.action;
+}
+
+function summarizeCompletedWork(toolCalls: readonly ToolCall[]): string {
+  const meaningful = toolCalls
+    .map(summarizeToolAction)
+    .filter(Boolean)
+    .slice(0, 3);
+  if (meaningful.length === 0) return '相关处理已完成。';
+  if (meaningful.length === 1) return `${meaningful[0]}已完成。`;
+  const suffix = toolCalls.length > meaningful.length ? '等处理已完成。' : '已完成。';
+  return `${meaningful.join('、')}${suffix}`;
+}
+
+function summarizeFailedWork(failedTools: readonly ToolCall[]): string {
+  const first = failedTools[0];
+  if (!first) return '';
+  const action = summarizeToolAction(first);
+  const reason = toolErrorText(first);
+  if (failedTools.length === 1) {
+    return reason
+      ? `${action}没有完成：${reason}。`
+      : `${action}没有完成。`;
+  }
+  return reason
+    ? `${failedTools.length} 个步骤没有完成，最先卡在 ${action}：${reason}。`
+    : `${failedTools.length} 个步骤没有完成，最先卡在 ${action}。`;
+}
+
 /**
  * 当模型最终没有返回正文时，由 UI 生成确定性的最小交付总结。
  * 最多列出 3 个关键步骤，防止长工具链刷屏。
@@ -300,27 +546,78 @@ export function buildToolCompletionSummary(
 ): string {
   if (toolCalls.length === 0) return '';
 
-  const completed = toolCalls.filter((tool) => tool.status === 'success').length;
-  const failed = toolCalls.filter(
+  const completedTools = toolCalls.filter((tool) => tool.status === 'success');
+  const failedTools = toolCalls.filter(
     (tool) => tool.status === 'error' || tool.status === 'cancelled',
-  ).length;
-  const pending = toolCalls.length - completed - failed;
-  const counts = [`完成 ${completed} 项`, `失败 ${failed} 项`];
-  if (pending > 0) counts.push(`待处理 ${pending} 项`);
+  );
+  const pendingTools = toolCalls.filter(
+    (tool) => tool.status !== 'success' && tool.status !== 'error' && tool.status !== 'cancelled',
+  );
+  const completed = completedTools.length;
+  const pending = pendingTools.length;
+
+  if (failedTools.length > 0) {
+    const completedText =
+      completedTools.length > 0
+        ? `已完成：${completedTools.slice(0, 2).map(summarizeToolAction).join('、')}。`
+        : '';
+    const pendingText =
+      pending > 0 ? `还有 ${pending} 个步骤在等待处理。` : '';
+    return `${summarizeFailedWork(failedTools)}${completedText}${pendingText}`;
+  }
+
+  if (pending > 0) {
+    return `我还在处理：${pendingTools
+      .slice(0, 2)
+      .map(summarizeToolAction)
+      .join('、')}。`;
+  }
 
   const steps = toolCalls.slice(0, 3).map((tool) => {
-    const resolved = resolveTool(tool);
-    const mappedLabel = SUMMARY_TOOL_LABELS[(tool.toolName ?? '').toLowerCase()];
-    const label = compactSummaryText(
-      mappedLabel ?? tool.displayName ?? resolved.label ?? tool.toolName,
-      24,
-    );
+    const resolved = refineResolvedTool(resolveTool(tool));
+    const label = compactSummaryText(resolved.action || resolved.label, 24);
     const target = compactSummaryText(resolved.target);
     return target && target !== label ? `${label}（${target}）` : label;
   }).filter(Boolean);
 
-  const detail = steps.length > 0 ? `关键步骤：${steps.join('；')}。` : '';
-  return `本轮共处理 ${toolCalls.length} 项操作：${counts.join('，')}。${detail}`;
+  if (completed === 0) return '';
+  if (toolCalls.length <= 3) return summarizeCompletedWork(toolCalls);
+  return `${summarizeCompletedWork(toolCalls)}主要处理了：${steps.join('；')}。`;
+}
+
+function buildToolGroupSummary(toolCalls: readonly ToolCall[]): string {
+  const running = toolCalls.filter((tool) =>
+    tool.status === 'executing' ||
+    tool.status === 'validating' ||
+    tool.status === 'scheduled'
+  );
+  const awaiting = toolCalls.filter((tool) => tool.status === 'awaiting_approval');
+  const failed = toolCalls.filter((tool) =>
+    tool.status === 'error' || tool.status === 'cancelled'
+  );
+
+  if (awaiting.length > 0) return '需要你确认下一步';
+
+  const current = running[0];
+  if (current) {
+    const resolved = refineResolvedTool(resolveTool(current));
+    const target = compactSummaryText(resolved.target, 36);
+    return target
+      ? `正在${resolved.action}：${target}`
+      : `正在${resolved.action}`;
+  }
+
+  if (failed.length > 0) {
+    return failed.length === toolCalls.length
+      ? '这一步没有完成'
+      : `有 ${failed.length} 个步骤需要处理`;
+  }
+
+  if (toolCalls.length === 1) {
+    const resolved = refineResolvedTool(resolveTool(toolCalls[0]));
+    return `已完成：${resolved.action}`;
+  }
+  return `已完成 ${toolCalls.length} 个步骤`;
 }
 
 /** 状态图标语义位：驱动渲染选哪个图标，避免用 running/error 双布尔反推。 */
@@ -391,9 +688,10 @@ export function ToolCallsCard({
   /** AskUserQuestion 作答回传；缺省时问答卡以只读态渲染（无交互按钮）。 */
   onRespondQuestion?: RespondQuestionFn;
 }): React.JSX.Element | null {
-  // 顶层「调用了 N 个工具」折叠卡：有运行中的默认展开，否则默认展开（spec 截图为展开态）。
+  // 顶层展示给普通用户看的行动进度，具体技术工具名保留在单项 tooltip 里。
   const [open, setOpen] = useState(true);
   if (!toolCalls || toolCalls.length === 0) return null;
+  const summary = buildToolGroupSummary(toolCalls);
 
   return (
     <div className="otto-tools">
@@ -403,7 +701,7 @@ export function ToolCallsCard({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        调用了 {toolCalls.length} 个工具
+        {summary}
         <IconChevron
           size={16}
           className={`otto-tools__chev${open ? ' otto-tools__chev--open' : ''}`}
@@ -483,7 +781,7 @@ function isPendingQuestion(tc: ToolCall): boolean {
 }
 
 function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
-  const resolved = resolveTool(tool);
+  const resolved = refineResolvedTool(resolveTool(tool));
   const st = statusInfo(tool.status);
   const feishuAuthorization = extractFeishuAuthorization(tool, resolved.output);
   // 编辑文件卡默认展开看 diff（spec 截图）；exec/generic 运行中默认展开露实时输出，
@@ -495,13 +793,17 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
     Boolean(feishuAuthorization) ||
     (resolved.kind === 'edit' && Boolean(resolved.diff)) ||
     (resolved.kind !== 'edit' && Boolean(resolved.output));
+  const rawName = tool.toolName || tool.displayName || '';
+  const rawTitle = rawName ? `内部能力：${rawName}` : undefined;
 
   const headInner = (
     <>
       <span className="otto-tool__icon">
         <Icon size={16} />
       </span>
-      <span className="otto-tool__kind">{resolved.label}</span>
+      <span className="otto-tool__kind" title={rawTitle}>
+        {resolved.label}
+      </span>
       <span className="otto-tool__target" title={resolved.target || undefined}>
         {resolved.target}
       </span>

@@ -126,7 +126,7 @@ describe('Message 动作行', () => {
     expect(screen.queryByLabelText('重新生成')).toBeNull();
   });
 
-  it('完成后的思考、Skill 与工具过程默认收进「深度思考」折叠区', () => {
+  it('完成后的思考、Skill 与工具过程默认收进「处理记录」折叠区', () => {
     render(
       <Message
         message={botMessage({
@@ -145,13 +145,13 @@ describe('Message 动作行', () => {
       />,
     );
 
-    const toggle = screen.getByRole('button', { name: /深度思考/ });
+    const toggle = screen.getByRole('button', { name: /处理记录/ });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('先定位可用的 PPT Skill。')).toBeTruthy();
-    expect(screen.getByText('find-skills')).toBeTruthy();
+    expect(screen.getByText('加载能力')).toBeTruthy();
   });
 
   it('工具已结束但模型正文为空时，显示确定性中文过程总结', () => {
@@ -171,6 +171,12 @@ describe('Message 动作行', () => {
               toolName: 'run_shell_command',
               parameters: { command: 'npm run build' },
               status: 'error' as NonNullable<OttoMessage['associatedToolCalls']>[number]['status'],
+              result: {
+                success: false,
+                error: '构建脚本失败',
+                executionTime: 20,
+                toolName: 'run_shell_command',
+              },
             },
           ],
         })}
@@ -179,8 +185,9 @@ describe('Message 动作行', () => {
       />,
     );
 
-    const summary = screen.getByText(/本轮共处理 2 项操作/);
-    expect(summary.textContent).toContain('完成 1 项，失败 1 项');
+    const summary = screen.getByText(/构建项目（npm run build）没有完成/);
+    expect(summary.textContent).toContain('没有完成');
+    expect(summary.textContent).toContain('构建脚本失败');
     expect(summary.textContent).toContain('report.pdf');
     expect(summary.textContent).toContain('npm run build');
   });
@@ -203,7 +210,7 @@ describe('Message 动作行', () => {
     );
 
     expect(screen.getByText('文件已读取，重点如下。')).toBeTruthy();
-    expect(screen.queryByText(/本轮共处理/)).toBeNull();
+    expect(screen.queryByText(/查看相关资料（PDF：report.pdf）已完成。/)).toBeNull();
   });
 
   it('Skill 执行时展开显示，执行完成后自动隐藏且仍可手动展开', () => {
@@ -226,9 +233,9 @@ describe('Message 动作行', () => {
       />,
     );
 
-    const activeToggle = screen.getByRole('button', { name: /深度思考中/ });
+    const activeToggle = screen.getByRole('button', { name: /正在处理/ });
     expect(activeToggle.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('find-skills')).toBeTruthy();
+    expect(screen.getByText('加载能力')).toBeTruthy();
 
     rerender(
       <Message
@@ -244,7 +251,7 @@ describe('Message 动作行', () => {
       />,
     );
 
-    const completeToggle = screen.getByRole('button', { name: /深度思考/ });
+    const completeToggle = screen.getByRole('button', { name: /处理记录/ });
     expect(completeToggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(completeToggle);
     expect(completeToggle.getAttribute('aria-expanded')).toBe('true');

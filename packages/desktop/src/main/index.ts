@@ -292,6 +292,7 @@ const IPC = {
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
+  enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
   enterpriseOrganizationFeaturesUpdate: 'otto:enterprise-organization-features-update',
   enterpriseOrganizationDepartments: 'otto:enterprise-organization-departments',
@@ -1377,6 +1378,10 @@ function registerIpc(): void {
   ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
     loadEnterpriseSession();
     return enterpriseClient.getOrganizationView();
+  });
+  ipcMain.handle(IPC.enterprisePresenceHeartbeat, async () => {
+    loadEnterpriseSession();
+    await enterpriseClient.heartbeatPresence('desktop');
   });
   ipcMain.handle(IPC.enterpriseOrganizationFeaturesGet, async () => {
     loadEnterpriseSession();

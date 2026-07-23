@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProductWorkspaceSnapshot, ScheduleItemInfo } from 'otto-server';
 import type {
   EnterpriseAccount,
@@ -14,6 +14,7 @@ import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { askLocalPeerOtto } from '../peerOttoRunner.js';
 import { IconChevronDown, IconPlus } from './icons.js';
 import { AtoaConsultDialog } from './AtoaConsultDialog.js';
+import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
 
 const ORGANIZATION_REFRESH_MS = 10_000;
 
@@ -23,6 +24,8 @@ export function OrganizationTree({
   enterpriseAccount,
   openRequest = 0,
   refreshRevision = 0,
+  unreadCounts = {},
+  onMessageRead,
 }: {
   workspace: ProductWorkspaceSnapshot | null;
   schedules?: readonly ScheduleItemInfo[];
@@ -31,11 +34,15 @@ export function OrganizationTree({
   openRequest?: number;
   /** 企业管理员提交成员/职位变化后递增，强制重读服务端组织目录。 */
   refreshRevision?: number;
+  unreadCounts?: EnterpriseUnreadCounts;
+  onMessageRead?: (peerAccountId: string) => void;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
+  const [orgSyncedAt, setOrgSyncedAt] = useState<Date | null>(null);
+  const [manualRefreshRequest, setManualRefreshRequest] = useState(0);
   const [chatMember, setChatMember] = useState<EnterpriseOrganizationView['members'][number] | null>(null);
   const hasLocalEnterpriseWorkspace = workspace?.context.edition === 'enterprise';
   const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
@@ -55,6 +62,10 @@ export function OrganizationTree({
     }
     return result;
   }, [orgView?.members]);
+  const openDirectChat = useCallback((member: EnterpriseOrganizationView['members'][number]): void => {
+    onMessageRead?.(member.id);
+    setChatMember(member);
+  }, [onMessageRead]);
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
     [organization?.positions],
@@ -89,6 +100,7 @@ export function OrganizationTree({
         const view = await window.otto.enterpriseOrganizationView();
         if (cancelled) return;
         setOrgView(view);
+        setOrgSyncedAt(new Date());
         setOrgError(null);
       } catch (error: unknown) {
         if (cancelled) return;
@@ -113,6 +125,7 @@ export function OrganizationTree({
     enterpriseAccount?.organizationId,
     enterpriseAccount?.updatedAt,
     refreshRevision,
+    manualRefreshRequest,
   ]);
 
   if (!hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization) return null;
@@ -142,13 +155,20 @@ export function OrganizationTree({
               positionById={positionById}
               childrenByParent={childrenByParent}
               chatMemberByWorkspaceKey={chatMemberByWorkspaceKey}
-              onOpenChat={setChatMember}
+              unreadCounts={unreadCounts}
+              onOpenChat={openDirectChat}
             />
           ) : orgView ? (
             <div className="otto-orgtree__member-list">
               {orgView.organization ? (
                 <div className="otto-orgtree__company-node">{orgView.organization.name}</div>
               ) : null}
+              <OrganizationPresenceSummary
+                members={orgView.members}
+                syncedAt={orgSyncedAt}
+                refreshing={orgLoading}
+                onRefresh={() => setManualRefreshRequest((value) => value + 1)}
+              />
               {/* Group members by department */}
               {(() => {
                 const deptMap = new Map<string, EnterpriseOrganizationView['members']>();
@@ -160,7 +180,7 @@ export function OrganizationTree({
                 }
                 return [...deptMap.entries()].map(([dept, members]) => (
                   <DepartmentSection key={dept} name={dept}>
-                    {members.map((member) => (
+                    {[...members].sort(compareEnterpriseMembers).map((member) => (
                       member.id === enterpriseAccount?.id ? (
                         <div
                           key={member.id}
@@ -179,13 +199,20 @@ export function OrganizationTree({
                           key={member.id}
                           type="button"
                           className="otto-orgtree__member otto-orgtree__member-button"
-                          onClick={() => setChatMember(member)}
+                          onClick={() => {
+                            openDirectChat(member);
+                          }}
                         >
                           <span>{member.name}</span>
                           <span>
                             {member.positionTitle ||
                               (member.isAdmin ? '管理员' : member.role || '成员')}
                           </span>
+                          <PresenceBadge
+                            online={member.ottoOnline}
+                            lastSeenAt={member.ottoLastSeenAt}
+                          />
+                          <UnreadBadge count={unreadCounts[`enterprise:message:${member.id}`] ?? 0} />
                         </button>
                       )
                     ))}
@@ -214,6 +241,65 @@ export function OrganizationTree({
       ) : null}
     </section>
   );
+}
+
+function OrganizationPresenceSummary({
+  members,
+  syncedAt,
+  refreshing,
+  onRefresh,
+}: {
+  members: EnterpriseOrganizationView['members'];
+  syncedAt: Date | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+}): React.JSX.Element {
+  const activeMembers = members.filter((member) => member.status === 'active');
+  const onlineCount = activeMembers.filter((member) => member.ottoOnline).length;
+  const knownPresenceCount = activeMembers.filter((member) =>
+    member.ottoOnline !== undefined || member.ottoLastSeenAt !== undefined,
+  ).length;
+  return (
+    <div className="otto-orgtree__presence-summary" aria-label="Otto 在线状态">
+      <span>
+        {knownPresenceCount > 0
+          ? `${onlineCount}/${activeMembers.length} 在线`
+          : '等待在线状态'}
+      </span>
+      {syncedAt ? (
+        <small title={syncedAt.toLocaleString('zh-CN')}>
+          {formatSyncedAt(syncedAt)}
+        </small>
+      ) : null}
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={refreshing}
+        aria-label="刷新企业组织在线状态"
+        title="刷新企业组织在线状态"
+      >
+        {refreshing ? '同步中' : '刷新'}
+      </button>
+    </div>
+  );
+}
+
+function compareEnterpriseMembers(
+  a: EnterpriseOrganizationView['members'][number],
+  b: EnterpriseOrganizationView['members'][number],
+): number {
+  const onlineRank = Number(Boolean(b.ottoOnline)) - Number(Boolean(a.ottoOnline));
+  if (onlineRank !== 0) return onlineRank;
+  const unreadRank = Number(Boolean(b.ottoLastSeenAt)) - Number(Boolean(a.ottoLastSeenAt));
+  if (unreadRank !== 0) return unreadRank;
+  return a.name.localeCompare(b.name, 'zh-CN');
+}
+
+function formatSyncedAt(date: Date): string {
+  return `同步 ${date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
 }
 
 function DirectMessagePanel({
@@ -463,6 +549,46 @@ function normalizeChatKey(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase();
 }
 
+function UnreadBadge({ count }: { count: number }): React.JSX.Element | null {
+  if (count <= 0) return null;
+  const label = count > 99 ? '99+' : String(count);
+  return (
+    <span
+      className="otto-orgtree__unread"
+      aria-label={`${label} 条未读消息`}
+      title={`${label} 条未读消息`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PresenceBadge({
+  online,
+  lastSeenAt,
+}: {
+  online?: boolean;
+  lastSeenAt?: string | null;
+}): React.JSX.Element | null {
+  if (online === undefined && lastSeenAt === undefined) return null;
+  const lastSeenMs = lastSeenAt ? Date.parse(lastSeenAt) : Number.NaN;
+  const recentlySeen = !online
+    && Number.isFinite(lastSeenMs)
+    && Date.now() - lastSeenMs <= 5 * 60_000;
+  const label = online ? '在线' : recentlySeen ? '刚刚在线' : '离线';
+  return (
+    <span
+      className={
+        'otto-orgtree__presence'
+        + (online ? ' is-online' : recentlySeen ? ' is-recent' : '')
+      }
+      title={lastSeenAt ? `${label} · ${new Date(lastSeenAt).toLocaleString('zh-CN')}` : label}
+    >
+      {label}
+    </span>
+  );
+}
+
 function CompanyBranch({
   companyId,
   organization,
@@ -470,6 +596,7 @@ function CompanyBranch({
   positionById,
   childrenByParent,
   chatMemberByWorkspaceKey,
+  unreadCounts,
   onOpenChat,
 }: {
   companyId: string;
@@ -478,6 +605,7 @@ function CompanyBranch({
   positionById: Map<string, Organization['positions'][number]>;
   childrenByParent: Map<string, string[]>;
   chatMemberByWorkspaceKey: Map<string, EnterpriseOrganizationView['members'][number]>;
+  unreadCounts: EnterpriseUnreadCounts;
   onOpenChat: (member: EnterpriseOrganizationView['members'][number]) => void;
 }): React.JSX.Element | null {
   const company = organization.companies.find((item) => item.id === companyId);
@@ -515,6 +643,11 @@ function CompanyBranch({
                     onClick={() => onOpenChat(chatMember)}
                   >
                     {content}
+                    <PresenceBadge
+                      online={chatMember.ottoOnline}
+                      lastSeenAt={chatMember.ottoLastSeenAt}
+                    />
+                    <UnreadBadge count={unreadCounts[`enterprise:message:${chatMember.id}`] ?? 0} />
                   </button>
                 ) : (
                   <div key={member.userId} className="otto-orgtree__member">
@@ -544,6 +677,7 @@ function CompanyBranch({
             positionById={positionById}
             childrenByParent={childrenByParent}
             chatMemberByWorkspaceKey={chatMemberByWorkspaceKey}
+            unreadCounts={unreadCounts}
             onOpenChat={onOpenChat}
           />
         ))}

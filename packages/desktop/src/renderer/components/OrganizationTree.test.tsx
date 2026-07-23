@@ -598,6 +598,8 @@ describe('OrganizationTree', () => {
         department: 'R&D',
         isAdmin: false,
         status: 'active' as const,
+        ottoOnline: true,
+        ottoLastSeenAt: '2026-07-23T06:00:00.000Z',
       }],
       employeeCount: 2,
     }));
@@ -646,6 +648,128 @@ describe('OrganizationTree', () => {
       'acc_2',
       expect.stringContaining('本机 Otto 给出的建议。'),
     );
+  });
+
+  it('shows unread direct-message counts on enterprise members and clears them when opening chat', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+        ottoOnline: true,
+        ottoLastSeenAt: '2026-07-23T06:00:00.000Z',
+      }],
+      employeeCount: 2,
+    }));
+    const onMessageRead = vi.fn();
+    const enterpriseMessagesList = vi.fn(async () => []);
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        unreadCounts={{ 'enterprise:message:acc_2': 3 }}
+        onMessageRead={onMessageRead}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    expect(await screen.findByLabelText('3 条未读消息')).toBeTruthy();
+    expect(await screen.findByText('在线')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Bob/ }));
+    expect(onMessageRead).toHaveBeenCalledWith('acc_2');
+    await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
+    expect(await screen.findByText('还没有消息，开始聊聊吧。')).toBeTruthy();
+  });
+
+  it('summarizes enterprise Otto presence, refreshes on demand, and keeps online members easy to find', async () => {
+    let calls = 0;
+    const enterpriseOrganizationView = vi.fn(async () => {
+      calls += 1;
+      return {
+        organization: {
+          id: 'org_acme',
+          name: 'Acme',
+          status: 'active' as const,
+          createdAt: '2026-07-13T00:00:00.000Z',
+        },
+        members: [{
+          id: 'acc_1',
+          username: 'alice',
+          name: 'Alice',
+          role: 'Engineer',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+        }, {
+          id: 'acc_2',
+          username: 'zara',
+          name: 'Zara',
+          role: 'Designer',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+          ottoOnline: false,
+          ottoLastSeenAt: '2026-07-23T05:55:00.000Z',
+        }, {
+          id: 'acc_3',
+          username: 'bob',
+          name: 'Bob',
+          role: 'Manager',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active' as const,
+          ottoOnline: true,
+          ottoLastSeenAt: '2026-07-23T06:00:00.000Z',
+        }],
+        employeeCount: 3,
+      };
+    });
+    Object.assign(window.otto, { enterpriseOrganizationView });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    expect(await screen.findByText('1/3 在线')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '刷新企业组织在线状态' })).toBeTruthy();
+    const bob = await screen.findByRole('button', { name: /Bob/ });
+    const zara = await screen.findByRole('button', { name: /Zara/ });
+    expect(
+      bob.compareDocumentPosition(zara) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新企业组织在线状态' }));
+    await waitFor(() => expect(calls).toBeGreaterThanOrEqual(2));
   });
 
   it('uses @otto as a direct-chat shortcut instead of sending it as a message', async () => {

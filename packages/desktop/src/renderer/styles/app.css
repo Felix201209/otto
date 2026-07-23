@@ -68,10 +68,18 @@
 }
 
 .otto-brand__unread {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
   background: var(--otto-accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
   box-shadow: 0 0 7px color-mix(in srgb, var(--otto-accent) 65%, transparent);
   animation: otto-unread-pulse 2s ease-in-out infinite;
   flex: 0 0 auto;
@@ -5905,12 +5913,17 @@ h6.otto-prose__h {
   margin-top: 12px;
   background: color-mix(in srgb, var(--otto-accent-soft) 45%, var(--otto-surface));
 }
-.otto-park-toast {
+.otto-park-toast-stack {
   position: fixed;
   right: 22px;
   bottom: 22px;
   z-index: 130;
   width: min(300px, calc(100vw - 44px));
+  display: grid;
+  gap: 10px;
+}
+.otto-park-toast {
+  width: 100%;
   border: 1px solid color-mix(in srgb, var(--otto-accent) 30%, var(--otto-border));
   border-radius: var(--otto-radius);
   background: var(--otto-bg);
@@ -5938,7 +5951,6 @@ h6.otto-prose__h {
   font-style: normal;
 }
 .otto-park-toast--result {
-  bottom: 118px;
   border-color: color-mix(in srgb, #168557 32%, var(--otto-border));
 }
 .otto-park-toast--result span { color: #168557; }
@@ -6153,8 +6165,7 @@ h6.otto-prose__h {
   .otto-park-demo__chat { margin-top: 11px; }
   .otto-park-receiver,
   .otto-park-survey { grid-template-columns: 1fr; }
-  .otto-park-toast { right: 12px; bottom: 12px; }
-  .otto-park-toast--result { bottom: 108px; }
+  .otto-park-toast-stack { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
   .otto-park-notice-overlay { right: 12px; bottom: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
   .otto-park-notice { max-height: calc(100vh - 24px); }
   .otto-park-repair__confirm { align-items: stretch; flex-direction: column; }
@@ -6479,15 +6490,99 @@ h6.otto-prose__h {
 .otto-orgtree__company-branch + .otto-orgtree__company-branch { margin-top: 7px; }
 .otto-orgtree__company-node { color: var(--otto-text-primary); font-size: 11px; font-weight: 750; padding: 4px 7px; border-left: 2px solid var(--otto-accent); }
 .otto-orgtree__company-content { margin-left: 9px; padding-left: 8px; border-left: 1px solid var(--otto-border); }
+.otto-orgtree__presence-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--otto-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--otto-surface) 78%, var(--otto-bg));
+  color: var(--otto-text-secondary);
+  font-size: 10px;
+}
+.otto-orgtree__presence-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--otto-text-primary);
+  font-weight: 700;
+}
+.otto-orgtree__presence-summary small {
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.otto-orgtree__presence-summary button {
+  min-height: 22px;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  background: var(--otto-bg);
+  color: var(--otto-text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 7px;
+}
+.otto-orgtree__presence-summary button:hover:not(:disabled) {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+}
+.otto-orgtree__presence-summary button:disabled {
+  opacity: .55;
+  cursor: default;
+}
 .otto-orgtree__department { position: relative; padding: 5px 0 5px 12px; border-left: 1px solid var(--otto-border-strong); }
 .otto-orgtree__department::before { content: ''; position: absolute; width: 8px; border-top: 1px solid var(--otto-border-strong); left: 0; top: 13px; }
 .otto-orgtree__department-name { font-size: 10.5px; color: var(--otto-text-secondary); font-weight: 700; }
 .otto-orgtree__department-toggle { width: 100%; min-height: 22px; border: 0; background: transparent; padding: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; text-align: left; }
 .otto-orgtree__department-toggle:hover { color: var(--otto-accent-hover); }
-.otto-orgtree__member { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 10px; }
+.otto-orgtree__member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; margin-top: 4px; font-size: 10px; }
 .otto-orgtree__member span:last-child, .otto-orgtree__vacant { color: var(--otto-text-tertiary); font-size: 9px; }
 .otto-orgtree__member-button { width: 100%; border: 0; padding: 4px 2px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .otto-orgtree__member-button:hover { color: var(--otto-accent-hover); }
+.otto-orgtree__member > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-orgtree__member > span:nth-child(2) { color: var(--otto-text-tertiary); font-size: 9px; white-space: nowrap; }
+.otto-orgtree__presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--otto-text-tertiary) !important;
+  font-size: 9px !important;
+  white-space: nowrap;
+}
+.otto-orgtree__presence::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--otto-text-tertiary) 55%, transparent);
+}
+.otto-orgtree__presence.is-online { color: #168557 !important; }
+.otto-orgtree__presence.is-online::before {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #16a34a 18%, transparent);
+}
+.otto-orgtree__presence.is-recent { color: #b7791f !important; }
+.otto-orgtree__presence.is-recent::before { background: #d97706; }
+.otto-orgtree__unread {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px !important;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 7px color-mix(in srgb, #ef4444 55%, transparent);
+  animation: otto-unread-pulse 2s ease-in-out infinite;
+}
 .otto-direct-chat { position: fixed; z-index: 50; left: 232px; bottom: 22px; width: 340px; height: 430px; display: flex; flex-direction: column; border: 1px solid var(--otto-border); border-radius: 12px; background: var(--otto-surface); box-shadow: 0 18px 48px rgba(0,0,0,.28); }
 .otto-direct-chat header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--otto-border); }
 .otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }

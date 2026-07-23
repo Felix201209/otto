@@ -438,7 +438,7 @@ describe('受保护 vs 公开路由边界', () => {
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 5,
+      schemaVersion: 6,
       capabilities: [
         'password_auth',
         'sms_login',
@@ -461,6 +461,7 @@ describe('受保护 vs 公开路由边界', () => {
         'park_membership_v1',
         'park_specialist_routing_v1',
         'unread_message_notifications_v1',
+        'account_presence_v1',
       ],
     });
     expect(body.uptime).toEqual(expect.any(Number));
@@ -1393,6 +1394,38 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           id: registered.account.id,
           name: '王小明',
           department: null,
+          ottoOnline: false,
+        }),
+      ]),
+    });
+
+    const anonymousHeartbeat = await fetch(`${base}/enterprise/presence/heartbeat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientId: 'spoof' }),
+    });
+    expect(anonymousHeartbeat.status).toBe(401);
+
+    const heartbeat = await fetch(`${base}/enterprise/presence/heartbeat`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${registered.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ clientId: 'desktop-test' }),
+    });
+    expect(heartbeat.status).toBe(200);
+
+    const onlineOrganizationView = await fetch(`${base}/enterprise/organization/view`, {
+      headers: { authorization: `Bearer ${registered.token}` },
+    });
+    expect(onlineOrganizationView.status).toBe(200);
+    expect(await onlineOrganizationView.json()).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          id: registered.account.id,
+          ottoOnline: true,
+          ottoLastSeenAt: expect.any(String),
         }),
       ]),
     });

@@ -106,6 +106,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/credits/transactions',
   '/enterprise/organization/view',
   '/enterprise/organization/features',
+  '/enterprise/presence/heartbeat',
   '/enterprise/organization/sync',
   '/enterprise/park/view',
   '/enterprise/messages/unread',
@@ -204,6 +205,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_membership_v1',
   'park_specialist_routing_v1',
   'unread_message_notifications_v1',
+  'account_presence_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -485,6 +487,9 @@ function organizationViewPayload(organizationId: string) {
   const accounts = db.listAccounts(organizationId);
   const employees = db.listEmployees(undefined, organizationId);
   const park = db.getParkForOrganization(organizationId);
+  const presenceByAccountId = new Map(
+    db.listAccountPresence(organizationId).map((presence) => [presence.accountId, presence]),
+  );
   return {
     organization: organization ? {
       id: organization.id,
@@ -505,6 +510,8 @@ function organizationViewPayload(organizationId: string) {
       avatarUrl: account.avatarUrl,
       isAdmin: account.isAdmin,
       status: account.status,
+      ottoOnline: presenceByAccountId.get(account.id)?.online ?? false,
+      ottoLastSeenAt: presenceByAccountId.get(account.id)?.lastSeenAt ?? null,
     })),
     employeeCount: employees.length,
     structure: db.listOrganizationStructure(organizationId),
@@ -2677,6 +2684,18 @@ function makeHandler(
           return;
         }
         sendJSON(res, 200, organizationViewPayload(organizationId));
+        return;
+      }
+
+      if (path === '/enterprise/presence/heartbeat' && method === 'POST') {
+        const body = await readBody(req);
+        const clientId = typeof body.clientId === 'string' ? body.clientId : 'desktop';
+        const presence = db.touchAccountPresence({
+          organizationId: memberAccount!.organizationId,
+          accountId: memberAccount!.id,
+          clientId,
+        });
+        sendJSON(res, 200, { presence });
         return;
       }
 

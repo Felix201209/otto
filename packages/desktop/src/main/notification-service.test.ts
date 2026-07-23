@@ -6,8 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const electron = vi.hoisted(() => ({
   supported: true,
+  failNextShow: false,
+  beep: vi.fn(),
   instances: [] as Array<{
-    options: { title: string; body: string; silent: boolean };
+    options: {
+      title: string;
+      body: string;
+      silent: boolean;
+      urgency?: string;
+      timeoutType?: string;
+    };
     handlers: Record<string, () => void>;
     show: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
@@ -15,16 +23,30 @@ const electron = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  shell: {
+    beep: electron.beep,
+  },
   Notification: class MockNotification {
     static isSupported(): boolean {
       return electron.supported;
     }
 
     handlers: Record<string, () => void> = {};
-    show = vi.fn();
+    show = vi.fn(() => {
+      if (electron.failNextShow) {
+        electron.failNextShow = false;
+        throw new Error('notification failed');
+      }
+    });
     close = vi.fn();
 
-    constructor(public options: { title: string; body: string; silent: boolean }) {
+    constructor(public options: {
+      title: string;
+      body: string;
+      silent: boolean;
+      urgency?: string;
+      timeoutType?: string;
+    }) {
       electron.instances.push(this);
     }
 
@@ -42,6 +64,8 @@ import {
 describe('NotificationService', () => {
   beforeEach(() => {
     electron.supported = true;
+    electron.failNextShow = false;
+    electron.beep.mockClear();
     electron.instances.length = 0;
     vi.useFakeTimers();
   });
@@ -61,18 +85,75 @@ describe('NotificationService', () => {
     expect(electron.instances).toHaveLength(0);
     expect(service.getUnreadSessions()).toEqual(['s1']);
     expect(onUnreadChange).toHaveBeenLastCalledWith(['s1']);
+    expect(electron.beep).toHaveBeenCalledOnce();
   });
 
-  it('系统弹窗五秒后消失，但未读点保留到用户真正读过', () => {
+  it('系统弹窗自动消失，但未读点保留到用户真正读过', () => {
     const service = new NotificationService();
     service.show({ sessionId: 's1', source: 'feishu', sender: '小王', preview: '开会吗？' });
     expect(electron.instances).toHaveLength(1);
     expect(electron.instances[0].options.title).toBe('飞书消息 · 小王');
     expect(electron.instances[0].show).toHaveBeenCalledOnce();
+    expect(electron.beep).toHaveBeenCalledOnce();
 
-    vi.advanceTimersByTime(5_000);
+    vi.advanceTimersByTime(7_000);
     expect(electron.instances[0].close).toHaveBeenCalledOnce();
     expect(service.getUnreadSessions()).toEqual(['s1']);
+  });
+
+  it('连续同会话消息会聚合成一条更清楚的系统弹窗', () => {
+    const service = new NotificationService();
+    service.show({
+      messageId: 'm1',
+      sessionId: 's1',
+      source: 'atoa',
+      sender: '同事 A',
+      preview: '第一条',
+    });
+    service.show({
+      messageId: 'm2',
+      sessionId: 's1',
+      source: 'atoa',
+      sender: '同事 A',
+      preview: '第二条',
+    });
+
+    expect(electron.instances).toHaveLength(2);
+    expect(electron.instances[0].close).toHaveBeenCalledOnce();
+    expect(electron.instances[1].options.title).toBe('企业内部协作 · 同事 A · 2 条新消息');
+    expect(electron.instances[1].options.body).toBe('最新：第二条');
+    expect(service.getUnreadSessions()).toEqual(['s1']);
+    expect(electron.beep).toHaveBeenCalledTimes(2);
+  });
+
+  it('清理过长和多行正文，空正文使用兜底提示', () => {
+    const service = new NotificationService();
+    service.show({
+      sessionId: 's1',
+      source: 'enterprise',
+      sender: ' Alice\n',
+      preview: `\n${'x'.repeat(220)}\u0000`,
+    });
+    service.show({
+      sessionId: 's2',
+      source: 'enterprise',
+      preview: '\n\t',
+    });
+
+    expect(electron.instances[0].options.title).toBe('企业通知 · Alice');
+    expect(electron.instances[0].options.body.length).toBeLessThanOrEqual(180);
+    expect(electron.instances[0].options.body.endsWith('…')).toBe(true);
+    expect(electron.instances[1].options.body).toBe('你收到了一条新消息。');
+  });
+
+  it('系统通知 show 失败时不丢 Otto 内部未读点', () => {
+    electron.failNextShow = true;
+    const service = new NotificationService();
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '新消息' });
+
+    expect(service.getUnreadSessions()).toEqual(['s1']);
+    expect(electron.instances[0].close).not.toHaveBeenCalled();
+    expect(electron.beep).toHaveBeenCalledOnce();
   });
 
   it('点击系统弹窗会清未读并把会话交给 renderer 打开', () => {
@@ -121,8 +202,28 @@ describe('NotificationService', () => {
     service.show(payload);
 
     expect(electron.instances).toHaveLength(1);
+    expect(electron.beep).toHaveBeenCalledOnce();
     expect(onUnreadChange).toHaveBeenCalledTimes(1);
     expect(service.getUnreadSessions()).toEqual(['feishu-session-1']);
+  });
+
+  it('企业私聊和 ATOA 消息都会触发系统音效', () => {
+    const service = new NotificationService();
+
+    service.show({ sessionId: 'enterprise:message:alice', source: 'enterprise', preview: '项目进度？' });
+    service.show({ sessionId: 'enterprise:message:bob', source: 'atoa', preview: '对方正在请求你的 Otto 协作' });
+
+    expect(electron.instances).toHaveLength(2);
+    expect(electron.beep).toHaveBeenCalledTimes(2);
+  });
+
+  it('普通后台对话完成不额外蜂鸣，避免打扰', () => {
+    const service = new NotificationService();
+
+    service.show({ sessionId: 'chat-1', source: 'tui', preview: '后台任务完成' });
+
+    expect(electron.instances).toHaveLength(1);
+    expect(electron.beep).not.toHaveBeenCalled();
   });
 
   it('园区系统通知进入统一服务，退出或切换身份时可连 toast 和未读一起清理', () => {

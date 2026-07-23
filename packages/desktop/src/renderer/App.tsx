@@ -75,7 +75,10 @@ import { processEnterpriseAtoaRequest } from './enterpriseAtoaCoordinator.js';
 import { collectAuthorizedAtoaContext } from './a2aContext.js';
 import { AtoaConsultDialog } from './components/AtoaConsultDialog.js';
 import { executeEnterpriseCollaborationRelay } from './enterpriseCollaborationRelay.js';
-import { EnterpriseUnreadNotificationTracker } from './enterpriseUnreadNotifications.js';
+import {
+  EnterpriseUnreadNotificationTracker,
+  type EnterpriseUnreadCounts,
+} from './enterpriseUnreadNotifications.js';
 import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
@@ -99,6 +102,7 @@ import {
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 /** 企业私聊后台未读轮询；只取摘要，不把消息提前标已读。 */
 const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
+const ENTERPRISE_PRESENCE_HEARTBEAT_MS = 20_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
 type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
@@ -176,6 +180,7 @@ function OttoWorkspaceApp({
   const softwareUpdate = useSoftwareUpdate();
   const product = useProductWorkspace();
   const [autoProfileRevision, setAutoProfileRevision] = useState(0);
+  const [enterpriseUnreadCounts, setEnterpriseUnreadCounts] = useState<EnterpriseUnreadCounts>({});
   const centralIdentity = useMemo(
     () => resolveCentralEnterpriseIdentity(account),
     // profile.json 刷新后重取固定目录；中心账号仍是身份与权限的唯一来源。
@@ -278,6 +283,7 @@ function OttoWorkspaceApp({
     const tracker = new EnterpriseUnreadNotificationTracker({
       show: (payload) => window.otto.notificationShow(payload),
       markRead: (sessionId) => window.otto.notificationMarkRead(sessionId),
+      onUnreadCountsChange: setEnterpriseUnreadCounts,
     });
 
     const poll = async (): Promise<void> => {
@@ -299,9 +305,42 @@ function OttoWorkspaceApp({
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      setEnterpriseUnreadCounts({});
       void tracker.clear();
     };
   }, [account.accountType, account.id, account.organizationId]);
+
+  useEffect(() => {
+    if (account.accountType === 'personal') return undefined;
+    let cancelled = false;
+    const beat = async (): Promise<void> => {
+      try {
+        await window.otto.enterprisePresenceHeartbeat?.();
+      } catch {
+        // 旧企业服务器或临时网络错误不影响登录、聊天和组织树展示。
+      }
+    };
+
+    void beat();
+    const timer = window.setInterval(() => {
+      if (!cancelled) void beat();
+    }, ENTERPRISE_PRESENCE_HEARTBEAT_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [account.accountType, account.id, account.organizationId]);
+
+  const markEnterpriseDirectMessageRead = useCallback((peerAccountId: string): void => {
+    const sessionId = `enterprise:message:${peerAccountId}`;
+    setEnterpriseUnreadCounts((current) => {
+      if (!current[sessionId]) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    void window.otto.notificationMarkRead(sessionId).catch(() => undefined);
+  }, []);
 
   // 企业 A2A 收件箱只在真实客户端本地轮询。请求已被服务端按回复去重；
   // 本地集合用于避免同一轮询周期重复处理，发送失败则释放以便下轮重试。
@@ -802,6 +841,8 @@ function OttoWorkspaceApp({
         enterpriseAccount={account}
         organizationOpenRequest={organizationOpenRequest}
         organizationRefreshRevision={organizationRefreshRevision}
+        enterpriseUnreadCounts={enterpriseUnreadCounts}
+        onEnterpriseMessageRead={markEnterpriseDirectMessageRead}
         onJoinEnterprise={onJoinEnterprise}
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}

@@ -25,21 +25,27 @@ describe('EnterpriseUnreadNotificationTracker', () => {
   it('shows only the latest unread message per sender and does not repeat notifications', async () => {
     const show = vi.fn(async () => undefined);
     const markRead = vi.fn(async () => undefined);
-    const tracker = new EnterpriseUnreadNotificationTracker({ show, markRead });
+    const onUnreadCountsChange = vi.fn();
+    const tracker = new EnterpriseUnreadNotificationTracker({ show, markRead, onUnreadCountsChange });
     const notifications = [
       message(),
       message({ id: 'msg-2', preview: '最新进度' }),
+      message({ id: 'msg-bob', senderAccountId: 'bob', senderName: 'Bob' }),
     ];
 
     await tracker.reconcile(notifications);
     await tracker.reconcile(notifications);
 
-    expect(show).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledTimes(2);
     expect(show).toHaveBeenCalledWith({
       sessionId: 'enterprise:message:alice',
       source: 'enterprise',
       sender: 'Alice',
       preview: '最新进度',
+    });
+    expect(onUnreadCountsChange).toHaveBeenLastCalledWith({
+      'enterprise:message:alice': 2,
+      'enterprise:message:bob': 1,
     });
     expect(markRead).not.toHaveBeenCalled();
   });
@@ -90,6 +96,23 @@ describe('EnterpriseUnreadNotificationTracker', () => {
     });
   });
 
+  it('plain direct messages use enterprise source so desktop can show toast and sound', async () => {
+    const show = vi.fn(async () => undefined);
+    const tracker = new EnterpriseUnreadNotificationTracker({
+      show,
+      markRead: vi.fn(async () => undefined),
+    });
+
+    await tracker.reconcile([message({ id: 'direct-1', preview: '下午方便同步吗？' })]);
+
+    expect(show).toHaveBeenCalledWith({
+      sessionId: 'enterprise:message:alice',
+      source: 'enterprise',
+      sender: 'Alice',
+      preview: '下午方便同步吗？',
+    });
+  });
+
   it('clears local unread markers when switching enterprise accounts', async () => {
     const markRead = vi.fn(async () => undefined);
     const tracker = new EnterpriseUnreadNotificationTracker({
@@ -105,5 +128,19 @@ describe('EnterpriseUnreadNotificationTracker', () => {
       'enterprise:message:alice',
       'enterprise:message:bob',
     ]));
+  });
+
+  it('clears unread counts when switching enterprise accounts', async () => {
+    const onUnreadCountsChange = vi.fn();
+    const tracker = new EnterpriseUnreadNotificationTracker({
+      show: vi.fn(async () => undefined),
+      markRead: vi.fn(async () => undefined),
+      onUnreadCountsChange,
+    });
+
+    await tracker.reconcile([message()]);
+    await tracker.clear();
+
+    expect(onUnreadCountsChange).toHaveBeenLastCalledWith({});
   });
 });

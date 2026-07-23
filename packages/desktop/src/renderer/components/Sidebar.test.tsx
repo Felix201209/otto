@@ -114,6 +114,18 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.getByRole('status', { name: '1 条未读消息' })).toBeTruthy();
   });
 
+  it('企业私聊未读按消息条数在 Otto 品牌区显示数字', () => {
+    renderSidebar({
+      unreadSessions: ['enterprise:message:alice', 'park:ticket:repair-1'],
+      enterpriseUnreadCounts: {
+        'enterprise:message:alice': 2,
+        'enterprise:message:bob': 1,
+      },
+    });
+
+    expect(screen.getByRole('status', { name: '4 条未读消息' }).textContent).toBe('4');
+  });
+
   it('个人版账号也始终显示账户区和退出登录入口', async () => {
     const onLogout = vi.fn(async () => undefined);
     renderSidebar({

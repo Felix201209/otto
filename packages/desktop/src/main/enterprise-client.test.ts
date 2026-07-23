@@ -56,6 +56,7 @@ const API_V2_HEALTH = {
     'position_invites',
     'personal_enterprise_upgrade',
     'park_service_push',
+    'account_presence_v1',
   ],
 };
 
@@ -498,6 +499,30 @@ describe('EnterpriseClient', () => {
     await expect(client.getOrganizationView()).resolves.toEqual(organizationView);
     expect(fetchMock.mock.calls[2]?.[0])
       .toBe('https://enterprise.otto.test/enterprise/organization/view');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer session-token',
+    });
+  });
+
+  it('企业在线心跳使用成员会话并要求服务端支持 presence capability', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        presence: { accountId: ACCOUNT.id, online: true, lastSeenAt: '2026-07-23T00:00:00.000Z' },
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.heartbeatPresence('desktop-test')).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/presence/heartbeat');
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ clientId: 'desktop-test' }),
+    });
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer session-token',
     });

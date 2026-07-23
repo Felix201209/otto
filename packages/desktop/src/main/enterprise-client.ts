@@ -250,6 +250,8 @@ export interface EnterpriseOrganizationView {
     avatarUrl?: string | null;
     isAdmin: boolean;
     status: 'active' | 'disabled';
+    ottoOnline?: boolean;
+    ottoLastSeenAt?: string | null;
   }>;
   employeeCount: number;
   structure?: EnterpriseOrganizationDepartment[];
@@ -883,6 +885,15 @@ export class EnterpriseClient {
   async getOrganizationView(): Promise<EnterpriseOrganizationView> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/organization/view');
+  }
+
+  async heartbeatPresence(clientId = 'desktop'): Promise<void> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['account_presence_v1']);
+    await this.request('/enterprise/presence/heartbeat', {
+      method: 'POST',
+      body: JSON.stringify({ clientId }),
+    });
   }
 
   async getOrganizationFeatures(): Promise<EnterpriseOrganizationFeatures> {

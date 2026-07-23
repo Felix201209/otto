@@ -18,6 +18,7 @@ beforeEach(() => {
         members: [],
         employeeCount: 0,
       })),
+      enterprisePresenceHeartbeat: vi.fn(async () => undefined),
       enterpriseMessagesList: vi.fn(async () => []),
       enterpriseMessagesUnread: vi.fn(async () => []),
       enterpriseMessageSend: vi.fn(async (_peerAccountId: string, content: string) => ({

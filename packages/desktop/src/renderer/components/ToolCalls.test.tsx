@@ -42,7 +42,7 @@ function questionCard(overrides: Partial<ToolCall> = {}): ToolCall {
 }
 
 describe('ToolCalls · 空正文的确定性总结', () => {
-  it('统计完成/失败数量，并生成可读工具名与目标', () => {
+  it('失败时说明卡在哪一步和原因', () => {
     const summary = buildToolCompletionSummary([
       {
         id: 'read-1',
@@ -55,13 +55,38 @@ describe('ToolCalls · 空正文的确定性总结', () => {
         toolName: 'run_shell_command',
         parameters: { command: 'npm run build' },
         status: 'error' as ToolCall['status'],
+        result: {
+          success: false,
+          error: '缺少 TypeScript 依赖',
+          executionTime: 12,
+          toolName: 'run_shell_command',
+        },
       },
     ]);
 
-    expect(summary).toContain('本轮共处理 2 项操作');
-    expect(summary).toContain('完成 1 项，失败 1 项');
-    expect(summary).toContain('读取文件（/tmp/report.pdf）');
-    expect(summary).toContain('终端运行（npm run build）');
+    expect(summary).toContain('构建项目（npm run build）没有完成');
+    expect(summary).toContain('缺少 TypeScript 依赖');
+    expect(summary).toContain('已完成：查看相关资料（PDF：report.pdf）');
+  });
+
+  it('全部完成时用自然结果句，不机械汇报步骤数', () => {
+    const summary = buildToolCompletionSummary([
+      {
+        id: 'read-1',
+        toolName: 'read_file',
+        parameters: { absolute_path: '/tmp/report.pdf' },
+        status: 'success' as ToolCall['status'],
+      },
+      {
+        id: 'exec-1',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm run build' },
+        status: 'success' as ToolCall['status'],
+      },
+    ]);
+
+    expect(summary).toBe('查看相关资料（PDF：report.pdf）、构建项目（npm run build）已完成。');
+    expect(summary).not.toContain('步骤');
   });
 
   it('最多列出 3 个关键步骤，避免长工具链刷屏', () => {
@@ -76,6 +101,55 @@ describe('ToolCalls · 空正文的确定性总结', () => {
     expect(summary).toContain('file-1.txt');
     expect(summary).toContain('file-3.txt');
     expect(summary).not.toContain('file-4.txt');
+    expect(summary).toContain('主要处理了');
+  });
+
+  it('工具区域标题展示自然语言进度，不暴露原始工具名', () => {
+    render(
+      <ToolCallsCard
+        toolCalls={[{
+          id: 'read-1',
+          toolName: 'read_file',
+          parameters: { absolute_path: '/tmp/report.pdf' },
+          status: 'executing' as ToolCall['status'],
+        }]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /正在查看相关资料：PDF：report.pdf/ })).toBeTruthy();
+    expect(screen.queryByText(/调用了/)).toBeNull();
+    expect(screen.queryByText('read_file')).toBeNull();
+  });
+
+  it('识别常见命令意图，标题直接说明正在做什么', () => {
+    render(
+      <ToolCallsCard
+        toolCalls={[{
+          id: 'test-1',
+          toolName: 'run_shell_command',
+          parameters: { command: 'npx vitest run src/foo.test.ts' },
+          status: 'executing' as ToolCall['status'],
+        }]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /正在运行测试/ })).toBeTruthy();
+    expect(screen.getByText('运行测试')).toBeTruthy();
+  });
+
+  it('文件目标显示成更短的业务对象，而不是整段路径', () => {
+    render(
+      <ToolCallsCard
+        toolCalls={[{
+          id: 'code-1',
+          toolName: 'read_file',
+          parameters: { absolute_path: 'D:/otto/otto-repo/packages/core/src/core/client.ts' },
+          status: 'success' as ToolCall['status'],
+        }]}
+      />,
+    );
+
+    expect(screen.getByText('代码文件：client.ts')).toBeTruthy();
   });
 });
 

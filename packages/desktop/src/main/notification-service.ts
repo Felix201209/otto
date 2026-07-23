@@ -12,7 +12,7 @@
  *   5. 权限未开启时引导用户授权。
  */
 
-import { Notification } from 'electron';
+import { Notification, shell } from 'electron';
 
 export interface NotificationPayload {
   /** 服务端真实入站消息 id，用于防重连/多路转发重复弹窗。 */
@@ -64,9 +64,20 @@ interface NotificationEntry {
   notification: Notification;
   sessionId: string;
   closeTimer: ReturnType<typeof setTimeout>;
+  count: number;
+  lastShownAt: number;
 }
 
 export class NotificationService {
+  private static readonly CLOSE_AFTER_MS = 7_000;
+  private static readonly MERGE_WINDOW_MS = 8_000;
+  private static readonly SOUND_SOURCES = new Set([
+    'enterprise',
+    'atoa',
+    'feishu',
+    'park',
+  ]);
+
   private active = new Map<string, NotificationEntry>();
   private unreadSessions = new Set<string>();
   private seenMessageIds = new Set<string>();
@@ -84,8 +95,11 @@ export class NotificationService {
 
   /** 收到非本地消息 → 发 OS 通知 + 记未读。 */
   show(payload: NotificationPayload): void {
+    const normalized = this.normalizePayload(payload);
+    if (!normalized) return;
+
     if (payload.messageId) {
-      const dedupeKey = `${payload.source}:${payload.messageId}`;
+      const dedupeKey = `${normalized.source}:${payload.messageId}`;
       if (this.seenMessageIds.has(dedupeKey)) return;
       this.seenMessageIds.add(dedupeKey);
       while (this.seenMessageIds.size > 512) {
@@ -96,8 +110,9 @@ export class NotificationService {
     }
     // 未读态属于 Otto 自己，不能依赖系统通知权限/平台支持。即使用户关闭了 OS toast，
     // 聊天侧栏和托盘徽标仍必须提示，直到真正打开该会话。
-    this.unreadSessions.add(payload.sessionId);
+    this.unreadSessions.add(normalized.sessionId);
     this.emitUnread();
+    this.playNotificationSound(normalized.source);
 
     let supported = false;
     try {
@@ -107,46 +122,69 @@ export class NotificationService {
     }
     if (!supported) return;
 
-    const previous = this.active.get(payload.sessionId);
+    const now = Date.now();
+    const previous = this.active.get(normalized.sessionId);
+    const count =
+      previous && now - previous.lastShownAt <= NotificationService.MERGE_WINDOW_MS
+        ? previous.count + 1
+        : 1;
     if (previous) {
       clearTimeout(previous.closeTimer);
       try { previous.notification.close(); } catch { /* ignore */ }
-      this.active.delete(payload.sessionId);
+      this.active.delete(normalized.sessionId);
     }
 
-    const title = payload.title?.trim().slice(0, 80)
-      || this.formatTitle(payload.source, payload.sender);
-    const body = payload.preview.slice(0, 200);
+    const title = count > 1
+      ? `${normalized.title} · ${count} 条新消息`
+      : normalized.title;
+    const body = count > 1
+      ? `最新：${normalized.preview}`
+      : normalized.preview;
 
-    const notification = new Notification({ title, body, silent: false });
+    const notification = new Notification({
+      title,
+      body,
+      silent: false,
+      urgency: 'normal',
+      timeoutType: 'default',
+    });
     notification.on('click', () => {
       // 企业私聊/A2A 用合成会话 id：点 toast 只能证明用户打开了 Otto，
       // 不代表他已打开真正的企业会话或完成授权。其未读点由业务已读回执清除。
-      if (!payload.sessionId.startsWith('enterprise:')) {
-        this.markRead(payload.sessionId);
+      if (!normalized.sessionId.startsWith('enterprise:')) {
+        this.markRead(normalized.sessionId);
       }
-      this.onNotificationClick?.(payload.sessionId);
+      this.onNotificationClick?.(normalized.sessionId);
+    });
+    notification.on('failed', () => {
+      const current = this.active.get(normalized.sessionId);
+      if (current?.notification === notification) {
+        clearTimeout(current.closeTimer);
+        this.active.delete(normalized.sessionId);
+      }
     });
 
-    // 5 秒后只关闭系统弹窗；Otto 内未读点继续保留。
+    // 只关闭系统弹窗；Otto 内未读点继续保留。
     const closeTimer = setTimeout(() => {
       try { notification.close(); } catch { /* ignore */ }
-      const current = this.active.get(payload.sessionId);
+      const current = this.active.get(normalized.sessionId);
       if (current?.notification === notification) {
-        this.active.delete(payload.sessionId);
+        this.active.delete(normalized.sessionId);
       }
-    }, 5000);
+    }, NotificationService.CLOSE_AFTER_MS);
 
-    this.active.set(payload.sessionId, {
+    this.active.set(normalized.sessionId, {
       notification,
-      sessionId: payload.sessionId,
+      sessionId: normalized.sessionId,
       closeTimer,
+      count,
+      lastShownAt: now,
     });
     try {
       notification.show();
     } catch {
       clearTimeout(closeTimer);
-      this.active.delete(payload.sessionId);
+      this.active.delete(normalized.sessionId);
       // OS 弹窗失败不影响上面已写入的 Otto 未读态。
     }
   }
@@ -201,6 +239,45 @@ export class NotificationService {
     };
     const label = labels[source] ?? '新消息';
     return sender ? `${label} · ${sender}` : label;
+  }
+
+  private normalizePayload(payload: NotificationPayload): NotificationPayload | null {
+    const sessionId = this.compactText(payload.sessionId, 160);
+    if (!sessionId) return null;
+    const source = this.compactText(payload.source, 40) || 'unknown';
+    const sender = this.compactText(payload.sender ?? '', 40);
+    const title =
+      this.compactText(payload.title ?? '', 80) ||
+      this.formatTitle(source, sender || undefined);
+    const preview =
+      this.compactText(payload.preview, 180) ||
+      '你收到了一条新消息。';
+    return {
+      ...payload,
+      sessionId,
+      source,
+      sender: sender || undefined,
+      title,
+      preview,
+    };
+  }
+
+  private compactText(value: string, maxLength: number): string {
+    const compact = value
+      .replace(/[\u0000-\u001f\u007f]+/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim();
+    if (compact.length <= maxLength) return compact;
+    return `${compact.slice(0, Math.max(0, maxLength - 1))}…`;
+  }
+
+  private playNotificationSound(source: string): void {
+    if (!NotificationService.SOUND_SOURCES.has(source)) return;
+    try {
+      shell.beep();
+    } catch {
+      // 系统声音失败不影响弹窗和 Otto 内部未读点。
+    }
   }
 
   private emitUnread(): void {

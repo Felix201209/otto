@@ -26,9 +26,12 @@ export interface EnterpriseUnreadNotificationPayload {
   preview: string;
 }
 
+export type EnterpriseUnreadCounts = Record<string, number>;
+
 interface EnterpriseUnreadNotificationTrackerOptions {
   show(payload: EnterpriseUnreadNotificationPayload): void | Promise<void>;
   markRead(sessionId: string): void | Promise<void>;
+  onUnreadCountsChange?: (counts: EnterpriseUnreadCounts) => void;
 }
 
 function sessionIdForSender(senderAccountId: string): string {
@@ -72,9 +75,13 @@ export class EnterpriseUnreadNotificationTracker {
 
   async reconcile(notifications: readonly EnterpriseUnreadMessageNotification[]): Promise<void> {
     const latest = new Map<string, EnterpriseUnreadMessageNotification>();
+    const counts: EnterpriseUnreadCounts = {};
     for (const notification of notifications) {
       latest.set(notification.senderAccountId, notification);
+      const sessionId = sessionIdForSender(notification.senderAccountId);
+      counts[sessionId] = (counts[sessionId] ?? 0) + 1;
     }
+    this.options.onUnreadCountsChange?.(counts);
 
     for (const senderAccountId of [...this.latestMessageBySender.keys()]) {
       if (latest.has(senderAccountId)) continue;
@@ -93,6 +100,7 @@ export class EnterpriseUnreadNotificationTracker {
   async clear(): Promise<void> {
     const senders = [...this.latestMessageBySender.keys()];
     this.latestMessageBySender.clear();
+    this.options.onUnreadCountsChange?.({});
     await Promise.all(
       senders.map((senderAccountId) =>
         this.options.markRead(sessionIdForSender(senderAccountId))),

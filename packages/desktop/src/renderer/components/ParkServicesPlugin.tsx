@@ -480,7 +480,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
-  const [backgroundTicket, setBackgroundTicket] = useState<EnterpriseRepairTicket | null>(null);
+  const [backgroundTickets, setBackgroundTickets] = useState<EnterpriseRepairTicket[]>([]);
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
   const [focusTicket, setFocusTicket] = useState<EnterpriseRepairTicket | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<EnterpriseRepairTicket[]>([]);
@@ -614,28 +614,50 @@ export function ParkServicesPlugin(): React.JSX.Element {
         setAssignedTasks(tickets.filter(
           (ticket) => ticket.isRecipient && ticket.status !== '已完成',
         ));
-        const candidate = tickets.find((ticket) => (
+        const candidates = [
+          ...tickets.filter((ticket) => (
           ticket.isRecipient
           && !ticket.readAt
           && !notifiedTicketKeys.current.has(`assigned:${ticket.id}`)
-        )) ?? tickets.find((ticket) => (
+          )),
+          ...tickets.filter((ticket) => (
           ticket.isCreator
           && Boolean(ticket.responseAt || ticket.status === '待验收')
           && !notifiedTicketKeys.current.has(`updated:${ticket.id}:${ticket.updatedAt}`)
-        ));
-        if (!candidate) return;
-        const key = candidate.isRecipient && !candidate.readAt
-          ? `assigned:${candidate.id}`
-          : `updated:${candidate.id}:${candidate.updatedAt}`;
-        notifiedTicketKeys.current.add(key);
-        setBackgroundTicket(candidate);
-        const title = candidate.isRecipient && !candidate.readAt
-          ? 'Otto 待处理提醒 · 园区服务'
-          : 'Otto 园区服务进度提醒';
-        const body = candidate.isRecipient && !candidate.readAt
-          ? `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`
-          : `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
-        void window.otto.parkNativeNotify?.(title, body);
+          )),
+        ];
+        if (!candidates.length) return;
+        for (const candidate of candidates) {
+          const key = candidate.isRecipient && !candidate.readAt
+            ? `assigned:${candidate.id}`
+            : `updated:${candidate.id}:${candidate.updatedAt}`;
+          notifiedTicketKeys.current.add(key);
+          const title = candidate.isRecipient && !candidate.readAt
+            ? 'Otto 待处理提醒 · 园区服务'
+            : 'Otto 园区服务进度提醒';
+          const body = candidate.isRecipient && !candidate.readAt
+            ? `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`
+            : `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
+          const notify = window.otto.notificationShow?.({
+            messageId: `park-ticket:${candidate.id}:${candidate.updatedAt}`,
+            sessionId: `park:ticket:${candidate.id}`,
+            source: 'park',
+            title,
+            sender: candidate.isRecipient ? candidate.creator.name : undefined,
+            preview: body,
+          });
+          if (notify) {
+            void notify.catch(() => {
+              void window.otto.parkNativeNotify?.(title, body);
+            });
+          } else {
+            void window.otto.parkNativeNotify?.(title, body);
+          }
+        }
+        setBackgroundTickets((current) => [
+          ...candidates,
+          ...current.filter((ticket) => !candidates.some((candidate) => candidate.id === ticket.id)),
+        ].slice(0, 5));
       } catch {
         // 未登录、服务器暂不可达时安静重试；报修页打开后会显示具体错误。
       }
@@ -668,9 +690,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
     }
   };
 
-  const openBackgroundTicket = (): void => {
-    if (backgroundTicket) openTicket(backgroundTicket);
-    setBackgroundTicket(null);
+  const openBackgroundTicket = (ticket: EnterpriseRepairTicket): void => {
+    openTicket(ticket);
+    setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
+    void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
   };
 
   const openBackgroundPublication = (): void => {
@@ -738,7 +761,15 @@ export function ParkServicesPlugin(): React.JSX.Element {
       </div>
     </div>
   ) : null}
-  {backgroundTicket ? <button type="button" className="otto-park-toast otto-park-toast--result" onClick={openBackgroundTicket} aria-label="打开园区服务通知"><span>Otto 园区服务</span><strong>{backgroundTicket.isRecipient && !backgroundTicket.readAt ? '收到新的待处理申请' : '你的园区服务申请有新进展'}</strong><em>{backgroundTicket.title} · {backgroundTicket.status} · 点击查看</em></button> : null}
-  {backgroundPublication ? <button type="button" className="otto-park-toast" onClick={openBackgroundPublication} aria-label="打开园区通知"><span>{backgroundPublication.kind === 'announcement' ? '园区公告' : '满意度调查'}</span><strong>{backgroundPublication.title}</strong><em>点击查看</em></button> : null}
+  {(backgroundTickets.length || backgroundPublication) ? <div className="otto-park-toast-stack" aria-live="polite">
+    {backgroundTickets.map((ticket) => (
+      <button key={ticket.id} type="button" className="otto-park-toast otto-park-toast--result" onClick={() => openBackgroundTicket(ticket)} aria-label={`打开园区服务通知：${ticket.title}`}>
+        <span>Otto 园区服务</span>
+        <strong>{ticket.isRecipient && !ticket.readAt ? '收到新的待处理申请' : '你的园区服务申请有新进展'}</strong>
+        <em>{ticket.title} · {ticket.status} · 点击查看</em>
+      </button>
+    ))}
+    {backgroundPublication ? <button type="button" className="otto-park-toast" onClick={openBackgroundPublication} aria-label="打开园区通知"><span>{backgroundPublication.kind === 'announcement' ? '园区公告' : '满意度调查'}</span><strong>{backgroundPublication.title}</strong><em>点击查看</em></button> : null}
+  </div> : null}
   </>;
 }

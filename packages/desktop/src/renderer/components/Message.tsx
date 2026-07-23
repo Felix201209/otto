@@ -306,11 +306,11 @@ function ProcessTrace({
         aria-expanded={open}
       >
         <span className="otto-reasoning__title">
-          {active ? '深度思考中…' : requiresAttention ? '等待确认' : '深度思考'}
+          {active ? '正在处理…' : requiresAttention ? '等待确认' : '处理记录'}
         </span>
         {tools.length > 0 ? (
           <span className="otto-process-trace__count">
-            {tools.length} 项过程
+            {tools.length} 个步骤
           </span>
         ) : null}
         <IconChevron

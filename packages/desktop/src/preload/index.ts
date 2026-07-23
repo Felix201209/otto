@@ -378,6 +378,8 @@ export interface EnterpriseOrganizationView {
     avatarUrl?: string | null;
     isAdmin: boolean;
     status: 'active' | 'disabled';
+    ottoOnline?: boolean;
+    ottoLastSeenAt?: string | null;
   }>;
   employeeCount: number;
   structure?: EnterpriseOrganizationDepartment[];
@@ -540,6 +542,7 @@ const IPC = {
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
+  enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
   enterpriseOrganizationFeaturesUpdate: 'otto:enterprise-organization-features-update',
   enterpriseOrganizationDepartments: 'otto:enterprise-organization-departments',
@@ -840,6 +843,7 @@ export interface OttoBridge {
     department?: string;
   }): Promise<EnterpriseKnowledgeItem[]>;
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
+  enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
   enterpriseOrganizationFeaturesUpdate(patch: Partial<EnterpriseOrganizationFeatures>): Promise<EnterpriseOrganizationFeatures>;
   enterpriseOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]>;
@@ -1557,6 +1561,9 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationView) as Promise<
       EnterpriseOrganizationView
     >;
+  },
+  enterprisePresenceHeartbeat(): Promise<void> {
+    return ipcRenderer.invoke(IPC.enterprisePresenceHeartbeat) as Promise<void>;
   },
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures> {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationFeaturesGet) as Promise<EnterpriseOrganizationFeatures>;

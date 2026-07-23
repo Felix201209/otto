@@ -38,6 +38,7 @@ import { OrganizationTree } from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
+import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -92,12 +93,14 @@ interface SidebarProps {
   enterpriseAccount?: EnterpriseAccount;
   organizationOpenRequest?: number;
   organizationRefreshRevision?: number;
+  enterpriseUnreadCounts?: EnterpriseUnreadCounts;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
   onOpenAccounts?: () => void;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => void | Promise<void>;
+  onEnterpriseMessageRead?: (peerAccountId: string) => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -116,12 +119,14 @@ export function Sidebar({
   enterpriseAccount,
   organizationOpenRequest = 0,
   organizationRefreshRevision = 0,
+  enterpriseUnreadCounts = {},
   onSelect,
   onNewChat,
   onOpenHub,
   onOpenAccounts,
   onJoinEnterprise,
   onLogout,
+  onEnterpriseMessageRead,
   onViewAll,
   onRename,
   onDelete,
@@ -133,7 +138,16 @@ export function Sidebar({
   const [logoutBusy, setLogoutBusy] = useState(false);
   const sessionGroups = relativeSessionGroups(groups);
   const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
-  const unreadCount = unreadSessions?.length ?? 0;
+  const enterpriseUnreadTotal = Object.values(enterpriseUnreadCounts)
+    .reduce((total, count) => total + count, 0);
+  const countedEnterpriseSessions = new Set(
+    Object.entries(enterpriseUnreadCounts)
+      .filter(([, count]) => count > 0)
+      .map(([sessionId]) => sessionId),
+  );
+  const unreadSessionRemainder = unreadSessions
+    ?.filter((sessionId) => !countedEnterpriseSessions.has(sessionId)).length ?? 0;
+  const unreadCount = enterpriseUnreadTotal + unreadSessionRemainder;
 
   return (
     <aside className="otto-sidebar">
@@ -150,7 +164,9 @@ export function Sidebar({
             role="status"
             aria-label={`${unreadCount} 条未读消息`}
             title={`${unreadCount} 条未读消息`}
-          />
+          >
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
         ) : null}
         <button
           type="button"
@@ -177,6 +193,8 @@ export function Sidebar({
             : enterpriseAccount}
           openRequest={organizationOpenRequest}
           refreshRevision={organizationRefreshRevision}
+          unreadCounts={enterpriseUnreadCounts}
+          onMessageRead={onEnterpriseMessageRead}
         />
 
         <section className="otto-conversations" aria-label="对话任务">

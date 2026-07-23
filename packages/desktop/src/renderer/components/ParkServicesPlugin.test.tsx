@@ -22,6 +22,7 @@ afterEach(() => {
     for (const key of [
       'enterpriseSession', 'enterpriseTicketList', 'enterpriseTicketSubmit',
       'enterpriseTicketAction', 'enterpriseTicketRead', 'parkNativeNotify',
+      'notificationShow', 'notificationMarkRead',
       'enterpriseParkPublications', 'enterpriseParkPublicationRead', 'enterpriseParkSurveySubmit',
       'enterpriseParkView', 'parkConfig',
     ]) delete (window.otto as unknown as Record<string, unknown>)[key];
@@ -35,7 +36,7 @@ function openDialog(): void {
   });
 }
 
-function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter') {
+function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCount = 1) {
   const account = {
     id: kind === 'worker' ? 'worker-1' : 'reporter-1',
     organizationId: 'org-1', organizationName: '测试园区', employeeId: null,
@@ -46,17 +47,23 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter') {
     tags: kind === 'worker' ? ['维修工作人员'] : ['普通成员'],
     createdAt: '2026-07-20', updatedAt: '2026-07-20',
   };
-  let tickets: EnterpriseRepairTicket[] = kind === 'worker' ? [{
-    id: 'ticket-1', serviceId: 'repair', title: '某某会议室 · 水电报修', description: '灯坏了',
-    formData: { location: '某某会议室', category: '水电', issue: '灯坏了', urgency: '普通', contact: '报修员工', phone: '13800138000' },
-    targetTags: ['维修工作人员'], status: '待接单', category: '水电', location: '某某会议室',
-    urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
-    responseType: null, responseText: null, responseAt: null,
-    createdAt: '2026-07-20', updatedAt: '2026-07-20',
-    creator: { id: 'reporter-1', name: '报修员工', username: 'reporter' },
-    recipientCount: 1, recipients: [{ id: account.id, name: account.name }], deliveryStatus: 'delivered', readAt: null,
-    isCreator: false, isRecipient: true, notifications: [],
-  }] : [];
+  const workerTickets = Array.from({ length: ticketCount }, (_, index): EnterpriseRepairTicket => {
+    const location = index === 0 ? '某某会议室' : 'A 座大厅';
+    const category = index === 0 ? '水电' : '空调';
+    const issue = index === 0 ? '灯坏了' : '空调漏水';
+    return {
+      id: `ticket-${index + 1}`, serviceId: 'repair', title: `${location} · ${category}报修`, description: issue,
+      formData: { location, category, issue, urgency: '普通', contact: '报修员工', phone: '13800138000' },
+      targetTags: ['维修工作人员'], status: '待接单', category, location,
+      urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
+      responseType: null, responseText: null, responseAt: null,
+      createdAt: '2026-07-20', updatedAt: '2026-07-20',
+      creator: { id: 'reporter-1', name: '报修员工', username: 'reporter' },
+      recipientCount: 1, recipients: [{ id: account.id, name: account.name }], deliveryStatus: 'delivered', readAt: null,
+      isCreator: false, isRecipient: true, notifications: [],
+    };
+  });
+  let tickets: EnterpriseRepairTicket[] = kind === 'worker' ? workerTickets : [];
   const submit = vi.fn(async (input: {
     serviceId?: string; title: string; description: string; targetTags?: string[]; formData?: Record<string, string>; category?: string;
     location?: string; urgency?: string; contact?: string; contactPhone?: string;
@@ -96,6 +103,8 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter') {
       return next;
     }),
     parkNativeNotify: vi.fn(async () => true),
+    notificationShow: vi.fn(async () => undefined),
+    notificationMarkRead: vi.fn(async () => undefined),
     enterpriseParkPublications: vi.fn(async () => []),
   });
   return { submit, action };
@@ -249,13 +258,41 @@ describe('ParkServicesPlugin', () => {
   it('维修人员从右下角待办提醒直接进入处理表，不显示角色切换', async () => {
     const bridge = installRepairBridge('worker');
     render(<ParkServicesPlugin />);
-    fireEvent.click(await screen.findByLabelText('打开园区服务通知'));
+    await waitFor(() => expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'park:ticket:ticket-1',
+      source: 'park',
+    })));
+    fireEvent.click(await screen.findByLabelText(/打开园区服务通知/));
     expect(await screen.findByText('灯坏了')).toBeTruthy();
     expect(screen.queryByText(/维修工作台|我要报修/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '接单并处理' }));
     await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', { action: 'accept' }));
     fireEvent.click(screen.getByRole('button', { name: '提交办理完成' }));
     await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', { action: 'complete' }));
+  });
+
+  it('多个报修待办不会重合，每个工单都有独立系统通知和可点击入口', async () => {
+    installRepairBridge('worker', 2);
+    render(<ParkServicesPlugin />);
+
+    const toasts = await screen.findAllByLabelText(/打开园区服务通知/);
+    expect(toasts).toHaveLength(2);
+    expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'park-ticket:ticket-1:2026-07-20',
+      sessionId: 'park:ticket:ticket-1',
+      source: 'park',
+      title: 'Otto 待处理提醒 · 园区服务',
+    }));
+    expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'park-ticket:ticket-2:2026-07-20',
+      sessionId: 'park:ticket:ticket-2',
+      source: 'park',
+      title: 'Otto 待处理提醒 · 园区服务',
+    }));
+
+    fireEvent.click(screen.getByLabelText(/A 座大厅/));
+    expect(await screen.findByText('空调漏水')).toBeTruthy();
+    expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:ticket:ticket-2');
   });
 
   it('工作人员关闭通知后仍可从九宫格上方找回自己的待办，普通用户看不到该入口', async () => {
@@ -278,7 +315,7 @@ describe('ParkServicesPlugin', () => {
   it('维修人员使用结构化回复表，不增加聊天窗口', async () => {
     const bridge = installRepairBridge('worker');
     render(<ParkServicesPlugin />);
-    fireEvent.click(await screen.findByLabelText('打开园区服务通知'));
+    fireEvent.click(await screen.findByLabelText(/打开园区服务通知/));
     fireEvent.change(await screen.findByLabelText('处理方式'), { target: { value: '远程指导' } });
     fireEvent.change(screen.getByLabelText('给申请人的说明'), { target: { value: '请先检查开关' } });
     fireEvent.submit(screen.getByLabelText('园区服务回复表'));

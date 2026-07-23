@@ -28,7 +28,7 @@ const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.ot
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 5;
+export const ENTERPRISE_SCHEMA_VERSION = 6;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -389,6 +389,17 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
+    CREATE TABLE IF NOT EXISTS account_presence (
+      organization_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      client_id TEXT NOT NULL DEFAULT '',
+      last_seen_at_ms INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (organization_id, account_id, client_id),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS direct_messages (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL,
@@ -599,6 +610,8 @@ function initSchema(d: Database): void {
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
       ON account_token_usage(account_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_account_presence_org_seen
+      ON account_presence(organization_id, last_seen_at_ms);
   `);
 
   const organizationColumns = d.prepare(
@@ -656,6 +669,7 @@ function initSchema(d: Database): void {
     'ticket_notifications',
     'park_publications',
     'park_publication_recipients',
+    'account_presence',
   ]) ensureOrganizationColumn(table);
 
   const ticketColumns = d.prepare('PRAGMA table_info(it_tickets)').all() as Array<{ name: string }>;
@@ -2292,6 +2306,59 @@ export function listAccounts(organizationId = DEFAULT_ORGANIZATION_ID): AccountV
     'SELECT * FROM accounts WHERE organization_id = ? AND deleted_at IS NULL ORDER BY name, username',
   ).all(organizationId) as AccountRow[])
     .map(toAccountView);
+}
+
+export interface AccountPresenceView {
+  accountId: string;
+  online: boolean;
+  lastSeenAt: string | null;
+}
+
+interface AccountPresenceRow {
+  account_id: string;
+  last_seen_at_ms: number;
+}
+
+export function touchAccountPresence(input: {
+  organizationId: string;
+  accountId: string;
+  clientId?: string | null;
+  nowMs?: number;
+}): AccountPresenceView {
+  const nowMs = Number.isFinite(input.nowMs) ? Math.floor(input.nowMs!) : Date.now();
+  const clientId = (input.clientId || 'default').trim().slice(0, 120) || 'default';
+  getDB().prepare(
+    `INSERT INTO account_presence
+      (organization_id, account_id, client_id, last_seen_at_ms, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(organization_id, account_id, client_id)
+     DO UPDATE SET last_seen_at_ms = excluded.last_seen_at_ms, updated_at = datetime('now')`,
+  ).run(input.organizationId, input.accountId, clientId, nowMs);
+  return {
+    accountId: input.accountId,
+    online: true,
+    lastSeenAt: new Date(nowMs).toISOString(),
+  };
+}
+
+export function listAccountPresence(
+  organizationId: string,
+  onlineWindowMs = 60_000,
+  nowMs = Date.now(),
+): AccountPresenceView[] {
+  const rows = getDB().prepare(
+    `SELECT account_id, MAX(last_seen_at_ms) AS last_seen_at_ms
+     FROM account_presence
+     WHERE organization_id = ?
+     GROUP BY account_id`,
+  ).all(organizationId) as AccountPresenceRow[];
+  return rows.map((row) => ({
+    accountId: row.account_id,
+    online: nowMs - Number(row.last_seen_at_ms) <= onlineWindowMs,
+    lastSeenAt: Number.isFinite(Number(row.last_seen_at_ms))
+      ? new Date(Number(row.last_seen_at_ms)).toISOString()
+      : null,
+  }));
 }
 
 export interface DirectMessageView {
