@@ -1,8 +1,9 @@
 /**
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  *
- * 企业私聊未读轮询的纯状态层：同一成员聚合为一个持久未读点，
- * 只在新消息到达时刷新 OS 弹窗；后端真正标记已读后才清本地点。
+ * Enterprise direct-message unread reconciliation:
+ * group unread items by sender, show one OS notification for the latest item,
+ * and keep Otto's unread marker until the backend reports the message as read.
  */
 
 const ATOA_REQUEST_PREFIX = 'OTTO_ATOA_REQUEST ';
@@ -38,23 +39,31 @@ function isAtoaRequest(notification: EnterpriseUnreadMessageNotification): boole
   return notification.preview.startsWith(ATOA_REQUEST_PREFIX);
 }
 
+function isAtoaResponse(notification: EnterpriseUnreadMessageNotification): boolean {
+  return notification.preview.startsWith(ATOA_RESPONSE_PREFIX);
+}
+
 function toPayload(
   notification: EnterpriseUnreadMessageNotification,
 ): EnterpriseUnreadNotificationPayload {
-  const isAtoaResponse = notification.preview.startsWith(ATOA_RESPONSE_PREFIX);
+  const atoaRequest = isAtoaRequest(notification);
+  const atoaResponse = isAtoaResponse(notification);
   return {
     sessionId: sessionIdForSender(notification.senderAccountId),
-    source: isAtoaResponse ? 'atoa' : 'enterprise',
+    source: atoaRequest || atoaResponse ? 'atoa' : 'enterprise',
     sender: notification.senderName,
-    preview: isAtoaResponse
-      ? '对方 Otto 已回复你的企业协作请求'
-      : notification.preview,
+    preview: atoaRequest
+      ? '对方正在请求你的 Otto 协作'
+      : atoaResponse
+        ? '对方 Otto 已回复你的企业协作请求'
+        : notification.preview,
   };
 }
 
 /**
- * reconcile 的输入是后端当前未读快照。服务端按时间升序返回，
- * 遍历覆盖后每个发送者只保留最新一条，避免启动时连弹几十个 toast。
+ * The input is the backend's current unread snapshot. The backend returns
+ * messages in time order; by overwriting in the map, each sender keeps only the
+ * latest unread notification so startup does not create a notification storm.
  */
 export class EnterpriseUnreadNotificationTracker {
   private latestMessageBySender = new Map<string, string>();
@@ -64,9 +73,6 @@ export class EnterpriseUnreadNotificationTracker {
   async reconcile(notifications: readonly EnterpriseUnreadMessageNotification[]): Promise<void> {
     const latest = new Map<string, EnterpriseUnreadMessageNotification>();
     for (const notification of notifications) {
-      // A2A 请求由 App 的授权收件箱负责弹窗和完成后已读，
-      // 这里略过以免同一协作请求弹两次。
-      if (isAtoaRequest(notification)) continue;
       latest.set(notification.senderAccountId, notification);
     }
 
@@ -83,7 +89,7 @@ export class EnterpriseUnreadNotificationTracker {
     }
   }
 
-  /** 切换/退出账号时不能把上一账号的未读点留给新账号。 */
+  /** Clear local unread markers when switching or logging out of an enterprise account. */
   async clear(): Promise<void> {
     const senders = [...this.latestMessageBySender.keys()];
     this.latestMessageBySender.clear();

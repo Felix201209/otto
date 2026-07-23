@@ -595,6 +595,16 @@ const IPC = {
 
 /** renderer 注册的入站帧回调。 */
 type FrameHandler = (frame: ServerToClient) => void;
+type ExternalInboundNotificationFrame = {
+  type: 'external_inbound_notification';
+  payload: {
+    messageId: string;
+    sessionId: string;
+    source: string;
+    sender?: string;
+    preview: string;
+  };
+};
 /** 连接状态变化回调。 */
 type ConnectionHandler = (connected: boolean) => void;
 /** 应用菜单动作回调（'new-chat' | 'open-settings'）。 */
@@ -739,7 +749,14 @@ export interface OttoBridge {
   /**
    * 通知：弹OS原生通知
    */
-  notificationShow(payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void>;
+  notificationShow(payload: {
+    sessionId: string;
+    source: string;
+    sender?: string;
+    title?: string;
+    preview: string;
+    messageId?: string;
+  }): Promise<void>;
   /** 通知：标记会话已读 */
   notificationMarkRead(sessionId: string): Promise<void>;
   /** 通知：读取 main 进程当前未读快照（renderer 重载后恢复闪烁点）。 */
@@ -933,10 +950,11 @@ function notifyConnection(connected: boolean): void {
 }
 
 function dispatchFrame(frame: ServerToClient): void {
-  if (frame.type === 'external_inbound_notification') {
+  if ((frame as { type: string }).type === 'external_inbound_notification') {
+    const notificationFrame = frame as unknown as ExternalInboundNotificationFrame;
+    void ipcRenderer.invoke(IPC.notificationShow, notificationFrame.payload).catch(() => undefined);
     // 不经 renderer React 生命周期：窗口隐藏、切在其它会话或 UI 重载时，
     // preload 仍会把全局入站帧直接交给 main NotificationService。
-    void ipcRenderer.invoke(IPC.notificationShow, frame.payload).catch(() => undefined);
     return;
   }
   for (const h of frameHandlers) {
@@ -1354,7 +1372,14 @@ const bridge: OttoBridge = {
       ipcRenderer.removeListener(IPC.updateProgress, listener);
     };
   },
-  notificationShow(payload: { sessionId: string; source: string; sender?: string; preview: string }): Promise<void> {
+  notificationShow(payload: {
+    sessionId: string;
+    source: string;
+    sender?: string;
+    title?: string;
+    preview: string;
+    messageId?: string;
+  }): Promise<void> {
     return ipcRenderer.invoke(IPC.notificationShow, payload) as Promise<void>;
   },
   notificationMarkRead(sessionId: string): Promise<void> {

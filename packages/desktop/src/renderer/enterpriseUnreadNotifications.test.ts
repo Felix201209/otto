@@ -22,7 +22,7 @@ function message(over: Partial<EnterpriseUnreadMessageNotification> = {}): Enter
 }
 
 describe('EnterpriseUnreadNotificationTracker', () => {
-  it('同一成员多条未读只弹最新一条，且重复轮询不重复弹窗', async () => {
+  it('shows only the latest unread message per sender and does not repeat notifications', async () => {
     const show = vi.fn(async () => undefined);
     const markRead = vi.fn(async () => undefined);
     const tracker = new EnterpriseUnreadNotificationTracker({ show, markRead });
@@ -44,7 +44,7 @@ describe('EnterpriseUnreadNotificationTracker', () => {
     expect(markRead).not.toHaveBeenCalled();
   });
 
-  it('同一成员出现新消息时更新系统弹窗，后端已读后才清本地闪烁点', async () => {
+  it('updates OS notification for new messages and clears local unread markers after backend read', async () => {
     const show = vi.fn(async () => undefined);
     const markRead = vi.fn(async () => undefined);
     const tracker = new EnterpriseUnreadNotificationTracker({ show, markRead });
@@ -58,7 +58,7 @@ describe('EnterpriseUnreadNotificationTracker', () => {
     expect(markRead).toHaveBeenCalledWith('enterprise:message:alice');
   });
 
-  it('A2A 请求交给专用收件箱弹窗，A2A 回复用可读提醒而不暴露协议 JSON', async () => {
+  it('shows OS notifications for both ATOA requests and responses without exposing protocol JSON', async () => {
     const show = vi.fn(async () => undefined);
     const tracker = new EnterpriseUnreadNotificationTracker({
       show,
@@ -75,8 +75,14 @@ describe('EnterpriseUnreadNotificationTracker', () => {
       }),
     ]);
 
-    expect(show).toHaveBeenCalledOnce();
-    expect(show).toHaveBeenCalledWith({
+    expect(show).toHaveBeenCalledTimes(2);
+    expect(show).toHaveBeenNthCalledWith(1, {
+      sessionId: 'enterprise:message:alice',
+      source: 'atoa',
+      sender: 'Alice',
+      preview: '对方正在请求你的 Otto 协作',
+    });
+    expect(show).toHaveBeenNthCalledWith(2, {
       sessionId: 'enterprise:message:bob',
       source: 'atoa',
       sender: 'Bob',
@@ -84,7 +90,7 @@ describe('EnterpriseUnreadNotificationTracker', () => {
     });
   });
 
-  it('账号切换时清理该账号的本地未读标记', async () => {
+  it('clears local unread markers when switching enterprise accounts', async () => {
     const markRead = vi.fn(async () => undefined);
     const tracker = new EnterpriseUnreadNotificationTracker({
       show: vi.fn(async () => undefined),

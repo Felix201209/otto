@@ -10,7 +10,7 @@ import { SetupPanel } from '../src/renderer/setup/SetupPanel.js';
 
 const MODELS = [
   { id: 'custom:anthropic:claude-opus-4@abc', displayName: 'Claude Opus 4', provider: 'anthropic' },
-  { id: 'custom:openai:gpt-5.1@def', displayName: 'OpenAI gpt-5.1', provider: 'openai-responses' },
+  { id: 'custom:openai:gpt-5.1@def', displayName: '高端推理模型', provider: 'openai-responses' },
 ];
 
 const root = document.getElementById('root');

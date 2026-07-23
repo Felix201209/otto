@@ -483,6 +483,18 @@ async function extractWordContent(filePath: string): Promise<string> {
  */
 async function extractPdfTextUncached(filePath: string): Promise<string> {
   const fileName = path.basename(filePath);
+  const stats = await fs.promises.stat(filePath);
+  const largePdf = stats.size >= 12 * 1024 * 1024;
+
+  // Large PDFs are often simple text exports. pdf-parse is usually faster for
+  // that case, so try it first and keep pdf2json as the layout-heavy fallback.
+  if (largePdf) {
+    try {
+      return await extractPdfWithPdfParse(filePath);
+    } catch {
+      // Continue to the standard fallback chain below.
+    }
+  }
 
   // Method 1: Try pdf2json first (better for complex PDFs, zero dependencies)
   try {
@@ -544,12 +556,32 @@ function resolvePdfTextCacheDir(): string {
 async function pdfCacheKey(filePath: string): Promise<string> {
   const stats = await fs.promises.stat(filePath, { bigint: true });
   const contentHash = createHash('sha256');
-  for await (const chunk of fs.createReadStream(filePath)) {
-    contentHash.update(chunk as Buffer);
+  const size = Number(stats.size);
+  const sampleSize = 64 * 1024;
+  if (size <= sampleSize * 3) {
+    for await (const chunk of fs.createReadStream(filePath)) {
+      contentHash.update(chunk as Buffer);
+    }
+  } else {
+    const positions = [
+      0,
+      Math.max(0, Math.floor(size / 2) - Math.floor(sampleSize / 2)),
+      Math.max(0, size - sampleSize),
+    ];
+    const handle = await fs.promises.open(filePath, 'r');
+    try {
+      for (const position of positions) {
+        const buffer = Buffer.allocUnsafe(sampleSize);
+        const { bytesRead } = await handle.read(buffer, 0, sampleSize, position);
+        contentHash.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      await handle.close();
+    }
   }
   return createHash('sha256')
     .update(JSON.stringify({
-      version: 2,
+      version: 3,
       path: path.resolve(filePath),
       size: stats.size.toString(),
       mtimeNs: stats.mtimeNs.toString(),
@@ -559,11 +591,11 @@ async function pdfCacheKey(filePath: string): Promise<string> {
 }
 
 /**
- * Persistent PDF text cache shared by CLI and Desktop. The key includes a real
- * content digest as well as metadata: filesystems can preserve or coarsen mtime,
- * so path/size/mtime alone is not a safe invalidation boundary. The in-flight
- * map also prevents two attachment readers from parsing the same large PDF at
- * once.
+ * Persistent PDF text cache shared by CLI and Desktop. The key includes
+ * metadata plus a content sample digest: small PDFs are hashed fully, while
+ * large PDFs hash first/middle/last windows so repeated reads do not scan the
+ * entire file before hitting cache. The in-flight map also prevents two
+ * attachment readers from parsing the same large PDF at once.
  */
 export async function extractPdfTextWithCache(
   filePath: string,

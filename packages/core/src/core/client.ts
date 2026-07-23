@@ -58,6 +58,10 @@ import {
   type MemoryInjection,
 } from '../memory/sessionMemoryInjector.js';
 import { createMemorySubsystem } from '../memory/memorySubsystem.js';
+import {
+  buildCheckpointRecoveryHistory,
+  SessionCheckpointService,
+} from '../services/sessionCheckpoint.js';
 
 import { OttoServerAdapter } from './OttoServerAdapter.js';
 
@@ -136,6 +140,7 @@ export class OttoClient {
   private activeGoalContext: GoalContext | null = null;
   private activeLoopContext: LoopContext | null = null;
   private memoryInjector?: SessionMemoryInjector;
+  private readonly checkpointService = new SessionCheckpointService();
 
   /**
    * Knowledge capture is registered via the module-level singleton
@@ -204,6 +209,7 @@ export class OttoClient {
     }
 
     this.chat = await this.startChat();
+    await this.restoreRuntimeCheckpoint();
   }
 
   /**
@@ -222,6 +228,15 @@ export class OttoClient {
         .fireSessionEndEvent(endReason);
     } catch (hookError) {
       logger.warn(`[OttoClient] SessionEnd hook execution failed: ${hookError}`);
+    }
+    try {
+      await this.checkpointService.markSessionEnded(
+        this.config.getSessionId(),
+        this.config.getTargetDir(),
+        reason,
+      );
+    } catch (checkpointError) {
+      logger.warn(`[OttoClient] Session checkpoint end failed: ${checkpointError}`);
     }
   }
 
@@ -692,6 +707,67 @@ export class OttoClient {
     return this.getChat().getHistory();
   }
 
+  private async restoreRuntimeCheckpoint(): Promise<void> {
+    try {
+      const restored = await this.checkpointService.restoreLatest(
+        this.config.getSessionId(),
+        this.config.getTargetDir(),
+      );
+      if (!restored) return;
+      this.setHistory(buildCheckpointRecoveryHistory(restored));
+      this.sessionTurnCount = Math.max(this.sessionTurnCount, restored.turnCount);
+      await this.checkpointService.markRecoveryApplied(this.config.getSessionId());
+      logger.info(
+        `[OttoClient] Restored runtime checkpoint for session ${this.config.getSessionId()}`,
+      );
+    } catch (err) {
+      logger.warn(`[OttoClient] Failed to restore runtime checkpoint: ${err}`);
+    }
+  }
+
+  private checkpointTurnStarted(request: PartListUnion): void {
+    const chat = this.chat;
+    if (!chat) return;
+    void this.checkpointService
+      .markTurnStarted({
+        sessionId: this.config.getSessionId(),
+        projectRoot: this.config.getTargetDir(),
+        history: chat.getHistory(true),
+        turnCount: this.sessionTurnCount,
+        pendingRequest: request,
+      })
+      .catch((err) => {
+        logger.debug(`[OttoClient] Session checkpoint start skipped: ${err}`);
+      });
+  }
+
+  private checkpointTurnReady(): void {
+    const chat = this.chat;
+    if (!chat) return;
+    void this.checkpointService
+      .markTurnReady({
+        sessionId: this.config.getSessionId(),
+        projectRoot: this.config.getTargetDir(),
+        history: chat.getHistory(true),
+        turnCount: this.sessionTurnCount,
+      })
+      .catch((err) => {
+        logger.debug(`[OttoClient] Session checkpoint ready skipped: ${err}`);
+      });
+  }
+
+  private checkpointTurnInterrupted(reason: string): void {
+    void this.checkpointService
+      .markTurnInterrupted(
+        this.config.getSessionId(),
+        this.config.getTargetDir(),
+        reason,
+      )
+      .catch((err) => {
+        logger.debug(`[OttoClient] Session checkpoint interruption skipped: ${err}`);
+      });
+  }
+
   setHistory(history: Content[]) {
     // 🛡️ /session select / IDE companion 等路径会直接通过此入口注入历史，
     //    在历史本身已经损坏的情况下（中断、截断、压缩失误），下一次 sendMessage
@@ -1048,7 +1124,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
               reason: compressionError ?? 'compression_returned_null',
             },
           };
-          // 注意：不清除 needsCompression 标记。下次用户发消息时会再试一次。
+          this.checkpointTurnInterrupted('compression_failed');
           return new Turn(this.getChat(), prompt_id, this.config.getModel());
         }
       }
@@ -1156,6 +1232,7 @@ ${injection.summary}]` },
       }
     }
 
+    this.checkpointTurnStarted(request);
     const turn = new Turn(this.getChat(), prompt_id, this.config.getModel());
 
     const loopDetected = await this.loopDetector.turnStarted(signal);
@@ -1164,6 +1241,7 @@ ${injection.summary}]` },
       yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
       // Add feedback to chat history so AI understands why it was stopped
       this.addLoopDetectionFeedbackToHistory(loopType);
+      this.checkpointTurnInterrupted(`loop_detected:${loopType ?? 'unknown'}`);
       return turn;
     }
 
@@ -1176,6 +1254,7 @@ ${injection.summary}]` },
         yield { type: OttoEventType.LoopDetected, value: loopType ? loopType.toString() : undefined };
         // Add feedback to chat history so AI understands why it was stopped
         this.addLoopDetectionFeedbackToHistory(loopType);
+        this.checkpointTurnInterrupted(`loop_detected:${loopType ?? 'unknown'}`);
         return turn;
       }
 
@@ -1219,6 +1298,7 @@ ${injection.summary}]` },
         // Model was switched (likely due to quota error fallback)
         // Don't continue with recursive call to prevent unwanted Flash execution
         logger.info(`[STOP-DEBUG] sendMessageStream: MODEL SWITCHED during call (${initialModel} → ${currentModel}), stopping recursion`);
+        this.checkpointTurnReady();
         return turn;
       }
 
@@ -1275,6 +1355,14 @@ ${injection.summary}]` },
     this.triggerKnowledgeCapture().catch((captureError) => {
       logger.debug(`[OttoClient] Knowledge capture skipped or failed: ${captureError}`);
     });
+
+    if (signal?.aborted) {
+      this.checkpointTurnInterrupted('abort_signal');
+    } else if (turn.pendingToolCalls.length > 0) {
+      this.checkpointTurnInterrupted('pending_tool_calls');
+    } else {
+      this.checkpointTurnReady();
+    }
 
     return turn;
   }

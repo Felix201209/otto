@@ -30,6 +30,11 @@ export * from './config/messageRoles.js';
 export * from './config/serverConfig.js';
 export * from './config/proxyConfig.js';
 export * from './config/modelCapabilities.js';
+export {
+  FEATURE_FLAGS,
+  FeatureFlagManager,
+  type FeatureFlagChangeCallback,
+} from './config/featureFlags.js';
 
 // Export extended types
 export * from './types/extendedContent.js';
