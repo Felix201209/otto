@@ -91,6 +91,10 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park-services/push',
   '/enterprise/park-services/survey-results',
   '/enterprise/usage/summary',
+  '/enterprise/deployment/status',
+  '/enterprise/deployment/license',
+  '/enterprise/deployment/telemetry',
+  '/enterprise/deployment/diagnostics',
   '/enterprise/organizations',
 ]);
 
@@ -208,6 +212,10 @@ const ENTERPRISE_CAPABILITIES = [
   'unread_message_notifications_v1',
   'account_presence_v1',
   'park_tenants_v1',
+  'private_deployment_v1',
+  'license_enforcement_v1',
+  'encrypted_telemetry_queue_v1',
+  'diagnostic_bundle_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -482,6 +490,24 @@ function isPublicSimpleParkRoute(path: string, method: string, url: URL): boolea
   ) || (
     path === '/enterprise/park/services/request' && method === 'POST'
   );
+}
+function isLicenseMaintenanceRoute(path: string): boolean {
+  return path === '/enterprise/health'
+    || path === '/enterprise/export'
+    || path === '/enterprise/deployment/status'
+    || path === '/enterprise/deployment/license'
+    || path === '/enterprise/deployment/telemetry'
+    || path === '/enterprise/deployment/diagnostics'
+    || path.startsWith('/enterprise/auth/');
+}
+
+function licenseBlockedPayload() {
+  const status = db.getPrivateDeploymentStatus();
+  return {
+    error: 'deployment license is not active',
+    license: status.license,
+    allowed: ['login', 'license update', 'data export', 'diagnostics'],
+  };
 }
 
 function organizationViewPayload(organizationId: string) {
@@ -804,6 +830,16 @@ function makeHandler(
           return;
         }
       }
+      if ((isAdminRoute(path) || isMemberRoute(path))
+        && !isLicenseMaintenanceRoute(path)
+        && db.isLicenseRestricted()) {
+        sendJSON(res, 402, licenseBlockedPayload());
+        return;
+      }
+      if (isPublicSimplePark && db.isLicenseRestricted()) {
+        sendJSON(res, 402, licenseBlockedPayload());
+        return;
+      }
 
       // ===== Health =====
       if (path === '/enterprise/health' && method === 'GET') {
@@ -828,6 +864,12 @@ function makeHandler(
               sms: repairSmsSender !== null,
               feishu: repairFeishuSender !== null,
             },
+            deployment: {
+              ...db.getPrivateDeploymentStatus(),
+              version: deploymentInfo.version,
+              buildCommit: deploymentInfo.buildCommit,
+              startedAt: deploymentInfo.startedAt,
+            },
           });
         } catch {
           sendJSON(res, 503, {
@@ -846,6 +888,52 @@ function makeHandler(
         return;
       }
 
+      // ===== Private deployment, license and telemetry =====
+      if (path === '/enterprise/deployment/status' && method === 'GET') {
+        sendJSON(res, 200, db.getPrivateDeploymentStatus());
+        return;
+      }
+
+      if (path === '/enterprise/deployment/license' && method === 'POST') {
+        const body = await readBody(req);
+        try {
+          const license = db.importDeploymentLicense(body);
+          db.recordTelemetryEvent({
+            organizationId: adminPrincipal?.organizationId ?? null,
+            eventType: 'license_imported',
+            payload: {
+              licenseId: license.id,
+              plan: license.plan,
+              status: license.status,
+              moduleCount: license.modules.length,
+            },
+          });
+          sendJSON(res, 200, { license, deployment: db.getPrivateDeploymentStatus() });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : 'license import failed' });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/deployment/telemetry' && method === 'PATCH') {
+        const body = await readBody(req);
+        const settings = db.updateTelemetrySettings({
+          enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+          contentMode: body.contentMode === 'diagnostic_redacted'
+            ? 'diagnostic_redacted'
+            : body.contentMode === 'operational_only' ? 'operational_only' : undefined,
+          endpoint: typeof body.endpoint === 'string' ? body.endpoint : undefined,
+        });
+        sendJSON(res, 200, { telemetry: { ...settings, ...db.getTelemetryQueueSummary() } });
+        return;
+      }
+
+      if (path === '/enterprise/deployment/diagnostics' && method === 'GET') {
+        sendJSON(res, 200, db.exportDeploymentDiagnostics({
+          includeRedactedSamples: url.searchParams.get('includeRedactedSamples') === 'true',
+        }));
+        return;
+      }
       // ===== Local Agent Discovery SDK =====
       if (path === '/enterprise/sdk/otto-discovery.js' && method === 'GET') {
         try {

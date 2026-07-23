@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
+import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,9 +41,17 @@ const ENV_KEYS = [
   'OTTO_ENTERPRISE_FEISHU_APP_ID',
   'OTTO_ENTERPRISE_FEISHU_APP_SECRET',
   'OTTO_ENTERPRISE_FEISHU_DOMAIN',
+  'OTTO_LICENSE_ENFORCE',
+  'OTTO_LICENSE_SIGNING_SECRET',
+  'OTTO_TELEMETRY_ENDPOINT',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
+const LICENSE_SECRET = 'test-license-secret';
+
+function signLicensePayload(payload: Record<string, unknown>): string {
+  return createHmac('sha256', LICENSE_SECRET).update(JSON.stringify(payload)).digest('base64url');
+}
 
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
 async function startIsolated(
@@ -438,33 +447,136 @@ describe('受保护 vs 公开路由边界', () => {
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 6,
-      capabilities: [
-        'password_auth',
-        'sms_login',
-        'sms_registration',
-        'personal_registration',
-        'personal_enterprise_upgrade',
-        'organization_invites',
-        'usage_summary',
-        'admin_console',
-        'account_deletion',
-        'multi_organization',
-        'direct_messages',
-        'atoa',
-        'position_invites',
-        'park_service_push',
-        'park_repair_v1',
-        'park_services_v2',
-        'organization_structure_v1',
-        'organization_feature_switches_v1',
-        'park_membership_v1',
-        'park_specialist_routing_v1',
-        'unread_message_notifications_v1',
-        'account_presence_v1',
-      ],
+      schemaVersion: 7,
+      deployment: {
+        license: { status: 'active', enforce: false },
+        dataBoundary: {
+          uploadsContentByDefault: false,
+          includesUserMessages: false,
+          includesFiles: false,
+          includesMeetingAudio: false,
+        },
+      },
     });
+    expect(body.capabilities).toEqual(expect.arrayContaining([
+      'password_auth',
+      'sms_login',
+      'sms_registration',
+      'personal_registration',
+      'personal_enterprise_upgrade',
+      'organization_invites',
+      'usage_summary',
+      'admin_console',
+      'account_deletion',
+      'multi_organization',
+      'direct_messages',
+      'atoa',
+      'position_invites',
+      'park_service_push',
+      'park_repair_v1',
+      'park_services_v2',
+      'organization_structure_v1',
+      'organization_feature_switches_v1',
+      'park_membership_v1',
+      'park_specialist_routing_v1',
+      'unread_message_notifications_v1',
+      'account_presence_v1',
+      'park_tenants_v1',
+      'private_deployment_v1',
+      'license_enforcement_v1',
+      'encrypted_telemetry_queue_v1',
+      'diagnostic_bundle_v1',
+    ]));
     expect(body.uptime).toEqual(expect.any(Number));
+  });
+
+  it('private deployment license enforcement keeps only maintenance routes open', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
+
+    const blocked = await fetch(`${base}/enterprise/report`, { headers });
+    expect(blocked.status).toBe(402);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: 'deployment license is not active',
+      license: { status: 'missing', enforce: true },
+    });
+
+    const publicPark = await fetch(`${base}/enterprise/park/services?parkId=park_missing`);
+    expect(publicPark.status).toBe(402);
+
+    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      license: { status: 'missing', enforce: true },
+      dataBoundary: { includesUserMessages: false, includesFiles: false, includesMeetingAudio: false },
+    });
+
+    const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(telemetry.status).toBe(200);
+    await expect(telemetry.json()).resolves.toMatchObject({ telemetry: { enabled: false } });
+
+    const diagnostics = await fetch(`${base}/enterprise/deployment/diagnostics`, { headers });
+    expect(diagnostics.status).toBe(200);
+    await expect(diagnostics.json()).resolves.toMatchObject({
+      redactedSamplesIncluded: false,
+      deployment: { license: { status: 'missing' } },
+    });
+  });
+
+  it('signed private deployment license reopens business routes and limits server-side modules', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
+
+    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    const deployment = await status.json();
+    const payload = {
+      id: 'lic_test_enterprise',
+      deploymentId: deployment.deploymentId,
+      customerName: 'Private Customer',
+      plan: 'enterprise',
+      expiresAtMs: Date.now() + 90 * 24 * 60 * 60 * 1000,
+      seatLimit: 100,
+      modules: ['enterprise_tree', 'direct_messages'],
+      offline: true,
+      telemetryAllowed: true,
+      issuedAtMs: Date.now(),
+    };
+
+    const imported = await fetch(`${base}/enterprise/deployment/license`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ license: payload, signature: signLicensePayload(payload) }),
+    });
+    expect(imported.status).toBe(200);
+    await expect(imported.json()).resolves.toMatchObject({
+      license: {
+        id: 'lic_test_enterprise',
+        status: 'active',
+        modules: ['enterprise_tree', 'direct_messages'],
+      },
+    });
+
+    const report = await fetch(`${base}/enterprise/report`, { headers });
+    expect(report.status).toBe(200);
+
+    const db = await import('./db.js');
+    const org = db.createOrganization({ name: 'Licensed Tenant', slug: 'licensed-tenant' });
+    expect(db.getOrganizationFeatures(org.id)).toMatchObject({
+      enterprise_tree: true,
+      direct_messages: true,
+      park_service: false,
+      atoa: false,
+      knowledge: false,
+      feishu_auto_reply: false,
+    });
   });
 
   it('企业知识库无登录会话不可读取', async () => {
