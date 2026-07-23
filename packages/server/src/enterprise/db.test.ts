@@ -105,7 +105,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 5,
+      schemaVersion: 7,
     });
   });
 
@@ -165,7 +165,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 5,
+      schemaVersion: 7,
       });
       const organizationColumns = reopened.getDB()
         .prepare('PRAGMA table_info(organizations)')
@@ -258,18 +258,18 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 6;
+      PRAGMA user_version = 8;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 6.*current version 5/i);
+    expect(() => db.getDB()).toThrow(/schema version 8.*current version 7/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
       expect(
         (reopened.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
-      ).toBe(6);
+      ).toBe(8);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string }).id,
       ).toBe('preserve-me');

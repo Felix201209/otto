@@ -209,6 +209,9 @@ const bridge = {
   enterpriseParkSurveyResults(): Promise<any> { return Promise.resolve([]); },
   enterpriseParkPublicationRead(): Promise<any> { return Promise.resolve({ id: '', title: '', content: '', publishedAt: '', serviceId: '' }); },
   enterpriseParkSurveySubmit(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
+  enterpriseParkResources(): Promise<any> {
+    return Promise.resolve({ settings: { parkingTotal: 0, parkingNote: null, updatedAt: '' }, meetingRooms: [], meetingSlots: [] });
+  },
   enterpriseTicketList(): Promise<any> { return Promise.resolve([]); },
   enterpriseTicketRead(): Promise<any> { return Promise.resolve({ id: '', title: '', description: '', status: '', createdAt: '' }); },
   enterpriseTicketAction(): Promise<any> { return Promise.reject(new Error('需 Electron 桌面端')); },
@@ -230,8 +233,18 @@ const bridge = {
       input.click();
     });
   },
+  getPathForFile(file: File): string {
+    return (file as File & { path?: string }).path || file.name;
+  },
   async readFilePath(_filePath: string): Promise<{ filePath: string; fileName: string; size: number; mimeType: string; data: string }> {
     throw new Error('浏览器环境不支持读取任意路径文件，请使用文件选择器');
+  },
+  async readClipboardText(): Promise<string> {
+    try {
+      return await navigator.clipboard.readText();
+    } catch {
+      return '';
+    }
   },
   async writeClipboard(text: string): Promise<boolean> {
     try {

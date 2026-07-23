@@ -673,6 +673,84 @@ describe('受保护 vs 公开路由边界', () => {
   });
 });
 
+describe('园区资源后台与用户端资源接口', () => {
+  it('园区后台页面公开可打开，但资源 API 必须管理员鉴权', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const page = await fetch(`${base}/enterprise/park-admin`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('园区服务后台');
+    expect(html).toContain('/enterprise/park-settings');
+    expect(html).toContain('/enterprise/park-meeting-rooms');
+
+    const denied = await fetch(`${base}/enterprise/park-settings`);
+    expect(denied.status).toBe(401);
+  });
+
+  it('管理员可设置车位并创建会议室，成员只读取本企业启用资源', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const adminHeaders = {
+      'content-type': 'application/json',
+      'x-otto-admin-token': ADMIN_TOKEN,
+    };
+    const settings = await fetch(`${base}/enterprise/park-settings`, {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        parkingTotal: 240,
+        parkingNote: '固定车位由客服确认',
+      }),
+    });
+    expect(settings.status).toBe(200);
+    await expect(settings.json()).resolves.toMatchObject({
+      settings: {
+        parkingTotal: 240,
+        parkingNote: '固定车位由客服确认',
+      },
+    });
+
+    const created = await fetch(`${base}/enterprise/park-meeting-rooms`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: '创新厅',
+        location: 'A 座 2 层',
+        capacity: 20,
+        equipment: ['投屏', '视频会议'],
+        openingHours: '工作日 09:00–18:00',
+        enabled: true,
+      }),
+    });
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      meetingRoom: {
+        name: '创新厅',
+        capacity: 20,
+        equipment: ['投屏', '视频会议'],
+      },
+    });
+
+    const database = await import('./db.js');
+    const member = database.createAccount({
+      username: 'park-member',
+      password: 'park-member-password',
+      name: '园区企业用户',
+    });
+    const session = database.createAuthSession(member.id);
+    const resources = await fetch(`${base}/enterprise/park-resources`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(resources.status).toBe(200);
+    await expect(resources.json()).resolves.toMatchObject({
+      settings: { parkingTotal: 240 },
+      meetingRooms: expect.arrayContaining([
+        expect.objectContaining({ name: '创新厅', location: 'A 座 2 层' }),
+      ]),
+      meetingSlots: expect.any(Array),
+    });
+  });
+});
+
 describe('公网企业引入链接与公开落地页', () => {
   it('API 返回配置的公网链接，绝不采用 Host 或 X-Forwarded-Host', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);

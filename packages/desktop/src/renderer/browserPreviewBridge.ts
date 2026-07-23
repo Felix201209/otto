@@ -18,6 +18,57 @@ if (!previewWindow.otto) {
   let currentModel: string | null = 'preview-model';
   let sessions = [makeSession('preview-session', '园区服务本地演示')];
   let models = readModels();
+  const previewAccount = {
+    id: 'preview-account',
+    organizationId: 'preview-organization',
+    organizationName: '北控宏创科技园',
+    accountType: 'enterprise',
+    employeeId: 'preview-employee',
+    username: 'preview.user',
+    phone: '+8613800000000',
+    name: '本地测试用户',
+    role: '企业员工',
+    department: '入驻企业',
+    positionId: null,
+    positionTitle: '员工',
+    isAdmin: false,
+    status: 'active',
+    tags: ['企业用户'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  let previewTickets: Array<Record<string, unknown>> = [];
+  const previewMeetingSlots = makePreviewMeetingSlots();
+
+  function localISODate(offsetDays: number): string {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + offsetDays);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+  function makePreviewMeetingSlots(): Array<Record<string, unknown>> {
+    const roomIds = ['preview-room-medium', 'preview-room-large', 'preview-room-auditorium'];
+    const slots: Array<Record<string, unknown>> = [];
+    for (let day = 1; day <= 30; day += 1) {
+      for (const roomId of roomIds) {
+        for (const slot of [
+          { key: 'morning', label: '上午 09:00–12:00' },
+          { key: 'afternoon', label: '下午 14:00–18:00' },
+        ]) {
+          slots.push({
+            id: `${roomId}-${localISODate(day)}-${slot.key}`,
+            roomId,
+            date: localISODate(day),
+            slotKey: slot.key,
+            label: slot.label,
+            status: day === 1 && roomId === 'preview-room-medium' && slot.key === 'morning' ? 'booked' : 'available',
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    return slots;
+  }
 
   function makeSession(sessionId: string, title: string): Record<string, unknown> {
     return { sessionId, title, model: currentModel, status: 'idle', messageCount: 0, createdAt: Date.now(), updatedAt: Date.now() };
@@ -102,10 +153,128 @@ if (!previewWindow.otto) {
     onMenu: () => () => {}, onUpdateProgress: () => () => {},
     appVersion: () => Promise.resolve('1.9.2-browser-preview'),
     openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(), saveTextFile: () => Promise.resolve(null),
+    getPathForFile: (file: File) => (file as File & { path?: string }).path || file.name,
+    readClipboardText: () => navigator.clipboard?.readText?.() ?? Promise.resolve(''),
     updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.2', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器预览不支持更新' }), updateCancel: () => Promise.resolve(), updateInstall: () => Promise.resolve({ ok: false, message: '浏览器预览不支持安装' }),
     themeGet: () => Promise.resolve('dark'), themeSet: () => Promise.resolve('dark'),
-    enterpriseSession: () => Promise.resolve(null), enterpriseLogout: () => Promise.resolve(),
+    enterpriseSession: () => Promise.resolve({
+      serverUrl: 'browser-preview://local',
+      account: previewAccount,
+    }),
+    enterpriseLogout: () => Promise.resolve(),
+    enterpriseTicketList: () => Promise.resolve(previewTickets),
+    enterpriseParkResources: () => Promise.resolve({
+      settings: {
+        parkingTotal: 180,
+        parkingNote: '固定车位需由客服确认，新能源车位优先分配。',
+        updatedAt: new Date().toISOString(),
+      },
+      meetingRooms: [
+        {
+          id: 'preview-room-medium',
+          name: '中会议室',
+          location: '位置待园区管理员补充',
+          capacity: 30,
+          priceHalfDay: 400,
+          equipment: ['投屏', '视频会议', '白板'],
+          imageUrl: null,
+          openingHours: '工作日 09:00–18:00',
+          enabled: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'preview-room-large',
+          name: '大会议室',
+          location: '位置待园区管理员补充',
+          capacity: 50,
+          priceHalfDay: 500,
+          equipment: ['投屏', '视频会议', '白板'],
+          imageUrl: null,
+          openingHours: '工作日 09:00–18:00',
+          enabled: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'preview-room-auditorium',
+          name: '报告厅',
+          location: '位置待园区管理员补充',
+          capacity: 80,
+          priceHalfDay: 800,
+          equipment: ['投屏', '视频会议', '白板'],
+          imageUrl: null,
+          openingHours: '工作日 09:00–18:00',
+          enabled: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      meetingSlots: previewMeetingSlots,
+    }),
+    enterpriseTicketSubmit: (input: Record<string, unknown>) => {
+      const now = new Date().toISOString();
+      const serviceId = String(input.serviceId || 'repair');
+      const formData = input.formData && typeof input.formData === 'object'
+        ? input.formData as Record<string, unknown>
+        : {};
+      if (serviceId === 'meeting-room') {
+        const slot = previewMeetingSlots.find((item) => (
+          item.roomId === formData.roomId
+          && item.date === formData.date
+          && item.slotKey === formData.slotKey
+        ));
+        if (!slot || slot.status !== 'available') {
+          return Promise.reject(new Error(slot?.status === 'booked' ? '该时段刚刚已被预约，请选择其他时段' : '该时段暂未开放'));
+        }
+        slot.status = 'booked';
+        slot.updatedAt = now;
+      }
+      const ticket = {
+        id: id('preview-ticket'),
+        serviceId,
+        title: String(input.title || '园区服务申请'),
+        description: String(input.description || ''),
+        formData,
+        targetTags: serviceId === 'repair' ? ['维修工作人员'] : ['客服人员'],
+        status: serviceId === 'repair' ? '待接单' : '待派单',
+        category: input.category ? String(input.category) : null,
+        location: input.location ? String(input.location) : null,
+        urgency: input.urgency ? String(input.urgency) : null,
+        contact: input.contact ? String(input.contact) : null,
+        contactPhone: input.contactPhone ? String(input.contactPhone) : null,
+        responseType: null,
+        responseText: null,
+        responseAt: null,
+        createdAt: now,
+        updatedAt: now,
+        creator: {
+          id: previewAccount.id,
+          name: previewAccount.name,
+          username: previewAccount.username,
+        },
+        recipientCount: serviceId === 'repair' ? 1 : 2,
+        recipients: serviceId === 'repair'
+          ? [{ id: 'preview-repairer', name: '维修工作人员' }]
+          : [{ id: 'preview-cs-1', name: '客服一组' }, { id: 'preview-cs-2', name: '客服二组' }],
+        deliveryStatus: serviceId === 'renovation' ? '已投递客服部' : '已投递',
+        readAt: null,
+        isCreator: true,
+        isRecipient: false,
+        notifications: [],
+      };
+      previewTickets = [ticket, ...previewTickets];
+      return Promise.resolve(ticket);
+    },
+    enterpriseTicketRead: (ticketId: string) => {
+      const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;
+      return ticket ? Promise.resolve(ticket) : Promise.reject(new Error('申请单不存在'));
+    },
+    enterpriseTicketAction: (ticketId: string) => {
+      const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;
+      return ticket ? Promise.resolve(ticket) : Promise.reject(new Error('申请单不存在'));
+    },
     enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ added: false }), enterpriseKnowledgeList: () => Promise.resolve([]),
   };
 

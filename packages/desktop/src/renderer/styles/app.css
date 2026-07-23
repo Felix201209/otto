@@ -6050,13 +6050,137 @@ h6.otto-prose__h {
 .otto-park-form__guide { display: grid; gap: 3px; padding: 10px 11px; border-radius: var(--otto-radius-sm); background: color-mix(in srgb, var(--otto-accent-soft) 42%, var(--otto-surface)); }
 .otto-park-form__guide strong { color: var(--otto-text); font-size: 12px; }
 .otto-park-form__guide span { color: var(--otto-text-secondary); font-size: 11px; line-height: 1.45; }
+.otto-park-resource-note {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 25%, var(--otto-border));
+  border-radius: var(--otto-radius-sm);
+  background: color-mix(in srgb, var(--otto-accent-soft) 38%, var(--otto-surface));
+}
+.otto-park-resource-note strong { color: var(--otto-text); font-size: 12px; }
+.otto-park-resource-note span { color: var(--otto-text-secondary); font-size: 11px; }
+.otto-park-room-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.otto-park-room-picker > button {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--otto-dur-fast) var(--otto-ease), box-shadow var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-room-picker > button:hover {
+  border-color: var(--otto-accent);
+}
+.otto-park-room-picker > button.is-selected {
+  border-color: var(--otto-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--otto-accent) 14%, transparent);
+}
+.otto-park-room-picker img {
+  width: 100%;
+  aspect-ratio: 16 / 8.5;
+  display: block;
+  object-fit: cover;
+}
+.otto-park-room-picker button > span {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px 11px;
+}
+.otto-park-room-picker strong {
+  color: var(--otto-text);
+  font-size: 12.5px;
+}
+.otto-park-room-picker em,
+.otto-park-room-picker small {
+  overflow: hidden;
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-park-meeting-booking { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 10px; align-items: start; }
+.otto-park-meeting-room-detail {
+  grid-row: span 2;
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  min-height: 84px;
+  overflow: hidden;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-bg);
+}
+.otto-park-meeting-room-detail img { width: 116px; height: 100%; min-height: 84px; object-fit: cover; }
+.otto-park-meeting-room-detail div { display: grid; align-content: center; gap: 4px; padding: 10px; }
+.otto-park-meeting-room-detail strong { color: var(--otto-text); font-size: 12.5px; }
+.otto-park-meeting-room-detail span { color: var(--otto-text-secondary); font-size: 10.5px; }
+.otto-park-meeting-slots {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 11px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+}
+.otto-park-meeting-slots legend { padding: 0 5px; color: var(--otto-text-secondary); font-size: 11px; }
+.otto-park-meeting-slots > p { grid-column: 1 / -1; margin: 4px 0; color: var(--otto-text-tertiary); font-size: 11px; }
+.otto-park-meeting-slots > button {
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--otto-radius-sm);
+  color: white;
+  cursor: pointer;
+  text-align: left;
+}
+.otto-park-meeting-slots > button strong { font-size: 11.5px; }
+.otto-park-meeting-slots > button span { font-size: 10px; opacity: .9; }
+.otto-park-meeting-slots > button.is-available { background: #258254; border-color: #3a9669; }
+.otto-park-meeting-slots > button.is-available:hover { background: #1d7047; }
+.otto-park-meeting-slots > button.is-booked { background: #b94842; border-color: #cd5a53; opacity: 1; }
+.otto-park-meeting-slots > button.is-closed { background: #69716e; border-color: #7b8480; opacity: .75; }
+.otto-park-meeting-slots > button.is-selected { box-shadow: 0 0 0 3px color-mix(in srgb, white 65%, transparent) inset, 0 0 0 2px var(--otto-accent); }
+.otto-park-meeting-legend { grid-column: 1 / -1; display: flex; gap: 12px; color: var(--otto-text-secondary); font-size: 10px; }
+.otto-park-meeting-legend span::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; }
+.otto-park-meeting-legend .is-available::before { background: #258254; }
+.otto-park-meeting-legend .is-booked::before { background: #b94842; }
+.otto-park-meeting-success {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, #258254 40%, var(--otto-border));
+  border-radius: var(--otto-radius);
+  background: color-mix(in srgb, #258254 10%, var(--otto-surface));
+}
+.otto-park-meeting-success > span { width: fit-content; padding: 4px 8px; border-radius: var(--otto-radius-pill); background: #258254; color: white; font-size: 10px; }
+.otto-park-meeting-success h3,
+.otto-park-meeting-success p { margin: 0; }
+.otto-park-meeting-success h3 { color: var(--otto-text); font-size: 15px; }
+.otto-park-meeting-success p { color: var(--otto-text-secondary); font-size: 11px; }
 .otto-park-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.otto-park-form__field.is-wide { grid-column: 1 / -1; }
 .otto-park-form__field { display: grid; gap: 5px; color: var(--otto-text-secondary); font-size: 11px; }
 .otto-park-form__field input,
 .otto-park-form__field select,
 .otto-park-form__field textarea { width: 100%; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); font: inherit; font-size: 12px; padding: 8px 9px; }
 .otto-park-form__field textarea { resize: vertical; min-height: 74px; }
 .otto-park-form__field input:disabled { opacity: .7; }
+.otto-park-form__field small { color: var(--otto-text-tertiary); font-size: 9.5px; }
+.otto-park-form__field small.is-error { color: #d7514a; }
 .otto-park-form__receipt { color: #168557; font-size: 11px; }
 .otto-park-request-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .otto-park-request-summary div { display: grid; gap: 3px; padding: 8px; border-radius: var(--otto-radius-sm); background: var(--otto-bg); }
@@ -6069,6 +6193,15 @@ h6.otto-prose__h {
 .otto-park-workflow-chat .otto-park-repair__messages { max-height: 120px; padding: 11px 12px; }
 .otto-park-workflow-chat > .otto-park-repair__input { padding: 9px 12px 11px; border-top: 1px solid var(--otto-border); }
 .otto-park-workflow-chat__quick { padding: 0 12px; }
+
+@media (max-width: 700px) {
+  .otto-park-room-picker,
+  .otto-park-meeting-booking,
+  .otto-park-form__grid {
+    grid-template-columns: 1fr;
+  }
+  .otto-park-meeting-room-detail { grid-row: auto; }
+}
 
 /* 每个责任人收到的 Otto 待处理弹窗。演示时可明确看到渠道接力和兜底动作。 */
 .otto-park-notice-overlay {

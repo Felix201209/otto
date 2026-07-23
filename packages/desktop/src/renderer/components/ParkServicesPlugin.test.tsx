@@ -331,7 +331,7 @@ describe('ParkServicesPlugin', () => {
     openDialog();
     fireEvent.click(screen.getByText('装修管理'));
     expect(await screen.findByLabelText('装修管理申请表')).toBeTruthy();
-    expect(screen.getByText(/装修申请先核对施工范围/)).toBeTruthy();
+    expect(screen.getByText(/客户只需如实填写并提交申请单/)).toBeTruthy();
     expect((screen.getByLabelText('装修区域') as HTMLInputElement).value).toBe('');
     expect(screen.getByRole('button', { name: '提交装修管理申请' })).toBeTruthy();
   });

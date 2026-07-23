@@ -58,6 +58,7 @@ import { sendPublicInvitePage } from './publicInvitePage.js';
 import { sendLocalAgentPage } from './localAgentPage.js';
 import * as simplePark from './park.js';
 import { handleFeatureFlagsRoute } from './featureFlagsAdmin.js';
+import { parkAdminHTML } from './parkAdminPage.js';
 import {
   createRepairFeishuSenderFromEnv,
   createRepairSmsSenderFromEnv,
@@ -90,6 +91,9 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/services/assign',
   '/enterprise/park-services/push',
   '/enterprise/park-services/survey-results',
+  '/enterprise/park-settings',
+  '/enterprise/park-meeting-rooms',
+  '/enterprise/park-meeting-slots',
   '/enterprise/usage/summary',
   '/enterprise/deployment/status',
   '/enterprise/deployment/license',
@@ -116,6 +120,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/park/view',
   '/enterprise/messages/unread',
   '/enterprise/auth/join-organization',
+  '/enterprise/park-resources',
 ]);
 
 const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -216,6 +221,8 @@ const ENTERPRISE_CAPABILITIES = [
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
   'diagnostic_bundle_v1',
+  'park_resources_v1',
+  'park_meeting_slots_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -470,6 +477,7 @@ function isAdminRoute(path: string): boolean {
     || path.startsWith('/enterprise/accounts/')
     || path.startsWith('/enterprise/organization/departments')
     || path.startsWith('/enterprise/organization/positions')
+    || path.startsWith('/enterprise/park-meeting-rooms/')
     || path.startsWith('/enterprise/platform/organizations/');
 }
 
@@ -1935,6 +1943,158 @@ function makeHandler(
         return;
       }
 
+      if (path === '/enterprise/park-resources' && method === 'GET') {
+        sendJSON(res, 200, {
+          settings: db.getParkSettings(memberAccount!.organizationId),
+          meetingRooms: db.listParkMeetingRooms(memberAccount!.organizationId),
+          meetingSlots: db.listParkMeetingSlots(memberAccount!.organizationId),
+        });
+        return;
+      }
+
+      if (path === '/enterprise/park-settings' && method === 'GET') {
+        sendJSON(res, 200, {
+          settings: db.getParkSettings(adminPrincipal!.organizationId),
+        });
+        return;
+      }
+
+      if (path === '/enterprise/park-settings' && method === 'PUT') {
+        const body = await readBody(req);
+        try {
+          const parkingTotal = typeof body.parkingTotal === 'number'
+            ? body.parkingTotal
+            : Number(body.parkingTotal);
+          sendJSON(res, 200, {
+            settings: db.updateParkSettings(adminPrincipal!.organizationId, {
+              parkingTotal,
+              parkingNote: typeof body.parkingNote === 'string' ? body.parkingNote : null,
+            }),
+          });
+        } catch (error) {
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : '园区设置保存失败',
+          });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park-meeting-rooms' && method === 'GET') {
+        sendJSON(res, 200, {
+          meetingRooms: db.listParkMeetingRooms(adminPrincipal!.organizationId, true),
+        });
+        return;
+      }
+
+      if (path === '/enterprise/park-meeting-rooms' && method === 'POST') {
+        const body = await readBody(req);
+        try {
+          sendJSON(res, 201, {
+            meetingRoom: db.createParkMeetingRoom(adminPrincipal!.organizationId, {
+              name: typeof body.name === 'string' ? body.name : '',
+              location: typeof body.location === 'string' ? body.location : '',
+              capacity: Number(body.capacity),
+              equipment: Array.isArray(body.equipment)
+                ? body.equipment.filter((item): item is string => typeof item === 'string')
+                : [],
+              imageUrl: typeof body.imageUrl === 'string' ? body.imageUrl : null,
+              openingHours: typeof body.openingHours === 'string' ? body.openingHours : null,
+              enabled: body.enabled !== false,
+            }),
+          });
+        } catch (error) {
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : '会议室创建失败',
+          });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park-meeting-slots' && method === 'GET') {
+        const from = url.searchParams.get('from') || undefined;
+        const to = url.searchParams.get('to') || undefined;
+        try {
+          sendJSON(res, 200, {
+            meetingSlots: db.listParkMeetingSlots(
+              adminPrincipal!.organizationId,
+              from,
+              to,
+            ),
+          });
+        } catch (error) {
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : '会议室时段读取失败',
+          });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park-meeting-slots' && method === 'PUT') {
+        const body = await readBody(req);
+        try {
+          sendJSON(res, 200, {
+            meetingSlot: db.setParkMeetingSlotAvailability(
+              adminPrincipal!.organizationId,
+              {
+                roomId: typeof body.roomId === 'string' ? body.roomId : '',
+                date: typeof body.date === 'string' ? body.date : '',
+                slotKey: typeof body.slotKey === 'string' ? body.slotKey : '',
+                enabled: body.enabled !== false,
+              },
+            ),
+          });
+        } catch (error) {
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : '会议室时段保存失败',
+          });
+        }
+        return;
+      }
+
+      const meetingRoomRoute = path.match(/^\/enterprise\/park-meeting-rooms\/([^/]+)$/);
+      if (meetingRoomRoute && (method === 'PUT' || method === 'DELETE')) {
+        let meetingRoomId = '';
+        try {
+          meetingRoomId = decodeURIComponent(meetingRoomRoute[1]!);
+        } catch {
+          meetingRoomId = '';
+        }
+        if (!meetingRoomId) {
+          sendJSON(res, 400, { error: '会议室编号不正确' });
+          return;
+        }
+        try {
+          if (method === 'DELETE') {
+            db.deleteParkMeetingRoom(adminPrincipal!.organizationId, meetingRoomId);
+            sendJSON(res, 200, { status: 'deleted' });
+            return;
+          }
+          const body = await readBody(req);
+          sendJSON(res, 200, {
+            meetingRoom: db.updateParkMeetingRoom(
+              adminPrincipal!.organizationId,
+              meetingRoomId,
+              {
+                name: typeof body.name === 'string' ? body.name : '',
+                location: typeof body.location === 'string' ? body.location : '',
+                capacity: Number(body.capacity),
+                equipment: Array.isArray(body.equipment)
+                  ? body.equipment.filter((item): item is string => typeof item === 'string')
+                  : [],
+                imageUrl: typeof body.imageUrl === 'string' ? body.imageUrl : null,
+                openingHours: typeof body.openingHours === 'string' ? body.openingHours : null,
+                enabled: body.enabled !== false,
+              },
+            ),
+          });
+        } catch (error) {
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : '会议室保存失败',
+          });
+        }
+        return;
+      }
+
       if (path === '/enterprise/park-services/push' && method === 'POST') {
         const principal = adminPrincipal!;
         if (principal.kind !== 'account') {
@@ -2426,25 +2586,87 @@ function makeHandler(
           : Array.isArray(body.targetTags)
             ? body.targetTags.filter((tag): tag is string => typeof tag === 'string')
             : ['IT', '报修'];
-        const formData = body.formData && typeof body.formData === 'object'
+        let formData = body.formData && typeof body.formData === 'object'
           && !Array.isArray(body.formData)
           ? Object.fromEntries(Object.entries(body.formData).filter(
             (entry): entry is [string, string] => typeof entry[1] === 'string',
           ).map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]))
           : {};
-        const ticket = db.createTicket({
-          createdByAccountId: account.id,
-          serviceId,
-          title,
-          description,
-          targetTags,
-          formData,
-          category: typeof body.category === 'string' ? body.category : undefined,
-          location: typeof body.location === 'string' ? body.location : undefined,
-          urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
-          contact: typeof body.contact === 'string' ? body.contact : undefined,
-          contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
-        });
+        const meetingRoom = serviceId === 'meeting-room'
+          ? db.listParkMeetingRooms(account.organizationId).find(
+            (room) => room.id === formData.roomId,
+          )
+          : undefined;
+        if (serviceId === 'meeting-room') {
+          if (!meetingRoom) {
+            sendJSON(res, 400, { error: '请选择有效的会议室' });
+            return;
+          }
+          const attendees = Number(formData.attendees);
+          if (!Number.isInteger(attendees) || attendees < 1) {
+            sendJSON(res, 400, { error: '参会人数只能填写大于等于 1 的正整数' });
+            return;
+          }
+          if (attendees > meetingRoom.capacity) {
+            sendJSON(res, 400, {
+              error: `${meetingRoom.name}最多容纳 ${meetingRoom.capacity} 人`,
+            });
+            return;
+          }
+          const slot = db.PARK_MEETING_TIME_SLOTS.find(
+            (item) => item.key === formData.slotKey,
+          );
+          if (!slot) {
+            sendJSON(res, 400, { error: '请选择绿色的可预约时间段' });
+            return;
+          }
+          formData = {
+            ...formData,
+            roomName: meetingRoom.name,
+            roomCapacity: String(meetingRoom.capacity),
+            priceHalfDay: String(meetingRoom.priceHalfDay),
+            time: slot.label,
+          };
+        }
+        let ticket: ReturnType<typeof db.createTicket>;
+        try {
+          const database = db.getDB();
+          database.exec('BEGIN IMMEDIATE');
+          try {
+            ticket = db.createTicket({
+              createdByAccountId: account.id,
+              serviceId,
+              title,
+              description,
+              targetTags,
+              formData,
+              category: typeof body.category === 'string' ? body.category : undefined,
+              location: typeof body.location === 'string' ? body.location : undefined,
+              urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
+              contact: typeof body.contact === 'string' ? body.contact : undefined,
+              contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
+            });
+            if (serviceId === 'meeting-room') {
+              db.reserveParkMeetingSlot(account.organizationId, {
+                roomId: formData.roomId || '',
+                date: formData.date || '',
+                slotKey: formData.slotKey || '',
+                ticketId: ticket.id,
+              });
+            }
+            database.exec('COMMIT');
+          } catch (cause) {
+            database.exec('ROLLBACK');
+            throw cause;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '会议室预约失败';
+          if (serviceId === 'meeting-room' && /已被预约|暂不可预约|请选择|只能预约/.test(message)) {
+            sendJSON(res, message.includes('已被预约') ? 409 : 400, { error: message });
+            return;
+          }
+          throw error;
+        }
         await sendRepairNotifications({
           ticket,
           recipients: db.getTicketNotificationRecipients(ticket.id),
@@ -3129,6 +3351,20 @@ function makeHandler(
         return;
       }
 
+      // ===== Park resource admin web app =====
+      if (path === '/enterprise/park-admin' && method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data: https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+        });
+        res.end(parkAdminHTML());
+        return;
+      }
+
       // ===== Platform multi-organization admin web app =====
       // 平台令牌只能由操作者在浏览器内手动输入，并仅保存在当前标签页的 sessionStorage。
       if (path === '/enterprise/admin/platform' && method === 'GET') {
@@ -3218,7 +3454,7 @@ export function adminAccountsHTML(): string {
 </main>
 <main id="adminView" class="admin hidden">
   <aside class="rail"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="nav-label">企业管理</div><div class="nav-item"><span class="nav-dot"></span>成员与用量</div><div class="rail-foot"><div><div id="railUser" class="rail-user"></div><div id="railMeta" class="rail-meta">企业管理员</div></div><button id="logoutButton" class="ghost-dark" type="button">退出登录</button></div></aside>
-  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/admin/platform">多企业管理</a> <a class="secondary" href="/enterprise/admin/credits">积分管理</a> <a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
+  <section class="workspace"><header class="topbar"><div><div class="eyebrow">ORGANIZATION CONTROL</div><h1 id="organizationTitle" tabindex="-1">企业账号</h1><p>成员、注册入口、职责标签与 AI 用量都只属于当前企业。</p></div><div><a class="secondary" href="/enterprise/park-admin">园区服务后台</a> <a class="secondary" href="/enterprise/admin/platform">多企业管理</a> <a class="secondary" href="/enterprise/admin/credits">积分管理</a> <a class="secondary" href="/enterprise/dashboard">老板看板</a> <button id="createButton" class="primary" type="button">新增账号</button></div></header>
     <div class="ops-grid">
       <section class="ops-card" aria-labelledby="inviteTitle"><div class="ops-head"><div><div class="eyebrow">MEMBER ONBOARDING</div><h2 id="inviteTitle">企业成员引入链接</h2><p>成员点击后由 Otto 打开首次注册并自动填入企业信息；精确有效 7 天，生成新链接会立即废止旧链接。</p></div><span id="inviteBadge" class="badge off">尚未生成</span></div><div class="invite-row"><div><input id="inviteCode" class="invite-code" aria-label="当前企业邀请码" value="••••-••••" readonly><div class="invite-meta"><span id="inviteCountdown" class="sub">等待管理员生成</span></div><input id="inviteLinkPreview" class="invite-link-preview hidden" aria-label="当前企业引入链接" value="" readonly></div><div class="invite-actions"><button id="copyInviteLink" class="primary" type="button" disabled>复制企业引入链接</button><button id="copyInvite" class="copy" type="button" disabled>复制邀请码</button><button id="issueInvite" class="secondary" type="button">生成引入链接</button></div></div><div id="inviteError" class="error hidden" role="alert"></div></section>
       <section class="ops-card" aria-labelledby="usageTitle"><div class="ops-head"><div><div class="eyebrow">AI CONSUMPTION</div><h2 id="usageTitle">近 30 天 Token</h2><p>按登录账号汇总模型返回的用量。</p></div><span class="badge">客户端回传</span></div><div id="totalTokens" class="token-number">0</div><div class="token-split"><span>输入 <b id="inputTokens">0</b></span><span>输出 <b id="outputTokens">0</b></span><span>请求 <b id="requestCount">0</b></span></div><div class="token-note">用于企业内部用量观察，不等同于模型供应商的计费账单。</div></section>

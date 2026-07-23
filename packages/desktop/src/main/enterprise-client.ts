@@ -360,6 +360,36 @@ export interface EnterpriseParkSurveyResult {
   }>;
 }
 
+export interface EnterpriseParkResources {
+  settings: {
+    parkingTotal: number;
+    parkingNote: string | null;
+    updatedAt: string;
+  };
+  meetingRooms: Array<{
+    id: string;
+    name: string;
+    location: string;
+    capacity: number;
+    priceHalfDay: number;
+    equipment: string[];
+    imageUrl: string | null;
+    openingHours: string | null;
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  meetingSlots: Array<{
+    id: string;
+    roomId: string;
+    date: string;
+    slotKey: 'morning' | 'afternoon';
+    label: string;
+    status: 'available' | 'booked' | 'closed';
+    updatedAt: string;
+  }>;
+}
+
 export interface EnterpriseSessionResult {
   serverUrl: string;
   account: EnterpriseAccount | null;
@@ -1111,6 +1141,15 @@ export class EnterpriseClient {
     return (await this.request<{ surveys: EnterpriseParkSurveyResult[] }>(
       '/enterprise/park-services/survey-results',
     )).surveys;
+  }
+
+  async getParkResources(): Promise<EnterpriseParkResources> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(
+      this.serverUrl,
+      ['park_resources_v1', 'park_meeting_slots_v1'],
+    );
+    return this.request('/enterprise/park-resources');
   }
 
   async readParkPublication(id: string): Promise<EnterpriseParkPublication> {
