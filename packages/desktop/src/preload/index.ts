@@ -327,6 +327,15 @@ export interface EnterpriseParkService {
   updatedAt: string;
 }
 
+export interface EnterpriseParkTenantOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  parkId?: string | null;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+}
 export interface EnterprisePark {
   id: string;
   name: string;
@@ -561,6 +570,7 @@ const IPC = {
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
+  enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
   enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
   enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
@@ -877,6 +887,7 @@ export interface OttoBridge {
   enterpriseParkRegister(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark>;
   enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark>;
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
+  enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]>;
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
   enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist>;
   enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean>;
@@ -1641,6 +1652,9 @@ const bridge: OttoBridge = {
   },
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite> {
     return ipcRenderer.invoke(IPC.enterpriseParkInviteIssue, maxUses ?? null) as Promise<EnterpriseParkInvite>;
+  },
+  enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]> {
+    return ipcRenderer.invoke(IPC.enterpriseParkTenants) as Promise<EnterpriseParkTenantOrganization[]>;
   },
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkSpecialists) as Promise<EnterpriseParkSpecialist[]>;

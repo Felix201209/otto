@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * Copyright 2025 Otto
  * SPDX-License-Identifier: Apache-2.0
@@ -311,6 +311,7 @@ const IPC = {
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
+  enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
   enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
   enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
@@ -1514,6 +1515,10 @@ function registerIpc(): void {
       throw new Error('邀请码使用次数不正确');
     }
     return enterpriseClient.issueParkInvite(maxUses as number | null | undefined);
+  });
+  ipcMain.handle(IPC.enterpriseParkTenants, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkTenantOrganizations();
   });
   ipcMain.handle(IPC.enterpriseParkSpecialists, async () => {
     loadEnterpriseSession();

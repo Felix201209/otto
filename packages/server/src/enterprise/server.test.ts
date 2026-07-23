@@ -3525,4 +3525,85 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
        WHERE organization_id NOT IN (SELECT id FROM organizations)`,
     ).get() as { count: number }).count).toBe(0);
   });
+  it('platform can provision a park admin organization and park admins can list tenant organizations', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN, null);
+    const db = await import('./db.js');
+    const parkProvision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Hongchuang Park Operator',
+        slug: 'hongchuang-park-operator',
+        admin: {
+          username: 'park.owner',
+          password: 'park-owner-password',
+          name: 'Park Owner',
+        },
+      }),
+    });
+    expect(parkProvision.status).toBe(201);
+    const parkProvisioned = await parkProvision.json();
+    const provisionPark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
+      {
+        method: 'POST',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Hongchuang Park', brandName: 'Hongchuang Park Services' }),
+      },
+    );
+    expect(provisionPark.status).toBe(201);
+    const park = (await provisionPark.json()).park;
+    expect(park).toMatchObject({
+      name: 'Hongchuang Park',
+      brandName: 'Hongchuang Park Services',
+      adminOrganizationId: parkProvisioned.organization.id,
+    });
+
+    const parkAdminToken = db.createAuthSession(parkProvisioned.admin.id).token;
+    const inviteResponse = await fetch(`${base}/enterprise/park/invite`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ maxUses: 2 }),
+    });
+    expect(inviteResponse.status).toBe(201);
+    const invite = (await inviteResponse.json()).invite;
+    const tenantProvision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Tenant Company',
+        slug: 'tenant-company',
+        admin: {
+          username: 'tenant.owner',
+          password: 'tenant-owner-password',
+          name: 'Tenant Owner',
+        },
+      }),
+    });
+    expect(tenantProvision.status).toBe(201);
+    const tenantProvisioned = await tenantProvision.json();
+    const tenantAdminToken = db.createAuthSession(tenantProvisioned.admin.id).token;
+    const join = await fetch(`${base}/enterprise/park/join`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ inviteCode: invite.code }),
+    });
+    expect(join.status).toBe(200);
+    expect((await join.json()).park.id).toBe(park.id);
+    const tenants = await fetch(`${base}/enterprise/park/tenants`, {
+      headers: { authorization: `Bearer ${parkAdminToken}` },
+    });
+    expect(tenants.status).toBe(200);
+    expect(await tenants.json()).toMatchObject({
+      organizations: [expect.objectContaining({
+        id: tenantProvisioned.organization.id,
+        name: 'Tenant Company',
+        parkId: park.id,
+      })],
+    });
+    const tenantCannotList = await fetch(`${base}/enterprise/park/tenants`, {
+      headers: { authorization: `Bearer ${tenantAdminToken}` },
+    });
+    expect(tenantCannotList.status).toBe(403);
+  }, 30_000);
 });

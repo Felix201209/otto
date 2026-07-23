@@ -832,7 +832,10 @@ h6.otto-prose__h {
 .otto-account-survey-result__responses time { color: #8aa99b; font-size: 9.5px; }
 .otto-account-survey-result__responses p { margin: 2px 0; color: #b9d7ca; font-size: 10.5px; line-height: 1.45; }
 .otto-account-survey-result__empty { margin: 0; padding: 0 12px 11px; color: #8aa99b; font-size: 10px; }
-
+.otto-account-park-tenants { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.otto-account-park-tenants article { min-width: 0; display: grid; gap: 3px; padding: 10px 12px; border: 1px solid #24473a; border-radius: 9px; background: #10271f; }
+.otto-account-park-tenants strong { overflow: hidden; color: #dffff0; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-account-park-tenants span { overflow: hidden; color: #8aa99b; font: 9.5px/1.35 var(--otto-font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .otto-account-metrics { max-width: 1180px; margin: 0 auto 18px; display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
 .otto-account-metrics article { min-width: 0; padding: 17px 18px; border: 1px solid var(--otto-border); border-radius: 13px; background: var(--otto-surface); box-shadow: var(--otto-shadow-sm); }
 .otto-account-metrics span, .otto-account-metrics small { display: block; color: var(--otto-text-tertiary); font-size: 10.5px; }
@@ -950,6 +953,7 @@ h6.otto-prose__h {
   .otto-account-invite__body { grid-template-columns: 1fr; }
   .otto-account-invite__actions { grid-column: auto; }
   .otto-account-survey-result__responses { grid-template-columns: 1fr; }
+  .otto-account-park-tenants { grid-template-columns: 1fr; }
   .otto-account-page__create { align-self: flex-start; }
   .otto-account-metrics { grid-template-columns: 1fr; }
   .otto-account-search { width: 100%; }

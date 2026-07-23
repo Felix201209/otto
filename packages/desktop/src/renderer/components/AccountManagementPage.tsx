@@ -11,6 +11,7 @@ import type {
   EnterpriseOrganizationInviteContext,
   EnterpriseOrganizationFeatures,
   EnterpriseParkSurveyResult,
+  EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
 import { EnterpriseAdministrationPanel } from './EnterpriseAdministrationPanel.js';
 
@@ -192,6 +193,8 @@ export function AccountManagementPage({
   const [parkPushError, setParkPushError] = useState<string | null>(null);
   const [parkServiceBrand, setParkServiceBrand] = useState('园区服务');
   const [parkSurveyResults, setParkSurveyResults] = useState<EnterpriseParkSurveyResult[]>([]);
+  const [parkTenantOrganizations, setParkTenantOrganizations] = useState<EnterpriseParkTenantOrganization[]>([]);
+  const [parkTenantError, setParkTenantError] = useState<string | null>(null);
   const [parkSurveyError, setParkSurveyError] = useState<string | null>(null);
   const [configurationFeatures, setConfigurationFeatures] = useState<EnterpriseOrganizationFeatures | null>(null);
   const [organizationDepartments, setOrganizationDepartments] = useState<EnterpriseOrganizationDepartment[]>([]);
@@ -343,9 +346,23 @@ export function AccountManagementPage({
     }
   }, [currentAccount.isAdmin]);
 
+  const refreshParkTenantOrganizations = useCallback(async (): Promise<void> => {
+    if (!currentAccount.isAdmin || typeof window.otto.enterpriseParkTenants !== 'function') return;
+    try {
+      setParkTenantOrganizations(await window.otto.enterpriseParkTenants());
+      setParkTenantError(null);
+    } catch (cause) {
+      setParkTenantOrganizations([]);
+      setParkTenantError(errorMessage(cause));
+    }
+  }, [currentAccount.isAdmin]);
   useEffect(() => {
     void refreshParkSurveyResults();
   }, [refreshParkSurveyResults]);
+  useEffect(() => {
+    void refreshParkTenantOrganizations();
+  }, [refreshParkTenantOrganizations]);
+
 
   const openCreate = (): void => {
     if (loading) return;
@@ -786,6 +803,12 @@ export function AccountManagementPage({
           </div>
           {parkPushMessage ? <div className="otto-account-invite__loading" role="status">{parkPushMessage}</div> : null}
           {parkPushError ? <div className="otto-account-invite__error" role="alert">{parkPushError}</div> : null}
+          <div className="otto-account-survey-results" aria-label="产业园入驻企业">
+            <div className="otto-account-survey-results__head"><strong>已入驻企业</strong><span>企业 CEO 填写产业园邀请码后加入</span></div>
+            {parkTenantError ? <div className="otto-account-invite__error" role="alert">{parkTenantError}</div> : null}
+            {!parkTenantError && parkTenantOrganizations.length === 0 ? <div className="otto-account-invite__loading">暂无企业加入当前产业园</div> : null}
+            {parkTenantOrganizations.length ? <div className="otto-account-park-tenants">{parkTenantOrganizations.map((organization) => <article key={organization.id}><strong>{organization.name}</strong><span>{organization.slug}</span></article>)}</div> : null}
+          </div>
           <div className="otto-account-survey-results" aria-label="满意度问卷回收结果">
             <div className="otto-account-survey-results__head"><strong>问卷回收</strong><span>实名提交，提交后不可修改</span></div>
             {parkSurveyError ? <div className="otto-account-invite__error" role="alert">{parkSurveyError}</div> : null}

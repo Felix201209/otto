@@ -84,6 +84,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/manage',
   '/enterprise/park/invite',
   '/enterprise/park/join',
+  '/enterprise/park/tenants',
   '/enterprise/park/specialists',
   '/enterprise/park/services',
   '/enterprise/park/services/assign',
@@ -206,6 +207,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_specialist_routing_v1',
   'unread_message_notifications_v1',
   'account_presence_v1',
+  'park_tenants_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -1392,13 +1394,11 @@ function makeHandler(
         return;
       }
 
-      if (path === '/enterprise/park/invite' && method === 'POST') {
+      if (path === '/enterprise/park/invite' && method === 'POST' && adminPrincipal?.kind !== 'account') {
         const body = await readBody(req);
         const parkId = typeof body.parkId === 'string' ? body.parkId : '';
         if (parkId) {
-          const createdBy = adminPrincipal?.kind === 'account'
-            ? adminPrincipal.account.id
-            : 'platform-admin';
+          const createdBy = 'platform-admin';
           if (!simplePark.getPark(parkId)) {
             sendJSON(res, 404, { error: '园区不存在' });
             return;
@@ -1412,6 +1412,29 @@ function makeHandler(
 
       if (path === '/enterprise/park/join' && method === 'POST' && isPublicSimplePark) {
         const body = await readBody(req);
+        const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
+        if (inviteCode) {
+          const account = db.getAccountBySession(extractToken(req));
+          if (!account || !account.isAdmin) {
+            sendJSON(res, 403, { error: '请使用企业管理员账号加入产业园' });
+            return;
+          }
+          if (!db.getOrganizationFeatures(account.organizationId).park_service) {
+            sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+            return;
+          }
+          try {
+            const park = db.joinOrganizationToPark({
+              organizationId: account.organizationId,
+              actorAccountId: account.id,
+              code: inviteCode,
+            });
+            sendJSON(res, 200, { park, organization: db.getEnterpriseOrganization(account.organizationId) });
+          } catch (error) {
+            sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
+          }
+          return;
+        }
         const code = typeof body.code === 'string' ? body.code : '';
         const enterpriseId = typeof body.enterpriseId === 'string' ? body.enterpriseId : '';
         if (!code || !enterpriseId) {
@@ -1557,6 +1580,20 @@ function makeHandler(
         return;
       }
 
+      if (path === '/enterprise/park/tenants' && method === 'GET') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: 'park admin account required' });
+          return;
+        }
+        const park = db.getParkForOrganization(principal.organizationId);
+        if (!park || park.adminOrganizationId !== principal.organizationId) {
+          sendJSON(res, 403, { error: 'current organization is not a park admin organization' });
+          return;
+        }
+        sendJSON(res, 200, { organizations: db.listParkTenantOrganizations(park.id) });
+        return;
+      }
       if (path === '/enterprise/park/specialists' && ['GET', 'POST', 'DELETE'].includes(method)) {
         const principal = adminPrincipal!;
         if (principal.kind !== 'account') {
@@ -2195,6 +2232,26 @@ function makeHandler(
           return;
         }
 
+        if (segments.length === 2 && resource === 'park' && method === 'POST') {
+          const body = await readBody(req);
+          try {
+            const park = db.createParkAsPlatform({
+              adminOrganizationId: organizationId,
+              name: typeof body.name === 'string' ? body.name : undefined,
+              slug: typeof body.slug === 'string' ? body.slug : undefined,
+              brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
+            });
+            sendJSON(res, 201, {
+              organization: db.getEnterpriseOrganization(organizationId),
+              park,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'park provisioning failed';
+            if (message === 'Organization not found') sendJSON(res, 404, { error: message });
+            else sendJSON(res, 400, { error: message });
+          }
+          return;
+        }
         if (
           segments.length === 3
           && resource === 'accounts'

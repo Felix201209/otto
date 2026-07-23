@@ -3672,6 +3672,33 @@ export function getParkForOrganization(organizationId: string): ParkView | null 
   return row ? toParkView(row) : null;
 }
 
+export function listParkTenantOrganizations(parkId: string): OrganizationView[] {
+  const park = getPark(parkId);
+  if (!park) throw new Error("Park not found");
+  return (getDB().prepare(
+    "SELECT * FROM organizations WHERE park_id = ? AND id <> ? ORDER BY name COLLATE NOCASE, slug",
+  ).all(park.id, park.adminOrganizationId) as OrganizationRow[]).map(toOrganizationView);
+}
+export function createParkAsPlatform(input: {
+  adminOrganizationId: string;
+  name?: string;
+  slug?: string;
+  brandName?: string;
+}): ParkView {
+  const organization = getEnterpriseOrganization(input.adminOrganizationId);
+  if (!organization) throw new Error("Organization not found");
+  const admin = listAccounts(input.adminOrganizationId).find(
+    (account) => account.isAdmin && account.status === 'active',
+  );
+  if (!admin) throw new Error("Park admin organization requires an active admin account");
+  return createPark({
+    adminOrganizationId: input.adminOrganizationId,
+    actorAccountId: admin.id,
+    name: input.name || organization.name,
+    slug: input.slug,
+    brandName: input.brandName,
+  });
+}
 export function createPark(input: {
   adminOrganizationId: string;
   actorAccountId: string;

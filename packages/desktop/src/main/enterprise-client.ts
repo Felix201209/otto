@@ -190,6 +190,15 @@ export interface EnterpriseOrganizationDepartment {
   updatedAt: string;
 }
 
+export interface EnterpriseParkTenantOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  parkId?: string | null;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+}
 export interface EnterpriseParkService {
   parkId: string;
   id: string;
@@ -994,6 +1003,11 @@ export class EnterpriseClient {
     })).invite;
   }
 
+  async listParkTenantOrganizations(): Promise<EnterpriseParkTenantOrganization[]> {
+    return (await this.request<{ organizations: EnterpriseParkTenantOrganization[] }>(
+      '/enterprise/park/tenants',
+    )).organizations;
+  }
   async listParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
     return (await this.request<{ specialists: EnterpriseParkSpecialist[] }>(
       '/enterprise/park/specialists',
