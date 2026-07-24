@@ -7,7 +7,6 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { rgPath } from '@vscode/ripgrep';
 import { BaseTool, Icon, ToolResult } from './tools.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
@@ -38,40 +37,46 @@ const MAX_LINE_LENGTH = 256;
  * - VSCode environment: Use VSCode's built-in ripgrep from installation directory
  * - CLI environment: Use bundled @vscode/ripgrep package
  */
-function getRipgrepPath(): string {
+async function getRipgrepPath(): Promise<string> {
+  const packagedPath = findPackagedElectronRipgrep();
+  if (packagedPath) {
+    logger.info('[GrepTool] Packaged Electron ripgrep detected');
+    return packagedPath;
+  }
+
   // Check if we're in VSCode environment
   const isVSCode = isVSCodeEnvironment();
 
   if (isVSCode) {
     logger.info('[GrepTool] VSCode environment detected - locating VSCode built-in ripgrep');
-    return findVSCodeRipgrep();
+    return await findVSCodeRipgrep();
   } else {
     logger.info('[GrepTool] CLI environment detected - using bundled ripgrep');
-    return resolvePackagedRgPath(rgPath);
+    return await getBundledRipgrepPath();
   }
 }
 
 /**
- * In a packaged Electron app the bundled rgPath points inside `app.asar`, where
- * the executable cannot be spawned by child_process. The rg binary is shipped
- * outside the archive to `<app>/Contents/Resources/ripgrep/rg` via electron-builder
- * `extraResources`; resolve to that real file. No-op outside a packaged app
- * (process.resourcesPath unset, or the default path is not inside an asar).
+ * In a packaged Electron app the rg binary is shipped outside `app.asar` via
+ * electron-builder `extraResources`. Resolve it before importing
+ * `@vscode/ripgrep`, so desktop packages do not need to bundle the whole npm
+ * wrapper just to discover this executable path.
  */
-function resolvePackagedRgPath(defaultPath: string): string {
+function findPackagedElectronRipgrep(): string | null {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
-  if (resourcesPath && defaultPath.includes('app.asar')) {
-    const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
-    const candidate = path.join(resourcesPath, 'ripgrep', binName);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+  if (!resourcesPath || !resourcesPath.includes('app.asar') && !fs.existsSync(path.join(resourcesPath, 'app.asar'))) {
+    return null;
   }
-  return defaultPath;
+  const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+  const candidate = path.join(resourcesPath, 'ripgrep', binName);
+  return fs.existsSync(candidate) ? candidate : null;
 }
 
-
+async function getBundledRipgrepPath(): Promise<string> {
+  const { rgPath } = await import('@vscode/ripgrep');
+  return rgPath;
+}
 
 /**
  * Find VSCode's built-in ripgrep binary.
@@ -83,7 +88,7 @@ function resolvePackagedRgPath(defaultPath: string): string {
  * The appRoot (from vscode.env.appRoot) typically points to
  * .../resources/app, where node_modules lives.
  */
-function findVSCodeRipgrep(): string {
+async function findVSCodeRipgrep(): Promise<string> {
   const platform = process.platform;
   const binaryName = platform === 'win32' ? 'rg.exe' : 'rg';
 
@@ -91,7 +96,7 @@ function findVSCodeRipgrep(): string {
   const appRoot = process.env.VSCODE_APP_ROOT;
   if (!appRoot) {
     logger.warn('[GrepTool] VSCODE_APP_ROOT not set, falling back to bundled ripgrep');
-    return rgPath;
+    return await getBundledRipgrepPath();
   }
 
   logger.info(`[GrepTool] Using VSCode app root: ${appRoot}`);
@@ -123,7 +128,7 @@ function findVSCodeRipgrep(): string {
   }
 
   logger.warn(`[GrepTool] Could not find VSCode ripgrep in app root, falling back to bundled ripgrep`);
-  return rgPath;
+  return await getBundledRipgrepPath();
 }
 
 
@@ -380,7 +385,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     const args = this.buildRipgrepArgs(params, searchPath);
 
     // Get the correct ripgrep path based on environment
-    const ripgrepPath = getRipgrepPath();
+    const ripgrepPath = await getRipgrepPath();
 
     logger.debug('[GrepTool] executeRipgrep', { args, searchPath, ripgrepPath });
 

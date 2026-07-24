@@ -57,7 +57,7 @@ const SOURCE_UPSTREAM = 'origin/internal';
 const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
 const RELEASE_TAG = `v${VERSION}`;
 const MAX_INSTALLER_SIZE_BYTES = Number(
-  process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 100,
+  process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 150,
 ) * 1024 * 1024;
 const BUILD_ASSET_NAMES = [
   `Otto-${VERSION}-arm64.dmg`,

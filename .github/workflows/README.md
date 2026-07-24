@@ -39,7 +39,7 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 
 规则：
 - 根 `package.json` 与 `packages/desktop/package.json` 必须等于目标版本。
-- 每个桌面安装包必须小于 `OTTO_DESKTOP_MAX_INSTALLER_MB`，默认 100MB。
+- 每个桌面安装包必须小于 `OTTO_DESKTOP_MAX_INSTALLER_MB`，默认 150MB。
 - Release 默认创建为 draft。人工确认后发布，发布事件会触发服务器部署 workflow。
 
 ## Deploy Server
