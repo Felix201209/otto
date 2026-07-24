@@ -169,7 +169,85 @@ try {
   cpSync(smsSource, smsTarget);
   writeFileSync(
     path.join(releaseRoot, 'node_modules', 'otto-core', 'dist', 'index.js'),
-    "export * from './src/services/aliyunSmsSender.js';\n",
+    `export * from './src/services/aliyunSmsSender.js';
+
+export const FEATURE_FLAGS = {
+  park_service: '公园服务',
+  feishu_auto_reply: '飞书自动回复',
+  enterprise_tree: '企业组织树',
+  tui_sync: 'TUI同步',
+  knowledge_loop: '知识沉淀闭环',
+  memory_injection: '经验检索注入',
+  checkpoints: '崩溃恢复',
+  audit_log: '审计日志',
+};
+
+const FEATURE_FLAG_DEFAULTS = {
+  park_service: false,
+  feishu_auto_reply: true,
+  enterprise_tree: true,
+  tui_sync: true,
+  knowledge_loop: true,
+  memory_injection: true,
+  checkpoints: true,
+  audit_log: true,
+};
+
+export class ProjectSettingsManager {
+  constructor() {
+    this.settings = {};
+  }
+
+  getSettings() {
+    return { ...this.settings };
+  }
+
+  save(settings) {
+    this.settings = { ...settings };
+  }
+}
+
+export class FeatureFlagManager {
+  constructor(settingsManager) {
+    this.settingsManager = settingsManager;
+    this.listeners = new Set();
+  }
+
+  isEnabled(flag) {
+    const configured = this.settingsManager.getSettings().featureFlags?.[flag];
+    return typeof configured === 'boolean' ? configured : FEATURE_FLAG_DEFAULTS[flag];
+  }
+
+  setEnabled(flag, enabled) {
+    const oldValue = this.isEnabled(flag);
+    if (oldValue === enabled) return;
+    const settings = this.settingsManager.getSettings();
+    this.settingsManager.save({
+      ...settings,
+      featureFlags: {
+        ...settings.featureFlags,
+        [flag]: enabled,
+      },
+    });
+    for (const listener of this.listeners) {
+      try {
+        listener(flag, enabled, oldValue);
+      } catch {
+        // Ignore listener failures in the minimal enterprise adapter.
+      }
+    }
+  }
+
+  getAll() {
+    return Object.fromEntries(Object.keys(FEATURE_FLAGS).map((flag) => [flag, this.isEnabled(flag)]));
+  }
+
+  onChange(callback) {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  }
+}
+`,
   );
   writeFileSync(
     path.join(releaseRoot, 'node_modules', 'otto-core', 'package.json'),
