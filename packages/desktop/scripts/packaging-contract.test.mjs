@@ -97,6 +97,13 @@ describe('desktop packaging contract', () => {
     expect(bundledInputs).not.toContain('resources/video-editor');
   });
 
+  it('does not exclude runtime build/src modules required by ESM dependencies', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    expect(packageJson.build.files).not.toContain('!**/node_modules/**/src/**');
+  });
+
   it('keeps update manifest download URLs bound to the configured release repo', async () => {
     const script = await readFile(
       path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),

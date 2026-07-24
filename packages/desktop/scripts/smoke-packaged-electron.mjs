@@ -72,6 +72,8 @@ async function reservePort() {
   return port;
 }
 
+const cdpCommandTimeoutMs = Number(process.env.OTTO_SMOKE_CDP_TIMEOUT_MS || 45_000);
+
 async function waitForDebugger(port, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = '尚未发现 renderer page';
@@ -95,7 +97,7 @@ async function waitForDebugger(port, timeoutMs = 30_000) {
   throw new Error(`等待 Electron CDP 超时: ${lastError}`);
 }
 
-async function createCdpClient(webSocketUrl) {
+async function createCdpClient(webSocketUrl, getOutput = () => '') {
   const socket = new WebSocket(webSocketUrl);
   await Promise.race([
     once(socket, 'open'),
@@ -137,8 +139,14 @@ async function createCdpClient(webSocketUrl) {
     return new Promise((resolveResult, reject) => {
       const timeout = setTimeout(() => {
         pending.delete(id);
-        reject(new Error(`Electron CDP ${method} 超时`));
-      }, 15_000);
+        const tail = getOutput();
+        reject(
+          new Error(
+            `Electron CDP ${method} 超时`
+            + (tail ? `\n\nElectron 日志尾部:\n${tail}` : ''),
+          ),
+        );
+      }, cdpCommandTimeoutMs);
       pending.set(id, { resolve: resolveResult, reject, timeout });
       socket.send(JSON.stringify({ id, method, params }), (error) => {
         if (!error) return;
@@ -256,12 +264,28 @@ try {
   appProcess.on('error', capture);
 
   const page = await waitForDebugger(debuggerPort);
-  cdp = await createCdpClient(page.webSocketDebuggerUrl);
+  cdp = await createCdpClient(page.webSocketDebuggerUrl, () => output);
   await cdp.send('Runtime.enable');
 
   const expression = `(() => new Promise(async (resolve) => {
-    const timeout = setTimeout(() => resolve({ smokeTimeout: true }), 12000);
+    const steps = [];
+    const mark = (name) => steps.push({ name, at: Date.now() });
+    const timeout = setTimeout(() => resolve({ smokeTimeout: true, steps }), 12000);
+    const withTimeout = (name, promise, ms = 4000) => {
+      mark(name + ':start');
+      return Promise.race([
+        Promise.resolve(promise).then((value) => {
+          mark(name + ':done');
+          return value;
+        }),
+        new Promise((_, reject) => setTimeout(() => {
+          mark(name + ':timeout');
+          reject(new Error(name + ' timed out'));
+        }, ms)),
+      ]);
+    };
     try {
+      mark('begin');
       const uiDeadline = Date.now() + 5000;
       while (
         Date.now() < uiDeadline
@@ -269,6 +293,7 @@ try {
       ) {
         await new Promise((next) => setTimeout(next, 50));
       }
+      mark('body-ready');
       const bridge = window.otto;
       const required = [
         'enterpriseSession', 'enterprisePasswordLogin', 'appVersion',
@@ -281,16 +306,17 @@ try {
           pageUrl: location.href,
           hasBridge: Boolean(bridge),
           missingMethods,
+          steps,
           bodyText: document.body?.innerText ?? ''
         });
         return;
       }
 
-      const appVersion = await bridge.appVersion();
-      const session = await bridge.enterpriseSession();
+      const appVersion = await withTimeout('appVersion', bridge.appVersion());
+      const session = await withTimeout('enterpriseSession', bridge.enterpriseSession());
       let loginProbeError = '';
       try {
-        await bridge.enterprisePasswordLogin(null);
+        await withTimeout('enterprisePasswordLogin', bridge.enterprisePasswordLogin(null));
       } catch (error) {
         loginProbeError = error instanceof Error ? error.message : String(error);
       }
@@ -306,15 +332,16 @@ try {
           resolveFrame(null);
         }, 5000);
       });
-      const connected = await bridge.connect();
+      const connected = await withTimeout('connect', bridge.connect());
       bridge.send({ type: 'list_sessions', payload: {} });
-      const frameType = await framePromise;
+      const frameType = await withTimeout('sessionsList', framePromise, 6000);
       const bodyText = document.body?.innerText ?? '';
       clearTimeout(timeout);
       resolve({
         pageUrl: location.href,
         hasBridge: true,
         missingMethods,
+        steps,
         appVersion,
         session,
         sessionIsValid: Boolean(
@@ -336,6 +363,7 @@ try {
       resolve({
         pageUrl: location.href,
         smokeError: error instanceof Error ? error.stack || error.message : String(error),
+        steps,
         bodyText: document.body?.innerText ?? ''
       });
     }
@@ -349,8 +377,16 @@ try {
     throw new Error(`CDP evaluate 异常: ${JSON.stringify(evaluation.exceptionDetails)}`);
   }
   const result = evaluation.result?.value;
-  if (result?.smokeTimeout) throw new Error('最终 DMG 动态验收超时');
-  if (result?.smokeError) throw new Error(`最终 DMG 动态验收异常: ${result.smokeError}`);
+  if (result?.smokeTimeout) {
+    throw new Error(`最终 DMG 动态验收超时: ${JSON.stringify(result.steps ?? [])}`);
+  }
+  if (result?.smokeError) {
+    throw new Error(
+      `最终 DMG 动态验收异常: ${result.smokeError}`
+      + `\nsteps=${JSON.stringify(result.steps ?? [])}`
+      + (output ? `\n\nElectron 日志尾部:\n${output}` : ''),
+    );
+  }
   assertSmokeResult(result);
 
   const fatalOutput = [

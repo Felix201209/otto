@@ -77,7 +77,6 @@
       "!**/*.markdown",
       "!**/*.ts",
       "!**/*.d.ts",
-      "!**/node_modules/**/src/**",
       "!**/node_modules/**/test/**",
       "!**/node_modules/**/tests/**",
       "!**/node_modules/**/__tests__/**",
