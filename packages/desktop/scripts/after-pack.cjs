@@ -8,13 +8,52 @@
  */
 
 const { execFileSync } = require('node:child_process');
+const { existsSync, readdirSync } = require('node:fs');
 const path = require('node:path');
 
-module.exports = async function afterPack(context) {
+function findNestedLibreOfficeBundles(appPath) {
+  const runtimeRoot = path.join(
+    appPath,
+    'Contents',
+    'Resources',
+    'runtime',
+  );
+  if (!existsSync(runtimeRoot)) return [];
+
+  return readdirSync(runtimeRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) =>
+      path.join(
+        runtimeRoot,
+        entry.name,
+        'libreoffice',
+        'LibreOffice.app',
+      ))
+    .filter(existsSync)
+    .sort();
+}
+
+async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
 
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  for (const libreOfficePath of findNestedLibreOfficeBundles(appPath)) {
+    execFileSync(
+      'codesign',
+      ['--force', '--deep', '--sign', '-', libreOfficePath],
+      { stdio: 'inherit' },
+    );
+    execFileSync(
+      'codesign',
+      ['--verify', '--deep', '--strict', libreOfficePath],
+      { stdio: 'inherit' },
+    );
+    console.log(`[after-pack] 内置 LibreOffice ad-hoc 签名校验通过：${libreOfficePath}`);
+  }
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
   execFileSync('codesign', ['--verify', '--deep', '--strict', appPath], { stdio: 'inherit' });
   console.log(`[after-pack] macOS ad-hoc 签名校验通过：${appPath}`);
-};
+}
+
+module.exports = afterPack;
+module.exports.findNestedLibreOfficeBundles = findNestedLibreOfficeBundles;

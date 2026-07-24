@@ -10,7 +10,6 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/renderer/App.js';
 
@@ -63,8 +62,8 @@ const HISTORY: Record<string, Frame[]> = {
         { type: 'text', value: '登录流程已优化完成！我将重复的输入验证逻辑提取到了 `validateLoginInput` 方法中，并通过单元测试确保功能正常。' },
       ],
       associatedToolCalls: [
-        { callId: 't1', toolName: 'edit_file', displayName: '编辑文件', status: 'success', parameters: {}, confirmationDetails: { type: 'edit', filePath: 'src/services/auth/login.ts', fileDiff: DIFF } },
-        { callId: 't2', toolName: 'run_shell_command', displayName: '终端运行', status: 'success', parameters: {}, confirmationDetails: { type: 'exec', command: 'npm run lint' } },
+        { id: 't1', toolName: 'edit_file', displayName: '编辑文件', status: 'success', parameters: {}, confirmationDetails: { type: 'edit', filePath: 'src/services/auth/login.ts', fileDiff: DIFF } },
+        { id: 't2', toolName: 'run_shell_command', displayName: '终端运行', status: 'success', parameters: {}, confirmationDetails: { type: 'exec', command: 'npm run lint' } },
       ],
     },
   ],
@@ -286,7 +285,13 @@ const mockBridge = {
   async enterpriseTicketSubmitLegacy(): Promise<any> { return previewTicket; },
 };
 
-(window as any).otto = mockBridge;
+(window as any).otto = new Proxy(mockBridge, {
+  get(target, key) {
+    if (key in target) return target[key as keyof typeof target];
+    if (typeof key === 'string' && key.startsWith('on')) return () => () => {};
+    return async () => null;
+  },
+});
 // 自检钩子：让截图脚本能注入任意 server 帧（仅 preview，不参与交付）。
 (window as any).__emitTestFrame = (f: Frame): void => emit(f);
 

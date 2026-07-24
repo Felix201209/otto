@@ -129,6 +129,8 @@ export type EnterpriseServerOwnership =
 export interface ServerManagerDependencies {
   loadOttoServer: typeof loadOttoServer;
   loadEnterpriseServer: typeof loadEnterpriseServer;
+  /** 子进程边界可注入，避免单测真的拉起另一个 Otto server。 */
+  spawnDetached: typeof childProcess.spawn;
   pidAlive: typeof pidAlive;
   probeHealth: typeof probeHealth;
   fetchImpl: typeof fetch;
@@ -138,6 +140,7 @@ export interface ServerManagerDependencies {
 const DEFAULT_DEPENDENCIES: ServerManagerDependencies = {
   loadOttoServer,
   loadEnterpriseServer,
+  spawnDetached: childProcess.spawn,
   pidAlive,
   probeHealth,
   fetchImpl: fetch,
@@ -351,7 +354,11 @@ export class ServerManager {
       };
     }
 
-    const child = childProcess.spawn(process.execPath, spawnArgs, spawnOpts);
+    const child = this.dependencies.spawnDetached(
+      process.execPath,
+      spawnArgs,
+      spawnOpts,
+    );
     this.detachedChild = child;
     child.unref(); // 不计入父进程事件循环引用
 
@@ -388,6 +395,7 @@ export class ServerManager {
         }
       }
       if (child.exitCode !== null) {
+        if (this.detachedChild === child) this.detachedChild = undefined;
         throw new Error(
           `detached server 异常退出 code=${child.exitCode} stderr=${stderr.slice(-200)}`,
         );

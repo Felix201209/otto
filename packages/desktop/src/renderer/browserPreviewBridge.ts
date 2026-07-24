@@ -78,7 +78,7 @@ if (!previewWindow.otto) {
       const stored: unknown = JSON.parse(localStorage.getItem(modelStorageKey) ?? '[]');
       if (Array.isArray(stored) && stored.length > 0) return stored as Array<Record<string, unknown>>;
     } catch { /* 隐私模式或损坏数据时使用默认模型 */ }
-    return [{ id: 'preview-model', displayName: 'gpt-5.1（本地预览）', provider: 'openai', enabled: true }];
+    return [{ id: 'preview-model', displayName: 'GPT-5.1', provider: 'openai', enabled: true }];
   }
   function persistModels(): void {
     try { localStorage.setItem(modelStorageKey, JSON.stringify(models)); } catch { /* 不可持久化时仍可在当前页使用 */ }

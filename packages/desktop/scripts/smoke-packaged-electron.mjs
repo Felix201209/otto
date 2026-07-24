@@ -399,7 +399,9 @@ try {
   }
   if (mounted) {
     let detachError;
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
+    // Electron/WindowServer 退出后，macOS 偶尔还会短暂占用只读 APFS DMG。
+    // 旧的 5 × 500ms 会把已通过的产品验收误报成失败；先给系统完整的释放窗口。
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
       try {
         execFileSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' });
         mounted = false;
@@ -407,12 +409,26 @@ try {
         break;
       } catch (error) {
         detachError = error;
-        if (attempt < 5) await sleep(500);
+        if (attempt < 20) await sleep(500);
+      }
+    }
+    // 目标始终是本脚本刚挂载的临时、只读镜像；正常重试耗尽后才强制卸载。
+    if (mounted) {
+      try {
+        execFileSync(
+          'hdiutil',
+          ['detach', '-force', mountPoint],
+          { stdio: 'pipe' },
+        );
+        mounted = false;
+        detachError = undefined;
+      } catch (error) {
+        detachError = error;
       }
     }
     if (mounted) {
       throw new Error(
-        `[packaged-smoke] 5 次重试后仍无法卸载 DMG: ${String(detachError)}`,
+        `[packaged-smoke] 正常重试与只读镜像强制卸载后仍失败: ${String(detachError)}`,
       );
     }
   }

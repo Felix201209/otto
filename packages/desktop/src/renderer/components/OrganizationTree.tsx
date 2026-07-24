@@ -61,7 +61,7 @@ export function OrganizationTree({
       result.set(normalizeChatKey(member.name), member);
     }
     return result;
-  }, [orgView?.members]);
+  }, [enterpriseAccount?.id, orgView?.members]);
   const openDirectChat = useCallback((member: EnterpriseOrganizationView['members'][number]): void => {
     onMessageRead?.(member.id);
     setChatMember(member);

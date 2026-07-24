@@ -71,11 +71,19 @@ function fakeHttpServer(
 function dependencies(
   overrides: Partial<ServerManagerDependencies> = {},
 ): ServerManagerDependencies {
+  const exitedChild = Object.assign(new EventEmitter(), {
+    exitCode: 1,
+    stdout: null,
+    stderr: null,
+    unref: vi.fn(),
+    kill: vi.fn(),
+  });
   return {
     loadOttoServer: async () => discoveredMainModule(),
     loadEnterpriseServer: async () => {
       throw new Error('enterprise factory was not configured');
     },
+    spawnDetached: vi.fn(() => exitedChild) as unknown as ServerManagerDependencies['spawnDetached'],
     pidAlive: () => true,
     probeHealth: async (_host, port) => port === MAIN_ENDPOINT.port,
     fetchImpl: vi.fn() as unknown as typeof fetch,

@@ -1,0 +1,121 @@
+/**
+ * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const require = createRequire(import.meta.url);
+const afterPack = require('./after-pack.cjs');
+
+describe('desktop packaging contract', () => {
+  it('uses a real multi-resolution ICO for Windows packaging', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    expect(packageJson.build.win.icon).toBe('build/icon.ico');
+
+    const icon = await readFile(path.join(packageRoot, 'build', 'icon.ico'));
+    expect(icon.readUInt16LE(0)).toBe(0);
+    expect(icon.readUInt16LE(2)).toBe(1);
+    const count = icon.readUInt16LE(4);
+    expect(count).toBeGreaterThanOrEqual(4);
+    const sizes = new Set();
+    for (let index = 0; index < count; index += 1) {
+      const entryOffset = 6 + index * 16;
+      const widthByte = icon[entryOffset];
+      const heightByte = icon[entryOffset + 1];
+      const imageSize = icon.readUInt32LE(entryOffset + 8);
+      const imageOffset = icon.readUInt32LE(entryOffset + 12);
+      sizes.add(widthByte === 0 ? 256 : widthByte);
+      expect(heightByte === 0 ? 256 : heightByte).toBe(widthByte === 0 ? 256 : widthByte);
+      // rcedit writes this size through a 16-bit Windows resource field. A
+      // larger PNG is truncated in the final Otto.exe even though the source
+      // ICO itself still opens correctly.
+      expect(imageSize).toBeLessThanOrEqual(0xffff);
+      expect(imageOffset + imageSize).toBeLessThanOrEqual(icon.length);
+    }
+    for (const size of [16, 32, 48, 256]) {
+      expect(sizes.has(size)).toBe(true);
+    }
+  });
+
+  it('uses a complete multi-resolution ICNS for macOS packaging', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    expect(packageJson.build.mac.icon).toBe('build/icon.icns');
+
+    const icon = await readFile(path.join(packageRoot, 'build', 'icon.icns'));
+    expect(icon.subarray(0, 4).toString('ascii')).toBe('icns');
+    expect(icon.readUInt32BE(4)).toBe(icon.length);
+
+    const chunkTypes = new Set();
+    let offset = 8;
+    while (offset + 8 <= icon.length) {
+      const type = icon.subarray(offset, offset + 4).toString('ascii');
+      const length = icon.readUInt32BE(offset + 4);
+      expect(length).toBeGreaterThanOrEqual(8);
+      expect(offset + length).toBeLessThanOrEqual(icon.length);
+      chunkTypes.add(type);
+      offset += length;
+    }
+    expect(offset).toBe(icon.length);
+    for (const type of ['ic07', 'ic08', 'ic09', 'ic10']) {
+      expect(chunkTypes.has(type)).toBe(true);
+    }
+  });
+
+  it('keeps the public browser previews on their current model display names', async () => {
+    const [mockPreview, browserBridge] = await Promise.all([
+      readFile(path.join(packageRoot, 'preview', 'mock.tsx'), 'utf8'),
+      readFile(
+        path.join(packageRoot, 'src', 'renderer', 'browserPreviewBridge.ts'),
+        'utf8',
+      ),
+    ]);
+    expect(mockPreview).toContain("displayName: '高端推理模型'");
+    expect(browserBridge).toContain("displayName: 'GPT-5.1'");
+    expect(browserBridge).not.toContain("displayName: 'gpt-5.1（本地预览）'");
+  });
+
+  it('discovers every packaged LibreOffice bundle before signing Otto', async () => {
+    const appPath = await mkdtemp(path.join(os.tmpdir(), 'otto-after-pack-'));
+    try {
+      const arm64Bundle = path.join(
+        appPath,
+        'Contents',
+        'Resources',
+        'runtime',
+        'darwin-arm64',
+        'libreoffice',
+        'LibreOffice.app',
+      );
+      const x64Bundle = path.join(
+        appPath,
+        'Contents',
+        'Resources',
+        'runtime',
+        'darwin-x64',
+        'libreoffice',
+        'LibreOffice.app',
+      );
+      await Promise.all([
+        mkdir(arm64Bundle, { recursive: true }),
+        mkdir(x64Bundle, { recursive: true }),
+      ]);
+
+      expect(afterPack.findNestedLibreOfficeBundles(appPath)).toEqual([
+        arm64Bundle,
+        x64Bundle,
+      ]);
+    } finally {
+      await rm(appPath, { recursive: true, force: true });
+    }
+  });
+});
