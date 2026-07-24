@@ -372,7 +372,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
   });
 
-  it('中心返回未加入园区时不用旧本机品牌显示园区入口', async () => {
+  it('中心返回未加入园区时显示默认宏创园区入口，不读取旧本机品牌', async () => {
     installBridge();
     const enterpriseParkView = vi.fn(async () => null);
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
@@ -387,6 +387,7 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: /宏创园区服务/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '旧本机宏创园区服务' })).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });

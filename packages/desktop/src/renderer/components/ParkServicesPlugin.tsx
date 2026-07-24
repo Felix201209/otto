@@ -48,8 +48,8 @@ interface ParkService {
   steps?: WorkflowStep[];
 }
 
-const DEFAULT_BRAND = '园区服务';
-const DEFAULT_PARK = '产业园';
+const DEFAULT_BRAND = '宏创园区服务';
+const DEFAULT_PARK = '宏创园区';
 
 const ICON_POOL: IconComponent[] = [
   IconBuilding,
@@ -294,12 +294,8 @@ export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
 }
 
-export function useParkBrand(): string | null {
-  // 新版 preload 有中心园区查询时先隐藏，等服务端确认开关；
-  // 旧版客户端没有该 API 时保留原有本机配置兼容行为。
-  const [brand, setBrand] = useState<string | null>(() => (
-    typeof window.otto?.enterpriseParkView === 'function' ? null : DEFAULT_BRAND
-  ));
+export function useParkBrand(): string {
+  const [brand, setBrand] = useState(DEFAULT_BRAND);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -308,10 +304,10 @@ export function useParkBrand(): string | null {
         try {
           const park = await enterpriseParkView();
           if (!cancelled) {
-            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : null);
+            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : DEFAULT_BRAND);
           }
         } catch {
-          if (!cancelled) setBrand(null);
+          if (!cancelled) setBrand(DEFAULT_BRAND);
         }
         return;
       }
@@ -832,9 +828,7 @@ function ServiceDemo({ service, onBack, focusTicket }: { service: ParkService; o
 }
 
 export function ParkServicesPlugin(): React.JSX.Element {
-  const [parkEnabled, setParkEnabled] = useState<boolean | null>(() => (
-    typeof window.otto?.enterpriseParkView === 'function' ? null : true
-  ));
+  const [parkEnabled, setParkEnabled] = useState(true);
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
@@ -858,9 +852,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
           const park = await enterpriseParkView();
           if (!park || park.status !== 'active') {
             if (!cancelled) {
-              setParkEnabled(false);
-              setOpen(false);
-              setServices([]);
+              setParkEnabled(true);
+              setBrand(DEFAULT_BRAND);
+              setServices(defaultServices(DEFAULT_PARK));
             }
             return;
           }
@@ -887,9 +881,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
           }
         } catch {
           if (!cancelled) {
-            setParkEnabled(false);
-            setOpen(false);
-            setServices([]);
+            setParkEnabled(true);
+            setBrand(DEFAULT_BRAND);
+            setServices(defaultServices(DEFAULT_PARK));
           }
         }
         return;

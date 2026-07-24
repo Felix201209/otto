@@ -167,7 +167,7 @@ describe('ParkServicesPlugin', () => {
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
   });
 
-  it('中心接口返回 null 时表示未加入园区，不回退本机配置也不允许事件打开', async () => {
+  it('中心接口返回 null 时仍显示默认宏创园区面板，不回退旧本机品牌', async () => {
     const enterpriseParkView = vi.fn(async () => null);
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
     Object.assign(window.otto, { enterpriseParkView, parkConfig });
@@ -176,11 +176,13 @@ describe('ParkServicesPlugin', () => {
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
     openDialog();
 
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('宏创园区服务')).toBeTruthy();
+    expect(screen.queryByText('旧本机宏创园区服务')).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });
 
-  it('中心园区请求失败时 fail closed，不展示陈旧本机品牌', async () => {
+  it('中心园区请求失败时仍显示默认宏创园区面板，不展示陈旧本机品牌', async () => {
     const enterpriseParkView = vi.fn(async () => {
       throw new Error('园区服务暂时不可用');
     });
@@ -191,7 +193,9 @@ describe('ParkServicesPlugin', () => {
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
     openDialog();
 
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('宏创园区服务')).toBeTruthy();
+    expect(screen.queryByText('陈旧宏创园区服务')).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });
 
@@ -359,7 +363,7 @@ describe('ParkServicesPlugin', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     const labelledBy = dialog.getAttribute('aria-labelledby')!;
-    expect(document.getElementById(labelledBy)?.textContent).toBe('园区服务');
+    expect(document.getElementById(labelledBy)?.textContent).toBe('宏创园区服务');
   });
 
   it('企业定制：parkConfig 的 brandName/services 覆盖内置默认', async () => {

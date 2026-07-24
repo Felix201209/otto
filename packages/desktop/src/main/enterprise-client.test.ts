@@ -916,6 +916,33 @@ describe('EnterpriseClient', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/park-services/push');
   });
 
+  it('园区视图读取直接请求业务接口，不因旧 health capabilities 缺 park_membership_v1 隐藏入口', async () => {
+    const park = {
+      id: 'park_hc',
+      name: '宏创园区',
+      slug: 'hongchuang',
+      brandName: '宏创园区服务',
+      adminOrganizationId: 'org_acme',
+      status: 'active' as const,
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+      services: [],
+      tenantOrganizations: [],
+      specialists: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, { park }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    client.restore({ serverUrl: 'https://enterprise.otto.test', token: 'session-token' });
+
+    await expect(client.getParkView()).resolves.toEqual(park);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://enterprise.otto.test/enterprise/park/view');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer session-token',
+    });
+  });
+
   it('恢复会话遇到旧服务器时保留服务器地址和 token，并返回明确的升级提示', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, { status: 'ok' }));
     const client = new EnterpriseClient(fetchMock as typeof fetch);

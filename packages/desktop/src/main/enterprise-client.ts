@@ -1011,7 +1011,6 @@ export class EnterpriseClient {
 
   async getParkView(): Promise<EnterprisePark | null> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['park_membership_v1']);
     return (await this.request<{ park: EnterprisePark | null }>('/enterprise/park/view')).park;
   }
 
