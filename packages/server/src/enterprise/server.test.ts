@@ -574,7 +574,7 @@ describe('受保护 vs 公开路由边界', () => {
       direct_messages: true,
       park_service: false,
       atoa: false,
-      knowledge: false,
+      knowledge: true,
       feishu_auto_reply: false,
     });
   });

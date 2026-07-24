@@ -1550,7 +1550,9 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
 };
 
 const LICENSE_MODULE_FEATURES: Record<string, Array<keyof OrganizationFeatures>> = {
-  enterprise_tree: ['enterprise_tree'],
+  // 企业记忆是企业树的基础能力：组织、部门与身份边界已经由企业树建立后，
+  // 同一组织内的已授权知识应可被读取和沉淀，不能因独立授权项缺失而在客户端消失。
+  enterprise_tree: ['enterprise_tree', 'knowledge'],
   park_service: ['park_service'],
   park_services: ['park_service'],
   feishu: ['feishu_auto_reply'],
