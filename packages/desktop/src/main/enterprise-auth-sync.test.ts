@@ -124,6 +124,14 @@ describe('enterprise auth identity synchronization', () => {
     expect(cancelHandler).not.toContain('notificationService.clearAll()');
   });
 
+  it('mac 打包版不会无条件恢复 Keychain token 以免系统密码框卡死登录页', () => {
+    const source = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
+    expect(source).toContain('function canRestoreEncryptedEnterpriseSession()');
+    expect(source).toContain("process.env.OTTO_ENTERPRISE_RESTORE_KEYCHAIN_SESSION === '1'");
+    expect(source).toContain("process.platform === 'darwin' && app.isPackaged");
+    expect(source).toContain('if (!canRestoreEncryptedEnterpriseSession()) return');
+  });
+
   it('协议与工作区服务不暴露可由退出流程触发的整库销毁入口', () => {
     const protocolSource = readFileSync(
       resolve(__dirname, '../../../server/src/protocol.ts'),

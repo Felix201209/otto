@@ -399,6 +399,11 @@ function enterpriseSessionPath(): string {
   return path.join(app.getPath('userData'), 'enterprise-auth.json');
 }
 
+function canRestoreEncryptedEnterpriseSession(): boolean {
+  if (process.env.OTTO_ENTERPRISE_RESTORE_KEYCHAIN_SESSION === '1') return true;
+  return !(process.platform === 'darwin' && app.isPackaged);
+}
+
 function loadEnterpriseSession(): void {
   if (enterpriseSessionLoaded) return;
   enterpriseSessionLoaded = true;
@@ -416,6 +421,7 @@ function loadEnterpriseSession(): void {
       fs.readFileSync(enterpriseSessionPath(), 'utf8'),
       DEFAULT_ENTERPRISE_SERVER_URL,
       (encryptedToken) => {
+        if (!canRestoreEncryptedEnterpriseSession()) return '';
         if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用');
         return safeStorage.decryptString(Buffer.from(encryptedToken, 'base64'));
       },
@@ -435,7 +441,7 @@ function loadEnterpriseSession(): void {
 
 function saveEnterpriseSession(): void {
   const snapshot = enterpriseClient.snapshot();
-  const safeSnapshot = safeStorage.isEncryptionAvailable()
+  const safeSnapshot = canRestoreEncryptedEnterpriseSession() && safeStorage.isEncryptionAvailable()
     ? snapshot
     : { ...snapshot, token: null };
   fs.mkdirSync(path.dirname(enterpriseSessionPath()), { recursive: true });
