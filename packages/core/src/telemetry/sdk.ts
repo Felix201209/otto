@@ -5,41 +5,15 @@
  */
 
 import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
-import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-grpc';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
-import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
-import { Resource } from '@opentelemetry/resources';
-import {
-  BatchSpanProcessor,
-  ConsoleSpanExporter,
-} from '@opentelemetry/sdk-trace-node';
-import {
-  BatchLogRecordProcessor,
-  ConsoleLogRecordExporter,
-} from '@opentelemetry/sdk-logs';
-import {
-  ConsoleMetricExporter,
-  PeriodicExportingMetricReader,
-} from '@opentelemetry/sdk-metrics';
-import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { Config } from '../config/config.js';
+import type { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
 import { initializeMetrics } from './metrics.js';
-import {
-  FileLogExporter,
-  FileMetricExporter,
-  FileSpanExporter,
-} from './file-exporters.js';
 
 // For troubleshooting, set the log level to DiagLogLevel.DEBUG
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);
 
-let sdk: NodeSDK | undefined;
+let sdk: { start: () => Promise<void> | void; shutdown: () => Promise<void> | void } | undefined;
 let telemetryInitialized = false;
-type NodeSDKOptions = NonNullable<ConstructorParameters<typeof NodeSDK>[0]>;
 
 export function isTelemetrySdkInitialized(): boolean {
   return telemetryInitialized;
@@ -74,6 +48,44 @@ export function initializeTelemetry(config: Config): void {
   const otlpEndpoint = parseGrpcEndpoint(config.getTelemetryOtlpEndpoint());
 
   if (telemetryEnabled && otlpEndpoint) {
+    void initializeOtlpTelemetry(config, otlpEndpoint);
+  }
+
+  telemetryInitialized = true;
+}
+
+async function initializeOtlpTelemetry(
+  config: Config,
+  otlpEndpoint: string,
+): Promise<void> {
+  try {
+    const [
+      { OTLPTraceExporter },
+      { OTLPLogExporter },
+      { OTLPMetricExporter },
+      { NodeSDK },
+      { SemanticResourceAttributes },
+      { Resource },
+      { BatchLogRecordProcessor },
+      { PeriodicExportingMetricReader },
+      { HttpInstrumentation },
+    ] = await Promise.all([
+      import('@opentelemetry/exporter-trace-otlp-grpc'),
+      import('@opentelemetry/exporter-logs-otlp-grpc'),
+      import('@opentelemetry/exporter-metrics-otlp-grpc'),
+      import('@opentelemetry/sdk-node'),
+      import('@opentelemetry/semantic-conventions'),
+      import('@opentelemetry/resources'),
+      import('@opentelemetry/sdk-logs'),
+      import('@opentelemetry/sdk-metrics'),
+      import('@opentelemetry/instrumentation-http'),
+    ]);
+
+    const metricReader = new PeriodicExportingMetricReader({
+      exporter: new OTLPMetricExporter({
+        url: `${otlpEndpoint}/v1/metrics`,
+      }),
+    });
     sdk = new NodeSDK({
       resource: new Resource({
         [SemanticResourceAttributes.SERVICE_NAME]: SERVICE_NAME,
@@ -82,11 +94,7 @@ export function initializeTelemetry(config: Config): void {
       traceExporter: new OTLPTraceExporter({
         url: `${otlpEndpoint}/v1/traces`,
       }),
-      metricReader: new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
-          url: `${otlpEndpoint}/v1/metrics`,
-        }),
-      }) as unknown as NodeSDKOptions['metricReader'],
+      metricReader: metricReader as never,
       logRecordProcessor: new BatchLogRecordProcessor(
         new OTLPLogExporter({
           url: `${otlpEndpoint}/v1/logs`,
@@ -95,15 +103,11 @@ export function initializeTelemetry(config: Config): void {
       instrumentations: [new HttpInstrumentation()],
     });
 
-    try {
-      sdk.start();
-      console.log('OpenTelemetry SDK initialized successfully.');
-    } catch (error) {
-      console.error('Failed to start OpenTelemetry SDK:', error);
-    }
+    sdk.start();
+    console.log('OpenTelemetry SDK initialized successfully.');
+  } catch (error) {
+    console.error('Failed to start OpenTelemetry SDK:', error);
   }
-
-  telemetryInitialized = true;
 }
 
 export async function shutdownTelemetry(): Promise<void> {

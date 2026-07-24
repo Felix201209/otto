@@ -53,6 +53,16 @@ import type {
   ServerEndpoint,
 } from 'otto-server';
 
+function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE') return;
+    throw error;
+  });
+}
+
+ignoreBrokenPipe(process.stdout);
+ignoreBrokenPipe(process.stderr);
+
 /** 脱敏后的飞书配置视图（不含 secret）。 */
 interface FeishuConfigPublic {
   appId: string;
