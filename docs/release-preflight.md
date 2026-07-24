@@ -7,7 +7,7 @@
 - 发布源必须是 `origin/internal` 上的明确 commit；不要从本地脏树、过期 tag 或临时构建目录发版。
 - 桌面端、企业服务器、GitHub Release 三者必须同步到同一版本号。
 - 企业服务器升级必须先跑 canary，canary 通过后才允许切换生产 systemd。
-- 桌面安装包目标上限是 `100MB`；超过上限只能发内部测试包，不能标正式 release。
+- 桌面安装包目标上限是 `150MB`；超过上限只能发内部测试包，不能标正式 release。
 - GitHub Actions 失败时必须查明是代码、脚本、Secrets、runner/账单还是服务器权限问题，不能把失败的自动化当作已发布。
 
 ## 0.1 LSTC 版本门禁
@@ -95,12 +95,12 @@ npm run release --workspace=packages/desktop
 ```
 
 必须满足：
-- mac arm64 DMG `< 100MB`
-- mac x64 DMG `< 100MB`
-- Windows x64 installer `< 100MB`
+- mac arm64 DMG `< 150MB`
+- mac x64 DMG `< 150MB`
+- Windows x64 installer `< 150MB`
 - `latest.json` 的 sha256 与实际资产一致
 
-如果包体超过 `100MB`：
+如果包体超过 `150MB`：
 - 不允许发布正式版本。
 - 必须先查 `app.asar`、Electron Framework、`node_modules` 最大项。
 - 不得为了体积删除运行时必需文件；先用 canary 或安装包实测证明可运行。

@@ -51,6 +51,7 @@ async function getRipgrepPath(): Promise<string> {
     logger.info(
       '[GrepTool] VSCode environment detected - locating VSCode built-in ripgrep',
     );
+
     return await findVSCodeRipgrep();
   } else {
     logger.info('[GrepTool] CLI environment detected - using bundled ripgrep');
@@ -74,6 +75,7 @@ function findPackagedElectronRipgrep(): string | null {
     fs.existsSync(path.join(resourcesPath, 'app.asar'));
   if (!looksPackaged) return null;
 
+
   const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
   const candidate = path.join(resourcesPath, 'ripgrep', binName);
   return fs.existsSync(candidate) ? candidate : null;
@@ -85,6 +87,7 @@ async function getBundledRipgrepPath(): Promise<string> {
   throw new Error(
     `Failed to execute ripgrep: bundled ripgrep missing at ${rgPath}`,
   );
+
 }
 
 /**
@@ -107,6 +110,7 @@ async function findVSCodeRipgrep(): Promise<string> {
     logger.warn(
       '[GrepTool] VSCODE_APP_ROOT not set, falling back to bundled ripgrep',
     );
+
     return await getBundledRipgrepPath();
   }
 
@@ -157,6 +161,7 @@ async function findVSCodeRipgrep(): Promise<string> {
   logger.warn(
     `[GrepTool] Could not find VSCode ripgrep in app root, falling back to bundled ripgrep`,
   );
+
   return await getBundledRipgrepPath();
 }
 

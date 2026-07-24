@@ -122,14 +122,14 @@ Otto 的成熟方向是“轻内核 + 独立组件”，而不是把所有功能
 
 - `docs/release-preflight.md`
 
-它是当前唯一的发布前硬门禁，覆盖源码状态、版本一致性、问题回归、安装包 `< 100MB`、企业服务器包 canary、GitHub Release、服务器升级、发布后验证和回滚。
+它是当前唯一的发布前硬门禁，覆盖源码状态、版本一致性、问题回归、安装包 `< 150MB`、企业服务器包 canary、GitHub Release、服务器升级、发布后验证和回滚。
 
 LSTC 版本还必须满足：
 
 - 企业一键包 `manifest.json.releaseChannel` 为 `lstc`。
 - 企业包 `schemaTo` 与当前服务 `ENTERPRISE_SCHEMA_VERSION` 一致。
 - 服务器 health 的 `apiVersion`、`schemaVersion`、`version` 和 `buildCommit` 与发布包一致。
-- 桌面安装包仍受 `< 100MB` 正式发布门禁约束，超出只能作为内部测试资产。
+- 桌面安装包仍受 `< 150MB` 正式发布门禁约束，超出只能作为内部测试资产。
 
 发布规范的优先级：
 

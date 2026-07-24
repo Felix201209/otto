@@ -78,6 +78,8 @@
       "!**/*.markdown",
       "!**/*.ts",
       "!**/*.d.ts",
+      "!**/node_modules/**/src/**",
+
       "!**/node_modules/**/test/**",
       "!**/node_modules/**/tests/**",
       "!**/node_modules/**/__tests__/**",
@@ -89,6 +91,7 @@
       "!**/node_modules/@larksuiteoapi/node-sdk/es/**",
       "!**/node_modules/@larksuiteoapi/node-sdk/types/**",
       "!**/node_modules/js-tiktoken/dist/**/*.cjs",
+
       "!**/coverage/**",
       "!**/junit.xml",
       "!**/*.tsbuildinfo",
