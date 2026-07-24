@@ -8,12 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PartUnion } from '@google/genai';
 import mime from 'mime-types';
-import Jimp from 'jimp';
-import * as XLSX from 'xlsx';
-import mammoth from 'mammoth';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
-// Note: Dynamic import for pdf-parse to avoid initialization issues
+// Heavy parsers are dynamically imported by file type so plain text reads keep
+// the runtime kernel lightweight.
 
 // Constants for text file processing
 const DEFAULT_MAX_LINES_TEXT_FILE = 2000;
@@ -141,6 +139,7 @@ async function compressImage(
   console.log(`🖼️  Jimp图片压缩开始 - 原始大小: ${originalSizeKB}KB, 格式: ${mimeType}`);
 
   try {
+    const { default: Jimp } = await import('jimp');
     // 使用Jimp加载图片
     const image = await Jimp.read(imageBuffer);
     const originalWidth = image.getWidth();
@@ -394,6 +393,7 @@ export async function detectFileType(
  */
 async function extractExcelContent(filePath: string): Promise<string> {
   try {
+    const XLSX = await import('xlsx');
     // Read file as buffer first
     const fileBuffer = fs.readFileSync(filePath);
 
@@ -459,6 +459,7 @@ async function extractExcelContent(filePath: string): Promise<string> {
  */
 async function extractWordContent(filePath: string): Promise<string> {
   try {
+    const { default: mammoth } = await import('mammoth');
     const result = await mammoth.extractRawText({ path: filePath });
 
     // Check for conversion warnings

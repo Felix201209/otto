@@ -76,6 +76,14 @@ describe('fileUtils', () => {
     vi.restoreAllMocks(); // Restore any spies
   });
 
+  it('keeps heavy binary parsers out of static fileUtils imports', () => {
+    const source = actualNodeFs.readFileSync(path.join(__dirname, 'fileUtils.ts'), 'utf8');
+    for (const specifier of ['jimp', 'xlsx', 'mammoth', 'pdf-parse', 'pdf2json']) {
+      expect(source).not.toContain(`from '${specifier}'`);
+      expect(source).not.toContain(`from "${specifier}"`);
+    }
+  });
+
   describe('isWithinRoot', () => {
     const root = path.resolve('/project/root');
 
