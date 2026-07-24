@@ -145,7 +145,9 @@ export function EnterpriseLoginPage({
   onClearError: () => void;
 }): React.JSX.Element {
   const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'join' : 'login');
-  const [loginMethod, setLoginMethod] = useState<LoginMethod>('password');
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>(
+    onRequestLoginCode && onSmsLogin ? 'sms' : 'password',
+  );
   const [identifier, setIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginPhone, setLoginPhone] = useState('');
