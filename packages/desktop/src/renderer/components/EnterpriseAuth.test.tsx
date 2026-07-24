@@ -53,6 +53,10 @@ describe('专业登录入口', () => {
         busy={false}
         error={null}
         onPasswordLogin={async () => undefined}
+        onRequestLoginCode={async () => ({
+          challengeId: 'login_sms_1', message: '验证码已发送', retryAfterSeconds: 60,
+        })}
+        onSmsLogin={async () => undefined}
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
@@ -79,6 +83,10 @@ describe('专业登录入口', () => {
         busy={false}
         error={null}
         onPasswordLogin={async () => undefined}
+        onRequestLoginCode={async () => ({
+          challengeId: 'login_sms_1', message: '验证码已发送', retryAfterSeconds: 60,
+        })}
+        onSmsLogin={async () => undefined}
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
@@ -90,11 +98,12 @@ describe('专业登录入口', () => {
 
     expect(screen.queryByText('连接设置')).toBeNull();
     expect(screen.queryByLabelText('企业服务器')).toBeNull();
-    expect(screen.getByLabelText('账号或手机号')).toBeTruthy();
-    expect(screen.queryByLabelText('短信验证码')).toBeNull();
+    expect(screen.getByLabelText('登录手机号')).toBeTruthy();
+    expect(screen.getByLabelText('登录验证码')).toBeTruthy();
+    expect(screen.queryByLabelText('密码')).toBeNull();
 
-    expect(screen.getByRole('button', { name: '密码登录' }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByRole('button', { name: '验证码登录' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '验证码登录' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '密码登录' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '使用邀请码加入企业' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '普通注册' }));
