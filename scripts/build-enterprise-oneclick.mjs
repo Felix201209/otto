@@ -23,6 +23,7 @@ const sourceDir = path.join(repoRoot, 'deployment', 'enterprise-oneclick');
 const outputDir = path.join(repoRoot, 'deliverables');
 const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
 const version = rootPackage.version;
+const releaseChannel = 'lstc';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -290,6 +291,7 @@ export class FeatureFlagManager {
   const manifest = {
     format: 'otto-enterprise-release-v1',
     version,
+    releaseChannel,
     buildCommit,
     buildIdentityKind: 'release-content-sha1',
     sourceCommit,
@@ -302,8 +304,8 @@ export class FeatureFlagManager {
       supportedArchitectures: ['linux-x64', 'linux-arm64'],
     },
     database: {
-      schemaFrom: [2, 3, 4],
-      schemaTo: 4,
+      schemaFrom: [2, 3, 4, 5, 6, 7],
+      schemaTo: 7,
       futureSchemaPolicy: 'reject',
     },
     files: fileHashes,
@@ -327,6 +329,7 @@ export class FeatureFlagManager {
     path.join(finalPackageRoot, 'BUILD-INFO.json'),
     `${JSON.stringify({
       version,
+      releaseChannel,
       buildCommit,
       sourceCommit,
       sourceTreeDirty,

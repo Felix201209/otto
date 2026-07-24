@@ -10,6 +10,16 @@
 - 桌面安装包目标上限是 `100MB`；超过上限只能发内部测试包，不能标正式 release。
 - GitHub Actions 失败时必须查明是代码、脚本、Secrets、runner/账单还是服务器权限问题，不能把失败的自动化当作已发布。
 
+## 0.1 LSTC 版本门禁
+
+LSTC 指 Long-term Stable Channel。标记为 LSTC 的版本必须比普通 patch 版本多满足：
+
+- 企业一键包 `manifest.json.releaseChannel` 必须是 `lstc`。
+- 企业一键包 `manifest.json.database.schemaTo` 必须等于 `packages/server/src/enterprise/db.ts` 中的 `ENTERPRISE_SCHEMA_VERSION`。
+- `deployment/enterprise-oneclick/tools/health-check.mjs` 必须检查当前源码的 `ENTERPRISE_API_VERSION` 和 `ENTERPRISE_SCHEMA_VERSION`。
+- `deployment/enterprise-oneclick/tools/verify-release.mjs` 必须拒绝缺少 `releaseChannel: "lstc"` 或 schema 目标过旧的包。
+- Release 说明必须明确写出 `LSTC`、发布 commit、企业包 SHA-256、服务器 health 结果和桌面安装包体积状态。
+
 ## 1. 源码状态
 
 ```bash

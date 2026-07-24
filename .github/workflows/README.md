@@ -79,8 +79,8 @@ Release 默认使用当前仓库的 `GITHUB_TOKEN`。如果未来要发布到独
 ## Manual Release
 
 ```bash
-git tag v1.9.3
-git push origin v1.9.3
+git tag v1.9.4
+git push origin v1.9.4
 ```
 
 等待 `Release Build` 生成 draft release。检查资产和体积后，在 GitHub Release 页面点 Publish。发布后 `Deploy Enterprise Server` 会自动同步服务器。
@@ -89,7 +89,7 @@ git push origin v1.9.3
 
 Actions -> Deploy Enterprise Server -> Run workflow：
 
-- `version`: `1.9.3`
+- `version`: `1.9.4`
 - `dry_run`: true
 
 dry-run 只会在目标机解包、校验、迁移 canary 和 health，不切换生产 `current`。

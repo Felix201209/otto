@@ -108,7 +108,7 @@ describe('enterprise one-click service layout', () => {
 });
 
 describe('enterprise one-click schema contract', () => {
-  it('declares v2/v3/v4 migration input and v4 output consistently', () => {
+  it('declares LSTC v2-v7 migration input and v7 output consistently', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
     const migrationCheck = readFileSync(MIGRATE_CHECK, 'utf8');
@@ -117,20 +117,23 @@ describe('enterprise one-click schema contract', () => {
     const installer = readFileSync(INSTALL_SH, 'utf8');
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
-    expect(bundle).toContain('schemaFrom: [2, 3, 4]');
-    expect(bundle).toContain('schemaTo: 4');
+    expect(bundle).toContain("const releaseChannel = 'lstc'");
+    expect(bundle).toContain('releaseChannel,');
+    expect(bundle).toContain('schemaFrom: [2, 3, 4, 5, 6, 7]');
+    expect(bundle).toContain('schemaTo: 7');
     expect(bundle).toContain("'src/enterprise/repairNotifications.js',");
-    expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 4');
-    expect(migrationCheck).toContain('readiness.schemaVersion !== 4');
-    expect(healthCheck).toContain('body.apiVersion !== 3');
-    expect(healthCheck).toContain('body.schemaVersion !== 4');
-    expect(verifyRelease).toContain('const EXPECTED_SCHEMA_FROM = [2, 3, 4]');
-    expect(verifyRelease).toContain('manifest.database.schemaTo !== 4');
-    expect(installer).toContain('2|3|4) ;;');
-    expect(exporter).toContain('2|3|4) ;;');
+    expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 7');
+    expect(migrationCheck).toContain('readiness.schemaVersion !== 7');
+    expect(healthCheck).toContain('body.apiVersion !== 4');
+    expect(healthCheck).toContain('body.schemaVersion !== 7');
+    expect(verifyRelease).toContain('const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7]');
+    expect(verifyRelease).toContain("manifest.releaseChannel !== 'lstc'");
+    expect(verifyRelease).toContain('manifest.database.schemaTo !== 7');
+    expect(installer).toContain('2|3|4|5|6|7) ;;');
+    expect(exporter).toContain('2|3|4|5|6|7) ;;');
   });
 
-  it('accepts v3/v4 databases and rejects a future v5 database', () => {
+  it('accepts v3-v7 databases and rejects a future v8 database', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-schema-'));
     try {
       const createDatabase = (schemaVersion) => {
@@ -145,7 +148,7 @@ describe('enterprise one-click schema contract', () => {
         return target;
       };
 
-      for (const schemaVersion of [3, 4]) {
+      for (const schemaVersion of [3, 4, 5, 6, 7]) {
         const inspected = spawnSync(
           process.execPath,
           [DB_TOOL, 'inspect', createDatabase(schemaVersion)],
@@ -160,24 +163,24 @@ describe('enterprise one-click schema contract', () => {
         });
       }
 
-      const v5 = spawnSync(
+      const v8 = spawnSync(
         process.execPath,
-        [DB_TOOL, 'inspect', createDatabase(5)],
+        [DB_TOOL, 'inspect', createDatabase(8)],
         { encoding: 'utf8' },
       );
-      expect(v5.status).toBe(5);
-      expect(v5.stderr).toContain('高于部署包支持的 4');
+      expect(v8.status).toBe(5);
+      expect(v8.stderr).toContain('高于部署包支持的 7');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
   });
 
-  it('backs up v3 before migration and verifies that v4 preserves every row', () => {
+  it('backs up v3 before migration and verifies that v7 preserves every row', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-upgrade-'));
     try {
       const source = path.join(sandbox, 'source-v3.db');
       const backup = path.join(sandbox, 'backup-v3.db');
-      const migrated = path.join(sandbox, 'migrated-v4.db');
+      const migrated = path.join(sandbox, 'migrated-v7.db');
       const sourceDatabase = new DatabaseSync(source);
       sourceDatabase.exec(`
         CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL);
@@ -206,7 +209,7 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(copyResult.status, copyResult.stderr).toBe(0);
       const migratedDatabase = new DatabaseSync(migrated);
-      migratedDatabase.exec('PRAGMA user_version = 4;');
+      migratedDatabase.exec('PRAGMA user_version = 7;');
       migratedDatabase.close();
 
       const comparison = spawnSync(
@@ -217,7 +220,7 @@ describe('enterprise one-click schema contract', () => {
       expect(comparison.status, comparison.stderr).toBe(0);
       expect(JSON.parse(comparison.stdout)).toMatchObject({
         before: { userVersion: 3, rowCounts: { accounts: 2 } },
-        after: { userVersion: 4, rowCounts: { accounts: 2 } },
+        after: { userVersion: 7, rowCounts: { accounts: 2 } },
         preservedTables: 1,
       });
     } finally {
@@ -225,17 +228,18 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('rejects a release manifest that still declares a v3 target', () => {
+  it('rejects a release manifest that omits LSTC or still declares a v6 target', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-manifest-'));
     try {
       const manifest = {
         format: 'otto-enterprise-release-v1',
         version: '1.9.0-test',
+        releaseChannel: 'lstc',
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
         database: {
-          schemaFrom: [2, 3, 4],
-          schemaTo: 4,
+          schemaFrom: [2, 3, 4, 5, 6, 7],
+          schemaTo: 7,
           futureSchemaPolicy: 'reject',
         },
         files: {},
@@ -251,14 +255,15 @@ describe('enterprise one-click schema contract', () => {
       expect(valid.status, valid.stderr).toBe(0);
       expect(JSON.parse(valid.stdout)).toMatchObject({
         ok: true,
+        releaseChannel: 'lstc',
         database: {
-          schemaFrom: [2, 3, 4],
-          schemaTo: 4,
+          schemaFrom: [2, 3, 4, 5, 6, 7],
+          schemaTo: 7,
           futureSchemaPolicy: 'reject',
         },
       });
 
-      manifest.database.schemaTo = 3;
+      manifest.database.schemaTo = 6;
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
       const stale = spawnSync(
         process.execPath,
@@ -267,12 +272,23 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(stale.status).toBe(3);
       expect(stale.stderr).toContain('manifest.json 格式不正确');
+
+      manifest.database.schemaTo = 7;
+      delete manifest.releaseChannel;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const unmarked = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(unmarked.status).toBe(3);
+      expect(unmarked.stderr).toContain('manifest.json 格式不正确');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
   });
 
-  it('accepts only a completed v4 migration readiness result', () => {
+  it('accepts only a completed v7 migration readiness result', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-readiness-'));
     try {
       const release = path.join(sandbox, 'release');
@@ -295,7 +311,7 @@ describe('enterprise one-click schema contract', () => {
         );
       };
 
-      writeDatabaseModule(4);
+      writeDatabaseModule(7);
       const ready = spawnSync(
         process.execPath,
         [MIGRATE_CHECK, release, data],
@@ -304,7 +320,7 @@ describe('enterprise one-click schema contract', () => {
       expect(ready.status, ready.stderr).toBe(0);
       expect(JSON.parse(ready.stdout)).toEqual({
         ready: true,
-        schemaVersion: 4,
+        schemaVersion: 7,
       });
 
       writeDatabaseModule(3);

@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const EXPECTED_SCHEMA_FROM = [2, 3, 4];
+const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7];
 
 function fail(message) {
   process.stderr.write(`[Otto Release] ${message}\n`);
@@ -41,6 +41,7 @@ try {
 if (
   manifest?.format !== 'otto-enterprise-release-v1'
   || typeof manifest.version !== 'string'
+  || manifest.releaseChannel !== 'lstc'
   || !/^[0-9a-f]{40}$/.test(manifest.buildCommit || '')
   || typeof manifest.files !== 'object'
   || Array.isArray(manifest.files)
@@ -48,7 +49,7 @@ if (
   || manifest.database === null
   || Array.isArray(manifest.database)
   || JSON.stringify(manifest.database.schemaFrom) !== JSON.stringify(EXPECTED_SCHEMA_FROM)
-  || manifest.database.schemaTo !== 4
+  || manifest.database.schemaTo !== 7
   || manifest.database.futureSchemaPolicy !== 'reject'
 ) {
   fail('manifest.json 格式不正确');
@@ -71,6 +72,7 @@ for (const relative of expectedFiles) {
 process.stdout.write(`${JSON.stringify({
   ok: true,
   version: manifest.version,
+  releaseChannel: manifest.releaseChannel,
   buildCommit: manifest.buildCommit,
   sourceCommit: manifest.sourceCommit,
   database: manifest.database,

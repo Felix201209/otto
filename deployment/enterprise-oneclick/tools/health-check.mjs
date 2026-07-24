@@ -43,10 +43,10 @@ const missing = requiredCapabilities.filter(
 if (
   body.status !== 'ok'
   || body.service !== 'otto-enterprise'
-  || body.apiVersion !== 3
+  || body.apiVersion !== 4
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== 4
+  || body.schemaVersion !== 7
   || body.db !== 'connected'
   || missing.length > 0
 ) {
