@@ -264,6 +264,7 @@ try {
 
   for (const script of [
     'install.sh',
+    'upgrade.sh',
     'export-migration.sh',
     'verify.sh',
     'lib/common.sh',

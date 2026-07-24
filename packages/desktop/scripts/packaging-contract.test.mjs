@@ -84,6 +84,29 @@ describe('desktop packaging contract', () => {
     expect(browserBridge).not.toContain("displayName: 'gpt-5.1（本地预览）'");
   });
 
+  it('keeps default installers below the lightweight contract by excluding optional runtimes', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    const resources = [
+      ...(packageJson.build.mac.extraResources ?? []),
+      ...(packageJson.build.win.extraResources ?? []),
+    ];
+    const bundledInputs = resources.map((resource) => resource.from).join('\n');
+    expect(bundledInputs).not.toContain('vendor/runtime');
+    expect(bundledInputs).not.toContain('resources/video-editor');
+  });
+
+  it('keeps update manifest download URLs bound to the configured release repo', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    expect(script).toContain("process.env.OTTO_RELEASES_REPO || 'Felix201209/otto'");
+    expect(script).toContain('https://github.com/${RELEASES_REPO}/releases/download');
+    expect(script).not.toContain('github.com/Felix201209/otto-releases/releases/download');
+  });
+
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {
     const appPath = await mkdtemp(path.join(os.tmpdir(), 'otto-after-pack-'));
     try {

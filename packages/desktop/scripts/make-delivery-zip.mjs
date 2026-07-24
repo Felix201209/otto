@@ -40,7 +40,6 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WINDOWS_RIPGREP_INTEGRITY } from './ripgrep-integrity.mjs';
-import { verifyBundledRuntimeTargets } from './verify-document-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = path.resolve(__dirname, '..');
@@ -55,8 +54,11 @@ const ROOT_PKG = JSON.parse(readFileSync(path.join(ROOT_DIR, 'package.json'), 'u
 const VERSION = PKG.version;
 const SOURCE_REPO = 'Felix201209/otto';
 const SOURCE_UPSTREAM = 'origin/internal';
-const RELEASES_REPO = 'Felix201209/otto-releases';
+const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
 const RELEASE_TAG = `v${VERSION}`;
+const MAX_INSTALLER_SIZE_BYTES = Number(
+  process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 100,
+) * 1024 * 1024;
 const BUILD_ASSET_NAMES = [
   `Otto-${VERSION}-arm64.dmg`,
   `Otto-${VERSION}-arm64.dmg.blockmap`,
@@ -275,12 +277,6 @@ async function inspectWindowsRipgrep() {
 async function build(sourceCommit) {
   log('BUILD', '开始编译服务端与桌面端...');
 
-  verifyBundledRuntimeTargets([
-    { platform: 'darwin', arch: 'arm64' },
-    { platform: 'darwin', arch: 'x64' },
-    { platform: 'win32', arch: 'x64' },
-  ]);
-
   // desktop 通过 file:../server 读取 otto-server/dist。必须先从当前 HEAD
   // 重建 server（tsc -b 会同步 project reference），禁止把旧 dist 打进新版本。
   execFileSync(NPM_BIN, ['run', 'build', '--workspace=packages/server'], {
@@ -377,6 +373,13 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
     if (size < minimumSize) {
       throw new Error(`${name} 体积异常小: ${size} bytes`);
     }
+    if (!name.endsWith('.blockmap') && name !== 'latest.json' && size > MAX_INSTALLER_SIZE_BYTES) {
+      throw new Error(
+        `${name} 体积 ${(size / 1048576).toFixed(1)} MB 超过 `
+        + `${(MAX_INSTALLER_SIZE_BYTES / 1048576).toFixed(0)} MB 上限；`
+        + '默认安装包禁止内嵌文档运行时、视频编辑器或多架构 payload',
+      );
+    }
     artifacts.push({ name, path: p, size });
     log('CHECK', `  ${name}  ${(size / 1048576).toFixed(1)} MB`);
   }
@@ -407,6 +410,7 @@ async function makeLatestJson(sourceCommit) {
   const macArm64 = path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`);
   const macX64 = path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`);
   const winX64 = path.join(RELEASE_DIR, `Otto-Setup-${VERSION}-win-x64.exe`);
+  const releaseBaseUrl = `https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`;
   // 使用发布候选提交时间，确保同一 commit 的失败重试能生成字节完全一致的清单。
   const publishedAt = git(['show', '-s', '--format=%cI', sourceCommit]);
 
@@ -418,19 +422,19 @@ async function makeLatestJson(sourceCommit) {
     assets: {
       'mac-arm64': {
         name: `Otto-${VERSION}-arm64.dmg`,
-        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-${VERSION}-arm64.dmg`,
+        url: `${releaseBaseUrl}/Otto-${VERSION}-arm64.dmg`,
         size: statSync(macArm64).size,
         sha256: await sha256(macArm64),
       },
       'mac-x64': {
         name: `Otto-${VERSION}-x64.dmg`,
-        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-${VERSION}-x64.dmg`,
+        url: `${releaseBaseUrl}/Otto-${VERSION}-x64.dmg`,
         size: statSync(macX64).size,
         sha256: await sha256(macX64),
       },
       'win-x64': {
         name: `Otto-Setup-${VERSION}-win-x64.exe`,
-        url: `https://github.com/Felix201209/otto-releases/releases/download/v${VERSION}/Otto-Setup-${VERSION}-win-x64.exe`,
+        url: `${releaseBaseUrl}/Otto-Setup-${VERSION}-win-x64.exe`,
         size: statSync(winX64).size,
         sha256: await sha256(winX64),
       },

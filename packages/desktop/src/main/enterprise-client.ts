@@ -1120,7 +1120,6 @@ export class EnterpriseClient {
     note?: string | null;
   }): Promise<{ message?: EnterpriseDirectMessage; publication?: EnterpriseParkPublication; recipientCount?: number }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['park_service_push']);
     return this.request('/enterprise/park-services/push', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -1129,7 +1128,6 @@ export class EnterpriseClient {
 
   async listParkPublications(): Promise<EnterpriseParkPublication[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['park_services_v2']);
     return (await this.request<{ publications: EnterpriseParkPublication[] }>(
       '/enterprise/park-services/publications',
     )).publications;
@@ -1137,7 +1135,6 @@ export class EnterpriseClient {
 
   async listParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['park_services_v2']);
     return (await this.request<{ surveys: EnterpriseParkSurveyResult[] }>(
       '/enterprise/park-services/survey-results',
     )).surveys;
@@ -1145,10 +1142,6 @@ export class EnterpriseClient {
 
   async getParkResources(): Promise<EnterpriseParkResources> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(
-      this.serverUrl,
-      ['park_resources_v1', 'park_meeting_slots_v1'],
-    );
     return this.request('/enterprise/park-resources');
   }
 

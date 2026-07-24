@@ -2252,8 +2252,21 @@ export class OttoServer {
   }
 
   private async readRendererAsset(fileName: string): Promise<string> {
-    const rendererDir = path.resolve(process.cwd(), '..', 'desktop', 'dist', 'renderer');
-    return fs.readFile(path.join(rendererDir, fileName), 'utf8');
+    const rendererDirs = [
+      path.resolve(process.cwd(), '..', 'desktop', 'dist', 'renderer'),
+      path.resolve(process.cwd(), 'packages', 'desktop', 'dist', 'renderer'),
+      path.resolve(process.cwd(), '..', 'desktop', 'src', 'renderer'),
+      path.resolve(process.cwd(), 'packages', 'desktop', 'src', 'renderer'),
+    ];
+    let lastError: unknown;
+    for (const rendererDir of rendererDirs) {
+      try {
+        return await fs.readFile(path.join(rendererDir, fileName), 'utf8');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -3922,8 +3935,8 @@ function browserBridgeScript(clientToken: string): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.9.2'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.2', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.9.3'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.3', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),

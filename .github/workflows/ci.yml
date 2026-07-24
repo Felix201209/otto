@@ -58,6 +58,11 @@ jobs:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 🩺 Cheap anomaly checks
+        run: |
+          npm run doctor
+          git diff --check
+
       # 先 build 再 typecheck：packages/cli 与 packages/server 的 tsconfig 用
       # TS project references 指向 packages/core（"references": [{ "path":
       # "../core" }]），tsc --noEmit 需要 core/dist/index.d.ts 已存在，否则
@@ -71,6 +76,14 @@ jobs:
 
       - name: 🔍 Typecheck (all workspaces, including desktop)
         run: npm run typecheck --workspaces --if-present
+
+      - name: 🧪 Focused release regressions
+        run: |
+          npx vitest run \
+            packages/desktop/src/main/enterprise-client.test.ts \
+            packages/desktop/scripts/packaging-contract.test.mjs \
+            packages/server/src/server.test.ts \
+            packages/server/src/enterprise/server.test.ts
 
       - name: 🧪 Test core
         run: npm run test --workspace=packages/core

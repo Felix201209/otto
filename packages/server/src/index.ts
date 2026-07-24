@@ -16,6 +16,11 @@ export * from './sessions.js';
 export * from './sessions-persistent.js';
 export { OttoServer } from './server.js';
 export type { OttoServerOptions, RuntimeFactory } from './server.js';
+export {
+  createEnterpriseServer,
+  startEnterpriseServer,
+} from './enterprise/server.js';
+export type { EnterpriseServerOptions } from './enterprise/server.js';
 export { createCoreConfig } from './coreConfig.js';
 export type { CreateCoreConfigOptions } from './coreConfig.js';
 export {

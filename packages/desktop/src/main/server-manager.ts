@@ -27,7 +27,8 @@
  * 建议）。因此这里只保留 `import type` 型引入（纯类型，编译期擦除，不产生 require），
  * 运行期需要的值全部经 loadOttoServer() 懒加载并缓存。
  *
- * 同样，enterprise-server 也是 ESM，经 loadEnterpriseServer() 动态 import。
+ * enterprise server 也经 otto-server 公共入口动态 import，避免 desktop 深导入
+ * server/src 或 dist/src。
  */
 
 import * as childProcess from 'node:child_process';
@@ -65,10 +66,10 @@ function loadOttoServer(): Promise<typeof import('otto-server')> {
 }
 
 /** enterprise-server（ESM）动态加载并缓存。 */
-let enterpriseServerModulePromise: Promise<typeof import('otto-server/dist/src/enterprise/server.js')> | undefined;
-function loadEnterpriseServer(): Promise<typeof import('otto-server/dist/src/enterprise/server.js')> {
+let enterpriseServerModulePromise: Promise<typeof import('otto-server')> | undefined;
+function loadEnterpriseServer(): Promise<typeof import('otto-server')> {
   if (!enterpriseServerModulePromise) {
-    enterpriseServerModulePromise = import('otto-server/dist/src/enterprise/server.js');
+    enterpriseServerModulePromise = import('otto-server');
   }
   return enterpriseServerModulePromise;
 }

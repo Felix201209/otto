@@ -2592,12 +2592,14 @@ function makeHandler(
             (entry): entry is [string, string] => typeof entry[1] === 'string',
           ).map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]))
           : {};
-        const meetingRoom = serviceId === 'meeting-room'
+        const hasScheduledMeetingRoomBooking = serviceId === 'meeting-room'
+          && (Boolean(formData.roomId) || Boolean(formData.slotKey));
+        const meetingRoom = hasScheduledMeetingRoomBooking
           ? db.listParkMeetingRooms(account.organizationId).find(
             (room) => room.id === formData.roomId,
           )
           : undefined;
-        if (serviceId === 'meeting-room') {
+        if (hasScheduledMeetingRoomBooking) {
           if (!meetingRoom) {
             sendJSON(res, 400, { error: '请选择有效的会议室' });
             return;
@@ -2646,7 +2648,7 @@ function makeHandler(
               contact: typeof body.contact === 'string' ? body.contact : undefined,
               contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
             });
-            if (serviceId === 'meeting-room') {
+            if (hasScheduledMeetingRoomBooking) {
               db.reserveParkMeetingSlot(account.organizationId, {
                 roomId: formData.roomId || '',
                 date: formData.date || '',

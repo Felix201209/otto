@@ -1,0 +1,121 @@
+name: Deploy Enterprise Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy, for example 1.9.3 or v1.9.3.'
+        required: true
+        type: string
+      dry_run:
+        description: 'Run remote dry-run only.'
+        required: false
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-enterprise
+  cancel-in-progress: false
+
+env:
+  RELEASES_REPO: ${{ github.repository }}
+  DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+  DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
+
+jobs:
+  deploy:
+    name: Sync and Upgrade Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.version }}"
+          fi
+          TAG="${TAG#v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.DEPLOY_HOST }}"
+          test -n "${{ secrets.DEPLOY_USER }}"
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+
+      - name: Download enterprise release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-download
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --repo "${RELEASES_REPO}" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256" \
+            --dir release-download
+          cd release-download
+          sha256sum -c ./*.sha256
+          ls -lh
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload enterprise package
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_DIR="/var/tmp/otto-enterprise-github/${{ steps.version.outputs.tag }}-${GITHUB_RUN_ID}"
+          echo "REMOTE_DIR=$REMOTE_DIR" >> "$GITHUB_ENV"
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "mkdir -p '$REMOTE_DIR'"
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" release-download/* \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
+
+      - name: Install or upgrade on server
+        shell: bash
+        env:
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+          DRY_RUN_FLAG=""
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '$REMOTE_DIR'
+             sha256sum -c ./*.sha256
+             ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz | head -n 1)
+             rm -rf unpack
+             mkdir unpack
+             tar -xzf \"\$ARCHIVE\" -C unpack
+             PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
+             if [ -L /opt/otto-enterprise/current ]; then
+               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
+             else
+               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
+             fi"

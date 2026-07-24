@@ -866,15 +866,6 @@ describe('EnterpriseClient', () => {
       endpoint: '/enterprise/organization/invite',
       invoke: (client: EnterpriseClient) => client.issueOrganizationInvite({ positionId: 'pos_brand' }),
     },
-    {
-      name: '推送园区服务',
-      capability: 'park_service_push',
-      endpoint: '/enterprise/park-services/push',
-      invoke: (client: EnterpriseClient) => client.pushParkService({
-        recipientAccountId: 'acc_peer',
-        serviceId: 'svc_shuttle',
-      }),
-    },
   ])('$name 在业务请求前验证 $capability 能力', async ({ capability, endpoint, invoke }) => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, {
@@ -899,6 +890,30 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/health');
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(endpoint))).toBe(false);
+  });
+
+  it('园区服务请求兼容旧服务器能力列表，不因缺少 park_service_push 预先失效', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: API_V2_HEALTH.capabilities.filter((item) => item !== 'park_service_push'),
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, { recipientCount: 1 }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.pushParkService({
+      recipientAccountId: 'acc_peer',
+      serviceId: 'announcement',
+    })).resolves.toEqual({ recipientCount: 1 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/park-services/push');
   });
 
   it('恢复会话遇到旧服务器时保留服务器地址和 token，并返回明确的升级提示', async () => {
