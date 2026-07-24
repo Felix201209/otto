@@ -88,6 +88,7 @@
       "!**/node_modules/@vscode/ripgrep/**",
       "!**/node_modules/@larksuiteoapi/node-sdk/es/**",
       "!**/node_modules/@larksuiteoapi/node-sdk/types/**",
+      "!**/node_modules/js-tiktoken/dist/**/*.cjs",
       "!**/coverage/**",
       "!**/junit.xml",
       "!**/*.tsbuildinfo",
