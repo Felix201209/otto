@@ -2,6 +2,8 @@
 
 Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release 草稿，最后在 Release 正式发布后同步企业服务器。
 
+发布前必须先完成 `docs/release-preflight.md`；本文件只说明 Actions 如何执行，不替代发布门禁。
+
 ## CI
 
 文件：`.github/workflows/ci.yml`

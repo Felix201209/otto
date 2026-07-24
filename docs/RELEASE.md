@@ -1,5 +1,7 @@
 # Otto Desktop 发布规范
 
+> 发布前硬门禁见 [Otto 发布前检查清单与规范](./release-preflight.md)。本文件只保留桌面端历史流程和踩坑记录；如有冲突，以 `release-preflight.md` 为准。
+
 > 每次发版都走这套流程，一步不跳。本文沉淀自 v1.4.2 → v1.5.1 的实战（含踩过的坑）。
 > 适用：packages/desktop 的桌面端发版。执行环境：mac（arm64），Windows 包在 mac 上交叉打。
 

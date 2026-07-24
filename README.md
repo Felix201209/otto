@@ -6,7 +6,7 @@ Otto 是一个正在走向成熟形态的 agent 产品：核心要轻、边界�
 
 ## 当前内核状态
 
-当前 `1.9.2` 版本的主入口仍然是 Node/TypeScript CLI bundle：
+当前 `1.9.3` 版本的主入口仍然是 Node/TypeScript CLI bundle：
 
 - npm bin: `bundle/otto.js`
 - 开发入口: `scripts/start.js`
@@ -115,6 +115,22 @@ Otto 的成熟方向是“轻内核 + 独立组件”，而不是把所有功能
 - release distribution size: `<= 10MB`
 
 `npm run doctor` 会检查发行产物体积。如果当前开发检出没有 `bundle/` 或 `otto-native/bin/`，doctor 会显示“未发现发行产物，但 10MB 预算已生效”。
+
+## 发布前门禁
+
+所有正式发布先读并执行：
+
+- `docs/release-preflight.md`
+
+它是当前唯一的发布前硬门禁，覆盖源码状态、版本一致性、问题回归、安装包 `< 100MB`、企业服务器包 canary、GitHub Release、服务器升级、发布后验证和回滚。
+
+发布规范的优先级：
+
+1. `docs/release-preflight.md`
+2. `.github/workflows/README.md`
+3. `docs/RELEASE.md`
+
+如果 GitHub Actions 没有真正启动 runner、服务器仍是旧 `apiVersion`、Release 资产不是实际部署包，均视为没有完成发布。
 
 ## 构建 Rust 原生核心
 

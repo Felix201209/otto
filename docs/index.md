@@ -83,6 +83,7 @@ The CLI and VS Code extension communicate with AI models through the core librar
 
 ### 🏗️ Build & Development
 - **[Build Workflow](./build-workflow.md)** - Build process and scripts
+- **[Release Preflight](./release-preflight.md)** - Mandatory release checklist and gates
 - **[NPM Workspaces](./npm.md)** - Monorepo package management
 - **[NPM Publish Guide](./npm-publish-guide.md)** - Publishing packages to npm
 - **[GitHub Actions Release](./github-actions-release.md)** - CI/CD release automation
