@@ -7378,3 +7378,29 @@ h6.otto-prose__h {
 @media (max-width: 860px) {
   .otto-product-choice, .otto-product-identity, .otto-credit-summary { grid-template-columns: 1fr; }
 }
+
+/* Enterprise configuration shell */
+.otto-enterprise-config { display: grid; gap: 14px; }
+.otto-enterprise-config__hero,
+.otto-enterprise-config__card { border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); box-shadow: var(--otto-shadow-soft); }
+.otto-enterprise-config__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 18px; }
+.otto-enterprise-config__hero span { color: var(--otto-text-tertiary); font: 10px/1.2 var(--otto-font-mono); letter-spacing: .08em; }
+.otto-enterprise-config__hero h2 { margin: 4px 0 5px; color: var(--otto-text); font-size: 18px; }
+.otto-enterprise-config__hero p,
+.otto-enterprise-config__card > p { margin: 0; color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; }
+.otto-enterprise-config__refresh { flex: 0 0 auto; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); cursor: pointer; font-size: 12px; padding: 8px 12px; }
+.otto-enterprise-config__card { display: grid; gap: 12px; padding: 15px; }
+.otto-enterprise-config__card h3 { margin: 0; color: var(--otto-text); font-size: 14px; }
+.otto-enterprise-config__switches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.otto-enterprise-config__switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); padding: 9px 10px; }
+.otto-enterprise-config__switch span { color: var(--otto-text); font-size: 12px; }
+.otto-enterprise-config__switch input { width: 17px; height: 17px; accent-color: var(--otto-accent); }
+.otto-enterprise-config__park-state { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border)); border-radius: var(--otto-radius-sm); background: var(--otto-accent-soft); padding: 11px 12px; }
+.otto-enterprise-config__park-state div { display: grid; gap: 3px; min-width: 0; }
+.otto-enterprise-config__park-state strong { overflow: hidden; color: var(--otto-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-enterprise-config__park-state span,
+.otto-enterprise-config__invite span { color: var(--otto-text-secondary); font-size: 11px; }
+.otto-enterprise-config__park-state b { flex: 0 0 auto; border-radius: var(--otto-radius-pill); background: var(--otto-surface); color: var(--otto-accent-hover); font-size: 11px; padding: 5px 8px; }
+.otto-enterprise-config__invite { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; color: var(--otto-text-secondary); font-size: 12px; }
+.otto-enterprise-config__invite strong { color: var(--otto-text); font: 700 13px/1.3 var(--otto-font-mono); }
+@media (max-width: 760px) { .otto-enterprise-config__hero { flex-direction: column; } .otto-enterprise-config__switches { grid-template-columns: 1fr; } }

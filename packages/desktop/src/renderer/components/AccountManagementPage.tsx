@@ -88,6 +88,17 @@ export function applyAccountTemplate(draft: AccountDraft, templateId: AccountTem
   };
 }
 
+
+function isAcceptableAccountPassword(password: string): boolean {
+  if (password.length < 8 || password.length > 128) return false;
+  if (/[^\x20-\x7E]/.test(password)) return false;
+  const lower = password.toLocaleLowerCase('en-US');
+  if (['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(lower)) return false;
+  if (/^\d+$/.test(password) || /^[a-z]+$/i.test(password)) return false;
+  if (/^(.)\1{7,}$/.test(password)) return false;
+  return true;
+}
+
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const withoutIpcPrefix = message.replace(/^Error invoking remote method '[^']+':\s*/, '');
@@ -917,7 +928,7 @@ export function AccountManagementPage({
                 <label><span>头像 URL</span><input aria-label="头像 URL" type="url" value={draft.avatarUrl} onChange={(e) => setDraft((v) => ({ ...v, avatarUrl: e.target.value }))} placeholder="https://… 或 data:image/…" /></label>
                 <label><span>手机号码</span><input aria-label="手机号码" inputMode="tel" value={draft.phone} onChange={(e) => setDraft((v) => ({ ...v, phone: e.target.value }))} placeholder="用于短信验证码登录" /></label>
                 <label><span>飞书 open_id</span><input aria-label="飞书 open_id" value={draft.feishuOpenId} onChange={(e) => setDraft((v) => ({ ...v, feishuOpenId: e.target.value }))} placeholder="例如：ou_xxx，用于报修通知" /></label>
-                <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} /></label>
+                <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" minLength={8} maxLength={128} value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} placeholder="至少 8 位，不能是纯数字或纯字母" /><small>不能使用常见密码、纯数字、纯字母或连续重复字符。</small></label>
               </> : null}
               {editorMode === 'assignment' ? <>
                 <label><span>所属部门</span><select ref={assignmentFocusRef} aria-label="安排职位部门" value={draft.departmentId} onChange={(event) => {
@@ -972,7 +983,7 @@ export function AccountManagementPage({
                 </button>
               ) : null}
               <button type="button" onClick={closeEditor} disabled={saving}>取消</button>
-              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.departmentId || !draft.positionId : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && draft.password.length < 8)}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
+              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.departmentId || !draft.positionId : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && !isAcceptableAccountPassword(draft.password)) || (editing !== 'new' && Boolean(draft.password) && !isAcceptableAccountPassword(draft.password))}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
             </footer>
             {editorMode === 'identity' && editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>

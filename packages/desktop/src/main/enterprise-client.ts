@@ -730,9 +730,9 @@ export class EnterpriseClient {
     if (this.currentAccount.accountType !== 'personal') {
       throw new Error('当前账号已经属于企业');
     }
-    const normalizedInviteCode = inviteCode.trim().toUpperCase();
-    if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(normalizedInviteCode)) {
-      throw new Error('请输入有效的 8 位企业邀请码');
+    const normalizedInviteCode = inviteCode.trim();
+    if (!/^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/.test(normalizedInviteCode)) {
+      throw new Error('请输入有效的 12 位大小写敏感企业邀请码');
     }
     const requestGeneration = this.authOperationGeneration;
     const requestToken = this.token;

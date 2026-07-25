@@ -54,7 +54,7 @@ beforeEach(() => {
       serverUrl: 'https://enterprise.otto.test',
       account: null,
     })),
-    enterpriseRegistrationIntent: vi.fn(async () => ({ inviteCode: 'ABCD-EFGH' })),
+    enterpriseRegistrationIntent: vi.fn(async () => ({ inviteCode: 'Ab3D-k9Pq-Z7xY' })),
     onEnterpriseRegistrationIntent: vi.fn((
       handler: (intent: { inviteCode: string; serverUrl?: string }) => void,
     ) => {
@@ -105,7 +105,7 @@ describe('企业注册链接进入中心注册', () => {
     const view = renderHook(() => useEnterpriseAuth());
     await waitFor(() => expect(view.result.current.state.status).toBe('signed-out'));
 
-    expect(view.result.current.state.registrationIntent).toEqual({ inviteCode: 'ABCD-EFGH' });
+    expect(view.result.current.state.registrationIntent).toEqual({ inviteCode: 'Ab3D-k9Pq-Z7xY' });
     expect(view.result.current.state.serverUrl).toBe('https://enterprise.otto.test');
     expect(view.result.current.state.account).toBeNull();
   });
@@ -119,7 +119,7 @@ describe('企业注册链接进入中心注册', () => {
     await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
     expect(view.result.current.state.registrationIntent).toBeNull();
 
-    act(() => intentHandler?.({ inviteCode: 'WXYZ-2345' }));
+    act(() => intentHandler?.({ inviteCode: 'Wz8Y-m3Na-Q5pB' }));
     expect(view.result.current.state.status).toBe('signed-in');
     expect(view.result.current.state.account?.id).toBe('acc_1');
     expect(view.result.current.state.registrationIntent).toBeNull();
@@ -131,12 +131,12 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.serverUrl).toBe('https://enterprise.otto.test');
 
     act(() => intentHandler?.({
-      inviteCode: 'WXYZ-2345',
+      inviteCode: 'Wz8Y-m3Na-Q5pB',
       serverUrl: 'https://new-enterprise.otto.test',
     }));
     expect(view.result.current.state.serverUrl).toBe('https://new-enterprise.otto.test');
     expect(view.result.current.state.registrationIntent).toEqual({
-      inviteCode: 'WXYZ-2345',
+      inviteCode: 'Wz8Y-m3Na-Q5pB',
       serverUrl: 'https://new-enterprise.otto.test',
     });
     expect(view.result.current.state.status).toBe('signed-out');
@@ -189,11 +189,11 @@ describe('企业注册链接进入中心注册', () => {
     await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
 
     await act(async () => {
-      await view.result.current.actions.joinEnterprise({ inviteCode: 'ABCD-EFGH' });
+      await view.result.current.actions.joinEnterprise({ inviteCode: 'Ab3D-k9Pq-Z7xY' });
     });
 
     expect(bridge.enterpriseJoinOrganization).toHaveBeenCalledWith({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     });
     expect(view.result.current.state.status).toBe('signed-in');
     expect(view.result.current.state.account).toMatchObject({
@@ -217,7 +217,7 @@ describe('企业注册链接进入中心注册', () => {
     let failure: unknown;
     await act(async () => {
       try {
-        await view.result.current.actions.joinEnterprise({ inviteCode: 'WXYZ-2345' });
+        await view.result.current.actions.joinEnterprise({ inviteCode: 'Wz8Y-m3Na-Q5pB' });
       } catch (cause) {
         failure = cause;
       }
@@ -243,7 +243,7 @@ describe('企业注册链接进入中心注册', () => {
 
     await act(async () => {
       await expect(
-        view.result.current.actions.joinEnterprise({ inviteCode: 'ABCD-EFGH' }),
+        view.result.current.actions.joinEnterprise({ inviteCode: 'Ab3D-k9Pq-Z7xY' }),
       ).rejects.toThrow('企业已成功加入');
     });
 

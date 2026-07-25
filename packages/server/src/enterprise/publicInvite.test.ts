@@ -20,8 +20,8 @@ describe('企业公开引入链接', () => {
     });
 
     expect(baseUrl).toBe('https://join.otto.example/otto');
-    expect(buildOrganizationInviteLink(baseUrl, 'ABCD-2345'))
-      .toBe('https://join.otto.example/otto/enterprise/join/ABCD-2345');
+    expect(buildOrganizationInviteLink(baseUrl, 'Ab3D-k9Pq-Z7xY'))
+      .toBe('https://join.otto.example/otto/enterprise/join/Ab3D-k9Pq-Z7xY');
   });
 
   it('拒绝非 HTTP(S)、凭据、query 与 fragment，避免生成可伪装链接', () => {
@@ -48,10 +48,10 @@ describe('企业公开引入链接', () => {
       .toBe(DEFAULT_ENTERPRISE_PUBLIC_URL);
   });
 
-  it('只接受规范的 8 位企业邀请码', () => {
+  it('只接受规范的 12 位大小写敏感企业邀请码', () => {
     expect(() => buildOrganizationInviteLink('https://join.otto.example', '../admin'))
       .toThrow(/邀请码格式/);
-    expect(() => buildOrganizationInviteLink('https://join.otto.example', 'ABCI-2345'))
+    expect(() => buildOrganizationInviteLink('https://join.otto.example', 'Ab3D-k9Pq-Z7xI'))
       .toThrow(/邀请码格式/);
   });
 });

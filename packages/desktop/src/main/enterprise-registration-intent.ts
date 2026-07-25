@@ -11,7 +11,7 @@ export interface EnterpriseRegistrationIntent {
   serverUrl?: string;
 }
 
-const ENTERPRISE_INVITE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+const ENTERPRISE_INVITE_PATTERN = /^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/;
 const ENTERPRISE_JOIN_PATH_PATTERN = /^(.*)\/enterprise\/join\/([^/]+)$/;
 
 function normalizeEnterpriseServerUrl(input: string): string | null {
@@ -75,7 +75,7 @@ export function parseEnterpriseRegistrationIntent(
     return null;
   }
   if (url.searchParams.getAll('server').length > 1) return null;
-  const inviteCode = (url.searchParams.get('invite') || '').toLocaleUpperCase('en-US');
+  const inviteCode = url.searchParams.get('invite') || '';
   if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
   const serverInput = url.searchParams.get('server');
   if (serverInput === null) return { inviteCode };
@@ -97,7 +97,7 @@ function parseEnterpriseJoinPageIntent(
   } catch {
     return null;
   }
-  const inviteCode = decodedInviteCode.toLocaleUpperCase('en-US');
+  const inviteCode = decodedInviteCode;
   if (!ENTERPRISE_INVITE_PATTERN.test(inviteCode)) return null;
 
   const serverPath = match[1] || '';

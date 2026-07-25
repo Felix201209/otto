@@ -26,8 +26,8 @@ const ADMIN = {
 };
 
 const INVITE = {
-  id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
-  link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
+  id: 'invite_1', organizationId: 'org_acme', code: 'Ab3D-k9Pq-Z7xY',
+  link: 'https://59.110.154.44:7777/enterprise/join/Ab3D-k9Pq-Z7xY', status: 'active' as const,
   defaultDepartment: null,
   departmentId: null, positionId: null, positionTitle: null, defaultRole: null,
   maxUses: null, usedCount: 0,
@@ -106,8 +106,8 @@ beforeEach(() => {
       enterpriseOrganizationInviteIssue: vi.fn(async () => ({
         organization: { id: 'org_acme', name: '星河科技' },
         invite: {
-          ...INVITE, id: 'invite_2', code: 'WXYZ-2345',
-          link: 'https://59.110.154.44:7777/enterprise/join/WXYZ-2345',
+          ...INVITE, id: 'invite_2', code: 'Wz8Y-m3Na-Q5pB',
+          link: 'https://59.110.154.44:7777/enterprise/join/Wz8Y-m3Na-Q5pB',
         },
       })),
       enterpriseAccountCreate: vi.fn(async () => CREATED_ACCOUNT),
@@ -177,17 +177,17 @@ describe('企业引入链接', () => {
   it('管理员可复制完整链接或邀请码，并手动生成会立即替换旧链接', async () => {
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
 
-    expect(await screen.findByText('ABCD-EFGH')).toBeTruthy();
+    expect(await screen.findByText('Ab3D-k9Pq-Z7xY')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '复制完整引入链接' }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith(
-      'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH',
+      'https://59.110.154.44:7777/enterprise/join/Ab3D-k9Pq-Z7xY',
     ));
     fireEvent.click(screen.getByRole('button', { name: '复制企业邀请码' }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('ABCD-EFGH'));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('Ab3D-k9Pq-Z7xY'));
 
     fireEvent.click(screen.getByRole('button', { name: '生成新引入链接' }));
-    expect(await screen.findByText('WXYZ-2345')).toBeTruthy();
-    expect(screen.queryByText('ABCD-EFGH')).toBeNull();
+    expect(await screen.findByText('Wz8Y-m3Na-Q5pB')).toBeTruthy();
+    expect(screen.queryByText('Ab3D-k9Pq-Z7xY')).toBeNull();
   });
 
   it('读取当前链接完成前禁止生成，避免晚返回的 GET 覆盖新 POST', async () => {

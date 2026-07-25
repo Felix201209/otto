@@ -8,6 +8,7 @@ import {
   advanceTypewriterFrame,
   EnterpriseLoginPage,
   isRegistrationReady,
+  sanitizeOrganizationInviteCode,
   sanitizeSmsCode,
 } from './EnterpriseLoginPage.js';
 import { friendlyAuthError } from '../state/useEnterpriseAuth.js';
@@ -23,12 +24,13 @@ beforeAll(() => {
 describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
+    expect(sanitizeOrganizationInviteCode('ab3D k9Pq z7xY<script>')).toBe('ab3D-k9Pq-z7xY');
     expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(true);
     expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'ABCD-EFGH', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'ABCD-EFGH', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'ABCD-EFGH', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'ABCD-EFGH', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731' })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731' })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731' })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(true);
   });
 });
 
@@ -209,14 +211,14 @@ describe('专业登录入口', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: '使用邀请码加入企业' }));
-    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'abcd-efgh' } });
+    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'Ab3D-k9Pq-Z7xY' } });
     fireEvent.change(screen.getByLabelText('手机号'), { target: { value: '13800138000' } });
     fireEvent.click(screen.getByRole('button', { name: '获取验证码' }));
 
     await waitFor(() => expect(onRequestRegistrationCode).toHaveBeenCalledWith({
       serverUrl: 'https://enterprise.otto.test',
       phone: '13800138000',
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     }));
     expect(await screen.findByText('将加入「星河科技」')).toBeTruthy();
 
@@ -226,7 +228,7 @@ describe('专业登录入口', () => {
     fireEvent.change(screen.getByLabelText('短信验证码'), { target: { value: '042731' } });
     expect((screen.getByRole('button', { name: '加入企业并进入' }) as HTMLButtonElement).disabled).toBe(false);
 
-    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'WXYZ-2345' } });
+    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'Wz8Y-m3Na-Q5pB' } });
     expect(screen.queryByText('将加入「星河科技」')).toBeNull();
     expect((screen.getByRole('button', { name: '加入企业并进入' }) as HTMLButtonElement).disabled).toBe(true);
 
@@ -251,21 +253,21 @@ describe('专业登录入口', () => {
       onClearError: () => undefined,
     };
     const view = render(
-      <EnterpriseLoginPage {...props} initialInviteCode="ABCD-EFGH" />,
+      <EnterpriseLoginPage {...props} initialInviteCode="Ab3D-k9Pq-Z7xY" />,
     );
 
     expect(screen.getByRole('heading', { name: '加入企业' })).toBeTruthy();
-    expect((screen.getByLabelText('企业邀请码') as HTMLInputElement).value).toBe('ABCD-EFGH');
+    expect((screen.getByLabelText('企业邀请码') as HTMLInputElement).value).toBe('Ab3D-k9Pq-Z7xY');
     fireEvent.change(screen.getByLabelText('手机号'), { target: { value: '13800138000' } });
     fireEvent.click(screen.getByRole('button', { name: '获取验证码' }));
     await waitFor(() => expect(onRequestRegistrationCode).toHaveBeenCalledWith({
       serverUrl: 'https://enterprise.otto.test',
       phone: '13800138000',
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     }));
 
-    view.rerender(<EnterpriseLoginPage {...props} initialInviteCode="WXYZ-2345" />);
-    expect((screen.getByLabelText('企业邀请码') as HTMLInputElement).value).toBe('WXYZ-2345');
+    view.rerender(<EnterpriseLoginPage {...props} initialInviteCode="Wz8Y-m3Na-Q5pB" />);
+    expect((screen.getByLabelText('企业邀请码') as HTMLInputElement).value).toBe('Wz8Y-m3Na-Q5pB');
     expect(screen.queryByText('将加入「星河科技」')).toBeNull();
   });
 
@@ -354,7 +356,7 @@ describe('专业登录入口', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '使用邀请码加入企业' }));
     fireEvent.change(screen.getByLabelText('企业邀请码'), {
-      target: { value: 'ABCD-EFGH' },
+      target: { value: 'Ab3D-k9Pq-Z7xY' },
     });
     fireEvent.change(screen.getByLabelText('手机号'), {
       target: { value: '13800138000' },

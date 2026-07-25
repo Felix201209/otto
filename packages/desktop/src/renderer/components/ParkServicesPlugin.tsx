@@ -295,7 +295,7 @@ export function openParkServices(): void {
 }
 
 export function useParkBrand(): string {
-  const [brand, setBrand] = useState(DEFAULT_BRAND);
+  const [brand, setBrand] = useState('');
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -304,10 +304,10 @@ export function useParkBrand(): string {
         try {
           const park = await enterpriseParkView();
           if (!cancelled) {
-            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : DEFAULT_BRAND);
+            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : '');
           }
         } catch {
-          if (!cancelled) setBrand(DEFAULT_BRAND);
+          if (!cancelled) setBrand('');
         }
         return;
       }
@@ -382,6 +382,7 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
     try {
       const next = await window.otto.enterpriseParkSurveySubmit(selected.id, { score, focus, feedback, submittedBy: account?.name || '' });
       setItems((current) => current.map((item) => item.id === next.id ? next : item));
+      window.dispatchEvent(new CustomEvent('otto:park-publication-handled', { detail: { id: selected.id } }));
     } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
   };
   return <div className="otto-park-demo">
@@ -828,7 +829,7 @@ function ServiceDemo({ service, onBack, focusTicket }: { service: ParkService; o
 }
 
 export function ParkServicesPlugin(): React.JSX.Element {
-  const [parkEnabled, setParkEnabled] = useState(true);
+  const [parkEnabled, setParkEnabled] = useState(() => typeof window.otto?.enterpriseParkView !== 'function');
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
@@ -852,8 +853,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
           const park = await enterpriseParkView();
           if (!park || park.status !== 'active') {
             if (!cancelled) {
-              setParkEnabled(true);
-              setBrand(DEFAULT_BRAND);
+              setParkEnabled(false);
+              setBrand('');
               setServices(defaultServices(DEFAULT_PARK));
             }
             return;
@@ -881,8 +882,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
           }
         } catch {
           if (!cancelled) {
-            setParkEnabled(true);
-            setBrand(DEFAULT_BRAND);
+            setParkEnabled(false);
+            setBrand('');
             setServices(defaultServices(DEFAULT_PARK));
           }
         }
@@ -890,8 +891,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
       }
       // 旧 preload 兼容：没有 enterpriseParkView 时才允许本机园区配置。
       const cfg = await window.otto?.parkConfig?.().catch(() => null);
-      if (cancelled || !cfg) return;
+      if (cancelled) return;
       setParkEnabled(true);
+      if (!cfg) return;
       if (cfg.brandName) setBrand(cfg.brandName);
       if (cfg.services && cfg.services.length > 0) {
         setServices(cfg.services.map((service, index) => ({
@@ -940,8 +942,20 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, [open, selected]);
 
   useEffect(() => {
+    const onPublicationHandled = (event: Event): void => {
+      const id = event instanceof CustomEvent && typeof event.detail?.id === 'string'
+        ? event.detail.id
+        : '';
+      if (!id) return;
+      notifiedPublicationKeys.current.add(id);
+      setBackgroundPublication((current) => current?.id === id ? null : current);
+    };
+    window.addEventListener('otto:park-publication-handled', onPublicationHandled);
+    return () => window.removeEventListener('otto:park-publication-handled', onPublicationHandled);
+  }, []);
+
+  useEffect(() => {
     const onOpen = (): void => {
-      if (parkEnabled !== true) return;
       setSelected(null);
       setFocusTicket(null);
       setOpen(true);

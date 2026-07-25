@@ -631,7 +631,7 @@ function accountConflictMessage(error: unknown): string | null {
 
 function accountInputMessage(error: unknown): string | null {
   const message = error instanceof Error ? error.message : String(error);
-  if (message === '手机号格式不正确' || message === '登录密码至少需要 8 位') return message;
+  if (message === '手机号格式不正确' || message === '登录密码不符合安全要求') return message;
   if (message === '账号状态必须是 active 或 disabled') return message;
   if (message === 'username required') return '账号不能为空';
   if (message === 'name required') return '姓名不能为空';
@@ -1023,7 +1023,7 @@ function makeHandler(
         const encodedCode = path.slice('/enterprise/join/'.length);
         let code = '';
         try {
-          code = decodeURIComponent(encodedCode).toLocaleUpperCase('en-US');
+          code = decodeURIComponent(encodedCode);
         } catch {
           sendPublicInvitePage(res, 404);
           return;
@@ -1241,8 +1241,8 @@ function makeHandler(
           sendJSON(res, 400, { error: '请输入 6 位短信验证码' });
           return;
         }
-        if (!name || name.length > 40 || password.length < 8) {
-          sendJSON(res, 400, { error: '请填写姓名，并设置至少 8 位登录密码' });
+        if (!name || name.length > 40 || !db.isAcceptableAccountPassword(password)) {
+          sendJSON(res, 400, { error: '请填写姓名，并设置符合安全要求的登录密码' });
           return;
         }
         const verified = db.verifySmsRegistrationChallenge(challengeId, code);
@@ -1823,8 +1823,8 @@ function makeHandler(
           sendJSON(res, 400, { error: '账号和姓名不能为空' });
           return;
         }
-        if (password.length < 8) {
-          sendJSON(res, 400, { error: '登录密码至少需要 8 位' });
+        if (!db.isAcceptableAccountPassword(password)) {
+          sendJSON(res, 400, { error: '登录密码不符合安全要求' });
           return;
         }
         if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
@@ -1868,6 +1868,14 @@ function makeHandler(
           return;
         }
         const body = await readBody(req);
+        if (typeof body.password === 'string' && body.password && !db.isAcceptableAccountPassword(body.password)) {
+          sendJSON(res, 400, {
+            error: body.password.length < 8
+              ? '登录密码至少需要 8 位'
+              : '登录密码需要避免纯数字、纯字母、重复字符或常见弱密码',
+          });
+          return;
+        }
         if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
           sendJSON(res, 400, { error: '账号状态必须是 active 或 disabled' });
           return;
@@ -2351,9 +2359,9 @@ function makeHandler(
         const username = typeof admin.username === 'string' ? admin.username : '';
         const password = typeof admin.password === 'string' ? admin.password : '';
         const adminName = typeof admin.name === 'string' ? admin.name : '';
-        if (!name.trim() || !username.trim() || !adminName.trim() || password.length < 8) {
+        if (!name.trim() || !username.trim() || !adminName.trim() || !db.isAcceptableAccountPassword(password)) {
           sendJSON(res, 400, {
-            error: '企业名称及首位管理员的用户名、姓名和至少 8 位密码不能为空',
+            error: '企业名称及首位管理员的用户名、姓名和符合安全要求的密码不能为空',
           });
           return;
         }
@@ -3471,7 +3479,7 @@ export function adminAccountsHTML(): string {
         <article id="parkCard" class="configuration-card wide" aria-labelledby="parkTitle"><h3 id="parkTitle">产业园管理</h3><p>产业园方可发放邀请码、管理服务和指定专员；普通企业填写邀请码后整体加入。</p>
           <div id="parkEmptyControls" class="park-forms">
             <form id="parkRegisterForm" class="park-form"><h4>注册产业园</h4><p>当前企业将成为该产业园的管理方。</p><div class="field"><label for="parkName">产业园名称</label><input id="parkName" maxlength="80" required placeholder="例如：科技大厦"></div><div class="field"><label for="parkBrandName">客户端服务名称</label><input id="parkBrandName" maxlength="80" placeholder="例如：科技大厦服务"></div><button class="primary" type="submit">注册并开始管理</button></form>
-            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 8 位邀请码。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="ABCD-EFGH"></div><button class="primary" type="submit">整个企业加入</button></form>
+            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 12 位大小写敏感邀请码。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="Aa3B-k9Pq-Z7xY"></div><button class="primary" type="submit">整个企业加入</button></form>
           </div>
           <div id="parkDetails" class="hidden"><div id="parkSummary" class="park-summary"></div><div id="parkTenantNote" class="configuration-disabled hidden">当前企业已加入该产业园。服务与专员由产业园管理方统一配置。</div><div id="parkOwnerControls" class="hidden"><form id="parkInviteForm" class="park-invite"><div class="field"><label for="parkInviteCode">最新产业园邀请码</label><input id="parkInviteCode" readonly placeholder="点击生成"></div><div class="field"><label for="parkInviteMax">可使用次数</label><input id="parkInviteMax" type="number" min="1" max="10000" placeholder="不限"></div><button class="primary" type="submit">生成邀请码</button></form><div id="serviceList" class="service-list"></div></div></div>
         </article>

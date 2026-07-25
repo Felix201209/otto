@@ -234,7 +234,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByText('自主开发')).toBeNull();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
-    expect(screen.getByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeTruthy();
+    expect(screen.queryByText('装修 · 公告 · 停车 · 网络 · 会议 · 报修')).toBeNull();
     expect(screen.queryByText('访客 · 会议室 · 报修 · 后勤 · 班车 · 餐饮')).toBeNull();
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(1);
   });
@@ -495,7 +495,7 @@ describe('RightPanel fixed Agent catalog', () => {
     ));
   });
 
-  it('中心返回未加入园区时显示默认宏创园区入口，不读取旧本机品牌', async () => {
+  it('中心返回未加入园区时不显示宏创园区入口，不读取旧本机品牌', async () => {
     installBridge();
     const enterpriseParkView = vi.fn(async () => null);
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
@@ -510,7 +510,7 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: /宏创园区服务/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /宏创园区服务/ })).toBeNull();
     expect(screen.queryByRole('button', { name: '旧本机宏创园区服务' })).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });

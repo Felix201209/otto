@@ -128,25 +128,25 @@ export function EnterpriseAdministrationPanel({
   );
 
   return (
-    <section className="otto-account-invite" aria-label="企业组织与园区配置">
-      <header>
+    <section className="otto-enterprise-config" aria-label="企业组织与园区配置">
+      <header className="otto-enterprise-config__hero">
         <div>
-          <span>ENTERPRISE CONFIGURATION</span>
-          <h2>组织结构、功能开关与园区</h2>
-          <p>这里直接修改中心企业服务器。部门、职位权限、园区归属与专员投递会同步到所有成员。</p>
+          <span>ENTERPRISE CONTROL</span>
+          <h2>企业配置中心</h2>
+          <p>组织结构、权限开关和产业园端分区管理。这里的修改直接写入中心企业服务器，并同步到所有成员。</p>
         </div>
-        <button type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
+        <button type="button" className="otto-enterprise-config__refresh" disabled={busy} onClick={() => void refresh()}>刷新</button>
       </header>
 
       {error ? <div className="otto-account-invite__error" role="alert">{error}</div> : null}
       {message ? <div className="otto-account-invite__success" role="status">{message}</div> : null}
 
       {features ? (
-        <div className="otto-account-form__section">
-          <h3>企业功能开关</h3>
-          <div className="otto-account-form__tags">
+        <div className="otto-enterprise-config__card">
+          <h3>功能开关</h3><p>开关决定客户端是否展示对应能力；关闭后服务端接口同时 fail closed。</p>
+          <div className="otto-enterprise-config__switches">
             {FEATURE_LABELS.map(([key, label]) => (
-              <label key={key} className="otto-account-form__check">
+              <label key={key} className="otto-enterprise-config__switch">
                 <input
                   type="checkbox"
                   checked={features[key]}
@@ -167,8 +167,8 @@ export function EnterpriseAdministrationPanel({
       ) : null}
 
       {features?.enterprise_tree ? (
-        <div className="otto-account-form__section">
-          <h3>自定义部门与职位权限</h3>
+        <div className="otto-enterprise-config__card">
+          <h3>组织结构</h3><p>用职位映射权限，避免单独给人手动加权导致权限漂移。</p>
           <div className="otto-account-invite__controls">
             <label>新部门<input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder="例如：产业合作部" /></label>
             <button type="button" disabled={busy || !newDepartment.trim()} onClick={() => {
@@ -234,11 +234,11 @@ export function EnterpriseAdministrationPanel({
       ) : null}
 
       {features?.park_service ? (
-        <div className="otto-account-form__section">
-          <h3>产业园归属与服务</h3>
+        <div className="otto-enterprise-config__card">
+          <h3>产业园端</h3><p>产业园管理方可以签发邀请码邀请其他企业入驻；普通企业只能凭有效邀请码加入。</p>
           {park ? (
             <>
-              <p><strong>{park.brandName}</strong> · {park.name} · {park.isAdminOrganization ? '产业园管理方' : '入驻企业'}</p>
+              <div className="otto-enterprise-config__park-state"><div><strong>{park.brandName}</strong><span>{park.name}</span></div><b>{park.isAdminOrganization ? '产业园管理方' : '入驻企业'}</b></div>
               {park.isAdminOrganization ? (
                 <>
                   <button type="button" disabled={busy} onClick={() => {
@@ -246,8 +246,8 @@ export function EnterpriseAdministrationPanel({
                       const invite = await window.otto.enterpriseParkInviteIssue(null);
                       setParkInvite(invite);
                     }, '产业园邀请码已生成');
-                  }}>生成产业园邀请码</button>
-                  {parkInvite ? <p>邀请码：<strong>{parkInvite.code}</strong>（7 天有效，已使用 {parkInvite.usedCount} 次）</p> : null}
+                  }}>生成入驻企业邀请码</button>
+                  {parkInvite ? <p className="otto-enterprise-config__invite">入驻邀请码：<strong>{parkInvite.code}</strong><span>7 天有效，已使用 {parkInvite.usedCount} 次</span></p> : null}
                   {parkServices.map((service) => {
                     const assigned = specialists.find((item) => item.serviceId === service.id);
                     return (
@@ -274,20 +274,20 @@ export function EnterpriseAdministrationPanel({
           ) : (
             <>
               <div className="otto-account-invite__controls">
-                <label>产业园邀请码<input value={parkInviteCode} onChange={(event) => setParkInviteCode(event.target.value)} placeholder="XXXX-XXXX" /></label>
+                <label>产业园邀请码<input value={parkInviteCode} onChange={(event) => setParkInviteCode(event.target.value)} placeholder="Aa3B-k9Pq-Z7xY" /></label>
                 <button type="button" disabled={busy || !parkInviteCode.trim()} onClick={() => {
                   void run(() => window.otto.enterpriseParkJoin(parkInviteCode.trim()), '整个企业已加入产业园');
-                }}>加入产业园</button>
+                }}>作为入驻企业加入</button>
               </div>
               <div className="otto-account-invite__controls">
-                <label>注册产业园<input value={newParkName} onChange={(event) => setNewParkName(event.target.value)} placeholder="例如：科技大厦" /></label>
+                <label>创建产业园端<input value={newParkName} onChange={(event) => setNewParkName(event.target.value)} placeholder="例如：科技大厦" /></label>
                 <label>服务品牌<input value={newParkBrand} onChange={(event) => setNewParkBrand(event.target.value)} placeholder="例如：科技大厦园区服务" /></label>
                 <button type="button" disabled={busy || !newParkName.trim()} onClick={() => {
                   void run(() => window.otto.enterpriseParkRegister({
                     name: newParkName.trim(),
                     brandName: newParkBrand.trim() || `${newParkName.trim()}服务`,
                   }), '产业园已注册');
-                }}>注册为产业园管理方</button>
+                }}>创建产业园管理端</button>
               </div>
             </>
           )}

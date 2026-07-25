@@ -141,6 +141,7 @@ import {
   type EnterpriseKnowledgeRecordInput,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
+  type EnterpriseUnreadMessageNotification,
 } from './enterprise-client.js';
 import {
   authenticateAndSyncEnterpriseAccount,
@@ -240,6 +241,15 @@ let endpoint: ServerEndpoint | undefined;
 let mainWindow: BrowserWindow | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
 let tray: Tray | undefined;
+let enterpriseTrayContacts: EnterpriseTrayContact[] = [];
+
+interface EnterpriseTrayContact {
+  accountId: string;
+  name: string;
+  preview: string;
+  count: number;
+  createdAt: string;
+}
 /** 用户主动退出标记；关闭窗口时不退出，只有菜单/托盘退出才真正结束进程。 */
 let isQuitting = false;
 /** 视频编辑器窗口（OpenReel）。 */
@@ -773,13 +783,65 @@ function loadTrayIcon(): NativeImage {
   return loadIcon().resize({ width: 16, height: 16 });
 }
 
+function summarizeEnterpriseTrayContacts(items: readonly EnterpriseUnreadMessageNotification[]): EnterpriseTrayContact[] {
+  const byAccount = new Map<string, EnterpriseTrayContact>();
+  for (const item of items) {
+    const current = byAccount.get(item.senderAccountId);
+    if (!current) {
+      byAccount.set(item.senderAccountId, {
+        accountId: item.senderAccountId,
+        name: item.senderName || '企业联系人',
+        preview: item.preview || '新消息',
+        count: 1,
+        createdAt: item.createdAt,
+      });
+      continue;
+    }
+    current.count += 1;
+    if (Date.parse(item.createdAt) > Date.parse(current.createdAt)) {
+      current.preview = item.preview || current.preview;
+      current.createdAt = item.createdAt;
+    }
+  }
+  return [...byAccount.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function trayTooltip(unreadCount: number): string {
+  if (!enterpriseTrayContacts.length) {
+    return unreadCount > 0 ? `Otto · ${unreadCount} 条未读消息` : 'Otto';
+  }
+  const contacts = enterpriseTrayContacts.slice(0, 5).map((item) => (
+    `${item.name} ${item.count} 条：${item.preview}`
+  ));
+  const more = enterpriseTrayContacts.length > contacts.length
+    ? `还有 ${enterpriseTrayContacts.length - contacts.length} 位联系人`
+    : null;
+  return ['Otto 企业消息', ...contacts, ...(more ? [more] : [])].join('\n');
+}
+
+async function refreshEnterpriseTrayContacts(): Promise<void> {
+  if (!enterpriseClient.snapshot().token) {
+    enterpriseTrayContacts = [];
+    updateUnreadIndicators(notificationService.getUnreadSessions());
+    return;
+  }
+  try {
+    enterpriseTrayContacts = summarizeEnterpriseTrayContacts(
+      await enterpriseClient.listUnreadDirectMessageNotifications(),
+    );
+  } catch {
+    enterpriseTrayContacts = [];
+  }
+  updateUnreadIndicators(notificationService.getUnreadSessions());
+}
+
 /** 同步系统级未读提示：macOS Dock/菜单栏、Windows 任务栏覆盖图标与托盘说明。 */
 function updateUnreadIndicators(unread: readonly string[]): void {
   const count = unread.length;
   if (tray && !tray.isDestroyed()) {
-    tray.setToolTip(count > 0 ? `Otto · ${count} 条未读消息` : 'Otto');
+    tray.setToolTip(trayTooltip(count));
     if (process.platform === 'darwin') {
-      tray.setTitle(count > 0 ? ' •' : '');
+      tray.setTitle(count > 0 || enterpriseTrayContacts.length > 0 ? ' •' : '');
     }
   }
   if (process.platform === 'darwin' && app.dock) {
@@ -821,6 +883,17 @@ function createTray(): void {
     const status = tracer.getSummary();
     const restarting = (tray as any).__restarting === true;
 
+    const enterpriseContactItems: Electron.MenuItemConstructorOptions[] = enterpriseTrayContacts.length
+      ? [
+        { type: 'separator' },
+        { label: '企业未读联系人', enabled: false },
+        ...enterpriseTrayContacts.slice(0, 6).map((item) => ({
+          label: `${item.name} · ${item.count} 条 · ${item.preview}`,
+          enabled: false,
+        })),
+      ]
+      : [];
+
     const template: Electron.MenuItemConstructorOptions[] = [
       {
         label: '打开 Otto',
@@ -831,6 +904,7 @@ function createTray(): void {
         label: status,
         enabled: false,
       },
+      ...enterpriseContactItems,
       {
         label: restarting ? '正在重启…' : '重启 Otto 服务',
         enabled: !restarting,
@@ -869,6 +943,10 @@ function createTray(): void {
   setInterval(() => {
     if (tray && !tray.isDestroyed()) updateMenu();
   }, 2000);
+  void refreshEnterpriseTrayContacts();
+  setInterval(() => {
+    void refreshEnterpriseTrayContacts();
+  }, 20000);
 
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);

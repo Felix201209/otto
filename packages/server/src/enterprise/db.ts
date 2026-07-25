@@ -32,7 +32,8 @@ const DB_PATH = path.join(DATA_DIR, 'data.db');
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
 export const ENTERPRISE_SCHEMA_VERSION = 7;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
-const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const INVITE_CODE_RAW_LENGTH = 12;
 
 /**
  * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
@@ -2390,7 +2391,8 @@ export function getEnterpriseOrganization(id: string): OrganizationView | null {
 }
 
 function normalizeOrganizationInviteCode(code: string): string {
-  return code.toLocaleUpperCase('en-US').replace(/[^A-Z2-9]/g, '');
+  const compact = code.trim().replace(/[\s-]/g, '');
+  return /^[A-HJ-NP-Za-km-z2-9]+$/.test(compact) ? compact : '';
 }
 
 function deriveOrganizationInviteCode(
@@ -2401,13 +2403,13 @@ function deriveOrganizationInviteCode(
     .update(`${organization.id}:${nonce}`)
     .digest();
   let code = '';
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < INVITE_CODE_RAW_LENGTH; index += 1) {
     code +=
       ORGANIZATION_INVITE_ALPHABET[
         digest[index]! % ORGANIZATION_INVITE_ALPHABET.length
       ];
   }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
 }
 
 function toOrganizationInviteView(
@@ -2462,7 +2464,7 @@ export function inspectOrganizationInvite(
   now = Date.now(),
 ): OrganizationInviteInspection {
   const normalized = normalizeOrganizationInviteCode(code);
-  if (normalized.length !== 8)
+  if (normalized.length !== INVITE_CODE_RAW_LENGTH)
     return { status: 'invalid', organizationId: null };
 
   // 邀请码由 nonce 动态派生，库中没有可直接索引的明文 code；必须保留已撤销/
@@ -2852,7 +2854,7 @@ export function resolveOrganizationInviteWithDefaults(
   now = Date.now(),
 ): OrganizationInviteResolution | null {
   const normalized = normalizeOrganizationInviteCode(code);
-  if (normalized.length !== 8) return null;
+  if (normalized.length !== INVITE_CODE_RAW_LENGTH) return null;
   const rows = getDB()
     .prepare(
       `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
@@ -3119,6 +3121,27 @@ function passwordMatches(password: string, stored: string): boolean {
 
 function assertAccountPassword(password: string): void {
   if (password.length < 8) throw new Error('登录密码至少需要 8 位');
+  if (password.length > 128) throw new Error('登录密码不能超过 128 位');
+  if (/[^\x20-\x7E]/.test(password)) throw new Error('登录密码不能包含控制字符或不可见字符');
+  const lower = password.toLocaleLowerCase('en-US');
+  if (['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(lower)) {
+    throw new Error('登录密码过于常见，请更换更安全的密码');
+  }
+  if (/^\d+$/.test(password) || /^[a-z]+$/i.test(password)) {
+    throw new Error('登录密码不能只包含数字或字母');
+  }
+  if (/^(.)\1{7,}$/.test(password)) {
+    throw new Error('登录密码不能使用连续重复字符');
+  }
+}
+
+export function isAcceptableAccountPassword(password: string): boolean {
+  try {
+    assertAccountPassword(password);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function tokenHash(token: string): string {
@@ -5139,13 +5162,13 @@ function deriveParkInviteCode(park: ParkRow, nonce: string): string {
     .update(`${park.id}:${nonce}`)
     .digest();
   let code = '';
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < INVITE_CODE_RAW_LENGTH; index += 1) {
     code +=
       ORGANIZATION_INVITE_ALPHABET[
         digest[index]! % ORGANIZATION_INVITE_ALPHABET.length
       ];
   }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
 }
 
 function toParkInviteView(
@@ -5229,7 +5252,7 @@ export function joinOrganizationToPark(input: {
   if (getParkForOrganization(input.organizationId))
     throw new Error('企业已加入产业园');
   const normalized = normalizeOrganizationInviteCode(input.code);
-  if (normalized.length !== 8) throw new Error('产业园邀请码无效或已过期');
+  if (normalized.length !== INVITE_CODE_RAW_LENGTH) throw new Error('产业园邀请码无效或已过期');
   const now = input.now ?? Date.now();
   const rows = getDB()
     .prepare(
