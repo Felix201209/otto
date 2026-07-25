@@ -1693,9 +1693,30 @@ h6.otto-prose__h {
 }
 
 /* 终端运行卡展开输出 */
-.otto-tool__output {
+.otto-tool__output-wrap {
+  position: relative;
   border-top: 1px solid var(--otto-border);
   background: #1d1d1f;
+}
+.otto-tool__output-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 9px 0;
+}
+.otto-tool__copy {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d7d7d7;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.otto-tool__copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.otto-tool__output {
   color: #e6e6e6;
   font-family: var(--otto-font-mono);
   font-size: 12px;
