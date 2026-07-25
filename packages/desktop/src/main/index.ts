@@ -505,7 +505,9 @@ const updateService = new UpdateService(
   () => mainWindow?.webContents,
   IPC.updateProgress,
 );
-const incrementalUpdateService = new IncrementalUpdateService();
+const incrementalUpdateService = new IncrementalUpdateService(
+  () => mainWindow?.webContents,
+);
 
 /**
  * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
@@ -915,6 +917,11 @@ function createWindow(): BrowserWindow {
   });
 
   hardenWebContents(win);
+  win.webContents.once('did-finish-load', () => {
+    void incrementalUpdateService.applyActiveRendererPatches().catch((error) => {
+      console.warn('[otto-desktop] apply renderer css patch failed:', error);
+    });
+  });
 
   void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
   return win;

@@ -6,19 +6,19 @@
   "channels": {
     "patch": [
       {
-        "id": "patch-login-lease-v1",
+        "id": "patch-renderer-css-enterprise-login",
         "kind": "patch",
         "version": "1.9.5+patch.1",
-        "target": "desktop/main",
+        "target": "desktop/renderer-css",
         "compat": {
           "appVersion": "1.9.5",
           "sourceCommit": "f09c18d28e5359d15328c0f6a13fb7c2ea1d523a"
         },
-        "url": "https://updates.example.com/otto/patch-login-lease-v1.tar.zst",
-        "size": 4096,
+        "url": "https://updates.example.com/otto/patch-renderer-css-enterprise-login.bundle.json",
+        "size": 1024,
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "restart": "app",
+        "restart": "renderer",
         "rollback": {
           "supported": true,
           "receipt": true

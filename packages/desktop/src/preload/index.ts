@@ -138,6 +138,16 @@ export type IncrementalUpdateCheckResult =
 export type IncrementalUpdateApplyResult =
   | {
       ok: true;
+      kind: 'patch';
+      id: string;
+      version: string;
+      target: string;
+      restart: 'none' | 'renderer' | 'server' | 'app';
+      artifactPath: string;
+      runtimeApplied: boolean;
+    }
+  | {
+      ok: true;
       kind: 'component';
       id: string;
       version: string;

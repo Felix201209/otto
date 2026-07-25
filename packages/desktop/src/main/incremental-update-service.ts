@@ -2,7 +2,9 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { app } from 'electron';
+import { app, type WebContents } from 'electron';
+import { applyPatchUpdate } from './incremental-patch-updater.js';
+import { readActiveRendererCssPatch, resolvePatchUpdateRoot } from './incremental-patch-store.js';
 import { applyComponentUpdate } from './incremental-component-updater.js';
 import type { IncrementalUpdateArtifact, IncrementalUpdateKind, IncrementalUpdateManifest } from './incremental-update-manifest.js';
 import { parseIncrementalUpdateManifest } from './incremental-update-manifest.js';
@@ -35,6 +37,16 @@ export type IncrementalUpdateCheckResult =
   | { status: 'check-failed'; appVersion: string; message: string };
 
 export type IncrementalUpdateApplyResult =
+  | {
+      ok: true;
+      kind: 'patch';
+      id: string;
+      version: string;
+      target: string;
+      restart: IncrementalUpdateArtifact['restart'];
+      artifactPath: string;
+      runtimeApplied: boolean;
+    }
   | {
       ok: true;
       kind: 'component';
@@ -113,6 +125,8 @@ export class IncrementalUpdateService {
   private lastManifest: IncrementalUpdateManifest | null = null;
   private allowedAssetOrigins: string[] = [];
 
+  constructor(private readonly getWebContents?: () => WebContents | undefined) {}
+
   async checkForUpdates(manifestUrlOverride?: string): Promise<IncrementalUpdateCheckResult> {
     this.lastManifest = null;
     this.allowedAssetOrigins = [];
@@ -158,11 +172,31 @@ export class IncrementalUpdateService {
       return { ok: false, error: `未找到兼容的增量更新：${kind}/${id}` };
     }
 
-    if (artifact.kind === 'patch' || artifact.kind === 'kernel') {
+    if (artifact.kind === 'kernel') {
       return {
         ok: false,
         unsupported: true,
-        error: `${artifact.kind} 增量更新执行器尚未接入；当前版本只支持 component 增量更新`,
+        error: `${artifact.kind} 增量更新执行器尚未接入；当前版本支持 patch/component 增量更新`,
+      };
+    }
+
+    if (artifact.kind === 'patch') {
+      const result = await applyPatchUpdate({
+        artifact,
+        userDataPath: app.getPath('userData'),
+        allowedAssetOrigins: this.allowedAssetOrigins,
+      });
+      if (!result.ok) return result;
+
+      return {
+        ok: true,
+        kind: 'patch',
+        id: result.record.id,
+        version: result.record.version,
+        target: result.record.target,
+        restart: artifact.restart,
+        artifactPath: result.receipt.installedArtifactPath,
+        runtimeApplied: await this.applyActiveRendererPatches(),
       };
     }
 
@@ -182,5 +216,14 @@ export class IncrementalUpdateService {
       restart: artifact.restart,
       artifactPath: result.receipt.installedArtifactPath,
     };
+  }
+
+  async applyActiveRendererPatches(): Promise<boolean> {
+    const webContents = this.getWebContents?.();
+    if (!webContents || webContents.isDestroyed()) return false;
+    const css = await readActiveRendererCssPatch(resolvePatchUpdateRoot(app.getPath('userData')));
+    if (!css) return false;
+    await webContents.insertCSS(css);
+    return true;
   }
 }

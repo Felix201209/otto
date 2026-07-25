@@ -35,17 +35,19 @@ Otto 后续更新分为四类，默认优先发增量包，只有触及 Electron
 - 发布校验脚本强制 HTTPS、sha256、`ed25519:<64-byte-base64url>` 签名、回滚字段和类型专属兼容字段。
 - server loopback/control-token 推送入口：`POST /internal/incremental-update/push` 广播 `incremental_update_available`，只通知客户端检查 HTTPS manifest，不下发可执行内容。
 - desktop main/preload 增量更新 IPC：`incrementalUpdateCheck` 与 `incrementalUpdateApply`；preload 收到 server 推送后会触发 main 进程检查。
+- patch 本地执行层：下载 artifact、校验 sha256 和 Ed25519 签名、登记到 `userData/incremental-updates/patches/registry.json`，并写入 rollback receipt。
+- `desktop/renderer-css` patch bundle 安全解包：bundle 必须是 schemaVersion=1 的 JSON，相对路径 + base64 文件内容，且根目录必须包含 `patch.css`；安装后会插入当前 renderer，窗口重建后也会重新应用。
 - component 本地执行层：下载 artifact、校验 sha256 和 Ed25519 签名、登记到 `userData/incremental-updates/components/registry.json`，并写入 rollback receipt。
 - `skills/<name>` component bundle 安全解包：bundle 必须是 schemaVersion=1 的 JSON，相对路径 + base64 文件内容；安装后同步到 `~/.otto-user/skills/<name>`，下一次 skills 刷新可发现。
 
 运行约束：
 
 - 客户端可通过 `OTTO_INCREMENTAL_UPDATE_MANIFEST_URL` 指向企业 HTTPS 增量 manifest；服务器推送帧也可携带本次检查用的 HTTPS manifest URL。未配置且未收到推送时检查会明确失败，不会伪装成“已最新”。
-- 当前只有 component 增量更新可执行。patch/kernel 清单可被识别，但 apply 会返回 unsupported，等待执行器接入。
+- 当前 patch 支持 `desktop/renderer-css` 受控 UI 热补丁，component 支持 `skills/<name>` 安全解包；kernel 清单可被识别，但 apply 会返回 unsupported，等待 ABI 切换与重启协调执行器接入。
 
 未实现：
 
-- patch 代码覆盖与回滚执行器。
+- patch 仍未开放 main/renderer JS 或服务端 JS 覆盖；当前只允许 CSS 资源补丁，不执行任意脚本。
 - kernel ABI 切换、重启协调与回滚执行器。
 - 非 skills component 的解包、运行时加载和权限授予。
 - 公钥轮换和服务端发布接口。
