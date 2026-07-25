@@ -231,6 +231,13 @@ export function RightPanel({
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   }, []);
 
+  const documentExportName = useCallback((file: FileEntry): string => {
+    const dot = file.name.lastIndexOf('.');
+    const base = dot > 0 ? file.name.slice(0, dot) : file.name;
+    const ext = file.exportFormat || (dot > 0 ? file.name.slice(dot + 1).toLowerCase() : 'md');
+    return base + '.edited.' + ext;
+  }, []);
+
   const selectDocumentFiles = useCallback(async (): Promise<void> => {
     setDocumentsLoading(true);
     setDocumentsError('');
@@ -239,6 +246,20 @@ export function RightPanel({
       if (paths.length === 0) return;
       const loaded = await Promise.all(paths.map(async (filePath): Promise<FileEntry> => {
         const file = await window.otto.readFilePath(filePath);
+        if (/\.(pdf|docx?|md|markdown|txt|json|csv|xml|html?|css|jsx?|tsx?|log|ya?ml)$/i.test(file.fileName)) {
+          const extracted = await window.otto.extractEditableDocument(file.filePath);
+          return {
+            id: file.filePath,
+            name: file.fileName,
+            path: file.filePath,
+            size: file.size,
+            mimeType: file.mimeType,
+            content: extracted.content,
+            source: extracted.message,
+            editableText: true,
+            exportFormat: extracted.sourceFormat,
+          };
+        }
         return {
           id: file.filePath,
           name: file.fileName,
@@ -569,7 +590,13 @@ export function RightPanel({
               files={documentFiles}
               editable
               onOpenExternal={(file) => void window.otto.openPath(file.path)}
-              onSaveTextFile={(file, content) => window.otto.saveTextFile(file.name, content)}
+              onSaveTextFile={(file, content) => {
+                if (file.exportFormat === 'docx' || file.exportFormat === 'pdf') {
+                  return window.otto.exportEditedDocument(file.path, documentExportName(file), content)
+                    .then((result) => result?.path ?? null);
+                }
+                return window.otto.saveTextFile(file.name, content);
+              }}
             />
           </div>
         ) : null}

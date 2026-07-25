@@ -539,6 +539,8 @@ const IPC = {
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
+  extractEditableDocument: 'otto:extract-editable-document',
+  exportEditedDocument: 'otto:export-edited-document',
   openVideoEditor: 'otto:open-video-editor',
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
@@ -702,6 +704,23 @@ export interface OttoBridge {
     mimeType: string;
     data: string;
   }>;
+  /** 提取 PDF/Word/文本为右侧可编辑 Markdown。 */
+  extractEditableDocument(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+    editableFormat: 'markdown';
+    content: string;
+    readonly: boolean;
+    message: string;
+  }>;
+  /** 将右侧编辑稿导出回目标格式。取消保存时返回 null。 */
+  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+    ok: boolean;
+    path: string;
+    format: 'text' | 'markdown' | 'docx' | 'pdf';
+    message: string;
+  } | null>;
   /** 打开内置视频编辑器窗口。 */
   openVideoEditor(): Promise<{ ok: boolean }>;
   /**
@@ -1257,6 +1276,40 @@ const bridge: OttoBridge = {
       data: string;
     }>;
   },
+  extractEditableDocument(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+    editableFormat: 'markdown';
+    content: string;
+    readonly: boolean;
+    message: string;
+  }> {
+    return ipcRenderer.invoke(IPC.extractEditableDocument, filePath) as Promise<{
+      filePath: string;
+      fileName: string;
+      sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+      editableFormat: 'markdown';
+      content: string;
+      readonly: boolean;
+      message: string;
+    }>;
+  },
+
+  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+    ok: boolean;
+    path: string;
+    format: 'text' | 'markdown' | 'docx' | 'pdf';
+    message: string;
+  } | null> {
+    return ipcRenderer.invoke(IPC.exportEditedDocument, sourcePath, suggestedFileName, content) as Promise<{
+      ok: boolean;
+      path: string;
+      format: 'text' | 'markdown' | 'docx' | 'pdf';
+      message: string;
+    } | null>;
+  },
+
   openVideoEditor(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean }>;
   },

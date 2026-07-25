@@ -252,6 +252,8 @@ const IPC = {
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
+  extractEditableDocument: 'otto:extract-editable-document',
+  exportEditedDocument: 'otto:export-edited-document',
   readClipboardText: 'otto:read-clipboard-text',
   saveTextFile: 'otto:save-text-file',
   openVideoEditor: 'otto:open-video-editor',
@@ -2182,6 +2184,44 @@ function registerIpc(): void {
 
   // 读取用户本进程中通过原生选择器明确授权的文件，返回 Base64 + 元数据。
   // 授权不再限定 home：外部卷、其它盘符与网络盘都可选；未选择路径仍 fail closed。
+
+  ipcMain.handle(IPC.extractEditableDocument, async (_e, filePath: unknown) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      throw new Error('文件路径无效');
+    }
+    const granted = fileAccessGrants.resolve(filePath, 50 * 1024 * 1024);
+    const core = await import('otto-core') as unknown as {
+      extractEditableDocument(filePath: string): Promise<unknown>;
+    };
+    return core.extractEditableDocument(granted.filePath);
+  });
+
+  ipcMain.handle(IPC.exportEditedDocument, async (_e, sourcePath: unknown, suggestedFileName: unknown, content: unknown) => {
+    if (typeof sourcePath !== 'string' || typeof suggestedFileName !== 'string' || typeof content !== 'string') {
+      return null;
+    }
+    const granted = fileAccessGrants.resolve(sourcePath, 50 * 1024 * 1024);
+    const ext = path.extname(suggestedFileName).slice(1).toLowerCase();
+    const filters = ext
+      ? [{ name: ext.toUpperCase() + ' 文件', extensions: [ext] }, { name: '所有文件', extensions: ['*'] }]
+      : [{ name: '所有文件', extensions: ['*'] }];
+    const win = mainWindow;
+    const result = win
+      ? await dialog.showSaveDialog(win, {
+          defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+          filters,
+        })
+      : await dialog.showSaveDialog({
+          defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+          filters,
+        });
+    if (result.canceled || !result.filePath) return null;
+    const core = await import('otto-core') as unknown as {
+      exportEditedDocument(sourcePath: string, content: string, outPath: string): Promise<unknown>;
+    };
+    return core.exportEditedDocument(granted.filePath, content, result.filePath);
+  });
+
   ipcMain.handle(IPC.readFilePath, async (_e, filePath: unknown) => {
     if (typeof filePath !== 'string' || filePath.length === 0) {
       throw new Error('文件路径无效');

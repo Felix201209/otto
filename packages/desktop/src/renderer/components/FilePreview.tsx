@@ -24,6 +24,10 @@ export interface FileEntry {
   size?: number;
   /** Source: tool result or message attachment */
   source?: string;
+  /** True when a non-text source has been converted into editable text. */
+  editableText?: boolean;
+  /** Original source format to use when exporting edited content. */
+  exportFormat?: 'text' | 'markdown' | 'docx' | 'pdf';
 }
 
 function inferCategory(file: FileEntry): 'image' | 'markdown' | 'code' | 'pdf' | 'office' | 'text' {
@@ -99,7 +103,7 @@ function renderMarkdown(md: string): string {
 
 function isDirectlyEditable(file: FileEntry): boolean {
   const category = inferCategory(file);
-  return category === 'markdown' || category === 'code' || category === 'text';
+  return file.editableText === true || category === 'markdown' || category === 'code' || category === 'text';
 }
 
 function extensionToLanguage(filename: string): string {
@@ -288,7 +292,7 @@ export function FilePreview({
             <div className="otto-file-preview__list-items">
               {files.map((file) => {
                 const cat = inferCategory(file);
-                const icon = cat === 'image' ? '🖼' : cat === 'markdown' ? '📝' : cat === 'code' ? '📄' : cat === 'pdf' ? '📕' : '📃';
+                const icon = cat === 'image' ? 'IMG' : cat === 'markdown' ? 'MD' : cat === 'code' ? 'CODE' : cat === 'pdf' ? 'PDF' : cat === 'office' ? 'DOC' : 'TXT';
                 return (
                   <button
                     key={file.id}
@@ -368,7 +372,7 @@ export function FilePreview({
                     <div className="otto-file-preview__pdf-icon">{category === 'pdf' ? 'PDF' : 'DOC'}</div>
                     <strong>{activeFile.name}</strong>
                     <span>{activeFile.size ? formatSize(activeFile.size) : '未知大小'}</span>
-                    <span>{category === 'pdf' ? 'PDF' : 'Word'} 内嵌可编辑转换尚未接入；当前可进入文档工作区并用系统程序打开。</span>
+                    <span>{category === 'pdf' ? 'PDF' : 'Word'} 尚未提取出可编辑文本。请重新选择文件，或用系统程序打开。</span>
                     <button type="button" className="otto-file-preview__open-btn" onClick={handleOpenExternal}>
                       外部打开 ↗
                     </button>

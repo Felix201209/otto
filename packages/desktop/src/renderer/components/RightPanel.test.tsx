@@ -51,6 +51,21 @@ function installBridge(
     mimeType: 'text/markdown',
     data: Buffer.from('# 企业总结\n\n初稿。', 'utf8').toString('base64'),
   }));
+  const extractEditableDocument = vi.fn(async () => ({
+    filePath: '/tmp/enterprise-summary.md',
+    fileName: 'enterprise-summary.md',
+    sourceFormat: 'markdown' as 'text' | 'markdown' | 'docx' | 'pdf',
+    editableFormat: 'markdown' as const,
+    content: '# 企业总结\n\n初稿。',
+    readonly: false,
+    message: '已读取文本文件。',
+  }));
+  const exportEditedDocument = vi.fn(async () => ({
+    ok: true,
+    path: '/tmp/enterprise-summary.edited.docx',
+    format: 'docx' as const,
+    message: '已保存编辑稿：enterprise-summary.edited.docx',
+  }));
   const enterpriseKnowledgeList = vi.fn(async () => []);
   const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
     enterprise_tree: true,
@@ -84,12 +99,16 @@ function installBridge(
     saveTextFile,
     selectFiles,
     readFilePath,
+    extractEditableDocument,
+    exportEditedDocument,
   };
   return {
     openPath,
     saveTextFile,
     selectFiles,
     readFilePath,
+    extractEditableDocument,
+    exportEditedDocument,
     workLogReport,
     enterpriseKnowledgeList,
     enterpriseOrganizationFeaturesGet,
@@ -387,7 +406,7 @@ describe('RightPanel fixed Agent catalog', () => {
   });
 
   it('loads, edits, and saves a text document from the right panel', async () => {
-    const { readFilePath, saveTextFile, selectFiles } = installBridge();
+    const { extractEditableDocument, readFilePath, saveTextFile, selectFiles } = installBridge();
     render(<RightPanel busy={false} />);
 
     fireEvent.click(screen.getByRole('tab', { name: '文档' }));
@@ -395,12 +414,48 @@ describe('RightPanel fixed Agent catalog', () => {
 
     expect(selectFiles).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(readFilePath).toHaveBeenCalledWith('/tmp/enterprise-summary.md'));
+    await waitFor(() => expect(extractEditableDocument).toHaveBeenCalledWith('/tmp/enterprise-summary.md'));
     const editor = await screen.findByLabelText('编辑 /tmp/enterprise-summary.md');
     fireEvent.change(editor, { target: { value: '# 企业总结\n\n终稿。' } });
     fireEvent.click(screen.getByRole('button', { name: /保存/ }));
 
     await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith(
       'enterprise-summary.md',
+      expect.stringContaining('终稿。'),
+    ));
+  });
+
+  it('exports an edited Word document from the right panel', async () => {
+    const { exportEditedDocument, extractEditableDocument, readFilePath, selectFiles } = installBridge();
+    selectFiles.mockResolvedValueOnce(['/tmp/proposal.docx']);
+    readFilePath.mockResolvedValueOnce({
+      filePath: '/tmp/proposal.docx',
+      fileName: 'proposal.docx',
+      size: 4096,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      data: '',
+    });
+    extractEditableDocument.mockResolvedValueOnce({
+      filePath: '/tmp/proposal.docx',
+      fileName: 'proposal.docx',
+      sourceFormat: 'docx' as const,
+      editableFormat: 'markdown' as const,
+      content: '# 方案\n\n初稿。',
+      readonly: false,
+      message: '已从 Word 提取可编辑文本。',
+    });
+    render(<RightPanel busy={false} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
+
+    const editor = await screen.findByLabelText('编辑 /tmp/proposal.docx');
+    fireEvent.change(editor, { target: { value: '# 方案\n\n终稿。' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => expect(exportEditedDocument).toHaveBeenCalledWith(
+      '/tmp/proposal.docx',
+      'proposal.edited.docx',
       expect.stringContaining('终稿。'),
     ));
   });
