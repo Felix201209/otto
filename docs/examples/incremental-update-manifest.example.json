@@ -17,7 +17,7 @@
         "url": "https://updates.example.com/otto/patch-login-lease-v1.tar.zst",
         "size": 4096,
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "signature": "ed25519:example",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "restart": "app",
         "rollback": {
           "supported": true,
@@ -38,7 +38,7 @@
         "url": "https://updates.example.com/otto/kernel-core-abi-2026-07.tar.zst",
         "size": 8192,
         "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "signature": "ed25519:example",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "restart": "server",
         "rollback": {
           "supported": true,
@@ -59,7 +59,7 @@
         "url": "https://updates.example.com/otto/component-skills-ppt-v2.tar.zst",
         "size": 2048,
         "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "signature": "ed25519:example",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "restart": "none",
         "rollback": {
           "supported": true,

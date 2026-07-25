@@ -3,6 +3,7 @@
  */
 
 import * as crypto from 'node:crypto';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -14,6 +15,14 @@ import { readIncrementalComponentRegistry, resolveComponentUpdateRoot } from './
 
 function sha256(data: string): string {
   return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function signingFixture(body: string): { signature: string; publicKey: string } {
+  const keys = generateKeyPairSync('ed25519');
+  return {
+    signature: `ed25519:${sign(null, Buffer.from(body), keys.privateKey).toString('base64url')}`,
+    publicKey: keys.publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+  };
 }
 
 function fetchBody(body: string, url = 'https://updates.example.com/otto/component.bin'): FetchLike {
@@ -51,7 +60,7 @@ function artifact(body: string, overrides: Partial<IncrementalUpdateArtifact> = 
     url: 'https://updates.example.com/otto/component.bin',
     size: Buffer.byteLength(body),
     sha256: sha256(body),
-    signature: 'ed25519:example',
+    signature: overrides.signature ?? signingFixture(body).signature,
     restart: 'none',
     rollback: { supported: true, receipt: true },
     ...overrides,
@@ -62,12 +71,14 @@ describe('incremental component updater', () => {
   it('downloads, verifies and registers a component update', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
     const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
+    const signed = signingFixture(body);
     const result = await applyComponentUpdate({
-      artifact: artifact(body),
+      artifact: artifact(body, { signature: signed.signature }),
       userDataPath,
       allowedAssetOrigins: ['https://updates.example.com'],
       fetchImpl: fetchBody(body),
       now: '2026-07-25T00:00:00.000Z',
+      publicKey: signed.publicKey,
     });
 
     expect(result.ok).toBe(true);
@@ -83,10 +94,12 @@ describe('incremental component updater', () => {
   it('rejects unapproved artifact origins before writing registry state', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
     const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
+    const signed = signingFixture(body);
     const result = await applyComponentUpdate({
-      artifact: artifact(body),
+      artifact: artifact(body, { signature: signed.signature }),
       userDataPath,
       fetchImpl: fetchBody(body),
+      publicKey: signed.publicKey,
     });
 
     expect(result.ok).toBe(false);
@@ -94,13 +107,33 @@ describe('incremental component updater', () => {
     expect(Object.keys(registry.components)).toEqual([]);
   });
 
+  it('rejects invalid Ed25519 signatures before registry install', async () => {
+    const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
+    const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
+    const signedOtherBody = signingFixture('different body');
+    const result = await applyComponentUpdate({
+      artifact: artifact(body, { signature: signedOtherBody.signature }),
+      userDataPath,
+      allowedAssetOrigins: ['https://updates.example.com'],
+      fetchImpl: fetchBody(body),
+      publicKey: signedOtherBody.publicKey,
+    });
+
+    expect(result).toEqual({ ok: false, error: 'artifact Ed25519 signature verification failed' });
+    const registry = await readIncrementalComponentRegistry(resolveComponentUpdateRoot(userDataPath));
+    expect(Object.keys(registry.components)).toEqual([]);
+  });
+
   it('rejects sha256 mismatches before registry install', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
+    const expected = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: expected\n---\n# expected' });
+    const signed = signingFixture(expected);
     const result = await applyComponentUpdate({
-      artifact: artifact(bundle({ 'SKILL.md': '---\nname: presentations\ndescription: expected\n---\n# expected' })),
+      artifact: artifact(expected, { signature: signed.signature }),
       userDataPath,
       allowedAssetOrigins: ['https://updates.example.com'],
       fetchImpl: fetchBody(bundle({ 'SKILL.md': '---\nname: presentations\ndescription: tampered\n---\n# tampered' })),
+      publicKey: signed.publicKey,
     });
 
     expect(result.ok).toBe(false);

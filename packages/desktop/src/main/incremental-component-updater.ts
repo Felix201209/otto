@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { IncrementalUpdateArtifact } from './incremental-update-manifest.js';
 import { downloadToFile, type FetchLike } from './update-download.js';
+import { verifyIncrementalArtifactSignature } from './incremental-signature.js';
 import {
   installComponentUpdate,
   resolveComponentUpdateRoot,
@@ -21,6 +22,7 @@ export interface ApplyComponentUpdateOptions {
   signal?: AbortSignal;
   now?: string;
   onProgress?: (transferred: number, total: number) => void;
+  publicKey?: string;
 }
 
 export type ApplyComponentUpdateResult =
@@ -70,6 +72,16 @@ export async function applyComponentUpdate(
     onProgress: options.onProgress ?? (() => undefined),
   });
   if (!downloaded.ok) return downloaded;
+
+  const signed = await verifyIncrementalArtifactSignature({
+    filePath: downloaded.filePath,
+    signature: artifact.signature,
+    publicKey: options.publicKey,
+  });
+  if (!signed.ok) {
+    await fs.promises.rm(downloaded.filePath, { force: true }).catch(() => undefined);
+    return { ok: false, error: signed.error };
+  }
 
   const installed = await installComponentUpdate({
     artifact,

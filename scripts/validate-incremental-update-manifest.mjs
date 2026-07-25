@@ -7,6 +7,7 @@ import fs from 'node:fs';
 
 const manifestPath = process.argv[2] ?? 'docs/examples/incremental-update-manifest.example.json';
 const sha256Re = /^[a-f0-9]{64}$/;
+const ed25519SignatureRe = /^ed25519:[A-Za-z0-9_-]{86}$/;
 const kinds = ['patch', 'kernel', 'component'];
 const restarts = new Set(['none', 'renderer', 'server', 'app']);
 
@@ -48,6 +49,7 @@ for (const kind of kinds) {
     }
     if (!Number.isSafeInteger(artifact.size) || artifact.size <= 0) fail(`${label}.size must be a positive integer`);
     if (!sha256Re.test(artifact.sha256)) fail(`${label}.sha256 must be lowercase hex sha256`);
+    if (!ed25519SignatureRe.test(artifact.signature)) fail(`${label}.signature must be ed25519:<64-byte-base64url>`);
     if (!restarts.has(artifact.restart)) fail(`${label}.restart is invalid`);
     try {
       const url = new URL(artifact.url);

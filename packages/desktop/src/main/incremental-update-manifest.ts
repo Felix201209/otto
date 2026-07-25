@@ -44,6 +44,7 @@ export type IncrementalManifestParseResult =
   | { ok: false; error: string };
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
+const ED25519_SIGNATURE_RE = /^ed25519:[A-Za-z0-9_-]{86}$/;
 const KINDS: IncrementalUpdateKind[] = ['patch', 'kernel', 'component'];
 const RESTART_POLICIES: IncrementalRestartPolicy[] = ['none', 'renderer', 'server', 'app'];
 
@@ -85,6 +86,9 @@ function validateArtifact(
   const artifactSha256 = sha256 as string;
   const artifactUrlString = artifactUrl as string;
   if (!SHA256_RE.test(artifactSha256)) return `${expectedKind} artifact sha256 must be lowercase hex`;
+  if (!ED25519_SIGNATURE_RE.test(signature as string)) {
+    return `${expectedKind} artifact signature must be ed25519:<64-byte-base64url>`;
+  }
   if (!RESTART_POLICIES.includes(value.restart as IncrementalRestartPolicy)) {
     return `${expectedKind} artifact restart policy is invalid`;
   }

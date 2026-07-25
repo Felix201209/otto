@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { parseIncrementalUpdateManifest } from './incremental-update-manifest.js';
 
 const sha = 'a'.repeat(64);
+const signature = `ed25519:${Buffer.alloc(64).toString('base64url')}`;
 
 describe('incremental update manifest', () => {
   it('accepts patch, kernel and component channels with signed https artifacts', () => {
@@ -24,7 +25,7 @@ describe('incremental update manifest', () => {
           url: 'https://updates.example.com/otto/patch-login-lease-v1.tar.zst',
           size: 4096,
           sha256: sha,
-          signature: 'ed25519:example',
+          signature,
           restart: 'app',
           rollback: { supported: true, receipt: true },
         }],
@@ -37,7 +38,7 @@ describe('incremental update manifest', () => {
           url: 'https://updates.example.com/otto/kernel-core-abi-2026-07.tar.zst',
           size: 8192,
           sha256: sha,
-          signature: 'ed25519:example',
+          signature,
           restart: 'server',
           rollback: { supported: true, receipt: true },
         }],
@@ -50,7 +51,7 @@ describe('incremental update manifest', () => {
           url: 'https://updates.example.com/otto/component-skills-ppt-v2.tar.zst',
           size: 2048,
           sha256: sha,
-          signature: 'ed25519:example',
+          signature,
           restart: 'none',
           rollback: { supported: true, receipt: true },
         }],
@@ -109,7 +110,7 @@ describe('incremental update manifest', () => {
           url: 'http://updates.example.com/bad.tar.zst',
           size: 1,
           sha256: sha,
-          signature: 'ed25519:example',
+          signature,
           restart: 'app',
           rollback: { supported: true, receipt: true },
         }],
@@ -138,7 +139,7 @@ describe('incremental update manifest', () => {
           url: 'https://updates.example.com/otto/component-skills-ppt-v2.tar.zst',
           size: 2048,
           sha256: sha,
-          signature: 'ed25519:example',
+          signature,
           restart: 'none',
           rollback: { supported: true, receipt: true },
         }],
