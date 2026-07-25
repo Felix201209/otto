@@ -780,6 +780,31 @@ function isPendingQuestion(tc: ToolCall): boolean {
   );
 }
 
+async function copyToolOutput(text: string): Promise<boolean> {
+  try {
+    // Desktop 通过 main 进程写系统剪贴板，避免 renderer 权限和焦点状态导致复制失败。
+    const desktopWriter = window.otto?.writeClipboard;
+    if (typeof desktopWriter === 'function') return await desktopWriter(text);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    // 浏览器预览/旧版 WebView 的兼容路径。
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   const resolved = refineResolvedTool(resolveTool(tool));
   const st = statusInfo(tool.status);
@@ -787,6 +812,7 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   // 编辑文件卡默认展开看 diff（spec 截图）；exec/generic 运行中默认展开露实时输出，
   // 否则默认折叠。
   const [open, setOpen] = useState(resolved.kind === 'edit' || st.running);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const Icon = resolved.kind === 'exec' ? IconTerminal : IconFile;
   const hasBody =
@@ -848,7 +874,22 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
             ) : resolved.kind === 'edit' && resolved.diff ? (
               <DiffView diff={resolved.diff} path={resolved.target} />
             ) : resolved.output ? (
-              <pre className="otto-tool__output">{resolved.output}</pre>
+              <div className="otto-tool__output-wrap">
+                <div className="otto-tool__output-actions">
+                  <button
+                    type="button"
+                    className="otto-tool__copy"
+                    onClick={async () => {
+                      const copied = await copyToolOutput(resolved.output!);
+                      setCopyState(copied ? 'copied' : 'failed');
+                      if (copied) window.setTimeout(() => setCopyState('idle'), 1600);
+                    }}
+                  >
+                    {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制结果'}
+                  </button>
+                </div>
+                <pre className="otto-tool__output">{resolved.output}</pre>
+              </div>
             ) : null}
           </div>
         </div>

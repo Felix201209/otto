@@ -151,6 +151,34 @@ describe('ToolCalls · 空正文的确定性总结', () => {
 
     expect(screen.getByText('代码文件：client.ts')).toBeTruthy();
   });
+
+  it('Bash 结果提供可用的复制按钮并写入系统剪贴板', async () => {
+    const writeClipboard = vi.fn(async () => true);
+    Object.defineProperty(window, 'otto', {
+      configurable: true,
+      value: { writeClipboard },
+    });
+    render(
+      <ToolCallsCard
+        toolCalls={[{
+          id: 'bash-copy-1',
+          toolName: 'run_shell_command',
+          parameters: { command: 'npm test' },
+          status: 'success' as ToolCall['status'],
+          result: {
+            success: true,
+            data: '测试输出\n全部通过',
+            executionTime: 10,
+            toolName: 'run_shell_command',
+          },
+        }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '复制结果' }));
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith('测试输出\n全部通过'));
+    expect(await screen.findByRole('button', { name: '已复制' })).toBeTruthy();
+  });
 });
 
 describe('ToolCalls · AskUserQuestion 问答卡', () => {
