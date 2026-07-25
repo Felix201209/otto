@@ -10,7 +10,7 @@
  * ════════════════════════════════════════════════════════════════════════════
  *
  * 这是 server ↔ desktop renderer 之间的唯一契约源。
- * 形态复用 `packages/vscode-ui-plugin/webview/src/types/index.ts` 的
+ * 形态复用 历史 webview types 的
  * `{ type, payload }` 信封 + MessageContentPart / ToolCall 等渲染类型，
  * 在其上扩展：
  *   - `source: 'feishu' | 'local' | 'enterprise' | 'park'`（消息/会话来源标记）

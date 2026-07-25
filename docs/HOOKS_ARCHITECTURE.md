@@ -87,9 +87,9 @@ Otto/
 │   │   │     }
 │   │   └── dist/
 │   │
-│   └── vscode-ui-plugin/
-│       ├── src/
-│       │   ├── extension.ts               (导入 easycode-core)
+│   └── desktop/
+│       ├── src/renderer/
+│       │   ├── App.tsx                    (导入 easycode-core)
 │       │   ├── services/
 │       │   │   ├── authManager.ts         (导入 core)
 │       │   │   ├── aiService.ts           (导入 core)
@@ -304,10 +304,10 @@ const hookSystem = new HookSystem(config);
 await hookSystem.fireEvent('BeforeTool', toolInput);
 ```
 
-### VSCode UI 插件如何使用
+### Desktop UI 如何使用
 
 ```typescript
-// packages/vscode-ui-plugin/src/services/aiService.ts
+// packages/desktop/src/renderer/services/aiService.ts
 
 import {
   HookSystem,
@@ -405,7 +405,7 @@ packages/core/src/hooks/myCustomHook.ts
 ```typescript
 // 不好：在两个地方都实现
 packages/core/src/ui-hooks/... (retired text UI pattern; avoid)
-packages/vscode-ui-plugin/src/hooks/... (❌ 避免)
+packages/desktop/src/renderer/hooks/... (❌ 避免)
 ```
 
 ### 配置文件位置
@@ -521,10 +521,10 @@ export class Agent {
 }
 ```
 
-### 在 VSCode UI 中
+### 在 Desktop UI 中
 
 ```typescript
-// packages/vscode-ui-plugin/src/services/aiService.ts
+// packages/desktop/src/renderer/services/aiService.ts
 
 import { HookEventHandler } from 'easycode-core';
 

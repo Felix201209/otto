@@ -94,7 +94,7 @@ for (const workspacePattern of workspaces) {
 printHeader(stepCount++, totalSteps, 'Cleaning system caches and build info');
 const caches = [
   { glob: '**/tsconfig.tsbuildinfo', type: 'TS Build Cache' },
-  { dir: join(os.tmpdir(), 'deepv-webview-webpack-cache'), type: 'Webpack Cache', manual: true }
+  { dir: join(os.tmpdir(), 'otto-renderer-webpack-cache'), type: 'Webpack Cache', manual: true }
 ];
 
 // TS Build Info
@@ -104,10 +104,10 @@ globSync('**/tsconfig.tsbuildinfo', { cwd: root, ignore: ['node_modules/**'] }).
 });
 
 // Webpack
-const webpackCache = join(os.tmpdir(), 'deepv-webview-webpack-cache');
+const webpackCache = join(os.tmpdir(), 'otto-renderer-webpack-cache');
 if (existsSync(webpackCache)) {
   rmSync(webpackCache, RMRF_OPTIONS);
-  printItem('success', '<System Temp>/deepv-webview-webpack-cache', 'Webpack Cache');
+  printItem('success', '<System Temp>/otto-renderer-webpack-cache', 'Webpack Cache');
 }
 
 // Generated files

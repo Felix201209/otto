@@ -150,7 +150,6 @@ This documentation is structured into logical sections:
 ## 💡 Quick Navigation Tips
 
 - **New to Otto?** Start with [Deployment Guide](./deployment.md)
-- **VS Code User?** See [VS Code Extension Documentation](../packages/vscode-ui-plugin/README.md)
 - **Enterprise Admin?** Read [Hooks START HERE](./HOOKS_START_HERE.md)
 - **Developer/Contributor?** See [Contributing Guide](../CONTRIBUTING.md) and [Architecture](./architecture.md)
 - **Need MCP Integration?** Check [MCP Documentation](#-model-context-protocol-mcp)
