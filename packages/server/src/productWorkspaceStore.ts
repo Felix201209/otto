@@ -110,6 +110,9 @@ export interface ProductWorkspaceStoreOptions {
   now?: () => Date;
 }
 
+export const ENTERPRISE_IDENTITY_RECOVERING_MESSAGE =
+  '正在恢复企业身份，请稍候。若网络恢复后仍无法继续，再重新登录。';
+
 export interface AuthenticatedEnterpriseOrganizationMember {
   id: string;
   username: string;
@@ -295,7 +298,7 @@ export class ProductWorkspaceStore {
   snapshot(): ProductWorkspaceSnapshot {
     const identity = this.enterpriseIdentityState();
     if (identity.status === 'expired') {
-      throw new Error('中心认证身份租约已过期，请重新登录');
+      throw new Error(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
     }
     if (identity.status === 'active') {
       const account = identity.account;
@@ -711,7 +714,7 @@ export class ProductWorkspaceStore {
 
   private assertIdentityLeaseActiveIfPresent(): void {
     if (this.enterpriseIdentityState().status === 'expired') {
-      throw new Error('中心认证身份租约已过期，请重新登录');
+      throw new Error(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
     }
   }
 
