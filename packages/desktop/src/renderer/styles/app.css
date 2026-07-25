@@ -7125,7 +7125,13 @@ h6.otto-prose__h {
 .otto-worklog-panel__actions button { flex: 1; border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 7px 8px; font-size: 9px; cursor: pointer; }
 .otto-worklog-panel__actions button.is-primary { border-color: var(--otto-accent); background: var(--otto-accent-soft); color: var(--otto-accent); font-weight: 700; }
 .otto-worklog-panel__tip { color: var(--otto-text-tertiary); font-size: 8.5px; line-height: 1.4; }
-.otto-worklog-panel__summary { margin: 0; max-height: 150px; overflow: auto; white-space: pre-wrap; font: 9px/1.5 var(--otto-font-mono); color: var(--otto-text-secondary); }
+.otto-worklog-panel__summary { margin: 0; color: var(--otto-text-secondary); font-size: 9px; line-height: 1.45; }
+.otto-worklog-panel__editor { display: grid; gap: 6px; min-height: 220px; }
+.otto-worklog-panel__editor .otto-ce { min-height: 220px; max-height: 360px; border-radius: 8px; }
+.otto-worklog-panel__editor .otto-ce__toolbar { min-height: 30px; padding: 6px 8px; }
+.otto-worklog-panel__editor .otto-ce__editor { min-height: 160px; }
+.otto-worklog-panel__editor .otto-ce__statusbar { min-height: 22px; padding: 4px 8px; }
+.otto-worklog-panel__saved-path { border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); color: var(--otto-accent); padding: 6px 8px; font-size: 9px; cursor: pointer; }
 .otto-worklog-panel__details summary { color: var(--otto-text-tertiary); font-size: 8.5px; cursor: pointer; }
 .otto-worklog-panel__details pre { margin: 7px 0 0; white-space: pre-wrap; color: var(--otto-text-secondary); font: 8.5px/1.5 var(--otto-font-mono); }
 .otto-wcal__title { display: flex; align-items: center; justify-content: space-between; padding: 0; }

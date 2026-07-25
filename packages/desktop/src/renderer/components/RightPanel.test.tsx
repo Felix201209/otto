@@ -42,6 +42,7 @@ function installBridge(
   knowledgeEnabled = false,
 ) {
   const openPath = vi.fn(async () => undefined);
+  const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
   const enterpriseKnowledgeList = vi.fn(async () => []);
   const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
     enterprise_tree: true,
@@ -72,9 +73,11 @@ function installBridge(
     enterpriseOrganizationFeaturesGet,
     workLogReport,
     openPath,
+    saveTextFile,
   };
   return {
     openPath,
+    saveTextFile,
     workLogReport,
     enterpriseKnowledgeList,
     enterpriseOrganizationFeaturesGet,
@@ -570,8 +573,8 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(reject).toHaveBeenCalledWith('candidate-1');
   });
 
-  it('shows and opens the real saved result after generating a work report', async () => {
-    const { openPath, workLogReport } = installBridge();
+  it('edits, saves, and opens the generated work report from the right panel', async () => {
+    const { openPath, saveTextFile, workLogReport } = installBridge();
     render(<RightPanel busy={false} />);
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
     fireEvent.click(screen.getByRole('button', { name: '生成今日总结' }));
@@ -579,6 +582,15 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(workLogReport).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(/已生成并保存「市场竞品调研报告」/))
       .toBeTruthy();
+    const editor = await screen.findByLabelText('编辑 /tmp/2026-07-10-市场竞品调研报告.md');
+    fireEvent.change(editor, { target: { value: '# 市场竞品调研报告\n\n已完成对比。\n\n补充结论。' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+    await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith(
+      '2026-07-10-市场竞品调研报告.md',
+      expect.stringContaining('补充结论。'),
+    ));
+    fireEvent.click(screen.getByRole('button', { name: '打开已保存编辑稿' }));
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith('/tmp/edited-worklog.md'));
     fireEvent.click(screen.getByRole('button', { name: '打开总结' }));
     await waitFor(() => expect(openPath).toHaveBeenCalledWith(
       '/tmp/2026-07-10-市场竞品调研报告.md',

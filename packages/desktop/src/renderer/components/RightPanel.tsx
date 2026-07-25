@@ -15,6 +15,7 @@ import type {
   CustomAgentDraft,
 } from '../customAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
+import { CodeEditor } from './CodeEditor.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
@@ -167,8 +168,10 @@ export function RightPanel({
   } | null>(null);
   const [worklogDays, setWorklogDays] = useState<WorkLogDay[]>([]);
   const [worklogLoading, setWorklogLoading] = useState(false);
-  const [workReportPreview, setWorkReportPreview] = useState('');
+  const [workReportMessage, setWorkReportMessage] = useState('');
+  const [workReportDraft, setWorkReportDraft] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
+  const [workReportSavePath, setWorkReportSavePath] = useState('');
   const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState('');
@@ -577,14 +580,45 @@ export function RightPanel({
                 try {
                   const report = await window.otto.workLogReport();
                   setWorkReportPath(report.ok ? report.path : '');
-                  setWorkReportPreview(report.ok ? `${report.message}\n\n${report.markdown}` : report.message);
+                  setWorkReportMessage(report.message);
+                  setWorkReportDraft(report.ok ? report.markdown : '');
+                  setWorkReportSavePath('');
                 } catch { /* 保留 */ }
               }}>生成今日总结</button>
               {workReportPath ? <button type="button" onClick={() => void window.otto.openPath(workReportPath)}>打开总结</button> : null}
             </div>
             <WorkLogCalendar onSelectDate={onSelectDate} byDate={worklogByDate} />
             <div className="otto-worklog-panel__tip">悬浮日期看当天成果；点击日期进入日程与工作详情。</div>
-            {workReportPreview ? <pre className="otto-worklog-panel__summary">{workReportPreview}</pre> : null}
+            {workReportMessage ? (
+              <div className="otto-worklog-panel__summary">{workReportMessage}</div>
+            ) : null}
+            {workReportDraft ? (
+              <div className="otto-worklog-panel__editor">
+                <CodeEditor
+                  content={workReportDraft}
+                  filePath={workReportPath || 'otto-worklog-report.md'}
+                  onSave={(nextContent) => {
+                    void window.otto
+                      .saveTextFile(
+                        workReportPath.split(/[\\/]/).pop() || 'otto-worklog-report.md',
+                        nextContent,
+                      )
+                      .then((savedPath) => {
+                        if (savedPath) setWorkReportSavePath(savedPath);
+                      });
+                  }}
+                />
+                {workReportSavePath ? (
+                  <button
+                    type="button"
+                    className="otto-worklog-panel__saved-path"
+                    onClick={() => void window.otto.openPath(workReportSavePath)}
+                  >
+                    打开已保存编辑稿
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {workSummary ? (
               <details className="otto-worklog-panel__details">
                 <summary>查看执行明细</summary>
