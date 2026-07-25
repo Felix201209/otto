@@ -16,7 +16,7 @@ import type { Config } from '../config/config.js';
  * SelfUpdateTool / buildRelaunchScript — 飞书模式下"更新并重启 / 仅重启"。
  *
  * 重启方式（双轨）：
- *   - Windows: cmd.exe /c <command>（有 conpty，用户可见 TUI）
+ *   - Windows: cmd.exe /c <command>（有 conpty，用户可见输出）
  *   - Linux/macOS: login shell -l -c <command>（加载 .bashrc/.profile，使 nvm 等 PATH 生效）
  */
 describe('buildRelaunchScript', () => {

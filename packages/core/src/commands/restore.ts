@@ -21,7 +21,7 @@ export async function performRestore(
     type: 'message',
     messageType: 'warning',
     content:
-      '/restore is not yet wired up in the ACP layer. Use the TUI checkpoint browser for now.',
+      '/restore is not yet wired up in the ACP layer. Use the desktop checkpoint browser for now.',
   };
 }
 

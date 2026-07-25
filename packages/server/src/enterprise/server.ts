@@ -3048,7 +3048,7 @@ function makeHandler(
       if (path === '/enterprise/organization/sync' && method === 'GET') {
         const organizationId = memberAccount!.organizationId;
         const features = db.getOrganizationFeatures(organizationId);
-        if (!features.enterprise_tree || !features.tui_sync) {
+        if (!features.enterprise_tree) {
           sendJSON(res, 403, { error: '企业树同步功能已由管理员关闭' });
           return;
         }
@@ -3522,7 +3522,6 @@ const featureDefinitions={
   enterprise_tree:['企业树','成员、部门与职位目录'],
   park_service:['园区服务','产业园入驻、服务与报修路由'],
   feishu_auto_reply:['飞书自动回复','飞书向 Otto 提问后自动执行并回复'],
-  tui_sync:['TUI 企业同步','终端企业身份与目录同步'],
   direct_messages:['企业内部消息','成员直聊与未读提醒'],
   atoa:['A2A 协作','数字同事之间的任务转交'],
   knowledge:['企业知识','按企业与部门范围使用知识库']

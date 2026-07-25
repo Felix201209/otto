@@ -42,7 +42,7 @@ Every PR description must include this checklist. Check each box before marking 
 - [ ] `npm run test` passes for all changed packages
 - [ ] `npm run lint` passes (zero warnings in CI)
 - [ ] Changed files audit: every modified file is intentional and listed below
-- [ ] New code follows TDD (test first) for `packages/cli` and `packages/core`
+- [ ] New code follows TDD (test first) for `packages/core`, `packages/server`, and `packages/desktop`
 - [ ] If tests were skipped for a valid reason, the reason is noted in this PR
 ```
 
@@ -133,7 +133,6 @@ The `.github/workflows/ci.yml` workflow runs on every PR to `internal` and `main
 3. `npm run typecheck --workspaces`
 4. `npm run test --workspace=packages/core`
 5. `npm run test --workspace=packages/server`
-6. `npm run test --workspace=packages/cli`
 7. `npm run test --workspace=packages/desktop`
 
 If CI is red, the PR cannot merge.

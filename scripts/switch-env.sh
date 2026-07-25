@@ -7,7 +7,7 @@ set -e
 
 # Get project root directory (parent directory of script location)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI_DIR="$PROJECT_ROOT/packages/cli"
+DESKTOP_DIR="$PROJECT_ROOT/packages/desktop"
 
 # Fun environment switch quotes
 quotes=(
@@ -50,8 +50,8 @@ case "$ENV_TYPE" in
 esac
 
 # Check if source environment file exists
-SOURCE_ENV_FILE="$CLI_DIR/.env.$ENV_TYPE"
-TARGET_ENV_FILE="$CLI_DIR/.env"
+SOURCE_ENV_FILE="$DESKTOP_DIR/.env.$ENV_TYPE"
+TARGET_ENV_FILE="$DESKTOP_DIR/.env"
 
 if [ ! -f "$SOURCE_ENV_FILE" ]; then
     echo "❌ Error: Environment configuration file not found: $SOURCE_ENV_FILE"

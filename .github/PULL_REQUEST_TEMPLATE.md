@@ -23,7 +23,7 @@ Closes #
 - [ ] `npm run lint` passes (zero warnings)
 - [ ] `scripts/verify-pr.sh` passes locally
 - [ ] Changed files audit below is complete
-- [ ] New code in `packages/cli` or `packages/core` follows TDD (test-first)
+- [ ] New code in `packages/core`, `packages/server`, or `packages/desktop` follows TDD (test-first)
 - [ ] If tests were skipped, the reason is noted below
 
 ## Changed files audit

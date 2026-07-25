@@ -221,10 +221,9 @@ These concerns belong outside the kernel boundary. Kernel files **must not impor
 
 ### UI Behavior (React, Ink, DOM)
 
-- `packages/cli/src/ui/` — Terminal UI (Ink/React 19)
 - `packages/desktop/src/renderer/` — Electron DOM UI (React 18)
 - `packages/vscode-ui-plugin/` — VS Code WebView
-- **Ban**: `import from 'react'`, `import from 'ink'`, `import from '../ui/'`, `import from '../../desktop/'`.
+- **Ban**: `import from 'react'`, `import from '../../desktop/'`.
 
 ### Memory Ranking / Scoring
 

@@ -21,7 +21,6 @@ const FEATURE_LABELS: Array<[keyof EnterpriseOrganizationFeatures, string]> = [
   ['enterprise_tree', '企业组织树'],
   ['park_service', '园区服务'],
   ['feishu_auto_reply', '飞书自动回答'],
-  ['tui_sync', '终端组织同步'],
   ['direct_messages', '企业内部消息'],
   ['atoa', 'Otto 间协作'],
   ['knowledge', '企业知识库'],

@@ -8,7 +8,6 @@ next model to understand.
 
 Otto is an AI coworker and coding agent with several surfaces:
 
-- CLI/TUI agent in `packages/cli`
 - Runtime kernel and tools in `packages/core`
 - Enterprise server in `packages/server`
 - Desktop/Electron app in `packages/desktop`
@@ -56,7 +55,7 @@ Everything else should stay outside the kernel behind an interface:
 
 ## Development discipline
 
-For `packages/core` and `packages/cli`, use test-driven development when the
+For `packages/core`, `packages/server`, and `packages/desktop`, use test-driven development when the
 change involves branches, state transitions, data conversion, or business
 rules:
 

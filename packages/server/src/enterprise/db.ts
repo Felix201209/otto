@@ -1705,7 +1705,6 @@ export interface OrganizationFeatures {
   enterprise_tree: boolean;
   park_service: boolean;
   feishu_auto_reply: boolean;
-  tui_sync: boolean;
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
@@ -1780,7 +1779,6 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   enterprise_tree: true,
   park_service: true,
   feishu_auto_reply: true,
-  tui_sync: true,
   direct_messages: true,
   atoa: true,
   knowledge: true,
@@ -1801,7 +1799,6 @@ const LICENSE_MODULE_FEATURES: Record<
   atoa: ['atoa'],
   enterprise_memory: ['knowledge'],
   knowledge: ['knowledge'],
-  tui_sync: ['tui_sync'],
 };
 
 function licenseEnforcementEnabled(): boolean {

@@ -58,7 +58,7 @@ function violationFor(fromRel, specifier) {
   if (!fromPackage) return null;
   const resolved = resolveImport(fromRel, specifier);
   if (fromPackage === 'core') {
-    if (resolved?.startsWith('packages/cli/') || resolved?.startsWith('packages/server/') || resolved?.startsWith('packages/desktop/')) {
+    if (resolved?.startsWith('packages/server/') || resolved?.startsWith('packages/desktop/')) {
       return 'core must not import cli/server/desktop';
     }
   }

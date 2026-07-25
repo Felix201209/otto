@@ -46,7 +46,7 @@ const AUTH_APP_ID_RE = /^[a-z0-9_-]{3,128}$/i;
 const ANSI_ESCAPE = String.fromCharCode(27);
 
 /**
- * Extract an official lark-cli authorization URL. Core/TUI must enforce the
+ * Extract an official lark-cli authorization URL. Core must enforce the
  * same boundary as Desktop; otherwise a compromised tool output could turn an
  * attacker-controlled lookalike URL into an `auth_required` link.
  */

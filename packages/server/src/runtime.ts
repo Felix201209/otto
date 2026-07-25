@@ -7,7 +7,7 @@
 /**
  * CoreSessionRuntime —— 把 otto-core「跑一整轮对话」封进一个 SessionRuntime。
  *
- * 设计参照 `packages/cli/src/nonInteractiveCli.ts` 的 while 循环（headless，无 Ink）：
+ * 设计为 headless 运行循环：
  *   1. chat.sendMessageStream(...) 拿逐 chunk 流；
  *   2. 文本 chunk → publish('chat_chunk')；functionCalls 累积；
  *   3. 本轮有工具调用 → 用 executeToolCall 一次性执行，把状态/结果 publish

@@ -220,7 +220,7 @@ describe('NotificationService', () => {
   it('普通后台对话完成不额外蜂鸣，避免打扰', () => {
     const service = new NotificationService();
 
-    service.show({ sessionId: 'chat-1', source: 'tui', preview: '后台任务完成' });
+    service.show({ sessionId: 'chat-1', source: 'local', preview: '后台任务完成' });
 
     expect(electron.instances).toHaveLength(1);
     expect(electron.beep).not.toHaveBeenCalled();

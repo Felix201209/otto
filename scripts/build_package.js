@@ -35,7 +35,7 @@ try {
 
 if (!process.cwd().includes('packages')) {
   console.error(chalk.red('[!] Error: Must be called from within a package directory'));
-  console.error(chalk.yellow('    Hint: Change directory to packages/cli or packages/core first'));
+  console.error(chalk.yellow('    Hint: Change directory to packages/core or packages/server first'));
   process.exit(1);
 }
 

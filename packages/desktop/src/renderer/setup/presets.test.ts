@@ -12,7 +12,6 @@ import {
   buildSavePayload,
   effectiveModelIds,
   buildModelsFileJson,
-  buildCliCommand,
   vendorFromBaseUrl,
   type SetupFormState,
 } from './presets.js';
@@ -60,13 +59,6 @@ describe('buildModelsFileJson', () => {
   });
 });
 
-describe('buildCliCommand', () => {
-  it('--key 一直是占位符，不含明文 key', () => {
-    const cmd = buildCliCommand(form);
-    expect(cmd).toContain('--key <你的API_KEY>');
-    expect(cmd).not.toContain('sk-real-secret-123');
-  });
-});
 
 describe('多选批量（填一次 key → 多模型）', () => {
   it('effectiveModelIds 合并已选 + 输入框待添加，去重去空', () => {

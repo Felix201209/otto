@@ -47,7 +47,7 @@ export function SourceBadge({
       </span>
     );
   }
-  // 'local' 与 'tui' 都按本地展示（TUI 只读会话视作本地来源）。
+  // 旧版本可能留下 source=tui 的历史消息；统一按本地来源展示。
   return (
     <span className="otto-badge otto-badge--local">
       <IconLocalMark size={11} />

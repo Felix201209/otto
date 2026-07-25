@@ -290,7 +290,6 @@ export interface EnterpriseOrganizationFeatures {
   enterprise_tree: boolean;
   park_service: boolean;
   feishu_auto_reply: boolean;
-  tui_sync: boolean;
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;

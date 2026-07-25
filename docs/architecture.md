@@ -9,7 +9,6 @@ Otto 采用 Monorepo（npm workspaces）管理，包含以下包：
 | 包 | 职责 |
 |---|---|
 | **otto-core** (`packages/core`) | 后端引擎：AI 客户端、工具系统（40+工具）、Prompt 构建、会话管理、记忆系统、技能系统、企业编排（orchestration）、鉴权、遥测 |
-| **otto-cli** (`packages/cli`) | 终端 UI（Ink/React 19）：输入处理、历史、渲染、主题、斜杠命令、飞书 daemon 进程管理 |
 | **otto-server** (`packages/server`) | 本地 HTTP+WS 服务：唯一会话真相源、飞书网关桥、自定义模型管理、企业仪表盘 |
 | **otto-desktop** (`packages/desktop`) | Electron 应用（main/preload/renderer）：内嵌 server，复用 DOM UI，7 个右侧企业面板 |
 | **vscode-ui-plugin** (`packages/vscode-ui-plugin`) | VS Code 扩展：侧边栏 AI 助手、内联补全、规则管理 |
@@ -19,7 +18,6 @@ Otto 采用 Monorepo（npm workspaces）管理，包含以下包：
 ```
 otto-core（无下游依赖）
   ↑
-  ├── otto-cli（依赖 core）
   ├── otto-server（依赖 core）
   │     ↑
   │     └── otto-desktop（依赖 server → core）
@@ -100,8 +98,7 @@ otto enterprise sync → 拉取部门树 + 人员 → OrgMemoryStore
 ## 技术栈
 
 - TypeScript 5.x + Node.js 20+
-- React 19（CLI）/ React 18（桌面端）
-- Ink 6.4（终端 UI）
+- React 18（桌面端）
 - esbuild（构建）/ Vitest（测试）
 - Electron 33（桌面端）
 - @larksuiteoapi/node-sdk（飞书）

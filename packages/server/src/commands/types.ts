@@ -13,9 +13,9 @@
  *   - 命令实现只依赖 CommandHost 这个窄接口（由 OttoServer 用闭包拼装），
  *     不反向 import OttoServer——单测时用假 host 即可全链路覆盖。
  *
- * 与 CLI 命令层（packages/cli/src/ui/commands/types.ts 的 9 种返回类型）不同，
+ * 与历史交互命令层不同，
  * 这里刻意收敛为两种结果：markdown（渲染成聊天区系统气泡）与 submit_prompt
- * （转投喂给模型跑一轮）。dialog/switch_session 等 TUI 交互形态在桌面端由
+ * （转投喂给模型跑一轮）。dialog/switch_session 等交互形态在桌面端由
  * renderer 的本地面板命令承担，不进 server。
  */
 

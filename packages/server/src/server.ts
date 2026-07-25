@@ -7,7 +7,7 @@
 /**
  * otto-server：本地 HTTP + WS app server 骨架。
  *
- * 唯一会话源：所有客户端（desktop renderer / 未来 TUI 只读 / 飞书网关）都经
+ * 唯一会话源：所有客户端（desktop renderer / 飞书网关）都经
  * 这里读写同一份 SessionStore，并通过 WS 收到同一会话的实时广播。
  *
  * 本文件立「服务外壳 + 路由 + WS 收发分发 + registerFeishu 接缝」。
@@ -1043,7 +1043,7 @@ export class OttoServer {
    *   校验 → 复用 customModels.saveCustomModel 原子写盘（CLI 同格式）
    *   → 成功广播最新 models_list（含 current）；失败回 error(code:'save_failed')。
    *
-   * 广播用 broadcastAll：多窗口（及未来只读 TUI 视图）同步刷新模型列表。
+   * 广播用 broadcastAll：多窗口同步刷新模型列表。
    * makeActive：server 端真正实现——写盘时把该模型设为「当前生效模型」
    * （customModels 的 preferredModel 单一事实源），createCoreConfig 优先用它，
    * 广播 models_list 时带 current，让 renderer 模型药丸/菜单勾号反映真实生效模型。
@@ -2018,7 +2018,7 @@ export class OttoServer {
    * 本地 app server 防滥用闸门：仅放行本机/Electron 自身的连接，拒绝任意网页
    * 经 DNS-rebinding 或 localhost WebSocket 无鉴权驱动本 server（越权跑工具/读历史）。
    * - Origin：浏览器对 ws 握手与跨源 http 必带 Origin 且无法伪造。放行 无 Origin（Node 客户端
-   *   如 TUI）、`null`/`file://`（Electron file:// 渲染层）、localhost/127.0.0.1（本地 dev/工具）；
+   *   `null`/`file://`（Electron file:// 渲染层）、localhost/127.0.0.1（本地 dev/工具）；
    *   其余 http(s):// 网页来源一律拒。
    * - Host：要求主机名是 localhost/127.0.0.1/[::1]，挡 DNS-rebinding。
    */

@@ -1,39 +1,23 @@
 # Welcome to Otto Documentation
 
-This documentation provides a comprehensive guide to installing, using, and developing Otto. Otto is an AI-powered coding assistant that brings advanced AI capabilities to your development workflow through both a command-line interface and VS Code extension.
+This documentation provides a guide to developing and delivering Otto. Otto is a desktop-first AI assistant with shared core, local server, enterprise services, and componentized skills.
 
 ## Overview
 
 Otto is a monorepo project consisting of:
-- **`packages/cli`**: Command-line interface with interactive REPL environment
 - **`packages/core`**: Core functionality library (AI client, tools, MCP, hooks, skills)
-- **`packages/vscode-ui-plugin`**: Full-featured VS Code extension with webview UI
-- **`packages/vscode-ide-companion`**: Lightweight VS Code integration companion
+- **`packages/server`**: Local and enterprise HTTP/WebSocket services
+- **`packages/desktop`**: Electron desktop client and renderer
 
-The CLI and VS Code extension communicate with AI models through the core library, which manages requests, tool execution, context handling, and extensibility features.
+Desktop and server code communicate through the core library, which manages requests, tool execution, context handling, and extensibility features.
 
 ---
 
 ## 📚 Documentation Index
 
 ### 🚀 Getting Started
-- **[Deployment Guide](./deployment.md)** - Installation, setup, and running Otto
 - **[Architecture Overview](./architecture.md)** - High-level system design and component interactions
-- **[Troubleshooting Guide](./troubleshooting.md)** - Common problems and solutions
 - **[Uninstall Guide](./Uninstall.md)** - How to remove Otto
-
-### 🖥️ CLI Documentation
-- **[CLI Introduction](./cli/index.md)** - Overview of the command-line interface
-- **[Commands Reference](./cli/commands.md)** - Available CLI commands
-- **[Configuration](./cli/configuration.md)** - CLI configuration options
-- **[Authentication](./cli/authentication.md)** - Authentication setup and management
-- **[Themes](./cli/themes.md)** - Terminal UI theming
-- **[Tutorials](./cli/tutorials.md)** - Step-by-step CLI guides
-- **[Init Command](./cli/init-command.md)** - Project initialization
-- **[MCP Add Command](./cli/mcp-add-command.md)** - Adding MCP servers
-- **[Extensions Command](./extensions-command.md)** - Managing CLI extensions
-- **[Working Directory Paths](./cli/workdir-paths-with-spaces.md)** - Handling paths with spaces
-- **[Token Caching](./cli/token-caching.md)** - Authentication token management
 
 ### 🔧 Core Library Documentation
 - **[Core Introduction](./core/index.md)** - Overview of the core package
@@ -66,16 +50,12 @@ The CLI and VS Code extension communicate with AI models through the core librar
 
 ### 🎯 Skills System
 - **[Skills Usage Guide](./skills-usage.md)** - How to use and create skills
-- **[Skills Context Injection](./skills-context-injection.md)** - Skills 元数据注入机制（维护文档）
 
 ### 🔌 Model Context Protocol (MCP)
-- **[MCP Async Loading](./mcp-async-loading.md)** - Asynchronous server loading
 - **[MCP Sequential Startup](./mcp-sequential-startup.md)** - Server startup ordering
-- **[MCP Status Display](./mcp-status-display.md)** - Server status monitoring
 - **[MCP Tools Sync Fix](./mcp-tools-sync-fix.md)** - Tool synchronization fixes
 - **[MCP Response Guard](./mcp-response-guard.md)** - Response validation system
 - **[MCP Response Guard Integration](./mcp-response-guard-integration-guide.md)** - Integration guide
-- **[MCP Improvements Summary](./mcp-improvements-summary.md)** - Recent MCP enhancements
 - **[Cloud Mode MCP Fix](./cloud-mode-mcp-fix.md)** - Cloud deployment fixes
 
 ### 🔤 Language Server Protocol (LSP)
@@ -170,7 +150,6 @@ This documentation is structured into logical sections:
 ## 💡 Quick Navigation Tips
 
 - **New to Otto?** Start with [Deployment Guide](./deployment.md)
-- **CLI User?** Check [CLI Introduction](./cli/index.md) and [Commands](./cli/commands.md)
 - **VS Code User?** See [VS Code Extension Documentation](../packages/vscode-ui-plugin/README.md)
 - **Enterprise Admin?** Read [Hooks START HERE](./HOOKS_START_HERE.md)
 - **Developer/Contributor?** See [Contributing Guide](../CONTRIBUTING.md) and [Architecture](./architecture.md)

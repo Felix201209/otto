@@ -11,7 +11,7 @@
  * callback, and returns the agent's final answer.
  *
  * This is the mirror image of the existing ACP *server* in
- * `packages/cli/src/acp/` (where Otto is spawned by acpx/OpenClaw). The two
+ * the retired CLI ACP prototype. The two
  * directions share no code: here we own a {@link acp.ClientSideConnection} and
  * implement the {@link acp.Client} side (permission + session updates + fs
  * proxy), driving the remote agent's {@link acp.Agent} methods.

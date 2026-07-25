@@ -44,7 +44,6 @@ import {
   validateForm,
   effectiveModelIds,
   buildModelsFileJson,
-  buildCliCommand,
   type CustomModelProvider,
   type SetupFormState,
   type SaveCustomModelPayload,
@@ -95,7 +94,7 @@ export function SetupPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [revealKey, setRevealKey] = useState(false);
-  const [copied, setCopied] = useState<'json' | 'cli' | null>(null);
+  const [copied, setCopied] = useState<'json' | null>(null);
   /** 「离线兜底」高级块折叠态：默认收起（对新手是噪音），点击展开。 */
   const [advancedOpen, setAdvancedOpen] = useState(false);
   /** 「本地测试模式」块折叠态：默认收起；面向开发者，折叠对普通用户无干扰。 */
@@ -263,12 +262,10 @@ export function SetupPanel({
     }
   };
 
-  const copy = async (kind: 'json' | 'cli'): Promise<void> => {
-    const text =
-      kind === 'json' ? buildModelsFileJson(cfg) : buildCliCommand(form);
+  const copyJson = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(kind);
+      await navigator.clipboard.writeText(buildModelsFileJson(cfg));
+      setCopied('json');
       window.setTimeout(() => setCopied(null), 1600);
     } catch {
       // 复制失败静默；用户仍可手动选中文本框。
@@ -814,21 +811,11 @@ export function SetupPanel({
                   type="button"
                   className="otto-setup__copybtn"
                   disabled={!valid}
-                  onClick={() => void copy('json')}
+                  onClick={() => void copyJson()}
                 >
                   {copied === 'json' ? (
                     <><span>已复制 JSON</span><IconCheck size={12} /></>
                   ) : '复制 custom-models.json'}
-                </button>
-                <button
-                  type="button"
-                  className="otto-setup__copybtn"
-                  disabled={!valid}
-                  onClick={() => void copy('cli')}
-                >
-                  {copied === 'cli' ? (
-                    <><span>已复制命令</span><IconCheck size={12} /></>
-                  ) : '复制 otto setup 命令'}
                 </button>
               </div>
               <p className="otto-setup__hint">

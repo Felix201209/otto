@@ -235,7 +235,6 @@ export class NotificationService {
       atoa: '企业内部协作',
       enterprise: '企业通知',
       park: '园区服务',
-      tui: 'TUI',
     };
     const label = labels[source] ?? '新消息';
     return sender ? `${label} · ${sender}` : label;

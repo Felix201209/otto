@@ -1413,7 +1413,7 @@ function registerIpc(): void {
       throw new Error('功能开关格式不正确');
     }
     const allowed = new Set([
-      'enterprise_tree', 'park_service', 'feishu_auto_reply', 'tui_sync',
+      'enterprise_tree', 'park_service', 'feishu_auto_reply',
       'direct_messages', 'atoa', 'knowledge',
     ]);
     const patch = Object.fromEntries(Object.entries(input).filter(

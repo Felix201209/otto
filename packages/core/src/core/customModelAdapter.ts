@@ -105,7 +105,7 @@ function expandHome(p: string): string {
 
 /**
  * 解析配置值（apiKey / baseUrl）中的引用。支持三种语法 —— 其中 {file:} / {env:}
- * 抄自 opencode：让 API key 不必经过终端 TUI 粘贴（部分终端 / Windows / SSH 下
+ * 抄自 opencode：让 API key 不必经过终端粘贴（部分终端 / Windows / SSH 下
  * bracketed-paste 不稳，表现为「key 粘不进去」）。把 key 放进一个文件或环境变量
  * （在普通编辑器 / shell 里粘贴永远可靠），再用引用指向它即可：
  *

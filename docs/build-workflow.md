@@ -11,11 +11,11 @@ Otto 采用 npm workspaces 的 monorepo 架构：
 Otto uses a monorepo architecture with npm workspaces:
 
 ```
-DeepCode/
+Otto/
 ├── packages/
-│   ├── cli/                    # CLI 用户界面 / CLI User Interface
 │   ├── core/                   # 核心业务逻辑 / Core Business Logic
-│   └── vscode-ui-plugin/       # VS Code 扩展 / VS Code Extension
+│   ├── server/                 # 本机与企业服务 / Local and enterprise services
+│   └── desktop/                # Electron 桌面端 / Electron desktop client
 └── package.json                # Workspace 配置 / Workspace Configuration
 ```
 
@@ -23,12 +23,12 @@ DeepCode/
 
 ### 1. 快速开发构建 / Quick Development Build
 
-**用途 / Purpose**: 日常开发时使用，构建速度快，排除 VS Code 扩展
-For daily development with faster build times, excluding VS Code extension
+**用途 / Purpose**: 日常开发时使用，优先验证 core/server/desktop 三个边界
+For daily development, validate the core/server/desktop boundaries first
 
 ```bash
 # 基础构建 / Basic build
-npm run build                    # 仅构建 core 和 cli / Build only core and cli
+npm run build                    # 构建 core/server/desktop / Build core/server/desktop
 
 # 开发版打包 / Development bundle
 npm run bundle:dev              # 开发版打包（快速）/ Development bundle (fast)
@@ -224,7 +224,6 @@ npm run env:test
 - [项目架构 / Architecture](./architecture.md)
 - [部署指南 / Deployment Guide](./deployment.md)
 - [故障排除 / Troubleshooting](./troubleshooting.md)
-- [CLI 使用指南 / CLI Usage Guide](./cli/index.md)
 
 ---
 

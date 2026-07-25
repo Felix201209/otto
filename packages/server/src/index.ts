@@ -7,8 +7,7 @@
 /**
  * otto-server 包入口（barrel）。
  *
- * desktop / 未来 TUI 只读端经 `from 'otto-server'` 复用协议类型与服务类。
- * ⚠️ 不要让 cli/core 反向依赖本包（保 TUI 回归门 Issue #10）。
+ * desktop 端经 `from 'otto-server'` 复用协议类型与服务类。
  */
 
 export * from './protocol.js';

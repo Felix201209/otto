@@ -508,21 +508,18 @@ describe('企业组织结构与功能配置', () => {
         direct_messages: false,
         feishu_auto_reply: false,
         enterprise_tree: false,
-        tui_sync: false,
       }),
     ).toMatchObject({
       park_service: false,
       direct_messages: false,
       feishu_auto_reply: false,
       enterprise_tree: false,
-      tui_sync: false,
     });
     expect(db.getOrganizationFeatures(other.id)).toMatchObject({
       park_service: true,
       direct_messages: true,
       feishu_auto_reply: true,
       enterprise_tree: true,
-      tui_sync: true,
     });
   });
 

@@ -53,7 +53,7 @@ export interface BuildRelaunchScriptOptions {
  *   1) 轮询父 PID，直到父进程退出（process.kill(pid, 0) 抛 ESRCH 即已退出）
  *   2) 按 install 模式安装（none 跳过 / npm latest / 本地 tgz）
  *   3) 拉起新进程：
- *      - Windows: cmd.exe /c <command>（有 conpty，用户可见 TUI）
+ *      - Windows: cmd.exe /c <command>（有 conpty，用户可见输出）
  *      - Linux/macOS: node <entryScript> <args>（绝对路径自举，不依赖 PATH）
  *   4) 删除自身临时脚本
  *
@@ -164,7 +164,7 @@ async function main() {
   }
 
   // 4) 拉起新进程
-  //    Windows: cmd.exe /c <command>（有 conpty，用户可见 TUI）
+  //    Windows: cmd.exe /c <command>（有 conpty，用户可见输出）
   //    Linux/macOS: login shell -l -c <command>（加载 .bashrc/.profile，
   //      使 nvm/homebrew 等 PATH 生效，确保 otto 命令可找到）
   // 同时设置新旧两个环境变量名：新进程优先读 OTTO_STARTUP_DELAY_MS，

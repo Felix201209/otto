@@ -1038,7 +1038,7 @@ async function _connectToMcpServerInternal(
 ): Promise<Client> {
   const mcpClient = new Client(
     {
-      name: 'otto-cli-mcp-client',
+      name: 'otto-mcp-client',
       version: '1.0.0',
     },
     {

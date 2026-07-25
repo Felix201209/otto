@@ -57,7 +57,6 @@ const FEATURES = {
   enterprise_tree: true,
   park_service: true,
   feishu_auto_reply: true,
-  tui_sync: true,
   direct_messages: true,
   atoa: true,
   knowledge: true,

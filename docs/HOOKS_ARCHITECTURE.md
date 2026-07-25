@@ -289,7 +289,7 @@ export { HookEventHandler } from './hookEventHandler.js';
 ### CLI 如何使用
 
 ```typescript
-// packages/cli/src/services/hookService.ts (假设位置)
+// packages/core/src/services/hookService.ts (示例位置)
 
 import {
   HookSystem,
@@ -404,7 +404,7 @@ packages/core/src/hooks/myCustomHook.ts
 
 ```typescript
 // 不好：在两个地方都实现
-packages/cli/src/hooks/... (❌ 避免)
+packages/core/src/ui-hooks/... (retired text UI pattern; avoid)
 packages/vscode-ui-plugin/src/hooks/... (❌ 避免)
 ```
 
@@ -487,7 +487,7 @@ VSCode UI 开发者：只需在插件中导入和使用 core 的 Hooks
 ### 在 CLI 中（假设位置）
 
 ```typescript
-// packages/cli/src/core/agent.ts
+// packages/core/src/core/agent.ts
 
 import { HookEventHandler } from 'easycode-core';
 

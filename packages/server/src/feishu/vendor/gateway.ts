@@ -1793,7 +1793,7 @@ export class FeishuGateway {
   /**
    * 精确判断会话类型（飞书 chat_mode 字段）。
    *
-   * 用于 TUI 仪表板友好展示——例如把"与 Bot 的私聊"（chat_mode='p2p'）
+   * 用于桌面仪表板友好展示——例如把"与 Bot 的私聊"（chat_mode='p2p'）
    * 与普通群聊区分开。**这是唯一可靠的判据**：p2p 单聊和群聊的 chatId
    * 都是 `oc_` 前缀，无法靠前缀或"群名是否解析得出"来区分（无名群/无权限群
    * 同样没有群名，但它们不是 p2p）。
@@ -3887,7 +3887,7 @@ export class FeishuGateway {
   /**
    * 发送「目标驱动模式（/goal）」表单卡片，收集启动 goal 所需的全部字段。
    *
-   * 字段（对齐 TUI GoalWizard）：
+   * 字段（对齐目标创建表单）：
    *   - task        目标任务（必填，多行）
    *   - forbidden   禁止事项（可选，多行）
    *   - criteria    成功判定标准（必填，多行）

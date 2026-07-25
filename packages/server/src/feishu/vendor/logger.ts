@@ -7,7 +7,7 @@
 /**
  * Feishu module debug logger.
  *
- * The CLI runs an Ink TUI (full-screen React in the terminal). Anything
+ * Historical terminal clients could be corrupted by raw stderr. Anything
  * written to stdout outside of Ink's render path corrupts the layout, so
  * we cannot just `console.log` from the Feishu code paths.
  *
@@ -31,7 +31,7 @@ const DEBUG_ENABLED = (() => {
     const lower = v.toLowerCase();
     return lower !== '0' && lower !== 'false' && lower !== 'no' && lower !== '';
   }
-  return false; // 🚀 默认关闭所有原始 stderr 日志打印，防止破坏和滚动污染终端 TUI 布局。需要调试时可设置 OTTO_DEBUG_FEISHU=1 开启。
+  return false; // 🚀 默认关闭所有原始 stderr 日志打印，防止破坏日志输出。需要调试时可设置 OTTO_DEBUG_FEISHU=1 开启。
 })();
 
 function ts(): string {
@@ -51,7 +51,7 @@ export function dwarn(...args: unknown[]): void {
 
 export function derror(...args: unknown[]): void {
   // Errors are kept silent in production unless explicitly enabled — the
-  // primary feedback channel for users is the TUI / Bot reply, not stderr.
+  // primary feedback channel for users is the desktop / Bot reply, not stderr.
   if (!DEBUG_ENABLED) return;
   process.stderr.write(`[feishu ${ts()}] ERROR ${args.map(String).join(' ')}\n`);
 }

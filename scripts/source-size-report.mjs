@@ -69,11 +69,6 @@ const BUDGETS = {
 };
 
 const BASELINE = new Map([
-  ['packages/cli/src/ui/commands/feishuCommand.ts', '#86 split Feishu command'],
-  ['packages/cli/src/services/feishu/gateway.ts', '#84 canonicalize Feishu gateway'],
-  ['packages/cli/src/services/feishu/gateway.test.ts', '#84 split gateway tests after canonicalization'],
-  ['packages/cli/src/ui/App.tsx', '#88/#89 CLI UI split pending'],
-  ['packages/cli/src/ui/utils/i18n.ts', '#86 command/UI text extraction pending'],
   ['packages/core/src/core/customModelAdapter.ts', '#92 inventory: keep provider adapter in core boundary review'],
   ['packages/core/src/core/customModelAdapter.test.ts', '#92 inventory: test follows adapter'],
   ['packages/desktop/src/renderer/styles/app.css', '#89 split desktop CSS'],

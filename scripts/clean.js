@@ -111,10 +111,10 @@ if (existsSync(webpackCache)) {
 }
 
 // Generated files
-const generatedDir = join(root, 'packages/cli/src/generated/');
+const generatedDir = join(root, 'packages/core/src/generated/');
 if (existsSync(generatedDir)) {
   rmSync(generatedDir, RMRF_OPTIONS);
-  printItem('success', 'packages/cli/src/generated', 'Generated Source');
+  printItem('success', 'packages/core/src/generated', 'Generated Source');
 }
 
 // --- STEP 4: Package Artifacts ---
