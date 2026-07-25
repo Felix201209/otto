@@ -30,8 +30,8 @@ concurrency:
 
 env:
   NODE_VERSION: '22.13.0'
-  RELEASES_REPO: ${{ github.repository }}
-  OTTO_DESKTOP_MAX_INSTALLER_MB: '100'
+  RELEASES_REPO: Felix201209/otto-releases
+  OTTO_DESKTOP_MAX_INSTALLER_MB: '160'
 
 jobs:
   build:
@@ -126,7 +126,7 @@ jobs:
             "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg" \
             "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"; do
             size="$(stat -f%z "$artifact")"
-            limit="$((100 * 1024 * 1024))"
+            limit="$((160 * 1024 * 1024))"
             if [ "$size" -gt "$limit" ]; then
               echo "Installer too large: $artifact ($size bytes)" >&2
               exit 1
@@ -151,7 +151,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: Otto v${{ steps.version.outputs.version }}
           draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
