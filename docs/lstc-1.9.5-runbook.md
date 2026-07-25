@@ -18,7 +18,7 @@ release/1.9.5-lstc-v194
 Current local HEAD:
 
 ```text
-0498447c2a379e335b899b476396df4c6ec8b50e
+25c2e9994f17d38ee2b438c7090203acfd5b4049
 ```
 
 Important local commits after `v1.9.4`:
@@ -32,6 +32,7 @@ Important local commits after `v1.9.4`:
 - `bee20332` requires `release/latest.json` in the desktop release gate when a Windows installer exists.
 - `3f704d76` merges the remote `internal` packaged grep fallback into core.
 - `0498447c` fixes the GitHub release workflow to publish LSTC assets to `Felix201209/otto-releases` with a 160 MB installer limit.
+- `25c2e99` adds this runbook for the remaining privileged release and deployment steps.
 
 ## Verified Local Artifacts
 
@@ -53,8 +54,8 @@ Server deployment package:
 
 ```text
 deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
-sha256 8e4416ac0a59e7251822b3baad867726d4f45835d0dc89bdd69afc405d3afa1c
-sourceCommit 0498447c2a379e335b899b476396df4c6ec8b50e
+sha256 0f53e43279b511955fdca47d9d36617fb41161edc9b2b0985007db62230c2fdb
+sourceCommit 25c2e9994f17d38ee2b438c7090203acfd5b4049
 buildCommit ae492c9641a52f21f11882260b5da526cbbe7935
 ```
 
@@ -89,3 +90,71 @@ version 1.9.4
 buildCommit b1b4567ba5e392884e31f4cf2851e87940cc6860
 ExecStart /usr/local/bin/node /opt/otto-enterprise/releases/v1.9.4-b1b4567ba5e3-2a6e66b/run.mjs
 data dir /var/lib/otto-enterprise
+```
+
+Uploaded but not deployed:
+
+```text
+/tmp/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
+sha256 0f53e43279b511955fdca47d9d36617fb41161edc9b2b0985007db62230c2fdb
+/tmp/otto-v195-deploy-root.sh
+```
+
+The SSH user `king` can log in but cannot write `/opt/otto-enterprise` and cannot
+read `/var/lib/otto-enterprise/data.db` without sudo/root. The tested passwords
+`King2026`, `King0603`, and `060603` did not pass sudo/root authentication, and
+`sudo -n` reports that a password is required. Formal deployment therefore
+requires valid sudo/root credentials.
+
+A non-privileged canary on the target server passed with the uploaded 1.9.5 package:
+
+```text
+version 1.9.5
+buildCommit ae492c9641a52f21f11882260b5da526cbbe7935
+schemaVersion 7
+db connected
+port 127.0.0.1:17777
+data temporary under /tmp
+```
+
+The production service was checked after the canary and remained active on 1.9.4:
+
+```text
+version 1.9.4
+buildCommit b1b4567ba5e392884e31f4cf2851e87940cc6860
+schemaVersion 7
+db connected
+```
+
+After privileged access is available, run:
+
+```bash
+sudo bash /tmp/otto-v195-deploy-root.sh
+```
+
+The uploaded script backs up `data.db`, starts a canary against a copied database,
+switches the systemd drop-in only after canary health passes, and rolls back the
+drop-in plus `data.db` if post-start health does not report 1.9.5.
+
+## Post-Deployment Verification
+
+After deployment, verify all of the following:
+
+```bash
+systemctl is-active otto-enterprise
+curl -fsS http://127.0.0.1:7778/enterprise/health
+curl -k -fsS https://59.110.154.44:7777/enterprise/health
+```
+
+Expected health fields:
+
+```text
+version/appVersion: 1.9.5
+buildCommit: ae492c9641a52f21f11882260b5da526cbbe7935
+schemaVersion: 7
+db: connected
+```
+
+Then verify enterprise login with a real enterprise account or an explicitly
+authorized temporary smoke account. Do not mutate the production database without
+explicit authorization and a rollback plan.
