@@ -2098,14 +2098,19 @@ function registerIpc(): void {
         return null;
       }
       const win = mainWindow;
+      const ext = path.extname(suggestedFileName).slice(1).toLowerCase();
+      const textExtensions = ['md', 'markdown', 'txt', 'json', 'csv', 'xml', 'html', 'css', 'js', 'ts', 'tsx', 'jsx', 'log', 'yaml', 'yml'];
+      const filters = textExtensions.includes(ext)
+        ? [{ name: `${ext.toUpperCase()} 文本`, extensions: [ext] }, { name: '所有文件', extensions: ['*'] }]
+        : [{ name: 'Markdown', extensions: ['md'] }, { name: '所有文件', extensions: ['*'] }];
       const result = win
         ? await dialog.showSaveDialog(win, {
             defaultPath: path.join(app.getPath('documents'), suggestedFileName),
-            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            filters,
           })
         : await dialog.showSaveDialog({
             defaultPath: path.join(app.getPath('documents'), suggestedFileName),
-            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            filters,
           });
       if (result.canceled || !result.filePath) return null;
       await fs.promises.writeFile(result.filePath, content, 'utf-8');

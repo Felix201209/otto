@@ -5,6 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { CodeEditor } from './CodeEditor.js';
 
 // ── Types ──
 
@@ -25,7 +26,7 @@ export interface FileEntry {
   source?: string;
 }
 
-function inferCategory(file: FileEntry): 'image' | 'markdown' | 'code' | 'pdf' | 'text' {
+function inferCategory(file: FileEntry): 'image' | 'markdown' | 'code' | 'pdf' | 'office' | 'text' {
   const name = file.name.toLowerCase();
   const mime = file.mimeType?.toLowerCase() ?? '';
 
@@ -37,6 +38,9 @@ function inferCategory(file: FileEntry): 'image' | 'markdown' | 'code' | 'pdf' |
   }
   if (/\.pdf$/.test(name) || mime === 'application/pdf') {
     return 'pdf';
+  }
+  if (/\.(doc|docx)$/.test(name) || mime === 'application/msword' || mime.includes('wordprocessingml')) {
+    return 'office';
   }
   if (
     /\.(tsx?|jsx?|json|css|html?|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|sh|bash|zsh|yaml|yml|xml|toml|ini|cfg|sql|graphql|proto|vue|svelte)$/.test(
@@ -92,6 +96,11 @@ function renderMarkdown(md: string): string {
 }
 
 // ── Syntax Highlighting helpers ──
+
+function isDirectlyEditable(file: FileEntry): boolean {
+  const category = inferCategory(file);
+  return category === 'markdown' || category === 'code' || category === 'text';
+}
 
 function extensionToLanguage(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
@@ -188,7 +197,12 @@ export interface FilePreviewProps {
   selectedId?: string;
   /** Selection callback */
   onSelectFile?: (file: FileEntry) => void;
+  /** Enables direct text editing for markdown, code, and plain text files. */
+  editable?: boolean;
+  /** Save edited text content. Return a saved path when the host writes a new file. */
+  onSaveTextFile?: (file: FileEntry, content: string) => void | Promise<string | null | void>;
 }
+
 
 export function FilePreview({
   files,
@@ -196,6 +210,8 @@ export function FilePreview({
   onDropFiles,
   selectedId,
   onSelectFile,
+  editable = false,
+  onSaveTextFile,
 }: FilePreviewProps): React.JSX.Element {
   const [activeId, setActiveId] = useState<string>(selectedId ?? '');
   const [dragOver, setDragOver] = useState(false);
@@ -220,6 +236,7 @@ export function FilePreview({
 
   const category = activeFile ? inferCategory(activeFile) : 'text';
   const language = activeFile ? extensionToLanguage(activeFile.name) : '';
+  const [savedPathById, setSavedPathById] = useState<Record<string, string>>({});
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -308,7 +325,31 @@ export function FilePreview({
                 </button>
               </div>
               <div className="otto-file-preview__body">
-                {category === 'image' ? (
+                {editable && activeFile && isDirectlyEditable(activeFile) ? (
+                  <div className="otto-file-preview__editor">
+                    <CodeEditor
+                      content={activeFile.content ?? ''}
+                      filePath={savedPathById[activeFile.id] || activeFile.path || activeFile.name}
+                      onSave={(nextContent) => {
+                        void Promise.resolve(onSaveTextFile?.(activeFile, nextContent))
+                          .then((savedPath) => {
+                            if (savedPath) {
+                              setSavedPathById((current) => ({ ...current, [activeFile.id]: savedPath }));
+                            }
+                          });
+                      }}
+                    />
+                    {savedPathById[activeFile.id] ? (
+                      <button
+                        type="button"
+                        className="otto-file-preview__open-btn"
+                        onClick={() => onOpenExternal?.({ ...activeFile, path: savedPathById[activeFile.id] })}
+                      >
+                        打开已保存编辑稿 ↗
+                      </button>
+                    ) : null}
+                  </div>
+                ) : category === 'image' ? (
                   <img
                     src={activeFile.content ?? `file://${activeFile.path}`}
                     alt={activeFile.name}
@@ -322,14 +363,14 @@ export function FilePreview({
                       __html: renderMarkdown(activeFile.content ?? ''),
                     }}
                   />
-                ) : category === 'pdf' ? (
+                ) : category === 'pdf' || category === 'office' ? (
                   <div className="otto-file-preview__pdf-info">
-                    <div className="otto-file-preview__pdf-icon">📕</div>
+                    <div className="otto-file-preview__pdf-icon">{category === 'pdf' ? 'PDF' : 'DOC'}</div>
                     <strong>{activeFile.name}</strong>
                     <span>{activeFile.size ? formatSize(activeFile.size) : '未知大小'}</span>
-                    <span>PDF 文件 — 点击"外部打开"用系统默认程序查看</span>
+                    <span>{category === 'pdf' ? 'PDF' : 'Word'} 内嵌可编辑转换尚未接入；当前可进入文档工作区并用系统程序打开。</span>
                     <button type="button" className="otto-file-preview__open-btn" onClick={handleOpenExternal}>
-                      打开 PDF ↗
+                      外部打开 ↗
                     </button>
                   </div>
                 ) : (

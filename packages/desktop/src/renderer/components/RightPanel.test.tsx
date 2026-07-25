@@ -43,6 +43,14 @@ function installBridge(
 ) {
   const openPath = vi.fn(async () => undefined);
   const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
+  const selectFiles = vi.fn(async () => ['/tmp/enterprise-summary.md']);
+  const readFilePath = vi.fn(async () => ({
+    filePath: '/tmp/enterprise-summary.md',
+    fileName: 'enterprise-summary.md',
+    size: 24,
+    mimeType: 'text/markdown',
+    data: Buffer.from('# 企业总结\n\n初稿。', 'utf8').toString('base64'),
+  }));
   const enterpriseKnowledgeList = vi.fn(async () => []);
   const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
     enterprise_tree: true,
@@ -74,10 +82,14 @@ function installBridge(
     workLogReport,
     openPath,
     saveTextFile,
+    selectFiles,
+    readFilePath,
   };
   return {
     openPath,
     saveTextFile,
+    selectFiles,
+    readFilePath,
     workLogReport,
     enterpriseKnowledgeList,
     enterpriseOrganizationFeaturesGet,
@@ -359,18 +371,38 @@ describe('RightPanel fixed Agent catalog', () => {
       .toHaveLength(1);
   });
 
-  it('keeps personal mode on its three tabs without enterprise-only actions', () => {
+  it('keeps personal mode on its right-panel tabs without enterprise-only actions', () => {
     installBridge();
     render(<RightPanel busy={false} />);
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
       '工具',
+      '文档',
       '工作日志',
     ]);
     expect(screen.queryByText('企业记忆')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
+  });
+
+  it('loads, edits, and saves a text document from the right panel', async () => {
+    const { readFilePath, saveTextFile, selectFiles } = installBridge();
+    render(<RightPanel busy={false} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
+
+    expect(selectFiles).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(readFilePath).toHaveBeenCalledWith('/tmp/enterprise-summary.md'));
+    const editor = await screen.findByLabelText('编辑 /tmp/enterprise-summary.md');
+    fireEvent.change(editor, { target: { value: '# 企业总结\n\n终稿。' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith(
+      'enterprise-summary.md',
+      expect.stringContaining('终稿。'),
+    ));
   });
 
   it('中心返回未加入园区时显示默认宏创园区入口，不读取旧本机品牌', async () => {
@@ -436,7 +468,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '工具', '企业记忆', '工作日志',
+        '专家', '工具', '文档', '企业记忆', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));

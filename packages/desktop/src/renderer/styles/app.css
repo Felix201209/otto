@@ -7097,6 +7097,26 @@ h6.otto-prose__h {
 .otto-collab-drawer__content { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
 .otto-collab-drawer__content span, .otto-collab-drawer__content small { color: var(--otto-text-tertiary); }
 .otto-collab-drawer__content input, .otto-collab-drawer__content button { border: 1px solid var(--otto-border); border-radius: 7px; padding: 6px 8px; background: var(--otto-surface); color: var(--otto-text); }
+.otto-documents-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.otto-documents-panel .otto-file-preview { min-height: 420px; border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); overflow: hidden; }
+.otto-file-preview__layout { display: grid; grid-template-columns: 88px minmax(0, 1fr); min-height: 420px; }
+.otto-file-preview__list { border-right: 1px solid var(--otto-border); background: color-mix(in srgb, var(--otto-bg) 72%, transparent); min-width: 0; }
+.otto-file-preview__list-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px; color: var(--otto-text); font-size: 9px; }
+.otto-file-preview__list-head span, .otto-file-preview__source, .otto-file-preview__list-item-size { color: var(--otto-text-tertiary); font-size: 8px; }
+.otto-file-preview__list-items { display: grid; gap: 3px; padding: 0 5px 6px; }
+.otto-file-preview__list-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--otto-text-secondary); padding: 6px 5px; text-align: left; cursor: pointer; }
+.otto-file-preview__list-item.is-active { border-color: var(--otto-accent); background: var(--otto-accent-soft); color: var(--otto-accent); }
+.otto-file-preview__list-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8.5px; }
+.otto-file-preview__content { min-width: 0; display: flex; flex-direction: column; }
+.otto-file-preview__toolbar { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--otto-border); }
+.otto-file-preview__filename { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otto-text); font-size: 9px; display: flex; gap: 5px; align-items: center; }
+.otto-file-preview__body { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+.otto-file-preview__editor { display: grid; gap: 6px; min-height: 340px; }
+.otto-file-preview__editor .otto-ce { min-height: 330px; border-radius: 8px; }
+.otto-file-preview__open-btn { border: 1px solid var(--otto-border); border-radius: 7px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 5px 7px; font-size: 8.5px; cursor: pointer; white-space: nowrap; }
+.otto-file-preview__pdf-info, .otto-file-preview__empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: var(--otto-text-secondary); text-align: center; font-size: 9px; line-height: 1.45; padding: 14px; }
+.otto-file-preview__pdf-icon { border: 1px solid var(--otto-border); border-radius: 7px; padding: 5px 7px; color: var(--otto-accent); font: 9px var(--otto-font-mono); }
+.otto-file-preview__code, .otto-file-preview__markdown { margin: 0; white-space: pre-wrap; color: var(--otto-text-secondary); font: 9px/1.5 var(--otto-font-mono); }
 .otto-worklog-panel { display: flex; flex-direction: column; gap: 10px; }
 .otto-worklog-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .otto-worklog-panel__head > div { display: flex; flex-direction: column; gap: 1px; }

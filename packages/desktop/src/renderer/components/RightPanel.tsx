@@ -16,6 +16,7 @@ import type {
 } from '../customAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { CodeEditor } from './CodeEditor.js';
+import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
@@ -28,7 +29,7 @@ import {
   IconTerminal,
 } from './icons.js';
 
-type TabType = 'agents' | 'tools' | 'memory' | 'worklog';
+type TabType = 'agents' | 'tools' | 'documents' | 'memory' | 'worklog';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -50,6 +51,7 @@ interface EnterpriseKnowledgeItem {
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   tools: '工具',
+  documents: '文档',
   memory: '企业记忆',
   worklog: '工作日志',
 };
@@ -142,9 +144,9 @@ export function RightPanel({
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise'
       ? enterpriseKnowledgeEnabled
-        ? ['agents', 'tools', 'memory', 'worklog']
-        : ['agents', 'tools', 'worklog']
-      : ['agents', 'tools', 'worklog'],
+        ? ['agents', 'tools', 'documents', 'memory', 'worklog']
+        : ['agents', 'tools', 'documents', 'worklog']
+      : ['agents', 'tools', 'documents', 'worklog'],
     [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
@@ -160,6 +162,9 @@ export function RightPanel({
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
   const [friendNote, setFriendNote] = useState('');
+  const [documentFiles, setDocumentFiles] = useState<FileEntry[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState('');
   const [workSummary, setWorkSummary] = useState<{
     summary: string;
     date: string;
@@ -216,6 +221,45 @@ export function RightPanel({
       setWorklogLoading(false);
     }
   }, []);
+
+  const decodeDocumentText = useCallback((data: string, mimeType: string): string => {
+    if (!mimeType.startsWith('text/') && !/markdown|json|xml|csv|javascript|typescript/i.test(mimeType)) {
+      return '';
+    }
+    const binary = atob(data);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }, []);
+
+  const selectDocumentFiles = useCallback(async (): Promise<void> => {
+    setDocumentsLoading(true);
+    setDocumentsError('');
+    try {
+      const paths = await window.otto.selectFiles();
+      if (paths.length === 0) return;
+      const loaded = await Promise.all(paths.map(async (filePath): Promise<FileEntry> => {
+        const file = await window.otto.readFilePath(filePath);
+        return {
+          id: file.filePath,
+          name: file.fileName,
+          path: file.filePath,
+          size: file.size,
+          mimeType: file.mimeType,
+          content: decodeDocumentText(file.data, file.mimeType),
+          source: '本机文档',
+        };
+      }));
+      setDocumentFiles((current) => {
+        const byId = new Map(current.map((item) => [item.id, item]));
+        for (const item of loaded) byId.set(item.id, item);
+        return [...byId.values()];
+      });
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [decodeDocumentText]);
 
   const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
     if (mode !== 'enterprise' || !enterpriseOrganizationId) return;
@@ -504,6 +548,29 @@ export function RightPanel({
                 </button>
               ))}
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'documents' ? (
+          <div className="otto-documents-panel">
+            <div className="otto-worklog-panel__head">
+              <div>
+                <strong>右侧文档</strong>
+                <span>Markdown、TXT 和代码文件可直接编辑保存</span>
+              </div>
+              <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
+                {documentsLoading ? '读取中' : '选择文件'}
+              </button>
+            </div>
+            {documentsError ? (
+              <div className="otto-right-panel__empty">文档读取失败：{documentsError}</div>
+            ) : null}
+            <FilePreview
+              files={documentFiles}
+              editable
+              onOpenExternal={(file) => void window.otto.openPath(file.path)}
+              onSaveTextFile={(file, content) => window.otto.saveTextFile(file.name, content)}
+            />
           </div>
         ) : null}
 
