@@ -35,6 +35,7 @@ Important local commits after `v1.9.4`:
 - `0498447c` fixes the GitHub release workflow to publish LSTC assets to `Felix201209/otto-releases` with a 160 MB installer limit.
 - `25c2e99` adds this runbook for the remaining privileged release and deployment steps.
 - `7d7e690` records the target-server canary result and production handoff state.
+- `b7add82` makes the push-bundle handoff stable and avoids self-referential artifact hashes.
 
 ## Verified Local Artifacts
 
@@ -49,17 +50,18 @@ Windows update manifest:
 
 ```text
 packages/desktop/release/latest.json
-# Regenerate after the final source commit so sourceCommit is current:
-# node packages/desktop/scripts/make-latest-json.mjs ... or the checked recovery generator.
+sha256 070192b2407277a7212991f1189a2b1008c20e78e9ef9d4af6e3d01c0997f830
+sourceCommit b7add82d2fbc7eb2985fd46488524eb956e97b11
 ```
 
 Server deployment package:
 
 ```text
 deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
-# Regenerate after the final source commit with: npm run bundle:enterprise
-# Verify sha256 with: sha256sum deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
+sha256 48f46731e3b5aec711c2be51de478e0ff6be96fda66fcb5499a79f59ae034678
 buildCommit ae492c9641a52f21f11882260b5da526cbbe7935
+sourceCommit b7add82d2fbc7eb2985fd46488524eb956e97b11
+sourceTreeDirty false
 ```
 
 The Windows installer is not code-signed because no signing certificate was
@@ -83,7 +85,8 @@ withdrawn 1.9.3 or 1.9.4 asset.
 
 ## Production Server State
 
-Server host checked: `59.110.154.44`.
+Sensitive server coordinates and credentials must stay out of GitHub. Keep the
+actual host, SSH user, and privileged credentials in a private handoff channel.
 
 Current observed service before deployment:
 
@@ -91,8 +94,8 @@ Current observed service before deployment:
 otto-enterprise.service active
 version 1.9.4
 buildCommit b1b4567ba5e392884e31f4cf2851e87940cc6860
-ExecStart /usr/local/bin/node /opt/otto-enterprise/releases/v1.9.4-b1b4567ba5e3-2a6e66b/run.mjs
-data dir /var/lib/otto-enterprise
+ExecStart existing v1.9.4 release path
+data dir existing production data directory
 ```
 
 Uploaded but not deployed:
@@ -103,11 +106,7 @@ Uploaded but not deployed:
 # Verify the uploaded tarball against the current local sha256 before running sudo.
 ```
 
-The SSH user `king` can log in but cannot write `/opt/otto-enterprise` and cannot
-read `/var/lib/otto-enterprise/data.db` without sudo/root. The tested passwords
-`King2026`, `King0603`, and `060603` did not pass sudo/root authentication, and
-`sudo -n` reports that a password is required. Formal deployment therefore
-requires valid sudo/root credentials.
+The non-privileged SSH user can log in, but cannot write the production install root or read the production database without sudo/root. The provided privileged credential candidates did not pass authentication, and passwordless sudo is not enabled. Formal deployment therefore requires valid sudo/root credentials.
 
 A non-privileged canary on the target server passed with the uploaded 1.9.5 package:
 
@@ -146,7 +145,7 @@ After deployment, verify all of the following:
 ```bash
 systemctl is-active otto-enterprise
 curl -fsS http://127.0.0.1:7778/enterprise/health
-curl -k -fsS https://59.110.154.44:7777/enterprise/health
+curl -k -fsS https://<production-host>:7777/enterprise/health
 ```
 
 Expected health fields:
@@ -161,3 +160,10 @@ db: connected
 Then verify enterprise login with a real enterprise account or an explicitly
 authorized temporary smoke account. Do not mutate the production database without
 explicit authorization and a rollback plan.
+
+## Public Issue Policy
+
+Do not post this full handoff to a public or trust-unknown GitHub issue. Create a
+sanitary tracking issue only after the release owner explicitly approves what can
+be disclosed. Keep server coordinates, credential attempts, production paths,
+and private deployment state in private handoff notes.
