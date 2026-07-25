@@ -36,6 +36,7 @@ Otto 后续更新分为四类，默认优先发增量包，只有触及 Electron
 - server loopback/control-token 推送入口：`POST /internal/incremental-update/push` 广播 `incremental_update_available`，只通知客户端检查 HTTPS manifest，不下发可执行内容。
 - desktop main/preload 增量更新 IPC：`incrementalUpdateCheck` 与 `incrementalUpdateApply`；preload 收到 server 推送后会触发 main 进程检查。
 - component 本地执行层：下载 artifact、校验 sha256、登记到 `userData/incremental-updates/components/registry.json`，并写入 rollback receipt。
+- `skills/<name>` component bundle 安全解包：bundle 必须是 schemaVersion=1 的 JSON，相对路径 + base64 文件内容；安装后同步到 `~/.otto-user/skills/<name>`，下一次 skills 刷新可发现。
 
 运行约束：
 
@@ -46,7 +47,7 @@ Otto 后续更新分为四类，默认优先发增量包，只有触及 Electron
 
 - patch 代码覆盖与回滚执行器。
 - kernel ABI 切换、重启协调与回滚执行器。
-- component artifact 解包、运行时加载和权限授予。
+- 非 skills component 的解包、运行时加载和权限授予。
 - 真实 Ed25519 验签、公钥轮换和服务端发布接口。
 
-当前 component 更新只把已校验 artifact 放入本机组件仓库，作为可发现资源；不会自动执行包内代码，也不会直接替换运行时文件。
+当前 `skills/*` component 会解包并替换对应用户技能目录；非 skills component 仍只登记 artifact。客户端不会自动执行 bundle 内代码，只有 core 既有 skills 加载器在刷新后读取 `SKILL.md` 和相关资源。

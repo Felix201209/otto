@@ -31,6 +31,16 @@ function fetchBody(body: string, url = 'https://updates.example.com/otto/compone
   });
 }
 
+function bundle(files: Record<string, string>): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    files: Object.entries(files).map(([filePath, content]) => ({
+      path: filePath,
+      contentBase64: Buffer.from(content).toString('base64'),
+    })),
+  });
+}
+
 function artifact(body: string, overrides: Partial<IncrementalUpdateArtifact> = {}): IncrementalUpdateArtifact {
   return {
     id: 'component-skills-ppt-v2',
@@ -51,7 +61,7 @@ function artifact(body: string, overrides: Partial<IncrementalUpdateArtifact> = 
 describe('incremental component updater', () => {
   it('downloads, verifies and registers a component update', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
-    const body = 'component payload from server';
+    const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
     const result = await applyComponentUpdate({
       artifact: artifact(body),
       userDataPath,
@@ -63,6 +73,8 @@ describe('incremental component updater', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(await fs.readFile(result.record.artifactPath, 'utf8')).toBe(body);
+    expect(result.record.exposedPath).toBeTruthy();
+    expect(await fs.readFile(path.join(result.record.exposedPath!, 'SKILL.md'), 'utf8')).toContain('PPT skill');
     const registry = await readIncrementalComponentRegistry(resolveComponentUpdateRoot(userDataPath));
     expect(registry.components['component-skills-ppt-v2'].artifactPath).toBe(result.record.artifactPath);
     await expect(fs.access(path.join(resolveComponentUpdateRoot(userDataPath), 'downloads', 'component-skills-ppt-v2', '2026.07.25', 'artifact.bin'))).rejects.toThrow();
@@ -70,7 +82,7 @@ describe('incremental component updater', () => {
 
   it('rejects unapproved artifact origins before writing registry state', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
-    const body = 'component payload from server';
+    const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
     const result = await applyComponentUpdate({
       artifact: artifact(body),
       userDataPath,
@@ -85,10 +97,10 @@ describe('incremental component updater', () => {
   it('rejects sha256 mismatches before registry install', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
     const result = await applyComponentUpdate({
-      artifact: artifact('expected payload'),
+      artifact: artifact(bundle({ 'SKILL.md': '---\nname: presentations\ndescription: expected\n---\n# expected' })),
       userDataPath,
       allowedAssetOrigins: ['https://updates.example.com'],
-      fetchImpl: fetchBody('tampered payload'),
+      fetchImpl: fetchBody(bundle({ 'SKILL.md': '---\nname: presentations\ndescription: tampered\n---\n# tampered' })),
     });
 
     expect(result.ok).toBe(false);
