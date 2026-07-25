@@ -182,7 +182,7 @@ export function inspectBundledDocumentRuntime(
   const missingRequired: string[] = [];
   if (!hasExecutable('python')) missingRequired.push('python executable');
   if (!hasExecutable('node')) missingRequired.push('node executable');
-  for (const moduleName of ['docx', 'jinja2', 'markdown']) {
+  for (const moduleName of ['docx', 'jinja2', 'markdown', 'fpdf']) {
     if (!pathExists(path.join(root, 'python', 'site-packages', moduleName))) {
       missingRequired.push(`python site-packages/${moduleName}`);
     }
@@ -191,7 +191,7 @@ export function inspectBundledDocumentRuntime(
     missingRequired.push('LibreOffice executable');
   const ready = missingRequired.length === 0;
   const requiredSummary = ready
-    ? 'Python、Node.js、必需 Python 模块与 LibreOffice 齐全。'
+    ? 'Python、Node.js、必需 Python 模块（含 fpdf2）与 LibreOffice 齐全。'
     : `缺少必需组件：${missingRequired.join('、')}；桌面安装包打包必须失败。`;
   return {
     ready,

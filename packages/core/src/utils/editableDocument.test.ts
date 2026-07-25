@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { exportEditedDocument, extractEditableDocument } from './editableDocument.js';
@@ -18,6 +19,12 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.promises.rm(tempRoot, { recursive: true, force: true });
 });
+
+async function hasFpdf2(): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('python3', ['-c', 'import fpdf'], { timeout: 3_000 }, (error) => resolve(!error));
+  });
+}
 
 describe('editableDocument', () => {
   it('extracts a text document as editable markdown', async () => {
@@ -47,13 +54,24 @@ describe('editableDocument', () => {
     expect(documentXml).toContain('• Done');
   });
 
-  it('exports markdown edits to a PDF file', async () => {
+  it('exports markdown edits to a PDF file or fails loud when fpdf2 is missing', async () => {
     const output = path.join(tempRoot, 'brief.edited.pdf');
 
-    await exportEditedDocument(path.join(tempRoot, 'brief.pdf'), '# Brief\n\nDone', output);
+    if (!(await hasFpdf2())) {
+      await expect(exportEditedDocument(
+        path.join(tempRoot, 'brief.pdf'),
+        '# Brief\n\n中文内容',
+        output,
+      )).rejects.toThrow(/fpdf2|PDF 编辑稿导出失败/);
+      expect(fs.existsSync(output)).toBe(false);
+      return;
+    }
+
+    await exportEditedDocument(path.join(tempRoot, 'brief.pdf'), '# Brief\n\n中文内容', output);
 
     const header = await fs.promises.readFile(output, 'utf8');
-    expect(header.startsWith('%PDF-1.4')).toBe(true);
+    expect(header.startsWith('%PDF-')).toBe(true);
     expect(header).toContain('xref');
+    expect(header).not.toContain('??');
   });
 });

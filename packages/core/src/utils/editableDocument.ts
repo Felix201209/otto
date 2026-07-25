@@ -4,8 +4,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { extractPdfTextWithCache } from './fileUtils.js';
+import { buildBundledPythonEnvironment, resolveDocumentRuntime } from '../services/bundledRuntime.js';
 
 export type EditableDocumentFormat = 'text' | 'markdown' | 'docx' | 'pdf';
 
@@ -123,49 +126,48 @@ async function writeDocxFromMarkdown(markdown: string, outPath: string): Promise
   await fs.promises.writeFile(outPath, buffer);
 }
 
-function pdfEscape(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+function findBundledPdfWriterScript(): string | null {
+  const candidates = [
+    path.resolve(moduleDir, '../../skills-seed/pdf-toolkit/scripts/create_pdf.py'),
+    path.resolve(moduleDir, '../../../skills-seed/pdf-toolkit/scripts/create_pdf.py'),
+    path.resolve(moduleDir, '../../../../skills-seed/pdf-toolkit/scripts/create_pdf.py'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
-function encodePdfText(value: string): Buffer {
-  const escaped = pdfEscape(value);
-  return Buffer.from(escaped.replace(/[^\x20-\x7e]/g, '?'), 'latin1');
+function runPdfWriter(script: string, inputPath: string, outPath: string): Promise<void> {
+  const python = resolveDocumentRuntime('python');
+  const env = buildBundledPythonEnvironment(python);
+  return new Promise((resolve, reject) => {
+    execFile(
+      python.executable,
+      [script, inputPath, outPath],
+      { env, timeout: 30_000, windowsHide: true, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve();
+          return;
+        }
+        const detail = String(stderr || stdout || error.message).trim();
+        reject(new Error('PDF 编辑稿导出失败：需要可用的 pdf-toolkit 运行时（python + fpdf2 + 中文字体）。' + (detail ? ' ' + detail : '')));
+      },
+    );
+  });
 }
 
 async function writePdfFromMarkdown(markdown: string, outPath: string): Promise<void> {
-  const lines = normalizeEditableText(markdown).split('\n').flatMap((line) => {
-    if (line.length <= 86) return [line];
-    const chunks: string[] = [];
-    for (let i = 0; i < line.length; i += 86) chunks.push(line.slice(i, i + 86));
-    return chunks;
-  }).slice(0, 42);
-  const prefix = ['BT', '/F1 11 Tf', '50 790 Td', '14 TL'].join('\n') + '\n';
-  const suffix = '\nET';
-  const lineBuffers = lines.map((line, index) => Buffer.concat([
-    Buffer.from(index === 0 ? '(' : 'T* (', 'latin1'),
-    encodePdfText(line),
-    Buffer.from(') Tj\n', 'latin1'),
-  ]));
-  const stream = Buffer.concat([Buffer.from(prefix, 'latin1'), ...lineBuffers, Buffer.from(suffix, 'latin1')]);
-  const objects = [
-    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
-    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
-    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj\n',
-    '4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>endobj\n',
-    '5 0 obj<</Length ' + stream.length + '>>stream\n',
-  ];
-  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n', 'latin1')];
-  const offsets = [0];
-  for (const object of objects.slice(0, 4)) {
-    offsets.push(Buffer.concat(chunks).length);
-    chunks.push(Buffer.from(object, 'latin1'));
+  const script = findBundledPdfWriterScript();
+  if (!script) throw new Error('PDF 编辑稿导出失败：create_pdf.py 未随包分发。');
+  const tmpDir = await fs.promises.mkdtemp(path.join(path.dirname(outPath), '.otto-pdf-edit-'));
+  const mdPath = path.join(tmpDir, 'edited.md');
+  try {
+    await fs.promises.writeFile(mdPath, markdown, 'utf8');
+    await runPdfWriter(script, mdPath, outPath);
+  } finally {
+    await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
   }
-  offsets.push(Buffer.concat(chunks).length);
-  chunks.push(Buffer.from(objects[4], 'latin1'), stream, Buffer.from('\nendstream endobj\n', 'latin1'));
-  const xrefOffset = Buffer.concat(chunks).length;
-  const xref = ['xref', '0 6', '0000000000 65535 f ', ...offsets.slice(1).map((offset) => String(offset).padStart(10, '0') + ' 00000 n '), 'trailer<</Size 6/Root 1 0 R>>', 'startxref', String(xrefOffset), '%%EOF'].join('\n');
-  chunks.push(Buffer.from(xref, 'latin1'));
-  await fs.promises.writeFile(outPath, Buffer.concat(chunks));
 }
 
 export async function exportEditedDocument(
