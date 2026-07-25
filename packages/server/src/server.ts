@@ -66,6 +66,7 @@ import {
   PNA_HEADERS,
 } from './protocol.js';
 import {
+  ENTERPRISE_IDENTITY_RECOVERING_MESSAGE,
   ProductWorkspaceStore,
   type AuthenticatedEnterpriseAccount,
   type ProductWorkspaceSnapshot,
@@ -871,7 +872,7 @@ export class OttoServer {
   ): string | undefined {
     const identity = this.productWorkspace.enterpriseIdentityState();
     if (identity.status === 'expired') {
-      return '中心认证身份租约已过期，请重新登录。';
+      return ENTERPRISE_IDENTITY_RECOVERING_MESSAGE;
     }
     if (identity.status === 'active') {
       if (
@@ -911,7 +912,7 @@ export class OttoServer {
   ): SessionSummary {
     const identity = this.productWorkspace.enterpriseIdentityState();
     if (identity.status === 'expired') {
-      throw new Error('中心认证身份租约已过期，请重新登录');
+      throw new Error(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
     }
     return this.store.createSession({
       ...init,
@@ -952,7 +953,7 @@ export class OttoServer {
   ): SessionSummary {
     const identity = this.productWorkspace.enterpriseIdentityState();
     if (identity.status === 'expired') {
-      throw new Error('中心认证身份租约已过期，请重新登录');
+      throw new Error(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
     }
     const summary = this.store.createEphemeralSession({
       ...init,

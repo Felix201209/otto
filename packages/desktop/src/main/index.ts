@@ -379,7 +379,7 @@ const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
 let enterpriseIdentityRefreshTimer: ReturnType<typeof setInterval> | undefined;
-const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 20_000;
+const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 2 * 60_000;
 
 function acceptEnterpriseRegistrationUrl(input: string): boolean {
   if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;

@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  ENTERPRISE_IDENTITY_RECOVERING_MESSAGE,
   ProductWorkspaceStore,
   type AuthenticatedEnterpriseAccount,
 } from './productWorkspaceStore.js';
@@ -315,10 +316,10 @@ describe('ProductWorkspaceStore', () => {
 
     now = new Date('2026-07-19T00:01:00.001Z');
     expect(store.enterpriseIdentityState().status).toBe('expired');
-    expect(() => store.snapshot()).toThrow(/中心认证身份租约已过期/);
+    expect(() => store.snapshot()).toThrow(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
     expect(() =>
       store.configureManager({ managerName: '攻击者', companyName: '伪造企业' }),
-    ).toThrow(/中心认证身份租约已过期/);
+    ).toThrow(ENTERPRISE_IDENTITY_RECOVERING_MESSAGE);
 
     store.setAuthenticatedEnterpriseAccount(null);
     expect(store.snapshot().context.edition).toBe('personal');

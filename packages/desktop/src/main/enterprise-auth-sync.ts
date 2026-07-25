@@ -25,8 +25,8 @@ export type EnterpriseIdentitySynchronizer = (
   account: AuthenticatedEnterpriseAccountInput | null,
 ) => Promise<void>;
 
-/** 20 秒刷新、60 秒到期：允许短暂网络抖动，但远端撤权不会无限沿用。 */
-export const ENTERPRISE_IDENTITY_LEASE_MS = 60_000;
+/** 2 分钟刷新、10 分钟到期：允许休眠/断网后的短暂恢复窗口，但远端撤权不会无限沿用。 */
+export const ENTERPRISE_IDENTITY_LEASE_MS = 10 * 60_000;
 
 /**
  * 认证事务从“开始请求中心服务”起串行化。仅在 ServerManager 层对最终同步排队
