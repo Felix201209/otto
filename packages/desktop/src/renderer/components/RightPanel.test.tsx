@@ -425,6 +425,41 @@ describe('RightPanel fixed Agent catalog', () => {
     ));
   });
 
+  it('exports an edited PDF document from the right panel', async () => {
+    const { exportEditedDocument, extractEditableDocument, readFilePath, selectFiles } = installBridge();
+    selectFiles.mockResolvedValueOnce(['/tmp/readiness.pdf']);
+    readFilePath.mockResolvedValueOnce({
+      filePath: '/tmp/readiness.pdf',
+      fileName: 'readiness.pdf',
+      size: 8192,
+      mimeType: 'application/pdf',
+      data: '',
+    });
+    extractEditableDocument.mockResolvedValueOnce({
+      filePath: '/tmp/readiness.pdf',
+      fileName: 'readiness.pdf',
+      sourceFormat: 'pdf' as const,
+      editableFormat: 'markdown' as const,
+      content: '# 验收清单\n\n待确认。',
+      readonly: false,
+      message: '已从 PDF 提取可编辑文本。',
+    });
+    render(<RightPanel busy={false} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
+
+    const editor = await screen.findByLabelText('编辑 /tmp/readiness.pdf');
+    fireEvent.change(editor, { target: { value: '# 验收清单\n\n已确认。' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => expect(exportEditedDocument).toHaveBeenCalledWith(
+      '/tmp/readiness.pdf',
+      'readiness.edited.pdf',
+      expect.stringContaining('已确认。'),
+    ));
+  });
+
   it('exports an edited Word document from the right panel', async () => {
     const { exportEditedDocument, extractEditableDocument, readFilePath, selectFiles } = installBridge();
     selectFiles.mockResolvedValueOnce(['/tmp/proposal.docx']);
