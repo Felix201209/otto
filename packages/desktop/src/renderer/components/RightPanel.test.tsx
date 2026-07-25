@@ -660,7 +660,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(reject).toHaveBeenCalledWith('candidate-1');
   });
 
-  it('edits, saves, and opens the generated work report from the right panel', async () => {
+  it('generates and opens the work report without turning worklog into a notes editor', async () => {
     const { openPath, saveTextFile, workLogReport } = installBridge();
     render(<RightPanel busy={false} />);
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
@@ -669,15 +669,10 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(workLogReport).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(/已生成并保存「市场竞品调研报告」/))
       .toBeTruthy();
-    const editor = await screen.findByLabelText('编辑 /tmp/2026-07-10-市场竞品调研报告.md');
-    fireEvent.change(editor, { target: { value: '# 市场竞品调研报告\n\n已完成对比。\n\n补充结论。' } });
-    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
-    await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith(
-      '2026-07-10-市场竞品调研报告.md',
-      expect.stringContaining('补充结论。'),
-    ));
-    fireEvent.click(screen.getByRole('button', { name: '打开已保存编辑稿' }));
-    await waitFor(() => expect(openPath).toHaveBeenCalledWith('/tmp/edited-worklog.md'));
+    expect(screen.queryByLabelText('编辑 /tmp/2026-07-10-市场竞品调研报告.md')).toBeNull();
+    expect(screen.queryByRole('button', { name: '打开已保存编辑稿' })).toBeNull();
+    expect(saveTextFile).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole('button', { name: '打开总结' }));
     await waitFor(() => expect(openPath).toHaveBeenCalledWith(
       '/tmp/2026-07-10-市场竞品调研报告.md',

@@ -6,7 +6,7 @@
 
 /**
  * 左侧栏。以会话列表为主体：
- *   品牌 otto✦ + compose 按钮 / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
+ *   品牌 otto✦ / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
  *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
@@ -26,7 +26,6 @@ import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
 import {
-  IconCompose,
   IconPlus,
   IconList,
   IconChevron,
@@ -168,15 +167,6 @@ export function Sidebar({
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         ) : null}
-        <button
-          type="button"
-          className="otto-iconbtn"
-          title="新建对话"
-          aria-label="新建对话"
-          onClick={onNewChat}
-        >
-          <IconCompose size={17} />
-        </button>
       </div>
 
       <button type="button" className="otto-newchat" onClick={onNewChat}>

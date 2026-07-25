@@ -88,6 +88,16 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.queryByText('全部智能体')).toBeNull();
   });
 
+  it('只保留一个明确的新建对话入口，不再显示品牌行铅笔按钮', () => {
+    const onNewChat = vi.fn();
+    renderSidebar({ onNewChat });
+
+    const buttons = screen.getAllByRole('button', { name: '新建对话' });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+  });
+
   it('对话任务标题只用一个数字表示总数，并支持整体展开收起', () => {
     renderSidebar({
       groups: [{
