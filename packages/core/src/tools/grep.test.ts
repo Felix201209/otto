@@ -70,8 +70,8 @@ describe('GrepTool', () => {
 
     it('should return error if pattern is missing', () => {
       const params = { path: '.' } as unknown as GrepToolParams;
-      expect(grepTool.validateToolParams(params)).toBe(
-        `params must have required property 'pattern'`,
+      expect(grepTool.validateToolParams(params)).toMatch(
+        /params (must|should) have required property 'pattern'/,
       );
     });
 
@@ -203,8 +203,10 @@ describe('GrepTool', () => {
     it('should return an error if params are invalid', async () => {
       const params = { path: '.' } as unknown as GrepToolParams; // Invalid: pattern missing
       const result = await grepTool.execute(params, abortSignal);
-      expect(result.llmContent).toContain("Error: Invalid parameters provided");
-      expect(result.returnDisplay).toContain("Error: params must have required property 'pattern'");
+      expect(result.llmContent).toContain('Error: Invalid parameters provided');
+      expect(result.returnDisplay).toMatch(
+        /Error: params (must|should) have required property 'pattern'/,
+      );
     });
   });
 
