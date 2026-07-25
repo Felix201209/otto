@@ -24,7 +24,9 @@ import {
   resolveEnterprisePublicBaseUrl,
 } from './publicInvite.js';
 
-const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.otto-enterprise');
+const DATA_DIR =
+  process.env.OTTO_ENTERPRISE_DIR ||
+  path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
@@ -116,19 +118,19 @@ export function getDB(): Database {
   const database = new Database(DB_PATH);
   try {
     const existingSchema = database.prepare('PRAGMA user_version').get() as
-      | { user_version?: number }
-      | undefined;
+      { user_version?: number } | undefined;
     const existingSchemaVersion = Number(existingSchema?.user_version ?? 0);
     if (
-      Number.isInteger(existingSchemaVersion)
-      && existingSchemaVersion > ENTERPRISE_SCHEMA_VERSION
+      Number.isInteger(existingSchemaVersion) &&
+      existingSchemaVersion > ENTERPRISE_SCHEMA_VERSION
     ) {
       throw new Error(
-        `Enterprise database schema version ${existingSchemaVersion} is newer than `
-        + `current version ${ENTERPRISE_SCHEMA_VERSION}; refusing downgrade`,
+        `Enterprise database schema version ${existingSchemaVersion} is newer than ` +
+          `current version ${ENTERPRISE_SCHEMA_VERSION}; refusing downgrade`,
       );
     }
     database.pragma('journal_mode = WAL');
+    migrateLegacyAuthSessions(database);
     database.pragma('foreign_keys = ON');
     initSchema(database);
     db = database;
@@ -144,14 +146,96 @@ export function getDB(): Database {
   }
 }
 
+function migrateLegacyAuthSessions(d: Database): void {
+  const table = d
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_sessions'",
+    )
+    .get() as { name?: string } | undefined;
+  if (!table) return;
+  const columns = d.prepare('PRAGMA table_info(auth_sessions)').all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(columns.map((column) => column.name));
+  if (names.has('token_hash') && names.has('id')) return;
+  if (
+    !names.has('token') ||
+    !names.has('account_id') ||
+    !names.has('expires_at')
+  )
+    return;
+
+  d.exec('PRAGMA foreign_keys = OFF');
+  d.exec('BEGIN IMMEDIATE');
+  try {
+    d.exec('ALTER TABLE auth_sessions RENAME TO auth_sessions_legacy_v195');
+    d.exec(`
+      CREATE TABLE auth_sessions (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
+        account_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT
+      )
+    `);
+    const legacyColumns = d
+      .prepare('PRAGMA table_info(auth_sessions_legacy_v195)')
+      .all() as Array<{ name: string }>;
+    const legacyNames = new Set(legacyColumns.map((column) => column.name));
+    const organizationExpr = legacyNames.has('organization_id')
+      ? 'COALESCE(organization_id, ?)'
+      : '? AS organization_id';
+    const rows = d
+      .prepare(
+        `SELECT token, account_id, expires_at, created_at, ${organizationExpr}
+       FROM auth_sessions_legacy_v195
+       WHERE token IS NOT NULL AND token <> ''`,
+      )
+      .all(DEFAULT_ORGANIZATION_ID) as Array<{
+      token: string;
+      account_id: string;
+      expires_at: string;
+      created_at: string | null;
+      organization_id: string | null;
+    }>;
+    const insert = d.prepare(
+      `INSERT OR IGNORE INTO auth_sessions
+       (id, organization_id, account_id, token_hash, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+    );
+    for (const row of rows) {
+      const hashed = createHash('sha256').update(row.token).digest('hex');
+      insert.run(
+        `session_legacy_${hashed.slice(0, 24)}`,
+        row.organization_id || DEFAULT_ORGANIZATION_ID,
+        row.account_id,
+        hashed,
+        row.expires_at,
+        row.created_at,
+      );
+    }
+    d.exec('DROP TABLE auth_sessions_legacy_v195');
+    d.exec('COMMIT');
+  } catch (error) {
+    d.exec('ROLLBACK');
+    throw error;
+  } finally {
+    d.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export function getDatabaseReadiness(): { ready: true; schemaVersion: number } {
   const database = getDB();
-  const probe = database.prepare('SELECT 1 AS ready').get() as { ready?: number } | undefined;
-  if (probe?.ready !== 1) throw new Error('Enterprise database readiness probe failed');
+  const probe = database.prepare('SELECT 1 AS ready').get() as
+    { ready?: number } | undefined;
+  if (probe?.ready !== 1)
+    throw new Error('Enterprise database readiness probe failed');
   const schema = database.prepare('PRAGMA user_version').get() as
-    | { user_version?: number }
-    | undefined;
+    { user_version?: number } | undefined;
   const schemaVersion = Number(schema?.user_version);
   if (!Number.isInteger(schemaVersion) || schemaVersion <= 0) {
     throw new Error('Enterprise database schema version is unavailable');
@@ -697,11 +781,13 @@ function initSchema(d: Database): void {
       ON telemetry_events(deployment_id, created_at_ms);
   `);
 
-  const organizationColumns = d.prepare(
-    'PRAGMA table_info(organizations)',
-  ).all() as Array<{ name: string }>;
+  const organizationColumns = d
+    .prepare('PRAGMA table_info(organizations)')
+    .all() as Array<{ name: string }>;
   if (!organizationColumns.some((column) => column.name === 'credit_balance')) {
-    d.exec('ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0');
+    d.exec(
+      'ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0',
+    );
   }
 
   d.prepare(
@@ -715,7 +801,9 @@ function initSchema(d: Database): void {
   );
 
   // v1.8 以前的线上库没有手机号列。先探测再做幂等迁移，保留既有账号和会话。
-  const accountColumns = d.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>;
+  const accountColumns = d
+    .prepare('PRAGMA table_info(accounts)')
+    .all() as Array<{ name: string }>;
   if (!accountColumns.some((column) => column.name === 'phone')) {
     d.exec('ALTER TABLE accounts ADD COLUMN phone TEXT');
   }
@@ -729,7 +817,9 @@ function initSchema(d: Database): void {
 
   // B2B v2：旧库所有既有数据归入默认企业，密码、标签和会话继续有效。
   const ensureOrganizationColumn = (table: string): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
     if (!columns.some((column) => column.name === 'organization_id')) {
       d.exec(
         `ALTER TABLE ${table} ADD COLUMN organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}'`,
@@ -753,31 +843,50 @@ function initSchema(d: Database): void {
     'park_publications',
     'park_publication_recipients',
     'account_presence',
-  ]) ensureOrganizationColumn(table);
+  ])
+    ensureOrganizationColumn(table);
 
-  const ticketColumns = d.prepare('PRAGMA table_info(it_tickets)').all() as Array<{ name: string }>;
+  const ticketColumns = d
+    .prepare('PRAGMA table_info(it_tickets)')
+    .all() as Array<{ name: string }>;
   const ensureTicketColumn = (name: string, definition = 'TEXT'): void => {
     if (!ticketColumns.some((column) => column.name === name)) {
       d.exec(`ALTER TABLE it_tickets ADD COLUMN ${name} ${definition}`);
     }
   };
   for (const name of [
-    'service_id', 'form_data',
-    'category', 'location', 'urgency', 'contact', 'contact_phone',
-    'response_type', 'response_text', 'response_at', 'accepted_at',
-    'completed_at', 'closed_at',
-  ]) ensureTicketColumn(name);
-  d.exec("UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''");
+    'service_id',
+    'form_data',
+    'category',
+    'location',
+    'urgency',
+    'contact',
+    'contact_phone',
+    'response_type',
+    'response_text',
+    'response_at',
+    'accepted_at',
+    'completed_at',
+    'closed_at',
+  ])
+    ensureTicketColumn(name);
+  d.exec(
+    "UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''",
+  );
   d.exec("UPDATE it_tickets SET status = '待接单' WHERE status = 'open'");
 
   // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
   // 否则最早期的单组织 knowledge 表会因缺少该列而无法启动迁移。
-  const knowledgeColumns = d.prepare('PRAGMA table_info(knowledge)').all() as Array<{ name: string }>;
+  const knowledgeColumns = d
+    .prepare('PRAGMA table_info(knowledge)')
+    .all() as Array<{ name: string }>;
   if (!knowledgeColumns.some((column) => column.name === 'source_id')) {
     d.exec('ALTER TABLE knowledge ADD COLUMN source_id TEXT');
   }
   const ensureTextColumn = (table: string, column: string): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
     if (!columns.some((item) => item.name === column)) {
       d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
     }
@@ -793,6 +902,7 @@ function initSchema(d: Database): void {
   ensureTextColumn('sms_registration_challenges', 'position_id');
   ensureTextColumn('sms_registration_challenges', 'position_title');
   ensureTextColumn('sms_registration_challenges', 'role');
+  ensureTextColumn('accounts', 'employee_id');
   ensureTextColumn('accounts', 'position_id');
   ensureTextColumn('accounts', 'position_title');
   ensureTextColumn('accounts', 'department_id');
@@ -804,17 +914,29 @@ function initSchema(d: Database): void {
   ensureTextColumn('accounts', 'deleted_at');
   ensureTextColumn('organizations', 'park_id');
   ensureTextColumn('it_tickets', 'park_id');
-  d.exec("UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL");
+  d.exec(
+    "UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL",
+  );
   backfillEnterpriseAccountEmployees(d);
   backfillOrganizationStructure(d);
-  const ensureIntegerColumn = (table: string, column: string, ddl: string): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  const ensureIntegerColumn = (
+    table: string,
+    column: string,
+    ddl: string,
+  ): void => {
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
     if (!columns.some((item) => item.name === column)) {
       d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
     }
   };
   ensureIntegerColumn('organization_invites', 'max_uses', 'INTEGER');
-  ensureIntegerColumn('organization_invites', 'used_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureIntegerColumn(
+    'organization_invites',
+    'used_count',
+    'INTEGER NOT NULL DEFAULT 0',
+  );
   d.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_source_unique
       ON knowledge(organization_id, source_id) WHERE source_id IS NOT NULL;
@@ -858,12 +980,14 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
     organization_id: string;
   }
 
-  const accounts = d.prepare(
-    `SELECT id, organization_id, employee_id, name, role, department, department_id,
+  const accounts = d
+    .prepare(
+      `SELECT id, organization_id, employee_id, name, role, department, department_id,
             position_id, position_title, status, created_at
      FROM accounts
      WHERE account_type = 'enterprise' AND deleted_at IS NULL`,
-  ).all() as MigrationAccountRow[];
+    )
+    .all() as MigrationAccountRow[];
   const findEmployee = d.prepare(
     'SELECT id, organization_id FROM employees WHERE id = ?',
   );
@@ -909,16 +1033,18 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
   d.exec('SAVEPOINT backfill_enterprise_account_employees');
   try {
     for (const account of accounts) {
-      const departmentId = account.department_id
-        ?? (account.department
+      const departmentId =
+        account.department_id ??
+        (account.department
           ? stableAssignmentId(
               'dept',
               account.organization_id,
               normalizeAssignmentName(account.department),
             )
           : null);
-      const positionId = account.position_id
-        ?? (account.position_title
+      const positionId =
+        account.position_id ??
+        (account.position_title
           ? stableAssignmentId(
               'pos',
               account.organization_id,
@@ -927,8 +1053,8 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
             )
           : null);
       if (
-        departmentId !== account.department_id
-        || positionId !== account.position_id
+        departmentId !== account.department_id ||
+        positionId !== account.position_id
       ) {
         syncAccountAssignments.run(
           departmentId,
@@ -940,11 +1066,11 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
         account.position_id = positionId;
       }
       const linked = account.employee_id
-        ? findEmployee.get(account.employee_id) as MigrationEmployeeRow | undefined
+        ? (findEmployee.get(account.employee_id) as
+            MigrationEmployeeRow | undefined)
         : undefined;
-      let employeeId = linked?.organization_id === account.organization_id
-        ? linked.id
-        : null;
+      let employeeId =
+        linked?.organization_id === account.organization_id ? linked.id : null;
       if (!employeeId) {
         employeeId = `emp_${randomUUID()}`;
         insertEmployee.run(
@@ -991,13 +1117,15 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
 
 /** 把 v4 以前只存在于账号/员工字段里的节点补成可独立管理的组织目录。 */
 function backfillOrganizationStructure(d: Database): void {
-  const departments = d.prepare(
-    `SELECT organization_id, department_id, department FROM accounts
+  const departments = d
+    .prepare(
+      `SELECT organization_id, department_id, department FROM accounts
        WHERE deleted_at IS NULL AND department IS NOT NULL AND trim(department) <> ''
      UNION
      SELECT organization_id, department_id, department FROM employees
        WHERE department IS NOT NULL AND trim(department) <> ''`,
-  ).all() as Array<{
+    )
+    .all() as Array<{
     organization_id: string;
     department_id: string | null;
     department: string;
@@ -1007,9 +1135,13 @@ function backfillOrganizationStructure(d: Database): void {
      VALUES (?, ?, ?)`,
   );
   for (const row of departments) {
-    const id = row.department_id ?? stableAssignmentId(
-      'dept', row.organization_id, normalizeAssignmentName(row.department),
-    );
+    const id =
+      row.department_id ??
+      stableAssignmentId(
+        'dept',
+        row.organization_id,
+        normalizeAssignmentName(row.department),
+      );
     insertDepartment.run(id, row.organization_id, row.department.trim());
     d.prepare(
       `UPDATE accounts SET department_id = ?
@@ -1021,15 +1153,17 @@ function backfillOrganizationStructure(d: Database): void {
     ).run(id, row.organization_id, row.department);
   }
 
-  const positions = d.prepare(
-    `SELECT organization_id, department_id, position_id, position_title FROM accounts
+  const positions = d
+    .prepare(
+      `SELECT organization_id, department_id, position_id, position_title FROM accounts
        WHERE deleted_at IS NULL AND department_id IS NOT NULL
          AND position_title IS NOT NULL AND trim(position_title) <> ''
      UNION
      SELECT organization_id, department_id, position_id, position_title FROM employees
        WHERE department_id IS NOT NULL
          AND position_title IS NOT NULL AND trim(position_title) <> ''`,
-  ).all() as Array<{
+    )
+    .all() as Array<{
     organization_id: string;
     department_id: string;
     position_id: string | null;
@@ -1041,12 +1175,19 @@ function backfillOrganizationStructure(d: Database): void {
      VALUES (?, ?, ?, ?, 'member')`,
   );
   for (const row of positions) {
-    const id = row.position_id ?? stableAssignmentId(
-      'pos', row.organization_id, row.department_id,
-      normalizeAssignmentName(row.position_title),
-    );
+    const id =
+      row.position_id ??
+      stableAssignmentId(
+        'pos',
+        row.organization_id,
+        row.department_id,
+        normalizeAssignmentName(row.position_title),
+      );
     insertPosition.run(
-      id, row.organization_id, row.department_id, row.position_title.trim(),
+      id,
+      row.organization_id,
+      row.department_id,
+      row.position_title.trim(),
     );
     d.prepare(
       `UPDATE accounts SET position_id = ?
@@ -1133,8 +1274,13 @@ function toOrganizationView(row: OrganizationRow): OrganizationView {
 }
 
 function normalizeOrganizationSlug(input: string): string {
-  const slug = input.trim().toLocaleLowerCase('en-US').replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  if (!slug || slug.length > 48) throw new Error('企业标识只能使用字母、数字和连字符');
+  const slug = input
+    .trim()
+    .toLocaleLowerCase('en-US')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (!slug || slug.length > 48)
+    throw new Error('企业标识只能使用字母、数字和连字符');
   return slug;
 }
 
@@ -1144,29 +1290,35 @@ export function createOrganization(input: {
   now?: number;
 }): OrganizationView {
   const name = input.name.trim();
-  if (!name || name.length > 80) throw new Error('企业名称不能为空且不能超过 80 个字符');
+  if (!name || name.length > 80)
+    throw new Error('企业名称不能为空且不能超过 80 个字符');
   const slug = normalizeOrganizationSlug(
     input.slug || `company-${randomBytes(5).toString('hex')}`,
   );
   const id = `org_${randomUUID()}`;
-  getDB().prepare(
-    `INSERT INTO organizations (id, name, slug, invite_secret)
+  getDB()
+    .prepare(
+      `INSERT INTO organizations (id, name, slug, invite_secret)
      VALUES (?, ?, ?, ?)`,
-  ).run(id, name, slug, randomBytes(32).toString('hex'));
+    )
+    .run(id, name, slug, randomBytes(32).toString('hex'));
   logAudit('organization_create', null, `Organization ${slug} created`, id);
   return getOrganization(id)!;
 }
 
 export function getOrganization(id: string): OrganizationView | null {
-  const row = getDB().prepare('SELECT * FROM organizations WHERE id = ?').get(id) as
-    | OrganizationRow
-    | undefined;
+  const row = getDB()
+    .prepare('SELECT * FROM organizations WHERE id = ?')
+    .get(id) as OrganizationRow | undefined;
   return row ? toOrganizationView(row) : null;
 }
 
 export function listOrganizations(): OrganizationView[] {
-  return (getDB().prepare('SELECT * FROM organizations ORDER BY name, slug').all() as OrganizationRow[])
-    .map(toOrganizationView);
+  return (
+    getDB()
+      .prepare('SELECT * FROM organizations ORDER BY name, slug')
+      .all() as OrganizationRow[]
+  ).map(toOrganizationView);
 }
 
 /**
@@ -1174,8 +1326,10 @@ export function listOrganizations(): OrganizationView[] {
  * 隔离容器，不能把这些个人空间混入平台企业清单。
  */
 export function listEnterpriseOrganizations(): OrganizationView[] {
-  return (getDB().prepare(
-    `SELECT o.*
+  return (
+    getDB()
+      .prepare(
+        `SELECT o.*
      FROM organizations o
      WHERE EXISTS (
        SELECT 1
@@ -1185,10 +1339,13 @@ export function listEnterpriseOrganizations(): OrganizationView[] {
          AND a.deleted_at IS NULL
      )
      ORDER BY o.name, o.slug`,
-  ).all() as OrganizationRow[]).map(toOrganizationView);
+      )
+      .all() as OrganizationRow[]
+  ).map(toOrganizationView);
 }
 
-export type OrganizationPositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
+export type OrganizationPositionRoleMapping =
+  'member' | 'department_admin' | 'enterprise_admin';
 
 export interface OrganizationPositionView {
   id: string;
@@ -1228,7 +1385,9 @@ interface OrganizationPositionRow {
   updated_at: string;
 }
 
-function toOrganizationPositionView(row: OrganizationPositionRow): OrganizationPositionView {
+function toOrganizationPositionView(
+  row: OrganizationPositionRow,
+): OrganizationPositionView {
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -1240,23 +1399,33 @@ function toOrganizationPositionView(row: OrganizationPositionRow): OrganizationP
   };
 }
 
-export function listOrganizationStructure(organizationId: string): OrganizationDepartmentView[] {
+export function listOrganizationStructure(
+  organizationId: string,
+): OrganizationDepartmentView[] {
   const database = getDB();
-  const departments = database.prepare(
-    `SELECT * FROM organization_departments
+  const departments = database
+    .prepare(
+      `SELECT * FROM organization_departments
      WHERE organization_id = ? ORDER BY name COLLATE NOCASE, id`,
-  ).all(organizationId) as OrganizationDepartmentRow[];
-  const positions = database.prepare(
-    `SELECT * FROM organization_positions
+    )
+    .all(organizationId) as OrganizationDepartmentRow[];
+  const positions = database
+    .prepare(
+      `SELECT * FROM organization_positions
      WHERE organization_id = ? ORDER BY title COLLATE NOCASE, id`,
-  ).all(organizationId) as OrganizationPositionRow[];
-  const counts = database.prepare(
-    `SELECT department_id, COUNT(*) AS count FROM accounts
+    )
+    .all(organizationId) as OrganizationPositionRow[];
+  const counts = database
+    .prepare(
+      `SELECT department_id, COUNT(*) AS count FROM accounts
      WHERE organization_id = ? AND deleted_at IS NULL AND status = 'active'
        AND department_id IS NOT NULL
      GROUP BY department_id`,
-  ).all(organizationId) as Array<{ department_id: string; count: number }>;
-  const countByDepartment = new Map(counts.map((row) => [row.department_id, Number(row.count)]));
+    )
+    .all(organizationId) as Array<{ department_id: string; count: number }>;
+  const countByDepartment = new Map(
+    counts.map((row) => [row.department_id, Number(row.count)]),
+  );
   return departments.map((department) => ({
     id: department.id,
     organizationId: department.organization_id,
@@ -1277,16 +1446,24 @@ export function createOrganizationDepartment(input: {
   if (!getOrganization(input.organizationId)) throw new Error('企业不存在');
   const name = normalizeOptionalText(input.name, '部门名称');
   if (!name) throw new Error('部门名称不能为空');
-  const id = stableAssignmentId('dept', input.organizationId, normalizeAssignmentName(name));
+  const id = stableAssignmentId(
+    'dept',
+    input.organizationId,
+    normalizeAssignmentName(name),
+  );
   try {
-    getDB().prepare(
-      `INSERT INTO organization_departments (id, organization_id, name)
+    getDB()
+      .prepare(
+        `INSERT INTO organization_departments (id, organization_id, name)
        VALUES (?, ?, ?)`,
-    ).run(id, input.organizationId, name);
+      )
+      .run(id, input.organizationId, name);
   } catch {
     throw new Error('部门名称已存在');
   }
-  return listOrganizationStructure(input.organizationId).find((department) => department.id === id)!;
+  return listOrganizationStructure(input.organizationId).find(
+    (department) => department.id === id,
+  )!;
 }
 
 export function updateOrganizationDepartment(input: {
@@ -1299,31 +1476,40 @@ export function updateOrganizationDepartment(input: {
   const database = getDB();
   database.exec('BEGIN IMMEDIATE');
   try {
-    const changed = database.prepare(
-      `UPDATE organization_departments SET name = ?, updated_at = datetime('now')
+    const changed = database
+      .prepare(
+        `UPDATE organization_departments SET name = ?, updated_at = datetime('now')
        WHERE id = ? AND organization_id = ?`,
-    ).run(name, input.departmentId, input.organizationId);
+      )
+      .run(name, input.departmentId, input.organizationId);
     if (Number(changed.changes) !== 1) throw new Error('部门不存在');
-    database.prepare(
-      `UPDATE accounts SET department = ?, updated_at = datetime('now')
+    database
+      .prepare(
+        `UPDATE accounts SET department = ?, updated_at = datetime('now')
        WHERE organization_id = ? AND department_id = ?`,
-    ).run(name, input.organizationId, input.departmentId);
-    database.prepare(
-      `UPDATE employees SET department = ?
+      )
+      .run(name, input.organizationId, input.departmentId);
+    database
+      .prepare(
+        `UPDATE employees SET department = ?
        WHERE organization_id = ? AND department_id = ?`,
-    ).run(name, input.organizationId, input.departmentId);
-    database.prepare(
-      `UPDATE organization_invites SET default_department = ?
+      )
+      .run(name, input.organizationId, input.departmentId);
+    database
+      .prepare(
+        `UPDATE organization_invites SET default_department = ?
        WHERE organization_id = ? AND department_id = ?`,
-    ).run(name, input.organizationId, input.departmentId);
+      )
+      .run(name, input.organizationId, input.departmentId);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
     if (error instanceof Error && error.message === '部门不存在') throw error;
     throw new Error('部门名称已存在');
   }
-  return listOrganizationStructure(input.organizationId)
-    .find((department) => department.id === input.departmentId)!;
+  return listOrganizationStructure(input.organizationId).find(
+    (department) => department.id === input.departmentId,
+  )!;
 }
 
 export function deleteOrganizationDepartment(input: {
@@ -1331,18 +1517,24 @@ export function deleteOrganizationDepartment(input: {
   departmentId: string;
 }): void {
   const database = getDB();
-  const positions = database.prepare(
-    'SELECT COUNT(*) AS count FROM organization_positions WHERE organization_id = ? AND department_id = ?',
-  ).get(input.organizationId, input.departmentId) as { count: number };
+  const positions = database
+    .prepare(
+      'SELECT COUNT(*) AS count FROM organization_positions WHERE organization_id = ? AND department_id = ?',
+    )
+    .get(input.organizationId, input.departmentId) as { count: number };
   if (Number(positions.count) > 0) throw new Error('部门仍有岗位，不能删除');
-  const members = database.prepare(
-    `SELECT COUNT(*) AS count FROM accounts
+  const members = database
+    .prepare(
+      `SELECT COUNT(*) AS count FROM accounts
      WHERE organization_id = ? AND department_id = ? AND deleted_at IS NULL`,
-  ).get(input.organizationId, input.departmentId) as { count: number };
+    )
+    .get(input.organizationId, input.departmentId) as { count: number };
   if (Number(members.count) > 0) throw new Error('部门仍有成员，不能删除');
-  const changed = database.prepare(
-    'DELETE FROM organization_departments WHERE id = ? AND organization_id = ?',
-  ).run(input.departmentId, input.organizationId);
+  const changed = database
+    .prepare(
+      'DELETE FROM organization_departments WHERE id = ? AND organization_id = ?',
+    )
+    .run(input.departmentId, input.organizationId);
   if (Number(changed.changes) !== 1) throw new Error('部门不存在');
 }
 
@@ -1354,25 +1546,33 @@ export function createOrganizationPosition(input: {
 }): OrganizationPositionView {
   const title = normalizeOptionalText(input.title, '职位名称');
   if (!title) throw new Error('职位名称不能为空');
-  const department = getDB().prepare(
-    'SELECT id FROM organization_departments WHERE id = ? AND organization_id = ?',
-  ).get(input.departmentId, input.organizationId);
+  const department = getDB()
+    .prepare(
+      'SELECT id FROM organization_departments WHERE id = ? AND organization_id = ?',
+    )
+    .get(input.departmentId, input.organizationId);
   if (!department) throw new Error('部门不存在');
   const roleMapping = input.roleMapping ?? 'member';
   const id = stableAssignmentId(
-    'pos', input.organizationId, input.departmentId, normalizeAssignmentName(title),
+    'pos',
+    input.organizationId,
+    input.departmentId,
+    normalizeAssignmentName(title),
   );
   try {
-    getDB().prepare(
-      `INSERT INTO organization_positions
+    getDB()
+      .prepare(
+        `INSERT INTO organization_positions
         (id, organization_id, department_id, title, role_mapping)
        VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, input.organizationId, input.departmentId, title, roleMapping);
+      )
+      .run(id, input.organizationId, input.departmentId, title, roleMapping);
   } catch {
     throw new Error('该部门下职位名称已存在');
   }
   return listOrganizationStructure(input.organizationId)
-    .flatMap((item) => item.positions).find((position) => position.id === id)!;
+    .flatMap((item) => item.positions)
+    .find((position) => position.id === id)!;
 }
 
 export function updateOrganizationPosition(input: {
@@ -1386,58 +1586,86 @@ export function updateOrganizationPosition(input: {
   try {
     // 最后管理员检查与批量降权必须处于同一写事务，
     // 否则两个并发职位更新都可能读到对方仍是管理员。
-    const current = database.prepare(
-      'SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?',
-    ).get(input.positionId, input.organizationId) as OrganizationPositionRow | undefined;
+    const current = database
+      .prepare(
+        'SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?',
+      )
+      .get(input.positionId, input.organizationId) as
+      OrganizationPositionRow | undefined;
     if (!current) throw new Error('职位不存在');
-    const title = input.title === undefined
-      ? current.title
-      : normalizeOptionalText(input.title, '职位名称');
+    const title =
+      input.title === undefined
+        ? current.title
+        : normalizeOptionalText(input.title, '职位名称');
     if (!title) throw new Error('职位名称不能为空');
     const roleMapping = input.roleMapping ?? current.role_mapping;
     if (roleMapping !== 'enterprise_admin') {
-      const activeMappedAdmins = database.prepare(
-        `SELECT COUNT(*) AS count FROM accounts
+      const activeMappedAdmins = database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM accounts
          WHERE organization_id = ? AND position_id = ? AND is_admin = 1
            AND status = 'active' AND deleted_at IS NULL`,
-      ).get(input.organizationId, input.positionId) as { count: number };
+        )
+        .get(input.organizationId, input.positionId) as { count: number };
       if (Number(activeMappedAdmins.count) > 0) {
-        const otherActiveAdmin = database.prepare(
-          `SELECT 1 FROM accounts
+        const otherActiveAdmin = database
+          .prepare(
+            `SELECT 1 FROM accounts
            WHERE organization_id = ? AND (position_id IS NULL OR position_id <> ?) AND is_admin = 1
              AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
-        ).get(input.organizationId, input.positionId);
-        if (!otherActiveAdmin) throw new Error('企业至少需要保留一名可登录管理员');
+          )
+          .get(input.organizationId, input.positionId);
+        if (!otherActiveAdmin)
+          throw new Error('企业至少需要保留一名可登录管理员');
       }
     }
-    const mappedRole = roleMapping === 'enterprise_admin'
-      ? '企业管理员'
-      : roleMapping === 'department_admin' ? '部门管理员' : '成员';
-    database.prepare(
-      `UPDATE organization_positions
+    const mappedRole =
+      roleMapping === 'enterprise_admin'
+        ? '企业管理员'
+        : roleMapping === 'department_admin'
+          ? '部门管理员'
+          : '成员';
+    database
+      .prepare(
+        `UPDATE organization_positions
        SET title = ?, role_mapping = ?, updated_at = datetime('now')
        WHERE id = ? AND organization_id = ?`,
-    ).run(title, roleMapping, input.positionId, input.organizationId);
-    database.prepare(
-      `UPDATE accounts SET position_title = ?,
+      )
+      .run(title, roleMapping, input.positionId, input.organizationId);
+    database
+      .prepare(
+        `UPDATE accounts SET position_title = ?,
          role = ?, is_admin = CASE WHEN ? = 'enterprise_admin' THEN 1 ELSE 0 END,
          updated_at = datetime('now')
        WHERE organization_id = ? AND position_id = ?`,
-    ).run(title, mappedRole, roleMapping, input.organizationId, input.positionId);
-    database.prepare(
-      `UPDATE employees SET position_title = ?, role = ?
+      )
+      .run(
+        title,
+        mappedRole,
+        roleMapping,
+        input.organizationId,
+        input.positionId,
+      );
+    database
+      .prepare(
+        `UPDATE employees SET position_title = ?, role = ?
        WHERE organization_id = ? AND position_id = ?`,
-    ).run(title, mappedRole, input.organizationId, input.positionId);
-    database.prepare(
-      `UPDATE organization_invites SET position_title = ?, default_role = ?
+      )
+      .run(title, mappedRole, input.organizationId, input.positionId);
+    database
+      .prepare(
+        `UPDATE organization_invites SET position_title = ?, default_role = ?
        WHERE organization_id = ? AND position_id = ?`,
-    ).run(title, mappedRole, input.organizationId, input.positionId);
-    database.prepare(
-      `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, datetime('now'))
+      )
+      .run(title, mappedRole, input.organizationId, input.positionId);
+    database
+      .prepare(
+        `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, datetime('now'))
        WHERE account_id IN (
          SELECT id FROM accounts WHERE organization_id = ? AND position_id = ?
        )`,
-    ).run(input.organizationId, input.positionId);
+      )
+      .run(input.organizationId, input.positionId);
     logAudit(
       'organization_position_update',
       null,
@@ -1450,21 +1678,26 @@ export function updateOrganizationPosition(input: {
     throw error;
   }
   return listOrganizationStructure(input.organizationId)
-    .flatMap((item) => item.positions).find((position) => position.id === input.positionId)!;
+    .flatMap((item) => item.positions)
+    .find((position) => position.id === input.positionId)!;
 }
 
 export function deleteOrganizationPosition(input: {
   organizationId: string;
   positionId: string;
 }): void {
-  const member = getDB().prepare(
-    `SELECT 1 FROM accounts WHERE organization_id = ? AND position_id = ?
+  const member = getDB()
+    .prepare(
+      `SELECT 1 FROM accounts WHERE organization_id = ? AND position_id = ?
      AND deleted_at IS NULL LIMIT 1`,
-  ).get(input.organizationId, input.positionId);
+    )
+    .get(input.organizationId, input.positionId);
   if (member) throw new Error('职位仍有成员，不能删除');
-  const changed = getDB().prepare(
-    'DELETE FROM organization_positions WHERE id = ? AND organization_id = ?',
-  ).run(input.positionId, input.organizationId);
+  const changed = getDB()
+    .prepare(
+      'DELETE FROM organization_positions WHERE id = ? AND organization_id = ?',
+    )
+    .run(input.positionId, input.organizationId);
   if (Number(changed.changes) !== 1) throw new Error('职位不存在');
 }
 
@@ -1478,7 +1711,8 @@ export interface OrganizationFeatures {
   knowledge: boolean;
 }
 
-export type DeploymentLicenseStatus = 'active' | 'expiring' | 'expired' | 'revoked' | 'missing' | 'invalid';
+export type DeploymentLicenseStatus =
+  'active' | 'expiring' | 'expired' | 'revoked' | 'missing' | 'invalid';
 
 export interface DeploymentLicenseView {
   id: string;
@@ -1521,7 +1755,10 @@ export interface PrivateDeploymentStatus {
     includesMeetingAudio: false;
     defaultPayload: string[];
   };
-  moduleCatalog: Array<{ module: string; features: Array<keyof OrganizationFeatures> }>;
+  moduleCatalog: Array<{
+    module: string;
+    features: Array<keyof OrganizationFeatures>;
+  }>;
   runtimeHealth: {
     uptimeSec: number;
     nodeVersion: string;
@@ -1549,7 +1786,10 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   knowledge: true,
 };
 
-const LICENSE_MODULE_FEATURES: Record<string, Array<keyof OrganizationFeatures>> = {
+const LICENSE_MODULE_FEATURES: Record<
+  string,
+  Array<keyof OrganizationFeatures>
+> = {
   // 企业记忆是企业树的基础能力：组织、部门与身份边界已经由企业树建立后，
   // 同一组织内的已授权知识应可被读取和沉淀，不能因独立授权项缺失而在客户端消失。
   enterprise_tree: ['enterprise_tree', 'knowledge'],
@@ -1577,18 +1817,20 @@ function dateFromMs(ms: number): string {
 }
 
 function settingValue(key: string): string | null {
-  const row = getDB().prepare('SELECT value FROM deployment_settings WHERE key = ?').get(key) as
-    | { value: string }
-    | undefined;
+  const row = getDB()
+    .prepare('SELECT value FROM deployment_settings WHERE key = ?')
+    .get(key) as { value: string } | undefined;
   return typeof row?.value === 'string' ? row.value : null;
 }
 
 function setSettingValue(key: string, value: string): void {
-  getDB().prepare(
-    `INSERT INTO deployment_settings (key, value, updated_at)
+  getDB()
+    .prepare(
+      `INSERT INTO deployment_settings (key, value, updated_at)
      VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).run(key, value);
+    )
+    .run(key, value);
 }
 
 export function getDeploymentId(): string {
@@ -1607,14 +1849,18 @@ export function getMachineFingerprint(): string {
 }
 
 function safeJsonObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function parseModules(value: string): string[] {
   try {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      ? parsed.filter(
+          (item): item is string => typeof item === 'string' && item.length > 0,
+        )
       : [];
   } catch {
     return [];
@@ -1623,13 +1869,20 @@ function parseModules(value: string): string[] {
 
 function signDeploymentPayload(payload: unknown): string {
   const secret = licenseSigningSecret() || getDeploymentId();
-  return createHmac('sha256', secret).update(JSON.stringify(payload)).digest('base64url');
+  return createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('base64url');
 }
 
-function verifyDeploymentLicensePayload(payload: unknown, signature: string): boolean {
+function verifyDeploymentLicensePayload(
+  payload: unknown,
+  signature: string,
+): boolean {
   const secret = licenseSigningSecret();
   if (!secret || !signature) return false;
-  const expected = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('base64url');
+  const expected = createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('base64url');
   return tokensEqual(expected, signature);
 }
 
@@ -1643,12 +1896,14 @@ function tokensEqual(a: string, b: string): boolean {
 }
 
 function activeSeatCount(organizationId: string | null): number {
-  const row = getDB().prepare(
-    `SELECT COUNT(*) AS count FROM accounts
+  const row = getDB()
+    .prepare(
+      `SELECT COUNT(*) AS count FROM accounts
      WHERE deleted_at IS NULL AND status = 'active'
        AND account_type = 'enterprise'
        AND (? IS NULL OR organization_id = ?)`,
-  ).get(organizationId, organizationId) as { count: number };
+    )
+    .get(organizationId, organizationId) as { count: number };
   return row.count;
 }
 
@@ -1670,7 +1925,10 @@ interface DeploymentLicenseRow {
   updated_at: string;
 }
 
-function toDeploymentLicenseView(row: DeploymentLicenseRow | null, now = Date.now()): DeploymentLicenseView {
+function toDeploymentLicenseView(
+  row: DeploymentLicenseRow | null,
+  now = Date.now(),
+): DeploymentLicenseView {
   const enforce = licenseEnforcementEnabled();
   if (!row) {
     const modules = Object.keys(LICENSE_MODULE_FEATURES);
@@ -1697,10 +1955,12 @@ function toDeploymentLicenseView(row: DeploymentLicenseRow | null, now = Date.no
   let status: DeploymentLicenseStatus = 'active';
   if (row.revoked_at_ms != null) status = 'revoked';
   else if (now >= row.expires_at_ms) status = 'expired';
-  else if (row.expires_at_ms - now <= 14 * 24 * 60 * 60 * 1000) status = 'expiring';
+  else if (row.expires_at_ms - now <= 14 * 24 * 60 * 60 * 1000)
+    status = 'expiring';
   try {
     const payload = JSON.parse(row.raw_json);
-    if (!verifyDeploymentLicensePayload(payload, row.signature)) status = 'invalid';
+    if (!verifyDeploymentLicensePayload(payload, row.signature))
+      status = 'invalid';
   } catch {
     status = 'invalid';
   }
@@ -1725,33 +1985,51 @@ function toDeploymentLicenseView(row: DeploymentLicenseRow | null, now = Date.no
 }
 
 export function getDeploymentLicense(): DeploymentLicenseView {
-  const row = getDB().prepare(
-    'SELECT * FROM deployment_license ORDER BY updated_at DESC LIMIT 1',
-  ).get() as DeploymentLicenseRow | undefined;
+  const row = getDB()
+    .prepare(
+      'SELECT * FROM deployment_license ORDER BY updated_at DESC LIMIT 1',
+    )
+    .get() as DeploymentLicenseRow | undefined;
   return toDeploymentLicenseView(row ?? null);
 }
 
 export function importDeploymentLicense(raw: unknown): DeploymentLicenseView {
   const envelope = safeJsonObject(raw);
-  const payload = safeJsonObject(envelope.license ?? envelope.payload ?? envelope);
-  const signature = typeof envelope.signature === 'string'
-    ? envelope.signature
-    : typeof payload.signature === 'string' ? payload.signature : '';
-  if (!verifyDeploymentLicensePayload(payload, signature)) throw new Error('license signature invalid');
+  const payload = safeJsonObject(
+    envelope.license ?? envelope.payload ?? envelope,
+  );
+  const signature =
+    typeof envelope.signature === 'string'
+      ? envelope.signature
+      : typeof payload.signature === 'string'
+        ? payload.signature
+        : '';
+  if (!verifyDeploymentLicensePayload(payload, signature))
+    throw new Error('license signature invalid');
   const deploymentId = String(payload.deploymentId || getDeploymentId());
-  if (deploymentId !== getDeploymentId()) throw new Error('license deploymentId mismatch');
+  if (deploymentId !== getDeploymentId())
+    throw new Error('license deploymentId mismatch');
   const modules = Array.isArray(payload.modules)
-    ? payload.modules.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    ? payload.modules.filter(
+        (item): item is string => typeof item === 'string' && item.length > 0,
+      )
     : [];
-  const expiresAtMs = Number(payload.expiresAtMs ?? Date.parse(String(payload.expiresAt || '')));
+  const expiresAtMs = Number(
+    payload.expiresAtMs ?? Date.parse(String(payload.expiresAt || '')),
+  );
   const parsedIssuedAtMs = Date.parse(String(payload.issuedAt || ''));
-  const issuedAtMs = Number(payload.issuedAtMs ?? (Number.isFinite(parsedIssuedAtMs) ? parsedIssuedAtMs : Date.now()));
+  const issuedAtMs = Number(
+    payload.issuedAtMs ??
+      (Number.isFinite(parsedIssuedAtMs) ? parsedIssuedAtMs : Date.now()),
+  );
   const seatLimit = Math.max(0, Math.floor(Number(payload.seatLimit ?? 0)));
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) throw new Error('license expiresAt invalid');
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0)
+    throw new Error('license expiresAt invalid');
   if (modules.length === 0) throw new Error('license modules required');
   const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
-  getDB().prepare(
-    `INSERT INTO deployment_license
+  getDB()
+    .prepare(
+      `INSERT INTO deployment_license
        (id, deployment_id, organization_id, customer_name, plan, expires_at_ms, seat_limit,
         modules_json, offline, telemetry_allowed, issued_at_ms, revoked_at_ms, signature, raw_json, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
@@ -1770,43 +2048,67 @@ export function importDeploymentLicense(raw: unknown): DeploymentLicenseView {
        signature = excluded.signature,
        raw_json = excluded.raw_json,
        updated_at = excluded.updated_at`,
-  ).run(
-    id,
-    deploymentId,
-    typeof payload.organizationId === 'string' ? payload.organizationId : null,
-    String(payload.customerName || 'Private customer'),
-    String(payload.plan || 'enterprise'),
-    expiresAtMs,
-    seatLimit,
-    JSON.stringify(modules),
-    payload.offline === false ? 0 : 1,
-    payload.telemetryAllowed === false ? 0 : 1,
-    issuedAtMs,
-    payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
-    signature,
-    JSON.stringify(payload),
+    )
+    .run(
+      id,
+      deploymentId,
+      typeof payload.organizationId === 'string'
+        ? payload.organizationId
+        : null,
+      String(payload.customerName || 'Private customer'),
+      String(payload.plan || 'enterprise'),
+      expiresAtMs,
+      seatLimit,
+      JSON.stringify(modules),
+      payload.offline === false ? 0 : 1,
+      payload.telemetryAllowed === false ? 0 : 1,
+      issuedAtMs,
+      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      signature,
+      JSON.stringify(payload),
+    );
+  logAudit(
+    'deployment_license_import',
+    null,
+    `License imported: ${id}`,
+    DEFAULT_ORGANIZATION_ID,
   );
-  logAudit('deployment_license_import', null, `License imported: ${id}`, DEFAULT_ORGANIZATION_ID);
   return getDeploymentLicense();
 }
 
 export function getTelemetrySettings(): DeploymentTelemetrySettings {
   return {
     enabled: settingValue('telemetry_enabled') !== 'false',
-    contentMode: settingValue('telemetry_content_mode') === 'diagnostic_redacted'
-      ? 'diagnostic_redacted'
-      : 'operational_only',
-    endpoint: settingValue('telemetry_endpoint') || process.env.OTTO_TELEMETRY_ENDPOINT || null,
+    contentMode:
+      settingValue('telemetry_content_mode') === 'diagnostic_redacted'
+        ? 'diagnostic_redacted'
+        : 'operational_only',
+    endpoint:
+      settingValue('telemetry_endpoint') ||
+      process.env.OTTO_TELEMETRY_ENDPOINT ||
+      null,
   };
 }
 
-export function updateTelemetrySettings(patch: Partial<DeploymentTelemetrySettings>): DeploymentTelemetrySettings {
-  if (typeof patch.enabled === 'boolean') setSettingValue('telemetry_enabled', patch.enabled ? 'true' : 'false');
-  if (patch.contentMode === 'operational_only' || patch.contentMode === 'diagnostic_redacted') {
+export function updateTelemetrySettings(
+  patch: Partial<DeploymentTelemetrySettings>,
+): DeploymentTelemetrySettings {
+  if (typeof patch.enabled === 'boolean')
+    setSettingValue('telemetry_enabled', patch.enabled ? 'true' : 'false');
+  if (
+    patch.contentMode === 'operational_only' ||
+    patch.contentMode === 'diagnostic_redacted'
+  ) {
     setSettingValue('telemetry_content_mode', patch.contentMode);
   }
-  if (typeof patch.endpoint === 'string') setSettingValue('telemetry_endpoint', patch.endpoint.trim());
-  logAudit('deployment_telemetry_update', null, 'Telemetry settings updated', DEFAULT_ORGANIZATION_ID);
+  if (typeof patch.endpoint === 'string')
+    setSettingValue('telemetry_endpoint', patch.endpoint.trim());
+  logAudit(
+    'deployment_telemetry_update',
+    null,
+    'Telemetry settings updated',
+    DEFAULT_ORGANIZATION_ID,
+  );
   return getTelemetrySettings();
 }
 
@@ -1825,32 +2127,51 @@ export function recordTelemetryEvent(input: {
     createdAtMs: Date.now(),
     payload: input.payload,
   };
-  getDB().prepare(
-    `INSERT INTO telemetry_events
+  getDB()
+    .prepare(
+      `INSERT INTO telemetry_events
        (id, deployment_id, organization_id, event_type, payload_json, signature, status, attempts, created_at_ms)
      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?)`,
-  ).run(
-    `tel_${randomUUID().replace(/-/g, '')}`,
-    payload.deploymentId,
-    payload.organizationId,
-    input.eventType,
-    JSON.stringify(payload),
-    signDeploymentPayload(payload),
-    payload.createdAtMs,
-  );
+    )
+    .run(
+      `tel_${randomUUID().replace(/-/g, '')}`,
+      payload.deploymentId,
+      payload.organizationId,
+      input.eventType,
+      JSON.stringify(payload),
+      signDeploymentPayload(payload),
+      payload.createdAtMs,
+    );
 }
 
-export function getTelemetryQueueSummary(): { queued: number; failed: number; sent: number; lastQueuedAt: string | null } {
-  const rows = getDB().prepare(
-    `SELECT status, COUNT(*) AS count, MAX(created_at_ms) AS lastQueuedAt
+export function getTelemetryQueueSummary(): {
+  queued: number;
+  failed: number;
+  sent: number;
+  lastQueuedAt: string | null;
+} {
+  const rows = getDB()
+    .prepare(
+      `SELECT status, COUNT(*) AS count, MAX(created_at_ms) AS lastQueuedAt
      FROM telemetry_events GROUP BY status`,
-  ).all() as Array<{ status: string; count: number; lastQueuedAt: number | null }>;
-  const summary = { queued: 0, failed: 0, sent: 0, lastQueuedAt: null as string | null };
+    )
+    .all() as Array<{
+    status: string;
+    count: number;
+    lastQueuedAt: number | null;
+  }>;
+  const summary = {
+    queued: 0,
+    failed: 0,
+    sent: 0,
+    lastQueuedAt: null as string | null,
+  };
   for (const row of rows) {
     if (row.status === 'queued') summary.queued = row.count;
     if (row.status === 'failed') summary.failed = row.count;
     if (row.status === 'sent') summary.sent = row.count;
-    if (row.status === 'queued' && row.lastQueuedAt) summary.lastQueuedAt = dateFromMs(row.lastQueuedAt);
+    if (row.status === 'queued' && row.lastQueuedAt)
+      summary.lastQueuedAt = dateFromMs(row.lastQueuedAt);
   }
   return summary;
 }
@@ -1859,14 +2180,19 @@ function getDeploymentRuntimeHealth(): PrivateDeploymentStatus['runtimeHealth'] 
   const database = getDB();
   const memory = process.memoryUsage();
   const cpu = process.cpuUsage();
-  const organizations = database.prepare(
-    "SELECT COUNT(*) AS count FROM organizations WHERE status = 'active'",
-  ).get() as { count: number };
-  const accounts = database.prepare(
-    "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
-  ).get() as { count: number };
-  const audit = database.prepare(
-    `SELECT
+  const organizations = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM organizations WHERE status = 'active'",
+    )
+    .get() as { count: number };
+  const accounts = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
+    )
+    .get() as { count: number };
+  const audit = database
+    .prepare(
+      `SELECT
        SUM(CASE WHEN lower(event) LIKE '%error%' OR lower(event) LIKE '%fail%'
              OR lower(COALESCE(detail, '')) LIKE '%error%' OR lower(COALESCE(detail, '')) LIKE '%fail%'
            THEN 1 ELSE 0 END) AS errorCount,
@@ -1874,10 +2200,13 @@ function getDeploymentRuntimeHealth(): PrivateDeploymentStatus['runtimeHealth'] 
              OR lower(COALESCE(detail, '')) LIKE '%crash%' OR lower(COALESCE(detail, '')) LIKE '%uncaught%'
            THEN 1 ELSE 0 END) AS crashCount
      FROM audit_logs`,
-  ).get() as { errorCount: number | null; crashCount: number | null };
-  const usage = database.prepare(
-    'SELECT COUNT(*) AS callCount, COALESCE(SUM(total_tokens), 0) AS tokenTotal FROM account_token_usage',
-  ).get() as { callCount: number; tokenTotal: number };
+    )
+    .get() as { errorCount: number | null; crashCount: number | null };
+  const usage = database
+    .prepare(
+      'SELECT COUNT(*) AS callCount, COALESCE(SUM(total_tokens), 0) AS tokenTotal FROM account_token_usage',
+    )
+    .get() as { callCount: number; tokenTotal: number };
   return {
     uptimeSec: Math.round(process.uptime()),
     nodeVersion: process.version,
@@ -1908,25 +2237,43 @@ export function getPrivateDeploymentStatus(): PrivateDeploymentStatus {
       includesUserMessages: false,
       includesFiles: false,
       includesMeetingAudio: false,
-      defaultPayload: ['license status', 'version', 'module usage counters', 'error codes', 'runtime health'],
+      defaultPayload: [
+        'license status',
+        'version',
+        'module usage counters',
+        'error codes',
+        'runtime health',
+      ],
     },
-    moduleCatalog: Object.entries(LICENSE_MODULE_FEATURES).map(([module, features]) => ({ module, features })),
+    moduleCatalog: Object.entries(LICENSE_MODULE_FEATURES).map(
+      ([module, features]) => ({ module, features }),
+    ),
     runtimeHealth: getDeploymentRuntimeHealth(),
   };
 }
 
-export function exportDeploymentDiagnostics(input: { includeRedactedSamples?: boolean } = {}): Record<string, unknown> {
+export function exportDeploymentDiagnostics(
+  input: { includeRedactedSamples?: boolean } = {},
+): Record<string, unknown> {
   const database = getDB();
-  const orgs = database.prepare('SELECT COUNT(*) AS count FROM organizations').get() as { count: number };
-  const accounts = database.prepare(
-    "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
-  ).get() as { count: number };
-  const tickets = database.prepare('SELECT status, COUNT(*) AS count FROM it_tickets GROUP BY status').all();
-  const recentErrors = database.prepare(
-    `SELECT event, detail, created_at FROM audit_logs
+  const orgs = database
+    .prepare('SELECT COUNT(*) AS count FROM organizations')
+    .get() as { count: number };
+  const accounts = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
+    )
+    .get() as { count: number };
+  const tickets = database
+    .prepare('SELECT status, COUNT(*) AS count FROM it_tickets GROUP BY status')
+    .all();
+  const recentErrors = database
+    .prepare(
+      `SELECT event, detail, created_at FROM audit_logs
      WHERE lower(event) LIKE '%error%' OR lower(event) LIKE '%fail%'
      ORDER BY created_at DESC LIMIT 20`,
-  ).all();
+    )
+    .all();
   return {
     generatedAt: new Date().toISOString(),
     deployment: getPrivateDeploymentStatus(),
@@ -1935,14 +2282,21 @@ export function exportDeploymentDiagnostics(input: { includeRedactedSamples?: bo
     tickets,
     recentErrors,
     redactedSamplesIncluded: input.includeRedactedSamples === true,
-    privacy: 'No chat content, file body, meeting audio, or raw uploaded document is included by default.',
+    privacy:
+      'No chat content, file body, meeting audio, or raw uploaded document is included by default.',
   };
 }
 
-export function isLicenseUsableForOrganizationFeature(feature: keyof OrganizationFeatures): boolean {
+export function isLicenseUsableForOrganizationFeature(
+  feature: keyof OrganizationFeatures,
+): boolean {
   const license = getDeploymentLicense();
   if (!license.enforce && license.status === 'active') return true;
-  if (!['active', 'expiring'].includes(license.status) || license.seatLimitExceeded) return false;
+  if (
+    !['active', 'expiring'].includes(license.status) ||
+    license.seatLimitExceeded
+  )
+    return false;
   for (const moduleName of license.modules) {
     if (LICENSE_MODULE_FEATURES[moduleName]?.includes(feature)) return true;
   }
@@ -1951,14 +2305,25 @@ export function isLicenseUsableForOrganizationFeature(feature: keyof Organizatio
 
 export function isLicenseRestricted(): boolean {
   const license = getDeploymentLicense();
-  return license.enforce && (!['active', 'expiring'].includes(license.status) || license.seatLimitExceeded);
+  return (
+    license.enforce &&
+    (!['active', 'expiring'].includes(license.status) ||
+      license.seatLimitExceeded)
+  );
 }
-export function getOrganizationFeatures(organizationId: string): OrganizationFeatures {
+export function getOrganizationFeatures(
+  organizationId: string,
+): OrganizationFeatures {
   if (!getOrganization(organizationId)) throw new Error('企业不存在');
   const result = { ...DEFAULT_ORGANIZATION_FEATURES };
-  const rows = getDB().prepare(
-    'SELECT feature_key, enabled FROM organization_features WHERE organization_id = ?',
-  ).all(organizationId) as Array<{ feature_key: keyof OrganizationFeatures; enabled: number }>;
+  const rows = getDB()
+    .prepare(
+      'SELECT feature_key, enabled FROM organization_features WHERE organization_id = ?',
+    )
+    .all(organizationId) as Array<{
+    feature_key: keyof OrganizationFeatures;
+    enabled: number;
+  }>;
   for (const row of rows) {
     if (row.feature_key in result) result[row.feature_key] = row.enabled === 1;
   }
@@ -1974,17 +2339,16 @@ export function updateOrganizationFeatures(
 ): OrganizationFeatures {
   const allowed = new Set(Object.keys(DEFAULT_ORGANIZATION_FEATURES));
   const entries = Object.entries(patch).filter(
-    (entry): entry is [keyof OrganizationFeatures, boolean] => (
-      allowed.has(entry[0]) && typeof entry[1] === 'boolean'
-    ),
+    (entry): entry is [keyof OrganizationFeatures, boolean] =>
+      allowed.has(entry[0]) && typeof entry[1] === 'boolean',
   );
   if (entries.length === 0) throw new Error('至少需要一个有效功能开关');
   const database = getDB();
   database.exec('BEGIN IMMEDIATE');
   try {
-    const organization = database.prepare(
-      'SELECT 1 FROM organizations WHERE id = ?',
-    ).get(organizationId);
+    const organization = database
+      .prepare('SELECT 1 FROM organizations WHERE id = ?')
+      .get(organizationId);
     if (!organization) throw new Error('企业不存在');
     const statement = database.prepare(
       `INSERT INTO organization_features (organization_id, feature_key, enabled, updated_at)
@@ -1992,7 +2356,8 @@ export function updateOrganizationFeatures(
        ON CONFLICT(organization_id, feature_key)
        DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`,
     );
-    for (const [key, enabled] of entries) statement.run(organizationId, key, enabled ? 1 : 0);
+    for (const [key, enabled] of entries)
+      statement.run(organizationId, key, enabled ? 1 : 0);
     logAudit(
       'organization_features_update',
       null,
@@ -2009,8 +2374,9 @@ export function updateOrganizationFeatures(
 
 /** 平台企业面板只能访问企业租户，个人空间按不存在处理。 */
 export function getEnterpriseOrganization(id: string): OrganizationView | null {
-  const row = getDB().prepare(
-    `SELECT o.*
+  const row = getDB()
+    .prepare(
+      `SELECT o.*
      FROM organizations o
      WHERE o.id = ?
        AND EXISTS (
@@ -2021,7 +2387,8 @@ export function getEnterpriseOrganization(id: string): OrganizationView | null {
            AND a.deleted_at IS NULL
        )
      LIMIT 1`,
-  ).get(id) as OrganizationRow | undefined;
+    )
+    .get(id) as OrganizationRow | undefined;
   return row ? toOrganizationView(row) : null;
 }
 
@@ -2029,13 +2396,19 @@ function normalizeOrganizationInviteCode(code: string): string {
   return code.toLocaleUpperCase('en-US').replace(/[^A-Z2-9]/g, '');
 }
 
-function deriveOrganizationInviteCode(organization: OrganizationRow, nonce: string): string {
+function deriveOrganizationInviteCode(
+  organization: OrganizationRow,
+  nonce: string,
+): string {
   const digest = createHmac('sha256', organization.invite_secret)
     .update(`${organization.id}:${nonce}`)
     .digest();
   let code = '';
   for (let index = 0; index < 8; index += 1) {
-    code += ORGANIZATION_INVITE_ALPHABET[digest[index]! % ORGANIZATION_INVITE_ALPHABET.length];
+    code +=
+      ORGANIZATION_INVITE_ALPHABET[
+        digest[index]! % ORGANIZATION_INVITE_ALPHABET.length
+      ];
   }
   return `${code.slice(0, 4)}-${code.slice(4)}`;
 }
@@ -2045,9 +2418,12 @@ function toOrganizationInviteView(
   organization: OrganizationRow,
   now: number,
 ): OrganizationInviteView {
-  const status = row.revoked_at_ms != null
-    ? 'revoked'
-    : now >= row.expires_at_ms ? 'expired' : 'active';
+  const status =
+    row.revoked_at_ms != null
+      ? 'revoked'
+      : now >= row.expires_at_ms
+        ? 'expired'
+        : 'active';
   const code = deriveOrganizationInviteCode(organization, row.nonce);
   const publicBaseUrl = resolveEnterprisePublicBaseUrl({
     configuredUrl: process.env.OTTO_ENTERPRISE_PUBLIC_URL,
@@ -2071,7 +2447,8 @@ function toOrganizationInviteView(
   };
 }
 
-export type OrganizationInviteStatus = 'active' | 'expired' | 'revoked' | 'invalid';
+export type OrganizationInviteStatus =
+  'active' | 'expired' | 'revoked' | 'invalid';
 
 export interface OrganizationInviteInspection {
   status: OrganizationInviteStatus;
@@ -2088,18 +2465,21 @@ export function inspectOrganizationInvite(
   now = Date.now(),
 ): OrganizationInviteInspection {
   const normalized = normalizeOrganizationInviteCode(code);
-  if (normalized.length !== 8) return { status: 'invalid', organizationId: null };
+  if (normalized.length !== 8)
+    return { status: 'invalid', organizationId: null };
 
   // 邀请码由 nonce 动态派生，库中没有可直接索引的明文 code；必须保留已撤销/
   // 已过期记录，公开落地页才能正确区分 404 与 410。先在 SQL 层排除已停用企业，
   // 再恒定时间比对候选 code，不能引用 organization_invites 中不存在的 status 列。
-  const rows = getDB().prepare(
-    `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
+  const rows = getDB()
+    .prepare(
+      `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
      FROM organization_invites i
      JOIN organizations o ON o.id = i.organization_id
      WHERE o.status = 'active'
      ORDER BY i.issued_at_ms DESC`,
-  ).all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+    )
+    .all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
   const matches = rows.filter((row) => {
     const organization: OrganizationRow = {
       id: row.organization_id,
@@ -2113,13 +2493,16 @@ export function inspectOrganizationInvite(
     const expected = normalizeOrganizationInviteCode(
       deriveOrganizationInviteCode(organization, row.nonce),
     );
-    return expected.length === normalized.length
-      && timingSafeEqual(Buffer.from(expected), Buffer.from(normalized));
+    return (
+      expected.length === normalized.length &&
+      timingSafeEqual(Buffer.from(expected), Buffer.from(normalized))
+    );
   });
   if (matches.length !== 1) return { status: 'invalid', organizationId: null };
 
   const match = matches[0]!;
-  if (match.status !== 'active') return { status: 'invalid', organizationId: null };
+  if (match.status !== 'active')
+    return { status: 'invalid', organizationId: null };
   if (match.revoked_at_ms != null) {
     return { status: 'revoked', organizationId: match.organization_id };
   }
@@ -2141,14 +2524,23 @@ export interface OrganizationInviteIssueInput {
   maxUses?: number | null;
 }
 
-function normalizeOptionalText(value: string | null | undefined, label: string, maxLength = 80): string | null {
+function normalizeOptionalText(
+  value: string | null | undefined,
+  label: string,
+  maxLength = 80,
+): string | null {
   const clean = value?.trim() || null;
-  if (clean && clean.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  if (clean && clean.length > maxLength)
+    throw new Error(`${label}不能超过 ${maxLength} 个字符`);
   return clean;
 }
 
 function normalizeAssignmentName(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
+  return value
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('zh-CN');
 }
 
 function stableAssignmentId(
@@ -2186,14 +2578,25 @@ function resolveAssignmentIdentity(
   },
 ): AssignmentIdentity {
   const department = normalizeOptionalText(input.department, '部门名称');
-  const requestedDepartmentId = normalizeOptionalText(input.departmentId, '部门 ID', 120);
+  const requestedDepartmentId = normalizeOptionalText(
+    input.departmentId,
+    '部门 ID',
+    120,
+  );
   const positionTitle = normalizeOptionalText(input.positionTitle, '职位名称');
-  const requestedPositionId = normalizeOptionalText(input.positionId, '职位 ID', 120);
-  if (!department && requestedDepartmentId) throw new Error('设置部门 ID 时必须同时提供部门名称');
-  if (!positionTitle && requestedPositionId) throw new Error('设置职位 ID 时必须同时提供职位名称');
+  const requestedPositionId = normalizeOptionalText(
+    input.positionId,
+    '职位 ID',
+    120,
+  );
+  if (!department && requestedDepartmentId)
+    throw new Error('设置部门 ID 时必须同时提供部门名称');
+  if (!positionTitle && requestedPositionId)
+    throw new Error('设置职位 ID 时必须同时提供职位名称');
 
-  const departmentRows = database.prepare(
-    `SELECT id, name FROM organization_departments WHERE organization_id = ?
+  const departmentRows = database
+    .prepare(
+      `SELECT id, name FROM organization_departments WHERE organization_id = ?
      UNION ALL
      SELECT department_id AS id, department AS name FROM accounts
        WHERE organization_id = ? AND deleted_at IS NULL
@@ -2203,41 +2606,52 @@ function resolveAssignmentIdentity(
      UNION ALL
      SELECT department_id AS id, default_department AS name FROM organization_invites
        WHERE organization_id = ?`,
-  ).all(organizationId, organizationId, organizationId, organizationId) as Array<{
+    )
+    .all(
+      organizationId,
+      organizationId,
+      organizationId,
+      organizationId,
+    ) as Array<{
     id: string | null;
     name: string | null;
   }>;
-  const normalizedDepartment = department ? normalizeAssignmentName(department) : null;
+  const normalizedDepartment = department
+    ? normalizeAssignmentName(department)
+    : null;
   const existingDepartment = normalizedDepartment
-    ? departmentRows.find((row) => (
-        row.id
-        && row.name
-        && normalizeAssignmentName(row.name) === normalizedDepartment
-      ))
+    ? departmentRows.find(
+        (row) =>
+          row.id &&
+          row.name &&
+          normalizeAssignmentName(row.name) === normalizedDepartment,
+      )
     : undefined;
   if (
-    requestedDepartmentId
-    && existingDepartment?.id
-    && existingDepartment.id !== requestedDepartmentId
+    requestedDepartmentId &&
+    existingDepartment?.id &&
+    existingDepartment.id !== requestedDepartmentId
   ) {
     throw new Error('该部门名称已绑定其他部门 ID');
   }
   if (requestedDepartmentId) {
-    const conflicting = departmentRows.find((row) => (
-      row.id === requestedDepartmentId
-      && row.name
-      && normalizeAssignmentName(row.name) !== normalizedDepartment
-    ));
+    const conflicting = departmentRows.find(
+      (row) =>
+        row.id === requestedDepartmentId &&
+        row.name &&
+        normalizeAssignmentName(row.name) !== normalizedDepartment,
+    );
     if (conflicting) throw new Error('该部门 ID 已绑定其他部门名称');
   }
   const departmentId = department
-    ? requestedDepartmentId
-      ?? existingDepartment?.id
-      ?? stableAssignmentId('dept', organizationId, normalizedDepartment)
+    ? (requestedDepartmentId ??
+      existingDepartment?.id ??
+      stableAssignmentId('dept', organizationId, normalizedDepartment))
     : null;
 
-  const positionRows = database.prepare(
-    `SELECT id, title, department_id FROM organization_positions WHERE organization_id = ?
+  const positionRows = database
+    .prepare(
+      `SELECT id, title, department_id FROM organization_positions WHERE organization_id = ?
      UNION ALL
      SELECT position_id AS id, position_title AS title, department_id
        FROM accounts WHERE organization_id = ? AND deleted_at IS NULL
@@ -2247,58 +2661,75 @@ function resolveAssignmentIdentity(
      UNION ALL
      SELECT position_id AS id, position_title AS title, department_id
        FROM organization_invites WHERE organization_id = ?`,
-  ).all(organizationId, organizationId, organizationId, organizationId) as Array<{
+    )
+    .all(
+      organizationId,
+      organizationId,
+      organizationId,
+      organizationId,
+    ) as Array<{
     id: string | null;
     title: string | null;
     department_id: string | null;
   }>;
-  const normalizedPosition = positionTitle ? normalizeAssignmentName(positionTitle) : null;
+  const normalizedPosition = positionTitle
+    ? normalizeAssignmentName(positionTitle)
+    : null;
   const existingPosition = normalizedPosition
-    ? positionRows.find((row) => (
-        row.id
-        && row.title
-        && row.department_id === departmentId
-        && normalizeAssignmentName(row.title) === normalizedPosition
-      ))
+    ? positionRows.find(
+        (row) =>
+          row.id &&
+          row.title &&
+          row.department_id === departmentId &&
+          normalizeAssignmentName(row.title) === normalizedPosition,
+      )
     : undefined;
   if (
-    requestedPositionId
-    && existingPosition?.id
-    && existingPosition.id !== requestedPositionId
+    requestedPositionId &&
+    existingPosition?.id &&
+    existingPosition.id !== requestedPositionId
   ) {
     throw new Error('该职位名称已绑定其他职位 ID');
   }
   if (requestedPositionId) {
-    const conflicting = positionRows.find((row) => (
-      row.id === requestedPositionId
-      && (
-        row.department_id !== departmentId
-        || !row.title
-        || normalizeAssignmentName(row.title) !== normalizedPosition
-      )
-    ));
+    const conflicting = positionRows.find(
+      (row) =>
+        row.id === requestedPositionId &&
+        (row.department_id !== departmentId ||
+          !row.title ||
+          normalizeAssignmentName(row.title) !== normalizedPosition),
+    );
     if (conflicting) throw new Error('该职位 ID 已绑定其他部门或职位名称');
   }
   const positionId = positionTitle
-    ? requestedPositionId
-      ?? existingPosition?.id
-      ?? stableAssignmentId('pos', organizationId, departmentId, normalizedPosition)
+    ? (requestedPositionId ??
+      existingPosition?.id ??
+      stableAssignmentId(
+        'pos',
+        organizationId,
+        departmentId,
+        normalizedPosition,
+      ))
     : null;
 
   // 任意管理员输入的部门/职位都落入同一份持久化目录，组织树与邀请不会再依赖
   // “恰好已有成员”才能看到节点。旧调用方无需迁移即可自动补齐目录。
   if (department && departmentId) {
-    database.prepare(
-      `INSERT OR IGNORE INTO organization_departments (id, organization_id, name)
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO organization_departments (id, organization_id, name)
        VALUES (?, ?, ?)`,
-    ).run(departmentId, organizationId, department);
+      )
+      .run(departmentId, organizationId, department);
   }
   if (positionTitle && positionId && departmentId) {
-    database.prepare(
-      `INSERT OR IGNORE INTO organization_positions
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO organization_positions
         (id, organization_id, department_id, title, role_mapping)
        VALUES (?, ?, ?, ?, 'member')`,
-    ).run(positionId, organizationId, departmentId, positionTitle);
+      )
+      .run(positionId, organizationId, departmentId, positionTitle);
   }
 
   return { department, departmentId, positionTitle, positionId };
@@ -2313,14 +2744,15 @@ export function issueOrganizationInvite(
   const database = getDB();
   database.exec('SAVEPOINT issue_organization_invite');
   try {
-    const organization = database.prepare(
-      'SELECT * FROM organizations WHERE id = ? AND status = ?',
-    ).get(organizationId, 'active') as OrganizationRow | undefined;
+    const organization = database
+      .prepare('SELECT * FROM organizations WHERE id = ? AND status = ?')
+      .get(organizationId, 'active') as OrganizationRow | undefined;
     if (!organization) throw new Error('Organization not found');
     const id = `orginvite_${randomUUID()}`;
     const nonce = randomBytes(24).toString('base64url');
     const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
-    const options = typeof input === 'string' ? { defaultDepartment: input } : input ?? {};
+    const options =
+      typeof input === 'string' ? { defaultDepartment: input } : (input ?? {});
     const assignment = resolveAssignmentIdentity(database, organizationId, {
       department: options.defaultDepartment,
       departmentId: options.departmentId,
@@ -2328,48 +2760,60 @@ export function issueOrganizationInvite(
       positionTitle: options.positionTitle,
     });
     const defaultRole = normalizeOptionalText(options.defaultRole, '角色');
-    const maxUses = options.maxUses == null ? null : Math.floor(Number(options.maxUses));
-    if (maxUses != null && (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)) {
+    const maxUses =
+      options.maxUses == null ? null : Math.floor(Number(options.maxUses));
+    if (
+      maxUses != null &&
+      (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)
+    ) {
       throw new Error('邀请码可注册人数必须在 1 到 10000 之间');
     }
-    database.prepare(
-      `INSERT INTO organization_invites
+    database
+      .prepare(
+        `INSERT INTO organization_invites
          (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id,
           default_department, department_id, position_id, position_title, default_role, max_uses)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      organizationId,
-      nonce,
-      now,
-      expiresAtMs,
-      createdByAccountId || null,
-      assignment.department,
-      assignment.departmentId,
-      assignment.positionId,
-      assignment.positionTitle,
-      defaultRole,
-      maxUses,
-    );
-    database.prepare(
-      `UPDATE organization_invites SET revoked_at_ms = ?
+      )
+      .run(
+        id,
+        organizationId,
+        nonce,
+        now,
+        expiresAtMs,
+        createdByAccountId || null,
+        assignment.department,
+        assignment.departmentId,
+        assignment.positionId,
+        assignment.positionTitle,
+        defaultRole,
+        maxUses,
+      );
+    database
+      .prepare(
+        `UPDATE organization_invites SET revoked_at_ms = ?
        WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
-    ).run(now, organizationId, id);
+      )
+      .run(now, organizationId, id);
     logAudit(
       'organization_invite_issue',
       null,
-      [assignment.department, assignment.positionTitle, defaultRole].filter(Boolean).length
+      [assignment.department, assignment.positionTitle, defaultRole].filter(
+        Boolean,
+      ).length
         ? `Position invite issued for ${[
-          assignment.department,
-          assignment.positionTitle,
-          defaultRole,
-        ].filter(Boolean).join(' / ')}`
+            assignment.department,
+            assignment.positionTitle,
+            defaultRole,
+          ]
+            .filter(Boolean)
+            .join(' / ')}`
         : 'Registration invite issued for 7 days',
       organizationId,
     );
-    const row = database.prepare(
-      'SELECT * FROM organization_invites WHERE id = ?',
-    ).get(id) as OrganizationInviteRow;
+    const row = database
+      .prepare('SELECT * FROM organization_invites WHERE id = ?')
+      .get(id) as OrganizationInviteRow;
     database.exec('RELEASE SAVEPOINT issue_organization_invite');
     return toOrganizationInviteView(row, organization, now);
   } catch (error) {
@@ -2383,14 +2827,16 @@ export function getOrganizationInvite(
   organizationId: string,
   now = Date.now(),
 ): OrganizationInviteView | null {
-  const organization = getDB().prepare('SELECT * FROM organizations WHERE id = ?').get(organizationId) as
-    | OrganizationRow
-    | undefined;
+  const organization = getDB()
+    .prepare('SELECT * FROM organizations WHERE id = ?')
+    .get(organizationId) as OrganizationRow | undefined;
   if (!organization) return null;
-  const row = getDB().prepare(
-    `SELECT * FROM organization_invites
+  const row = getDB()
+    .prepare(
+      `SELECT * FROM organization_invites
      WHERE organization_id = ? ORDER BY issued_at_ms DESC LIMIT 1`,
-  ).get(organizationId) as OrganizationInviteRow | undefined;
+    )
+    .get(organizationId) as OrganizationInviteRow | undefined;
   return row ? toOrganizationInviteView(row, organization, now) : null;
 }
 
@@ -2410,12 +2856,14 @@ export function resolveOrganizationInviteWithDefaults(
 ): OrganizationInviteResolution | null {
   const normalized = normalizeOrganizationInviteCode(code);
   if (normalized.length !== 8) return null;
-  const rows = getDB().prepare(
-    `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
+  const rows = getDB()
+    .prepare(
+      `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
      FROM organization_invites i
      JOIN organizations o ON o.id = i.organization_id
      WHERE i.revoked_at_ms IS NULL AND i.expires_at_ms > ? AND o.status = 'active'`,
-  ).all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
+    )
+    .all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
   const matches = rows.filter((row) => {
     const organization: OrganizationRow = {
       id: row.organization_id,
@@ -2429,8 +2877,10 @@ export function resolveOrganizationInviteWithDefaults(
     const expected = normalizeOrganizationInviteCode(
       deriveOrganizationInviteCode(organization, row.nonce),
     );
-    return expected.length === normalized.length
-      && timingSafeEqual(Buffer.from(expected), Buffer.from(normalized));
+    return (
+      expected.length === normalized.length &&
+      timingSafeEqual(Buffer.from(expected), Buffer.from(normalized))
+    );
   });
   if (matches.length !== 1) return null;
   const match = matches[0]!;
@@ -2454,7 +2904,10 @@ export function resolveOrganizationInviteWithDefaults(
   };
 }
 
-export function resolveOrganizationInvite(code: string, now = Date.now()): OrganizationView | null {
+export function resolveOrganizationInvite(
+  code: string,
+  now = Date.now(),
+): OrganizationView | null {
   return resolveOrganizationInviteWithDefaults(code, now)?.organization ?? null;
 }
 
@@ -2481,30 +2934,43 @@ function resolveCurrentInvitationAssignment(
     defaultRole: string | null;
   },
 ): CurrentInvitationAssignment {
-  const organization = database.prepare(
-    `SELECT 1 FROM organizations WHERE id = ? AND status = 'active'`,
-  ).get(organizationId);
+  const organization = database
+    .prepare(`SELECT 1 FROM organizations WHERE id = ? AND status = 'active'`)
+    .get(organizationId);
   if (!organization) throw new Error('企业不存在或已停用');
 
-  const department = input.departmentId ? database.prepare(
-    `SELECT * FROM organization_departments WHERE id = ? AND organization_id = ?`,
-  ).get(input.departmentId, organizationId) as OrganizationDepartmentRow | undefined : undefined;
+  const department = input.departmentId
+    ? (database
+        .prepare(
+          `SELECT * FROM organization_departments WHERE id = ? AND organization_id = ?`,
+        )
+        .get(input.departmentId, organizationId) as
+        OrganizationDepartmentRow | undefined)
+    : undefined;
   if (input.departmentId && !department) throw new Error('部门不存在');
   if (input.positionId && !department) throw new Error('职位必须属于有效部门');
 
-  const position = input.positionId ? database.prepare(
-    `SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?`,
-  ).get(input.positionId, organizationId) as OrganizationPositionRow | undefined : undefined;
+  const position = input.positionId
+    ? (database
+        .prepare(
+          `SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?`,
+        )
+        .get(input.positionId, organizationId) as
+        OrganizationPositionRow | undefined)
+    : undefined;
   if (input.positionId && !position) throw new Error('职位不存在');
   if (position && position.department_id !== department!.id) {
     throw new Error('职位与部门不一致');
   }
 
-  const role = position?.role_mapping === 'enterprise_admin'
-    ? '企业管理员'
-    : position?.role_mapping === 'department_admin'
-      ? '部门管理员'
-      : position ? '成员' : input.defaultRole?.trim() || '成员';
+  const role =
+    position?.role_mapping === 'enterprise_admin'
+      ? '企业管理员'
+      : position?.role_mapping === 'department_admin'
+        ? '部门管理员'
+        : position
+          ? '成员'
+          : input.defaultRole?.trim() || '成员';
   return {
     department: department?.name ?? null,
     departmentId: department?.id ?? null,
@@ -2573,28 +3039,37 @@ function normalizeUsername(username: string): string {
 export function normalizePhone(phone: string): string {
   let digits = phone.trim().replace(/[^\d]/g, '');
   if (digits.startsWith('0086')) digits = digits.slice(4);
-  else if (digits.startsWith('86') && digits.length === 13) digits = digits.slice(2);
+  else if (digits.startsWith('86') && digits.length === 13)
+    digits = digits.slice(2);
   if (!/^1[3-9]\d{9}$/.test(digits)) throw new Error('手机号格式不正确');
   return `+86${digits}`;
 }
 
-function normalizeOptionalPhone(phone: string | null | undefined): string | null {
+function normalizeOptionalPhone(
+  phone: string | null | undefined,
+): string | null {
   if (phone == null || !phone.trim()) return null;
   return normalizePhone(phone);
 }
 
-function normalizeOptionalFeishuOpenId(value: string | null | undefined): string | null {
+function normalizeOptionalFeishuOpenId(
+  value: string | null | undefined,
+): string | null {
   if (value == null || !value.trim()) return null;
   const openId = value.trim();
-  if (!/^ou_[A-Za-z0-9_-]+$/.test(openId)) throw new Error('飞书 open_id 格式不正确');
+  if (!/^ou_[A-Za-z0-9_-]+$/.test(openId))
+    throw new Error('飞书 open_id 格式不正确');
   return openId;
 }
 
-function normalizeOptionalAvatarUrl(value: string | null | undefined): string | null {
+function normalizeOptionalAvatarUrl(
+  value: string | null | undefined,
+): string | null {
   if (value == null || !value.trim()) return null;
   const avatarUrl = value.trim();
   if (/^https:\/\//i.test(avatarUrl)) {
-    if (avatarUrl.length > 2_000) throw new Error('头像地址不能超过 2000 个字符');
+    if (avatarUrl.length > 2_000)
+      throw new Error('头像地址不能超过 2000 个字符');
     try {
       if (new URL(avatarUrl).protocol !== 'https:') throw new Error();
     } catch {
@@ -2602,18 +3077,27 @@ function normalizeOptionalAvatarUrl(value: string | null | undefined): string | 
     }
     return avatarUrl;
   }
-  const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(avatarUrl);
-  if (!match) throw new Error('头像仅支持 HTTPS 或 PNG、JPEG、WebP、GIF 格式的 data:image');
-  if (avatarUrl.length > 700_000 || Buffer.from(match[2]!, 'base64').byteLength > 512 * 1024) {
+  const match =
+    /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(
+      avatarUrl,
+    );
+  if (!match)
+    throw new Error(
+      '头像仅支持 HTTPS 或 PNG、JPEG、WebP、GIF 格式的 data:image',
+    );
+  if (
+    avatarUrl.length > 700_000 ||
+    Buffer.from(match[2]!, 'base64').byteLength > 512 * 1024
+  ) {
     throw new Error('头像数据不能超过 512KB');
   }
   return avatarUrl;
 }
 
 function normalizeTags(tags: string[] | undefined): string[] {
-  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, 'zh-CN'),
-  );
+  return [
+    ...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
 function passwordHash(password: string): string {
@@ -2628,7 +3112,9 @@ function passwordMatches(password: string, stored: string): boolean {
   try {
     const actual = scryptSync(password, salt, 64);
     const expected = Buffer.from(expectedHex, 'hex');
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
+    return (
+      actual.length === expected.length && timingSafeEqual(actual, expected)
+    );
   } catch {
     return false;
   }
@@ -2643,9 +3129,13 @@ function tokenHash(token: string): string {
 }
 
 function tagsForAccount(accountId: string, organizationId: string): string[] {
-  return (getDB().prepare(
-    'SELECT tag FROM account_tags WHERE account_id = ? AND organization_id = ? ORDER BY tag',
-  ).all(accountId, organizationId) as Array<{ tag: string }>).map((row) => row.tag);
+  return (
+    getDB()
+      .prepare(
+        'SELECT tag FROM account_tags WHERE account_id = ? AND organization_id = ? ORDER BY tag',
+      )
+      .all(accountId, organizationId) as Array<{ tag: string }>
+  ).map((row) => row.tag);
 }
 
 function toAccountView(row: AccountRow): AccountView {
@@ -2674,15 +3164,22 @@ function toAccountView(row: AccountRow): AccountView {
   };
 }
 
-function replaceAccountTags(accountId: string, organizationId: string, tags: string[]): void {
+function replaceAccountTags(
+  accountId: string,
+  organizationId: string,
+  tags: string[],
+): void {
   const database = getDB();
-  database.prepare(
-    'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-  ).run(accountId, organizationId);
+  database
+    .prepare(
+      'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
+    )
+    .run(accountId, organizationId);
   const insert = database.prepare(
     'INSERT INTO account_tags (organization_id, account_id, tag) VALUES (?, ?, ?)',
   );
-  for (const tag of normalizeTags(tags)) insert.run(organizationId, accountId, tag);
+  for (const tag of normalizeTags(tags))
+    insert.run(organizationId, accountId, tag);
 }
 
 export function createAccount(input: {
@@ -2705,10 +3202,12 @@ export function createAccount(input: {
   status?: 'active' | 'disabled';
 }): AccountView {
   const organizationId = input.organizationId || DEFAULT_ORGANIZATION_ID;
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
   const username = normalizeUsername(input.username);
   const name = input.name.trim();
-  if (!username || !name || !input.password) throw new Error('username, password and name required');
+  if (!username || !name || !input.password)
+    throw new Error('username, password and name required');
   assertAccountPassword(input.password);
   const status = input.status ?? 'active';
   if (status !== 'active' && status !== 'disabled') {
@@ -2722,23 +3221,32 @@ export function createAccount(input: {
     positionId: input.positionId,
     positionTitle: input.positionTitle,
   });
-  const positionMapping = assignment.positionId ? database.prepare(
-    `SELECT role_mapping FROM organization_positions
+  const positionMapping = assignment.positionId
+    ? (database
+        .prepare(
+          `SELECT role_mapping FROM organization_positions
      WHERE id = ? AND organization_id = ?`,
-  ).get(assignment.positionId, organizationId) as {
-    role_mapping: OrganizationPositionRoleMapping;
-  } | undefined : undefined;
-  const mappedRole = positionMapping?.role_mapping === 'enterprise_admin'
-    ? '企业管理员'
-    : positionMapping?.role_mapping === 'department_admin'
-      ? '部门管理员'
-      : positionMapping ? '成员' : null;
+        )
+        .get(assignment.positionId, organizationId) as
+        | {
+            role_mapping: OrganizationPositionRoleMapping;
+          }
+        | undefined)
+    : undefined;
+  const mappedRole =
+    positionMapping?.role_mapping === 'enterprise_admin'
+      ? '企业管理员'
+      : positionMapping?.role_mapping === 'department_admin'
+        ? '部门管理员'
+        : positionMapping
+          ? '成员'
+          : null;
   const effectiveRole = positionMapping
     ? mappedRole
     : input.role?.trim() || null;
   const effectiveIsAdmin = positionMapping
     ? positionMapping.role_mapping === 'enterprise_admin'
-    : input.isAdmin ?? false;
+    : (input.isAdmin ?? false);
   const id = `acc_${randomUUID()}`;
   let employeeId = input.employeeId || null;
   database.exec('SAVEPOINT create_account');
@@ -2756,32 +3264,39 @@ export function createAccount(input: {
         positionTitle: assignment.positionTitle || undefined,
       });
     }
-    database.prepare(
-    `INSERT INTO accounts
+    database
+      .prepare(
+        `INSERT INTO accounts
        (id, organization_id, account_type, employee_id, username, phone, feishu_open_id, password_hash,
         name, role, department, department_id, position_id, position_title, avatar_url, is_admin, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      organizationId,
-      accountType,
-      employeeId,
-      username,
-      normalizeOptionalPhone(input.phone),
-      normalizeOptionalFeishuOpenId(input.feishuOpenId),
-      passwordHash(input.password),
-      name,
-      effectiveRole,
-      assignment.department,
-      assignment.departmentId,
-      assignment.positionId,
-      assignment.positionTitle,
-      normalizeOptionalAvatarUrl(input.avatarUrl),
-      effectiveIsAdmin ? 1 : 0,
-      status,
-    );
+      )
+      .run(
+        id,
+        organizationId,
+        accountType,
+        employeeId,
+        username,
+        normalizeOptionalPhone(input.phone),
+        normalizeOptionalFeishuOpenId(input.feishuOpenId),
+        passwordHash(input.password),
+        name,
+        effectiveRole,
+        assignment.department,
+        assignment.departmentId,
+        assignment.positionId,
+        assignment.positionTitle,
+        normalizeOptionalAvatarUrl(input.avatarUrl),
+        effectiveIsAdmin ? 1 : 0,
+        status,
+      );
     replaceAccountTags(id, organizationId, input.tags ?? []);
-    logAudit('account_create', employeeId, `Preset account ${username} created`, organizationId);
+    logAudit(
+      'account_create',
+      employeeId,
+      `Preset account ${username} created`,
+      organizationId,
+    );
     const created = getAccount(id, organizationId);
     if (!created) throw new Error('账号创建失败');
     database.exec('RELEASE SAVEPOINT create_account');
@@ -2833,7 +3348,11 @@ export function provisionOrganization(input: {
       tags: ['企业管理员'],
       isAdmin: true,
     });
-    const invite = issueOrganizationInvite(organization.id, input.now ?? Date.now(), admin.id);
+    const invite = issueOrganizationInvite(
+      organization.id,
+      input.now ?? Date.now(),
+      admin.id,
+    );
     database.exec('COMMIT');
     return { organization, admin, invite };
   } catch (error) {
@@ -2842,21 +3361,34 @@ export function provisionOrganization(input: {
   }
 }
 
-export function getAccount(id: string, organizationId?: string): AccountView | null {
-  const row = (organizationId
-    ? getDB().prepare(
-      'SELECT * FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL',
-    ).get(id, organizationId)
-    : getDB().prepare('SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL').get(id)
+export function getAccount(
+  id: string,
+  organizationId?: string,
+): AccountView | null {
+  const row = (
+    organizationId
+      ? getDB()
+          .prepare(
+            'SELECT * FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL',
+          )
+          .get(id, organizationId)
+      : getDB()
+          .prepare('SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL')
+          .get(id)
   ) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
 }
 
-export function listAccounts(organizationId = DEFAULT_ORGANIZATION_ID): AccountView[] {
-  return (getDB().prepare(
-    'SELECT * FROM accounts WHERE organization_id = ? AND deleted_at IS NULL ORDER BY name, username',
-  ).all(organizationId) as AccountRow[])
-    .map(toAccountView);
+export function listAccounts(
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): AccountView[] {
+  return (
+    getDB()
+      .prepare(
+        'SELECT * FROM accounts WHERE organization_id = ? AND deleted_at IS NULL ORDER BY name, username',
+      )
+      .all(organizationId) as AccountRow[]
+  ).map(toAccountView);
 }
 
 export interface AccountPresenceView {
@@ -2876,15 +3408,20 @@ export function touchAccountPresence(input: {
   clientId?: string | null;
   nowMs?: number;
 }): AccountPresenceView {
-  const nowMs = Number.isFinite(input.nowMs) ? Math.floor(input.nowMs!) : Date.now();
-  const clientId = (input.clientId || 'default').trim().slice(0, 120) || 'default';
-  getDB().prepare(
-    `INSERT INTO account_presence
+  const nowMs = Number.isFinite(input.nowMs)
+    ? Math.floor(input.nowMs!)
+    : Date.now();
+  const clientId =
+    (input.clientId || 'default').trim().slice(0, 120) || 'default';
+  getDB()
+    .prepare(
+      `INSERT INTO account_presence
       (organization_id, account_id, client_id, last_seen_at_ms, updated_at)
      VALUES (?, ?, ?, ?, datetime('now'))
      ON CONFLICT(organization_id, account_id, client_id)
      DO UPDATE SET last_seen_at_ms = excluded.last_seen_at_ms, updated_at = datetime('now')`,
-  ).run(input.organizationId, input.accountId, clientId, nowMs);
+    )
+    .run(input.organizationId, input.accountId, clientId, nowMs);
   return {
     accountId: input.accountId,
     online: true,
@@ -2897,12 +3434,14 @@ export function listAccountPresence(
   onlineWindowMs = 60_000,
   nowMs = Date.now(),
 ): AccountPresenceView[] {
-  const rows = getDB().prepare(
-    `SELECT account_id, MAX(last_seen_at_ms) AS last_seen_at_ms
+  const rows = getDB()
+    .prepare(
+      `SELECT account_id, MAX(last_seen_at_ms) AS last_seen_at_ms
      FROM account_presence
      WHERE organization_id = ?
      GROUP BY account_id`,
-  ).all(organizationId) as AccountPresenceRow[];
+    )
+    .all(organizationId) as AccountPresenceRow[];
   return rows.map((row) => ({
     accountId: row.account_id,
     online: nowMs - Number(row.last_seen_at_ms) <= onlineWindowMs,
@@ -2952,17 +3491,30 @@ export function sendDirectMessage(input: {
   content: string;
 }): DirectMessageView {
   const content = input.content.trim();
-  if (!content || content.length > 4000) throw new Error('消息内容长度必须为 1 到 4000 个字符');
-  if (input.senderAccountId === input.recipientAccountId) throw new Error('不能给自己发送消息');
+  if (!content || content.length > 4000)
+    throw new Error('消息内容长度必须为 1 到 4000 个字符');
+  if (input.senderAccountId === input.recipientAccountId)
+    throw new Error('不能给自己发送消息');
   const recipient = getAccount(input.recipientAccountId, input.organizationId);
-  if (!recipient || recipient.status !== 'active') throw new Error('接收成员不存在或已停用');
+  if (!recipient || recipient.status !== 'active')
+    throw new Error('接收成员不存在或已停用');
   const id = randomUUID();
-  getDB().prepare(
-    `INSERT INTO direct_messages
+  getDB()
+    .prepare(
+      `INSERT INTO direct_messages
       (id, organization_id, sender_account_id, recipient_account_id, content)
      VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, input.organizationId, input.senderAccountId, input.recipientAccountId, content);
-  const row = getDB().prepare('SELECT * FROM direct_messages WHERE id = ?').get(id) as DirectMessageRow;
+    )
+    .run(
+      id,
+      input.organizationId,
+      input.senderAccountId,
+      input.recipientAccountId,
+      content,
+    );
+  const row = getDB()
+    .prepare('SELECT * FROM direct_messages WHERE id = ?')
+    .get(id) as DirectMessageRow;
   return toDirectMessageView(row);
 }
 
@@ -2973,24 +3525,32 @@ export function listDirectMessages(input: {
   limit?: number;
 }): DirectMessageView[] {
   const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 100)));
-  getDB().prepare(
-    `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
+  getDB()
+    .prepare(
+      `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
      WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?`,
-  ).run(input.organizationId, input.peerAccountId, input.accountId);
-  return (getDB().prepare(
-    `SELECT * FROM direct_messages
+    )
+    .run(input.organizationId, input.peerAccountId, input.accountId);
+  return (
+    getDB()
+      .prepare(
+        `SELECT * FROM direct_messages
      WHERE organization_id = ? AND (
        (sender_account_id = ? AND recipient_account_id = ?) OR
        (sender_account_id = ? AND recipient_account_id = ?)
      ) ORDER BY created_at DESC, id DESC LIMIT ?`,
-  ).all(
-    input.organizationId,
-    input.accountId,
-    input.peerAccountId,
-    input.peerAccountId,
-    input.accountId,
-    limit,
-  ) as DirectMessageRow[]).reverse().map(toDirectMessageView);
+      )
+      .all(
+        input.organizationId,
+        input.accountId,
+        input.peerAccountId,
+        input.peerAccountId,
+        input.accountId,
+        limit,
+      ) as DirectMessageRow[]
+  )
+    .reverse()
+    .map(toDirectMessageView);
 }
 
 export interface UnreadDirectMessageNotification {
@@ -3013,13 +3573,15 @@ export function listUnreadDirectMessageNotifications(input: {
   limit?: number;
 }): UnreadDirectMessageNotification[] {
   const account = getAccount(input.accountId, input.organizationId);
-  if (!account || account.status !== 'active') throw new Error('账号不存在或已停用');
+  if (!account || account.status !== 'active')
+    throw new Error('账号不存在或已停用');
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isFinite(requestedLimit)
     ? Math.min(100, Math.max(1, Math.floor(requestedLimit)))
     : 50;
-  const rows = getDB().prepare(
-    `SELECT m.id, m.sender_account_id, m.content, m.created_at, a.name AS sender_name
+  const rows = getDB()
+    .prepare(
+      `SELECT m.id, m.sender_account_id, m.content, m.created_at, a.name AS sender_name
      FROM direct_messages m
      JOIN accounts a ON a.id = m.sender_account_id
        AND a.organization_id = m.organization_id
@@ -3027,7 +3589,8 @@ export function listUnreadDirectMessageNotifications(input: {
      WHERE m.organization_id = ? AND m.recipient_account_id = ?
        AND m.read_at IS NULL
      ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
-  ).all(input.organizationId, input.accountId, limit) as Array<{
+    )
+    .all(input.organizationId, input.accountId, limit) as Array<{
     id: string;
     sender_account_id: string;
     content: string;
@@ -3040,7 +3603,8 @@ export function listUnreadDirectMessageNotifications(input: {
     title: `${row.sender_name} 发来消息`,
     senderAccountId: row.sender_account_id,
     senderName: row.sender_name,
-    preview: row.content.length > 160 ? `${row.content.slice(0, 157)}…` : row.content,
+    preview:
+      row.content.length > 160 ? `${row.content.slice(0, 157)}…` : row.content,
     createdAt: row.created_at,
   }));
 }
@@ -3053,41 +3617,52 @@ export function listPendingAtoaRequests(input: {
   limit?: number;
 }): AtoaInboxMessageView[] {
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 50)));
-  const requests = getDB().prepare(
-    `SELECT * FROM direct_messages
+  const requests = getDB()
+    .prepare(
+      `SELECT * FROM direct_messages
      WHERE organization_id = ?
        AND recipient_account_id = ?
        AND content LIKE ?
      ORDER BY created_at DESC, id DESC
      LIMIT ?`,
-  ).all(
-    input.organizationId,
-    input.accountId,
-    `${input.requestPrefix}%`,
-    limit,
-  ) as DirectMessageRow[];
-  const responses = getDB().prepare(
-    `SELECT sender_account_id, recipient_account_id, content FROM direct_messages
+    )
+    .all(
+      input.organizationId,
+      input.accountId,
+      `${input.requestPrefix}%`,
+      limit,
+    ) as DirectMessageRow[];
+  const responses = getDB()
+    .prepare(
+      `SELECT sender_account_id, recipient_account_id, content FROM direct_messages
      WHERE organization_id = ?
        AND sender_account_id = ?
        AND content LIKE ?
      ORDER BY created_at DESC, id DESC
      LIMIT 300`,
-  ).all(
-    input.organizationId,
-    input.accountId,
-    `${input.responsePrefix}%`,
-  ) as Array<{
+    )
+    .all(
+      input.organizationId,
+      input.accountId,
+      `${input.responsePrefix}%`,
+    ) as Array<{
     sender_account_id: string;
     recipient_account_id: string;
     content: string;
   }>;
   return requests
-    .filter((request) => !responses.some((response) => (
-      response.sender_account_id === input.accountId &&
-      response.recipient_account_id === request.sender_account_id &&
-      parseAtoaResponseRequestId(response.content, input.responsePrefix) === request.id
-    )))
+    .filter(
+      (request) =>
+        !responses.some(
+          (response) =>
+            response.sender_account_id === input.accountId &&
+            response.recipient_account_id === request.sender_account_id &&
+            parseAtoaResponseRequestId(
+              response.content,
+              input.responsePrefix,
+            ) === request.id,
+        ),
+    )
     .reverse()
     .map((request) => ({
       ...toDirectMessageView(request),
@@ -3120,12 +3695,12 @@ function parseAtoaResponseRequestId(
   if (!content.startsWith(responsePrefix)) return null;
   try {
     const parsed = JSON.parse(content.slice(responsePrefix.length)) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return null;
     const response = parsed as Record<string, unknown>;
     const mode = response.mode === undefined ? 'answer' : response.mode;
-    const sources = response.grantedSources === undefined
-      ? []
-      : response.grantedSources;
+    const sources =
+      response.grantedSources === undefined ? [] : response.grantedSources;
     if (
       response.v !== 1 ||
       !isAtoaResponseText(response.requestId, 200) ||
@@ -3162,48 +3737,64 @@ export function markAtoaRequestReadFromResponse(input: {
   requestPrefix: string;
   responsePrefix: string;
 }): string | null {
-  const requestId = parseAtoaResponseRequestId(input.responseContent, input.responsePrefix);
+  const requestId = parseAtoaResponseRequestId(
+    input.responseContent,
+    input.responsePrefix,
+  );
   if (!requestId) return null;
-  const changed = getDB().prepare(
-    `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
+  const changed = getDB()
+    .prepare(
+      `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
      WHERE id = ? AND organization_id = ?
        AND sender_account_id = ? AND recipient_account_id = ?
        AND read_at IS NULL AND content LIKE ?`,
-  ).run(
-    requestId,
-    input.organizationId,
-    input.peerAccountId,
-    input.responderAccountId,
-    `${input.requestPrefix}%`,
-  );
+    )
+    .run(
+      requestId,
+      input.organizationId,
+      input.peerAccountId,
+      input.responderAccountId,
+      `${input.requestPrefix}%`,
+    );
   return Number(changed.changes) === 1 ? requestId : null;
 }
 
-export function authenticateAccount(identifier: string, password: string): AccountView | null {
+export function authenticateAccount(
+  identifier: string,
+  password: string,
+): AccountView | null {
   const normalized = normalizeUsername(identifier);
-  let row = getDB().prepare(
-    'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE AND deleted_at IS NULL',
-  ).get(normalized) as AccountRow | undefined;
+  let row = getDB()
+    .prepare(
+      'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE AND deleted_at IS NULL',
+    )
+    .get(normalized) as AccountRow | undefined;
   if (!row) {
     try {
-      row = getDB().prepare(
-        'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
-      ).get(normalizePhone(identifier)) as AccountRow | undefined;
+      row = getDB()
+        .prepare(
+          'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
+        )
+        .get(normalizePhone(identifier)) as AccountRow | undefined;
     } catch {
       // 不是手机号时继续按“账号或密码错误”处理，避免泄露账号是否存在。
     }
   }
-  if (!row || row.status !== 'active'
-    || getOrganization(row.organization_id)?.status !== 'active'
-    || !passwordMatches(password, row.password_hash)) return null;
+  if (
+    !row ||
+    row.status !== 'active' ||
+    getOrganization(row.organization_id)?.status !== 'active' ||
+    !passwordMatches(password, row.password_hash)
+  )
+    return null;
   return toAccountView(row);
 }
 
 export function findAccountByPhone(phone: string): AccountView | null {
   const normalized = normalizePhone(phone);
-  const row = getDB().prepare(
-    'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
-  ).get(normalized) as AccountRow | undefined;
+  const row = getDB()
+    .prepare('SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL')
+    .get(normalized) as AccountRow | undefined;
   return row ? toAccountView(row) : null;
 }
 
@@ -3216,14 +3807,20 @@ export function findActiveAccountByPhone(phone: string): AccountView | null {
 export function isFeishuAutoReplyEnabledForOpenId(openId: string): boolean {
   const normalized = openId.trim();
   if (!normalized) return false;
-  const rows = getDB().prepare(
-    `SELECT DISTINCT organization_id FROM accounts
+  const rows = getDB()
+    .prepare(
+      `SELECT DISTINCT organization_id FROM accounts
      WHERE feishu_open_id = ? AND status = 'active' AND deleted_at IS NULL`,
-  ).all(normalized) as Array<{ organization_id: string }>;
+    )
+    .all(normalized) as Array<{ organization_id: string }>;
   // 旧的纯飞书 allowlist 用户尚未绑定企业账号时保持兼容；一旦绑定，所有关联
   // 租户都必须允许自动回答，避免同一 open_id 借另一个租户绕过关闭开关。
-  return rows.length === 0
-    || rows.every((row) => getOrganizationFeatures(row.organization_id).feishu_auto_reply);
+  return (
+    rows.length === 0 ||
+    rows.every(
+      (row) => getOrganizationFeatures(row.organization_id).feishu_auto_reply,
+    )
+  );
 }
 
 export function createSelfRegisteredAccount(input: {
@@ -3248,35 +3845,52 @@ export function createSelfRegisteredAccount(input: {
   try {
     let assignment: CurrentInvitationAssignment;
     if (input.organizationInviteId) {
-      const invite = database.prepare(
-        `SELECT department_id, position_id, default_role
+      const invite = database
+        .prepare(
+          `SELECT department_id, position_id, default_role
          FROM organization_invites
          WHERE id = ? AND organization_id = ?
            AND revoked_at_ms IS NULL AND expires_at_ms > ?
            AND (max_uses IS NULL OR used_count < max_uses)`,
-      ).get(input.organizationInviteId, input.organizationId, Date.now()) as {
-        department_id: string | null;
-        position_id: string | null;
-        default_role: string | null;
-      } | undefined;
-      if (!invite) throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
-      assignment = resolveCurrentInvitationAssignment(database, input.organizationId, {
-        departmentId: invite.department_id,
-        positionId: invite.position_id,
-        defaultRole: invite.default_role,
-      });
+        )
+        .get(input.organizationInviteId, input.organizationId, Date.now()) as
+        | {
+            department_id: string | null;
+            position_id: string | null;
+            default_role: string | null;
+          }
+        | undefined;
+      if (!invite)
+        throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
+      assignment = resolveCurrentInvitationAssignment(
+        database,
+        input.organizationId,
+        {
+          departmentId: invite.department_id,
+          positionId: invite.position_id,
+          defaultRole: invite.default_role,
+        },
+      );
     } else {
-      const normalized = resolveAssignmentIdentity(database, input.organizationId, {
-        department: input.department,
-        departmentId: input.departmentId,
-        positionId: input.positionId,
-        positionTitle: input.positionTitle,
-      });
-      assignment = resolveCurrentInvitationAssignment(database, input.organizationId, {
-        departmentId: normalized.departmentId,
-        positionId: normalized.positionId,
-        defaultRole: input.role ?? null,
-      });
+      const normalized = resolveAssignmentIdentity(
+        database,
+        input.organizationId,
+        {
+          department: input.department,
+          departmentId: input.departmentId,
+          positionId: input.positionId,
+          positionTitle: input.positionTitle,
+        },
+      );
+      assignment = resolveCurrentInvitationAssignment(
+        database,
+        input.organizationId,
+        {
+          departmentId: normalized.departmentId,
+          positionId: normalized.positionId,
+          defaultRole: input.role ?? null,
+        },
+      );
     }
     const employeeId = `emp_${randomUUID()}`;
     createEmployee({
@@ -3306,13 +3920,15 @@ export function createSelfRegisteredAccount(input: {
       isAdmin: assignment.isAdmin,
     });
     if (input.organizationInviteId) {
-      const reserved = database.prepare(
-        `UPDATE organization_invites
+      const reserved = database
+        .prepare(
+          `UPDATE organization_invites
          SET used_count = used_count + 1
          WHERE id = ? AND organization_id = ?
            AND revoked_at_ms IS NULL AND expires_at_ms > ?
            AND (max_uses IS NULL OR used_count < max_uses)`,
-      ).run(input.organizationInviteId, input.organizationId, Date.now());
+        )
+        .run(input.organizationInviteId, input.organizationId, Date.now());
       if (Number(reserved.changes) !== 1) {
         throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
       }
@@ -3323,7 +3939,8 @@ export function createSelfRegisteredAccount(input: {
     database.exec('ROLLBACK TO SAVEPOINT create_self_registered_account');
     database.exec('RELEASE SAVEPOINT create_self_registered_account');
     // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
-    if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+    if (findAccountByPhone(normalized))
+      throw new Error('该手机号已注册，请直接登录');
     throw error;
   }
 }
@@ -3338,7 +3955,8 @@ export function createPersonalRegisteredAccount(input: {
   password: string;
 }): AccountView {
   const normalized = normalizePhone(input.phone);
-  if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+  if (findAccountByPhone(normalized))
+    throw new Error('该手机号已注册，请直接登录');
   const name = input.name.trim();
   if (!name) throw new Error('name required');
   const digits = normalized.slice(3);
@@ -3364,7 +3982,8 @@ export function createPersonalRegisteredAccount(input: {
     return account;
   } catch (error) {
     database.exec('ROLLBACK');
-    if (findAccountByPhone(normalized)) throw new Error('该手机号已注册，请直接登录');
+    if (findAccountByPhone(normalized))
+      throw new Error('该手机号已注册，请直接登录');
     throw error;
   }
 }
@@ -3389,11 +4008,15 @@ export function joinOrganizationWithInvite(
     }
     const invite = resolveOrganizationInviteWithDefaults(inviteCode, now);
     if (!invite) throw new Error('企业邀请码无效、已过期或名额已用完');
-    const assignment = resolveCurrentInvitationAssignment(database, invite.organization.id, {
-      departmentId: invite.departmentId,
-      positionId: invite.positionId,
-      defaultRole: invite.defaultRole,
-    });
+    const assignment = resolveCurrentInvitationAssignment(
+      database,
+      invite.organization.id,
+      {
+        departmentId: invite.departmentId,
+        positionId: invite.positionId,
+        defaultRole: invite.defaultRole,
+      },
+    );
 
     const employeeId = `emp_${randomUUID()}`;
     createEmployee({
@@ -3408,44 +4031,53 @@ export function joinOrganizationWithInvite(
       invite_code: normalizeOrganizationInviteCode(inviteCode),
     });
 
-    const reserved = database.prepare(
-      `UPDATE organization_invites
+    const reserved = database
+      .prepare(
+        `UPDATE organization_invites
        SET used_count = used_count + 1
        WHERE id = ? AND organization_id = ?
          AND revoked_at_ms IS NULL AND expires_at_ms > ?
          AND (max_uses IS NULL OR used_count < max_uses)`,
-    ).run(invite.inviteId, invite.organization.id, now);
+      )
+      .run(invite.inviteId, invite.organization.id, now);
     if (Number(reserved.changes) !== 1) {
       throw new Error('企业邀请码无效、已过期或名额已用完');
     }
 
-    const moved = database.prepare(
-      `UPDATE accounts
+    const moved = database
+      .prepare(
+        `UPDATE accounts
        SET organization_id = ?, account_type = 'enterprise', employee_id = ?,
            role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?,
            is_admin = ?, updated_at = datetime('now')
        WHERE id = ? AND organization_id = ? AND account_type = 'personal'
          AND deleted_at IS NULL AND status = 'active'`,
-    ).run(
-      invite.organization.id,
-      employeeId,
-      assignment.role,
-      assignment.department,
-      assignment.departmentId,
-      assignment.positionId,
-      assignment.positionTitle,
-      assignment.isAdmin ? 1 : 0,
-      current.id,
-      current.organizationId,
-    );
-    if (Number(moved.changes) !== 1) throw new Error('只有个人版账号可加入企业');
+      )
+      .run(
+        invite.organization.id,
+        employeeId,
+        assignment.role,
+        assignment.department,
+        assignment.departmentId,
+        assignment.positionId,
+        assignment.positionTitle,
+        assignment.isAdmin ? 1 : 0,
+        current.id,
+        current.organizationId,
+      );
+    if (Number(moved.changes) !== 1)
+      throw new Error('只有个人版账号可加入企业');
 
-    database.prepare(
-      'UPDATE auth_sessions SET organization_id = ? WHERE account_id = ? AND revoked_at IS NULL',
-    ).run(invite.organization.id, current.id);
+    database
+      .prepare(
+        'UPDATE auth_sessions SET organization_id = ? WHERE account_id = ? AND revoked_at IS NULL',
+      )
+      .run(invite.organization.id, current.id);
     // 标签是企业内身份，不得把旧个人空间标签带进新租户；
     // account_tags 的历史主键也不含 organization_id，需先清理再建立企业标签。
-    database.prepare('DELETE FROM account_tags WHERE account_id = ?').run(current.id);
+    database
+      .prepare('DELETE FROM account_tags WHERE account_id = ?')
+      .run(current.id);
     replaceAccountTags(current.id, invite.organization.id, ['普通成员']);
     logAudit(
       'personal_account_join_organization',
@@ -3463,22 +4095,26 @@ export function joinOrganizationWithInvite(
   }
 }
 
-export function updateAccount(id: string, patch: {
-  username?: string;
-  password?: string;
-  name?: string;
-  phone?: string | null;
-  feishuOpenId?: string | null;
-  role?: string | null;
-  department?: string | null;
-  departmentId?: string | null;
-  positionId?: string | null;
-  positionTitle?: string | null;
-  avatarUrl?: string | null;
-  tags?: string[];
-  isAdmin?: boolean;
-  status?: 'active' | 'disabled';
-}, organizationId?: string): AccountView {
+export function updateAccount(
+  id: string,
+  patch: {
+    username?: string;
+    password?: string;
+    name?: string;
+    phone?: string | null;
+    feishuOpenId?: string | null;
+    role?: string | null;
+    department?: string | null;
+    departmentId?: string | null;
+    positionId?: string | null;
+    positionTitle?: string | null;
+    avatarUrl?: string | null;
+    tags?: string[];
+    isAdmin?: boolean;
+    status?: 'active' | 'disabled';
+  },
+  organizationId?: string,
+): AccountView {
   const database = getDB();
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -3493,39 +4129,58 @@ export function updateAccount(id: string, patch: {
     ].some((value) => value !== undefined);
     const assignment = assignmentChanged
       ? resolveAssignmentIdentity(database, current.organizationId, {
-          department: patch.department !== undefined ? patch.department : current.department,
-          departmentId: patch.departmentId !== undefined ? patch.departmentId : undefined,
-          positionTitle: patch.positionTitle !== undefined
-            ? patch.positionTitle
-            : current.positionTitle,
-          positionId: patch.positionId !== undefined ? patch.positionId : undefined,
+          department:
+            patch.department !== undefined
+              ? patch.department
+              : current.department,
+          departmentId:
+            patch.departmentId !== undefined ? patch.departmentId : undefined,
+          positionTitle:
+            patch.positionTitle !== undefined
+              ? patch.positionTitle
+              : current.positionTitle,
+          positionId:
+            patch.positionId !== undefined ? patch.positionId : undefined,
         })
       : null;
-    const positionMapping = assignment?.positionId ? database.prepare(
-      `SELECT role_mapping FROM organization_positions
+    const positionMapping = assignment?.positionId
+      ? (database
+          .prepare(
+            `SELECT role_mapping FROM organization_positions
        WHERE id = ? AND organization_id = ?`,
-    ).get(assignment.positionId, current.organizationId) as {
-      role_mapping: OrganizationPositionRoleMapping;
-    } | undefined : undefined;
-    const mappedRole = positionMapping?.role_mapping === 'enterprise_admin'
-      ? '企业管理员'
-      : positionMapping?.role_mapping === 'department_admin'
-        ? '部门管理员'
-        : positionMapping ? '成员' : null;
+          )
+          .get(assignment.positionId, current.organizationId) as
+          | {
+              role_mapping: OrganizationPositionRoleMapping;
+            }
+          | undefined)
+      : undefined;
+    const mappedRole =
+      positionMapping?.role_mapping === 'enterprise_admin'
+        ? '企业管理员'
+        : positionMapping?.role_mapping === 'department_admin'
+          ? '部门管理员'
+          : positionMapping
+            ? '成员'
+            : null;
     // 真实职位 ID 是权限源。只要将成员安排到目录职位，就按
     // role_mapping 双向升/降权，不允许前端同时传 role/isAdmin 绕过映射。
     const nextIsAdmin = positionMapping
       ? positionMapping.role_mapping === 'enterprise_admin'
-      : patch.isAdmin ?? current.isAdmin;
+      : (patch.isAdmin ?? current.isAdmin);
     const nextStatus = patch.status ?? current.status;
-    const removesActiveAdmin = current.isAdmin && current.status === 'active'
-      && (!nextIsAdmin || nextStatus === 'disabled');
+    const removesActiveAdmin =
+      current.isAdmin &&
+      current.status === 'active' &&
+      (!nextIsAdmin || nextStatus === 'disabled');
     if (removesActiveAdmin) {
-      const other = database.prepare(
-        `SELECT 1 FROM accounts
+      const other = database
+        .prepare(
+          `SELECT 1 FROM accounts
          WHERE organization_id = ? AND id <> ? AND is_admin = 1 AND status = 'active'
          LIMIT 1`,
-      ).get(current.organizationId, current.id);
+        )
+        .get(current.organizationId, current.id);
       if (!other) throw new Error('企业至少需要保留一名可登录管理员');
     }
 
@@ -3540,7 +4195,8 @@ export function updateAccount(id: string, patch: {
       if (!username) throw new Error('username required');
       set('username', username);
     }
-    if (patch.phone !== undefined) set('phone', normalizeOptionalPhone(patch.phone));
+    if (patch.phone !== undefined)
+      set('phone', normalizeOptionalPhone(patch.phone));
     if (patch.feishuOpenId !== undefined) {
       set('feishu_open_id', normalizeOptionalFeishuOpenId(patch.feishuOpenId));
     }
@@ -3561,9 +4217,11 @@ export function updateAccount(id: string, patch: {
       set('position_id', assignment.positionId);
       set('position_title', assignment.positionTitle);
     }
-    if (patch.avatarUrl !== undefined) set('avatar_url', normalizeOptionalAvatarUrl(patch.avatarUrl));
+    if (patch.avatarUrl !== undefined)
+      set('avatar_url', normalizeOptionalAvatarUrl(patch.avatarUrl));
     if (positionMapping) set('is_admin', nextIsAdmin ? 1 : 0);
-    else if (patch.isAdmin !== undefined) set('is_admin', patch.isAdmin ? 1 : 0);
+    else if (patch.isAdmin !== undefined)
+      set('is_admin', patch.isAdmin ? 1 : 0);
     if (patch.status !== undefined) set('status', patch.status);
     if (assignments.length > 0) {
       assignments.push("updated_at = datetime('now')");
@@ -3571,7 +4229,9 @@ export function updateAccount(id: string, patch: {
         const sql = organizationId
           ? `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ? AND organization_id = ?`
           : `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`;
-        database.prepare(sql).run(...values, id, ...(organizationId ? [organizationId] : []));
+        database
+          .prepare(sql)
+          .run(...values, id, ...(organizationId ? [organizationId] : []));
       } catch (error) {
         if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
           throw new Error('手机号已绑定其他账号');
@@ -3579,42 +4239,51 @@ export function updateAccount(id: string, patch: {
         throw error;
       }
     }
-    if (patch.tags !== undefined) replaceAccountTags(id, current.organizationId, patch.tags);
+    if (patch.tags !== undefined)
+      replaceAccountTags(id, current.organizationId, patch.tags);
 
-    const shouldRevokeSessions = patch.password !== undefined
-      || (patch.status !== undefined && patch.status !== current.status)
-      || nextIsAdmin !== current.isAdmin
-      || mappedRole !== null && mappedRole !== current.role
-      || assignmentChanged;
+    const shouldRevokeSessions =
+      patch.password !== undefined ||
+      (patch.status !== undefined && patch.status !== current.status) ||
+      nextIsAdmin !== current.isAdmin ||
+      (mappedRole !== null && mappedRole !== current.role) ||
+      assignmentChanged;
     if (shouldRevokeSessions) {
-      database.prepare(
-        "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
-      ).run(id);
+      database
+        .prepare(
+          "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
+        )
+        .run(id);
     }
 
     const updated = getAccount(id, organizationId)!;
-    if (current.employeeId && [
-      patch.name,
-      patch.role,
-      patch.department,
-      patch.departmentId,
-      patch.positionId,
-      patch.positionTitle,
-    ].some((value) => value !== undefined)) {
-      database.prepare(
-        `UPDATE employees
+    if (
+      current.employeeId &&
+      [
+        patch.name,
+        patch.role,
+        patch.department,
+        patch.departmentId,
+        patch.positionId,
+        patch.positionTitle,
+      ].some((value) => value !== undefined)
+    ) {
+      database
+        .prepare(
+          `UPDATE employees
          SET name = ?, role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?
          WHERE id = ? AND organization_id = ?`,
-      ).run(
-        updated.name,
-        updated.role,
-        updated.department,
-        updated.departmentId,
-        updated.positionId,
-        updated.positionTitle,
-        current.employeeId,
-        current.organizationId,
-      );
+        )
+        .run(
+          updated.name,
+          updated.role,
+          updated.department,
+          updated.departmentId,
+          updated.positionId,
+          updated.positionTitle,
+          current.employeeId,
+          current.organizationId,
+        );
     }
 
     logAudit(
@@ -3647,17 +4316,20 @@ export function deleteAccount(
     const current = getAccount(id, organizationId);
     if (!current) throw new Error('Account not found');
     if (current.isAdmin && current.status === 'active') {
-      const other = database.prepare(
-        `SELECT 1 FROM accounts
+      const other = database
+        .prepare(
+          `SELECT 1 FROM accounts
          WHERE organization_id = ? AND id <> ? AND is_admin = 1
            AND status = 'active' AND deleted_at IS NULL
          LIMIT 1`,
-      ).get(organizationId, id);
+        )
+        .get(organizationId, id);
       if (!other) throw new Error('企业至少需要保留一名可登录管理员');
     }
 
-    database.prepare(
-      `UPDATE accounts SET
+    database
+      .prepare(
+        `UPDATE accounts SET
          employee_id = NULL,
          username = ?,
          phone = NULL,
@@ -3675,23 +4347,30 @@ export function deleteAccount(
          deleted_at = datetime('now'),
          updated_at = datetime('now')
        WHERE id = ? AND organization_id = ? AND deleted_at IS NULL`,
-    ).run(
-      `deleted_${id}`,
-      passwordHash(randomBytes(32).toString('base64url')),
-      id,
-      organizationId,
-    );
-    database.prepare(
-      'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-    ).run(id, organizationId);
-    database.prepare(
-      "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
-    ).run(id);
+      )
+      .run(
+        `deleted_${id}`,
+        passwordHash(randomBytes(32).toString('base64url')),
+        id,
+        organizationId,
+      );
+    database
+      .prepare(
+        'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
+      )
+      .run(id, organizationId);
+    database
+      .prepare(
+        "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
+      )
+      .run(id);
     if (current.employeeId) {
-      database.prepare(
-        `UPDATE employees SET status = 'offboarded', offboarded_at = datetime('now')
+      database
+        .prepare(
+          `UPDATE employees SET status = 'offboarded', offboarded_at = datetime('now')
          WHERE id = ? AND organization_id = ?`,
-      ).run(current.employeeId, organizationId);
+        )
+        .run(current.employeeId, organizationId);
     }
     logAudit(
       'account_delete',
@@ -3707,48 +4386,69 @@ export function deleteAccount(
   }
 }
 
-export function createAuthSession(accountId: string, ttlMs = 30 * 24 * 60 * 60 * 1000): {
+export function createAuthSession(
+  accountId: string,
+  ttlMs = 30 * 24 * 60 * 60 * 1000,
+): {
   token: string;
   expiresAt: string;
 } {
   const account = getAccount(accountId);
-  if (!account || getOrganization(account.organizationId)?.status !== 'active') {
+  if (
+    !account ||
+    getOrganization(account.organizationId)?.status !== 'active'
+  ) {
     throw new Error('Account not found');
   }
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-  getDB().prepare(
-    `INSERT INTO auth_sessions (id, organization_id, account_id, token_hash, expires_at)
+  getDB()
+    .prepare(
+      `INSERT INTO auth_sessions (id, organization_id, account_id, token_hash, expires_at)
      VALUES (?, ?, ?, ?, ?)`,
-  ).run(`session_${randomUUID()}`, account.organizationId, accountId, tokenHash(token), expiresAt);
+    )
+    .run(
+      `session_${randomUUID()}`,
+      account.organizationId,
+      accountId,
+      tokenHash(token),
+      expiresAt,
+    );
   return { token, expiresAt };
 }
 
 export function getAccountBySession(token: string): AccountView | null {
   if (!token) return null;
-  const row = getDB().prepare(
-    `SELECT a.* FROM auth_sessions s
+  const row = getDB()
+    .prepare(
+      `SELECT a.* FROM auth_sessions s
      JOIN accounts a ON a.id = s.account_id
      JOIN organizations o ON o.id = a.organization_id
      WHERE s.token_hash = ? AND s.revoked_at IS NULL
        AND a.status = 'active' AND a.deleted_at IS NULL AND o.status = 'active'`,
-  ).get(tokenHash(token)) as AccountRow | undefined;
+    )
+    .get(tokenHash(token)) as AccountRow | undefined;
   if (!row) return null;
-  const session = getDB().prepare(
-    'SELECT expires_at FROM auth_sessions WHERE token_hash = ?',
-  ).get(tokenHash(token)) as { expires_at: string } | undefined;
-  if (!session || new Date(session.expires_at).getTime() <= Date.now()) return null;
-  getDB().prepare(
-    "UPDATE auth_sessions SET last_used_at = datetime('now') WHERE token_hash = ?",
-  ).run(tokenHash(token));
+  const session = getDB()
+    .prepare('SELECT expires_at FROM auth_sessions WHERE token_hash = ?')
+    .get(tokenHash(token)) as { expires_at: string } | undefined;
+  if (!session || new Date(session.expires_at).getTime() <= Date.now())
+    return null;
+  getDB()
+    .prepare(
+      "UPDATE auth_sessions SET last_used_at = datetime('now') WHERE token_hash = ?",
+    )
+    .run(tokenHash(token));
   return toAccountView(row);
 }
 
 export function revokeAuthSession(token: string): void {
   if (!token) return;
-  getDB().prepare(
-    "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE token_hash = ?",
-  ).run(tokenHash(token));
+  getDB()
+    .prepare(
+      "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE token_hash = ?",
+    )
+    .run(tokenHash(token));
 }
 
 const SMS_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -3757,8 +4457,17 @@ const SMS_CHALLENGE_HOURLY_LIMIT = 5;
 const SMS_CHALLENGE_MAX_ATTEMPTS = 5;
 
 export type SmsChallengeIssueResult =
-  | { ok: true; challengeId: string; expiresAt: string; retryAfterSeconds: number }
-  | { ok: false; reason: 'cooldown' | 'hourly_limit'; retryAfterSeconds: number };
+  | {
+      ok: true;
+      challengeId: string;
+      expiresAt: string;
+      retryAfterSeconds: number;
+    }
+  | {
+      ok: false;
+      reason: 'cooldown' | 'hourly_limit';
+      retryAfterSeconds: number;
+    };
 
 export function createSmsLoginChallenge(
   accountId: string,
@@ -3767,20 +4476,25 @@ export function createSmsLoginChallenge(
 ): SmsChallengeIssueResult {
   if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
   const account = getAccount(accountId);
-  if (!account || account.status !== 'active' || !account.phone) throw new Error('Account not available for SMS login');
+  if (!account || account.status !== 'active' || !account.phone)
+    throw new Error('Account not available for SMS login');
 
   const now = options.now ?? Date.now();
-  const recent = getDB().prepare(
-    `SELECT created_at_ms FROM sms_login_challenges
+  const recent = getDB()
+    .prepare(
+      `SELECT created_at_ms FROM sms_login_challenges
      WHERE account_id = ? AND created_at_ms > ?
      ORDER BY created_at_ms DESC`,
-  ).all(accountId, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
+    )
+    .all(accountId, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
   const latest = recent[0]?.created_at_ms;
   if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
     return {
       ok: false,
       reason: 'cooldown',
-      retryAfterSeconds: Math.ceil((latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000),
+      retryAfterSeconds: Math.ceil(
+        (latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000,
+      ),
     };
   }
   if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
@@ -3788,25 +4502,30 @@ export function createSmsLoginChallenge(
     return {
       ok: false,
       reason: 'hourly_limit',
-      retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000)),
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000),
+      ),
     };
   }
 
   const challengeId = `sms_${randomUUID()}`;
   const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
-  getDB().prepare(
-    `INSERT INTO sms_login_challenges
+  getDB()
+    .prepare(
+      `INSERT INTO sms_login_challenges
        (id, organization_id, account_id, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    challengeId,
-    account.organizationId,
-    accountId,
-    passwordHash(code),
-    expiresAtMs,
-    SMS_CHALLENGE_MAX_ATTEMPTS,
-    now,
-  );
+    )
+    .run(
+      challengeId,
+      account.organizationId,
+      accountId,
+      passwordHash(code),
+      expiresAtMs,
+      SMS_CHALLENGE_MAX_ATTEMPTS,
+      now,
+    );
   logAudit(
     'sms_login_code_requested',
     account.employeeId,
@@ -3824,9 +4543,11 @@ export function createSmsLoginChallenge(
 /** 供应商未接收短信时撤销刚创建的挑战，避免失败请求占用冷却/小时额度。 */
 export function discardSmsLoginChallenge(challengeId: string): void {
   if (!challengeId) return;
-  getDB().prepare(
-    'DELETE FROM sms_login_challenges WHERE id = ? AND consumed_at_ms IS NULL',
-  ).run(challengeId);
+  getDB()
+    .prepare(
+      'DELETE FROM sms_login_challenges WHERE id = ? AND consumed_at_ms IS NULL',
+    )
+    .run(challengeId);
 }
 
 export function createSmsRegistrationChallenge(
@@ -3845,19 +4566,24 @@ export function createSmsRegistrationChallenge(
 ): SmsChallengeIssueResult {
   if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
   const normalized = normalizePhone(phone);
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
   const now = options.now ?? Date.now();
-  const recent = getDB().prepare(
-    `SELECT created_at_ms FROM sms_registration_challenges
+  const recent = getDB()
+    .prepare(
+      `SELECT created_at_ms FROM sms_registration_challenges
      WHERE phone = ? AND created_at_ms > ?
      ORDER BY created_at_ms DESC`,
-  ).all(normalized, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
+    )
+    .all(normalized, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
   const latest = recent[0]?.created_at_ms;
   if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
     return {
       ok: false,
       reason: 'cooldown',
-      retryAfterSeconds: Math.ceil((latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000),
+      retryAfterSeconds: Math.ceil(
+        (latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000,
+      ),
     };
   }
   if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
@@ -3865,7 +4591,10 @@ export function createSmsRegistrationChallenge(
     return {
       ok: false,
       reason: 'hourly_limit',
-      retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000)),
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000),
+      ),
     };
   }
 
@@ -3877,30 +4606,39 @@ export function createSmsRegistrationChallenge(
   const positionTitle = options.positionTitle?.trim() || null;
   const role = options.role?.trim() || null;
   const organizationInviteId = options.organizationInviteId?.trim() || null;
-  if (department && department.length > 80) throw new Error('部门名称不能超过 80 个字符');
-  if (positionTitle && positionTitle.length > 80) throw new Error('职位名称不能超过 80 个字符');
+  if (department && department.length > 80)
+    throw new Error('部门名称不能超过 80 个字符');
+  if (positionTitle && positionTitle.length > 80)
+    throw new Error('职位名称不能超过 80 个字符');
   if (role && role.length > 80) throw new Error('角色不能超过 80 个字符');
-  getDB().prepare(
-    `INSERT INTO sms_registration_challenges
+  getDB()
+    .prepare(
+      `INSERT INTO sms_registration_challenges
        (id, organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
         organization_invite_id, department, department_id, position_id, position_title, role, created_at_ms)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    challengeId,
+    )
+    .run(
+      challengeId,
+      organizationId,
+      normalized,
+      passwordHash(code),
+      expiresAtMs,
+      SMS_CHALLENGE_MAX_ATTEMPTS,
+      organizationInviteId,
+      department,
+      departmentId,
+      positionId,
+      positionTitle,
+      role,
+      now,
+    );
+  logAudit(
+    'sms_registration_code_requested',
+    null,
+    'SMS registration code requested',
     organizationId,
-    normalized,
-    passwordHash(code),
-    expiresAtMs,
-    SMS_CHALLENGE_MAX_ATTEMPTS,
-    organizationInviteId,
-    department,
-    departmentId,
-    positionId,
-    positionTitle,
-    role,
-    now,
   );
-  logAudit('sms_registration_code_requested', null, 'SMS registration code requested', organizationId);
   return {
     ok: true,
     challengeId,
@@ -3911,9 +4649,11 @@ export function createSmsRegistrationChallenge(
 
 export function discardSmsRegistrationChallenge(challengeId: string): void {
   if (!challengeId) return;
-  getDB().prepare(
-    'DELETE FROM sms_registration_challenges WHERE id = ? AND consumed_at_ms IS NULL',
-  ).run(challengeId);
+  getDB()
+    .prepare(
+      'DELETE FROM sms_registration_challenges WHERE id = ? AND consumed_at_ms IS NULL',
+    )
+    .run(challengeId);
 }
 
 export type SmsRegistrationVerifyResult =
@@ -3939,24 +4679,28 @@ export function verifySmsRegistrationChallenge(
   code: string,
   now = Date.now(),
 ): SmsRegistrationVerifyResult {
-  const row = getDB().prepare(
-    `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
+  const row = getDB()
+    .prepare(
+      `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
             organization_invite_id, department, department_id, position_id, position_title, role, consumed_at_ms
      FROM sms_registration_challenges WHERE id = ?`,
-  ).get(challengeId) as {
-    organization_id: string;
-    phone: string;
-    code_hash: string;
-    expires_at_ms: number;
-    attempts_remaining: number;
-    organization_invite_id: string | null;
-    department: string | null;
-    department_id: string | null;
-    position_id: string | null;
-    position_title: string | null;
-    role: string | null;
-    consumed_at_ms: number | null;
-  } | undefined;
+    )
+    .get(challengeId) as
+    | {
+        organization_id: string;
+        phone: string;
+        code_hash: string;
+        expires_at_ms: number;
+        attempts_remaining: number;
+        organization_invite_id: string | null;
+        department: string | null;
+        department_id: string | null;
+        position_id: string | null;
+        position_title: string | null;
+        role: string | null;
+        consumed_at_ms: number | null;
+      }
+    | undefined;
 
   if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
   if (row.consumed_at_ms != null) {
@@ -3967,18 +4711,26 @@ export function verifySmsRegistrationChallenge(
     };
   }
   if (now > row.expires_at_ms) {
-    getDB().prepare(
-      'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
-    ).run(now, challengeId);
-    return { ok: false, reason: 'expired', attemptsRemaining: row.attempts_remaining };
+    getDB()
+      .prepare(
+        'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
+      )
+      .run(now, challengeId);
+    return {
+      ok: false,
+      reason: 'expired',
+      attemptsRemaining: row.attempts_remaining,
+    };
   }
   if (!passwordMatches(code, row.code_hash)) {
     const remaining = Math.max(0, row.attempts_remaining - 1);
-    getDB().prepare(
-      `UPDATE sms_registration_challenges
+    getDB()
+      .prepare(
+        `UPDATE sms_registration_challenges
        SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
        WHERE id = ?`,
-    ).run(remaining, remaining, now, challengeId);
+      )
+      .run(remaining, remaining, now, challengeId);
     return {
       ok: false,
       reason: remaining === 0 ? 'locked' : 'invalid',
@@ -3986,10 +4738,17 @@ export function verifySmsRegistrationChallenge(
     };
   }
 
-  getDB().prepare(
-    'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
-  ).run(now, challengeId);
-  logAudit('sms_registration_verified', null, 'SMS registration verified', row.organization_id);
+  getDB()
+    .prepare(
+      'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
+    )
+    .run(now, challengeId);
+  logAudit(
+    'sms_registration_verified',
+    null,
+    'SMS registration verified',
+    row.organization_id,
+  );
   return {
     ok: true,
     phone: row.phone,
@@ -4016,20 +4775,24 @@ export function verifySmsLoginChallenge(
   code: string,
   now = Date.now(),
 ): SmsChallengeVerifyResult {
-  const row = getDB().prepare(
-    `SELECT c.account_id, c.code_hash, c.expires_at_ms, c.attempts_remaining, c.consumed_at_ms,
+  const row = getDB()
+    .prepare(
+      `SELECT c.account_id, c.code_hash, c.expires_at_ms, c.attempts_remaining, c.consumed_at_ms,
             a.status AS account_status
      FROM sms_login_challenges c
      JOIN accounts a ON a.id = c.account_id
      WHERE c.id = ?`,
-  ).get(challengeId) as {
-    account_id: string;
-    code_hash: string;
-    expires_at_ms: number;
-    attempts_remaining: number;
-    consumed_at_ms: number | null;
-    account_status: 'active' | 'disabled';
-  } | undefined;
+    )
+    .get(challengeId) as
+    | {
+        account_id: string;
+        code_hash: string;
+        expires_at_ms: number;
+        attempts_remaining: number;
+        consumed_at_ms: number | null;
+        account_status: 'active' | 'disabled';
+      }
+    | undefined;
 
   if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
   if (row.consumed_at_ms != null) {
@@ -4040,20 +4803,34 @@ export function verifySmsLoginChallenge(
     };
   }
   if (row.account_status !== 'active') {
-    getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
+    getDB()
+      .prepare(
+        'UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?',
+      )
+      .run(now, challengeId);
     return { ok: false, reason: 'used', attemptsRemaining: 0 };
   }
   if (now > row.expires_at_ms) {
-    getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
-    return { ok: false, reason: 'expired', attemptsRemaining: row.attempts_remaining };
+    getDB()
+      .prepare(
+        'UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?',
+      )
+      .run(now, challengeId);
+    return {
+      ok: false,
+      reason: 'expired',
+      attemptsRemaining: row.attempts_remaining,
+    };
   }
   if (!passwordMatches(code, row.code_hash)) {
     const remaining = Math.max(0, row.attempts_remaining - 1);
-    getDB().prepare(
-      `UPDATE sms_login_challenges
+    getDB()
+      .prepare(
+        `UPDATE sms_login_challenges
        SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
        WHERE id = ?`,
-    ).run(remaining, remaining, now, challengeId);
+      )
+      .run(remaining, remaining, now, challengeId);
     return {
       ok: false,
       reason: remaining === 0 ? 'locked' : 'invalid',
@@ -4061,7 +4838,9 @@ export function verifySmsLoginChallenge(
     };
   }
 
-  getDB().prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?').run(now, challengeId);
+  getDB()
+    .prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?')
+    .run(now, challengeId);
   const account = getAccount(row.account_id);
   if (!account) return { ok: false, reason: 'used', attemptsRemaining: 0 };
   logAudit('sms_login_verified', account.employeeId, 'SMS login verified');
@@ -4107,7 +4886,9 @@ const DEFAULT_PARK_SERVICES = [
   ['satisfaction', '满意度调查'],
 ] as const;
 
-const PARK_SERVICE_IDS = new Set<string>(DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId));
+const PARK_SERVICE_IDS = new Set<string>(
+  DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
+);
 
 export interface ParkServiceView {
   parkId: string;
@@ -4132,9 +4913,11 @@ function toParkServiceView(row: ParkServiceRow): ParkServiceView {
   try {
     const parsed = JSON.parse(row.config_json) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      config = Object.fromEntries(Object.entries(parsed).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ));
+      config = Object.fromEntries(
+        Object.entries(parsed).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+      );
     }
   } catch {
     config = {};
@@ -4150,9 +4933,13 @@ function toParkServiceView(row: ParkServiceRow): ParkServiceView {
 }
 
 export function listParkServices(parkId: string): ParkServiceView[] {
-  return (getDB().prepare(
-    'SELECT * FROM park_services WHERE park_id = ? ORDER BY name, id',
-  ).all(parkId) as ParkServiceRow[]).map(toParkServiceView);
+  return (
+    getDB()
+      .prepare(
+        'SELECT * FROM park_services WHERE park_id = ? ORDER BY name, id',
+      )
+      .all(parkId) as ParkServiceRow[]
+  ).map(toParkServiceView);
 }
 
 export function updateParkService(input: {
@@ -4166,34 +4953,43 @@ export function updateParkService(input: {
   const park = getPark(input.parkId);
   if (!park) throw new Error('产业园不存在');
   const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有产业园管理员可配置服务');
-  const current = getDB().prepare(
-    'SELECT * FROM park_services WHERE park_id = ? AND id = ?',
-  ).get(park.id, input.serviceId) as ParkServiceRow | undefined;
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有产业园管理员可配置服务');
+  const current = getDB()
+    .prepare('SELECT * FROM park_services WHERE park_id = ? AND id = ?')
+    .get(park.id, input.serviceId) as ParkServiceRow | undefined;
   if (!current) throw new Error('园区服务不存在');
-  const name = input.name === undefined
-    ? current.name
-    : normalizeOptionalText(input.name, '园区服务名称');
+  const name =
+    input.name === undefined
+      ? current.name
+      : normalizeOptionalText(input.name, '园区服务名称');
   if (!name) throw new Error('园区服务名称不能为空');
   const config = input.config ?? toParkServiceView(current).config;
-  const normalizedConfig = Object.fromEntries(Object.entries(config).filter(
-    (entry): entry is [string, string] => (
-      entry[0].length <= 64 && typeof entry[1] === 'string' && entry[1].length <= 500
+  const normalizedConfig = Object.fromEntries(
+    Object.entries(config).filter(
+      (entry): entry is [string, string] =>
+        entry[0].length <= 64 &&
+        typeof entry[1] === 'string' &&
+        entry[1].length <= 500,
     ),
-  ));
-  getDB().prepare(
-    `UPDATE park_services SET name = ?, enabled = ?, config_json = ?, updated_at = datetime('now')
-     WHERE park_id = ? AND id = ?`,
-  ).run(
-    name,
-    (input.enabled ?? (current.enabled === 1)) ? 1 : 0,
-    JSON.stringify(normalizedConfig),
-    park.id,
-    input.serviceId,
   );
-  return toParkServiceView(getDB().prepare(
-    'SELECT * FROM park_services WHERE park_id = ? AND id = ?',
-  ).get(park.id, input.serviceId) as ParkServiceRow);
+  getDB()
+    .prepare(
+      `UPDATE park_services SET name = ?, enabled = ?, config_json = ?, updated_at = datetime('now')
+     WHERE park_id = ? AND id = ?`,
+    )
+    .run(
+      name,
+      (input.enabled ?? current.enabled === 1) ? 1 : 0,
+      JSON.stringify(normalizedConfig),
+      park.id,
+      input.serviceId,
+    );
+  return toParkServiceView(
+    getDB()
+      .prepare('SELECT * FROM park_services WHERE park_id = ? AND id = ?')
+      .get(park.id, input.serviceId) as ParkServiceRow,
+  );
 }
 
 function toParkView(row: ParkRow): ParkView {
@@ -4210,25 +5006,36 @@ function toParkView(row: ParkRow): ParkView {
 }
 
 export function getPark(id: string): ParkView | null {
-  const row = getDB().prepare('SELECT * FROM parks WHERE id = ?').get(id) as ParkRow | undefined;
+  const row = getDB().prepare('SELECT * FROM parks WHERE id = ?').get(id) as
+    ParkRow | undefined;
   return row ? toParkView(row) : null;
 }
 
-export function getParkForOrganization(organizationId: string): ParkView | null {
-  const row = getDB().prepare(
-    `SELECT p.* FROM organizations o
+export function getParkForOrganization(
+  organizationId: string,
+): ParkView | null {
+  const row = getDB()
+    .prepare(
+      `SELECT p.* FROM organizations o
      JOIN parks p ON p.id = o.park_id
      WHERE o.id = ? AND p.status = 'active'`,
-  ).get(organizationId) as ParkRow | undefined;
+    )
+    .get(organizationId) as ParkRow | undefined;
   return row ? toParkView(row) : null;
 }
 
-export function listParkTenantOrganizations(parkId: string): OrganizationView[] {
+export function listParkTenantOrganizations(
+  parkId: string,
+): OrganizationView[] {
   const park = getPark(parkId);
-  if (!park) throw new Error("Park not found");
-  return (getDB().prepare(
-    "SELECT * FROM organizations WHERE park_id = ? AND id <> ? ORDER BY name COLLATE NOCASE, slug",
-  ).all(park.id, park.adminOrganizationId) as OrganizationRow[]).map(toOrganizationView);
+  if (!park) throw new Error('Park not found');
+  return (
+    getDB()
+      .prepare(
+        'SELECT * FROM organizations WHERE park_id = ? AND id <> ? ORDER BY name COLLATE NOCASE, slug',
+      )
+      .all(park.id, park.adminOrganizationId) as OrganizationRow[]
+  ).map(toOrganizationView);
 }
 export function createParkAsPlatform(input: {
   adminOrganizationId: string;
@@ -4237,11 +5044,12 @@ export function createParkAsPlatform(input: {
   brandName?: string;
 }): ParkView {
   const organization = getEnterpriseOrganization(input.adminOrganizationId);
-  if (!organization) throw new Error("Organization not found");
+  if (!organization) throw new Error('Organization not found');
   const admin = listAccounts(input.adminOrganizationId).find(
     (account) => account.isAdmin && account.status === 'active',
   );
-  if (!admin) throw new Error("Park admin organization requires an active admin account");
+  if (!admin)
+    throw new Error('Park admin organization requires an active admin account');
   return createPark({
     adminOrganizationId: input.adminOrganizationId,
     actorAccountId: admin.id,
@@ -4258,11 +5066,14 @@ export function createPark(input: {
   brandName?: string;
 }): ParkView {
   const actor = getAccount(input.actorAccountId, input.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有企业管理员可注册产业园');
-  if (getParkForOrganization(input.adminOrganizationId)) throw new Error('企业已加入产业园');
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有企业管理员可注册产业园');
+  if (getParkForOrganization(input.adminOrganizationId))
+    throw new Error('企业已加入产业园');
   const name = normalizeOptionalText(input.name, '产业园名称');
   if (!name) throw new Error('产业园名称不能为空');
-  const brandName = normalizeOptionalText(input.brandName, '园区服务名称') ?? `${name}服务`;
+  const brandName =
+    normalizeOptionalText(input.brandName, '园区服务名称') ?? `${name}服务`;
   const slug = normalizeOrganizationSlug(
     input.slug || `park-${randomBytes(5).toString('hex')}`,
   );
@@ -4270,14 +5081,25 @@ export function createPark(input: {
   const database = getDB();
   database.exec('BEGIN IMMEDIATE');
   try {
-    database.prepare(
-      `INSERT INTO parks
+    database
+      .prepare(
+        `INSERT INTO parks
         (id, name, slug, invite_secret, admin_organization_id, brand_name)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, name, slug, randomBytes(32).toString('hex'), input.adminOrganizationId, brandName);
-    database.prepare(
-      `UPDATE organizations SET park_id = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(id, input.adminOrganizationId);
+      )
+      .run(
+        id,
+        name,
+        slug,
+        randomBytes(32).toString('hex'),
+        input.adminOrganizationId,
+        brandName,
+      );
+    database
+      .prepare(
+        `UPDATE organizations SET park_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      )
+      .run(id, input.adminOrganizationId);
     const insertService = database.prepare(
       `INSERT INTO park_services (park_id, id, name, enabled, config_json)
        VALUES (?, ?, ?, 1, '{}')`,
@@ -4321,21 +5143,30 @@ function deriveParkInviteCode(park: ParkRow, nonce: string): string {
     .digest();
   let code = '';
   for (let index = 0; index < 8; index += 1) {
-    code += ORGANIZATION_INVITE_ALPHABET[digest[index]! % ORGANIZATION_INVITE_ALPHABET.length];
+    code +=
+      ORGANIZATION_INVITE_ALPHABET[
+        digest[index]! % ORGANIZATION_INVITE_ALPHABET.length
+      ];
   }
   return `${code.slice(0, 4)}-${code.slice(4)}`;
 }
 
-function toParkInviteView(row: ParkInviteRow, park: ParkRow, now: number): ParkInviteView {
+function toParkInviteView(
+  row: ParkInviteRow,
+  park: ParkRow,
+  now: number,
+): ParkInviteView {
   return {
     id: row.id,
     parkId: row.park_id,
     code: deriveParkInviteCode(park, row.nonce),
-    status: row.revoked_at_ms != null
-      ? 'revoked'
-      : now >= row.expires_at_ms || (row.max_uses != null && row.used_count >= row.max_uses)
-        ? 'expired'
-        : 'active',
+    status:
+      row.revoked_at_ms != null
+        ? 'revoked'
+        : now >= row.expires_at_ms ||
+            (row.max_uses != null && row.used_count >= row.max_uses)
+          ? 'expired'
+          : 'active',
     usedCount: row.used_count,
     maxUses: row.max_uses,
     issuedAt: new Date(row.issued_at_ms).toISOString(),
@@ -4349,12 +5180,17 @@ export function issueParkInvite(input: {
   maxUses?: number | null;
   now?: number;
 }): ParkInviteView {
-  const parkRow = getDB().prepare('SELECT * FROM parks WHERE id = ?').get(input.parkId) as ParkRow | undefined;
-  if (!parkRow || parkRow.status !== 'active') throw new Error('产业园不存在或已停用');
+  const parkRow = getDB()
+    .prepare('SELECT * FROM parks WHERE id = ?')
+    .get(input.parkId) as ParkRow | undefined;
+  if (!parkRow || parkRow.status !== 'active')
+    throw new Error('产业园不存在或已停用');
   const actor = getAccount(input.actorAccountId, parkRow.admin_organization_id);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有产业园管理企业管理员可生成邀请码');
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有产业园管理企业管理员可生成邀请码');
   const maxUses = input.maxUses == null ? null : Math.floor(input.maxUses);
-  if (maxUses != null && (maxUses < 1 || maxUses > 10_000)) throw new Error('邀请码使用次数必须为 1 到 10000');
+  if (maxUses != null && (maxUses < 1 || maxUses > 10_000))
+    throw new Error('邀请码使用次数必须为 1 到 10000');
   const now = input.now ?? Date.now();
   const row: ParkInviteRow = {
     id: `park_invite_${randomUUID()}`,
@@ -4366,14 +5202,21 @@ export function issueParkInvite(input: {
     max_uses: maxUses,
     used_count: 0,
   };
-  getDB().prepare(
-    `INSERT INTO park_invites
+  getDB()
+    .prepare(
+      `INSERT INTO park_invites
       (id, park_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id, max_uses)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    row.id, row.park_id, row.nonce, row.issued_at_ms, row.expires_at_ms,
-    actor.id, row.max_uses,
-  );
+    )
+    .run(
+      row.id,
+      row.park_id,
+      row.nonce,
+      row.issued_at_ms,
+      row.expires_at_ms,
+      actor.id,
+      row.max_uses,
+    );
   return toParkInviteView(row, parkRow, now);
 }
 
@@ -4384,48 +5227,64 @@ export function joinOrganizationToPark(input: {
   now?: number;
 }): ParkView {
   const actor = getAccount(input.actorAccountId, input.organizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有企业管理员可让企业加入产业园');
-  if (getParkForOrganization(input.organizationId)) throw new Error('企业已加入产业园');
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有企业管理员可让企业加入产业园');
+  if (getParkForOrganization(input.organizationId))
+    throw new Error('企业已加入产业园');
   const normalized = normalizeOrganizationInviteCode(input.code);
   if (normalized.length !== 8) throw new Error('产业园邀请码无效或已过期');
   const now = input.now ?? Date.now();
-  const rows = getDB().prepare(
-    `SELECT i.*, p.name, p.slug, p.invite_secret, p.admin_organization_id,
+  const rows = getDB()
+    .prepare(
+      `SELECT i.*, p.name, p.slug, p.invite_secret, p.admin_organization_id,
             p.brand_name, p.status, p.created_at, p.updated_at
      FROM park_invites i JOIN parks p ON p.id = i.park_id
      WHERE i.revoked_at_ms IS NULL AND i.expires_at_ms > ? AND p.status = 'active'
        AND (i.max_uses IS NULL OR i.used_count < i.max_uses)`,
-  ).all(now) as Array<ParkInviteRow & Omit<ParkRow, 'id'>>;
+    )
+    .all(now) as Array<ParkInviteRow & Omit<ParkRow, 'id'>>;
   const matches = rows.filter((row) => {
-    const expected = normalizeOrganizationInviteCode(deriveParkInviteCode({
-      id: row.park_id,
-      name: row.name,
-      slug: row.slug,
-      invite_secret: row.invite_secret,
-      admin_organization_id: row.admin_organization_id,
-      brand_name: row.brand_name,
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }, row.nonce));
-    return expected.length === normalized.length
-      && timingSafeEqual(Buffer.from(expected), Buffer.from(normalized));
+    const expected = normalizeOrganizationInviteCode(
+      deriveParkInviteCode(
+        {
+          id: row.park_id,
+          name: row.name,
+          slug: row.slug,
+          invite_secret: row.invite_secret,
+          admin_organization_id: row.admin_organization_id,
+          brand_name: row.brand_name,
+          status: row.status,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        },
+        row.nonce,
+      ),
+    );
+    return (
+      expected.length === normalized.length &&
+      timingSafeEqual(Buffer.from(expected), Buffer.from(normalized))
+    );
   });
   if (matches.length !== 1) throw new Error('产业园邀请码无效或已过期');
   const invite = matches[0]!;
   const database = getDB();
   database.exec('BEGIN IMMEDIATE');
   try {
-    const reserved = database.prepare(
-      `UPDATE park_invites SET used_count = used_count + 1
+    const reserved = database
+      .prepare(
+        `UPDATE park_invites SET used_count = used_count + 1
        WHERE id = ? AND revoked_at_ms IS NULL AND expires_at_ms > ?
          AND (max_uses IS NULL OR used_count < max_uses)`,
-    ).run(invite.id, now);
-    if (Number(reserved.changes) !== 1) throw new Error('产业园邀请码无效或已过期');
-    const joined = database.prepare(
-      `UPDATE organizations SET park_id = ?, updated_at = datetime('now')
+      )
+      .run(invite.id, now);
+    if (Number(reserved.changes) !== 1)
+      throw new Error('产业园邀请码无效或已过期');
+    const joined = database
+      .prepare(
+        `UPDATE organizations SET park_id = ?, updated_at = datetime('now')
        WHERE id = ? AND park_id IS NULL`,
-    ).run(invite.park_id, input.organizationId);
+      )
+      .run(invite.park_id, input.organizationId);
     if (Number(joined.changes) !== 1) throw new Error('企业已加入产业园');
     database.exec('COMMIT');
   } catch (error) {
@@ -4442,15 +5301,24 @@ export interface ParkServiceSpecialistView {
   name: string;
 }
 
-export function listParkServiceSpecialists(parkId: string): ParkServiceSpecialistView[] {
-  return (getDB().prepare(
-    `SELECT s.park_id, s.service_id, a.id AS account_id, a.name
+export function listParkServiceSpecialists(
+  parkId: string,
+): ParkServiceSpecialistView[] {
+  return (
+    getDB()
+      .prepare(
+        `SELECT s.park_id, s.service_id, a.id AS account_id, a.name
      FROM park_service_specialists s JOIN accounts a ON a.id = s.account_id
      WHERE s.park_id = ? AND a.status = 'active' AND a.deleted_at IS NULL
      ORDER BY s.service_id, a.name, a.id`,
-  ).all(parkId) as Array<{
-    park_id: string; service_id: string; account_id: string; name: string;
-  }>).map((row) => ({
+      )
+      .all(parkId) as Array<{
+      park_id: string;
+      service_id: string;
+      account_id: string;
+      name: string;
+    }>
+  ).map((row) => ({
     parkId: row.park_id,
     serviceId: row.service_id,
     accountId: row.account_id,
@@ -4467,22 +5335,28 @@ export function setParkServiceSpecialist(input: {
   const park = getPark(input.parkId);
   if (!park) throw new Error('产业园不存在');
   const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有产业园管理员可设置服务专员');
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有产业园管理员可设置服务专员');
   const specialist = getAccount(input.accountId, park.adminOrganizationId);
-  if (!specialist || specialist.status !== 'active') throw new Error('专员必须属于产业园管理企业');
+  if (!specialist || specialist.status !== 'active')
+    throw new Error('专员必须属于产业园管理企业');
   const serviceId = input.serviceId.trim();
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(serviceId)) throw new Error('服务标识格式不正确');
-  const service = getDB().prepare(
-    'SELECT enabled FROM park_services WHERE park_id = ? AND id = ?',
-  ).get(park.id, serviceId) as { enabled: number } | undefined;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(serviceId))
+    throw new Error('服务标识格式不正确');
+  const service = getDB()
+    .prepare('SELECT enabled FROM park_services WHERE park_id = ? AND id = ?')
+    .get(park.id, serviceId) as { enabled: number } | undefined;
   if (!service) throw new Error('园区服务不存在');
   if (service.enabled !== 1) throw new Error('园区服务已停用');
-  getDB().prepare(
-    `INSERT OR IGNORE INTO park_service_specialists (park_id, service_id, account_id)
+  getDB()
+    .prepare(
+      `INSERT OR IGNORE INTO park_service_specialists (park_id, service_id, account_id)
      VALUES (?, ?, ?)`,
-  ).run(park.id, serviceId, specialist.id);
-  return listParkServiceSpecialists(park.id)
-    .find((item) => item.serviceId === serviceId && item.accountId === specialist.id)!;
+    )
+    .run(park.id, serviceId, specialist.id);
+  return listParkServiceSpecialists(park.id).find(
+    (item) => item.serviceId === serviceId && item.accountId === specialist.id,
+  )!;
 }
 
 export function removeParkServiceSpecialist(input: {
@@ -4494,11 +5368,14 @@ export function removeParkServiceSpecialist(input: {
   const park = getPark(input.parkId);
   if (!park) throw new Error('产业园不存在');
   const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') throw new Error('只有产业园管理员可设置服务专员');
-  getDB().prepare(
-    `DELETE FROM park_service_specialists
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有产业园管理员可设置服务专员');
+  getDB()
+    .prepare(
+      `DELETE FROM park_service_specialists
      WHERE park_id = ? AND service_id = ? AND account_id = ?`,
-  ).run(park.id, input.serviceId, input.accountId);
+    )
+    .run(park.id, input.serviceId, input.accountId);
 }
 
 export interface TicketView {
@@ -4560,22 +5437,43 @@ interface TicketRow {
 }
 
 function ticketView(id: string, viewerAccountId?: string): TicketView {
-  const row = getDB().prepare('SELECT * FROM it_tickets WHERE id = ?').get(id) as TicketRow | undefined;
+  const row = getDB()
+    .prepare('SELECT * FROM it_tickets WHERE id = ?')
+    .get(id) as TicketRow | undefined;
   if (!row) throw new Error('Ticket not found');
-  const activeCreator = getAccount(row.created_by_account_id, row.organization_id);
-  const creatorRow = activeCreator ? null : getDB().prepare(
-    `SELECT id FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NOT NULL`,
-  ).get(row.created_by_account_id, row.organization_id) as { id: string } | undefined;
-  const creator: Pick<AccountView, 'id' | 'name' | 'username'> | null = activeCreator
-    ? { id: activeCreator.id, name: activeCreator.name, username: activeCreator.username }
-    : creatorRow
-      ? { id: creatorRow.id, name: '已删除账号', username: '已删除账号' }
-      : null;
+  const activeCreator = getAccount(
+    row.created_by_account_id,
+    row.organization_id,
+  );
+  const creatorRow = activeCreator
+    ? null
+    : (getDB()
+        .prepare(
+          `SELECT id FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NOT NULL`,
+        )
+        .get(row.created_by_account_id, row.organization_id) as
+        { id: string } | undefined);
+  const creator: Pick<AccountView, 'id' | 'name' | 'username'> | null =
+    activeCreator
+      ? {
+          id: activeCreator.id,
+          name: activeCreator.name,
+          username: activeCreator.username,
+        }
+      : creatorRow
+        ? { id: creatorRow.id, name: '已删除账号', username: '已删除账号' }
+        : null;
   if (!creator) throw new Error('Ticket creator not found');
-  const deliveries = getDB().prepare(
-    `SELECT account_id, status, read_at FROM ticket_deliveries
+  const deliveries = getDB()
+    .prepare(
+      `SELECT account_id, status, read_at FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
-  ).all(id, row.organization_id) as Array<{ account_id: string; status: string; read_at: string | null }>;
+    )
+    .all(id, row.organization_id) as Array<{
+    account_id: string;
+    status: string;
+    read_at: string | null;
+  }>;
   const recipientAccounts = deliveries
     .map((delivery) => getAccount(delivery.account_id))
     .filter((account): account is AccountView => account !== null);
@@ -4584,20 +5482,31 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   const viewerDelivery = viewerAccountId
     ? deliveries.find((delivery) => delivery.account_id === viewerAccountId)
     : undefined;
-  const notifications = viewer?.isAdmin ? getDB().prepare(
-    `SELECT channel, event, status, detail, created_at FROM ticket_notifications
+  const notifications = viewer?.isAdmin
+    ? (getDB()
+        .prepare(
+          `SELECT channel, event, status, detail, created_at FROM ticket_notifications
      WHERE ticket_id = ? ORDER BY created_at`,
-  ).all(id) as Array<{
-    channel: 'otto' | 'sms' | 'feishu'; event: string;
-    status: 'sent' | 'failed' | 'skipped'; detail: string | null; created_at: string;
-  }> : [];
+        )
+        .all(id) as Array<{
+        channel: 'otto' | 'sms' | 'feishu';
+        event: string;
+        status: 'sent' | 'failed' | 'skipped';
+        detail: string | null;
+        created_at: string;
+      }>)
+    : [];
   let formData: Record<string, string> = {};
   try {
-    const parsed = row.form_data ? JSON.parse(row.form_data) as unknown : null;
+    const parsed = row.form_data
+      ? (JSON.parse(row.form_data) as unknown)
+      : null;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      formData = Object.fromEntries(Object.entries(parsed).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ));
+      formData = Object.fromEntries(
+        Object.entries(parsed).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+      );
     }
   } catch {
     formData = {};
@@ -4628,7 +5537,10 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
     },
     recipientCount: recipientAccounts.length,
     recipients: canSeeRecipients
-      ? recipientAccounts.map((recipient) => ({ id: recipient.id, name: recipient.name }))
+      ? recipientAccounts.map((recipient) => ({
+          id: recipient.id,
+          name: recipient.name,
+        }))
       : [],
     deliveryStatus: viewerDelivery?.status,
     readAt: viewerDelivery?.read_at,
@@ -4644,29 +5556,41 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   };
 }
 
-export function getTicketForAccount(id: string, accountId: string): TicketView | null {
+export function getTicketForAccount(
+  id: string,
+  accountId: string,
+): TicketView | null {
   const account = getAccount(accountId);
   if (!account) return null;
-  const row = getDB().prepare(
-    'SELECT organization_id, park_id, created_by_account_id FROM it_tickets WHERE id = ?',
-  ).get(id) as {
-    organization_id: string; park_id: string | null; created_by_account_id: string;
-  } | undefined;
+  const row = getDB()
+    .prepare(
+      'SELECT organization_id, park_id, created_by_account_id FROM it_tickets WHERE id = ?',
+    )
+    .get(id) as
+    | {
+        organization_id: string;
+        park_id: string | null;
+        created_by_account_id: string;
+      }
+    | undefined;
   if (!row) return null;
-  const delivery = getDB().prepare(
-    'SELECT 1 FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
-  ).get(id, accountId);
+  const delivery = getDB()
+    .prepare(
+      'SELECT 1 FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+    )
+    .get(id, accountId);
   const park = row.park_id ? getPark(row.park_id) : null;
-  const isCreatorOrganizationAdmin = account.isAdmin
-    && account.organizationId === row.organization_id;
-  const isParkAdmin = account.isAdmin
-    && park?.adminOrganizationId === account.organizationId;
+  const isCreatorOrganizationAdmin =
+    account.isAdmin && account.organizationId === row.organization_id;
+  const isParkAdmin =
+    account.isAdmin && park?.adminOrganizationId === account.organizationId;
   if (
-    row.created_by_account_id !== accountId
-    && !delivery
-    && !isCreatorOrganizationAdmin
-    && !isParkAdmin
-  ) return null;
+    row.created_by_account_id !== accountId &&
+    !delivery &&
+    !isCreatorOrganizationAdmin &&
+    !isParkAdmin
+  )
+    return null;
   return ticketView(id, accountId);
 }
 
@@ -4674,26 +5598,38 @@ export function getTicketForAccount(id: string, accountId: string): TicketView |
  * 仅向已经有权查看该工单的账号返回创建者联系方式。园区处理方可以据此向
  * 跨组织创建者发送进度回执，但不能把 accountId 当作跨租户任意账号查询器。
  */
-export function getTicketCreatorForAccount(id: string, accountId: string): AccountView | null {
+export function getTicketCreatorForAccount(
+  id: string,
+  accountId: string,
+): AccountView | null {
   if (!getTicketForAccount(id, accountId)) return null;
-  const row = getDB().prepare(
-    'SELECT organization_id, created_by_account_id FROM it_tickets WHERE id = ?',
-  ).get(id) as { organization_id: string; created_by_account_id: string } | undefined;
-  return row ? getAccount(row.created_by_account_id, row.organization_id) : null;
+  const row = getDB()
+    .prepare(
+      'SELECT organization_id, created_by_account_id FROM it_tickets WHERE id = ?',
+    )
+    .get(id) as
+    { organization_id: string; created_by_account_id: string } | undefined;
+  return row
+    ? getAccount(row.created_by_account_id, row.organization_id)
+    : null;
 }
 
 /** 已授权账号是否仍可使用该工单所属功能；企业 IT 工单不受园区开关影响。 */
-export function isTicketFeatureEnabledForAccount(id: string, accountId: string): boolean {
+export function isTicketFeatureEnabledForAccount(
+  id: string,
+  accountId: string,
+): boolean {
   if (!getTicketForAccount(id, accountId)) return false;
   const viewer = getAccount(accountId);
   if (!viewer) return false;
-  const row = getDB().prepare(
-    'SELECT organization_id, park_id FROM it_tickets WHERE id = ?',
-  ).get(id) as { organization_id: string; park_id: string | null } | undefined;
+  const row = getDB()
+    .prepare('SELECT organization_id, park_id FROM it_tickets WHERE id = ?')
+    .get(id) as { organization_id: string; park_id: string | null } | undefined;
   if (!row) return false;
-  return row.park_id === null || (
-    getOrganizationFeatures(row.organization_id).park_service
-    && getOrganizationFeatures(viewer.organizationId).park_service
+  return (
+    row.park_id === null ||
+    (getOrganizationFeatures(row.organization_id).park_service &&
+      getOrganizationFeatures(viewer.organizationId).park_service)
   );
 }
 
@@ -4714,7 +5650,9 @@ export function createTicket(input: {
   if (!creator) throw new Error('Account not found');
   const title = input.title.trim();
   const description = input.description.trim();
-  const targetTags = normalizeTags(input.targetTags?.length ? input.targetTags : ['IT', '报修']);
+  const targetTags = normalizeTags(
+    input.targetTags?.length ? input.targetTags : ['IT', '报修'],
+  );
   if (!title || !description || targetTags.length === 0) {
     throw new Error('title, description and targetTags required');
   }
@@ -4723,14 +5661,17 @@ export function createTicket(input: {
   const isParkService = PARK_SERVICE_IDS.has(serviceId);
   if (serviceId !== 'it' && !isParkService) throw new Error('服务类型不正确');
 
-  const candidatePark = isParkService ? getParkForOrganization(creator.organizationId) : null;
+  const candidatePark = isParkService
+    ? getParkForOrganization(creator.organizationId)
+    : null;
   if (isParkService && !candidatePark) {
     throw new Error('企业尚未加入产业园');
   }
-  if (candidatePark && (
-    !getOrganizationFeatures(creator.organizationId).park_service
-    || !getOrganizationFeatures(candidatePark.adminOrganizationId).park_service
-  )) {
+  if (
+    candidatePark &&
+    (!getOrganizationFeatures(creator.organizationId).park_service ||
+      !getOrganizationFeatures(candidatePark.adminOrganizationId).park_service)
+  ) {
     throw new Error('园区服务功能已由管理员关闭');
   }
   const park = candidatePark;
@@ -4742,54 +5683,78 @@ export function createTicket(input: {
     throw new Error('园区服务已停用');
   }
   const parkSpecialists = park
-    ? listParkServiceSpecialists(park.id).filter((item) => item.serviceId === serviceId)
+    ? listParkServiceSpecialists(park.id).filter(
+        (item) => item.serviceId === serviceId,
+      )
     : [];
-  const parkAdminFallback = park && parkSpecialists.length === 0
-    ? (getDB().prepare(
-      `SELECT * FROM accounts WHERE organization_id = ? AND is_admin = 1
+  const parkAdminFallback =
+    park && parkSpecialists.length === 0
+      ? (
+          getDB()
+            .prepare(
+              `SELECT * FROM accounts WHERE organization_id = ? AND is_admin = 1
        AND status = 'active' AND deleted_at IS NULL ORDER BY name, username`,
-    ).all(park.adminOrganizationId) as AccountRow[]).map(toAccountView)
-    : [];
+            )
+            .all(park.adminOrganizationId) as AccountRow[]
+        ).map(toAccountView)
+      : [];
   const placeholders = targetTags.map(() => '?').join(', ');
-  const recipients = parkSpecialists.length > 0
-    ? parkSpecialists
-      .map((item) => getAccount(item.accountId))
-      .filter((account): account is AccountView => account !== null)
-    : parkAdminFallback.length > 0
-      ? parkAdminFallback
-      : (getDB().prepare(
-    `SELECT a.* FROM accounts a
+  const recipients =
+    parkSpecialists.length > 0
+      ? parkSpecialists
+          .map((item) => getAccount(item.accountId))
+          .filter((account): account is AccountView => account !== null)
+      : parkAdminFallback.length > 0
+        ? parkAdminFallback
+        : (
+            getDB()
+              .prepare(
+                `SELECT a.* FROM accounts a
      JOIN account_tags t ON t.account_id = a.id
      WHERE a.organization_id = ? AND t.organization_id = ?
        AND a.status = 'active' AND t.tag IN (${placeholders})
      GROUP BY a.id
      HAVING COUNT(DISTINCT t.tag) = ?
      ORDER BY a.name, a.username`,
-  ).all(
-    creator.organizationId,
-    creator.organizationId,
-    ...targetTags,
-    targetTags.length,
-  ) as AccountRow[]).map(toAccountView);
+              )
+              .all(
+                creator.organizationId,
+                creator.organizationId,
+                ...targetTags,
+                targetTags.length,
+              ) as AccountRow[]
+          ).map(toAccountView);
 
   const id = `ticket_${randomUUID()}`;
-  getDB().prepare(
-    `INSERT INTO it_tickets
+  getDB()
+    .prepare(
+      `INSERT INTO it_tickets
        (id, organization_id, park_id, created_by_account_id, service_id, title, description, target_tags, form_data,
         category, location, urgency, contact, contact_phone, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
-  ).run(
-    id, creator.organizationId, park?.id ?? null, creator.id, serviceId,
-    title, description, JSON.stringify(targetTags), JSON.stringify(input.formData ?? {}),
-    input.category?.trim() || null, input.location?.trim() || null,
-    input.urgency?.trim() || null, input.contact?.trim() || null,
-    input.contactPhone?.trim() || null,
-  );
+    )
+    .run(
+      id,
+      creator.organizationId,
+      park?.id ?? null,
+      creator.id,
+      serviceId,
+      title,
+      description,
+      JSON.stringify(targetTags),
+      JSON.stringify(input.formData ?? {}),
+      input.category?.trim() || null,
+      input.location?.trim() || null,
+      input.urgency?.trim() || null,
+      input.contact?.trim() || null,
+      input.contactPhone?.trim() || null,
+    );
   const deliver = getDB().prepare(
     `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
      VALUES (?, ?, ?)`,
   );
-  for (const recipient of recipients) deliver.run(creator.organizationId, id, recipient.id);
+  for (const recipient of recipients)
+    deliver.run(creator.organizationId, id, recipient.id);
   logAudit(
     'ticket_create',
     creator.employeeId,
@@ -4800,61 +5765,82 @@ export function createTicket(input: {
 }
 
 /** 通知只能在服务端使用完整账号资料，绝不把手机号或飞书 open_id 返回给普通客户端。 */
-export function getTicketNotificationRecipients(ticketId: string): AccountView[] {
-  const row = getDB().prepare(
-    'SELECT organization_id FROM it_tickets WHERE id = ?',
-  ).get(ticketId) as { organization_id: string } | undefined;
+export function getTicketNotificationRecipients(
+  ticketId: string,
+): AccountView[] {
+  const row = getDB()
+    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+    .get(ticketId) as { organization_id: string } | undefined;
   if (!row) return [];
-  const deliveries = getDB().prepare(
-    `SELECT account_id FROM ticket_deliveries
+  const deliveries = getDB()
+    .prepare(
+      `SELECT account_id FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
-  ).all(ticketId, row.organization_id) as Array<{ account_id: string }>;
+    )
+    .all(ticketId, row.organization_id) as Array<{ account_id: string }>;
   return deliveries
     .map(({ account_id: accountId }) => getAccount(accountId))
     .filter((account): account is AccountView => account !== null);
 }
 
 export function listTicketInbox(accountId: string): TicketView[] {
-  const ids = getDB().prepare(
-    `SELECT t.id FROM ticket_deliveries d
+  const ids = getDB()
+    .prepare(
+      `SELECT t.id FROM ticket_deliveries d
      JOIN it_tickets t ON t.id = d.ticket_id
      WHERE d.account_id = ? AND d.organization_id = t.organization_id
      ORDER BY t.updated_at DESC, t.created_at DESC`,
-  ).all(accountId) as Array<{ id: string }>;
+    )
+    .all(accountId) as Array<{ id: string }>;
   return ids.map(({ id }) => ticketView(id, accountId));
 }
 
 export function listTicketsForAccount(accountId: string): TicketView[] {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const managedPark = getDB().prepare(
-    'SELECT id FROM parks WHERE admin_organization_id = ? AND status = ? LIMIT 1',
-  ).get(account.organizationId, 'active') as { id: string } | undefined;
-  const ids = (account.isAdmin
-    ? managedPark
-      ? getDB().prepare(
-        `SELECT id FROM it_tickets WHERE organization_id = ? OR park_id = ?
+  const managedPark = getDB()
+    .prepare(
+      'SELECT id FROM parks WHERE admin_organization_id = ? AND status = ? LIMIT 1',
+    )
+    .get(account.organizationId, 'active') as { id: string } | undefined;
+  const ids = (
+    account.isAdmin
+      ? managedPark
+        ? getDB()
+            .prepare(
+              `SELECT id FROM it_tickets WHERE organization_id = ? OR park_id = ?
          ORDER BY updated_at DESC, created_at DESC`,
-      ).all(account.organizationId, managedPark.id)
-      : getDB().prepare(
-        `SELECT id FROM it_tickets WHERE organization_id = ? ORDER BY updated_at DESC, created_at DESC`,
-      ).all(account.organizationId)
-    : getDB().prepare(
-      `SELECT DISTINCT t.id FROM it_tickets t
+            )
+            .all(account.organizationId, managedPark.id)
+        : getDB()
+            .prepare(
+              `SELECT id FROM it_tickets WHERE organization_id = ? ORDER BY updated_at DESC, created_at DESC`,
+            )
+            .all(account.organizationId)
+      : getDB()
+          .prepare(
+            `SELECT DISTINCT t.id FROM it_tickets t
        LEFT JOIN ticket_deliveries d ON d.ticket_id = t.id AND d.account_id = ?
        WHERE t.created_by_account_id = ? OR d.account_id = ?
        ORDER BY t.updated_at DESC, t.created_at DESC`,
-    ).all(account.id, account.id, account.id)) as Array<{ id: string }>;
+          )
+          .all(account.id, account.id, account.id)
+  ) as Array<{ id: string }>;
   return ids.map(({ id }) => ticketView(id, account.id));
 }
 
-export function markTicketRead(ticketId: string, accountId: string): TicketView {
+export function markTicketRead(
+  ticketId: string,
+  accountId: string,
+): TicketView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const changed = getDB().prepare(
-    `UPDATE ticket_deliveries SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
+  const changed = getDB()
+    .prepare(
+      `UPDATE ticket_deliveries SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
      WHERE ticket_id = ? AND account_id = ?`,
-  ).run(ticketId, account.id);
+    )
+    .run(ticketId, account.id);
   if (changed.changes === 0) throw new Error('Ticket delivery not found');
   return ticketView(ticketId, accountId);
 }
@@ -4870,43 +5856,66 @@ export function updateTicket(input: {
   if (!account) throw new Error('Account not found');
   const current = getTicketForAccount(input.ticketId, input.accountId);
   if (!current) throw new Error('Ticket not found');
-  const ticketRow = getDB().prepare(
-    'SELECT organization_id FROM it_tickets WHERE id = ?',
-  ).get(input.ticketId) as { organization_id: string };
+  const ticketRow = getDB()
+    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+    .get(input.ticketId) as { organization_id: string };
   const isRecipient = Boolean(current.isRecipient);
   if (input.action === 'confirm') {
     if (!current.isCreator) throw new Error('Only ticket creator can confirm');
-    if (current.status !== '待验收') throw new Error('Ticket is not awaiting acceptance');
-    getDB().prepare(
-      `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
+    if (current.status !== '待验收')
+      throw new Error('Ticket is not awaiting acceptance');
+    getDB()
+      .prepare(
+        `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
        WHERE id = ? AND organization_id = ?`,
-    ).run(input.ticketId, ticketRow.organization_id);
+      )
+      .run(input.ticketId, ticketRow.organization_id);
   } else {
-    if (!isRecipient) throw new Error('Only assigned repair workers can update');
+    if (!isRecipient)
+      throw new Error('Only assigned repair workers can update');
     if (input.action === 'respond') {
       const responseType = input.responseType?.trim() || '';
       const responseText = input.responseText?.trim() || '';
-      if (!responseType || !responseText) throw new Error('responseType and responseText required');
-      if (responseType.length > 50 || responseText.length > 2000) throw new Error('Repair response is too long');
-      const nextStatus = responseType === '已完成维修' ? '待验收' : current.status;
-      getDB().prepare(
-        `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
+      if (!responseType || !responseText)
+        throw new Error('responseType and responseText required');
+      if (responseType.length > 50 || responseText.length > 2000)
+        throw new Error('Repair response is too long');
+      const nextStatus =
+        responseType === '已完成维修' ? '待验收' : current.status;
+      getDB()
+        .prepare(
+          `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
           status = ?, completed_at = CASE WHEN ? = '待验收' THEN datetime('now') ELSE completed_at END,
           updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
-      ).run(responseType, responseText, nextStatus, nextStatus, input.ticketId, ticketRow.organization_id);
+        )
+        .run(
+          responseType,
+          responseText,
+          nextStatus,
+          nextStatus,
+          input.ticketId,
+          ticketRow.organization_id,
+        );
     } else if (input.action === 'accept') {
-      if (!['待接单', '待派单'].includes(current.status)) throw new Error('Ticket cannot be accepted');
-      const acceptedStatus = current.serviceId === 'repair' ? '维修中' : '处理中';
-      getDB().prepare(
-        `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
+      if (!['待接单', '待派单'].includes(current.status))
+        throw new Error('Ticket cannot be accepted');
+      const acceptedStatus =
+        current.serviceId === 'repair' ? '维修中' : '处理中';
+      getDB()
+        .prepare(
+          `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
          WHERE id = ? AND organization_id = ?`,
-      ).run(acceptedStatus, input.ticketId, ticketRow.organization_id);
+        )
+        .run(acceptedStatus, input.ticketId, ticketRow.organization_id);
     } else if (input.action === 'complete') {
-      if (!['维修中', '处理中'].includes(current.status)) throw new Error('Ticket is not being processed');
-      getDB().prepare(
-        `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
+      if (!['维修中', '处理中'].includes(current.status))
+        throw new Error('Ticket is not being processed');
+      getDB()
+        .prepare(
+          `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
          WHERE id = ? AND organization_id = ?`,
-      ).run(input.ticketId, ticketRow.organization_id);
+        )
+        .run(input.ticketId, ticketRow.organization_id);
     }
   }
   logAudit(
@@ -4926,24 +5935,26 @@ export function recordTicketNotification(input: {
   status: 'sent' | 'failed' | 'skipped';
   detail?: string | null;
 }): void {
-  const ticket = getDB().prepare(
-    'SELECT organization_id FROM it_tickets WHERE id = ?',
-  ).get(input.ticketId) as { organization_id: string } | undefined;
+  const ticket = getDB()
+    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+    .get(input.ticketId) as { organization_id: string } | undefined;
   if (!ticket) throw new Error('Ticket not found');
-  getDB().prepare(
-    `INSERT INTO ticket_notifications
+  getDB()
+    .prepare(
+      `INSERT INTO ticket_notifications
       (id, organization_id, ticket_id, recipient_account_id, channel, event, status, detail)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    `ticket_notice_${randomUUID()}`,
-    ticket.organization_id,
-    input.ticketId,
-    input.recipientAccountId,
-    input.channel,
-    input.event,
-    input.status,
-    input.detail ?? null,
-  );
+    )
+    .run(
+      `ticket_notice_${randomUUID()}`,
+      ticket.organization_id,
+      input.ticketId,
+      input.recipientAccountId,
+      input.channel,
+      input.event,
+      input.status,
+      input.detail ?? null,
+    );
 }
 
 export interface ParkSettingsView {
@@ -5005,7 +6016,9 @@ function parkMeetingRoomView(row: ParkMeetingRoomRow): ParkMeetingRoomView {
   try {
     const parsed = JSON.parse(row.equipment) as unknown;
     if (Array.isArray(parsed)) {
-      equipment = parsed.filter((item): item is string => typeof item === 'string');
+      equipment = parsed.filter(
+        (item): item is string => typeof item === 'string',
+      );
     }
   } catch {
     equipment = [];
@@ -5032,7 +6045,11 @@ function localISODate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function futureDateRange(days = 30): { from: string; to: string; dates: string[] } {
+function futureDateRange(days = 30): {
+  from: string;
+  to: string;
+  dates: string[];
+} {
   const start = new Date();
   start.setHours(12, 0, 0, 0);
   start.setDate(start.getDate() + 1);
@@ -5047,14 +6064,16 @@ function futureDateRange(days = 30): { from: string; to: string; dates: string[]
 
 function assertFutureMeetingDate(value: string): string {
   const date = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('请选择有效的预约日期');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+    throw new Error('请选择有效的预约日期');
   const { from } = futureDateRange(1);
   if (date < from) throw new Error('会议室只能预约未来日期');
   return date;
 }
 
 function assertMeetingSlotKey(value: string): 'morning' | 'afternoon' {
-  if (value !== 'morning' && value !== 'afternoon') throw new Error('请选择有效的使用时段');
+  if (value !== 'morning' && value !== 'afternoon')
+    throw new Error('请选择有效的使用时段');
   return value;
 }
 
@@ -5095,12 +6114,14 @@ export function listParkMeetingSlots(
   const from = fromDate ? assertFutureMeetingDate(fromDate) : defaults.from;
   const to = toDate ? assertFutureMeetingDate(toDate) : defaults.to;
   if (to < from) throw new Error('预约结束日期不能早于开始日期');
-  const rows = getDB().prepare(
-    `SELECT id, meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
+  const rows = getDB()
+    .prepare(
+      `SELECT id, meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
      FROM park_meeting_slots
      WHERE organization_id = ? AND use_date BETWEEN ? AND ?
      ORDER BY use_date, meeting_room_id, slot_key DESC`,
-  ).all(organizationId, from, to) as Array<{
+    )
+    .all(organizationId, from, to) as Array<{
     id: string;
     meeting_room_id: string;
     use_date: string;
@@ -5115,7 +6136,11 @@ export function listParkMeetingSlots(
     date: row.use_date,
     slotKey: row.slot_key,
     label: meetingSlotLabel(row.slot_key),
-    status: row.booked_ticket_id ? 'booked' : row.enabled === 1 ? 'available' : 'closed',
+    status: row.booked_ticket_id
+      ? 'booked'
+      : row.enabled === 1
+        ? 'available'
+        : 'closed',
     updatedAt: row.updated_at,
   }));
 }
@@ -5124,30 +6149,37 @@ export function setParkMeetingSlotAvailability(
   organizationId: string,
   input: { roomId: string; date: string; slotKey: string; enabled: boolean },
 ): ParkMeetingSlotView {
-  const room = listParkMeetingRooms(organizationId, true).find((item) => item.id === input.roomId);
+  const room = listParkMeetingRooms(organizationId, true).find(
+    (item) => item.id === input.roomId,
+  );
   if (!room) throw new Error('会议室不存在');
   const date = assertFutureMeetingDate(input.date);
   const slotKey = assertMeetingSlotKey(input.slotKey);
   ensureDefaultParkMeetingSlots(organizationId);
-  const current = getDB().prepare(
-    `SELECT booked_ticket_id FROM park_meeting_slots
+  const current = getDB()
+    .prepare(
+      `SELECT booked_ticket_id FROM park_meeting_slots
      WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-  ).get(organizationId, room.id, date, slotKey) as { booked_ticket_id: string | null } | undefined;
+    )
+    .get(organizationId, room.id, date, slotKey) as
+    { booked_ticket_id: string | null } | undefined;
   if (current?.booked_ticket_id) throw new Error('已预约的时间段不能关闭');
-  getDB().prepare(
-    `INSERT INTO park_meeting_slots
+  getDB()
+    .prepare(
+      `INSERT INTO park_meeting_slots
       (id, organization_id, meeting_room_id, use_date, slot_key, enabled)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(organization_id, meeting_room_id, use_date, slot_key)
      DO UPDATE SET enabled = excluded.enabled, updated_at = datetime('now')`,
-  ).run(
-    `park_slot_${randomUUID()}`,
-    organizationId,
-    room.id,
-    date,
-    slotKey,
-    input.enabled ? 1 : 0,
-  );
+    )
+    .run(
+      `park_slot_${randomUUID()}`,
+      organizationId,
+      room.id,
+      date,
+      slotKey,
+      input.enabled ? 1 : 0,
+    );
   return listParkMeetingSlots(organizationId, date, date).find(
     (slot) => slot.roomId === room.id && slot.slotKey === slotKey,
   )!;
@@ -5160,21 +6192,28 @@ export function reserveParkMeetingSlot(
   const date = assertFutureMeetingDate(input.date);
   const slotKey = assertMeetingSlotKey(input.slotKey);
   ensureDefaultParkMeetingSlots(organizationId);
-  const changed = getDB().prepare(
-    `UPDATE park_meeting_slots
+  const changed = getDB()
+    .prepare(
+      `UPDATE park_meeting_slots
      SET booked_ticket_id = ?, updated_at = datetime('now')
      WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?
        AND enabled = 1 AND booked_ticket_id IS NULL`,
-  ).run(input.ticketId, organizationId, input.roomId, date, slotKey);
+    )
+    .run(input.ticketId, organizationId, input.roomId, date, slotKey);
   if (changed.changes === 0) {
-    const existing = getDB().prepare(
-      `SELECT enabled, booked_ticket_id FROM park_meeting_slots
+    const existing = getDB()
+      .prepare(
+        `SELECT enabled, booked_ticket_id FROM park_meeting_slots
        WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-    ).get(organizationId, input.roomId, date, slotKey) as {
-      enabled: number;
-      booked_ticket_id: string | null;
-    } | undefined;
-    if (existing?.booked_ticket_id) throw new Error('该时间段已被预约，请选择绿色时段');
+      )
+      .get(organizationId, input.roomId, date, slotKey) as
+      | {
+          enabled: number;
+          booked_ticket_id: string | null;
+        }
+      | undefined;
+    if (existing?.booked_ticket_id)
+      throw new Error('该时间段已被预约，请选择绿色时段');
     throw new Error('该时间段暂不可预约');
   }
   return listParkMeetingSlots(organizationId, date, date).find(
@@ -5182,13 +6221,16 @@ export function reserveParkMeetingSlot(
   )!;
 }
 
-function normalizeMeetingRoomImageUrl(value: string | null | undefined): string | null {
+function normalizeMeetingRoomImageUrl(
+  value: string | null | undefined,
+): string | null {
   const imageUrl = value?.trim() || '';
   if (!imageUrl) return null;
-  if (imageUrl.length > 900_000) throw new Error('会议室图片过大，请压缩后重试');
+  if (imageUrl.length > 900_000)
+    throw new Error('会议室图片过大，请压缩后重试');
   if (
-    !/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i.test(imageUrl)
-    && !/^https?:\/\/[^\s]+$/i.test(imageUrl)
+    !/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i.test(imageUrl) &&
+    !/^https?:\/\/[^\s]+$/i.test(imageUrl)
   ) {
     throw new Error('会议室图片格式不正确');
   }
@@ -5219,9 +6261,13 @@ function normalizeMeetingRoomInput(input: {
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 1000) {
     throw new Error('会议室容纳人数必须在 1–1000 之间');
   }
-  const equipment = [...new Set((input.equipment ?? [])
-    .map((item) => item.trim().slice(0, 40))
-    .filter(Boolean))].slice(0, 20);
+  const equipment = [
+    ...new Set(
+      (input.equipment ?? [])
+        .map((item) => item.trim().slice(0, 40))
+        .filter(Boolean),
+    ),
+  ].slice(0, 20);
   return {
     name,
     location,
@@ -5234,9 +6280,11 @@ function normalizeMeetingRoomInput(input: {
 }
 
 function ensureDefaultParkMeetingRoom(organizationId: string): void {
-  const existing = getDB().prepare(
-    'SELECT id FROM park_meeting_rooms WHERE organization_id = ? LIMIT 1',
-  ).get(organizationId) as { id: string } | undefined;
+  const existing = getDB()
+    .prepare(
+      'SELECT id FROM park_meeting_rooms WHERE organization_id = ? LIMIT 1',
+    )
+    .get(organizationId) as { id: string } | undefined;
   if (existing) return;
   const insert = getDB().prepare(
     `INSERT INTO park_meeting_rooms
@@ -5262,14 +6310,18 @@ function ensureDefaultParkMeetingRoom(organizationId: string): void {
 }
 
 export function getParkSettings(organizationId: string): ParkSettingsView {
-  getDB().prepare(
-    `INSERT OR IGNORE INTO park_settings (organization_id, parking_total)
+  getDB()
+    .prepare(
+      `INSERT OR IGNORE INTO park_settings (organization_id, parking_total)
      VALUES (?, 0)`,
-  ).run(organizationId);
-  const row = getDB().prepare(
-    `SELECT parking_total, parking_note, updated_at
+    )
+    .run(organizationId);
+  const row = getDB()
+    .prepare(
+      `SELECT parking_total, parking_note, updated_at
      FROM park_settings WHERE organization_id = ?`,
-  ).get(organizationId) as {
+    )
+    .get(organizationId) as {
     parking_total: number;
     parking_note: string | null;
     updated_at: string;
@@ -5286,22 +6338,28 @@ export function updateParkSettings(
   input: { parkingTotal: number; parkingNote?: string | null },
 ): ParkSettingsView {
   const parkingTotal = Math.floor(Number(input.parkingTotal));
-  if (!Number.isInteger(parkingTotal) || parkingTotal < 0 || parkingTotal > 100_000) {
+  if (
+    !Number.isInteger(parkingTotal) ||
+    parkingTotal < 0 ||
+    parkingTotal > 100_000
+  ) {
     throw new Error('总车位数必须是 0–100000 之间的整数');
   }
-  getDB().prepare(
-    `INSERT INTO park_settings
+  getDB()
+    .prepare(
+      `INSERT INTO park_settings
       (organization_id, parking_total, parking_note, updated_at)
      VALUES (?, ?, ?, datetime('now'))
      ON CONFLICT(organization_id) DO UPDATE SET
        parking_total = excluded.parking_total,
        parking_note = excluded.parking_note,
        updated_at = datetime('now')`,
-  ).run(
-    organizationId,
-    parkingTotal,
-    input.parkingNote?.trim().slice(0, 500) || null,
-  );
+    )
+    .run(
+      organizationId,
+      parkingTotal,
+      input.parkingNote?.trim().slice(0, 500) || null,
+    );
   return getParkSettings(organizationId);
 }
 
@@ -5310,13 +6368,15 @@ export function listParkMeetingRooms(
   includeDisabled = false,
 ): ParkMeetingRoomView[] {
   ensureDefaultParkMeetingRoom(organizationId);
-  const rows = getDB().prepare(
-    `SELECT id, name, location, capacity, equipment, image_url, opening_hours,
+  const rows = getDB()
+    .prepare(
+      `SELECT id, name, location, capacity, equipment, image_url, opening_hours,
             enabled, created_at, updated_at
      FROM park_meeting_rooms
      WHERE organization_id = ? ${includeDisabled ? '' : 'AND enabled = 1'}
      ORDER BY enabled DESC, capacity ASC, created_at ASC`,
-  ).all(organizationId) as ParkMeetingRoomRow[];
+    )
+    .all(organizationId) as ParkMeetingRoomRow[];
   return rows.map(parkMeetingRoomView);
 }
 
@@ -5326,23 +6386,27 @@ export function createParkMeetingRoom(
 ): ParkMeetingRoomView {
   const normalized = normalizeMeetingRoomInput(input);
   const id = `park_room_${randomUUID()}`;
-  getDB().prepare(
-    `INSERT INTO park_meeting_rooms
+  getDB()
+    .prepare(
+      `INSERT INTO park_meeting_rooms
       (id, organization_id, name, location, capacity, equipment, image_url,
        opening_hours, enabled)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    organizationId,
-    normalized.name,
-    normalized.location,
-    normalized.capacity,
-    JSON.stringify(normalized.equipment),
-    normalized.imageUrl,
-    normalized.openingHours,
-    normalized.enabled ? 1 : 0,
-  );
-  return listParkMeetingRooms(organizationId, true).find((room) => room.id === id)!;
+    )
+    .run(
+      id,
+      organizationId,
+      normalized.name,
+      normalized.location,
+      normalized.capacity,
+      JSON.stringify(normalized.equipment),
+      normalized.imageUrl,
+      normalized.openingHours,
+      normalized.enabled ? 1 : 0,
+    );
+  return listParkMeetingRooms(organizationId, true).find(
+    (room) => room.id === id,
+  )!;
 }
 
 export function updateParkMeetingRoom(
@@ -5351,30 +6415,39 @@ export function updateParkMeetingRoom(
   input: Parameters<typeof normalizeMeetingRoomInput>[0],
 ): ParkMeetingRoomView {
   const normalized = normalizeMeetingRoomInput(input);
-  const changed = getDB().prepare(
-    `UPDATE park_meeting_rooms SET
+  const changed = getDB()
+    .prepare(
+      `UPDATE park_meeting_rooms SET
        name = ?, location = ?, capacity = ?, equipment = ?, image_url = ?,
        opening_hours = ?, enabled = ?, updated_at = datetime('now')
      WHERE id = ? AND organization_id = ?`,
-  ).run(
-    normalized.name,
-    normalized.location,
-    normalized.capacity,
-    JSON.stringify(normalized.equipment),
-    normalized.imageUrl,
-    normalized.openingHours,
-    normalized.enabled ? 1 : 0,
-    id,
-    organizationId,
-  );
+    )
+    .run(
+      normalized.name,
+      normalized.location,
+      normalized.capacity,
+      JSON.stringify(normalized.equipment),
+      normalized.imageUrl,
+      normalized.openingHours,
+      normalized.enabled ? 1 : 0,
+      id,
+      organizationId,
+    );
   if (changed.changes === 0) throw new Error('会议室不存在');
-  return listParkMeetingRooms(organizationId, true).find((room) => room.id === id)!;
+  return listParkMeetingRooms(organizationId, true).find(
+    (room) => room.id === id,
+  )!;
 }
 
-export function deleteParkMeetingRoom(organizationId: string, id: string): void {
-  const changed = getDB().prepare(
-    'DELETE FROM park_meeting_rooms WHERE id = ? AND organization_id = ?',
-  ).run(id, organizationId);
+export function deleteParkMeetingRoom(
+  organizationId: string,
+  id: string,
+): void {
+  const changed = getDB()
+    .prepare(
+      'DELETE FROM park_meeting_rooms WHERE id = ? AND organization_id = ?',
+    )
+    .run(id, organizationId);
   if (changed.changes === 0) throw new Error('会议室不存在');
 }
 
@@ -5418,11 +6491,15 @@ interface ParkPublicationRow {
 function publicationView(row: ParkPublicationRow): ParkPublicationView {
   let responseData: Record<string, string> | null = null;
   try {
-    const value = row.response_data ? JSON.parse(row.response_data) as unknown : null;
+    const value = row.response_data
+      ? (JSON.parse(row.response_data) as unknown)
+      : null;
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      responseData = Object.fromEntries(Object.entries(value).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ));
+      responseData = Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+      );
     }
   } catch {
     responseData = null;
@@ -5447,26 +6524,34 @@ export function createParkPublication(input: {
   recipientAccountId?: string | null;
 }): { publication: ParkPublicationView; recipientCount: number } {
   const creator = getAccount(input.createdByAccountId);
-  if (!creator?.isAdmin) throw new Error('Only enterprise administrators can publish park content');
+  if (!creator?.isAdmin)
+    throw new Error('Only enterprise administrators can publish park content');
   const title = input.title.trim();
   const body = input.body.trim();
   if (!title || !body) throw new Error('title and body required');
   const recipients = input.recipientAccountId
     ? [getAccount(input.recipientAccountId, creator.organizationId)].filter(
-      (account): account is AccountView => account !== null && account.status === 'active',
-    )
-    : (getDB().prepare(
-      `SELECT * FROM accounts
+        (account): account is AccountView =>
+          account !== null && account.status === 'active',
+      )
+    : (
+        getDB()
+          .prepare(
+            `SELECT * FROM accounts
        WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL
        ORDER BY name, username`,
-    ).all(creator.organizationId) as AccountRow[]).map(toAccountView);
+          )
+          .all(creator.organizationId) as AccountRow[]
+      ).map(toAccountView);
   if (recipients.length === 0) throw new Error('No active recipients');
   const id = `park_publication_${randomUUID()}`;
-  getDB().prepare(
-    `INSERT INTO park_publications
+  getDB()
+    .prepare(
+      `INSERT INTO park_publications
       (id, organization_id, kind, title, body, created_by_account_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, creator.organizationId, input.kind, title, body, creator.id);
+    )
+    .run(id, creator.organizationId, input.kind, title, body, creator.id);
   const insertRecipient = getDB().prepare(
     `INSERT INTO park_publication_recipients
       (organization_id, publication_id, account_id) VALUES (?, ?, ?)`,
@@ -5481,8 +6566,18 @@ export function createParkPublication(input: {
     creator.organizationId,
   );
   return {
-    publication: listParkPublications(creator.id).find((item) => item.id === id)
-      ?? { id, kind: input.kind, title, body, createdAt: new Date().toISOString(), readAt: null, submittedAt: null, responseData: null },
+    publication: listParkPublications(creator.id).find(
+      (item) => item.id === id,
+    ) ?? {
+      id,
+      kind: input.kind,
+      title,
+      body,
+      createdAt: new Date().toISOString(),
+      readAt: null,
+      submittedAt: null,
+      responseData: null,
+    },
     recipientCount: recipients.length,
   };
 }
@@ -5490,23 +6585,33 @@ export function createParkPublication(input: {
 export function listParkPublications(accountId: string): ParkPublicationView[] {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const rows = getDB().prepare(
-    `SELECT p.id, p.kind, p.title, p.body, p.created_at,
+  const rows = getDB()
+    .prepare(
+      `SELECT p.id, p.kind, p.title, p.body, p.created_at,
             r.read_at, r.submitted_at, r.response_data
      FROM park_publication_recipients r
      JOIN park_publications p ON p.id = r.publication_id
      WHERE r.account_id = ? AND r.organization_id = ? AND p.organization_id = ?
      ORDER BY p.created_at DESC`,
-  ).all(account.id, account.organizationId, account.organizationId) as ParkPublicationRow[];
+    )
+    .all(
+      account.id,
+      account.organizationId,
+      account.organizationId,
+    ) as ParkPublicationRow[];
   return rows.map(publicationView);
 }
 
 /** 管理员查看本企业问卷回收情况；实名由账号表提供，不信任客户端自填姓名。 */
-export function listParkSurveyResults(accountId: string): ParkSurveyResultView[] {
+export function listParkSurveyResults(
+  accountId: string,
+): ParkSurveyResultView[] {
   const account = getAccount(accountId);
-  if (!account?.isAdmin) throw new Error('Only enterprise administrators can view survey results');
-  const publications = getDB().prepare(
-    `SELECT p.id, p.title, p.body, p.created_at,
+  if (!account?.isAdmin)
+    throw new Error('Only enterprise administrators can view survey results');
+  const publications = getDB()
+    .prepare(
+      `SELECT p.id, p.title, p.body, p.created_at,
             COUNT(r.account_id) AS recipient_count,
             SUM(CASE WHEN r.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS submitted_count
      FROM park_publications p
@@ -5515,9 +6620,14 @@ export function listParkSurveyResults(accountId: string): ParkSurveyResultView[]
      WHERE p.organization_id = ? AND p.kind = 'satisfaction'
      GROUP BY p.id, p.title, p.body, p.created_at
      ORDER BY p.created_at DESC`,
-  ).all(account.organizationId) as Array<{
-    id: string; title: string; body: string; created_at: string;
-    recipient_count: number; submitted_count: number;
+    )
+    .all(account.organizationId) as Array<{
+    id: string;
+    title: string;
+    body: string;
+    created_at: string;
+    recipient_count: number;
+    submitted_count: number;
   }>;
   const responseRows = getDB().prepare(
     `SELECT r.account_id, a.name AS account_name, r.submitted_at, r.response_data
@@ -5527,8 +6637,14 @@ export function listParkSurveyResults(accountId: string): ParkSurveyResultView[]
      ORDER BY r.submitted_at DESC`,
   );
   return publications.map((publication) => {
-    const rows = responseRows.all(publication.id, account.organizationId) as Array<{
-      account_id: string; account_name: string; submitted_at: string; response_data: string | null;
+    const rows = responseRows.all(
+      publication.id,
+      account.organizationId,
+    ) as Array<{
+      account_id: string;
+      account_name: string;
+      submitted_at: string;
+      response_data: string | null;
     }>;
     return {
       id: publication.id,
@@ -5540,11 +6656,16 @@ export function listParkSurveyResults(accountId: string): ParkSurveyResultView[]
       responses: rows.map((row) => {
         let responseData: Record<string, string> = {};
         try {
-          const value = row.response_data ? JSON.parse(row.response_data) as unknown : null;
+          const value = row.response_data
+            ? (JSON.parse(row.response_data) as unknown)
+            : null;
           if (value && typeof value === 'object' && !Array.isArray(value)) {
-            responseData = Object.fromEntries(Object.entries(value).filter(
-              (entry): entry is [string, string] => typeof entry[1] === 'string',
-            ));
+            responseData = Object.fromEntries(
+              Object.entries(value).filter(
+                (entry): entry is [string, string] =>
+                  typeof entry[1] === 'string',
+              ),
+            );
           }
         } catch {
           responseData = {};
@@ -5561,16 +6682,24 @@ export function listParkSurveyResults(accountId: string): ParkSurveyResultView[]
   });
 }
 
-export function markParkPublicationRead(id: string, accountId: string): ParkPublicationView {
+export function markParkPublicationRead(
+  id: string,
+  accountId: string,
+): ParkPublicationView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const changed = getDB().prepare(
-    `UPDATE park_publication_recipients
+  const changed = getDB()
+    .prepare(
+      `UPDATE park_publication_recipients
      SET read_at = COALESCE(read_at, datetime('now'))
      WHERE publication_id = ? AND account_id = ? AND organization_id = ?`,
-  ).run(id, account.id, account.organizationId);
-  if (changed.changes === 0) throw new Error('Publication not found or not assigned');
-  const publication = listParkPublications(account.id).find((item) => item.id === id);
+    )
+    .run(id, account.id, account.organizationId);
+  if (changed.changes === 0)
+    throw new Error('Publication not found or not assigned');
+  const publication = listParkPublications(account.id).find(
+    (item) => item.id === id,
+  );
   if (!publication) throw new Error('Publication not found');
   return publication;
 }
@@ -5582,23 +6711,39 @@ export function submitParkSurvey(
 ): ParkPublicationView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const publication = getDB().prepare(
-    'SELECT kind FROM park_publications WHERE id = ? AND organization_id = ?',
-  ).get(id, account.organizationId) as { kind: string } | undefined;
+  const publication = getDB()
+    .prepare(
+      'SELECT kind FROM park_publications WHERE id = ? AND organization_id = ?',
+    )
+    .get(id, account.organizationId) as { kind: string } | undefined;
   if (publication?.kind !== 'satisfaction') throw new Error('Survey not found');
-  const normalized = Object.fromEntries(Object.entries(responseData)
-    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-    .map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]));
+  const normalized = Object.fromEntries(
+    Object.entries(responseData)
+      .filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      )
+      .map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]),
+  );
   normalized.submittedBy = account.name;
-  const changed = getDB().prepare(
-    `UPDATE park_publication_recipients
+  const changed = getDB()
+    .prepare(
+      `UPDATE park_publication_recipients
      SET read_at = COALESCE(read_at, datetime('now')), submitted_at = datetime('now'), response_data = ?
      WHERE publication_id = ? AND account_id = ? AND organization_id = ? AND submitted_at IS NULL`,
-  ).run(JSON.stringify(normalized), id, account.id, account.organizationId);
-  if (changed.changes === 0) throw new Error('问卷不存在或已经提交，不能重复修改');
-  const result = listParkPublications(account.id).find((item) => item.id === id);
+    )
+    .run(JSON.stringify(normalized), id, account.id, account.organizationId);
+  if (changed.changes === 0)
+    throw new Error('问卷不存在或已经提交，不能重复修改');
+  const result = listParkPublications(account.id).find(
+    (item) => item.id === id,
+  );
   if (!result) throw new Error('Survey not found');
-  logAudit('park_survey_submit', account.employeeId, `Survey ${id} submitted`, account.organizationId);
+  logAudit(
+    'park_survey_submit',
+    account.employeeId,
+    `Survey ${id} submitted`,
+    account.organizationId,
+  );
   return result;
 }
 
@@ -5641,7 +6786,8 @@ function sqliteUtcToIso(value: string | null): string | null {
 
 function normalizeReportedTokenCount(value: unknown): number {
   const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(number) || number < 0) throw new Error('Token 用量必须是非负数字');
+  if (!Number.isFinite(number) || number < 0)
+    throw new Error('Token 用量必须是非负数字');
   return Math.min(1_000_000_000, Math.floor(number));
 }
 
@@ -5658,41 +6804,48 @@ export function recordTokenUsage(input: {
   if (!account) throw new Error('Account not found');
   const sessionId = input.sessionId.trim().slice(0, 160);
   const messageId = input.messageId.trim().slice(0, 160);
-  if (!sessionId || !messageId) throw new Error('sessionId and messageId required');
+  if (!sessionId || !messageId)
+    throw new Error('sessionId and messageId required');
   const inputTokens = normalizeReportedTokenCount(input.inputTokens);
   const outputTokens = normalizeReportedTokenCount(input.outputTokens);
   const totalTokens = Math.max(
     normalizeReportedTokenCount(input.totalTokens),
     inputTokens + outputTokens,
   );
-  const duplicate = getDB().prepare(
-    'SELECT 1 AS found FROM account_token_usage WHERE account_id = ? AND message_id = ?',
-  ).get(account.id, messageId) as { found?: number } | undefined;
+  const duplicate = getDB()
+    .prepare(
+      'SELECT 1 AS found FROM account_token_usage WHERE account_id = ? AND message_id = ?',
+    )
+    .get(account.id, messageId) as { found?: number } | undefined;
   if (duplicate?.found === 1) return false;
-  const recentCount = getDB().prepare(
-    `SELECT COUNT(*) AS count
+  const recentCount = getDB()
+    .prepare(
+      `SELECT COUNT(*) AS count
      FROM account_token_usage
      WHERE account_id = ? AND datetime(created_at) >= datetime('now', '-1 day')`,
-  ).get(account.id) as { count?: number } | undefined;
+    )
+    .get(account.id) as { count?: number } | undefined;
   if (Number(recentCount?.count ?? 0) >= USAGE_DAILY_RECORD_LIMIT) {
     throw new Error('账号今日 Token 用量记录已达上限');
   }
-  const result = getDB().prepare(
-    `INSERT OR IGNORE INTO account_token_usage
+  const result = getDB()
+    .prepare(
+      `INSERT OR IGNORE INTO account_token_usage
        (id, organization_id, account_id, session_id, message_id, model,
         input_tokens, output_tokens, total_tokens)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    `usage_${randomUUID()}`,
-    account.organizationId,
-    account.id,
-    sessionId,
-    messageId,
-    input.model?.trim().slice(0, 120) || null,
-    inputTokens,
-    outputTokens,
-    totalTokens,
-  ) as { changes?: number | bigint };
+    )
+    .run(
+      `usage_${randomUUID()}`,
+      account.organizationId,
+      account.id,
+      sessionId,
+      messageId,
+      input.model?.trim().slice(0, 120) || null,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+    ) as { changes?: number | bigint };
   return Number(result.changes ?? 0) > 0;
 }
 
@@ -5700,11 +6853,18 @@ export function getOrganizationUsageSummary(
   organizationId: string,
   periodDays = 30,
 ): OrganizationUsageSummary {
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
-  const safePeriodDays = Math.min(365, Math.max(1, Math.floor(periodDays) || 30));
-  const since = new Date(Date.now() - safePeriodDays * 86_400_000).toISOString();
-  const rows = getDB().prepare(
-    `SELECT a.id AS account_id, a.name, a.username,
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
+  const safePeriodDays = Math.min(
+    365,
+    Math.max(1, Math.floor(periodDays) || 30),
+  );
+  const since = new Date(
+    Date.now() - safePeriodDays * 86_400_000,
+  ).toISOString();
+  const rows = getDB()
+    .prepare(
+      `SELECT a.id AS account_id, a.name, a.username,
             COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
             COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
             COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
@@ -5718,7 +6878,8 @@ export function getOrganizationUsageSummary(
      WHERE a.organization_id = ?
      GROUP BY a.id, a.name, a.username
      ORDER BY total_tokens DESC, a.name, a.username`,
-  ).all(since, organizationId) as Array<{
+    )
+    .all(since, organizationId) as Array<{
     account_id: string;
     name: string;
     username: string;
@@ -5743,7 +6904,10 @@ export function getOrganizationUsageSummary(
     periodDays: safePeriodDays,
     source: 'client_reported',
     totalInputTokens: byAccount.reduce((sum, row) => sum + row.inputTokens, 0),
-    totalOutputTokens: byAccount.reduce((sum, row) => sum + row.outputTokens, 0),
+    totalOutputTokens: byAccount.reduce(
+      (sum, row) => sum + row.outputTokens,
+      0,
+    ),
     totalTokens: byAccount.reduce((sum, row) => sum + row.totalTokens, 0),
     requestCount: byAccount.reduce((sum, row) => sum + row.requestCount, 0),
     byAccount,
@@ -5754,13 +6918,20 @@ export function getOrganizationUsageSummary(
 // Employee operations
 // ============================================================
 export function createEmployee(emp: {
-  id: string; name: string; role?: string;
-  department?: string; invite_code?: string; personality?: string;
-  departmentId?: string; positionId?: string; positionTitle?: string;
+  id: string;
+  name: string;
+  role?: string;
+  department?: string;
+  invite_code?: string;
+  personality?: string;
+  departmentId?: string;
+  positionId?: string;
+  positionTitle?: string;
   organizationId?: string;
 }): void {
   const organizationId = emp.organizationId || DEFAULT_ORGANIZATION_ID;
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
   const database = getDB();
   const assignment = resolveAssignmentIdentity(database, organizationId, {
     department: emp.department,
@@ -5768,23 +6939,25 @@ export function createEmployee(emp: {
     positionId: emp.positionId,
     positionTitle: emp.positionTitle,
   });
-  database.prepare(
-    `INSERT INTO employees
+  database
+    .prepare(
+      `INSERT INTO employees
        (id, organization_id, name, role, department, department_id, position_id, position_title,
         invite_code, personality)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    emp.id,
-    organizationId,
-    emp.name,
-    emp.role || null,
-    assignment.department,
-    assignment.departmentId,
-    assignment.positionId,
-    assignment.positionTitle,
-    emp.invite_code || null,
-    emp.personality || null,
-  );
+    )
+    .run(
+      emp.id,
+      organizationId,
+      emp.name,
+      emp.role || null,
+      assignment.department,
+      assignment.departmentId,
+      assignment.positionId,
+      assignment.positionTitle,
+      emp.invite_code || null,
+      emp.personality || null,
+    );
   logAudit(
     'onboard',
     emp.id,
@@ -5796,7 +6969,9 @@ export function createEmployee(emp: {
 export function getEmployee(id: string, organizationId?: string): any | null {
   // 1. 先查 SQLite（B套本地数据）
   const local = organizationId
-    ? getDB().prepare('SELECT * FROM employees WHERE id = ? AND organization_id = ?').get(id, organizationId)
+    ? getDB()
+        .prepare('SELECT * FROM employees WHERE id = ? AND organization_id = ?')
+        .get(id, organizationId)
     : getDB().prepare('SELECT * FROM employees WHERE id = ?').get(id);
   if (local) return local;
 
@@ -5817,7 +6992,9 @@ export function getEmployee(id: string, organizationId?: string): any | null {
         onboarded_at: user.createdAt,
       };
     }
-  } catch { /* A套数据不可用时降级返回null */ }
+  } catch {
+    /* A套数据不可用时降级返回null */
+  }
 
   return null;
 }
@@ -5829,14 +7006,18 @@ export function listEmployees(
   // 1. 先查 SQLite
   let local: any[];
   if (department) {
-    local = getDB().prepare(
-      `SELECT * FROM employees
+    local = getDB()
+      .prepare(
+        `SELECT * FROM employees
        WHERE organization_id = ? AND department = ? AND status = ? ORDER BY onboarded_at`,
-    ).all(organizationId, department, 'active');
+      )
+      .all(organizationId, department, 'active');
   } else {
-    local = getDB().prepare(
-      'SELECT * FROM employees WHERE organization_id = ? AND status = ? ORDER BY onboarded_at',
-    ).all(organizationId, 'active');
+    local = getDB()
+      .prepare(
+        'SELECT * FROM employees WHERE organization_id = ? AND status = ? ORDER BY onboarded_at',
+      )
+      .all(organizationId, 'active');
   }
 
   // 2. 合并 OrgMemoryStore 的飞书同步数据（去重）
@@ -5880,7 +7061,9 @@ function loadOrgMemoryStore(): any {
       if (fs.existsSync(p)) {
         return JSON.parse(fs.readFileSync(p, 'utf-8'));
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
   return { users: [], teams: [], companies: [], licenses: [] };
 }
@@ -5888,12 +7071,17 @@ function loadOrgMemoryStore(): any {
 export function offboardEmployee(id: string, organizationId?: string): boolean {
   const employee = getEmployee(id, organizationId);
   if (!employee || !employee.organization_id) return false;
-  const result = getDB().prepare(
-    `UPDATE employees SET status = ?, offboarded_at = datetime('now')
+  const result = getDB()
+    .prepare(
+      `UPDATE employees SET status = ?, offboarded_at = datetime('now')
      WHERE id = ? AND organization_id = ?`,
-  ).run('offboarded', id, employee.organization_id) as { changes?: number | bigint };
+    )
+    .run('offboarded', id, employee.organization_id) as {
+    changes?: number | bigint;
+  };
   const changed = Number(result.changes ?? 0) > 0;
-  if (changed) logAudit('offboard', id, 'Employee offboarded', employee.organization_id);
+  if (changed)
+    logAudit('offboard', id, 'Employee offboarded', employee.organization_id);
   return changed;
 }
 
@@ -5901,12 +7089,17 @@ export function offboardEmployee(id: string, organizationId?: string): boolean {
 // Task logging
 // ============================================================
 export function logTask(task: {
-  employee_id: string; task_type: string; context?: string;
-  result?: string; duration_min?: number; tokens_used?: number; cost_cny?: number;
+  employee_id: string;
+  task_type: string;
+  context?: string;
+  result?: string;
+  duration_min?: number;
+  tokens_used?: number;
+  cost_cny?: number;
 }): void {
-  const employee = getDB().prepare(
-    'SELECT organization_id FROM employees WHERE id = ?',
-  ).get(task.employee_id) as { organization_id: string } | undefined;
+  const employee = getDB()
+    .prepare('SELECT organization_id FROM employees WHERE id = ?')
+    .get(task.employee_id) as { organization_id: string } | undefined;
   if (!employee) throw new Error('Employee not found');
   // 成本/token 口径归一：显式上报 0 或非正值时回落到默认估计，保证与 report 聚合口径一致，
   // 避免「多数任务 cost=0、少数有真实成本」时 totalCost 塌到极小、laborPerToken 爆表。
@@ -5915,20 +7108,22 @@ export function logTask(task: {
     tokens_used: normalizeTokens(task.tokens_used),
     cost_cny: normalizeCostCNY(task.cost_cny),
   };
-  getDB().prepare(
-    `INSERT INTO task_logs
+  getDB()
+    .prepare(
+      `INSERT INTO task_logs
        (organization_id, employee_id, task_type, context, result, duration_min, tokens_used, cost_cny)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    employee.organization_id,
-    normalized.employee_id,
-    normalized.task_type,
-    normalized.context || null,
-    normalized.result || null,
-    normalized.duration_min || 0,
-    normalized.tokens_used,
-    normalized.cost_cny,
-  );
+    )
+    .run(
+      employee.organization_id,
+      normalized.employee_id,
+      normalized.task_type,
+      normalized.context || null,
+      normalized.result || null,
+      normalized.duration_min || 0,
+      normalized.tokens_used,
+      normalized.cost_cny,
+    );
   logAudit(
     'learn',
     task.employee_id,
@@ -5943,40 +7138,50 @@ export function getTaskHistory(
   organizationId?: string,
 ): any[] {
   return organizationId
-    ? getDB().prepare(
-      `SELECT * FROM task_logs WHERE employee_id = ? AND organization_id = ?
+    ? getDB()
+        .prepare(
+          `SELECT * FROM task_logs WHERE employee_id = ? AND organization_id = ?
        ORDER BY created_at DESC LIMIT ?`,
-    ).all(employeeId, organizationId, limit)
-    : getDB().prepare(
-      'SELECT * FROM task_logs WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?',
-    ).all(employeeId, limit);
+        )
+        .all(employeeId, organizationId, limit)
+    : getDB()
+        .prepare(
+          'SELECT * FROM task_logs WHERE employee_id = ? ORDER BY created_at DESC LIMIT ?',
+        )
+        .all(employeeId, limit);
 }
 
 // ============================================================
 // Knowledge operations
 // ============================================================
 export function addKnowledge(k: {
-  department?: string; category: string; content: string;
-  contributor?: string; confidence?: number;
+  department?: string;
+  category: string;
+  content: string;
+  contributor?: string;
+  confidence?: number;
   organizationId?: string;
   sourceId?: string;
 }): boolean {
   const organizationId = k.organizationId || DEFAULT_ORGANIZATION_ID;
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
-  const result = getDB().prepare(
-    `INSERT INTO knowledge
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
+  const result = getDB()
+    .prepare(
+      `INSERT INTO knowledge
        (organization_id, source_id, department, category, content, contributor, confidence)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(organization_id, source_id) WHERE source_id IS NOT NULL DO NOTHING`,
-  ).run(
-    organizationId,
-    k.sourceId || null,
-    k.department || null,
-    k.category,
-    k.content,
-    k.contributor || null,
-    k.confidence ?? 0.5,
-  ) as { changes?: number | bigint };
+    )
+    .run(
+      organizationId,
+      k.sourceId || null,
+      k.department || null,
+      k.category,
+      k.content,
+      k.contributor || null,
+      k.confidence ?? 0.5,
+    ) as { changes?: number | bigint };
   return Number(result.changes ?? 0) > 0;
 }
 
@@ -5987,10 +7192,18 @@ export function getKnowledge(
 ): any[] {
   let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
   const params: any[] = [organizationId];
-  if (department) { sql += ' AND department = ?'; params.push(department); }
-  if (category) { sql += ' AND category = ?'; params.push(category); }
+  if (department) {
+    sql += ' AND department = ?';
+    params.push(department);
+  }
+  if (category) {
+    sql += ' AND category = ?';
+    params.push(category);
+  }
   sql += ' ORDER BY created_at DESC';
-  return getDB().prepare(sql).all(...params);
+  return getDB()
+    .prepare(sql)
+    .all(...params);
 }
 
 export function searchKnowledge(
@@ -6001,11 +7214,17 @@ export function searchKnowledge(
   // Match against both category (task_type is usually stored here, e.g. "contract_review")
   // and content (free-text description), otherwise knowledge tagged by category never
   // surfaces during recall when task_type doesn't literally appear in the Chinese content.
-  let sql = 'SELECT * FROM knowledge WHERE organization_id = ? AND (content LIKE ? OR category LIKE ?)';
+  let sql =
+    'SELECT * FROM knowledge WHERE organization_id = ? AND (content LIKE ? OR category LIKE ?)';
   const params: any[] = [organizationId, `%${query}%`, `%${query}%`];
-  if (department) { sql += ' AND department = ?'; params.push(department); }
+  if (department) {
+    sql += ' AND department = ?';
+    params.push(department);
+  }
   sql += ' ORDER BY confidence DESC LIMIT 20';
-  return getDB().prepare(sql).all(...params);
+  return getDB()
+    .prepare(sql)
+    .all(...params);
 }
 
 /**
@@ -6034,7 +7253,9 @@ export function getMemberKnowledge(
   } else {
     sql += ' ORDER BY created_at DESC';
   }
-  return getDB().prepare(sql).all(...params);
+  return getDB()
+    .prepare(sql)
+    .all(...params);
 }
 
 // ============================================================
@@ -6046,34 +7267,58 @@ export function createInviteCode(
   maxUses = 1,
   organizationId = DEFAULT_ORGANIZATION_ID,
 ): string {
-  if (!getOrganization(organizationId)) throw new Error('Organization not found');
+  if (!getOrganization(organizationId))
+    throw new Error('Organization not found');
   const code = generateCode();
-  getDB().prepare(
-    `INSERT INTO invite_codes (code, organization_id, department, max_uses, created_by)
+  getDB()
+    .prepare(
+      `INSERT INTO invite_codes (code, organization_id, department, max_uses, created_by)
      VALUES (?, ?, ?, ?, ?)`,
-  ).run(code, organizationId, department, maxUses, createdBy || 'admin');
-  logAudit('invite_create', null, `Code ${code} for ${department}`, organizationId);
+    )
+    .run(code, organizationId, department, maxUses, createdBy || 'admin');
+  logAudit(
+    'invite_create',
+    null,
+    `Code ${code} for ${department}`,
+    organizationId,
+  );
   return code;
 }
 
 export function validateInviteCode(
   code: string,
   organizationId?: string,
-): { valid: boolean; department?: string; organizationId?: string; error?: string } {
+): {
+  valid: boolean;
+  department?: string;
+  organizationId?: string;
+  error?: string;
+} {
   const row: any = organizationId
-    ? getDB().prepare(
-      'SELECT * FROM invite_codes WHERE code = ? AND organization_id = ?',
-    ).get(code, organizationId)
+    ? getDB()
+        .prepare(
+          'SELECT * FROM invite_codes WHERE code = ? AND organization_id = ?',
+        )
+        .get(code, organizationId)
     : getDB().prepare('SELECT * FROM invite_codes WHERE code = ?').get(code);
   if (!row) return { valid: false, error: 'Invalid invite code' };
-  if (row.used_count >= row.max_uses) return { valid: false, error: 'Invite code already used' };
-  if (row.expires_at && new Date(row.expires_at) < new Date()) return { valid: false, error: 'Invite code expired' };
+  if (row.used_count >= row.max_uses)
+    return { valid: false, error: 'Invite code already used' };
+  if (row.expires_at && new Date(row.expires_at) < new Date())
+    return { valid: false, error: 'Invite code expired' };
   // 原子操作：WHERE used_count < max_uses 防止并发超用
-  const result = getDB().prepare(
-    'UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ? AND used_count < max_uses',
-  ).run(code);
-  if (result.changes === 0) return { valid: false, error: 'Invite code already used' };
-  return { valid: true, department: row.department, organizationId: row.organization_id };
+  const result = getDB()
+    .prepare(
+      'UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ? AND used_count < max_uses',
+    )
+    .run(code);
+  if (result.changes === 0)
+    return { valid: false, error: 'Invite code already used' };
+  return {
+    valid: true,
+    department: row.department,
+    organizationId: row.organization_id,
+  };
 }
 
 function generateCode(): string {
@@ -6097,20 +7342,26 @@ export function getReport(
   let empFilter = '';
   const params: any[] = [since, organizationId];
   if (department) {
-    empFilter = ' AND employee_id IN (SELECT id FROM employees WHERE organization_id = ? AND department = ?)';
+    empFilter =
+      ' AND employee_id IN (SELECT id FROM employees WHERE organization_id = ? AND department = ?)';
     params.push(organizationId, department);
   }
 
-  const tasks: any[] = db.prepare(
-    `SELECT * FROM task_logs WHERE created_at >= ? AND organization_id = ?${empFilter} ORDER BY created_at`,
-  ).all(...params);
+  const tasks: any[] = db
+    .prepare(
+      `SELECT * FROM task_logs WHERE created_at >= ? AND organization_id = ?${empFilter} ORDER BY created_at`,
+    )
+    .all(...params);
 
   const totalTasks = tasks.length;
   // ottoMin = Otto 实际记录的耗时（这就是「用了 Otto 之后花的时间」）。
   const ottoMin = tasks.reduce((s, t) => s + (t.duration_min || 0), 0);
   // token/成本聚合时对每条也走归一化：即便有历史脏数据或绕过 logTask 直接写库的
   // cost=0 记录，成本口径也一致，不会把 totalCost 拖塌导致 laborPerToken 爆表。
-  const totalTokens = tasks.reduce((s, t) => s + normalizeTokens(t.tokens_used), 0);
+  const totalTokens = tasks.reduce(
+    (s, t) => s + normalizeTokens(t.tokens_used),
+    0,
+  );
   const totalCost = tasks.reduce((s, t) => s + normalizeCostCNY(t.cost_cny), 0);
 
   // 真·省时：人工估时 − Otto 实际耗时，不双算。
@@ -6129,9 +7380,13 @@ export function getReport(
   const laborPerTokenCNY = laborPerTokenCapped ? cap : rawLaborPerToken;
 
   // By task type（成本/token 同样归一，与顶层 totalCost/totalTokens 口径一致）
-  const byType: Record<string, { count: number; min: number; tokens: number; cost: number }> = {};
+  const byType: Record<
+    string,
+    { count: number; min: number; tokens: number; cost: number }
+  > = {};
   for (const t of tasks) {
-    if (!byType[t.task_type]) byType[t.task_type] = { count: 0, min: 0, tokens: 0, cost: 0 };
+    if (!byType[t.task_type])
+      byType[t.task_type] = { count: 0, min: 0, tokens: 0, cost: 0 };
     byType[t.task_type].count++;
     byType[t.task_type].min += t.duration_min || 0;
     byType[t.task_type].tokens += normalizeTokens(t.tokens_used);
@@ -6162,8 +7417,11 @@ export function getReport(
       laborPerTokenCap: cap,
     },
     byType: Object.entries(byType).map(([type, d]) => ({
-      taskType: type, count: d.count, minutes: Math.round(d.min),
-      tokens: d.tokens, costCNY: Math.round(d.cost * 100) / 100,
+      taskType: type,
+      count: d.count,
+      minutes: Math.round(d.min),
+      tokens: d.tokens,
+      costCNY: Math.round(d.cost * 100) / 100,
     })),
     // 图表数据：任务累积趋势（按时间序累积任务数与省时分钟），以及瓶颈提示。
     trend: buildTrend(tasks, mult),
@@ -6183,7 +7441,12 @@ function buildTrend(
   const sorted = [...tasks].sort((a, b) =>
     String(a.created_at || '').localeCompare(String(b.created_at || '')),
   );
-  const out: Array<{ i: number; at: string; cumTasks: number; cumSavedHours: number }> = [];
+  const out: Array<{
+    i: number;
+    at: string;
+    cumTasks: number;
+    cumSavedHours: number;
+  }> = [];
   let cumTasks = 0;
   let cumSavedMin = 0;
   for (let i = 0; i < sorted.length; i++) {
@@ -6203,7 +7466,10 @@ function buildTrend(
  * 瓶颈提示：从 byType 聚合里挑「最耗时」「最频繁」「单次平均最慢」三类。
  */
 function buildBottlenecks(
-  byType: Record<string, { count: number; min: number; tokens: number; cost: number }>,
+  byType: Record<
+    string,
+    { count: number; min: number; tokens: number; cost: number }
+  >,
 ): {
   slowestTotal: { taskType: string; minutes: number } | null;
   mostFrequent: { taskType: string; count: number } | null;
@@ -6214,18 +7480,24 @@ function buildBottlenecks(
     return { slowestTotal: null, mostFrequent: null, slowestAvg: null };
   }
   const slowestTotal = entries.reduce((a, b) => (b[1].min > a[1].min ? b : a));
-  const mostFrequent = entries.reduce((a, b) => (b[1].count > a[1].count ? b : a));
+  const mostFrequent = entries.reduce((a, b) =>
+    b[1].count > a[1].count ? b : a,
+  );
   const slowestAvg = entries.reduce((a, b) => {
     const avgA = a[1].count ? a[1].min / a[1].count : 0;
     const avgB = b[1].count ? b[1].min / b[1].count : 0;
     return avgB > avgA ? b : a;
   });
   return {
-    slowestTotal: { taskType: slowestTotal[0], minutes: Math.round(slowestTotal[1].min) },
+    slowestTotal: {
+      taskType: slowestTotal[0],
+      minutes: Math.round(slowestTotal[1].min),
+    },
     mostFrequent: { taskType: mostFrequent[0], count: mostFrequent[1].count },
     slowestAvg: {
       taskType: slowestAvg[0],
-      avgMinutes: Math.round((slowestAvg[1].min / (slowestAvg[1].count || 1)) * 10) / 10,
+      avgMinutes:
+        Math.round((slowestAvg[1].min / (slowestAvg[1].count || 1)) * 10) / 10,
     },
   };
 }
@@ -6239,17 +7511,24 @@ export function logAudit(
   detail: string,
   organizationId = DEFAULT_ORGANIZATION_ID,
 ): void {
-  getDB().prepare(
-    `INSERT INTO audit_logs (organization_id, event, employee_id, detail)
+  getDB()
+    .prepare(
+      `INSERT INTO audit_logs (organization_id, event, employee_id, detail)
      VALUES (?, ?, ?, ?)`,
-  ).run(organizationId, event, employeeId, detail);
+    )
+    .run(organizationId, event, employeeId, detail);
 }
 
-export function getAuditLogs(limit = 50, organizationId = DEFAULT_ORGANIZATION_ID): any[] {
-  return getDB().prepare(
-    `SELECT * FROM audit_logs WHERE organization_id = ?
+export function getAuditLogs(
+  limit = 50,
+  organizationId = DEFAULT_ORGANIZATION_ID,
+): any[] {
+  return getDB()
+    .prepare(
+      `SELECT * FROM audit_logs WHERE organization_id = ?
      ORDER BY created_at DESC LIMIT ?`,
-  ).all(organizationId, limit);
+    )
+    .all(organizationId, limit);
 }
 
 // ============================================================
@@ -6260,30 +7539,40 @@ export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID): any {
     // Full backup must include offboarded employees too, otherwise every
     // offboarding silently erases historical employee records from the
     // export — contradicting the "export ALL data" guarantee.
-    employees: getDB().prepare(
-      'SELECT * FROM employees WHERE organization_id = ? ORDER BY onboarded_at',
-    ).all(organizationId),
-    taskLogs: getDB().prepare(
-      `SELECT * FROM task_logs WHERE organization_id = ?
+    employees: getDB()
+      .prepare(
+        'SELECT * FROM employees WHERE organization_id = ? ORDER BY onboarded_at',
+      )
+      .all(organizationId),
+    taskLogs: getDB()
+      .prepare(
+        `SELECT * FROM task_logs WHERE organization_id = ?
        ORDER BY created_at DESC LIMIT 1000`,
-    ).all(organizationId),
+      )
+      .all(organizationId),
     knowledge: getKnowledge(undefined, undefined, organizationId),
-    inviteCodes: getDB().prepare(
-      'SELECT * FROM invite_codes WHERE organization_id = ?',
-    ).all(organizationId),
+    inviteCodes: getDB()
+      .prepare('SELECT * FROM invite_codes WHERE organization_id = ?')
+      .all(organizationId),
     auditLogs: getAuditLogs(200, organizationId),
     // 账号导出不包含 password_hash / session token 摘要；备份可迁移组织信息，
     // 但不能把登录凭证扩散到普通数据导出文件。
     accounts: listAccounts(organizationId),
-    accountTags: getDB().prepare(
-      `SELECT account_id, tag, created_at FROM account_tags
+    accountTags: getDB()
+      .prepare(
+        `SELECT account_id, tag, created_at FROM account_tags
        WHERE organization_id = ?`,
-    ).all(organizationId),
-    tickets: getDB().prepare(
-      `SELECT * FROM it_tickets WHERE organization_id = ? ORDER BY created_at DESC`,
-    ).all(organizationId),
-    ticketDeliveries: getDB().prepare(
-      `SELECT * FROM ticket_deliveries WHERE organization_id = ? ORDER BY delivered_at DESC`,
-    ).all(organizationId),
+      )
+      .all(organizationId),
+    tickets: getDB()
+      .prepare(
+        `SELECT * FROM it_tickets WHERE organization_id = ? ORDER BY created_at DESC`,
+      )
+      .all(organizationId),
+    ticketDeliveries: getDB()
+      .prepare(
+        `SELECT * FROM ticket_deliveries WHERE organization_id = ? ORDER BY delivered_at DESC`,
+      )
+      .all(organizationId),
   };
 }
