@@ -120,4 +120,32 @@ describe('incremental update manifest', () => {
 
     expect(parsed).toEqual({ ok: false, error: 'patch artifact url must use https' });
   });
+  it('requires kind-specific compatibility metadata', () => {
+    const parsed = parseIncrementalUpdateManifest({
+      schemaVersion: 1,
+      appVersion: '1.9.5',
+      sourceCommit: 'abc',
+      publishedAt: '2026-07-25T00:00:00.000Z',
+      channels: {
+        patch: [],
+        kernel: [],
+        component: [{
+          id: 'component-skills-ppt-v2',
+          kind: 'component',
+          version: '2026.07.25',
+          target: 'skills/presentations',
+          compat: { appVersion: '1.9.5' },
+          url: 'https://updates.example.com/otto/component-skills-ppt-v2.tar.zst',
+          size: 2048,
+          sha256: sha,
+          signature: 'ed25519:example',
+          restart: 'none',
+          rollback: { supported: true, receipt: true },
+        }],
+      },
+    });
+
+    expect(parsed).toEqual({ ok: false, error: 'component artifact must declare compat.componentApi' });
+  });
+
 });

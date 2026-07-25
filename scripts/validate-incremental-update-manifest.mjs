@@ -57,6 +57,9 @@ for (const kind of kinds) {
     }
     if (!artifact.compat || typeof artifact.compat !== 'object' || Array.isArray(artifact.compat)) fail(`${label}.compat must be an object`);
     if (artifact.compat.appVersion !== manifest.appVersion) fail(`${label}.compat.appVersion must match manifest appVersion`);
+    if (kind === 'patch') assertString(artifact.compat.sourceCommit, `${label}.compat.sourceCommit`);
+    if (kind === 'kernel') assertString(artifact.compat.kernelAbi, `${label}.compat.kernelAbi`);
+    if (kind === 'component') assertString(artifact.compat.componentApi, `${label}.compat.componentApi`);
     if (!artifact.rollback || typeof artifact.rollback !== 'object' || Array.isArray(artifact.rollback)) fail(`${label}.rollback must be an object`);
     if (typeof artifact.rollback.supported !== 'boolean' || typeof artifact.rollback.receipt !== 'boolean') {
       fail(`${label}.rollback flags must be boolean`);

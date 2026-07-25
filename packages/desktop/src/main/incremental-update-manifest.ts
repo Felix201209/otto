@@ -98,6 +98,15 @@ function validateArtifact(
   if (value.compat.appVersion !== manifestAppVersion) {
     return `${expectedKind} artifact compat.appVersion must match manifest appVersion`;
   }
+  if (expectedKind === 'patch' && !isNonEmptyString(value.compat.sourceCommit)) {
+    return 'patch artifact must declare compat.sourceCommit';
+  }
+  if (expectedKind === 'kernel' && !isNonEmptyString(value.compat.kernelAbi)) {
+    return 'kernel artifact must declare compat.kernelAbi';
+  }
+  if (expectedKind === 'component' && !isNonEmptyString(value.compat.componentApi)) {
+    return 'component artifact must declare compat.componentApi';
+  }
   if (!isRecord(value.rollback)) return `${expectedKind} artifact rollback must be an object`;
   if (typeof value.rollback.supported !== 'boolean' || typeof value.rollback.receipt !== 'boolean') {
     return `${expectedKind} artifact rollback flags must be boolean`;

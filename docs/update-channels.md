@@ -26,3 +26,20 @@ Otto 后续更新分为四类，默认优先发增量包，只有触及 Electron
 也可以校验指定清单：
 
     npm run update:channels:check -- path/to/manifest.json
+
+## 当前实现状态
+
+已实现：
+
+- manifest parser 校验 patch/kernel/component 三类通道。
+- 发布校验脚本强制 HTTPS、sha256、签名、回滚字段和类型专属兼容字段。
+- component 本地执行层：下载 artifact、校验 sha256、登记到 userData/incremental-updates/components/registry.json，并写入 rollback receipt。
+
+未实现：
+
+- patch 代码覆盖与回滚执行器。
+- kernel ABI 切换、重启协调与回滚执行器。
+- component artifact 解包、运行时加载和权限授予。
+- 真实 Ed25519 验签、公钥轮换和服务端发布接口。
+
+当前 component 更新只把已校验 artifact 放入本机组件仓库，作为可发现资源；不会自动执行包内代码，也不会直接替换运行时文件。
