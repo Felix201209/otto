@@ -113,6 +113,7 @@ function getMimeType(filePath: string): string {
 }
 
 import { ServerManager } from './server-manager.js';
+import { resolveKernelUpdateRoot } from './incremental-kernel-store.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
 import { IncrementalUpdateService } from './incremental-update-service.js';
@@ -219,6 +220,7 @@ const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
 /** server 生命周期管理器（发现/拉起/探活/退出清理）。 */
 const serverManager = new ServerManager({
   enterpriseServerUrl: DEFAULT_ENTERPRISE_SERVER_URL,
+  kernelUpdateRoot: resolveKernelUpdateRoot(app.getPath('userData')),
   onHealthChange: (status) => {
     tracer.updateStatus(status);
   },

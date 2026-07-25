@@ -3,6 +3,7 @@
  */
 
 import { app, type WebContents } from 'electron';
+import { applyKernelUpdate } from './incremental-kernel-updater.js';
 import { applyPatchUpdate } from './incremental-patch-updater.js';
 import { readActiveRendererCssPatch, resolvePatchUpdateRoot } from './incremental-patch-store.js';
 import { applyComponentUpdate } from './incremental-component-updater.js';
@@ -37,6 +38,17 @@ export type IncrementalUpdateCheckResult =
   | { status: 'check-failed'; appVersion: string; message: string };
 
 export type IncrementalUpdateApplyResult =
+  | {
+      ok: true;
+      kind: 'kernel';
+      id: string;
+      version: string;
+      target: string;
+      restart: IncrementalUpdateArtifact['restart'];
+      artifactPath: string;
+      modulePath: string;
+      binPath: string;
+    }
   | {
       ok: true;
       kind: 'patch';
@@ -173,10 +185,23 @@ export class IncrementalUpdateService {
     }
 
     if (artifact.kind === 'kernel') {
+      const result = await applyKernelUpdate({
+        artifact,
+        userDataPath: app.getPath('userData'),
+        allowedAssetOrigins: this.allowedAssetOrigins,
+      });
+      if (!result.ok) return result;
+
       return {
-        ok: false,
-        unsupported: true,
-        error: `${artifact.kind} 增量更新执行器尚未接入；当前版本支持 patch/component 增量更新`,
+        ok: true,
+        kind: 'kernel',
+        id: result.record.id,
+        version: result.record.version,
+        target: result.record.target,
+        restart: artifact.restart,
+        artifactPath: result.receipt.installedArtifactPath,
+        modulePath: result.record.modulePath,
+        binPath: result.record.binPath,
       };
     }
 

@@ -27,16 +27,16 @@
     ],
     "kernel": [
       {
-        "id": "kernel-core-abi-2026-07",
+        "id": "kernel-server-runtime-2026-07",
         "kind": "kernel",
         "version": "1.9.5+k1",
-        "target": "core/server/native",
+        "target": "server/runtime",
         "compat": {
           "appVersion": "1.9.5",
           "kernelAbi": "2026.07"
         },
-        "url": "https://updates.example.com/otto/kernel-core-abi-2026-07.tar.zst",
-        "size": 8192,
+        "url": "https://updates.example.com/otto/kernel-server-runtime-2026-07.bundle.json",
+        "size": 10485760,
         "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "restart": "server",
