@@ -3,18 +3,10 @@
 Use this only when the local machine that produced the release branch does not
 have GitHub push credentials.
 
-Bundle file:
-
-```text
-deliverables/otto-v1.9.5-lstc-v194-2fca2a2.bundle
-sha256 47e5e8c1903c1e76adc690e49bbec65a836b191d03beb0fe20fb9fb2dc11eeec
-```
-
-The bundle contains `HEAD` at:
-
-```text
-2fca2a2684fc6e7ebaa1de30c17a1925ac998732
-```
+The release owner should use the newest `deliverables/*.bundle` file handed off
+with the release notes, plus its reported SHA256. Do not commit the exact bundle
+commit or bundle hash into this file; doing so makes the instructions
+self-referential and stale as soon as this document changes.
 
 It requires the repository to already contain `v1.9.4`:
 
@@ -28,8 +20,8 @@ On a machine with GitHub push credentials:
 git clone git@github.com:Felix201209/otto.git otto-1.9.5-push
 cd otto-1.9.5-push
 git fetch --tags origin
-git bundle verify /path/to/otto-v1.9.5-lstc-v194-2fca2a2.bundle
-git fetch /path/to/otto-v1.9.5-lstc-v194-2fca2a2.bundle HEAD:release/1.9.5-lstc-v194
+git bundle verify /path/to/otto-v1.9.5-lstc-v194-<commit>.bundle
+git fetch /path/to/otto-v1.9.5-lstc-v194-<commit>.bundle HEAD:release/1.9.5-lstc-v194
 git checkout release/1.9.5-lstc-v194
 git log --oneline v1.9.4..HEAD
 git push origin release/1.9.5-lstc-v194
@@ -43,3 +35,7 @@ draft=true
 prerelease=false
 ```
 
+Before pushing, compare `git log --oneline v1.9.4..HEAD` with the release
+handoff notes. If the document was edited after the bundle was generated,
+regenerate the bundle only when those documentation edits must also be pushed to
+GitHub.
