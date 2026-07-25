@@ -282,7 +282,7 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
       if (m.includes('not found') || /duckdb|gnuplot/i.test(m))
         return {
           llmContent:
-            'analyze_data FAIL: tool not installed. macOS: brew install duckdb gnuplot. Windows: winget install DuckDB; choco install gnuplot. Details: ' +
+            'analyze_data FAIL: tool not installed. macOS: brew install duckdb; brew install gnuplot. Windows: winget install DuckDB; choco install gnuplot. Details: ' +
             m,
           returnDisplay: 'analyze_data FAIL: tool not installed',
         };
