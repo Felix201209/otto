@@ -141,6 +141,7 @@ export function OttoPetStage({
   const [stepIndex, setStepIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [loopIndex, setLoopIndex] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
 
   const sequence = reducedMotion
     ? REDUCED_MOTION_SEQUENCE
@@ -210,6 +211,28 @@ export function OttoPetStage({
   const travelling =
     animation.id === 'running-right' || animation.id === 'running-left';
 
+  if (variant === 'panel' && collapsed) {
+    return (
+      <section
+        className="otto-pet-stage otto-pet-stage--collapsed"
+        aria-label="Otto 吉祥物活动区（已折叠）"
+        data-testid="otto-pet-stage"
+        data-current-state={animation.id}
+        data-running={running ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          className="otto-pet-stage__toggle"
+          onClick={() => setCollapsed(false)}
+          aria-label="展开小宠物"
+          title="展开小宠物"
+        >
+          Otto
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section
       className={`otto-pet-stage${variant === 'login' ? ' otto-pet-stage--login' : ''}`}
@@ -222,6 +245,15 @@ export function OttoPetStage({
         <div className="otto-pet-stage__head">
           <span>Otto 的小角落</span>
           <span className="otto-pet-stage__state">{animation.label}</span>
+          <button
+            type="button"
+            className="otto-pet-stage__toggle"
+            onClick={() => setCollapsed(true)}
+            aria-label="折叠小宠物"
+            title="折叠小宠物"
+          >
+            收起
+          </button>
         </div>
       ) : null}
       <div className="otto-pet-stage__scene">

@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { OttoPetStage, PET_ANIMATIONS } from './OttoPetStage.js';
 
 vi.mock('../assets/otto-pet-atlas.png', () => ({ default: 'otto-pet-atlas.png' }));
@@ -31,6 +31,18 @@ afterEach(() => {
 });
 
 describe('OttoPetStage', () => {
+  it('右栏小宠物可以折叠和展开，登录页模式不显示折叠按钮', () => {
+    const { rerender } = render(<OttoPetStage running={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '折叠小宠物' }));
+    expect(screen.getByRole('region', { name: 'Otto 吉祥物活动区（已折叠）' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '展开小宠物' }));
+    expect(screen.getByRole('region', { name: 'Otto 吉祥物活动区' })).toBeTruthy();
+
+    rerender(<OttoPetStage running={false} variant="login" />);
+    expect(screen.queryByRole('button', { name: '折叠小宠物' })).toBeNull();
+  });
+
   it('声明完整 9 行动画协议，行号与 hatch-pet atlas 一一对应', () => {
     expect(Object.values(PET_ANIMATIONS).map((animation) => animation.row)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8,

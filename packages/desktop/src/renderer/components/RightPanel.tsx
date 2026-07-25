@@ -27,7 +27,7 @@ import {
   IconTerminal,
 } from './icons.js';
 
-type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
+type TabType = 'agents' | 'tools' | 'memory' | 'worklog';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -50,7 +50,6 @@ const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   tools: '工具',
   memory: '企业记忆',
-  notes: '笔记',
   worklog: '工作日志',
 };
 
@@ -142,14 +141,13 @@ export function RightPanel({
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise'
       ? enterpriseKnowledgeEnabled
-        ? ['agents', 'tools', 'memory', 'notes', 'worklog']
-        : ['agents', 'tools', 'notes', 'worklog']
-      : ['agents', 'tools', 'notes', 'worklog'],
+        ? ['agents', 'tools', 'memory', 'worklog']
+        : ['agents', 'tools', 'worklog']
+      : ['agents', 'tools', 'worklog'],
     [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
-  const [noteText, setNoteText] = useState('');
   const [parkOpen, setParkOpen] = useState(true);
   const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
@@ -548,13 +546,6 @@ export function RightPanel({
           </div>
         ) : null}
 
-        {activeTab === 'notes' ? (
-          <div className="otto-right-panel__notes">
-            <div className="otto-right-panel__head">本地笔记</div>
-            <div className="otto-right-panel__hint">临时草稿：仅当前应用运行期间保留。</div>
-            <textarea className="otto-right-panel__textarea" value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="随手记点什么…（临时草稿）" aria-label="本地笔记" />
-          </div>
-        ) : null}
 
         {activeTab === 'worklog' ? (
           <div className="otto-worklog-panel">

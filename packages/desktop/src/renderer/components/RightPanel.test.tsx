@@ -350,20 +350,19 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
       .toHaveLength(1);
 
-    fireEvent.click(screen.getByRole('tab', { name: '笔记' }));
+    fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
 
     expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
       .toHaveLength(1);
   });
 
-  it('keeps personal mode on its four tabs without enterprise-only actions', () => {
+  it('keeps personal mode on its three tabs without enterprise-only actions', () => {
     installBridge();
     render(<RightPanel busy={false} />);
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
       '工具',
-      '笔记',
       '工作日志',
     ]);
     expect(screen.queryByText('企业记忆')).toBeNull();
@@ -434,7 +433,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '工具', '企业记忆', '笔记', '工作日志',
+        '专家', '工具', '企业记忆', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));

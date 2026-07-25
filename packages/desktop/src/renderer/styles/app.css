@@ -3986,8 +3986,8 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-focus);
 }
 
-/* ══════════════ 右侧面板（智能体 / 工具 / 记忆 / 浏览器 / 笔记） ══════════════
- * RightPanel.tsx。原 RightMascotPanel 的内联样式全部规范化到此；
+/* ══════════════ 右侧面板（智能体 / 工具 / 记忆 / 工作日志） ══════════════
+ * RightPanel.tsx。右栏样式集中维护；
  * 配色全走 tokens 变量，暗色自动跟随（个别黑底 hover 叠加见文末暗色补丁）。 */
 
 .otto-right-panel {
@@ -4023,11 +4023,44 @@ h6.otto-prose__h {
 }
 .otto-pet-stage__state {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--otto-text-tertiary);
   font-weight: 500;
+}
+.otto-pet-stage__toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface-raised);
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.otto-pet-stage__toggle:hover {
+  color: var(--otto-accent);
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-pet-stage__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-pet-stage--collapsed {
+  flex-basis: 42px;
+  min-height: 42px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.otto-pet-stage--collapsed .otto-pet-stage__toggle {
+  width: 100%;
+  height: 28px;
 }
 .otto-pet-stage__scene {
   position: relative;
@@ -4450,36 +4483,6 @@ h6.otto-prose__h {
   border: none;
 }
 
-/* —— 笔记 tab —— */
-.otto-right-panel__notes {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.otto-right-panel__textarea {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  padding: 8px;
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-sm);
-  background: var(--otto-surface);
-  color: var(--otto-text);
-  font-family: var(--otto-font-mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  outline: none;
-  resize: none;
-  transition: border-color var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-right-panel__textarea::placeholder {
-  color: var(--otto-text-tertiary);
-}
-.otto-right-panel__textarea:focus-visible {
-  border-color: var(--otto-accent);
-  box-shadow: var(--otto-shadow-focus);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .otto-response-mark.is-active,
