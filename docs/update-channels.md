@@ -33,7 +33,13 @@ Otto 后续更新分为四类，默认优先发增量包，只有触及 Electron
 
 - manifest parser 校验 patch/kernel/component 三类通道。
 - 发布校验脚本强制 HTTPS、sha256、签名、回滚字段和类型专属兼容字段。
-- component 本地执行层：下载 artifact、校验 sha256、登记到 userData/incremental-updates/components/registry.json，并写入 rollback receipt。
+- desktop main/preload 增量更新 IPC：`incrementalUpdateCheck` 与 `incrementalUpdateApply`。
+- component 本地执行层：下载 artifact、校验 sha256、登记到 `userData/incremental-updates/components/registry.json`，并写入 rollback receipt。
+
+运行约束：
+
+- 客户端通过 `OTTO_INCREMENTAL_UPDATE_MANIFEST_URL` 指向企业 HTTPS 增量 manifest；未配置时检查会明确失败，不会伪装成“已最新”。
+- 当前只有 component 增量更新可执行。patch/kernel 清单可被识别，但 apply 会返回 unsupported，等待执行器接入。
 
 未实现：
 

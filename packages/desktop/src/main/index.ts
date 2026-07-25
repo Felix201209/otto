@@ -115,6 +115,7 @@ function getMimeType(filePath: string): string {
 import { ServerManager } from './server-manager.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
+import { IncrementalUpdateService } from './incremental-update-service.js';
 import {
   EnterpriseNotificationIdentityBoundary,
   NotificationService,
@@ -280,6 +281,8 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  incrementalUpdateCheck: 'otto:incremental-update-check',
+  incrementalUpdateApply: 'otto:incremental-update-apply',
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
@@ -502,6 +505,7 @@ const updateService = new UpdateService(
   () => mainWindow?.webContents,
   IPC.updateProgress,
 );
+const incrementalUpdateService = new IncrementalUpdateService();
 
 /**
  * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
@@ -2070,6 +2074,20 @@ function registerIpc(): void {
     updateService.cancelDownload();
   });
   ipcMain.handle(IPC.updateInstall, () => updateService.installUpdate());
+  ipcMain.handle(IPC.incrementalUpdateCheck, () => incrementalUpdateService.checkForUpdates());
+  ipcMain.handle(IPC.incrementalUpdateApply, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      return Promise.resolve({ ok: false, error: '增量更新参数必须是对象' });
+    }
+    const input = payload as { kind?: unknown; id?: unknown };
+    if (input.kind !== 'patch' && input.kind !== 'kernel' && input.kind !== 'component') {
+      return Promise.resolve({ ok: false, error: '增量更新 kind 无效' });
+    }
+    if (typeof input.id !== 'string' || input.id.trim().length === 0) {
+      return Promise.resolve({ ok: false, error: '增量更新 id 不能为空' });
+    }
+    return incrementalUpdateService.applyUpdate(input.kind, input.id);
+  });
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。

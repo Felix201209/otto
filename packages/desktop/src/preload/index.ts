@@ -116,6 +116,37 @@ export interface UpdateInstallResult {
   message: string;
 }
 
+export type IncrementalUpdateKind = 'patch' | 'kernel' | 'component';
+export interface IncrementalUpdateAvailableArtifact {
+  id: string;
+  kind: IncrementalUpdateKind;
+  version: string;
+  target: string;
+  restart: 'none' | 'renderer' | 'server' | 'app';
+  rollbackSupported: boolean;
+}
+export type IncrementalUpdateCheckResult =
+  | {
+      status: 'available';
+      appVersion: string;
+      sourceCommit: string;
+      publishedAt: string;
+      artifacts: IncrementalUpdateAvailableArtifact[];
+    }
+  | { status: 'up-to-date'; appVersion: string }
+  | { status: 'check-failed'; appVersion: string; message: string };
+export type IncrementalUpdateApplyResult =
+  | {
+      ok: true;
+      kind: 'component';
+      id: string;
+      version: string;
+      target: string;
+      restart: 'none' | 'renderer' | 'server' | 'app';
+      artifactPath: string;
+    }
+  | { ok: false; unsupported?: boolean; cancelled?: boolean; error: string };
+
 export type AsrProvider = 'volcengine' | 'openai';
 export interface VoicePublicConfig {
   enabled: boolean;
@@ -551,6 +582,8 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  incrementalUpdateCheck: 'otto:incremental-update-check',
+  incrementalUpdateApply: 'otto:incremental-update-apply',
   notificationUnreadChanged: 'otto:notification-unread-changed',
   notificationMarkRead: 'otto:notification-mark-read',
   notificationGetUnread: 'otto:notification-get-unread',
@@ -840,6 +873,10 @@ export interface OttoBridge {
   updateInstall(): Promise<UpdateInstallResult>;
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
+  /** 检查补丁 / 内核 / 组件增量更新。 */
+  incrementalUpdateCheck(): Promise<IncrementalUpdateCheckResult>;
+  /** 应用最近一次检查到的增量更新；当前仅 component 有执行器。 */
+  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult>;
   voiceGetConfig(): Promise<VoicePublicConfig>;
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
@@ -1459,6 +1496,12 @@ const bridge: OttoBridge = {
   },
   updateInstall(): Promise<UpdateInstallResult> {
     return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
+  },
+  incrementalUpdateCheck(): Promise<IncrementalUpdateCheckResult> {
+    return ipcRenderer.invoke(IPC.incrementalUpdateCheck) as Promise<IncrementalUpdateCheckResult>;
+  },
+  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult> {
+    return ipcRenderer.invoke(IPC.incrementalUpdateApply, input) as Promise<IncrementalUpdateApplyResult>;
   },
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void {
     // 仿 onMenu 订阅：进度帧由 main 的 UpdateService 节流推送。
