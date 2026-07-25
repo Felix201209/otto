@@ -35,7 +35,7 @@ Important local commits after `v1.9.4`:
 - `0498447c` fixes the GitHub release workflow to publish LSTC assets to `Felix201209/otto-releases` with a 160 MB installer limit.
 - `25c2e99` adds this runbook for the remaining privileged release and deployment steps.
 - `7d7e690` records the target-server canary result and production handoff state.
-- `b7add82` makes the push-bundle handoff stable and avoids self-referential artifact hashes.
+- Later docs commits keep the release handoff stable and remove sensitive deployment details.
 
 ## Verified Local Artifacts
 
@@ -50,18 +50,17 @@ Windows update manifest:
 
 ```text
 packages/desktop/release/latest.json
-sha256 070192b2407277a7212991f1189a2b1008c20e78e9ef9d4af6e3d01c0997f830
-sourceCommit b7add82d2fbc7eb2985fd46488524eb956e97b11
+# Regenerate after the final source commit so sourceCommit is current.
+# Record the final sha256 in the private release handoff notes, not in this tracked file.
 ```
 
 Server deployment package:
 
 ```text
 deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
-sha256 48f46731e3b5aec711c2be51de478e0ff6be96fda66fcb5499a79f59ae034678
+# Regenerate after the final source commit with: npm run bundle:enterprise
+# Record sha256, sourceCommit, and sourceTreeDirty in the private release handoff notes.
 buildCommit ae492c9641a52f21f11882260b5da526cbbe7935
-sourceCommit b7add82d2fbc7eb2985fd46488524eb956e97b11
-sourceTreeDirty false
 ```
 
 The Windows installer is not code-signed because no signing certificate was
