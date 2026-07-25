@@ -15,10 +15,11 @@ Local branch:
 release/1.9.5-lstc-v194
 ```
 
-Current local HEAD:
+Current local HEAD is intentionally not hard-coded here because this runbook is
+itself part of the release branch. Before publishing or deploying, use:
 
-```text
-25c2e9994f17d38ee2b438c7090203acfd5b4049
+```bash
+git rev-parse HEAD
 ```
 
 Important local commits after `v1.9.4`:
@@ -33,6 +34,7 @@ Important local commits after `v1.9.4`:
 - `3f704d76` merges the remote `internal` packaged grep fallback into core.
 - `0498447c` fixes the GitHub release workflow to publish LSTC assets to `Felix201209/otto-releases` with a 160 MB installer limit.
 - `25c2e99` adds this runbook for the remaining privileged release and deployment steps.
+- `7d7e690` records the target-server canary result and production handoff state.
 
 ## Verified Local Artifacts
 
@@ -47,15 +49,16 @@ Windows update manifest:
 
 ```text
 packages/desktop/release/latest.json
-sha256 950fb9416e184b6b39b4dbfa748bc0c03f2f937d91b63cbeab2325242c73e975
+# Regenerate after the final source commit so sourceCommit is current:
+# node packages/desktop/scripts/make-latest-json.mjs ... or the checked recovery generator.
 ```
 
 Server deployment package:
 
 ```text
 deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
-sha256 0f53e43279b511955fdca47d9d36617fb41161edc9b2b0985007db62230c2fdb
-sourceCommit 25c2e9994f17d38ee2b438c7090203acfd5b4049
+# Regenerate after the final source commit with: npm run bundle:enterprise
+# Verify sha256 with: sha256sum deliverables/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
 buildCommit ae492c9641a52f21f11882260b5da526cbbe7935
 ```
 
@@ -96,8 +99,8 @@ Uploaded but not deployed:
 
 ```text
 /tmp/otto-enterprise-oneclick-v1.9.5-ae492c9641a5.tar.gz
-sha256 0f53e43279b511955fdca47d9d36617fb41161edc9b2b0985007db62230c2fdb
 /tmp/otto-v195-deploy-root.sh
+# Verify the uploaded tarball against the current local sha256 before running sudo.
 ```
 
 The SSH user `king` can log in but cannot write `/opt/otto-enterprise` and cannot
