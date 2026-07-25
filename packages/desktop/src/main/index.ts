@@ -2074,7 +2074,12 @@ function registerIpc(): void {
     updateService.cancelDownload();
   });
   ipcMain.handle(IPC.updateInstall, () => updateService.installUpdate());
-  ipcMain.handle(IPC.incrementalUpdateCheck, () => incrementalUpdateService.checkForUpdates());
+  ipcMain.handle(IPC.incrementalUpdateCheck, (_event, payload?: unknown) => {
+    const manifestUrl = payload && typeof payload === 'object' && typeof (payload as { manifestUrl?: unknown }).manifestUrl === 'string'
+      ? (payload as { manifestUrl: string }).manifestUrl
+      : undefined;
+    return incrementalUpdateService.checkForUpdates(manifestUrl);
+  });
   ipcMain.handle(IPC.incrementalUpdateApply, (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') {
       return Promise.resolve({ ok: false, error: '增量更新参数必须是对象' });

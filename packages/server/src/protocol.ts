@@ -954,6 +954,16 @@ export type ErrorMsg = Envelope<
   { sessionId?: string; code: string; message: string }
 >;
 
+/** 企业服务器通知桌面端检查补丁 / 内核 / 组件增量更新。 */
+export type IncrementalUpdateAvailableMsg = Envelope<
+  'incremental_update_available',
+  {
+    manifestUrl: string;
+    reason?: string;
+    requestedAt: string;
+  }
+>;
+
 /** 可用模型列表回包。 */
 export type ModelsListMsg = Envelope<
   'models_list',
@@ -1330,6 +1340,7 @@ export type ServerToClient =
   | ToolConfirmationRequestMsg
   | SessionStatusMsg
   | ErrorMsg
+  | IncrementalUpdateAvailableMsg
   | ModelsListMsg
   | FeishuPushResultMsg
   | SettingsMsg
@@ -1471,6 +1482,7 @@ export const HTTP_ROUTES = {
   feishuStart: '/feishu/start',
   feishuStop: '/feishu/stop',
   feishuConfig: '/feishu/config',
+  incrementalUpdatePush: '/internal/incremental-update/push',
   ws: '/ws',
 } as const;
 

@@ -2109,6 +2109,39 @@ export class OttoServer {
     if (path === HTTP_ROUTES.health) {
       return sendJson(res, 200, ok(this.health()));
     }
+    if (path === HTTP_ROUTES.incrementalUpdatePush) {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, err('method_not_allowed'));
+      }
+      if (!isLoopbackRequest(req)) {
+        return sendJson(res, 403, err('loopback_only'));
+      }
+      if (!matchesBearerToken(req.headers.authorization, this.localControlToken)) {
+        return sendJson(res, 401, err('unauthorized'));
+      }
+      void readJsonBody(req)
+        .then(parseIncrementalUpdatePushBody)
+        .then((parsed) => {
+          if (!parsed.ok) {
+            sendJson(res, 400, err(parsed.error));
+            return;
+          }
+          const frame = {
+            type: 'incremental_update_available',
+            payload: {
+              manifestUrl: parsed.value.manifestUrl,
+              reason: parsed.value.reason,
+              requestedAt: new Date().toISOString(),
+            },
+          } as const;
+          this.broadcastAll(frame);
+          sendJson(res, 202, ok({ deliveredTo: this.conns.size }));
+        })
+        .catch((error) => {
+          sendJson(res, 400, err(error instanceof Error ? error.message : String(error)));
+        });
+      return;
+    }
     if (path === '/' || path === '/index.html') {
       void this.serveBrowserApp(res);
       return;
@@ -3998,6 +4031,35 @@ function readJsonBody(
     });
     req.on('error', reject);
   });
+}
+
+function parseIncrementalUpdatePushBody(body: unknown):
+  | { ok: true; value: { manifestUrl: string; reason?: string } }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: '请求体必须是对象' };
+  }
+  const input = body as { manifestUrl?: unknown; reason?: unknown };
+  if (typeof input.manifestUrl !== 'string' || input.manifestUrl.trim().length === 0) {
+    return { ok: false, error: 'manifestUrl 不能为空' };
+  }
+  let manifestUrl: string;
+  try {
+    const url = new URL(input.manifestUrl.trim());
+    if (url.protocol !== 'https:' || url.username || url.password) {
+      return { ok: false, error: 'manifestUrl 必须是无凭证 HTTPS URL' };
+    }
+    manifestUrl = url.toString();
+  } catch {
+    return { ok: false, error: 'manifestUrl 不是合法 URL' };
+  }
+  if (input.reason !== undefined) {
+    if (typeof input.reason !== 'string') return { ok: false, error: 'reason 必须是字符串' };
+    const reason = input.reason.trim();
+    if (reason.length > 160) return { ok: false, error: 'reason 不能超过 160 字符' };
+    return { ok: true, value: reason ? { manifestUrl, reason } : { manifestUrl } };
+  }
+  return { ok: true, value: { manifestUrl } };
 }
 
 function isLoopbackRequest(req: IncomingMessage): boolean {

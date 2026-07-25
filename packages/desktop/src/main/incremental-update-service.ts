@@ -113,11 +113,11 @@ export class IncrementalUpdateService {
   private lastManifest: IncrementalUpdateManifest | null = null;
   private allowedAssetOrigins: string[] = [];
 
-  async checkForUpdates(): Promise<IncrementalUpdateCheckResult> {
+  async checkForUpdates(manifestUrlOverride?: string): Promise<IncrementalUpdateCheckResult> {
     this.lastManifest = null;
     this.allowedAssetOrigins = [];
     const appVersion = app.getVersion();
-    const manifestUrl = resolveIncrementalManifestUrl();
+    const manifestUrl = resolveIncrementalManifestUrl(manifestUrlOverride);
     if (!manifestUrl) {
       return {
         status: 'check-failed',

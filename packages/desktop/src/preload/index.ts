@@ -874,7 +874,7 @@ export interface OttoBridge {
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
   /** 检查补丁 / 内核 / 组件增量更新。 */
-  incrementalUpdateCheck(): Promise<IncrementalUpdateCheckResult>;
+  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult>;
   /** 应用最近一次检查到的增量更新；当前仅 component 有执行器。 */
   incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult>;
   voiceGetConfig(): Promise<VoicePublicConfig>;
@@ -1058,6 +1058,13 @@ function dispatchFrame(frame: ServerToClient): void {
     // 不经 renderer React 生命周期：窗口隐藏、切在其它会话或 UI 重载时，
     // preload 仍会把全局入站帧直接交给 main NotificationService。
     return;
+  }
+  if ((frame as { type: string }).type === 'incremental_update_available') {
+    const updateFrame = frame as { payload?: { manifestUrl?: unknown } };
+    const manifestUrl = updateFrame.payload?.manifestUrl;
+    if (typeof manifestUrl === 'string' && manifestUrl.trim()) {
+      void ipcRenderer.invoke(IPC.incrementalUpdateCheck, { manifestUrl }).catch(() => undefined);
+    }
   }
   for (const h of frameHandlers) {
     try {
@@ -1497,8 +1504,8 @@ const bridge: OttoBridge = {
   updateInstall(): Promise<UpdateInstallResult> {
     return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
   },
-  incrementalUpdateCheck(): Promise<IncrementalUpdateCheckResult> {
-    return ipcRenderer.invoke(IPC.incrementalUpdateCheck) as Promise<IncrementalUpdateCheckResult>;
+  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult> {
+    return ipcRenderer.invoke(IPC.incrementalUpdateCheck, input) as Promise<IncrementalUpdateCheckResult>;
   },
   incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult> {
     return ipcRenderer.invoke(IPC.incrementalUpdateApply, input) as Promise<IncrementalUpdateApplyResult>;
