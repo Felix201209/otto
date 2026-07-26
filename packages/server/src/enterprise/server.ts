@@ -45,69 +45,17 @@ import {
   dispatchEnterpriseRoute,
   type AdminPrincipal,
 } from './enterpriseRouteDispatcher.js';
+import {
+  FEATURE_ADMIN_PREFIX,
+  isAdminRoute,
+  isLicenseMaintenanceRoute,
+  isMemberRoute,
+  isPublicSimpleParkRoute,
+} from './enterpriseRouteGuards.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 
 const DEFAULT_PORT = 7777;
-
-/** 需要管理员令牌的路由（读/写全公司数据或改员工状态）。 */
-const ADMIN_ROUTES = new Set([
-  '/enterprise/invite',
-  '/enterprise/offboard',
-  '/enterprise/export',
-  '/enterprise/audit',
-  '/enterprise/employees',
-  '/enterprise/report',
-  '/enterprise/accounts',
-  '/enterprise/organization/invite',
-  '/enterprise/park',
-  '/enterprise/park/manage',
-  '/enterprise/park/invite',
-  '/enterprise/park/join',
-  '/enterprise/park/profile',
-  '/enterprise/park/tenants',
-  '/enterprise/park-statistics',
-  '/enterprise/park/specialists',
-  '/enterprise/park/services',
-  '/enterprise/park/services/assign',
-  '/enterprise/park-services/push',
-  '/enterprise/park-services/survey-results',
-  '/enterprise/park-settings',
-  '/enterprise/park-meeting-rooms',
-  '/enterprise/park-meeting-slots',
-  '/enterprise/usage/summary',
-  '/enterprise/deployment/status',
-  '/enterprise/deployment/license',
-  '/enterprise/deployment/telemetry',
-  '/enterprise/deployment/diagnostics',
-  '/enterprise/modules/updates',
-  '/enterprise/organizations',
-]);
-
-/** 会读取或写入企业内部数据的成员路由，必须使用账号会话。 */
-const MEMBER_ROUTES = new Set([
-  '/enterprise/onboard',
-  '/enterprise/task',
-  '/enterprise/recall',
-  '/enterprise/knowledge',
-  '/enterprise/credits/balance',
-  '/enterprise/credits/redeem',
-  '/enterprise/credits/redeem-codes',
-  '/enterprise/credits/topup',
-  '/enterprise/credits/transactions',
-  '/enterprise/organization/view',
-  '/enterprise/organization/features',
-  '/enterprise/presence/heartbeat',
-  '/enterprise/organization/sync',
-  '/enterprise/park/view',
-  '/enterprise/messages/unread',
-  '/enterprise/auth/join-organization',
-  '/enterprise/park-resources',
-  '/enterprise/park-statistics/inbox',
-  '/enterprise/modules/updates/client',
-]);
-
-const FEATURE_ADMIN_PREFIX = '/admin/features';
 
 interface RouteBody {
   [key: string]: unknown;
@@ -485,53 +433,6 @@ function tokensMatch(a: string, b: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isAdminRoute(path: string): boolean {
-  return (
-    ADMIN_ROUTES.has(path) ||
-    path.startsWith('/enterprise/accounts/') ||
-    path.startsWith('/enterprise/organization/departments') ||
-    path.startsWith('/enterprise/organization/positions') ||
-    path.startsWith('/enterprise/park-meeting-rooms/') ||
-    path.startsWith('/enterprise/platform/organizations/')
-  );
-}
-
-function isMemberRoute(path: string): boolean {
-  return (
-    MEMBER_ROUTES.has(path) ||
-    path === '/enterprise/atoa/inbox' ||
-    path.startsWith('/enterprise/messages/') ||
-    path.startsWith('/enterprise/park-statistics/') ||
-    (path.startsWith('/enterprise/credits/redeem-codes/') &&
-      path.endsWith('/revoke'))
-  );
-}
-
-function isPublicSimpleParkRoute(
-  path: string,
-  method: string,
-  url: URL,
-): boolean {
-  return (
-    (path === '/enterprise/park/join' && method === 'POST') ||
-    (path === '/enterprise/park/services' &&
-      method === 'GET' &&
-      url.searchParams.has('parkId')) ||
-    (path === '/enterprise/park/services/request' && method === 'POST')
-  );
-}
-function isLicenseMaintenanceRoute(path: string): boolean {
-  return (
-    path === '/enterprise/health' ||
-    path === '/enterprise/export' ||
-    path === '/enterprise/deployment/status' ||
-    path === '/enterprise/deployment/license' ||
-    path === '/enterprise/deployment/telemetry' ||
-    path === '/enterprise/deployment/diagnostics' ||
-    path.startsWith('/enterprise/auth/')
-  );
 }
 
 function licenseBlockedPayload() {
