@@ -58,6 +58,7 @@ import { handleAuthRoute } from './authRoutes.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import { handleDeploymentRoute } from './deploymentRoutes.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
+import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
 import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 import { handleOrganizationRoute } from './organizationRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
@@ -1325,141 +1326,18 @@ function makeHandler(
         return;
       }
 
-      // ===== Join (employee uses invite code) =====
-      if (path === '/enterprise/join' && method === 'POST') {
-        const body = await readBody(req);
-        const invite_code = body.invite_code as string | undefined;
-        const employee_name = body.employee_name as string | undefined;
-        if (!invite_code || !employee_name) {
-          sendJSON(res, 400, { error: 'invite_code and employee_name required' });
-          return;
-        }
-        const result = db.validateInviteCode(invite_code);
-        if (!result.valid) {
-          sendJSON(res, 403, { error: result.error });
-          return;
-        }
-        const empId = `emp_${Date.now()}_${randomBytes(3).toString('hex')}`;
-        db.createEmployee({
-          id: empId,
-          organizationId: result.organizationId,
-          name: employee_name,
-          invite_code,
-          department: result.department,
-        });
-        sendJSON(res, 200, {
-          employee_id: empId,
-          department: result.department,
-          message: `Welcome ${employee_name}! Please complete onboarding.`,
-          next_step: 'onboard',
-        });
-        return;
-      }
-
-      // ===== Onboard (5 questions) =====
-      if (path === '/enterprise/onboard' && method === 'POST') {
-        const body = await readBody(req);
-        const employee_id = body.employee_id as string | undefined;
-        const { role, pain_points, preferred_device, help_focus } = body;
-        if (!employee_id) {
-          sendJSON(res, 400, { error: 'employee_id required' });
-          return;
-        }
-
-        const personalityJson = JSON.stringify({
-          role,
-          pain_points,
-          preferred_device,
-          help_focus,
-          onboarded_at: new Date().toISOString(),
-        });
-
-        const emp = db.getEmployee(employee_id, memberAccount!.organizationId) as {
-          role?: string;
-          department?: string;
-          organization_id?: string;
-        } | null;
-        if (!emp) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-        if (!memberAccount!.isAdmin && memberAccount!.employeeId !== employee_id) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-
-        db.getDB()
-          .prepare(
-            'UPDATE employees SET role = ?, personality = ? WHERE id = ? AND organization_id = ?',
-          )
-          .run((role as string) || emp.role, personalityJson, employee_id, emp.organization_id);
-
-        const knowledge = db.getOrganizationFeatures(memberAccount!.organizationId).knowledge
-          ? db.getKnowledge(emp.department, undefined, emp.organization_id)
-          : [];
-
-        sendJSON(res, 200, {
-          employee_id,
-          message: 'Onboarding complete!',
-          inherited_knowledge: knowledge.slice(0, 10),
-          total_knowledge_items: knowledge.length,
-          next_step: 'start_working',
-        });
-        return;
-      }
-
-      // ===== Log task =====
-      if (path === '/enterprise/task' && method === 'POST') {
-        const body = await readBody(req);
-        const employee_id = body.employee_id as string | undefined;
-        const task_type = body.task_type as string | undefined;
-        if (!employee_id || !task_type) {
-          sendJSON(res, 400, { error: 'employee_id and task_type required' });
-          return;
-        }
-        const employee = db.getEmployee(employee_id, memberAccount!.organizationId);
-        if (!employee
-          || (!memberAccount!.isAdmin && memberAccount!.employeeId !== employee_id)) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-        db.logTask({
-          employee_id,
-          task_type,
-          context: body.context as string | undefined,
-          result: body.result as string | undefined,
-          duration_min: (body.duration_min as number) || 0,
-          // 直接透传原始上报值；成本/token 的兜底口径统一交给 db.logTask 里的归一化。
-          // 之前用 `?? default` 时，显式上报 cost_cny:0 不会兜底、会存 0，导致
-          // 多数任务 cost=0 时 totalCost 塌小、laborPerToken 爆表。
-          tokens_used: body.tokens_used as number | undefined,
-          cost_cny: body.cost_cny as number | undefined,
-        });
-        sendJSON(res, 200, { status: 'logged' });
-        return;
-      }
-
-      // ===== Recall knowledge =====
-      if (path === '/enterprise/recall' && method === 'GET') {
-        const employee_id = url.searchParams.get('employee_id') || '';
-        const task_type = url.searchParams.get('task_type') || '';
-        const emp = db.getEmployee(employee_id, memberAccount!.organizationId) as {
-          department?: string;
-          organization_id?: string;
-        } | null;
-        if (!emp) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-        if (!memberAccount!.isAdmin && memberAccount!.employeeId !== employee_id) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-        const knowledge = db.getOrganizationFeatures(memberAccount!.organizationId).knowledge
-          ? db.searchKnowledge(task_type, emp.department, emp.organization_id)
-          : [];
-        const history = db.getTaskHistory(employee_id, 5, emp.organization_id);
-        sendJSON(res, 200, { knowledge: knowledge.slice(0, 5), history, department: emp.department });
+      // ===== Member workflow routes =====
+      if (await handleMemberWorkflowRoute({
+        path,
+        method,
+        req,
+        res,
+        url,
+        memberAccount,
+        adminPrincipal,
+        readBody,
+        sendJSON,
+      })) {
         return;
       }
 
@@ -1635,132 +1513,6 @@ function makeHandler(
         } catch (error) {
           sendJSON(res, 400, { error: error instanceof Error ? error.message : '消息发送失败' });
         }
-        return;
-      }
-
-      // ===== Offboard =====
-      if (path === '/enterprise/offboard' && method === 'POST') {
-        const body = await readBody(req);
-        const employee_id = body.employee_id as string | undefined;
-        if (!employee_id) {
-          sendJSON(res, 400, { error: 'employee_id required' });
-          return;
-        }
-        const organizationId = adminPrincipal!.organizationId;
-        const emp = db.getEmployee(employee_id, organizationId) as {
-          name?: string;
-          department?: string;
-        } | null;
-        if (!emp) {
-          sendJSON(res, 404, { error: 'Employee not found' });
-          return;
-        }
-        const tasks = db.getTaskHistory(employee_id, 50, organizationId) as Array<{ task_type: string }>;
-        const byType: Record<string, number> = {};
-        for (const t of tasks) byType[t.task_type] = (byType[t.task_type] || 0) + 1;
-        for (const [type, count] of Object.entries(byType)) {
-          db.addKnowledge({
-            organizationId,
-            department: emp.department,
-            category: 'offboarded_experience',
-            content: `Task "${type}" executed ${count} times by ${emp.name}. Average patterns preserved.`,
-            contributor: emp.name,
-            confidence: 0.8,
-          });
-        }
-        db.offboardEmployee(employee_id, organizationId);
-        sendJSON(res, 200, {
-          status: 'offboarded',
-          merged_tasks: tasks.length,
-          merged_patterns: Object.keys(byType).length,
-          message: 'Experience merged to department. No manual handover needed.',
-        });
-        return;
-      }
-
-      // ===== Create invite code (admin) =====
-      if (path === '/enterprise/invite' && method === 'POST') {
-        const body = await readBody(req);
-        const department = body.department as string | undefined;
-        const max_uses = body.max_uses as number | undefined;
-        if (!department) {
-          sendJSON(res, 400, { error: 'department required' });
-          return;
-        }
-        const code = db.createInviteCode(
-          department,
-          adminPrincipal!.kind === 'account' ? adminPrincipal!.account.id : 'platform-admin',
-          max_uses || 1,
-          adminPrincipal!.organizationId,
-        );
-        sendJSON(res, 200, { code, department, max_uses: max_uses || 1 });
-        return;
-      }
-
-      // ===== Knowledge search =====
-      if (path === '/enterprise/knowledge' && method === 'GET') {
-        const organizationId = memberAccount!.organizationId;
-        if (!db.getOrganizationFeatures(organizationId).knowledge) {
-          sendJSON(res, 403, { error: '企业知识功能已由管理员关闭' });
-          return;
-        }
-        const query = url.searchParams.get('q') || '';
-        const requestedDepartment = url.searchParams.get('department')?.trim() || undefined;
-        if (
-          !memberAccount!.isAdmin
-          && requestedDepartment
-          && requestedDepartment !== memberAccount!.department
-        ) {
-          sendJSON(res, 403, { error: '无权读取其他部门知识' });
-          return;
-        }
-        // 当前数据模型用 department=NULL 表示组织全局知识。普通成员的最大安全
-        // 可见域固定为“全局 + 本人当前部门”；query 只能缩小文本结果，不能改授权域。
-        // 管理员保留原有组织范围，并可按任意本企业部门筛选。
-        const result = memberAccount!.isAdmin
-          ? query
-            ? db.searchKnowledge(query, requestedDepartment, organizationId)
-            : db.getKnowledge(requestedDepartment, undefined, organizationId)
-          : db.getMemberKnowledge(memberAccount!.department, query, organizationId);
-        sendJSON(res, 200, { knowledge: result });
-        return;
-      }
-
-      // ===== Add knowledge =====
-      if (path === '/enterprise/knowledge' && method === 'POST') {
-        const organizationId = memberAccount!.organizationId;
-        if (!db.getOrganizationFeatures(organizationId).knowledge) {
-          sendJSON(res, 403, { error: '企业知识功能已由管理员关闭' });
-          return;
-        }
-        const body = await readBody(req);
-        const content = body.content as string | undefined;
-        if (!content) {
-          sendJSON(res, 400, { error: 'content required' });
-          return;
-        }
-        const confidence = typeof body.confidence === 'number'
-          && Number.isFinite(body.confidence)
-          && body.confidence >= 0
-          && body.confidence <= 1
-          ? body.confidence
-          : 0.5;
-        const sourceId = typeof body.sourceId === 'string'
-          ? body.sourceId.trim().slice(0, 200)
-          : undefined;
-        const added = db.addKnowledge({
-          organizationId,
-          sourceId: sourceId || undefined,
-          // 普通成员不能伪造部门；管理员手动录入时可明确指定本企业部门。
-          department: memberAccount!.isAdmin && typeof body.department === 'string'
-            ? body.department
-            : memberAccount!.department || undefined,
-          category: (body.category as string) || 'general',
-          content,
-          contributor: memberAccount!.name,
-          confidence,
-        });
-        sendJSON(res, 200, { status: added ? 'added' : 'exists', added });
         return;
       }
 
