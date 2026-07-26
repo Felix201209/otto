@@ -5216,6 +5216,41 @@ export function createParkAsPlatform(input: {
     brandName: input.brandName,
   });
 }
+
+export function updateParkAsPlatform(input: {
+  adminOrganizationId: string;
+  name?: string;
+  brandName?: string;
+}): ParkView {
+  const current = getDB()
+    .prepare(
+      `SELECT * FROM parks
+       WHERE admin_organization_id = ? AND status = 'active'`,
+    )
+    .get(input.adminOrganizationId) as ParkRow | undefined;
+  if (!current) throw new Error('Park admin organization not found');
+
+  const name =
+    input.name === undefined
+      ? current.name
+      : normalizeOptionalText(input.name, '产业园名称');
+  if (!name) throw new Error('产业园名称不能为空');
+  const brandName =
+    input.brandName === undefined
+      ? current.brand_name
+      : normalizeOptionalText(input.brandName, '园区服务名称');
+  if (!brandName) throw new Error('园区服务名称不能为空');
+
+  getDB()
+    .prepare(
+      `UPDATE parks
+       SET name = ?, brand_name = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .run(name, brandName, current.id);
+  return getPark(current.id)!;
+}
+
 export function createPark(input: {
   adminOrganizationId: string;
   actorAccountId: string;

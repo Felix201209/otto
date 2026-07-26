@@ -2593,6 +2593,36 @@ function makeHandler(
           }
           return;
         }
+
+        if (segments.length === 2 && resource === 'park' && method === 'PATCH') {
+          const body = await readBody(req);
+          const hasName = typeof body.name === 'string';
+          const hasBrandName = typeof body.brandName === 'string';
+          if (!hasName && !hasBrandName) {
+            sendJSON(res, 400, { error: '至少提供一个需要修改的产业园字段' });
+            return;
+          }
+          try {
+            const park = db.updateParkAsPlatform({
+              adminOrganizationId: organizationId,
+              name: hasName ? body.name as string : undefined,
+              brandName: hasBrandName ? body.brandName as string : undefined,
+            });
+            sendJSON(res, 200, {
+              organization: db.getEnterpriseOrganization(organizationId),
+              park,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'park update failed';
+            if (message === 'Park admin organization not found') {
+              sendJSON(res, 404, { error: message });
+            } else {
+              sendJSON(res, 400, { error: message });
+            }
+          }
+          return;
+        }
+
         if (
           segments.length === 3
           && resource === 'accounts'
@@ -3827,6 +3857,15 @@ function platformAdminHTML(): string {
         </div>
         <div id="platformParkDetails" class="hidden">
           <div id="platformParkSummary" class="department" style="margin-bottom:10px"></div>
+          <form id="platformParkEditForm" class="department hidden" style="margin-bottom:10px">
+            <div class="department-head"><span>编辑产业园资料</span><span class="department-count">仅平台管理员可修改</span></div>
+            <div class="invite-settings">
+              <div class="field"><label for="platformParkEditName">产业园名称</label><input id="platformParkEditName" maxlength="80" required></div>
+              <div class="field"><label for="platformParkEditBrandName">客户端服务名称</label><input id="platformParkEditBrandName" maxlength="80" required></div>
+              <div class="field"><label for="platformParkEditSlug">稳定标识（不可修改）</label><input id="platformParkEditSlug" readonly aria-readonly="true"></div>
+            </div>
+            <div class="inline-actions"><button id="platformParkSave" class="primary" type="submit">保存园区资料</button></div>
+          </form>
           <div id="platformParkTenants" class="department-list"></div>
         </div>
         <div id="platformParkNotice" class="notice hidden" role="status"></div>
@@ -3899,7 +3938,52 @@ function renderInvite(invite){const available=Boolean(invite&&invite.status==='a
 function renderDepartments(accounts){const list=$('departmentList');list.replaceChildren();const groups=new Map();accounts.forEach(account=>{const department=String(account.department||'未分配部门');if(!groups.has(department))groups.set(department,[]);groups.get(department).push(account)});if(!groups.size){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无成员';list.append(empty);return}Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0],'zh-CN')).forEach(([department,members])=>{const card=document.createElement('article');card.className='department';const head=document.createElement('div');head.className='department-head';const name=document.createElement('span');name.textContent=department;const count=document.createElement('span');count.className='department-count';count.textContent=members.length+' 人';head.append(name,count);const names=document.createElement('div');names.className='department-members';names.textContent=members.map(member=>String(member.name||member.username||'未命名成员')).join('、');card.append(head,names);list.append(card)})}
 function appendCell(row,text,className){const cell=document.createElement('td');if(className)cell.className=className;cell.textContent=String(text==null?'':text);row.append(cell);return cell}
 function renderAccounts(accounts){const rows=$('accountRows');rows.replaceChildren();$('accountCount').textContent=accounts.length+' 个';if(!accounts.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.className='table-empty';cell.textContent='当前企业还没有成员账号';row.append(cell);rows.append(row);return}accounts.forEach(account=>{const row=document.createElement('tr');const member=document.createElement('td');const name=document.createElement('div');name.className='name';name.textContent=String(account.name||'未命名成员');const username=document.createElement('div');username.className='sub';username.textContent='@'+String(account.username||'');member.append(name,username);row.append(member);appendCell(row,(account.department||'未分配部门')+' / '+(account.positionTitle||account.role||'未设置职位'));const permission=appendCell(row,'');const permissionBadge=document.createElement('span');permissionBadge.className=account.isAdmin?'badge admin':'badge';permissionBadge.textContent=account.isAdmin?'企业管理员':'普通成员';permission.append(permissionBadge);const status=appendCell(row,'');const statusBadge=document.createElement('span');statusBadge.className=account.status==='active'?'badge ok':'badge';statusBadge.textContent=account.status==='active'?'正常':'已停用';status.append(statusBadge);appendCell(row,formatNumber(account.usage&&account.usage.totalTokens));const action=appendCell(row,'');const remove=document.createElement('button');remove.type='button';remove.className='danger';remove.textContent='删除';remove.setAttribute('aria-label','删除账号 '+String(account.name||account.username||''));remove.addEventListener('click',()=>deleteAccount(remove,account));action.append(remove);rows.append(row)})}
-function renderPlatformPark(data){const park=data&&data.park||null;$('platformParkNotice').classList.add('hidden');$('platformParkEmpty').classList.toggle('hidden',!!park);$('platformParkDetails').classList.toggle('hidden',!park);if(!park){$('platformParkStatus').textContent='未加入';$('platformParkStatus').className='badge';$('platformParkSummary').replaceChildren();$('platformParkTenants').replaceChildren();return}const isOwner=park.isAdminOrganization||park.adminOrganizationId===(data.organization&&data.organization.id);$('platformParkStatus').textContent=isOwner?'产业园管理方':'已入驻企业';$('platformParkStatus').className=isOwner?'badge ok':'badge';$('platformParkSummary').innerHTML='<div class="department-head"><span>'+esc(park.brandName||park.name)+'</span><span class="department-count">'+esc(isOwner?'可邀请企业入驻':'由园区方统一配置')+'</span></div><div class="department-members">'+esc(park.name)+' · '+esc(park.slug||'')+'</div>';const tenants=Array.isArray(park.tenants)?park.tenants:[];const tenantHost=$('platformParkTenants');tenantHost.replaceChildren();if(!isOwner){const note=document.createElement('div');note.className='organization-empty';note.textContent='该企业已加入产业园，不能发布园区公告，也不能管理入驻企业。';tenantHost.append(note);return}if(!tenants.length){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无企业加入该产业园。';tenantHost.append(empty);return}tenants.forEach(tenant=>{const item=document.createElement('article');item.className='department';const name=document.createElement('div');name.className='department-head';const strong=document.createElement('span');strong.textContent=String(tenant.name||'未命名企业');const status=document.createElement('span');status.className='department-count';status.textContent=String(tenant.status||'active');name.append(strong,status);const meta=document.createElement('div');meta.className='department-members';meta.textContent=String(tenant.slug||tenant.id||'');item.append(name,meta);tenantHost.append(item)})}
+function renderPlatformPark(data){
+  const park=data&&data.park||null;
+  const editForm=$('platformParkEditForm');
+  $('platformParkNotice').classList.add('hidden');
+  $('platformParkEmpty').classList.toggle('hidden',!!park);
+  $('platformParkDetails').classList.toggle('hidden',!park);
+  editForm.classList.add('hidden');
+  $('platformParkEditName').value='';
+  $('platformParkEditBrandName').value='';
+  $('platformParkEditSlug').value='';
+  if(!park){
+    $('platformParkStatus').textContent='未加入';
+    $('platformParkStatus').className='badge';
+    $('platformParkSummary').replaceChildren();
+    $('platformParkTenants').replaceChildren();
+    return;
+  }
+  const isOwner=park.isAdminOrganization||park.adminOrganizationId===(data.organization&&data.organization.id);
+  $('platformParkStatus').textContent=isOwner?'产业园管理方':'已入驻企业';
+  $('platformParkStatus').className=isOwner?'badge ok':'badge';
+  $('platformParkSummary').innerHTML='<div class="department-head"><span>'+esc(park.brandName||park.name)+'</span><span class="department-count">'+esc(isOwner?'可邀请企业入驻':'由园区方统一配置')+'</span></div><div class="department-members">'+esc(park.name)+' · '+esc(park.slug||'')+'</div>';
+  editForm.classList.toggle('hidden',!isOwner);
+  if(isOwner){
+    $('platformParkEditName').value=String(park.name||'');
+    $('platformParkEditBrandName').value=String(park.brandName||park.name||'');
+    $('platformParkEditSlug').value=String(park.slug||'');
+  }
+  const tenants=Array.isArray(park.tenants)?park.tenants:[];
+  const tenantHost=$('platformParkTenants');
+  tenantHost.replaceChildren();
+  if(!isOwner){
+    const note=document.createElement('div');
+    note.className='organization-empty';
+    note.textContent='该企业已加入产业园，不能修改园区资料、发布园区公告或管理入驻企业。';
+    tenantHost.append(note);
+    return;
+  }
+  if(!tenants.length){
+    const empty=document.createElement('div');
+    empty.className='organization-empty';
+    empty.textContent='暂无企业加入该产业园。';
+    tenantHost.append(empty);
+    return;
+  }
+  tenants.forEach(tenant=>{const item=document.createElement('article');item.className='department';const name=document.createElement('div');name.className='department-head';const strong=document.createElement('span');strong.textContent=String(tenant.name||'未命名企业');const status=document.createElement('span');status.className='department-count';status.textContent=String(tenant.status||'active');name.append(strong,status);const meta=document.createElement('div');meta.className='department-members';meta.textContent=String(tenant.slug||tenant.id||'');item.append(name,meta);tenantHost.append(item)});
+}
 function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts);renderPlatformPark(data)}
 async function selectOrganization(organizationId,focusTitle){const organization=organizations.find(item=>item.id===organizationId);if(!organization)return;selectedOrganizationId=organizationId;sessionStorage.setItem(SELECTED_KEY,organizationId);renderOrganizations();setPanelLoading(organization);const epoch=++platformRequestEpoch;try{const data=await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/overview');if(epoch!==platformRequestEpoch||selectedOrganizationId!==organizationId)return;renderOverview(data);if(focusTitle)$('panelTitle').focus()}catch(error){if(epoch!==platformRequestEpoch)return;if(isAuthorizationError(error)){clearPlatformSession('平台令牌已失效，请重新验证');$('platformToken').focus()}else show('panelError',error.message||'企业面板加载失败')}}
 async function loadOrganizations(preferredId){show('tokenError','');const data=await api('/enterprise/organizations');organizations=Array.isArray(data.organizations)?data.organizations:[];setAuthenticated(true);const preferred=organizations.find(organization=>organization.id===preferredId);const current=organizations.find(organization=>organization.id===selectedOrganizationId);const next=preferred||current||organizations[0]||null;selectedOrganizationId=next?next.id:'';renderOrganizations();if(next)await selectOrganization(next.id,false);else{$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.remove('hidden')}}
@@ -3907,6 +3991,7 @@ async function copyText(value,label){if(!value)return;try{await navigator.clipbo
 function resetInviteArm(){inviteArmed=false;$('issueInvite').textContent='生成新邀请码';$('issueInvite').classList.remove('armed');if(inviteArmTimer)clearTimeout(inviteArmTimer);inviteArmTimer=0}
 async function issueInvite(){if(!selectedOrganizationId||!selectedOverview||selectedOverview.organization.id!==selectedOrganizationId)return;if(!inviteArmed){inviteArmed=true;$('issueInvite').textContent='再次点击确认换新';$('issueInvite').classList.add('armed');inviteArmTimer=setTimeout(resetInviteArm,5000);return}const organizationId=selectedOrganizationId;const rawMaxUses=$('platformInviteMaxUses').value.trim();const body={defaultDepartment:$('platformInviteDepartment').value.trim()||null,positionTitle:$('platformInvitePosition').value.trim()||null,defaultRole:$('platformInviteRole').value.trim()||null,maxUses:rawMaxUses?Number(rawMaxUses):null};resetInviteArm();$('issueInvite').disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/invite',{method:'POST',body:JSON.stringify(body)});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','新的 7 天岗位邀请码已生成')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(selectedOrganizationId===organizationId&&selectedOverview&&selectedOverview.organization.id===organizationId)$('issueInvite').disabled=false}}
 async function registerPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const name=$('platformParkName').value.trim();const brandName=$('platformParkBrandName').value.trim();show('panelError','');show('platformParkNotice','正在认证产业园端…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已认证为产业园管理方')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
+async function updatePlatformPark(event){event.preventDefault();if(!selectedOrganizationId||!selectedOverview||!selectedOverview.park)return;const organizationId=selectedOrganizationId;const park=selectedOverview.park;const isOwner=park.isAdminOrganization||park.adminOrganizationId===organizationId;if(!isOwner){show('panelError','只有产业园管理方可以修改园区资料');return}const button=$('platformParkSave');const name=$('platformParkEditName').value.trim();const brandName=$('platformParkEditBrandName').value.trim();show('panelError','');show('platformParkNotice','正在保存产业园资料…');button.disabled=true;button.textContent='正在保存…';try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'PATCH',body:JSON.stringify({name,brandName})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','产业园资料已更新')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected){button.disabled=false;button.textContent='保存园区资料'}}}
 async function joinPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const inviteCode=$('platformParkJoinCode').value.trim();show('panelError','');show('platformParkNotice','正在加入产业园…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park/join',{method:'POST',body:JSON.stringify({inviteCode})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已加入产业园')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
 async function deleteAccount(button,account){if(!selectedOrganizationId)return;if(button.dataset.armed!=='true'){button.dataset.armed='true';button.classList.add('armed');button.textContent='再次点击确认';setTimeout(()=>{if(button.isConnected){button.dataset.armed='false';button.classList.remove('armed');button.textContent='删除'}},5000);return}const organizationId=selectedOrganizationId;button.disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(account.id),{method:'DELETE'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','账号已删除，原登录会话已撤销')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected)button.disabled=false}}
 function openCreateOrganization(){show('createError','');$('createOrganizationModal').classList.remove('hidden');$('organizationName').focus()}
@@ -3918,6 +4003,7 @@ $('copyInviteCode').addEventListener('click',()=>copyText(selectedOverview&&sele
 $('copyInviteLink').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.link,'企业引入链接'));
 $('issueInvite').addEventListener('click',issueInvite);
 $('platformParkRegisterForm').addEventListener('submit',registerPlatformPark);
+$('platformParkEditForm').addEventListener('submit',updatePlatformPark);
 $('platformParkJoinForm').addEventListener('submit',joinPlatformPark);
 $('openCreateOrganization').addEventListener('click',openCreateOrganization);
 $('closeCreateOrganization').addEventListener('click',closeCreateOrganization);

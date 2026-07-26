@@ -1029,6 +1029,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="platformInviteMaxUses"');
     expect(html).toContain('id="platformParkCard"');
     expect(html).toContain('id="platformParkRegisterForm"');
+    expect(html).toContain('id="platformParkEditForm"');
+    expect(html).toContain('id="platformParkEditName"');
+    expect(html).toContain('id="platformParkEditBrandName"');
+    expect(html).toContain("method:'PATCH'");
     expect(html).toContain('id="platformParkJoinForm"');
     expect(html).toContain('/park/join');
     expect(html).toContain("body:JSON.stringify(body)");
@@ -1039,6 +1043,9 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('platformRequestEpoch');
     expect(html).not.toContain('<iframe');
     expect(html).toContain('sessionStorage');
+    const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    expect(() => new Function(script!)).not.toThrow();
     expect(html).not.toContain(ADMIN_TOKEN);
   }, 30_000);
 
@@ -3831,7 +3838,39 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       adminOrganizationId: parkProvisioned.organization.id,
     });
 
+    const updatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Hongchuang Innovation Park',
+          brandName: 'Hongchuang Enterprise Services',
+        }),
+      },
+    );
+    expect(updatePark.status).toBe(200);
+    expect((await updatePark.json()).park).toMatchObject({
+      id: park.id,
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+      slug: park.slug,
+    });
+    expect(db.getPark(park.id)).toMatchObject({
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+    });
+
     const parkAdminToken = db.createAuthSession(parkProvisioned.admin.id).token;
+    const enterpriseAdminCannotUpdatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Unauthorized Rename' }),
+      },
+    );
+    expect(enterpriseAdminCannotUpdatePark.status).toBe(403);
     const inviteResponse = await fetch(`${base}/enterprise/park/invite`, {
       method: 'POST',
       headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
@@ -3906,6 +3945,15 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       id: park.id,
       isAdminOrganization: false,
     });
+    const tenantCannotUpdatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Tenant Controlled Park' }),
+      },
+    );
+    expect(tenantCannotUpdatePark.status).toBe(404);
     const platformTenantOverview = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/overview`,
       { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
@@ -3920,7 +3968,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
     );
     expect(platformParkOverview.status).toBe(200);
-    expect((await platformParkOverview.json()).park.tenants).toEqual(
+    const platformParkOverviewBody = await platformParkOverview.json();
+    expect(platformParkOverviewBody.park).toMatchObject({
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+    });
+    expect(platformParkOverviewBody.park.tenants).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
       ]),
