@@ -34,6 +34,7 @@ import {
   getModuleUpdateManifestFromStore,
   updateModuleUpdateDescriptorInStore,
 } from './moduleUpdateRepository.js';
+import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 export type {
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
@@ -5556,109 +5557,12 @@ export function getTaskHistory(
 // ============================================================
 // Knowledge operations
 // ============================================================
-export function addKnowledge(k: {
-  department?: string;
-  category: string;
-  content: string;
-  contributor?: string;
-  confidence?: number;
-  organizationId?: string;
-  sourceId?: string;
-}): boolean {
-  const organizationId = k.organizationId || DEFAULT_ORGANIZATION_ID;
-  if (!getOrganization(organizationId))
-    throw new Error('Organization not found');
-  const result = getDB()
-    .prepare(
-      `INSERT INTO knowledge
-       (organization_id, source_id, department, category, content, contributor, confidence)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(organization_id, source_id) WHERE source_id IS NOT NULL DO NOTHING`,
-    )
-    .run(
-      organizationId,
-      k.sourceId || null,
-      k.department || null,
-      k.category,
-      k.content,
-      k.contributor || null,
-      k.confidence ?? 0.5,
-    ) as { changes?: number | bigint };
-  return Number(result.changes ?? 0) > 0;
-}
-
-export function getKnowledge(
-  department?: string,
-  category?: string,
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): any[] {
-  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
-  const params: any[] = [organizationId];
-  if (department) {
-    sql += ' AND department = ?';
-    params.push(department);
-  }
-  if (category) {
-    sql += ' AND category = ?';
-    params.push(category);
-  }
-  sql += ' ORDER BY created_at DESC';
-  return getDB()
-    .prepare(sql)
-    .all(...params);
-}
-
-export function searchKnowledge(
-  query: string,
-  department?: string,
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): any[] {
-  // Match against both category (task_type is usually stored here, e.g. "contract_review")
-  // and content (free-text description), otherwise knowledge tagged by category never
-  // surfaces during recall when task_type doesn't literally appear in the Chinese content.
-  let sql =
-    'SELECT * FROM knowledge WHERE organization_id = ? AND (content LIKE ? OR category LIKE ?)';
-  const params: any[] = [organizationId, `%${query}%`, `%${query}%`];
-  if (department) {
-    sql += ' AND department = ?';
-    params.push(department);
-  }
-  sql += ' ORDER BY confidence DESC LIMIT 20';
-  return getDB()
-    .prepare(sql)
-    .all(...params);
-}
-
-/**
- * 普通成员的知识可见域：本企业中未绑定部门的全局知识，加上本人当前部门知识。
- * 调用方不能传入任意目标部门；无部门成员只能读取全局知识。
- */
-export function getMemberKnowledge(
-  memberDepartment: string | null | undefined,
-  query = '',
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): any[] {
-  const department = memberDepartment?.trim() || null;
-  const cleanQuery = query.trim();
-  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
-  const params: any[] = [organizationId];
-  if (department) {
-    sql += ' AND (department IS NULL OR department = ?)';
-    params.push(department);
-  } else {
-    sql += ' AND department IS NULL';
-  }
-  if (cleanQuery) {
-    sql += ' AND (content LIKE ? OR category LIKE ?)';
-    params.push(`%${cleanQuery}%`, `%${cleanQuery}%`);
-    sql += ' ORDER BY confidence DESC LIMIT 20';
-  } else {
-    sql += ' ORDER BY created_at DESC';
-  }
-  return getDB()
-    .prepare(sql)
-    .all(...params);
-}
+export {
+  addKnowledge,
+  getKnowledge,
+  getMemberKnowledge,
+  searchKnowledge,
+} from './knowledgeRepository.js';
 
 // ============================================================
 // Invite codes
@@ -5952,7 +5856,7 @@ export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID): any {
        ORDER BY created_at DESC LIMIT 1000`,
       )
       .all(organizationId),
-    knowledge: getKnowledge(undefined, undefined, organizationId),
+    knowledge: getKnowledgeFromRepository(undefined, undefined, organizationId),
     inviteCodes: getDB()
       .prepare('SELECT * FROM invite_codes WHERE organization_id = ?')
       .all(organizationId),
