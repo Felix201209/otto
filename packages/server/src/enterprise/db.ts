@@ -33,6 +33,7 @@ import {
   getModuleUpdateManifestFromStore,
   updateModuleUpdateDescriptorInStore,
 } from './moduleUpdateRepository.js';
+import { getAuditLogs, logAudit } from './auditRepository.js';
 import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 export type {
   ModuleUpdateDescriptor,
@@ -5517,31 +5518,10 @@ export {
 // ============================================================
 // Audit
 // ============================================================
-export function logAudit(
-  event: string,
-  employeeId: string | null,
-  detail: string,
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): void {
-  getDB()
-    .prepare(
-      `INSERT INTO audit_logs (organization_id, event, employee_id, detail)
-     VALUES (?, ?, ?, ?)`,
-    )
-    .run(organizationId, event, employeeId, detail);
-}
-
-export function getAuditLogs(
-  limit = 50,
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): any[] {
-  return getDB()
-    .prepare(
-      `SELECT * FROM audit_logs WHERE organization_id = ?
-     ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(organizationId, limit);
-}
+export {
+  getAuditLogs,
+  logAudit,
+} from './auditRepository.js';
 
 // ============================================================
 // Export all (for backup)
