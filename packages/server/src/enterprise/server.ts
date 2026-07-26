@@ -4032,7 +4032,20 @@ function renderPlatformPark(data){
   const isOwner=park.isAdminOrganization||park.adminOrganizationId===(data.organization&&data.organization.id);
   $('platformParkStatus').textContent=isOwner?'产业园管理方':'已入驻企业';
   $('platformParkStatus').className=isOwner?'badge ok':'badge';
-  $('platformParkSummary').innerHTML='<div class="department-head"><span>'+esc(park.brandName||park.name)+'</span><span class="department-count">'+esc(isOwner?'可邀请企业入驻':'由园区方统一配置')+'</span></div><div class="department-members">'+esc(park.name)+' · '+esc(park.slug||'')+'</div>';
+  const summary=$('platformParkSummary');
+  summary.replaceChildren();
+  const summaryHead=document.createElement('div');
+  summaryHead.className='department-head';
+  const summaryName=document.createElement('span');
+  summaryName.textContent=String(park.brandName||park.name||'未命名产业园');
+  const summaryScope=document.createElement('span');
+  summaryScope.className='department-count';
+  summaryScope.textContent=isOwner?'可邀请企业入驻':'由园区方统一配置';
+  summaryHead.append(summaryName,summaryScope);
+  const summaryMeta=document.createElement('div');
+  summaryMeta.className='department-members';
+  summaryMeta.textContent=String(park.name||'未命名产业园')+' · '+String(park.slug||'');
+  summary.append(summaryHead,summaryMeta);
   editForm.classList.toggle('hidden',!isOwner);
   if(isOwner){
     $('platformParkEditName').value=String(park.name||'');

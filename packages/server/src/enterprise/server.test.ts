@@ -1036,6 +1036,8 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="platformParkEditForm"');
     expect(html).toContain('id="platformParkEditName"');
     expect(html).toContain('id="platformParkEditBrandName"');
+    expect(html).toContain("summary.replaceChildren()");
+    expect(html).not.toContain("$('platformParkSummary').innerHTML");
     expect(html).toContain("method:'PATCH'");
     expect(html).toContain('id="platformParkJoinForm"');
     expect(html).toContain('/park/join');
