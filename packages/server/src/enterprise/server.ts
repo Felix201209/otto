@@ -99,6 +99,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/deployment/license',
   '/enterprise/deployment/telemetry',
   '/enterprise/deployment/diagnostics',
+  '/enterprise/modules/updates',
   '/enterprise/organizations',
 ]);
 
@@ -223,6 +224,7 @@ const ENTERPRISE_CAPABILITIES = [
   'diagnostic_bundle_v1',
   'park_resources_v1',
   'park_meeting_slots_v1',
+  'modular_update_push_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -874,6 +876,7 @@ function makeHandler(
             },
             deployment: {
               ...db.getPrivateDeploymentStatus(),
+              moduleUpdates: db.getModuleUpdateManifest(),
               version: deploymentInfo.version,
               buildCommit: deploymentInfo.buildCommit,
               startedAt: deploymentInfo.startedAt,
@@ -899,6 +902,43 @@ function makeHandler(
       // ===== Private deployment, license and telemetry =====
       if (path === '/enterprise/deployment/status' && method === 'GET') {
         sendJSON(res, 200, db.getPrivateDeploymentStatus());
+        return;
+      }
+
+      if (path === '/enterprise/modules/updates' && method === 'GET') {
+        sendJSON(res, 200, db.getModuleUpdateManifest());
+        return;
+      }
+
+      if (path === '/enterprise/modules/updates' && method === 'PATCH') {
+        const body = await readBody(req);
+        try {
+          const moduleUpdate = db.updateModuleUpdateDescriptor({
+            module: typeof body.module === 'string' ? body.module : '',
+            version: typeof body.version === 'string' ? body.version : undefined,
+            rollout: typeof body.rollout === 'string'
+              ? body.rollout as db.ModuleUpdateRollout
+              : undefined,
+            notes: typeof body.notes === 'string' ? body.notes : undefined,
+            minAppVersion: typeof body.minAppVersion === 'string' ? body.minAppVersion : undefined,
+            manifestUrl: typeof body.manifestUrl === 'string' ? body.manifestUrl : undefined,
+            sha256: typeof body.sha256 === 'string' ? body.sha256 : undefined,
+            publishedAt: typeof body.publishedAt === 'string' ? body.publishedAt : undefined,
+            organizationId: adminPrincipal?.organizationId,
+          });
+          db.recordTelemetryEvent({
+            organizationId: adminPrincipal?.organizationId ?? null,
+            eventType: 'module_update_published',
+            payload: {
+              module: moduleUpdate.module,
+              version: moduleUpdate.version,
+              rollout: moduleUpdate.rollout,
+            },
+          });
+          sendJSON(res, 200, { moduleUpdate, manifest: db.getModuleUpdateManifest() });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : 'module update failed' });
+        }
         return;
       }
 
