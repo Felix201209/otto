@@ -23,6 +23,21 @@ import {
   buildOrganizationInviteLink,
   resolveEnterprisePublicBaseUrl,
 } from './publicInvite.js';
+import {
+  LICENSE_MODULE_FEATURES,
+  MODULE_UPDATE_ROLLOUTS,
+  MODULE_UPDATE_SHA256_RE,
+  licenseModuleCatalog,
+  parseModuleUpdateDescriptors,
+  type ModuleUpdateDescriptor,
+  type ModuleUpdateManifest,
+  type ModuleUpdateRollout,
+} from './moduleUpdateManifest.js';
+export type {
+  ModuleUpdateDescriptor,
+  ModuleUpdateManifest,
+  ModuleUpdateRollout,
+} from './moduleUpdateManifest.js';
 
 const DATA_DIR = process.env.OTTO_ENTERPRISE_DIR || path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
@@ -1540,27 +1555,6 @@ export interface PrivateDeploymentStatus {
   };
 }
 
-export type ModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
-
-export interface ModuleUpdateDescriptor {
-  module: string;
-  version: string;
-  rollout: ModuleUpdateRollout;
-  notes: string;
-  minAppVersion: string | null;
-  manifestUrl: string | null;
-  sha256: string | null;
-  publishedAt: string | null;
-  updatedAt: string;
-}
-
-export interface ModuleUpdateManifest {
-  format: 'otto-module-updates-v1';
-  deploymentId: string;
-  generatedAt: string;
-  modules: ModuleUpdateDescriptor[];
-  catalog: Array<{ module: string; features: Array<keyof OrganizationFeatures> }>;
-}
 const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   enterprise_tree: true,
   park_service: true,
@@ -1569,21 +1563,6 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   direct_messages: true,
   atoa: true,
   knowledge: true,
-};
-
-const LICENSE_MODULE_FEATURES: Record<string, Array<keyof OrganizationFeatures>> = {
-  // 企业记忆是企业树的基础能力：组织、部门与身份边界已经由企业树建立后，
-  // 同一组织内的已授权知识应可被读取和沉淀，不能因独立授权项缺失而在客户端消失。
-  enterprise_tree: ['enterprise_tree', 'knowledge'],
-  park_service: ['park_service'],
-  park_services: ['park_service'],
-  feishu: ['feishu_auto_reply'],
-  feishu_auto_reply: ['feishu_auto_reply'],
-  direct_messages: ['direct_messages'],
-  atoa: ['atoa'],
-  enterprise_memory: ['knowledge'],
-  knowledge: ['knowledge'],
-  tui_sync: ['tui_sync'],
 };
 
 function licenseEnforcementEnabled(): boolean {
@@ -1611,64 +1590,6 @@ function setSettingValue(key: string, value: string): void {
      VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(key, value);
-}
-
-const MODULE_UPDATE_ROLLOUTS = new Set<ModuleUpdateRollout>([
-  'off',
-  'canary',
-  'stable',
-  'required',
-]);
-
-const MODULE_UPDATE_SHA256_RE = /^[0-9a-f]{64}$/i;
-
-function licenseModuleCatalog(): Array<{ module: string; features: Array<keyof OrganizationFeatures> }> {
-  return Object.entries(LICENSE_MODULE_FEATURES).map(([module, features]) => ({ module, features }));
-}
-
-function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDescriptor[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    const allowedModules = new Set(Object.keys(LICENSE_MODULE_FEATURES));
-    const result: ModuleUpdateDescriptor[] = [];
-    for (const item of parsed) {
-      if (typeof item !== 'object' || item === null) continue;
-      const row = item as Record<string, unknown>;
-      const module = typeof row.module === 'string' ? row.module.trim() : '';
-      const version = typeof row.version === 'string' ? row.version.trim() : '';
-      const rollout = typeof row.rollout === 'string' && MODULE_UPDATE_ROLLOUTS.has(row.rollout as ModuleUpdateRollout)
-        ? row.rollout as ModuleUpdateRollout
-        : 'off';
-      const updatedAt = typeof row.updatedAt === 'string' && row.updatedAt.trim()
-        ? row.updatedAt.trim()
-        : new Date(0).toISOString();
-      if (!allowedModules.has(module) || !version) continue;
-      result.push({
-        module,
-        version,
-        rollout,
-        notes: typeof row.notes === 'string' ? row.notes.slice(0, 2_000) : '',
-        minAppVersion: typeof row.minAppVersion === 'string' && row.minAppVersion.trim()
-          ? row.minAppVersion.trim()
-          : null,
-        manifestUrl: typeof row.manifestUrl === 'string' && row.manifestUrl.trim()
-          ? row.manifestUrl.trim()
-          : null,
-        sha256: typeof row.sha256 === 'string' && MODULE_UPDATE_SHA256_RE.test(row.sha256)
-          ? row.sha256.toLowerCase()
-          : null,
-        publishedAt: typeof row.publishedAt === 'string' && row.publishedAt.trim()
-          ? row.publishedAt.trim()
-          : null,
-        updatedAt,
-      });
-    }
-    return result.sort((a, b) => a.module.localeCompare(b.module));
-  } catch {
-    return [];
-  }
 }
 
 export function getModuleUpdateManifest(): ModuleUpdateManifest {
