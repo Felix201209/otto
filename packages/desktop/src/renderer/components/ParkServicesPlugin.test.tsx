@@ -22,7 +22,7 @@ afterEach(() => {
     for (const key of [
       'enterpriseSession', 'enterpriseTicketList', 'enterpriseTicketSubmit',
       'enterpriseTicketAction', 'enterpriseTicketRead', 'parkNativeNotify',
-      'notificationShow', 'notificationMarkRead',
+      'notificationShow', 'notificationMarkRead', 'onNotificationSessionOpen',
       'enterpriseParkPublications', 'enterpriseParkPublicationRead', 'enterpriseParkSurveySubmit',
       'enterpriseParkView', 'parkConfig',
     ]) delete (window.otto as unknown as Record<string, unknown>)[key];
@@ -93,6 +93,16 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     tickets = tickets.map((ticket) => ticket.id === id ? next : ticket);
     return next;
   });
+  const read = vi.fn(async (id: string) => {
+    const next = { ...tickets.find((ticket) => ticket.id === id)!, readAt: '2026-07-20' };
+    tickets = tickets.map((ticket) => ticket.id === id ? next : ticket);
+    return next;
+  });
+  const notificationSessionListeners = new Set<(sessionId: string) => void>();
+  const onNotificationSessionOpen = vi.fn((listener: (sessionId: string) => void) => {
+    notificationSessionListeners.add(listener);
+    return () => { notificationSessionListeners.delete(listener); };
+  });
   Object.assign(window.otto, {
     enterpriseParkView: vi.fn(async () => ({
       id: 'park-1',
@@ -111,17 +121,19 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     enterpriseTicketList: vi.fn(async () => tickets),
     enterpriseTicketSubmit: submit,
     enterpriseTicketAction: action,
-    enterpriseTicketRead: vi.fn(async (id: string) => {
-      const next = { ...tickets.find((ticket) => ticket.id === id)!, readAt: '2026-07-20' };
-      tickets = tickets.map((ticket) => ticket.id === id ? next : ticket);
-      return next;
-    }),
+    enterpriseTicketRead: read,
     parkNativeNotify: vi.fn(async () => true),
     notificationShow: vi.fn(async () => undefined),
     notificationMarkRead: vi.fn(async () => undefined),
+    onNotificationSessionOpen,
     enterpriseParkPublications: vi.fn(async () => []),
   });
-  return { submit, action, account };
+  return {
+    submit, action, read, account,
+    openSystemNotification: (sessionId: string) => {
+      for (const listener of notificationSessionListeners) listener(sessionId);
+    },
+  };
 }
 
 function installPublicationBridge(kind: 'announcement' | 'satisfaction') {
@@ -326,6 +338,7 @@ describe('ParkServicesPlugin', () => {
       source: 'park',
     })));
     fireEvent.click(await screen.findByLabelText(/打开园区服务通知/));
+    await waitFor(() => expect(bridge.read).toHaveBeenCalledWith('ticket-1'));
     expect(await screen.findByText('灯坏了')).toBeTruthy();
     expect(screen.queryByText(/维修工作台|我要报修/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '接单并处理' }));
@@ -335,7 +348,7 @@ describe('ParkServicesPlugin', () => {
   });
 
   it('登录时多个待办合并成一个汇总提醒，具体工单仍可从待办列表打开', async () => {
-    installRepairBridge('worker', 2);
+    const bridge = installRepairBridge('worker', 2);
     render(<ParkServicesPlugin />);
 
     fireEvent.click(await screen.findByLabelText('打开园区待办汇总'));
@@ -346,9 +359,35 @@ describe('ParkServicesPlugin', () => {
       title: 'Otto 待处理提醒 · 园区服务',
     }));
     expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:service');
+    await waitFor(() => expect(bridge.read).toHaveBeenCalledTimes(2));
 
     fireEvent.click(await screen.findByRole('button', { name: /打开工作人员待办：A 座大厅/ }));
     expect(await screen.findByText('空调漏水')).toBeTruthy();
+  });
+
+  it('点过系统园区提醒后不再重复弹窗，未处理工单继续保留在我的园区待办', async () => {
+    const bridge = installRepairBridge('worker');
+    render(<ParkServicesPlugin />);
+    await waitFor(() => expect(window.otto.notificationShow).toHaveBeenCalledTimes(1));
+
+    act(() => bridge.openSystemNotification('park:ticket:ticket-1'));
+    await waitFor(() => expect(bridge.read).toHaveBeenCalledWith('ticket-1'));
+    expect(await screen.findByText('灯坏了')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '← 返回服务列表' }));
+    expect(await screen.findByLabelText('我的园区待办')).toBeTruthy();
+    expect(screen.getByText(/待接单/)).toBeTruthy();
+
+    cleanup();
+    const ticketList = vi.mocked(window.otto.enterpriseTicketList);
+    const previousListCalls = ticketList.mock.calls.length;
+    render(<ParkServicesPlugin />);
+    await waitFor(() => expect(ticketList.mock.calls.length).toBeGreaterThan(previousListCalls));
+    expect(window.otto.notificationShow).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText(/打开园区服务通知|打开园区待办汇总/)).toBeNull();
+
+    openDialog();
+    expect(await screen.findByLabelText('我的园区待办')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /打开工作人员待办：某某会议室/ })).toBeTruthy();
   });
 
   it('客服登录时不弹已完成或待验收历史，只保留真正可处理的任务', async () => {

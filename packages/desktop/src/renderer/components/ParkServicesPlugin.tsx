@@ -917,6 +917,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
   const [focusTicket, setFocusTicket] = useState<EnterpriseRepairTicket | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<EnterpriseRepairTicket[]>([]);
+  const [pendingNotificationSessionId, setPendingNotificationSessionId] = useState<string | null>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const notifiedTicketKeys = useRef(new Set<string>());
   const ticketPollIdentity = useRef<string | null>(null);
@@ -1036,13 +1037,26 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const onOpen = (): void => {
+    const showParkSession = (sessionId?: string): void => {
       setSelected(null);
       setFocusTicket(null);
+      setPendingNotificationSessionId(sessionId?.startsWith('park:') ? sessionId : null);
       setOpen(true);
     };
+    const onOpen = (event: Event): void => {
+      const sessionId = event instanceof CustomEvent && typeof event.detail?.sessionId === 'string'
+        ? event.detail.sessionId
+        : undefined;
+      showParkSession(sessionId);
+    };
+    const unsubscribeNotification = window.otto.onNotificationSessionOpen?.((sessionId) => {
+      if (sessionId.startsWith('park:')) showParkSession(sessionId);
+    }) ?? (() => {});
     window.addEventListener(PARK_OPEN_EVENT, onOpen);
-    return () => window.removeEventListener(PARK_OPEN_EVENT, onOpen);
+    return () => {
+      unsubscribeNotification();
+      window.removeEventListener(PARK_OPEN_EVENT, onOpen);
+    };
   }, [parkEnabled]);
 
   useEffect(() => {
@@ -1190,7 +1204,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     setSelected(service);
   };
 
-  const openTicket = (ticket: EnterpriseRepairTicket): void => {
+  const openTicket = useCallback((ticket: EnterpriseRepairTicket): void => {
     const service = services.find((item) => item.id === (ticket.serviceId || 'repair'))
       ?? services.find((item) => item.id === 'repair');
     if (service) {
@@ -1198,21 +1212,75 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setSelected(service);
       setOpen(true);
     }
-  };
+  }, [services]);
+
+  const markAssignedTicketsViewed = useCallback((tickets: EnterpriseRepairTicket[]): void => {
+    const unread = tickets.filter((ticket) => ticket.isRecipient && !ticket.readAt);
+    if (!unread.length) return;
+    void Promise.all(unread.map(async (ticket) => {
+      try {
+        return await window.otto.enterpriseTicketRead(ticket.id);
+      } catch {
+        return null;
+      }
+    })).then((viewed) => {
+      const updates = new Map(viewed
+        .filter((ticket): ticket is EnterpriseRepairTicket => Boolean(ticket))
+        .map((ticket) => [ticket.id, ticket]));
+      if (!updates.size) return;
+      const applyUpdates = (current: EnterpriseRepairTicket[]): EnterpriseRepairTicket[] => current.map(
+        (ticket) => updates.get(ticket.id) ?? ticket,
+      );
+      setAssignedTasks(applyUpdates);
+      setBackgroundTickets(applyUpdates);
+      setFocusTicket((current) => current ? updates.get(current.id) ?? current : current);
+    });
+  }, []);
+
+  const openAssignedTicket = useCallback((ticket: EnterpriseRepairTicket): void => {
+    openTicket(ticket);
+    markAssignedTicketsViewed([ticket]);
+    void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
+  }, [markAssignedTicketsViewed, openTicket]);
 
   const openBackgroundTicket = (ticket: EnterpriseRepairTicket): void => {
-    openTicket(ticket);
+    openAssignedTicket(ticket);
     setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
-    void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
   };
 
   const openBackgroundTicketSummary = (): void => {
+    markAssignedTicketsViewed(assignedTasks);
     setSelected(null);
     setFocusTicket(null);
     setOpen(true);
     setBackgroundTicketSummaryCount(0);
     void window.otto.notificationMarkRead?.('park:service').catch(() => undefined);
   };
+
+  useEffect(() => {
+    const sessionId = pendingNotificationSessionId;
+    if (!sessionId) return;
+    if (sessionId === 'park:service') {
+      if (!assignedTasks.length) return;
+      markAssignedTicketsViewed(assignedTasks);
+      setPendingNotificationSessionId(null);
+      setBackgroundTicketSummaryCount(0);
+      void window.otto.notificationMarkRead?.(sessionId).catch(() => undefined);
+      return;
+    }
+    if (!sessionId.startsWith('park:ticket:')) {
+      setPendingNotificationSessionId(null);
+      return;
+    }
+    const ticketId = sessionId.slice('park:ticket:'.length);
+    const ticket = assignedTasks.find((item) => item.id === ticketId)
+      ?? backgroundTickets.find((item) => item.id === ticketId);
+    if (!ticket) return;
+    openAssignedTicket(ticket);
+    setPendingNotificationSessionId(null);
+    setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
+    void window.otto.notificationMarkRead?.(sessionId).catch(() => undefined);
+  }, [assignedTasks, backgroundTickets, markAssignedTicketsViewed, openAssignedTicket, pendingNotificationSessionId]);
 
   const openBackgroundPublication = (): void => {
     const serviceId = backgroundPublication?.kind;
@@ -1260,7 +1328,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
           <div className="otto-park-dialog__landing">
             {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
               <div><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
-              <div className="otto-park-staff-tasks__items">{assignedTasks.slice(0, 3).map((ticket) => <button key={ticket.id} type="button" onClick={() => openTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
+              <div className="otto-park-staff-tasks__items">{assignedTasks.slice(0, 3).map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
             </section> : null}
             <div className="otto-park-dialog__grid">
               {services.map((service, index) => {
