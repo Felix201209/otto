@@ -53,7 +53,6 @@ import {
   resolveEnterprisePublicBaseUrl,
 } from './publicInvite.js';
 import { sendLocalAgentPage } from './localAgentPage.js';
-import * as simplePark from './park.js';
 import { handleFeatureFlagsRoute } from './featureFlagsAdmin.js';
 import { parkAdminHTML } from './parkAdminPage.js';
 import {
@@ -70,6 +69,7 @@ import { handleAuthRoute } from './authRoutes.js';
 import { handleDeploymentRoute } from './deploymentRoutes.js';
 import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 import { handleOrganizationRoute } from './organizationRoutes.js';
+import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
 
 const DEFAULT_PORT = 7777;
 
@@ -1035,132 +1035,18 @@ function makeHandler(
         return;
       }
 
-      // ===== Simple park API compatibility =====
-      if (path === '/enterprise/park' && method === 'POST') {
-        const body = await readBody(req);
-        const name = typeof body.name === 'string' ? body.name : '';
-        const address = typeof body.address === 'string' ? body.address : '';
-        if (!name.trim()) {
-          sendJSON(res, 400, { error: '园区名称不能为空' });
-          return;
-        }
-        const adminUserIds = Array.isArray(body.adminUserIds)
-          ? body.adminUserIds.filter((id): id is string => typeof id === 'string')
-          : [];
-        const park = simplePark.createPark({ name, address, adminUserIds });
-        sendJSON(res, 201, { park });
-        return;
-      }
-
-      if (path === '/enterprise/park/invite' && method === 'POST' && adminPrincipal?.kind !== 'account') {
-        const body = await readBody(req);
-        const parkId = typeof body.parkId === 'string' ? body.parkId : '';
-        if (parkId) {
-          const createdBy = 'platform-admin';
-          if (!simplePark.getPark(parkId)) {
-            sendJSON(res, 404, { error: '园区不存在' });
-            return;
-          }
-          const maxUses = typeof body.maxUses === 'number' ? body.maxUses : undefined;
-          const invite = simplePark.createInviteCode({ parkId, createdBy, maxUses });
-          sendJSON(res, 201, { invite });
-          return;
-        }
-      }
-
-      if (path === '/enterprise/park/join' && method === 'POST' && isPublicSimplePark) {
-        const body = await readBody(req);
-        const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
-        if (inviteCode) {
-          const account = db.getAccountBySession(extractToken(req));
-          if (!account || !account.isAdmin) {
-            sendJSON(res, 403, { error: '请使用企业管理员账号加入产业园' });
-            return;
-          }
-          if (!db.getOrganizationFeatures(account.organizationId).park_service) {
-            sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
-            return;
-          }
-          try {
-            const park = db.joinOrganizationToPark({
-              organizationId: account.organizationId,
-              actorAccountId: account.id,
-              code: inviteCode,
-              address: typeof body.address === 'string' ? body.address : '',
-              roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
-            });
-            const profile = db.getParkTenantProfile(account.organizationId);
-            sendJSON(res, 200, {
-              park: {
-                ...park,
-                tenantAddress: profile?.address ?? null,
-                tenantRoomNumber: profile?.roomNumber ?? null,
-              },
-              organization: db.getEnterpriseOrganization(account.organizationId),
-            });
-          } catch (error) {
-            sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
-          }
-          return;
-        }
-        const code = typeof body.code === 'string' ? body.code : '';
-        const enterpriseId = typeof body.enterpriseId === 'string' ? body.enterpriseId : '';
-        if (!code || !enterpriseId) {
-          sendJSON(res, 400, { error: '邀请码和企业ID不能为空' });
-          return;
-        }
-        const result = simplePark.useInviteCode(code, enterpriseId);
-        if (!result.success) {
-          sendJSON(res, 403, { error: result.error });
-          return;
-        }
-        sendJSON(res, 200, { parkId: result.parkId, enterpriseId });
-        return;
-      }
-
-      if (path === '/enterprise/park/services' && method === 'GET' && url.searchParams.has('parkId')) {
-        const parkId = url.searchParams.get('parkId') || '';
-        if (!parkId || !simplePark.getPark(parkId)) {
-          sendJSON(res, 404, { error: '园区不存在' });
-          return;
-        }
-        const status = url.searchParams.get('status') || undefined;
-        sendJSON(res, 200, {
-          requests: simplePark.getParkServiceRequests(parkId, status),
-          specialists: simplePark.getSpecialists(parkId),
-        });
-        return;
-      }
-
-      if (path === '/enterprise/park/services/request' && method === 'POST') {
-        const body = await readBody(req);
-        const parkId = typeof body.parkId === 'string' ? body.parkId : '';
-        const enterpriseId = typeof body.enterpriseId === 'string' ? body.enterpriseId : '';
-        const type = typeof body.type === 'string' ? body.type : '';
-        const description = typeof body.description === 'string' ? body.description : '';
-        if (!parkId || !enterpriseId || !type || !description) {
-          sendJSON(res, 400, { error: '园区ID、企业ID、服务类型和描述不能为空' });
-          return;
-        }
-        const request = simplePark.createServiceRequest({ parkId, enterpriseId, type, description });
-        const routed = simplePark.routeServiceRequest(request.id);
-        sendJSON(res, 201, { request: routed });
-        return;
-      }
-
-      if (path === '/enterprise/park/services/assign' && method === 'POST') {
-        const body = await readBody(req);
-        const parkId = typeof body.parkId === 'string' ? body.parkId : '';
-        const userId = typeof body.userId === 'string' ? body.userId : '';
-        const serviceTypes = Array.isArray(body.serviceTypes)
-          ? body.serviceTypes.filter((type): type is string => typeof type === 'string')
-          : [];
-        if (!parkId || !userId || serviceTypes.length === 0) {
-          sendJSON(res, 400, { error: '园区ID、用户ID和服务类型不能为空' });
-          return;
-        }
-        const specialist = simplePark.assignSpecialist({ parkId, userId, serviceTypes });
-        sendJSON(res, 201, { specialist });
+      if (await handleSimpleParkCompatibilityRoute({
+        path,
+        method,
+        req,
+        res,
+        url,
+        adminPrincipal,
+        isPublicSimplePark,
+        readBody,
+        sendJSON,
+        extractToken,
+      })) {
         return;
       }
 
