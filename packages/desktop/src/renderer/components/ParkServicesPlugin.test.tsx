@@ -149,6 +149,19 @@ function installPublicationBridge(kind: 'announcement' | 'satisfaction') {
   });
   Object.assign(window.otto, {
     enterpriseSession: vi.fn(async () => ({ serverUrl: 'https://enterprise.test', account })),
+    enterpriseParkView: vi.fn(async () => ({
+      id: 'park-1',
+      name: '测试园区',
+      slug: 'test-park',
+      brandName: '测试园区服务',
+      adminOrganizationId: 'park-org',
+      status: 'active' as const,
+      createdAt: '2026-07-20',
+      updatedAt: '2026-07-20',
+      isAdminOrganization: false,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    })),
     enterpriseParkPublications: vi.fn(async () => items),
     enterpriseParkPublicationRead: read,
     enterpriseParkSurveySubmit: submit,
@@ -227,7 +240,7 @@ describe('ParkServicesPlugin', () => {
     const bridge = installPublicationBridge('announcement');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('园区公告'));
+    fireEvent.click(await screen.findByText('园区公告'));
     const item = await screen.findByRole('button', { name: /下午临时停水通知/ });
     fireEvent.click(item);
     await waitFor(() => expect(bridge.read).toHaveBeenCalledWith('publication-announcement'));
@@ -238,13 +251,22 @@ describe('ParkServicesPlugin', () => {
     const bridge = installPublicationBridge('satisfaction');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('满意度调查'));
-    await screen.findByLabelText('员工填写满意度调查');
+    fireEvent.click(await screen.findByText('满意度调查'));
+    const survey = await screen.findByLabelText('员工填写满意度调查');
+    expect((screen.getByLabelText('公司名称') as HTMLInputElement).value).toBe('测试园区');
+    expect((screen.getByLabelText('企业地址') as HTMLInputElement).value).toBe('科技大厦 A 座');
+    expect((screen.getByLabelText('房间号') as HTMLInputElement).value).toBe('1203 室');
+    expect((screen.getByLabelText('联系人') as HTMLInputElement).value).toBe('报修员工');
+    expect((screen.getByLabelText('联系电话') as HTMLInputElement).value).toBe('13800138000');
     fireEvent.change(screen.getByLabelText('总体满意度'), { target: { value: '4' } });
     fireEvent.change(screen.getByLabelText('重点关注'), { target: { value: '会议室环境' } });
     fireEvent.change(screen.getByLabelText('改进建议'), { target: { value: '希望加强巡检' } });
-    fireEvent.click(screen.getByRole('button', { name: '提交问卷' }));
-    await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith('publication-satisfaction', expect.objectContaining({ score: '4', focus: '会议室环境', submittedBy: '报修员工' })));
+    fireEvent.submit(survey);
+    await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith('publication-satisfaction', expect.objectContaining({
+      company: '测试园区', address: '科技大厦 A 座', roomNumber: '1203 室',
+      contact: '报修员工', phone: '13800138000', score: '4', focus: '会议室环境',
+      submittedBy: '报修员工',
+    })));
     expect((await screen.findByRole('button', { name: '已实名提交，不能修改' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(/模拟发布|园区端/)).toBeNull();
   });

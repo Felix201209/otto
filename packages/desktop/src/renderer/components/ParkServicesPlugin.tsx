@@ -405,12 +405,28 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
   const [score, setScore] = useState('5');
   const [focus, setFocus] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [identity, setIdentity] = useState({
+    company: '', address: '', roomNumber: '', contact: '', phone: '',
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [session, publications] = await Promise.all([window.otto.enterpriseSession(), window.otto.enterpriseParkPublications()]);
+      const [session, publications, park] = await Promise.all([
+        window.otto.enterpriseSession(),
+        window.otto.enterpriseParkPublications(),
+        typeof window.otto.enterpriseParkView === 'function'
+          ? window.otto.enterpriseParkView().catch(() => null)
+          : Promise.resolve(null),
+      ]);
       setAccount(session.account);
+      setIdentity({
+        company: session.account?.organizationName || '',
+        address: park?.tenantAddress || '',
+        roomNumber: park?.tenantRoomNumber || '',
+        contact: session.account?.name || '',
+        phone: session.account?.phone?.replace(/^\+86/, '') || '',
+      });
       setItems(publications.filter((item) => item.kind === 'satisfaction'));
       setError(null);
     } catch (cause) { setError(errorMessage(cause)); }
@@ -422,7 +438,14 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
     if (!selected || selected.submittedAt) return;
     setBusy(true); setError(null);
     try {
-      const next = await window.otto.enterpriseParkSurveySubmit(selected.id, { score, focus, feedback, submittedBy: account?.name || '' });
+      const requiredIdentity = Object.fromEntries(
+        Object.entries(identity).map(([key, value]) => [key, value.trim()]),
+      );
+      if (Object.values(requiredIdentity).some((value) => !value))
+        throw new Error('请完善公司、地址、房间和联系人信息');
+      const next = await window.otto.enterpriseParkSurveySubmit(selected.id, {
+        ...requiredIdentity, score, focus, feedback, submittedBy: identity.contact || account?.name || '',
+      });
       setItems((current) => current.map((item) => item.id === next.id ? next : item));
       window.dispatchEvent(new CustomEvent('otto:park-publication-handled', { detail: { id: selected.id } }));
     } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
@@ -431,7 +454,7 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
     <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className={`otto-park-demo__status ${selected?.submittedAt ? 'is-done' : ''}`}>{selected?.submittedAt ? '已提交' : selected ? '待填写' : '暂无问卷'}</span></div>
     <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">实名反馈</div><h3>满意度调查</h3><p>每份问卷只能提交一次，提交后不能修改。</p></div></div>
     {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
-    {items.length ? <><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => setSelectedId(item.id)}>{item.submittedAt ? '已提交 · ' : '待填写 · '}{item.title}</button>)}</div>{selected ? <form className="otto-park-survey__form" onSubmit={(event) => { void submit(event); }} aria-label="员工填写满意度调查"><div className="otto-park-receiver__label">提交人：{account?.name || '当前用户'}</div><h3>{selected.title}</h3><p>{selected.body}</p><label>总体满意度<select value={selected.responseData?.score || score} onChange={(event) => setScore(event.target.value)} disabled={Boolean(selected.submittedAt)}><option value="5">5 分 · 非常满意</option><option value="4">4 分 · 满意</option><option value="3">3 分 · 一般</option><option value="2">2 分 · 待改进</option><option value="1">1 分 · 不满意</option></select></label><label>重点关注<input required value={selected.responseData?.focus || focus} onChange={(event) => setFocus(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="例如：网络响应、会议室环境" /></label><label>改进建议<textarea required rows={4} value={selected.responseData?.feedback || feedback} onChange={(event) => setFeedback(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="请填写具体建议" /></label><button type="submit" className="otto-park-demo__primary" disabled={busy || Boolean(selected.submittedAt)}>{selected.submittedAt ? '已实名提交，不能修改' : busy ? '正在提交…' : '提交问卷'}</button></form> : null}</> : <div className="otto-park-repair__empty">暂无需要填写的满意度调查。</div>}
+    {items.length ? <><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => setSelectedId(item.id)}>{item.submittedAt ? '已提交 · ' : '待填写 · '}{item.title}</button>)}</div>{selected ? <form className="otto-park-survey__form" onSubmit={(event) => { void submit(event); }} aria-label="员工填写满意度调查"><div className="otto-park-receiver__label">提交人：{account?.name || '当前用户'}</div><h3>{selected.title}</h3><p>{selected.body}</p><div className="otto-park-form__grid">{COMMON_SERVICE_FORM_FIELDS.map((field) => <label key={field.key} className="otto-park-form__field">{field.label}<input aria-label={field.label} required value={selected.responseData?.[field.key] ?? identity[field.key as keyof typeof identity]} onChange={(event) => setIdentity((current) => ({ ...current, [field.key]: event.target.value }))} disabled={Boolean(selected.submittedAt)} placeholder={field.placeholder} /></label>)}</div><label>总体满意度<select value={selected.responseData?.score || score} onChange={(event) => setScore(event.target.value)} disabled={Boolean(selected.submittedAt)}><option value="5">5 分 · 非常满意</option><option value="4">4 分 · 满意</option><option value="3">3 分 · 一般</option><option value="2">2 分 · 待改进</option><option value="1">1 分 · 不满意</option></select></label><label>重点关注<input required value={selected.responseData?.focus || focus} onChange={(event) => setFocus(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="例如：网络响应、会议室环境" /></label><label>改进建议<textarea required rows={4} value={selected.responseData?.feedback || feedback} onChange={(event) => setFeedback(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="请填写具体建议" /></label><button type="submit" className="otto-park-demo__primary" disabled={busy || Boolean(selected.submittedAt)}>{selected.submittedAt ? '已实名提交，不能修改' : busy ? '正在提交…' : '提交问卷'}</button></form> : null}</> : <div className="otto-park-repair__empty">暂无需要填写的满意度调查。</div>}
   </div>;
 }
 
