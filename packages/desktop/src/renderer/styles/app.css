@@ -3986,8 +3986,8 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-focus);
 }
 
-/* ══════════════ 右侧面板（智能体 / 工具 / 记忆 / 浏览器 / 笔记） ══════════════
- * RightPanel.tsx。原 RightMascotPanel 的内联样式全部规范化到此；
+/* ══════════════ 右侧面板（智能体 / 工具 / 记忆 / 工作日志） ══════════════
+ * RightPanel.tsx。右栏样式集中维护；
  * 配色全走 tokens 变量，暗色自动跟随（个别黑底 hover 叠加见文末暗色补丁）。 */
 
 .otto-right-panel {
@@ -4023,11 +4023,44 @@ h6.otto-prose__h {
 }
 .otto-pet-stage__state {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--otto-text-tertiary);
   font-weight: 500;
+}
+.otto-pet-stage__toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface-raised);
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.otto-pet-stage__toggle:hover {
+  color: var(--otto-accent);
+  border-color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+.otto-pet-stage__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-pet-stage--collapsed {
+  flex-basis: 42px;
+  min-height: 42px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.otto-pet-stage--collapsed .otto-pet-stage__toggle {
+  width: 100%;
+  height: 28px;
 }
 .otto-pet-stage__scene {
   position: relative;
@@ -4450,36 +4483,6 @@ h6.otto-prose__h {
   border: none;
 }
 
-/* —— 笔记 tab —— */
-.otto-right-panel__notes {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.otto-right-panel__textarea {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  padding: 8px;
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-sm);
-  background: var(--otto-surface);
-  color: var(--otto-text);
-  font-family: var(--otto-font-mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  outline: none;
-  resize: none;
-  transition: border-color var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-right-panel__textarea::placeholder {
-  color: var(--otto-text-tertiary);
-}
-.otto-right-panel__textarea:focus-visible {
-  border-color: var(--otto-accent);
-  box-shadow: var(--otto-shadow-focus);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .otto-response-mark.is-active,
@@ -6741,55 +6744,197 @@ h6.otto-prose__h {
   box-shadow: 0 0 7px color-mix(in srgb, #ef4444 55%, transparent);
   animation: otto-unread-pulse 2s ease-in-out infinite;
 }
-.otto-direct-chat { position: fixed; z-index: 50; left: 232px; bottom: 22px; width: 340px; height: 430px; display: flex; flex-direction: column; border: 1px solid var(--otto-border); border-radius: 12px; background: var(--otto-surface); box-shadow: 0 18px 48px rgba(0,0,0,.28); }
-.otto-direct-chat header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--otto-border); }
-.otto-direct-chat header button { border:0; background:transparent; color:var(--otto-text-secondary); font-size:20px; cursor:pointer; }
-.otto-direct-chat__otto { margin-left:auto; margin-right:8px; border:1px solid var(--otto-border) !important; border-radius:8px; background:var(--otto-bg) !important; color:var(--otto-text) !important; font-size:12px !important; line-height:1; padding:7px 9px; }
-.otto-direct-chat__otto:hover { border-color:var(--otto-accent); color:var(--otto-accent) !important; }
-.otto-direct-chat__a2a-menu { position: relative; }
-.otto-direct-chat__plus { display: grid; place-items: center; width: 28px; height: 28px; padding: 0 !important; border: 1px solid var(--otto-border) !important; border-radius: 8px; background: var(--otto-bg) !important; }
+.otto-direct-chat {
+  position: fixed;
+  z-index: 50;
+  left: 232px;
+  bottom: 22px;
+  width: min(520px, calc(100vw - 270px));
+  height: min(640px, calc(100vh - 52px));
+  min-height: 460px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 8px;
+  background: var(--otto-surface);
+  box-shadow: 0 22px 60px rgba(15, 23, 42, .24);
+}
+.otto-direct-chat__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 68px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--otto-border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--otto-surface) 92%, var(--otto-accent-soft)), var(--otto-surface));
+}
+.otto-direct-chat__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.otto-direct-chat__avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  color: #f8fafc;
+  background: #1f2937;
+  font-size: 12px;
+  font-weight: 800;
+}
+.otto-direct-chat__titleblock { display: grid; gap: 3px; min-width: 0; }
+.otto-direct-chat__titleblock strong { overflow: hidden; color: var(--otto-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-direct-chat__titleblock span { overflow: hidden; color: var(--otto-text-tertiary); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-direct-chat__header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.otto-direct-chat__presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: 999px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-bg);
+  font-size: 10px;
+}
+.otto-direct-chat__presence::before { content: ''; width: 6px; height: 6px; border-radius: 999px; background: #94a3b8; }
+.otto-direct-chat__presence.is-online { color: #166534; background: #ecfdf5; }
+.otto-direct-chat__presence.is-online::before { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .14); }
+.otto-direct-chat__icon,
+.otto-direct-chat__plus {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-bg);
+  cursor: pointer;
+}
+.otto-direct-chat__icon { font-size: 20px; line-height: 1; }
+.otto-direct-chat__icon:hover,
+.otto-direct-chat__plus:hover { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-direct-chat__actionbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--otto-border);
+  background: var(--otto-bg);
+}
+.otto-direct-chat__otto {
+  min-height: 30px;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--otto-text);
+  background: var(--otto-surface);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.otto-direct-chat__otto:hover:not(:disabled) { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-direct-chat__otto:disabled { cursor: default; opacity: .5; }
+.otto-direct-chat__a2a-menu { position: relative; margin-left: auto; }
 .otto-direct-chat__a2a-popover {
   position: absolute;
   z-index: 4;
-  top: 34px;
+  top: 36px;
   right: 0;
-  width: 230px;
+  width: 240px;
   padding: 6px;
-  border: 1px solid var(--otto-border);
-  border-radius: 11px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 8px;
   background: var(--otto-surface);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, .24);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, .22);
 }
 .otto-direct-chat__a2a-popover button {
   display: grid;
   width: 100%;
   gap: 4px;
-  padding: 10px !important;
-  border-radius: 8px !important;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--otto-text);
+  background: transparent;
   text-align: left;
+  cursor: pointer;
 }
-.otto-direct-chat__a2a-popover button:hover { background: var(--otto-accent-soft) !important; }
-.otto-direct-chat__a2a-popover strong { color: var(--otto-text); font-size: 12px; }
+.otto-direct-chat__a2a-popover button:hover { background: var(--otto-accent-soft); }
+.otto-direct-chat__a2a-popover strong { font-size: 12px; }
 .otto-direct-chat__a2a-popover small { color: var(--otto-text-secondary); font-size: 10px; line-height: 1.4; }
-.otto-direct-chat__messages { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:12px; }
-.otto-direct-chat__messages p { color:var(--otto-text-tertiary); text-align:center; }
-.otto-direct-chat__message { max-width:80%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
-.otto-direct-chat__message.is-peer { align-self:flex-start; background:var(--otto-bg); border:1px solid var(--otto-border); }
-.otto-direct-chat__message.is-me { align-self:flex-end; background:var(--otto-accent-soft); }
-.otto-direct-chat__error { padding:6px 12px; color:var(--otto-danger); font-size:11px; }
-.otto-direct-chat form { display:grid; grid-template-columns:auto auto auto 1fr auto; gap:8px; padding:10px; border-top:1px solid var(--otto-border); }
-.otto-direct-chat form input { grid-column:1 / -1; min-width:0; border:1px solid var(--otto-border); border-radius:8px; background:var(--otto-bg); color:var(--otto-text); padding:9px 10px; }
-.otto-direct-chat form button { min-height:32px; border:0; border-radius:8px; padding:0 12px; background:var(--otto-accent); color:white; cursor:pointer; font-size:12px; }
-.otto-direct-chat form button:disabled { cursor:default; opacity:.55; }
-.otto-direct-chat__tool,
-.otto-direct-chat__otto-action { display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid var(--otto-border) !important; background:var(--otto-bg) !important; color:var(--otto-text) !important; }
-.otto-direct-chat__tool { width:32px; padding:0 !important; }
-.otto-direct-chat__otto-action:hover:not(:disabled),
-.otto-direct-chat__tool:hover:not(:disabled) { border-color:var(--otto-accent) !important; color:var(--otto-accent) !important; }
-.otto-direct-chat__a2a-menu { position:relative; }
-.otto-direct-chat__a2a-pop { position:absolute; left:0; bottom:calc(100% + 8px); width:168px; padding:6px; border:1px solid var(--otto-border-strong); border-radius:10px; background:var(--otto-surface); box-shadow:var(--otto-shadow-pop); z-index:60; }
-.otto-direct-chat__a2a-pop button { width:100%; display:flex; align-items:center; gap:7px; justify-content:flex-start; padding:8px 9px; background:transparent; color:var(--otto-text); }
-.otto-direct-chat__a2a-pop button:hover:not(:disabled) { background:var(--otto-accent-soft); }
+.otto-direct-chat__messages {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--otto-bg) 74%, var(--otto-surface));
+}
+.otto-direct-chat__empty {
+  align-self: center;
+  width: min(300px, 100%);
+  margin: auto 0;
+  padding: 18px;
+  border: 1px dashed var(--otto-border-strong);
+  border-radius: 8px;
+  color: var(--otto-text-tertiary);
+  background: var(--otto-surface);
+  text-align: center;
+}
+.otto-direct-chat__empty strong { display: block; margin-bottom: 6px; color: var(--otto-text-secondary); font-size: 13px; }
+.otto-direct-chat__empty span { font-size: 10.5px; line-height: 1.5; }
+.otto-direct-chat__message { display: grid; gap: 4px; max-width: 82%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.otto-direct-chat__message.is-peer { align-self: flex-start; }
+.otto-direct-chat__message.is-me { align-self: flex-end; }
+.otto-direct-chat__message-meta { display: flex; align-items: center; gap: 7px; color: var(--otto-text-tertiary); font-size: 9.5px; }
+.otto-direct-chat__message.is-me .otto-direct-chat__message-meta { justify-content: flex-end; }
+.otto-direct-chat__bubble {
+  padding: 9px 11px;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  color: var(--otto-text);
+  background: var(--otto-surface);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.otto-direct-chat__message.is-me .otto-direct-chat__bubble { border-color: color-mix(in srgb, var(--otto-accent) 34%, var(--otto-border)); background: var(--otto-accent-soft); }
+.otto-direct-chat__error { padding: 7px 12px; border-top: 1px solid var(--otto-border); color: var(--otto-danger); background: #fff5f5; font-size: 11px; }
+.otto-direct-chat__composer { display: grid; gap: 8px; padding: 11px 12px 12px; border-top: 1px solid var(--otto-border); background: var(--otto-surface); }
+.otto-direct-chat__composer textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 8px;
+  padding: 9px 10px;
+  outline: none;
+  color: var(--otto-text);
+  background: var(--otto-bg);
+  font: 12px/1.5 var(--otto-font);
+}
+.otto-direct-chat__composer textarea:focus { border-color: var(--otto-accent); box-shadow: var(--otto-shadow-focus); }
+.otto-direct-chat__composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.otto-direct-chat__composer-footer span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-direct-chat__composer-footer button {
+  min-width: 74px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 13px;
+  color: white;
+  background: var(--otto-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.otto-direct-chat__composer-footer button:disabled { cursor: default; opacity: .55; }
+@media (max-width: 760px) {
+  .otto-direct-chat { left: 12px; right: 12px; bottom: 12px; width: auto; height: min(620px, calc(100vh - 24px)); }
+}
 
 .otto-a2a-permission-backdrop {
   position: fixed;
@@ -7094,6 +7239,26 @@ h6.otto-prose__h {
 .otto-collab-drawer__content { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
 .otto-collab-drawer__content span, .otto-collab-drawer__content small { color: var(--otto-text-tertiary); }
 .otto-collab-drawer__content input, .otto-collab-drawer__content button { border: 1px solid var(--otto-border); border-radius: 7px; padding: 6px 8px; background: var(--otto-surface); color: var(--otto-text); }
+.otto-documents-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.otto-documents-panel .otto-file-preview { min-height: 420px; border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); overflow: hidden; }
+.otto-file-preview__layout { display: grid; grid-template-columns: 88px minmax(0, 1fr); min-height: 420px; }
+.otto-file-preview__list { border-right: 1px solid var(--otto-border); background: color-mix(in srgb, var(--otto-bg) 72%, transparent); min-width: 0; }
+.otto-file-preview__list-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px; color: var(--otto-text); font-size: 9px; }
+.otto-file-preview__list-head span, .otto-file-preview__source, .otto-file-preview__list-item-size { color: var(--otto-text-tertiary); font-size: 8px; }
+.otto-file-preview__list-items { display: grid; gap: 3px; padding: 0 5px 6px; }
+.otto-file-preview__list-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--otto-text-secondary); padding: 6px 5px; text-align: left; cursor: pointer; }
+.otto-file-preview__list-item.is-active { border-color: var(--otto-accent); background: var(--otto-accent-soft); color: var(--otto-accent); }
+.otto-file-preview__list-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8.5px; }
+.otto-file-preview__content { min-width: 0; display: flex; flex-direction: column; }
+.otto-file-preview__toolbar { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--otto-border); }
+.otto-file-preview__filename { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otto-text); font-size: 9px; display: flex; gap: 5px; align-items: center; }
+.otto-file-preview__body { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+.otto-file-preview__editor { display: grid; gap: 6px; min-height: 340px; }
+.otto-file-preview__editor .otto-ce { min-height: 330px; border-radius: 8px; }
+.otto-file-preview__open-btn { border: 1px solid var(--otto-border); border-radius: 7px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 5px 7px; font-size: 8.5px; cursor: pointer; white-space: nowrap; }
+.otto-file-preview__pdf-info, .otto-file-preview__empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: var(--otto-text-secondary); text-align: center; font-size: 9px; line-height: 1.45; padding: 14px; }
+.otto-file-preview__pdf-icon { border: 1px solid var(--otto-border); border-radius: 7px; padding: 5px 7px; color: var(--otto-accent); font: 9px var(--otto-font-mono); }
+.otto-file-preview__code, .otto-file-preview__markdown { margin: 0; white-space: pre-wrap; color: var(--otto-text-secondary); font: 9px/1.5 var(--otto-font-mono); }
 .otto-worklog-panel { display: flex; flex-direction: column; gap: 10px; }
 .otto-worklog-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .otto-worklog-panel__head > div { display: flex; flex-direction: column; gap: 1px; }
@@ -7122,7 +7287,7 @@ h6.otto-prose__h {
 .otto-worklog-panel__actions button { flex: 1; border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); color: var(--otto-text-secondary); padding: 7px 8px; font-size: 9px; cursor: pointer; }
 .otto-worklog-panel__actions button.is-primary { border-color: var(--otto-accent); background: var(--otto-accent-soft); color: var(--otto-accent); font-weight: 700; }
 .otto-worklog-panel__tip { color: var(--otto-text-tertiary); font-size: 8.5px; line-height: 1.4; }
-.otto-worklog-panel__summary { margin: 0; max-height: 150px; overflow: auto; white-space: pre-wrap; font: 9px/1.5 var(--otto-font-mono); color: var(--otto-text-secondary); }
+.otto-worklog-panel__summary { margin: 0; color: var(--otto-text-secondary); font-size: 9px; line-height: 1.45; }
 .otto-worklog-panel__details summary { color: var(--otto-text-tertiary); font-size: 8.5px; cursor: pointer; }
 .otto-worklog-panel__details pre { margin: 7px 0 0; white-space: pre-wrap; color: var(--otto-text-secondary); font: 8.5px/1.5 var(--otto-font-mono); }
 .otto-wcal__title { display: flex; align-items: center; justify-content: space-between; padding: 0; }
@@ -7213,3 +7378,49 @@ h6.otto-prose__h {
 @media (max-width: 860px) {
   .otto-product-choice, .otto-product-identity, .otto-credit-summary { grid-template-columns: 1fr; }
 }
+
+/* Enterprise configuration shell */
+.otto-enterprise-config { display: grid; gap: 14px; }
+.otto-enterprise-config__hero,
+.otto-enterprise-config__card { border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); box-shadow: var(--otto-shadow-soft); }
+.otto-enterprise-config__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 18px; }
+.otto-enterprise-config__hero span { color: var(--otto-text-tertiary); font: 10px/1.2 var(--otto-font-mono); letter-spacing: .08em; }
+.otto-enterprise-config__hero h2 { margin: 4px 0 5px; color: var(--otto-text); font-size: 18px; }
+.otto-enterprise-config__hero p,
+.otto-enterprise-config__card > p { margin: 0; color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; }
+.otto-enterprise-config__refresh { flex: 0 0 auto; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); cursor: pointer; font-size: 12px; padding: 8px 12px; }
+.otto-enterprise-config__card { display: grid; gap: 12px; padding: 15px; }
+.otto-enterprise-config__card h3 { margin: 0; color: var(--otto-text); font-size: 14px; }
+.otto-enterprise-config__switches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.otto-enterprise-config__switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); padding: 9px 10px; }
+.otto-enterprise-config__switch span { color: var(--otto-text); font-size: 12px; }
+.otto-enterprise-config__switch input { width: 17px; height: 17px; accent-color: var(--otto-accent); }
+.otto-enterprise-config__park-state { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border)); border-radius: var(--otto-radius-sm); background: var(--otto-accent-soft); padding: 11px 12px; }
+.otto-enterprise-config__park-state div { display: grid; gap: 3px; min-width: 0; }
+.otto-enterprise-config__park-state strong { overflow: hidden; color: var(--otto-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-enterprise-config__park-state span,
+.otto-enterprise-config__invite span { color: var(--otto-text-secondary); font-size: 11px; }
+.otto-enterprise-config__park-state b { flex: 0 0 auto; border-radius: var(--otto-radius-pill); background: var(--otto-surface); color: var(--otto-accent-hover); font-size: 11px; padding: 5px 8px; }
+.otto-enterprise-config__invite { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; color: var(--otto-text-secondary); font-size: 12px; }
+.otto-enterprise-config__invite strong { color: var(--otto-text); font: 700 13px/1.3 var(--otto-font-mono); }
+.otto-enterprise-config__service { display: grid; gap: 10px; border-top: 1px solid var(--otto-border); padding-top: 12px; }
+.otto-enterprise-config__service-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.otto-enterprise-config__service-head > div { display: grid; gap: 2px; min-width: 0; }
+.otto-enterprise-config__service-head strong { color: var(--otto-text); font-size: 13px; }
+.otto-enterprise-config__service-head span,
+.otto-enterprise-config__specialist-picker label > span { color: var(--otto-text-secondary); font-size: 11px; }
+.otto-enterprise-config__service-toggle { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.otto-enterprise-config__service-toggle input { width: 17px; height: 17px; accent-color: var(--otto-accent); }
+.otto-enterprise-config__specialist-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.otto-enterprise-config__specialist-picker label { display: grid; gap: 5px; min-width: 0; }
+.otto-enterprise-config__specialist-picker select { width: 100%; min-width: 0; }
+.otto-enterprise-config__specialist-picker button,
+.otto-enterprise-config__specialist button { border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); cursor: pointer; font-size: 11px; padding: 7px 10px; }
+.otto-enterprise-config__specialist-picker button:disabled,
+.otto-enterprise-config__specialist button:disabled { cursor: default; opacity: .55; }
+.otto-enterprise-config__specialists { display: flex; flex-wrap: wrap; gap: 7px; }
+.otto-enterprise-config__specialist { display: inline-flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, var(--otto-accent) 24%, var(--otto-border)); border-radius: var(--otto-radius-sm); background: var(--otto-accent-soft); padding: 4px 5px 4px 9px; }
+.otto-enterprise-config__specialist b { color: var(--otto-text); font-size: 11px; font-weight: 600; }
+.otto-enterprise-config__specialist button { background: var(--otto-surface); padding: 4px 7px; }
+.otto-enterprise-config__hint { margin: 0; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; padding: 10px 12px; }
+@media (max-width: 760px) { .otto-enterprise-config__hero { flex-direction: column; } .otto-enterprise-config__switches { grid-template-columns: 1fr; } .otto-enterprise-config__specialist-picker { grid-template-columns: 1fr; } }

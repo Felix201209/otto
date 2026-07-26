@@ -283,7 +283,7 @@ function maybeShowChatNotification(
     void window.otto.notificationShow?.({
       messageId: `chat-complete:${messageId}`,
       sessionId,
-      source: 'tui',
+      source: 'local',
       title: session?.title || 'Otto 对话已完成',
       preview,
     }).catch(() => undefined);
@@ -297,7 +297,7 @@ function maybeShowChatNotification(
     void window.otto.notificationShow?.({
       messageId: `chat-error:${code}:${message}`,
       sessionId,
-      source: 'tui',
+      source: 'local',
       title: session?.title || 'Otto 对话需要注意',
       preview: message,
     }).catch(() => undefined);

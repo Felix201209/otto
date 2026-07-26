@@ -42,10 +42,4 @@ copyFiles('core', {
   '.npmrc': '.npmrc',
 });
 
-// Prepare 'cli' package
-copyFiles('cli', {
-  'README.md': 'README.md',
-  LICENSE: 'LICENSE',
-});
-
-console.log('Successfully prepared all packages.');
+console.log('Successfully prepared active packages.');

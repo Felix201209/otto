@@ -24,7 +24,7 @@ async function filesBelow(root, current = root) {
     const absolute = path.join(current, entry.name);
     if (entry.isSymbolicLink()) fail(`release 中不允许符号链接：${absolute}`);
     if (entry.isDirectory()) output.push(...await filesBelow(root, absolute));
-    else if (entry.isFile()) output.push(path.relative(root, absolute));
+    else if (entry.isFile()) output.push(path.relative(root, absolute).split(path.sep).join('/'));
     else fail(`release 中只允许普通文件和目录：${absolute}`);
   }
   return output.sort();

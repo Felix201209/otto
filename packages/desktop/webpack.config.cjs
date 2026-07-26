@@ -5,9 +5,9 @@
  */
 
 /**
- * Renderer 构建链（独立，贴 webview 的 webpack@react18 范式）。
+ * Renderer 构建链（独立的 Electron renderer webpack@react18 范式）。
  *
- * 与 vscode-ui-plugin/webview 的关键差异：
+ * 与历史 webview 构建的关键差异：
  *   - target: 'electron-renderer'（而非 'web'）—— renderer 跑在 Electron。
  *   - 自带 html-webpack-plugin 产出 index.html（webview 当年由 VSCode host 注入，
  *     移植到 Electron 必须自产；交付文档 [WEBVIEW] §1 已点明）。
@@ -56,7 +56,7 @@ module.exports = (_env, argv) => {
           use: ['style-loader', 'css-loader'],
         },
         {
-          // 图片内联为 base64，避免 Electron file:// 下的外链资源解析（贴 webview）。
+          // 图片内联为 base64，避免 Electron file:// 下的外链资源解析。
           test: /\.(png|jpe?g|gif|svg)$/i,
           type: 'asset/inline',
         },

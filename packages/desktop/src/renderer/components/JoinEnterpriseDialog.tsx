@@ -22,7 +22,7 @@ export function JoinEnterpriseDialog({
   const triggerRef = useRef<Element | null>(null);
   const titleId = `${useId()}-title`;
   const descriptionId = `${useId()}-description`;
-  const valid = inviteCode.replace(/[^A-HJ-NP-Z2-9]/g, '').length === 8;
+  const valid = inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12;
 
   useEffect(() => {
     if (!open) return;
@@ -88,17 +88,17 @@ export function JoinEnterpriseDialog({
           <input
             ref={inputRef}
             aria-label="企业邀请码"
-            autoCapitalize="characters"
+            autoCapitalize="none"
             autoComplete="off"
             spellCheck={false}
-            maxLength={9}
+            maxLength={14}
             value={inviteCode}
             disabled={busy}
             onChange={(event) => {
               setInviteCode(sanitizeOrganizationInviteCode(event.target.value));
               setError(null);
             }}
-            placeholder="XXXX-XXXX"
+            placeholder="Aa3B-k9Pq-Z7xY"
           />
         </label>
         {error ? <div className="otto-join-enterprise__error" role="alert">{error}</div> : null}

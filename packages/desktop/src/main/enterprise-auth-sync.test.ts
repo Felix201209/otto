@@ -10,6 +10,7 @@ import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
+  ENTERPRISE_IDENTITY_LEASE_MS,
   EnterpriseAuthOperationQueue,
   failClosedUncertainEnterpriseJoin,
   logoutAndClearEnterpriseIdentity,
@@ -97,6 +98,19 @@ const ORGANIZATION_VIEW = {
 };
 
 describe('enterprise auth identity synchronization', () => {
+  it('keeps enterprise center token at 30 days and local identity lease at 10 minutes with 2 minute refresh', () => {
+    expect(ENTERPRISE_IDENTITY_LEASE_MS).toBe(10 * 60_000);
+
+    const mainSource = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
+    expect(mainSource).toContain('const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 2 * 60_000');
+
+    const enterpriseDbSource = readFileSync(
+      resolve(__dirname, '../../../server/src/enterprise/db.ts'),
+      'utf8',
+    );
+    expect(enterpriseDbSource).toContain('ttlMs = 30 * 24 * 60 * 60 * 1000');
+  });
+
   it('主进程退出处理只清企业身份，不删除本机对话、模型、知识库或 Skill', () => {
     const source = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
     const handlerStart = source.indexOf('ipcMain.handle(IPC.enterpriseLogout');

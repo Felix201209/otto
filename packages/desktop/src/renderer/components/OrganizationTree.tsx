@@ -302,6 +302,25 @@ function formatSyncedAt(date: Date): string {
   })}`;
 }
 
+function formatDirectMessageTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function memberInitials(name: string): string {
+  const clean = name.trim();
+  if (!clean) return 'OT';
+  const chars = Array.from(clean);
+  return chars.slice(0, 2).join('').toUpperCase();
+}
+
 function DirectMessagePanel({
   member,
   currentAccount,
@@ -425,10 +444,34 @@ function DirectMessagePanel({
     }
   };
 
+  const subtitle = [member.department, member.role].filter(Boolean).join(' · ') || member.username;
+  const presenceLabel = member.ottoOnline ? '在线' : member.ottoLastSeenAt ? '最近在线' : '离线';
+
   return (
     <div className="otto-direct-chat" role="dialog" aria-label={`与 ${member.name} 聊天`}>
-      <header>
-        <strong>{member.name}</strong>
+      <header className="otto-direct-chat__header">
+        <div className="otto-direct-chat__identity">
+          <div className="otto-direct-chat__avatar" aria-hidden="true">{memberInitials(member.name)}</div>
+          <div className="otto-direct-chat__titleblock">
+            <strong>{member.name}</strong>
+            <span>{subtitle}</span>
+          </div>
+        </div>
+        <div className="otto-direct-chat__header-actions">
+          <span className={'otto-direct-chat__presence' + (member.ottoOnline ? ' is-online' : '')}>{presenceLabel}</span>
+          <button
+            type="button"
+            className="otto-direct-chat__icon"
+            onClick={onClose}
+            aria-label="关闭聊天"
+            title="关闭聊天"
+          >
+            ×
+          </button>
+        </div>
+      </header>
+
+      <div className="otto-direct-chat__actionbar" aria-label="Otto 协作操作">
         <button
           type="button"
           className="otto-direct-chat__otto"
@@ -473,28 +516,44 @@ function DirectMessagePanel({
             ) : null}
           </div>
         ) : null}
-        <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
-      </header>
+      </div>
+
       <div className="otto-direct-chat__messages">
-        {messages.length === 0 ? <p>还没有消息，开始聊聊吧。</p> : messages.map((message) => (
-          <div
-            key={message.id}
-            className={'otto-direct-chat__message' + (message.senderAccountId === member.id ? ' is-peer' : ' is-me')}
-          >
-            {displayDirectMessageContent(message.content)}
+        {messages.length === 0 ? (
+          <div className="otto-direct-chat__empty">
+            <strong>还没有消息，开始聊聊吧。</strong>
+            <span>企业私聊只同步当前会话；需要自动整理上下文时可使用 Otto 协作。</span>
           </div>
-        ))}
+        ) : messages.map((message) => {
+          const mine = message.senderAccountId !== member.id;
+          return (
+            <article
+              key={message.id}
+              className={'otto-direct-chat__message' + (mine ? ' is-me' : ' is-peer')}
+            >
+              <div className="otto-direct-chat__message-meta">
+                <span>{mine ? '我' : member.name}</span>
+                {message.createdAt ? <time dateTime={message.createdAt}>{formatDirectMessageTime(message.createdAt)}</time> : null}
+              </div>
+              <div className="otto-direct-chat__bubble">{displayDirectMessageContent(message.content)}</div>
+            </article>
+          );
+        })}
       </div>
       {error ? <div className="otto-direct-chat__error" role="alert">{error}</div> : null}
-      <form onSubmit={send}>
-        <input
+      <form className="otto-direct-chat__composer" onSubmit={send}>
+        <textarea
           value={draft}
           maxLength={4000}
+          rows={3}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="输入消息"
           aria-label="消息内容"
         />
-        <button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button>
+        <div className="otto-direct-chat__composer-footer">
+          <span>{draft.trim().length > 0 ? draft.trim().length + '/4000' : 'Enter 发送'}</span>
+          <button type="submit" disabled={!draft.trim() || sending}>{sending ? '发送中' : '发送'}</button>
+        </div>
       </form>
       {consultOpen && currentAccount ? (
         <AtoaConsultDialog

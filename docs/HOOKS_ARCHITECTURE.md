@@ -87,9 +87,9 @@ Otto/
 │   │   │     }
 │   │   └── dist/
 │   │
-│   └── vscode-ui-plugin/
-│       ├── src/
-│       │   ├── extension.ts               (导入 easycode-core)
+│   └── desktop/
+│       ├── src/renderer/
+│       │   ├── App.tsx                    (导入 easycode-core)
 │       │   ├── services/
 │       │   │   ├── authManager.ts         (导入 core)
 │       │   │   ├── aiService.ts           (导入 core)
@@ -289,7 +289,7 @@ export { HookEventHandler } from './hookEventHandler.js';
 ### CLI 如何使用
 
 ```typescript
-// packages/cli/src/services/hookService.ts (假设位置)
+// packages/core/src/services/hookService.ts (示例位置)
 
 import {
   HookSystem,
@@ -304,10 +304,10 @@ const hookSystem = new HookSystem(config);
 await hookSystem.fireEvent('BeforeTool', toolInput);
 ```
 
-### VSCode UI 插件如何使用
+### Desktop UI 如何使用
 
 ```typescript
-// packages/vscode-ui-plugin/src/services/aiService.ts
+// packages/desktop/src/renderer/services/aiService.ts
 
 import {
   HookSystem,
@@ -404,8 +404,8 @@ packages/core/src/hooks/myCustomHook.ts
 
 ```typescript
 // 不好：在两个地方都实现
-packages/cli/src/hooks/... (❌ 避免)
-packages/vscode-ui-plugin/src/hooks/... (❌ 避免)
+packages/core/src/ui-hooks/... (retired text UI pattern; avoid)
+packages/desktop/src/renderer/hooks/... (❌ 避免)
 ```
 
 ### 配置文件位置
@@ -487,7 +487,7 @@ VSCode UI 开发者：只需在插件中导入和使用 core 的 Hooks
 ### 在 CLI 中（假设位置）
 
 ```typescript
-// packages/cli/src/core/agent.ts
+// packages/core/src/core/agent.ts
 
 import { HookEventHandler } from 'easycode-core';
 
@@ -521,10 +521,10 @@ export class Agent {
 }
 ```
 
-### 在 VSCode UI 中
+### 在 Desktop UI 中
 
 ```typescript
-// packages/vscode-ui-plugin/src/services/aiService.ts
+// packages/desktop/src/renderer/services/aiService.ts
 
 import { HookEventHandler } from 'easycode-core';
 

@@ -57,6 +57,7 @@ const API_V2_HEALTH = {
     'personal_enterprise_upgrade',
     'park_service_push',
     'account_presence_v1',
+    'modular_update_push_v1',
   ],
 };
 
@@ -120,7 +121,7 @@ describe('EnterpriseClient', () => {
     const challenge = await client.requestRegistrationCode(
       'https://enterprise.otto.test',
       '13800138000',
-      'ABCD-EFGH',
+      'Ab3D-k9Pq-Z7xY',
     );
     expect(challenge.challengeId).toBe('sms_1');
     expect(challenge.organization).toEqual({ id: 'org_acme', name: '星河科技' });
@@ -135,7 +136,7 @@ describe('EnterpriseClient', () => {
       ['https://enterprise.otto.test/enterprise/auth/register/sms/verify', 'POST'],
     ]);
     expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toEqual({
-      phone: '13800138000', inviteCode: 'ABCD-EFGH',
+      phone: '13800138000', inviteCode: 'Ab3D-k9Pq-Z7xY',
     });
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
@@ -197,7 +198,7 @@ describe('EnterpriseClient', () => {
       'password',
     );
 
-    await expect(client.joinOrganization('ABCD-EFGH')).resolves.toEqual({
+    await expect(client.joinOrganization('Ab3D-k9Pq-Z7xY')).resolves.toEqual({
       account: upgradedAccount,
     });
     expect(client.authenticatedAccountSnapshot()).toEqual(upgradedAccount);
@@ -206,7 +207,41 @@ describe('EnterpriseClient', () => {
     const request = fetchMock.mock.calls[2]?.[1] as RequestInit;
     expect(request.method).toBe('POST');
     expect(request.headers).toMatchObject({ authorization: 'Bearer personal-token' });
-    expect(JSON.parse(request.body as string)).toEqual({ inviteCode: 'ABCD-EFGH' });
+    expect(JSON.parse(request.body as string)).toEqual({ inviteCode: 'Ab3D-k9Pq-Z7xY' });
+  });
+
+  it('uses the member session to read enterprise module update manifests', async () => {
+    const manifest = {
+      format: 'otto-module-updates-v1',
+      deploymentId: 'dep_1',
+      generatedAt: '2026-07-26T00:00:00.000Z',
+      modules: [{
+        module: 'park_service',
+        version: '1.9.5-park.2',
+        rollout: 'stable',
+        notes: 'park update',
+        minAppVersion: '1.9.5',
+        manifestUrl: 'https://updates.example.com/otto-incremental.json',
+        sha256: 'a'.repeat(64),
+        publishedAt: '2026-07-26T00:00:00.000Z',
+        updatedAt: '2026-07-26T00:00:00.000Z',
+      }],
+      catalog: [{ module: 'park_service', features: ['park_service'] }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, manifest));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getModuleUpdates()).resolves.toEqual(manifest);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/modules/updates/client');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
+      .toMatchObject({ authorization: 'Bearer session-token' });
   });
 
   it('加入企业已提交但响应断线时，用原 Bearer 会话对账并提交企业身份', async () => {
@@ -239,7 +274,7 @@ describe('EnterpriseClient', () => {
       'password',
     );
 
-    await expect(client.joinOrganization('ABCD-EFGH')).resolves.toEqual({
+    await expect(client.joinOrganization('Ab3D-k9Pq-Z7xY')).resolves.toEqual({
       account: upgradedAccount,
     });
     expect(client.authenticatedAccountSnapshot()).toEqual(upgradedAccount);
@@ -270,7 +305,7 @@ describe('EnterpriseClient', () => {
       'password',
     );
 
-    await expect(client.joinOrganization('ABCD-EFGH'))
+    await expect(client.joinOrganization('Ab3D-k9Pq-Z7xY'))
       .rejects.toThrow('无法连接企业服务器：socket disconnected before commit');
     expect(client.authenticatedAccountSnapshot()).toEqual(personalAccount);
   });
@@ -296,7 +331,7 @@ describe('EnterpriseClient', () => {
       'password',
     );
 
-    await expect(client.joinOrganization('ABCD-EFGH'))
+    await expect(client.joinOrganization('Ab3D-k9Pq-Z7xY'))
       .rejects.toBeInstanceOf(EnterpriseJoinStateUncertainError);
     expect(client.authenticatedAccountSnapshot()).toEqual(personalAccount);
   });
@@ -316,7 +351,7 @@ describe('EnterpriseClient', () => {
       'password',
     );
 
-    await expect(client.joinOrganization('ABCD-EFGH'))
+    await expect(client.joinOrganization('Ab3D-k9Pq-Z7xY'))
       .rejects.toThrow('当前账号已经属于企业');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -595,8 +630,8 @@ describe('EnterpriseClient', () => {
 
   it('企业管理员可读取并手动换新 7 天中心引入链接', async () => {
     const firstInvite = {
-      id: 'invite_1', organizationId: 'org_acme', code: 'ABCD-EFGH',
-      link: 'https://59.110.154.44:7777/enterprise/join/ABCD-EFGH', status: 'active' as const,
+      id: 'invite_1', organizationId: 'org_acme', code: 'Ab3D-k9Pq-Z7xY',
+      link: 'https://59.110.154.44:7777/enterprise/join/Ab3D-k9Pq-Z7xY', status: 'active' as const,
       defaultDepartment: null,
       departmentId: null, positionId: null, positionTitle: null, defaultRole: null,
       maxUses: null, usedCount: 0,
@@ -616,16 +651,16 @@ describe('EnterpriseClient', () => {
         invite: {
           ...firstInvite,
           id: 'invite_2',
-          code: 'WXYZ-2345',
-          link: 'https://59.110.154.44:7777/enterprise/join/WXYZ-2345',
+          code: 'Wz8Y-m3Na-Q5pB',
+          link: 'https://59.110.154.44:7777/enterprise/join/Wz8Y-m3Na-Q5pB',
         },
       }));
     const client = new EnterpriseClient(fetchMock as typeof fetch);
     await client.loginWithPassword('https://enterprise.otto.test', 'admin', 'password');
 
     expect((await client.getOrganizationInvite()).invite?.link)
-      .toBe('https://59.110.154.44:7777/enterprise/join/ABCD-EFGH');
-    expect((await client.issueOrganizationInvite()).invite.code).toBe('WXYZ-2345');
+      .toBe('https://59.110.154.44:7777/enterprise/join/Ab3D-k9Pq-Z7xY');
+    expect((await client.issueOrganizationInvite()).invite.code).toBe('Wz8Y-m3Na-Q5pB');
     expect(fetchMock.mock.calls.slice(2).map(([, init]) => (init as RequestInit).method)).toEqual([
       'GET', 'POST',
     ]);
@@ -815,7 +850,7 @@ describe('EnterpriseClient', () => {
     await expect(client.requestRegistrationCode(
       'https://enterprise.otto.test',
       '13800138000',
-      'ABCD-EFGH',
+      'Ab3D-k9Pq-Z7xY',
     )).rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -1093,7 +1128,7 @@ describe('EnterpriseClient', () => {
     });
     const client = new EnterpriseClient(fetchMock as typeof fetch);
 
-    await client.requestRegistrationCode('https://a.otto.test', '13800138000', 'ABCD-EFGH');
+    await client.requestRegistrationCode('https://a.otto.test', '13800138000', 'Ab3D-k9Pq-Z7xY');
     const staleRegister = client.registerWithSms({
       challengeId: 'sms_a',
       code: '123456',

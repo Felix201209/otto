@@ -40,6 +40,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WINDOWS_RIPGREP_INTEGRITY } from './ripgrep-integrity.mjs';
+import { resolveUpdateAssetBaseUrl } from './update-mirror-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = path.resolve(__dirname, '..');
@@ -55,6 +56,7 @@ const VERSION = PKG.version;
 const SOURCE_REPO = 'Felix201209/otto';
 const SOURCE_UPSTREAM = 'origin/internal';
 const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
+const UPDATE_ASSET_BASE_URL = resolveUpdateAssetBaseUrl();
 const RELEASE_TAG = `v${VERSION}`;
 const BUILD_ASSET_NAMES = [
   `Otto-${VERSION}-arm64.dmg`,
@@ -400,7 +402,7 @@ async function makeLatestJson(sourceCommit) {
   const macArm64 = path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`);
   const macX64 = path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`);
   const winX64 = path.join(RELEASE_DIR, `Otto-Setup-${VERSION}-win-x64.exe`);
-  const releaseBaseUrl = `https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`;
+  const releaseBaseUrl = UPDATE_ASSET_BASE_URL;
   // 使用发布候选提交时间，确保同一 commit 的失败重试能生成字节完全一致的清单。
   const publishedAt = git(['show', '-s', '--format=%cI', sourceCommit]);
 
@@ -542,8 +544,7 @@ function validateManifest(manifest, localAssets, source, sourceCommit) {
   for (const [platform, name] of Object.entries(expectedPlatforms)) {
     const expected = localAssetByName(localAssets, name);
     const actual = manifestAssets[platform];
-    const expectedUrl =
-      `https://github.com/${RELEASES_REPO}/releases/download/${RELEASE_TAG}/${name}`;
+    const expectedUrl = `${UPDATE_ASSET_BASE_URL}/${name}`;
     if (
       !actual ||
       actual.name !== name ||

@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASES_REPO: ${{ github.repository }}
+  RELEASES_REPO: Felix201209/otto-releases
   DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
   DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
 

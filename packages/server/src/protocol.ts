@@ -9,11 +9,11 @@
  *  otto-server 线协议（FROZEN CONTRACT — Issue #2）
  * ════════════════════════════════════════════════════════════════════════════
  *
- * 这是 server ↔ desktop renderer（以及未来 ↔ TUI 只读）之间的唯一契约源。
- * 形态复用 `packages/vscode-ui-plugin/webview/src/types/index.ts` 的
+ * 这是 server ↔ desktop renderer 之间的唯一契约源。
+ * 形态复用 历史 webview types 的
  * `{ type, payload }` 信封 + MessageContentPart / ToolCall 等渲染类型，
  * 在其上扩展：
- *   - `source: 'feishu' | 'local' | 'tui'`（消息/会话来源标记）
+ *   - `source: 'feishu' | 'local' | 'enterprise' | 'park'`（消息/会话来源标记）
  *   - 会话列表 / 历史拉取 / 流式增量 / 工具调用 / 状态 / 错误
  *   - app → 飞书回推
  *
@@ -43,9 +43,8 @@ export const PROTOCOL_VERSION = '1' as const;
  * 消息/会话来源。
  * - 'local'：app（Electron renderer）内用户输入
  * - 'feishu'：飞书网关收到的消息
- * - 'tui'：Ink 终端（P1，目前只读）
  */
-export type MessageSource = 'local' | 'feishu' | 'tui' | 'atoa' | 'enterprise' | 'park';
+export type MessageSource = 'local' | 'feishu' | 'atoa' | 'enterprise' | 'park';
 
 /**
  * 统一信封。所有 WS 帧都是这个形状（与 webview `{ type, payload }` 对齐）。
@@ -208,7 +207,7 @@ export interface OttoMessage {
   role: 'user' | 'assistant' | 'system' | 'tool' | 'notification';
   content: MessageContent;
   timestamp: number;
-  /** 来源标记（飞书 / 本地 / TUI）。 */
+  /** 来源标记（飞书 / 本地 / 企业 / 园区）。 */
   source: MessageSource;
   isStreaming?: boolean;
   reasoning?: string;
@@ -260,7 +259,7 @@ export interface SessionSummary {
 /** 握手：连接建立后客户端首帧，声明协议版本与身份。 */
 export type HelloMsg = Envelope<
   'hello',
-  { protocolVersion: string; clientKind: 'desktop' | 'tui'; clientId?: string }
+  { protocolVersion: string; clientKind: 'desktop'; clientId?: string }
 >;
 
 /** 拉取会话列表。 */
@@ -955,6 +954,16 @@ export type ErrorMsg = Envelope<
   { sessionId?: string; code: string; message: string }
 >;
 
+/** 企业服务器通知桌面端检查补丁 / 内核 / 组件增量更新。 */
+export type IncrementalUpdateAvailableMsg = Envelope<
+  'incremental_update_available',
+  {
+    manifestUrl: string;
+    reason?: string;
+    requestedAt: string;
+  }
+>;
+
 /** 可用模型列表回包。 */
 export type ModelsListMsg = Envelope<
   'models_list',
@@ -1331,6 +1340,7 @@ export type ServerToClient =
   | ToolConfirmationRequestMsg
   | SessionStatusMsg
   | ErrorMsg
+  | IncrementalUpdateAvailableMsg
   | ModelsListMsg
   | FeishuPushResultMsg
   | SettingsMsg
@@ -1472,6 +1482,7 @@ export const HTTP_ROUTES = {
   feishuStart: '/feishu/start',
   feishuStop: '/feishu/stop',
   feishuConfig: '/feishu/config',
+  incrementalUpdatePush: '/internal/incremental-update/push',
   ws: '/ws',
 } as const;
 
@@ -1541,7 +1552,7 @@ function isNonEmptyString(v: unknown): v is string {
 }
 
 function isMessageSourceValue(v: unknown): v is MessageSource {
-  return v === 'local' || v === 'feishu' || v === 'tui';
+  return v === 'local' || v === 'feishu' || v === 'atoa' || v === 'enterprise' || v === 'park';
 }
 
 /** 校验单个 MessageContentPart 的形状（按判别 type 查各自 value 必备字段）。 */
@@ -1665,7 +1676,7 @@ export function validateClientPayload(msg: {
       if (!isMessageContentValue(p['content']))
         return 'content 必须是 MessageContentPart 数组';
       if (!isMessageSourceValue(p['source']))
-        return 'source 必须是 local | feishu | tui';
+        return 'source 必须是 local | feishu | atoa | enterprise | park';
       // 飞书入站消息由 FeishuAdapter 直接注入 SessionRuntime，不经过客户端 WS。
       // 禁止客户端伪造 source=feishu，否则会借飞书免确认策略绕过桌面操作确认。
       if (p['source'] === 'feishu')

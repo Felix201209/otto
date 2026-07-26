@@ -79,8 +79,6 @@ const TOOL_FEATURE_FLAG_MAP: Record<string, FeatureFlag> = {
   'desktop_automation': 'park_service',
   'web_automation': 'park_service',
 
-  // TUI 同步
-  'tui_sync': 'tui_sync',
 
   // 知识沉淀闭环
   'memory_manager': 'knowledge_loop',
@@ -222,7 +220,7 @@ export class CentralPolicy {
    */
   private isFeatureEnabled(flagKey: string): boolean {
     // Typed flags first
-    if (flagKey in { park_service: 1, feishu_auto_reply: 1, enterprise_tree: 1, tui_sync: 1, knowledge_loop: 1, memory_injection: 1, checkpoints: 1, audit_log: 1 }) {
+    if (flagKey in { park_service: 1, feishu_auto_reply: 1, enterprise_tree: 1, knowledge_loop: 1, memory_injection: 1, checkpoints: 1, audit_log: 1 }) {
       return this.featureFlags.isEnabled(flagKey as FeatureFlag);
     }
     // Legacy fallback

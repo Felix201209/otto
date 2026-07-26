@@ -25,6 +25,11 @@ export interface NotificationPayload {
   preview: string;
 }
 
+export type SystemNotificationFailureReason =
+  | 'unsupported'
+  | 'show-failed'
+  | 'delivery-unconfirmed';
+
 export interface EnterpriseNotificationIdentity {
   id: string;
   organizationId: string;
@@ -64,12 +69,14 @@ interface NotificationEntry {
   notification: Notification;
   sessionId: string;
   closeTimer: ReturnType<typeof setTimeout>;
+  deliveryTimer: ReturnType<typeof setTimeout>;
   count: number;
   lastShownAt: number;
 }
 
 export class NotificationService {
   private static readonly CLOSE_AFTER_MS = 7_000;
+  private static readonly CONFIRM_DELIVERY_AFTER_MS = 2_000;
   private static readonly MERGE_WINDOW_MS = 8_000;
   private static readonly SOUND_SOURCES = new Set([
     'enterprise',
@@ -83,14 +90,29 @@ export class NotificationService {
   private seenMessageIds = new Set<string>();
   private onUnreadChange?: (unread: string[]) => void;
   private onNotificationClick?: (sessionId: string) => void;
+  private shouldPresentSystemNotification?: () => boolean;
+  private onBackgroundAttention?: (payload: NotificationPayload) => void;
+  private onSystemNotificationUnavailable?: (
+    payload: NotificationPayload,
+    reason: SystemNotificationFailureReason,
+  ) => void;
 
   /** 注册回调：未读集合变化时通知 renderer（IPC）。 */
   registerCallbacks(opts: {
     onUnreadChange: (unread: string[]) => void;
     onNotificationClick: (sessionId: string) => void;
+    shouldPresentSystemNotification?: () => boolean;
+    onBackgroundAttention?: (payload: NotificationPayload) => void;
+    onSystemNotificationUnavailable?: (
+      payload: NotificationPayload,
+      reason: SystemNotificationFailureReason,
+    ) => void;
   }): void {
     this.onUnreadChange = opts.onUnreadChange;
     this.onNotificationClick = opts.onNotificationClick;
+    this.shouldPresentSystemNotification = opts.shouldPresentSystemNotification;
+    this.onBackgroundAttention = opts.onBackgroundAttention;
+    this.onSystemNotificationUnavailable = opts.onSystemNotificationUnavailable;
   }
 
   /** 收到非本地消息 → 发 OS 通知 + 记未读。 */
@@ -112,7 +134,27 @@ export class NotificationService {
     // 聊天侧栏和托盘徽标仍必须提示，直到真正打开该会话。
     this.unreadSessions.add(normalized.sessionId);
     this.emitUnread();
+
+    // Otto 正在前台时，界面本身已经承担消息反馈，不再额外打断用户。
+    // 先关掉同会话此前留下的系统 toast，但保留上面的未读状态。
+    if (!this.canPresentSystemNotification()) {
+      this.closeActiveNotification(normalized.sessionId);
+      return;
+    }
+
+    this.requestBackgroundAttention(normalized);
     this.playNotificationSound(normalized.source);
+
+    let fallbackRequested = false;
+    const requestFallback = (reason: SystemNotificationFailureReason): void => {
+      if (fallbackRequested) return;
+      fallbackRequested = true;
+      try {
+        this.onSystemNotificationUnavailable?.(normalized, reason);
+      } catch {
+        // 降级提醒失败也不能破坏 Otto 自己的未读状态。
+      }
+    };
 
     let supported = false;
     try {
@@ -120,7 +162,10 @@ export class NotificationService {
     } catch {
       supported = false;
     }
-    if (!supported) return;
+    if (!supported) {
+      requestFallback('unsupported');
+      return;
+    }
 
     const now = Date.now();
     const previous = this.active.get(normalized.sessionId);
@@ -130,6 +175,7 @@ export class NotificationService {
         : 1;
     if (previous) {
       clearTimeout(previous.closeTimer);
+      clearTimeout(previous.deliveryTimer);
       try { previous.notification.close(); } catch { /* ignore */ }
       this.active.delete(normalized.sessionId);
     }
@@ -141,14 +187,27 @@ export class NotificationService {
       ? `最新：${normalized.preview}`
       : normalized.preview;
 
-    const notification = new Notification({
-      title,
-      body,
-      silent: false,
-      urgency: 'normal',
-      timeoutType: 'default',
-    });
+    let notification: Notification;
+    try {
+      notification = new Notification({
+        title,
+        body,
+        silent: false,
+        urgency: 'normal',
+        timeoutType: 'default',
+      });
+    } catch {
+      requestFallback('show-failed');
+      return;
+    }
+    let deliveryConfirmed = false;
+    const confirmDelivery = (): void => {
+      deliveryConfirmed = true;
+      const current = this.active.get(normalized.sessionId);
+      if (current?.notification === notification) clearTimeout(current.deliveryTimer);
+    };
     notification.on('click', () => {
+      confirmDelivery();
       // 企业私聊/A2A 用合成会话 id：点 toast 只能证明用户打开了 Otto，
       // 不代表他已打开真正的企业会话或完成授权。其未读点由业务已读回执清除。
       if (!normalized.sessionId.startsWith('enterprise:')) {
@@ -156,11 +215,14 @@ export class NotificationService {
       }
       this.onNotificationClick?.(normalized.sessionId);
     });
+    notification.on('show', confirmDelivery);
     notification.on('failed', () => {
       const current = this.active.get(normalized.sessionId);
       if (current?.notification === notification) {
         clearTimeout(current.closeTimer);
+        clearTimeout(current.deliveryTimer);
         this.active.delete(normalized.sessionId);
+        requestFallback('show-failed');
       }
     });
 
@@ -172,11 +234,15 @@ export class NotificationService {
         this.active.delete(normalized.sessionId);
       }
     }, NotificationService.CLOSE_AFTER_MS);
+    const deliveryTimer = setTimeout(() => {
+      if (!deliveryConfirmed) requestFallback('delivery-unconfirmed');
+    }, NotificationService.CONFIRM_DELIVERY_AFTER_MS);
 
     this.active.set(normalized.sessionId, {
       notification,
       sessionId: normalized.sessionId,
       closeTimer,
+      deliveryTimer,
       count,
       lastShownAt: now,
     });
@@ -184,8 +250,10 @@ export class NotificationService {
       notification.show();
     } catch {
       clearTimeout(closeTimer);
+      clearTimeout(deliveryTimer);
       this.active.delete(normalized.sessionId);
       // OS 弹窗失败不影响上面已写入的 Otto 未读态。
+      requestFallback('show-failed');
     }
   }
 
@@ -194,6 +262,7 @@ export class NotificationService {
     const entry = this.active.get(sessionId);
     if (entry) {
       clearTimeout(entry.closeTimer);
+      clearTimeout(entry.deliveryTimer);
       try { entry.notification.close(); } catch { /* ignore */ }
       this.active.delete(sessionId);
     }
@@ -206,6 +275,7 @@ export class NotificationService {
   clearAll(): void {
     for (const [, entry] of this.active) {
       clearTimeout(entry.closeTimer);
+      clearTimeout(entry.deliveryTimer);
       try { entry.notification.close(); } catch { /* ignore */ }
     }
     this.active.clear();
@@ -235,7 +305,6 @@ export class NotificationService {
       atoa: '企业内部协作',
       enterprise: '企业通知',
       park: '园区服务',
-      tui: 'TUI',
     };
     const label = labels[source] ?? '新消息';
     return sender ? `${label} · ${sender}` : label;
@@ -278,6 +347,32 @@ export class NotificationService {
     } catch {
       // 系统声音失败不影响弹窗和 Otto 内部未读点。
     }
+  }
+
+  private canPresentSystemNotification(): boolean {
+    try {
+      return this.shouldPresentSystemNotification?.() ?? true;
+    } catch {
+      // 窗口状态读取失败时按后台处理，避免真正的后台消息完全无提示。
+      return true;
+    }
+  }
+
+  private requestBackgroundAttention(payload: NotificationPayload): void {
+    try {
+      this.onBackgroundAttention?.(payload);
+    } catch {
+      // 任务栏/Dock 提醒失败不影响系统通知与未读状态。
+    }
+  }
+
+  private closeActiveNotification(sessionId: string): void {
+    const entry = this.active.get(sessionId);
+    if (!entry) return;
+    clearTimeout(entry.closeTimer);
+    clearTimeout(entry.deliveryTimer);
+    try { entry.notification.close(); } catch { /* ignore */ }
+    this.active.delete(sessionId);
   }
 
   private emitUnread(): void {

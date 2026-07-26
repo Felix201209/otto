@@ -24,7 +24,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
-const generatedDir = join(root, 'packages/cli/src/generated');
+const generatedDir = join(root, 'packages/core/src/generated');
 const gitCommitFile = join(generatedDir, 'git-commit.ts');
 let gitCommitInfo = 'N/A';
 

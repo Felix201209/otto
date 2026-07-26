@@ -629,6 +629,24 @@ describe('受保护 vs 公开路由边界', () => {
       ]),
     });
 
+    const anonymousClientManifest = await fetch(`${base}/enterprise/modules/updates/client`);
+    expect(anonymousClientManifest.status).toBe(401);
+
+    const database = await import('./db.js');
+    const member = database.createAccount({
+      username: 'module-reader',
+      password: 'module-reader-password',
+      name: 'Module Reader',
+    });
+    const session = database.createAuthSession(member.id);
+    const clientManifest = await fetch(`${base}/enterprise/modules/updates/client`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(clientManifest.status).toBe(200);
+    await expect(clientManifest.json()).resolves.toMatchObject({
+      modules: [expect.objectContaining({ module: 'park_service', rollout: 'stable' })],
+    });
+
     const health = await fetch(`${base}/enterprise/health`);
     expect(health.status).toBe(200);
     const body = await health.json() as {
@@ -1005,10 +1023,24 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('企业工作台');
     expect(html).toContain('成员账号');
     expect(html).toContain('部门成员目录');
+    expect(html).toContain('id="accountPermissionModal"');
+    expect(html).toContain('id="accountPermissionLevel"');
+    expect(html).toContain('id="accountPermissionStatus"');
+    expect(html).toContain('openAccountPermission');
     expect(html).toContain('id="platformInviteDepartment"');
     expect(html).toContain('id="platformInvitePosition"');
     expect(html).toContain('id="platformInviteRole"');
     expect(html).toContain('id="platformInviteMaxUses"');
+    expect(html).toContain('id="platformParkCard"');
+    expect(html).toContain('id="platformParkRegisterForm"');
+    expect(html).toContain('id="platformParkEditForm"');
+    expect(html).toContain('id="platformParkEditName"');
+    expect(html).toContain('id="platformParkEditBrandName"');
+    expect(html).toContain("summary.replaceChildren()");
+    expect(html).not.toContain("$('platformParkSummary').innerHTML");
+    expect(html).toContain("method:'PATCH'");
+    expect(html).toContain('id="platformParkJoinForm"');
+    expect(html).toContain('/park/join');
     expect(html).toContain("body:JSON.stringify(body)");
     expect(html).toContain("value=invite&&invite.defaultDepartment||''");
     expect(html).toContain("account.positionTitle||account.role");
@@ -1017,8 +1049,11 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('platformRequestEpoch');
     expect(html).not.toContain('<iframe');
     expect(html).toContain('sessionStorage');
+    const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    expect(() => new Function(script!)).not.toThrow();
     expect(html).not.toContain(ADMIN_TOKEN);
-  });
+  }, 30_000);
 
   it('积分管理复用账号后台会话，未登录或会话失效时明确引导返回管理员登录', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
@@ -2318,6 +2353,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
       code: invite.code,
+      address: '回执测试园区 A 座',
+      roomNumber: '1203 室',
     });
     db.setParkServiceSpecialist({
       parkId: park.id,
@@ -2433,6 +2470,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
       code: invite.code,
+      address: '关闭测试园区 B 座',
+      roomNumber: '801 室',
     });
     const parkTicket = db.createTicket({
       createdByAccountId: reporter.id,
@@ -2622,7 +2661,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       body: JSON.stringify({ action: 'accept' }),
     });
     expect((await accepted.json()).ticket.status).toBe('处理中');
-  });
+  }, 30_000);
 });
 
 describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
@@ -3671,6 +3710,39 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(panel.accounts.every((account) => account.organizationId === beta.id)).toBe(true);
     expect(panel.accounts.map((account) => account.id)).not.toContain(alphaAdmin.id);
 
+    const betaMemberSession = db.createAuthSession(betaMember.id).token;
+    const permissionUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          role: '客户成功负责人',
+          isAdmin: true,
+          status: 'active',
+        }),
+      },
+    );
+    expect(permissionUpdate.status).toBe(200);
+    expect((await permissionUpdate.json()).account).toMatchObject({
+      id: betaMember.id,
+      organizationId: beta.id,
+      role: '客户成功负责人',
+      isAdmin: true,
+      status: 'active',
+    });
+    expect(db.getAccountBySession(betaMemberSession)).toBeNull();
+
+    const crossTenantUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(crossTenantUpdate.status).toBe(404);
+
     const alphaAdminToken = await login(
       base,
       'alpha.panel.owner',
@@ -3681,6 +3753,27 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { authorization: `Bearer ${alphaAdminToken}` } },
     );
     expect(denied.status).toBe(403);
+
+    const deniedPermissionUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${alphaAdminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(deniedPermissionUpdate.status).toBe(403);
+
+    const lastAdminCannotBeDemoted = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(alpha.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(lastAdminCannotBeDemoted.status).toBe(409);
+    expect(db.getAccount(alphaAdmin.id, alpha.id)?.isAdmin).toBe(true);
 
     const personalOverview = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(personal.organizationId)}/overview`,
@@ -3693,7 +3786,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
     );
     expect(missing.status).toBe(404);
-  });
+  }, 30_000);
 
   it('平台账号删除严格限定所选企业，不能用另一企业的账号 id 越权', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
@@ -3809,7 +3902,39 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       adminOrganizationId: parkProvisioned.organization.id,
     });
 
+    const updatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Hongchuang Innovation Park',
+          brandName: 'Hongchuang Enterprise Services',
+        }),
+      },
+    );
+    expect(updatePark.status).toBe(200);
+    expect((await updatePark.json()).park).toMatchObject({
+      id: park.id,
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+      slug: park.slug,
+    });
+    expect(db.getPark(park.id)).toMatchObject({
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+    });
+
     const parkAdminToken = db.createAuthSession(parkProvisioned.admin.id).token;
+    const enterpriseAdminCannotUpdatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Unauthorized Rename' }),
+      },
+    );
+    expect(enterpriseAdminCannotUpdatePark.status).toBe(403);
     const inviteResponse = await fetch(`${base}/enterprise/park/invite`, {
       method: 'POST',
       headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
@@ -3833,13 +3958,48 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(tenantProvision.status).toBe(201);
     const tenantProvisioned = await tenantProvision.json();
     const tenantAdminToken = db.createAuthSession(tenantProvisioned.admin.id).token;
-    const join = await fetch(`${base}/enterprise/park/join`, {
+    const incompleteJoin = await fetch(`${base}/enterprise/park/join`, {
       method: 'POST',
       headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ inviteCode: invite.code }),
     });
+    expect(incompleteJoin.status).toBe(400);
+    expect(await incompleteJoin.json()).toEqual({ error: '企业地址不能为空' });
+    const join = await fetch(`${base}/enterprise/park/join`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        inviteCode: invite.code,
+        address: '科技大厦 A 座',
+        roomNumber: '1203 室',
+      }),
+    });
     expect(join.status).toBe(200);
-    expect((await join.json()).park.id).toBe(park.id);
+    expect((await join.json()).park).toMatchObject({
+      id: park.id,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    });
+    const profileUpdate = await fetch(`${base}/enterprise/park/profile`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ address: '科技大厦 B 座', roomNumber: '1508 室' }),
+    });
+    expect(profileUpdate.status).toBe(200);
+    expect((await profileUpdate.json()).profile).toMatchObject({
+      organizationId: tenantProvisioned.organization.id,
+      parkId: park.id,
+      address: '科技大厦 B 座',
+      roomNumber: '1508 室',
+    });
+    const tenantParkView = await fetch(`${base}/enterprise/park/view`, {
+      headers: { authorization: `Bearer ${tenantAdminToken}` },
+    });
+    expect(tenantParkView.status).toBe(200);
+    expect((await tenantParkView.json()).park).toMatchObject({
+      tenantAddress: '科技大厦 B 座',
+      tenantRoomNumber: '1508 室',
+    });
     const tenants = await fetch(`${base}/enterprise/park/tenants`, {
       headers: { authorization: `Bearer ${parkAdminToken}` },
     });
@@ -3849,11 +4009,79 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         id: tenantProvisioned.organization.id,
         name: 'Tenant Company',
         parkId: park.id,
+        parkAddress: '科技大厦 B 座',
+        parkRoomNumber: '1508 室',
       })],
     });
     const tenantCannotList = await fetch(`${base}/enterprise/park/tenants`, {
       headers: { authorization: `Bearer ${tenantAdminToken}` },
     });
     expect(tenantCannotList.status).toBe(403);
+
+    const platformTenantProvision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Platform Joined Company',
+        slug: 'platform-joined-company',
+        admin: {
+          username: 'platform.tenant.owner',
+          password: 'tenant-owner-password',
+          name: 'Platform Tenant Owner',
+        },
+      }),
+    });
+    expect(platformTenantProvision.status).toBe(201);
+    const platformTenantProvisioned = await platformTenantProvision.json();
+    const platformJoin = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park/join`,
+      {
+        method: 'POST',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          inviteCode: invite.code,
+          address: '创新中心 C 座',
+          roomNumber: '903 室',
+        }),
+      },
+    );
+    expect(platformJoin.status).toBe(200);
+    expect((await platformJoin.json()).park).toMatchObject({
+      id: park.id,
+      isAdminOrganization: false,
+    });
+    const tenantCannotUpdatePark = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Tenant Controlled Park' }),
+      },
+    );
+    expect(tenantCannotUpdatePark.status).toBe(404);
+    const platformTenantOverview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(platformTenantOverview.status).toBe(200);
+    expect((await platformTenantOverview.json()).park).toMatchObject({
+      id: park.id,
+      isAdminOrganization: false,
+    });
+    const platformParkOverview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(platformParkOverview.status).toBe(200);
+    const platformParkOverviewBody = await platformParkOverview.json();
+    expect(platformParkOverviewBody.park).toMatchObject({
+      name: 'Hongchuang Innovation Park',
+      brandName: 'Hongchuang Enterprise Services',
+    });
+    expect(platformParkOverviewBody.park.tenants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
+      ]),
+    );
   }, 30_000);
 });

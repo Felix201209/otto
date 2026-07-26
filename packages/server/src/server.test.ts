@@ -1040,6 +1040,51 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     client.close();
   });
 
+  it('loopback 控制路由可向桌面 WS 推送增量更新检查通知', async () => {
+    const client = await connectWs(baseUrl);
+
+    const missing = await fetch(`${baseUrl}/internal/incremental-update/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ manifestUrl: 'https://updates.example.com/otto/incremental.json' }),
+    });
+    expect(missing.status).toBe(401);
+
+    const invalid = await fetch(`${baseUrl}/internal/incremental-update/push`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ manifestUrl: 'http://updates.example.com/otto/incremental.json' }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const pushed = await fetch(`${baseUrl}/internal/incremental-update/push`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        manifestUrl: 'https://updates.example.com/otto/incremental.json',
+        reason: 'LSTC component refresh',
+      }),
+    });
+    expect(pushed.status).toBe(202);
+    const body = (await pushed.json()) as ApiResponse<{ deliveredTo: number }>;
+    expect(body.ok).toBe(true);
+    expect(body.data?.deliveredTo).toBeGreaterThanOrEqual(1);
+
+    const frame = await client.waitFor((candidate) => candidate.type === 'incremental_update_available');
+    expect(frame.type).toBe('incremental_update_available');
+    if (frame.type !== 'incremental_update_available') throw new Error('unreachable');
+    expect(frame.payload.manifestUrl).toBe('https://updates.example.com/otto/incremental.json');
+    expect(frame.payload.reason).toBe('LSTC component refresh');
+    expect(Date.parse(frame.payload.requestedAt)).not.toBeNaN();
+    client.close();
+  });
+
   it('WS 升级必须使用独立 client token，并拒绝 Origin:null', async () => {
     expect(Buffer.from(server.clientToken, 'base64url')).toHaveLength(32);
     expect(server.clientToken).not.toBe(server.controlToken);

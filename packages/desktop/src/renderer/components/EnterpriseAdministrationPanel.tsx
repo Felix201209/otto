@@ -21,7 +21,6 @@ const FEATURE_LABELS: Array<[keyof EnterpriseOrganizationFeatures, string]> = [
   ['enterprise_tree', '企业组织树'],
   ['park_service', '园区服务'],
   ['feishu_auto_reply', '飞书自动回答'],
-  ['tui_sync', '终端组织同步'],
   ['direct_messages', '企业内部消息'],
   ['atoa', 'Otto 间协作'],
   ['knowledge', '企业知识库'],
@@ -59,8 +58,9 @@ export function EnterpriseAdministrationPanel({
   const [newPositionTitle, setNewPositionTitle] = useState('');
   const [newPositionRole, setNewPositionRole] = useState<EnterprisePositionRoleMapping>('member');
   const [parkInviteCode, setParkInviteCode] = useState('');
-  const [newParkName, setNewParkName] = useState('');
-  const [newParkBrand, setNewParkBrand] = useState('');
+  const [parkAddress, setParkAddress] = useState('');
+  const [parkRoomNumber, setParkRoomNumber] = useState('');
+  const [specialistSelections, setSpecialistSelections] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -79,6 +79,8 @@ export function EnterpriseAdministrationPanel({
       if (nextFeatures.park_service) {
         const nextPark = await window.otto.enterpriseParkView();
         setPark(nextPark);
+        setParkAddress(nextPark?.tenantAddress ?? '');
+        setParkRoomNumber(nextPark?.tenantRoomNumber ?? '');
         if (nextPark?.isAdminOrganization) {
           const [services, people] = await Promise.all([
             window.otto.enterpriseParkServices(),
@@ -129,25 +131,25 @@ export function EnterpriseAdministrationPanel({
   );
 
   return (
-    <section className="otto-account-invite" aria-label="企业组织与园区配置">
-      <header>
+    <section className="otto-enterprise-config" aria-label="企业组织与园区配置">
+      <header className="otto-enterprise-config__hero">
         <div>
-          <span>ENTERPRISE CONFIGURATION</span>
-          <h2>组织结构、功能开关与园区</h2>
-          <p>这里直接修改中心企业服务器。部门、职位权限、园区归属与专员投递会同步到所有成员。</p>
+          <span>ENTERPRISE CONTROL</span>
+          <h2>企业配置中心</h2>
+          <p>组织结构、权限开关和产业园端分区管理。这里的修改直接写入中心企业服务器，并同步到所有成员。</p>
         </div>
-        <button type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
+        <button type="button" className="otto-enterprise-config__refresh" disabled={busy} onClick={() => void refresh()}>刷新</button>
       </header>
 
       {error ? <div className="otto-account-invite__error" role="alert">{error}</div> : null}
       {message ? <div className="otto-account-invite__success" role="status">{message}</div> : null}
 
       {features ? (
-        <div className="otto-account-form__section">
-          <h3>企业功能开关</h3>
-          <div className="otto-account-form__tags">
+        <div className="otto-enterprise-config__card">
+          <h3>功能开关</h3><p>开关决定客户端是否展示对应能力；关闭后服务端接口同时 fail closed。</p>
+          <div className="otto-enterprise-config__switches">
             {FEATURE_LABELS.map(([key, label]) => (
-              <label key={key} className="otto-account-form__check">
+              <label key={key} className="otto-enterprise-config__switch">
                 <input
                   type="checkbox"
                   checked={features[key]}
@@ -168,8 +170,8 @@ export function EnterpriseAdministrationPanel({
       ) : null}
 
       {features?.enterprise_tree ? (
-        <div className="otto-account-form__section">
-          <h3>自定义部门与职位权限</h3>
+        <div className="otto-enterprise-config__card">
+          <h3>组织结构</h3><p>用职位映射权限，避免单独给人手动加权导致权限漂移。</p>
           <div className="otto-account-invite__controls">
             <label>新部门<input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder="例如：产业合作部" /></label>
             <button type="button" disabled={busy || !newDepartment.trim()} onClick={() => {
@@ -235,11 +237,11 @@ export function EnterpriseAdministrationPanel({
       ) : null}
 
       {features?.park_service ? (
-        <div className="otto-account-form__section">
-          <h3>产业园归属与服务</h3>
+        <div className="otto-enterprise-config__card">
+          <h3>产业园端</h3><p>产业园管理方可以签发邀请码邀请其他企业入驻；普通企业只能凭有效邀请码加入。</p>
           {park ? (
             <>
-              <p><strong>{park.brandName}</strong> · {park.name} · {park.isAdminOrganization ? '产业园管理方' : '入驻企业'}</p>
+              <div className="otto-enterprise-config__park-state"><div><strong>{park.brandName}</strong><span>{park.name}</span></div><b>{park.isAdminOrganization ? '产业园管理方' : '入驻企业'}</b></div>
               {park.isAdminOrganization ? (
                 <>
                   <button type="button" disabled={busy} onClick={() => {
@@ -247,49 +249,108 @@ export function EnterpriseAdministrationPanel({
                       const invite = await window.otto.enterpriseParkInviteIssue(null);
                       setParkInvite(invite);
                     }, '产业园邀请码已生成');
-                  }}>生成产业园邀请码</button>
-                  {parkInvite ? <p>邀请码：<strong>{parkInvite.code}</strong>（7 天有效，已使用 {parkInvite.usedCount} 次）</p> : null}
+                  }}>生成入驻企业邀请码</button>
+                  {parkInvite ? <p className="otto-enterprise-config__invite">入驻邀请码：<strong>{parkInvite.code}</strong><span>7 天有效，已使用 {parkInvite.usedCount} 次</span></p> : null}
                   {parkServices.map((service) => {
-                    const assigned = specialists.find((item) => item.serviceId === service.id);
+                    const assigned = specialists.filter((item) => item.serviceId === service.id);
+                    const assignedIds = new Set(assigned.map((item) => item.accountId));
+                    const availableAccounts = activeAccounts.filter((account) => !assignedIds.has(account.id));
+                    const selectedAccountId = specialistSelections[service.id] || '';
                     return (
-                      <div key={service.id} className="otto-account-invite__controls">
-                        <label>{service.name}<input type="checkbox" checked={service.enabled} disabled={busy} onChange={(event) => {
-                          void run(() => window.otto.enterpriseParkServiceUpdate({
-                            serviceId: service.id,
-                            enabled: event.target.checked,
-                          }), `${service.name}已${event.target.checked ? '启用' : '停用'}`);
-                        }} /></label>
-                        <label>服务专员<select value={assigned?.accountId || ''} disabled={busy || !service.enabled} onChange={(event) => {
-                          const accountId = event.target.value;
-                          void run(async () => {
-                            if (assigned) await window.otto.enterpriseParkSpecialistRemove(service.id, assigned.accountId);
-                            if (accountId) await window.otto.enterpriseParkSpecialistSet(service.id, accountId);
-                          }, accountId ? '服务专员已设置' : '服务专员已清除');
-                        }}><option value="">未设置（投递园区管理员）</option>{activeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+                      <div key={service.id} className="otto-enterprise-config__service">
+                        <div className="otto-enterprise-config__service-head">
+                          <div><strong>{service.name}</strong><span>{assigned.length ? `${assigned.length} 名服务专员` : '未指定时投递产业园管理员'}</span></div>
+                          <label className="otto-enterprise-config__service-toggle">
+                            <span>{service.enabled ? '已启用' : '已停用'}</span>
+                            <input type="checkbox" checked={service.enabled} disabled={busy} onChange={(event) => {
+                              void run(() => window.otto.enterpriseParkServiceUpdate({
+                                serviceId: service.id,
+                                enabled: event.target.checked,
+                              }), `${service.name}已${event.target.checked ? '启用' : '停用'}`);
+                            }} />
+                          </label>
+                        </div>
+                        <div className="otto-enterprise-config__specialist-picker">
+                          <label>
+                            <span>添加服务专员</span>
+                            <select
+                              aria-label={`${service.name}添加服务专员`}
+                              value={selectedAccountId}
+                              disabled={busy || !service.enabled || availableAccounts.length === 0}
+                              onChange={(event) => setSpecialistSelections((current) => ({
+                                ...current,
+                                [service.id]: event.target.value,
+                              }))}
+                            >
+                              <option value="">{availableAccounts.length ? '请选择企业成员' : '所有可用成员均已添加'}</option>
+                              {availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            disabled={busy || !service.enabled || !selectedAccountId}
+                            onClick={() => {
+                              void run(
+                                () => window.otto.enterpriseParkSpecialistSet(service.id, selectedAccountId),
+                                '服务专员已添加',
+                              ).then((saved) => {
+                                if (saved) setSpecialistSelections((current) => ({ ...current, [service.id]: '' }));
+                              });
+                            }}
+                          >添加</button>
+                        </div>
+                        {assigned.length ? (
+                          <div className="otto-enterprise-config__specialists" aria-label={`${service.name}已分配专员`}>
+                            {assigned.map((specialist) => (
+                              <span key={specialist.accountId} className="otto-enterprise-config__specialist">
+                                <b>{specialist.name}</b>
+                                <button
+                                  type="button"
+                                  aria-label={`从${service.name}移除${specialist.name}`}
+                                  disabled={busy}
+                                  onClick={() => {
+                                    void run(
+                                      () => window.otto.enterpriseParkSpecialistRemove(service.id, specialist.accountId),
+                                      '服务专员已移除',
+                                    );
+                                  }}
+                                >移除</button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
                 </>
-              ) : null}
+              ) : (
+                <div className="otto-account-invite__controls">
+                  <label>企业地址<input value={parkAddress} onChange={(event) => setParkAddress(event.target.value)} maxLength={160} placeholder="例如：科技大厦 A 座" /></label>
+                  <label>门牌/房间号<input value={parkRoomNumber} onChange={(event) => setParkRoomNumber(event.target.value)} maxLength={40} placeholder="例如：1203 室" /></label>
+                  <button type="button" disabled={busy || !parkAddress.trim() || !parkRoomNumber.trim()} onClick={() => {
+                    void run(() => window.otto.enterpriseParkProfileUpdate({
+                      address: parkAddress.trim(),
+                      roomNumber: parkRoomNumber.trim(),
+                    }), '企业入驻资料已更新');
+                  }}>保存入驻资料</button>
+                </div>
+              )}
             </>
           ) : (
             <>
               <div className="otto-account-invite__controls">
-                <label>产业园邀请码<input value={parkInviteCode} onChange={(event) => setParkInviteCode(event.target.value)} placeholder="XXXX-XXXX" /></label>
-                <button type="button" disabled={busy || !parkInviteCode.trim()} onClick={() => {
-                  void run(() => window.otto.enterpriseParkJoin(parkInviteCode.trim()), '整个企业已加入产业园');
-                }}>加入产业园</button>
+                <label>产业园邀请码<input value={parkInviteCode} onChange={(event) => setParkInviteCode(event.target.value)} placeholder="Aa3B-k9Pq-Z7xY" /></label>
+                <label>企业地址<input value={parkAddress} onChange={(event) => setParkAddress(event.target.value)} maxLength={160} placeholder="例如：科技大厦 A 座" /></label>
+                <label>门牌/房间号<input value={parkRoomNumber} onChange={(event) => setParkRoomNumber(event.target.value)} maxLength={40} placeholder="例如：1203 室" /></label>
+                <button type="button" disabled={busy || !parkInviteCode.trim() || !parkAddress.trim() || !parkRoomNumber.trim()} onClick={() => {
+                  void run(() => window.otto.enterpriseParkJoin({
+                    inviteCode: parkInviteCode.trim(),
+                    address: parkAddress.trim(),
+                    roomNumber: parkRoomNumber.trim(),
+                  }), '整个企业已加入产业园');
+                }}>作为入驻企业加入</button>
               </div>
-              <div className="otto-account-invite__controls">
-                <label>注册产业园<input value={newParkName} onChange={(event) => setNewParkName(event.target.value)} placeholder="例如：科技大厦" /></label>
-                <label>服务品牌<input value={newParkBrand} onChange={(event) => setNewParkBrand(event.target.value)} placeholder="例如：科技大厦园区服务" /></label>
-                <button type="button" disabled={busy || !newParkName.trim()} onClick={() => {
-                  void run(() => window.otto.enterpriseParkRegister({
-                    name: newParkName.trim(),
-                    brandName: newParkBrand.trim() || `${newParkName.trim()}服务`,
-                  }), '产业园已注册');
-                }}>注册为产业园管理方</button>
-              </div>
+              <p className="otto-enterprise-config__hint">创建产业园端需要平台管理员在多企业管理页面完成认证。普通企业 CEO 填写邀请码、企业地址和门牌号后，整个企业加入已有产业园。</p>
             </>
           )}
         </div>

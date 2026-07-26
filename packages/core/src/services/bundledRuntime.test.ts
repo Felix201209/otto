@@ -104,6 +104,7 @@ describe('bundled document runtime', () => {
         'python site-packages/docx',
         'python site-packages/jinja2',
         'python site-packages/markdown',
+        'python site-packages/fpdf',
         'LibreOffice executable',
       ]),
     );

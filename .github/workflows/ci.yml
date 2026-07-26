@@ -65,12 +65,12 @@ jobs:
           npm run validate:boundaries
           npm run size:source:check
 
-      # 先 build 再 typecheck：packages/cli 与 packages/server 的 tsconfig 用
+      # 先 build 再 typecheck：packages/server 的 tsconfig 用
       # TS project references 指向 packages/core（"references": [{ "path":
       # "../core" }]），tsc --noEmit 需要 core/dist/index.d.ts 已存在，否则
       # 报 TS6305 "has not been built from source file"。核心包尚无预构建产物
       # 提交进仓库，必须先跑一次 build 产出 core/dist 才能让下游 typecheck 通过。
-      - name: 🏗️ Build main chain (core/cli/server)
+      - name: 🏗️ Build main chain (core/server)
         run: npm run build
 
       - name: 🏗️ Build desktop (independent electron/webpack chain)
@@ -97,9 +97,6 @@ jobs:
 
       - name: 🧪 Test server
         run: npm run test --workspace=packages/server
-
-      - name: 🧪 Test cli
-        run: npm run test --workspace=packages/cli
 
       - name: 🧪 Test desktop
         run: npm run test --workspace=packages/desktop

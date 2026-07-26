@@ -15,6 +15,7 @@ import type {
   CustomAgentDraft,
 } from '../customAgents.js';
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
+import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
@@ -27,7 +28,7 @@ import {
   IconTerminal,
 } from './icons.js';
 
-type TabType = 'agents' | 'tools' | 'memory' | 'notes' | 'worklog';
+type TabType = 'agents' | 'tools' | 'documents' | 'memory' | 'worklog';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -49,8 +50,8 @@ interface EnterpriseKnowledgeItem {
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   tools: '工具',
+  documents: '文档',
   memory: '企业记忆',
-  notes: '笔记',
   worklog: '工作日志',
 };
 
@@ -142,14 +143,13 @@ export function RightPanel({
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise'
       ? enterpriseKnowledgeEnabled
-        ? ['agents', 'tools', 'memory', 'notes', 'worklog']
-        : ['agents', 'tools', 'notes', 'worklog']
-      : ['agents', 'tools', 'notes', 'worklog'],
+        ? ['agents', 'tools', 'documents', 'memory', 'worklog']
+        : ['agents', 'tools', 'documents', 'worklog']
+      : ['agents', 'tools', 'documents', 'worklog'],
     [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
-  const [noteText, setNoteText] = useState('');
   const [parkOpen, setParkOpen] = useState(true);
   const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
@@ -161,6 +161,9 @@ export function RightPanel({
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
   const [friendNote, setFriendNote] = useState('');
+  const [documentFiles, setDocumentFiles] = useState<FileEntry[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState('');
   const [workSummary, setWorkSummary] = useState<{
     summary: string;
     date: string;
@@ -169,7 +172,7 @@ export function RightPanel({
   } | null>(null);
   const [worklogDays, setWorklogDays] = useState<WorkLogDay[]>([]);
   const [worklogLoading, setWorklogLoading] = useState(false);
-  const [workReportPreview, setWorkReportPreview] = useState('');
+  const [workReportMessage, setWorkReportMessage] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
   const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
@@ -215,6 +218,66 @@ export function RightPanel({
       setWorklogLoading(false);
     }
   }, []);
+
+  const decodeDocumentText = useCallback((data: string, mimeType: string): string => {
+    if (!mimeType.startsWith('text/') && !/markdown|json|xml|csv|javascript|typescript/i.test(mimeType)) {
+      return '';
+    }
+    const binary = atob(data);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }, []);
+
+  const documentExportName = useCallback((file: FileEntry): string => {
+    const dot = file.name.lastIndexOf('.');
+    const base = dot > 0 ? file.name.slice(0, dot) : file.name;
+    const ext = file.exportFormat || (dot > 0 ? file.name.slice(dot + 1).toLowerCase() : 'md');
+    return base + '.edited.' + ext;
+  }, []);
+
+  const selectDocumentFiles = useCallback(async (): Promise<void> => {
+    setDocumentsLoading(true);
+    setDocumentsError('');
+    try {
+      const paths = await window.otto.selectFiles();
+      if (paths.length === 0) return;
+      const loaded = await Promise.all(paths.map(async (filePath): Promise<FileEntry> => {
+        const file = await window.otto.readFilePath(filePath);
+        if (/\.(pdf|docx?|md|markdown|txt|json|csv|xml|html?|css|jsx?|tsx?|log|ya?ml)$/i.test(file.fileName)) {
+          const extracted = await window.otto.extractEditableDocument(file.filePath);
+          return {
+            id: file.filePath,
+            name: file.fileName,
+            path: file.filePath,
+            size: file.size,
+            mimeType: file.mimeType,
+            content: extracted.content,
+            source: extracted.message,
+            editableText: true,
+            exportFormat: extracted.sourceFormat,
+          };
+        }
+        return {
+          id: file.filePath,
+          name: file.fileName,
+          path: file.filePath,
+          size: file.size,
+          mimeType: file.mimeType,
+          content: decodeDocumentText(file.data, file.mimeType),
+          source: '本机文档',
+        };
+      }));
+      setDocumentFiles((current) => {
+        const byId = new Map(current.map((item) => [item.id, item]));
+        for (const item of loaded) byId.set(item.id, item);
+        return [...byId.values()];
+      });
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [decodeDocumentText]);
 
   const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
     if (mode !== 'enterprise' || !enterpriseOrganizationId) return;
@@ -506,6 +569,35 @@ export function RightPanel({
           </div>
         ) : null}
 
+        {activeTab === 'documents' ? (
+          <div className="otto-documents-panel">
+            <div className="otto-worklog-panel__head">
+              <div>
+                <strong>右侧文档</strong>
+                <span>Markdown、TXT 和代码文件可直接编辑保存</span>
+              </div>
+              <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
+                {documentsLoading ? '读取中' : '选择文件'}
+              </button>
+            </div>
+            {documentsError ? (
+              <div className="otto-right-panel__empty">文档读取失败：{documentsError}</div>
+            ) : null}
+            <FilePreview
+              files={documentFiles}
+              editable
+              onOpenExternal={(file) => void window.otto.openPath(file.path)}
+              onSaveTextFile={(file, content) => {
+                if (file.exportFormat === 'docx' || file.exportFormat === 'pdf') {
+                  return window.otto.exportEditedDocument(file.path, documentExportName(file), content)
+                    .then((result) => result?.path ?? null);
+                }
+                return window.otto.saveTextFile(file.name, content);
+              }}
+            />
+          </div>
+        ) : null}
+
         {activeTab === 'memory' && enterpriseKnowledgeEnabled ? (
           <div>
             <div className="otto-worklog-panel__head">
@@ -548,13 +640,6 @@ export function RightPanel({
           </div>
         ) : null}
 
-        {activeTab === 'notes' ? (
-          <div className="otto-right-panel__notes">
-            <div className="otto-right-panel__head">本地笔记</div>
-            <div className="otto-right-panel__hint">临时草稿：仅当前应用运行期间保留。</div>
-            <textarea className="otto-right-panel__textarea" value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="随手记点什么…（临时草稿）" aria-label="本地笔记" />
-          </div>
-        ) : null}
 
         {activeTab === 'worklog' ? (
           <div className="otto-worklog-panel">
@@ -586,14 +671,16 @@ export function RightPanel({
                 try {
                   const report = await window.otto.workLogReport();
                   setWorkReportPath(report.ok ? report.path : '');
-                  setWorkReportPreview(report.ok ? `${report.message}\n\n${report.markdown}` : report.message);
+                  setWorkReportMessage(report.message);
                 } catch { /* 保留 */ }
               }}>生成今日总结</button>
               {workReportPath ? <button type="button" onClick={() => void window.otto.openPath(workReportPath)}>打开总结</button> : null}
             </div>
             <WorkLogCalendar onSelectDate={onSelectDate} byDate={worklogByDate} />
             <div className="otto-worklog-panel__tip">悬浮日期看当天成果；点击日期进入日程与工作详情。</div>
-            {workReportPreview ? <pre className="otto-worklog-panel__summary">{workReportPreview}</pre> : null}
+            {workReportMessage ? (
+              <div className="otto-worklog-panel__summary">{workReportMessage}</div>
+            ) : null}
             {workSummary ? (
               <details className="otto-worklog-panel__details">
                 <summary>查看执行明细</summary>

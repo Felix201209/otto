@@ -12,8 +12,8 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/react';
-import { ParkServicesPlugin, openParkServices } from './ParkServicesPlugin.js';
-import type { EnterpriseParkPublication, EnterpriseRepairTicket } from '../../preload/index.js';
+import { ParkServicesPlugin, openParkServices, serviceFormFields } from './ParkServicesPlugin.js';
+import type { EnterpriseAccount, EnterpriseParkPublication, EnterpriseRepairTicket } from '../../preload/index.js';
 
 afterEach(() => {
   cleanup();
@@ -36,10 +36,11 @@ function openDialog(): void {
   });
 }
 
-function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCount = 1) {
-  const account = {
+
+function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCount = 1, statuses: string[] = []) {
+  const account: EnterpriseAccount = {
     id: kind === 'worker' ? 'worker-1' : 'reporter-1',
-    organizationId: 'org-1', organizationName: '测试园区', employeeId: null,
+    organizationId: 'org-1', organizationName: '测试企业', employeeId: null,
     username: kind, phone: '+8613800138000', feishuOpenId: 'ou_test',
     name: kind === 'worker' ? '维修张工' : '报修员工', role: '成员', department: 'IT部',
     positionId: null, positionTitle: null,
@@ -54,7 +55,7 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     return {
       id: `ticket-${index + 1}`, serviceId: 'repair', title: `${location} · ${category}报修`, description: issue,
       formData: { location, category, issue, urgency: '普通', contact: '报修员工', phone: '13800138000' },
-      targetTags: ['维修工作人员'], status: '待接单', category, location,
+      targetTags: ['维修工作人员'], status: statuses[index] ?? '待接单', category, location,
       urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
       responseType: null, responseText: null, responseAt: null,
       createdAt: '2026-07-20', updatedAt: '2026-07-20',
@@ -93,6 +94,19 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     return next;
   });
   Object.assign(window.otto, {
+    enterpriseParkView: vi.fn(async () => ({
+      id: 'park-1',
+      name: '测试园区',
+      slug: 'test-park',
+      brandName: '测试园区服务',
+      adminOrganizationId: 'park-org',
+      status: 'active' as const,
+      createdAt: '2026-07-20',
+      updatedAt: '2026-07-20',
+      isAdminOrganization: false,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    })),
     enterpriseSession: vi.fn(async () => ({ serverUrl: 'https://enterprise.test', account })),
     enterpriseTicketList: vi.fn(async () => tickets),
     enterpriseTicketSubmit: submit,
@@ -107,7 +121,7 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     notificationMarkRead: vi.fn(async () => undefined),
     enterpriseParkPublications: vi.fn(async () => []),
   });
-  return { submit, action };
+  return { submit, action, account };
 }
 
 function installPublicationBridge(kind: 'announcement' | 'satisfaction') {
@@ -135,6 +149,19 @@ function installPublicationBridge(kind: 'announcement' | 'satisfaction') {
   });
   Object.assign(window.otto, {
     enterpriseSession: vi.fn(async () => ({ serverUrl: 'https://enterprise.test', account })),
+    enterpriseParkView: vi.fn(async () => ({
+      id: 'park-1',
+      name: '测试园区',
+      slug: 'test-park',
+      brandName: '测试园区服务',
+      adminOrganizationId: 'park-org',
+      status: 'active' as const,
+      createdAt: '2026-07-20',
+      updatedAt: '2026-07-20',
+      isAdminOrganization: false,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    })),
     enterpriseParkPublications: vi.fn(async () => items),
     enterpriseParkPublicationRead: read,
     enterpriseParkSurveySubmit: submit,
@@ -167,7 +194,7 @@ describe('ParkServicesPlugin', () => {
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
   });
 
-  it('中心接口返回 null 时仍显示默认宏创园区面板，不回退旧本机品牌', async () => {
+  it('中心接口返回 null 时不显示宏创园区面板，也不回退旧本机品牌', async () => {
     const enterpriseParkView = vi.fn(async () => null);
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
     Object.assign(window.otto, { enterpriseParkView, parkConfig });
@@ -176,13 +203,13 @@ describe('ParkServicesPlugin', () => {
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
     openDialog();
 
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByText('宏创园区服务')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('宏创园区服务')).toBeNull();
     expect(screen.queryByText('旧本机宏创园区服务')).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });
 
-  it('中心园区请求失败时仍显示默认宏创园区面板，不展示陈旧本机品牌', async () => {
+  it('中心园区请求失败时不显示宏创园区面板，不展示陈旧本机品牌', async () => {
     const enterpriseParkView = vi.fn(async () => {
       throw new Error('园区服务暂时不可用');
     });
@@ -193,8 +220,8 @@ describe('ParkServicesPlugin', () => {
     await waitFor(() => expect(enterpriseParkView).toHaveBeenCalledOnce());
     openDialog();
 
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByText('宏创园区服务')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('宏创园区服务')).toBeNull();
     expect(screen.queryByText('陈旧宏创园区服务')).toBeNull();
     expect(parkConfig).not.toHaveBeenCalled();
   });
@@ -203,7 +230,7 @@ describe('ParkServicesPlugin', () => {
     installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('会议室预约'));
+    fireEvent.click(await screen.findByText('会议室预约'));
     expect(await screen.findByLabelText('会议室预约申请表')).toBeTruthy();
     expect(screen.queryByText(/本地模拟/)).toBeNull();
     expect(screen.queryByText(/张工|维修工作台|园区端/)).toBeNull();
@@ -213,7 +240,7 @@ describe('ParkServicesPlugin', () => {
     const bridge = installPublicationBridge('announcement');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('园区公告'));
+    fireEvent.click(await screen.findByText('园区公告'));
     const item = await screen.findByRole('button', { name: /下午临时停水通知/ });
     fireEvent.click(item);
     await waitFor(() => expect(bridge.read).toHaveBeenCalledWith('publication-announcement'));
@@ -224,13 +251,22 @@ describe('ParkServicesPlugin', () => {
     const bridge = installPublicationBridge('satisfaction');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('满意度调查'));
-    await screen.findByLabelText('员工填写满意度调查');
+    fireEvent.click(await screen.findByText('满意度调查'));
+    const survey = await screen.findByLabelText('员工填写满意度调查');
+    expect((screen.getByLabelText('公司名称') as HTMLInputElement).value).toBe('测试园区');
+    expect((screen.getByLabelText('企业地址') as HTMLInputElement).value).toBe('科技大厦 A 座');
+    expect((screen.getByLabelText('房间号') as HTMLInputElement).value).toBe('1203 室');
+    expect((screen.getByLabelText('联系人') as HTMLInputElement).value).toBe('报修员工');
+    expect((screen.getByLabelText('联系电话') as HTMLInputElement).value).toBe('13800138000');
     fireEvent.change(screen.getByLabelText('总体满意度'), { target: { value: '4' } });
     fireEvent.change(screen.getByLabelText('重点关注'), { target: { value: '会议室环境' } });
     fireEvent.change(screen.getByLabelText('改进建议'), { target: { value: '希望加强巡检' } });
-    fireEvent.click(screen.getByRole('button', { name: '提交问卷' }));
-    await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith('publication-satisfaction', expect.objectContaining({ score: '4', focus: '会议室环境', submittedBy: '报修员工' })));
+    fireEvent.submit(survey);
+    await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith('publication-satisfaction', expect.objectContaining({
+      company: '测试园区', address: '科技大厦 A 座', roomNumber: '1203 室',
+      contact: '报修员工', phone: '13800138000', score: '4', focus: '会议室环境',
+      submittedBy: '报修员工',
+    })));
     expect((await screen.findByRole('button', { name: '已实名提交，不能修改' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(/模拟发布|园区端/)).toBeNull();
   });
@@ -239,7 +275,7 @@ describe('ParkServicesPlugin', () => {
     const bridge = installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('客户报修'));
+    fireEvent.click(await screen.findByText('客户报修'));
     const requestForm = await screen.findByLabelText('客户报修申请表');
     expect((screen.getByLabelText('故障位置') as HTMLInputElement).value).toBe('');
     fireEvent.submit(requestForm);
@@ -251,12 +287,35 @@ describe('ParkServicesPlugin', () => {
     const bridge = installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('客户报修'));
+    fireEvent.click(await screen.findByText('客户报修'));
     await screen.findByLabelText('客户报修申请表');
     fireEvent.change(screen.getByLabelText('报修类别'), { target: { value: '其他' } });
     fireEvent.change(screen.getByLabelText('请填写其他类别'), { target: { value: '玻璃门损坏' } });
     fireEvent.submit(screen.getByLabelText('客户报修申请表'));
     await waitFor(() => expect(bridge.submit).toHaveBeenCalledWith(expect.objectContaining({ category: '玻璃门损坏' })));
+  });
+
+  it('所有申请类园区服务都包含公司、地址、房间、联系人和电话', () => {
+    for (const serviceId of ['renovation', 'parking', 'network-phone', 'meeting-room', 'electric-card', 'repair', 'vehicle-visit']) {
+      expect(serviceFormFields(serviceId).slice(0, 5).map((field) => field.key)).toEqual([
+        'company', 'address', 'roomNumber', 'contact', 'phone',
+      ]);
+    }
+  });
+
+  it('园区申请默认带出企业入驻资料和账号信息，缺失手机号时保持空白', async () => {
+    const bridge = installRepairBridge('reporter');
+    bridge.account.phone = null;
+    render(<ParkServicesPlugin />);
+    openDialog();
+    fireEvent.click(await screen.findByText('客户报修'));
+    await screen.findByLabelText('客户报修申请表');
+
+    expect((screen.getByLabelText('公司名称') as HTMLInputElement).value).toBe('测试企业');
+    expect((screen.getByLabelText('企业地址') as HTMLInputElement).value).toBe('科技大厦 A 座');
+    expect((screen.getByLabelText('房间号') as HTMLInputElement).value).toBe('1203 室');
+    expect((screen.getByLabelText('联系人') as HTMLInputElement).value).toBe('报修员工');
+    expect((screen.getByLabelText('联系电话') as HTMLInputElement).value).toBe('');
   });
 
   it('维修人员从右下角待办提醒直接进入处理表，不显示角色切换', async () => {
@@ -275,28 +334,47 @@ describe('ParkServicesPlugin', () => {
     await waitFor(() => expect(bridge.action).toHaveBeenCalledWith('ticket-1', { action: 'complete' }));
   });
 
-  it('多个报修待办不会重合，每个工单都有独立系统通知和可点击入口', async () => {
+  it('登录时多个待办合并成一个汇总提醒，具体工单仍可从待办列表打开', async () => {
     installRepairBridge('worker', 2);
     render(<ParkServicesPlugin />);
 
-    const toasts = await screen.findAllByLabelText(/打开园区服务通知/);
-    expect(toasts).toHaveLength(2);
+    fireEvent.click(await screen.findByLabelText('打开园区待办汇总'));
+    expect(window.otto.notificationShow).toHaveBeenCalledTimes(1);
     expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
-      messageId: 'park-ticket:ticket-1:2026-07-20',
-      sessionId: 'park:ticket:ticket-1',
+      sessionId: 'park:service',
       source: 'park',
       title: 'Otto 待处理提醒 · 园区服务',
     }));
-    expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
-      messageId: 'park-ticket:ticket-2:2026-07-20',
-      sessionId: 'park:ticket:ticket-2',
-      source: 'park',
-      title: 'Otto 待处理提醒 · 园区服务',
-    }));
+    expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:service');
 
-    fireEvent.click(screen.getByLabelText(/A 座大厅/));
+    fireEvent.click(await screen.findByRole('button', { name: /打开工作人员待办：A 座大厅/ }));
     expect(await screen.findByText('空调漏水')).toBeTruthy();
+  });
+
+  it('客服登录时不弹已完成或待验收历史，只保留真正可处理的任务', async () => {
+    installRepairBridge('worker', 3, ['已完成', '待验收', '待接单']);
+    render(<ParkServicesPlugin />);
+
+    await waitFor(() => expect(window.otto.notificationShow).toHaveBeenCalledTimes(1));
+    expect(window.otto.notificationShow).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'park:ticket:ticket-3',
+    }));
+    expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:ticket:ticket-1');
     expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:ticket:ticket-2');
+    openDialog();
+    expect(await screen.findAllByRole('button', { name: /打开工作人员待办/ })).toHaveLength(1);
+    expect(screen.getByText(/1 项待处理/)).toBeTruthy();
+  });
+
+  it('客服登录时只有已处理历史则完全不弹报修提醒', async () => {
+    installRepairBridge('worker', 2, ['已完成', '待验收']);
+    render(<ParkServicesPlugin />);
+
+    await waitFor(() => expect(window.otto.notificationMarkRead).toHaveBeenCalledTimes(2));
+    expect(window.otto.notificationShow).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText(/打开园区服务通知|打开园区待办汇总/)).toBeNull();
+    openDialog();
+    expect(screen.queryByLabelText('我的园区待办')).toBeNull();
   });
 
   it('工作人员关闭通知后仍可从九宫格上方找回自己的待办，普通用户看不到该入口', async () => {
@@ -333,7 +411,7 @@ describe('ParkServicesPlugin', () => {
     installRepairBridge('reporter');
     render(<ParkServicesPlugin />);
     openDialog();
-    fireEvent.click(screen.getByText('装修管理'));
+    fireEvent.click(await screen.findByText('装修管理'));
     expect(await screen.findByLabelText('装修管理申请表')).toBeTruthy();
     expect(screen.getByText(/客户只需如实填写并提交申请单/)).toBeTruthy();
     expect((screen.getByLabelText('装修区域') as HTMLInputElement).value).toBe('');

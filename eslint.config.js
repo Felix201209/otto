@@ -28,7 +28,6 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       'eslint.config.js',
-      'packages/cli/dist/**',
       'packages/core/dist/**',
       'packages/server/dist/**',
       'packages/desktop/build/**',
@@ -67,24 +66,6 @@ export default tseslint.config(
       react: {
         version: 'detect',
       },
-    },
-  },
-  {
-    // Import specific config
-    files: ['packages/cli/src/**/*.{ts,tsx}'], // Target only TS/TSX in the cli package
-    plugins: {
-      import: importPlugin,
-    },
-    settings: {
-      'import/resolver': {
-        node: true,
-      },
-    },
-    rules: {
-      ...importPlugin.configs.recommended.rules,
-      ...importPlugin.configs.typescript.rules,
-      'import/no-default-export': 'warn',
-      'import/no-unresolved': 'off', // Disable for now, can be noisy with monorepos/paths
     },
   },
   {

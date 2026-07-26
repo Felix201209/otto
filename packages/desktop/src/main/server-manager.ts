@@ -37,6 +37,8 @@ import type { Server as HttpServer } from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { readActiveKernelBinPath, readActiveKernelModulePath } from './incremental-kernel-store.js';
 import type {
   OttoServer as OttoServerType,
   ServerEndpoint,
@@ -58,7 +60,20 @@ type TrustedOttoServer = OttoServerType & {
 
 /** otto-server（ESM）动态加载并缓存：避免每次调用都重新 import()。 */
 let ottoServerModulePromise: Promise<typeof import('otto-server')> | undefined;
-function loadOttoServer(): Promise<typeof import('otto-server')> {
+const kernelOverlayModulePromises = new Map<string, Promise<typeof import('otto-server')>>();
+async function loadOttoServer(kernelUpdateRoot?: string): Promise<typeof import('otto-server')> {
+  const activeModulePath = kernelUpdateRoot
+    ? await readActiveKernelModulePath(kernelUpdateRoot).catch(() => null)
+    : null;
+  if (activeModulePath) {
+    const url = pathToFileURL(activeModulePath).href;
+    let promise = kernelOverlayModulePromises.get(url);
+    if (!promise) {
+      promise = import(url) as Promise<typeof import('otto-server')>;
+      kernelOverlayModulePromises.set(url, promise);
+    }
+    return promise;
+  }
   if (!ottoServerModulePromise) {
     ottoServerModulePromise = import('otto-server');
   }
@@ -158,6 +173,8 @@ export interface ServerManagerOptions {
   dependencies?: ServerManagerDependencies;
   /** 健康状态变更回调（用于托盘图标/窗口状态提示）。 */
   onHealthChange?: (status: string) => void;
+  /** 已签名 kernel 增量更新的本地 store root；存在 active kernel 时优先加载。 */
+  kernelUpdateRoot?: string;
 }
 
 export class ServerManager {
@@ -194,10 +211,15 @@ export class ServerManager {
   private restartCount = 0;
   private readonly dependencies: ServerManagerDependencies;
   private readonly localEnterpriseServerUrl: string | null;
+  private readonly kernelUpdateRoot?: string;
   private readonly onHealthChange?: (status: string) => void;
 
   constructor(options: ServerManagerOptions = {}) {
-    this.dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
+    this.kernelUpdateRoot = options.kernelUpdateRoot;
+    this.dependencies = options.dependencies ?? {
+      ...DEFAULT_DEPENDENCIES,
+      loadOttoServer: () => loadOttoServer(this.kernelUpdateRoot),
+    };
     this.localEnterpriseServerUrl = loopbackServerUrl(options.enterpriseServerUrl);
     this.onHealthChange = options.onHealthChange;
     if (!this.localEnterpriseServerUrl && options.enterpriseServerUrl) {
@@ -307,21 +329,28 @@ export class ServerManager {
     const argv0 = process.argv0;
     const mod = await this.dependencies.loadOttoServer();
 
-    // 查找 bin.js 路径
+    // 查找 bin.js 路径；active kernel overlay 优先，其次回退安装包内 otto-server。
     let binPath: string;
-    try {
-      // 打包/开发形态：尝试通过 otto-server 模块解析
-      const serverPkg = path.dirname(
-        require.resolve('otto-server/package.json'),
-      );
-      binPath = path.join(serverPkg, 'dist', 'bin.js');
-      if (!fs.existsSync(binPath)) {
-        // 二次尝试：直接用 argv0 (node) 运行，开发环境
-        throw new Error('bin.js not found via require.resolve');
+    const activeKernelBinPath = this.kernelUpdateRoot
+      ? await readActiveKernelBinPath(this.kernelUpdateRoot).catch(() => null)
+      : null;
+    if (activeKernelBinPath) {
+      binPath = activeKernelBinPath;
+    } else {
+      try {
+        // 打包/开发形态：尝试通过 otto-server 模块解析
+        const serverPkg = path.dirname(
+          require.resolve('otto-server/package.json'),
+        );
+        binPath = path.join(serverPkg, 'dist', 'bin.js');
+        if (!fs.existsSync(binPath)) {
+          // 二次尝试：直接用 argv0 (node) 运行，开发环境
+          throw new Error('bin.js not found via require.resolve');
+        }
+      } catch {
+        // 终极回退：找 node 二进制
+        binPath = path.join(path.dirname(process.execPath), 'bin.js');
       }
-    } catch {
-      // 终极回退：找 node 二进制
-      binPath = path.join(path.dirname(process.execPath), 'bin.js');
     }
 
     // 通过 writeEndpoint 写一个临时文件让 bin.js 的 writeEndpoint 覆盖

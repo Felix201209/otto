@@ -48,7 +48,10 @@ async function getRipgrepPath(): Promise<string> {
   const isVSCode = isVSCodeEnvironment();
 
   if (isVSCode) {
-    logger.info('[GrepTool] VSCode environment detected - locating VSCode built-in ripgrep');
+    logger.info(
+      '[GrepTool] VSCode environment detected - locating VSCode built-in ripgrep',
+    );
+
     return await findVSCodeRipgrep();
   } else {
     logger.info('[GrepTool] CLI environment detected - using bundled ripgrep');
@@ -65,9 +68,14 @@ async function getRipgrepPath(): Promise<string> {
 function findPackagedElectronRipgrep(): string | null {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
-  if (!resourcesPath || !resourcesPath.includes('app.asar') && !fs.existsSync(path.join(resourcesPath, 'app.asar'))) {
-    return null;
-  }
+  if (!resourcesPath) return null;
+
+  const looksPackaged =
+    resourcesPath.includes('app.asar') ||
+    fs.existsSync(path.join(resourcesPath, 'app.asar'));
+  if (!looksPackaged) return null;
+
+
   const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
   const candidate = path.join(resourcesPath, 'ripgrep', binName);
   return fs.existsSync(candidate) ? candidate : null;
@@ -75,7 +83,11 @@ function findPackagedElectronRipgrep(): string | null {
 
 async function getBundledRipgrepPath(): Promise<string> {
   const { rgPath } = await import('@vscode/ripgrep');
-  return rgPath;
+  if (fs.existsSync(rgPath)) return rgPath;
+  throw new Error(
+    `Failed to execute ripgrep: bundled ripgrep missing at ${rgPath}`,
+  );
+
 }
 
 /**
@@ -95,7 +107,10 @@ async function findVSCodeRipgrep(): Promise<string> {
   // Get VSCode app root from environment variable set by extension
   const appRoot = process.env.VSCODE_APP_ROOT;
   if (!appRoot) {
-    logger.warn('[GrepTool] VSCODE_APP_ROOT not set, falling back to bundled ripgrep');
+    logger.warn(
+      '[GrepTool] VSCODE_APP_ROOT not set, falling back to bundled ripgrep',
+    );
+
     return await getBundledRipgrepPath();
   }
 
@@ -109,14 +124,30 @@ async function findVSCodeRipgrep(): Promise<string> {
     darwin: { x64: 'darwin-x64', arm64: 'darwin-arm64', arm: 'darwin-arm' },
     linux: { x64: 'linux-x64', arm64: 'linux-arm64', arm: 'linux-arm' },
   };
-  const platformArchDir = platformArchDirs[platform]?.[arch] ?? `${platform}-${arch}`;
+  const platformArchDir =
+    platformArchDirs[platform]?.[arch] ?? `${platform}-${arch}`;
 
   // Search paths in priority order
   const candidatePaths = [
     // New VSCode (1.99+): @vscode/ripgrep-universal with platform-arch subdirectory
-    path.join(appRoot, 'node_modules', '@vscode', 'ripgrep-universal', 'bin', platformArchDir, binaryName),
+    path.join(
+      appRoot,
+      'node_modules',
+      '@vscode',
+      'ripgrep-universal',
+      'bin',
+      platformArchDir,
+      binaryName,
+    ),
     // Old VSCode: @vscode/ripgrep with flat bin directory
-    path.join(appRoot, 'node_modules.asar.unpacked', '@vscode', 'ripgrep', 'bin', binaryName),
+    path.join(
+      appRoot,
+      'node_modules.asar.unpacked',
+      '@vscode',
+      'ripgrep',
+      'bin',
+      binaryName,
+    ),
     path.join(appRoot, 'node_modules', '@vscode', 'ripgrep', 'bin', binaryName),
   ];
 
@@ -127,11 +158,12 @@ async function findVSCodeRipgrep(): Promise<string> {
     }
   }
 
-  logger.warn(`[GrepTool] Could not find VSCode ripgrep in app root, falling back to bundled ripgrep`);
+  logger.warn(
+    `[GrepTool] Could not find VSCode ripgrep in app root, falling back to bundled ripgrep`,
+  );
+
   return await getBundledRipgrepPath();
 }
-
-
 
 // --- Interfaces ---
 
@@ -159,8 +191,6 @@ interface GrepMatch {
   lineNumber: number;
   line: string;
 }
-
-
 
 // --- GrepLogic Class ---
 
@@ -224,8 +254,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
             type: Type.BOOLEAN,
           },
           word: {
-            description:
-              'Optional: Match whole words only. Default is false.',
+            description: 'Optional: Match whole words only. Default is false.',
             type: Type.BOOLEAN,
           },
         },
@@ -278,7 +307,11 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
    * @returns An error message string if invalid, null otherwise
    */
   validateToolParams(params: GrepToolParams): string | null {
-    const errors = SchemaValidator.validate(this.schema.parameters, params, GrepTool.Name);
+    const errors = SchemaValidator.validate(
+      this.schema.parameters,
+      params,
+      GrepTool.Name,
+    );
     if (errors) {
       return errors;
     }
@@ -322,7 +355,11 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       searchDirAbs = this.resolveAndValidatePath(params.path);
       const searchDirDisplay = params.path || '.';
 
-      const allMatches: GrepMatch[] = await this.executeSearch(params, searchDirAbs, signal);
+      const allMatches: GrepMatch[] = await this.executeSearch(
+        params,
+        searchDirAbs,
+        signal,
+      );
 
       logger.debug('[GrepTool] allMatches', { allMatches: allMatches.length });
       if (allMatches.length === 0) {
@@ -337,8 +374,14 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       const wasTruncated = allMatches.length > effectiveMaxCount;
 
       // Standard content format
-      return this.formatContentResults(matches, allMatches.length, params, searchDirDisplay, wasTruncated, effectiveMaxCount);
-
+      return this.formatContentResults(
+        matches,
+        allMatches.length,
+        params,
+        searchDirDisplay,
+        wasTruncated,
+        effectiveMaxCount,
+      );
     } catch (error) {
       console.error(`Error during ripgrep execution: ${error}`);
       const errorMessage = getErrorMessage(error);
@@ -360,7 +403,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       return await this.executeRipgrep(params, searchPath, signal);
     } catch (error) {
       const message = getErrorMessage(error);
-      if (!message.toLowerCase().includes('spawn')) {
+      if (!/(spawn|execute ripgrep|bundled ripgrep missing)/i.test(message)) {
         throw error;
       }
       logger.warn('[GrepTool] ripgrep unavailable, falling back to JS search', {
@@ -380,14 +423,18 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
   private async executeRipgrep(
     params: GrepToolParams,
     searchPath: string,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<GrepMatch[]> {
     const args = this.buildRipgrepArgs(params, searchPath);
 
     // Get the correct ripgrep path based on environment
     const ripgrepPath = await getRipgrepPath();
 
-    logger.debug('[GrepTool] executeRipgrep', { args, searchPath, ripgrepPath });
+    logger.debug('[GrepTool] executeRipgrep', {
+      args,
+      searchPath,
+      ripgrepPath,
+    });
 
     return new Promise((resolve, reject) => {
       // Always use project root as working directory for consistency
@@ -458,7 +505,12 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       });
 
       process.on('close', (code, signal) => {
-        logger.debug('[GrepTool] Process closed:', { code, signal, stdoutLength: stdout.length, stderrLength: stderr.length });
+        logger.debug('[GrepTool] Process closed:', {
+          code,
+          signal,
+          stdoutLength: stdout.length,
+          stderrLength: stderr.length,
+        });
 
         if (isResolved) return;
         isResolved = true;
@@ -468,7 +520,13 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
         if (code === 0) {
           // Success with matches
           // Since we now use project root as working directory, basePath should be project root
-          resolve(this.parseRipgrepOutput(stdout, this.config.getTargetDir(), searchPath));
+          resolve(
+            this.parseRipgrepOutput(
+              stdout,
+              this.config.getTargetDir(),
+              searchPath,
+            ),
+          );
         } else if (code === 1) {
           // No matches found (normal exit)
           resolve([]);
@@ -491,7 +549,10 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
    * @param searchPath Absolute search path (file or directory)
    * @returns Array of command line arguments
    */
-  private buildRipgrepArgs(params: GrepToolParams, searchPath: string): string[] {
+  private buildRipgrepArgs(
+    params: GrepToolParams,
+    searchPath: string,
+  ): string[] {
     const args: string[] = [];
 
     // Standard format with line numbers
@@ -534,103 +595,103 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
         // This includes modern web, mobile, and other common development file types
         const customTypeToGlob: Record<string, string> = {
           // React/JSX/TSX
-          'tsx': '*.tsx',
-          'jsx': '*.jsx',
+          tsx: '*.tsx',
+          jsx: '*.jsx',
 
           // Vue.js
-          'vue': '*.vue',
+          vue: '*.vue',
 
           // Svelte
-          'svelte': '*.svelte',
+          svelte: '*.svelte',
 
           // Angular
-          'ng': '*.component.ts',
+          ng: '*.component.ts',
 
           // Modern JavaScript/TypeScript variants
-          'mjs': '*.mjs',
-          'cjs': '*.cjs',
-          'mts': '*.mts',
-          'cts': '*.cts',
+          mjs: '*.mjs',
+          cjs: '*.cjs',
+          mts: '*.mts',
+          cts: '*.cts',
 
           // Mobile Development
-          'dart': '*.dart',
-          'swift': '*.swift',
-          'kotlin': '*.kt',
-          'ktm': '*.ktm',
-          'kts': '*.kts',
+          dart: '*.dart',
+          swift: '*.swift',
+          kotlin: '*.kt',
+          ktm: '*.ktm',
+          kts: '*.kts',
 
           // Web Assembly
-          'wasm': '*.wasm',
-          'wat': '*.wat',
+          wasm: '*.wasm',
+          wat: '*.wat',
 
           // Markup & Styling
-          'sass': '*.sass',
-          'scss': '*.scss',
-          'less': '*.less',
-          'styl': '*.styl',
-          'stylus': '*.stylus',
+          sass: '*.sass',
+          scss: '*.scss',
+          less: '*.less',
+          styl: '*.styl',
+          stylus: '*.stylus',
 
           // Configuration & Data
-          'toml': '*.toml',
-          'yaml': '*.{yml,yaml}',
-          'yml': '*.yml',
-          'ini': '*.ini',
-          'env': '*.env',
-          'dotenv': '.env*',
+          toml: '*.toml',
+          yaml: '*.{yml,yaml}',
+          yml: '*.yml',
+          ini: '*.ini',
+          env: '*.env',
+          dotenv: '.env*',
 
           // Shell Scripts
-          'bash': '*.{sh,bash}',
-          'zsh': '*.zsh',
-          'fish': '*.fish',
-          'powershell': '*.{ps1,psm1,psd1}',
-          'bat': '*.{bat,cmd}',
+          bash: '*.{sh,bash}',
+          zsh: '*.zsh',
+          fish: '*.fish',
+          powershell: '*.{ps1,psm1,psd1}',
+          bat: '*.{bat,cmd}',
 
           // Document formats
-          'mdx': '*.mdx',
-          'tex': '*.tex',
-          'rst': '*.rst',
-          'adoc': '*.adoc',
-          'asciidoc': '*.{adoc,asciidoc}',
+          mdx: '*.mdx',
+          tex: '*.tex',
+          rst: '*.rst',
+          adoc: '*.adoc',
+          asciidoc: '*.{adoc,asciidoc}',
 
           // Programming Languages
-          'groovy': '*.{groovy,gradle}',
-          'scala': '*.scala',
-          'clojure': '*.{clj,cljs,cljc}',
-          'elixir': '*.{ex,exs}',
-          'erlang': '*.{erl,hrl}',
-          'haskell': '*.hs',
-          'ocaml': '*.ml',
-          'fsharp': '*.fs',
-          'nim': '*.nim',
-          'crystal': '*.cr',
-          'zig': '*.zig',
+          groovy: '*.{groovy,gradle}',
+          scala: '*.scala',
+          clojure: '*.{clj,cljs,cljc}',
+          elixir: '*.{ex,exs}',
+          erlang: '*.{erl,hrl}',
+          haskell: '*.hs',
+          ocaml: '*.ml',
+          fsharp: '*.fs',
+          nim: '*.nim',
+          crystal: '*.cr',
+          zig: '*.zig',
 
           // Data Science & ML
-          'ipynb': '*.ipynb',
-          'rmd': '*.rmd',
-          'jl': '*.jl',
+          ipynb: '*.ipynb',
+          rmd: '*.rmd',
+          jl: '*.jl',
 
           // Game Development
-          'gdscript': '*.gd',
-          'shader': '*.{shader,cginc,hlsl,glsl,vert,frag}',
+          gdscript: '*.gd',
+          shader: '*.{shader,cginc,hlsl,glsl,vert,frag}',
 
           // Templating
-          'ejs': '*.ejs',
-          'pug': '*.pug',
-          'jade': '*.jade',
-          'handlebars': '*.{hbs,handlebars}',
-          'mustache': '*.mustache',
-          'twig': '*.twig',
-          'jinja': '*.{jinja,jinja2,j2}',
+          ejs: '*.ejs',
+          pug: '*.pug',
+          jade: '*.jade',
+          handlebars: '*.{hbs,handlebars}',
+          mustache: '*.mustache',
+          twig: '*.twig',
+          jinja: '*.{jinja,jinja2,j2}',
 
           // Protocol Buffers & GraphQL
-          'proto': '*.proto',
-          'graphql': '*.{graphql,gql}',
+          proto: '*.proto',
+          graphql: '*.{graphql,gql}',
 
           // Infrastructure as Code
-          'terraform': '*.tf',
-          'dockerfile': '*Dockerfile*',
-          'dockerignore': '*.dockerignore',
+          terraform: '*.tf',
+          dockerfile: '*Dockerfile*',
+          dockerignore: '*.dockerignore',
 
           // CI/CD
           'gitlab-ci': '*.gitlab-ci.yml',
@@ -658,11 +719,17 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     // Add search target
     if (isFile) {
       // For files, use path relative to project root
-      const relativePath = path.relative(this.config.getTargetDir(), searchPath);
+      const relativePath = path.relative(
+        this.config.getTargetDir(),
+        searchPath,
+      );
       args.push(relativePath);
     } else {
       // For directories, use path relative to project root
-      const relativePath = path.relative(this.config.getTargetDir(), searchPath);
+      const relativePath = path.relative(
+        this.config.getTargetDir(),
+        searchPath,
+      );
       args.push(relativePath || '.');
     }
 
@@ -675,10 +742,16 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
    * @param basePath Base search path for relative file paths
    * @returns Array of parsed matches
    */
-  private parseRipgrepOutput(output: string, basePath: string, searchPath?: string): GrepMatch[] {
+  private parseRipgrepOutput(
+    output: string,
+    basePath: string,
+    searchPath?: string,
+  ): GrepMatch[] {
     if (!output.trim()) return [];
 
-    logger.debug('[GrepTool] parseRipgrepOutput:', { outputLength: output.length });
+    logger.debug('[GrepTool] parseRipgrepOutput:', {
+      outputLength: output.length,
+    });
 
     return this.parseStandardOutput(output, basePath, searchPath);
   }
@@ -735,7 +808,9 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
   ): string[] {
     const files: string[] = [];
     const globPattern = params.glob || params.include;
-    const typeGlob = params.type ? this.customTypeToGlob(params.type) : undefined;
+    const typeGlob = params.type
+      ? this.customTypeToGlob(params.type)
+      : undefined;
 
     const walk = (currentDir: string) => {
       for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
@@ -796,14 +871,22 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
    * Parses standard ripgrep output format (file:line:content)
    * Results are already sorted by modification time due to --sort modified
    */
-  private parseStandardOutput(output: string, basePath: string, searchPath?: string): GrepMatch[] {
+  private parseStandardOutput(
+    output: string,
+    basePath: string,
+    searchPath?: string,
+  ): GrepMatch[] {
     const results: GrepMatch[] = [];
-    const lines = output.split('\n').filter(line => line.trim());
+    const lines = output.split('\n').filter((line) => line.trim());
 
     // Determine if this is a single file search (cache the stat call once)
     let isSearchingFile = false;
     if (searchPath) {
-      try { isSearchingFile = fs.statSync(searchPath).isFile(); } catch { /* ignore */ }
+      try {
+        isSearchingFile = fs.statSync(searchPath).isFile();
+      } catch {
+        /* ignore */
+      }
     }
 
     // Regex for parsing ripgrep output: filename:line_number:content
@@ -855,8 +938,6 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     return results;
   }
 
-
-
   /**
    * Gets filter description for display
    */
@@ -874,8 +955,6 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     return filters.length > 0 ? ` (${filters.join(', ')})` : '';
   }
 
-
-
   /**
    * Formats results in content mode (default)
    */
@@ -885,16 +964,19 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     params: GrepToolParams,
     searchDirDisplay: string,
     wasTruncated: boolean,
-    maxCount: number
+    maxCount: number,
   ): ToolResult {
-    const matchesByFile = matches.reduce((acc, match) => {
-      if (!acc[match.filePath]) {
-        acc[match.filePath] = [];
-      }
-      acc[match.filePath].push(match);
-      acc[match.filePath].sort((a, b) => a.lineNumber - b.lineNumber);
-      return acc;
-    }, {} as Record<string, GrepMatch[]>);
+    const matchesByFile = matches.reduce(
+      (acc, match) => {
+        if (!acc[match.filePath]) {
+          acc[match.filePath] = [];
+        }
+        acc[match.filePath].push(match);
+        acc[match.filePath].sort((a, b) => a.lineNumber - b.lineNumber);
+        return acc;
+      },
+      {} as Record<string, GrepMatch[]>,
+    );
 
     const filterInfo = this.getFilterDescription(params);
     let llmContent = `Found ${totalMatches} ${totalMatches === 1 ? 'match' : 'matches'} for pattern "${params.pattern}" in path "${searchDirDisplay}"${filterInfo}`;
@@ -909,9 +991,10 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       llmContent += `File: ${filePath}\n`;
       matchesByFile[filePath].forEach((match) => {
         const trimmedLine = match.line.trim();
-        const truncatedLine = trimmedLine.length > MAX_LINE_LENGTH
-          ? trimmedLine.substring(0, MAX_LINE_LENGTH) + '...'
-          : trimmedLine;
+        const truncatedLine =
+          trimmedLine.length > MAX_LINE_LENGTH
+            ? trimmedLine.substring(0, MAX_LINE_LENGTH) + '...'
+            : trimmedLine;
         llmContent += `L${match.lineNumber}: ${truncatedLine}\n`;
       });
       llmContent += '---\n';
@@ -961,5 +1044,4 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
     }
     return description;
   }
-
 }

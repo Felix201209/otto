@@ -534,7 +534,7 @@ function OttoWorkspaceApp({
   // setup 落盘闭环：仅当面板打开且**本次保存进行中（saving）**时，才让裁决帧驱动面板开合。
   //   models_list  → 本次落盘成功（server 写盘后广播最新列表）→ 关面板。
   //   error(save_failed) → 落盘失败 → 面板内提示，不关。
-  // 加 saving 闸门的原因：models_list 还会因 get_models 回包、或其它客户端（如 TUI）
+  // 加 saving 闸门的原因：models_list 还会因 get_models 回包或其它客户端
   // save_custom_model 成功后的 broadcastAll 而到来；若不区分「是不是本次保存」，这些与本次
   // 无关的广播会把用户正在填 key 的面板意外关掉、丢掉输入。只认 saving=true 之后的裁决帧。
   useEffect(() => {

@@ -11,76 +11,76 @@ import {
 describe('enterprise registration link parsing', () => {
   it('accepts exact otto://enterprise/join links and normalizes invite codes', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'otto://enterprise/join?invite=abcd-efgh',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY',
     )).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     });
   });
 
   it('accepts a single safe HTTPS enterprise server URL and normalizes it to origin', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'otto://enterprise/join?invite=abcd-efgh&server=https%3A%2F%2Fenterprise.otto.test%2F',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=https%3A%2F%2Fenterprise.otto.test%2F',
     )).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
       serverUrl: 'https://enterprise.otto.test',
     });
   });
 
   it('allows HTTP loopback URLs for local integration', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'otto://enterprise/join?invite=ABCD-EFGH&server=http%3A%2F%2F127.0.0.1%3A7777',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=http%3A%2F%2F127.0.0.1%3A7777',
     )).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
       serverUrl: 'http://127.0.0.1:7777',
     });
   });
 
   it('preserves HTTPS reverse proxy path prefixes from otto links', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'otto://enterprise/join?invite=ABCD-EFGH&server=https%3A%2F%2Fenterprise.otto.test%2Fcompany%2F',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=https%3A%2F%2Fenterprise.otto.test%2Fcompany%2F',
     )).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
       serverUrl: 'https://enterprise.otto.test/company',
     });
   });
 
   it('accepts HTTPS enterprise invite page links', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'https://59.110.154.44:7777/enterprise/join/5re8-2rwa',
+      'https://59.110.154.44:7777/enterprise/join/F5e8-R2wA-Q9pB',
     )).toEqual({
-      inviteCode: '5RE8-2RWA',
+      inviteCode: 'F5e8-R2wA-Q9pB',
       serverUrl: 'https://59.110.154.44:7777',
     });
   });
 
   it('preserves HTTPS reverse proxy path prefixes from invite page links', () => {
     expect(parseEnterpriseRegistrationIntent(
-      'https://enterprise.otto.test/company/enterprise/join/ABCD-EFGH',
+      'https://enterprise.otto.test/company/enterprise/join/Ab3D-k9Pq-Z7xY',
     )).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
       serverUrl: 'https://enterprise.otto.test/company',
     });
   });
 
   it.each([
-    'otto://enterprise/register?invite=ABCD-EFGH',
-    'otto://other/join?invite=ABCD-EFGH',
+    'otto://enterprise/register?invite=Ab3D-k9Pq-Z7xY',
+    'otto://other/join?invite=Ab3D-k9Pq-Z7xY',
     'otto://enterprise/join?token=signed&key=public',
-    'https://enterprise.otto.test/enterprise/join/ABCD-EFGH?token=signed',
-    'https://enterprise.otto.test/enterprise/join/ABCD-EFGH#fragment',
-    'https://user:pass@enterprise.otto.test/enterprise/join/ABCD-EFGH',
-    'http://enterprise.otto.test/enterprise/join/ABCD-EFGH',
+    'https://enterprise.otto.test/enterprise/join/Ab3D-k9Pq-Z7xY?token=signed',
+    'https://enterprise.otto.test/enterprise/join/Ab3D-k9Pq-Z7xY#fragment',
+    'https://user:pass@enterprise.otto.test/enterprise/join/Ab3D-k9Pq-Z7xY',
+    'http://enterprise.otto.test/enterprise/join/Ab3D-k9Pq-Z7xY',
     'otto://enterprise/join?invite=BAD',
     'otto://enterprise/join?invite=ABCI-EFGH',
-    'otto://user:pass@enterprise/join?invite=ABCD-EFGH',
-    'otto://enterprise:123/join?invite=ABCD-EFGH',
-    'otto://enterprise/join?invite=ABCD-EFGH&server=http%3A%2F%2Fenterprise.otto.test',
-    'otto://enterprise/join?invite=ABCD-EFGH&server=https%3A%2F%2Fuser%3Apass%40enterprise.otto.test',
-    'otto://enterprise/join?invite=ABCD-EFGH&server=https%3A%2F%2Fenterprise.otto.test%3Fx%3D1',
-    'otto://enterprise/join?invite=ABCD-EFGH&server=https%3A%2F%2Fenterprise.otto.test&server=https%3A%2F%2Fb.otto.test',
-    'otto://enterprise/join?invite=ABCD-EFGH&extra=1',
-    'otto://enterprise/join?invite=ABCD-EFGH&invite=WXYZ-2345',
-    'otto://enterprise/join?invite=ABCD-EFGH#fragment',
+    'otto://user:pass@enterprise/join?invite=Ab3D-k9Pq-Z7xY',
+    'otto://enterprise:123/join?invite=Ab3D-k9Pq-Z7xY',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=http%3A%2F%2Fenterprise.otto.test',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=https%3A%2F%2Fuser%3Apass%40enterprise.otto.test',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=https%3A%2F%2Fenterprise.otto.test%3Fx%3D1',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&server=https%3A%2F%2Fenterprise.otto.test&server=https%3A%2F%2Fb.otto.test',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&extra=1',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY&invite=Wz8Y-m3Na-Q5pB',
+    'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY#fragment',
   ])('rejects non-registration, legacy signed, or suspicious links: %s', (url) => {
     expect(parseEnterpriseRegistrationIntent(url)).toBeNull();
   });
@@ -98,10 +98,10 @@ describe('enterprise registration intent store', () => {
     expect(store.acceptArgv([
       '/Applications/Otto.app/Contents/MacOS/Otto',
       '--flag',
-      'otto://enterprise/join?invite=ABCD-EFGH',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY',
     ])).toBe(true);
     expect(store.take()).toEqual({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     });
     expect(store.take()).toBeNull();
   });
@@ -109,9 +109,9 @@ describe('enterprise registration intent store', () => {
   it('does not let invalid second-instance args overwrite a cached valid intent', () => {
     const store = new EnterpriseRegistrationIntentStore();
     store.acceptUrl(
-      'otto://enterprise/join?invite=ABCD-EFGH',
+      'otto://enterprise/join?invite=Ab3D-k9Pq-Z7xY',
     );
     expect(store.acceptArgv(['otto://enterprise/join?token=signed&key=public'])).toBe(false);
-    expect(store.take()?.inviteCode).toBe('ABCD-EFGH');
+    expect(store.take()?.inviteCode).toBe('Ab3D-k9Pq-Z7xY');
   });
 });

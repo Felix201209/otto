@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.9.4",
+  "version": "1.9.7",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -24,7 +24,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
-    "release": "node scripts/make-delivery-zip.mjs --build"
+    "release": "node scripts/make-delivery-zip.mjs --build",
+    "release:gate": "node scripts/release-recovery-gate.mjs"
   },
   "dependencies": {
     "otto-server": "file:../server",

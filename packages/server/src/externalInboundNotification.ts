@@ -17,8 +17,7 @@ export function externalInboundNotificationFromFrame(
   const message = frame.payload.message;
   if (
     message.role !== 'user' ||
-    message.source === 'local' ||
-    message.source === 'tui'
+    message.source === 'local'
   ) {
     return null;
   }

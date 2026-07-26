@@ -40,7 +40,6 @@ const MOJIBAKE_SCAN_ROOTS = [
   'packages/core/src/tools',
   'packages/core/src/agents',
   'packages/core/src/config',
-  'packages/cli/src/ui/components/messages',
 ];
 const MOJIBAKE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.md']);
 const MOJIBAKE_MARKERS = [
@@ -252,7 +251,7 @@ addCheck(
   'Rewrite the affected agent-facing comments/docs/prompts as valid UTF-8 before changing behavior.',
 );
 
-const expectedWorkspaces = ['packages/cli', 'packages/core', 'packages/server', 'packages/desktop'];
+const expectedWorkspaces = ['packages/core', 'packages/server', 'packages/desktop'];
 for (const workspace of expectedWorkspaces) {
   addCheck(
     `workspace ${workspace}`,

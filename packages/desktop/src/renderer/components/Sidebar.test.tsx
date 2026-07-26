@@ -88,6 +88,16 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.queryByText('全部智能体')).toBeNull();
   });
 
+  it('只保留一个明确的新建对话入口，不再显示品牌行铅笔按钮', () => {
+    const onNewChat = vi.fn();
+    renderSidebar({ onNewChat });
+
+    const buttons = screen.getAllByRole('button', { name: '新建对话' });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+  });
+
   it('对话任务标题只用一个数字表示总数，并支持整体展开收起', () => {
     renderSidebar({
       groups: [{
@@ -158,7 +168,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
 
     await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledWith({
-      inviteCode: 'ABCD-EFGH',
+      inviteCode: 'Ab3D-k9Pq-Z7xY',
     }));
     await waitFor(() => expect(
       screen.queryByRole('dialog', { name: '升级为企业版' }),
@@ -177,13 +187,13 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     fireEvent.click(screen.getByRole('button', { name: '升级企业版' }));
     const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
     const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
-    fireEvent.change(invite, { target: { value: 'ABCD-EFGH' } });
+    fireEvent.change(invite, { target: { value: 'Ab3D-k9Pq-Z7xY' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
 
     expect((await within(dialog).findByRole('alert')).textContent)
       .toBe('企业邀请码无效或已失效');
-    expect((invite as HTMLInputElement).value).toBe('ABCD-EFGH');
-    fireEvent.change(invite, { target: { value: 'WXYZ-2345' } });
+    expect((invite as HTMLInputElement).value).toBe('Ab3D-k9Pq-Z7xY');
+    fireEvent.change(invite, { target: { value: 'Wz8Y-m3Na-Q5pB' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
 
     await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledTimes(2));

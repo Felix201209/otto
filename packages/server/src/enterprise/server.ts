@@ -87,6 +87,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/manage',
   '/enterprise/park/invite',
   '/enterprise/park/join',
+  '/enterprise/park/profile',
   '/enterprise/park/tenants',
   '/enterprise/park/specialists',
   '/enterprise/park/services',
@@ -124,6 +125,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/messages/unread',
   '/enterprise/auth/join-organization',
   '/enterprise/park-resources',
+  '/enterprise/modules/updates/client',
 ]);
 
 const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -220,6 +222,7 @@ const ENTERPRISE_CAPABILITIES = [
   'unread_message_notifications_v1',
   'account_presence_v1',
   'park_tenants_v1',
+  'park_tenant_profiles_v1',
   'private_deployment_v1',
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
@@ -635,7 +638,7 @@ function accountConflictMessage(error: unknown): string | null {
 
 function accountInputMessage(error: unknown): string | null {
   const message = error instanceof Error ? error.message : String(error);
-  if (message === '手机号格式不正确' || message === '登录密码至少需要 8 位') return message;
+  if (message === '手机号格式不正确' || message === '登录密码不符合安全要求') return message;
   if (message === '账号状态必须是 active 或 disabled') return message;
   if (message === 'username required') return '账号不能为空';
   if (message === 'name required') return '姓名不能为空';
@@ -1040,7 +1043,7 @@ function makeHandler(
         const encodedCode = path.slice('/enterprise/join/'.length);
         let code = '';
         try {
-          code = decodeURIComponent(encodedCode).toLocaleUpperCase('en-US');
+          code = decodeURIComponent(encodedCode);
         } catch {
           sendPublicInvitePage(res, 404);
           return;
@@ -1258,8 +1261,8 @@ function makeHandler(
           sendJSON(res, 400, { error: '请输入 6 位短信验证码' });
           return;
         }
-        if (!name || name.length > 40 || password.length < 8) {
-          sendJSON(res, 400, { error: '请填写姓名，并设置至少 8 位登录密码' });
+        if (!name || name.length > 40 || !db.isAcceptableAccountPassword(password)) {
+          sendJSON(res, 400, { error: '请填写姓名，并设置符合安全要求的登录密码' });
           return;
         }
         const verified = db.verifySmsRegistrationChallenge(challengeId, code);
@@ -1541,8 +1544,18 @@ function makeHandler(
               organizationId: account.organizationId,
               actorAccountId: account.id,
               code: inviteCode,
+              address: typeof body.address === 'string' ? body.address : '',
+              roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
             });
-            sendJSON(res, 200, { park, organization: db.getEnterpriseOrganization(account.organizationId) });
+            const profile = db.getParkTenantProfile(account.organizationId);
+            sendJSON(res, 200, {
+              park: {
+                ...park,
+                tenantAddress: profile?.address ?? null,
+                tenantRoomNumber: profile?.roomNumber ?? null,
+              },
+              organization: db.getEnterpriseOrganization(account.organizationId),
+            });
           } catch (error) {
             sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
           }
@@ -1624,19 +1637,9 @@ function makeHandler(
           sendJSON(res, 200, { park: db.getParkForOrganization(principal.organizationId) });
           return;
         }
-        const body = await readBody(req);
-        try {
-          const park = db.createPark({
-            adminOrganizationId: principal.organizationId,
-            actorAccountId: principal.account.id,
-            name: typeof body.name === 'string' ? body.name : '',
-            slug: typeof body.slug === 'string' ? body.slug : undefined,
-            brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
-          });
-          sendJSON(res, 201, { park });
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : '产业园注册失败' });
-        }
+        sendJSON(res, 403, {
+          error: '产业园端只能由平台管理员在多企业管理页面认证创建',
+        });
         return;
       }
 
@@ -1685,10 +1688,44 @@ function makeHandler(
             organizationId: principal.organizationId,
             actorAccountId: principal.account.id,
             code: typeof body.inviteCode === 'string' ? body.inviteCode : '',
+            address: typeof body.address === 'string' ? body.address : '',
+            roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
           });
-          sendJSON(res, 200, { park });
+          const profile = db.getParkTenantProfile(principal.organizationId);
+          sendJSON(res, 200, {
+            park: {
+              ...park,
+              tenantAddress: profile?.address ?? null,
+              tenantRoomNumber: profile?.roomNumber ?? null,
+            },
+          });
         } catch (error) {
           sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park/profile' && method === 'PATCH') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: '请使用企业管理员账号修改入驻资料' });
+          return;
+        }
+        if (!db.getOrganizationFeatures(principal.organizationId).park_service) {
+          sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+          return;
+        }
+        const body = await readBody(req);
+        try {
+          const profile = db.updateParkTenantProfile({
+            organizationId: principal.organizationId,
+            actorAccountId: principal.account.id,
+            address: typeof body.address === 'string' ? body.address : '',
+            roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
+          });
+          sendJSON(res, 200, { profile });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : '入驻资料保存失败' });
         }
         return;
       }
@@ -1800,11 +1837,14 @@ function makeHandler(
           return;
         }
         const park = db.getParkForOrganization(memberAccount!.organizationId);
+        const profile = park ? db.getParkTenantProfile(memberAccount!.organizationId) : null;
         sendJSON(res, 200, {
           park: park ? {
             ...park,
             isAdminOrganization: park.adminOrganizationId === memberAccount!.organizationId,
             services: db.listParkServices(park.id),
+            tenantAddress: profile?.address ?? null,
+            tenantRoomNumber: profile?.roomNumber ?? null,
           } : null,
         });
         return;
@@ -1840,8 +1880,8 @@ function makeHandler(
           sendJSON(res, 400, { error: '账号和姓名不能为空' });
           return;
         }
-        if (password.length < 8) {
-          sendJSON(res, 400, { error: '登录密码至少需要 8 位' });
+        if (!db.isAcceptableAccountPassword(password)) {
+          sendJSON(res, 400, { error: '登录密码不符合安全要求' });
           return;
         }
         if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
@@ -1885,6 +1925,14 @@ function makeHandler(
           return;
         }
         const body = await readBody(req);
+        if (typeof body.password === 'string' && body.password && !db.isAcceptableAccountPassword(body.password)) {
+          sendJSON(res, 400, {
+            error: body.password.length < 8
+              ? '登录密码至少需要 8 位'
+              : '登录密码需要避免纯数字、纯字母、重复字符或常见弱密码',
+          });
+          return;
+        }
         if (body.status !== undefined && body.status !== 'active' && body.status !== 'disabled') {
           sendJSON(res, 400, { error: '账号状态必须是 active 或 disabled' });
           return;
@@ -2122,6 +2170,11 @@ function makeHandler(
           sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
           return;
         }
+        const park = db.getParkForOrganization(principal.organizationId);
+        if (!park || park.adminOrganizationId !== principal.organizationId) {
+          sendJSON(res, 403, { error: '当前企业不是产业园管理方' });
+          return;
+        }
         const body = await readBody(req);
         const recipientAccountId = typeof body.recipientAccountId === 'string' ? body.recipientAccountId.trim() : '';
         const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
@@ -2137,7 +2190,6 @@ function makeHandler(
           return;
         }
         try {
-          const park = db.getParkForOrganization(principal.organizationId);
           const configuredService = park
             ? db.listParkServices(park.id).find((item) => item.id === serviceId)
             : undefined;
@@ -2368,9 +2420,9 @@ function makeHandler(
         const username = typeof admin.username === 'string' ? admin.username : '';
         const password = typeof admin.password === 'string' ? admin.password : '';
         const adminName = typeof admin.name === 'string' ? admin.name : '';
-        if (!name.trim() || !username.trim() || !adminName.trim() || password.length < 8) {
+        if (!name.trim() || !username.trim() || !adminName.trim() || !db.isAcceptableAccountPassword(password)) {
           sendJSON(res, 400, {
-            error: '企业名称及首位管理员的用户名、姓名和至少 8 位密码不能为空',
+            error: '企业名称及首位管理员的用户名、姓名和符合安全要求的密码不能为空',
           });
           return;
         }
@@ -2453,6 +2505,18 @@ function makeHandler(
           sendJSON(res, 200, {
             organization,
             accounts,
+            features: db.getOrganizationFeatures(organizationId),
+            park: (() => {
+              const park = db.getParkForOrganization(organizationId);
+              return park ? {
+                ...park,
+                isAdminOrganization: park.adminOrganizationId === organizationId,
+                services: db.listParkServices(park.id),
+                tenants: park.adminOrganizationId === organizationId
+                  ? db.listParkTenantOrganizations(park.id)
+                  : [],
+              } : null;
+            })(),
             invite: withPublicInviteLink(
               db.getOrganizationInvite(organizationId),
               publicBaseUrl,
@@ -2497,6 +2561,41 @@ function makeHandler(
           return;
         }
 
+        if (segments.length === 3 && resource === 'park' && segments[2] === 'join' && method === 'POST') {
+          const body = await readBody(req);
+          try {
+            const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
+            const actor = db.listAccounts(organizationId).find(
+              (account) => account.isAdmin && account.status === 'active',
+            );
+            if (!actor) {
+              sendJSON(res, 409, { error: '该企业没有可用的企业管理员账号，无法加入产业园' });
+              return;
+            }
+            const park = db.joinOrganizationToPark({
+              organizationId,
+              actorAccountId: actor.id,
+              code: inviteCode,
+              address: typeof body.address === 'string' ? body.address : '',
+              roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
+            });
+            sendJSON(res, 200, {
+              organization: db.getEnterpriseOrganization(organizationId),
+              park: {
+                ...park,
+                isAdminOrganization: park.adminOrganizationId === organizationId,
+                services: db.listParkServices(park.id),
+                tenants: park.adminOrganizationId === organizationId
+                  ? db.listParkTenantOrganizations(park.id)
+                  : [],
+              },
+            });
+          } catch (error) {
+            sendJSON(res, 400, { error: error instanceof Error ? error.message : 'park join failed' });
+          }
+          return;
+        }
+
         if (segments.length === 2 && resource === 'park' && method === 'POST') {
           const body = await readBody(req);
           try {
@@ -2517,6 +2616,89 @@ function makeHandler(
           }
           return;
         }
+
+        if (segments.length === 2 && resource === 'park' && method === 'PATCH') {
+          const body = await readBody(req);
+          const hasName = typeof body.name === 'string';
+          const hasBrandName = typeof body.brandName === 'string';
+          if (!hasName && !hasBrandName) {
+            sendJSON(res, 400, { error: '至少提供一个需要修改的产业园字段' });
+            return;
+          }
+          try {
+            const park = db.updateParkAsPlatform({
+              adminOrganizationId: organizationId,
+              name: hasName ? body.name as string : undefined,
+              brandName: hasBrandName ? body.brandName as string : undefined,
+            });
+            sendJSON(res, 200, {
+              organization: db.getEnterpriseOrganization(organizationId),
+              park,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'park update failed';
+            if (message === 'Park admin organization not found') {
+              sendJSON(res, 404, { error: message });
+            } else {
+              sendJSON(res, 400, { error: message });
+            }
+          }
+          return;
+        }
+
+        if (
+          segments.length === 3
+          && resource === 'accounts'
+          && accountId
+          && method === 'PATCH'
+        ) {
+          if (!db.getAccount(accountId, organizationId)) {
+            sendJSON(res, 404, { error: 'Account not found' });
+            return;
+          }
+          const body = await readBody(req);
+          const hasRole = typeof body.role === 'string' || body.role === null;
+          const hasAdminPermission = typeof body.isAdmin === 'boolean';
+          const hasStatus = body.status === 'active' || body.status === 'disabled';
+          if (body.isAdmin !== undefined && !hasAdminPermission) {
+            sendJSON(res, 400, { error: '管理员权限必须是布尔值' });
+            return;
+          }
+          if (body.status !== undefined && !hasStatus) {
+            sendJSON(res, 400, { error: '账号状态必须是 active 或 disabled' });
+            return;
+          }
+          if (body.role !== undefined && !hasRole) {
+            sendJSON(res, 400, { error: '角色名称格式不正确' });
+            return;
+          }
+          if (typeof body.role === 'string' && body.role.trim().length > 80) {
+            sendJSON(res, 400, { error: '角色名称不能超过 80 个字符' });
+            return;
+          }
+          if (!hasRole && !hasAdminPermission && !hasStatus) {
+            sendJSON(res, 400, { error: '至少提供一个需要修改的账号权限字段' });
+            return;
+          }
+          try {
+            const account = db.updateAccount(accountId, {
+              role: hasRole ? body.role as string | null : undefined,
+              isAdmin: hasAdminPermission ? body.isAdmin as boolean : undefined,
+              status: hasStatus ? body.status as 'active' | 'disabled' : undefined,
+            }, organizationId);
+            sendJSON(res, 200, { organization, account });
+          } catch (error) {
+            const conflict = accountConflictMessage(error);
+            const inputError = accountInputMessage(error);
+            if (conflict) sendJSON(res, 409, { error: conflict });
+            else if (inputError) sendJSON(res, 400, { error: inputError });
+            else if (error instanceof Error && error.message === 'Account not found') {
+              sendJSON(res, 404, { error: error.message });
+            } else throw error;
+          }
+          return;
+        }
+
         if (
           segments.length === 3
           && resource === 'accounts'
@@ -3065,7 +3247,7 @@ function makeHandler(
       if (path === '/enterprise/organization/sync' && method === 'GET') {
         const organizationId = memberAccount!.organizationId;
         const features = db.getOrganizationFeatures(organizationId);
-        if (!features.enterprise_tree || !features.tui_sync) {
+        if (!features.enterprise_tree) {
           sendJSON(res, 403, { error: '企业树同步功能已由管理员关闭' });
           return;
         }
@@ -3397,10 +3579,10 @@ export function adminAccountsHTML(): string {
 .admin{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr)}.rail{background:var(--nav);color:#edf5f1;padding:26px 19px 20px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.rail .brand{padding:0 9px;margin-bottom:38px}.nav-label{font-size:10px;color:#7f958b;letter-spacing:.12em;margin:8px 11px}.nav-item{display:flex;align-items:center;gap:10px;padding:10px 11px;border:1px solid var(--nav-line);border-radius:8px;background:#20372e;color:#f0f6f3;font-weight:700}.nav-dot{width:7px;height:7px;background:#65d6ad;border-radius:50%}.rail-foot{margin-top:auto;border-top:1px solid var(--nav-line);padding:17px 9px 0}.rail-user{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rail-meta{color:#8fa198;font-size:12px;margin-top:3px}.ghost-dark{border:1px solid #435950;background:transparent;color:#cfdbd5;padding:8px 11px;margin-top:14px;width:100%}.ghost-dark:hover{background:#263d34;border-color:#5a7066}
 .workspace{padding:31px clamp(24px,4vw,58px) 56px;min-width:0}.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}.topbar h1{font-size:30px;letter-spacing:-.035em;margin:0 0 5px}.topbar p{color:var(--muted);margin:0}.summary-strip{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:17px;overflow:hidden}.summary-item{padding:15px 18px;border-left:1px solid var(--line)}.summary-item:first-child{border-left:0}.summary-item strong{display:block;font-size:23px;line-height:1.2;letter-spacing:-.025em}.summary-item span{display:block;color:var(--muted);font-size:12px;margin-top:4px}.toolbar{display:flex;align-items:center;gap:14px;margin-bottom:11px}.search-wrap{flex:1}.result-count{color:var(--muted);font-size:12px;white-space:nowrap}.table-wrap{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:auto}.accounts{width:100%;border-collapse:collapse;min-width:820px}.accounts th{text-align:left;font-size:11px;letter-spacing:.045em;color:#53605a;background:#edf2ef;padding:11px 14px;border-bottom:1px solid var(--line)}.accounts td{padding:13px 14px;border-top:1px solid #ebefed;vertical-align:middle}.accounts tbody tr:first-child td{border-top:0}.accounts tr:hover td{background:#fafcfb}.name{font-weight:750}.sub{font-size:12px;color:var(--muted);margin-top:3px}.tag{display:inline-block;background:var(--accent-soft);color:#245e49;border:1px solid #d3e6dc;border-radius:999px;padding:3px 8px;font-size:11px;margin:2px 3px 2px 0}.badge{display:inline-block;white-space:nowrap;font-size:11px;border-radius:999px;padding:4px 8px;background:#edf1ef;color:#3f4b45}.badge.ok{background:var(--accent-soft);color:#245e49}.badge.off{background:var(--danger-soft);color:var(--danger)}.edit{border:1px solid var(--line-strong);background:#fff;padding:6px 10px;color:var(--ink)}.empty{text-align:center;color:var(--muted);padding:44px!important}
 .ops-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);gap:14px;margin-bottom:17px}.ops-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;min-width:0}.ops-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.ops-head h2{font-size:16px;margin:2px 0 4px;letter-spacing:-.015em}.ops-head p{font-size:12px;color:var(--muted);margin:0}.invite-row{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-top:18px}.invite-code{display:block;width:100%;border:0;background:transparent;padding:0;font:800 clamp(25px,3vw,38px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.075em;color:var(--ink);white-space:nowrap}.invite-meta{display:flex;align-items:center;gap:8px;margin-top:10px;min-height:25px}.invite-link-preview{display:block;width:100%;max-width:100%;margin-top:10px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--subtle);color:#53605a;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.invite-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.token-number{font-size:36px;font-weight:800;letter-spacing:-.045em;line-height:1.1;margin:18px 0 4px}.token-split{display:flex;gap:14px;color:var(--muted);font-size:12px}.token-note{border-top:1px solid var(--line);padding-top:11px;margin-top:14px;color:var(--muted);font-size:11px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.copy{border:1px solid var(--line-strong);background:#fff;color:var(--ink);padding:10px 13px;border-radius:8px;font-weight:700}.copy:hover{background:#f8faf9;border-color:#9caaa3}
-.configuration-shell{margin-bottom:17px}.configuration-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:3px 0 11px}.configuration-head h2{font-size:19px;margin:2px 0 0}.configuration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.configuration-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;min-width:0}.configuration-card.wide{grid-column:1/-1}.configuration-card h3{font-size:16px;margin:2px 0 4px}.configuration-card>p{font-size:12px;color:var(--muted);margin:0 0 14px}.switch-list,.structure-list,.service-list{display:grid;gap:8px}.switch-row,.department-row,.position-row,.service-row{border:1px solid var(--line);border-radius:8px;background:#fafcfb;padding:10px 11px}.switch-row{display:flex;align-items:center;justify-content:space-between;gap:14px}.switch-copy b{display:block}.switch-copy span{display:block;color:var(--muted);font-size:11px;margin-top:2px}.switch-row input{width:19px;height:19px;accent-color:var(--accent)}.compact-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end;margin:12px 0}.compact-form.three{grid-template-columns:minmax(0,1fr) minmax(140px,.45fr) auto}.compact-form .field{margin:0}.compact-form button{height:44px}.department-head,.position-head,.service-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.row-actions{display:flex;gap:6px;flex-wrap:wrap}.row-actions button{padding:5px 8px}.position-list{display:grid;gap:6px;margin-top:8px;padding-left:12px}.position-row{background:#fff}.role-note{font-size:11px;color:var(--muted)}.park-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:8px;background:var(--accent-soft);padding:12px;margin-bottom:12px}.park-summary strong{display:block}.park-summary span{display:block;color:#386b57;font-size:12px;margin-top:2px}.park-forms{display:grid;grid-template-columns:1fr 1fr;gap:12px}.park-form{border:1px solid var(--line);border-radius:8px;padding:12px}.park-form h4{margin:0 0 5px}.park-form p{font-size:11px;color:var(--muted);margin:0}.park-form .field{margin:10px 0}.park-invite{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;align-items:end;margin:12px 0}.park-invite .field{margin:0}.service-specialists{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.specialist-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe3d8;background:var(--accent-soft);border-radius:999px;padding:4px 7px;font-size:11px}.specialist-chip button{border:0;background:transparent;color:var(--danger);padding:0}.service-editor{display:grid;grid-template-columns:minmax(130px,1fr) auto minmax(140px,.8fr) auto;gap:8px;align-items:center;margin-top:8px}.service-editor input,.service-editor select{height:36px;border:1px solid var(--line-strong);border-radius:7px;padding:0 9px;background:#fff}.service-editor label{display:flex;align-items:center;gap:6px;font-size:12px}.configuration-status{font-size:12px;color:var(--accent);min-height:18px}.configuration-disabled{border:1px dashed var(--line-strong);border-radius:8px;padding:14px;color:var(--muted);font-size:12px}
+.configuration-shell{margin-bottom:17px}.configuration-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:3px 0 11px}.configuration-head h2{font-size:19px;margin:2px 0 0}.configuration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.configuration-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;min-width:0}.configuration-card.wide{grid-column:1/-1}.configuration-card h3{font-size:16px;margin:2px 0 4px}.configuration-card>p{font-size:12px;color:var(--muted);margin:0 0 14px}.switch-list,.structure-list,.service-list,.module-update-list{display:grid;gap:8px}.switch-row,.department-row,.position-row,.service-row,.module-update-row{border:1px solid var(--line);border-radius:8px;background:#fafcfb;padding:10px 11px}.switch-row{display:flex;align-items:center;justify-content:space-between;gap:14px}.switch-copy b{display:block}.switch-copy span{display:block;color:var(--muted);font-size:11px;margin-top:2px}.switch-row input{width:19px;height:19px;accent-color:var(--accent)}.compact-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end;margin:12px 0}.compact-form.three{grid-template-columns:minmax(0,1fr) minmax(140px,.45fr) auto}.compact-form .field{margin:0}.compact-form button{height:44px}.department-head,.position-head,.service-head,.module-update-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.row-actions{display:flex;gap:6px;flex-wrap:wrap}.row-actions button{padding:5px 8px}.position-list{display:grid;gap:6px;margin-top:8px;padding-left:12px}.position-row{background:#fff}.role-note{font-size:11px;color:var(--muted)}.module-update-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;align-items:end;margin:12px 0}.module-update-form .field{margin:0}.module-update-form .wide{grid-column:span 2}.module-update-actions{display:flex;gap:8px;align-items:end}.module-update-meta{color:var(--muted);font-size:11px;margin-top:4px;word-break:break-all}.park-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:8px;background:var(--accent-soft);padding:12px;margin-bottom:12px}.park-summary strong{display:block}.park-summary span{display:block;color:#386b57;font-size:12px;margin-top:2px}.park-forms{display:grid;grid-template-columns:1fr 1fr;gap:12px}.park-form{border:1px solid var(--line);border-radius:8px;padding:12px}.park-form h4{margin:0 0 5px}.park-form p{font-size:11px;color:var(--muted);margin:0}.park-form .field{margin:10px 0}.park-invite{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;align-items:end;margin:12px 0}.park-invite .field{margin:0}.service-specialists{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.specialist-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe3d8;background:var(--accent-soft);border-radius:999px;padding:4px 7px;font-size:11px}.specialist-chip button{border:0;background:transparent;color:var(--danger);padding:0}.service-editor{display:grid;grid-template-columns:minmax(130px,1fr) auto minmax(140px,.8fr) auto;gap:8px;align-items:center;margin-top:8px}.service-editor input,.service-editor select{height:36px;border:1px solid var(--line-strong);border-radius:7px;padding:0 9px;background:#fff}.service-editor label{display:flex;align-items:center;gap:6px;font-size:12px}.configuration-status{font-size:12px;color:var(--accent);min-height:18px}.configuration-disabled{border:1px dashed var(--line-strong);border-radius:8px;padding:14px;color:var(--muted);font-size:12px}
 .drawer-backdrop{position:fixed;inset:0;background:rgba(15,27,21,.38);display:flex;justify-content:flex-end;z-index:10}.drawer{width:min(620px,100%);height:100%;background:#fff;box-shadow:var(--shadow);padding:27px 30px;overflow:auto}.drawer-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:21px}.drawer h2{margin:3px 0 0;font-size:25px;letter-spacing:-.03em}.close{border:1px solid var(--line);background:#f4f6f5;width:35px;height:35px;border-radius:8px;font-size:20px;line-height:1;color:#53605a}.form-section{border-top:1px solid var(--line);padding-top:18px;margin-top:19px}.form-section:first-of-type{border-top:0;padding-top:0;margin-top:0}.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.section-head strong{font-size:13px}.section-head span{font-size:12px;color:var(--muted)}.template-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.template-button{border:1px solid var(--line);background:#f8faf9;color:var(--ink);padding:10px 11px;text-align:left}.template-button b{display:block;font-size:13px}.template-button span{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:2px}.template-button:hover,.template-button[aria-pressed=true]{border-color:#82a493;background:var(--accent-soft);color:#174f3b}.template-button[aria-pressed=true] b:after{content:' ✓'}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.wide{grid-column:1/-1}.preset-tags{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 12px}.tag-choice{border:1px solid var(--line-strong);background:#fff;color:#4c5953;padding:6px 10px;font-size:12px}.tag-choice:hover,.tag-choice[aria-pressed=true]{border-color:#6d9b84;background:var(--accent-soft);color:#174f3b}.checkline{display:flex;gap:16px;margin:17px 0}.checkline label{display:flex;align-items:center;gap:7px;font-weight:650}.drawer-actions{display:flex;justify-content:flex-end;gap:9px;border-top:1px solid var(--line);padding-top:18px;margin-top:23px}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,27,21,.5);display:grid;place-items:center;padding:22px;overflow:auto;z-index:20}.modal{width:min(420px,100%);max-height:calc(100dvh - 44px);overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:24px}.modal-kicker{font-size:11px;color:var(--danger);font-weight:750;letter-spacing:.1em}.modal h2{font-size:22px;letter-spacing:-.025em;margin:8px 0}.modal p{color:var(--muted);margin:0;line-height:1.7}.modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:23px}
-@media(max-width:900px){.login{grid-template-columns:1fr}.login-story{display:none}.login-mobile-brand{display:block;margin-bottom:32px;color:var(--ink)}.admin{display:block}.rail{height:auto;position:static;padding:16px 18px;flex-direction:row;align-items:center;gap:18px}.rail .brand{margin:0;padding:0}.nav-label,.nav-item,.rail-meta{display:none}.rail-foot{margin:0 0 0 auto;border:0;padding:0;display:flex;align-items:center;gap:11px}.rail-user{max-width:190px}.ghost-dark{margin:0;width:auto}.workspace{padding:24px 16px 42px}.accounts{min-width:820px}.accounts th,.accounts td{padding-left:10px;padding-right:10px}.ops-grid,.configuration-grid{grid-template-columns:1fr}.configuration-card.wide{grid-column:auto}.service-editor{grid-template-columns:1fr 1fr}.park-forms{grid-template-columns:1fr}}@media(max-width:620px){.login-side{padding:28px 20px}.topbar,.configuration-head{align-items:flex-start;flex-direction:column}.topbar .primary{width:100%}.summary-strip{grid-template-columns:1fr 1fr}.summary-item:nth-child(3){border-left:0;border-top:1px solid var(--line)}.summary-item:nth-child(4){border-top:1px solid var(--line)}.toolbar{align-items:stretch;flex-direction:column}.result-count{padding-left:2px}.drawer{padding:23px 18px}.template-grid,.form-grid,.compact-form,.compact-form.three,.park-invite,.service-editor{grid-template-columns:1fr}.wide{grid-column:auto}.invite-row{align-items:flex-start;flex-direction:column}.invite-actions{justify-content:flex-start}.invite-code{font-size:27px}}@media(max-height:620px){.login-side{place-items:start center}.modal-backdrop{place-items:start center}}
+@media(max-width:900px){.login{grid-template-columns:1fr}.login-story{display:none}.login-mobile-brand{display:block;margin-bottom:32px;color:var(--ink)}.admin{display:block}.rail{height:auto;position:static;padding:16px 18px;flex-direction:row;align-items:center;gap:18px}.rail .brand{margin:0;padding:0}.nav-label,.nav-item,.rail-meta{display:none}.rail-foot{margin:0 0 0 auto;border:0;padding:0;display:flex;align-items:center;gap:11px}.rail-user{max-width:190px}.ghost-dark{margin:0;width:auto}.workspace{padding:24px 16px 42px}.accounts{min-width:820px}.accounts th,.accounts td{padding-left:10px;padding-right:10px}.ops-grid,.configuration-grid,.module-update-form{grid-template-columns:1fr}.module-update-form .wide{grid-column:auto}.configuration-card.wide{grid-column:auto}.service-editor{grid-template-columns:1fr 1fr}.park-forms{grid-template-columns:1fr}}@media(max-width:620px){.login-side{padding:28px 20px}.topbar,.configuration-head{align-items:flex-start;flex-direction:column}.topbar .primary{width:100%}.summary-strip{grid-template-columns:1fr 1fr}.summary-item:nth-child(3){border-left:0;border-top:1px solid var(--line)}.summary-item:nth-child(4){border-top:1px solid var(--line)}.toolbar{align-items:stretch;flex-direction:column}.result-count{padding-left:2px}.drawer{padding:23px 18px}.template-grid,.form-grid,.compact-form,.compact-form.three,.park-invite,.service-editor,.module-update-actions{grid-template-columns:1fr}.wide{grid-column:auto}.invite-row{align-items:flex-start;flex-direction:column}.invite-actions{justify-content:flex-start}.invite-code{font-size:27px}}@media(max-height:620px){.login-side{place-items:start center}.modal-backdrop{place-items:start center}}
 </style></head><body>
 <main id="loginView" class="login">
   <section class="login-story"><div class="brand">otto<span class="brand-mark">✦</span></div><div class="story-copy"><div class="eyebrow" style="color:#65d6ad">ENTERPRISE IDENTITY</div><h1>让每个数字同事，都有清晰的身份。</h1><p>集中维护企业成员、部门、职责标签与管理权限。手机号验证码只用于首次注册，之后使用账号或手机号和密码登录。</p></div><div class="signal"><b></b> 企业身份服务在线</div></section>
@@ -3418,12 +3600,25 @@ export function adminAccountsHTML(): string {
       <div id="configurationError" class="error hidden" role="alert"></div>
       <div class="configuration-grid">
         <article class="configuration-card" aria-labelledby="featureTitle"><h3 id="featureTitle">功能开关</h3><p>关闭后服务端与界面同时失效，不仅隐藏按钮。</p><div id="featureSwitches" class="switch-list"></div></article>
+        <article class="configuration-card wide" aria-labelledby="moduleUpdateTitle"><h3 id="moduleUpdateTitle">模块化更新</h3><p>发布增量 manifest 后，已登录 Otto 客户端会自动轮询并触发更新检查；关闭模块会从客户端清单中移除。</p>
+          <form id="moduleUpdateForm" class="module-update-form">
+            <div class="field"><label for="moduleUpdateModule">模块</label><select id="moduleUpdateModule" required></select></div>
+            <div class="field"><label for="moduleUpdateVersion">版本</label><input id="moduleUpdateVersion" maxlength="80" required placeholder="例如：1.9.5-park.2"></div>
+            <div class="field"><label for="moduleUpdateRollout">推送策略</label><select id="moduleUpdateRollout"><option value="canary">灰度</option><option value="stable">稳定</option><option value="required">强制</option></select></div>
+            <div class="field"><label for="moduleUpdateMinAppVersion">最低 Otto 版本</label><input id="moduleUpdateMinAppVersion" maxlength="40" placeholder="例如：1.9.5"></div>
+            <div class="field wide"><label for="moduleUpdateManifestUrl">增量 manifest URL</label><input id="moduleUpdateManifestUrl" type="url" placeholder="https://example.com/otto-incremental.json"></div>
+            <div class="field wide"><label for="moduleUpdateSha256">SHA256</label><input id="moduleUpdateSha256" maxlength="64" placeholder="64 位校验值，可选"></div>
+            <div class="field wide"><label for="moduleUpdateNotes">发布说明</label><input id="moduleUpdateNotes" maxlength="200" placeholder="给管理员看的变更摘要"></div>
+            <div class="module-update-actions"><button class="primary" type="submit">发布模块</button><button id="moduleUpdateDisable" class="secondary" type="button">关闭该模块</button></div>
+          </form>
+          <div id="moduleUpdateList" class="module-update-list"></div>
+        </article>
         <article id="structureCard" class="configuration-card" aria-labelledby="structureTitle"><h3 id="structureTitle">部门与职位管理</h3><p>自定义部门和职位，职位权限会同步到已绑定成员。</p><form id="departmentForm" class="compact-form"><div class="field"><label for="newDepartmentName">新部门名称</label><input id="newDepartmentName" maxlength="80" required placeholder="例如：产品部"></div><button class="primary" type="submit">新增部门</button></form><div id="structureList" class="structure-list"></div></article>
         <article id="structureDisabled" class="configuration-card hidden"><h3>企业树已关闭</h3><div class="configuration-disabled">当前不加载部门与职位数据。在功能开关中重新启用后才会恢复。</div></article>
         <article id="parkCard" class="configuration-card wide" aria-labelledby="parkTitle"><h3 id="parkTitle">产业园管理</h3><p>产业园方可发放邀请码、管理服务和指定专员；普通企业填写邀请码后整体加入。</p>
           <div id="parkEmptyControls" class="park-forms">
-            <form id="parkRegisterForm" class="park-form"><h4>注册产业园</h4><p>当前企业将成为该产业园的管理方。</p><div class="field"><label for="parkName">产业园名称</label><input id="parkName" maxlength="80" required placeholder="例如：科技大厦"></div><div class="field"><label for="parkBrandName">客户端服务名称</label><input id="parkBrandName" maxlength="80" placeholder="例如：科技大厦服务"></div><button class="primary" type="submit">注册并开始管理</button></form>
-            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 8 位邀请码。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="ABCD-EFGH"></div><button class="primary" type="submit">整个企业加入</button></form>
+            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 12 位大小写敏感邀请码，并填写企业在园区内的地址和门牌号。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="Aa3B-k9Pq-Z7xY"></div><div class="field"><label for="parkJoinAddress">企业地址</label><input id="parkJoinAddress" maxlength="160" required placeholder="例如：科技大厦 A 座"></div><div class="field"><label for="parkJoinRoomNumber">门牌号</label><input id="parkJoinRoomNumber" maxlength="40" required placeholder="例如：1203 室"></div><button class="primary" type="submit">整个企业加入</button></form>
+            <div class="park-form"><h4>产业园端认证</h4><p>创建产业园端需要平台管理员在多企业管理页面认证当前企业。未认证企业不能发布园区公告、管理服务或邀请其他企业。</p></div>
           </div>
           <div id="parkDetails" class="hidden"><div id="parkSummary" class="park-summary"></div><div id="parkTenantNote" class="configuration-disabled hidden">当前企业已加入该产业园。服务与专员由产业园管理方统一配置。</div><div id="parkOwnerControls" class="hidden"><form id="parkInviteForm" class="park-invite"><div class="field"><label for="parkInviteCode">最新产业园邀请码</label><input id="parkInviteCode" readonly placeholder="点击生成"></div><div class="field"><label for="parkInviteMax">可使用次数</label><input id="parkInviteMax" type="number" min="1" max="10000" placeholder="不限"></div><button class="primary" type="submit">生成邀请码</button></form><div id="serviceList" class="service-list"></div></div></div>
         </article>
@@ -3474,7 +3669,6 @@ const featureDefinitions={
   enterprise_tree:['企业树','成员、部门与职位目录'],
   park_service:['园区服务','产业园入驻、服务与报修路由'],
   feishu_auto_reply:['飞书自动回复','飞书向 Otto 提问后自动执行并回复'],
-  tui_sync:['TUI 企业同步','终端企业身份与目录同步'],
   direct_messages:['企业内部消息','成员直聊与未读提醒'],
   atoa:['A2A 协作','数字同事之间的任务转交'],
   knowledge:['企业知识','按企业与部门范围使用知识库']
@@ -3486,6 +3680,7 @@ let currentInvite=null;
 let usageSummary=null;
 let organizationFeatures=null;
 let organizationStructure=[];
+let moduleUpdateManifest=null;
 let currentPark=null;
 let parkServices=[];
 let parkSpecialists=[];
@@ -3510,6 +3705,14 @@ function configurationFailure(error){if(isAuthorizationError(error)){expireAdmin
 function updateDepartmentDatalist(){const names=departmentPresets.concat(organizationStructure.map(department=>department.name));$('departmentPresetList').innerHTML=Array.from(new Set(names)).map(item=>'<option value="'+esc(item)+'"></option>').join('')}
 function renderConfigurationAvailability(){const treeEnabled=organizationFeatures&&organizationFeatures.enterprise_tree===true;const parkEnabled=organizationFeatures&&organizationFeatures.park_service===true;$('structureCard').classList.toggle('hidden',!treeEnabled);$('structureDisabled').classList.toggle('hidden',treeEnabled);$('parkCard').classList.toggle('hidden',!parkEnabled);$('parkDisabled').classList.toggle('hidden',parkEnabled)}
 function renderFeatureSwitches(){const host=$('featureSwitches');if(!organizationFeatures){host.innerHTML='<div class="configuration-disabled">正在加载功能开关…</div>';return}host.innerHTML=Object.entries(featureDefinitions).map(entry=>{const key=entry[0],copy=entry[1];return '<label class="switch-row"><span class="switch-copy"><b>'+esc(copy[0])+'</b><span>'+esc(copy[1])+'</span></span><input type="checkbox" data-feature-key="'+esc(key)+'" '+(organizationFeatures[key]?'checked':'')+' aria-label="'+esc(copy[0])+'"></label>'}).join('');host.querySelectorAll('[data-feature-key]').forEach(input=>input.addEventListener('change',()=>updateFeature(input.dataset.featureKey,input.checked,input)))}
+function moduleUpdateLabel(key){return (featureDefinitions[key]&&featureDefinitions[key][0])||key}
+function activeModuleUpdates(){return moduleUpdateManifest&&Array.isArray(moduleUpdateManifest.modules)?moduleUpdateManifest.modules:[]}
+function moduleUpdateCatalog(){const catalog=moduleUpdateManifest&&Array.isArray(moduleUpdateManifest.catalog)?moduleUpdateManifest.catalog:[];const modules=activeModuleUpdates().map(item=>({module:item.module,features:[]}));return Array.from(new Map(catalog.concat(modules).map(item=>[item.module,item])).values())}
+function fillModuleUpdateForm(){const selected=$('moduleUpdateModule').value;const update=activeModuleUpdates().find(item=>item.module===selected);if(!update)return;$('moduleUpdateVersion').value=update.version||'';$('moduleUpdateRollout').value=update.rollout||'stable';$('moduleUpdateManifestUrl').value=update.manifestUrl||'';$('moduleUpdateSha256').value=update.sha256||'';$('moduleUpdateMinAppVersion').value=update.minAppVersion||'';$('moduleUpdateNotes').value=update.notes||''}
+function renderModuleUpdates(){const list=$('moduleUpdateList'),select=$('moduleUpdateModule');if(!moduleUpdateManifest){list.innerHTML='<div class="configuration-disabled">正在加载模块更新配置…</div>';select.innerHTML='';return}const selected=select.value;const catalog=moduleUpdateCatalog();select.innerHTML=catalog.map(item=>'<option value="'+esc(item.module)+'">'+esc(moduleUpdateLabel(item.module))+' · '+esc(item.module)+'</option>').join('');if(selected&&catalog.some(item=>item.module===selected))select.value=selected;if(!catalog.length){list.innerHTML='<div class="configuration-disabled">当前授权目录里没有可发布的模块。</div>';return}const updates=new Map(activeModuleUpdates().map(item=>[item.module,item]));list.innerHTML=catalog.map(item=>{const update=updates.get(item.module);const rollout=update?update.rollout:'off';return '<section class="module-update-row"><div class="module-update-head"><div><b>'+esc(moduleUpdateLabel(item.module))+'</b><div class="role-note">'+esc(item.module)+'</div></div><span class="badge '+(rollout==='off'?'off':'ok')+'">'+esc(rollout==='off'?'未发布':rollout)+'</span></div><div class="module-update-meta">版本：'+esc(update&&update.version?update.version:'-')+' · 最低版本：'+esc(update&&update.minAppVersion?update.minAppVersion:'-')+' · 更新时间：'+esc(update&&update.updatedAt?new Date(update.updatedAt).toLocaleString('zh-CN',{hour12:false}):'-')+'</div><div class="module-update-meta">'+esc(update&&update.manifestUrl?update.manifestUrl:'暂无 manifest URL')+'</div>'+(update&&update.notes?'<div class="module-update-meta">'+esc(update.notes)+'</div>':'')+'</section>'}).join('');fillModuleUpdateForm()}
+async function loadModuleUpdates(){try{moduleUpdateManifest=await api('/enterprise/modules/updates');renderModuleUpdates()}catch(error){moduleUpdateManifest={modules:[],catalog:[]};renderModuleUpdates();throw error}}
+async function publishModuleUpdate(event){event.preventDefault();const module=$('moduleUpdateModule').value;const version=$('moduleUpdateVersion').value.trim();if(!module||!version)return;showError('configurationError','');setConfigurationStatus('正在发布模块更新…');try{const data=await api('/enterprise/modules/updates',{method:'PATCH',body:JSON.stringify({module,version,rollout:$('moduleUpdateRollout').value,manifestUrl:$('moduleUpdateManifestUrl').value.trim()||null,sha256:$('moduleUpdateSha256').value.trim()||null,minAppVersion:$('moduleUpdateMinAppVersion').value.trim()||null,notes:$('moduleUpdateNotes').value.trim()||null})});moduleUpdateManifest=data.manifest;renderModuleUpdates();setConfigurationStatus('模块更新已发布，客户端会在下一轮检查中发现')}catch(error){configurationFailure(error);setConfigurationStatus('')}}
+async function disableModuleUpdate(){const module=$('moduleUpdateModule').value;if(!module)return;const existing=activeModuleUpdates().find(item=>item.module===module);const version=$('moduleUpdateVersion').value.trim()||(existing&&existing.version)||'disabled';showError('configurationError','');setConfigurationStatus('正在关闭模块发布…');try{const data=await api('/enterprise/modules/updates',{method:'PATCH',body:JSON.stringify({module,version,rollout:'off'})});moduleUpdateManifest=data.manifest;renderModuleUpdates();setConfigurationStatus('该模块发布已关闭')}catch(error){configurationFailure(error);setConfigurationStatus('')}}
 async function updateFeature(key,enabled,input){input.disabled=true;showError('configurationError','');setConfigurationStatus('正在保存功能开关…');try{const data=await api('/enterprise/organization/features',{method:'PATCH',body:JSON.stringify({[key]:enabled})});organizationFeatures=data.features;renderFeatureSwitches();renderConfigurationAvailability();if(key==='enterprise_tree'){organizationStructure=[];if(enabled)await loadStructure();else renderStructure()}if(key==='park_service'){currentPark=null;parkServices=[];parkSpecialists=[];if(enabled)await loadPark();else renderPark()}setConfigurationStatus('功能开关已保存')}catch(error){renderFeatureSwitches();configurationFailure(error);setConfigurationStatus('')}finally{if(input&&input.isConnected)input.disabled=false}}
 function roleMappingLabel(value){return value==='enterprise_admin'?'企业管理员':value==='department_admin'?'部门管理员':'成员'}
 function renderStructure(){updateDepartmentDatalist();const host=$('structureList');if(!organizationFeatures||organizationFeatures.enterprise_tree!==true){host.replaceChildren();return}if(!organizationStructure.length){host.innerHTML='<div class="configuration-disabled">暂无部门。新建第一个部门后，可继续添加职位。</div>';return}host.innerHTML=organizationStructure.map(department=>'<section class="department-row" data-department-id="'+esc(department.id)+'"><div class="department-head"><div><b>'+esc(department.name)+'</b><div class="role-note">'+number(department.memberCount)+' 名在职成员</div></div><div class="row-actions"><button class="edit" type="button" data-rename-department="'+esc(department.id)+'">重命名</button><button class="danger" type="button" data-delete-department="'+esc(department.id)+'">删除</button></div></div><div class="position-list">'+((department.positions||[]).map(position=>'<div class="position-row"><div class="position-head"><div><b>'+esc(position.title)+'</b><div class="role-note">'+esc(roleMappingLabel(position.roleMapping))+'</div></div><div class="row-actions"><button class="edit" type="button" data-edit-position="'+esc(position.id)+'" data-position-title="'+esc(position.title)+'" data-role-mapping="'+esc(position.roleMapping)+'">编辑</button><button class="danger" type="button" data-delete-position="'+esc(position.id)+'">删除</button></div></div></div>').join('')||'<div class="role-note">尚未配置职位</div>')+'</div><form class="compact-form three" data-position-form="'+esc(department.id)+'"><div class="field"><label>职位名称</label><input name="title" maxlength="80" required placeholder="例如：产品经理"></div><div class="field"><label>权限映射</label><select name="roleMapping"><option value="member">成员</option><option value="department_admin">部门管理员</option><option value="enterprise_admin">企业管理员</option></select></div><button class="secondary" type="submit">新增职位</button></form></section>').join('');host.querySelectorAll('[data-rename-department]').forEach(button=>button.addEventListener('click',()=>renameDepartment(button.dataset.renameDepartment)));host.querySelectorAll('[data-delete-department]').forEach(button=>button.addEventListener('click',()=>deleteDepartment(button.dataset.deleteDepartment)));host.querySelectorAll('[data-position-form]').forEach(form=>form.addEventListener('submit',event=>createPosition(event,form.dataset.positionForm)));host.querySelectorAll('[data-edit-position]').forEach(button=>button.addEventListener('click',()=>editPosition(button)));host.querySelectorAll('[data-delete-position]').forEach(button=>button.addEventListener('click',()=>deletePosition(button.dataset.deletePosition)))}
@@ -3524,13 +3727,12 @@ async function deletePosition(id){if(!window.confirm('确认删除该职位？�
 function renderPark(){const empty=$('parkEmptyControls'),details=$('parkDetails'),owner=$('parkOwnerControls'),tenant=$('parkTenantNote');if(!organizationFeatures||organizationFeatures.park_service!==true){empty.classList.add('hidden');details.classList.add('hidden');return}empty.classList.toggle('hidden',!!currentPark);details.classList.toggle('hidden',!currentPark);if(!currentPark){owner.classList.add('hidden');tenant.classList.add('hidden');$('serviceList').replaceChildren();return}const isOwner=currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId;$('parkSummary').innerHTML='<div><strong>'+esc(currentPark.brandName||currentPark.name)+'</strong><span>'+esc(currentPark.name)+' · '+esc(currentPark.slug)+'</span></div><span class="badge '+(isOwner?'ok':'')+'">'+(isOwner?'产业园管理方':'已入驻企业')+'</span>';owner.classList.toggle('hidden',!isOwner);tenant.classList.toggle('hidden',isOwner);if(!isOwner){$('serviceList').replaceChildren();return}renderParkServices()}
 function renderParkServices(){const host=$('serviceList');if(!parkServices.length){host.innerHTML='<div class="configuration-disabled">暂无可配置服务。</div>';return}const activeAccounts=accounts.filter(account=>account.status==='active');host.innerHTML=parkServices.map(service=>{const assigned=parkSpecialists.filter(item=>item.serviceId===service.id);return '<section class="service-row"><div class="service-head"><div><b>'+esc(service.name)+'</b><div class="role-note">'+esc(service.id)+'</div></div><span class="badge '+(service.enabled?'ok':'off')+'">'+(service.enabled?'已启用':'已关闭')+'</span></div><div class="service-editor"><input data-service-name="'+esc(service.id)+'" value="'+esc(service.name)+'" aria-label="'+esc(service.name)+' 名称"><label><input type="checkbox" data-service-enabled="'+esc(service.id)+'" '+(service.enabled?'checked':'')+'> 启用</label><select data-specialist-select="'+esc(service.id)+'"><option value="">选择服务专员</option>'+activeAccounts.map(account=>'<option value="'+esc(account.id)+'">'+esc(account.name)+' @'+esc(account.username)+'</option>').join('')+'</select><div class="row-actions"><button class="edit" type="button" data-save-service="'+esc(service.id)+'">保存</button><button class="secondary" type="button" data-add-specialist="'+esc(service.id)+'">添加专员</button></div></div><div class="service-specialists">'+(assigned.map(item=>'<span class="specialist-chip">'+esc(item.name)+'<button type="button" data-remove-specialist="'+esc(service.id)+'" data-account-id="'+esc(item.accountId)+'" aria-label="移除 '+esc(item.name)+'">×</button></span>').join('')||'<span class="role-note">未指定时回退通知产业园管理员</span>')+'</div></section>'}).join('');host.querySelectorAll('[data-save-service]').forEach(button=>button.addEventListener('click',()=>saveParkService(button.dataset.saveService)));host.querySelectorAll('[data-add-specialist]').forEach(button=>button.addEventListener('click',()=>addParkSpecialist(button.dataset.addSpecialist)));host.querySelectorAll('[data-remove-specialist]').forEach(button=>button.addEventListener('click',()=>removeParkSpecialist(button.dataset.removeSpecialist,button.dataset.accountId)))}
 async function loadPark(){if(!organizationFeatures||organizationFeatures.park_service!==true){currentPark=null;parkServices=[];parkSpecialists=[];renderPark();return}const data=await api('/enterprise/park/manage');currentPark=data.park||null;parkServices=[];parkSpecialists=[];if(currentPark&&currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId){const results=await Promise.all([api('/enterprise/park/services'),api('/enterprise/park/specialists')]);parkServices=results[0].services||[];parkSpecialists=results[1].specialists||[]}renderPark()}
-async function registerPark(event){event.preventDefault();const name=$('parkName').value.trim(),brandName=$('parkBrandName').value.trim();try{const data=await api('/enterprise/park/manage',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});currentPark=data.park;await loadPark();setConfigurationStatus('产业园已注册')}catch(error){configurationFailure(error)}}
-async function joinPark(event){event.preventDefault();const inviteCode=$('parkJoinCode').value.trim();try{const data=await api('/enterprise/park/join',{method:'POST',body:JSON.stringify({inviteCode})});currentPark=data.park;await loadPark();setConfigurationStatus('当前企业已加入产业园')}catch(error){configurationFailure(error)}}
+async function joinPark(event){event.preventDefault();const inviteCode=$('parkJoinCode').value.trim(),address=$('parkJoinAddress').value.trim(),roomNumber=$('parkJoinRoomNumber').value.trim();try{const data=await api('/enterprise/park/join',{method:'POST',body:JSON.stringify({inviteCode,address,roomNumber})});currentPark=data.park;await loadPark();setConfigurationStatus('当前企业已加入产业园')}catch(error){configurationFailure(error)}}
 async function issueParkInvite(event){event.preventDefault();const raw=$('parkInviteMax').value.trim();try{const data=await api('/enterprise/park/invite',{method:'POST',body:JSON.stringify({maxUses:raw?Number(raw):null})});$('parkInviteCode').value=data.invite.code;setConfigurationStatus('产业园邀请码已生成，有效期 7 天')}catch(error){configurationFailure(error)}}
 async function saveParkService(serviceId){const name=document.querySelector('[data-service-name="'+CSS.escape(serviceId)+'"]').value.trim();const enabled=document.querySelector('[data-service-enabled="'+CSS.escape(serviceId)+'"]').checked;try{await api('/enterprise/park/services',{method:'PATCH',body:JSON.stringify({serviceId,name,enabled})});await loadPark();setConfigurationStatus('园区服务已保存')}catch(error){configurationFailure(error)}}
 async function addParkSpecialist(serviceId){const select=document.querySelector('[data-specialist-select="'+CSS.escape(serviceId)+'"]');if(!select||!select.value)return;try{await api('/enterprise/park/specialists',{method:'POST',body:JSON.stringify({serviceId,accountId:select.value})});await loadPark();setConfigurationStatus('服务专员已添加')}catch(error){configurationFailure(error)}}
 async function removeParkSpecialist(serviceId,accountId){try{await api('/enterprise/park/specialists',{method:'DELETE',body:JSON.stringify({serviceId,accountId})});await loadPark();setConfigurationStatus('服务专员已移除')}catch(error){configurationFailure(error)}}
-async function loadConfiguration(){organizationFeatures=null;organizationStructure=[];currentPark=null;parkServices=[];parkSpecialists=[];renderFeatureSwitches();showError('configurationError','');setConfigurationStatus('正在加载企业配置…');try{const data=await api('/enterprise/organization/features');organizationFeatures=data.features;renderFeatureSwitches();renderConfigurationAvailability();const tasks=[];if(organizationFeatures.enterprise_tree===true)tasks.push(loadStructure());else renderStructure();if(organizationFeatures.park_service===true)tasks.push(loadPark());else renderPark();await Promise.all(tasks);setConfigurationStatus('')}catch(error){configurationFailure(error);setConfigurationStatus('')}}
+async function loadConfiguration(){organizationFeatures=null;organizationStructure=[];moduleUpdateManifest=null;currentPark=null;parkServices=[];parkSpecialists=[];renderFeatureSwitches();renderModuleUpdates();showError('configurationError','');setConfigurationStatus('正在加载企业配置…');try{const data=await api('/enterprise/organization/features');organizationFeatures=data.features;renderFeatureSwitches();renderConfigurationAvailability();const tasks=[loadModuleUpdates()];if(organizationFeatures.enterprise_tree===true)tasks.push(loadStructure());else renderStructure();if(organizationFeatures.park_service===true)tasks.push(loadPark());else renderPark();await Promise.all(tasks);setConfigurationStatus('')}catch(error){configurationFailure(error);setConfigurationStatus('')}}
 function showLogin(message){$('adminView').classList.add('hidden');$('loginView').classList.remove('hidden');showError('loginError',message||'')}
 function showAdmin(){showError('loginError','');$('loginView').classList.add('hidden');$('adminView').classList.remove('hidden');$('railUser').textContent=currentAdmin.name+' · '+currentAdmin.username;$('railMeta').textContent=currentAdmin.organizationName+' · 企业管理员';$('organizationTitle').textContent=currentAdmin.organizationName;focusSoon($('organizationTitle'))}
 function tags(value){return Array.from(new Set(String(value||'').split(/[,，]/).map(s=>s.trim()).filter(Boolean)))}
@@ -3543,7 +3745,7 @@ async function deleteAccountFromRow(button,id){if(!id||isSaving)return;if(button
 function renderUsage(){const summary=usageSummary||{};$('totalTokens').textContent=number(summary.totalTokens);$('inputTokens').textContent=number(summary.totalInputTokens);$('outputTokens').textContent=number(summary.totalOutputTokens);$('requestCount').textContent=number(summary.requestCount)}
 function registrationInviteLink(){return currentInvite&&typeof currentInvite.link==='string'?currentInvite.link:''}
 function renderInvite(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}const active=currentInvite&&currentInvite.status==='active'&&new Date(currentInvite.expiresAt).getTime()>Date.now();const link=active?registrationInviteLink():'';$('inviteCode').value=currentInvite?currentInvite.code:'••••-••••';$('copyInvite').disabled=!active;$('copyInviteLink').disabled=!active;$('inviteLinkPreview').value=link;$('inviteLinkPreview').classList.toggle('hidden',!link);if(currentInvite&&$('inviteDepartment'))$('inviteDepartment').value=currentInvite.defaultDepartment||'';if(currentInvite&&$('invitePosition'))$('invitePosition').value=currentInvite.positionTitle||'';if(currentInvite&&$('inviteRole'))$('inviteRole').value=currentInvite.defaultRole||'';if(currentInvite&&$('inviteMaxUses'))$('inviteMaxUses').value=currentInvite.maxUses||'';$('issueInvite').textContent=currentInvite?'生成新邀请码':'生成岗位邀请码';$('inviteBadge').className='badge '+(active?'ok':'off');$('inviteBadge').textContent=active?'有效 7 天':currentInvite?'已失效':'尚未生成';function tick(){if(!currentInvite)return;const left=new Date(currentInvite.expiresAt).getTime()-Date.now();if(left<=0){currentInvite.status='expired';renderInvite();return}const h=Math.floor(left/3600000);const m=Math.floor((left%3600000)/60000);const s=Math.floor((left%60000)/1000);$('inviteCountdown').textContent='剩余 '+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+' · 到期 '+new Date(currentInvite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 岗位 '+[currentInvite.defaultDepartment||'未分配部门',currentInvite.positionTitle||'未指定职位',currentInvite.defaultRole||'成员'].join(' / ')+(currentInvite.maxUses?' · '+currentInvite.usedCount+'/'+currentInvite.maxUses:'')}if(active){tick();inviteTimer=setInterval(tick,1000)}else $('inviteCountdown').textContent=currentInvite?'已到期，请手动生成新的岗位邀请码':'等待管理员生成'}
-function resetWorkspace(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}accounts=[];currentInvite=null;usageSummary=null;organizationFeatures=null;organizationStructure=[];currentPark=null;parkServices=[];parkSpecialists=[];$('searchInput').value='';showError('pageError','');showError('inviteError','');showError('configurationError','');setConfigurationStatus('');render();renderInvite();renderUsage();renderFeatureSwitches();renderConfigurationAvailability();renderStructure();renderPark()}
+function resetWorkspace(){if(inviteTimer){clearInterval(inviteTimer);inviteTimer=null}accounts=[];currentInvite=null;usageSummary=null;organizationFeatures=null;organizationStructure=[];moduleUpdateManifest=null;currentPark=null;parkServices=[];parkSpecialists=[];$('searchInput').value='';showError('pageError','');showError('inviteError','');showError('configurationError','');setConfigurationStatus('');render();renderInvite();renderUsage();renderFeatureSwitches();renderModuleUpdates();renderConfigurationAvailability();renderStructure();renderPark()}
 function resetDeleteButton(){deleteArmed=false;$('deleteAccount').textContent='删除账号'}
 function setEditorPending(pending){const form=$('accountForm');form.setAttribute('aria-busy',pending?'true':'false');form.querySelectorAll('button,input,select').forEach(control=>{if(pending){control.dataset.pendingDisabled=control.disabled?'true':'false';control.disabled=true}else if(Object.prototype.hasOwnProperty.call(control.dataset,'pendingDisabled')){control.disabled=control.dataset.pendingDisabled==='true';delete control.dataset.pendingDisabled}});$('saveAccount').textContent=pending?'正在保存…':'保存账号';$('saveStatus').textContent=pending?'正在保存账号':''}
 function closeAllOverlays(){$('drawerWrap').classList.add('hidden');$('logoutModal').classList.add('hidden');$('inviteModal').classList.add('hidden');$('adminView').inert=false;activeOverlay=null;overlayReturnFocus=null;editorEpoch+=1;if(isSaving){isSaving=false;setEditorPending(false)}}
@@ -3569,7 +3771,9 @@ async function copyInvite(){if(!currentInvite||currentInvite.status!=='active')r
 async function copyInviteLink(){const link=registrationInviteLink();if(!link||!currentInvite||currentInvite.status!=='active')return;showError('inviteError','');try{await navigator.clipboard.writeText(link);const button=$('copyInviteLink');button.textContent='已复制引入链接';setTimeout(()=>{button.textContent='复制企业引入链接'},1500)}catch{selectInviteFallback('inviteLinkPreview','复制失败，已选中企业引入链接，可手动复制')}}
 renderPresets();
 $('departmentForm').addEventListener('submit',createDepartment);
-$('parkRegisterForm').addEventListener('submit',registerPark);
+$('moduleUpdateForm').addEventListener('submit',publishModuleUpdate);
+$('moduleUpdateModule').addEventListener('change',fillModuleUpdateForm);
+$('moduleUpdateDisable').addEventListener('click',disableModuleUpdate);
 $('parkJoinForm').addEventListener('submit',joinPark);
 $('parkInviteForm').addEventListener('submit',issueParkInvite);
 document.querySelectorAll('[data-account-template]').forEach(button=>button.addEventListener('click',()=>applyTemplate(button.dataset.accountTemplate,button)));
@@ -3600,11 +3804,11 @@ function platformAdminHTML(): string {
 <title>Otto 平台企业工作台</title>
 <style>
 :root{--ink:#17211d;--muted:#69736e;--line:#d9e1dd;--line-strong:#c6d1cb;--paper:#f3f6f4;--panel:#fff;--subtle:#edf2ef;--accent:#176a4b;--accent-dark:#10553b;--accent-soft:#e5f1eb;--danger:#a53e35;--danger-soft:#faece9;--nav:#13241d;--nav-soft:#1d352b;--nav-line:#31483e;--shadow:0 18px 48px rgba(19,36,29,.13);--radius:11px}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}button,input{font:inherit}button{cursor:pointer}.hidden{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #2b8f68;outline-offset:2px}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif}button,input,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid #2b8f68;outline-offset:2px}
 .platform-shell{min-height:100vh;display:grid;grid-template-columns:300px minmax(0,1fr)}.rail{position:sticky;top:0;height:100vh;background:var(--nav);color:#edf6f1;padding:25px 20px 20px;display:flex;flex-direction:column;overflow:hidden}.brand{font-size:25px;font-weight:850;letter-spacing:-.05em;padding:0 8px}.brand b{color:#6bd5ad}.rail-intro{padding:30px 8px 20px;border-bottom:1px solid var(--nav-line)}.eyebrow{font-size:10px;letter-spacing:.14em;font-weight:800;text-transform:uppercase;color:#59c79d}.rail-intro h1{font-size:22px;letter-spacing:-.035em;margin:8px 0 5px}.rail-intro p{font-size:12px;color:#9cb0a7;margin:0}.organization-controls{display:flex;flex-direction:column;min-height:0;flex:1}.organization-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 8px 10px}.organization-head strong{font-size:13px}.organization-count{font-size:11px;color:#8da198}.organization-search{height:38px;border:1px solid var(--nav-line);border-radius:8px;background:#1a3027;color:#eff7f3;padding:0 11px;margin:0 8px 10px;outline:none}.organization-search::placeholder{color:#758b81}.organization-search:focus{border-color:#69d5ab;box-shadow:0 0 0 3px rgba(105,213,171,.12)}.organization-nav{display:grid;gap:6px;overflow:auto;padding:0 4px 12px}.organization-button{width:100%;border:1px solid transparent;border-radius:9px;background:transparent;color:#cfddd6;padding:11px 12px;text-align:left;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}.organization-button:hover{background:#193027;border-color:#29453a}.organization-button[aria-selected="true"]{background:var(--nav-soft);border-color:#406052;color:#fff}.organization-button strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.organization-button small{display:block;color:#82988d;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.organization-state{width:7px;height:7px;border-radius:50%;background:#65d6ad;margin-top:6px}.organization-empty{padding:22px 12px;color:#82988d;font-size:12px;text-align:center}.rail-action{margin:0 8px 10px;height:41px;border:1px solid #4b6a5d;border-radius:8px;background:#213d32;color:#eff7f3;font-weight:750}.rail-action:hover{background:#29483b}.rail-foot{border-top:1px solid var(--nav-line);padding:15px 8px 0;display:grid;gap:8px}.rail-link,.rail-clear{border:0;background:transparent;color:#a9bbb2;text-decoration:none;text-align:left;padding:4px 0;font-size:12px}.rail-link:hover,.rail-clear:hover{color:#fff}
-.workspace{padding:31px clamp(24px,4vw,58px) 56px;min-width:0}.workspace-top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:23px}.workspace-top h2{font-size:30px;line-height:1.15;letter-spacing:-.04em;margin:4px 0}.workspace-top p{margin:0;color:var(--muted)}.platform-status{display:inline-flex;align-items:center;gap:7px;background:var(--accent-soft);color:#245f49;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:750}.platform-status:before{content:'';width:7px;height:7px;border-radius:50%;background:#2d966c}.auth-card,.empty-panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(19,36,29,.04)}.auth-card{max-width:720px;padding:27px}.auth-card h3{font-size:21px;letter-spacing:-.025em;margin:0 0 7px}.auth-card>p{color:var(--muted);margin:0 0 20px}.token-row{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:end}.field{display:grid;gap:6px}.field label{font-size:12px;font-weight:750;color:#46534d}.field input{height:44px;border:1px solid var(--line-strong);border-radius:8px;padding:0 12px;background:#fff;color:var(--ink);outline:none}.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,106,75,.11)}.primary,.secondary,.danger{min-height:42px;border-radius:8px;padding:0 15px;font-weight:750}.primary{border:1px solid var(--accent);background:var(--accent);color:#fff}.primary:hover{background:var(--accent-dark)}.secondary{border:1px solid var(--line-strong);background:#fff;color:var(--ink)}.secondary:hover{border-color:#91a198;background:#f8faf9}.danger{border:1px solid #d9aaa5;background:#fff;color:var(--danger)}.danger:hover,.danger.armed{border-color:var(--danger);background:var(--danger);color:#fff}.primary:disabled,.secondary:disabled,.danger:disabled{opacity:.5;cursor:default}.error,.notice{padding:10px 12px;border-radius:8px;margin-top:13px}.error{color:var(--danger);background:var(--danger-soft);border:1px solid #ecc8c2}.notice{color:#245f49;background:var(--accent-soft);border:1px solid #cfe3d8}.empty-panel{padding:60px 28px;text-align:center;color:var(--muted)}.empty-panel strong{display:block;color:var(--ink);font-size:20px;margin-bottom:5px}
+.workspace{padding:31px clamp(24px,4vw,58px) 56px;min-width:0}.workspace-top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:23px}.workspace-top h2{font-size:30px;line-height:1.15;letter-spacing:-.04em;margin:4px 0}.workspace-top p{margin:0;color:var(--muted)}.platform-status{display:inline-flex;align-items:center;gap:7px;background:var(--accent-soft);color:#245f49;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:750}.platform-status:before{content:'';width:7px;height:7px;border-radius:50%;background:#2d966c}.auth-card,.empty-panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(19,36,29,.04)}.auth-card{max-width:720px;padding:27px}.auth-card h3{font-size:21px;letter-spacing:-.025em;margin:0 0 7px}.auth-card>p{color:var(--muted);margin:0 0 20px}.token-row{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:end}.field{display:grid;gap:6px}.field label{font-size:12px;font-weight:750;color:#46534d}.field input,.field select{height:44px;border:1px solid var(--line-strong);border-radius:8px;padding:0 12px;background:#fff;color:var(--ink);outline:none}.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(23,106,75,.11)}.primary,.secondary,.danger{min-height:42px;border-radius:8px;padding:0 15px;font-weight:750}.primary{border:1px solid var(--accent);background:var(--accent);color:#fff}.primary:hover{background:var(--accent-dark)}.secondary{border:1px solid var(--line-strong);background:#fff;color:var(--ink)}.secondary:hover{border-color:#91a198;background:#f8faf9}.danger{border:1px solid #d9aaa5;background:#fff;color:var(--danger)}.danger:hover,.danger.armed{border-color:var(--danger);background:var(--danger);color:#fff}.primary:disabled,.secondary:disabled,.danger:disabled{opacity:.5;cursor:default}.error,.notice{padding:10px 12px;border-radius:8px;margin-top:13px}.error{color:var(--danger);background:var(--danger-soft);border:1px solid #ecc8c2}.notice{color:#245f49;background:var(--accent-soft);border:1px solid #cfe3d8}.empty-panel{padding:60px 28px;text-align:center;color:var(--muted)}.empty-panel strong{display:block;color:var(--ink);font-size:20px;margin-bottom:5px}
 .panel-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}.panel-header h3{font-size:28px;letter-spacing:-.035em;margin:4px 0}.panel-meta{color:var(--muted);margin:0}.panel-actions{display:flex;gap:9px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:15px}.metric{padding:17px 19px;border-left:1px solid var(--line)}.metric:first-child{border-left:0}.metric strong{display:block;font-size:24px;line-height:1.2;letter-spacing:-.03em}.metric span{display:block;color:var(--muted);font-size:12px;margin-top:4px}.panel-grid{display:grid;grid-template-columns:minmax(0,1.18fr) minmax(320px,.82fr);gap:14px;margin-bottom:15px}.card{padding:20px;min-width:0}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}.card h4{font-size:17px;margin:0 0 4px}.card-copy{color:var(--muted);font-size:12px;margin:0}.invite-code{font:850 clamp(26px,3.4vw,42px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.075em;margin:19px 0 10px}.invite-meta{color:var(--muted);font-size:12px}.invite-link{display:block;margin:12px 0;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--subtle);color:#53605a;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.invite-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:13px 0}.invite-settings .field input{height:38px}.inline-actions{display:flex;gap:8px;flex-wrap:wrap}.department-list{display:grid;gap:8px;max-height:280px;overflow:auto}.department{border:1px solid var(--line);border-radius:9px;padding:11px 12px}.department-head{display:flex;justify-content:space-between;gap:12px;font-weight:750}.department-count{font-size:11px;color:var(--muted)}.department-members{color:var(--muted);font-size:12px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.table-card{padding:0;overflow:hidden}.table-heading{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.table-heading h4{margin:0}.table-wrap{overflow:auto}.accounts{width:100%;border-collapse:collapse;min-width:790px}.accounts th{text-align:left;font-size:11px;letter-spacing:.045em;color:#53605a;background:var(--subtle);padding:11px 14px;border-bottom:1px solid var(--line)}.accounts td{padding:13px 14px;border-top:1px solid #e9eeeb;vertical-align:middle}.accounts tbody tr:first-child td{border-top:0}.accounts tbody tr:hover td{background:#fafcfb}.name{font-weight:750}.sub{font-size:12px;color:var(--muted);margin-top:2px}.badge{display:inline-block;border-radius:999px;padding:4px 8px;background:#edf1ef;color:#46534d;font-size:11px;white-space:nowrap}.badge.ok{background:var(--accent-soft);color:#245f49}.badge.admin{background:#e7edf7;color:#365679}.table-empty{text-align:center!important;color:var(--muted);padding:35px!important}
-.modal-backdrop{position:fixed;inset:0;background:rgba(11,25,19,.55);display:grid;place-items:center;padding:20px;z-index:20}.modal{width:min(760px,100%);max-height:min(88vh,760px);overflow:auto;background:#fff;border-radius:13px;box-shadow:var(--shadow);padding:24px}.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.modal h3{font-size:22px;margin:0}.close{border:1px solid var(--line);background:#fff;border-radius:7px;width:36px;height:36px;font-size:20px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.form-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:19px}
+.modal-backdrop{position:fixed;inset:0;background:rgba(11,25,19,.55);display:grid;place-items:center;padding:20px;z-index:20}.modal{width:min(760px,100%);max-height:min(88vh,760px);overflow:auto;background:#fff;border-radius:13px;box-shadow:var(--shadow);padding:24px}.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.modal h3{font-size:22px;margin:0}.close{border:1px solid var(--line);background:#fff;border-radius:7px;width:36px;height:36px;font-size:20px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.form-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:19px}.row-actions{display:flex;align-items:center;gap:7px;white-space:nowrap}.row-actions .secondary,.row-actions .danger{min-height:34px;padding:0 10px;font-size:12px}.permission-member{border:1px solid var(--line);border-radius:8px;background:var(--subtle);padding:11px 12px;margin-bottom:16px}.permission-member strong{display:block}.permission-member span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 @media(max-width:980px){.platform-shell{grid-template-columns:260px minmax(0,1fr)}.panel-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:repeat(2,1fr)}.metric:nth-child(3){border-left:0;border-top:1px solid var(--line)}.metric:nth-child(4){border-top:1px solid var(--line)}}@media(max-width:720px){.platform-shell{display:block}.rail{position:relative;height:auto;min-height:0;overflow:visible}.organization-nav{max-height:260px}.workspace{padding:24px 16px 44px}.workspace-top,.panel-header{align-items:flex-start;flex-direction:column}.token-row,.form-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.metric{border-left:0;border-top:1px solid var(--line)}.metric:first-child{border-top:0}.panel-actions{width:100%}.panel-actions button{flex:1}}
 </style></head><body>
 <main class="platform-shell">
@@ -3647,6 +3851,38 @@ function platformAdminHTML(): string {
         <div class="metric"><strong id="metricDepartments">—</strong><span>已分配部门</span></div>
         <div class="metric"><strong id="metricTokens">—</strong><span>近 30 天 Token</span></div>
       </div>
+      <section class="card" id="platformParkCard" aria-label="当前企业产业园设置">
+        <div class="card-head"><div><h4>产业园设置</h4><p class="card-copy">这里针对左侧选中的企业生效。平台可认证产业园端；普通企业 CEO 只能用邀请码加入已有产业园。</p></div><span id="platformParkStatus" class="badge">未加入</span></div>
+        <div id="platformParkEmpty" class="panel-grid">
+          <form id="platformParkRegisterForm" class="department" style="margin:0">
+            <h4>认证为产业园端</h4><p class="card-copy">该企业认证后，才拥有发放产业园邀请码和发布园区公告的权限。</p>
+            <div class="field"><label for="platformParkName">产业园名称</label><input id="platformParkName" maxlength="80" placeholder="例如：科技大厦" required></div>
+            <div class="field"><label for="platformParkBrandName">客户端服务名称</label><input id="platformParkBrandName" maxlength="80" placeholder="例如：科技大厦园区服务"></div>
+            <div class="inline-actions"><button class="primary" type="submit">认证为产业园端</button></div>
+          </form>
+          <form id="platformParkJoinForm" class="department" style="margin:0">
+            <h4>加入已有产业园</h4><p class="card-copy">使用产业园管理方生成的邀请码，让整个企业成为入驻企业。</p>
+            <div class="field"><label for="platformParkJoinCode">产业园邀请码</label><input id="platformParkJoinCode" autocomplete="off" placeholder="Aa3B-k9Pq-Z7xY" required></div>
+            <div class="field"><label for="platformParkJoinAddress">企业地址</label><input id="platformParkJoinAddress" maxlength="160" placeholder="例如：科技大厦 A 座" required></div>
+            <div class="field"><label for="platformParkJoinRoomNumber">门牌号</label><input id="platformParkJoinRoomNumber" maxlength="40" placeholder="例如：1203 室" required></div>
+            <div class="inline-actions"><button class="primary" type="submit">整个企业加入</button></div>
+          </form>
+        </div>
+        <div id="platformParkDetails" class="hidden">
+          <div id="platformParkSummary" class="department" style="margin-bottom:10px"></div>
+          <form id="platformParkEditForm" class="department hidden" style="margin-bottom:10px">
+            <div class="department-head"><span>编辑产业园资料</span><span class="department-count">仅平台管理员可修改</span></div>
+            <div class="invite-settings">
+              <div class="field"><label for="platformParkEditName">产业园名称</label><input id="platformParkEditName" maxlength="80" required></div>
+              <div class="field"><label for="platformParkEditBrandName">客户端服务名称</label><input id="platformParkEditBrandName" maxlength="80" required></div>
+              <div class="field"><label for="platformParkEditSlug">稳定标识（不可修改）</label><input id="platformParkEditSlug" readonly aria-readonly="true"></div>
+            </div>
+            <div class="inline-actions"><button id="platformParkSave" class="primary" type="submit">保存园区资料</button></div>
+          </form>
+          <div id="platformParkTenants" class="department-list"></div>
+        </div>
+        <div id="platformParkNotice" class="notice hidden" role="status"></div>
+      </section>
       <div class="panel-grid">
         <section class="card">
           <div class="card-head"><div><h4>企业成员引入</h4><p class="card-copy">岗位邀请码精确有效 7 天；生成新码会撤销旧码。</p></div><span id="inviteStatus" class="badge">未生成</span></div>
@@ -3691,6 +3927,21 @@ function platformAdminHTML(): string {
     </form>
   </section>
 </div>
+<div id="accountPermissionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="accountPermissionTitle">
+  <section class="modal">
+    <div class="modal-head"><div><div class="eyebrow">MEMBER ACCESS</div><h3 id="accountPermissionTitle">成员权限</h3></div><button id="closeAccountPermission" class="close" type="button" aria-label="关闭">×</button></div>
+    <div id="accountPermissionMember" class="permission-member"></div>
+    <form id="accountPermissionForm">
+      <div class="form-grid">
+        <div class="field"><label for="accountPermissionRole">角色名称</label><input id="accountPermissionRole" maxlength="80" placeholder="例如：销售经理"></div>
+        <div class="field"><label for="accountPermissionLevel">企业管理权限</label><select id="accountPermissionLevel"><option value="member">普通成员</option><option value="admin">企业管理员</option></select></div>
+        <div class="field"><label for="accountPermissionStatus">账号状态</label><select id="accountPermissionStatus"><option value="active">正常使用</option><option value="disabled">停用账号</option></select></div>
+      </div>
+      <div class="form-actions"><span id="accountPermissionStatusText" class="organization-count" role="status" aria-live="polite"></span><button id="cancelAccountPermission" class="secondary" type="button">取消</button><button id="saveAccountPermission" class="primary" type="submit">保存权限</button></div>
+      <div id="accountPermissionError" class="error hidden" role="alert"></div>
+    </form>
+  </section>
+</div>
 <script>
 const KEY='otto.enterprise.platform.session';
 const SELECTED_KEY=KEY+'.organization';
@@ -3701,26 +3952,94 @@ let selectedOverview=null;
 let platformRequestEpoch=0;
 let inviteArmed=false;
 let inviteArmTimer=0;
+let editingPermissionAccountId='';
+let editingPermissionOrganizationId='';
+let permissionReturnFocus=null;
 const $=id=>document.getElementById(id);
 function show(id,message){const element=$(id);element.textContent=message||'';element.classList.toggle('hidden',!message)}
 function formatNumber(value){return Number(value||0).toLocaleString('zh-CN')}
 function isAuthorizationError(error){return error&&((error.status===401)||(error.status===403))}
 async function api(path,options){const response=await fetch(path,Object.assign({},options||{},{headers:Object.assign({'content-type':'application/json'},options&&options.headers||{},token?{authorization:'Bearer '+token}:{})}));const data=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(data.error||('请求失败 '+response.status));error.status=response.status;throw error}return data}
 function setAuthenticated(authenticated){$('tokenGate').classList.toggle('hidden',authenticated);$('organizationControls').classList.toggle('hidden',!authenticated);$('authStatus').classList.toggle('hidden',!authenticated);$('clearToken').classList.toggle('hidden',!authenticated);if(authenticated)$('platformToken').value=''}
-function clearPlatformSession(message){platformRequestEpoch+=1;token='';organizations=[];selectedOrganizationId='';selectedOverview=null;sessionStorage.removeItem(KEY);sessionStorage.removeItem(SELECTED_KEY);setAuthenticated(false);$('organizationNav').replaceChildren();$('organizationCount').textContent='0 个';$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.add('hidden');if(message)show('tokenError',message)}
+function clearPlatformSession(message){platformRequestEpoch+=1;closeAccountPermission(true);token='';organizations=[];selectedOrganizationId='';selectedOverview=null;sessionStorage.removeItem(KEY);sessionStorage.removeItem(SELECTED_KEY);setAuthenticated(false);$('organizationNav').replaceChildren();$('organizationCount').textContent='0 个';$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.add('hidden');if(message)show('tokenError',message)}
 function filteredOrganizations(){const query=$('organizationSearch').value.trim().toLocaleLowerCase('zh-CN');if(!query)return organizations;return organizations.filter(organization=>String(organization.name||'').toLocaleLowerCase('zh-CN').includes(query)||String(organization.slug||'').toLocaleLowerCase('en-US').includes(query))}
 function renderOrganizations(){const list=$('organizationNav');list.replaceChildren();const visible=filteredOrganizations();$('organizationCount').textContent=organizations.length+' 个';if(!visible.length){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent=organizations.length?'没有匹配的企业':'还没有企业，请先创建第一家企业';list.append(empty);return}visible.forEach(organization=>{const button=document.createElement('button');button.type='button';button.className='organization-button';button.dataset.organizationId=organization.id;button.setAttribute('aria-selected',String(organization.id===selectedOrganizationId));const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=String(organization.name||'未命名企业');const meta=document.createElement('small');meta.textContent=String(organization.slug||'');copy.append(name,meta);const state=document.createElement('span');state.className='organization-state';state.setAttribute('aria-label',organization.status==='active'?'正常运行':'已停用');button.append(copy,state);button.addEventListener('click',()=>selectOrganization(organization.id,true));list.append(button)})}
-function setPanelLoading(organization){selectedOverview=null;resetInviteArm();renderInvite(null);$('issueInvite').disabled=true;$('organizationPanel').classList.remove('hidden');$('emptyPanel').classList.add('hidden');$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · 正在加载企业数据…';['metricAccounts','metricAdmins','metricDepartments','metricTokens'].forEach(id=>$(id).textContent='—');$('accountRows').replaceChildren();$('departmentList').replaceChildren();show('panelError','')}
+function setPanelLoading(organization){closeAccountPermission(true);selectedOverview=null;resetInviteArm();renderInvite(null);renderPlatformPark(null);$('issueInvite').disabled=true;$('organizationPanel').classList.remove('hidden');$('emptyPanel').classList.add('hidden');$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · 正在加载企业数据…';['metricAccounts','metricAdmins','metricDepartments','metricTokens'].forEach(id=>$(id).textContent='—');$('accountRows').replaceChildren();$('departmentList').replaceChildren();show('panelError','')}
 function renderInvite(invite){const available=Boolean(invite&&invite.status==='active');$('inviteCode').textContent=available?String(invite.code||'—'):'—';$('inviteStatus').textContent=available?'有效':'未生成';$('inviteStatus').className=available?'badge ok':'badge';$('inviteMeta').textContent=available?('有效至 '+new Date(invite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 已使用 '+Number(invite.usedCount||0)+(invite.maxUses==null?' 次':' / '+Number(invite.maxUses)+' 次')):'当前企业没有有效邀请码';$('inviteLink').textContent=available?String(invite.link||''):'尚无可复制链接';$('copyInviteCode').disabled=!available;$('copyInviteLink').disabled=!available;$('platformInviteDepartment').value=invite&&invite.defaultDepartment||'';$('platformInvitePosition').value=invite&&invite.positionTitle||'';$('platformInviteRole').value=invite&&invite.defaultRole||'';$('platformInviteMaxUses').value=invite&&invite.maxUses||''}
 function renderDepartments(accounts){const list=$('departmentList');list.replaceChildren();const groups=new Map();accounts.forEach(account=>{const department=String(account.department||'未分配部门');if(!groups.has(department))groups.set(department,[]);groups.get(department).push(account)});if(!groups.size){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无成员';list.append(empty);return}Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0],'zh-CN')).forEach(([department,members])=>{const card=document.createElement('article');card.className='department';const head=document.createElement('div');head.className='department-head';const name=document.createElement('span');name.textContent=department;const count=document.createElement('span');count.className='department-count';count.textContent=members.length+' 人';head.append(name,count);const names=document.createElement('div');names.className='department-members';names.textContent=members.map(member=>String(member.name||member.username||'未命名成员')).join('、');card.append(head,names);list.append(card)})}
 function appendCell(row,text,className){const cell=document.createElement('td');if(className)cell.className=className;cell.textContent=String(text==null?'':text);row.append(cell);return cell}
-function renderAccounts(accounts){const rows=$('accountRows');rows.replaceChildren();$('accountCount').textContent=accounts.length+' 个';if(!accounts.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.className='table-empty';cell.textContent='当前企业还没有成员账号';row.append(cell);rows.append(row);return}accounts.forEach(account=>{const row=document.createElement('tr');const member=document.createElement('td');const name=document.createElement('div');name.className='name';name.textContent=String(account.name||'未命名成员');const username=document.createElement('div');username.className='sub';username.textContent='@'+String(account.username||'');member.append(name,username);row.append(member);appendCell(row,(account.department||'未分配部门')+' / '+(account.positionTitle||account.role||'未设置职位'));const permission=appendCell(row,'');const permissionBadge=document.createElement('span');permissionBadge.className=account.isAdmin?'badge admin':'badge';permissionBadge.textContent=account.isAdmin?'企业管理员':'普通成员';permission.append(permissionBadge);const status=appendCell(row,'');const statusBadge=document.createElement('span');statusBadge.className=account.status==='active'?'badge ok':'badge';statusBadge.textContent=account.status==='active'?'正常':'已停用';status.append(statusBadge);appendCell(row,formatNumber(account.usage&&account.usage.totalTokens));const action=appendCell(row,'');const remove=document.createElement('button');remove.type='button';remove.className='danger';remove.textContent='删除';remove.setAttribute('aria-label','删除账号 '+String(account.name||account.username||''));remove.addEventListener('click',()=>deleteAccount(remove,account));action.append(remove);rows.append(row)})}
-function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts)}
+function openAccountPermission(account,trigger){editingPermissionAccountId=String(account.id||'');editingPermissionOrganizationId=selectedOrganizationId;permissionReturnFocus=trigger||null;const host=$('accountPermissionMember');host.replaceChildren();const name=document.createElement('strong');name.textContent=String(account.name||'未命名成员');const meta=document.createElement('span');meta.textContent='@'+String(account.username||'')+' · '+String(account.department||'未分配部门')+' / '+String(account.positionTitle||'未设置职位');host.append(name,meta);$('accountPermissionRole').value=String(account.role||'');$('accountPermissionLevel').value=account.isAdmin?'admin':'member';$('accountPermissionStatus').value=account.status==='disabled'?'disabled':'active';$('accountPermissionStatusText').textContent='';show('accountPermissionError','');$('accountPermissionModal').classList.remove('hidden');$('accountPermissionLevel').focus()}
+function closeAccountPermission(force){const modal=$('accountPermissionModal');if(modal.classList.contains('hidden'))return;if($('saveAccountPermission').disabled&&!force)return;modal.classList.add('hidden');editingPermissionAccountId='';editingPermissionOrganizationId='';$('accountPermissionForm').reset();$('accountPermissionStatusText').textContent='';show('accountPermissionError','');const target=permissionReturnFocus;permissionReturnFocus=null;if(!force&&target&&target.isConnected)target.focus()}
+async function saveAccountPermission(event){event.preventDefault();const accountId=editingPermissionAccountId;const organizationId=editingPermissionOrganizationId;if(!accountId||!organizationId||organizationId!==selectedOrganizationId)return;const button=$('saveAccountPermission');const body={role:$('accountPermissionRole').value.trim()||null,isAdmin:$('accountPermissionLevel').value==='admin',status:$('accountPermissionStatus').value};button.disabled=true;button.textContent='正在保存…';$('accountPermissionStatusText').textContent='正在更新成员权限';show('accountPermissionError','');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(accountId),{method:'PATCH',body:JSON.stringify(body)});closeAccountPermission(true);if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','成员权限已更新，原登录会话已刷新')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('accountPermissionError',error.message)}finally{if(button.isConnected){button.disabled=false;button.textContent='保存权限';$('accountPermissionStatusText').textContent=''}}}
+function renderAccounts(accounts){const rows=$('accountRows');rows.replaceChildren();$('accountCount').textContent=accounts.length+' 个';if(!accounts.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.className='table-empty';cell.textContent='当前企业还没有成员账号';row.append(cell);rows.append(row);return}accounts.forEach(account=>{const row=document.createElement('tr');const member=document.createElement('td');const name=document.createElement('div');name.className='name';name.textContent=String(account.name||'未命名成员');const username=document.createElement('div');username.className='sub';username.textContent='@'+String(account.username||'');member.append(name,username);row.append(member);appendCell(row,(account.department||'未分配部门')+' / '+(account.positionTitle||account.role||'未设置职位'));const permission=appendCell(row,'');const permissionBadge=document.createElement('span');permissionBadge.className=account.isAdmin?'badge admin':'badge';permissionBadge.textContent=account.isAdmin?'企业管理员':'普通成员';permission.append(permissionBadge);const status=appendCell(row,'');const statusBadge=document.createElement('span');statusBadge.className=account.status==='active'?'badge ok':'badge';statusBadge.textContent=account.status==='active'?'正常':'已停用';status.append(statusBadge);appendCell(row,formatNumber(account.usage&&account.usage.totalTokens));const action=appendCell(row,'');const actions=document.createElement('div');actions.className='row-actions';const edit=document.createElement('button');edit.type='button';edit.className='secondary';edit.textContent='权限';edit.setAttribute('aria-label','编辑权限 '+String(account.name||account.username||''));edit.addEventListener('click',()=>openAccountPermission(account,edit));const remove=document.createElement('button');remove.type='button';remove.className='danger';remove.textContent='删除';remove.setAttribute('aria-label','删除账号 '+String(account.name||account.username||''));remove.addEventListener('click',()=>deleteAccount(remove,account));actions.append(edit,remove);action.append(actions);rows.append(row)})}
+function renderPlatformPark(data){
+  const park=data&&data.park||null;
+  const editForm=$('platformParkEditForm');
+  $('platformParkNotice').classList.add('hidden');
+  $('platformParkEmpty').classList.toggle('hidden',!!park);
+  $('platformParkDetails').classList.toggle('hidden',!park);
+  editForm.classList.add('hidden');
+  $('platformParkEditName').value='';
+  $('platformParkEditBrandName').value='';
+  $('platformParkEditSlug').value='';
+  if(!park){
+    $('platformParkStatus').textContent='未加入';
+    $('platformParkStatus').className='badge';
+    $('platformParkSummary').replaceChildren();
+    $('platformParkTenants').replaceChildren();
+    return;
+  }
+  const isOwner=park.isAdminOrganization||park.adminOrganizationId===(data.organization&&data.organization.id);
+  $('platformParkStatus').textContent=isOwner?'产业园管理方':'已入驻企业';
+  $('platformParkStatus').className=isOwner?'badge ok':'badge';
+  const summary=$('platformParkSummary');
+  summary.replaceChildren();
+  const summaryHead=document.createElement('div');
+  summaryHead.className='department-head';
+  const summaryName=document.createElement('span');
+  summaryName.textContent=String(park.brandName||park.name||'未命名产业园');
+  const summaryScope=document.createElement('span');
+  summaryScope.className='department-count';
+  summaryScope.textContent=isOwner?'可邀请企业入驻':'由园区方统一配置';
+  summaryHead.append(summaryName,summaryScope);
+  const summaryMeta=document.createElement('div');
+  summaryMeta.className='department-members';
+  summaryMeta.textContent=String(park.name||'未命名产业园')+' · '+String(park.slug||'');
+  summary.append(summaryHead,summaryMeta);
+  editForm.classList.toggle('hidden',!isOwner);
+  if(isOwner){
+    $('platformParkEditName').value=String(park.name||'');
+    $('platformParkEditBrandName').value=String(park.brandName||park.name||'');
+    $('platformParkEditSlug').value=String(park.slug||'');
+  }
+  const tenants=Array.isArray(park.tenants)?park.tenants:[];
+  const tenantHost=$('platformParkTenants');
+  tenantHost.replaceChildren();
+  if(!isOwner){
+    const note=document.createElement('div');
+    note.className='organization-empty';
+    note.textContent='该企业已加入产业园，不能修改园区资料、发布园区公告或管理入驻企业。';
+    tenantHost.append(note);
+    return;
+  }
+  if(!tenants.length){
+    const empty=document.createElement('div');
+    empty.className='organization-empty';
+    empty.textContent='暂无企业加入该产业园。';
+    tenantHost.append(empty);
+    return;
+  }
+  tenants.forEach(tenant=>{const item=document.createElement('article');item.className='department';const name=document.createElement('div');name.className='department-head';const strong=document.createElement('span');strong.textContent=String(tenant.name||'未命名企业');const status=document.createElement('span');status.className='department-count';status.textContent=String(tenant.status||'active');name.append(strong,status);const meta=document.createElement('div');meta.className='department-members';meta.textContent=String(tenant.slug||tenant.id||'');item.append(name,meta);tenantHost.append(item)});
+}
+function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts);renderPlatformPark(data)}
 async function selectOrganization(organizationId,focusTitle){const organization=organizations.find(item=>item.id===organizationId);if(!organization)return;selectedOrganizationId=organizationId;sessionStorage.setItem(SELECTED_KEY,organizationId);renderOrganizations();setPanelLoading(organization);const epoch=++platformRequestEpoch;try{const data=await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/overview');if(epoch!==platformRequestEpoch||selectedOrganizationId!==organizationId)return;renderOverview(data);if(focusTitle)$('panelTitle').focus()}catch(error){if(epoch!==platformRequestEpoch)return;if(isAuthorizationError(error)){clearPlatformSession('平台令牌已失效，请重新验证');$('platformToken').focus()}else show('panelError',error.message||'企业面板加载失败')}}
 async function loadOrganizations(preferredId){show('tokenError','');const data=await api('/enterprise/organizations');organizations=Array.isArray(data.organizations)?data.organizations:[];setAuthenticated(true);const preferred=organizations.find(organization=>organization.id===preferredId);const current=organizations.find(organization=>organization.id===selectedOrganizationId);const next=preferred||current||organizations[0]||null;selectedOrganizationId=next?next.id:'';renderOrganizations();if(next)await selectOrganization(next.id,false);else{$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.remove('hidden')}}
 async function copyText(value,label){if(!value)return;try{await navigator.clipboard.writeText(value);show('globalNotice',label+'已复制');setTimeout(()=>show('globalNotice',''),2200)}catch{show('panelError','浏览器未允许复制，请手动选择文本')}}
 function resetInviteArm(){inviteArmed=false;$('issueInvite').textContent='生成新邀请码';$('issueInvite').classList.remove('armed');if(inviteArmTimer)clearTimeout(inviteArmTimer);inviteArmTimer=0}
 async function issueInvite(){if(!selectedOrganizationId||!selectedOverview||selectedOverview.organization.id!==selectedOrganizationId)return;if(!inviteArmed){inviteArmed=true;$('issueInvite').textContent='再次点击确认换新';$('issueInvite').classList.add('armed');inviteArmTimer=setTimeout(resetInviteArm,5000);return}const organizationId=selectedOrganizationId;const rawMaxUses=$('platformInviteMaxUses').value.trim();const body={defaultDepartment:$('platformInviteDepartment').value.trim()||null,positionTitle:$('platformInvitePosition').value.trim()||null,defaultRole:$('platformInviteRole').value.trim()||null,maxUses:rawMaxUses?Number(rawMaxUses):null};resetInviteArm();$('issueInvite').disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/invite',{method:'POST',body:JSON.stringify(body)});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','新的 7 天岗位邀请码已生成')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(selectedOrganizationId===organizationId&&selectedOverview&&selectedOverview.organization.id===organizationId)$('issueInvite').disabled=false}}
+async function registerPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const name=$('platformParkName').value.trim();const brandName=$('platformParkBrandName').value.trim();show('panelError','');show('platformParkNotice','正在认证产业园端…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已认证为产业园管理方')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
+async function updatePlatformPark(event){event.preventDefault();if(!selectedOrganizationId||!selectedOverview||!selectedOverview.park)return;const organizationId=selectedOrganizationId;const park=selectedOverview.park;const isOwner=park.isAdminOrganization||park.adminOrganizationId===organizationId;if(!isOwner){show('panelError','只有产业园管理方可以修改园区资料');return}const button=$('platformParkSave');const name=$('platformParkEditName').value.trim();const brandName=$('platformParkEditBrandName').value.trim();show('panelError','');show('platformParkNotice','正在保存产业园资料…');button.disabled=true;button.textContent='正在保存…';try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'PATCH',body:JSON.stringify({name,brandName})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','产业园资料已更新')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected){button.disabled=false;button.textContent='保存园区资料'}}}
+async function joinPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const inviteCode=$('platformParkJoinCode').value.trim(),address=$('platformParkJoinAddress').value.trim(),roomNumber=$('platformParkJoinRoomNumber').value.trim();show('panelError','');show('platformParkNotice','正在加入产业园…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park/join',{method:'POST',body:JSON.stringify({inviteCode,address,roomNumber})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已加入产业园')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
 async function deleteAccount(button,account){if(!selectedOrganizationId)return;if(button.dataset.armed!=='true'){button.dataset.armed='true';button.classList.add('armed');button.textContent='再次点击确认';setTimeout(()=>{if(button.isConnected){button.dataset.armed='false';button.classList.remove('armed');button.textContent='删除'}},5000);return}const organizationId=selectedOrganizationId;button.disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(account.id),{method:'DELETE'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','账号已删除，原登录会话已撤销')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected)button.disabled=false}}
 function openCreateOrganization(){show('createError','');$('createOrganizationModal').classList.remove('hidden');$('organizationName').focus()}
 function closeCreateOrganization(force){if($('createOrganization').disabled&&!force)return;$('createOrganizationModal').classList.add('hidden');$('organizationForm').reset();show('createError','');$('createStatus').textContent=''}
@@ -3730,13 +4049,20 @@ $('refreshPanel').addEventListener('click',()=>{if(selectedOrganizationId)select
 $('copyInviteCode').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.code,'邀请码'));
 $('copyInviteLink').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.link,'企业引入链接'));
 $('issueInvite').addEventListener('click',issueInvite);
+$('platformParkRegisterForm').addEventListener('submit',registerPlatformPark);
+$('platformParkEditForm').addEventListener('submit',updatePlatformPark);
+$('platformParkJoinForm').addEventListener('submit',joinPlatformPark);
+$('accountPermissionForm').addEventListener('submit',saveAccountPermission);
+$('closeAccountPermission').addEventListener('click',()=>closeAccountPermission(false));
+$('cancelAccountPermission').addEventListener('click',()=>closeAccountPermission(false));
+$('accountPermissionModal').addEventListener('click',event=>{if(event.target===$('accountPermissionModal'))closeAccountPermission(false)});
 $('openCreateOrganization').addEventListener('click',openCreateOrganization);
 $('closeCreateOrganization').addEventListener('click',closeCreateOrganization);
 $('cancelCreateOrganization').addEventListener('click',closeCreateOrganization);
 $('createOrganizationModal').addEventListener('click',event=>{if(event.target===$('createOrganizationModal'))closeCreateOrganization()});
 $('organizationForm').addEventListener('submit',async event=>{event.preventDefault();show('createError','');const button=$('createOrganization');button.disabled=true;$('createStatus').textContent='正在创建企业…';const body={name:$('organizationName').value.trim(),admin:{username:$('adminUsername').value.trim(),name:$('adminName').value.trim(),phone:$('adminPhone').value.trim()||null,password:$('adminPassword').value}};const slug=$('organizationSlug').value.trim();if(slug)body.slug=slug;try{const data=await api('/enterprise/organizations',{method:'POST',body:JSON.stringify(body)});closeCreateOrganization(true);show('globalNotice','企业「'+data.organization.name+'」已创建，首位管理员和 7 天邀请码已生效');await loadOrganizations(data.organization.id)}catch(error){if(isAuthorizationError(error)){closeCreateOrganization(true);clearPlatformSession('平台令牌已失效，请重新验证')}else show('createError',error.message)}finally{button.disabled=false;$('createStatus').textContent=''}});
 $('clearToken').addEventListener('click',()=>{clearPlatformSession('');$('platformToken').focus()});
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('createOrganizationModal').classList.contains('hidden'))closeCreateOrganization()});
+document.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if(!$('accountPermissionModal').classList.contains('hidden'))closeAccountPermission(false);else if(!$('createOrganizationModal').classList.contains('hidden'))closeCreateOrganization()});
 if(token){loadOrganizations(selectedOrganizationId).then(()=>sessionStorage.setItem(KEY,token)).catch(()=>clearPlatformSession('平台令牌已失效，请重新验证'))}else setAuthenticated(false);
 </script></body></html>`;
 }

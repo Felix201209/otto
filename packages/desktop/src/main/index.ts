@@ -113,8 +113,10 @@ function getMimeType(filePath: string): string {
 }
 
 import { ServerManager } from './server-manager.js';
+import { resolveKernelUpdateRoot } from './incremental-kernel-store.js';
 import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
+import { IncrementalUpdateService } from './incremental-update-service.js';
 import {
   EnterpriseNotificationIdentityBoundary,
   NotificationService,
@@ -137,8 +139,10 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseKnowledgeRecordInput,
+  type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
+  type EnterpriseUnreadMessageNotification,
 } from './enterprise-client.js';
 import {
   authenticateAndSyncEnterpriseAccount,
@@ -218,6 +222,7 @@ const DEFAULT_ENTERPRISE_SERVER_URL = defaultEnterpriseServerUrl(
 /** server 生命周期管理器（发现/拉起/探活/退出清理）。 */
 const serverManager = new ServerManager({
   enterpriseServerUrl: DEFAULT_ENTERPRISE_SERVER_URL,
+  kernelUpdateRoot: resolveKernelUpdateRoot(app.getPath('userData')),
   onHealthChange: (status) => {
     tracer.updateStatus(status);
   },
@@ -235,8 +240,19 @@ const enterpriseNotificationIdentityBoundary = new EnterpriseNotificationIdentit
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
+let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
 let tray: Tray | undefined;
+let enterpriseTrayContacts: EnterpriseTrayContact[] = [];
+
+interface EnterpriseTrayContact {
+  accountId: string;
+  name: string;
+  preview: string;
+  count: number;
+  createdAt: string;
+}
 /** 用户主动退出标记；关闭窗口时不退出，只有菜单/托盘退出才真正结束进程。 */
 let isQuitting = false;
 /** 视频编辑器窗口（OpenReel）。 */
@@ -252,6 +268,8 @@ const IPC = {
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
+  extractEditableDocument: 'otto:extract-editable-document',
+  exportEditedDocument: 'otto:export-edited-document',
   readClipboardText: 'otto:read-clipboard-text',
   saveTextFile: 'otto:save-text-file',
   openVideoEditor: 'otto:open-video-editor',
@@ -278,6 +296,8 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  incrementalUpdateCheck: 'otto:incremental-update-check',
+  incrementalUpdateApply: 'otto:incremental-update-apply',
   voiceGetConfig: 'otto:voice-get-config',
   voiceSaveConfig: 'otto:voice-save-config',
   voiceTranscribe: 'otto:voice-transcribe',
@@ -321,6 +341,7 @@ const IPC = {
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
@@ -361,6 +382,7 @@ function synchronizeAuthenticatedEnterpriseAccount(
   );
 }
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
+  resetEnterpriseModuleUpdateState();
   // 任一受保护接口返回 401 都会走这里：立即持久化清 token，并通知 renderer
   // 退出过期管理员界面。错误登录时 token 本来为空，不会触发此回调。
   if (enterpriseSessionLoaded) {
@@ -380,6 +402,10 @@ let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
 let enterpriseIdentityRefreshTimer: ReturnType<typeof setInterval> | undefined;
 const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 2 * 60_000;
+let enterpriseModuleUpdateTimer: ReturnType<typeof setInterval> | undefined;
+let enterpriseModuleUpdateFingerprint = '';
+let enterpriseModuleUpdatePolling = false;
+const ENTERPRISE_MODULE_UPDATE_POLL_INTERVAL_MS = 2 * 60_000;
 
 function acceptEnterpriseRegistrationUrl(input: string): boolean {
   if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;
@@ -481,6 +507,7 @@ function startEnterpriseIdentityRefresh(): void {
 }
 
 function notifyEnterpriseAccountUpdated(account: EnterpriseAccount): void {
+  void checkEnterpriseModuleUpdates('identity');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC.enterpriseAccountUpdated, account);
   }
@@ -500,6 +527,81 @@ const updateService = new UpdateService(
   () => mainWindow?.webContents,
   IPC.updateProgress,
 );
+const incrementalUpdateService = new IncrementalUpdateService(
+  () => mainWindow?.webContents,
+);
+
+function moduleUpdateFingerprint(updates: EnterpriseModuleUpdateDescriptor[]): string {
+  return updates
+    .filter((update) => update.rollout !== 'off' && Boolean(update.manifestUrl))
+    .map((update) => [
+      update.module,
+      update.version,
+      update.rollout,
+      update.manifestUrl ?? '',
+      update.sha256 ?? '',
+      update.updatedAt,
+    ].join('\u0000'))
+    .sort()
+    .join('\u0001');
+}
+
+function chooseEnterpriseModuleUpdate(
+  updates: EnterpriseModuleUpdateDescriptor[],
+): EnterpriseModuleUpdateDescriptor | null {
+  const active = updates.filter((update) => update.rollout !== 'off' && Boolean(update.manifestUrl));
+  return active.find((update) => update.rollout === 'required')
+    ?? active.find((update) => update.rollout === 'stable')
+    ?? active.find((update) => update.rollout === 'canary')
+    ?? null;
+}
+
+async function checkEnterpriseModuleUpdates(reason: 'startup' | 'interval' | 'identity'): Promise<void> {
+  if (enterpriseModuleUpdatePolling) return;
+  loadEnterpriseSession();
+  if (!enterpriseClient.snapshot().token) return;
+  enterpriseModuleUpdatePolling = true;
+  try {
+    const manifest = await enterpriseClient.getModuleUpdates();
+    const fingerprint = moduleUpdateFingerprint(manifest.modules);
+    if (!fingerprint || fingerprint === enterpriseModuleUpdateFingerprint) return;
+    enterpriseModuleUpdateFingerprint = fingerprint;
+    const target = chooseEnterpriseModuleUpdate(manifest.modules);
+    if (!target?.manifestUrl) return;
+    const result = await incrementalUpdateService.checkForUpdates(target.manifestUrl);
+    console.info('[otto-desktop] enterprise module update check', {
+      reason,
+      module: target.module,
+      version: target.version,
+      rollout: target.rollout,
+      status: result.status,
+    });
+  } catch (error) {
+    console.warn('[otto-desktop] 企业模块化更新检查失败:', error);
+  } finally {
+    enterpriseModuleUpdatePolling = false;
+  }
+}
+
+function startEnterpriseModuleUpdatePolling(): void {
+  if (enterpriseModuleUpdateTimer) return;
+  enterpriseModuleUpdateTimer = setInterval(() => {
+    if (isQuitting) return;
+    void checkEnterpriseModuleUpdates('interval');
+  }, ENTERPRISE_MODULE_UPDATE_POLL_INTERVAL_MS);
+  enterpriseModuleUpdateTimer.unref?.();
+  void checkEnterpriseModuleUpdates('startup');
+}
+
+function stopEnterpriseModuleUpdatePolling(): void {
+  if (!enterpriseModuleUpdateTimer) return;
+  clearInterval(enterpriseModuleUpdateTimer);
+  enterpriseModuleUpdateTimer = undefined;
+}
+
+function resetEnterpriseModuleUpdateState(): void {
+  enterpriseModuleUpdateFingerprint = '';
+}
 
 /**
  * 飞书状态/启停在桌面端的通路（诚实原则，全部真实）。
@@ -763,13 +865,65 @@ function loadTrayIcon(): NativeImage {
   return loadIcon().resize({ width: 16, height: 16 });
 }
 
+function summarizeEnterpriseTrayContacts(items: readonly EnterpriseUnreadMessageNotification[]): EnterpriseTrayContact[] {
+  const byAccount = new Map<string, EnterpriseTrayContact>();
+  for (const item of items) {
+    const current = byAccount.get(item.senderAccountId);
+    if (!current) {
+      byAccount.set(item.senderAccountId, {
+        accountId: item.senderAccountId,
+        name: item.senderName || '企业联系人',
+        preview: item.preview || '新消息',
+        count: 1,
+        createdAt: item.createdAt,
+      });
+      continue;
+    }
+    current.count += 1;
+    if (Date.parse(item.createdAt) > Date.parse(current.createdAt)) {
+      current.preview = item.preview || current.preview;
+      current.createdAt = item.createdAt;
+    }
+  }
+  return [...byAccount.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function trayTooltip(unreadCount: number): string {
+  if (!enterpriseTrayContacts.length) {
+    return unreadCount > 0 ? `Otto · ${unreadCount} 条未读消息` : 'Otto';
+  }
+  const contacts = enterpriseTrayContacts.slice(0, 5).map((item) => (
+    `${item.name} ${item.count} 条：${item.preview}`
+  ));
+  const more = enterpriseTrayContacts.length > contacts.length
+    ? `还有 ${enterpriseTrayContacts.length - contacts.length} 位联系人`
+    : null;
+  return ['Otto 企业消息', ...contacts, ...(more ? [more] : [])].join('\n');
+}
+
+async function refreshEnterpriseTrayContacts(): Promise<void> {
+  if (!enterpriseClient.snapshot().token) {
+    enterpriseTrayContacts = [];
+    updateUnreadIndicators(notificationService.getUnreadSessions());
+    return;
+  }
+  try {
+    enterpriseTrayContacts = summarizeEnterpriseTrayContacts(
+      await enterpriseClient.listUnreadDirectMessageNotifications(),
+    );
+  } catch {
+    enterpriseTrayContacts = [];
+  }
+  updateUnreadIndicators(notificationService.getUnreadSessions());
+}
+
 /** 同步系统级未读提示：macOS Dock/菜单栏、Windows 任务栏覆盖图标与托盘说明。 */
 function updateUnreadIndicators(unread: readonly string[]): void {
   const count = unread.length;
   if (tray && !tray.isDestroyed()) {
-    tray.setToolTip(count > 0 ? `Otto · ${count} 条未读消息` : 'Otto');
+    tray.setToolTip(trayTooltip(count));
     if (process.platform === 'darwin') {
-      tray.setTitle(count > 0 ? ' •' : '');
+      tray.setTitle(count > 0 || enterpriseTrayContacts.length > 0 ? ' •' : '');
     }
   }
   if (process.platform === 'darwin' && app.dock) {
@@ -787,7 +941,57 @@ function updateUnreadIndicators(unread: readonly string[]): void {
   }
 }
 
+/** 主窗口没有呈现在用户眼前时，才需要系统级弹窗。 */
+function shouldPresentSystemNotification(): boolean {
+  return !mainWindow
+    || mainWindow.isDestroyed()
+    || !mainWindow.isVisible()
+    || mainWindow.isMinimized()
+    || !mainWindow.isFocused();
+}
+
+/** 后台来消息时提供不依赖通知中心权限的任务栏/Dock 提醒。 */
+function requestBackgroundAttention(): void {
+  if (!shouldPresentSystemNotification()) return;
+  if (process.platform === 'darwin' && app.dock) {
+    if (dockBounceId !== undefined) app.dock.cancelBounce(dockBounceId);
+    dockBounceId = app.dock.bounce('informational');
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.flashFrame(true); } catch { /* platform may not support flashing */ }
+  }
+}
+
+/** 系统通知 API 不可用或发送失败时，Windows 再退化为托盘气泡。 */
+function showFallbackNotification(payload: NotificationPayload): void {
+  if (process.platform !== 'win32' || !tray || tray.isDestroyed()) return;
+  try {
+    tray.displayBalloon({
+      title: payload.title || 'Otto 新消息',
+      content: payload.preview,
+      icon: loadIcon(),
+      iconType: 'custom',
+      noSound: true,
+      respectQuietTime: false,
+    });
+  } catch {
+    // 仍有任务栏闪烁、托盘未读说明和声音作为最终兜底。
+  }
+}
+
+function clearBackgroundAttention(): void {
+  if (dockBounceId !== undefined && process.platform === 'darwin' && app.dock) {
+    app.dock.cancelBounce(dockBounceId);
+    dockBounceId = undefined;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.flashFrame(false); } catch { /* ignore */ }
+  }
+}
+
 function showMainWindow(): void {
+  clearBackgroundAttention();
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
     mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
@@ -811,6 +1015,17 @@ function createTray(): void {
     const status = tracer.getSummary();
     const restarting = (tray as any).__restarting === true;
 
+    const enterpriseContactItems: Electron.MenuItemConstructorOptions[] = enterpriseTrayContacts.length
+      ? [
+        { type: 'separator' },
+        { label: '企业未读联系人', enabled: false },
+        ...enterpriseTrayContacts.slice(0, 6).map((item) => ({
+          label: `${item.name} · ${item.count} 条 · ${item.preview}`,
+          enabled: false,
+        })),
+      ]
+      : [];
+
     const template: Electron.MenuItemConstructorOptions[] = [
       {
         label: '打开 Otto',
@@ -821,6 +1036,7 @@ function createTray(): void {
         label: status,
         enabled: false,
       },
+      ...enterpriseContactItems,
       {
         label: restarting ? '正在重启…' : '重启 Otto 服务',
         enabled: !restarting,
@@ -859,9 +1075,14 @@ function createTray(): void {
   setInterval(() => {
     if (tray && !tray.isDestroyed()) updateMenu();
   }, 2000);
+  void refreshEnterpriseTrayContacts();
+  setInterval(() => {
+    void refreshEnterpriseTrayContacts();
+  }, 20000);
 
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
+  tray.on('balloon-click', showMainWindow);
 }
 
 // ── 托盘状态追踪器 ──
@@ -902,6 +1123,7 @@ function createWindow(): BrowserWindow {
     win.show();
     updateUnreadIndicators(notificationService.getUnreadSessions());
   });
+  win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
     event.preventDefault();
@@ -909,6 +1131,11 @@ function createWindow(): BrowserWindow {
   });
 
   hardenWebContents(win);
+  win.webContents.once('did-finish-load', () => {
+    void incrementalUpdateService.applyActiveRendererPatches().catch((error) => {
+      console.warn('[otto-desktop] apply renderer css patch failed:', error);
+    });
+  });
 
   void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
   return win;
@@ -1291,6 +1518,7 @@ function registerIpc(): void {
       );
       fileAccessGrants.clear();
       notificationService.clearAll();
+      resetEnterpriseModuleUpdateState();
     });
   });
   ipcMain.handle(IPC.enterprisePair, async (_e, token: unknown) => {
@@ -1421,7 +1649,7 @@ function registerIpc(): void {
       throw new Error('功能开关格式不正确');
     }
     const allowed = new Set([
-      'enterprise_tree', 'park_service', 'feishu_auto_reply', 'tui_sync',
+      'enterprise_tree', 'park_service', 'feishu_auto_reply',
       'direct_messages', 'atoa', 'knowledge',
     ]);
     const patch = Object.fromEntries(Object.entries(input).filter(
@@ -1531,10 +1759,24 @@ function registerIpc(): void {
       brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
     });
   });
-  ipcMain.handle(IPC.enterpriseParkJoin, async (_event, inviteCode: unknown) => {
+  ipcMain.handle(IPC.enterpriseParkJoin, async (_event, input: unknown) => {
     loadEnterpriseSession();
-    if (typeof inviteCode !== 'string' || !inviteCode.trim()) throw new Error('产业园邀请码不能为空');
-    return enterpriseClient.joinPark(inviteCode);
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.inviteCode !== 'string' || !body.inviteCode.trim()) throw new Error('产业园邀请码不能为空');
+    if (typeof body.address !== 'string' || !body.address.trim()) throw new Error('企业地址不能为空');
+    if (typeof body.roomNumber !== 'string' || !body.roomNumber.trim()) throw new Error('门牌号不能为空');
+    return enterpriseClient.joinPark({
+      inviteCode: body.inviteCode,
+      address: body.address,
+      roomNumber: body.roomNumber,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseParkProfileUpdate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.address !== 'string' || !body.address.trim()) throw new Error('企业地址不能为空');
+    if (typeof body.roomNumber !== 'string' || !body.roomNumber.trim()) throw new Error('门牌号不能为空');
+    return enterpriseClient.updateParkTenantProfile({ address: body.address, roomNumber: body.roomNumber });
   });
   ipcMain.handle(IPC.enterpriseParkInviteIssue, async (_event, maxUses: unknown) => {
     loadEnterpriseSession();
@@ -1720,6 +1962,12 @@ function registerIpc(): void {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.notificationSessionOpen, sessionId);
       }
+    },
+    shouldPresentSystemNotification,
+    onBackgroundAttention: requestBackgroundAttention,
+    onSystemNotificationUnavailable: (payload, reason) => {
+      console.warn(`[otto-desktop] system notification ${reason}; using fallback alert`);
+      showFallbackNotification(payload);
     },
   });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
@@ -2075,6 +2323,25 @@ function registerIpc(): void {
     updateService.cancelDownload();
   });
   ipcMain.handle(IPC.updateInstall, () => updateService.installUpdate());
+  ipcMain.handle(IPC.incrementalUpdateCheck, (_event, payload?: unknown) => {
+    const manifestUrl = payload && typeof payload === 'object' && typeof (payload as { manifestUrl?: unknown }).manifestUrl === 'string'
+      ? (payload as { manifestUrl: string }).manifestUrl
+      : undefined;
+    return incrementalUpdateService.checkForUpdates(manifestUrl);
+  });
+  ipcMain.handle(IPC.incrementalUpdateApply, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      return Promise.resolve({ ok: false, error: '增量更新参数必须是对象' });
+    }
+    const input = payload as { kind?: unknown; id?: unknown };
+    if (input.kind !== 'patch' && input.kind !== 'kernel' && input.kind !== 'component') {
+      return Promise.resolve({ ok: false, error: '增量更新 kind 无效' });
+    }
+    if (typeof input.id !== 'string' || input.id.trim().length === 0) {
+      return Promise.resolve({ ok: false, error: '增量更新 id 不能为空' });
+    }
+    return incrementalUpdateService.applyUpdate(input.kind, input.id);
+  });
 
   ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
     // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
@@ -2105,14 +2372,19 @@ function registerIpc(): void {
         return null;
       }
       const win = mainWindow;
+      const ext = path.extname(suggestedFileName).slice(1).toLowerCase();
+      const textExtensions = ['md', 'markdown', 'txt', 'json', 'csv', 'xml', 'html', 'css', 'js', 'ts', 'tsx', 'jsx', 'log', 'yaml', 'yml'];
+      const filters = textExtensions.includes(ext)
+        ? [{ name: `${ext.toUpperCase()} 文本`, extensions: [ext] }, { name: '所有文件', extensions: ['*'] }]
+        : [{ name: 'Markdown', extensions: ['md'] }, { name: '所有文件', extensions: ['*'] }];
       const result = win
         ? await dialog.showSaveDialog(win, {
             defaultPath: path.join(app.getPath('documents'), suggestedFileName),
-            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            filters,
           })
         : await dialog.showSaveDialog({
             defaultPath: path.join(app.getPath('documents'), suggestedFileName),
-            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            filters,
           });
       if (result.canceled || !result.filePath) return null;
       await fs.promises.writeFile(result.filePath, content, 'utf-8');
@@ -2184,6 +2456,44 @@ function registerIpc(): void {
 
   // 读取用户本进程中通过原生选择器明确授权的文件，返回 Base64 + 元数据。
   // 授权不再限定 home：外部卷、其它盘符与网络盘都可选；未选择路径仍 fail closed。
+
+  ipcMain.handle(IPC.extractEditableDocument, async (_e, filePath: unknown) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      throw new Error('文件路径无效');
+    }
+    const granted = fileAccessGrants.resolve(filePath, 50 * 1024 * 1024);
+    const core = await import('otto-core') as unknown as {
+      extractEditableDocument(filePath: string): Promise<unknown>;
+    };
+    return core.extractEditableDocument(granted.filePath);
+  });
+
+  ipcMain.handle(IPC.exportEditedDocument, async (_e, sourcePath: unknown, suggestedFileName: unknown, content: unknown) => {
+    if (typeof sourcePath !== 'string' || typeof suggestedFileName !== 'string' || typeof content !== 'string') {
+      return null;
+    }
+    const granted = fileAccessGrants.resolve(sourcePath, 50 * 1024 * 1024);
+    const ext = path.extname(suggestedFileName).slice(1).toLowerCase();
+    const filters = ext
+      ? [{ name: ext.toUpperCase() + ' 文件', extensions: [ext] }, { name: '所有文件', extensions: ['*'] }]
+      : [{ name: '所有文件', extensions: ['*'] }];
+    const win = mainWindow;
+    const result = win
+      ? await dialog.showSaveDialog(win, {
+          defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+          filters,
+        })
+      : await dialog.showSaveDialog({
+          defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+          filters,
+        });
+    if (result.canceled || !result.filePath) return null;
+    const core = await import('otto-core') as unknown as {
+      exportEditedDocument(sourcePath: string, content: string, outPath: string): Promise<unknown>;
+    };
+    return core.exportEditedDocument(granted.filePath, content, result.filePath);
+  });
+
   ipcMain.handle(IPC.readFilePath, async (_e, filePath: unknown) => {
     if (typeof filePath !== 'string' || filePath.length === 0) {
       throw new Error('文件路径无效');
@@ -2217,6 +2527,10 @@ app.on('open-url', (event, url) => {
   acceptEnterpriseRegistrationUrl(url);
 });
 
+// 在窗口、托盘和 Notification 创建前注册稳定 AUMID。部分 Windows 机器若注册过晚，
+// 通知中心无法把 toast 与安装器创建的 Otto 开始菜单快捷方式关联。
+if (process.platform === 'win32') app.setAppUserModelId('ai.otto.desktop');
+
 // 单实例锁：第二次启动直接聚焦已开窗口，避免多开多个 server 抢端口。
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -2234,9 +2548,6 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    // Windows 通知中心/任务栏用稳定 AUMID 绑定 Otto；缺失时 toast 可能不显示应用图标，
-    // 甚至在部分系统上直接不出现。
-    if (process.platform === 'win32') app.setAppUserModelId('ai.otto.desktop');
     if (process.defaultApp && process.argv[1]) {
       app.setAsDefaultProtocolClient('otto', process.execPath, [path.resolve(process.argv[1])]);
     } else {
@@ -2255,6 +2566,7 @@ if (!gotLock) {
     applyCsp();
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();
+    startEnterpriseModuleUpdatePolling();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -2277,6 +2589,7 @@ if (!gotLock) {
   app.on('before-quit', (event) => {
     isQuitting = true;
     stopEnterpriseIdentityRefresh();
+    stopEnterpriseModuleUpdatePolling();
     if (quitCleanupFinished) return;
     event.preventDefault();
     if (quitCleanupStarted) return;

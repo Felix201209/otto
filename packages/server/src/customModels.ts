@@ -7,10 +7,9 @@
 /**
  * BYO-key 自定义模型读取（server 端自包含副本）。
  *
- * 落盘格式与 CLI/TUI 完全一致：`~/.otto-user/custom-models.json`，
+ * 落盘格式与 桌面 完全一致：`~/.otto-user/custom-models.json`，
  * 结构 `{ models: CustomModelConfig[] }`。CLI 侧的读写 API 在
- * `packages/cli/src/config/customModelsStorage.ts`，但那是 CLI 包内文件，
- * server **不能反向依赖 otto-cli**（会牵入 Ink，破 TUI 回归门 Issue #10）。
+ * 历史 CLI 设置格式；server 不能反向依赖任何 UI 包。
  *
  * 因此这里在 server 包内复刻「只读」路径：仅依赖 otto-core 的
  * `CustomModelConfig` / `validateCustomModelConfig` / `generateCustomModelId`，
@@ -19,8 +18,7 @@
  * 写入：setup GUI（Issue #7）经 `save_custom_model` 帧落盘，由本文件的
  * `saveCustomModel` 处理 —— 复刻 CLI `customModelsStorage.ts` 的**原子写**
  * （.tmp → rename）+ 按 displayName 去重 + `{ models, _metadata }` 结构，
- * 字节级对齐 CLI 格式；依赖仍只有 otto-core，**不**反向依赖 otto-cli，守住
- * Issue #10（TUI 回归门不被 Ink 牵连）。
+ * 字节级对齐 CLI 格式；依赖仍只有 otto-core，**不**反向依赖 UI 包。
  */
 
 import * as fs from 'node:fs';
@@ -216,7 +214,7 @@ function ensureDirectoryExists(dirPath: string): void {
  *
  * - 写前逐条 `validateCustomModelConfig`，任一非法即抛（调用方转 error 帧）。
  * - 结构 `{ models, _metadata: { version, lastModified } }`，与 CLI 字节级一致，
- *   保证 CLI/TUI 与 GUI 读到同一份、互不破坏格式。
+ *   保证 桌面 与 GUI 读到同一份、互不破坏格式。
  * - 原子写：先写 `.tmp` 再 `rename`，避免半截文件。
  */
 export function saveCustomModels(

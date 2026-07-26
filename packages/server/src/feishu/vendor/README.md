@@ -1,6 +1,6 @@
 # feishu/vendor —— 飞书网关源（软链自 cli，单一真相）
 
-> Issue #3：把 `packages/cli/src/services/feishu/` 的**纯网关层**接入 server，
+> Issue #3：把 历史 Feishu 纯网关层接入 server，
 > 实现飞书 ↔ app 双向同步。
 
 ## 这些文件是什么
@@ -25,10 +25,9 @@
 - 摸底确认：`gateway.ts` 仅依赖 `node:*` + 同目录这 4 个纯模块，
   **零 otto-core、零 Ink、零 appEvents**，可直接 import 进 server。
 
-## ⚠️ 改动纪律（保 TUI 回归门 Issue #10）
+## 改动纪律
 
-- **不要在 server 这边「编辑 vendor 文件」**：编辑软链等于改 cli 源，会震到 TUI。
-  网关逻辑要改 → 去 `packages/cli/src/services/feishu/` 改，两边一起验。
+- vendor 文件是服务端运行时副本。修改 Feishu 网关时，需要同步跑 server Feishu adapter 测试。
 - server 侧的飞书**适配 / 接线**逻辑写在 vendor 之外（`feishuAdapter.ts` /
   `streamBridge.ts` / `register.ts`），不碰 vendor。
 - 若日后要彻底切断 cli 依赖（cli 退场），把这些软链替换为物理副本即可，

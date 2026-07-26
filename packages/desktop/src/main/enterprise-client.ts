@@ -162,10 +162,31 @@ export interface EnterpriseOrganizationFeatures {
   enterprise_tree: boolean;
   park_service: boolean;
   feishu_auto_reply: boolean;
-  tui_sync: boolean;
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
+}
+
+export type EnterpriseModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
+
+export interface EnterpriseModuleUpdateDescriptor {
+  module: string;
+  version: string;
+  rollout: EnterpriseModuleUpdateRollout;
+  notes: string;
+  minAppVersion: string | null;
+  manifestUrl: string | null;
+  sha256: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface EnterpriseModuleUpdateManifest {
+  format: 'otto-module-updates-v1';
+  deploymentId: string;
+  generatedAt: string;
+  modules: EnterpriseModuleUpdateDescriptor[];
+  catalog: Array<{ module: string; features: string[] }>;
 }
 
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
@@ -195,6 +216,8 @@ export interface EnterpriseParkTenantOrganization {
   name: string;
   slug: string;
   parkId?: string | null;
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -219,6 +242,16 @@ export interface EnterprisePark {
   updatedAt: string;
   isAdminOrganization?: boolean;
   services?: EnterpriseParkService[];
+  tenantAddress?: string | null;
+  tenantRoomNumber?: string | null;
+}
+
+export interface EnterpriseParkTenantProfile {
+  organizationId: string;
+  parkId: string;
+  address: string;
+  roomNumber: string;
+  updatedAt: string;
 }
 
 export interface EnterpriseParkInvite {
@@ -731,9 +764,9 @@ export class EnterpriseClient {
     if (this.currentAccount.accountType !== 'personal') {
       throw new Error('当前账号已经属于企业');
     }
-    const normalizedInviteCode = inviteCode.trim().toUpperCase();
-    if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(normalizedInviteCode)) {
-      throw new Error('请输入有效的 8 位企业邀请码');
+    const normalizedInviteCode = inviteCode.trim();
+    if (!/^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/.test(normalizedInviteCode)) {
+      throw new Error('请输入有效的 12 位大小写敏感企业邀请码');
     }
     const requestGeneration = this.authOperationGeneration;
     const requestToken = this.token;
@@ -943,6 +976,12 @@ export class EnterpriseClient {
     )).features;
   }
 
+  async getModuleUpdates(): Promise<EnterpriseModuleUpdateManifest> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['modular_update_push_v1']);
+    return this.request('/enterprise/modules/updates/client');
+  }
+
   async updateOrganizationFeatures(
     patch: Partial<EnterpriseOrganizationFeatures>,
   ): Promise<EnterpriseOrganizationFeatures> {
@@ -1020,10 +1059,19 @@ export class EnterpriseClient {
     })).park;
   }
 
-  async joinPark(inviteCode: string): Promise<EnterprisePark> {
+  async joinPark(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
     return (await this.request<{ park: EnterprisePark }>('/enterprise/park/join', {
-      method: 'POST', body: JSON.stringify({ inviteCode }),
+      method: 'POST', body: JSON.stringify(input),
     })).park;
+  }
+
+  async updateParkTenantProfile(input: {
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile> {
+    return (await this.request<{ profile: EnterpriseParkTenantProfile }>('/enterprise/park/profile', {
+      method: 'PATCH', body: JSON.stringify(input),
+    })).profile;
   }
 
   async issueParkInvite(maxUses?: number | null): Promise<EnterpriseParkInvite> {

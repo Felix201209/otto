@@ -24,6 +24,7 @@ const outputDir = path.join(repoRoot, 'deliverables');
 const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
 const version = rootPackage.version;
 const releaseChannel = 'lstc';
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -52,15 +53,15 @@ function filesBelow(root, current = root) {
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     const absolute = path.join(current, entry.name);
     if (entry.isDirectory()) output.push(...filesBelow(root, absolute));
-    else if (entry.isFile()) output.push(path.relative(root, absolute));
+    else if (entry.isFile()) output.push(path.relative(root, absolute).split(path.sep).join('/'));
     else throw new Error(`unsupported release entry: ${absolute}`);
   }
   return output.sort();
 }
 
 console.log('[bundle] 构建 otto-core 与 otto-server');
-run('npm', ['run', 'build', '--workspace', 'otto-core']);
-run('npm', ['run', 'build', '--workspace', 'otto-server']);
+run(npmCommand, ['run', 'build', '--workspace', 'otto-core'], { shell: process.platform === 'win32' });
+run(npmCommand, ['run', 'build', '--workspace', 'otto-server'], { shell: process.platform === 'win32' });
 
 const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true });
 const sourceScope = [
@@ -176,7 +177,6 @@ export const FEATURE_FLAGS = {
   park_service: '公园服务',
   feishu_auto_reply: '飞书自动回复',
   enterprise_tree: '企业组织树',
-  tui_sync: 'TUI同步',
   knowledge_loop: '知识沉淀闭环',
   memory_injection: '经验检索注入',
   checkpoints: '崩溃恢复',
@@ -187,7 +187,6 @@ const FEATURE_FLAG_DEFAULTS = {
   park_service: false,
   feishu_auto_reply: true,
   enterprise_tree: true,
-  tui_sync: true,
   knowledge_loop: true,
   memory_injection: true,
   checkpoints: true,

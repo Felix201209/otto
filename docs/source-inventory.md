@@ -6,7 +6,7 @@ This decision log tracks the large and boundary-sensitive areas found by the 202
 
 | Feature/module | Entry points | Tests | Runtime references | Owner package | Decision | Follow-up issue |
 | --- | --- | --- | --- | --- | --- | --- |
-| CLI/TUI agent | `packages/cli/src/otto.tsx`, `packages/cli/src/ui/App.tsx` | `packages/cli/src/**/*.test.ts*` | root `otto` bin, `scripts/start.js` | `packages/cli` | keep, split large command/UI modules | #86 |
+| CLI/TUI agent | retired in the 1.9.5/1.9.6 LSTC line | none | desktop and server surfaces now own runtime entrypoints | n/a | removed from source tree; do not reintroduce as release payload | #86 |
 | Runtime kernel | `packages/core/src/index.ts`, `packages/core/src/core/*` | `packages/core/src/**/*.test.ts` | `otto-core` workspace dependency | `packages/core` | keep, enforce kernel boundary | #90 |
 | Enterprise/local server | `packages/server/src/index.ts`, `packages/server/src/server.ts`, `packages/server/src/enterprise/server.ts` | `packages/server/src/**/*.test.ts` | desktop server manager, enterprise one-click bundle | `packages/server` | keep, split enterprise DB/server modules | #85, #87, #91 |
 | Desktop app | `packages/desktop/src/main/index.ts`, `packages/desktop/src/renderer/App.tsx` | `packages/desktop/src/**/*.test.ts*` | Electron app and desktop release artifacts | `packages/desktop` | keep, split IPC/CSS and keep installer lightweight | #88, #89 |
@@ -19,14 +19,14 @@ This decision log tracks the large and boundary-sensitive areas found by the 202
 
 | Feature/module | Entry points | Tests | Runtime references | Owner package | Decision | Follow-up issue |
 | --- | --- | --- | --- | --- | --- | --- |
-| Feishu CLI command | `packages/cli/src/ui/commands/feishuCommand.ts` | `packages/cli/src/ui/commands/feishuCommand.test.ts` | `/feishu` CLI command | `packages/cli` | keep, extract handlers in small commits | #86 |
-| Feishu gateway | `packages/cli/src/services/feishu/gateway.ts`, `packages/server/src/feishu/vendor/gateway.ts` | `gateway.test.ts`, `feishuAdapter.test.ts` | CLI Feishu bridge, server Feishu adapter | `packages/cli`, `packages/server` | keep one implementation; current duplicate is baselined | #84 |
+| Feishu CLI command | retired with `packages/cli` | none | none | n/a | removed from source tree | #86 |
+| Feishu gateway | `packages/server/src/feishu/vendor/gateway.ts` | `feishuAdapter.test.ts` | server Feishu adapter | `packages/server` | keep server-owned vendor copy after CLI retirement | #84 |
 | Enterprise DB | `packages/server/src/enterprise/db.ts` | `db.test.ts`, park/server tests | enterprise SQLite data path | `packages/server` | keep schema behavior, split by domain | #87 |
 | Enterprise HTTP server | `packages/server/src/enterprise/server.ts` | `server.test.ts`, admin HTML tests | enterprise HTTP API and admin UI | `packages/server` | keep, extract pages/routes by domain | #85, #87 |
 | Desktop CSS | `packages/desktop/src/renderer/styles/app.css` | renderer component tests | desktop renderer stylesheet import | `packages/desktop` | keep, split by surface | #89 |
 | Core custom model adapter | `packages/core/src/core/customModelAdapter.ts` | `customModelAdapter.test.ts` | shared model routing | `packages/core` | keep, review during kernel boundary tightening | #92 |
-| CLI App shell | `packages/cli/src/ui/App.tsx` | `App.test.tsx` | TUI root | `packages/cli` | keep, split only with UI tests | #92 |
-| CLI i18n catalog | `packages/cli/src/ui/utils/i18n.ts` | UI command tests | TUI copy | `packages/cli` | keep, later extract locale data | #92 |
+| CLI App shell | retired with `packages/cli` | none | none | n/a | removed from source tree | #92 |
+| CLI i18n catalog | retired with `packages/cli` | none | none | n/a | removed from source tree | #92 |
 
 ## Large Binary Assets
 
@@ -36,7 +36,7 @@ This decision log tracks the large and boundary-sensitive areas found by the 202
 | Otto pet atlas | `packages/desktop/src/renderer/assets/otto-pet-atlas.png` | visual smoke/manual | renderer pet/avatar surfaces | `packages/desktop` | keep pending compression audit | #89 |
 | Otto avatar | `packages/desktop/src/renderer/assets/otto-avatar.png` | renderer tests/manual | renderer identity surfaces | `packages/desktop` | keep pending compression audit | #89 |
 | Meeting room default image | `packages/desktop/src/renderer/assets/meeting-room-default.png` | park resource tests/manual | park resources UI | `packages/desktop` | keep because Hongchuang park module depends on it visually | #89 |
-| CLI sounds | `packages/cli/src/assets/sounds/*.wav` | manual notification smoke | TUI notifications | `packages/cli` | keep, optional compression later | #92 |
+| CLI sounds | retired with `packages/cli` | none | none | n/a | removed from source tree | #92 |
 
 ## Current Guardrails
 

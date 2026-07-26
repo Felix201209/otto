@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "1.9.5",
+  "sourceCommit": "f09c18d28e5359d15328c0f6a13fb7c2ea1d523a",
+  "publishedAt": "2026-07-25T00:00:00.000Z",
+  "channels": {
+    "patch": [
+      {
+        "id": "patch-renderer-css-enterprise-login",
+        "kind": "patch",
+        "version": "1.9.5+patch.1",
+        "target": "desktop/renderer-css",
+        "compat": {
+          "appVersion": "1.9.5",
+          "sourceCommit": "f09c18d28e5359d15328c0f6a13fb7c2ea1d523a"
+        },
+        "url": "https://updates.example.com/otto/patch-renderer-css-enterprise-login.bundle.json",
+        "size": 1024,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "restart": "renderer",
+        "rollback": {
+          "supported": true,
+          "receipt": true
+        }
+      }
+    ],
+    "kernel": [
+      {
+        "id": "kernel-server-runtime-2026-07",
+        "kind": "kernel",
+        "version": "1.9.5+k1",
+        "target": "server/runtime",
+        "compat": {
+          "appVersion": "1.9.5",
+          "kernelAbi": "2026.07"
+        },
+        "url": "https://updates.example.com/otto/kernel-server-runtime-2026-07.bundle.json",
+        "size": 10485760,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "restart": "server",
+        "rollback": {
+          "supported": true,
+          "receipt": true
+        }
+      }
+    ],
+    "component": [
+      {
+        "id": "component-skills-ppt-v2",
+        "kind": "component",
+        "version": "2026.07.25",
+        "target": "skills/presentations",
+        "compat": {
+          "appVersion": "1.9.5",
+          "componentApi": "skills.v1"
+        },
+        "url": "https://updates.example.com/otto/component-skills-ppt-v2.tar.zst",
+        "size": 2048,
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "restart": "none",
+        "rollback": {
+          "supported": true,
+          "receipt": true
+        }
+      }
+    ]
+  }
+}

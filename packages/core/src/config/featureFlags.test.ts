@@ -95,10 +95,10 @@ describe('FeatureFlagManager', () => {
 
   it('setEnabled persists across new manager instances', () => {
     const mgr1 = createManager();
-    mgr1.setEnabled('tui_sync', false);
+    mgr1.setEnabled('park_service', true);
 
     // 用同一个 settings（通过 managers 共享底层存储）验证持久化
-    expect(mgr1.isEnabled('tui_sync')).toBe(false);
+    expect(mgr1.isEnabled('park_service')).toBe(true);
   });
 
   it('onChange fires when flag changes', () => {

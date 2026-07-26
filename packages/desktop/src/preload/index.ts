@@ -116,6 +116,58 @@ export interface UpdateInstallResult {
   message: string;
 }
 
+export type IncrementalUpdateKind = 'patch' | 'kernel' | 'component';
+export interface IncrementalUpdateAvailableArtifact {
+  id: string;
+  kind: IncrementalUpdateKind;
+  version: string;
+  target: string;
+  restart: 'none' | 'renderer' | 'server' | 'app';
+  rollbackSupported: boolean;
+}
+export type IncrementalUpdateCheckResult =
+  | {
+      status: 'available';
+      appVersion: string;
+      sourceCommit: string;
+      publishedAt: string;
+      artifacts: IncrementalUpdateAvailableArtifact[];
+    }
+  | { status: 'up-to-date'; appVersion: string }
+  | { status: 'check-failed'; appVersion: string; message: string };
+export type IncrementalUpdateApplyResult =
+  | {
+      ok: true;
+      kind: 'kernel';
+      id: string;
+      version: string;
+      target: string;
+      restart: 'none' | 'renderer' | 'server' | 'app';
+      artifactPath: string;
+      modulePath: string;
+      binPath: string;
+    }
+  | {
+      ok: true;
+      kind: 'patch';
+      id: string;
+      version: string;
+      target: string;
+      restart: 'none' | 'renderer' | 'server' | 'app';
+      artifactPath: string;
+      runtimeApplied: boolean;
+    }
+  | {
+      ok: true;
+      kind: 'component';
+      id: string;
+      version: string;
+      target: string;
+      restart: 'none' | 'renderer' | 'server' | 'app';
+      artifactPath: string;
+    }
+  | { ok: false; unsupported?: boolean; cancelled?: boolean; error: string };
+
 export type AsrProvider = 'volcengine' | 'openai';
 export interface VoicePublicConfig {
   enabled: boolean;
@@ -290,7 +342,6 @@ export interface EnterpriseOrganizationFeatures {
   enterprise_tree: boolean;
   park_service: boolean;
   feishu_auto_reply: boolean;
-  tui_sync: boolean;
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
@@ -332,6 +383,8 @@ export interface EnterpriseParkTenantOrganization {
   name: string;
   slug: string;
   parkId?: string | null;
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -347,6 +400,16 @@ export interface EnterprisePark {
   updatedAt: string;
   isAdminOrganization?: boolean;
   services?: EnterpriseParkService[];
+  tenantAddress?: string | null;
+  tenantRoomNumber?: string | null;
+}
+
+export interface EnterpriseParkTenantProfile {
+  organizationId: string;
+  parkId: string;
+  address: string;
+  roomNumber: string;
+  updatedAt: string;
 }
 
 export interface EnterpriseParkInvite {
@@ -540,6 +603,8 @@ const IPC = {
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
+  extractEditableDocument: 'otto:extract-editable-document',
+  exportEditedDocument: 'otto:export-edited-document',
   openVideoEditor: 'otto:open-video-editor',
   saveTextFile: 'otto:save-text-file',
   menu: 'otto:menu',
@@ -550,6 +615,8 @@ const IPC = {
   updateCancel: 'otto:update-cancel',
   updateInstall: 'otto:update-install',
   updateProgress: 'otto:update-progress',
+  incrementalUpdateCheck: 'otto:incremental-update-check',
+  incrementalUpdateApply: 'otto:incremental-update-apply',
   notificationUnreadChanged: 'otto:notification-unread-changed',
   notificationMarkRead: 'otto:notification-mark-read',
   notificationGetUnread: 'otto:notification-get-unread',
@@ -599,6 +666,7 @@ const IPC = {
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
@@ -703,6 +771,23 @@ export interface OttoBridge {
     mimeType: string;
     data: string;
   }>;
+  /** 提取 PDF/Word/文本为右侧可编辑 Markdown。 */
+  extractEditableDocument(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+    editableFormat: 'markdown';
+    content: string;
+    readonly: boolean;
+    message: string;
+  }>;
+  /** 将右侧编辑稿导出回目标格式。取消保存时返回 null。 */
+  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+    ok: boolean;
+    path: string;
+    format: 'text' | 'markdown' | 'docx' | 'pdf';
+    message: string;
+  } | null>;
   /** 打开内置视频编辑器窗口。 */
   openVideoEditor(): Promise<{ ok: boolean; error?: string }>;
   /**
@@ -822,6 +907,10 @@ export interface OttoBridge {
   updateInstall(): Promise<UpdateInstallResult>;
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
+  /** 检查补丁 / 内核 / 组件增量更新。 */
+  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult>;
+  /** 应用最近一次检查到的增量更新；当前仅 component 有执行器。 */
+  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult>;
   voiceGetConfig(): Promise<VoicePublicConfig>;
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
@@ -916,7 +1005,11 @@ export interface OttoBridge {
   }>;
   enterpriseParkView(): Promise<EnterprisePark | null>;
   enterpriseParkRegister(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark>;
-  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark>;
+  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark>;
+  enterpriseParkProfileUpdate(input: {
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile>;
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]>;
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
@@ -1003,6 +1096,13 @@ function dispatchFrame(frame: ServerToClient): void {
     // 不经 renderer React 生命周期：窗口隐藏、切在其它会话或 UI 重载时，
     // preload 仍会把全局入站帧直接交给 main NotificationService。
     return;
+  }
+  if ((frame as { type: string }).type === 'incremental_update_available') {
+    const updateFrame = frame as { payload?: { manifestUrl?: unknown } };
+    const manifestUrl = updateFrame.payload?.manifestUrl;
+    if (typeof manifestUrl === 'string' && manifestUrl.trim()) {
+      void ipcRenderer.invoke(IPC.incrementalUpdateCheck, { manifestUrl }).catch(() => undefined);
+    }
   }
   for (const h of frameHandlers) {
     try {
@@ -1258,6 +1358,40 @@ const bridge: OttoBridge = {
       data: string;
     }>;
   },
+  extractEditableDocument(filePath: string): Promise<{
+    filePath: string;
+    fileName: string;
+    sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+    editableFormat: 'markdown';
+    content: string;
+    readonly: boolean;
+    message: string;
+  }> {
+    return ipcRenderer.invoke(IPC.extractEditableDocument, filePath) as Promise<{
+      filePath: string;
+      fileName: string;
+      sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
+      editableFormat: 'markdown';
+      content: string;
+      readonly: boolean;
+      message: string;
+    }>;
+  },
+
+  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+    ok: boolean;
+    path: string;
+    format: 'text' | 'markdown' | 'docx' | 'pdf';
+    message: string;
+  } | null> {
+    return ipcRenderer.invoke(IPC.exportEditedDocument, sourcePath, suggestedFileName, content) as Promise<{
+      ok: boolean;
+      path: string;
+      format: 'text' | 'markdown' | 'docx' | 'pdf';
+      message: string;
+    } | null>;
+  },
+
   openVideoEditor(): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean; error?: string }>;
   },
@@ -1407,6 +1541,12 @@ const bridge: OttoBridge = {
   },
   updateInstall(): Promise<UpdateInstallResult> {
     return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
+  },
+  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult> {
+    return ipcRenderer.invoke(IPC.incrementalUpdateCheck, input) as Promise<IncrementalUpdateCheckResult>;
+  },
+  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult> {
+    return ipcRenderer.invoke(IPC.incrementalUpdateApply, input) as Promise<IncrementalUpdateApplyResult>;
   },
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void {
     // 仿 onMenu 订阅：进度帧由 main 的 UpdateService 节流推送。
@@ -1679,8 +1819,13 @@ const bridge: OttoBridge = {
   }): Promise<EnterprisePark> {
     return ipcRenderer.invoke(IPC.enterpriseParkRegister, input) as Promise<EnterprisePark>;
   },
-  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark> {
-    return ipcRenderer.invoke(IPC.enterpriseParkJoin, inviteCode) as Promise<EnterprisePark>;
+  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
+    return ipcRenderer.invoke(IPC.enterpriseParkJoin, input) as Promise<EnterprisePark>;
+  },
+  enterpriseParkProfileUpdate(input: {
+    address: string; roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseParkProfileUpdate, input) as Promise<EnterpriseParkTenantProfile>;
   },
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite> {
     return ipcRenderer.invoke(IPC.enterpriseParkInviteIssue, maxUses ?? null) as Promise<EnterpriseParkInvite>;

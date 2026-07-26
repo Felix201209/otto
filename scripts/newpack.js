@@ -58,8 +58,6 @@ function updateRootPackageVersion(newVersion) {
 
 function updateAllPackageVersions(newVersion) {
   const packagesToUpdate = [
-    'packages/cli/package.json',
-    'packages/cli/src/package.json',
     'packages/core/package.json'
   ];
 

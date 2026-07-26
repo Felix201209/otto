@@ -35,7 +35,7 @@ if (!versionType) {
 run(`npm version ${versionType} --no-git-tag-version --allow-same-version`);
 
 // Update specific workspaces only
-const workspacesToUpdate = ['packages/cli', 'packages/core'];
+const workspacesToUpdate = ['packages/core', 'packages/desktop'];
 for (const workspace of workspacesToUpdate) {
   run(`npm version ${versionType} --workspace=${workspace} --no-git-tag-version --allow-same-version`);
 }
@@ -53,14 +53,14 @@ const newVersion = readJson(rootPackageJsonPath).version;
 //   writeJson(rootPackageJsonPath, rootPackageJson);
 // }
 
-// 5. Update the sandboxImageUri in the cli package.json (optional, can be commented out if not needed)
-// const cliPackageJsonPath = resolve(process.cwd(), 'packages/cli/package.json');
+// 5. Update the sandboxImageUri in the desktop package.json (optional, can be commented out if not needed)
+// const cliPackageJsonPath = resolve(process.cwd(), 'packages/desktop/package.json');
 // const cliPackageJson = readJson(cliPackageJsonPath);
 // if (cliPackageJson.config?.sandboxImageUri) {
 //   cliPackageJson.config.sandboxImageUri =
 //     cliPackageJson.config.sandboxImageUri.replace(/:.*$/, `:${newVersion}`);
 //   console.log(
-//     `Updated sandboxImageUri in cli package to use version ${newVersion}`,
+//     `Updated sandboxImageUri in desktop package to use version ${newVersion}`,
 //   );
 //   writeJson(cliPackageJsonPath, cliPackageJson);
 // }

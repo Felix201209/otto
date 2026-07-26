@@ -10,7 +10,7 @@
 
 export const DEFAULT_ENTERPRISE_PUBLIC_URL = 'https://59.110.154.44:7777';
 
-const ORGANIZATION_INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+const ORGANIZATION_INVITE_CODE_PATTERN = /^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/;
 
 export interface EnterprisePublicBaseUrlOptions {
   /** Explicit option or OTTO_ENTERPRISE_PUBLIC_URL. */

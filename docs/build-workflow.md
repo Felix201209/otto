@@ -11,11 +11,11 @@ Otto 采用 npm workspaces 的 monorepo 架构：
 Otto uses a monorepo architecture with npm workspaces:
 
 ```
-DeepCode/
+Otto/
 ├── packages/
-│   ├── cli/                    # CLI 用户界面 / CLI User Interface
 │   ├── core/                   # 核心业务逻辑 / Core Business Logic
-│   └── vscode-ui-plugin/       # VS Code 扩展 / VS Code Extension
+│   ├── server/                 # 本机与企业服务 / Local and enterprise services
+│   └── desktop/                # Electron 桌面端 / Electron desktop client
 └── package.json                # Workspace 配置 / Workspace Configuration
 ```
 
@@ -23,12 +23,12 @@ DeepCode/
 
 ### 1. 快速开发构建 / Quick Development Build
 
-**用途 / Purpose**: 日常开发时使用，构建速度快，排除 VS Code 扩展
-For daily development with faster build times, excluding VS Code extension
+**用途 / Purpose**: 日常开发时使用，优先验证 core/server/desktop 三个边界
+For daily development, validate the core/server/desktop boundaries first
 
 ```bash
 # 基础构建 / Basic build
-npm run build                    # 仅构建 core 和 cli / Build only core and cli
+npm run build                    # 构建 core/server/desktop / Build core/server/desktop
 
 # 开发版打包 / Development bundle
 npm run bundle:dev              # 开发版打包（快速）/ Development bundle (fast)
@@ -41,23 +41,14 @@ npm run bundle:cross-platform:dev   # 开发版跨平台 / Development cross-pla
 npm run bundle:cross-platform:prod  # 生产版跨平台 / Production cross-platform
 ```
 
-### 2. VS Code 扩展开发 / VS Code Extension Development
+### 2. LSTC 桌面 / 服务端构建
 
-**用途 / Purpose**: 专门用于 VS Code 扩展的开发和构建
-Specifically for VS Code extension development and building
+VS Code 扩展包已从当前 LSTC 工作区移除；桌面 UI 统一由 `packages/desktop` 承载。
 
 ```bash
-# 安装依赖 / Install dependencies
-npm install --workspace=packages/vscode-ui-plugin
-
-# 构建扩展 / Build extension
-npm run build --workspace=packages/vscode-ui-plugin
-
-# 打包扩展为 .vsix 文件 / Package extension as .vsix file
-npm run pack:vscode
-
-# 专用构建脚本 / Dedicated build script
-npm run build:vscode
+npm run build --workspace=packages/core
+npm run build --workspace=packages/server
+npm run build --workspace=packages/desktop
 ```
 
 ### 3. 完整构建 / Complete Build
@@ -172,18 +163,9 @@ npm run env:test
    npm test                    # 运行测试 / Run tests
    ```
 
-### VS Code 扩展开发 / VS Code Extension Development
+### LSTC 边界说明
 
-1. **准备扩展开发环境 / Prepare Extension Development**
-   ```bash
-   npm install --workspace=packages/vscode-ui-plugin
-   ```
-
-2. **开发和测试 / Development and Testing**
-   ```bash
-   npm run build --workspace=packages/vscode-ui-plugin
-   npm run pack:vscode         # 生成 .vsix 文件测试 / Generate .vsix file for testing
-   ```
+当前工作区只构建 `packages/core`、`packages/server` 和 `packages/desktop`。历史 VS Code webview/extension 路线不再作为 LSTC 交付目标。
 
 ### 发布准备 / Release Preparation
 
@@ -210,13 +192,13 @@ npm run env:test
 ### 构建策略 / Build Strategy
 
 - 🚀 **日常开发使用快速构建** / Use quick build for daily development
-- 🔧 **VS Code 扩展独立开发** / Develop VS Code extension independently
+- 🔧 **Desktop / Server / Core 分层开发** / Develop desktop, server, and core independently
 - 🎯 **发布前使用完整构建** / Use complete build before release
 
 ### 性能优化 / Performance Optimization
 
-- ⚡ **默认构建排除 VS Code 扩展以提升速度** / Default build excludes VS Code extension for speed
-- 🎨 **需要完整功能时使用 `INCLUDE_VSCODE_PLUGIN=true`** / Use `INCLUDE_VSCODE_PLUGIN=true` when complete functionality is needed
+- ⚡ **默认只构建当前 workspace 包以提升速度** / Default build only includes active workspace packages for speed
+- 🎨 **需要完整功能时分别验证 core/server/desktop** / Validate core, server, and desktop separately for complete functionality
 - 🔄 **CI/CD 环境建议使用完整构建** / Recommend complete build for CI/CD environments
 
 ## 📚 相关文档 / Related Documentation
@@ -224,7 +206,6 @@ npm run env:test
 - [项目架构 / Architecture](./architecture.md)
 - [部署指南 / Deployment Guide](./deployment.md)
 - [故障排除 / Troubleshooting](./troubleshooting.md)
-- [CLI 使用指南 / CLI Usage Guide](./cli/index.md)
 
 ---
 

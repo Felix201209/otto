@@ -77,22 +77,21 @@ if (!existsSync(join(root, 'node_modules'))) {
 // Build workspaces in specific order
 const allWorkspaces = [
   { path: 'packages/core', name: 'core' },
-  { path: 'packages/cli', name: 'cli' },
   { path: 'packages/server', name: 'server' }
   // 注意: packages/desktop 刻意不进主链 (独立 electron/webpack 构建)。
-  // 用 `npm run build --workspace=packages/desktop` 单独构建, 避免 electron native 拖垮 core/cli/CI 主链。
+  // 用 `npm run build --workspace=packages/desktop` 单独构建, 避免 electron native 拖垮 core/server/CI 主链。
 ];
 
 // Filter workspaces based on NPM_PUBLISH_MODE
-// When publishing to npm, only build core and cli to speed up CI
+// When publishing to npm, only build core and server to speed up CI
 const workspaces = process.env.NPM_PUBLISH_MODE === '1'
-  ? allWorkspaces.filter(ws => ws.name === 'core' || ws.name === 'cli')
+  ? allWorkspaces.filter(ws => ws.name === 'core')
   : allWorkspaces;
 
 const results = [];
 
 // Determine which packages are required (critical) for build success
-const criticalPackages = new Set(['core', 'cli', 'server']);
+const criticalPackages = new Set(['core', 'server']);
 
 printHeader('Building workspaces');
 
@@ -148,7 +147,7 @@ printSummary(results);
 
 function printSummary(workspaceResults) {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  const criticalPackages = new Set(['core', 'cli', 'server']);
+  const criticalPackages = new Set(['core', 'server']);
 
   console.log(`\n${COLORS.bright}${COLORS.blue}----------------------- Build Summary -----------------------${COLORS.reset}`);
 

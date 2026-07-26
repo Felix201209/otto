@@ -5,6 +5,9 @@
  */
 
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Server as HttpServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import type { ServerEndpoint } from 'otto-server';
@@ -12,6 +15,7 @@ import {
   ServerManager,
   type ServerManagerDependencies,
 } from './server-manager.js';
+import { installKernelUpdate, resolveKernelUpdateRoot } from './incremental-kernel-store.js';
 
 const MAIN_ENDPOINT = {
   host: '127.0.0.1',
@@ -424,5 +428,120 @@ describe('ServerManager enterprise lifecycle', () => {
 
     expect(manager.currentEnterpriseOwnership).toBe('unavailable');
     warn.mockRestore();
+  });
+});
+
+describe('ServerManager kernel overlay loading', () => {
+  async function installOverlayKernel(): Promise<{ root: string; modulePath: string; binPath: string }> {
+    const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-server-manager-kernel-'));
+    const root = resolveKernelUpdateRoot(userData);
+    const body = JSON.stringify({
+      schemaVersion: 1,
+      files: [
+        {
+          path: 'dist/index.js',
+          contentBase64: Buffer.from(`
+export const DEFAULT_HOST = '127.0.0.1';
+export const DEFAULT_PORT = 7637;
+export const HTTP_ROUTES = { health: '/health' };
+export const readEndpoint = () => undefined;
+export const clearEndpoint = () => undefined;
+export const writeEndpoint = (host, port, clientToken, controlToken) => ({ host, port, protocolVersion: '1', pid: 4321, startedAt: 3, clientToken, controlToken });
+export class PersistentSessionStore { constructor(_dir) {} }
+export class OttoServer {
+  endpoint = { host: '127.0.0.1', port: 7637, clientToken: 'overlay-client-token' };
+  controlToken = 'overlay-control-token';
+  start = async () => undefined;
+  stop = async () => undefined;
+  setAuthenticatedEnterpriseAccount(_account) {}
+}
+`).toString('base64'),
+        },
+        { path: 'dist/bin.js', contentBase64: Buffer.from('import \"./index.js\";\n').toString('base64') },
+      ],
+    });
+    const source = path.join(root, 'overlay.bundle.json');
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(source, body);
+    const installed = await installKernelUpdate({
+      artifact: {
+        id: 'kernel-overlay-test',
+        kind: 'kernel',
+        version: '2026.07.25',
+        target: 'server/runtime',
+        compat: { appVersion: '1.9.5', kernelAbi: '2026.07' },
+        url: 'https://updates.example.com/kernel.bundle.json',
+        size: Buffer.byteLength(body),
+        sha256: await import('node:crypto').then((crypto) => crypto.createHash('sha256').update(body).digest('hex')),
+        signature: 'ed25519:example',
+        restart: 'server',
+        rollback: { supported: true, receipt: true },
+      },
+      downloadedFilePath: source,
+      rootDir: root,
+    });
+    if (!installed.ok) throw new Error(installed.error);
+    return { root, modulePath: installed.record.modulePath, binPath: installed.record.binPath };
+  }
+
+  it('keeps active embedded kernel metadata loadable before falling back to packaged baseline', async () => {
+    const overlay = await installOverlayKernel();
+    await expect(fs.access(overlay.modulePath)).resolves.toBeUndefined();
+    await expect(fs.access(overlay.binPath)).resolves.toBeUndefined();
+
+    const setAuthenticatedEnterpriseAccount = vi.fn();
+    const overlayModule = embeddedMainModule(setAuthenticatedEnterpriseAccount);
+    const manager = new ServerManager({
+      kernelUpdateRoot: overlay.root,
+      dependencies: dependencies({
+        loadOttoServer: async () => overlayModule,
+        pidAlive: () => false,
+        probeHealth: async () => false,
+      }),
+    });
+
+    const ensured = await manager.ensure();
+
+    expect(ensured.ownership).toBe('embedded');
+    expect(ensured.endpoint.clientToken).toBe('embedded-client-token');
+    await manager.shutdown();
+  });
+
+  it('uses the active kernel bin path for detached server startup', async () => {
+    const overlay = await installOverlayKernel();
+    let capturedArgs: string[] = [];
+    let spawned = false;
+    const runningChild = Object.assign(new EventEmitter(), {
+      exitCode: null,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      unref: vi.fn(),
+      kill: vi.fn(),
+    });
+    const mod = {
+      ...discoveredMainModule(),
+      readEndpoint: vi.fn(() => (spawned ? MAIN_ENDPOINT : undefined)),
+      readEndpointRecord: vi.fn(() => (spawned ? MAIN_ENDPOINT : undefined)),
+      DEFAULT_PORT: MAIN_ENDPOINT.port,
+    } as unknown as Awaited<ReturnType<ServerManagerDependencies['loadOttoServer']>>;
+    const manager = new ServerManager({
+      kernelUpdateRoot: overlay.root,
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        pidAlive: () => true,
+        probeHealth: async () => true,
+        spawnDetached: vi.fn((_cmd, args) => {
+          capturedArgs = args as string[];
+          spawned = true;
+          return runningChild;
+        }) as unknown as ServerManagerDependencies['spawnDetached'],
+      }),
+    });
+
+    const ensured = await manager.ensure();
+
+    expect(ensured.ownership).toBe('detached');
+    expect(capturedArgs[0]).toBe(overlay.binPath);
+    await manager.shutdown(true);
   });
 });

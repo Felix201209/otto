@@ -313,9 +313,8 @@ export function validateForm(form: SetupFormState): Record<string, string> {
 }
 
 /**
- * 生成与 CLI/server 完全一致的 `~/.otto-user/custom-models.json` 文本片段。
- * 落盘端点未实装时，把这段交给用户复制 / CLI 写入（见 SetupPanel 的「写入端点待补」）。
- * apiKey 与 buildCliCommand 一致用占位符——明文 key 不进剪贴板，粘贴后用户自行填入。
+ * 生成 `~/.otto-user/custom-models.json` 文本片段。
+ * apiKey 用占位符，明文 key 不进剪贴板，粘贴后用户自行填入。
  */
 export function buildModelsFileJson(cfg: CustomModelConfig): string {
   const data = {
@@ -328,27 +327,6 @@ export function buildModelsFileJson(cfg: CustomModelConfig): string {
   return JSON.stringify(data, null, 2);
 }
 
-/** 生成等价的 CLI 命令（非交互式 `otto setup`，与 modelSetupCli 对齐）。 */
-export function buildCliCommand(form: SetupFormState): string {
-  const cfg = buildConfig(form);
-  const preset = findPreset(form.presetId);
-  const providerArg = preset && preset.id !== 'custom' ? preset.id : form.provider;
-  const parts = [
-    'otto setup',
-    `--provider ${shellQuote(providerArg)}`,
-    `--model ${shellQuote(cfg.modelId)}`,
-    '--key <你的API_KEY>',
-  ];
-  if (!preset || !preset.baseUrlLocked) {
-    parts.push(`--base-url ${shellQuote(cfg.baseUrl)}`);
-  }
-  return parts.join(' ');
-}
-
-function shellQuote(s: string): string {
-  if (/^[\w./:@-]+$/.test(s)) return s;
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
 
 /**
  * 按接入域名识别真实厂商（provider 只是协议名：OpenAI 兼容接入的

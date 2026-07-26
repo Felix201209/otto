@@ -30,13 +30,19 @@ concurrency:
 
 env:
   NODE_VERSION: '22.13.0'
-  RELEASES_REPO: ${{ github.repository }}
+  RELEASES_REPO: Felix201209/otto-releases
+  UPDATE_MIRROR_ASSET_BASE_URL: 'https://59.110.154.44:7777/downloads'
+  UPDATE_MIRROR_MANIFEST_URL: 'https://59.110.154.44:7777/otto-releases/latest.json'
+  UPDATE_MIRROR_ROOT: '/opt/otto-website'
 
 jobs:
   build:
     name: Check, Build, Draft Release
     runs-on: macos-latest
     timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout source
@@ -98,6 +104,8 @@ jobs:
             packages/desktop/src/main/enterprise-client.test.ts \
             packages/desktop/scripts/packaging-contract.test.mjs \
             packages/desktop/src/main/video-editor-resource.test.ts \
+            packages/desktop/scripts/make-latest-json.test.mjs \
+            packages/desktop/scripts/update-mirror-config.test.mjs \
             packages/server/src/enterprise/db.test.ts \
             packages/server/src/enterprise/parkEndpoints.test.ts \
             packages/server/src/server.test.ts \
@@ -110,6 +118,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OTTO_RELEASES_REPO: ${{ env.RELEASES_REPO }}
+          OTTO_UPDATE_ASSET_BASE_URL: ${{ env.UPDATE_MIRROR_ASSET_BASE_URL }}
 
       - name: Build enterprise server package
         run: npm run bundle:enterprise
@@ -137,8 +146,9 @@ jobs:
           if (latest.version !== version) {
             throw new Error(`latest.json version mismatch: ${latest.version} !== ${version}`);
           }
+          const assets = latest.assets || latest.files || {};
           for (const key of ['macArm64', 'macX64', 'winX64']) {
-            const asset = latest.files?.[key];
+            const asset = assets[key];
             if (!asset?.url || !asset?.sha256 || !asset?.size) {
               throw new Error(`latest.json missing complete ${key} asset metadata`);
             }
@@ -159,17 +169,43 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes with no-proxy download
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          INSTALLER="packages/desktop/release/Otto-Setup-${VERSION}-win-x64.exe"
+          INSTALLER_SHA="$(shasum -a 256 "$INSTALLER" | awk '{print $1}')"
+          NOTES_FILE="$RUNNER_TEMP/otto-v${VERSION}-release-notes.md"
+          {
+            echo "## Otto v${VERSION}"
+            echo
+            echo "Source commit: \`${GITHUB_SHA}\`"
+            echo
+            echo "### Windows no-proxy download"
+            echo
+            echo "[Download Windows x64 installer from the Otto mirror](${UPDATE_MIRROR_ASSET_BASE_URL}/Otto-Setup-${VERSION}-win-x64.exe)"
+            echo
+            echo "SHA256: \`${INSTALLER_SHA}\`"
+            echo
+            echo "The Windows installer is currently unsigned, so Windows may show an unknown publisher prompt."
+            echo
+            echo "Desktop installers, update manifest, and enterprise one-click package are attached to this release."
+          } > "$NOTES_FILE"
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: Otto v${{ steps.version.outputs.version }}
-          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          draft: true
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
           files: ${{ steps.artifacts.outputs.files }}
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.path }}
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -180,3 +216,245 @@ jobs:
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
           retention-days: 30
+
+  deploy-enterprise:
+    name: Deploy Enterprise Server
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      ${{
+        success()
+        && (
+          github.event_name == 'push'
+          || (github.event_name == 'workflow_dispatch' && !inputs.draft)
+        )
+      }}
+    env:
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
+
+    steps:
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.DEPLOY_HOST }}"
+          test -n "${{ secrets.DEPLOY_USER }}"
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+
+      - name: Download release workflow artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-release-v${{ needs.build.outputs.version }}
+          path: release-download
+
+      - name: Verify enterprise package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p enterprise-upload
+          ARCHIVE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz' -print -quit)"
+          CHECKSUM="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sha256' -print -quit)"
+          test -n "$ARCHIVE"
+          test -n "$CHECKSUM"
+          cp "$ARCHIVE" "$CHECKSUM" enterprise-upload/
+          cd enterprise-upload
+          sha256sum -c ./*.sha256
+          ls -lh ./*
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload enterprise package
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_DIR="/var/tmp/otto-enterprise-github/${{ needs.build.outputs.tag }}-${GITHUB_RUN_ID}"
+          echo "REMOTE_DIR=$REMOTE_DIR" >> "$GITHUB_ENV"
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "mkdir -p '$REMOTE_DIR'"
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" enterprise-upload/otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-* \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
+
+      - name: Install or upgrade on server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '$REMOTE_DIR'
+             sha256sum -c ./*.sha256
+             ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz | head -n 1)
+             rm -rf unpack
+             mkdir unpack
+             tar -xzf \"\$ARCHIVE\" -C unpack
+             PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
+             if [ -L /opt/otto-enterprise/current ]; then
+               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}'
+             else
+               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}'
+             fi"
+
+  deploy-update-mirror:
+    name: Deploy Desktop Update Mirror
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      ${{
+        success()
+        && (
+          github.event_name == 'push'
+          || (github.event_name == 'workflow_dispatch' && !inputs.draft)
+        )
+      }}
+    env:
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+
+    steps:
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.DEPLOY_HOST }}"
+          test -n "${{ secrets.DEPLOY_USER }}"
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+
+      - name: Download release workflow artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-release-v${{ needs.build.outputs.version }}
+          path: release-download
+
+      - name: Prepare and verify mirror payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.version }}"
+          mkdir -p mirror-upload
+          copy_one() {
+            local pattern="$1"
+            local source
+            source="$(find release-download -type f -name "$pattern" -print -quit)"
+            test -n "$source"
+            cp "$source" mirror-upload/
+          }
+          copy_one "Otto-${VERSION}-arm64.dmg"
+          copy_one "Otto-${VERSION}-arm64.dmg.blockmap"
+          copy_one "Otto-${VERSION}-x64.dmg"
+          copy_one "Otto-${VERSION}-x64.dmg.blockmap"
+          copy_one "Otto-Setup-${VERSION}-win-x64.exe"
+          copy_one "Otto-Setup-${VERSION}-win-x64.exe.blockmap"
+          copy_one "latest.json"
+          node - "mirror-upload" "${UPDATE_MIRROR_ASSET_BASE_URL}" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [dir, baseUrl] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'latest.json'), 'utf8'));
+          for (const [platform, asset] of Object.entries(manifest.assets || {})) {
+            const file = path.join(dir, asset.name);
+            if (!fs.existsSync(file)) throw new Error(`missing ${platform} asset: ${asset.name}`);
+            const bytes = fs.readFileSync(file);
+            const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+            if (bytes.length !== asset.size) throw new Error(`${platform} size mismatch`);
+            if (digest !== asset.sha256) throw new Error(`${platform} sha256 mismatch`);
+            if (asset.url !== `${baseUrl}/${asset.name}`) throw new Error(`${platform} mirror URL mismatch`);
+          }
+          NODE
+          (
+            cd mirror-upload
+            sha256sum Otto-* latest.json > SHA256SUMS
+          )
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload and atomically publish mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_DIR="/var/tmp/otto-update-mirror/${{ needs.build.outputs.tag }}-${GITHUB_RUN_ID}"
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "mkdir -p '$REMOTE_DIR'"
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" mirror-upload/* \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '$REMOTE_DIR'
+             sha256sum -c SHA256SUMS
+             sudo install -d -m 0755 '${UPDATE_MIRROR_ROOT}/downloads' '${UPDATE_MIRROR_ROOT}/otto-releases'
+             for file in Otto-*; do
+               sudo install -m 0644 \"\$file\" '${UPDATE_MIRROR_ROOT}/downloads/'\"\$file\"
+             done
+             sudo install -m 0644 latest.json '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next'
+             sudo mv '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next' '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json'"
+
+      - name: Verify public mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 \
+            "${UPDATE_MIRROR_MANIFEST_URL}?run=${GITHUB_RUN_ID}" \
+            --output remote-latest.json
+          cmp mirror-upload/latest.json remote-latest.json
+          curl --fail --silent --show-error --location --retry 3 \
+            "${UPDATE_MIRROR_ASSET_BASE_URL}/Otto-Setup-${{ needs.build.outputs.version }}-win-x64.exe" \
+            --output remote-windows-installer.exe
+          echo "$(sha256sum mirror-upload/Otto-Setup-${{ needs.build.outputs.version }}-win-x64.exe | awk '{print $1}')  remote-windows-installer.exe" \
+            | sha256sum -c -
+
+  publish-release:
+    name: Publish Verified Release
+    needs:
+      - build
+      - deploy-enterprise
+      - deploy-update-mirror
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        always()
+        && needs.build.result == 'success'
+        && needs.deploy-enterprise.result == 'success'
+        && needs.deploy-update-mirror.result == 'success'
+        && (
+          github.event_name == 'push'
+          || (github.event_name == 'workflow_dispatch' && !inputs.draft)
+        )
+      }}
+    env:
+      GH_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Publish release after deployments pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXTRA_ARGS=(--draft=false)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.prerelease }}" = "true" ]; then
+            EXTRA_ARGS+=(--prerelease)
+          else
+            EXTRA_ARGS+=(--prerelease=false --latest)
+          fi
+          gh release edit "${{ needs.build.outputs.tag }}" \
+            --repo "${RELEASES_REPO}" \
+            "${EXTRA_ARGS[@]}"

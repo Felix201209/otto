@@ -22,7 +22,7 @@
  *
  * 与 cli `feishuCommand.ts` 的差异（宿主依赖替换，逻辑保留）：
  *   - `tuiContext.addItem(...)`（往 Ink history 打日志）→ 改为 deps.broadcast 的
- *     WS 事件帧 / logger，no-op 化（server 无 TUI）。
+ *     WS 事件帧 / logger，no-op 化（server 无界面）。
  *   - `appEvents.emit(AppEvent.Feishu*)`（驱动 FeishuStatusDashboard）→ 同上，
  *     由 WS 协议帧承载（双向同步视图 Issue #6 用 session_upsert / message_start）。
  *   - `isolatedSessions: Map<chatId, {config, geminiClient}>` → 提升为 store 的

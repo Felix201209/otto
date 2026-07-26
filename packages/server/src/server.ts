@@ -7,7 +7,7 @@
 /**
  * otto-server：本地 HTTP + WS app server 骨架。
  *
- * 唯一会话源：所有客户端（desktop renderer / 未来 TUI 只读 / 飞书网关）都经
+ * 唯一会话源：所有客户端（desktop renderer / 飞书网关）都经
  * 这里读写同一份 SessionStore，并通过 WS 收到同一会话的实时广播。
  *
  * 本文件立「服务外壳 + 路由 + WS 收发分发 + registerFeishu 接缝」。
@@ -1043,7 +1043,7 @@ export class OttoServer {
    *   校验 → 复用 customModels.saveCustomModel 原子写盘（CLI 同格式）
    *   → 成功广播最新 models_list（含 current）；失败回 error(code:'save_failed')。
    *
-   * 广播用 broadcastAll：多窗口（及未来只读 TUI 视图）同步刷新模型列表。
+   * 广播用 broadcastAll：多窗口同步刷新模型列表。
    * makeActive：server 端真正实现——写盘时把该模型设为「当前生效模型」
    * （customModels 的 preferredModel 单一事实源），createCoreConfig 优先用它，
    * 广播 models_list 时带 current，让 renderer 模型药丸/菜单勾号反映真实生效模型。
@@ -2018,7 +2018,7 @@ export class OttoServer {
    * 本地 app server 防滥用闸门：仅放行本机/Electron 自身的连接，拒绝任意网页
    * 经 DNS-rebinding 或 localhost WebSocket 无鉴权驱动本 server（越权跑工具/读历史）。
    * - Origin：浏览器对 ws 握手与跨源 http 必带 Origin 且无法伪造。放行 无 Origin（Node 客户端
-   *   如 TUI）、`null`/`file://`（Electron file:// 渲染层）、localhost/127.0.0.1（本地 dev/工具）；
+   *   `null`/`file://`（Electron file:// 渲染层）、localhost/127.0.0.1（本地 dev/工具）；
    *   其余 http(s):// 网页来源一律拒。
    * - Host：要求主机名是 localhost/127.0.0.1/[::1]，挡 DNS-rebinding。
    */
@@ -2108,6 +2108,39 @@ export class OttoServer {
     }
     if (path === HTTP_ROUTES.health) {
       return sendJson(res, 200, ok(this.health()));
+    }
+    if (path === HTTP_ROUTES.incrementalUpdatePush) {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, err('method_not_allowed'));
+      }
+      if (!isLoopbackRequest(req)) {
+        return sendJson(res, 403, err('loopback_only'));
+      }
+      if (!matchesBearerToken(req.headers.authorization, this.localControlToken)) {
+        return sendJson(res, 401, err('unauthorized'));
+      }
+      void readJsonBody(req)
+        .then(parseIncrementalUpdatePushBody)
+        .then((parsed) => {
+          if (!parsed.ok) {
+            sendJson(res, 400, err(parsed.error));
+            return;
+          }
+          const frame = {
+            type: 'incremental_update_available',
+            payload: {
+              manifestUrl: parsed.value.manifestUrl,
+              reason: parsed.value.reason,
+              requestedAt: new Date().toISOString(),
+            },
+          } as const;
+          this.broadcastAll(frame);
+          sendJson(res, 202, ok({ deliveredTo: this.conns.size }));
+        })
+        .catch((error) => {
+          sendJson(res, 400, err(error instanceof Error ? error.message : String(error)));
+        });
+      return;
     }
     if (path === '/' || path === '/index.html') {
       void this.serveBrowserApp(res);
@@ -3998,6 +4031,35 @@ function readJsonBody(
     });
     req.on('error', reject);
   });
+}
+
+function parseIncrementalUpdatePushBody(body: unknown):
+  | { ok: true; value: { manifestUrl: string; reason?: string } }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: '请求体必须是对象' };
+  }
+  const input = body as { manifestUrl?: unknown; reason?: unknown };
+  if (typeof input.manifestUrl !== 'string' || input.manifestUrl.trim().length === 0) {
+    return { ok: false, error: 'manifestUrl 不能为空' };
+  }
+  let manifestUrl: string;
+  try {
+    const url = new URL(input.manifestUrl.trim());
+    if (url.protocol !== 'https:' || url.username || url.password) {
+      return { ok: false, error: 'manifestUrl 必须是无凭证 HTTPS URL' };
+    }
+    manifestUrl = url.toString();
+  } catch {
+    return { ok: false, error: 'manifestUrl 不是合法 URL' };
+  }
+  if (input.reason !== undefined) {
+    if (typeof input.reason !== 'string') return { ok: false, error: 'reason 必须是字符串' };
+    const reason = input.reason.trim();
+    if (reason.length > 160) return { ok: false, error: 'reason 不能超过 160 字符' };
+    return { ok: true, value: reason ? { manifestUrl, reason } : { manifestUrl } };
+  }
+  return { ok: true, value: { manifestUrl } };
 }
 
 function isLoopbackRequest(req: IncomingMessage): boolean {

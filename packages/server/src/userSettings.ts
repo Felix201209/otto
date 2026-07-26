@@ -8,8 +8,7 @@
  * 全局用户设置读写（server 端自包含副本，只读写 GUI 需要的子集字段）。
  *
  * 与 CLI 共享同一份文件 ~/.otto-user/settings.json
- * （packages/cli/src/config/settings.ts 的 USER_SETTINGS_PATH），但 server
- * 不能反向依赖 otto-cli（会牵入 Ink，破 TUI 回归门），因此这里只处理
+ * （历史 CLI 设置路径）。server 只处理
  * GUI 面板需要的少数字段：healthyUse / preferredLanguage / mcpServers。
  * 读取时对文件里的其它字段（theme / vimMode / customModels 等）原样保留、
  * 写回时不覆盖，避免 GUI 保存设置时把 CLI 专属字段冲掉。

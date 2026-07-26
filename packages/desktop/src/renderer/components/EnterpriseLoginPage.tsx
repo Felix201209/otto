@@ -47,8 +47,19 @@ export function sanitizeSmsCode(value: string): string {
 }
 
 export function sanitizeOrganizationInviteCode(value: string): string {
-  const compact = value.toLocaleUpperCase('en-US').replace(/[^A-HJ-NP-Z2-9]/g, '').slice(0, 8);
+  const compact = value.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').slice(0, 12);
+  if (compact.length > 8) return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8)}`;
   return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
+}
+
+export function isAcceptableRegistrationPassword(password: string): boolean {
+  if (password.length < 8 || password.length > 128) return false;
+  if (/[^\x20-\x7E]/.test(password)) return false;
+  const lower = password.toLocaleLowerCase('en-US');
+  if (['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(lower)) return false;
+  if (/^\d+$/.test(password) || /^[a-z]+$/i.test(password)) return false;
+  if (/^(.)\1{7,}$/.test(password)) return false;
+  return true;
 }
 
 export function isRegistrationReady(input: {
@@ -61,9 +72,9 @@ export function isRegistrationReady(input: {
   code: string;
 }): boolean {
   return (!input.inviteRequired
-    || input.inviteCode.replace(/[^A-HJ-NP-Z2-9]/g, '').length === 8)
+    || input.inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12)
     && Boolean(input.name.trim())
-    && input.password.length >= 8
+    && isAcceptableRegistrationPassword(input.password)
     && input.password === input.confirmPassword
     && Boolean(input.challengeId)
     && /^\d{6}$/.test(input.code);
@@ -393,10 +404,10 @@ export function EnterpriseLoginPage({
                   <span>企业邀请码</span>
                   <input
                     aria-label="企业邀请码"
-                    autoCapitalize="characters"
+                    autoCapitalize="none"
                     autoComplete="off"
                     spellCheck={false}
-                    maxLength={9}
+                    maxLength={14}
                     value={inviteCode}
                     disabled={formPending}
                     onChange={(event) => {
@@ -404,10 +415,10 @@ export function EnterpriseLoginPage({
                       invalidateRegistrationChallenge();
                       onClearError();
                     }}
-                    placeholder="XXXX-XXXX"
+                    placeholder="Aa3B-k9Pq-Z7xY"
                     required
                   />
-                  <small>仅加入企业时需要，由企业管理员生成</small>
+                  <small>仅加入企业时需要，由企业管理员生成；大小写敏感</small>
                 </label>
               ) : null}
               <div className="otto-auth-register-grid">
@@ -455,16 +466,18 @@ export function EnterpriseLoginPage({
                     type="password"
                     autoComplete="new-password"
                     minLength={8}
+                    maxLength={128}
                     value={registrationPassword}
                     disabled={formPending}
                     onChange={(event) => {
                       setRegistrationPassword(event.target.value);
                       onClearError();
                     }}
-                    placeholder="至少 8 位"
+                    placeholder="至少 8 位，不能是纯数字或纯字母"
                     required
                   />
                 </label>
+                <div className="otto-auth-inline-hint">至少 8 位；不能使用常见密码、纯数字、纯字母或连续重复字符。</div>
                 <label className="otto-auth-field">
                   <span>确认登录密码</span>
                   <input

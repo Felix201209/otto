@@ -26,7 +26,8 @@ export async function handleModuleUpdateRoute({
   readBody,
   sendJSON,
 }: ModuleUpdateRouteDeps): Promise<boolean> {
-  if (path === '/enterprise/modules/updates' && method === 'GET') {
+  if ((path === '/enterprise/modules/updates' || path === '/enterprise/modules/updates/client')
+    && method === 'GET') {
     sendJSON(res, 200, db.getModuleUpdateManifest());
     return true;
   }

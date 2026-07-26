@@ -12,7 +12,7 @@ import chalk from 'chalk';
 
 const sourceExtensions = ['.ts', '.tsx'];
 const compiledExtensions = ['.js', '.js.map'];
-const packagesToClean = ['packages/cli/src', 'packages/core/src'];
+const packagesToClean = ['packages/core/src'];
 
 let totalCleaned = 0;
 const cleanedFiles = [];

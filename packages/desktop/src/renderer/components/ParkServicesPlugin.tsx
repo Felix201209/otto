@@ -50,6 +50,34 @@ interface ParkService {
 
 const DEFAULT_BRAND = '宏创园区服务';
 const DEFAULT_PARK = '宏创园区';
+const ACTIONABLE_STAFF_TICKET_STATUSES = new Set(['待派单', '待接单', '维修中', '处理中']);
+
+export function isActionableStaffTicket(ticket: EnterpriseRepairTicket): boolean {
+  return Boolean(ticket.isRecipient && ACTIONABLE_STAFF_TICKET_STATUSES.has(ticket.status));
+}
+
+function assignedNotificationKey(ticket: EnterpriseRepairTicket): string {
+  return `assigned:${ticket.id}`;
+}
+
+function creatorUpdateNotificationKey(ticket: EnterpriseRepairTicket): string {
+  return `updated:${ticket.id}:${ticket.updatedAt}`;
+}
+
+function showParkNotification(
+  payload: Parameters<NonNullable<typeof window.otto.notificationShow>>[0],
+  fallbackTitle: string,
+  fallbackBody: string,
+): void {
+  const notify = window.otto.notificationShow?.(payload);
+  if (notify) {
+    void notify.catch(() => {
+      void window.otto.parkNativeNotify?.(fallbackTitle, fallbackBody);
+    });
+  } else {
+    void window.otto.parkNativeNotify?.(fallbackTitle, fallbackBody);
+  }
+}
 
 const ICON_POOL: IconComponent[] = [
   IconBuilding,
@@ -131,6 +159,15 @@ interface ServiceFormField {
   options?: string[];
 }
 
+const COMMON_SERVICE_FORM_FIELDS: ServiceFormField[] = [
+  { key: 'company', label: '公司名称', placeholder: '请输入公司名称' },
+  { key: 'address', label: '企业地址', placeholder: '请输入企业在园区内的地址' },
+  { key: 'roomNumber', label: '房间号', placeholder: '请输入门牌或房间号' },
+  { key: 'contact', label: '联系人', placeholder: '请输入联系人姓名' },
+  { key: 'phone', label: '联系电话', placeholder: '请输入联系电话' },
+];
+const COMMON_SERVICE_FORM_KEYS = new Set(COMMON_SERVICE_FORM_FIELDS.map((field) => field.key));
+
 const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
   renovation: [
     { key: 'area', label: '装修区域', placeholder: '例如：A 座 1203 室' },
@@ -177,12 +214,17 @@ const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
   ],
   'vehicle-visit': [
     { key: 'visitor', label: '来访人', placeholder: '请输入来访人姓名' },
-    { key: 'phone', label: '手机号', placeholder: '请输入来访人手机号' },
+    { key: 'visitorPhone', label: '来访人手机号', placeholder: '请输入来访人手机号' },
     { key: 'plate', label: '车牌号', placeholder: '例如：粤 B·D5678' },
     { key: 'visitTime', label: '来访日期与时间', placeholder: '例如：2026-08-05 15:00' },
     { key: 'reason', label: '拜访企业及事由', placeholder: '请填写拜访对象和事由' },
   ],
 };
+
+export function serviceFormFields(serviceId: string): ServiceFormField[] {
+  const specific = SERVICE_FORM_FIELDS[serviceId] ?? [];
+  return [...COMMON_SERVICE_FORM_FIELDS, ...specific.filter((field) => !COMMON_SERVICE_FORM_KEYS.has(field.key))];
+}
 
 /**
  * 9 项正好形成 3 列 × 3 行，对应《客户服务工作流程》。steps 仅保留为服务说明；
@@ -295,7 +337,7 @@ export function openParkServices(): void {
 }
 
 export function useParkBrand(): string {
-  const [brand, setBrand] = useState(DEFAULT_BRAND);
+  const [brand, setBrand] = useState('');
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -304,10 +346,10 @@ export function useParkBrand(): string {
         try {
           const park = await enterpriseParkView();
           if (!cancelled) {
-            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : DEFAULT_BRAND);
+            setBrand(park?.status === 'active' ? park.brandName?.trim() || DEFAULT_BRAND : '');
           }
         } catch {
-          if (!cancelled) setBrand(DEFAULT_BRAND);
+          if (!cancelled) setBrand('');
         }
         return;
       }
@@ -363,12 +405,28 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
   const [score, setScore] = useState('5');
   const [focus, setFocus] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [identity, setIdentity] = useState({
+    company: '', address: '', roomNumber: '', contact: '', phone: '',
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [session, publications] = await Promise.all([window.otto.enterpriseSession(), window.otto.enterpriseParkPublications()]);
+      const [session, publications, park] = await Promise.all([
+        window.otto.enterpriseSession(),
+        window.otto.enterpriseParkPublications(),
+        typeof window.otto.enterpriseParkView === 'function'
+          ? window.otto.enterpriseParkView().catch(() => null)
+          : Promise.resolve(null),
+      ]);
       setAccount(session.account);
+      setIdentity({
+        company: session.account?.organizationName || '',
+        address: park?.tenantAddress || '',
+        roomNumber: park?.tenantRoomNumber || '',
+        contact: session.account?.name || '',
+        phone: session.account?.phone?.replace(/^\+86/, '') || '',
+      });
       setItems(publications.filter((item) => item.kind === 'satisfaction'));
       setError(null);
     } catch (cause) { setError(errorMessage(cause)); }
@@ -380,15 +438,23 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
     if (!selected || selected.submittedAt) return;
     setBusy(true); setError(null);
     try {
-      const next = await window.otto.enterpriseParkSurveySubmit(selected.id, { score, focus, feedback, submittedBy: account?.name || '' });
+      const requiredIdentity = Object.fromEntries(
+        Object.entries(identity).map(([key, value]) => [key, value.trim()]),
+      );
+      if (Object.values(requiredIdentity).some((value) => !value))
+        throw new Error('请完善公司、地址、房间和联系人信息');
+      const next = await window.otto.enterpriseParkSurveySubmit(selected.id, {
+        ...requiredIdentity, score, focus, feedback, submittedBy: identity.contact || account?.name || '',
+      });
       setItems((current) => current.map((item) => item.id === next.id ? next : item));
+      window.dispatchEvent(new CustomEvent('otto:park-publication-handled', { detail: { id: selected.id } }));
     } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
   };
   return <div className="otto-park-demo">
     <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className={`otto-park-demo__status ${selected?.submittedAt ? 'is-done' : ''}`}>{selected?.submittedAt ? '已提交' : selected ? '待填写' : '暂无问卷'}</span></div>
     <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">实名反馈</div><h3>满意度调查</h3><p>每份问卷只能提交一次，提交后不能修改。</p></div></div>
     {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
-    {items.length ? <><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => setSelectedId(item.id)}>{item.submittedAt ? '已提交 · ' : '待填写 · '}{item.title}</button>)}</div>{selected ? <form className="otto-park-survey__form" onSubmit={(event) => { void submit(event); }} aria-label="员工填写满意度调查"><div className="otto-park-receiver__label">提交人：{account?.name || '当前用户'}</div><h3>{selected.title}</h3><p>{selected.body}</p><label>总体满意度<select value={selected.responseData?.score || score} onChange={(event) => setScore(event.target.value)} disabled={Boolean(selected.submittedAt)}><option value="5">5 分 · 非常满意</option><option value="4">4 分 · 满意</option><option value="3">3 分 · 一般</option><option value="2">2 分 · 待改进</option><option value="1">1 分 · 不满意</option></select></label><label>重点关注<input required value={selected.responseData?.focus || focus} onChange={(event) => setFocus(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="例如：网络响应、会议室环境" /></label><label>改进建议<textarea required rows={4} value={selected.responseData?.feedback || feedback} onChange={(event) => setFeedback(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="请填写具体建议" /></label><button type="submit" className="otto-park-demo__primary" disabled={busy || Boolean(selected.submittedAt)}>{selected.submittedAt ? '已实名提交，不能修改' : busy ? '正在提交…' : '提交问卷'}</button></form> : null}</> : <div className="otto-park-repair__empty">暂无需要填写的满意度调查。</div>}
+    {items.length ? <><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => setSelectedId(item.id)}>{item.submittedAt ? '已提交 · ' : '待填写 · '}{item.title}</button>)}</div>{selected ? <form className="otto-park-survey__form" onSubmit={(event) => { void submit(event); }} aria-label="员工填写满意度调查"><div className="otto-park-receiver__label">提交人：{account?.name || '当前用户'}</div><h3>{selected.title}</h3><p>{selected.body}</p><div className="otto-park-form__grid">{COMMON_SERVICE_FORM_FIELDS.map((field) => <label key={field.key} className="otto-park-form__field">{field.label}<input aria-label={field.label} required value={selected.responseData?.[field.key] ?? identity[field.key as keyof typeof identity]} onChange={(event) => setIdentity((current) => ({ ...current, [field.key]: event.target.value }))} disabled={Boolean(selected.submittedAt)} placeholder={field.placeholder} /></label>)}</div><label>总体满意度<select value={selected.responseData?.score || score} onChange={(event) => setScore(event.target.value)} disabled={Boolean(selected.submittedAt)}><option value="5">5 分 · 非常满意</option><option value="4">4 分 · 满意</option><option value="3">3 分 · 一般</option><option value="2">2 分 · 待改进</option><option value="1">1 分 · 不满意</option></select></label><label>重点关注<input required value={selected.responseData?.focus || focus} onChange={(event) => setFocus(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="例如：网络响应、会议室环境" /></label><label>改进建议<textarea required rows={4} value={selected.responseData?.feedback || feedback} onChange={(event) => setFeedback(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="请填写具体建议" /></label><button type="submit" className="otto-park-demo__primary" disabled={busy || Boolean(selected.submittedAt)}>{selected.submittedAt ? '已实名提交，不能修改' : busy ? '正在提交…' : '提交问卷'}</button></form> : null}</> : <div className="otto-park-repair__empty">暂无需要填写的满意度调查。</div>}
   </div>;
 }
 
@@ -404,7 +470,7 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
   onBack: () => void;
   focusTicket: EnterpriseRepairTicket | null;
 }): React.JSX.Element {
-  const fields = SERVICE_FORM_FIELDS[service.id] ?? [];
+  const fields = serviceFormFields(service.id);
   const interaction = SERVICE_INTERACTIONS[service.id] ?? {
     intro: `填写并提交${service.name}申请，园区客服受理后会返回办理结果。`,
     quickReplies: ['已受理', '需要补充材料', '已安排办理'],
@@ -419,6 +485,7 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<EnterpriseRepairTicket | null>(null);
   const [resources, setResources] = useState<EnterpriseParkResources | null>(null);
+  const [membershipDefaults, setMembershipDefaults] = useState({ address: '', roomNumber: '' });
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries(
     fields.map((field) => [field.key, ''])
       .concat([
@@ -436,11 +503,29 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [session, next] = await Promise.all([
+      const [session, next, park] = await Promise.all([
         window.otto.enterpriseSession(),
         window.otto.enterpriseTicketList(),
+        typeof window.otto.enterpriseParkView === 'function'
+          ? window.otto.enterpriseParkView().catch(() => null)
+          : Promise.resolve(null),
       ]);
       setAccount(session.account);
+      const defaults = {
+        address: park?.tenantAddress ?? '',
+        roomNumber: park?.tenantRoomNumber ?? '',
+      };
+      setMembershipDefaults(defaults);
+      if (session.account) {
+        setForm((current) => ({
+          ...current,
+          company: current.company || session.account?.organizationName || '',
+          address: current.address || defaults.address,
+          roomNumber: current.roomNumber || defaults.roomNumber,
+          contact: current.contact || session.account?.name || '',
+          phone: current.phone || session.account?.phone?.replace(/^\+86/, '') || '',
+        }));
+      }
       setTickets(next.filter((ticket) => (
         ticket.serviceId === service.id || (service.id === 'repair' && !ticket.serviceId)
       )));
@@ -470,15 +555,6 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
     return () => window.clearInterval(timer);
   }, [refresh]);
   useEffect(() => { void refreshResources(); }, [refreshResources]);
-  useEffect(() => {
-    if (!account) return;
-    setForm((current) => ({
-      ...current,
-      company: current.company || account.organizationName || '',
-      contact: current.contact || account.name,
-      phone: current.phone || account.phone?.replace(/^\+86/, '') || '',
-    }));
-  }, [account]);
 
   const selectedRoom = resources?.meetingRooms.find((room) => room.id === form.roomId) ?? null;
   const visibleSlots = resources?.meetingSlots.filter((slot) => (
@@ -537,7 +613,7 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
         normalized.category = form.otherCategory.trim() || '其他';
       }
       const primary = normalized.roomName || normalized.location || normalized.area
-        || normalized.plate || normalized.date || normalized.cardNumber || normalized.visitor || service.name;
+        || normalized.roomNumber || normalized.plate || normalized.date || normalized.cardNumber || normalized.visitor || service.name;
       const description = service.id === 'repair'
         ? normalized.issue
         : [
@@ -570,9 +646,12 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
       if (service.id !== 'meeting-room') {
         setForm(Object.fromEntries(fields.map((field) => [
           field.key,
-          field.key === 'contact' ? account?.name || ''
+          field.key === 'company' ? account?.organizationName || ''
+            : field.key === 'address' ? membershipDefaults.address
+              : field.key === 'roomNumber' ? membershipDefaults.roomNumber
+                : field.key === 'contact' ? account?.name || ''
             : field.key === 'phone' ? account?.phone?.replace(/^\+86/, '') || ''
-              : field.key === 'company' ? account?.organizationName || '' : '',
+              : '',
         ]).concat([
           ['otherCategory', ''],
           ['roomId', ''],
@@ -828,17 +907,20 @@ function ServiceDemo({ service, onBack, focusTicket }: { service: ParkService; o
 }
 
 export function ParkServicesPlugin(): React.JSX.Element {
-  const [parkEnabled, setParkEnabled] = useState(true);
+  const [parkEnabled, setParkEnabled] = useState(() => typeof window.otto?.enterpriseParkView !== 'function');
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
   const [backgroundTickets, setBackgroundTickets] = useState<EnterpriseRepairTicket[]>([]);
+  const [backgroundTicketSummaryCount, setBackgroundTicketSummaryCount] = useState(0);
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
   const [focusTicket, setFocusTicket] = useState<EnterpriseRepairTicket | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<EnterpriseRepairTicket[]>([]);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const notifiedTicketKeys = useRef(new Set<string>());
+  const ticketPollIdentity = useRef<string | null>(null);
+  const ticketPollInitialized = useRef(false);
   const notifiedPublicationKeys = useRef(new Set<string>());
   const uid = useId();
   const titleId = `${uid}-title`;
@@ -852,8 +934,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
           const park = await enterpriseParkView();
           if (!park || park.status !== 'active') {
             if (!cancelled) {
-              setParkEnabled(true);
-              setBrand(DEFAULT_BRAND);
+              setParkEnabled(false);
+              setBrand('');
               setServices(defaultServices(DEFAULT_PARK));
             }
             return;
@@ -881,8 +963,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
           }
         } catch {
           if (!cancelled) {
-            setParkEnabled(true);
-            setBrand(DEFAULT_BRAND);
+            setParkEnabled(false);
+            setBrand('');
             setServices(defaultServices(DEFAULT_PARK));
           }
         }
@@ -890,8 +972,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
       }
       // 旧 preload 兼容：没有 enterpriseParkView 时才允许本机园区配置。
       const cfg = await window.otto?.parkConfig?.().catch(() => null);
-      if (cancelled || !cfg) return;
+      if (cancelled) return;
       setParkEnabled(true);
+      if (!cfg) return;
       if (cfg.brandName) setBrand(cfg.brandName);
       if (cfg.services && cfg.services.length > 0) {
         setServices(cfg.services.map((service, index) => ({
@@ -940,8 +1023,20 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, [open, selected]);
 
   useEffect(() => {
+    const onPublicationHandled = (event: Event): void => {
+      const id = event instanceof CustomEvent && typeof event.detail?.id === 'string'
+        ? event.detail.id
+        : '';
+      if (!id) return;
+      notifiedPublicationKeys.current.add(id);
+      setBackgroundPublication((current) => current?.id === id ? null : current);
+    };
+    window.addEventListener('otto:park-publication-handled', onPublicationHandled);
+    return () => window.removeEventListener('otto:park-publication-handled', onPublicationHandled);
+  }, []);
+
+  useEffect(() => {
     const onOpen = (): void => {
-      if (parkEnabled !== true) return;
       setSelected(null);
       setFocusTicket(null);
       setOpen(true);
@@ -960,57 +1055,119 @@ export function ParkServicesPlugin(): React.JSX.Element {
         if (cancelled) return;
         if (!session.account) {
           setAssignedTasks([]);
+          setBackgroundTickets([]);
+          setBackgroundTicketSummaryCount(0);
+          notifiedTicketKeys.current.clear();
+          ticketPollIdentity.current = null;
+          ticketPollInitialized.current = false;
           return;
+        }
+        const identity = `${session.account.organizationId}:${session.account.id}`;
+        if (ticketPollIdentity.current !== identity) {
+          ticketPollIdentity.current = identity;
+          ticketPollInitialized.current = false;
+          notifiedTicketKeys.current.clear();
+          setBackgroundTickets([]);
+          setBackgroundTicketSummaryCount(0);
         }
         const tickets = await window.otto.enterpriseTicketList();
         if (cancelled) return;
-        setAssignedTasks(tickets.filter(
-          (ticket) => ticket.isRecipient && ticket.status !== '已完成',
+        const actionableTasks = tickets.filter(isActionableStaffTicket);
+        const latestTickets = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+        setAssignedTasks(actionableTasks);
+        setBackgroundTickets((current) => current
+          .map((ticket) => latestTickets.get(ticket.id) ?? ticket)
+          .filter((ticket) => (
+            ticket.isRecipient ? isActionableStaffTicket(ticket) : ticket.status !== '已完成'
+          )));
+        setBackgroundTicketSummaryCount((current) => current > 0 ? actionableTasks.length : 0);
+
+        for (const ticket of tickets.filter((item) => item.isRecipient && !isActionableStaffTicket(item))) {
+          const settledKey = `settled:${ticket.id}:${ticket.status}`;
+          if (notifiedTicketKeys.current.has(settledKey)) continue;
+          notifiedTicketKeys.current.add(settledKey);
+          void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
+        }
+
+        const assignedCandidates = actionableTasks.filter((ticket) => (
+          !ticket.readAt && !notifiedTicketKeys.current.has(assignedNotificationKey(ticket))
         ));
-        const candidates = [
-          ...tickets.filter((ticket) => (
-          ticket.isRecipient
-          && !ticket.readAt
-          && !notifiedTicketKeys.current.has(`assigned:${ticket.id}`)
-          )),
-          ...tickets.filter((ticket) => (
+        const creatorCandidates = tickets.filter((ticket) => (
           ticket.isCreator
+          && ticket.status !== '已完成'
           && Boolean(ticket.responseAt || ticket.status === '待验收')
-          && !notifiedTicketKeys.current.has(`updated:${ticket.id}:${ticket.updatedAt}`)
-          )),
-        ];
-        if (!candidates.length) return;
-        for (const candidate of candidates) {
-          const key = candidate.isRecipient && !candidate.readAt
-            ? `assigned:${candidate.id}`
-            : `updated:${candidate.id}:${candidate.updatedAt}`;
-          notifiedTicketKeys.current.add(key);
-          const title = candidate.isRecipient && !candidate.readAt
-            ? 'Otto 待处理提醒 · 园区服务'
-            : 'Otto 园区服务进度提醒';
-          const body = candidate.isRecipient && !candidate.readAt
-            ? `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`
-            : `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
-          const notify = window.otto.notificationShow?.({
+          && !notifiedTicketKeys.current.has(creatorUpdateNotificationKey(ticket))
+        ));
+
+        if (!ticketPollInitialized.current) {
+          ticketPollInitialized.current = true;
+          for (const ticket of assignedCandidates) notifiedTicketKeys.current.add(assignedNotificationKey(ticket));
+          for (const ticket of creatorCandidates) notifiedTicketKeys.current.add(creatorUpdateNotificationKey(ticket));
+
+          if (assignedCandidates.length > 1) {
+            const title = 'Otto 待处理提醒 · 园区服务';
+            const body = `你有 ${assignedCandidates.length} 项尚未处理的园区任务，已为你汇总到待办列表。`;
+            setBackgroundTicketSummaryCount(actionableTasks.length);
+            showParkNotification({
+              messageId: `park-ticket-summary:${identity}:${assignedCandidates.map((ticket) => ticket.id).sort().join(',')}`,
+              sessionId: 'park:service',
+              source: 'park',
+              title,
+              preview: body,
+            }, title, body);
+            return;
+          }
+        }
+
+        if (assignedCandidates.length > 1) {
+          for (const ticket of assignedCandidates) notifiedTicketKeys.current.add(assignedNotificationKey(ticket));
+          const title = 'Otto 新任务提醒 · 园区服务';
+          const body = `新收到 ${assignedCandidates.length} 项园区任务，当前共 ${actionableTasks.length} 项待处理。`;
+          setBackgroundTicketSummaryCount(actionableTasks.length);
+          showParkNotification({
+            messageId: `park-ticket-batch:${identity}:${assignedCandidates.map((ticket) => ticket.id).sort().join(',')}`,
+            sessionId: 'park:service',
+            source: 'park',
+            title,
+            preview: body,
+          }, title, body);
+        } else if (assignedCandidates.length === 1) {
+          const candidate = assignedCandidates[0];
+          notifiedTicketKeys.current.add(assignedNotificationKey(candidate));
+          const title = 'Otto 待处理提醒 · 园区服务';
+          const body = `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`;
+          showParkNotification({
             messageId: `park-ticket:${candidate.id}:${candidate.updatedAt}`,
             sessionId: `park:ticket:${candidate.id}`,
             source: 'park',
             title,
-            sender: candidate.isRecipient ? candidate.creator.name : undefined,
+            sender: candidate.creator.name,
             preview: body,
-          });
-          if (notify) {
-            void notify.catch(() => {
-              void window.otto.parkNativeNotify?.(title, body);
-            });
-          } else {
-            void window.otto.parkNativeNotify?.(title, body);
-          }
+          }, title, body);
+          setBackgroundTickets((current) => [
+            candidate,
+            ...current.filter((ticket) => ticket.id !== candidate.id),
+          ].slice(0, 5));
         }
-        setBackgroundTickets((current) => [
-          ...candidates,
-          ...current.filter((ticket) => !candidates.some((candidate) => candidate.id === ticket.id)),
-        ].slice(0, 5));
+
+        for (const candidate of creatorCandidates) {
+          const key = creatorUpdateNotificationKey(candidate);
+          if (notifiedTicketKeys.current.has(key)) continue;
+          notifiedTicketKeys.current.add(key);
+          const title = 'Otto 园区服务进度提醒';
+          const body = `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
+          showParkNotification({
+            messageId: `park-ticket:${candidate.id}:${candidate.updatedAt}`,
+            sessionId: `park:ticket:${candidate.id}`,
+            source: 'park',
+            title,
+            preview: body,
+          }, title, body);
+          setBackgroundTickets((current) => [
+            candidate,
+            ...current.filter((ticket) => ticket.id !== candidate.id),
+          ].slice(0, 5));
+        }
       } catch {
         // 未登录、服务器暂不可达时安静重试；报修页打开后会显示具体错误。
       }
@@ -1047,6 +1204,14 @@ export function ParkServicesPlugin(): React.JSX.Element {
     openTicket(ticket);
     setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
     void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
+  };
+
+  const openBackgroundTicketSummary = (): void => {
+    setSelected(null);
+    setFocusTicket(null);
+    setOpen(true);
+    setBackgroundTicketSummaryCount(0);
+    void window.otto.notificationMarkRead?.('park:service').catch(() => undefined);
   };
 
   const openBackgroundPublication = (): void => {
@@ -1114,7 +1279,14 @@ export function ParkServicesPlugin(): React.JSX.Element {
       </div>
     </div>
   ) : null}
-  {(backgroundTickets.length || backgroundPublication) ? <div className="otto-park-toast-stack" aria-live="polite">
+  {(backgroundTicketSummaryCount || backgroundTickets.length || backgroundPublication) ? <div className="otto-park-toast-stack" aria-live="polite">
+    {backgroundTicketSummaryCount ? (
+      <button type="button" className="otto-park-toast otto-park-toast--result" onClick={openBackgroundTicketSummary} aria-label="打开园区待办汇总">
+        <span>Otto 园区服务</span>
+        <strong>{backgroundTicketSummaryCount} 项任务待处理</strong>
+        <em>已合并历史提醒 · 点击查看待办列表</em>
+      </button>
+    ) : null}
     {backgroundTickets.map((ticket) => (
       <button key={ticket.id} type="button" className="otto-park-toast otto-park-toast--result" onClick={() => openBackgroundTicket(ticket)} aria-label={`打开园区服务通知：${ticket.title}`}>
         <span>Otto 园区服务</span>
