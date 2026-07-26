@@ -62,6 +62,8 @@ jobs:
         run: |
           npm run doctor
           git diff --check
+          npm run validate:boundaries
+          npm run size:source:check
 
       # 先 build 再 typecheck：packages/cli 与 packages/server 的 tsconfig 用
       # TS project references 指向 packages/core（"references": [{ "path":
@@ -80,8 +82,13 @@ jobs:
       - name: 🧪 Focused release regressions
         run: |
           npx vitest run \
+            packages/core/src/config/lazy-heavy-tools.registration.test.ts \
+            packages/core/src/core/customModelAdapter.test.ts \
             packages/desktop/src/main/enterprise-client.test.ts \
             packages/desktop/scripts/packaging-contract.test.mjs \
+            packages/desktop/src/main/video-editor-resource.test.ts \
+            packages/server/src/enterprise/db.test.ts \
+            packages/server/src/enterprise/parkEndpoints.test.ts \
             packages/server/src/server.test.ts \
             packages/server/src/enterprise/server.test.ts
 

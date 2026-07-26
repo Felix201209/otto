@@ -1,7 +1,7 @@
 # Otto Runtime Kernel Boundary
 
 > **Status**: Living document — update when kernel modules change.
-> **Last updated**: 2026-07-22 (updated for session memory injection)
+> **Last updated**: 2026-07-26 (updated for A2A protocol and optional video editor boundaries)
 
 ## Purpose
 
@@ -76,6 +76,13 @@ The kernel owns these lifecycle-critical concerns:
 - Defines stable product semantics for tool readiness, agent activity labels, and unread-dot behavior.
 - Rule: performance optimizations may change load timing and sub-agent profiles, but must not make user-facing tools feel missing or first-use slow after session setup.
 - **UX guide**: `docs/product-ux-contracts.md`
+
+### 3d. Shared Product Protocols
+
+- **File**: `packages/core/src/a2a/atoaProtocol.ts`
+- Defines the typed A2A message prefixes, payloads, parsing, rendering helpers, and context-source constants shared by desktop and enterprise tests.
+- Rule: desktop and server code must consume A2A protocol types/constants through this shared module or public package exports; server must not import `packages/desktop/src`.
+- Rule: this module is pure protocol/data logic only. It must not import Electron, HTTP server code, UI components, storage, or provider adapters.
 
 ### 4. Central Policy Gate
 
@@ -213,6 +220,12 @@ The kernel owns these lifecycle-critical concerns:
 ## What Must NOT Live in the Kernel
 
 These concerns belong outside the kernel boundary. Kernel files **must not import** from them.
+
+### Optional External Components
+
+- Desktop-only optional tools such as the OpenReel video editor remain outside the kernel.
+- The desktop package does not bundle `resources/video-editor` by default. Packaged builds must fail loudly when the optional component is absent instead of falling back to a development server.
+- Development builds may still use local repo resources or a local dev server to keep contributor workflow intact.
 
 ### Provider Adapters
 

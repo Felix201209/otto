@@ -87,12 +87,19 @@ jobs:
         run: |
           npm run doctor
           git diff --check
+          npm run validate:boundaries
+          npm run size:source:check
 
       - name: Focused regression tests
         run: |
           npx vitest run \
+            packages/core/src/config/lazy-heavy-tools.registration.test.ts \
+            packages/core/src/core/customModelAdapter.test.ts \
             packages/desktop/src/main/enterprise-client.test.ts \
             packages/desktop/scripts/packaging-contract.test.mjs \
+            packages/desktop/src/main/video-editor-resource.test.ts \
+            packages/server/src/enterprise/db.test.ts \
+            packages/server/src/enterprise/parkEndpoints.test.ts \
             packages/server/src/server.test.ts \
             packages/server/src/enterprise/server.test.ts
 
@@ -122,6 +129,21 @@ jobs:
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
+          test -f "$DESKTOP_RELEASE/latest.json"
+          node - "$DESKTOP_RELEASE/latest.json" "$VERSION" <<'NODE'
+          const fs = require('node:fs');
+          const [latestPath, version] = process.argv.slice(2);
+          const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
+          if (latest.version !== version) {
+            throw new Error(`latest.json version mismatch: ${latest.version} !== ${version}`);
+          }
+          for (const key of ['macArm64', 'macX64', 'winX64']) {
+            const asset = latest.files?.[key];
+            if (!asset?.url || !asset?.sha256 || !asset?.size) {
+              throw new Error(`latest.json missing complete ${key} asset metadata`);
+            }
+          }
+          NODE
           {
             echo "files<<EOF"
             printf '%s\n' \

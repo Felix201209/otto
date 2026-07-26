@@ -10,8 +10,10 @@ This decision log tracks the large and boundary-sensitive areas found by the 202
 | Runtime kernel | `packages/core/src/index.ts`, `packages/core/src/core/*` | `packages/core/src/**/*.test.ts` | `otto-core` workspace dependency | `packages/core` | keep, enforce kernel boundary | #90 |
 | Enterprise/local server | `packages/server/src/index.ts`, `packages/server/src/server.ts`, `packages/server/src/enterprise/server.ts` | `packages/server/src/**/*.test.ts` | desktop server manager, enterprise one-click bundle | `packages/server` | keep, split enterprise DB/server modules | #85, #87, #91 |
 | Desktop app | `packages/desktop/src/main/index.ts`, `packages/desktop/src/renderer/App.tsx` | `packages/desktop/src/**/*.test.ts*` | Electron app and desktop release artifacts | `packages/desktop` | keep, split IPC/CSS and keep installer lightweight | #88, #89 |
+| A2A shared protocol | `packages/core/src/a2a/atoaProtocol.ts` | `packages/desktop/src/renderer/atoaProtocol.test.ts`, `packages/server/src/enterprise/server.test.ts` | desktop renderer A2A UI, enterprise A2A inbox/reply tests | `packages/core` | keep as pure shared protocol; no desktop/server deep import | #90 |
 | Mem0 adapter | `packages/adapters/mem0/index.ts` | none in adapter package | optional memory adapter | `packages/adapters/mem0` | keep but move imports to public `otto-core` exports | #90 |
 | VSCode UI plugin | `packages/vscode-ui-plugin` | plugin-local webview tests/build only | optional IDE companion surface | `packages/vscode-ui-plugin` | keep out of root workspaces until productized | #92 |
+| Optional video editor | `resources/video-editor`, `packages/desktop/src/main/video-editor-resource.ts` | `packages/desktop/src/main/video-editor-resource.test.ts`, `packages/desktop/scripts/packaging-contract.test.mjs` | desktop IPC opens editor when installed or available in dev | `resources`, `packages/desktop` | retain source, do not bundle in default desktop release; packaged absence fails loudly | #89 |
 
 ## Large Text Files
 
@@ -42,3 +44,4 @@ This decision log tracks the large and boundary-sensitive areas found by the 202
 - `npm run size:source:check` fails for new budget violations while keeping the 2026-07-23 cleanup backlog in a named baseline.
 - `npm run validate:boundaries` fails new cross-package deep imports and reports the remaining baselined violations with issue IDs.
 - `npm run benchmark:low-resource-agents` runs a local, credential-free synthetic multi-agent benchmark for 4GB/8GB/high profiles.
+- CI and release workflows run boundary and source-size checks. Release verification checks desktop/enterprise assets, SHA-256, and complete `latest.json` metadata without enforcing installer size as a hard gate.
