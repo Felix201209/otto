@@ -57,6 +57,7 @@ const API_V2_HEALTH = {
     'personal_enterprise_upgrade',
     'park_service_push',
     'account_presence_v1',
+    'modular_update_push_v1',
   ],
 };
 
@@ -207,6 +208,40 @@ describe('EnterpriseClient', () => {
     expect(request.method).toBe('POST');
     expect(request.headers).toMatchObject({ authorization: 'Bearer personal-token' });
     expect(JSON.parse(request.body as string)).toEqual({ inviteCode: 'Ab3D-k9Pq-Z7xY' });
+  });
+
+  it('uses the member session to read enterprise module update manifests', async () => {
+    const manifest = {
+      format: 'otto-module-updates-v1',
+      deploymentId: 'dep_1',
+      generatedAt: '2026-07-26T00:00:00.000Z',
+      modules: [{
+        module: 'park_service',
+        version: '1.9.5-park.2',
+        rollout: 'stable',
+        notes: 'park update',
+        minAppVersion: '1.9.5',
+        manifestUrl: 'https://updates.example.com/otto-incremental.json',
+        sha256: 'a'.repeat(64),
+        publishedAt: '2026-07-26T00:00:00.000Z',
+        updatedAt: '2026-07-26T00:00:00.000Z',
+      }],
+      catalog: [{ module: 'park_service', features: ['park_service'] }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, manifest));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getModuleUpdates()).resolves.toEqual(manifest);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/modules/updates/client');
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
+      .toMatchObject({ authorization: 'Bearer session-token' });
   });
 
   it('加入企业已提交但响应断线时，用原 Bearer 会话对账并提交企业身份', async () => {

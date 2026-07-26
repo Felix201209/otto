@@ -167,6 +167,28 @@ export interface EnterpriseOrganizationFeatures {
   knowledge: boolean;
 }
 
+export type EnterpriseModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
+
+export interface EnterpriseModuleUpdateDescriptor {
+  module: string;
+  version: string;
+  rollout: EnterpriseModuleUpdateRollout;
+  notes: string;
+  minAppVersion: string | null;
+  manifestUrl: string | null;
+  sha256: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface EnterpriseModuleUpdateManifest {
+  format: 'otto-module-updates-v1';
+  deploymentId: string;
+  generatedAt: string;
+  modules: EnterpriseModuleUpdateDescriptor[];
+  catalog: Array<{ module: string; features: string[] }>;
+}
+
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
 
 export interface EnterpriseOrganizationPosition {
@@ -940,6 +962,12 @@ export class EnterpriseClient {
     return (await this.request<{ features: EnterpriseOrganizationFeatures }>(
       '/enterprise/organization/features',
     )).features;
+  }
+
+  async getModuleUpdates(): Promise<EnterpriseModuleUpdateManifest> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['modular_update_push_v1']);
+    return this.request('/enterprise/modules/updates/client');
   }
 
   async updateOrganizationFeatures(

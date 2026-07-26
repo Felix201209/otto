@@ -629,6 +629,24 @@ describe('受保护 vs 公开路由边界', () => {
       ]),
     });
 
+    const anonymousClientManifest = await fetch(`${base}/enterprise/modules/updates/client`);
+    expect(anonymousClientManifest.status).toBe(401);
+
+    const database = await import('./db.js');
+    const member = database.createAccount({
+      username: 'module-reader',
+      password: 'module-reader-password',
+      name: 'Module Reader',
+    });
+    const session = database.createAuthSession(member.id);
+    const clientManifest = await fetch(`${base}/enterprise/modules/updates/client`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(clientManifest.status).toBe(200);
+    await expect(clientManifest.json()).resolves.toMatchObject({
+      modules: [expect.objectContaining({ module: 'park_service', rollout: 'stable' })],
+    });
+
     const health = await fetch(`${base}/enterprise/health`);
     expect(health.status).toBe(200);
     const body = await health.json() as {
