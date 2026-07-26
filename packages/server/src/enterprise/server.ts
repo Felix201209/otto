@@ -69,6 +69,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
 import { handleAdminPageRoute } from './adminPageRoutes.js';
+import { handleDeploymentRoute } from './deploymentRoutes.js';
 import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 
 const DEFAULT_PORT = 7777;
@@ -905,11 +906,6 @@ function makeHandler(
       }
 
       // ===== Private deployment, license and telemetry =====
-      if (path === '/enterprise/deployment/status' && method === 'GET') {
-        sendJSON(res, 200, db.getPrivateDeploymentStatus());
-        return;
-      }
-
       if (await handleModuleUpdateRoute({
         path,
         method,
@@ -922,46 +918,19 @@ function makeHandler(
         return;
       }
 
-      if (path === '/enterprise/deployment/license' && method === 'POST') {
-        const body = await readBody(req);
-        try {
-          const license = db.importDeploymentLicense(body);
-          db.recordTelemetryEvent({
-            organizationId: adminPrincipal?.organizationId ?? null,
-            eventType: 'license_imported',
-            payload: {
-              licenseId: license.id,
-              plan: license.plan,
-              status: license.status,
-              moduleCount: license.modules.length,
-            },
-          });
-          sendJSON(res, 200, { license, deployment: db.getPrivateDeploymentStatus() });
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : 'license import failed' });
-        }
+      if (await handleDeploymentRoute({
+        path,
+        method,
+        req,
+        res,
+        url,
+        principal: adminPrincipal,
+        readBody,
+        sendJSON,
+      })) {
         return;
       }
 
-      if (path === '/enterprise/deployment/telemetry' && method === 'PATCH') {
-        const body = await readBody(req);
-        const settings = db.updateTelemetrySettings({
-          enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
-          contentMode: body.contentMode === 'diagnostic_redacted'
-            ? 'diagnostic_redacted'
-            : body.contentMode === 'operational_only' ? 'operational_only' : undefined,
-          endpoint: typeof body.endpoint === 'string' ? body.endpoint : undefined,
-        });
-        sendJSON(res, 200, { telemetry: { ...settings, ...db.getTelemetryQueueSummary() } });
-        return;
-      }
-
-      if (path === '/enterprise/deployment/diagnostics' && method === 'GET') {
-        sendJSON(res, 200, db.exportDeploymentDiagnostics({
-          includeRedactedSamples: url.searchParams.get('includeRedactedSamples') === 'true',
-        }));
-        return;
-      }
       // ===== Local Agent Discovery SDK =====
       if (path === '/enterprise/sdk/otto-discovery.js' && method === 'GET') {
         try {
