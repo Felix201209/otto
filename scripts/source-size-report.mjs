@@ -81,7 +81,6 @@ const BASELINE = new Map([
   ['packages/server/src/enterprise/server.ts', '#85/#87 enterprise server split pending'],
   ['packages/server/src/enterprise/server.test.ts', '#87 enterprise tests follow DB/server split'],
   ['packages/server/src/server.ts', '#91 protocol/server split pending'],
-  ['packages/server/src/feishu/vendor/gateway.ts', '#84 duplicate Feishu gateway pending'],
 ]);
 
 function toRel(file) {

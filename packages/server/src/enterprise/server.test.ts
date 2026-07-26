@@ -16,7 +16,7 @@ import path from 'node:path';
 import {
   buildAtoaRequest,
   buildAtoaResponse,
-} from '../../../desktop/src/renderer/atoaProtocol.js';
+} from '../../../core/src/a2a/atoaProtocol.js';
 
 type ServerModule = typeof import('./server.js');
 type DatabaseModule = typeof import('./db.js');

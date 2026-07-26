@@ -17,7 +17,7 @@ import {
   ATOA_RESPONSE_PREFIX,
   buildAtoaRequest,
   buildAtoaResponse,
-} from '../../../desktop/src/renderer/atoaProtocol.js';
+} from '../../../core/src/a2a/atoaProtocol.js';
 
 type DbModule = typeof import('./db.js');
 

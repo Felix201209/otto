@@ -17,8 +17,10 @@ const IMPORT_RE = /\b(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]
 const BASELINE = new Set([
   'packages/adapters/mem0/index.ts -> ../../core/src/config/config.js (#90: adapter package is not a workspace yet; migrate to otto-core public exports)',
   'packages/adapters/mem0/index.ts -> ../../core/src/memory/memoryProvider.js (#90: adapter package is not a workspace yet; migrate to otto-core public exports)',
-  'packages/server/src/enterprise/db.test.ts -> ../../../desktop/src/renderer/atoaProtocol.js (#90/#91: move A2A protocol to shared public module)',
-  'packages/server/src/enterprise/server.test.ts -> ../../../desktop/src/renderer/atoaProtocol.js (#90/#91: move A2A protocol to shared public module)',
+]);
+
+const ALLOWED_CORE_SOURCE_IMPORTS = new Set([
+  'packages/core/src/a2a/atoaProtocol.js',
 ]);
 
 function toRel(file) {
@@ -61,6 +63,9 @@ function violationFor(fromRel, specifier) {
     if (resolved?.startsWith('packages/cli/') || resolved?.startsWith('packages/server/') || resolved?.startsWith('packages/desktop/')) {
       return 'core must not import cli/server/desktop';
     }
+  }
+  if (resolved && ALLOWED_CORE_SOURCE_IMPORTS.has(resolved)) {
+    return null;
   }
   if (specifier.includes('/core/src/') || specifier.match(/^\.\.\/\.\.\/core\/src\//)) {
     return 'cross-package core source import must use otto-core public exports';

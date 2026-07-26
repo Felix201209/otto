@@ -74,6 +74,7 @@ export * from './core/subAgentAdapter.js';
 export * from './core/sceneManager.js';
 export * from './core/imageGenerator.js';
 export * from './core/workflowRegistry.js';
+export * from './a2a/atoaProtocol.js';
 
 export * from './code_assist/codeAssist.js';
 // clearCachedCredentialFile removed with OAuth2 - no longer needed for Otto custom-model auth
