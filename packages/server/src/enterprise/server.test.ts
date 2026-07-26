@@ -2353,6 +2353,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
       code: invite.code,
+      address: '回执测试园区 A 座',
+      roomNumber: '1203 室',
     });
     db.setParkServiceSpecialist({
       parkId: park.id,
@@ -2468,6 +2470,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
       code: invite.code,
+      address: '关闭测试园区 B 座',
+      roomNumber: '801 室',
     });
     const parkTicket = db.createTicket({
       createdByAccountId: reporter.id,
@@ -3954,13 +3958,48 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(tenantProvision.status).toBe(201);
     const tenantProvisioned = await tenantProvision.json();
     const tenantAdminToken = db.createAuthSession(tenantProvisioned.admin.id).token;
-    const join = await fetch(`${base}/enterprise/park/join`, {
+    const incompleteJoin = await fetch(`${base}/enterprise/park/join`, {
       method: 'POST',
       headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ inviteCode: invite.code }),
     });
+    expect(incompleteJoin.status).toBe(400);
+    expect(await incompleteJoin.json()).toEqual({ error: '企业地址不能为空' });
+    const join = await fetch(`${base}/enterprise/park/join`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        inviteCode: invite.code,
+        address: '科技大厦 A 座',
+        roomNumber: '1203 室',
+      }),
+    });
     expect(join.status).toBe(200);
-    expect((await join.json()).park.id).toBe(park.id);
+    expect((await join.json()).park).toMatchObject({
+      id: park.id,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    });
+    const profileUpdate = await fetch(`${base}/enterprise/park/profile`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ address: '科技大厦 B 座', roomNumber: '1508 室' }),
+    });
+    expect(profileUpdate.status).toBe(200);
+    expect((await profileUpdate.json()).profile).toMatchObject({
+      organizationId: tenantProvisioned.organization.id,
+      parkId: park.id,
+      address: '科技大厦 B 座',
+      roomNumber: '1508 室',
+    });
+    const tenantParkView = await fetch(`${base}/enterprise/park/view`, {
+      headers: { authorization: `Bearer ${tenantAdminToken}` },
+    });
+    expect(tenantParkView.status).toBe(200);
+    expect((await tenantParkView.json()).park).toMatchObject({
+      tenantAddress: '科技大厦 B 座',
+      tenantRoomNumber: '1508 室',
+    });
     const tenants = await fetch(`${base}/enterprise/park/tenants`, {
       headers: { authorization: `Bearer ${parkAdminToken}` },
     });
@@ -3970,6 +4009,8 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         id: tenantProvisioned.organization.id,
         name: 'Tenant Company',
         parkId: park.id,
+        parkAddress: '科技大厦 B 座',
+        parkRoomNumber: '1508 室',
       })],
     });
     const tenantCannotList = await fetch(`${base}/enterprise/park/tenants`, {
@@ -3997,7 +4038,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       {
         method: 'POST',
         headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({ inviteCode: invite.code }),
+        body: JSON.stringify({
+          inviteCode: invite.code,
+          address: '创新中心 C 座',
+          roomNumber: '903 室',
+        }),
       },
     );
     expect(platformJoin.status).toBe(200);

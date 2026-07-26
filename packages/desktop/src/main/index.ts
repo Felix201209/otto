@@ -341,6 +341,7 @@ const IPC = {
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
@@ -1750,10 +1751,24 @@ function registerIpc(): void {
       brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
     });
   });
-  ipcMain.handle(IPC.enterpriseParkJoin, async (_event, inviteCode: unknown) => {
+  ipcMain.handle(IPC.enterpriseParkJoin, async (_event, input: unknown) => {
     loadEnterpriseSession();
-    if (typeof inviteCode !== 'string' || !inviteCode.trim()) throw new Error('产业园邀请码不能为空');
-    return enterpriseClient.joinPark(inviteCode);
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.inviteCode !== 'string' || !body.inviteCode.trim()) throw new Error('产业园邀请码不能为空');
+    if (typeof body.address !== 'string' || !body.address.trim()) throw new Error('企业地址不能为空');
+    if (typeof body.roomNumber !== 'string' || !body.roomNumber.trim()) throw new Error('门牌号不能为空');
+    return enterpriseClient.joinPark({
+      inviteCode: body.inviteCode,
+      address: body.address,
+      roomNumber: body.roomNumber,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseParkProfileUpdate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.address !== 'string' || !body.address.trim()) throw new Error('企业地址不能为空');
+    if (typeof body.roomNumber !== 'string' || !body.roomNumber.trim()) throw new Error('门牌号不能为空');
+    return enterpriseClient.updateParkTenantProfile({ address: body.address, roomNumber: body.roomNumber });
   });
   ipcMain.handle(IPC.enterpriseParkInviteIssue, async (_event, maxUses: unknown) => {
     loadEnterpriseSession();

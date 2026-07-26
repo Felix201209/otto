@@ -85,6 +85,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/manage',
   '/enterprise/park/invite',
   '/enterprise/park/join',
+  '/enterprise/park/profile',
   '/enterprise/park/tenants',
   '/enterprise/park/specialists',
   '/enterprise/park/services',
@@ -219,6 +220,7 @@ const ENTERPRISE_CAPABILITIES = [
   'unread_message_notifications_v1',
   'account_presence_v1',
   'park_tenants_v1',
+  'park_tenant_profiles_v1',
   'private_deployment_v1',
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
@@ -1570,8 +1572,18 @@ function makeHandler(
               organizationId: account.organizationId,
               actorAccountId: account.id,
               code: inviteCode,
+              address: typeof body.address === 'string' ? body.address : '',
+              roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
             });
-            sendJSON(res, 200, { park, organization: db.getEnterpriseOrganization(account.organizationId) });
+            const profile = db.getParkTenantProfile(account.organizationId);
+            sendJSON(res, 200, {
+              park: {
+                ...park,
+                tenantAddress: profile?.address ?? null,
+                tenantRoomNumber: profile?.roomNumber ?? null,
+              },
+              organization: db.getEnterpriseOrganization(account.organizationId),
+            });
           } catch (error) {
             sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
           }
@@ -1704,10 +1716,44 @@ function makeHandler(
             organizationId: principal.organizationId,
             actorAccountId: principal.account.id,
             code: typeof body.inviteCode === 'string' ? body.inviteCode : '',
+            address: typeof body.address === 'string' ? body.address : '',
+            roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
           });
-          sendJSON(res, 200, { park });
+          const profile = db.getParkTenantProfile(principal.organizationId);
+          sendJSON(res, 200, {
+            park: {
+              ...park,
+              tenantAddress: profile?.address ?? null,
+              tenantRoomNumber: profile?.roomNumber ?? null,
+            },
+          });
         } catch (error) {
           sendJSON(res, 400, { error: error instanceof Error ? error.message : '加入产业园失败' });
+        }
+        return;
+      }
+
+      if (path === '/enterprise/park/profile' && method === 'PATCH') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: '请使用企业管理员账号修改入驻资料' });
+          return;
+        }
+        if (!db.getOrganizationFeatures(principal.organizationId).park_service) {
+          sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+          return;
+        }
+        const body = await readBody(req);
+        try {
+          const profile = db.updateParkTenantProfile({
+            organizationId: principal.organizationId,
+            actorAccountId: principal.account.id,
+            address: typeof body.address === 'string' ? body.address : '',
+            roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
+          });
+          sendJSON(res, 200, { profile });
+        } catch (error) {
+          sendJSON(res, 400, { error: error instanceof Error ? error.message : '入驻资料保存失败' });
         }
         return;
       }
@@ -1819,11 +1865,14 @@ function makeHandler(
           return;
         }
         const park = db.getParkForOrganization(memberAccount!.organizationId);
+        const profile = park ? db.getParkTenantProfile(memberAccount!.organizationId) : null;
         sendJSON(res, 200, {
           park: park ? {
             ...park,
             isAdminOrganization: park.adminOrganizationId === memberAccount!.organizationId,
             services: db.listParkServices(park.id),
+            tenantAddress: profile?.address ?? null,
+            tenantRoomNumber: profile?.roomNumber ?? null,
           } : null,
         });
         return;
@@ -2555,6 +2604,8 @@ function makeHandler(
               organizationId,
               actorAccountId: actor.id,
               code: inviteCode,
+              address: typeof body.address === 'string' ? body.address : '',
+              roomNumber: typeof body.roomNumber === 'string' ? body.roomNumber : '',
             });
             sendJSON(res, 200, {
               organization: db.getEnterpriseOrganization(organizationId),
@@ -3659,7 +3710,7 @@ export function adminAccountsHTML(): string {
         <article id="structureDisabled" class="configuration-card hidden"><h3>企业树已关闭</h3><div class="configuration-disabled">当前不加载部门与职位数据。在功能开关中重新启用后才会恢复。</div></article>
         <article id="parkCard" class="configuration-card wide" aria-labelledby="parkTitle"><h3 id="parkTitle">产业园管理</h3><p>产业园方可发放邀请码、管理服务和指定专员；普通企业填写邀请码后整体加入。</p>
           <div id="parkEmptyControls" class="park-forms">
-            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 12 位大小写敏感邀请码。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="Aa3B-k9Pq-Z7xY"></div><button class="primary" type="submit">整个企业加入</button></form>
+            <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 12 位大小写敏感邀请码，并填写企业在园区内的地址和门牌号。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="Aa3B-k9Pq-Z7xY"></div><div class="field"><label for="parkJoinAddress">企业地址</label><input id="parkJoinAddress" maxlength="160" required placeholder="例如：科技大厦 A 座"></div><div class="field"><label for="parkJoinRoomNumber">门牌号</label><input id="parkJoinRoomNumber" maxlength="40" required placeholder="例如：1203 室"></div><button class="primary" type="submit">整个企业加入</button></form>
             <div class="park-form"><h4>产业园端认证</h4><p>创建产业园端需要平台管理员在多企业管理页面认证当前企业。未认证企业不能发布园区公告、管理服务或邀请其他企业。</p></div>
           </div>
           <div id="parkDetails" class="hidden"><div id="parkSummary" class="park-summary"></div><div id="parkTenantNote" class="configuration-disabled hidden">当前企业已加入该产业园。服务与专员由产业园管理方统一配置。</div><div id="parkOwnerControls" class="hidden"><form id="parkInviteForm" class="park-invite"><div class="field"><label for="parkInviteCode">最新产业园邀请码</label><input id="parkInviteCode" readonly placeholder="点击生成"></div><div class="field"><label for="parkInviteMax">可使用次数</label><input id="parkInviteMax" type="number" min="1" max="10000" placeholder="不限"></div><button class="primary" type="submit">生成邀请码</button></form><div id="serviceList" class="service-list"></div></div></div>
@@ -3769,7 +3820,7 @@ async function deletePosition(id){if(!window.confirm('确认删除该职位？�
 function renderPark(){const empty=$('parkEmptyControls'),details=$('parkDetails'),owner=$('parkOwnerControls'),tenant=$('parkTenantNote');if(!organizationFeatures||organizationFeatures.park_service!==true){empty.classList.add('hidden');details.classList.add('hidden');return}empty.classList.toggle('hidden',!!currentPark);details.classList.toggle('hidden',!currentPark);if(!currentPark){owner.classList.add('hidden');tenant.classList.add('hidden');$('serviceList').replaceChildren();return}const isOwner=currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId;$('parkSummary').innerHTML='<div><strong>'+esc(currentPark.brandName||currentPark.name)+'</strong><span>'+esc(currentPark.name)+' · '+esc(currentPark.slug)+'</span></div><span class="badge '+(isOwner?'ok':'')+'">'+(isOwner?'产业园管理方':'已入驻企业')+'</span>';owner.classList.toggle('hidden',!isOwner);tenant.classList.toggle('hidden',isOwner);if(!isOwner){$('serviceList').replaceChildren();return}renderParkServices()}
 function renderParkServices(){const host=$('serviceList');if(!parkServices.length){host.innerHTML='<div class="configuration-disabled">暂无可配置服务。</div>';return}const activeAccounts=accounts.filter(account=>account.status==='active');host.innerHTML=parkServices.map(service=>{const assigned=parkSpecialists.filter(item=>item.serviceId===service.id);return '<section class="service-row"><div class="service-head"><div><b>'+esc(service.name)+'</b><div class="role-note">'+esc(service.id)+'</div></div><span class="badge '+(service.enabled?'ok':'off')+'">'+(service.enabled?'已启用':'已关闭')+'</span></div><div class="service-editor"><input data-service-name="'+esc(service.id)+'" value="'+esc(service.name)+'" aria-label="'+esc(service.name)+' 名称"><label><input type="checkbox" data-service-enabled="'+esc(service.id)+'" '+(service.enabled?'checked':'')+'> 启用</label><select data-specialist-select="'+esc(service.id)+'"><option value="">选择服务专员</option>'+activeAccounts.map(account=>'<option value="'+esc(account.id)+'">'+esc(account.name)+' @'+esc(account.username)+'</option>').join('')+'</select><div class="row-actions"><button class="edit" type="button" data-save-service="'+esc(service.id)+'">保存</button><button class="secondary" type="button" data-add-specialist="'+esc(service.id)+'">添加专员</button></div></div><div class="service-specialists">'+(assigned.map(item=>'<span class="specialist-chip">'+esc(item.name)+'<button type="button" data-remove-specialist="'+esc(service.id)+'" data-account-id="'+esc(item.accountId)+'" aria-label="移除 '+esc(item.name)+'">×</button></span>').join('')||'<span class="role-note">未指定时回退通知产业园管理员</span>')+'</div></section>'}).join('');host.querySelectorAll('[data-save-service]').forEach(button=>button.addEventListener('click',()=>saveParkService(button.dataset.saveService)));host.querySelectorAll('[data-add-specialist]').forEach(button=>button.addEventListener('click',()=>addParkSpecialist(button.dataset.addSpecialist)));host.querySelectorAll('[data-remove-specialist]').forEach(button=>button.addEventListener('click',()=>removeParkSpecialist(button.dataset.removeSpecialist,button.dataset.accountId)))}
 async function loadPark(){if(!organizationFeatures||organizationFeatures.park_service!==true){currentPark=null;parkServices=[];parkSpecialists=[];renderPark();return}const data=await api('/enterprise/park/manage');currentPark=data.park||null;parkServices=[];parkSpecialists=[];if(currentPark&&currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId){const results=await Promise.all([api('/enterprise/park/services'),api('/enterprise/park/specialists')]);parkServices=results[0].services||[];parkSpecialists=results[1].specialists||[]}renderPark()}
-async function joinPark(event){event.preventDefault();const inviteCode=$('parkJoinCode').value.trim();try{const data=await api('/enterprise/park/join',{method:'POST',body:JSON.stringify({inviteCode})});currentPark=data.park;await loadPark();setConfigurationStatus('当前企业已加入产业园')}catch(error){configurationFailure(error)}}
+async function joinPark(event){event.preventDefault();const inviteCode=$('parkJoinCode').value.trim(),address=$('parkJoinAddress').value.trim(),roomNumber=$('parkJoinRoomNumber').value.trim();try{const data=await api('/enterprise/park/join',{method:'POST',body:JSON.stringify({inviteCode,address,roomNumber})});currentPark=data.park;await loadPark();setConfigurationStatus('当前企业已加入产业园')}catch(error){configurationFailure(error)}}
 async function issueParkInvite(event){event.preventDefault();const raw=$('parkInviteMax').value.trim();try{const data=await api('/enterprise/park/invite',{method:'POST',body:JSON.stringify({maxUses:raw?Number(raw):null})});$('parkInviteCode').value=data.invite.code;setConfigurationStatus('产业园邀请码已生成，有效期 7 天')}catch(error){configurationFailure(error)}}
 async function saveParkService(serviceId){const name=document.querySelector('[data-service-name="'+CSS.escape(serviceId)+'"]').value.trim();const enabled=document.querySelector('[data-service-enabled="'+CSS.escape(serviceId)+'"]').checked;try{await api('/enterprise/park/services',{method:'PATCH',body:JSON.stringify({serviceId,name,enabled})});await loadPark();setConfigurationStatus('园区服务已保存')}catch(error){configurationFailure(error)}}
 async function addParkSpecialist(serviceId){const select=document.querySelector('[data-specialist-select="'+CSS.escape(serviceId)+'"]');if(!select||!select.value)return;try{await api('/enterprise/park/specialists',{method:'POST',body:JSON.stringify({serviceId,accountId:select.value})});await loadPark();setConfigurationStatus('服务专员已添加')}catch(error){configurationFailure(error)}}
@@ -3905,6 +3956,8 @@ function platformAdminHTML(): string {
           <form id="platformParkJoinForm" class="department" style="margin:0">
             <h4>加入已有产业园</h4><p class="card-copy">使用产业园管理方生成的邀请码，让整个企业成为入驻企业。</p>
             <div class="field"><label for="platformParkJoinCode">产业园邀请码</label><input id="platformParkJoinCode" autocomplete="off" placeholder="Aa3B-k9Pq-Z7xY" required></div>
+            <div class="field"><label for="platformParkJoinAddress">企业地址</label><input id="platformParkJoinAddress" maxlength="160" placeholder="例如：科技大厦 A 座" required></div>
+            <div class="field"><label for="platformParkJoinRoomNumber">门牌号</label><input id="platformParkJoinRoomNumber" maxlength="40" placeholder="例如：1203 室" required></div>
             <div class="inline-actions"><button class="primary" type="submit">整个企业加入</button></div>
           </form>
         </div>
@@ -4079,7 +4132,7 @@ function resetInviteArm(){inviteArmed=false;$('issueInvite').textContent='生成
 async function issueInvite(){if(!selectedOrganizationId||!selectedOverview||selectedOverview.organization.id!==selectedOrganizationId)return;if(!inviteArmed){inviteArmed=true;$('issueInvite').textContent='再次点击确认换新';$('issueInvite').classList.add('armed');inviteArmTimer=setTimeout(resetInviteArm,5000);return}const organizationId=selectedOrganizationId;const rawMaxUses=$('platformInviteMaxUses').value.trim();const body={defaultDepartment:$('platformInviteDepartment').value.trim()||null,positionTitle:$('platformInvitePosition').value.trim()||null,defaultRole:$('platformInviteRole').value.trim()||null,maxUses:rawMaxUses?Number(rawMaxUses):null};resetInviteArm();$('issueInvite').disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/invite',{method:'POST',body:JSON.stringify(body)});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','新的 7 天岗位邀请码已生成')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(selectedOrganizationId===organizationId&&selectedOverview&&selectedOverview.organization.id===organizationId)$('issueInvite').disabled=false}}
 async function registerPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const name=$('platformParkName').value.trim();const brandName=$('platformParkBrandName').value.trim();show('panelError','');show('platformParkNotice','正在认证产业园端…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已认证为产业园管理方')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
 async function updatePlatformPark(event){event.preventDefault();if(!selectedOrganizationId||!selectedOverview||!selectedOverview.park)return;const organizationId=selectedOrganizationId;const park=selectedOverview.park;const isOwner=park.isAdminOrganization||park.adminOrganizationId===organizationId;if(!isOwner){show('panelError','只有产业园管理方可以修改园区资料');return}const button=$('platformParkSave');const name=$('platformParkEditName').value.trim();const brandName=$('platformParkEditBrandName').value.trim();show('panelError','');show('platformParkNotice','正在保存产业园资料…');button.disabled=true;button.textContent='正在保存…';try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'PATCH',body:JSON.stringify({name,brandName})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','产业园资料已更新')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected){button.disabled=false;button.textContent='保存园区资料'}}}
-async function joinPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const inviteCode=$('platformParkJoinCode').value.trim();show('panelError','');show('platformParkNotice','正在加入产业园…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park/join',{method:'POST',body:JSON.stringify({inviteCode})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已加入产业园')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
+async function joinPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const inviteCode=$('platformParkJoinCode').value.trim(),address=$('platformParkJoinAddress').value.trim(),roomNumber=$('platformParkJoinRoomNumber').value.trim();show('panelError','');show('platformParkNotice','正在加入产业园…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park/join',{method:'POST',body:JSON.stringify({inviteCode,address,roomNumber})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已加入产业园')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
 async function deleteAccount(button,account){if(!selectedOrganizationId)return;if(button.dataset.armed!=='true'){button.dataset.armed='true';button.classList.add('armed');button.textContent='再次点击确认';setTimeout(()=>{if(button.isConnected){button.dataset.armed='false';button.classList.remove('armed');button.textContent='删除'}},5000);return}const organizationId=selectedOrganizationId;button.disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(account.id),{method:'DELETE'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','账号已删除，原登录会话已撤销')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected)button.disabled=false}}
 function openCreateOrganization(){show('createError','');$('createOrganizationModal').classList.remove('hidden');$('organizationName').focus()}
 function closeCreateOrganization(force){if($('createOrganization').disabled&&!force)return;$('createOrganizationModal').classList.add('hidden');$('organizationForm').reset();show('createError','');$('createStatus').textContent=''}

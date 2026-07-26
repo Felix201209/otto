@@ -366,6 +366,16 @@ function initSchema(d: Database): void {
       FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS park_tenant_profiles (
+      organization_id TEXT PRIMARY KEY,
+      park_id TEXT NOT NULL,
+      address TEXT NOT NULL,
+      room_number TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS park_service_specialists (
       park_id TEXT NOT NULL,
       service_id TEXT NOT NULL,
@@ -1212,6 +1222,8 @@ export interface OrganizationView {
   name: string;
   slug: string;
   parkId: string | null;
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -1223,6 +1235,8 @@ interface OrganizationRow {
   slug: string;
   invite_secret: string;
   park_id?: string | null;
+  park_address?: string | null;
+  park_room_number?: string | null;
   status: 'active' | 'disabled';
   created_at: string;
   updated_at: string;
@@ -1268,6 +1282,8 @@ function toOrganizationView(row: OrganizationRow): OrganizationView {
     name: row.name,
     slug: row.slug,
     parkId: row.park_id ?? null,
+    parkAddress: row.park_address ?? null,
+    parkRoomNumber: row.park_room_number ?? null,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -5190,11 +5206,77 @@ export function listParkTenantOrganizations(
   return (
     getDB()
       .prepare(
-        'SELECT * FROM organizations WHERE park_id = ? AND id <> ? ORDER BY name COLLATE NOCASE, slug',
+        `SELECT o.*, profile.address AS park_address, profile.room_number AS park_room_number
+         FROM organizations o
+         LEFT JOIN park_tenant_profiles profile ON profile.organization_id = o.id AND profile.park_id = o.park_id
+         WHERE o.park_id = ? AND o.id <> ?
+         ORDER BY o.name COLLATE NOCASE, o.slug`,
       )
       .all(park.id, park.adminOrganizationId) as OrganizationRow[]
   ).map(toOrganizationView);
 }
+
+export interface ParkTenantProfileView {
+  organizationId: string;
+  parkId: string;
+  address: string;
+  roomNumber: string;
+  updatedAt: string;
+}
+
+interface ParkTenantProfileRow {
+  organization_id: string;
+  park_id: string;
+  address: string;
+  room_number: string;
+  updated_at: string;
+}
+
+function toParkTenantProfileView(row: ParkTenantProfileRow): ParkTenantProfileView {
+  return {
+    organizationId: row.organization_id,
+    parkId: row.park_id,
+    address: row.address,
+    roomNumber: row.room_number,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getParkTenantProfile(organizationId: string): ParkTenantProfileView | null {
+  const row = getDB()
+    .prepare('SELECT * FROM park_tenant_profiles WHERE organization_id = ?')
+    .get(organizationId) as ParkTenantProfileRow | undefined;
+  return row ? toParkTenantProfileView(row) : null;
+}
+
+export function updateParkTenantProfile(input: {
+  organizationId: string;
+  actorAccountId: string;
+  address: string;
+  roomNumber: string;
+}): ParkTenantProfileView {
+  const actor = getAccount(input.actorAccountId, input.organizationId);
+  if (!actor?.isAdmin || actor.status !== 'active')
+    throw new Error('只有企业管理员可修改企业入驻资料');
+  const park = getParkForOrganization(input.organizationId);
+  if (!park || park.adminOrganizationId === input.organizationId)
+    throw new Error('当前企业不是产业园入驻企业');
+  const address = normalizeOptionalText(input.address, '企业地址', 160);
+  const roomNumber = normalizeOptionalText(input.roomNumber, '门牌号', 40);
+  if (!address) throw new Error('企业地址不能为空');
+  if (!roomNumber) throw new Error('门牌号不能为空');
+  getDB().prepare(
+    `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(organization_id) DO UPDATE SET
+       park_id = excluded.park_id,
+       address = excluded.address,
+       room_number = excluded.room_number,
+       updated_at = datetime('now')`,
+  ).run(input.organizationId, park.id, address, roomNumber);
+  return getParkTenantProfile(input.organizationId)!;
+}
+
 export function createParkAsPlatform(input: {
   adminOrganizationId: string;
   name?: string;
@@ -5417,6 +5499,8 @@ export function joinOrganizationToPark(input: {
   organizationId: string;
   actorAccountId: string;
   code: string;
+  address: string;
+  roomNumber: string;
   now?: number;
 }): ParkView {
   const actor = getAccount(input.actorAccountId, input.organizationId);
@@ -5424,6 +5508,10 @@ export function joinOrganizationToPark(input: {
     throw new Error('只有企业管理员可让企业加入产业园');
   if (getParkForOrganization(input.organizationId))
     throw new Error('企业已加入产业园');
+  const address = normalizeOptionalText(input.address, '企业地址', 160);
+  const roomNumber = normalizeOptionalText(input.roomNumber, '门牌号', 40);
+  if (!address) throw new Error('企业地址不能为空');
+  if (!roomNumber) throw new Error('门牌号不能为空');
   const normalized = normalizeOrganizationInviteCode(input.code);
   if (normalized.length !== INVITE_CODE_RAW_LENGTH) throw new Error('产业园邀请码无效或已过期');
   const now = input.now ?? Date.now();
@@ -5479,6 +5567,10 @@ export function joinOrganizationToPark(input: {
       )
       .run(invite.park_id, input.organizationId);
     if (Number(joined.changes) !== 1) throw new Error('企业已加入产业园');
+    database.prepare(
+      `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
+       VALUES (?, ?, ?, ?)`,
+    ).run(input.organizationId, invite.park_id, address, roomNumber);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');

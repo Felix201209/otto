@@ -383,6 +383,8 @@ export interface EnterpriseParkTenantOrganization {
   name: string;
   slug: string;
   parkId?: string | null;
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -398,6 +400,16 @@ export interface EnterprisePark {
   updatedAt: string;
   isAdminOrganization?: boolean;
   services?: EnterpriseParkService[];
+  tenantAddress?: string | null;
+  tenantRoomNumber?: string | null;
+}
+
+export interface EnterpriseParkTenantProfile {
+  organizationId: string;
+  parkId: string;
+  address: string;
+  roomNumber: string;
+  updatedAt: string;
 }
 
 export interface EnterpriseParkInvite {
@@ -654,6 +666,7 @@ const IPC = {
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
   enterpriseParkJoin: 'otto:enterprise-park-join',
+  enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
@@ -992,7 +1005,11 @@ export interface OttoBridge {
   }>;
   enterpriseParkView(): Promise<EnterprisePark | null>;
   enterpriseParkRegister(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark>;
-  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark>;
+  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark>;
+  enterpriseParkProfileUpdate(input: {
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile>;
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]>;
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
@@ -1802,8 +1819,13 @@ const bridge: OttoBridge = {
   }): Promise<EnterprisePark> {
     return ipcRenderer.invoke(IPC.enterpriseParkRegister, input) as Promise<EnterprisePark>;
   },
-  enterpriseParkJoin(inviteCode: string): Promise<EnterprisePark> {
-    return ipcRenderer.invoke(IPC.enterpriseParkJoin, inviteCode) as Promise<EnterprisePark>;
+  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
+    return ipcRenderer.invoke(IPC.enterpriseParkJoin, input) as Promise<EnterprisePark>;
+  },
+  enterpriseParkProfileUpdate(input: {
+    address: string; roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseParkProfileUpdate, input) as Promise<EnterpriseParkTenantProfile>;
   },
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite> {
     return ipcRenderer.invoke(IPC.enterpriseParkInviteIssue, maxUses ?? null) as Promise<EnterpriseParkInvite>;

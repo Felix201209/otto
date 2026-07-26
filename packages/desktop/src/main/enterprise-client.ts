@@ -216,6 +216,8 @@ export interface EnterpriseParkTenantOrganization {
   name: string;
   slug: string;
   parkId?: string | null;
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -240,6 +242,16 @@ export interface EnterprisePark {
   updatedAt: string;
   isAdminOrganization?: boolean;
   services?: EnterpriseParkService[];
+  tenantAddress?: string | null;
+  tenantRoomNumber?: string | null;
+}
+
+export interface EnterpriseParkTenantProfile {
+  organizationId: string;
+  parkId: string;
+  address: string;
+  roomNumber: string;
+  updatedAt: string;
 }
 
 export interface EnterpriseParkInvite {
@@ -1047,10 +1059,19 @@ export class EnterpriseClient {
     })).park;
   }
 
-  async joinPark(inviteCode: string): Promise<EnterprisePark> {
+  async joinPark(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
     return (await this.request<{ park: EnterprisePark }>('/enterprise/park/join', {
-      method: 'POST', body: JSON.stringify({ inviteCode }),
+      method: 'POST', body: JSON.stringify(input),
     })).park;
+  }
+
+  async updateParkTenantProfile(input: {
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterpriseParkTenantProfile> {
+    return (await this.request<{ profile: EnterpriseParkTenantProfile }>('/enterprise/park/profile', {
+      method: 'PATCH', body: JSON.stringify(input),
+    })).profile;
   }
 
   async issueParkInvite(maxUses?: number | null): Promise<EnterpriseParkInvite> {
