@@ -6,12 +6,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveUpdateAssetBaseUrl } from './update-mirror-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopRoot, '../..');
 const maxWindowsInstallerBytes =
   Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 160) * 1024 * 1024;
+const updateAssetBaseUrl = resolveUpdateAssetBaseUrl();
 
 const failures = [];
 const notes = [];
@@ -148,7 +150,7 @@ if (existsSync(winInstaller)) {
         fail('latest.json missing assets.win-x64');
       } else {
         const expectedName = path.basename(winInstaller);
-        const expectedUrl = `https://github.com/Felix201209/otto-releases/releases/download/v${desktopPkg.version}/${expectedName}`;
+        const expectedUrl = `${updateAssetBaseUrl}/${expectedName}`;
         if (asset.name !== expectedName) {
           fail(
             `latest.json win-x64 name mismatch: manifest=${asset.name}, expected=${expectedName}`,

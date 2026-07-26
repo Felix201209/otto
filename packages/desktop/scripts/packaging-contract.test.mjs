@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(packageRoot, '../..');
 const require = createRequire(import.meta.url);
 const afterPack = require('./after-pack.cjs');
 
@@ -104,14 +105,34 @@ describe('desktop packaging contract', () => {
     expect(packageJson.build.files).not.toContain('!**/node_modules/**/src/**');
   });
 
-  it('keeps update manifest download URLs bound to the configured release repo', async () => {
+  it('keeps update manifest download URLs bound to the no-proxy update mirror', async () => {
     const script = await readFile(
       path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
       'utf8',
     );
-    expect(script).toContain("process.env.OTTO_RELEASES_REPO || 'Felix201209/otto'");
-    expect(script).toContain('https://github.com/${RELEASES_REPO}/releases/download');
+    const mirrorConfig = await readFile(
+      path.join(packageRoot, 'scripts', 'update-mirror-config.mjs'),
+      'utf8',
+    );
+    expect(script).toContain('resolveUpdateAssetBaseUrl()');
+    expect(mirrorConfig).toContain('process.env.OTTO_UPDATE_ASSET_BASE_URL');
+    expect(mirrorConfig).toContain('https://59.110.154.44:7777/downloads');
     expect(script).not.toContain('github.com/Felix201209/otto-releases/releases/download');
+  });
+
+  it('publishes releases only after the update mirror and enterprise deploy pass', async () => {
+    const workflow = await readFile(
+      path.join(repoRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    );
+    expect(workflow).toContain('deploy-update-mirror:');
+    expect(workflow).toContain('name: Deploy Desktop Update Mirror');
+    expect(workflow).toContain('draft: true');
+    expect(workflow).toContain("needs.deploy-update-mirror.result == 'success'");
+    expect(workflow).toContain("needs.deploy-enterprise.result == 'success'");
+    expect(workflow).toContain('sha256sum -c SHA256SUMS');
+    expect(workflow).toContain('latest.json.next');
+    expect(workflow).toContain('Windows no-proxy download');
   });
 
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {
