@@ -1,0 +1,238 @@
+/**
+ * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
+ */
+
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+import * as db from './db.js';
+
+interface CommunicationRouteDeps {
+  path: string;
+  method: string;
+  url: URL;
+  req: IncomingMessage;
+  res: ServerResponse;
+  memberAccount: db.AccountView;
+  atoaClaims: Map<string, number>;
+  atoaClaimTtlMs: number;
+  readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+  sendJSON(res: ServerResponse, status: number, data: unknown): void;
+}
+
+function organizationViewPayload(organizationId: string) {
+  const organization = db.getOrganization(organizationId);
+  const accounts = db.listAccounts(organizationId);
+  const employees = db.listEmployees(undefined, organizationId);
+  const park = db.getParkForOrganization(organizationId);
+  const presenceByAccountId = new Map(
+    db.listAccountPresence(organizationId).map((presence) => [presence.accountId, presence]),
+  );
+  return {
+    organization: organization ? {
+      id: organization.id,
+      name: organization.name,
+      status: organization.status,
+      parkId: organization.parkId,
+      createdAt: organization.createdAt,
+    } : null,
+    members: accounts.map((account) => ({
+      id: account.id,
+      username: account.username,
+      name: account.name,
+      role: account.role,
+      department: account.department,
+      departmentId: account.departmentId,
+      positionId: account.positionId,
+      positionTitle: account.positionTitle,
+      avatarUrl: account.avatarUrl,
+      isAdmin: account.isAdmin,
+      status: account.status,
+      ottoOnline: presenceByAccountId.get(account.id)?.online ?? false,
+      ottoLastSeenAt: presenceByAccountId.get(account.id)?.lastSeenAt ?? null,
+    })),
+    employeeCount: employees.length,
+    structure: db.listOrganizationStructure(organizationId),
+    features: db.getOrganizationFeatures(organizationId),
+    park: park ? {
+      ...park,
+      isAdminOrganization: park.adminOrganizationId === organizationId,
+      services: db.listParkServices(park.id),
+    } : null,
+  };
+}
+
+export async function handleCommunicationRoute({
+  path,
+  method,
+  url,
+  req,
+  res,
+  memberAccount,
+  atoaClaims,
+  atoaClaimTtlMs,
+  readBody,
+  sendJSON,
+}: CommunicationRouteDeps): Promise<boolean> {
+  if (path === '/enterprise/organization/view' && method === 'GET') {
+    const organizationId = memberAccount.organizationId;
+    if (!db.getOrganizationFeatures(organizationId).enterprise_tree) {
+      sendJSON(res, 403, { error: '企业树功能已由管理员关闭' });
+      return true;
+    }
+    sendJSON(res, 200, organizationViewPayload(organizationId));
+    return true;
+  }
+
+  if (path === '/enterprise/organization/sync' && method === 'GET') {
+    const organizationId = memberAccount.organizationId;
+    const features = db.getOrganizationFeatures(organizationId);
+    if (!features.enterprise_tree) {
+      sendJSON(res, 403, { error: '企业树同步功能已由管理员关闭' });
+      return true;
+    }
+    sendJSON(res, 200, organizationViewPayload(organizationId));
+    return true;
+  }
+
+  if (path === '/enterprise/presence/heartbeat' && method === 'POST') {
+    const body = await readBody(req);
+    const clientId = typeof body.clientId === 'string' ? body.clientId : 'desktop';
+    const presence = db.touchAccountPresence({
+      organizationId: memberAccount.organizationId,
+      accountId: memberAccount.id,
+      clientId,
+    });
+    sendJSON(res, 200, { presence });
+    return true;
+  }
+
+  if (path === '/enterprise/atoa/inbox' && method === 'GET') {
+    if (!db.getOrganizationFeatures(memberAccount.organizationId).atoa) {
+      sendJSON(res, 403, { error: '企业协作功能已由管理员关闭' });
+      return true;
+    }
+    const now = Date.now();
+    for (const [key, expiresAt] of atoaClaims) {
+      if (expiresAt <= now) atoaClaims.delete(key);
+    }
+    const pending = db.listPendingAtoaRequests({
+      organizationId: memberAccount.organizationId,
+      accountId: memberAccount.id,
+      requestPrefix: 'OTTO_ATOA_REQUEST ',
+      responsePrefix: 'OTTO_ATOA_RESPONSE ',
+      limit: Number(url.searchParams.get('limit') || 50),
+    });
+    const claimed = pending.find((request) => {
+      const peer = db.getAccount(
+        request.peerAccountId,
+        memberAccount.organizationId,
+      );
+      if (!peer || peer.status !== 'active') return false;
+      const key = `${memberAccount.organizationId}:${memberAccount.id}:${request.id}`;
+      if ((atoaClaims.get(key) ?? 0) > now) return false;
+      atoaClaims.set(key, now + atoaClaimTtlMs);
+      return true;
+    });
+    const peer = claimed
+      ? db.getAccount(
+          claimed.peerAccountId,
+          memberAccount.organizationId,
+        )
+      : null;
+    sendJSON(res, 200, {
+      requests:
+        claimed && peer
+          ? [
+              {
+                ...claimed,
+                peer: {
+                  id: peer.id,
+                  username: peer.username,
+                  name: peer.name,
+                  department: peer.department,
+                  positionTitle: peer.positionTitle,
+                  role: peer.role,
+                },
+              },
+            ]
+          : [],
+    });
+    return true;
+  }
+
+  if (path === '/enterprise/messages/unread' && method === 'GET') {
+    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+      sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
+      return true;
+    }
+    const requestedLimit = Number(url.searchParams.get('limit') || 50);
+    sendJSON(res, 200, {
+      notifications: db.listUnreadDirectMessageNotifications({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+      }),
+    });
+    return true;
+  }
+
+  if (path.startsWith('/enterprise/messages/') && (method === 'GET' || method === 'POST')) {
+    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+      sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
+      return true;
+    }
+    const peerAccountId = decodeURIComponent(path.slice('/enterprise/messages/'.length));
+    const peer = db.getAccount(peerAccountId, memberAccount.organizationId);
+    if (!peer || peer.status !== 'active') {
+      sendJSON(res, 404, { error: '成员不存在或已停用' });
+      return true;
+    }
+    if (peer.id === memberAccount.id) {
+      sendJSON(res, 400, { error: '不能给自己发送消息' });
+      return true;
+    }
+    if (method === 'GET') {
+      sendJSON(res, 200, { messages: db.listDirectMessages({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        peerAccountId,
+        limit: Number(url.searchParams.get('limit') || 100),
+      }) });
+      return true;
+    }
+    const body = await readBody(req);
+    if (typeof body.content !== 'string') {
+      sendJSON(res, 400, { error: '消息内容不能为空' });
+      return true;
+    }
+    try {
+      const message = db.sendDirectMessage({
+        organizationId: memberAccount.organizationId,
+        senderAccountId: memberAccount.id,
+        recipientAccountId: peerAccountId,
+        content: body.content,
+      });
+      if (body.content.startsWith('OTTO_ATOA_RESPONSE ')) {
+        const requestId = db.markAtoaRequestReadFromResponse({
+          organizationId: memberAccount.organizationId,
+          responderAccountId: memberAccount.id,
+          peerAccountId,
+          responseContent: body.content,
+          requestPrefix: 'OTTO_ATOA_REQUEST ',
+          responsePrefix: 'OTTO_ATOA_RESPONSE ',
+        });
+        if (requestId) {
+          atoaClaims.delete(
+            `${memberAccount.organizationId}:${memberAccount.id}:${requestId}`,
+          );
+        }
+      }
+      sendJSON(res, 201, { message });
+    } catch (error) {
+      sendJSON(res, 400, { error: error instanceof Error ? error.message : '消息发送失败' });
+    }
+    return true;
+  }
+
+  return false;
+}
