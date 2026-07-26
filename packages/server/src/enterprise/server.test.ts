@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -447,7 +447,7 @@ describe('受保护 vs 公开路由边界', () => {
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
-      schemaVersion: 7,
+      schemaVersion: 11,
       deployment: {
         license: { status: 'active', enforce: false },
         dataBoundary: {
@@ -482,6 +482,8 @@ describe('受保护 vs 公开路由边界', () => {
       'unread_message_notifications_v1',
       'account_presence_v1',
       'park_tenants_v1',
+      'park_service_statistics_v1',
+      'account_data_sync_v1',
       'private_deployment_v1',
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
@@ -657,6 +659,86 @@ describe('受保护 vs 公开路由边界', () => {
     expect(body.deployment.moduleUpdates.modules).toHaveLength(1);
   });
 
+  it('账号恢复接口只读写当前账号快照，并返回可重试的版本冲突', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    expect((await fetch(base + '/enterprise/account-sync')).status).toBe(401);
+
+    const database = await import('./db.js');
+    const first = database.createAccount({
+      username: 'sync-http-a',
+      password: 'sync-http-password-a',
+      name: '同步用户 A',
+    });
+    const second = database.createAccount({
+      username: 'sync-http-b',
+      password: 'sync-http-password-b',
+      name: '同步用户 B',
+    });
+    const firstToken = database.createAuthSession(first.id).token;
+    const secondToken = database.createAuthSession(second.id).token;
+    const memoryContent = '- Restore this personal memory' + String.fromCharCode(10);
+    const payload = {
+      schemaVersion: 1,
+      generatedAt: '2026-07-26T10:30:00.000Z',
+      files: [{
+        path: 'memory/global.md',
+        content: memoryContent,
+        modifiedAtMs: Date.parse('2026-07-26T10:30:00.000Z'),
+        sha256: createHash('sha256').update(memoryContent).digest('hex'),
+      }],
+    };
+    const saved = await fetch(base + '/enterprise/account-sync', {
+      method: 'PUT',
+      headers: {
+        authorization: 'Bearer ' + firstToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        scope: 'personal_memory',
+        expectedVersion: 0,
+        payload,
+        deviceId: 'http-device-a',
+      }),
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.headers.get('cache-control')).toBe('no-store');
+    await expect(saved.json()).resolves.toMatchObject({
+      snapshot: {
+        scope: 'personal_memory',
+        version: 1,
+        payload,
+        deviceId: 'http-device-a',
+      },
+    });
+
+    const restored = await fetch(base + '/enterprise/account-sync', {
+      headers: { authorization: 'Bearer ' + firstToken },
+    });
+    expect(restored.status).toBe(200);
+    expect(restored.headers.get('cache-control')).toBe('no-store');
+    await expect(restored.json()).resolves.toMatchObject({
+      snapshots: [expect.objectContaining({ scope: 'personal_memory', version: 1, payload })],
+    });
+    const isolated = await fetch(base + '/enterprise/account-sync', {
+      headers: { authorization: 'Bearer ' + secondToken },
+    });
+    await expect(isolated.json()).resolves.toEqual({ snapshots: [] });
+
+    const conflict = await fetch(base + '/enterprise/account-sync', {
+      method: 'PUT',
+      headers: {
+        authorization: 'Bearer ' + firstToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        scope: 'personal_memory',
+        expectedVersion: 0,
+        payload,
+      }),
+    });
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({ currentVersion: 1 });
+  });
   it('企业知识库无登录会话不可读取', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const res = await fetch(`${base}/enterprise/knowledge`);
@@ -767,6 +849,37 @@ describe('园区资源后台与用户端资源接口', () => {
 
   it('管理员可设置车位并创建会议室，成员只读取本企业启用资源', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    const parkAdmin = database.createAccount({
+      username: 'resource.park.admin',
+      password: 'resource-park-admin-password',
+      name: '资源园区管理员',
+      isAdmin: true,
+    });
+    const park = database.createPark({
+      adminOrganizationId: parkAdmin.organizationId,
+      actorAccountId: parkAdmin.id,
+      name: '资源测试园区',
+    });
+    const tenantOrganization = database.createOrganization({
+      name: '资源入驻企业',
+      slug: 'resource-tenant',
+    });
+    const tenantAdmin = database.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'resource.tenant.admin',
+      password: 'resource-tenant-admin-password',
+      name: '资源入驻企业管理员',
+      isAdmin: true,
+    });
+    const invite = database.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    database.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+      address: 'A 座',
+      roomNumber: '1203 室',
+    });
     const adminHeaders = {
       'content-type': 'application/json',
       'x-otto-admin-token': ADMIN_TOKEN,
@@ -800,16 +913,24 @@ describe('园区资源后台与用户端资源接口', () => {
       }),
     });
     expect(created.status).toBe(201);
-    await expect(created.json()).resolves.toMatchObject({
+    const createdBody = await created.json();
+    expect(createdBody).toMatchObject({
       meetingRoom: {
         name: '创新厅',
         capacity: 20,
         equipment: ['投屏', '视频会议'],
       },
     });
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const daySlots = database.listParkMeetingSlots(
+      park.adminOrganizationId, tomorrow, tomorrow,
+    ).filter((slot) => slot.roomId === createdBody.meetingRoom.id);
+    expect(daySlots).toHaveLength(84);
+    expect(daySlots[0]).toMatchObject({ slotKey: '09:00', status: 'available' });
+    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:50', status: 'available' });
 
-    const database = await import('./db.js');
     const member = database.createAccount({
+      organizationId: tenantOrganization.id,
       username: 'park-member',
       password: 'park-member-password',
       name: '园区企业用户',
@@ -826,6 +947,27 @@ describe('园区资源后台与用户端资源接口', () => {
       ]),
       meetingSlots: expect.any(Array),
     });
+  });
+
+  it('普通企业管理员不能越权修改产业园资源', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    const organization = database.createOrganization({ name: '普通企业', slug: 'ordinary-resource-org' });
+    const admin = database.createAccount({
+      organizationId: organization.id,
+      username: 'ordinary.resource.admin',
+      password: 'ordinary-resource-admin-password',
+      name: '普通企业管理员',
+      isAdmin: true,
+    });
+    const session = database.createAuthSession(admin.id);
+    const response = await fetch(`${base}/enterprise/park-settings`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ parkingTotal: 999 }),
+    });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: '当前企业不是产业园管理方' });
   });
 });
 
@@ -1497,6 +1639,96 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         }),
       ],
     });
+  }, 20_000);
+
+  it('企业私聊可发送并鉴权下载 Word、PDF 或图片附件', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'file-route-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const bob = db.createAccount({
+      username: 'file-route-bob',
+      password: 'bob-password',
+      name: 'Bob',
+    });
+    db.createAccount({
+      username: 'file-route-charlie',
+      password: 'charlie-password',
+      name: 'Charlie',
+    });
+    const login = async (identifier: string, password: string): Promise<string> => {
+      const response = await fetch(base + '/enterprise/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+    const aliceToken = await login('file-route-alice', 'alice-password');
+    const bobToken = await login('file-route-bob', 'bob-password');
+    const charlieToken = await login('file-route-charlie', 'charlie-password');
+    const file = Buffer.from('%PDF-1.7\nAttachment route test');
+
+    const sent = await fetch(base + '/enterprise/messages/' + bob.id, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + aliceToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: '',
+        attachments: [{
+          fileName: '项目方案.pdf',
+          mimeType: 'application/pdf',
+          size: file.length,
+          data: file.toString('base64'),
+        }],
+      }),
+    });
+    expect(sent.status).toBe(201);
+    const sentBody = await sent.json() as {
+      message: { content: string; attachments: Array<{ id: string; fileName: string; size: number }> };
+    };
+    expect(sentBody.message.content).toContain('项目方案.pdf');
+    expect(sentBody.message.attachments).toEqual([
+      expect.objectContaining({ fileName: '项目方案.pdf', size: file.length }),
+    ]);
+    const attachmentId = sentBody.message.attachments[0]!.id;
+
+    const conversation = await fetch(base + '/enterprise/messages/' + alice.id, {
+      headers: { authorization: 'Bearer ' + bobToken },
+    });
+    expect(conversation.status).toBe(200);
+    await expect(conversation.json()).resolves.toMatchObject({
+      messages: [
+        expect.objectContaining({
+          attachments: [expect.objectContaining({ id: attachmentId })],
+        }),
+      ],
+    });
+
+    const attachmentUrl = base + '/enterprise/message-attachments/'
+      + encodeURIComponent(attachmentId);
+    const downloaded = await fetch(attachmentUrl, {
+      headers: { authorization: 'Bearer ' + bobToken },
+    });
+    expect(downloaded.status).toBe(200);
+    await expect(downloaded.json()).resolves.toMatchObject({
+      attachment: {
+        id: attachmentId,
+        fileName: '项目方案.pdf',
+        data: file.toString('base64'),
+      },
+    });
+
+    const unrelated = await fetch(attachmentUrl, {
+      headers: { authorization: 'Bearer ' + charlieToken },
+    });
+    expect(unrelated.status).toBe(404);
   }, 20_000);
 
   it('A2A 收件箱经过成员鉴权返回待处理请求，并在回复后移出收件箱', async () => {
@@ -2342,6 +2574,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       phone: '13700137000',
       feishuOpenId: 'ou_receipt_specialist',
     });
+    const engineer = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'receipt.engineer',
+      password: 'receipt-engineer-password',
+      name: '工程李工',
+      department: '工程部',
+      phone: '13600136000',
+      feishuOpenId: 'ou_receipt_engineer',
+    });
     const tenantOrganization = db.createOrganization({ name: '园区入驻企业', slug: 'receipt-tenant' });
     const tenantAdmin = db.createAccount({
       organizationId: tenantOrganization.id,
@@ -2384,6 +2625,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     const reporterToken = db.createAuthSession(reporter.id).token;
     const specialistToken = db.createAuthSession(specialist.id).token;
+    const engineerToken = db.createAuthSession(engineer.id).token;
     const parkAdminToken = db.createAuthSession(parkAdmin.id).token;
 
     const submitted = await fetch(`${base}/enterprise/tickets`, {
@@ -2438,13 +2680,100 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       action: 'confirm', actor: { id: reporter.id, name: reporter.name },
     });
 
+    const transferredSubmitted = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: 'repair',
+        title: '物业报修 · 灯具维修',
+        description: '会议室灯具无法点亮',
+        formData: {
+          company: tenantOrganization.name,
+          roomNumber: '1203 室',
+          contact: reporter.name,
+          phone: '13800138000',
+          category: '灯具维修',
+          issue: '会议室灯具无法点亮',
+          urgency: '普通',
+        },
+      }),
+    });
+    expect(transferredSubmitted.status).toBe(201);
+    const transferredTicket = (await transferredSubmitted.json()).ticket;
+    const transfer = await fetch(`${base}/enterprise/tickets/${transferredTicket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${specialistToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'transfer',
+        transferAccountId: engineer.id,
+        responseText: '请工程部上门检查灯具并反馈结果',
+      }),
+    });
+    const transferPayload = await transfer.json();
+    expect(transfer.status, JSON.stringify(transferPayload)).toBe(200);
+    const oldAssigneeView = transferPayload.ticket;
+    expect(oldAssigneeView).toMatchObject({ status: '已转交', deliveryStatus: 'transferred' });
+    expect(oldAssigneeView.history.at(-1)).toMatchObject({
+      action: 'transfer',
+      responseText: '请工程部上门检查灯具并反馈结果',
+      actor: { id: specialist.id, name: specialist.name },
+    });
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613600136000', expect.stringContaining('转交任务'), expect.stringContaining('请工程部上门检查灯具'),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_receipt_engineer', expect.stringContaining('转交任务'), expect.stringContaining('请工程部上门检查灯具'),
+    );
+    const engineerInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
+      headers: { authorization: `Bearer ${engineerToken}` },
+    });
+    const engineerTicket = (await engineerInbox.json()).tickets.find(
+      (item: { id: string }) => item.id === transferredTicket.id,
+    );
+    expect(engineerTicket).toMatchObject({ status: '已转交', deliveryStatus: 'delivered', isRecipient: true });
+    smsSend.mockClear();
+    feishuSend.mockClear();
+    const completeTransfer = await fetch(`${base}/enterprise/tickets/${transferredTicket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${engineerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'complete',
+        responseType: '已完成工作',
+        responseText: '已更换灯具并完成通电测试',
+      }),
+    });
+    expect(completeTransfer.status).toBe(200);
+    const completedTransfer = (await completeTransfer.json()).ticket;
+    expect(completedTransfer).toMatchObject({
+      status: '已完成', responseType: '已完成工作', responseText: '已更换灯具并完成通电测试',
+    });
+    expect(completedTransfer.history.slice(-2).map((entry: { action: string }) => entry.action)).toEqual([
+      'transfer', 'complete',
+    ]);
+    expect(smsSend).toHaveBeenCalledTimes(2);
+    expect(feishuSend).toHaveBeenCalledTimes(2);
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613800138000', expect.stringContaining('工作已完成'), expect.stringContaining('当前状态：已完成'),
+    );
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613700137000', expect.stringContaining('工作已完成'), expect.stringContaining('当前状态：已完成'),
+    );
+
     const fallbackSubmitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
       headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        serviceId: 'meeting-room',
-        title: '会议室预约',
-        description: '预约明天下午会议室',
+        serviceId: 'renovation',
+        title: '装修管理申请',
+        description: '申请办公室装修备案',
+        formData: {
+          company: tenantOrganization.name,
+          roomNumber: '1203 室',
+          contact: reporter.name,
+          phone: '13800138000',
+          area: 'A 座 1203 室',
+          startDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+        },
       }),
     });
     expect(fallbackSubmitted.status).toBe(201);
@@ -2518,6 +2847,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       title: '园区空调报修',
       description: '关闭开关前已创建',
       targetTags: ['维修工作人员'],
+      formData: {
+        company: tenantOrganization.name,
+        roomNumber: '801 室',
+        contact: reporter.name,
+        phone: '13800138000',
+        category: '暖通维修',
+        issue: '空调无法启动',
+        urgency: '普通',
+      },
     });
     const itTicket = db.createTicket({
       createdByAccountId: reporter.id,
@@ -2600,8 +2938,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const admin = db.createAccount({
       username: 'park.http.admin', password: 'park-http-admin-password', name: '园区管理员', isAdmin: true,
     });
+    const tenantOrganization = db.createOrganization({ name: 'HTTP 入驻企业', slug: 'park-http-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenantOrganization.id,
+      username: 'park.http.tenant.admin',
+      password: 'park-http-tenant-admin-password',
+      name: '入驻企业管理员',
+      isAdmin: true,
+    });
     db.createAccount({
-      username: 'park.http.user', password: 'park-http-user-password', name: '实名员工', tags: ['普通成员'],
+      organizationId: tenantOrganization.id,
+      username: 'park.http.user', password: 'park-http-user-password', name: '实名员工',
+      phone: '13800138000', tags: ['普通成员'],
     });
     const firstService = db.createAccount({
       username: 'park.http.service1', password: 'park-http-service1-password', name: '客服一号', tags: ['客服人员'],
@@ -2613,6 +2961,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       adminOrganizationId: admin.organizationId,
       actorAccountId: admin.id,
       name: 'HTTP 测试园区',
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: admin.id });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrganization.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+      address: 'HTTP 测试园区 A 座',
+      roomNumber: '1203 室',
     });
     for (const specialist of [firstService, secondService]) {
       db.setParkServiceSpecialist({
@@ -2640,13 +2996,27 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       body: JSON.stringify({ recipientAccountId: 'all', serviceId: 'announcement', note: '今天下午 14:00–16:00 停水' }),
     });
     expect(published.status).toBe(201);
-    expect((await published.json()).recipientCount).toBe(4);
+    expect((await published.json()).recipientCount).toBe(2);
     const publications = await fetch(`${base}/enterprise/park-services/publications`, {
       headers: { authorization: `Bearer ${userToken}` },
     });
     expect((await publications.json()).publications).toEqual([
       expect.objectContaining({ kind: 'announcement', body: '今天下午 14:00–16:00 停水' }),
     ]);
+    const announcement = (await (await fetch(`${base}/enterprise/park-services/publications`, {
+      headers: { authorization: `Bearer ${userToken}` },
+    })).json()).publications[0];
+    expect((await fetch(`${base}/enterprise/park-services/publications/${announcement.id}/read`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}` },
+    })).status).toBe(200);
+    const announcementResults = await fetch(`${base}/enterprise/park-services/announcement-results`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(announcementResults.status).toBe(200);
+    await expect(announcementResults.json()).resolves.toMatchObject({
+      announcements: [expect.objectContaining({ recipientCount: 2, readCount: 1 })],
+    });
 
     const user = db.authenticateAccount('park.http.user', 'park-http-user-password')!;
     const surveyResponse = await fetch(`${base}/enterprise/park-services/push`, {
@@ -2675,13 +3045,26 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       })],
     });
 
+    const meetingDate = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const meetingRoom = db.listParkMeetingRooms(park.adminOrganizationId)[0]!;
     const request = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
       headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        serviceId: 'meeting-room', title: '会议室预约 · 7 月 21 日',
+        serviceId: 'meeting-room', title: `会议室预约 · ${meetingDate}`,
         description: '14:00 至 16:00，10 人',
-        formData: { date: '2026-07-21', time: '14:00–16:00', attendees: '10' },
+        formData: {
+          company: tenantOrganization.name,
+          roomNumber: '1203 室',
+          contact: '实名员工',
+          phone: '13800138000',
+          roomId: meetingRoom.id,
+          date: meetingDate,
+          startTime: '14:00',
+          endTime: '16:00',
+          attendees: '10',
+          meetingContent: '园区服务联席会',
+        },
       }),
     });
     expect(request.status).toBe(201);
@@ -4056,6 +4439,121 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       headers: { authorization: `Bearer ${tenantAdminToken}` },
     });
     expect(tenantCannotList.status).toBe(403);
+
+    db.createTicket({
+      createdByAccountId: tenantProvisioned.admin.id,
+      serviceId: 'vehicle-visit',
+      title: 'Visitor vehicle registration',
+      description: 'Register one visitor vehicle',
+      targetTags: ['安保'],
+      formData: {
+        company: tenantProvisioned.organization.name,
+        roomNumber: '1508 室',
+        contact: tenantProvisioned.admin.name,
+        phone: '13800138000',
+        visitDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+        reason: '客户到访洽谈',
+        vehicleCount: '1',
+        plate1: '京A12345',
+      },
+    });
+    db.createTicket({
+      createdByAccountId: tenantProvisioned.admin.id,
+      serviceId: 'parking',
+      title: 'Two fixed parking spaces',
+      description: 'Apply for two underground fixed parking spaces',
+      targetTags: ['客服人员'],
+      formData: {
+        company: tenantProvisioned.organization.name,
+        roomNumber: '1508 室',
+        contact: tenantProvisioned.admin.name,
+        phone: '13800138000',
+        applicationType: 'underground-fixed',
+        quantity: '2',
+      },
+    });
+    const meetingDate = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const meetingRoom = db.listParkMeetingRooms(park.adminOrganizationId)[0];
+    expect(meetingRoom).toBeDefined();
+    const bookedMeetingTicket = db.createTicket({
+      createdByAccountId: tenantProvisioned.admin.id,
+      serviceId: 'meeting-room',
+      title: 'Confirmed meeting room booking',
+      description: 'Reserve an actual meeting room slot',
+      targetTags: ['会议室'],
+      formData: {
+        company: tenantProvisioned.organization.name,
+        roomNumber: '1508 室',
+        contact: tenantProvisioned.admin.name,
+        phone: '13800138000',
+        roomId: meetingRoom.id,
+        roomName: meetingRoom.name,
+        date: meetingDate,
+        startTime: '09:00',
+        endTime: '12:00',
+        attendees: '10',
+        meetingContent: '园区服务沟通会',
+        priceHalfDay: String(meetingRoom.priceHalfDay),
+      },
+    });
+    db.reserveParkMeetingSlot(park.adminOrganizationId, {
+      roomId: meetingRoom.id,
+      date: meetingDate,
+      slotKey: 'morning',
+      ticketId: bookedMeetingTicket.id,
+    });
+    const expectedMeetingAmount = Number(bookedMeetingTicket.formData.amountCny);
+
+    const statisticsResponse = await fetch(base + '/enterprise/park/statistics', {
+      headers: { authorization: 'Bearer ' + parkAdminToken },
+    });
+    expect(statisticsResponse.status).toBe(200);
+    const statistics = (await statisticsResponse.json()).statistics;
+    expect(statistics).toMatchObject({
+      parkId: park.id,
+      parkName: 'Hongchuang Innovation Park',
+      organizationCount: 1,
+      activeOrganizationCount: 1,
+      totalServiceUses: 3,
+      totalAmountCny: 520 + expectedMeetingAmount,
+      recurringMonthlyCny: 520,
+      vehicleVisits: 1,
+      meetingRoomBookings: 1,
+      firstUsedAt: expect.any(String),
+      lastUsedAt: expect.any(String),
+      services: expect.arrayContaining([
+        expect.objectContaining({ serviceId: 'vehicle-visit', count: 1 }),
+        expect.objectContaining({
+          serviceId: 'parking', count: 1, amountCny: 520, recurringMonthlyCny: 520,
+          firstUsedAt: expect.any(String), lastUsedAt: expect.any(String),
+        }),
+        expect.objectContaining({ serviceId: 'meeting-room', count: 1 }),
+      ]),
+      organizations: [
+        expect.objectContaining({
+          organizationId: tenantProvisioned.organization.id,
+          name: 'Tenant Company',
+          address: '科技大厦 B 座',
+          roomNumber: '1508 室',
+          totalUses: 3,
+          totalAmountCny: 520 + expectedMeetingAmount,
+          recurringMonthlyCny: 520,
+          vehicleVisits: 1,
+          meetingRoomBookings: 1,
+          firstUsedAt: expect.any(String),
+          lastUsedAt: expect.any(String),
+          services: expect.arrayContaining([
+            expect.objectContaining({ serviceId: 'vehicle-visit', count: 1 }),
+            expect.objectContaining({ serviceId: 'parking', count: 1, amountCny: 520 }),
+            expect.objectContaining({ serviceId: 'meeting-room', count: 1 }),
+          ]),
+        }),
+      ],
+    });
+    const tenantCannotReadStatistics = await fetch(base + '/enterprise/park/statistics', {
+      headers: { authorization: 'Bearer ' + tenantAdminToken },
+    });
+    expect(tenantCannotReadStatistics.status).toBe(403);
 
     const platformTenantProvision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',

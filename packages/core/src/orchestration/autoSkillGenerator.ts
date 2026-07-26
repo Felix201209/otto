@@ -80,6 +80,21 @@ export function resolveAutoSkillSkillsDir(): string {
   return path.join(resolveAutoSkillUserDir(), 'skills');
 }
 
+function isPortableAutoSkillName(value: string): boolean {
+  return /^auto-[^/\\]{1,160}$/u.test(value);
+}
+
+function resolvePendingCandidateFilePath(skillName: string): string {
+  return path.join(resolveAutoSkillSkillsDir(), skillName, 'SKILL.md');
+}
+
+function portablePendingCandidate(candidate: SkillCandidate): SkillCandidate {
+  return {
+    ...candidate,
+    filePath: path.posix.join(candidate.name, 'SKILL.md'),
+  };
+}
+
 function pendingCandidatesPath(): string {
   return path.join(
     resolveAutoSkillUserDir(),
@@ -857,14 +872,22 @@ export async function listPendingSkillCandidates(): Promise<SkillCandidate[]> {
     const raw = await fs.readFile(pendingCandidatesPath(), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isSkillCandidate);
+    return parsed.filter(isSkillCandidate).map((candidate) => ({
+      ...candidate,
+      filePath: resolvePendingCandidateFilePath(candidate.name),
+    }));
   } catch {
     return [];
   }
 }
 
 async function savePendingSkillCandidates(candidates: SkillCandidate[]): Promise<void> {
-  await writeJsonAtomic(pendingCandidatesPath(), candidates);
+  for (const candidate of candidates) {
+    if (!isPortableAutoSkillName(candidate.name)) {
+      throw new Error('自动 Skill 名称不合法');
+    }
+  }
+  await writeJsonAtomic(pendingCandidatesPath(), candidates.map(portablePendingCandidate));
 }
 
 async function removePendingSkill(candidateId: string): Promise<void> {
@@ -969,6 +992,7 @@ function isSkillCandidate(value: unknown): value is SkillCandidate {
   const item = value as Partial<SkillCandidate>;
   return typeof item.id === 'string'
     && typeof item.name === 'string'
+    && isPortableAutoSkillName(item.name)
     && typeof item.description === 'string'
     && Array.isArray(item.triggerPatterns)
     && typeof item.detectedPattern === 'string'

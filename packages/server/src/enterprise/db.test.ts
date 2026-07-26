@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { scryptSync } from 'node:crypto';
+import { createHash, scryptSync } from 'node:crypto';
 import { Database } from '../sqlite-compat.js';
 import {
   ATOA_DIRECT_MESSAGE_MAX_LENGTH,
@@ -110,7 +110,7 @@ describe('知识库旧库迁移', () => {
 });
 
 describe('旧账号会话迁移', () => {
-  it('把 v1.9.1 单组织账号和明文 token 会话迁移到 schema 7，保留登录建联能力', async () => {
+  it('把 v1.9.1 单组织账号和明文 token 会话迁移到 schema 8，保留登录建联能力', async () => {
     const salt = '00112233445566778899aabbccddeeff';
     const password = 'legacy-password';
     const passwordHash = `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 7,
+      schemaVersion: 11,
     });
     const sessionColumns = db
       .getDB()
@@ -209,8 +209,54 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 7,
+      schemaVersion: 11,
     });
+  });
+
+  it('从 v10 升级时保留工单历史并允许记录物业报修转交', async () => {
+    const first = await freshDb();
+    const creator = first.createAccount({
+      username: 'ticket-migration-creator', password: 'ticket-migration-password', name: '迁移申请人',
+    });
+    first.createTicket({
+      createdByAccountId: creator.id,
+      title: '历史 IT 工单',
+      description: '必须保留创建记录',
+      targetTags: ['IT'],
+    });
+    first.closeEnterpriseDatabase();
+
+    const legacy = new Database(path.join(tmpDir, 'data.db'));
+    legacy.exec(`
+      PRAGMA foreign_keys = OFF;
+      ALTER TABLE ticket_events RENAME TO ticket_events_v11_source;
+      CREATE TABLE ticket_events (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        actor_account_id TEXT,
+        action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm')),
+        status_before TEXT,
+        status_after TEXT NOT NULL,
+        response_type TEXT,
+        response_text TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO ticket_events
+      SELECT * FROM ticket_events_v11_source;
+      DROP TABLE ticket_events_v11_source;
+      PRAGMA user_version = 10;
+    `);
+    legacy.close();
+
+    vi.resetModules();
+    const reopened: DbModule = await import('./db.js');
+    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 11 });
+    const tableSql = (reopened.getDB().prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
+    ).get() as { sql: string }).sql;
+    expect(tableSql).toContain("'transfer'");
+    expect((reopened.getDB().prepare('SELECT COUNT(*) AS count FROM ticket_events').get() as { count: number }).count).toBe(1);
   });
 
   it('从真实 v3 列布局升级到 v5，保留账号员工关联和园区服务列且可重复初始化', async () => {
@@ -272,7 +318,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 7,
+        schemaVersion: 11,
       });
       const organizationColumns = reopened
         .getDB()
@@ -416,12 +462,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 8;
+      PRAGMA user_version = 12;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 8.*current version 7/i);
+    expect(() => db.getDB()).toThrow(/schema version 12.*current version 11/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -431,7 +477,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(8);
+      ).toBe(12);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -442,6 +488,147 @@ describe('数据库 readiness', () => {
   });
 });
 
+describe('园区服务表单价格归一化', () => {
+  it('停车和网络电话按受理单计算本次金额与月度持续费用', async () => {
+    const db = await freshDb();
+    const common = {
+      company: '测试企业', roomNumber: '1203 室', contact: '张三', phone: '13800138000',
+    };
+    expect(db.normalizeParkServiceFormData('parking', {
+      ...common, applicationType: 'underground-fixed', quantity: '2',
+    })).toMatchObject({
+      applicationType: '地下固定停车位', quantity: '2', pricing: '260元/月',
+      amountCny: '520', recurringMonthlyCny: '520',
+    });
+    expect(db.normalizeParkServiceFormData('network-phone', {
+      ...common, businessType: 'phone-open', quantity: '2', expectedDate: '2026-08-01',
+    })).toMatchObject({
+      quantity: '2', amountCny: '540', recurringMonthlyCny: '70', expectedDate: '2026-08-01',
+    });
+  });
+
+  it('物业客服从待接单直接回复时一次办结，不留下无法完成的处理中工单', async () => {
+    const db = await freshDb();
+    const parkOrganization = db.createOrganization({ name: '测试园区方', slug: 'simple-repair-park' });
+    const parkAdmin = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'simple.repair.admin', password: 'simple-repair-admin-password',
+      name: '园区管理员', isAdmin: true,
+    });
+    const specialist = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'simple.repair.service', password: 'simple-repair-service-password',
+      name: '园区客服',
+    });
+    const tenant = db.createOrganization({ name: '测试入驻企业', slug: 'simple-repair-tenant' });
+    const tenantAdmin = db.createAccount({
+      organizationId: tenant.id,
+      username: 'simple.repair.tenant.admin', password: 'simple-repair-tenant-password',
+      name: '企业管理员', isAdmin: true,
+    });
+    const reporter = db.createAccount({
+      organizationId: tenant.id,
+      username: 'simple.repair.reporter', password: 'simple-repair-reporter-password',
+      name: '报修员工',
+    });
+    const park = db.createPark({
+      adminOrganizationId: parkOrganization.id, actorAccountId: parkAdmin.id, name: '测试产业园',
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    db.joinOrganizationToPark({
+      organizationId: tenant.id, actorAccountId: tenantAdmin.id, code: invite.code,
+      address: 'A 座', roomNumber: '1203 室',
+    });
+    db.setParkServiceSpecialist({
+      parkId: park.id, actorAccountId: parkAdmin.id, serviceId: 'repair', accountId: specialist.id,
+    });
+    const ticket = db.createTicket({
+      createdByAccountId: reporter.id,
+      serviceId: 'repair',
+      title: '物业报修 · 灯具维修',
+      description: '办公室灯具无法点亮',
+      formData: {
+        company: tenant.name, roomNumber: '1203 室', contact: reporter.name, phone: '13800138000',
+        category: '灯具维修', issue: '办公室灯具无法点亮', urgency: '普通',
+      },
+    });
+    const completed = db.updateTicket({
+      ticketId: ticket.id,
+      accountId: specialist.id,
+      action: 'respond',
+      responseType: '远程指导',
+      responseText: '请复位房间照明空气开关，已确认恢复供电。',
+    });
+    expect(completed.status).toBe('已完成');
+    expect(completed.history.map((entry) => entry.action)).toEqual(['created', 'respond']);
+    expect(completed.history.at(-1)).toMatchObject({
+      statusBefore: '待接单', statusAfter: '已完成', responseType: '远程指导',
+    });
+  });
+});
+
+describe('账号数据恢复快照', () => {
+  it('按账号隔离并加密存储个人记忆，使用版本号拒绝覆盖新数据', async () => {
+    const db = await freshDb();
+    const first = db.createAccount({
+      username: 'sync-account-a',
+      password: 'sync-password-a',
+      name: '同步用户 A',
+    });
+    const second = db.createAccount({
+      username: 'sync-account-b',
+      password: 'sync-password-b',
+      name: '同步用户 B',
+    });
+    const secret = 'private-memory-plaintext-must-not-be-in-sqlite';
+    const memoryContent = '- ' + secret + String.fromCharCode(10);
+    const payload = {
+      schemaVersion: 1 as const,
+      generatedAt: '2026-07-26T10:00:00.000Z',
+      files: [{
+        path: 'memory/global.md',
+        content: memoryContent,
+        modifiedAtMs: Date.parse('2026-07-26T10:00:00.000Z'),
+        sha256: createHash('sha256').update(memoryContent).digest('hex'),
+      }],
+    };
+
+    const stored = db.putAccountSyncSnapshot({
+      accountId: first.id,
+      scope: 'personal_memory',
+      expectedVersion: 0,
+      payload,
+      deviceId: 'device-a',
+    });
+    expect(stored).toMatchObject({
+      scope: 'personal_memory',
+      version: 1,
+      payload,
+      deviceId: 'device-a',
+    });
+    const raw = db.getDB()
+      .prepare('SELECT payload_ciphertext FROM account_sync_snapshots WHERE account_id = ?')
+      .get(first.id) as { payload_ciphertext: string };
+    expect(raw.payload_ciphertext).not.toContain(secret);
+    expect(db.listAccountSyncSnapshots(first.id)).toEqual([
+      expect.objectContaining({ version: 1, payload }),
+    ]);
+    expect(db.listAccountSyncSnapshots(second.id)).toEqual([]);
+
+    try {
+      db.putAccountSyncSnapshot({
+        accountId: first.id,
+        scope: 'personal_memory',
+        expectedVersion: 0,
+        payload,
+      });
+      throw new Error('expected account sync conflict');
+    } catch (error) {
+      expect(error).toBeInstanceOf(db.AccountSyncConflictError);
+      expect((error as InstanceType<typeof db.AccountSyncConflictError>).currentVersion).toBe(1);
+    }
+  });
+});
 describe('企业组织结构与功能配置', () => {
   it('支持自定义部门、岗位映射与重命名，并同步既有成员', async () => {
     const db = await freshDb();
@@ -861,6 +1048,62 @@ describe('企业成员直聊', () => {
         peerAccountId: bob.id,
       })[0].readAt,
     ).not.toBeNull();
+  });
+
+  it('持久化企业私聊附件，并且只允许会话双方读取原文件', async () => {
+    const db = await freshDb();
+    const alice = db.createAccount({
+      username: 'attachment-alice',
+      password: 'alice-password-123',
+      name: 'Alice',
+    });
+    const bob = db.createAccount({
+      username: 'attachment-bob',
+      password: 'bob-password-123',
+      name: 'Bob',
+    });
+    const charlie = db.createAccount({
+      username: 'attachment-charlie',
+      password: 'charlie-password-123',
+      name: 'Charlie',
+    });
+    const file = Buffer.from('%PDF-1.7\nOtto enterprise attachment');
+
+    const message = db.sendDirectMessage({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      content: '',
+      attachments: [{
+        fileName: '项目说明.pdf',
+        mimeType: 'application/pdf',
+        size: file.length,
+        data: file.toString('base64'),
+      }],
+    });
+
+    expect(message.content).toContain('项目说明.pdf');
+    expect(message.attachments).toEqual([
+      expect.objectContaining({
+        fileName: '项目说明.pdf',
+        mimeType: 'application/pdf',
+        size: file.length,
+      }),
+    ]);
+    const attachmentId = message.attachments[0]!.id;
+    expect(db.getDirectMessageAttachment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: bob.id,
+      attachmentId,
+    })).toMatchObject({
+      id: attachmentId,
+      data: file.toString('base64'),
+    });
+    expect(() => db.getDirectMessageAttachment({
+      organizationId: db.DEFAULT_ORGANIZATION_ID,
+      accountId: charlie.id,
+      attachmentId,
+    })).toThrow('附件不存在或无权访问');
   });
 
   it('拒绝给自己、跨企业或停用成员发送消息', async () => {

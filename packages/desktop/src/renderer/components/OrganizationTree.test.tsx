@@ -706,6 +706,128 @@ describe('OrganizationTree', () => {
     expect(await screen.findByText('还没有消息，开始聊聊吧。')).toBeTruthy();
   });
 
+  it('从托盘未读消息请求直接打开对应同事会话', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 2,
+    }));
+    const enterpriseMessagesList = vi.fn(async () => []);
+    const onMessageRead = vi.fn();
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        directChatOpenRequest={{ peerAccountId: 'acc_2', requestId: 1 }}
+        onMessageRead={onMessageRead}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
+    expect(onMessageRead).toHaveBeenCalledWith('acc_2');
+    expect(await screen.findByText('还没有消息，开始聊聊吧。')).toBeTruthy();
+  });
+
+  it('支持选择 PDF 附件并在无文字时直接发送', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 1,
+    }));
+    const enterpriseMessageSend = vi.fn(async (
+      _peerAccountId: string,
+      content: string,
+      attachments: Array<{ fileName: string; mimeType: string; size: number; data: string }>,
+    ): Promise<EnterpriseDirectMessage> => ({
+      id: 'dm_attachment',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_2',
+      content: content || '分享了 1 个文件：方案.pdf',
+      createdAt: '2026-07-26T08:00:00.000Z',
+      readAt: null,
+      attachments: [{ id: 'attachment-1', ...attachments[0]! }],
+    }));
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList: vi.fn(async () => []),
+      enterpriseMessageSend,
+      selectFiles: vi.fn(async () => ['C:\\docs\\方案.pdf']),
+      readFilePath: vi.fn(async () => ({
+        filePath: 'C:\\docs\\方案.pdf',
+        fileName: '方案.pdf',
+        size: 4,
+        mimeType: 'application/pdf',
+        data: 'JVBERg==',
+      })),
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+      />,
+    );
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByText('Bob'));
+    await screen.findByText('还没有消息，开始聊聊吧。');
+
+    fireEvent.click(screen.getByRole('button', { name: '添加文件或图片' }));
+    expect(await screen.findByText('方案.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(enterpriseMessageSend).toHaveBeenCalledWith(
+      'acc_2',
+      '',
+      [{
+        fileName: '方案.pdf',
+        mimeType: 'application/pdf',
+        size: 4,
+        data: 'JVBERg==',
+      }],
+    ));
+    expect(await screen.findByRole('button', { name: '下载 方案.pdf' })).toBeTruthy();
+  });
+
   it('summarizes enterprise Otto presence, refreshes on demand, and keeps online members easy to find', async () => {
     let calls = 0;
     const enterpriseOrganizationView = vi.fn(async () => {

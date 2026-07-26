@@ -52,6 +52,7 @@ const API_V2_HEALTH = {
     'account_deletion',
     'multi_organization',
     'direct_messages',
+    'direct_message_attachments_v1',
     'atoa',
     'position_invites',
     'personal_enterprise_upgrade',
@@ -925,6 +926,56 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/health');
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(endpoint))).toBe(false);
+  });
+
+  it('发送附件时验证新能力并保留附件元数据', async () => {
+    const attachment = {
+      fileName: '方案.pdf',
+      mimeType: 'application/pdf',
+      size: 4,
+      data: 'JVBERg==',
+    };
+    const responseMessage = {
+      id: 'message-1',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_peer',
+      content: '请查收',
+      createdAt: '2026-07-26T08:00:00.000Z',
+      readAt: null,
+      attachments: [{
+        id: 'attachment-1',
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, { message: responseMessage }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        attachment: { ...responseMessage.attachments[0], data: attachment.data },
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.sendDirectMessage('acc_peer', '请查收', [attachment]))
+      .resolves.toEqual(responseMessage);
+    await expect(client.getDirectMessageAttachment('attachment-1'))
+      .resolves.toMatchObject({ id: 'attachment-1', data: attachment.data });
+
+    const sendInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(JSON.parse(String(sendInit.body))).toEqual({
+      content: '请查收',
+      attachments: [attachment],
+    });
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/message-attachments/attachment-1',
+    );
   });
 
   it('园区服务请求兼容旧服务器能力列表，不因缺少 park_service_push 预先失效', async () => {

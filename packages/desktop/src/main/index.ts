@@ -38,6 +38,7 @@ import {
   nativeImage,
   nativeTheme,
   safeStorage,
+  screen,
   session,
   shell,
   Tray,
@@ -138,12 +139,68 @@ import {
   type AccountCreateInput,
   type AccountUpdateInput,
   type EnterpriseAccount,
+  type EnterpriseDirectMessageAttachmentUpload,
   type EnterpriseKnowledgeRecordInput,
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
-  type EnterpriseUnreadMessageNotification,
 } from './enterprise-client.js';
+import {
+  ENTERPRISE_TRAY_POPOVER_WIDTH,
+  enterpriseTrayPopoverHeight,
+  positionEnterpriseTrayPopover,
+  renderEnterpriseTrayPopoverHtml,
+  summarizeEnterpriseTrayContacts,
+  type EnterpriseTrayContact,
+} from './enterprise-tray-popover.js';
+
+const ENTERPRISE_MESSAGE_ATTACHMENT_MAX_COUNT = 6;
+const ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+function normalizeEnterpriseMessageAttachments(
+  value: unknown,
+): EnterpriseDirectMessageAttachmentUpload[] {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_COUNT) {
+    throw new Error('附件数量不正确');
+  }
+  let totalBytes = 0;
+  return value.map((item) => {
+    if (!item || typeof item !== 'object') throw new Error('附件信息不正确');
+    const candidate = item as Record<string, unknown>;
+    const fileName = typeof candidate.fileName === 'string'
+      ? candidate.fileName.trim()
+      : '';
+    const mimeType = typeof candidate.mimeType === 'string'
+      ? candidate.mimeType.trim()
+      : '';
+    const size = Number(candidate.size);
+    const data = typeof candidate.data === 'string' ? candidate.data.trim() : '';
+    if (
+      !fileName
+      || fileName.length > 260
+      || !mimeType
+      || !Number.isInteger(size)
+      || size < 1
+      || size > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES
+      || !data
+    ) {
+      throw new Error('附件信息不正确或单个附件超过 10 MB');
+    }
+    const buffer = Buffer.from(data, 'base64');
+    if (buffer.length !== size || buffer.toString('base64') !== data) {
+      throw new Error('附件内容不完整');
+    }
+    totalBytes += size;
+    if (totalBytes > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
+      throw new Error('每条消息的附件总大小不能超过 20 MB');
+    }
+    return { fileName, mimeType, size, data };
+  });
+}
+
+import { AccountDataSyncService } from './account-data-sync.js';
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
@@ -244,15 +301,8 @@ let mainWindow: BrowserWindow | undefined;
 let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
 let tray: Tray | undefined;
+let enterpriseTrayPopoverWindow: BrowserWindow | undefined;
 let enterpriseTrayContacts: EnterpriseTrayContact[] = [];
-
-interface EnterpriseTrayContact {
-  accountId: string;
-  name: string;
-  preview: string;
-  count: number;
-  createdAt: string;
-}
 /** 用户主动退出标记；关闭窗口时不退出，只有菜单/托盘退出才真正结束进程。 */
 let isQuitting = false;
 /** 视频编辑器窗口（OpenReel）。 */
@@ -336,6 +386,7 @@ const IPC = {
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
@@ -344,12 +395,14 @@ const IPC = {
   enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
+  enterpriseParkStatistics: 'otto:enterprise-park-statistics',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
   enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
   enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
   enterpriseParkServices: 'otto:enterprise-park-services',
   enterpriseParkServiceUpdate: 'otto:enterprise-park-service-update',
   enterpriseParkPublications: 'otto:enterprise-park-publications',
+  enterpriseParkAnnouncementResults: 'otto:enterprise-park-announcement-results',
   enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
   enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
   enterpriseParkSurveySubmit: 'otto:enterprise-park-survey-submit',
@@ -373,13 +426,69 @@ const IPC = {
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
 const enterpriseAuthOperations = new EnterpriseAuthOperationQueue();
-function synchronizeAuthenticatedEnterpriseAccount(
-  account: import('./enterprise-identity.js').AuthenticatedEnterpriseAccountInput | null,
+const accountDataSyncService = new AccountDataSyncService();
+
+type AuthenticatedEnterpriseAccount =
+  import('./enterprise-identity.js').AuthenticatedEnterpriseAccountInput;
+
+function accountDataSyncIdentity(
+  account: { id: string },
+): { serverUrl: string; accountId: string } | null {
+  if (process.env['OTTO_ACCOUNT_SYNC_DISABLED'] === '1') return null;
+  const snapshot = enterpriseClient.snapshot();
+  if (!snapshot.token || !snapshot.serverUrl) return null;
+  return { serverUrl: snapshot.serverUrl, accountId: account.id };
+}
+
+function logAccountDataSyncFailure(error: unknown): void {
+  console.warn('[otto-desktop] Account memory/worklog/auto-skill sync failed:', error);
+}
+
+async function flushEnterpriseAccountDataSync(timeoutMs: number): Promise<void> {
+  const account = enterpriseClient.authenticatedAccountSnapshot();
+  const identity = account ? accountDataSyncIdentity(account) : null;
+  if (!identity) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([
+    accountDataSyncService.sync(enterpriseClient, identity)
+      .then(() => undefined)
+      .catch(logAccountDataSyncFailure),
+    timeout,
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
+async function synchronizeAuthenticatedEnterpriseAccount(
+  account: AuthenticatedEnterpriseAccount | null,
 ): Promise<void> {
-  return enterpriseNotificationIdentityBoundary.synchronize(
+  await enterpriseNotificationIdentityBoundary.synchronize(
     account,
     (next) => serverManager.setAuthenticatedEnterpriseAccount(next),
   );
+  if (!account) return;
+  const identity = accountDataSyncIdentity(account);
+  if (!identity) return;
+  try {
+    await accountDataSyncService.activate(identity);
+  } catch (error) {
+    logAccountDataSyncFailure(error);
+    return;
+  }
+  try {
+    const summary = await accountDataSyncService.sync(enterpriseClient, identity);
+    if (summary.restoredFiles > 0 || summary.uploadedScopes.length > 0) {
+      console.info(
+        `[otto-desktop] Account data synchronized: restored ${summary.restoredFiles} file(s), uploaded ${summary.uploadedScopes.length} scope(s).`,
+      );
+    }
+  } catch (error) {
+    // Authentication stays available; the periodic identity refresh retries sync.
+    logAccountDataSyncFailure(error);
+  }
 }
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   resetEnterpriseModuleUpdateState();
@@ -865,29 +974,6 @@ function loadTrayIcon(): NativeImage {
   return loadIcon().resize({ width: 16, height: 16 });
 }
 
-function summarizeEnterpriseTrayContacts(items: readonly EnterpriseUnreadMessageNotification[]): EnterpriseTrayContact[] {
-  const byAccount = new Map<string, EnterpriseTrayContact>();
-  for (const item of items) {
-    const current = byAccount.get(item.senderAccountId);
-    if (!current) {
-      byAccount.set(item.senderAccountId, {
-        accountId: item.senderAccountId,
-        name: item.senderName || '企业联系人',
-        preview: item.preview || '新消息',
-        count: 1,
-        createdAt: item.createdAt,
-      });
-      continue;
-    }
-    current.count += 1;
-    if (Date.parse(item.createdAt) > Date.parse(current.createdAt)) {
-      current.preview = item.preview || current.preview;
-      current.createdAt = item.createdAt;
-    }
-  }
-  return [...byAccount.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-}
-
 function trayTooltip(unreadCount: number): string {
   if (!enterpriseTrayContacts.length) {
     return unreadCount > 0 ? `Otto · ${unreadCount} 条未读消息` : 'Otto';
@@ -905,6 +991,7 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   if (!enterpriseClient.snapshot().token) {
     enterpriseTrayContacts = [];
     updateUnreadIndicators(notificationService.getUnreadSessions());
+    syncEnterpriseTrayPopover();
     return;
   }
   try {
@@ -912,14 +999,24 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
       await enterpriseClient.listUnreadDirectMessageNotifications(),
     );
   } catch {
-    enterpriseTrayContacts = [];
+    updateUnreadIndicators(notificationService.getUnreadSessions());
+    return;
   }
   updateUnreadIndicators(notificationService.getUnreadSessions());
+  syncEnterpriseTrayPopover();
+}
+
+function totalTrayUnreadCount(unread: readonly string[]): number {
+  const enterpriseSessionIds = new Set(
+    enterpriseTrayContacts.map((contact) => `enterprise:message:${contact.accountId}`),
+  );
+  const otherUnread = unread.filter((sessionId) => !enterpriseSessionIds.has(sessionId)).length;
+  return otherUnread + enterpriseTrayContacts.reduce((total, contact) => total + contact.count, 0);
 }
 
 /** 同步系统级未读提示：macOS Dock/菜单栏、Windows 任务栏覆盖图标与托盘说明。 */
 function updateUnreadIndicators(unread: readonly string[]): void {
-  const count = unread.length;
+  const count = totalTrayUnreadCount(unread);
   if (tray && !tray.isDestroyed()) {
     tray.setToolTip(trayTooltip(count));
     if (process.platform === 'darwin') {
@@ -990,7 +1087,169 @@ function clearBackgroundAttention(): void {
   }
 }
 
+function hideEnterpriseTrayPopover(): void {
+  if (enterpriseTrayPopoverWindow && !enterpriseTrayPopoverWindow.isDestroyed()) {
+    enterpriseTrayPopoverWindow.hide();
+  }
+}
+
+function openNotificationSession(sessionId: string): void {
+  showMainWindow();
+  const targetWindow = mainWindow;
+  if (!targetWindow || targetWindow.isDestroyed()) return;
+  const send = (): void => {
+    if (!targetWindow.isDestroyed()) {
+      targetWindow.webContents.send(IPC.notificationSessionOpen, sessionId);
+    }
+  };
+  if (targetWindow.webContents.isLoading()) {
+    targetWindow.webContents.once('did-finish-load', send);
+  } else {
+    send();
+  }
+}
+
+function handleEnterpriseTrayNavigation(targetUrl: string): void {
+  try {
+    const target = new URL(targetUrl);
+    if (target.protocol !== 'otto-tray:') return;
+    if (target.hostname === 'open') {
+      showMainWindow();
+      return;
+    }
+    if (target.hostname !== 'message') return;
+    const accountId = decodeURIComponent(target.pathname.replace(/^\/+/, ''));
+    if (!accountId || accountId.length > 256) return;
+    openNotificationSession(`enterprise:message:${accountId}`);
+  } catch (error) {
+    void error;
+  }
+}
+
+function ensureEnterpriseTrayPopoverWindow(): BrowserWindow {
+  if (enterpriseTrayPopoverWindow && !enterpriseTrayPopoverWindow.isDestroyed()) {
+    return enterpriseTrayPopoverWindow;
+  }
+  const window = new BrowserWindow({
+    width: ENTERPRISE_TRAY_POPOVER_WIDTH,
+    height: enterpriseTrayPopoverHeight(enterpriseTrayContacts.length),
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    roundedCorners: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      devTools: false,
+      spellcheck: false,
+    },
+  });
+  enterpriseTrayPopoverWindow = window;
+  window.setAlwaysOnTop(true, 'pop-up-menu');
+  window.setMenuBarVisibility(false);
+  window.on('blur', () => window.hide());
+  window.on('closed', () => {
+    if (enterpriseTrayPopoverWindow === window) enterpriseTrayPopoverWindow = undefined;
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, targetUrl) => {
+    event.preventDefault();
+    handleEnterpriseTrayNavigation(targetUrl);
+  });
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.key !== 'Escape') return;
+    event.preventDefault();
+    window.hide();
+  });
+  return window;
+}
+
+function positionEnterpriseTrayPopoverWindow(window: BrowserWindow): void {
+  if (!tray || tray.isDestroyed()) return;
+  const trayBounds = tray.getBounds();
+  const anchorPoint = trayBounds.width > 0 || trayBounds.height > 0
+    ? {
+      x: Math.round(trayBounds.x + trayBounds.width / 2),
+      y: Math.round(trayBounds.y + trayBounds.height / 2),
+    }
+    : screen.getCursorScreenPoint();
+  const workArea = screen.getDisplayNearestPoint(anchorPoint).workArea;
+  const effectiveTrayBounds = trayBounds.width > 0 || trayBounds.height > 0
+    ? trayBounds
+    : {
+      x: workArea.x + workArea.width - 24,
+      y: workArea.y + workArea.height,
+      width: 24,
+      height: 0,
+    };
+  const position = positionEnterpriseTrayPopover(
+    effectiveTrayBounds,
+    workArea,
+    window.getBounds(),
+  );
+  window.setPosition(position.x, position.y, false);
+}
+
+async function renderEnterpriseTrayPopover(show: boolean): Promise<void> {
+  const window = ensureEnterpriseTrayPopoverWindow();
+  window.setSize(
+    ENTERPRISE_TRAY_POPOVER_WIDTH,
+    enterpriseTrayPopoverHeight(enterpriseTrayContacts.length),
+    false,
+  );
+  const html = renderEnterpriseTrayPopoverHtml(enterpriseTrayContacts);
+  try {
+    await window.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
+  } catch (error) {
+    void error;
+    return;
+  }
+  if (window.isDestroyed()) return;
+  positionEnterpriseTrayPopoverWindow(window);
+  if (show) {
+    window.show();
+    window.focus();
+  }
+}
+
+function syncEnterpriseTrayPopover(): void {
+  if (!enterpriseTrayPopoverWindow || enterpriseTrayPopoverWindow.isDestroyed()) return;
+  if (!enterpriseTrayPopoverWindow.isVisible()) return;
+  if (enterpriseTrayContacts.length === 0) {
+    enterpriseTrayPopoverWindow.hide();
+    return;
+  }
+  void renderEnterpriseTrayPopover(false);
+}
+
+async function showEnterpriseTrayPopover(): Promise<void> {
+  if (enterpriseTrayContacts.length === 0) await refreshEnterpriseTrayContacts();
+  if (enterpriseTrayContacts.length === 0) {
+    showMainWindow();
+    return;
+  }
+  await renderEnterpriseTrayPopover(true);
+}
+
+async function toggleEnterpriseTrayPopover(): Promise<void> {
+  if (enterpriseTrayPopoverWindow?.isVisible()) {
+    enterpriseTrayPopoverWindow.hide();
+    return;
+  }
+  await showEnterpriseTrayPopover();
+}
 function showMainWindow(): void {
+  hideEnterpriseTrayPopover();
   clearBackgroundAttention();
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
@@ -1015,14 +1274,19 @@ function createTray(): void {
     const status = tracer.getSummary();
     const restarting = (tray as any).__restarting === true;
 
+    const enterpriseUnreadTotal = enterpriseTrayContacts.reduce(
+      (total, contact) => total + contact.count,
+      0,
+    );
     const enterpriseContactItems: Electron.MenuItemConstructorOptions[] = enterpriseTrayContacts.length
       ? [
         { type: 'separator' },
-        { label: '企业未读联系人', enabled: false },
-        ...enterpriseTrayContacts.slice(0, 6).map((item) => ({
-          label: `${item.name} · ${item.count} 条 · ${item.preview}`,
-          enabled: false,
-        })),
+        {
+          label: `查看 ${enterpriseUnreadTotal} 条未读企业消息`,
+          click: () => {
+            void showEnterpriseTrayPopover();
+          },
+        },
       ]
       : [];
 
@@ -1078,9 +1342,11 @@ function createTray(): void {
   void refreshEnterpriseTrayContacts();
   setInterval(() => {
     void refreshEnterpriseTrayContacts();
-  }, 20000);
+  }, 8000);
 
-  tray.on('click', showMainWindow);
+  tray.on('click', () => {
+    void toggleEnterpriseTrayPopover();
+  });
   tray.on('double-click', showMainWindow);
   tray.on('balloon-click', showMainWindow);
 }
@@ -1503,6 +1769,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.enterpriseLogout, async () => {
     await enterpriseAuthOperations.run(async () => {
       loadEnterpriseSession();
+      await flushEnterpriseAccountDataSync(5_000);
       await logoutAndClearEnterpriseIdentity(
         enterpriseClient,
         synchronizeAuthenticatedEnterpriseAccount,
@@ -1714,13 +1981,39 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.listUnreadDirectMessageNotifications();
   });
-  ipcMain.handle(IPC.enterpriseMessageSend, async (_event, peerAccountId: unknown, content: unknown) => {
-    loadEnterpriseSession();
-    if (typeof peerAccountId !== 'string' || !peerAccountId || typeof content !== 'string') {
-      throw new Error('消息信息不正确');
-    }
-    return enterpriseClient.sendDirectMessage(peerAccountId, content);
-  });
+  ipcMain.handle(
+    IPC.enterpriseMessageSend,
+    async (
+      _event,
+      peerAccountId: unknown,
+      content: unknown,
+      attachments: unknown,
+    ) => {
+      loadEnterpriseSession();
+      if (typeof peerAccountId !== 'string' || !peerAccountId || typeof content !== 'string') {
+        throw new Error('消息信息不正确');
+      }
+      const normalizedAttachments = normalizeEnterpriseMessageAttachments(attachments);
+      if (!content.trim() && normalizedAttachments.length === 0) {
+        throw new Error('请输入消息或添加附件');
+      }
+      return enterpriseClient.sendDirectMessage(
+        peerAccountId,
+        content,
+        normalizedAttachments,
+      );
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseMessageAttachmentRead,
+    async (_event, attachmentId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof attachmentId !== 'string' || !attachmentId || attachmentId.length > 160) {
+        throw new Error('附件信息不正确');
+      }
+      return enterpriseClient.getDirectMessageAttachment(attachmentId);
+    },
+  );
   ipcMain.handle(IPC.enterpriseAtoaInbox, async () => {
     loadEnterpriseSession();
     return enterpriseClient.listAtoaInbox();
@@ -1781,6 +2074,10 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.listParkTenantOrganizations();
   });
+  ipcMain.handle(IPC.enterpriseParkStatistics, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getParkStatistics();
+  });
   ipcMain.handle(IPC.enterpriseParkSpecialists, async () => {
     loadEnterpriseSession();
     return enterpriseClient.listParkSpecialists();
@@ -1823,6 +2120,10 @@ function registerIpc(): void {
   ipcMain.handle(IPC.enterpriseParkPublications, async () => {
     loadEnterpriseSession();
     return enterpriseClient.listParkPublications();
+  });
+  ipcMain.handle(IPC.enterpriseParkAnnouncementResults, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listParkAnnouncementResults();
   });
   ipcMain.handle(IPC.enterpriseParkSurveyResults, async () => {
     loadEnterpriseSession();
@@ -1908,13 +2209,15 @@ function registerIpc(): void {
       throw new Error('工单操作格式不正确');
     }
     const body = input as Record<string, unknown>;
-    if (!['respond', 'accept', 'complete', 'confirm'].includes(String(body.action))) {
+    if (!['respond', 'accept', 'complete', 'confirm', 'transfer'].includes(String(body.action))) {
       throw new Error('工单操作不正确');
     }
     return enterpriseClient.updateTicket(id, {
-      action: body.action as 'respond' | 'accept' | 'complete' | 'confirm',
+      action: body.action as 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
       responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
       responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
+      transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
+      transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
     });
   });
   ipcMain.handle(IPC.parkNativeNotify, (_e, title: unknown, body: unknown) => {
@@ -2596,7 +2899,9 @@ if (!gotLock) {
     notificationService.clearAll();
     // detached server 仅用户主动退出托盘时才杀。
     // 关窗不杀：server + 飞书守护继续运行。
-    void serverManager.shutdown(isQuitting)
+    void flushEnterpriseAccountDataSync(3_000)
+      .catch(logAccountDataSyncFailure)
+      .then(() => serverManager.shutdown(isQuitting))
       .catch((error) => {
         console.warn('[otto-desktop] 退出清理 server 失败:', error);
       })

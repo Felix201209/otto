@@ -11,6 +11,8 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
   randomBytes,
@@ -19,6 +21,7 @@ import {
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   buildOrganizationInviteLink,
   resolveEnterprisePublicBaseUrl,
@@ -28,13 +31,22 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 7;
+export const ENTERPRISE_SCHEMA_VERSION = 11;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
 
+function tokensMatch(left: string, right: string): boolean {
+  if (!left || !right || left.length !== right.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  } catch {
+    return false;
+  }
+}
 /**
  * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
  */
@@ -92,12 +104,14 @@ export function normalizeTokens(tokens: unknown): number {
 }
 
 let db: Database | null = null;
+let accountSyncEncryptionKey: Buffer | null = null;
 
 /** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
 export function closeEnterpriseDatabase(): void {
   if (!db) return;
   const database = db;
   db = null;
+  accountSyncEncryptionKey = null;
   database.close();
 }
 
@@ -132,6 +146,7 @@ export function getDB(): Database {
     }
     database.pragma('journal_mode = WAL');
     migrateLegacyAuthSessions(database);
+    migrateLegacyTicketEvents(database);
     database.pragma('foreign_keys = ON');
     initSchema(database);
     db = database;
@@ -222,6 +237,58 @@ function migrateLegacyAuthSessions(d: Database): void {
     d.exec('COMMIT');
   } catch (error) {
     d.exec('ROLLBACK');
+    throw error;
+  } finally {
+    d.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+/** v11 adds the auditable property-repair transfer action without losing existing history. */
+function migrateLegacyTicketEvents(d: Database): void {
+  const table = d
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'")
+    .get() as { sql?: string } | undefined;
+  if (!table?.sql || table.sql.includes("'transfer'")) return;
+
+  const columns = new Set((d.prepare('PRAGMA table_info(ticket_events)').all() as Array<{ name: string }>)
+    .map((column) => column.name));
+  const requiredColumns = [
+    'id', 'organization_id', 'ticket_id', 'actor_account_id', 'action', 'status_before',
+    'status_after', 'response_type', 'response_text', 'created_at',
+  ];
+  if (!requiredColumns.every((column) => columns.has(column))) return;
+
+  d.exec('PRAGMA foreign_keys = OFF');
+  d.exec('BEGIN IMMEDIATE');
+  try {
+    d.exec(`
+      ALTER TABLE ticket_events RENAME TO ticket_events_legacy_v10;
+      CREATE TABLE ticket_events (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        actor_account_id TEXT,
+        action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
+        status_before TEXT,
+        status_after TEXT NOT NULL,
+        response_type TEXT,
+        response_text TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+        FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
+      );
+      INSERT INTO ticket_events
+        (id, organization_id, ticket_id, actor_account_id, action, status_before,
+         status_after, response_type, response_text, created_at)
+      SELECT id, organization_id, ticket_id, actor_account_id, action, status_before,
+             status_after, response_type, response_text, created_at
+      FROM ticket_events_legacy_v10;
+      DROP TABLE ticket_events_legacy_v10;
+      COMMIT;
+    `);
+  } catch (error) {
+    try { d.exec('ROLLBACK'); } catch { /* preserve the migration error */ }
     throw error;
   } finally {
     d.exec('PRAGMA foreign_keys = ON');
@@ -327,6 +394,22 @@ function initSchema(d: Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       sent_at_ms INTEGER
     );
+    CREATE TABLE IF NOT EXISTS account_sync_snapshots (
+      account_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK(scope IN ('personal_memory', 'worklog', 'auto_skills')),
+      version INTEGER NOT NULL,
+      payload_ciphertext TEXT NOT NULL,
+      payload_iv TEXT NOT NULL,
+      payload_auth_tag TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      device_id TEXT,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (account_id, scope),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS parks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -547,6 +630,22 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation
       ON direct_messages(organization_id, sender_account_id, recipient_account_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS direct_message_attachments (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 10485760),
+      content BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (message_id) REFERENCES direct_messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
+      ON direct_message_attachments(message_id, ordinal);
+
     CREATE TABLE IF NOT EXISTS sms_login_challenges (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -628,7 +727,7 @@ function initSchema(d: Database): void {
       organization_id TEXT NOT NULL,
       ticket_id TEXT NOT NULL,
       actor_account_id TEXT,
-      action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm')),
+      action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
       status_before TEXT,
       status_after TEXT NOT NULL,
       response_type TEXT,
@@ -698,6 +797,32 @@ function initSchema(d: Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (organization_id, meeting_room_id, use_date, slot_key),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS park_meeting_bookings (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      meeting_room_id TEXT NOT NULL,
+      use_date TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      booked_ticket_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (booked_ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS park_meeting_slot_overrides (
+      organization_id TEXT NOT NULL,
+      meeting_room_id TEXT NOT NULL,
+      use_date TEXT NOT NULL,
+      slot_key TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (organization_id, meeting_room_id, use_date, slot_key),
       FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
       FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE
     );
@@ -790,6 +915,10 @@ function initSchema(d: Database): void {
       ON ticket_notifications(ticket_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_created
       ON ticket_events(ticket_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_it_tickets_park_org_service_created
+      ON it_tickets(park_id, organization_id, service_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_park_meeting_slots_booked_ticket
+      ON park_meeting_slots(booked_ticket_id) WHERE booked_ticket_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_park_publications_org_created
       ON park_publications(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_publication_recipients_account
@@ -798,6 +927,8 @@ function initSchema(d: Database): void {
       ON park_meeting_rooms(organization_id, enabled, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_meeting_slots_org_date
       ON park_meeting_slots(organization_id, use_date, meeting_room_id);
+    CREATE INDEX IF NOT EXISTS idx_park_meeting_bookings_org_date
+      ON park_meeting_bookings(organization_id, use_date, meeting_room_id, start_time, end_time);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
@@ -808,6 +939,8 @@ function initSchema(d: Database): void {
       ON telemetry_events(status, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
       ON telemetry_events(deployment_id, created_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_account_sync_snapshots_org_updated
+      ON account_sync_snapshots(organization_id, updated_at_ms);
   `);
 
   const organizationColumns = d
@@ -1235,6 +1368,385 @@ function backfillOrganizationStructure(d: Database): void {
 // Organizations and time-boxed registration invites
 // ============================================================
 
+export const ACCOUNT_SYNC_SCOPES = [
+  'personal_memory',
+  'worklog',
+  'auto_skills',
+] as const;
+
+export type AccountSyncScope = (typeof ACCOUNT_SYNC_SCOPES)[number];
+
+export interface AccountSyncFile {
+  path: string;
+  content: string;
+  modifiedAtMs: number;
+  sha256: string;
+}
+
+export interface AccountSyncPayload {
+  schemaVersion: 1;
+  generatedAt: string;
+  files: AccountSyncFile[];
+  truncated?: boolean;
+}
+
+export interface AccountSyncSnapshotView {
+  scope: AccountSyncScope;
+  version: number;
+  payload: AccountSyncPayload;
+  payloadHash: string;
+  deviceId: string | null;
+  updatedAtMs: number;
+}
+
+export class AccountSyncConflictError extends Error {
+  constructor(readonly currentVersion: number) {
+    super('account sync snapshot changed on another device');
+    this.name = 'AccountSyncConflictError';
+  }
+}
+
+const ACCOUNT_SYNC_MAX_FILES = 1_000;
+const ACCOUNT_SYNC_MAX_FILE_BYTES = 1024 * 1024;
+const ACCOUNT_SYNC_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
+const ACCOUNT_SYNC_SCOPE_SET = new Set<string>(ACCOUNT_SYNC_SCOPES);
+
+interface AccountSyncSnapshotRow {
+  account_id: string;
+  organization_id: string;
+  scope: AccountSyncScope;
+  version: number;
+  payload_ciphertext: string;
+  payload_iv: string;
+  payload_auth_tag: string;
+  payload_hash: string;
+  device_id: string | null;
+  updated_at_ms: number;
+}
+
+function normalizeAccountSyncPath(
+  scope: AccountSyncScope,
+  value: string,
+): string {
+  if (scope !== 'personal_memory') return value;
+  if (value === 'global.md') return 'memory/global.md';
+  if (value.startsWith('sessions/')) return `memory/${value}`;
+  return value;
+}
+
+function isAccountSyncPathAllowed(scope: AccountSyncScope, value: string): boolean {
+  if (
+    !value ||
+    value.length > 260 ||
+    value.includes('\\') ||
+    value.startsWith('/') ||
+    value.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    return false;
+  }
+  if (scope === 'personal_memory') {
+    return value === 'memory/global.md'
+      || /^memory\/sessions\/[^/]{1,160}\.md$/u.test(value)
+      || value === 'knowledge/entries.jsonl';
+  }
+  if (scope === 'worklog') {
+    return /\.(?:jsonl|json|md)$/iu.test(value);
+  }
+  return /^auto-[^/]{1,160}\/(?:SKILL\.md|profile\.json)$/u.test(value);
+}
+
+function normalizeAccountSyncPayload(
+  scope: AccountSyncScope,
+  value: unknown,
+): AccountSyncPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('account sync payload must be an object');
+  }
+  const raw = value as Record<string, unknown>;
+  if (raw.schemaVersion !== 1 || !Array.isArray(raw.files)) {
+    throw new Error('account sync payload schema is unsupported');
+  }
+  if (raw.files.length > ACCOUNT_SYNC_MAX_FILES) {
+    throw new Error('account sync payload contains too many files');
+  }
+  const generatedAtMs = Date.parse(String(raw.generatedAt ?? ''));
+  if (!Number.isFinite(generatedAtMs)) {
+    throw new Error('account sync generatedAt is invalid');
+  }
+
+  let totalBytes = 0;
+  const seen = new Set<string>();
+  const files = raw.files.map((candidate): AccountSyncFile => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('account sync file entry is invalid');
+    }
+    const file = candidate as Record<string, unknown>;
+    const relativePath = normalizeAccountSyncPath(scope, typeof file.path === 'string' ? file.path : '');
+    const content = typeof file.content === 'string' ? file.content : '';
+    if (!isAccountSyncPathAllowed(scope, relativePath)) {
+      throw new Error('account sync file path is not allowed');
+    }
+    if (seen.has(relativePath)) {
+      throw new Error('account sync payload contains a duplicate path');
+    }
+    seen.add(relativePath);
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    if (contentBytes > ACCOUNT_SYNC_MAX_FILE_BYTES) {
+      throw new Error('account sync file exceeds the size limit');
+    }
+    totalBytes += contentBytes + Buffer.byteLength(relativePath, 'utf8');
+    if (totalBytes > ACCOUNT_SYNC_MAX_PAYLOAD_BYTES) {
+      throw new Error('account sync payload exceeds the size limit');
+    }
+    const modifiedAtMs = Number(file.modifiedAtMs);
+    if (!Number.isFinite(modifiedAtMs) || modifiedAtMs < 0) {
+      throw new Error('account sync file timestamp is invalid');
+    }
+    const digest = createHash('sha256').update(content, 'utf8').digest('hex');
+    if (typeof file.sha256 !== 'string' || !tokensMatch(digest, file.sha256.toLowerCase())) {
+      throw new Error('account sync file checksum mismatch');
+    }
+    return {
+      path: relativePath,
+      content,
+      modifiedAtMs: Math.floor(modifiedAtMs),
+      sha256: digest,
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date(generatedAtMs).toISOString(),
+    files,
+    ...(raw.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+function getAccountSyncEncryptionKey(): Buffer {
+  if (accountSyncEncryptionKey) return accountSyncEncryptionKey;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let key: Buffer;
+  try {
+    key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const generated = randomBytes(32);
+    try {
+      fs.writeFileSync(ACCOUNT_SYNC_KEY_PATH, generated, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+      key = generated;
+    } catch (writeError) {
+      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
+      key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
+    }
+  }
+  if (key.length !== 32) {
+    throw new Error('account sync encryption key is invalid');
+  }
+  try {
+    fs.chmodSync(ACCOUNT_SYNC_KEY_PATH, 0o600);
+  } catch {
+    // Windows may not support POSIX modes; ACLs still protect the data directory.
+  }
+  accountSyncEncryptionKey = key;
+  return key;
+}
+
+function accountSyncAad(row: Pick<
+  AccountSyncSnapshotRow,
+  'account_id' | 'organization_id' | 'scope' | 'version'
+>): Buffer {
+  return Buffer.from(
+    [row.account_id, row.organization_id, row.scope, String(row.version)].join('\0'),
+    'utf8',
+  );
+}
+
+function encryptAccountSyncPayload(input: {
+  accountId: string;
+  organizationId: string;
+  scope: AccountSyncScope;
+  version: number;
+  payload: AccountSyncPayload;
+}): {
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  payloadHash: string;
+} {
+  const raw = JSON.stringify(input.payload);
+  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', getAccountSyncEncryptionKey(), iv);
+  cipher.setAAD(accountSyncAad({
+    account_id: input.accountId,
+    organization_id: input.organizationId,
+    scope: input.scope,
+    version: input.version,
+  }));
+  const ciphertext = Buffer.concat([
+    cipher.update(gzipSync(Buffer.from(raw, 'utf8'))),
+    cipher.final(),
+  ]);
+  return {
+    ciphertext: ciphertext.toString('base64'),
+    iv: iv.toString('base64'),
+    authTag: cipher.getAuthTag().toString('base64'),
+    payloadHash,
+  };
+}
+
+function decryptAccountSyncPayload(row: AccountSyncSnapshotRow): AccountSyncPayload {
+  const decipher = createDecipheriv(
+    'aes-256-gcm',
+    getAccountSyncEncryptionKey(),
+    Buffer.from(row.payload_iv, 'base64'),
+  );
+  decipher.setAAD(accountSyncAad(row));
+  decipher.setAuthTag(Buffer.from(row.payload_auth_tag, 'base64'));
+  const compressed = Buffer.concat([
+    decipher.update(Buffer.from(row.payload_ciphertext, 'base64')),
+    decipher.final(),
+  ]);
+  const raw = gunzipSync(compressed).toString('utf8');
+  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
+  if (!tokensMatch(payloadHash, row.payload_hash)) {
+    throw new Error('account sync snapshot integrity check failed');
+  }
+  return normalizeAccountSyncPayload(row.scope, JSON.parse(raw) as unknown);
+}
+
+function accountSyncSnapshotView(row: AccountSyncSnapshotRow): AccountSyncSnapshotView {
+  return {
+    scope: row.scope,
+    version: row.version,
+    payload: decryptAccountSyncPayload(row),
+    payloadHash: row.payload_hash,
+    deviceId: row.device_id,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function activeAccountOrganization(accountId: string): string {
+  const account = getDB()
+    .prepare("SELECT organization_id FROM accounts WHERE id = ? AND status = 'active' AND deleted_at IS NULL")
+    .get(accountId) as { organization_id: string } | undefined;
+  if (!account) throw new Error('account not found');
+  return account.organization_id;
+}
+
+export function listAccountSyncSnapshots(accountId: string): AccountSyncSnapshotView[] {
+  activeAccountOrganization(accountId);
+  const rows = getDB()
+    .prepare('SELECT * FROM account_sync_snapshots WHERE account_id = ? ORDER BY scope')
+    .all(accountId) as AccountSyncSnapshotRow[];
+  return rows.map(accountSyncSnapshotView);
+}
+
+export function putAccountSyncSnapshot(input: {
+  accountId: string;
+  scope: AccountSyncScope;
+  expectedVersion: number;
+  payload: unknown;
+  deviceId?: string | null;
+}): AccountSyncSnapshotView {
+  if (!ACCOUNT_SYNC_SCOPE_SET.has(input.scope)) {
+    throw new Error('account sync scope is invalid');
+  }
+  if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
+    throw new Error('account sync expectedVersion is invalid');
+  }
+  const organizationId = activeAccountOrganization(input.accountId);
+  const payload = normalizeAccountSyncPayload(input.scope, input.payload);
+  const existing = getDB()
+    .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+    .get(input.accountId, input.scope) as { version: number } | undefined;
+  const currentVersion = existing?.version ?? 0;
+  if (currentVersion !== input.expectedVersion) {
+    throw new AccountSyncConflictError(currentVersion);
+  }
+
+  const version = currentVersion + 1;
+  const encrypted = encryptAccountSyncPayload({
+    accountId: input.accountId,
+    organizationId,
+    scope: input.scope,
+    version,
+    payload,
+  });
+  const updatedAtMs = Date.now();
+  const deviceId = typeof input.deviceId === 'string'
+    ? input.deviceId.trim().slice(0, 160) || null
+    : null;
+
+  if (existing) {
+    const result = getDB()
+      .prepare(
+        'UPDATE account_sync_snapshots SET organization_id = ?, version = ?, '
+        + 'payload_ciphertext = ?, payload_iv = ?, payload_auth_tag = ?, payload_hash = ?, '
+        + 'device_id = ?, updated_at_ms = ? '
+        + 'WHERE account_id = ? AND scope = ? AND version = ?',
+      )
+      .run(
+        organizationId,
+        version,
+        encrypted.ciphertext,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.payloadHash,
+        deviceId,
+        updatedAtMs,
+        input.accountId,
+        input.scope,
+        currentVersion,
+      ) as { changes?: number | bigint };
+    if (Number(result.changes ?? 0) !== 1) {
+      const latest = getDB()
+        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+        .get(input.accountId, input.scope) as { version?: number } | undefined;
+      throw new AccountSyncConflictError(Number(latest?.version ?? currentVersion));
+    }
+  } else {
+    try {
+      getDB()
+        .prepare(
+          'INSERT INTO account_sync_snapshots '
+          + '(account_id, organization_id, scope, version, payload_ciphertext, '
+          + 'payload_iv, payload_auth_tag, payload_hash, device_id, updated_at_ms) '
+          + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          input.accountId,
+          organizationId,
+          input.scope,
+          version,
+          encrypted.ciphertext,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.payloadHash,
+          deviceId,
+          updatedAtMs,
+        );
+    } catch (error) {
+      const latest = getDB()
+        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+        .get(input.accountId, input.scope) as { version?: number } | undefined;
+      if (latest) throw new AccountSyncConflictError(Number(latest.version));
+      throw error;
+    }
+  }
+
+  return {
+    scope: input.scope,
+    version,
+    payload,
+    payloadHash: encrypted.payloadHash,
+    deviceId,
+    updatedAtMs,
+  };
+}
 export interface OrganizationView {
   id: string;
   name: string;
@@ -3643,6 +4155,51 @@ export function listAccountPresence(
   }));
 }
 
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT = 6;
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+const DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.txt': 'text/plain',
+  '.log': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.md': 'text/markdown',
+  '.zip': 'application/zip',
+};
+
+export interface DirectMessageAttachmentView {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface DirectMessageAttachmentInput {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
+export interface DirectMessageAttachmentDownload extends DirectMessageAttachmentView {
+  data: string;
+}
+
 export interface DirectMessageView {
   id: string;
   senderAccountId: string;
@@ -3650,6 +4207,7 @@ export interface DirectMessageView {
   content: string;
   createdAt: string;
   readAt: string | null;
+  attachments: DirectMessageAttachmentView[];
 }
 
 export interface AtoaInboxMessageView extends DirectMessageView {
@@ -3665,7 +4223,150 @@ interface DirectMessageRow {
   read_at: string | null;
 }
 
-function toDirectMessageView(row: DirectMessageRow): DirectMessageView {
+interface DirectMessageAttachmentRow {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+}
+
+interface DirectMessageAttachmentMessageRow extends DirectMessageAttachmentRow {
+  message_id: string;
+}
+interface DirectMessageAttachmentContentRow extends DirectMessageAttachmentRow {
+  content: Uint8Array;
+}
+
+interface NormalizedDirectMessageAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  content: Buffer;
+}
+
+function normalizeDirectMessageFileName(value: unknown): {
+  fileName: string;
+  mimeType: string;
+} {
+  if (typeof value !== 'string') throw new Error('附件名称不正确');
+  const baseName = path.posix.basename(value.replace(/\\/g, '/')).trim();
+  const safeName = Array.from(baseName)
+    .map((character) => (
+      character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character)
+        ? '_'
+        : character
+    ))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!safeName || safeName === '.' || safeName === '..') {
+    throw new Error('附件名称不正确');
+  }
+  const extension = path.extname(safeName).toLowerCase();
+  const mimeType = DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION[extension];
+  if (!mimeType) {
+    throw new Error('暂不支持该附件格式，请选择图片、Word、PDF、Excel、PPT 或常用文本文件');
+  }
+  if (safeName.length <= 180) return { fileName: safeName, mimeType };
+  const stemLength = Math.max(1, 180 - extension.length);
+  return {
+    fileName: safeName.slice(0, stemLength) + extension,
+    mimeType,
+  };
+}
+
+function normalizeDirectMessageAttachments(
+  attachments: readonly DirectMessageAttachmentInput[] | undefined,
+): NormalizedDirectMessageAttachment[] {
+  if (attachments == null) return [];
+  if (!Array.isArray(attachments)) throw new Error('附件信息不正确');
+  if (attachments.length > DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT) {
+    throw new Error('每条消息最多发送 6 个附件');
+  }
+  let totalBytes = 0;
+  return attachments.map((attachment) => {
+    if (!attachment || typeof attachment !== 'object') {
+      throw new Error('附件信息不正确');
+    }
+    const { fileName, mimeType } = normalizeDirectMessageFileName(attachment.fileName);
+    if (typeof attachment.data !== 'string') throw new Error('附件内容不正确');
+    const data = attachment.data.trim();
+    if (
+      !data
+      || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)
+    ) {
+      throw new Error('附件内容不正确');
+    }
+    const content = Buffer.from(data, 'base64');
+    if (!content.length || content.toString('base64') !== data) {
+      throw new Error('附件内容不正确');
+    }
+    if (
+      content.length > DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES
+      || Number(attachment.size) !== content.length
+    ) {
+      throw new Error('单个附件不能超过 10 MB，且文件大小必须完整');
+    }
+    totalBytes += content.length;
+    if (totalBytes > DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
+      throw new Error('每条消息的附件总大小不能超过 20 MB');
+    }
+    return {
+      id: randomUUID(),
+      fileName,
+      mimeType,
+      size: content.length,
+      content,
+    };
+  });
+}
+
+function listDirectMessageAttachmentViews(messageId: string): DirectMessageAttachmentView[] {
+  const rows = getDB()
+    .prepare(
+      'SELECT id, file_name, mime_type, byte_size '
+      + 'FROM direct_message_attachments WHERE message_id = ? ORDER BY ordinal, id',
+    )
+    .all(messageId) as DirectMessageAttachmentRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    size: Number(row.byte_size),
+  }));
+}
+
+function listDirectMessageAttachmentMap(
+  messageIds: readonly string[],
+): Map<string, DirectMessageAttachmentView[]> {
+  const result = new Map<string, DirectMessageAttachmentView[]>();
+  if (messageIds.length === 0) return result;
+  const placeholders = messageIds.map(() => '?').join(',');
+  const rows = getDB()
+    .prepare(
+      'SELECT message_id, id, file_name, mime_type, byte_size '
+      + 'FROM direct_message_attachments WHERE message_id IN (' + placeholders + ') '
+      + 'ORDER BY message_id, ordinal, id',
+    )
+    .all(...messageIds) as DirectMessageAttachmentMessageRow[];
+  for (const row of rows) {
+    const list = result.get(row.message_id) || [];
+    list.push({
+      id: row.id,
+      fileName: row.file_name,
+      mimeType: row.mime_type,
+      size: Number(row.byte_size),
+    });
+    result.set(row.message_id, list);
+  }
+  return result;
+}
+
+function toDirectMessageView(
+  row: DirectMessageRow,
+  attachments = listDirectMessageAttachmentViews(row.id),
+): DirectMessageView {
   return {
     id: row.id,
     senderAccountId: row.sender_account_id,
@@ -3673,38 +4374,78 @@ function toDirectMessageView(row: DirectMessageRow): DirectMessageView {
     content: row.content,
     createdAt: row.created_at,
     readAt: row.read_at,
+    attachments,
   };
 }
-
 export function sendDirectMessage(input: {
   organizationId: string;
   senderAccountId: string;
   recipientAccountId: string;
   content: string;
+  attachments?: DirectMessageAttachmentInput[];
 }): DirectMessageView {
-  const content = input.content.trim();
-  if (!content || content.length > 4000)
+  const attachments = normalizeDirectMessageAttachments(input.attachments);
+  const trimmedContent = input.content.trim();
+  const content = trimmedContent || (
+    attachments.length > 0
+      ? '分享了 ' + attachments.length + ' 个文件：'
+        + attachments.map((attachment) => attachment.fileName).join('、')
+      : ''
+  );
+  if (!content || content.length > 4000) {
     throw new Error('消息内容长度必须为 1 到 4000 个字符');
-  if (input.senderAccountId === input.recipientAccountId)
+  }
+  if (input.senderAccountId === input.recipientAccountId) {
     throw new Error('不能给自己发送消息');
+  }
   const recipient = getAccount(input.recipientAccountId, input.organizationId);
-  if (!recipient || recipient.status !== 'active')
+  if (!recipient || recipient.status !== 'active') {
     throw new Error('接收成员不存在或已停用');
+  }
   const id = randomUUID();
-  getDB()
-    .prepare(
-      `INSERT INTO direct_messages
-      (id, organization_id, sender_account_id, recipient_account_id, content)
-     VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(
-      id,
-      input.organizationId,
-      input.senderAccountId,
-      input.recipientAccountId,
-      content,
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database
+      .prepare(
+        'INSERT INTO direct_messages '
+        + '(id, organization_id, sender_account_id, recipient_account_id, content) '
+        + 'VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(
+        id,
+        input.organizationId,
+        input.senderAccountId,
+        input.recipientAccountId,
+        content,
+      );
+    const insertAttachment = database.prepare(
+      'INSERT INTO direct_message_attachments '
+      + '(id, message_id, organization_id, ordinal, file_name, mime_type, byte_size, content) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     );
-  const row = getDB()
+    attachments.forEach((attachment, index) => {
+      insertAttachment.run(
+        attachment.id,
+        id,
+        input.organizationId,
+        index,
+        attachment.fileName,
+        attachment.mimeType,
+        attachment.size,
+        attachment.content,
+      );
+    });
+    database.exec('COMMIT');
+  } catch (error) {
+    try {
+      database.exec('ROLLBACK');
+    } catch (rollbackError) {
+      void rollbackError;
+    }
+    throw error;
+  }
+  const row = database
     .prepare('SELECT * FROM direct_messages WHERE id = ?')
     .get(id) as DirectMessageRow;
   return toDirectMessageView(row);
@@ -3719,18 +4460,18 @@ export function listDirectMessages(input: {
   const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 100)));
   getDB()
     .prepare(
-      `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
-     WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?`,
+      "UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now')) "
+      + 'WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?',
     )
     .run(input.organizationId, input.peerAccountId, input.accountId);
-  return (
+  const rows = (
     getDB()
       .prepare(
-        `SELECT * FROM direct_messages
-     WHERE organization_id = ? AND (
-       (sender_account_id = ? AND recipient_account_id = ?) OR
-       (sender_account_id = ? AND recipient_account_id = ?)
-     ) ORDER BY created_at DESC, id DESC LIMIT ?`,
+        'SELECT * FROM direct_messages '
+        + 'WHERE organization_id = ? AND ('
+        + '(sender_account_id = ? AND recipient_account_id = ?) OR '
+        + '(sender_account_id = ? AND recipient_account_id = ?)'
+        + ') ORDER BY created_at DESC, id DESC LIMIT ?',
       )
       .all(
         input.organizationId,
@@ -3740,11 +4481,44 @@ export function listDirectMessages(input: {
         input.accountId,
         limit,
       ) as DirectMessageRow[]
-  )
-    .reverse()
-    .map(toDirectMessageView);
+  ).reverse();
+  const attachmentsByMessage = listDirectMessageAttachmentMap(
+    rows.map((row) => row.id),
+  );
+  return rows.map((row) => toDirectMessageView(
+    row,
+    attachmentsByMessage.get(row.id) || [],
+  ));
 }
-
+export function getDirectMessageAttachment(input: {
+  organizationId: string;
+  accountId: string;
+  attachmentId: string;
+}): DirectMessageAttachmentDownload {
+  const row = getDB()
+    .prepare(
+      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content '
+      + 'FROM direct_message_attachments a '
+      + 'JOIN direct_messages m ON m.id = a.message_id '
+      + 'AND m.organization_id = a.organization_id '
+      + 'WHERE a.id = ? AND a.organization_id = ? '
+      + 'AND (m.sender_account_id = ? OR m.recipient_account_id = ?)',
+    )
+    .get(
+      input.attachmentId,
+      input.organizationId,
+      input.accountId,
+      input.accountId,
+    ) as DirectMessageAttachmentContentRow | undefined;
+  if (!row) throw new Error('附件不存在或无权访问');
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    size: Number(row.byte_size),
+    data: Buffer.from(row.content).toString('base64'),
+  };
+}
 export interface UnreadDirectMessageNotification {
   id: string;
   source: 'enterprise';
@@ -5081,6 +5855,9 @@ const DEFAULT_PARK_SERVICES = [
 const PARK_SERVICE_IDS = new Set<string>(
   DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
 );
+const PARK_REQUEST_SERVICE_IDS = new Set<string>(
+  DEFAULT_PARK_SERVICES.slice(0, 7).map(([serviceId]) => serviceId),
+);
 
 export interface ParkServiceView {
   parkId: string;
@@ -5234,6 +6011,211 @@ export function listParkTenantOrganizations(
   ).map(toOrganizationView);
 }
 
+export interface ParkServiceUsageCount {
+  serviceId: string;
+  name: string;
+  count: number;
+  amountCny: number;
+  recurringMonthlyCny: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface ParkTenantServiceStatistics {
+  organizationId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  address: string | null;
+  roomNumber: string | null;
+  totalUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: ParkServiceUsageCount[];
+}
+
+export interface ParkServiceStatisticsView {
+  parkId: string;
+  parkName: string;
+  generatedAt: string;
+  organizationCount: number;
+  activeOrganizationCount: number;
+  totalServiceUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: ParkServiceUsageCount[];
+  organizations: ParkTenantServiceStatistics[];
+}
+
+interface ParkServiceTicketRow {
+  organization_id: string;
+  service_id: string;
+  form_data: string | null;
+  created_at: string;
+}
+
+interface ParkUsageAggregate {
+  count: number;
+  amountCny: number;
+  recurringMonthlyCny: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+function ticketStoredMoney(formData: string | null): {
+  amountCny: number;
+  recurringMonthlyCny: number;
+} {
+  try {
+    const parsed = formData ? JSON.parse(formData) as Record<string, unknown> : {};
+    const amountCny = Number(parsed.amountCny);
+    const recurringMonthlyCny = Number(parsed.recurringMonthlyCny);
+    return {
+      amountCny: Number.isFinite(amountCny) && amountCny > 0 ? amountCny : 0,
+      recurringMonthlyCny: Number.isFinite(recurringMonthlyCny) && recurringMonthlyCny > 0
+        ? recurringMonthlyCny
+        : 0,
+    };
+  } catch {
+    return { amountCny: 0, recurringMonthlyCny: 0 };
+  }
+}
+
+export function getParkServiceStatistics(input: {
+  parkId: string;
+  actorAccountId: string;
+}): ParkServiceStatisticsView {
+  const park = getPark(input.parkId);
+  if (!park || park.status !== 'active') throw new Error('Park not found');
+  const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
+  if (!actor?.isAdmin || actor.status !== 'active') {
+    throw new Error('Only park administrators can view park statistics');
+  }
+
+  const tenants = listParkTenantOrganizations(park.id);
+  const configuredNames = new Map(
+    listParkServices(park.id).map((service) => [service.id, service.name]),
+  );
+  const serviceDefinitions = DEFAULT_PARK_SERVICES
+    .filter(([serviceId]) => PARK_REQUEST_SERVICE_IDS.has(serviceId))
+    .map(([serviceId, defaultName]) => ({
+      serviceId,
+      name: configuredNames.get(serviceId) || defaultName,
+    }));
+  const tenantIds = new Set(tenants.map((tenant) => tenant.id));
+  const usage = new Map<string, Map<string, ParkUsageAggregate>>();
+  const rows = getDB()
+    .prepare(
+      `SELECT organization_id, service_id, form_data, created_at
+       FROM it_tickets
+       WHERE park_id = ?
+       ORDER BY created_at`,
+    )
+    .all(park.id) as ParkServiceTicketRow[];
+  for (const row of rows) {
+    if (!tenantIds.has(row.organization_id) || !PARK_REQUEST_SERVICE_IDS.has(row.service_id)) continue;
+    const organizationUsage = usage.get(row.organization_id) ?? new Map();
+    const current = organizationUsage.get(row.service_id) ?? {
+      count: 0,
+      amountCny: 0,
+      recurringMonthlyCny: 0,
+      firstUsedAt: null,
+      lastUsedAt: null,
+    };
+    const money = ticketStoredMoney(row.form_data);
+    current.count += 1;
+    current.amountCny += money.amountCny;
+    current.recurringMonthlyCny += money.recurringMonthlyCny;
+    current.firstUsedAt = current.firstUsedAt && current.firstUsedAt < row.created_at
+      ? current.firstUsedAt
+      : row.created_at;
+    current.lastUsedAt = current.lastUsedAt && current.lastUsedAt > row.created_at
+      ? current.lastUsedAt
+      : row.created_at;
+    organizationUsage.set(row.service_id, current);
+    usage.set(row.organization_id, organizationUsage);
+  }
+
+  const organizations = tenants.map((tenant): ParkTenantServiceStatistics => {
+    const organizationUsage = usage.get(tenant.id) ?? new Map();
+    const services = serviceDefinitions.map(({ serviceId, name }): ParkServiceUsageCount => {
+      const aggregate = organizationUsage.get(serviceId);
+      return {
+        serviceId,
+        name,
+        count: aggregate?.count ?? 0,
+        amountCny: aggregate?.amountCny ?? 0,
+        recurringMonthlyCny: aggregate?.recurringMonthlyCny ?? 0,
+        firstUsedAt: aggregate?.firstUsedAt ?? null,
+        lastUsedAt: aggregate?.lastUsedAt ?? null,
+      };
+    });
+    const timestamps = services.flatMap((service) => (
+      [service.firstUsedAt, service.lastUsedAt].filter((value): value is string => Boolean(value))
+    )).sort();
+    return {
+      organizationId: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      status: tenant.status,
+      address: tenant.parkAddress ?? null,
+      roomNumber: tenant.parkRoomNumber ?? null,
+      totalUses: services.reduce((total, service) => total + service.count, 0),
+      totalAmountCny: services.reduce((total, service) => total + service.amountCny, 0),
+      recurringMonthlyCny: services.reduce((total, service) => total + service.recurringMonthlyCny, 0),
+      vehicleVisits: organizationUsage.get('vehicle-visit')?.count ?? 0,
+      meetingRoomBookings: organizationUsage.get('meeting-room')?.count ?? 0,
+      firstUsedAt: timestamps[0] ?? null,
+      lastUsedAt: timestamps.at(-1) ?? null,
+      services,
+    };
+  });
+  const services = serviceDefinitions.map(({ serviceId, name }): ParkServiceUsageCount => {
+    const matching = organizations.map((organization) => (
+      organization.services.find((service) => service.serviceId === serviceId)
+    )).filter((service): service is ParkServiceUsageCount => Boolean(service));
+    const timestamps = matching.flatMap((service) => (
+      [service.firstUsedAt, service.lastUsedAt].filter((value): value is string => Boolean(value))
+    )).sort();
+    return {
+      serviceId,
+      name,
+      count: matching.reduce((total, service) => total + service.count, 0),
+      amountCny: matching.reduce((total, service) => total + service.amountCny, 0),
+      recurringMonthlyCny: matching.reduce((total, service) => total + service.recurringMonthlyCny, 0),
+      firstUsedAt: timestamps[0] ?? null,
+      lastUsedAt: timestamps.at(-1) ?? null,
+    };
+  });
+  const allTimestamps = services.flatMap((service) => (
+    [service.firstUsedAt, service.lastUsedAt].filter((value): value is string => Boolean(value))
+  )).sort();
+
+  return {
+    parkId: park.id,
+    parkName: park.name,
+    generatedAt: new Date().toISOString(),
+    organizationCount: organizations.length,
+    activeOrganizationCount: organizations.filter((organization) => organization.status === 'active').length,
+    totalServiceUses: services.reduce((total, service) => total + service.count, 0),
+    totalAmountCny: services.reduce((total, service) => total + service.amountCny, 0),
+    recurringMonthlyCny: services.reduce((total, service) => total + service.recurringMonthlyCny, 0),
+    vehicleVisits: services.find((service) => service.serviceId === 'vehicle-visit')?.count ?? 0,
+    meetingRoomBookings: services.find((service) => service.serviceId === 'meeting-room')?.count ?? 0,
+    firstUsedAt: allTimestamps[0] ?? null,
+    lastUsedAt: allTimestamps.at(-1) ?? null,
+    services,
+    organizations,
+  };
+}
 export interface ParkTenantProfileView {
   organizationId: string;
   parkId: string;
@@ -5681,7 +6663,7 @@ export function removeParkServiceSpecialist(input: {
     .run(park.id, input.serviceId, input.accountId);
 }
 
-export type TicketHistoryAction = 'created' | 'accept' | 'respond' | 'complete' | 'confirm';
+export type TicketHistoryAction = 'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
 
 export interface TicketHistoryEntry {
   id: string;
@@ -5837,7 +6819,8 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
     status: string;
     read_at: string | null;
   }>;
-  const recipientAccounts = deliveries
+  const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'transferred');
+  const recipientAccounts = activeDeliveries
     .map((delivery) => getAccount(delivery.account_id))
     .filter((account): account is AccountView => account !== null);
   const viewer = viewerAccountId ? getAccount(viewerAccountId) : null;
@@ -5944,10 +6927,16 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
     row.response_type,
     row.response_text,
   );
-  if (!eventRows.some((event) => event.status_after === '待验收')) {
+  const hasTerminalEvent = eventRows.some((event) => event.status_after === '已完成');
+  if (
+    !hasTerminalEvent
+    && !eventRows.some((event) => event.status_after === '待验收')
+  ) {
     addLegacyEvent('complete', row.completed_at, processingStatus, '待验收', 30);
   }
-  addLegacyEvent('confirm', row.closed_at, '待验收', '已完成', 40);
+  if (!hasTerminalEvent) {
+    addLegacyEvent('confirm', row.closed_at, '待验收', '已完成', 40);
+  }
   const history = historyCandidates
     .sort((left, right) => (
       left.event.createdAt.localeCompare(right.event.createdAt) || left.order - right.order
@@ -6076,6 +7065,147 @@ export function isTicketFeatureEnabledForAccount(
   );
 }
 
+const PARKING_APPLICATION_PRICES: Record<string, { label: string; amount: number; billingUnit: string }> = {
+  'underground-fixed': { label: '地下固定停车位', amount: 260, billingUnit: '月' },
+  '地下固定停车位:260元/月': { label: '地下固定停车位', amount: 260, billingUnit: '月' },
+  'underground-tandem': { label: '地下固定子母停车位', amount: 390, billingUnit: '月' },
+  '地下固定子母停车位:390元/月': { label: '地下固定子母停车位', amount: 390, billingUnit: '月' },
+  'surface-temporary': { label: '地上临时停车位', amount: 1200, billingUnit: '半年' },
+  '地上临时停车位:1200元/半年': { label: '地上临时停车位', amount: 1200, billingUnit: '半年' },
+  'underground-temporary': { label: '地下临时停车位', amount: 1560, billingUnit: '半年' },
+  '地下临时停车位:1560元/半年': { label: '地下临时停车位', amount: 1560, billingUnit: '半年' },
+  cancel: { label: '退停车位', amount: 0, billingUnit: '次' },
+  '退停车位': { label: '退停车位', amount: 0, billingUnit: '次' },
+};
+
+const NETWORK_PHONE_PRICES: Record<string, {
+  label: string;
+  amount: number;
+  recurringMonthly: number;
+}> = {
+  'phone-open': { label: '开通电话（开通费235元/部，线路占用费35元/月/部）', amount: 270, recurringMonthly: 35 },
+  '开通电话': { label: '开通电话（开通费235元/部，线路占用费35元/月/部）', amount: 270, recurringMonthly: 35 },
+  'caller-id': { label: '来电显示（开通费50元/部，功能费5元/月/部）', amount: 55, recurringMonthly: 5 },
+  '来电显示': { label: '来电显示（开通费50元/部，功能费5元/月/部）', amount: 55, recurringMonthly: 5 },
+  'number-hold': { label: '停机保号（5元/月/部）', amount: 5, recurringMonthly: 5 },
+  '停机保号': { label: '停机保号（5元/月/部）', amount: 5, recurringMonthly: 5 },
+  'landline-stop': { label: '固话停机', amount: 0, recurringMonthly: 0 },
+  '固话停机': { label: '固话停机', amount: 0, recurringMonthly: 0 },
+  'leased-line-15': { label: '企业专线 15M（500元/月）', amount: 500, recurringMonthly: 500 },
+  'leased-line-30': { label: '企业专线 30M（1000元/月）', amount: 1000, recurringMonthly: 1000 },
+  'leased-line-45': { label: '企业专线 45M（1600元/月）', amount: 1600, recurringMonthly: 1600 },
+  'leased-line-75': { label: '企业专线 75M（2900元/月）', amount: 2900, recurringMonthly: 2900 },
+};
+
+function requiredParkFormValue(formData: Record<string, string>, key: string, label: string): string {
+  const value = formData[key]?.trim() || '';
+  if (!value) throw new Error(`请填写${label}`);
+  return value;
+}
+
+function parkFormPositiveInteger(value: string, label: string, allowZero = false): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < (allowZero ? 0 : 1) || number > 1000) {
+    throw new Error(`${label}必须是${allowZero ? '大于等于 0' : '大于等于 1'}的整数`);
+  }
+  return number;
+}
+
+function parkFormMoney(value: string, label: string): number {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) {
+    throw new Error(`${label}必须是有效金额`);
+  }
+  return Math.round(amount * 100) / 100;
+}
+
+function validParkDate(value: string, label: string): string {
+  const date = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`请选择有效的${label}`);
+  return date;
+}
+
+export function normalizeParkServiceFormData(
+  serviceId: string,
+  input: Record<string, string>,
+): Record<string, string> {
+  const formData = Object.fromEntries(Object.entries(input).map(([key, value]) => [
+    key.slice(0, 50),
+    value.trim().slice(0, 2000),
+  ]));
+  for (const [key, label] of [
+    ['company', '公司名称'],
+    ['roomNumber', '房间号'],
+    ['contact', '联系人'],
+    ['phone', '联系电话'],
+  ] as const) {
+    formData[key] = requiredParkFormValue(formData, key, label);
+  }
+
+  if (serviceId === 'renovation') {
+    formData.area = requiredParkFormValue(formData, 'area', '装修区域');
+    formData.startDate = validParkDate(requiredParkFormValue(formData, 'startDate', '计划开工日期'), '计划开工日期');
+  } else if (serviceId === 'parking') {
+    const application = PARKING_APPLICATION_PRICES[requiredParkFormValue(formData, 'applicationType', '申请内容')];
+    if (!application) throw new Error('请选择有效的停车办理申请内容');
+    const quantity = parkFormPositiveInteger(requiredParkFormValue(formData, 'quantity', '申请数量'), '申请数量');
+    formData.applicationType = application.label;
+    formData.pricing = `${application.amount}元/${application.billingUnit}`;
+    formData.billingUnit = application.billingUnit;
+    const amountCny = application.amount * quantity;
+    formData.amountCny = String(amountCny);
+    formData.recurringMonthlyCny = String(
+      application.billingUnit === '月'
+        ? amountCny
+        : application.billingUnit === '半年'
+          ? Math.round((amountCny / 6) * 100) / 100
+          : 0,
+    );
+  } else if (serviceId === 'network-phone') {
+    const business = NETWORK_PHONE_PRICES[requiredParkFormValue(formData, 'businessType', '业务类型')];
+    if (!business) throw new Error('请选择有效的网络或电话业务类型');
+    const quantity = parkFormPositiveInteger(requiredParkFormValue(formData, 'quantity', '工位或号码数量'), '工位或号码数量');
+    formData.businessType = business.label;
+    formData.expectedDate = validParkDate(requiredParkFormValue(formData, 'expectedDate', '期望开通日期'), '期望开通日期');
+    formData.amountCny = String(business.amount * quantity);
+    formData.recurringMonthlyCny = String(business.recurringMonthly * quantity);
+  } else if (serviceId === 'meeting-room') {
+    parkFormPositiveInteger(requiredParkFormValue(formData, 'attendees', '参会人数'), '参会人数');
+    formData.roomId = requiredParkFormValue(formData, 'roomId', '会议室');
+    formData.date = validParkDate(requiredParkFormValue(formData, 'date', '使用日期'), '使用日期');
+    const period = assertMeetingPeriod(
+      requiredParkFormValue(formData, 'startTime', '开始时间'),
+      requiredParkFormValue(formData, 'endTime', '结束时间'),
+    );
+    const priceHalfDay = parkFormMoney(requiredParkFormValue(formData, 'priceHalfDay', '会议室价格'), '会议室价格');
+    const halfDayUnits = Math.ceil((period.endMinutes - period.startMinutes) / (4 * 60));
+    formData.startTime = period.startTime;
+    formData.endTime = period.endTime;
+    formData.time = `${period.startTime}–${period.endTime}`;
+    formData.amountCny = String(priceHalfDay * halfDayUnits);
+    formData.pricing = `${priceHalfDay}元/半天，不足半天按半天计`;
+  } else if (serviceId === 'electric-card') {
+    formData.amount = String(parkFormMoney(requiredParkFormValue(formData, 'amount', '充值金额'), '充值金额'));
+    formData.amountCny = formData.amount;
+  } else if (serviceId === 'repair') {
+    formData.category = requiredParkFormValue(formData, 'category', '报修类别');
+    formData.issue = requiredParkFormValue(formData, 'issue', '故障描述');
+    formData.urgency = requiredParkFormValue(formData, 'urgency', '紧急程度');
+  } else if (serviceId === 'vehicle-visit') {
+    formData.visitDate = validParkDate(requiredParkFormValue(formData, 'visitDate', '来访日期'), '来访日期');
+    formData.reason = requiredParkFormValue(formData, 'reason', '拜访企业及事由');
+    const vehicleCount = parkFormPositiveInteger(
+      requiredParkFormValue(formData, 'vehicleCount', '来访车辆数量'),
+      '来访车辆数量',
+      true,
+    );
+    if (vehicleCount > 20) throw new Error('来访车辆数量不能超过 20');
+    for (let index = 1; index <= vehicleCount; index += 1) {
+      formData[`plate${index}`] = requiredParkFormValue(formData, `plate${index}`, `第 ${index} 辆车车牌号`);
+    }
+  }
+  return formData;
+}
 export function createTicket(input: {
   createdByAccountId: string;
   serviceId?: string;
@@ -6103,6 +7233,9 @@ export function createTicket(input: {
   const serviceId = input.serviceId?.trim() || 'it';
   const isParkService = PARK_SERVICE_IDS.has(serviceId);
   if (serviceId !== 'it' && !isParkService) throw new Error('服务类型不正确');
+  const normalizedFormData = isParkService
+    ? normalizeParkServiceFormData(serviceId, input.formData ?? {})
+    : input.formData ?? {};
 
   const candidatePark = isParkService
     ? getParkForOrganization(creator.organizationId)
@@ -6188,7 +7321,7 @@ export function createTicket(input: {
         title,
         description,
         JSON.stringify(targetTags),
-        JSON.stringify(input.formData ?? {}),
+        JSON.stringify(normalizedFormData),
         input.category?.trim() || null,
         input.location?.trim() || null,
         input.urgency?.trim() || null,
@@ -6239,7 +7372,27 @@ export function getTicketNotificationRecipients(
   const deliveries = getDB()
     .prepare(
       `SELECT account_id FROM ticket_deliveries
-     WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
+     WHERE ticket_id = ? AND organization_id = ? AND status <> 'transferred' ORDER BY delivered_at`,
+    )
+    .all(ticketId, row.organization_id) as Array<{ account_id: string }>;
+  return deliveries
+    .map(({ account_id: accountId }) => getAccount(accountId))
+    .filter((account): account is AccountView => account !== null);
+}
+
+/** 已转交报修的原处理人，用于在现场工作完成后同步最终结果。 */
+export function getTicketTransferredNotificationRecipients(
+  ticketId: string,
+): AccountView[] {
+  const row = getDB()
+    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+    .get(ticketId) as { organization_id: string } | undefined;
+  if (!row) return [];
+  const deliveries = getDB()
+    .prepare(
+      `SELECT account_id FROM ticket_deliveries
+       WHERE ticket_id = ? AND organization_id = ? AND status = 'transferred'
+       ORDER BY delivered_at`,
     )
     .all(ticketId, row.organization_id) as Array<{ account_id: string }>;
   return deliveries
@@ -6312,9 +7465,11 @@ export function markTicketRead(
 export function updateTicket(input: {
   ticketId: string;
   accountId: string;
-  action: 'respond' | 'accept' | 'complete' | 'confirm';
+  action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
   responseType?: string;
   responseText?: string;
+  transferAccountId?: string;
+  transferDepartment?: string;
 }): TicketView {
   const account = getAccount(input.accountId);
   if (!account) throw new Error('Account not found');
@@ -6326,69 +7481,129 @@ export function updateTicket(input: {
     const ticketRow = database
       .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
       .get(input.ticketId) as { organization_id: string };
-    const isRecipient = Boolean(current.isRecipient);
+    const isActiveRecipient = Boolean(
+      current.isRecipient && current.deliveryStatus !== 'transferred',
+    );
     let statusAfter = current.status;
     let responseType: string | null = null;
     let responseText: string | null = null;
 
     if (input.action === 'confirm') {
       if (!current.isCreator) throw new Error('Only ticket creator can confirm');
-      if (current.status !== '待验收')
-        throw new Error('Ticket is not awaiting acceptance');
+      if (current.status !== '待验收') throw new Error('Ticket is not awaiting acceptance');
       statusAfter = '已完成';
-      database
-        .prepare(
-          `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
-           WHERE id = ? AND organization_id = ?`,
-        )
-        .run(input.ticketId, ticketRow.organization_id);
+      database.prepare(
+        `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ? AND organization_id = ?`,
+      ).run(input.ticketId, ticketRow.organization_id);
     } else {
-      if (!isRecipient)
-        throw new Error('Only assigned repair workers can update');
+      if (!isActiveRecipient) throw new Error('Only the currently assigned worker can update');
       if (input.action === 'respond') {
-        if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status))
+        if (!['待接单', '待派单', '维修中', '处理中', '已转交'].includes(current.status)) {
           throw new Error('Completed ticket cannot be updated');
+        }
         responseType = input.responseType?.trim() || '';
         responseText = input.responseText?.trim() || '';
-        if (!responseType || !responseText)
-          throw new Error('responseType and responseText required');
-        if (responseType.length > 50 || responseText.length > 2000)
+        if (!responseType || !responseText) throw new Error('responseType and responseText required');
+        if (responseType.length > 80 || responseText.length > 2000) {
           throw new Error('Repair response is too long');
-        statusAfter = responseType === '已完成维修' ? '待验收' : current.status;
-        database
-          .prepare(
-            `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
-             status = ?, completed_at = CASE WHEN ? = '待验收' THEN datetime('now') ELSE completed_at END,
-             updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
-          )
-          .run(
-            responseType,
-            responseText,
-            statusAfter,
-            statusAfter,
-            input.ticketId,
-            ticketRow.organization_id,
-          );
+        }
+        const isParkService = Boolean(current.parkId);
+        statusAfter = current.serviceId === 'repair' && current.parkId
+          ? ['待接单', '待派单'].includes(current.status) ? '已完成' : current.status
+          : isParkService
+            ? '已完成'
+            : responseType === '已完成维修' ? '待验收' : current.status;
+        database.prepare(
+          `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
+           status = ?,
+           completed_at = CASE WHEN ? IN ('待验收', '已完成') THEN datetime('now') ELSE completed_at END,
+           closed_at = CASE WHEN ? = '已完成' THEN datetime('now') ELSE closed_at END,
+           updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+        ).run(
+          responseType,
+          responseText,
+          statusAfter,
+          statusAfter,
+          statusAfter,
+          input.ticketId,
+          ticketRow.organization_id,
+        );
+      } else if (input.action === 'transfer') {
+        if (current.serviceId !== 'repair' || !current.parkId) {
+          throw new Error('只有物业报修可以转交');
+        }
+        if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status)) {
+          throw new Error('当前报修不能转交');
+        }
+        const park = getPark(current.parkId);
+        if (!park) throw new Error('产业园不存在');
+        const transferAccountId = input.transferAccountId?.trim() || '';
+        const transferDepartment = input.transferDepartment?.trim() || '';
+        let targets: AccountView[] = [];
+        if (transferAccountId) {
+          const target = getAccount(transferAccountId, park.adminOrganizationId);
+          if (target?.status === 'active' && target.id !== account.id) targets = [target];
+        } else if (transferDepartment) {
+          targets = (database.prepare(
+            `SELECT * FROM accounts
+             WHERE organization_id = ? AND department = ? AND status = 'active'
+               AND deleted_at IS NULL AND id <> ?
+             ORDER BY name, username`,
+          ).all(park.adminOrganizationId, transferDepartment, account.id) as AccountRow[]).map(toAccountView);
+        }
+        if (!targets.length) throw new Error('请选择有效的转交同事或部门');
+        const targetLabel = transferAccountId
+          ? targets[0]!.name
+          : `${transferDepartment}（${targets.length} 人）`;
+        responseType = `已转交至${targetLabel}`;
+        responseText = input.responseText?.trim() || '请接手处理该物业报修，并在完成后确认工作结果。';
+        if (responseText.length > 2000) throw new Error('转交说明不能超过 2000 个字符');
+        statusAfter = '已转交';
+        database.prepare(
+          `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
+           status = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+        ).run(responseType, responseText, statusAfter, input.ticketId, ticketRow.organization_id);
+        database.prepare(
+          `UPDATE ticket_deliveries SET status = 'transferred', read_at = COALESCE(read_at, datetime('now'))
+           WHERE ticket_id = ?`,
+        ).run(input.ticketId);
+        const deliver = database.prepare(
+          `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id, status, read_at)
+           VALUES (?, ?, ?, 'delivered', NULL)
+           ON CONFLICT(ticket_id, account_id) DO UPDATE SET status = 'delivered', read_at = NULL,
+             delivered_at = datetime('now')`,
+        );
+        for (const target of targets) {
+          deliver.run(ticketRow.organization_id, input.ticketId, target.id);
+        }
       } else if (input.action === 'accept') {
-        if (!['待接单', '待派单'].includes(current.status))
-          throw new Error('Ticket cannot be accepted');
+        if (!['待接单', '待派单'].includes(current.status)) throw new Error('Ticket cannot be accepted');
         statusAfter = current.serviceId === 'repair' ? '维修中' : '处理中';
-        database
-          .prepare(
-            `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
-             WHERE id = ? AND organization_id = ?`,
-          )
-          .run(statusAfter, input.ticketId, ticketRow.organization_id);
+        database.prepare(
+          `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?`,
+        ).run(statusAfter, input.ticketId, ticketRow.organization_id);
       } else if (input.action === 'complete') {
-        if (!['维修中', '处理中'].includes(current.status))
-          throw new Error('Ticket is not being processed');
-        statusAfter = '待验收';
-        database
-          .prepare(
+        if (current.serviceId === 'repair' && current.parkId && current.status === '已转交') {
+          statusAfter = '已完成';
+          responseType = input.responseType?.trim() || '现场工作已完成';
+          responseText = input.responseText?.trim() || '工作人员已完成转交事项。';
+          database.prepare(
+            `UPDATE it_tickets SET status = '已完成', response_type = ?, response_text = ?,
+             response_at = datetime('now'), completed_at = datetime('now'), closed_at = datetime('now'),
+             updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+          ).run(responseType, responseText, input.ticketId, ticketRow.organization_id);
+        } else {
+          if (!['维修中', '处理中'].includes(current.status)) {
+            throw new Error('Ticket is not being processed');
+          }
+          statusAfter = '待验收';
+          database.prepare(
             `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
              WHERE id = ? AND organization_id = ?`,
-          )
-          .run(input.ticketId, ticketRow.organization_id);
+          ).run(input.ticketId, ticketRow.organization_id);
+        }
       } else {
         throw new Error('Unknown ticket action');
       }
@@ -6421,7 +7636,6 @@ export function updateTicket(input: {
   }
   return ticketView(input.ticketId, input.accountId);
 }
-
 export function recordTicketNotification(input: {
   ticketId: string;
   recipientAccountId: string;
@@ -6472,16 +7686,35 @@ export interface ParkMeetingRoomView {
   updatedAt: string;
 }
 
-export const PARK_MEETING_TIME_SLOTS = [
-  { key: 'morning', label: '上午 09:00–12:00' },
-  { key: 'afternoon', label: '下午 14:00–18:00' },
-] as const;
+export const PARK_MEETING_SLOT_MINUTES = 10;
+export const PARK_MEETING_OPEN_MINUTES = 9 * 60;
+export const PARK_MEETING_CLOSE_MINUTES = 23 * 60;
+
+function meetingClock(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+export const PARK_MEETING_TIME_SLOTS = Array.from(
+  { length: (PARK_MEETING_CLOSE_MINUTES - PARK_MEETING_OPEN_MINUTES) / PARK_MEETING_SLOT_MINUTES },
+  (_, index) => {
+    const startMinutes = PARK_MEETING_OPEN_MINUTES + index * PARK_MEETING_SLOT_MINUTES;
+    const endMinutes = startMinutes + PARK_MEETING_SLOT_MINUTES;
+    return {
+      key: meetingClock(startMinutes),
+      label: `${meetingClock(startMinutes)}–${meetingClock(endMinutes)}`,
+      startMinutes,
+      endMinutes,
+    };
+  },
+);
 
 export interface ParkMeetingSlotView {
   id: string;
   roomId: string;
   date: string;
-  slotKey: 'morning' | 'afternoon';
+  slotKey: string;
   label: string;
   status: 'available' | 'booked' | 'closed';
   updatedAt: string;
@@ -6566,58 +7799,60 @@ function assertFutureMeetingDate(value: string): string {
   return date;
 }
 
-function assertMeetingSlotKey(value: string): 'morning' | 'afternoon' {
-  if (value !== 'morning' && value !== 'afternoon')
-    throw new Error('请选择有效的使用时段');
-  return value;
+function meetingMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) throw new Error('请选择有效的会议时间');
+  return Number(match[1]) * 60 + Number(match[2]);
 }
 
-function meetingSlotLabel(slotKey: 'morning' | 'afternoon'): string {
-  return PARK_MEETING_TIME_SLOTS.find((slot) => slot.key === slotKey)!.label;
-}
-
-function ensureDefaultParkMeetingSlots(organizationId: string): void {
-  const rooms = listParkMeetingRooms(organizationId);
-  const insert = getDB().prepare(
-    `INSERT OR IGNORE INTO park_meeting_slots
-      (id, organization_id, meeting_room_id, use_date, slot_key, enabled)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-  );
-  const { dates } = futureDateRange();
-  for (const room of rooms) {
-    for (const date of dates) {
-      for (const slot of PARK_MEETING_TIME_SLOTS) {
-        insert.run(
-          `park_slot_${randomUUID()}`,
-          organizationId,
-          room.id,
-          date,
-          slot.key,
-        );
-      }
-    }
+function assertMeetingPeriod(startValue: string, endValue: string): {
+  startTime: string;
+  endTime: string;
+  startMinutes: number;
+  endMinutes: number;
+} {
+  const startMinutes = meetingMinutes(startValue);
+  const endMinutes = meetingMinutes(endValue);
+  if (
+    startMinutes < PARK_MEETING_OPEN_MINUTES
+    || endMinutes > PARK_MEETING_CLOSE_MINUTES
+    || startMinutes >= endMinutes
+    || startMinutes % PARK_MEETING_SLOT_MINUTES !== 0
+    || endMinutes % PARK_MEETING_SLOT_MINUTES !== 0
+  ) {
+    throw new Error('会议时间必须在 09:00–23:00 内，并按 10 分钟选择');
   }
+  return {
+    startTime: meetingClock(startMinutes),
+    endTime: meetingClock(endMinutes),
+    startMinutes,
+    endMinutes,
+  };
 }
+
+const LEGACY_MEETING_PERIODS = {
+  morning: { startMinutes: 9 * 60, endMinutes: 12 * 60 },
+  afternoon: { startMinutes: 14 * 60, endMinutes: 18 * 60 },
+} as const;
 
 export function listParkMeetingSlots(
   organizationId: string,
   fromDate?: string,
   toDate?: string,
 ): ParkMeetingSlotView[] {
-  ensureDefaultParkMeetingSlots(organizationId);
+  const rooms = listParkMeetingRooms(organizationId);
   const defaults = futureDateRange();
   const from = fromDate ? assertFutureMeetingDate(fromDate) : defaults.from;
   const to = toDate ? assertFutureMeetingDate(toDate) : defaults.to;
   if (to < from) throw new Error('预约结束日期不能早于开始日期');
-  const rows = getDB()
+  const dates = defaults.dates.filter((date) => date >= from && date <= to);
+  const legacyRows = getDB()
     .prepare(
-      `SELECT id, meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
-     FROM park_meeting_slots
-     WHERE organization_id = ? AND use_date BETWEEN ? AND ?
-     ORDER BY use_date, meeting_room_id, slot_key DESC`,
+      `SELECT meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
+       FROM park_meeting_slots
+       WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
     )
     .all(organizationId, from, to) as Array<{
-    id: string;
     meeting_room_id: string;
     use_date: string;
     slot_key: 'morning' | 'afternoon';
@@ -6625,19 +7860,65 @@ export function listParkMeetingSlots(
     booked_ticket_id: string | null;
     updated_at: string;
   }>;
-  return rows.map((row) => ({
-    id: row.id,
-    roomId: row.meeting_room_id,
-    date: row.use_date,
-    slotKey: row.slot_key,
-    label: meetingSlotLabel(row.slot_key),
-    status: row.booked_ticket_id
+  const bookings = getDB()
+    .prepare(
+      `SELECT meeting_room_id, use_date, start_time, end_time, created_at
+       FROM park_meeting_bookings
+       WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
+    )
+    .all(organizationId, from, to) as Array<{
+    meeting_room_id: string;
+    use_date: string;
+    start_time: string;
+    end_time: string;
+    created_at: string;
+  }>;
+  const overrides = getDB()
+    .prepare(
+      `SELECT meeting_room_id, use_date, slot_key, enabled, updated_at
+       FROM park_meeting_slot_overrides
+       WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
+    )
+    .all(organizationId, from, to) as Array<{
+    meeting_room_id: string;
+    use_date: string;
+    slot_key: string;
+    enabled: number;
+    updated_at: string;
+  }>;
+
+  return rooms.flatMap((room) => dates.flatMap((date) => PARK_MEETING_TIME_SLOTS.map((slot) => {
+    const booking = bookings.find((item) => (
+      item.meeting_room_id === room.id
+      && item.use_date === date
+      && meetingMinutes(item.start_time) < slot.endMinutes
+      && meetingMinutes(item.end_time) > slot.startMinutes
+    ));
+    const legacy = legacyRows.find((item) => {
+      const period = LEGACY_MEETING_PERIODS[item.slot_key];
+      return item.meeting_room_id === room.id
+        && item.use_date === date
+        && period.startMinutes < slot.endMinutes
+        && period.endMinutes > slot.startMinutes;
+    });
+    const override = overrides.find((item) => (
+      item.meeting_room_id === room.id && item.use_date === date && item.slot_key === slot.key
+    ));
+    const status = booking || legacy?.booked_ticket_id
       ? 'booked'
-      : row.enabled === 1
-        ? 'available'
-        : 'closed',
-    updatedAt: row.updated_at,
-  }));
+      : override?.enabled === 0 || legacy?.enabled === 0
+        ? 'closed'
+        : 'available';
+    return {
+      id: `park_slot_${room.id}_${date}_${slot.key.replace(':', '')}`,
+      roomId: room.id,
+      date,
+      slotKey: slot.key,
+      label: slot.label,
+      status,
+      updatedAt: booking?.created_at || override?.updated_at || legacy?.updated_at || room.updatedAt,
+    } satisfies ParkMeetingSlotView;
+  })));
 }
 
 export function setParkMeetingSlotAvailability(
@@ -6649,73 +7930,99 @@ export function setParkMeetingSlotAvailability(
   );
   if (!room) throw new Error('会议室不存在');
   const date = assertFutureMeetingDate(input.date);
-  const slotKey = assertMeetingSlotKey(input.slotKey);
-  ensureDefaultParkMeetingSlots(organizationId);
-  const current = getDB()
-    .prepare(
-      `SELECT booked_ticket_id FROM park_meeting_slots
-     WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-    )
-    .get(organizationId, room.id, date, slotKey) as
-    { booked_ticket_id: string | null } | undefined;
-  if (current?.booked_ticket_id) throw new Error('已预约的时间段不能关闭');
-  getDB()
-    .prepare(
-      `INSERT INTO park_meeting_slots
-      (id, organization_id, meeting_room_id, use_date, slot_key, enabled)
-     VALUES (?, ?, ?, ?, ?, ?)
+  const legacyPeriod = LEGACY_MEETING_PERIODS[input.slotKey as keyof typeof LEGACY_MEETING_PERIODS];
+  const keys = legacyPeriod
+    ? PARK_MEETING_TIME_SLOTS.filter((slot) => (
+        slot.startMinutes >= legacyPeriod.startMinutes && slot.endMinutes <= legacyPeriod.endMinutes
+      )).map((slot) => slot.key)
+    : [PARK_MEETING_TIME_SLOTS.find((slot) => slot.key === input.slotKey)?.key].filter(
+        (key): key is string => Boolean(key),
+      );
+  if (!keys.length) throw new Error('请选择有效的会议时间');
+  const visible = listParkMeetingSlots(organizationId, date, date).filter(
+    (slot) => slot.roomId === room.id && keys.includes(slot.slotKey),
+  );
+  if (!input.enabled && visible.some((slot) => slot.status === 'booked')) {
+    throw new Error('已预约的时间段不能关闭');
+  }
+  const save = getDB().prepare(
+    `INSERT INTO park_meeting_slot_overrides
+      (organization_id, meeting_room_id, use_date, slot_key, enabled, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(organization_id, meeting_room_id, use_date, slot_key)
      DO UPDATE SET enabled = excluded.enabled, updated_at = datetime('now')`,
-    )
-    .run(
-      `park_slot_${randomUUID()}`,
-      organizationId,
-      room.id,
-      date,
-      slotKey,
-      input.enabled ? 1 : 0,
-    );
+  );
+  for (const key of keys) save.run(organizationId, room.id, date, key, input.enabled ? 1 : 0);
   return listParkMeetingSlots(organizationId, date, date).find(
-    (slot) => slot.roomId === room.id && slot.slotKey === slotKey,
+    (slot) => slot.roomId === room.id && slot.slotKey === keys[0],
   )!;
 }
 
+export function reserveParkMeetingPeriod(
+  organizationId: string,
+  input: {
+    roomId: string;
+    date: string;
+    startTime: string;
+    endTime: string;
+    ticketId: string;
+  },
+): ParkMeetingSlotView[] {
+  const date = assertFutureMeetingDate(input.date);
+  const period = assertMeetingPeriod(input.startTime, input.endTime);
+  const room = listParkMeetingRooms(organizationId).find((item) => item.id === input.roomId);
+  if (!room) throw new Error('会议室不存在');
+  const periodSlots = listParkMeetingSlots(organizationId, date, date).filter((slot) => {
+    const slotStart = meetingMinutes(slot.slotKey);
+    return slot.roomId === room.id
+      && slotStart >= period.startMinutes
+      && slotStart < period.endMinutes;
+  });
+  const expectedCount = (period.endMinutes - period.startMinutes) / PARK_MEETING_SLOT_MINUTES;
+  if (periodSlots.length !== expectedCount || periodSlots.some((slot) => slot.status !== 'available')) {
+    throw new Error('所选时间内包含已预约或未开放时段，请重新选择绿色时段');
+  }
+  getDB()
+    .prepare(
+      `INSERT INTO park_meeting_bookings
+       (id, organization_id, meeting_room_id, use_date, start_time, end_time, booked_ticket_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `park_booking_${randomUUID()}`,
+      organizationId,
+      room.id,
+      date,
+      period.startTime,
+      period.endTime,
+      input.ticketId,
+    );
+  return listParkMeetingSlots(organizationId, date, date).filter((slot) => {
+    const slotStart = meetingMinutes(slot.slotKey);
+    return slot.roomId === room.id
+      && slotStart >= period.startMinutes
+      && slotStart < period.endMinutes;
+  });
+}
+
+/** 兼容旧客户端的上午/下午预约，新的桌面端使用 reserveParkMeetingPeriod。 */
 export function reserveParkMeetingSlot(
   organizationId: string,
   input: { roomId: string; date: string; slotKey: string; ticketId: string },
 ): ParkMeetingSlotView {
-  const date = assertFutureMeetingDate(input.date);
-  const slotKey = assertMeetingSlotKey(input.slotKey);
-  ensureDefaultParkMeetingSlots(organizationId);
-  const changed = getDB()
-    .prepare(
-      `UPDATE park_meeting_slots
-     SET booked_ticket_id = ?, updated_at = datetime('now')
-     WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?
-       AND enabled = 1 AND booked_ticket_id IS NULL`,
-    )
-    .run(input.ticketId, organizationId, input.roomId, date, slotKey);
-  if (changed.changes === 0) {
-    const existing = getDB()
-      .prepare(
-        `SELECT enabled, booked_ticket_id FROM park_meeting_slots
-       WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-      )
-      .get(organizationId, input.roomId, date, slotKey) as
-      | {
-          enabled: number;
-          booked_ticket_id: string | null;
-        }
-      | undefined;
-    if (existing?.booked_ticket_id)
-      throw new Error('该时间段已被预约，请选择绿色时段');
-    throw new Error('该时间段暂不可预约');
-  }
-  return listParkMeetingSlots(organizationId, date, date).find(
-    (slot) => slot.roomId === input.roomId && slot.slotKey === slotKey,
-  )!;
+  const legacy = LEGACY_MEETING_PERIODS[input.slotKey as keyof typeof LEGACY_MEETING_PERIODS];
+  const startTime = legacy ? meetingClock(legacy.startMinutes) : input.slotKey;
+  const endTime = legacy
+    ? meetingClock(legacy.endMinutes)
+    : meetingClock(meetingMinutes(input.slotKey) + PARK_MEETING_SLOT_MINUTES);
+  return reserveParkMeetingPeriod(organizationId, {
+    roomId: input.roomId,
+    date: input.date,
+    startTime,
+    endTime,
+    ticketId: input.ticketId,
+  })[0]!;
 }
-
 function normalizeMeetingRoomImageUrl(
   value: string | null | undefined,
 ): string | null {
@@ -6946,6 +8253,8 @@ export function deleteParkMeetingRoom(
   if (changed.changes === 0) throw new Error('会议室不存在');
 }
 
+// ============================================================
+// Provider-reported Token usage (client_reported, idempotent)
 export interface ParkPublicationView {
   id: string;
   kind: 'announcement' | 'satisfaction';
@@ -6955,6 +8264,17 @@ export interface ParkPublicationView {
   readAt: string | null;
   submittedAt: string | null;
   responseData: Record<string, string> | null;
+  recipientCount: number;
+  readCount: number;
+}
+
+export interface ParkAnnouncementResultView {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  readCount: number;
 }
 
 export interface ParkSurveyResultView {
@@ -6981,20 +8301,18 @@ interface ParkPublicationRow {
   read_at: string | null;
   submitted_at: string | null;
   response_data: string | null;
+  recipient_count?: number;
+  read_count?: number;
 }
 
 function publicationView(row: ParkPublicationRow): ParkPublicationView {
   let responseData: Record<string, string> | null = null;
   try {
-    const value = row.response_data
-      ? (JSON.parse(row.response_data) as unknown)
-      : null;
+    const value = row.response_data ? (JSON.parse(row.response_data) as unknown) : null;
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      responseData = Object.fromEntries(
-        Object.entries(value).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-      );
+      responseData = Object.fromEntries(Object.entries(value).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ));
     }
   } catch {
     responseData = null;
@@ -7008,6 +8326,8 @@ function publicationView(row: ParkPublicationRow): ParkPublicationView {
     readAt: row.read_at,
     submittedAt: row.submitted_at,
     responseData,
+    recipientCount: Number(row.recipient_count) || 0,
+    readCount: Number(row.read_count) || 0,
   };
 }
 
@@ -7019,51 +8339,51 @@ export function createParkPublication(input: {
   recipientAccountId?: string | null;
 }): { publication: ParkPublicationView; recipientCount: number } {
   const creator = getAccount(input.createdByAccountId);
-  if (!creator?.isAdmin)
-    throw new Error('Only enterprise administrators can publish park content');
+  const park = creator ? getParkForOrganization(creator.organizationId) : null;
+  if (!creator?.isAdmin || !park || park.adminOrganizationId !== creator.organizationId) {
+    throw new Error('Only park administrators can publish park content');
+  }
   const title = input.title.trim();
   const body = input.body.trim();
   if (!title || !body) throw new Error('title and body required');
+  const tenantOrganizationIds = new Set(
+    listParkTenantOrganizations(park.id).map((organization) => organization.id),
+  );
   const recipients = input.recipientAccountId
-    ? [getAccount(input.recipientAccountId, creator.organizationId)].filter(
-        (account): account is AccountView =>
-          account !== null && account.status === 'active',
+    ? [getAccount(input.recipientAccountId)].filter(
+        (account): account is AccountView => account !== null
+          && account.status === 'active'
+          && tenantOrganizationIds.has(account.organizationId),
       )
-    : (
-        getDB()
-          .prepare(
-            `SELECT * FROM accounts
-       WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL
-       ORDER BY name, username`,
-          )
-          .all(creator.organizationId) as AccountRow[]
-      ).map(toAccountView);
-  if (recipients.length === 0) throw new Error('No active recipients');
+    : (getDB().prepare(
+        `SELECT a.* FROM accounts a
+         JOIN organizations o ON o.id = a.organization_id
+         WHERE o.park_id = ? AND o.id <> ?
+           AND o.status = 'active' AND a.status = 'active' AND a.deleted_at IS NULL
+         ORDER BY o.name, a.name, a.username`,
+      ).all(park.id, park.adminOrganizationId) as AccountRow[]).map(toAccountView);
+  if (recipients.length === 0) throw new Error('No active park tenant recipients');
   const id = `park_publication_${randomUUID()}`;
-  getDB()
-    .prepare(
-      `INSERT INTO park_publications
-      (id, organization_id, kind, title, body, created_by_account_id)
+  getDB().prepare(
+    `INSERT INTO park_publications
+     (id, organization_id, kind, title, body, created_by_account_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, creator.organizationId, input.kind, title, body, creator.id);
+  ).run(id, creator.organizationId, input.kind, title, body, creator.id);
   const insertRecipient = getDB().prepare(
     `INSERT INTO park_publication_recipients
-      (organization_id, publication_id, account_id) VALUES (?, ?, ?)`,
+     (organization_id, publication_id, account_id) VALUES (?, ?, ?)`,
   );
   for (const recipient of recipients) {
-    insertRecipient.run(creator.organizationId, id, recipient.id);
+    insertRecipient.run(recipient.organizationId, id, recipient.id);
   }
   logAudit(
     'park_publication_create',
     creator.employeeId,
-    `${input.kind} ${id} delivered to ${recipients.length} account(s)`,
+    `${input.kind} ${id} delivered to ${recipients.length} park tenant account(s)`,
     creator.organizationId,
   );
   return {
-    publication: listParkPublications(creator.id).find(
-      (item) => item.id === id,
-    ) ?? {
+    publication: {
       id,
       kind: input.kind,
       title,
@@ -7072,6 +8392,8 @@ export function createParkPublication(input: {
       readAt: null,
       submittedAt: null,
       responseData: null,
+      recipientCount: recipients.length,
+      readCount: 0,
     },
     recipientCount: recipients.length,
   };
@@ -7080,66 +8402,79 @@ export function createParkPublication(input: {
 export function listParkPublications(accountId: string): ParkPublicationView[] {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const rows = getDB()
-    .prepare(
-      `SELECT p.id, p.kind, p.title, p.body, p.created_at,
-            r.read_at, r.submitted_at, r.response_data
+  const rows = getDB().prepare(
+    `SELECT p.id, p.kind, p.title, p.body, p.created_at,
+            r.read_at, r.submitted_at, r.response_data,
+            (SELECT COUNT(*) FROM park_publication_recipients all_r
+             WHERE all_r.publication_id = p.id) AS recipient_count,
+            (SELECT COUNT(*) FROM park_publication_recipients read_r
+             WHERE read_r.publication_id = p.id AND read_r.read_at IS NOT NULL) AS read_count
      FROM park_publication_recipients r
      JOIN park_publications p ON p.id = r.publication_id
-     WHERE r.account_id = ? AND r.organization_id = ? AND p.organization_id = ?
+     WHERE r.account_id = ? AND r.organization_id = ?
      ORDER BY p.created_at DESC`,
-    )
-    .all(
-      account.id,
-      account.organizationId,
-      account.organizationId,
-    ) as ParkPublicationRow[];
+  ).all(account.id, account.organizationId) as ParkPublicationRow[];
   return rows.map(publicationView);
 }
 
-/** 管理员查看本企业问卷回收情况；实名由账号表提供，不信任客户端自填姓名。 */
-export function listParkSurveyResults(
-  accountId: string,
-): ParkSurveyResultView[] {
+export function listParkAnnouncementResults(accountId: string): ParkAnnouncementResultView[] {
   const account = getAccount(accountId);
-  if (!account?.isAdmin)
-    throw new Error('Only enterprise administrators can view survey results');
-  const publications = getDB()
-    .prepare(
-      `SELECT p.id, p.title, p.body, p.created_at,
+  const park = account ? getParkForOrganization(account.organizationId) : null;
+  if (!account?.isAdmin || !park || park.adminOrganizationId !== account.organizationId) {
+    throw new Error('Only park administrators can view announcement results');
+  }
+  return (getDB().prepare(
+    `SELECT p.id, p.title, p.body, p.created_at,
+            COUNT(r.account_id) AS recipient_count,
+            SUM(CASE WHEN r.read_at IS NOT NULL THEN 1 ELSE 0 END) AS read_count
+     FROM park_publications p
+     LEFT JOIN park_publication_recipients r ON r.publication_id = p.id
+     WHERE p.organization_id = ? AND p.kind = 'announcement'
+     GROUP BY p.id, p.title, p.body, p.created_at
+     ORDER BY p.created_at DESC`,
+  ).all(account.organizationId) as Array<{
+    id: string; title: string; body: string; created_at: string;
+    recipient_count: number; read_count: number;
+  }>).map((publication) => ({
+    id: publication.id,
+    title: publication.title,
+    body: publication.body,
+    createdAt: publication.created_at,
+    recipientCount: Number(publication.recipient_count) || 0,
+    readCount: Number(publication.read_count) || 0,
+  }));
+}
+
+/** 产业园管理员查看全部租户企业的实名问卷回收情况。 */
+export function listParkSurveyResults(accountId: string): ParkSurveyResultView[] {
+  const account = getAccount(accountId);
+  const park = account ? getParkForOrganization(account.organizationId) : null;
+  if (!account?.isAdmin || !park || park.adminOrganizationId !== account.organizationId) {
+    throw new Error('Only park administrators can view survey results');
+  }
+  const publications = getDB().prepare(
+    `SELECT p.id, p.title, p.body, p.created_at,
             COUNT(r.account_id) AS recipient_count,
             SUM(CASE WHEN r.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS submitted_count
      FROM park_publications p
-     LEFT JOIN park_publication_recipients r
-       ON r.publication_id = p.id AND r.organization_id = p.organization_id
+     LEFT JOIN park_publication_recipients r ON r.publication_id = p.id
      WHERE p.organization_id = ? AND p.kind = 'satisfaction'
      GROUP BY p.id, p.title, p.body, p.created_at
      ORDER BY p.created_at DESC`,
-    )
-    .all(account.organizationId) as Array<{
-    id: string;
-    title: string;
-    body: string;
-    created_at: string;
-    recipient_count: number;
-    submitted_count: number;
+  ).all(account.organizationId) as Array<{
+    id: string; title: string; body: string; created_at: string;
+    recipient_count: number; submitted_count: number;
   }>;
   const responseRows = getDB().prepare(
     `SELECT r.account_id, a.name AS account_name, r.submitted_at, r.response_data
      FROM park_publication_recipients r
      JOIN accounts a ON a.id = r.account_id AND a.organization_id = r.organization_id
-     WHERE r.publication_id = ? AND r.organization_id = ? AND r.submitted_at IS NOT NULL
+     WHERE r.publication_id = ? AND r.submitted_at IS NOT NULL
      ORDER BY r.submitted_at DESC`,
   );
   return publications.map((publication) => {
-    const rows = responseRows.all(
-      publication.id,
-      account.organizationId,
-    ) as Array<{
-      account_id: string;
-      account_name: string;
-      submitted_at: string;
-      response_data: string | null;
+    const rows = responseRows.all(publication.id) as Array<{
+      account_id: string; account_name: string; submitted_at: string; response_data: string | null;
     }>;
     return {
       id: publication.id,
@@ -7151,16 +8486,11 @@ export function listParkSurveyResults(
       responses: rows.map((row) => {
         let responseData: Record<string, string> = {};
         try {
-          const value = row.response_data
-            ? (JSON.parse(row.response_data) as unknown)
-            : null;
+          const value = row.response_data ? (JSON.parse(row.response_data) as unknown) : null;
           if (value && typeof value === 'object' && !Array.isArray(value)) {
-            responseData = Object.fromEntries(
-              Object.entries(value).filter(
-                (entry): entry is [string, string] =>
-                  typeof entry[1] === 'string',
-              ),
-            );
+            responseData = Object.fromEntries(Object.entries(value).filter(
+              (entry): entry is [string, string] => typeof entry[1] === 'string',
+            ));
           }
         } catch {
           responseData = {};
@@ -7177,24 +8507,16 @@ export function listParkSurveyResults(
   });
 }
 
-export function markParkPublicationRead(
-  id: string,
-  accountId: string,
-): ParkPublicationView {
+export function markParkPublicationRead(id: string, accountId: string): ParkPublicationView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const changed = getDB()
-    .prepare(
-      `UPDATE park_publication_recipients
+  const changed = getDB().prepare(
+    `UPDATE park_publication_recipients
      SET read_at = COALESCE(read_at, datetime('now'))
      WHERE publication_id = ? AND account_id = ? AND organization_id = ?`,
-    )
-    .run(id, account.id, account.organizationId);
-  if (changed.changes === 0)
-    throw new Error('Publication not found or not assigned');
-  const publication = listParkPublications(account.id).find(
-    (item) => item.id === id,
-  );
+  ).run(id, account.id, account.organizationId);
+  if (changed.changes === 0) throw new Error('Publication not found or not assigned');
+  const publication = listParkPublications(account.id).find((item) => item.id === id);
   if (!publication) throw new Error('Publication not found');
   return publication;
 }
@@ -7206,44 +8528,29 @@ export function submitParkSurvey(
 ): ParkPublicationView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const publication = getDB()
-    .prepare(
-      'SELECT kind FROM park_publications WHERE id = ? AND organization_id = ?',
-    )
-    .get(id, account.organizationId) as { kind: string } | undefined;
+  const publication = getDB().prepare(
+    `SELECT p.kind FROM park_publications p
+     JOIN park_publication_recipients r ON r.publication_id = p.id
+     WHERE p.id = ? AND r.account_id = ? AND r.organization_id = ?`,
+  ).get(id, account.id, account.organizationId) as { kind: string } | undefined;
   if (publication?.kind !== 'satisfaction') throw new Error('Survey not found');
   const normalized = Object.fromEntries(
     Object.entries(responseData)
-      .filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      )
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
       .map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]),
   );
   normalized.submittedBy = account.name;
-  const changed = getDB()
-    .prepare(
-      `UPDATE park_publication_recipients
+  const changed = getDB().prepare(
+    `UPDATE park_publication_recipients
      SET read_at = COALESCE(read_at, datetime('now')), submitted_at = datetime('now'), response_data = ?
      WHERE publication_id = ? AND account_id = ? AND organization_id = ? AND submitted_at IS NULL`,
-    )
-    .run(JSON.stringify(normalized), id, account.id, account.organizationId);
-  if (changed.changes === 0)
-    throw new Error('问卷不存在或已经提交，不能重复修改');
-  const result = listParkPublications(account.id).find(
-    (item) => item.id === id,
-  );
+  ).run(JSON.stringify(normalized), id, account.id, account.organizationId);
+  if (changed.changes === 0) throw new Error('问卷不存在或已经提交，不能重复修改');
+  const result = listParkPublications(account.id).find((item) => item.id === id);
   if (!result) throw new Error('Survey not found');
-  logAudit(
-    'park_survey_submit',
-    account.employeeId,
-    `Survey ${id} submitted`,
-    account.organizationId,
-  );
+  logAudit('park_survey_submit', account.employeeId, `Survey ${id} submitted`, account.organizationId);
   return result;
 }
-
-// ============================================================
-// Provider-reported Token usage (client_reported, idempotent)
 // ============================================================
 
 export interface AccountTokenUsageView {

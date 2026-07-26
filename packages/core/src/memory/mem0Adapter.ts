@@ -182,10 +182,14 @@ export class Mem0Adapter implements MemoryProvider {
       return this.fileFallback.load(scope);
     }
 
+    // File memory is the portable source of truth. Account recovery restores
+    // these files, while Mem0's local database is intentionally device-local.
+    const fileMemory = await this.fileFallback.load(scope);
+
     const ok = await this.ensureInitialized();
     if (!ok || !this.mem0Client) {
       // 降级到文件
-      return this.fileFallback.load(scope);
+      return fileMemory;
     }
 
     try {
@@ -200,7 +204,7 @@ export class Mem0Adapter implements MemoryProvider {
       });
 
       if (!Array.isArray(results) || results.length === 0) {
-        return '';
+        return fileMemory;
       }
 
       // 格式化为 prompt 可用的文本
@@ -211,7 +215,24 @@ export class Mem0Adapter implements MemoryProvider {
         return `- ${r.memory}${tags}`;
       });
 
-      return memories.join('\n');
+      const fileFacts = new Set(
+        fileMemory
+          .split(/\r?\n/u)
+          .map((line) => line.replace(/^\s*[-*]\s*/u, '').trim().toLocaleLowerCase())
+          .filter(Boolean),
+      );
+      const structuredMemory = memories.filter((line) => {
+        const normalized = line
+          .replace(/^\s*[-*]\s*/u, '')
+          .replace(/\s+\[[^\]]*\]\s*$/u, '')
+          .trim()
+          .toLocaleLowerCase();
+        return normalized.length > 0 && !fileFacts.has(normalized);
+      });
+
+      return [fileMemory.trim(), structuredMemory.join('\n')]
+        .filter(Boolean)
+        .join('\n\n');
     } catch (error) {
       console.warn(`[Mem0Adapter] load failed, falling back: ${error instanceof Error ? error.message : String(error)}`);
       return this.fileFallback.load(scope);

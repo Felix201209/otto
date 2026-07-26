@@ -222,6 +222,51 @@ export interface EnterpriseParkTenantOrganization {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface EnterpriseParkServiceUsageCount {
+  serviceId: string;
+  name: string;
+  count: number;
+  amountCny: number;
+  recurringMonthlyCny: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface EnterpriseParkTenantStatistics {
+  organizationId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  address: string | null;
+  roomNumber: string | null;
+  totalUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: EnterpriseParkServiceUsageCount[];
+}
+
+export interface EnterpriseParkStatistics {
+  parkId: string;
+  parkName: string;
+  generatedAt: string;
+  organizationCount: number;
+  activeOrganizationCount: number;
+  totalServiceUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: EnterpriseParkServiceUsageCount[];
+  organizations: EnterpriseParkTenantStatistics[];
+}
+
 export interface EnterpriseParkService {
   parkId: string;
   id: string;
@@ -301,6 +346,25 @@ export interface EnterpriseOrganizationView {
   park?: EnterprisePark | null;
 }
 
+export interface EnterpriseDirectMessageAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface EnterpriseDirectMessageAttachmentUpload {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
+export interface EnterpriseDirectMessageAttachmentDownload
+  extends EnterpriseDirectMessageAttachment {
+  data: string;
+}
+
 export interface EnterpriseDirectMessage {
   id: string;
   senderAccountId: string;
@@ -308,6 +372,7 @@ export interface EnterpriseDirectMessage {
   content: string;
   createdAt: string;
   readAt: string | null;
+  attachments?: EnterpriseDirectMessageAttachment[];
 }
 
 export interface EnterpriseUnreadMessageNotification {
@@ -335,7 +400,7 @@ export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
 
 export interface EnterpriseRepairTicketHistoryEntry {
   id: string;
-  action: 'created' | 'accept' | 'respond' | 'complete' | 'confirm';
+  action: 'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
   statusBefore: string | null;
   statusAfter: string;
   responseType: string | null;
@@ -388,6 +453,17 @@ export interface EnterpriseParkPublication {
   readAt: string | null;
   submittedAt: string | null;
   responseData: Record<string, string> | null;
+  recipientCount: number;
+  readCount: number;
+}
+
+export interface EnterpriseParkAnnouncementResult {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  readCount: number;
 }
 
 export interface EnterpriseParkSurveyResult {
@@ -428,13 +504,40 @@ export interface EnterpriseParkResources {
     id: string;
     roomId: string;
     date: string;
-    slotKey: 'morning' | 'afternoon';
+    slotKey: string;
     label: string;
     status: 'available' | 'booked' | 'closed';
     updatedAt: string;
   }>;
 }
 
+export type EnterpriseAccountSyncScope =
+  | 'personal_memory'
+  | 'worklog'
+  | 'auto_skills';
+
+export interface EnterpriseAccountSyncFile {
+  path: string;
+  content: string;
+  modifiedAtMs: number;
+  sha256: string;
+}
+
+export interface EnterpriseAccountSyncPayload {
+  schemaVersion: 1;
+  generatedAt: string;
+  files: EnterpriseAccountSyncFile[];
+  truncated?: boolean;
+}
+
+export interface EnterpriseAccountSyncSnapshot {
+  scope: EnterpriseAccountSyncScope;
+  version: number;
+  payload: EnterpriseAccountSyncPayload;
+  payloadHash: string;
+  deviceId: string | null;
+  updatedAtMs: number;
+}
 export interface EnterpriseSessionResult {
   serverUrl: string;
   account: EnterpriseAccount | null;
@@ -453,6 +556,7 @@ interface EnterpriseRequestBehavior {
   preserveSessionOnUnauthorized?: boolean;
   serverUrl?: string;
   authorizationToken?: string | null;
+  timeoutMs?: number;
 }
 
 const ENTERPRISE_SERVER_UPGRADE_ERROR = '企业服务器版本过旧或功能不完整，请联系管理员升级后重试';
@@ -548,7 +652,7 @@ export class EnterpriseClient {
       : this.token;
     if (!requestServerUrl) throw new Error('请先填写企业服务器地址');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
+    const timer = setTimeout(() => controller.abort(), behavior.timeoutMs ?? 10_000);
     try {
       const headers: Record<string, string> = {
         accept: 'application/json',
@@ -966,6 +1070,35 @@ export class EnterpriseClient {
     }));
   }
 
+  async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['account_data_sync_v1']);
+    const response = await this.request<{ snapshots: EnterpriseAccountSyncSnapshot[] }>(
+      '/enterprise/account-sync',
+      {},
+      { timeoutMs: 30_000 },
+    );
+    return response.snapshots;
+  }
+
+  async putAccountSyncSnapshot(input: {
+    scope: EnterpriseAccountSyncScope;
+    expectedVersion: number;
+    payload: EnterpriseAccountSyncPayload;
+    deviceId?: string | null;
+  }): Promise<EnterpriseAccountSyncSnapshot> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['account_data_sync_v1']);
+    const response = await this.request<{ snapshot: EnterpriseAccountSyncSnapshot }>(
+      '/enterprise/account-sync',
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+      { timeoutMs: 30_000 },
+    );
+    return response.snapshot;
+  }
   async getOrganizationView(): Promise<EnterpriseOrganizationView> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/organization/view');
@@ -1097,6 +1230,14 @@ export class EnterpriseClient {
       '/enterprise/park/tenants',
     )).organizations;
   }
+
+  async getParkStatistics(): Promise<EnterpriseParkStatistics> {
+    await this.assertCompatibleServer(this.serverUrl, ['park_service_statistics_v1']);
+    return (await this.request<{ statistics: EnterpriseParkStatistics }>(
+      '/enterprise/park/statistics',
+    )).statistics;
+  }
+
   async listParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
     return (await this.request<{ specialists: EnterpriseParkSpecialist[] }>(
       '/enterprise/park/specialists',
@@ -1137,11 +1278,14 @@ export class EnterpriseClient {
   async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
-    return (await this.request<{ messages: EnterpriseDirectMessage[] }>(
-      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
+    const messages = (await this.request<{ messages: EnterpriseDirectMessage[] }>(
+      '/enterprise/messages/' + encodeURIComponent(peerAccountId),
     )).messages;
+    return messages.map((message) => ({
+      ...message,
+      attachments: Array.isArray(message.attachments) ? message.attachments : [],
+    }));
   }
-
   async listUnreadDirectMessageNotifications(): Promise<EnterpriseUnreadMessageNotification[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['unread_message_notifications_v1']);
@@ -1156,15 +1300,46 @@ export class EnterpriseClient {
     }
   }
 
-  async sendDirectMessage(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
+  async sendDirectMessage(
+    peerAccountId: string,
+    content: string,
+    attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
+  ): Promise<EnterpriseDirectMessage> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
-    return (await this.request<{ message: EnterpriseDirectMessage }>(
-      `/enterprise/messages/${encodeURIComponent(peerAccountId)}`,
-      { method: 'POST', body: JSON.stringify({ content }) },
+    await this.assertCompatibleServer(
+      this.serverUrl,
+      attachments.length > 0
+        ? ['direct_messages', 'direct_message_attachments_v1']
+        : ['direct_messages'],
+    );
+    const message = (await this.request<{ message: EnterpriseDirectMessage }>(
+      '/enterprise/messages/' + encodeURIComponent(peerAccountId),
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          content,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        }),
+      },
+      { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
     )).message;
+    return {
+      ...message,
+      attachments: Array.isArray(message.attachments) ? message.attachments : [],
+    };
   }
 
+  async getDirectMessageAttachment(
+    attachmentId: string,
+  ): Promise<EnterpriseDirectMessageAttachmentDownload> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['direct_message_attachments_v1']);
+    return (await this.request<{ attachment: EnterpriseDirectMessageAttachmentDownload }>(
+      '/enterprise/message-attachments/' + encodeURIComponent(attachmentId),
+      {},
+      { timeoutMs: 60_000 },
+    )).attachment;
+  }
   async listAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['atoa']);
@@ -1190,6 +1365,12 @@ export class EnterpriseClient {
     return (await this.request<{ publications: EnterpriseParkPublication[] }>(
       '/enterprise/park-services/publications',
     )).publications;
+  }
+
+  async listParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]> {
+    return (await this.request<{ announcements: EnterpriseParkAnnouncementResult[] }>(
+      '/enterprise/park-services/announcement-results',
+    )).announcements;
   }
 
   async listParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
@@ -1290,9 +1471,11 @@ export class EnterpriseClient {
   }
 
   async updateTicket(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm';
+    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
     responseType?: string;
     responseText?: string;
+    transferAccountId?: string;
+    transferDepartment?: string;
   }): Promise<EnterpriseRepairTicket> {
     return (await this.request<{ ticket: EnterpriseRepairTicket }>(
       `/enterprise/tickets/${encodeURIComponent(id)}/action`,

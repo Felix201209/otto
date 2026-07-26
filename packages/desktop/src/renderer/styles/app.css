@@ -5568,6 +5568,194 @@ h6.otto-prose__h {
   display: grid;
   gap: 10px;
 }
+.otto-park-statistics {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-surface);
+}
+.otto-park-statistics__head,
+.otto-park-statistics__organizations-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.otto-park-statistics__head > div,
+.otto-park-statistics__organizations-head {
+  min-width: 0;
+}
+.otto-park-statistics__head > div {
+  display: grid;
+  gap: 3px;
+}
+.otto-park-statistics__head strong,
+.otto-park-statistics__organizations-head strong {
+  color: var(--otto-text);
+  font-size: 12.5px;
+}
+.otto-park-statistics__head span,
+.otto-park-statistics__head time,
+.otto-park-statistics__organizations-head span {
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+}
+.otto-park-statistics__head time {
+  flex: 0 0 auto;
+}
+.otto-park-statistics__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-bg);
+}
+.otto-park-statistics__metrics > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 11px;
+}
+.otto-park-statistics__metrics > div + div {
+  border-left: 1px solid var(--otto-border);
+}
+.otto-park-statistics__metrics > div:nth-child(4) { border-left: none; }
+.otto-park-statistics__metrics > div:nth-child(n + 4) { border-top: 1px solid var(--otto-border); }
+.otto-park-statistics__metrics span,
+.otto-park-statistics__metrics small {
+  overflow: hidden;
+  color: var(--otto-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-park-statistics__metrics strong {
+  color: var(--otto-text);
+  font-size: 18px;
+  font-weight: 650;
+}
+.otto-park-statistics__organizations {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.otto-park-statistics__organization {
+  overflow: hidden;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-bg);
+}
+.otto-park-statistics__organization > button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 86px minmax(138px, auto) 20px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--otto-text);
+  cursor: pointer;
+  text-align: left;
+}
+.otto-park-statistics__organization > button:hover {
+  background: var(--otto-surface-raised);
+}
+.otto-park-statistics__organization > button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--otto-accent);
+}
+.otto-park-statistics__organization-name,
+.otto-park-statistics__organization-total,
+.otto-park-statistics__organization-last {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.otto-park-statistics__organization-name strong,
+.otto-park-statistics__organization-last span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-park-statistics__organization-name strong {
+  font-size: 11.5px;
+}
+.otto-park-statistics__organization-name small,
+.otto-park-statistics__organization-total small,
+.otto-park-statistics__organization-last small,
+.otto-park-statistics__organization-last span {
+  color: var(--otto-text-secondary);
+  font-size: 9.5px;
+}
+.otto-park-statistics__organization-total {
+  justify-items: end;
+}
+.otto-park-statistics__organization-total strong {
+  color: var(--otto-accent-hover);
+  font-size: 14px;
+}
+.otto-park-statistics__organization > button svg {
+  color: var(--otto-text-tertiary);
+  transition: transform var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-park-statistics__organization > button svg.is-expanded {
+  transform: rotate(180deg);
+}
+.otto-park-statistics__service-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--otto-border);
+  background: color-mix(in srgb, var(--otto-accent-soft) 30%, var(--otto-surface));
+}
+.otto-park-statistics__service-counts > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 7px 10px;
+  border-right: 1px solid var(--otto-border);
+  border-bottom: 1px solid var(--otto-border);
+  font-size: 9.5px;
+}
+.otto-park-statistics__service-counts span {
+  overflow: hidden;
+  color: var(--otto-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-park-statistics__service-counts strong {
+  color: var(--otto-text);
+}
+.otto-park-statistics__service-counts small {
+  overflow: hidden;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-park-statistics__error,
+.otto-park-statistics__loading,
+.otto-park-statistics__empty {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px dashed var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+  text-align: center;
+}
+.otto-park-statistics__error {
+  border-color: color-mix(in srgb, #ef4444 45%, var(--otto-border));
+  background: color-mix(in srgb, #ef4444 7%, var(--otto-surface));
+  color: #c43d3d;
+}
 .otto-park-staff-workspace {
   display: grid;
   grid-template-columns: minmax(260px, .82fr) minmax(420px, 1.18fr);
@@ -6216,7 +6404,6 @@ h6.otto-prose__h {
 .otto-park-meeting-slots {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
   margin: 0;
@@ -6226,28 +6413,61 @@ h6.otto-prose__h {
 }
 .otto-park-meeting-slots legend { padding: 0 5px; color: var(--otto-text-secondary); font-size: 11px; }
 .otto-park-meeting-slots > p { grid-column: 1 / -1; margin: 4px 0; color: var(--otto-text-tertiary); font-size: 11px; }
-.otto-park-meeting-slots > button {
+.otto-park-meeting-timeline-scroll { min-width: 0; overflow-x: auto; padding-bottom: 4px; }
+.otto-park-meeting-timeline__hours {
   display: grid;
-  gap: 3px;
-  min-height: 58px;
-  padding: 9px 11px;
-  border: 1px solid transparent;
-  border-radius: var(--otto-radius-sm);
-  color: white;
-  cursor: pointer;
-  text-align: left;
+  grid-template-columns: repeat(15, minmax(38px, 1fr));
+  min-width: 840px;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
 }
-.otto-park-meeting-slots > button strong { font-size: 11.5px; }
-.otto-park-meeting-slots > button span { font-size: 10px; opacity: .9; }
-.otto-park-meeting-slots > button.is-available { background: #258254; border-color: #3a9669; }
-.otto-park-meeting-slots > button.is-available:hover { background: #1d7047; }
-.otto-park-meeting-slots > button.is-booked { background: #b94842; border-color: #cd5a53; opacity: 1; }
-.otto-park-meeting-slots > button.is-closed { background: #69716e; border-color: #7b8480; opacity: .75; }
-.otto-park-meeting-slots > button.is-selected { box-shadow: 0 0 0 3px color-mix(in srgb, white 65%, transparent) inset, 0 0 0 2px var(--otto-accent); }
+.otto-park-meeting-timeline__hours span:last-child { text-align: right; }
+.otto-park-meeting-timeline {
+  display: grid;
+  grid-template-columns: repeat(84, minmax(10px, 1fr));
+  min-width: 840px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 5px;
+  background: var(--otto-bg);
+}
+.otto-park-meeting-timeline > button {
+  min-width: 10px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, white 38%, transparent);
+  border-radius: 0;
+  cursor: pointer;
+}
+.otto-park-meeting-timeline > button:nth-child(6n) { border-right-color: var(--otto-border-strong); }
+.otto-park-meeting-timeline > button.is-available { background: #49a875; }
+.otto-park-meeting-timeline > button.is-available:hover { background: #2f8d60; }
+.otto-park-meeting-timeline > button.is-booked { background: #d65d56; opacity: 1; }
+.otto-park-meeting-timeline > button.is-closed { background: #89928e; opacity: .8; }
+.otto-park-meeting-timeline > button.is-selected { background: #11653f; box-shadow: inset 0 0 0 1px #e4fff1; }
+.otto-park-meeting-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--otto-text-secondary);
+  font-size: 10.5px;
+}
+.otto-park-meeting-selection button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--otto-accent-hover);
+  cursor: pointer;
+  font: inherit;
+}
 .otto-park-meeting-legend { grid-column: 1 / -1; display: flex; gap: 12px; color: var(--otto-text-secondary); font-size: 10px; }
 .otto-park-meeting-legend span::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; }
 .otto-park-meeting-legend .is-available::before { background: #258254; }
 .otto-park-meeting-legend .is-booked::before { background: #b94842; }
+.otto-park-meeting-legend .is-selected::before { background: #11653f; }
 .otto-park-meeting-success {
   display: grid;
   gap: 8px;
@@ -6271,6 +6491,32 @@ h6.otto-prose__h {
 .otto-park-form__field input:disabled { opacity: .7; }
 .otto-park-form__field small { color: var(--otto-text-tertiary); font-size: 9.5px; }
 .otto-park-form__field small.is-error { color: #d7514a; }
+.otto-park-repair-actions { display: grid; gap: 10px; }
+.otto-park-repair-actions__modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 3px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-bg);
+}
+.otto-park-repair-actions__modes button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.otto-park-repair-actions__modes button.is-active {
+  background: var(--otto-surface);
+  color: var(--otto-text);
+  box-shadow: var(--otto-shadow-sm);
+  font-weight: 650;
+}
+.otto-park-transfer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .otto-park-form__receipt { color: #168557; font-size: 11px; }
 .otto-park-request-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .otto-park-request-summary .is-wide { grid-column: 1 / -1; }
@@ -6434,12 +6680,22 @@ h6.otto-prose__h {
 }
 
 @media (max-width: 880px) {
+  .otto-park-statistics__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .otto-park-statistics__metrics > div:nth-child(3) { border-left: none; }
+  .otto-park-statistics__metrics > div:nth-child(n + 3) { border-top: 1px solid var(--otto-border); }
+  .otto-park-statistics__organization > button { grid-template-columns: minmax(140px, 1fr) 72px 20px; }
+  .otto-park-statistics__organization-last { display: none; }
+  .otto-park-statistics__service-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .otto-park-staff-workspace { grid-template-columns: 1fr; }
   .otto-park-staff-workspace > :only-child { grid-column: auto; }
   .otto-park-dialog__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
   .otto-park-dialog { width: min(100vw - 24px, 560px); padding: 16px; }
+  .otto-park-statistics__head,
+  .otto-park-statistics__organizations-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .otto-park-statistics__head time { align-self: flex-start; }
+  .otto-park-statistics__organization > button { grid-template-columns: minmax(110px, 1fr) 58px 18px; gap: 8px; }
   .otto-park-staff-history__controls { grid-template-columns: 1fr; }
   .otto-park-dialog__grid { grid-template-columns: 1fr; }
   .otto-park-demo__summary { display: block; }
@@ -6453,7 +6709,8 @@ h6.otto-prose__h {
   .otto-park-repair__ticket { grid-template-columns: 1fr; }
   .otto-park-repair__replytitle { align-items: flex-start; flex-direction: column; }
   .otto-park-form__grid,
-  .otto-park-request-summary { grid-template-columns: 1fr; }
+  .otto-park-request-summary,
+  .otto-park-transfer-grid { grid-template-columns: 1fr; }
 }
 
 /* ── setup 已配置模型列表（v1.6.1：可删除 + 真实厂商）─────────────────── */
@@ -7022,8 +7279,119 @@ h6.otto-prose__h {
   line-height: 1.55;
 }
 .otto-direct-chat__message.is-me .otto-direct-chat__bubble { border-color: color-mix(in srgb, var(--otto-accent) 34%, var(--otto-border)); background: var(--otto-accent-soft); }
+.otto-direct-chat__message-attachments { display: grid; gap: 6px; min-width: min(310px, 70vw); }
+.otto-direct-chat__attachment {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 62px;
+  padding: 7px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-surface);
+}
+.otto-direct-chat__message.is-me .otto-direct-chat__attachment {
+  border-color: color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border));
+  background: color-mix(in srgb, var(--otto-accent-soft) 55%, var(--otto-surface));
+}
+.otto-direct-chat__attachment img {
+  width: 48px;
+  height: 48px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--otto-bg);
+}
+.otto-direct-chat__attachment-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 7px;
+  color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+.otto-direct-chat__attachment-copy { display: grid; gap: 3px; min-width: 0; }
+.otto-direct-chat__attachment-copy strong {
+  overflow: hidden;
+  color: var(--otto-text);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-direct-chat__attachment-copy small { color: var(--otto-text-tertiary); font-size: 9.5px; }
+.otto-direct-chat__attachment-copy em { color: var(--otto-danger); font-size: 9.5px; font-style: normal; }
+.otto-direct-chat__attachment-actions { display: flex; align-items: center; gap: 4px; }
+.otto-direct-chat__attachment-actions button {
+  min-height: 27px;
+  padding: 0 7px;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-bg);
+  font-size: 10px;
+  cursor: pointer;
+}
+.otto-direct-chat__attachment-actions button:hover:not(:disabled) { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-direct-chat__attachment-actions button:disabled { cursor: default; opacity: .55; }
 .otto-direct-chat__error { padding: 7px 12px; border-top: 1px solid var(--otto-border); color: var(--otto-danger); background: #fff5f5; font-size: 11px; }
 .otto-direct-chat__composer { display: grid; gap: 8px; padding: 11px 12px 12px; border-top: 1px solid var(--otto-border); background: var(--otto-surface); }
+.otto-direct-chat__composer.is-drag-over {
+  background: color-mix(in srgb, var(--otto-accent-soft) 68%, var(--otto-surface));
+  box-shadow: inset 0 0 0 2px var(--otto-accent);
+}
+.otto-direct-chat__pending-attachments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.otto-direct-chat__pending-attachment {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  background: var(--otto-bg);
+}
+.otto-direct-chat__pending-attachment > img,
+.otto-direct-chat__pending-attachment > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  object-fit: cover;
+  color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+  font-size: 8px;
+  font-weight: 800;
+}
+.otto-direct-chat__pending-attachment > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
+.otto-direct-chat__pending-attachment strong {
+  overflow: hidden;
+  color: var(--otto-text);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-direct-chat__pending-attachment small { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-direct-chat__pending-attachment > button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--otto-text-tertiary);
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+.otto-direct-chat__pending-attachment > button:hover { color: var(--otto-danger); background: #fff1f2; }
+.otto-direct-chat__attachment-status,
+.otto-direct-chat__attachment-error { grid-column: 1 / -1; font-size: 10px; }
+.otto-direct-chat__attachment-status { color: var(--otto-text-secondary); }
+.otto-direct-chat__attachment-error { color: var(--otto-danger); }
 .otto-direct-chat__composer textarea {
   width: 100%;
   min-height: 72px;
@@ -7039,8 +7407,24 @@ h6.otto-prose__h {
 }
 .otto-direct-chat__composer textarea:focus { border-color: var(--otto-accent); box-shadow: var(--otto-shadow-focus); }
 .otto-direct-chat__composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.otto-direct-chat__composer-footer span { color: var(--otto-text-tertiary); font-size: 10px; }
-.otto-direct-chat__composer-footer button {
+.otto-direct-chat__composer-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.otto-direct-chat__composer-tools > span { overflow: hidden; color: var(--otto-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-direct-chat__attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: 7px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-bg);
+  font-size: 10px;
+  cursor: pointer;
+}
+.otto-direct-chat__attach:hover:not(:disabled) { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-direct-chat__attach:disabled { cursor: default; opacity: .5; }
+.otto-direct-chat__composer-footer > button {
   min-width: 74px;
   min-height: 32px;
   border: 0;
@@ -7051,7 +7435,7 @@ h6.otto-prose__h {
   font-size: 12px;
   cursor: pointer;
 }
-.otto-direct-chat__composer-footer button:disabled { cursor: default; opacity: .55; }
+.otto-direct-chat__composer-footer > button:disabled { cursor: default; opacity: .55; }
 @media (max-width: 760px) {
   .otto-direct-chat { left: 12px; right: 12px; bottom: 12px; width: auto; height: min(620px, calc(100vh - 24px)); }
 }

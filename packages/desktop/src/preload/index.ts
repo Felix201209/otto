@@ -389,6 +389,51 @@ export interface EnterpriseParkTenantOrganization {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface EnterpriseParkServiceUsageCount {
+  serviceId: string;
+  name: string;
+  count: number;
+  amountCny: number;
+  recurringMonthlyCny: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface EnterpriseParkTenantStatistics {
+  organizationId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  address: string | null;
+  roomNumber: string | null;
+  totalUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: EnterpriseParkServiceUsageCount[];
+}
+
+export interface EnterpriseParkStatistics {
+  parkId: string;
+  parkName: string;
+  generatedAt: string;
+  organizationCount: number;
+  activeOrganizationCount: number;
+  totalServiceUses: number;
+  totalAmountCny: number;
+  recurringMonthlyCny: number;
+  vehicleVisits: number;
+  meetingRoomBookings: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  services: EnterpriseParkServiceUsageCount[];
+  organizations: EnterpriseParkTenantStatistics[];
+}
+
 export interface EnterprisePark {
   id: string;
   name: string;
@@ -459,6 +504,25 @@ export interface EnterpriseOrganizationView {
   park?: EnterprisePark | null;
 }
 
+export interface EnterpriseDirectMessageAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface EnterpriseDirectMessageAttachmentUpload {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
+export interface EnterpriseDirectMessageAttachmentDownload
+  extends EnterpriseDirectMessageAttachment {
+  data: string;
+}
+
 export interface EnterpriseDirectMessage {
   id: string;
   senderAccountId: string;
@@ -466,6 +530,7 @@ export interface EnterpriseDirectMessage {
   content: string;
   createdAt: string;
   readAt: string | null;
+  attachments?: EnterpriseDirectMessageAttachment[];
 }
 
 export interface EnterpriseUnreadMessageNotification {
@@ -501,7 +566,7 @@ export interface EnterpriseRepairNotification {
 
 export interface EnterpriseRepairTicketHistoryEntry {
   id: string;
-  action: 'created' | 'accept' | 'respond' | 'complete' | 'confirm';
+  action: 'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
   statusBefore: string | null;
   statusAfter: string;
   responseType: string | null;
@@ -548,6 +613,17 @@ export interface EnterpriseParkPublication {
   readAt: string | null;
   submittedAt: string | null;
   responseData: Record<string, string> | null;
+  recipientCount: number;
+  readCount: number;
+}
+
+export interface EnterpriseParkAnnouncementResult {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  readCount: number;
 }
 
 export interface EnterpriseParkSurveyResult {
@@ -588,7 +664,7 @@ export interface EnterpriseParkResources {
     id: string;
     roomId: string;
     date: string;
-    slotKey: 'morning' | 'afternoon';
+    slotKey: string;
     label: string;
     status: 'available' | 'booked' | 'closed';
     updatedAt: string;
@@ -673,6 +749,7 @@ const IPC = {
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
@@ -681,12 +758,14 @@ const IPC = {
   enterpriseParkProfileUpdate: 'otto:enterprise-park-profile-update',
   enterpriseParkInviteIssue: 'otto:enterprise-park-invite-issue',
   enterpriseParkTenants: 'otto:enterprise-park-tenants',
+  enterpriseParkStatistics: 'otto:enterprise-park-statistics',
   enterpriseParkSpecialists: 'otto:enterprise-park-specialists',
   enterpriseParkSpecialistSet: 'otto:enterprise-park-specialist-set',
   enterpriseParkSpecialistRemove: 'otto:enterprise-park-specialist-remove',
   enterpriseParkServices: 'otto:enterprise-park-services',
   enterpriseParkServiceUpdate: 'otto:enterprise-park-service-update',
   enterpriseParkPublications: 'otto:enterprise-park-publications',
+  enterpriseParkAnnouncementResults: 'otto:enterprise-park-announcement-results',
   enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
   enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
   enterpriseParkSurveySubmit: 'otto:enterprise-park-survey-submit',
@@ -1004,7 +1083,14 @@ export interface OttoBridge {
   enterpriseOrganizationPositionDelete(id: string): Promise<boolean>;
   enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]>;
-  enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage>;
+  enterpriseMessageSend(
+    peerAccountId: string,
+    content: string,
+    attachments?: EnterpriseDirectMessageAttachmentUpload[],
+  ): Promise<EnterpriseDirectMessage>;
+  enterpriseMessageAttachmentRead(
+    attachmentId: string,
+  ): Promise<EnterpriseDirectMessageAttachmentDownload>;
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]>;
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
@@ -1024,6 +1110,7 @@ export interface OttoBridge {
   }): Promise<EnterpriseParkTenantProfile>;
   enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]>;
+  enterpriseParkStatistics(): Promise<EnterpriseParkStatistics>;
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
   enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist>;
   enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean>;
@@ -1035,6 +1122,7 @@ export interface OttoBridge {
     config?: Record<string, string>;
   }): Promise<EnterpriseParkService>;
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]>;
+  enterpriseParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]>;
   enterpriseParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]>;
   enterpriseParkPublicationRead(id: string): Promise<EnterpriseParkPublication>;
   enterpriseParkSurveySubmit(id: string, responseData: Record<string, string>): Promise<EnterpriseParkPublication>;
@@ -1066,9 +1154,11 @@ export interface OttoBridge {
   }): Promise<EnterpriseRepairTicket>;
   enterpriseTicketRead(id: string): Promise<EnterpriseRepairTicket>;
   enterpriseTicketAction(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm';
+    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
     responseType?: string;
     responseText?: string;
+    transferAccountId?: string;
+    transferDepartment?: string;
   }): Promise<EnterpriseRepairTicket>;
   parkNativeNotify(title: string, body: string): Promise<boolean>;
   /** 将文本写入系统剪贴板（通过 IPC 调用 main 进程 clipboard 模块，不受 renderer 权限限制）。 */
@@ -1802,8 +1892,25 @@ const bridge: OttoBridge = {
   enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]> {
     return ipcRenderer.invoke(IPC.enterpriseMessagesUnread) as Promise<EnterpriseUnreadMessageNotification[]>;
   },
-  enterpriseMessageSend(peerAccountId: string, content: string): Promise<EnterpriseDirectMessage> {
-    return ipcRenderer.invoke(IPC.enterpriseMessageSend, peerAccountId, content) as Promise<EnterpriseDirectMessage>;
+  enterpriseMessageSend(
+    peerAccountId: string,
+    content: string,
+    attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
+  ): Promise<EnterpriseDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseMessageSend,
+      peerAccountId,
+      content,
+      attachments,
+    ) as Promise<EnterpriseDirectMessage>;
+  },
+  enterpriseMessageAttachmentRead(
+    attachmentId: string,
+  ): Promise<EnterpriseDirectMessageAttachmentDownload> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseMessageAttachmentRead,
+      attachmentId,
+    ) as Promise<EnterpriseDirectMessageAttachmentDownload>;
   },
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
     return ipcRenderer.invoke(IPC.enterpriseAtoaInbox) as Promise<EnterpriseAtoaInboxMessage[]>;
@@ -1845,6 +1952,9 @@ const bridge: OttoBridge = {
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkTenants) as Promise<EnterpriseParkTenantOrganization[]>;
   },
+  enterpriseParkStatistics(): Promise<EnterpriseParkStatistics> {
+    return ipcRenderer.invoke(IPC.enterpriseParkStatistics) as Promise<EnterpriseParkStatistics>;
+  },
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkSpecialists) as Promise<EnterpriseParkSpecialist[]>;
   },
@@ -1867,6 +1977,9 @@ const bridge: OttoBridge = {
   },
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkPublications) as Promise<EnterpriseParkPublication[]>;
+  },
+  enterpriseParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]> {
+    return ipcRenderer.invoke(IPC.enterpriseParkAnnouncementResults) as Promise<EnterpriseParkAnnouncementResult[]>;
   },
   enterpriseParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
     return ipcRenderer.invoke(IPC.enterpriseParkSurveyResults) as Promise<EnterpriseParkSurveyResult[]>;
@@ -1923,9 +2036,11 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.enterpriseTicketRead, id) as Promise<EnterpriseRepairTicket>;
   },
   enterpriseTicketAction(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm';
+    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
     responseType?: string;
     responseText?: string;
+    transferAccountId?: string;
+    transferDepartment?: string;
   }): Promise<EnterpriseRepairTicket> {
     return ipcRenderer.invoke(IPC.enterpriseTicketAction, id, input) as Promise<EnterpriseRepairTicket>;
   },

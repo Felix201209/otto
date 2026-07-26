@@ -87,11 +87,13 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/join',
   '/enterprise/park/profile',
   '/enterprise/park/tenants',
+  '/enterprise/park/statistics',
   '/enterprise/park/specialists',
   '/enterprise/park/services',
   '/enterprise/park/services/assign',
   '/enterprise/park-services/push',
   '/enterprise/park-services/survey-results',
+  '/enterprise/park-services/announcement-results',
   '/enterprise/park-settings',
   '/enterprise/park-meeting-rooms',
   '/enterprise/park-meeting-slots',
@@ -124,12 +126,17 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/auth/join-organization',
   '/enterprise/park-resources',
   '/enterprise/modules/updates/client',
+  '/enterprise/account-sync',
 ]);
 
 const FEATURE_ADMIN_PREFIX = '/admin/features';
 
+const BODY_TOO_LARGE = Symbol('bodyTooLarge');
+const DIRECT_MESSAGE_REQUEST_MAX_LENGTH = 30 * 1024 * 1024;
+
 interface RouteBody {
   [key: string]: unknown;
+  [BODY_TOO_LARGE]?: true;
 }
 
 export interface EnterpriseServerOptions {
@@ -208,6 +215,7 @@ const ENTERPRISE_CAPABILITIES = [
   'account_deletion',
   'multi_organization',
   'direct_messages',
+  'direct_message_attachments_v1',
   'atoa',
   'position_invites',
   'park_service_push',
@@ -221,6 +229,7 @@ const ENTERPRISE_CAPABILITIES = [
   'account_presence_v1',
   'park_tenants_v1',
   'park_tenant_profiles_v1',
+  'park_service_statistics_v1',
   'private_deployment_v1',
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
@@ -228,6 +237,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_resources_v1',
   'park_meeting_slots_v1',
   'modular_update_push_v1',
+  'account_data_sync_v1',
 ] as const;
 
 interface DeploymentInfo {
@@ -442,14 +452,26 @@ function sendJSON(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-function readBody(req: IncomingMessage): Promise<RouteBody> {
+function readBody(
+  req: IncomingMessage,
+  maxLength = 1_000_000,
+): Promise<RouteBody> {
   return new Promise((resolve) => {
     let body = '';
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       body += chunk;
-      if (body.length > 1_000_000) body = body.slice(0, 1_000_000); // 防超大 body
+      if (body.length > maxLength) {
+        tooLarge = true;
+        body = '';
+      }
     });
     req.on('end', () => {
+      if (tooLarge) {
+        resolve({ [BODY_TOO_LARGE]: true });
+        return;
+      }
       try {
         resolve(body ? (JSON.parse(body) as RouteBody) : {});
       } catch {
@@ -490,6 +512,7 @@ function isMemberRoute(path: string): boolean {
   return MEMBER_ROUTES.has(path)
     || path === '/enterprise/atoa/inbox'
     || path.startsWith('/enterprise/messages/')
+    || path.startsWith('/enterprise/message-attachments/')
     || (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke'));
 }
 
@@ -511,6 +534,7 @@ function isLicenseMaintenanceRoute(path: string): boolean {
     || path === '/enterprise/deployment/license'
     || path === '/enterprise/deployment/telemetry'
     || path === '/enterprise/deployment/diagnostics'
+    || path === '/enterprise/account-sync'
     || path.startsWith('/enterprise/auth/');
 }
 
@@ -600,12 +624,12 @@ const PARK_SERVICE_PUSH_TEMPLATES: Record<string, { name: string; detail: string
   announcement: { name: '园区公告', detail: '请查看园区公告并确认是否需要转发给企业成员。' },
   satisfaction: { name: '满意度调查', detail: '请填写本次园区服务满意度调查，提交后由管理员汇总。' },
   renovation: { name: '装修申请', detail: '请补充装修区域、施工内容、开工时间和现场联系人。' },
-  parking: { name: '停车位办理', detail: '请提交车牌号、车辆类型、申请数量和联系人。' },
-  'network-phone': { name: '网络 / 电话业务', detail: '请提交安装位置、工位数量或号码数量、期望开通日期。' },
+  parking: { name: '停车办理', detail: '请选择停车位申请内容和数量，并核对企业联系人。' },
+  'network-phone': { name: '网络 / 电话业务', detail: '请选择业务类型、工位或号码数量和期望开通日期。' },
   'meeting-room': { name: '会议室预订', detail: '请确认参会人数、日期、时间段和投屏/视频会议需求。' },
-  'electric-card': { name: '电卡充电', detail: '请提交电卡编号、充值金额、公司名称和联系人。' },
-  repair: { name: '客户报修', detail: '请描述故障位置、故障现象、紧急程度和现场联系人。' },
-  'vehicle-visit': { name: '来访车辆登记', detail: '请登记来访人、手机号、车牌号、来访时间和拜访事由。' },
+  'electric-card': { name: '电卡服务', detail: '请提交充值金额，并核对公司、房间和联系人。' },
+  repair: { name: '物业报修', detail: '请填写报修类别、故障描述、紧急程度和联系人。' },
+  'vehicle-visit': { name: '车辆与访客', detail: '请登记来访日期、拜访企业及事由、车辆数量和对应车牌号。' },
 };
 
 function buildParkServicePushMessage(input: {
@@ -902,6 +926,49 @@ function makeHandler(
         return;
       }
 
+      if (path === '/enterprise/account-sync' && method === 'GET') {
+        res.setHeader('Cache-Control', 'no-store');
+        sendJSON(res, 200, {
+          snapshots: db.listAccountSyncSnapshots(memberAccount!.id),
+        });
+        return;
+      }
+
+      if (path === '/enterprise/account-sync' && method === 'PUT') {
+        res.setHeader('Cache-Control', 'no-store');
+        const body = await readBody(req, 12 * 1024 * 1024);
+        if (body[BODY_TOO_LARGE]) {
+          sendJSON(res, 413, { error: 'account sync request is too large' });
+          return;
+        }
+        const scope = typeof body.scope === 'string' ? body.scope : '';
+        if (!(db.ACCOUNT_SYNC_SCOPES as readonly string[]).includes(scope)) {
+          sendJSON(res, 400, { error: 'account sync scope is invalid' });
+          return;
+        }
+        try {
+          const snapshot = db.putAccountSyncSnapshot({
+            accountId: memberAccount!.id,
+            scope: scope as db.AccountSyncScope,
+            expectedVersion: Number(body.expectedVersion),
+            payload: body.payload,
+            deviceId: typeof body.deviceId === 'string' ? body.deviceId : null,
+          });
+          sendJSON(res, 200, { snapshot });
+        } catch (error) {
+          if (error instanceof db.AccountSyncConflictError) {
+            sendJSON(res, 409, {
+              error: error.message,
+              currentVersion: error.currentVersion,
+            });
+            return;
+          }
+          sendJSON(res, 400, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
       // ===== Private deployment, license and telemetry =====
       if (path === '/enterprise/deployment/status' && method === 'GET') {
         sendJSON(res, 200, db.getPrivateDeploymentStatus());
@@ -1772,6 +1839,35 @@ function makeHandler(
         sendJSON(res, 200, { organizations: db.listParkTenantOrganizations(park.id) });
         return;
       }
+
+      if (path === '/enterprise/park/statistics' && method === 'GET') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: 'park admin account required' });
+          return;
+        }
+        if (!db.getOrganizationFeatures(principal.organizationId).park_service) {
+          sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+          return;
+        }
+        const park = db.getParkForOrganization(principal.organizationId);
+        if (!park || park.adminOrganizationId !== principal.organizationId) {
+          sendJSON(res, 403, { error: 'current organization is not a park admin organization' });
+          return;
+        }
+        try {
+          sendJSON(res, 200, {
+            statistics: db.getParkServiceStatistics({
+              parkId: park.id,
+              actorAccountId: principal.account.id,
+            }),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '园区统计读取失败';
+          sendJSON(res, /Only park administrators/.test(message) ? 403 : 400, { error: message });
+        }
+        return;
+      }
       if (path === '/enterprise/park/specialists' && ['GET', 'POST', 'DELETE'].includes(method)) {
         const principal = adminPrincipal!;
         if (principal.kind !== 'account') {
@@ -2037,12 +2133,31 @@ function makeHandler(
       }
 
       if (path === '/enterprise/park-resources' && method === 'GET') {
+        const park = db.getParkForOrganization(memberAccount!.organizationId);
+        if (!park) {
+          sendJSON(res, 403, { error: '企业尚未加入产业园' });
+          return;
+        }
+        const resourceOrganizationId = park.adminOrganizationId;
         sendJSON(res, 200, {
-          settings: db.getParkSettings(memberAccount!.organizationId),
-          meetingRooms: db.listParkMeetingRooms(memberAccount!.organizationId),
-          meetingSlots: db.listParkMeetingSlots(memberAccount!.organizationId),
+          settings: db.getParkSettings(resourceOrganizationId),
+          meetingRooms: db.listParkMeetingRooms(resourceOrganizationId),
+          meetingSlots: db.listParkMeetingSlots(resourceOrganizationId),
         });
         return;
+      }
+
+      const isParkResourceAdminRoute = path === '/enterprise/park-settings'
+        || path === '/enterprise/park-meeting-rooms'
+        || path.startsWith('/enterprise/park-meeting-rooms/')
+        || path === '/enterprise/park-meeting-slots';
+      if (isParkResourceAdminRoute) {
+        const organizationId = adminPrincipal!.organizationId;
+        const managedPark = db.getParkForOrganization(organizationId);
+        if (!managedPark || managedPark.adminOrganizationId !== organizationId) {
+          sendJSON(res, 403, { error: '当前企业不是产业园管理方' });
+          return;
+        }
       }
 
       if (path === '/enterprise/park-settings' && method === 'GET') {
@@ -2279,6 +2394,21 @@ function makeHandler(
         return;
       }
 
+      if (path === '/enterprise/park-services/announcement-results' && method === 'GET') {
+        const principal = adminPrincipal!;
+        if (principal.kind !== 'account') {
+          sendJSON(res, 403, { error: '请使用产业园管理员账号查看公告确认情况' });
+          return;
+        }
+        if (!db.getOrganizationFeatures(principal.organizationId).park_service) {
+          sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+          return;
+        }
+        sendJSON(res, 200, {
+          announcements: db.listParkAnnouncementResults(principal.account.id),
+        });
+        return;
+      }
       if (path === '/enterprise/park-services/survey-results' && method === 'GET') {
         const principal = adminPrincipal!;
         if (principal.kind !== 'account') {
@@ -2792,15 +2922,17 @@ function makeHandler(
           return;
         }
         const isParkRequest = parkRequestIds.has(serviceId);
+        const ticketPark = isParkRequest
+          ? db.getParkForOrganization(account.organizationId)
+          : null;
         if (isParkRequest) {
-          const park = db.getParkForOrganization(account.organizationId);
-          if (!park) {
+          if (!ticketPark) {
             sendJSON(res, 403, { error: '企业尚未加入产业园' });
             return;
           }
           if (
             !db.getOrganizationFeatures(account.organizationId).park_service
-            || !db.getOrganizationFeatures(park.adminOrganizationId).park_service
+            || !db.getOrganizationFeatures(ticketPark.adminOrganizationId).park_service
           ) {
             sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
             return;
@@ -2819,10 +2951,38 @@ function makeHandler(
             (entry): entry is [string, string] => typeof entry[1] === 'string',
           ).map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]))
           : {};
+        // 1.9.7 之前的报修客户端把这些字段放在请求顶层。服务端继续接收旧格式，
+        // 但只使用当前账号、入驻资料和原有报修字段补全，不能由调用方伪造其他企业。
+        if (serviceId === 'repair' && Object.keys(formData).length === 0) {
+          const organization = db.getOrganization(account.organizationId);
+          const profile = db.getParkTenantProfile(account.organizationId);
+          formData = {
+            company: organization?.name || '',
+            roomNumber: profile?.roomNumber
+              || (typeof body.location === 'string' ? body.location.trim() : ''),
+            contact: typeof body.contact === 'string' && body.contact.trim()
+              ? body.contact.trim()
+              : account.name,
+            phone: typeof body.contactPhone === 'string' && body.contactPhone.trim()
+              ? body.contactPhone.trim()
+              : account.phone?.replace(/^\+86/, '') || '',
+            category: typeof body.category === 'string' && body.category.trim()
+              ? body.category.trim()
+              : title.trim(),
+            issue: description.trim(),
+            urgency: typeof body.urgency === 'string' && body.urgency.trim()
+              ? body.urgency.trim()
+              : '普通',
+          };
+        }
         const hasScheduledMeetingRoomBooking = serviceId === 'meeting-room'
-          && (Boolean(formData.roomId) || Boolean(formData.slotKey));
+          && Boolean(formData.roomId)
+          && Boolean(formData.date)
+          && Boolean(formData.startTime || formData.slotKey);
+        const meetingResourceOrganizationId = ticketPark?.adminOrganizationId
+          || account.organizationId;
         const meetingRoom = hasScheduledMeetingRoomBooking
-          ? db.listParkMeetingRooms(account.organizationId).find(
+          ? db.listParkMeetingRooms(meetingResourceOrganizationId).find(
             (room) => room.id === formData.roomId,
           )
           : undefined;
@@ -2842,11 +3002,27 @@ function makeHandler(
             });
             return;
           }
-          const slot = db.PARK_MEETING_TIME_SLOTS.find(
-            (item) => item.key === formData.slotKey,
+          if (formData.slotKey && !formData.startTime) {
+            const legacy = formData.slotKey === 'morning'
+              ? { startTime: '09:00', endTime: '12:00' }
+              : formData.slotKey === 'afternoon'
+                ? { startTime: '14:00', endTime: '18:00' }
+                : null;
+            if (!legacy) {
+              sendJSON(res, 400, { error: '请选择绿色的可预约时间段' });
+              return;
+            }
+            formData.startTime = legacy.startTime;
+            formData.endTime = legacy.endTime;
+          }
+          const validStart = db.PARK_MEETING_TIME_SLOTS.some(
+            (slot) => slot.key === formData.startTime,
           );
-          if (!slot) {
-            sendJSON(res, 400, { error: '请选择绿色的可预约时间段' });
+          const validEnd = formData.endTime === '23:00' || db.PARK_MEETING_TIME_SLOTS.some(
+            (slot) => slot.key === formData.endTime,
+          );
+          if (!validStart || !validEnd || formData.startTime >= formData.endTime) {
+            sendJSON(res, 400, { error: '请在 09:00–23:00 之间按 10 分钟选择连续时段' });
             return;
           }
           formData = {
@@ -2854,7 +3030,7 @@ function makeHandler(
             roomName: meetingRoom.name,
             roomCapacity: String(meetingRoom.capacity),
             priceHalfDay: String(meetingRoom.priceHalfDay),
-            time: slot.label,
+            time: `${formData.startTime}–${formData.endTime}`,
           };
         }
         let ticket: ReturnType<typeof db.createTicket>;
@@ -2876,10 +3052,11 @@ function makeHandler(
               contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
             });
             if (hasScheduledMeetingRoomBooking) {
-              db.reserveParkMeetingSlot(account.organizationId, {
+              db.reserveParkMeetingPeriod(meetingResourceOrganizationId, {
                 roomId: formData.roomId || '',
                 date: formData.date || '',
-                slotKey: formData.slotKey || '',
+                startTime: formData.startTime || '',
+                endTime: formData.endTime || '',
                 ticketId: ticket.id,
               });
             }
@@ -2962,31 +3139,43 @@ function makeHandler(
           }
           const body = await readBody(req);
           const action = typeof body.action === 'string' ? body.action : '';
-          if (!['respond', 'accept', 'complete', 'confirm'].includes(action)) {
+          if (!['respond', 'accept', 'complete', 'confirm', 'transfer'].includes(action)) {
             sendJSON(res, 400, { error: '工单操作不正确' });
             return;
           }
           const ticket = db.updateTicket({
             ticketId,
             accountId: account.id,
-            action: action as 'respond' | 'accept' | 'complete' | 'confirm',
+            action: action as 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
             responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
             responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
+            transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
+            transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
           });
-          const recipients = action === 'confirm'
+          const creatorRecipients = [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
+            (item): item is db.AccountView => item !== null,
+          );
+          const recipientCandidates = action === 'confirm' || action === 'transfer'
             ? db.getTicketNotificationRecipients(ticket.id)
-            : [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
-              (item): item is db.AccountView => item !== null,
-            );
+            : action === 'complete' && currentTicket.status === '已转交'
+              ? [...creatorRecipients, ...db.getTicketTransferredNotificationRecipients(ticket.id)]
+              : creatorRecipients;
+          const recipients = [...new Map(recipientCandidates.map((item) => [item.id, item])).values()];
           const title = action === 'respond'
             ? `Otto 办理回复 · ${ticket.title}`
             : action === 'accept'
               ? `Otto 申请已受理 · ${ticket.title}`
               : action === 'complete'
-                ? `Otto 待确认 · ${ticket.title}`
+                ? ticket.status === '已完成'
+                  ? `Otto 工作已完成 · ${ticket.title}`
+                  : `Otto 待确认 · ${ticket.title}`
+                : action === 'transfer'
+                  ? `Otto 转交任务 · ${ticket.title}`
                 : `Otto 办理已确认 · ${ticket.title}`;
           const detail = action === 'respond'
             ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
+            : action === 'transfer'
+              ? `${ticket.responseType || '物业报修已转交'}：${ticket.responseText || ''}`
             : `工单 ${ticket.id} 当前状态：${ticket.status}`;
           await sendRepairNotifications({
             ticket,
@@ -3366,6 +3555,28 @@ function makeHandler(
         return;
       }
 
+      if (path.startsWith('/enterprise/message-attachments/') && method === 'GET') {
+        if (!db.getOrganizationFeatures(memberAccount!.organizationId).direct_messages) {
+          sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
+          return;
+        }
+        const attachmentId = decodeURIComponent(
+          path.slice('/enterprise/message-attachments/'.length),
+        );
+        try {
+          sendJSON(res, 200, {
+            attachment: db.getDirectMessageAttachment({
+              organizationId: memberAccount!.organizationId,
+              accountId: memberAccount!.id,
+              attachmentId,
+            }),
+          });
+        } catch {
+          sendJSON(res, 404, { error: '附件不存在或无权访问' });
+        }
+        return;
+      }
+
       if (path.startsWith('/enterprise/messages/') && (method === 'GET' || method === 'POST')) {
         if (!db.getOrganizationFeatures(memberAccount!.organizationId).direct_messages) {
           sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
@@ -3390,9 +3601,17 @@ function makeHandler(
           }) });
           return;
         }
-        const body = await readBody(req);
+        const body = await readBody(req, DIRECT_MESSAGE_REQUEST_MAX_LENGTH);
+        if (body[BODY_TOO_LARGE]) {
+          sendJSON(res, 413, { error: '消息附件总大小超过限制' });
+          return;
+        }
         if (typeof body.content !== 'string') {
           sendJSON(res, 400, { error: '消息内容不能为空' });
+          return;
+        }
+        if (body.attachments != null && !Array.isArray(body.attachments)) {
+          sendJSON(res, 400, { error: '附件信息不正确' });
           return;
         }
         try {
@@ -3401,6 +3620,7 @@ function makeHandler(
             senderAccountId: memberAccount!.id,
             recipientAccountId: peerAccountId,
             content: body.content,
+            attachments: body.attachments as db.DirectMessageAttachmentInput[] | undefined,
           });
           if (body.content.startsWith('OTTO_ATOA_RESPONSE ')) {
             const requestId = db.markAtoaRequestReadFromResponse({
