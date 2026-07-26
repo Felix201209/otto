@@ -7,7 +7,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IncrementalUpdateArtifact } from './incremental-update-manifest.js';
 import type { FetchLike } from './update-download.js';
 import { applyComponentUpdate } from './incremental-component-updater.js';
@@ -68,6 +68,21 @@ function artifact(body: string, overrides: Partial<IncrementalUpdateArtifact> = 
 }
 
 describe('incremental component updater', () => {
+  let originalOttoUserDir: string | undefined;
+  let isolatedOttoUserDir: string;
+
+  beforeEach(async () => {
+    originalOttoUserDir = process.env['OTTO_USER_DIR'];
+    isolatedOttoUserDir = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-user-'));
+    process.env['OTTO_USER_DIR'] = isolatedOttoUserDir;
+  });
+
+  afterEach(async () => {
+    if (originalOttoUserDir === undefined) delete process.env['OTTO_USER_DIR'];
+    else process.env['OTTO_USER_DIR'] = originalOttoUserDir;
+    await fs.rm(isolatedOttoUserDir, { recursive: true, force: true });
+  });
+
   it('downloads, verifies and registers a component update', async () => {
     const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-component-apply-'));
     const body = bundle({ 'SKILL.md': '---\nname: presentations\ndescription: PPT skill\n---\n# PPT' });
