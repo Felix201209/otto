@@ -12,54 +12,13 @@
  * 不能把存在余额表误报为已经强制托管模型或禁止 BYOK。
  */
 
-import { getDB, DEFAULT_ORGANIZATION_ID } from './db.js';
+import { getDB } from './db.js';
+import { buildCreditsTablesSql } from './creditsSchema.js';
 import * as crypto from 'node:crypto';
 
 // ── 表结构（在 db.ts 初始化时创建）─────────────────────────────
 
-export const CREDITS_TABLES_SQL = [
-  // 积分交易流水
-  `CREATE TABLE IF NOT EXISTS credit_transactions (
-    id TEXT PRIMARY KEY,
-    organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-    account_id TEXT,                    -- NULL=系统操作（管理员充值）
-    type TEXT NOT NULL CHECK(type IN ('topup','redeem','consume','refund')),
-    amount INTEGER NOT NULL,            -- 正=入账，负=出账
-    balance_after INTEGER NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    redeem_code_id TEXT,                -- 关联兑换码
-    model TEXT,                         -- consume 时记录用了哪个模型
-    message_id TEXT,                    -- consume 时记录关联消息
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (organization_id) REFERENCES organizations(id),
-    FOREIGN KEY (account_id) REFERENCES accounts(id),
-    FOREIGN KEY (redeem_code_id) REFERENCES redeem_codes(id)
-  )`,
-
-  // 兑换码表
-  `CREATE TABLE IF NOT EXISTS redeem_codes (
-    id TEXT PRIMARY KEY,
-    organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-    code TEXT NOT NULL UNIQUE,           -- 兑换码（12位字母数字）
-    credit_amount INTEGER NOT NULL,      -- 面额（积分）
-    created_by TEXT NOT NULL,            -- 管理员账号ID
-    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','redeemed','revoked')),
-    redeemed_by TEXT,                    -- 兑换人账号ID
-    redeemed_at TEXT,                    -- 兑换时间
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (organization_id) REFERENCES organizations(id),
-    FOREIGN KEY (created_by) REFERENCES accounts(id)
-  )`,
-
-  `CREATE INDEX IF NOT EXISTS idx_credit_transactions_org
-    ON credit_transactions(organization_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_credit_transactions_account
-    ON credit_transactions(account_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_redeem_codes_org
-    ON redeem_codes(organization_id, status, created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_redeem_codes_code
-    ON redeem_codes(code)`,
-];
+export const CREDITS_TABLES_SQL = buildCreditsTablesSql('org_default');
 
 // ── 兑换码生成 ──────────────────────────────────────────────────
 
