@@ -26,11 +26,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import {
-  createHash,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import { isIP } from 'node:net';
 import os from 'node:os';
@@ -39,42 +35,18 @@ import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 
 import { resolveEnterprisePublicBaseUrl } from './publicInvite.js';
-import { handleFeatureFlagsRoute } from './featureFlagsAdmin.js';
-import { adminAccountsHTML } from './adminAccountsPage.js';
-import { adminCreditsHTML } from './adminCreditsPage.js';
-import { adminDashboardHTML } from './adminDashboardPage.js';
-import { parkAdminHTML } from './parkAdminPage.js';
-import { platformAdminHTML } from './platformAdminPage.js';
 import {
   createRepairFeishuSenderFromEnv,
   createRepairSmsSenderFromEnv,
   type RepairNotificationSender,
 } from './repairNotifications.js';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
-import { handleAdminDataRoute } from './adminDataRoutes.js';
-import { handleAdminPageRoute } from './adminPageRoutes.js';
-import { handleAccountRoute } from './accountRoutes.js';
-import { handleAuthRoute } from './authRoutes.js';
-import { handleCommunicationRoute } from './communicationRoutes.js';
-import { handleCreditsRoute } from './creditsRoutes.js';
-import { handleDeploymentRoute } from './deploymentRoutes.js';
-import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
-import { handleHealthRoute } from './healthRoutes.js';
-import { handleLocalAgentRoute } from './localAgentRoutes.js';
-import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
-import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
-import { handleOrganizationRoute } from './organizationRoutes.js';
-import { handleParkResourceRoute } from './parkResourceRoutes.js';
-import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
-import { handleParkStatisticsRoute } from './parkStatisticsRoutes.js';
-import { handlePlatformOrganizationRoute } from './platformOrganizationRoutes.js';
-import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
-import { handleTicketRoute } from './ticketRoutes.js';
-import { handleWorkspaceRoute } from './workspaceRoutes.js';
+import {
+  dispatchEnterpriseRoute,
+  type AdminPrincipal,
+} from './enterpriseRouteDispatcher.js';
 
-export {
-  adminAccountsHTML,
-} from './adminAccountsPage.js';
+export { adminAccountsHTML } from './adminAccountsPage.js';
 
 const DEFAULT_PORT = 7777;
 
@@ -239,7 +211,10 @@ export interface DeploymentInfo {
 }
 
 interface LoginRateLimiter {
-  keys(req: IncomingMessage, identifier: string): {
+  keys(
+    req: IncomingMessage,
+    identifier: string,
+  ): {
     identity: string;
     client: string;
   };
@@ -248,12 +223,20 @@ interface LoginRateLimiter {
   clearIdentity(key: string): void;
 }
 
-function positiveInteger(value: number | undefined, fallback: number, maximum: number): number {
+function positiveInteger(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+): number {
   if (!Number.isFinite(value) || value == null || value <= 0) return fallback;
   return Math.min(maximum, Math.max(1, Math.floor(value)));
 }
 
-function nonNegativeInteger(value: number | undefined, fallback: number, maximum: number): number {
+function nonNegativeInteger(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+): number {
   if (!Number.isFinite(value) || value == null || value < 0) return fallback;
   return Math.min(maximum, Math.floor(value));
 }
@@ -285,16 +268,21 @@ export function resolveEnterpriseClientAddress(
       .map((address) => normalizedIp(address))
       .filter((address): address is string => address !== null),
   );
-  if (!isLoopbackAddress(direct) && !trustedProxyAddresses.has(direct)) return direct;
-  if (typeof forwardedFor !== 'string' || forwardedFor.length > 2048) return direct;
+  if (!isLoopbackAddress(direct) && !trustedProxyAddresses.has(direct))
+    return direct;
+  if (typeof forwardedFor !== 'string' || forwardedFor.length > 2048)
+    return direct;
 
   const forwardedChain = forwardedFor
     .split(',')
     .map((address) => normalizedIp(address));
-  if (forwardedChain.length === 0 || forwardedChain.some((address) => address === null)) {
+  if (
+    forwardedChain.length === 0 ||
+    forwardedChain.some((address) => address === null)
+  ) {
     return direct;
   }
-  const chain = [...forwardedChain as string[], direct];
+  const chain = [...(forwardedChain as string[]), direct];
   const candidateIndex = chain.length - trustedProxyHops - 1;
   if (candidateIndex < 0) return direct;
   return chain[candidateIndex] || direct;
@@ -315,11 +303,21 @@ function rateLimitClientAddress(
  * 每个 EnterpriseServer 实例独立的有界登录限流器。键只保留 identifier + 客户端地址
  * 的 SHA-256，不在内存中保存明文账号；超过上限按 LRU 淘汰，避免攻击者撑爆进程。
  */
-function createLoginRateLimiter(options: PasswordLoginRateLimitOptions = {}): LoginRateLimiter {
+function createLoginRateLimiter(
+  options: PasswordLoginRateLimitOptions = {},
+): LoginRateLimiter {
   const maxFailures = positiveInteger(options.maxFailures, 5, 100);
   const maxIpFailures = positiveInteger(options.maxIpFailures, 30, 1_000);
-  const windowMs = positiveInteger(options.windowMs, 15 * 60 * 1000, 24 * 60 * 60 * 1000);
-  const blockMs = positiveInteger(options.blockMs, 60 * 1000, 24 * 60 * 60 * 1000);
+  const windowMs = positiveInteger(
+    options.windowMs,
+    15 * 60 * 1000,
+    24 * 60 * 60 * 1000,
+  );
+  const blockMs = positiveInteger(
+    options.blockMs,
+    60 * 1000,
+    24 * 60 * 60 * 1000,
+  );
   const maxEntries = positiveInteger(options.maxEntries, 10_000, 100_000);
   const trustedProxyHops = nonNegativeInteger(options.trustedProxyHops, 0, 5);
   const trustedProxyAddresses = options.trustedProxyAddresses ?? [];
@@ -353,7 +351,10 @@ function createLoginRateLimiter(options: PasswordLoginRateLimitOptions = {}): Lo
   ): RateEntry | null => {
     const entry = entries.get(key);
     if (!entry) return null;
-    if (entry.blockedUntil <= timestamp && timestamp - entry.windowStartedAt >= windowMs) {
+    if (
+      entry.blockedUntil <= timestamp &&
+      timestamp - entry.windowStartedAt >= windowMs
+    ) {
       entries.delete(key);
       return null;
     }
@@ -379,9 +380,10 @@ function createLoginRateLimiter(options: PasswordLoginRateLimitOptions = {}): Lo
     timestamp: number,
   ): number => {
     const existing = currentEntryIn(entries, key, timestamp);
-    const entry = existing && timestamp - existing.windowStartedAt < windowMs
-      ? existing
-      : { failures: 0, windowStartedAt: timestamp, blockedUntil: 0 };
+    const entry =
+      existing && timestamp - existing.windowStartedAt < windowMs
+        ? existing
+        : { failures: 0, windowStartedAt: timestamp, blockedUntil: 0 };
     entry.failures += 1;
     if (entry.failures >= threshold) entry.blockedUntil = timestamp + blockMs;
     touch(entries, key, entry);
@@ -422,7 +424,12 @@ function createLoginRateLimiter(options: PasswordLoginRateLimitOptions = {}): Lo
     recordFailure(keys) {
       const timestamp = now();
       return Math.max(
-        recordFailureFor(identityEntries, keys.identity, maxFailures, timestamp),
+        recordFailureFor(
+          identityEntries,
+          keys.identity,
+          maxFailures,
+          timestamp,
+        ),
         recordFailureFor(clientEntries, keys.client, maxIpFailures, timestamp),
       );
     },
@@ -466,7 +473,8 @@ function extractToken(req: IncomingMessage): string {
   const h = req.headers['x-otto-admin-token'];
   if (typeof h === 'string' && h) return h;
   const auth = req.headers['authorization'];
-  if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7);
+  if (typeof auth === 'string' && auth.startsWith('Bearer '))
+    return auth.slice(7);
   return '';
 }
 
@@ -480,41 +488,50 @@ function tokensMatch(a: string, b: string): boolean {
 }
 
 function isAdminRoute(path: string): boolean {
-  return ADMIN_ROUTES.has(path)
-    || path.startsWith('/enterprise/accounts/')
-    || path.startsWith('/enterprise/organization/departments')
-    || path.startsWith('/enterprise/organization/positions')
-    || path.startsWith('/enterprise/park-meeting-rooms/')
-    || path.startsWith('/enterprise/platform/organizations/');
+  return (
+    ADMIN_ROUTES.has(path) ||
+    path.startsWith('/enterprise/accounts/') ||
+    path.startsWith('/enterprise/organization/departments') ||
+    path.startsWith('/enterprise/organization/positions') ||
+    path.startsWith('/enterprise/park-meeting-rooms/') ||
+    path.startsWith('/enterprise/platform/organizations/')
+  );
 }
 
 function isMemberRoute(path: string): boolean {
-  return MEMBER_ROUTES.has(path)
-    || path === '/enterprise/atoa/inbox'
-    || path.startsWith('/enterprise/messages/')
-    || path.startsWith('/enterprise/park-statistics/')
-    || (path.startsWith('/enterprise/credits/redeem-codes/') && path.endsWith('/revoke'));
+  return (
+    MEMBER_ROUTES.has(path) ||
+    path === '/enterprise/atoa/inbox' ||
+    path.startsWith('/enterprise/messages/') ||
+    path.startsWith('/enterprise/park-statistics/') ||
+    (path.startsWith('/enterprise/credits/redeem-codes/') &&
+      path.endsWith('/revoke'))
+  );
 }
 
-function isPublicSimpleParkRoute(path: string, method: string, url: URL): boolean {
+function isPublicSimpleParkRoute(
+  path: string,
+  method: string,
+  url: URL,
+): boolean {
   return (
-    path === '/enterprise/park/join' && method === 'POST'
-  ) || (
-    path === '/enterprise/park/services' &&
-    method === 'GET' &&
-    url.searchParams.has('parkId')
-  ) || (
-    path === '/enterprise/park/services/request' && method === 'POST'
+    (path === '/enterprise/park/join' && method === 'POST') ||
+    (path === '/enterprise/park/services' &&
+      method === 'GET' &&
+      url.searchParams.has('parkId')) ||
+    (path === '/enterprise/park/services/request' && method === 'POST')
   );
 }
 function isLicenseMaintenanceRoute(path: string): boolean {
-  return path === '/enterprise/health'
-    || path === '/enterprise/export'
-    || path === '/enterprise/deployment/status'
-    || path === '/enterprise/deployment/license'
-    || path === '/enterprise/deployment/telemetry'
-    || path === '/enterprise/deployment/diagnostics'
-    || path.startsWith('/enterprise/auth/');
+  return (
+    path === '/enterprise/health' ||
+    path === '/enterprise/export' ||
+    path === '/enterprise/deployment/status' ||
+    path === '/enterprise/deployment/license' ||
+    path === '/enterprise/deployment/telemetry' ||
+    path === '/enterprise/deployment/diagnostics' ||
+    path.startsWith('/enterprise/auth/')
+  );
 }
 
 function licenseBlockedPayload() {
@@ -543,7 +560,13 @@ function isLoopbackRequestHost(req: IncomingMessage): boolean {
   if (typeof host !== 'string' || !host.trim()) return false;
   try {
     const parsed = new URL(`http://${host}`);
-    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash
+    ) {
       return false;
     }
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
@@ -552,10 +575,6 @@ function isLoopbackRequestHost(req: IncomingMessage): boolean {
     return false;
   }
 }
-
-type AdminPrincipal =
-  | { kind: 'system'; organizationId: string }
-  | { kind: 'account'; organizationId: string; account: db.AccountView };
 
 function makeHandler(
   adminToken: string,
@@ -573,7 +592,10 @@ function makeHandler(
   // 租约自动过期并可重试，不新增另一套聊天存储。
   const atoaClaims = new Map<string, number>();
   const ATOA_CLAIM_TTL_MS = 180_000;
-  return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  return async function handler(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     // 只需要 path/query，不使用客户端可控的 Host 或 X-Forwarded-Host 作为 URL 权威源。
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     const path = url.pathname;
@@ -583,12 +605,13 @@ function makeHandler(
     let adminPrincipal: AdminPrincipal | null = null;
     let memberAccount: db.AccountView | null = null;
 
-    if (!localAgentPairingEnabled && (
-      path === '/enterprise/sdk/otto-discovery.js'
-      || path === '/enterprise/local-agent'
-      || path === '/enterprise/local-agent/pair'
-      || path === '/enterprise/local-agent/pair/verify'
-    )) {
+    if (
+      !localAgentPairingEnabled &&
+      (path === '/enterprise/sdk/otto-discovery.js' ||
+        path === '/enterprise/local-agent' ||
+        path === '/enterprise/local-agent/pair' ||
+        path === '/enterprise/local-agent/pair/verify')
+    ) {
       sendJSON(res, 404, { error: 'not found' });
       return;
     }
@@ -629,17 +652,26 @@ function makeHandler(
     try {
       // 无静态 token 的兼容模式只能通过明确的 loopback Host 使用，避免 DNS
       // rebinding 让恶意域名在 Origin/Host 同名时伪装成本机管理站点。
-      if ((isAdminRoute(path) || isFeatureFlagsRoute) && !isPublicSimplePark && !adminToken && !isLoopbackRequestHost(req)) {
-        sendJSON(res, 403, { error: 'forbidden: loopback admin host required' });
+      if (
+        (isAdminRoute(path) || isFeatureFlagsRoute) &&
+        !isPublicSimplePark &&
+        !adminToken &&
+        !isLoopbackRequestHost(req)
+      ) {
+        sendJSON(res, 403, {
+          error: 'forbidden: loopback admin host required',
+        });
         return;
       }
 
       // 本机兼容模式允许无静态 token 管理，但仍必须阻止第三方网页借浏览器
       // 对状态变更接口发起 blind POST/PATCH（无 Origin 的 CLI/桌面调用不受影响）。
-      if ((isAdminRoute(path) || isFeatureFlagsRoute)
-        && !isPublicSimplePark
-        && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-        && isCrossOriginBrowserRequest(req)) {
+      if (
+        (isAdminRoute(path) || isFeatureFlagsRoute) &&
+        !isPublicSimplePark &&
+        ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) &&
+        isCrossOriginBrowserRequest(req)
+      ) {
         sendJSON(res, 403, { error: 'forbidden: cross-origin admin request' });
         return;
       }
@@ -650,7 +682,10 @@ function makeHandler(
       if ((isAdminRoute(path) || isFeatureFlagsRoute) && !isPublicSimplePark) {
         const token = extractToken(req);
         if (adminToken && tokensMatch(token, adminToken)) {
-          adminPrincipal = { kind: 'system', organizationId: db.DEFAULT_ORGANIZATION_ID };
+          adminPrincipal = {
+            kind: 'system',
+            organizationId: db.DEFAULT_ORGANIZATION_ID,
+          };
         } else if (adminToken) {
           const account = db.getAccountBySession(token);
           if (!account) {
@@ -661,7 +696,11 @@ function makeHandler(
             sendJSON(res, 403, { error: 'forbidden: admin account required' });
             return;
           }
-          adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
+          adminPrincipal = {
+            kind: 'account',
+            organizationId: account.organizationId,
+            account,
+          };
         } else {
           // 未配置静态 token 的本机模式仅接受管理员账号会话，不提供平台级绕过。
           const account = db.getAccountBySession(token);
@@ -673,7 +712,11 @@ function makeHandler(
             sendJSON(res, 403, { error: 'forbidden: admin account required' });
             return;
           }
-          adminPrincipal = { kind: 'account', organizationId: account.organizationId, account };
+          adminPrincipal = {
+            kind: 'account',
+            organizationId: account.organizationId,
+            account,
+          };
         }
       }
 
@@ -684,9 +727,11 @@ function makeHandler(
           return;
         }
       }
-      if ((isAdminRoute(path) || isMemberRoute(path))
-        && !isLicenseMaintenanceRoute(path)
-        && db.isLicenseRestricted()) {
+      if (
+        (isAdminRoute(path) || isMemberRoute(path)) &&
+        !isLicenseMaintenanceRoute(path) &&
+        db.isLicenseRestricted()
+      ) {
         sendJSON(res, 402, licenseBlockedPayload());
         return;
       }
@@ -695,281 +740,33 @@ function makeHandler(
         return;
       }
 
-      if (handleHealthRoute({
-        path,
-        method,
-        res,
-        apiVersion: ENTERPRISE_API_VERSION,
-        capabilities: ENTERPRISE_CAPABILITIES,
-        deploymentInfo,
-        smsConfigured: smsSender !== null,
-        repairSmsConfigured: repairSmsSender !== null,
-        repairFeishuConfigured: repairFeishuSender !== null,
-        sendJSON,
-      })) {
+      if (
+        await dispatchEnterpriseRoute({
+          path,
+          method,
+          url,
+          req,
+          res,
+          adminPrincipal,
+          memberAccount,
+          publicBaseUrl,
+          smsSender,
+          repairSmsSender,
+          repairFeishuSender,
+          loginRateLimiter,
+          deploymentInfo,
+          apiVersion: ENTERPRISE_API_VERSION,
+          capabilities: ENTERPRISE_CAPABILITIES,
+          atoaClaims,
+          atoaClaimTtlMs: ATOA_CLAIM_TTL_MS,
+          isPublicSimplePark,
+          featureFlags,
+          readBody,
+          sendJSON,
+          extractToken,
+        })
+      ) {
         return;
-      }
-
-      // ===== Private deployment, license and telemetry =====
-      if (await handleModuleUpdateRoute({
-        path,
-        method,
-        req,
-        res,
-        principal: adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleDeploymentRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        principal: adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleLocalAgentRoute({
-        path,
-        method,
-        req,
-        res,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleAuthRoute({
-        path,
-        method,
-        req,
-        res,
-        memberAccount,
-        publicBaseUrl,
-        smsSender,
-        loginRateLimiter,
-        readBody,
-        sendJSON,
-        extractToken,
-      })) {
-        return;
-      }
-
-      if (await handleOrganizationRoute({
-        path,
-        method,
-        req,
-        res,
-        memberAccount,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleSimpleParkCompatibilityRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        adminPrincipal,
-        isPublicSimplePark,
-        readBody,
-        sendJSON,
-        extractToken,
-      })) {
-        return;
-      }
-
-      if (await handleGeneralizedParkRoute({
-        path,
-        method,
-        req,
-        res,
-        memberAccount,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleAccountRoute({
-        path,
-        method,
-        req,
-        res,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleParkResourceRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        memberAccount,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleParkServicePublicationRoute({
-        path,
-        method,
-        req,
-        res,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-        extractToken,
-      })) {
-        return;
-      }
-
-      if (await handleWorkspaceRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        adminPrincipal,
-        publicBaseUrl,
-        readBody,
-        sendJSON,
-        extractToken,
-      })) {
-        return;
-      }
-
-      if (await handlePlatformOrganizationRoute({
-        path,
-        method,
-        req,
-        res,
-        adminPrincipal,
-        publicBaseUrl,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleTicketRoute({
-        path,
-        method,
-        req,
-        res,
-        repairSmsSender,
-        repairFeishuSender,
-        extractToken,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleParkStatisticsRoute({
-        path,
-        method,
-        req,
-        res,
-        memberAccount,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-      // ===== Enterprise Credits System =====
-      if (await handleCreditsRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        memberAccount,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      // ===== Member workflow routes =====
-      if (await handleMemberWorkflowRoute({
-        path,
-        method,
-        req,
-        res,
-        url,
-        memberAccount,
-        adminPrincipal,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      // ===== Admin data routes =====
-      if (handleAdminDataRoute({
-        path,
-        method,
-        res,
-        url,
-        adminPrincipal,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (await handleCommunicationRoute({
-        path,
-        method,
-        url,
-        req,
-        res,
-        memberAccount: memberAccount!,
-        atoaClaims,
-        atoaClaimTtlMs: ATOA_CLAIM_TTL_MS,
-        readBody,
-        sendJSON,
-      })) {
-        return;
-      }
-
-      if (handleAdminPageRoute(method, path, res, {
-        adminAccountsHTML,
-        parkAdminHTML,
-        platformAdminHTML,
-        adminDashboardHTML,
-        adminCreditsHTML,
-      })) {
-        return;
-      }
-
-      if (isFeatureFlagsRoute && featureFlags) {
-        const userId = adminPrincipal
-          ? (adminPrincipal.kind === 'account' ? adminPrincipal.account.id : 'platform-admin')
-          : 'unknown';
-        if (handleFeatureFlagsRoute(method, path, featureFlags, res, userId)) {
-          return;
-        }
       }
 
       sendJSON(res, 404, { error: `Not found: ${method} ${path}` });
@@ -984,8 +781,6 @@ function makeHandler(
   };
 }
 
-
-
 /**
  * 组装企业服务端（不 listen）。会算好 host/port/token：
  * 监听非本地又没给 token → 自动生成一枚并回传（调用方负责打印/落盘），绝不裸奔。
@@ -999,79 +794,94 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   generatedToken: boolean;
 } {
   const host = opts.host || process.env.OTTO_ENTERPRISE_HOST || '127.0.0.1';
-  const port = opts.port
-    ?? parseInt(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT), 10);
+  const port =
+    opts.port ??
+    parseInt(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT), 10);
   const publicBaseUrl = resolveEnterprisePublicBaseUrl({
     configuredUrl: opts.publicUrl ?? process.env.OTTO_ENTERPRISE_PUBLIC_URL,
     host,
     port,
   });
-  let adminToken = opts.adminToken ?? process.env.OTTO_ENTERPRISE_ADMIN_TOKEN ?? '';
+  let adminToken =
+    opts.adminToken ?? process.env.OTTO_ENTERPRISE_ADMIN_TOKEN ?? '';
   let generatedToken = false;
   if (!adminToken && !isLoopback(host)) {
     adminToken = randomBytes(18).toString('base64url');
     generatedToken = true;
   }
   const hasSmsEnv = Boolean(
-    process.env.ALIYUN_SMS_ACCESS_KEY_ID
-    && process.env.ALIYUN_SMS_ACCESS_KEY_SECRET
-    && process.env.ALIYUN_SMS_SIGN_NAME
-    && process.env.ALIYUN_SMS_TEMPLATE_ID,
+    process.env.ALIYUN_SMS_ACCESS_KEY_ID &&
+    process.env.ALIYUN_SMS_ACCESS_KEY_SECRET &&
+    process.env.ALIYUN_SMS_SIGN_NAME &&
+    process.env.ALIYUN_SMS_TEMPLATE_ID,
   );
-  const smsSender = opts.smsSender === undefined
-    ? (hasSmsEnv ? createAliyunLoginSmsFromEnv() : null)
-    : opts.smsSender;
-  const repairSmsSender = opts.repairSmsSender === undefined
-    ? createRepairSmsSenderFromEnv()
-    : opts.repairSmsSender;
-  const repairFeishuSender = opts.repairFeishuSender === undefined
-    ? createRepairFeishuSenderFromEnv()
-    : opts.repairFeishuSender;
-  const version = opts.appVersion?.trim()
-    || process.env.OTTO_APP_VERSION?.trim()
-    || 'unknown';
-  const buildCommit = opts.buildCommit?.trim()
-    || process.env.OTTO_BUILD_COMMIT?.trim()
-    || process.env.GITHUB_SHA?.trim()
-    || 'unknown';
+  const smsSender =
+    opts.smsSender === undefined
+      ? hasSmsEnv
+        ? createAliyunLoginSmsFromEnv()
+        : null
+      : opts.smsSender;
+  const repairSmsSender =
+    opts.repairSmsSender === undefined
+      ? createRepairSmsSenderFromEnv()
+      : opts.repairSmsSender;
+  const repairFeishuSender =
+    opts.repairFeishuSender === undefined
+      ? createRepairFeishuSenderFromEnv()
+      : opts.repairFeishuSender;
+  const version =
+    opts.appVersion?.trim() ||
+    process.env.OTTO_APP_VERSION?.trim() ||
+    'unknown';
+  const buildCommit =
+    opts.buildCommit?.trim() ||
+    process.env.OTTO_BUILD_COMMIT?.trim() ||
+    process.env.GITHUB_SHA?.trim() ||
+    'unknown';
   const configuredProxyHops = nonNegativeInteger(
-    opts.loginRateLimit?.trustedProxyHops
-      ?? Number(process.env.OTTO_ENTERPRISE_TRUST_PROXY_HOPS),
+    opts.loginRateLimit?.trustedProxyHops ??
+      Number(process.env.OTTO_ENTERPRISE_TRUST_PROXY_HOPS),
     0,
     5,
   );
-  const configuredProxyAddresses = opts.loginRateLimit?.trustedProxyAddresses
-    ?? process.env.OTTO_ENTERPRISE_TRUSTED_PROXIES?.split(',')
+  const configuredProxyAddresses =
+    opts.loginRateLimit?.trustedProxyAddresses ??
+    process.env.OTTO_ENTERPRISE_TRUSTED_PROXIES?.split(',')
       .map((address) => address.trim())
-      .filter(Boolean)
-    ?? [];
+      .filter(Boolean) ??
+    [];
   const loginRateLimiter = createLoginRateLimiter({
     ...opts.loginRateLimit,
     trustedProxyHops: configuredProxyHops,
     trustedProxyAddresses: configuredProxyAddresses,
   });
-  const featureFlags = new FeatureFlagManager(new ProjectSettingsManager(process.cwd()));
-  const server = createServer(makeHandler(
-    adminToken,
-    smsSender,
-    repairSmsSender,
-    repairFeishuSender,
-    publicBaseUrl,
-    loginRateLimiter,
-    {
-      version,
-      buildCommit,
-      startedAt: new Date().toISOString(),
-    },
-    opts.localAgentPairingEnabled === true,
-    featureFlags,
-  ));
+  const featureFlags = new FeatureFlagManager(
+    new ProjectSettingsManager(process.cwd()),
+  );
+  const server = createServer(
+    makeHandler(
+      adminToken,
+      smsSender,
+      repairSmsSender,
+      repairFeishuSender,
+      publicBaseUrl,
+      loginRateLimiter,
+      {
+        version,
+        buildCommit,
+        startedAt: new Date().toISOString(),
+      },
+      opts.localAgentPairingEnabled === true,
+      featureFlags,
+    ),
+  );
   return { server, host, port, publicBaseUrl, adminToken, generatedToken };
 }
 
 function persistGeneratedAdminToken(token: string): string {
-  const directory = process.env.OTTO_ENTERPRISE_DIR
-    || path.join(os.homedir(), '.otto-enterprise');
+  const directory =
+    process.env.OTTO_ENTERPRISE_DIR ||
+    path.join(os.homedir(), '.otto-enterprise');
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   try {
     fs.chmodSync(directory, 0o700);
@@ -1091,17 +901,19 @@ function persistGeneratedAdminToken(token: string): string {
   return tokenPath;
 }
 
-function validatedStartOptions(opts: EnterpriseServerOptions): EnterpriseServerOptions {
+function validatedStartOptions(
+  opts: EnterpriseServerOptions,
+): EnterpriseServerOptions {
   const host = opts.host || process.env.OTTO_ENTERPRISE_HOST || '127.0.0.1';
   if (isLoopback(host)) return opts;
 
-  const appVersion = opts.appVersion?.trim()
-    || process.env.OTTO_APP_VERSION?.trim()
-    || '';
-  const buildCommit = opts.buildCommit?.trim()
-    || process.env.OTTO_BUILD_COMMIT?.trim()
-    || process.env.GITHUB_SHA?.trim()
-    || '';
+  const appVersion =
+    opts.appVersion?.trim() || process.env.OTTO_APP_VERSION?.trim() || '';
+  const buildCommit =
+    opts.buildCommit?.trim() ||
+    process.env.OTTO_BUILD_COMMIT?.trim() ||
+    process.env.GITHUB_SHA?.trim() ||
+    '';
   const errors: string[] = [];
   if (!appVersion || appVersion.toLowerCase() === 'unknown') {
     errors.push('OTTO_APP_VERSION 必须设置为明确的发布版本');
@@ -1110,7 +922,9 @@ function validatedStartOptions(opts: EnterpriseServerOptions): EnterpriseServerO
     errors.push('OTTO_BUILD_COMMIT 必须是完整的 40 位十六进制 Git SHA');
   }
   if (errors.length > 0) {
-    throw new Error(`[Otto Enterprise] 拒绝非 loopback 启动：${errors.join('；')}`);
+    throw new Error(
+      `[Otto Enterprise] 拒绝非 loopback 启动：${errors.join('；')}`,
+    );
   }
   return {
     ...opts,
@@ -1121,34 +935,48 @@ function validatedStartOptions(opts: EnterpriseServerOptions): EnterpriseServerO
 }
 
 /** 组装并 listen；返回 http.Server。访问地址不包含凭证，自动令牌只落 0600 文件。 */
-export function startEnterpriseServer(opts: EnterpriseServerOptions = {}): Server {
+export function startEnterpriseServer(
+  opts: EnterpriseServerOptions = {},
+): Server {
   const validatedOptions = validatedStartOptions(opts);
-  const {
-    server,
-    host,
-    port,
-    publicBaseUrl,
-    adminToken,
-    generatedToken,
-  } = createEnterpriseServer(validatedOptions);
+  const { server, host, port, publicBaseUrl, adminToken, generatedToken } =
+    createEnterpriseServer(validatedOptions);
   const generatedTokenPath = generatedToken
     ? persistGeneratedAdminToken(adminToken)
     : null;
   server.listen(port, host, () => {
     console.log(`[Otto Enterprise] 服务端运行于 http://${host}:${port}`);
-    console.log(`[Otto Enterprise] 账号管理: http://localhost:${port}/enterprise/admin`);
-    console.log(`[Otto Enterprise] 企业引入: ${publicBaseUrl}/enterprise/join/{邀请码}`);
-    console.log(`[Otto Enterprise] 老板看板: http://localhost:${port}/enterprise/dashboard`);
-    console.log(`[Otto Enterprise] 数据: ~/.otto-enterprise/data.db（本地，零云端）`);
+    console.log(
+      `[Otto Enterprise] 账号管理: http://localhost:${port}/enterprise/admin`,
+    );
+    console.log(
+      `[Otto Enterprise] 企业引入: ${publicBaseUrl}/enterprise/join/{邀请码}`,
+    );
+    console.log(
+      `[Otto Enterprise] 老板看板: http://localhost:${port}/enterprise/dashboard`,
+    );
+    console.log(
+      `[Otto Enterprise] 数据: ~/.otto-enterprise/data.db（本地，零云端）`,
+    );
     if (generatedTokenPath) {
-      console.log(`[Otto Enterprise] 自动生成的管理令牌已安全保存: ${generatedTokenPath}`);
+      console.log(
+        `[Otto Enterprise] 自动生成的管理令牌已安全保存: ${generatedTokenPath}`,
+      );
     } else if (adminToken) {
-      console.log('[Otto Enterprise] 已使用环境中配置的平台管理令牌（不会输出令牌内容）');
+      console.log(
+        '[Otto Enterprise] 已使用环境中配置的平台管理令牌（不会输出令牌内容）',
+      );
     } else {
-      console.log('[Otto Enterprise] 未配置平台令牌；管理页面仍要求管理员账号登录');
+      console.log(
+        '[Otto Enterprise] 未配置平台令牌；管理页面仍要求管理员账号登录',
+      );
     }
-    console.log('[Otto Enterprise] 积分管理: http://localhost:' + port + '/enterprise/admin/credits');
-  console.log('[Otto Enterprise] Ctrl+C 停止');
+    console.log(
+      '[Otto Enterprise] 积分管理: http://localhost:' +
+        port +
+        '/enterprise/admin/credits',
+    );
+    console.log('[Otto Enterprise] Ctrl+C 停止');
   });
   return server;
 }
