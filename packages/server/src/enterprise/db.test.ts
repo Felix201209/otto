@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
     });
     const sessionColumns = db
       .getDB()
@@ -209,7 +209,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
     });
   });
 
@@ -272,7 +272,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 7,
+        schemaVersion: 8,
       });
       const organizationColumns = reopened
         .getDB()
@@ -416,12 +416,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 8;
+      PRAGMA user_version = 9;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 8.*current version 7/i);
+    expect(() => db.getDB()).toThrow(/schema version 9.*current version 8/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -431,7 +431,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(8);
+      ).toBe(9);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -687,6 +687,56 @@ describe('企业组织结构与功能配置', () => {
   });
 });
 
+describe('园区数据统计任务', () => {
+  it('按企业隔离投递，支持分派、填报、审核、退回和催办', async () => {
+    const db = await freshDb();
+    const parkAdmin = db.createAccount({
+      username: 'park-statistics-admin', password: 'park-statistics-password', name: '园区管理员', isAdmin: true,
+    });
+    const park = db.createPark({
+      adminOrganizationId: db.DEFAULT_ORGANIZATION_ID,
+      actorAccountId: parkAdmin.id,
+      name: '统计测试园区',
+    });
+    const tenantOrg = db.createOrganization({ name: '入住企业甲', slug: 'statistics-tenant' });
+    const ceo = db.createAccount({
+      organizationId: tenantOrg.id,
+      username: 'statistics-ceo', password: 'statistics-ceo-password', name: '企业负责人', isAdmin: true,
+    });
+    const employee = db.createAccount({
+      organizationId: tenantOrg.id,
+      username: 'statistics-employee', password: 'statistics-employee-password', name: '填报员工', isAdmin: false,
+    });
+    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    db.joinOrganizationToPark({ organizationId: tenantOrg.id, actorAccountId: ceo.id, code: invite.code, address: 'A 座 101', roomNumber: '101' });
+
+    const created = db.createParkDataStatisticsTask({
+      createdByAccountId: parkAdmin.id,
+      title: '年度经营数据',
+      description: '请按模板填报',
+      deadline: '2099-12-31',
+      fields: ['营业收入', '员工人数'],
+      organizationIds: [tenantOrg.id],
+    });
+    expect(created.recipientCount).toBe(1);
+    expect(db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0]).toMatchObject({
+      organizationId: tenantOrg.id,
+      ceoAccountId: ceo.id,
+      status: 'pending',
+    });
+    expect(db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments).toHaveLength(1);
+
+    db.delegateParkDataStatistics(created.task.id, ceo.id, employee.id);
+    db.submitParkDataStatisticsDraft(created.task.id, employee.id, { 营业收入: '100 万', 员工人数: '20' });
+    expect(db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0]?.status).toBe('pending_review');
+    db.reviewParkDataStatistics(created.task.id, ceo.id, false, '请补充统计口径');
+    expect(db.listParkDataStatisticsTasks(employee.id)[0]?.assignments[0]?.status).toBe('returned');
+    db.submitParkDataStatisticsDraft(created.task.id, employee.id, { 营业收入: '100 万', 员工人数: '20', 统计口径: '含税' });
+    db.reviewParkDataStatistics(created.task.id, ceo.id, true);
+    expect(db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments[0]?.status).toBe('submitted');
+    db.remindParkDataStatistics(created.task.id, parkAdmin.id);
+  });
+});
 describe('企业 Token 用量时间窗口', () => {
   it('按 UTC datetime 比较完整 30 天边界，并把 SQLite 时间返回为带 Z 的 ISO', async () => {
     vi.useFakeTimers();
