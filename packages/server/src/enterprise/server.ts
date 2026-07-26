@@ -39,7 +39,6 @@ import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 
 import { resolveEnterprisePublicBaseUrl } from './publicInvite.js';
-import { sendLocalAgentPage } from './localAgentPage.js';
 import { handleFeatureFlagsRoute } from './featureFlagsAdmin.js';
 import { parkAdminHTML } from './parkAdminPage.js';
 import {
@@ -47,9 +46,6 @@ import {
   createRepairSmsSenderFromEnv,
   type RepairNotificationSender,
 } from './repairNotifications.js';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join as pathJoin } from 'node:path';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
 import { handleAdminDataRoute } from './adminDataRoutes.js';
 import { handleAdminPageRoute } from './adminPageRoutes.js';
@@ -58,6 +54,7 @@ import { handleAuthRoute } from './authRoutes.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import { handleDeploymentRoute } from './deploymentRoutes.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
+import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
 import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 import { handleOrganizationRoute } from './organizationRoutes.js';
@@ -186,13 +183,6 @@ export interface EnterpriseProxyOptions {
 }
 
 const ENTERPRISE_API_VERSION = 4;
-
-/** 内存中的配对令牌存储（服务重启后自动失效）。 */
-const pairingTokens = new Map<string, {
-  instanceId: string;
-  expiresAt: number;
-  createdAt: number;
-}>();
 
 const ENTERPRISE_CAPABILITIES = [
   'password_auth',
@@ -868,79 +858,14 @@ function makeHandler(
         return;
       }
 
-      // ===== Local Agent Discovery SDK =====
-      if (path === '/enterprise/sdk/otto-discovery.js' && method === 'GET') {
-        try {
-          const __filename = fileURLToPath(import.meta.url);
-          const __dirname = dirname(__filename);
-          const sdkPath = pathJoin(__dirname, 'public', 'otto-discovery.js');
-          const sdkContent = readFileSync(sdkPath, 'utf-8');
-          res.writeHead(200, {
-            'Content-Type': 'application/javascript; charset=utf-8',
-            'Cache-Control': 'public, max-age=3600',
-            'Access-Control-Allow-Origin': '*',
-          });
-          res.end(sdkContent);
-        } catch {
-          sendJSON(res, 404, { error: 'sdk not found' });
-        }
-        return;
-      }
-
-      // ===== Local Agent Detection Page =====
-      if (path === '/enterprise/local-agent' && method === 'GET') {
-        sendLocalAgentPage(res);
-        return;
-      }
-
-      // ===== Pairing Token Generation =====
-      if (path === '/enterprise/local-agent/pair' && method === 'POST') {
-        const body = await readBody(req);
-        const instanceId = typeof body.instanceId === 'string' ? body.instanceId : '';
-        if (!instanceId) {
-          sendJSON(res, 400, { ok: false, error: 'missing instanceId' });
-          return;
-        }
-        // 生成 6 位配对令牌，5 分钟过期
-        const token = randomBytes(3).toString('hex').toUpperCase();
-        const expiresAt = Date.now() + 5 * 60 * 1000;
-        // 存到内存中（服务重启后令牌自动失效）
-        pairingTokens.set(token, { instanceId, expiresAt, createdAt: Date.now() });
-        sendJSON(res, 200, {
-          ok: true,
-          data: {
-            token,
-            expiresIn: 300,
-            instructions: '请在 Otto 桌面端中输入此令牌完成接入',
-          },
-        });
-        return;
-      }
-
-      // ===== Pairing Token Verification (called by Otto Desktop) =====
-      if (path === '/enterprise/local-agent/pair/verify' && method === 'POST') {
-        const body = await readBody(req);
-        const token = (typeof body.token === 'string' ? body.token : '').toUpperCase();
-        if (!token || !pairingTokens.has(token)) {
-          sendJSON(res, 400, { ok: false, error: '令牌无效或已过期' });
-          return;
-        }
-        const record = pairingTokens.get(token)!;
-        if (Date.now() > record.expiresAt) {
-          pairingTokens.delete(token);
-          sendJSON(res, 400, { ok: false, error: '令牌已过期' });
-          return;
-        }
-        // 令牌有效，返回 instanceId 供 desktop 确认
-        pairingTokens.delete(token);
-        sendJSON(res, 200, {
-          ok: true,
-          data: {
-            verified: true,
-            instanceId: record.instanceId,
-            message: '配对令牌验证成功',
-          },
-        });
+      if (await handleLocalAgentRoute({
+        path,
+        method,
+        req,
+        res,
+        readBody,
+        sendJSON,
+      })) {
         return;
       }
 
