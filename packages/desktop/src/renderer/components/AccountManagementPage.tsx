@@ -10,6 +10,7 @@ import type {
   EnterpriseOrganizationDepartment,
   EnterpriseOrganizationInviteContext,
   EnterpriseOrganizationFeatures,
+  EnterprisePark,
   EnterpriseParkSurveyResult,
   EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
@@ -203,6 +204,7 @@ export function AccountManagementPage({
   const [parkPushMessage, setParkPushMessage] = useState<string | null>(null);
   const [parkPushError, setParkPushError] = useState<string | null>(null);
   const [parkServiceBrand, setParkServiceBrand] = useState('园区服务');
+  const [currentPark, setCurrentPark] = useState<EnterprisePark | null>(null);
   const [parkSurveyResults, setParkSurveyResults] = useState<EnterpriseParkSurveyResult[]>([]);
   const [parkTenantOrganizations, setParkTenantOrganizations] = useState<EnterpriseParkTenantOrganization[]>([]);
   const [parkTenantError, setParkTenantError] = useState<string | null>(null);
@@ -217,19 +219,31 @@ export function AccountManagementPage({
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const invite = inviteContext?.invite;
+  const isParkAdminOrganization = Boolean(
+    currentPark?.isAdminOrganization || (
+      currentPark?.adminOrganizationId && currentPark.adminOrganizationId === currentAccount.organizationId
+    ),
+  );
 
   useEffect(() => {
     let cancelled = false;
     setParkServiceBrand('园区服务');
+    setCurrentPark(null);
     if (!currentAccount.isAdmin || typeof window.otto.enterpriseParkView !== 'function') {
       return () => { cancelled = true; };
     }
     void window.otto.enterpriseParkView()
       .then((park) => {
-        if (!cancelled) setParkServiceBrand(park?.brandName?.trim() || '园区服务');
+        if (!cancelled) {
+          setCurrentPark(park);
+          setParkServiceBrand(park?.brandName?.trim() || '园区服务');
+        }
       })
       .catch(() => {
-        if (!cancelled) setParkServiceBrand('园区服务');
+        if (!cancelled) {
+          setCurrentPark(null);
+          setParkServiceBrand('园区服务');
+        }
       });
     return () => { cancelled = true; };
   }, [currentAccount.id, currentAccount.isAdmin, currentAccount.organizationId]);
@@ -348,17 +362,25 @@ export function AccountManagementPage({
     [accounts],
   );
   const refreshParkSurveyResults = useCallback(async (): Promise<void> => {
-    if (!currentAccount.isAdmin) return;
+    if (!currentAccount.isAdmin || !isParkAdminOrganization) {
+      setParkSurveyResults([]);
+      setParkSurveyError(null);
+      return;
+    }
     try {
       setParkSurveyResults(await window.otto.enterpriseParkSurveyResults());
       setParkSurveyError(null);
     } catch (cause) {
       setParkSurveyError(errorMessage(cause));
     }
-  }, [currentAccount.isAdmin]);
+  }, [currentAccount.isAdmin, isParkAdminOrganization]);
 
   const refreshParkTenantOrganizations = useCallback(async (): Promise<void> => {
-    if (!currentAccount.isAdmin || typeof window.otto.enterpriseParkTenants !== 'function') return;
+    if (!currentAccount.isAdmin || !isParkAdminOrganization || typeof window.otto.enterpriseParkTenants !== 'function') {
+      setParkTenantOrganizations([]);
+      setParkTenantError(null);
+      return;
+    }
     try {
       setParkTenantOrganizations(await window.otto.enterpriseParkTenants());
       setParkTenantError(null);
@@ -366,7 +388,7 @@ export function AccountManagementPage({
       setParkTenantOrganizations([]);
       setParkTenantError(errorMessage(cause));
     }
-  }, [currentAccount.isAdmin]);
+  }, [currentAccount.isAdmin, isParkAdminOrganization]);
   useEffect(() => {
     void refreshParkSurveyResults();
   }, [refreshParkSurveyResults]);
@@ -584,6 +606,10 @@ export function AccountManagementPage({
   };
 
   const pushParkService = async (): Promise<void> => {
+    if (!isParkAdminOrganization) {
+      setParkPushError('当前企业未认证为产业园管理方，不能发布园区公告或调查');
+      return;
+    }
     setParkPushBusy(true);
     setParkPushError(null);
     setParkPushMessage(null);
@@ -751,7 +777,7 @@ export function AccountManagementPage({
         />
       ) : null}
 
-      {currentAccount.isAdmin && configurationFeatures?.park_service === true ? (
+      {currentAccount.isAdmin && configurationFeatures?.park_service === true && isParkAdminOrganization ? (
         <section className="otto-account-invite otto-account-park-push" aria-label="园区公告与调查发布">
           <header>
             <div>

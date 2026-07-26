@@ -58,8 +58,6 @@ export function EnterpriseAdministrationPanel({
   const [newPositionTitle, setNewPositionTitle] = useState('');
   const [newPositionRole, setNewPositionRole] = useState<EnterprisePositionRoleMapping>('member');
   const [parkInviteCode, setParkInviteCode] = useState('');
-  const [newParkName, setNewParkName] = useState('');
-  const [newParkBrand, setNewParkBrand] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -279,16 +277,7 @@ export function EnterpriseAdministrationPanel({
                   void run(() => window.otto.enterpriseParkJoin(parkInviteCode.trim()), '整个企业已加入产业园');
                 }}>作为入驻企业加入</button>
               </div>
-              <div className="otto-account-invite__controls">
-                <label>创建产业园端<input value={newParkName} onChange={(event) => setNewParkName(event.target.value)} placeholder="例如：科技大厦" /></label>
-                <label>服务品牌<input value={newParkBrand} onChange={(event) => setNewParkBrand(event.target.value)} placeholder="例如：科技大厦园区服务" /></label>
-                <button type="button" disabled={busy || !newParkName.trim()} onClick={() => {
-                  void run(() => window.otto.enterpriseParkRegister({
-                    name: newParkName.trim(),
-                    brandName: newParkBrand.trim() || `${newParkName.trim()}服务`,
-                  }), '产业园已注册');
-                }}>创建产业园管理端</button>
-              </div>
+              <p className="otto-enterprise-config__hint">创建产业园端需要平台管理员在多企业管理页面完成认证。普通企业 CEO 这里只能填写邀请码加入已有产业园。</p>
             </>
           )}
         </div>

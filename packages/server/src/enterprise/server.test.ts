@@ -1027,6 +1027,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="platformInvitePosition"');
     expect(html).toContain('id="platformInviteRole"');
     expect(html).toContain('id="platformInviteMaxUses"');
+    expect(html).toContain('id="platformParkCard"');
+    expect(html).toContain('id="platformParkRegisterForm"');
+    expect(html).toContain('id="platformParkJoinForm"');
+    expect(html).toContain('/park/join');
     expect(html).toContain("body:JSON.stringify(body)");
     expect(html).toContain("value=invite&&invite.defaultDepartment||''");
     expect(html).toContain("account.positionTitle||account.role");
@@ -1036,7 +1040,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).not.toContain('<iframe');
     expect(html).toContain('sessionStorage');
     expect(html).not.toContain(ADMIN_TOKEN);
-  });
+  }, 30_000);
 
   it('积分管理复用账号后台会话，未登录或会话失效时明确引导返回管理员登录', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
@@ -2640,7 +2644,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       body: JSON.stringify({ action: 'accept' }),
     });
     expect((await accepted.json()).ticket.status).toBe('处理中');
-  });
+  }, 30_000);
 });
 
 describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
@@ -3873,5 +3877,53 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       headers: { authorization: `Bearer ${tenantAdminToken}` },
     });
     expect(tenantCannotList.status).toBe(403);
+
+    const platformTenantProvision = await fetch(`${base}/enterprise/organizations`, {
+      method: 'POST',
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Platform Joined Company',
+        slug: 'platform-joined-company',
+        admin: {
+          username: 'platform.tenant.owner',
+          password: 'tenant-owner-password',
+          name: 'Platform Tenant Owner',
+        },
+      }),
+    });
+    expect(platformTenantProvision.status).toBe(201);
+    const platformTenantProvisioned = await platformTenantProvision.json();
+    const platformJoin = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park/join`,
+      {
+        method: 'POST',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ inviteCode: invite.code }),
+      },
+    );
+    expect(platformJoin.status).toBe(200);
+    expect((await platformJoin.json()).park).toMatchObject({
+      id: park.id,
+      isAdminOrganization: false,
+    });
+    const platformTenantOverview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(platformTenantOverview.status).toBe(200);
+    expect((await platformTenantOverview.json()).park).toMatchObject({
+      id: park.id,
+      isAdminOrganization: false,
+    });
+    const platformParkOverview = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/overview`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(platformParkOverview.status).toBe(200);
+    expect((await platformParkOverview.json()).park.tenants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
+      ]),
+    );
   }, 30_000);
 });

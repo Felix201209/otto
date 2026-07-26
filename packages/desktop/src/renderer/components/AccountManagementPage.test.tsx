@@ -222,7 +222,27 @@ describe('企业引入链接', () => {
 });
 
 describe('园区内容发布', () => {
+  it('未认证为产业园端的企业管理员不能看到园区公告发布和回收面板', async () => {
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    await waitFor(() => expect(window.otto.enterpriseParkView).toHaveBeenCalled());
+    expect(screen.queryByRole('region', { name: '园区公告与调查发布' })).toBeNull();
+    expect(window.otto.enterpriseParkServicePush).not.toHaveBeenCalled();
+    expect(window.otto.enterpriseParkSurveyResults).not.toHaveBeenCalled();
+  });
+
   it('管理员只发布公告和问卷，其他七项服务由用户主动申请', async () => {
+    vi.mocked(window.otto.enterpriseParkView).mockResolvedValueOnce({
+      id: 'park_acme',
+      name: '星河产业园',
+      slug: 'acme-park',
+      brandName: '园区服务',
+      adminOrganizationId: 'org_acme',
+      isAdminOrganization: true,
+      status: 'active',
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    });
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
     const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
     const type = within(panel).getByLabelText('选择园区服务类型') as HTMLSelectElement;
@@ -249,6 +269,7 @@ describe('园区内容发布', () => {
       slug: 'star-park',
       brandName: '星火智慧园区服务',
       adminOrganizationId: 'org_acme',
+      isAdminOrganization: true,
       status: 'active',
       createdAt: '2026-07-21T00:00:00.000Z',
       updatedAt: '2026-07-21T00:00:00.000Z',

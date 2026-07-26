@@ -7403,4 +7403,5 @@ h6.otto-prose__h {
 .otto-enterprise-config__park-state b { flex: 0 0 auto; border-radius: var(--otto-radius-pill); background: var(--otto-surface); color: var(--otto-accent-hover); font-size: 11px; padding: 5px 8px; }
 .otto-enterprise-config__invite { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; color: var(--otto-text-secondary); font-size: 12px; }
 .otto-enterprise-config__invite strong { color: var(--otto-text); font: 700 13px/1.3 var(--otto-font-mono); }
+.otto-enterprise-config__hint { margin: 0; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text-secondary); font-size: 12px; line-height: 1.55; padding: 10px 12px; }
 @media (max-width: 760px) { .otto-enterprise-config__hero { flex-direction: column; } .otto-enterprise-config__switches { grid-template-columns: 1fr; } }

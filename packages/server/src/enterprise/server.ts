@@ -1653,19 +1653,9 @@ function makeHandler(
           sendJSON(res, 200, { park: db.getParkForOrganization(principal.organizationId) });
           return;
         }
-        const body = await readBody(req);
-        try {
-          const park = db.createPark({
-            adminOrganizationId: principal.organizationId,
-            actorAccountId: principal.account.id,
-            name: typeof body.name === 'string' ? body.name : '',
-            slug: typeof body.slug === 'string' ? body.slug : undefined,
-            brandName: typeof body.brandName === 'string' ? body.brandName : undefined,
-          });
-          sendJSON(res, 201, { park });
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : '产业园注册失败' });
-        }
+        sendJSON(res, 403, {
+          error: '产业园端只能由平台管理员在多企业管理页面认证创建',
+        });
         return;
       }
 
@@ -2159,6 +2149,11 @@ function makeHandler(
           sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
           return;
         }
+        const park = db.getParkForOrganization(principal.organizationId);
+        if (!park || park.adminOrganizationId !== principal.organizationId) {
+          sendJSON(res, 403, { error: '当前企业不是产业园管理方' });
+          return;
+        }
         const body = await readBody(req);
         const recipientAccountId = typeof body.recipientAccountId === 'string' ? body.recipientAccountId.trim() : '';
         const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
@@ -2174,7 +2169,6 @@ function makeHandler(
           return;
         }
         try {
-          const park = db.getParkForOrganization(principal.organizationId);
           const configuredService = park
             ? db.listParkServices(park.id).find((item) => item.id === serviceId)
             : undefined;
@@ -2490,6 +2484,18 @@ function makeHandler(
           sendJSON(res, 200, {
             organization,
             accounts,
+            features: db.getOrganizationFeatures(organizationId),
+            park: (() => {
+              const park = db.getParkForOrganization(organizationId);
+              return park ? {
+                ...park,
+                isAdminOrganization: park.adminOrganizationId === organizationId,
+                services: db.listParkServices(park.id),
+                tenants: park.adminOrganizationId === organizationId
+                  ? db.listParkTenantOrganizations(park.id)
+                  : [],
+              } : null;
+            })(),
             invite: withPublicInviteLink(
               db.getOrganizationInvite(organizationId),
               publicBaseUrl,
@@ -2531,6 +2537,39 @@ function makeHandler(
             publicBaseUrl,
           );
           sendJSON(res, 201, { organization, invite });
+          return;
+        }
+
+        if (segments.length === 3 && resource === 'park' && segments[2] === 'join' && method === 'POST') {
+          const body = await readBody(req);
+          try {
+            const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : '';
+            const actor = db.listAccounts(organizationId).find(
+              (account) => account.isAdmin && account.status === 'active',
+            );
+            if (!actor) {
+              sendJSON(res, 409, { error: '该企业没有可用的企业管理员账号，无法加入产业园' });
+              return;
+            }
+            const park = db.joinOrganizationToPark({
+              organizationId,
+              actorAccountId: actor.id,
+              code: inviteCode,
+            });
+            sendJSON(res, 200, {
+              organization: db.getEnterpriseOrganization(organizationId),
+              park: {
+                ...park,
+                isAdminOrganization: park.adminOrganizationId === organizationId,
+                services: db.listParkServices(park.id),
+                tenants: park.adminOrganizationId === organizationId
+                  ? db.listParkTenantOrganizations(park.id)
+                  : [],
+              },
+            });
+          } catch (error) {
+            sendJSON(res, 400, { error: error instanceof Error ? error.message : 'park join failed' });
+          }
           return;
         }
 
@@ -3537,8 +3576,8 @@ export function adminAccountsHTML(): string {
         <article id="structureDisabled" class="configuration-card hidden"><h3>企业树已关闭</h3><div class="configuration-disabled">当前不加载部门与职位数据。在功能开关中重新启用后才会恢复。</div></article>
         <article id="parkCard" class="configuration-card wide" aria-labelledby="parkTitle"><h3 id="parkTitle">产业园管理</h3><p>产业园方可发放邀请码、管理服务和指定专员；普通企业填写邀请码后整体加入。</p>
           <div id="parkEmptyControls" class="park-forms">
-            <form id="parkRegisterForm" class="park-form"><h4>注册产业园</h4><p>当前企业将成为该产业园的管理方。</p><div class="field"><label for="parkName">产业园名称</label><input id="parkName" maxlength="80" required placeholder="例如：科技大厦"></div><div class="field"><label for="parkBrandName">客户端服务名称</label><input id="parkBrandName" maxlength="80" placeholder="例如：科技大厦服务"></div><button class="primary" type="submit">注册并开始管理</button></form>
             <form id="parkJoinForm" class="park-form"><h4>加入已有产业园</h4><p>使用产业园管理方发来的 12 位大小写敏感邀请码。</p><div class="field"><label for="parkJoinCode">产业园邀请码</label><input id="parkJoinCode" autocomplete="off" required placeholder="Aa3B-k9Pq-Z7xY"></div><button class="primary" type="submit">整个企业加入</button></form>
+            <div class="park-form"><h4>产业园端认证</h4><p>创建产业园端需要平台管理员在多企业管理页面认证当前企业。未认证企业不能发布园区公告、管理服务或邀请其他企业。</p></div>
           </div>
           <div id="parkDetails" class="hidden"><div id="parkSummary" class="park-summary"></div><div id="parkTenantNote" class="configuration-disabled hidden">当前企业已加入该产业园。服务与专员由产业园管理方统一配置。</div><div id="parkOwnerControls" class="hidden"><form id="parkInviteForm" class="park-invite"><div class="field"><label for="parkInviteCode">最新产业园邀请码</label><input id="parkInviteCode" readonly placeholder="点击生成"></div><div class="field"><label for="parkInviteMax">可使用次数</label><input id="parkInviteMax" type="number" min="1" max="10000" placeholder="不限"></div><button class="primary" type="submit">生成邀请码</button></form><div id="serviceList" class="service-list"></div></div></div>
         </article>
@@ -3647,7 +3686,6 @@ async function deletePosition(id){if(!window.confirm('确认删除该职位？�
 function renderPark(){const empty=$('parkEmptyControls'),details=$('parkDetails'),owner=$('parkOwnerControls'),tenant=$('parkTenantNote');if(!organizationFeatures||organizationFeatures.park_service!==true){empty.classList.add('hidden');details.classList.add('hidden');return}empty.classList.toggle('hidden',!!currentPark);details.classList.toggle('hidden',!currentPark);if(!currentPark){owner.classList.add('hidden');tenant.classList.add('hidden');$('serviceList').replaceChildren();return}const isOwner=currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId;$('parkSummary').innerHTML='<div><strong>'+esc(currentPark.brandName||currentPark.name)+'</strong><span>'+esc(currentPark.name)+' · '+esc(currentPark.slug)+'</span></div><span class="badge '+(isOwner?'ok':'')+'">'+(isOwner?'产业园管理方':'已入驻企业')+'</span>';owner.classList.toggle('hidden',!isOwner);tenant.classList.toggle('hidden',isOwner);if(!isOwner){$('serviceList').replaceChildren();return}renderParkServices()}
 function renderParkServices(){const host=$('serviceList');if(!parkServices.length){host.innerHTML='<div class="configuration-disabled">暂无可配置服务。</div>';return}const activeAccounts=accounts.filter(account=>account.status==='active');host.innerHTML=parkServices.map(service=>{const assigned=parkSpecialists.filter(item=>item.serviceId===service.id);return '<section class="service-row"><div class="service-head"><div><b>'+esc(service.name)+'</b><div class="role-note">'+esc(service.id)+'</div></div><span class="badge '+(service.enabled?'ok':'off')+'">'+(service.enabled?'已启用':'已关闭')+'</span></div><div class="service-editor"><input data-service-name="'+esc(service.id)+'" value="'+esc(service.name)+'" aria-label="'+esc(service.name)+' 名称"><label><input type="checkbox" data-service-enabled="'+esc(service.id)+'" '+(service.enabled?'checked':'')+'> 启用</label><select data-specialist-select="'+esc(service.id)+'"><option value="">选择服务专员</option>'+activeAccounts.map(account=>'<option value="'+esc(account.id)+'">'+esc(account.name)+' @'+esc(account.username)+'</option>').join('')+'</select><div class="row-actions"><button class="edit" type="button" data-save-service="'+esc(service.id)+'">保存</button><button class="secondary" type="button" data-add-specialist="'+esc(service.id)+'">添加专员</button></div></div><div class="service-specialists">'+(assigned.map(item=>'<span class="specialist-chip">'+esc(item.name)+'<button type="button" data-remove-specialist="'+esc(service.id)+'" data-account-id="'+esc(item.accountId)+'" aria-label="移除 '+esc(item.name)+'">×</button></span>').join('')||'<span class="role-note">未指定时回退通知产业园管理员</span>')+'</div></section>'}).join('');host.querySelectorAll('[data-save-service]').forEach(button=>button.addEventListener('click',()=>saveParkService(button.dataset.saveService)));host.querySelectorAll('[data-add-specialist]').forEach(button=>button.addEventListener('click',()=>addParkSpecialist(button.dataset.addSpecialist)));host.querySelectorAll('[data-remove-specialist]').forEach(button=>button.addEventListener('click',()=>removeParkSpecialist(button.dataset.removeSpecialist,button.dataset.accountId)))}
 async function loadPark(){if(!organizationFeatures||organizationFeatures.park_service!==true){currentPark=null;parkServices=[];parkSpecialists=[];renderPark();return}const data=await api('/enterprise/park/manage');currentPark=data.park||null;parkServices=[];parkSpecialists=[];if(currentPark&&currentAdmin&&currentPark.adminOrganizationId===currentAdmin.organizationId){const results=await Promise.all([api('/enterprise/park/services'),api('/enterprise/park/specialists')]);parkServices=results[0].services||[];parkSpecialists=results[1].specialists||[]}renderPark()}
-async function registerPark(event){event.preventDefault();const name=$('parkName').value.trim(),brandName=$('parkBrandName').value.trim();try{const data=await api('/enterprise/park/manage',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});currentPark=data.park;await loadPark();setConfigurationStatus('产业园已注册')}catch(error){configurationFailure(error)}}
 async function joinPark(event){event.preventDefault();const inviteCode=$('parkJoinCode').value.trim();try{const data=await api('/enterprise/park/join',{method:'POST',body:JSON.stringify({inviteCode})});currentPark=data.park;await loadPark();setConfigurationStatus('当前企业已加入产业园')}catch(error){configurationFailure(error)}}
 async function issueParkInvite(event){event.preventDefault();const raw=$('parkInviteMax').value.trim();try{const data=await api('/enterprise/park/invite',{method:'POST',body:JSON.stringify({maxUses:raw?Number(raw):null})});$('parkInviteCode').value=data.invite.code;setConfigurationStatus('产业园邀请码已生成，有效期 7 天')}catch(error){configurationFailure(error)}}
 async function saveParkService(serviceId){const name=document.querySelector('[data-service-name="'+CSS.escape(serviceId)+'"]').value.trim();const enabled=document.querySelector('[data-service-enabled="'+CSS.escape(serviceId)+'"]').checked;try{await api('/enterprise/park/services',{method:'PATCH',body:JSON.stringify({serviceId,name,enabled})});await loadPark();setConfigurationStatus('园区服务已保存')}catch(error){configurationFailure(error)}}
@@ -3695,7 +3733,6 @@ $('departmentForm').addEventListener('submit',createDepartment);
 $('moduleUpdateForm').addEventListener('submit',publishModuleUpdate);
 $('moduleUpdateModule').addEventListener('change',fillModuleUpdateForm);
 $('moduleUpdateDisable').addEventListener('click',disableModuleUpdate);
-$('parkRegisterForm').addEventListener('submit',registerPark);
 $('parkJoinForm').addEventListener('submit',joinPark);
 $('parkInviteForm').addEventListener('submit',issueParkInvite);
 document.querySelectorAll('[data-account-template]').forEach(button=>button.addEventListener('click',()=>applyTemplate(button.dataset.accountTemplate,button)));
@@ -3773,6 +3810,27 @@ function platformAdminHTML(): string {
         <div class="metric"><strong id="metricDepartments">—</strong><span>已分配部门</span></div>
         <div class="metric"><strong id="metricTokens">—</strong><span>近 30 天 Token</span></div>
       </div>
+      <section class="card" id="platformParkCard" aria-label="当前企业产业园设置">
+        <div class="card-head"><div><h4>产业园设置</h4><p class="card-copy">这里针对左侧选中的企业生效。平台可认证产业园端；普通企业 CEO 只能用邀请码加入已有产业园。</p></div><span id="platformParkStatus" class="badge">未加入</span></div>
+        <div id="platformParkEmpty" class="panel-grid">
+          <form id="platformParkRegisterForm" class="department" style="margin:0">
+            <h4>认证为产业园端</h4><p class="card-copy">该企业认证后，才拥有发放产业园邀请码和发布园区公告的权限。</p>
+            <div class="field"><label for="platformParkName">产业园名称</label><input id="platformParkName" maxlength="80" placeholder="例如：科技大厦" required></div>
+            <div class="field"><label for="platformParkBrandName">客户端服务名称</label><input id="platformParkBrandName" maxlength="80" placeholder="例如：科技大厦园区服务"></div>
+            <div class="inline-actions"><button class="primary" type="submit">认证为产业园端</button></div>
+          </form>
+          <form id="platformParkJoinForm" class="department" style="margin:0">
+            <h4>加入已有产业园</h4><p class="card-copy">使用产业园管理方生成的邀请码，让整个企业成为入驻企业。</p>
+            <div class="field"><label for="platformParkJoinCode">产业园邀请码</label><input id="platformParkJoinCode" autocomplete="off" placeholder="Aa3B-k9Pq-Z7xY" required></div>
+            <div class="inline-actions"><button class="primary" type="submit">整个企业加入</button></div>
+          </form>
+        </div>
+        <div id="platformParkDetails" class="hidden">
+          <div id="platformParkSummary" class="department" style="margin-bottom:10px"></div>
+          <div id="platformParkTenants" class="department-list"></div>
+        </div>
+        <div id="platformParkNotice" class="notice hidden" role="status"></div>
+      </section>
       <div class="panel-grid">
         <section class="card">
           <div class="card-head"><div><h4>企业成员引入</h4><p class="card-copy">岗位邀请码精确有效 7 天；生成新码会撤销旧码。</p></div><span id="inviteStatus" class="badge">未生成</span></div>
@@ -3836,17 +3894,20 @@ function setAuthenticated(authenticated){$('tokenGate').classList.toggle('hidden
 function clearPlatformSession(message){platformRequestEpoch+=1;token='';organizations=[];selectedOrganizationId='';selectedOverview=null;sessionStorage.removeItem(KEY);sessionStorage.removeItem(SELECTED_KEY);setAuthenticated(false);$('organizationNav').replaceChildren();$('organizationCount').textContent='0 个';$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.add('hidden');if(message)show('tokenError',message)}
 function filteredOrganizations(){const query=$('organizationSearch').value.trim().toLocaleLowerCase('zh-CN');if(!query)return organizations;return organizations.filter(organization=>String(organization.name||'').toLocaleLowerCase('zh-CN').includes(query)||String(organization.slug||'').toLocaleLowerCase('en-US').includes(query))}
 function renderOrganizations(){const list=$('organizationNav');list.replaceChildren();const visible=filteredOrganizations();$('organizationCount').textContent=organizations.length+' 个';if(!visible.length){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent=organizations.length?'没有匹配的企业':'还没有企业，请先创建第一家企业';list.append(empty);return}visible.forEach(organization=>{const button=document.createElement('button');button.type='button';button.className='organization-button';button.dataset.organizationId=organization.id;button.setAttribute('aria-selected',String(organization.id===selectedOrganizationId));const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=String(organization.name||'未命名企业');const meta=document.createElement('small');meta.textContent=String(organization.slug||'');copy.append(name,meta);const state=document.createElement('span');state.className='organization-state';state.setAttribute('aria-label',organization.status==='active'?'正常运行':'已停用');button.append(copy,state);button.addEventListener('click',()=>selectOrganization(organization.id,true));list.append(button)})}
-function setPanelLoading(organization){selectedOverview=null;resetInviteArm();renderInvite(null);$('issueInvite').disabled=true;$('organizationPanel').classList.remove('hidden');$('emptyPanel').classList.add('hidden');$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · 正在加载企业数据…';['metricAccounts','metricAdmins','metricDepartments','metricTokens'].forEach(id=>$(id).textContent='—');$('accountRows').replaceChildren();$('departmentList').replaceChildren();show('panelError','')}
+function setPanelLoading(organization){selectedOverview=null;resetInviteArm();renderInvite(null);renderPlatformPark(null);$('issueInvite').disabled=true;$('organizationPanel').classList.remove('hidden');$('emptyPanel').classList.add('hidden');$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · 正在加载企业数据…';['metricAccounts','metricAdmins','metricDepartments','metricTokens'].forEach(id=>$(id).textContent='—');$('accountRows').replaceChildren();$('departmentList').replaceChildren();show('panelError','')}
 function renderInvite(invite){const available=Boolean(invite&&invite.status==='active');$('inviteCode').textContent=available?String(invite.code||'—'):'—';$('inviteStatus').textContent=available?'有效':'未生成';$('inviteStatus').className=available?'badge ok':'badge';$('inviteMeta').textContent=available?('有效至 '+new Date(invite.expiresAt).toLocaleString('zh-CN',{hour12:false})+' · 已使用 '+Number(invite.usedCount||0)+(invite.maxUses==null?' 次':' / '+Number(invite.maxUses)+' 次')):'当前企业没有有效邀请码';$('inviteLink').textContent=available?String(invite.link||''):'尚无可复制链接';$('copyInviteCode').disabled=!available;$('copyInviteLink').disabled=!available;$('platformInviteDepartment').value=invite&&invite.defaultDepartment||'';$('platformInvitePosition').value=invite&&invite.positionTitle||'';$('platformInviteRole').value=invite&&invite.defaultRole||'';$('platformInviteMaxUses').value=invite&&invite.maxUses||''}
 function renderDepartments(accounts){const list=$('departmentList');list.replaceChildren();const groups=new Map();accounts.forEach(account=>{const department=String(account.department||'未分配部门');if(!groups.has(department))groups.set(department,[]);groups.get(department).push(account)});if(!groups.size){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无成员';list.append(empty);return}Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0],'zh-CN')).forEach(([department,members])=>{const card=document.createElement('article');card.className='department';const head=document.createElement('div');head.className='department-head';const name=document.createElement('span');name.textContent=department;const count=document.createElement('span');count.className='department-count';count.textContent=members.length+' 人';head.append(name,count);const names=document.createElement('div');names.className='department-members';names.textContent=members.map(member=>String(member.name||member.username||'未命名成员')).join('、');card.append(head,names);list.append(card)})}
 function appendCell(row,text,className){const cell=document.createElement('td');if(className)cell.className=className;cell.textContent=String(text==null?'':text);row.append(cell);return cell}
 function renderAccounts(accounts){const rows=$('accountRows');rows.replaceChildren();$('accountCount').textContent=accounts.length+' 个';if(!accounts.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.className='table-empty';cell.textContent='当前企业还没有成员账号';row.append(cell);rows.append(row);return}accounts.forEach(account=>{const row=document.createElement('tr');const member=document.createElement('td');const name=document.createElement('div');name.className='name';name.textContent=String(account.name||'未命名成员');const username=document.createElement('div');username.className='sub';username.textContent='@'+String(account.username||'');member.append(name,username);row.append(member);appendCell(row,(account.department||'未分配部门')+' / '+(account.positionTitle||account.role||'未设置职位'));const permission=appendCell(row,'');const permissionBadge=document.createElement('span');permissionBadge.className=account.isAdmin?'badge admin':'badge';permissionBadge.textContent=account.isAdmin?'企业管理员':'普通成员';permission.append(permissionBadge);const status=appendCell(row,'');const statusBadge=document.createElement('span');statusBadge.className=account.status==='active'?'badge ok':'badge';statusBadge.textContent=account.status==='active'?'正常':'已停用';status.append(statusBadge);appendCell(row,formatNumber(account.usage&&account.usage.totalTokens));const action=appendCell(row,'');const remove=document.createElement('button');remove.type='button';remove.className='danger';remove.textContent='删除';remove.setAttribute('aria-label','删除账号 '+String(account.name||account.username||''));remove.addEventListener('click',()=>deleteAccount(remove,account));action.append(remove);rows.append(row)})}
-function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts)}
+function renderPlatformPark(data){const park=data&&data.park||null;$('platformParkNotice').classList.add('hidden');$('platformParkEmpty').classList.toggle('hidden',!!park);$('platformParkDetails').classList.toggle('hidden',!park);if(!park){$('platformParkStatus').textContent='未加入';$('platformParkStatus').className='badge';$('platformParkSummary').replaceChildren();$('platformParkTenants').replaceChildren();return}const isOwner=park.isAdminOrganization||park.adminOrganizationId===(data.organization&&data.organization.id);$('platformParkStatus').textContent=isOwner?'产业园管理方':'已入驻企业';$('platformParkStatus').className=isOwner?'badge ok':'badge';$('platformParkSummary').innerHTML='<div class="department-head"><span>'+esc(park.brandName||park.name)+'</span><span class="department-count">'+esc(isOwner?'可邀请企业入驻':'由园区方统一配置')+'</span></div><div class="department-members">'+esc(park.name)+' · '+esc(park.slug||'')+'</div>';const tenants=Array.isArray(park.tenants)?park.tenants:[];const tenantHost=$('platformParkTenants');tenantHost.replaceChildren();if(!isOwner){const note=document.createElement('div');note.className='organization-empty';note.textContent='该企业已加入产业园，不能发布园区公告，也不能管理入驻企业。';tenantHost.append(note);return}if(!tenants.length){const empty=document.createElement('div');empty.className='organization-empty';empty.textContent='暂无企业加入该产业园。';tenantHost.append(empty);return}tenants.forEach(tenant=>{const item=document.createElement('article');item.className='department';const name=document.createElement('div');name.className='department-head';const strong=document.createElement('span');strong.textContent=String(tenant.name||'未命名企业');const status=document.createElement('span');status.className='department-count';status.textContent=String(tenant.status||'active');name.append(strong,status);const meta=document.createElement('div');meta.className='department-members';meta.textContent=String(tenant.slug||tenant.id||'');item.append(name,meta);tenantHost.append(item)})}
+function renderOverview(data){selectedOverview=data;$('issueInvite').disabled=false;const organization=data.organization;const accounts=Array.isArray(data.accounts)?data.accounts:[];const departments=new Set(accounts.map(account=>String(account.department||'').trim()).filter(Boolean));$('panelTitle').textContent=String(organization.name||'企业');$('panelMeta').textContent=String(organization.slug||'')+' · '+(organization.status==='active'?'正常运行':'已停用')+' · 创建于 '+new Date(organization.createdAt).toLocaleString('zh-CN',{hour12:false});$('metricAccounts').textContent=formatNumber(accounts.length);$('metricAdmins').textContent=formatNumber(accounts.filter(account=>account.isAdmin).length);$('metricDepartments').textContent=formatNumber(departments.size);$('metricTokens').textContent=formatNumber(data.usage&&data.usage.totalTokens);renderInvite(data.invite);renderDepartments(accounts);renderAccounts(accounts);renderPlatformPark(data)}
 async function selectOrganization(organizationId,focusTitle){const organization=organizations.find(item=>item.id===organizationId);if(!organization)return;selectedOrganizationId=organizationId;sessionStorage.setItem(SELECTED_KEY,organizationId);renderOrganizations();setPanelLoading(organization);const epoch=++platformRequestEpoch;try{const data=await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/overview');if(epoch!==platformRequestEpoch||selectedOrganizationId!==organizationId)return;renderOverview(data);if(focusTitle)$('panelTitle').focus()}catch(error){if(epoch!==platformRequestEpoch)return;if(isAuthorizationError(error)){clearPlatformSession('平台令牌已失效，请重新验证');$('platformToken').focus()}else show('panelError',error.message||'企业面板加载失败')}}
 async function loadOrganizations(preferredId){show('tokenError','');const data=await api('/enterprise/organizations');organizations=Array.isArray(data.organizations)?data.organizations:[];setAuthenticated(true);const preferred=organizations.find(organization=>organization.id===preferredId);const current=organizations.find(organization=>organization.id===selectedOrganizationId);const next=preferred||current||organizations[0]||null;selectedOrganizationId=next?next.id:'';renderOrganizations();if(next)await selectOrganization(next.id,false);else{$('organizationPanel').classList.add('hidden');$('emptyPanel').classList.remove('hidden')}}
 async function copyText(value,label){if(!value)return;try{await navigator.clipboard.writeText(value);show('globalNotice',label+'已复制');setTimeout(()=>show('globalNotice',''),2200)}catch{show('panelError','浏览器未允许复制，请手动选择文本')}}
 function resetInviteArm(){inviteArmed=false;$('issueInvite').textContent='生成新邀请码';$('issueInvite').classList.remove('armed');if(inviteArmTimer)clearTimeout(inviteArmTimer);inviteArmTimer=0}
 async function issueInvite(){if(!selectedOrganizationId||!selectedOverview||selectedOverview.organization.id!==selectedOrganizationId)return;if(!inviteArmed){inviteArmed=true;$('issueInvite').textContent='再次点击确认换新';$('issueInvite').classList.add('armed');inviteArmTimer=setTimeout(resetInviteArm,5000);return}const organizationId=selectedOrganizationId;const rawMaxUses=$('platformInviteMaxUses').value.trim();const body={defaultDepartment:$('platformInviteDepartment').value.trim()||null,positionTitle:$('platformInvitePosition').value.trim()||null,defaultRole:$('platformInviteRole').value.trim()||null,maxUses:rawMaxUses?Number(rawMaxUses):null};resetInviteArm();$('issueInvite').disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/invite',{method:'POST',body:JSON.stringify(body)});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','新的 7 天岗位邀请码已生成')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(selectedOrganizationId===organizationId&&selectedOverview&&selectedOverview.organization.id===organizationId)$('issueInvite').disabled=false}}
+async function registerPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const name=$('platformParkName').value.trim();const brandName=$('platformParkBrandName').value.trim();show('panelError','');show('platformParkNotice','正在认证产业园端…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park',{method:'POST',body:JSON.stringify({name,brandName:brandName||name+'服务'})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已认证为产业园管理方')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
+async function joinPlatformPark(event){event.preventDefault();if(!selectedOrganizationId)return;const organizationId=selectedOrganizationId;const inviteCode=$('platformParkJoinCode').value.trim();show('panelError','');show('platformParkNotice','正在加入产业园…');try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/park/join',{method:'POST',body:JSON.stringify({inviteCode})});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('platformParkNotice','该企业已加入产业园')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}}
 async function deleteAccount(button,account){if(!selectedOrganizationId)return;if(button.dataset.armed!=='true'){button.dataset.armed='true';button.classList.add('armed');button.textContent='再次点击确认';setTimeout(()=>{if(button.isConnected){button.dataset.armed='false';button.classList.remove('armed');button.textContent='删除'}},5000);return}const organizationId=selectedOrganizationId;button.disabled=true;try{await api('/enterprise/platform/organizations/'+encodeURIComponent(organizationId)+'/accounts/'+encodeURIComponent(account.id),{method:'DELETE'});if(selectedOrganizationId===organizationId){await selectOrganization(organizationId,false);show('globalNotice','账号已删除，原登录会话已撤销')}}catch(error){if(isAuthorizationError(error))clearPlatformSession('平台令牌已失效，请重新验证');else show('panelError',error.message)}finally{if(button.isConnected)button.disabled=false}}
 function openCreateOrganization(){show('createError','');$('createOrganizationModal').classList.remove('hidden');$('organizationName').focus()}
 function closeCreateOrganization(force){if($('createOrganization').disabled&&!force)return;$('createOrganizationModal').classList.add('hidden');$('organizationForm').reset();show('createError','');$('createStatus').textContent=''}
@@ -3856,6 +3917,8 @@ $('refreshPanel').addEventListener('click',()=>{if(selectedOrganizationId)select
 $('copyInviteCode').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.code,'邀请码'));
 $('copyInviteLink').addEventListener('click',()=>copyText(selectedOverview&&selectedOverview.invite&&selectedOverview.invite.link,'企业引入链接'));
 $('issueInvite').addEventListener('click',issueInvite);
+$('platformParkRegisterForm').addEventListener('submit',registerPlatformPark);
+$('platformParkJoinForm').addEventListener('submit',joinPlatformPark);
 $('openCreateOrganization').addEventListener('click',openCreateOrganization);
 $('closeCreateOrganization').addEventListener('click',closeCreateOrganization);
 $('cancelCreateOrganization').addEventListener('click',closeCreateOrganization);
