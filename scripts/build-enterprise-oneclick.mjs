@@ -24,6 +24,7 @@ const outputDir = path.join(repoRoot, 'deliverables');
 const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
 const version = rootPackage.version;
 const releaseChannel = 'lstc';
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -59,8 +60,8 @@ function filesBelow(root, current = root) {
 }
 
 console.log('[bundle] 构建 otto-core 与 otto-server');
-run('npm', ['run', 'build', '--workspace', 'otto-core']);
-run('npm', ['run', 'build', '--workspace', 'otto-server']);
+run(npmCommand, ['run', 'build', '--workspace', 'otto-core'], { shell: process.platform === 'win32' });
+run(npmCommand, ['run', 'build', '--workspace', 'otto-server'], { shell: process.platform === 'win32' });
 
 const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true });
 const sourceScope = [
