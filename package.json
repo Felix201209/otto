@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "engines": {
     "node": ">=20.0.0"
   },
