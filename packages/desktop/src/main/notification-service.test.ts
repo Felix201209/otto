@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const electron = vi.hoisted(() => ({
   supported: true,
   failNextShow: false,
+  confirmShow: true,
   beep: vi.fn(),
   instances: [] as Array<{
     options: {
@@ -37,6 +38,7 @@ vi.mock('electron', () => ({
         electron.failNextShow = false;
         throw new Error('notification failed');
       }
+      if (electron.confirmShow) this.handlers.show?.();
     });
     close = vi.fn();
 
@@ -65,6 +67,7 @@ describe('NotificationService', () => {
   beforeEach(() => {
     electron.supported = true;
     electron.failNextShow = false;
+    electron.confirmShow = true;
     electron.beep.mockClear();
     electron.instances.length = 0;
     vi.useFakeTimers();
@@ -77,8 +80,13 @@ describe('NotificationService', () => {
   it('系统通知不可用时仍保留 Otto 内未读闪烁点', () => {
     electron.supported = false;
     const onUnreadChange = vi.fn();
+    const onSystemNotificationUnavailable = vi.fn();
     const service = new NotificationService();
-    service.registerCallbacks({ onUnreadChange, onNotificationClick: vi.fn() });
+    service.registerCallbacks({
+      onUnreadChange,
+      onNotificationClick: vi.fn(),
+      onSystemNotificationUnavailable,
+    });
 
     service.show({ sessionId: 's1', source: 'atoa', preview: '请查看消息' });
 
@@ -86,6 +94,55 @@ describe('NotificationService', () => {
     expect(service.getUnreadSessions()).toEqual(['s1']);
     expect(onUnreadChange).toHaveBeenLastCalledWith(['s1']);
     expect(electron.beep).toHaveBeenCalledOnce();
+    expect(onSystemNotificationUnavailable).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's1' }),
+      'unsupported',
+    );
+  });
+
+  it('Otto 位于前台时只保留应用内未读，不弹系统通知也不播放提示音', () => {
+    const onUnreadChange = vi.fn();
+    const onBackgroundAttention = vi.fn();
+    const onSystemNotificationUnavailable = vi.fn();
+    const service = new NotificationService();
+    service.registerCallbacks({
+      onUnreadChange,
+      onNotificationClick: vi.fn(),
+      shouldPresentSystemNotification: () => false,
+      onBackgroundAttention,
+      onSystemNotificationUnavailable,
+    });
+
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '前台新消息' });
+
+    expect(electron.instances).toHaveLength(0);
+    expect(electron.beep).not.toHaveBeenCalled();
+    expect(onBackgroundAttention).not.toHaveBeenCalled();
+    expect(onSystemNotificationUnavailable).not.toHaveBeenCalled();
+    expect(service.getUnreadSessions()).toEqual(['s1']);
+    expect(onUnreadChange).toHaveBeenLastCalledWith(['s1']);
+  });
+
+  it('窗口从后台回到前台后关闭同会话旧 toast，不重复打扰', () => {
+    let foreground = false;
+    const onBackgroundAttention = vi.fn();
+    const service = new NotificationService();
+    service.registerCallbacks({
+      onUnreadChange: vi.fn(),
+      onNotificationClick: vi.fn(),
+      shouldPresentSystemNotification: () => !foreground,
+      onBackgroundAttention,
+    });
+
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '后台消息' });
+    foreground = true;
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '前台消息' });
+
+    expect(electron.instances).toHaveLength(1);
+    expect(electron.instances[0].close).toHaveBeenCalledOnce();
+    expect(electron.beep).toHaveBeenCalledOnce();
+    expect(onBackgroundAttention).toHaveBeenCalledOnce();
+    expect(service.getUnreadSessions()).toEqual(['s1']);
   });
 
   it('系统弹窗自动消失，但未读点保留到用户真正读过', () => {
@@ -148,12 +205,60 @@ describe('NotificationService', () => {
 
   it('系统通知 show 失败时不丢 Otto 内部未读点', () => {
     electron.failNextShow = true;
+    const onSystemNotificationUnavailable = vi.fn();
     const service = new NotificationService();
+    service.registerCallbacks({
+      onUnreadChange: vi.fn(),
+      onNotificationClick: vi.fn(),
+      onSystemNotificationUnavailable,
+    });
     service.show({ sessionId: 's1', source: 'enterprise', preview: '新消息' });
 
     expect(service.getUnreadSessions()).toEqual(['s1']);
     expect(electron.instances[0].close).not.toHaveBeenCalled();
     expect(electron.beep).toHaveBeenCalledOnce();
+    expect(onSystemNotificationUnavailable).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's1' }),
+      'show-failed',
+    );
+  });
+
+  it('系统异步报告通知失败时只触发一次降级提醒', () => {
+    const onSystemNotificationUnavailable = vi.fn();
+    const service = new NotificationService();
+    service.registerCallbacks({
+      onUnreadChange: vi.fn(),
+      onNotificationClick: vi.fn(),
+      onSystemNotificationUnavailable,
+    });
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '新消息' });
+
+    electron.instances[0].handlers.failed();
+    electron.instances[0].handlers.failed();
+
+    expect(onSystemNotificationUnavailable).toHaveBeenCalledTimes(1);
+    expect(service.getUnreadSessions()).toEqual(['s1']);
+  });
+
+  it('系统接受 show 但未确认展示时自动切换降级提醒', () => {
+    electron.confirmShow = false;
+    const onSystemNotificationUnavailable = vi.fn();
+    const service = new NotificationService();
+    service.registerCallbacks({
+      onUnreadChange: vi.fn(),
+      onNotificationClick: vi.fn(),
+      onSystemNotificationUnavailable,
+    });
+    service.show({ sessionId: 's1', source: 'enterprise', preview: '新消息' });
+
+    vi.advanceTimersByTime(1_999);
+    expect(onSystemNotificationUnavailable).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+
+    expect(onSystemNotificationUnavailable).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's1' }),
+      'delivery-unconfirmed',
+    );
   });
 
   it('点击系统弹窗会清未读并把会话交给 renderer 打开', () => {

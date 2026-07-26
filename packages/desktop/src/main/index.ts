@@ -240,6 +240,8 @@ const enterpriseNotificationIdentityBoundary = new EnterpriseNotificationIdentit
 let endpoint: ServerEndpoint | undefined;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
+let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
 let tray: Tray | undefined;
 let enterpriseTrayContacts: EnterpriseTrayContact[] = [];
@@ -938,7 +940,57 @@ function updateUnreadIndicators(unread: readonly string[]): void {
   }
 }
 
+/** 主窗口没有呈现在用户眼前时，才需要系统级弹窗。 */
+function shouldPresentSystemNotification(): boolean {
+  return !mainWindow
+    || mainWindow.isDestroyed()
+    || !mainWindow.isVisible()
+    || mainWindow.isMinimized()
+    || !mainWindow.isFocused();
+}
+
+/** 后台来消息时提供不依赖通知中心权限的任务栏/Dock 提醒。 */
+function requestBackgroundAttention(): void {
+  if (!shouldPresentSystemNotification()) return;
+  if (process.platform === 'darwin' && app.dock) {
+    if (dockBounceId !== undefined) app.dock.cancelBounce(dockBounceId);
+    dockBounceId = app.dock.bounce('informational');
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.flashFrame(true); } catch { /* platform may not support flashing */ }
+  }
+}
+
+/** 系统通知 API 不可用或发送失败时，Windows 再退化为托盘气泡。 */
+function showFallbackNotification(payload: NotificationPayload): void {
+  if (process.platform !== 'win32' || !tray || tray.isDestroyed()) return;
+  try {
+    tray.displayBalloon({
+      title: payload.title || 'Otto 新消息',
+      content: payload.preview,
+      icon: loadIcon(),
+      iconType: 'custom',
+      noSound: true,
+      respectQuietTime: false,
+    });
+  } catch {
+    // 仍有任务栏闪烁、托盘未读说明和声音作为最终兜底。
+  }
+}
+
+function clearBackgroundAttention(): void {
+  if (dockBounceId !== undefined && process.platform === 'darwin' && app.dock) {
+    app.dock.cancelBounce(dockBounceId);
+    dockBounceId = undefined;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.flashFrame(false); } catch { /* ignore */ }
+  }
+}
+
 function showMainWindow(): void {
+  clearBackgroundAttention();
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
     mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
@@ -1029,6 +1081,7 @@ function createTray(): void {
 
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
+  tray.on('balloon-click', showMainWindow);
 }
 
 // ── 托盘状态追踪器 ──
@@ -1069,6 +1122,7 @@ function createWindow(): BrowserWindow {
     win.show();
     updateUnreadIndicators(notificationService.getUnreadSessions());
   });
+  win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
     event.preventDefault();
@@ -1886,6 +1940,12 @@ function registerIpc(): void {
         mainWindow.webContents.send(IPC.notificationSessionOpen, sessionId);
       }
     },
+    shouldPresentSystemNotification,
+    onBackgroundAttention: requestBackgroundAttention,
+    onSystemNotificationUnavailable: (payload, reason) => {
+      console.warn(`[otto-desktop] system notification ${reason}; using fallback alert`);
+      showFallbackNotification(payload);
+    },
   });
   ipcMain.handle(IPC.voiceGetConfig, () => loadVoiceConfig().public);
   ipcMain.handle(IPC.voiceSaveConfig, (_e, body: VoiceConfigInput) => saveVoiceConfig(body));
@@ -2445,6 +2505,10 @@ app.on('open-url', (event, url) => {
   acceptEnterpriseRegistrationUrl(url);
 });
 
+// 在窗口、托盘和 Notification 创建前注册稳定 AUMID。部分 Windows 机器若注册过晚，
+// 通知中心无法把 toast 与安装器创建的 Otto 开始菜单快捷方式关联。
+if (process.platform === 'win32') app.setAppUserModelId('ai.otto.desktop');
+
 // 单实例锁：第二次启动直接聚焦已开窗口，避免多开多个 server 抢端口。
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -2462,9 +2526,6 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    // Windows 通知中心/任务栏用稳定 AUMID 绑定 Otto；缺失时 toast 可能不显示应用图标，
-    // 甚至在部分系统上直接不出现。
-    if (process.platform === 'win32') app.setAppUserModelId('ai.otto.desktop');
     if (process.defaultApp && process.argv[1]) {
       app.setAsDefaultProtocolClient('otto', process.execPath, [path.resolve(process.argv[1])]);
     } else {
