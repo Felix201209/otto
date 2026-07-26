@@ -20,6 +20,10 @@ import {
   CUSTOM_MODEL_DEFAULT_MAX_OUTPUT_TOKENS,
   CUSTOM_MODEL_STREAM_READ_IDLE_TIMEOUT_MS,
 } from './customModelProviderContract.js';
+import {
+  sanitiseGeminiToolSchema,
+  sanitiseGeminiTools,
+} from './customModelGeminiSchema.js';
 import { cleanOpenAICompatibleSchema } from './customModelOpenAISchema.js';
 export { CODEX_OAUTH_SENTINEL } from './customModelProviderContract.js';
 
@@ -2440,163 +2444,6 @@ function applyGeminiNativeThinking(
         : effortToGeminiBudget(thinking.effort) ?? -1; // -1 = dynamic thinking (Gemini 2.5 default)
     generationConfig.thinkingConfig = { thinkingBudget: budget, includeThoughts: true };
   }
-}
-
-// ----------------------------------------------------------------------------
-// Tool / schema sanitiser for the GenAI v1beta endpoint
-// ----------------------------------------------------------------------------
-// Why this exists:
-//   Gemini's `Schema` (per @google/genai's typings — see
-//   node_modules/@google/genai/dist/node/node.d.ts ~line 8498) is an
-//   OpenAPI-3-shaped *subset* of JSON Schema. Unknown keys produce a hard
-//   HTTP 400 from the upstream:
-//     "Invalid JSON payload received. Unknown name "$schema" at
-//      'tools[0].function_declarations[N].parameters': Cannot find field."
-//   MCP servers (e.g. Context7) return tool inputSchemas with the JSON-Schema
-//   header `"$schema": "http://json-schema.org/draft-07/schema#"` plus the
-//   occasional `additionalProperties` / `oneOf` / `const`, all of which are
-//   valid JSON-Schema-2020-12 but not in Gemini's accepted set.
-//
-//   The OttoServerAdapter path doesn't trip this because the Otto proxy
-//   strips these on its way out. The custom-model direct path (talking to
-//   EasyRouter / Google directly) bypasses that proxy and therefore must
-//   sanitise client-side. The other vendor branches in this file
-//   (OpenAIConverter / OpenAIResponsesConverter / AnthropicConverter)
-//   already do the equivalent — Gemini was the odd one out.
-//
-// Accepted Gemini Schema keys (kept in `GEMINI_SCHEMA_ALLOWED_KEYS` below)
-// match @google/genai's `Schema` interface verbatim. Anything else is
-// dropped silently. We also:
-//   • lower→upper-case `type` values (Gemini canonicalises e.g. "STRING"),
-//     because MCP tools emit lowercase JSON-Schema types like "string".
-//     Both forms are tolerated by EasyRouter, but we normalise to the
-//     uppercase form the SDK exposes for consistency with built-in tools
-//     in the same payload (see decl 0 in the failing dump: type: "STRING").
-//   • coerce `const: x` → `enum: [x]` (Gemini supports `enum` only).
-//   • flatten `oneOf` / `allOf` into `anyOf` (the only multi-schema combinator
-//     Gemini accepts), which is a strict-mode best-effort — unsupported
-//     advanced combinators degrade rather than 400.
-//
-// Verification: see customModelAdapter.test.ts ("sanitiseGeminiToolSchema").
-const GEMINI_SCHEMA_ALLOWED_KEYS = new Set<string>([
-  'anyOf', 'default', 'description', 'enum', 'example', 'format',
-  'items', 'maxItems', 'maxLength', 'maxProperties', 'maximum',
-  'minItems', 'minLength', 'minProperties', 'minimum', 'nullable',
-  'pattern', 'properties', 'propertyOrdering', 'required', 'title',
-  'type',
-]);
-
-const GEMINI_TYPE_NORMALISE = new Map<string, string>([
-  ['string', 'STRING'], ['number', 'NUMBER'], ['integer', 'INTEGER'],
-  ['boolean', 'BOOLEAN'], ['array', 'ARRAY'], ['object', 'OBJECT'],
-  ['null', 'TYPE_UNSPECIFIED'],
-]);
-
-/**
- * Recursively prune a JSON Schema down to the subset Gemini's GenAI v1beta
- * accepts. Returns a fresh object — does not mutate the input.
- *
- * Pure function — exported (via the trailing alias at the bottom of the
- * file) for unit testing.
- */
-function sanitiseGeminiToolSchema(schema: unknown): unknown {
-  if (schema === null || schema === undefined) return schema;
-  if (Array.isArray(schema)) {
-    return schema.map((item) => sanitiseGeminiToolSchema(item));
-  }
-  if (typeof schema !== 'object') return schema;
-
-  const src = schema as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-
-  // 1) `const: x` → `enum: [x]` (Gemini supports enum only). Apply BEFORE
-  //    field iteration so a coexisting `enum` (rare but legal in JSON-Schema)
-  //    isn't clobbered.
-  if (src['const'] !== undefined && src['enum'] === undefined) {
-    out['enum'] = [src['const']];
-  }
-
-  // 2) `oneOf` / `allOf` → fold into `anyOf` (best-effort; Gemini only
-  //    accepts anyOf as its combinator). If `anyOf` is also present we
-  //    concatenate, dedupe is left to the upstream validator.
-  const combinators: unknown[] = [];
-  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
-    const v = src[key];
-    if (Array.isArray(v)) combinators.push(...v);
-  }
-  if (combinators.length > 0) {
-    out['anyOf'] = combinators.map((s) => sanitiseGeminiToolSchema(s));
-  }
-
-  for (const key of Object.keys(src)) {
-    // anyOf already handled above; const already converted.
-    if (key === 'anyOf' || key === 'oneOf' || key === 'allOf' || key === 'const') continue;
-    if (!GEMINI_SCHEMA_ALLOWED_KEYS.has(key)) continue; // drops $schema, $id,
-    //                                                     additionalProperties,
-    //                                                     patternProperties, $ref,
-    //                                                     $defs, definitions, not, …
-
-    const val = src[key];
-
-    if (key === 'type' && typeof val === 'string') {
-      const upper = GEMINI_TYPE_NORMALISE.get(val.toLowerCase()) ?? val;
-      out[key] = upper;
-      continue;
-    }
-
-    if (key === 'properties' && val && typeof val === 'object' && !Array.isArray(val)) {
-      const props: Record<string, unknown> = {};
-      for (const [propName, propSchema] of Object.entries(val as Record<string, unknown>)) {
-        props[propName] = sanitiseGeminiToolSchema(propSchema);
-      }
-      out[key] = props;
-      continue;
-    }
-
-    if (key === 'items') {
-      out[key] = sanitiseGeminiToolSchema(val);
-      continue;
-    }
-
-    out[key] = val;
-  }
-
-  return out;
-}
-
-/**
- * Sanitise the `tools` array as it appears in `request.config.tools` on its
- * way into a Gemini-native request body. Each element is the GenAI
- * `{ functionDeclarations: [{ name, description, parameters }] }` shape.
- *
- * Returns a freshly built array — input is not mutated, so other adapter
- * branches (which receive the same `request.config.tools`) keep their
- * untouched JSON-Schema view.
- */
-function sanitiseGeminiTools(tools: unknown): unknown {
-  if (!Array.isArray(tools)) return tools;
-  return tools.map((tool) => {
-    if (!tool || typeof tool !== 'object') return tool;
-    const t = tool as Record<string, unknown>;
-    if (!Array.isArray(t['functionDeclarations'])) return tool;
-    return {
-      ...t,
-      functionDeclarations: (t['functionDeclarations'] as unknown[]).map((fd) => {
-        if (!fd || typeof fd !== 'object') return fd;
-        const decl = fd as Record<string, unknown>;
-        const cleaned: Record<string, unknown> = { ...decl };
-        if (decl['parameters'] !== undefined) {
-          cleaned['parameters'] = sanitiseGeminiToolSchema(decl['parameters']);
-        }
-        if (decl['response'] !== undefined) {
-          // FunctionDeclaration also carries an optional `response` schema
-          // (rare client-side, but follow the same rules to be safe).
-          cleaned['response'] = sanitiseGeminiToolSchema(decl['response']);
-        }
-        return cleaned;
-      }),
-    };
-  });
 }
 
 /**
