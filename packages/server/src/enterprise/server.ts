@@ -55,6 +55,7 @@ import { handleCommunicationRoute } from './communicationRoutes.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import { handleDeploymentRoute } from './deploymentRoutes.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
+import { handleHealthRoute } from './healthRoutes.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
 import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
@@ -220,7 +221,7 @@ const ENTERPRISE_CAPABILITIES = [
   'modular_update_push_v1',
 ] as const;
 
-interface DeploymentInfo {
+export interface DeploymentInfo {
   version: string;
   buildCommit: string;
   startedAt: string;
@@ -682,51 +683,18 @@ function makeHandler(
         return;
       }
 
-      // ===== Health =====
-      if (path === '/enterprise/health' && method === 'GET') {
-        try {
-          const readiness = db.getDatabaseReadiness();
-          sendJSON(res, 200, {
-            status: 'ok',
-            service: 'otto-enterprise',
-            apiVersion: ENTERPRISE_API_VERSION,
-            version: deploymentInfo.version,
-            // appVersion 作为旧调用方的可读别名保留；新版客户端使用 version。
-            appVersion: deploymentInfo.version,
-            buildCommit: deploymentInfo.buildCommit,
-            schemaVersion: readiness.schemaVersion,
-            capabilities: [...ENTERPRISE_CAPABILITIES],
-            uptime: process.uptime(),
-            startedAt: deploymentInfo.startedAt,
-            runtimeVersion: process.version,
-            db: 'connected',
-            sms: { configured: smsSender !== null },
-            repairNotifications: {
-              sms: repairSmsSender !== null,
-              feishu: repairFeishuSender !== null,
-            },
-            deployment: {
-              ...db.getPrivateDeploymentStatus(),
-              moduleUpdates: db.getModuleUpdateManifest(),
-              version: deploymentInfo.version,
-              buildCommit: deploymentInfo.buildCommit,
-              startedAt: deploymentInfo.startedAt,
-            },
-          });
-        } catch {
-          sendJSON(res, 503, {
-            status: 'unavailable',
-            service: 'otto-enterprise',
-            apiVersion: ENTERPRISE_API_VERSION,
-            version: deploymentInfo.version,
-            appVersion: deploymentInfo.version,
-            buildCommit: deploymentInfo.buildCommit,
-            schemaVersion: null,
-            capabilities: [...ENTERPRISE_CAPABILITIES],
-            db: 'unavailable',
-            error: 'enterprise database unavailable',
-          });
-        }
+      if (handleHealthRoute({
+        path,
+        method,
+        res,
+        apiVersion: ENTERPRISE_API_VERSION,
+        capabilities: ENTERPRISE_CAPABILITIES,
+        deploymentInfo,
+        smsConfigured: smsSender !== null,
+        repairSmsConfigured: repairSmsSender !== null,
+        repairFeishuConfigured: repairFeishuSender !== null,
+        sendJSON,
+      })) {
         return;
       }
 
