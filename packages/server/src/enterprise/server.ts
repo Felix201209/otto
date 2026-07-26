@@ -51,6 +51,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
+import { handleAdminDataRoute } from './adminDataRoutes.js';
 import { handleAdminPageRoute } from './adminPageRoutes.js';
 import { handleAccountRoute } from './accountRoutes.js';
 import { handleAuthRoute } from './authRoutes.js';
@@ -1462,24 +1463,15 @@ function makeHandler(
         return;
       }
 
-      // ===== Report =====
-      if (path === '/enterprise/report' && method === 'GET') {
-        const period = parseInt(url.searchParams.get('period') || '30', 10);
-        const department = url.searchParams.get('department') || undefined;
-        sendJSON(
-          res,
-          200,
-          db.getReport(period, department, adminPrincipal!.organizationId),
-        );
-        return;
-      }
-
-      // ===== Employees list =====
-      if (path === '/enterprise/employees' && method === 'GET') {
-        const department = url.searchParams.get('department') || undefined;
-        sendJSON(res, 200, {
-          employees: db.listEmployees(department, adminPrincipal!.organizationId),
-        });
+      // ===== Admin data routes =====
+      if (handleAdminDataRoute({
+        path,
+        method,
+        res,
+        url,
+        adminPrincipal,
+        sendJSON,
+      })) {
         return;
       }
 
@@ -1769,20 +1761,6 @@ function makeHandler(
           confidence,
         });
         sendJSON(res, 200, { status: added ? 'added' : 'exists', added });
-        return;
-      }
-
-      // ===== Audit logs =====
-      if (path === '/enterprise/audit' && method === 'GET') {
-        sendJSON(res, 200, {
-          logs: db.getAuditLogs(50, adminPrincipal!.organizationId),
-        });
-        return;
-      }
-
-      // ===== Export =====
-      if (path === '/enterprise/export' && method === 'GET') {
-        sendJSON(res, 200, db.exportAll(adminPrincipal!.organizationId));
         return;
       }
 
