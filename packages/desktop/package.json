@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -78,7 +78,6 @@
       "!**/*.markdown",
       "!**/*.ts",
       "!**/*.d.ts",
-
       "!**/node_modules/**/test/**",
       "!**/node_modules/**/tests/**",
       "!**/node_modules/**/__tests__/**",
@@ -90,7 +89,6 @@
       "!**/node_modules/@larksuiteoapi/node-sdk/es/**",
       "!**/node_modules/@larksuiteoapi/node-sdk/types/**",
       "!**/node_modules/js-tiktoken/dist/**/*.cjs",
-
       "!**/coverage/**",
       "!**/junit.xml",
       "!**/*.tsbuildinfo",
