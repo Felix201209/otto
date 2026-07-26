@@ -43,6 +43,7 @@ export * from './types/customModel.js';
 // Export Core Logic
 export * from './core/client.js';
 export * from './core/contentGenerator.js';
+export * from './core/customModelProviderContract.js';
 export * from './core/ottoChat.js';
 export * from './core/logger.js';
 export * from './core/prompts.js';

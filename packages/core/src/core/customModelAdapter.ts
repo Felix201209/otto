@@ -15,6 +15,12 @@ import { retryWithBackoff, getErrorStatus } from '../utils/retry.js';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
+import {
+  CODEX_OAUTH_SENTINEL,
+  CUSTOM_MODEL_DEFAULT_MAX_OUTPUT_TOKENS,
+  CUSTOM_MODEL_STREAM_READ_IDLE_TIMEOUT_MS,
+} from './customModelProviderContract.js';
+export { CODEX_OAUTH_SENTINEL } from './customModelProviderContract.js';
 
 /**
  * 为对象添加 functionCalls getter，兼容不同的结构
@@ -61,11 +67,9 @@ function addFunctionCallsGetter(obj: any) {
  * 每来一个数据块计时器就重置（下一次 read() 新建定时器），所以只防单块卡顿，
  * 不对总时长设限——长推理同样不受影响。
  */
-const STREAM_READ_IDLE_TIMEOUT_MS = 300000;
-
 async function readStreamWithIdleTimeout<T>(
   reader: ReadableStreamDefaultReader<T>,
-  timeoutMs: number = STREAM_READ_IDLE_TIMEOUT_MS,
+  timeoutMs: number = CUSTOM_MODEL_STREAM_READ_IDLE_TIMEOUT_MS,
 ): Promise<ReadableStreamReadResult<T>> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,8 +152,6 @@ function resolveEnvVar(value: string): string {
  * Codex CLI 凭证(~/.codex/auth.json)调用 —— 支持 ChatGPT 订阅 OAuth 或 API Key。
  * 实测:Codex 走 provider='openai-responses' + baseUrl='https://chatgpt.com/backend-api/codex'。
  */
-export const CODEX_OAUTH_SENTINEL = '${CODEX_OAUTH}';
-
 function isCodexAuth(
   modelConfig: CustomModelConfig,
   resolvedApiKey = resolveEnvVar(modelConfig.apiKey || ''),
@@ -221,8 +223,6 @@ function extractSystemText(request: any): string {
  * 截断 + thinking 模型直接 budget 用完没空间出文字。32K 对绝大多数现代模型都安全，
  * 旧模型若不支持会被 vendor 自己截到上限——比报 400 友好。
  */
-const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
-
 /**
  * 解析单次响应的 max output tokens。
  *
@@ -241,7 +241,7 @@ function resolveOutputTokens(
     typeof modelConfig.maxOutputTokens === 'number' && modelConfig.maxOutputTokens > 0
       ? modelConfig.maxOutputTokens
       : undefined;
-  const base = explicit ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const base = explicit ?? CUSTOM_MODEL_DEFAULT_MAX_OUTPUT_TOKENS;
   // 思考型模型需要为思考预留 budget；如果 thinking budget 比当前 base 大，
   // 把 max_tokens 抬到至少 thinking budget + 一个余量，否则模型会把
   // 思考 budget 用完后没空间出文字。
