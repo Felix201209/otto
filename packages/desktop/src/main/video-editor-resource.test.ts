@@ -24,7 +24,7 @@ describe('video editor packaged resource', () => {
     })).toBe('/workspace/resources/video-editor/index.html');
   });
 
-  it('macOS 与 Windows 安装包都声明复制完整视频编辑器资源', () => {
+  it('macOS 与 Windows 安装包默认不内置视频编辑器资源', () => {
     const pkg = JSON.parse(
       readFileSync(resolve(__dirname, '../../package.json'), 'utf8'),
     ) as {
@@ -35,10 +35,12 @@ describe('video editor packaged resource', () => {
     };
 
     for (const target of [pkg.build.mac, pkg.build.win]) {
-      expect(target.extraResources).toContainEqual({
-        from: '../../resources/video-editor',
-        to: 'video-editor',
-      });
+      expect(target.extraResources).not.toContainEqual(
+        expect.objectContaining({ from: '../../resources/video-editor' }),
+      );
+      expect(target.extraResources).not.toContainEqual(
+        expect.objectContaining({ to: 'video-editor' }),
+      );
     }
   });
 });

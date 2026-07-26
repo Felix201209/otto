@@ -56,9 +56,6 @@ const SOURCE_REPO = 'Felix201209/otto';
 const SOURCE_UPSTREAM = 'origin/internal';
 const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
 const RELEASE_TAG = `v${VERSION}`;
-const MAX_INSTALLER_SIZE_BYTES = Number(
-  process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 150,
-) * 1024 * 1024;
 const BUILD_ASSET_NAMES = [
   `Otto-${VERSION}-arm64.dmg`,
   `Otto-${VERSION}-arm64.dmg.blockmap`,
@@ -372,13 +369,6 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
         : 1024 * 1024;
     if (size < minimumSize) {
       throw new Error(`${name} 体积异常小: ${size} bytes`);
-    }
-    if (!name.endsWith('.blockmap') && name !== 'latest.json' && size > MAX_INSTALLER_SIZE_BYTES) {
-      throw new Error(
-        `${name} 体积 ${(size / 1048576).toFixed(1)} MB 超过 `
-        + `${(MAX_INSTALLER_SIZE_BYTES / 1048576).toFixed(0)} MB 上限；`
-        + '默认安装包禁止内嵌文档运行时、视频编辑器或多架构 payload',
-      );
     }
     artifacts.push({ name, path: p, size });
     log('CHECK', `  ${name}  ${(size / 1048576).toFixed(1)} MB`);

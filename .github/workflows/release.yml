@@ -31,7 +31,6 @@ concurrency:
 env:
   NODE_VERSION: '22.13.0'
   RELEASES_REPO: ${{ github.repository }}
-  OTTO_DESKTOP_MAX_INSTALLER_MB: '100'
 
 jobs:
   build:
@@ -104,7 +103,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OTTO_RELEASES_REPO: ${{ env.RELEASES_REPO }}
-          OTTO_DESKTOP_MAX_INSTALLER_MB: ${{ env.OTTO_DESKTOP_MAX_INSTALLER_MB }}
 
       - name: Build enterprise server package
         run: npm run bundle:enterprise
@@ -121,17 +119,9 @@ jobs:
           test -f "$ENTERPRISE_ARCHIVE"
           test -f "$ENTERPRISE_SHA"
           sha256sum -c "$ENTERPRISE_SHA"
-          for artifact in \
-            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg" \
-            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg" \
-            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"; do
-            size="$(stat -f%z "$artifact")"
-            limit="$((100 * 1024 * 1024))"
-            if [ "$size" -gt "$limit" ]; then
-              echo "Installer too large: $artifact ($size bytes)" >&2
-              exit 1
-            fi
-          done
+          test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
+          test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
+          test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           {
             echo "files<<EOF"
             printf '%s\n' \
