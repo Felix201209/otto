@@ -38,6 +38,9 @@ jobs:
     name: Check, Build, Draft Release
     runs-on: macos-latest
     timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout source
@@ -154,7 +157,7 @@ jobs:
           token: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: Otto v${{ steps.version.outputs.version }}
-          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
           files: ${{ steps.artifacts.outputs.files }}
           generate_release_notes: true
@@ -168,3 +171,85 @@ jobs:
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
           retention-days: 30
+
+  deploy-enterprise:
+    name: Deploy Enterprise Server
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      ${{
+        success()
+        && (
+          github.event_name == 'push'
+          || (github.event_name == 'workflow_dispatch' && !inputs.draft)
+        )
+      }}
+    env:
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
+
+    steps:
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.DEPLOY_HOST }}"
+          test -n "${{ secrets.DEPLOY_USER }}"
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+
+      - name: Download release workflow artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-release-v${{ needs.build.outputs.version }}
+          path: release-download
+
+      - name: Verify enterprise package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-download
+          sha256sum -c otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sha256
+          ls -lh otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz*
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload enterprise package
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_DIR="/var/tmp/otto-enterprise-github/${{ needs.build.outputs.tag }}-${GITHUB_RUN_ID}"
+          echo "REMOTE_DIR=$REMOTE_DIR" >> "$GITHUB_ENV"
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "mkdir -p '$REMOTE_DIR'"
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" release-download/otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-* \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
+
+      - name: Install or upgrade on server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '$REMOTE_DIR'
+             sha256sum -c ./*.sha256
+             ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz | head -n 1)
+             rm -rf unpack
+             mkdir unpack
+             tar -xzf \"\$ARCHIVE\" -C unpack
+             PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
+             if [ -L /opt/otto-enterprise/current ]; then
+               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}'
+             else
+               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}'
+             fi"
