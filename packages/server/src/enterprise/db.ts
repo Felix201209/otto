@@ -12,16 +12,11 @@ import os from 'os';
 import fs from 'fs';
 import {
   createHash,
-  createHmac,
   randomBytes,
   randomUUID,
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
-import {
-  buildOrganizationInviteLink,
-  resolveEnterprisePublicBaseUrl,
-} from './publicInvite.js';
 import {
   LICENSE_MODULE_FEATURES,
   licenseModuleCatalog,
@@ -79,11 +74,25 @@ import {
   setParkServiceSpecialist as setParkServiceSpecialistInRepository,
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
+import {
+  getOrganizationInvite as getOrganizationInviteFromRepository,
+  inspectOrganizationInvite as inspectOrganizationInviteFromRepository,
+  issueOrganizationInvite as issueOrganizationInviteInRepository,
+  normalizeOrganizationInviteCode as normalizeOrganizationInviteCodeFromRepository,
+  resolveOrganizationInvite as resolveOrganizationInviteFromRepository,
+  resolveOrganizationInviteWithDefaults as resolveOrganizationInviteWithDefaultsFromRepository,
+} from './organizationInviteRepository.js';
 import type {
   DeploymentLicenseView,
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
+import type {
+  OrganizationInviteInspection,
+  OrganizationInviteIssueInput,
+  OrganizationInviteResolution,
+  OrganizationInviteView,
+} from './organizationInviteTypes.js';
 import type {
   ParkInviteView,
   ParkTenantProfileView,
@@ -107,6 +116,13 @@ export type {
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
+export type {
+  OrganizationInviteInspection,
+  OrganizationInviteIssueInput,
+  OrganizationInviteResolution,
+  OrganizationInviteStatus,
+  OrganizationInviteView,
+} from './organizationInviteTypes.js';
 export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
@@ -144,9 +160,7 @@ export {
   recordTicketNotification,
   updateTicket,
 } from './ticketRepository.js';
-export type {
-  TicketView,
-} from './ticketRepository.js';
+export type { TicketView } from './ticketRepository.js';
 
 const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
@@ -156,7 +170,8 @@ const DB_PATH = path.join(DATA_DIR, 'data.db');
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
 export const ENTERPRISE_SCHEMA_VERSION = 8;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
-const ORGANIZATION_INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const ORGANIZATION_INVITE_ALPHABET =
+  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
 
 /**
@@ -1414,40 +1429,6 @@ interface OrganizationRow {
   updated_at: string;
 }
 
-export interface OrganizationInviteView {
-  id: string;
-  organizationId: string;
-  code: string;
-  link: string;
-  status: 'active' | 'expired' | 'revoked';
-  defaultDepartment: string | null;
-  departmentId: string | null;
-  positionId: string | null;
-  positionTitle: string | null;
-  defaultRole: string | null;
-  maxUses: number | null;
-  usedCount: number;
-  issuedAt: string;
-  expiresAt: string;
-  validHours: 168;
-}
-
-interface OrganizationInviteRow {
-  id: string;
-  organization_id: string;
-  nonce: string;
-  issued_at_ms: number;
-  expires_at_ms: number;
-  revoked_at_ms: number | null;
-  default_department: string | null;
-  department_id: string | null;
-  position_id: string | null;
-  position_title: string | null;
-  default_role: string | null;
-  max_uses: number | null;
-  used_count: number;
-}
-
 function toOrganizationView(row: OrganizationRow): OrganizationView {
   return {
     id: row.id,
@@ -1948,8 +1929,12 @@ const deploymentStore = {
   licenseSigningSecret: () => process.env.OTTO_LICENSE_SIGNING_SECRET || '',
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
   databaseReadiness: getDatabaseReadiness,
-  audit: (event: string, employeeId: string | null, detail: string, organizationId: string) =>
-    logAudit(event, employeeId, detail, organizationId),
+  audit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ) => logAudit(event, employeeId, detail, organizationId),
 };
 
 export function getModuleUpdateManifest(): ModuleUpdateManifest {
@@ -1983,7 +1968,13 @@ const moduleUpdateStore = {
     employeeId: string | null;
     message: string;
     organizationId: string;
-  }) => logAudit(input.event, input.employeeId, input.message, input.organizationId),
+  }) =>
+    logAudit(
+      input.event,
+      input.employeeId,
+      input.message,
+      input.organizationId,
+    ),
 };
 
 export function getDeploymentId(): string {
@@ -2042,7 +2033,10 @@ export function exportDeploymentDiagnostics(
 export function isLicenseUsableForOrganizationFeature(
   feature: keyof OrganizationFeatures,
 ): boolean {
-  return isLicenseUsableForOrganizationFeatureInRepository(deploymentStore, feature);
+  return isLicenseUsableForOrganizationFeatureInRepository(
+    deploymentStore,
+    feature,
+  );
 }
 
 export function isLicenseRestricted(): boolean {
@@ -2127,139 +2121,6 @@ export function getEnterpriseOrganization(id: string): OrganizationView | null {
     )
     .get(id) as OrganizationRow | undefined;
   return row ? toOrganizationView(row) : null;
-}
-
-function normalizeOrganizationInviteCode(code: string): string {
-  const compact = code.trim().replace(/[\s-]/g, '');
-  return /^[A-HJ-NP-Za-km-z2-9]+$/.test(compact) ? compact : '';
-}
-
-function deriveOrganizationInviteCode(
-  organization: OrganizationRow,
-  nonce: string,
-): string {
-  const digest = createHmac('sha256', organization.invite_secret)
-    .update(`${organization.id}:${nonce}`)
-    .digest();
-  let code = '';
-  for (let index = 0; index < INVITE_CODE_RAW_LENGTH; index += 1) {
-    code +=
-      ORGANIZATION_INVITE_ALPHABET[
-        digest[index]! % ORGANIZATION_INVITE_ALPHABET.length
-      ];
-  }
-  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
-}
-
-function toOrganizationInviteView(
-  row: OrganizationInviteRow,
-  organization: OrganizationRow,
-  now: number,
-): OrganizationInviteView {
-  const status =
-    row.revoked_at_ms != null
-      ? 'revoked'
-      : now >= row.expires_at_ms
-        ? 'expired'
-        : 'active';
-  const code = deriveOrganizationInviteCode(organization, row.nonce);
-  const publicBaseUrl = resolveEnterprisePublicBaseUrl({
-    configuredUrl: process.env.OTTO_ENTERPRISE_PUBLIC_URL,
-  });
-  return {
-    id: row.id,
-    organizationId: row.organization_id,
-    code,
-    link: buildOrganizationInviteLink(publicBaseUrl, code),
-    status,
-    defaultDepartment: row.default_department,
-    departmentId: row.department_id,
-    positionId: row.position_id,
-    positionTitle: row.position_title,
-    defaultRole: row.default_role,
-    maxUses: row.max_uses,
-    usedCount: row.used_count ?? 0,
-    issuedAt: new Date(row.issued_at_ms).toISOString(),
-    expiresAt: new Date(row.expires_at_ms).toISOString(),
-    validHours: 168,
-  };
-}
-
-export type OrganizationInviteStatus =
-  'active' | 'expired' | 'revoked' | 'invalid';
-
-export interface OrganizationInviteInspection {
-  status: OrganizationInviteStatus;
-  organizationId: string | null;
-}
-
-/**
- * Inspect one derived invite code without returning organization metadata.
- * Public landing pages use this to distinguish a missing link from a link that
- * existed but is no longer usable, while keeping tenant details private.
- */
-export function inspectOrganizationInvite(
-  code: string,
-  now = Date.now(),
-): OrganizationInviteInspection {
-  const normalized = normalizeOrganizationInviteCode(code);
-  if (normalized.length !== INVITE_CODE_RAW_LENGTH)
-    return { status: 'invalid', organizationId: null };
-
-  // 邀请码由 nonce 动态派生，库中没有可直接索引的明文 code；必须保留已撤销/
-  // 已过期记录，公开落地页才能正确区分 404 与 410。先在 SQL 层排除已停用企业，
-  // 再恒定时间比对候选 code，不能引用 organization_invites 中不存在的 status 列。
-  const rows = getDB()
-    .prepare(
-      `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
-     FROM organization_invites i
-     JOIN organizations o ON o.id = i.organization_id
-     WHERE o.status = 'active'
-     ORDER BY i.issued_at_ms DESC`,
-    )
-    .all() as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
-  const matches = rows.filter((row) => {
-    const organization: OrganizationRow = {
-      id: row.organization_id,
-      name: row.name,
-      slug: row.slug,
-      invite_secret: row.invite_secret,
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-    const expected = normalizeOrganizationInviteCode(
-      deriveOrganizationInviteCode(organization, row.nonce),
-    );
-    return (
-      expected.length === normalized.length &&
-      timingSafeEqual(Buffer.from(expected), Buffer.from(normalized))
-    );
-  });
-  if (matches.length !== 1) return { status: 'invalid', organizationId: null };
-
-  const match = matches[0]!;
-  if (match.status !== 'active')
-    return { status: 'invalid', organizationId: null };
-  if (match.revoked_at_ms != null) {
-    return { status: 'revoked', organizationId: match.organization_id };
-  }
-  if (now >= match.expires_at_ms) {
-    return { status: 'expired', organizationId: match.organization_id };
-  }
-  if (match.max_uses != null && match.used_count >= match.max_uses) {
-    return { status: 'revoked', organizationId: match.organization_id };
-  }
-  return { status: 'active', organizationId: match.organization_id };
-}
-
-export interface OrganizationInviteIssueInput {
-  defaultDepartment?: string | null;
-  departmentId?: string | null;
-  positionId?: string | null;
-  positionTitle?: string | null;
-  defaultRole?: string | null;
-  maxUses?: number | null;
 }
 
 function normalizeOptionalText(
@@ -2473,180 +2334,83 @@ export function resolveAssignmentIdentity(
   return { department, departmentId, positionTitle, positionId };
 }
 
+const organizationInviteStore = {
+  db: getDB,
+  inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
+  inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
+  inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
+  toOrganizationView,
+  resolveAssignmentIdentity,
+  normalizeOptionalText,
+  logAudit,
+};
+
+function normalizeOrganizationInviteCode(code: string): string {
+  return normalizeOrganizationInviteCodeFromRepository(code);
+}
+
+/**
+ * Inspect one derived invite code without returning organization metadata.
+ * Public landing pages use this to distinguish a missing link from a link that
+ * existed but is no longer usable, while keeping tenant details private.
+ */
+export function inspectOrganizationInvite(
+  code: string,
+  now = Date.now(),
+): OrganizationInviteInspection {
+  return inspectOrganizationInviteFromRepository(
+    organizationInviteStore,
+    code,
+    now,
+  );
+}
+
 export function issueOrganizationInvite(
   organizationId: string,
   now = Date.now(),
   createdByAccountId?: string | null,
   input?: string | OrganizationInviteIssueInput | null,
 ): OrganizationInviteView {
-  const database = getDB();
-  database.exec('SAVEPOINT issue_organization_invite');
-  try {
-    const organization = database
-      .prepare('SELECT * FROM organizations WHERE id = ? AND status = ?')
-      .get(organizationId, 'active') as OrganizationRow | undefined;
-    if (!organization) throw new Error('Organization not found');
-    const id = `orginvite_${randomUUID()}`;
-    const nonce = randomBytes(24).toString('base64url');
-    const expiresAtMs = now + ORGANIZATION_INVITE_VALIDITY_MS;
-    const options =
-      typeof input === 'string' ? { defaultDepartment: input } : (input ?? {});
-    const assignment = resolveAssignmentIdentity(database, organizationId, {
-      department: options.defaultDepartment,
-      departmentId: options.departmentId,
-      positionId: options.positionId,
-      positionTitle: options.positionTitle,
-    });
-    const defaultRole = normalizeOptionalText(options.defaultRole, '角色');
-    const maxUses =
-      options.maxUses == null ? null : Math.floor(Number(options.maxUses));
-    if (
-      maxUses != null &&
-      (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)
-    ) {
-      throw new Error('邀请码可注册人数必须在 1 到 10000 之间');
-    }
-    database
-      .prepare(
-        `INSERT INTO organization_invites
-         (id, organization_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id,
-          default_department, department_id, position_id, position_title, default_role, max_uses)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        organizationId,
-        nonce,
-        now,
-        expiresAtMs,
-        createdByAccountId || null,
-        assignment.department,
-        assignment.departmentId,
-        assignment.positionId,
-        assignment.positionTitle,
-        defaultRole,
-        maxUses,
-      );
-    database
-      .prepare(
-        `UPDATE organization_invites SET revoked_at_ms = ?
-       WHERE organization_id = ? AND id <> ? AND revoked_at_ms IS NULL`,
-      )
-      .run(now, organizationId, id);
-    logAudit(
-      'organization_invite_issue',
-      null,
-      [assignment.department, assignment.positionTitle, defaultRole].filter(
-        Boolean,
-      ).length
-        ? `Position invite issued for ${[
-            assignment.department,
-            assignment.positionTitle,
-            defaultRole,
-          ]
-            .filter(Boolean)
-            .join(' / ')}`
-        : 'Registration invite issued for 7 days',
-      organizationId,
-    );
-    const row = database
-      .prepare('SELECT * FROM organization_invites WHERE id = ?')
-      .get(id) as OrganizationInviteRow;
-    database.exec('RELEASE SAVEPOINT issue_organization_invite');
-    return toOrganizationInviteView(row, organization, now);
-  } catch (error) {
-    database.exec('ROLLBACK TO SAVEPOINT issue_organization_invite');
-    database.exec('RELEASE SAVEPOINT issue_organization_invite');
-    throw error;
-  }
+  return issueOrganizationInviteInRepository(
+    organizationInviteStore,
+    organizationId,
+    now,
+    createdByAccountId,
+    input,
+  );
 }
 
 export function getOrganizationInvite(
   organizationId: string,
   now = Date.now(),
 ): OrganizationInviteView | null {
-  const organization = getDB()
-    .prepare('SELECT * FROM organizations WHERE id = ?')
-    .get(organizationId) as OrganizationRow | undefined;
-  if (!organization) return null;
-  const row = getDB()
-    .prepare(
-      `SELECT * FROM organization_invites
-     WHERE organization_id = ? ORDER BY issued_at_ms DESC LIMIT 1`,
-    )
-    .get(organizationId) as OrganizationInviteRow | undefined;
-  return row ? toOrganizationInviteView(row, organization, now) : null;
-}
-
-export interface OrganizationInviteResolution {
-  organization: OrganizationView;
-  inviteId: string;
-  defaultDepartment: string | null;
-  departmentId: string | null;
-  positionId: string | null;
-  positionTitle: string | null;
-  defaultRole: string | null;
+  return getOrganizationInviteFromRepository(
+    organizationInviteStore,
+    organizationId,
+    now,
+  );
 }
 
 export function resolveOrganizationInviteWithDefaults(
   code: string,
   now = Date.now(),
 ): OrganizationInviteResolution | null {
-  const normalized = normalizeOrganizationInviteCode(code);
-  if (normalized.length !== INVITE_CODE_RAW_LENGTH) return null;
-  const rows = getDB()
-    .prepare(
-      `SELECT i.*, o.name, o.slug, o.invite_secret, o.status, o.created_at, o.updated_at
-     FROM organization_invites i
-     JOIN organizations o ON o.id = i.organization_id
-     WHERE i.revoked_at_ms IS NULL AND i.expires_at_ms > ? AND o.status = 'active'`,
-    )
-    .all(now) as Array<OrganizationInviteRow & Omit<OrganizationRow, 'id'>>;
-  const matches = rows.filter((row) => {
-    const organization: OrganizationRow = {
-      id: row.organization_id,
-      name: row.name,
-      slug: row.slug,
-      invite_secret: row.invite_secret,
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-    const expected = normalizeOrganizationInviteCode(
-      deriveOrganizationInviteCode(organization, row.nonce),
-    );
-    return (
-      expected.length === normalized.length &&
-      timingSafeEqual(Buffer.from(expected), Buffer.from(normalized))
-    );
-  });
-  if (matches.length !== 1) return null;
-  const match = matches[0]!;
-  if (match.max_uses != null && match.used_count >= match.max_uses) return null;
-  return {
-    organization: toOrganizationView({
-      id: match.organization_id,
-      name: match.name,
-      slug: match.slug,
-      invite_secret: match.invite_secret,
-      status: match.status,
-      created_at: match.created_at,
-      updated_at: match.updated_at,
-    }),
-    inviteId: match.id,
-    defaultDepartment: match.default_department ?? null,
-    departmentId: match.department_id ?? null,
-    positionId: match.position_id ?? null,
-    positionTitle: match.position_title ?? null,
-    defaultRole: match.default_role ?? null,
-  };
+  return resolveOrganizationInviteWithDefaultsFromRepository(
+    organizationInviteStore,
+    code,
+    now,
+  );
 }
 
 export function resolveOrganizationInvite(
   code: string,
   now = Date.now(),
 ): OrganizationView | null {
-  return resolveOrganizationInviteWithDefaults(code, now)?.organization ?? null;
+  return resolveOrganizationInviteFromRepository(
+    organizationInviteStore,
+    code,
+    now,
+  );
 }
 
 interface CurrentInvitationAssignment {
@@ -2861,9 +2625,14 @@ function passwordMatches(password: string, stored: string): boolean {
 function assertAccountPassword(password: string): void {
   if (password.length < 8) throw new Error('登录密码至少需要 8 位');
   if (password.length > 128) throw new Error('登录密码不能超过 128 位');
-  if (/[^\x20-\x7E]/.test(password)) throw new Error('登录密码不能包含控制字符或不可见字符');
+  if (/[^\x20-\x7E]/.test(password))
+    throw new Error('登录密码不能包含控制字符或不可见字符');
   const lower = password.toLocaleLowerCase('en-US');
-  if (['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(lower)) {
+  if (
+    ['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(
+      lower,
+    )
+  ) {
     throw new Error('登录密码过于常见，请更换更安全的密码');
   }
   if (/^\d+$/.test(password) || /^[a-z]+$/i.test(password)) {
@@ -4425,7 +4194,9 @@ const parkInviteStore = {
   normalizeOptionalText,
 };
 
-export function getParkTenantProfile(organizationId: string): ParkTenantProfileView | null {
+export function getParkTenantProfile(
+  organizationId: string,
+): ParkTenantProfileView | null {
   return getParkTenantProfileFromRepository(parkInviteStore, organizationId);
 }
 
@@ -4446,8 +4217,12 @@ const parkStatisticsStore = {
   getOrganizationFeatures,
   listAccounts,
   listParkTenantOrganizations,
-  audit: (event: string, employeeId: string | null, detail: string, organizationId: string) =>
-    logAudit(event, employeeId, detail, organizationId),
+  audit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ) => logAudit(event, employeeId, detail, organizationId),
 };
 
 export function createParkDataStatisticsTask(input: {
@@ -4463,22 +4238,45 @@ export function createParkDataStatisticsTask(input: {
   return createParkDataStatisticsTaskInRepository(parkStatisticsStore, input);
 }
 
-export function listParkDataStatisticsTasks(accountId: string): ParkDataStatisticsTaskView[] {
-  return listParkDataStatisticsTasksFromRepository(parkStatisticsStore, accountId);
+export function listParkDataStatisticsTasks(
+  accountId: string,
+): ParkDataStatisticsTaskView[] {
+  return listParkDataStatisticsTasksFromRepository(
+    parkStatisticsStore,
+    accountId,
+  );
 }
 
-export function markParkDataStatisticsRead(taskId: string, accountId: string): ParkDataStatisticsAssignmentView {
-  return markParkDataStatisticsReadInRepository(parkStatisticsStore, taskId, accountId);
+export function markParkDataStatisticsRead(
+  taskId: string,
+  accountId: string,
+): ParkDataStatisticsAssignmentView {
+  return markParkDataStatisticsReadInRepository(
+    parkStatisticsStore,
+    taskId,
+    accountId,
+  );
 }
 
-export function getParkDataStatisticsTemplate(taskId: string, accountId: string): {
+export function getParkDataStatisticsTemplate(
+  taskId: string,
+  accountId: string,
+): {
   name: string;
   data: string;
 } {
-  return getParkDataStatisticsTemplateFromRepository(parkStatisticsStore, taskId, accountId);
+  return getParkDataStatisticsTemplateFromRepository(
+    parkStatisticsStore,
+    taskId,
+    accountId,
+  );
 }
 
-export function delegateParkDataStatistics(taskId: string, accountId: string, assigneeAccountId: string): ParkDataStatisticsAssignmentView {
+export function delegateParkDataStatistics(
+  taskId: string,
+  accountId: string,
+  assigneeAccountId: string,
+): ParkDataStatisticsAssignmentView {
   return delegateParkDataStatisticsInRepository(
     parkStatisticsStore,
     taskId,
@@ -4487,7 +4285,11 @@ export function delegateParkDataStatistics(taskId: string, accountId: string, as
   );
 }
 
-export function submitParkDataStatisticsDraft(taskId: string, accountId: string, responseData: Record<string, string>): ParkDataStatisticsAssignmentView {
+export function submitParkDataStatisticsDraft(
+  taskId: string,
+  accountId: string,
+  responseData: Record<string, string>,
+): ParkDataStatisticsAssignmentView {
   return submitParkDataStatisticsDraftInRepository(
     parkStatisticsStore,
     taskId,
@@ -4496,7 +4298,12 @@ export function submitParkDataStatisticsDraft(taskId: string, accountId: string,
   );
 }
 
-export function reviewParkDataStatistics(taskId: string, accountId: string, approved: boolean, reason?: string): ParkDataStatisticsAssignmentView {
+export function reviewParkDataStatistics(
+  taskId: string,
+  accountId: string,
+  approved: boolean,
+  reason?: string,
+): ParkDataStatisticsAssignmentView {
   return reviewParkDataStatisticsInRepository(
     parkStatisticsStore,
     taskId,
@@ -4506,11 +4313,23 @@ export function reviewParkDataStatistics(taskId: string, accountId: string, appr
   );
 }
 
-export function remindParkDataStatistics(taskId: string, adminAccountId: string): ParkDataStatisticsTaskView {
-  return remindParkDataStatisticsInRepository(parkStatisticsStore, taskId, adminAccountId);
+export function remindParkDataStatistics(
+  taskId: string,
+  adminAccountId: string,
+): ParkDataStatisticsTaskView {
+  return remindParkDataStatisticsInRepository(
+    parkStatisticsStore,
+    taskId,
+    adminAccountId,
+  );
 }
 
-export function returnParkDataStatistics(taskId: string, adminAccountId: string, organizationId: string, reason: string): ParkDataStatisticsAssignmentView {
+export function returnParkDataStatistics(
+  taskId: string,
+  adminAccountId: string,
+  organizationId: string,
+  reason: string,
+): ParkDataStatisticsAssignmentView {
   return returnParkDataStatisticsInRepository(
     parkStatisticsStore,
     taskId,
@@ -4732,11 +4551,7 @@ export {
 // ============================================================
 // Task logging and reports
 // ============================================================
-export {
-  getReport,
-  getTaskHistory,
-  logTask,
-} from './taskReportRepository.js';
+export { getReport, getTaskHistory, logTask } from './taskReportRepository.js';
 
 // ============================================================
 // Knowledge operations
@@ -4759,10 +4574,7 @@ export {
 // ============================================================
 // Audit
 // ============================================================
-export {
-  getAuditLogs,
-  logAudit,
-} from './auditRepository.js';
+export { getAuditLogs, logAudit } from './auditRepository.js';
 
 // ============================================================
 // Export all (for backup)
