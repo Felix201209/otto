@@ -2283,15 +2283,35 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'accept' }),
     });
-    expect((await accepted.json()).ticket.status).toBe('维修中');
+    const acceptedTicket = (await accepted.json()).ticket;
+    expect(acceptedTicket.status).toBe('维修中');
+    expect(acceptedTicket.history.map((entry: { action: string }) => entry.action)).toEqual([
+      'created', 'accept',
+    ]);
     const replied = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
       method: 'POST',
       headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'respond', responseType: '远程指导', responseText: '请先检查墙面开关' }),
     });
-    expect((await replied.json()).ticket).toMatchObject({
+    const repliedTicket = (await replied.json()).ticket;
+    expect(repliedTicket).toMatchObject({
       responseType: '远程指导', responseText: '请先检查墙面开关', status: '维修中',
     });
+    expect(repliedTicket.history.at(-1)).toMatchObject({
+      action: 'respond', responseType: '远程指导', responseText: '请先检查墙面开关',
+      actor: { id: worker.id, name: worker.name },
+    });
+    const followUp = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'respond', responseType: '安排上门', responseText: '工程师将在下午三点到场' }),
+    });
+    const followUpTicket = (await followUp.json()).ticket;
+    expect(followUpTicket.history
+      .filter((entry: { action: string }) => entry.action === 'respond')
+      .map((entry: { responseText: string }) => entry.responseText)).toEqual([
+      '请先检查墙面开关', '工程师将在下午三点到场',
+    ]);
     expect(smsSend).toHaveBeenCalledWith('+8613800138000', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
     expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
   });
@@ -2382,6 +2402,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       { action: 'respond', responseType: '现场处理', responseText: '工程师已到场' },
       { action: 'complete' },
     ];
+    let completedTicket: { history: Array<{ action: string }> } | null = null;
     for (const action of specialistActions) {
       const response = await fetch(`${base}/enterprise/tickets/${specialistTicket.id}/action`, {
         method: 'POST',
@@ -2389,7 +2410,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         body: JSON.stringify(action),
       });
       expect(response.status).toBe(200);
+      completedTicket = (await response.json()).ticket;
     }
+    expect(completedTicket?.history.map((entry) => entry.action)).toEqual([
+      'created', 'accept', 'respond', 'complete',
+    ]);
     expect(smsSend).toHaveBeenCalledTimes(3);
     expect(feishuSend).toHaveBeenCalledTimes(3);
     expect(smsSend).toHaveBeenCalledWith(
@@ -2398,6 +2423,20 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(feishuSend).toHaveBeenCalledWith(
       'ou_receipt_reporter', expect.any(String), expect.any(String),
     );
+    const confirmed = await fetch(`${base}/enterprise/tickets/${specialistTicket.id}/action`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'confirm' }),
+    });
+    expect(confirmed.status).toBe(200);
+    const confirmedTicket = (await confirmed.json()).ticket;
+    expect(confirmedTicket.status).toBe('已完成');
+    expect(confirmedTicket.history.map((entry: { action: string }) => entry.action)).toEqual([
+      'created', 'accept', 'respond', 'complete', 'confirm',
+    ]);
+    expect(confirmedTicket.history.at(-1)).toMatchObject({
+      action: 'confirm', actor: { id: reporter.id, name: reporter.name },
+    });
 
     const fallbackSubmitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',

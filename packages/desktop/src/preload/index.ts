@@ -499,6 +499,17 @@ export interface EnterpriseRepairNotification {
   createdAt: string;
 }
 
+export interface EnterpriseRepairTicketHistoryEntry {
+  id: string;
+  action: 'created' | 'accept' | 'respond' | 'complete' | 'confirm';
+  statusBefore: string | null;
+  statusAfter: string;
+  responseType: string | null;
+  responseText: string | null;
+  createdAt: string;
+  actor: { id: string; name: string } | null;
+}
+
 export interface EnterpriseRepairTicket {
   id: string;
   serviceId: string;
@@ -524,6 +535,7 @@ export interface EnterpriseRepairTicket {
   readAt?: string | null;
   isCreator?: boolean;
   isRecipient?: boolean;
+  history?: EnterpriseRepairTicketHistoryEntry[];
   notifications: EnterpriseRepairNotification[];
 }
 

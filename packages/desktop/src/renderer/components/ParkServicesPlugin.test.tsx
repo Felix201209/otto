@@ -128,8 +128,11 @@ function installRepairBridge(kind: 'reporter' | 'worker' = 'reporter', ticketCou
     onNotificationSessionOpen,
     enterpriseParkPublications: vi.fn(async () => []),
   });
+  const setTickets = (next: EnterpriseRepairTicket[]): void => { tickets = next; };
   return {
     submit, action, read, account,
+    getTickets: () => tickets,
+    setTickets,
     openSystemNotification: (sessionId: string) => {
       for (const listener of notificationSessionListeners) listener(sessionId);
     },
@@ -414,6 +417,116 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByLabelText(/打开园区服务通知|打开园区待办汇总/)).toBeNull();
     openDialog();
     expect(screen.queryByLabelText('我的园区待办')).toBeNull();
+  });
+
+  it('工作人员可在待办右侧搜索、按九类筛选并按时间查看完整服务历史', async () => {
+    const bridge = installRepairBridge('worker', 3, ['已完成', '待验收', '已完成']);
+    const [repair, network, parking] = bridge.getTickets();
+    bridge.setTickets([
+      {
+        ...repair,
+        serviceId: 'repair',
+        title: 'A 座 1203 · 网络报修',
+        description: '办公室网络中断',
+        formData: {
+          company: '星河科技', address: '科技大厦 A 座', roomNumber: '1203',
+          contact: '李经理', phone: '13800138000', issue: '办公室网络中断',
+        },
+        responseType: '现场维修完成',
+        responseText: '交换机端口已更换，网络恢复',
+        responseAt: '2026-07-20T10:04:00Z',
+        updatedAt: '2026-07-20T10:05:00Z',
+        history: [
+          {
+            id: 'h1-created', action: 'created', statusBefore: null, statusAfter: '待接单',
+            responseType: null, responseText: null, createdAt: '2026-07-20T10:00:00Z',
+            actor: { id: 'reporter-1', name: '报修员工' },
+          },
+          {
+            id: 'h1-accept', action: 'accept', statusBefore: '待接单', statusAfter: '维修中',
+            responseType: null, responseText: null, createdAt: '2026-07-20T10:01:00Z',
+            actor: { id: 'worker-1', name: '维修张工' },
+          },
+          {
+            id: 'h1-response-1', action: 'respond', statusBefore: '维修中', statusAfter: '维修中',
+            responseType: '远程指导', responseText: '请先检查墙面开关', createdAt: '2026-07-20T10:02:00Z',
+            actor: { id: 'worker-1', name: '维修张工' },
+          },
+          {
+            id: 'h1-response-2', action: 'respond', statusBefore: '维修中', statusAfter: '维修中',
+            responseType: '现场处理', responseText: '确认交换机端口损坏', createdAt: '2026-07-20T10:03:00Z',
+            actor: { id: 'worker-1', name: '维修张工' },
+          },
+          {
+            id: 'h1-complete', action: 'complete', statusBefore: '维修中', statusAfter: '待验收',
+            responseType: null, responseText: null, createdAt: '2026-07-20T10:04:00Z',
+            actor: { id: 'worker-1', name: '维修张工' },
+          },
+          {
+            id: 'h1-confirm', action: 'confirm', statusBefore: '待验收', statusAfter: '已完成',
+            responseType: null, responseText: null, createdAt: '2026-07-20T10:05:00Z',
+            actor: { id: 'reporter-1', name: '报修员工' },
+          },
+        ],
+      },
+      {
+        ...network,
+        serviceId: 'network-phone',
+        title: 'B 座 806 · 固话开通',
+        description: '申请两个固定电话工位',
+        formData: { company: '海川设计', address: '科技大厦 B 座', roomNumber: '806' },
+        responseType: '线路已开通', responseText: '等待企业验收',
+        responseAt: '2026-07-20T12:00:00Z', updatedAt: '2026-07-20T12:00:00Z',
+        history: [{
+          id: 'h2-complete', action: 'complete', statusBefore: '处理中', statusAfter: '待验收',
+          responseType: null, responseText: null, createdAt: '2026-07-20T12:00:00Z',
+          actor: { id: 'worker-1', name: '维修张工' },
+        }],
+      },
+      {
+        ...parking,
+        serviceId: 'parking',
+        title: '停车位办理 · 京 A12345',
+        description: '固定停车位办理',
+        formData: { company: '远景咨询', plate: '京 A12345' },
+        responseType: '车位已开通', responseText: '门禁权限已生效',
+        responseAt: '2026-07-20T11:00:00Z', updatedAt: '2026-07-20T11:00:00Z',
+        history: [{
+          id: 'h3-confirm', action: 'confirm', statusBefore: '待验收', statusAfter: '已完成',
+          responseType: null, responseText: null, createdAt: '2026-07-20T11:00:00Z',
+          actor: { id: 'reporter-1', name: '报修员工' },
+        }],
+      },
+    ]);
+
+    render(<ParkServicesPlugin />);
+    openDialog();
+    const historyPanel = await screen.findByLabelText('我的园区服务历史记录');
+    expect(historyPanel).toBeTruthy();
+    expect((screen.getByLabelText('园区历史分类') as HTMLSelectElement).options).toHaveLength(10);
+    expect(screen.getAllByRole('button', { name: /打开园区历史/ }).map((button) => button.getAttribute('aria-label'))).toEqual([
+      '打开园区历史：B 座 806 · 固话开通',
+      '打开园区历史：停车位办理 · 京 A12345',
+      '打开园区历史：A 座 1203 · 网络报修',
+    ]);
+
+    fireEvent.change(screen.getByLabelText('园区历史分类'), { target: { value: 'network-phone' } });
+    expect(screen.getAllByRole('button', { name: /打开园区历史/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '打开园区历史：B 座 806 · 固话开通' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('园区历史分类'), { target: { value: 'all' } });
+    fireEvent.change(screen.getByLabelText('园区历史排序'), { target: { value: 'asc' } });
+    expect(screen.getAllByRole('button', { name: /打开园区历史/ })[0].getAttribute('aria-label')).toBe('打开园区历史：A 座 1203 · 网络报修');
+
+    fireEvent.change(screen.getByLabelText('搜索园区服务历史'), { target: { value: '墙面开关' } });
+    expect(screen.getAllByRole('button', { name: /打开园区历史/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '打开园区历史：A 座 1203 · 网络报修' }));
+
+    expect(await screen.findByText('历史记录只读')).toBeTruthy();
+    expect(screen.getByLabelText('园区服务处理历史')).toBeTruthy();
+    expect(screen.getByText('星河科技')).toBeTruthy();
+    expect(screen.getByText((_, node) => node?.textContent === '远程指导：请先检查墙面开关')).toBeTruthy();
+    expect(screen.getByText((_, node) => node?.textContent === '现场处理：确认交换机端口损坏')).toBeTruthy();
+    expect(screen.queryByLabelText('园区服务回复表')).toBeNull();
   });
 
   it('工作人员关闭通知后仍可从九宫格上方找回自己的待办，普通用户看不到该入口', async () => {

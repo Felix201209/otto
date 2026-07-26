@@ -623,6 +623,22 @@ function initSchema(d: Database): void {
       FOREIGN KEY (park_id) REFERENCES parks(id)
     );
 
+    CREATE TABLE IF NOT EXISTS ticket_events (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      actor_account_id TEXT,
+      action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm')),
+      status_before TEXT,
+      status_after TEXT NOT NULL,
+      response_type TEXT,
+      response_text TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
+    );
+
     CREATE TABLE IF NOT EXISTS park_publications (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL,
@@ -772,6 +788,8 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_created
+      ON ticket_events(ticket_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_publications_org_created
       ON park_publications(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_publication_recipients_account
@@ -5663,6 +5681,19 @@ export function removeParkServiceSpecialist(input: {
     .run(park.id, input.serviceId, input.accountId);
 }
 
+export type TicketHistoryAction = 'created' | 'accept' | 'respond' | 'complete' | 'confirm';
+
+export interface TicketHistoryEntry {
+  id: string;
+  action: TicketHistoryAction;
+  statusBefore: string | null;
+  statusAfter: string;
+  responseType: string | null;
+  responseText: string | null;
+  createdAt: string;
+  actor: { id: string; name: string } | null;
+}
+
 export interface TicketView {
   id: string;
   parkId: string | null;
@@ -5689,6 +5720,7 @@ export interface TicketView {
   readAt?: string | null;
   isCreator?: boolean;
   isRecipient?: boolean;
+  history: TicketHistoryEntry[];
   notifications: Array<{
     channel: 'otto' | 'sms' | 'feishu';
     event: string;
@@ -5716,9 +5748,55 @@ interface TicketRow {
   response_type: string | null;
   response_text: string | null;
   response_at: string | null;
+  accepted_at: string | null;
+  completed_at: string | null;
+  closed_at: string | null;
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+interface TicketEventRow {
+  id: string;
+  event_order: number;
+  actor_account_id: string | null;
+  actor_name: string | null;
+  action: TicketHistoryAction;
+  status_before: string | null;
+  status_after: string;
+  response_type: string | null;
+  response_text: string | null;
+  created_at: string;
+}
+
+function recordTicketEvent(input: {
+  organizationId: string;
+  ticketId: string;
+  actorAccountId: string | null;
+  action: TicketHistoryAction;
+  statusBefore: string | null;
+  statusAfter: string;
+  responseType?: string | null;
+  responseText?: string | null;
+}): void {
+  getDB()
+    .prepare(
+      `INSERT INTO ticket_events
+       (id, organization_id, ticket_id, actor_account_id, action, status_before, status_after,
+        response_type, response_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `ticket_event_${randomUUID()}`,
+      input.organizationId,
+      input.ticketId,
+      input.actorAccountId,
+      input.action,
+      input.statusBefore,
+      input.statusAfter,
+      input.responseType ?? null,
+      input.responseText ?? null,
+    );
 }
 
 function ticketView(id: string, viewerAccountId?: string): TicketView {
@@ -5796,6 +5874,85 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   } catch {
     formData = {};
   }
+  const eventRows = getDB()
+    .prepare(
+      `SELECT e.id, e.rowid AS event_order, e.actor_account_id, a.name AS actor_name,
+              e.action, e.status_before, e.status_after, e.response_type, e.response_text, e.created_at
+       FROM ticket_events e
+       LEFT JOIN accounts a ON a.id = e.actor_account_id
+       WHERE e.ticket_id = ? AND e.organization_id = ?
+       ORDER BY e.created_at, e.rowid`,
+    )
+    .all(id, row.organization_id) as TicketEventRow[];
+  const historyCandidates: Array<{ order: number; event: TicketHistoryEntry }> = eventRows.map(
+    (event) => ({
+      order: 100 + event.event_order,
+      event: {
+        id: event.id,
+        action: event.action,
+        statusBefore: event.status_before,
+        statusAfter: event.status_after,
+        responseType: event.response_type,
+        responseText: event.response_text,
+        createdAt: event.created_at,
+        actor: event.actor_account_id
+          ? { id: event.actor_account_id, name: event.actor_name || '已删除账号' }
+          : null,
+      },
+    }),
+  );
+  const hasAction = (action: TicketHistoryAction): boolean => eventRows.some(
+    (event) => event.action === action,
+  );
+  const addLegacyEvent = (
+    action: TicketHistoryAction,
+    createdAt: string | null,
+    statusBefore: string | null,
+    statusAfter: string,
+    order: number,
+    responseType: string | null = null,
+    responseText: string | null = null,
+    actor: TicketHistoryEntry['actor'] = null,
+  ): void => {
+    if (!createdAt || hasAction(action)) return;
+    historyCandidates.push({
+      order,
+      event: {
+        id: `legacy_${action}_${row.id}`,
+        action,
+        statusBefore,
+        statusAfter,
+        responseType,
+        responseText,
+        createdAt,
+        actor,
+      },
+    });
+  };
+  addLegacyEvent('created', row.created_at, null, '待接单', 0, null, null, {
+    id: creator.id,
+    name: creator.name,
+  });
+  const processingStatus = row.service_id === 'repair' ? '维修中' : '处理中';
+  addLegacyEvent('accept', row.accepted_at, '待接单', processingStatus, 10);
+  addLegacyEvent(
+    'respond',
+    row.response_at,
+    row.accepted_at ? processingStatus : '待接单',
+    row.response_type === '已完成维修' ? '待验收' : row.status,
+    20,
+    row.response_type,
+    row.response_text,
+  );
+  if (!eventRows.some((event) => event.status_after === '待验收')) {
+    addLegacyEvent('complete', row.completed_at, processingStatus, '待验收', 30);
+  }
+  addLegacyEvent('confirm', row.closed_at, '待验收', '已完成', 40);
+  const history = historyCandidates
+    .sort((left, right) => (
+      left.event.createdAt.localeCompare(right.event.createdAt) || left.order - right.order
+    ))
+    .map((candidate) => candidate.event);
   return {
     id: row.id,
     parkId: row.park_id,
@@ -5831,6 +5988,7 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
     readAt: viewerDelivery?.read_at,
     isCreator: viewerAccountId === creator.id,
     isRecipient: Boolean(viewerDelivery),
+    history,
     notifications: notifications.map((notification) => ({
       channel: notification.channel,
       event: notification.event,
@@ -6011,41 +6169,62 @@ export function createTicket(input: {
           ).map(toAccountView);
 
   const id = `ticket_${randomUUID()}`;
-  getDB()
-    .prepare(
-      `INSERT INTO it_tickets
-       (id, organization_id, park_id, created_by_account_id, service_id, title, description, target_tags, form_data,
-        category, location, urgency, contact, contact_phone, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
-    )
-    .run(
-      id,
-      creator.organizationId,
-      park?.id ?? null,
-      creator.id,
-      serviceId,
-      title,
-      description,
-      JSON.stringify(targetTags),
-      JSON.stringify(input.formData ?? {}),
-      input.category?.trim() || null,
-      input.location?.trim() || null,
-      input.urgency?.trim() || null,
-      input.contact?.trim() || null,
-      input.contactPhone?.trim() || null,
+  const database = getDB();
+  database.exec('SAVEPOINT create_ticket');
+  try {
+    database
+      .prepare(
+        `INSERT INTO it_tickets
+         (id, organization_id, park_id, created_by_account_id, service_id, title, description, target_tags, form_data,
+          category, location, urgency, contact, contact_phone, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
+      )
+      .run(
+        id,
+        creator.organizationId,
+        park?.id ?? null,
+        creator.id,
+        serviceId,
+        title,
+        description,
+        JSON.stringify(targetTags),
+        JSON.stringify(input.formData ?? {}),
+        input.category?.trim() || null,
+        input.location?.trim() || null,
+        input.urgency?.trim() || null,
+        input.contact?.trim() || null,
+        input.contactPhone?.trim() || null,
+      );
+    recordTicketEvent({
+      organizationId: creator.organizationId,
+      ticketId: id,
+      actorAccountId: creator.id,
+      action: 'created',
+      statusBefore: null,
+      statusAfter: '待接单',
+    });
+    const deliver = database.prepare(
+      `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
+       VALUES (?, ?, ?)`,
     );
-  const deliver = getDB().prepare(
-    `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
-     VALUES (?, ?, ?)`,
-  );
-  for (const recipient of recipients)
-    deliver.run(creator.organizationId, id, recipient.id);
-  logAudit(
-    'ticket_create',
-    creator.employeeId,
-    `Ticket ${id} delivered to ${recipients.length} account(s)`,
-    creator.organizationId,
-  );
+    for (const recipient of recipients)
+      deliver.run(creator.organizationId, id, recipient.id);
+    logAudit(
+      'ticket_create',
+      creator.employeeId,
+      `Ticket ${id} delivered to ${recipients.length} account(s)`,
+      creator.organizationId,
+    );
+    database.exec('RELEASE SAVEPOINT create_ticket');
+  } catch (cause) {
+    try {
+      database.exec('ROLLBACK TO SAVEPOINT create_ticket');
+      database.exec('RELEASE SAVEPOINT create_ticket');
+    } catch {
+      // SAVEPOINT succeeded above; preserve the original business or database error.
+    }
+    throw cause;
+  }
   return ticketView(id, creator.id);
 }
 
@@ -6139,76 +6318,107 @@ export function updateTicket(input: {
 }): TicketView {
   const account = getAccount(input.accountId);
   if (!account) throw new Error('Account not found');
-  const current = getTicketForAccount(input.ticketId, input.accountId);
-  if (!current) throw new Error('Ticket not found');
-  const ticketRow = getDB()
-    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
-    .get(input.ticketId) as { organization_id: string };
-  const isRecipient = Boolean(current.isRecipient);
-  if (input.action === 'confirm') {
-    if (!current.isCreator) throw new Error('Only ticket creator can confirm');
-    if (current.status !== '待验收')
-      throw new Error('Ticket is not awaiting acceptance');
-    getDB()
-      .prepare(
-        `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
-       WHERE id = ? AND organization_id = ?`,
-      )
-      .run(input.ticketId, ticketRow.organization_id);
-  } else {
-    if (!isRecipient)
-      throw new Error('Only assigned repair workers can update');
-    if (input.action === 'respond') {
-      const responseType = input.responseType?.trim() || '';
-      const responseText = input.responseText?.trim() || '';
-      if (!responseType || !responseText)
-        throw new Error('responseType and responseText required');
-      if (responseType.length > 50 || responseText.length > 2000)
-        throw new Error('Repair response is too long');
-      const nextStatus =
-        responseType === '已完成维修' ? '待验收' : current.status;
-      getDB()
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const current = getTicketForAccount(input.ticketId, input.accountId);
+    if (!current) throw new Error('Ticket not found');
+    const ticketRow = database
+      .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+      .get(input.ticketId) as { organization_id: string };
+    const isRecipient = Boolean(current.isRecipient);
+    let statusAfter = current.status;
+    let responseType: string | null = null;
+    let responseText: string | null = null;
+
+    if (input.action === 'confirm') {
+      if (!current.isCreator) throw new Error('Only ticket creator can confirm');
+      if (current.status !== '待验收')
+        throw new Error('Ticket is not awaiting acceptance');
+      statusAfter = '已完成';
+      database
         .prepare(
-          `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
-          status = ?, completed_at = CASE WHEN ? = '待验收' THEN datetime('now') ELSE completed_at END,
-          updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
-        )
-        .run(
-          responseType,
-          responseText,
-          nextStatus,
-          nextStatus,
-          input.ticketId,
-          ticketRow.organization_id,
-        );
-    } else if (input.action === 'accept') {
-      if (!['待接单', '待派单'].includes(current.status))
-        throw new Error('Ticket cannot be accepted');
-      const acceptedStatus =
-        current.serviceId === 'repair' ? '维修中' : '处理中';
-      getDB()
-        .prepare(
-          `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ? AND organization_id = ?`,
-        )
-        .run(acceptedStatus, input.ticketId, ticketRow.organization_id);
-    } else if (input.action === 'complete') {
-      if (!['维修中', '处理中'].includes(current.status))
-        throw new Error('Ticket is not being processed');
-      getDB()
-        .prepare(
-          `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ? AND organization_id = ?`,
+          `UPDATE it_tickets SET status = '已完成', closed_at = datetime('now'), updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?`,
         )
         .run(input.ticketId, ticketRow.organization_id);
+    } else {
+      if (!isRecipient)
+        throw new Error('Only assigned repair workers can update');
+      if (input.action === 'respond') {
+        if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status))
+          throw new Error('Completed ticket cannot be updated');
+        responseType = input.responseType?.trim() || '';
+        responseText = input.responseText?.trim() || '';
+        if (!responseType || !responseText)
+          throw new Error('responseType and responseText required');
+        if (responseType.length > 50 || responseText.length > 2000)
+          throw new Error('Repair response is too long');
+        statusAfter = responseType === '已完成维修' ? '待验收' : current.status;
+        database
+          .prepare(
+            `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
+             status = ?, completed_at = CASE WHEN ? = '待验收' THEN datetime('now') ELSE completed_at END,
+             updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+          )
+          .run(
+            responseType,
+            responseText,
+            statusAfter,
+            statusAfter,
+            input.ticketId,
+            ticketRow.organization_id,
+          );
+      } else if (input.action === 'accept') {
+        if (!['待接单', '待派单'].includes(current.status))
+          throw new Error('Ticket cannot be accepted');
+        statusAfter = current.serviceId === 'repair' ? '维修中' : '处理中';
+        database
+          .prepare(
+            `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ? AND organization_id = ?`,
+          )
+          .run(statusAfter, input.ticketId, ticketRow.organization_id);
+      } else if (input.action === 'complete') {
+        if (!['维修中', '处理中'].includes(current.status))
+          throw new Error('Ticket is not being processed');
+        statusAfter = '待验收';
+        database
+          .prepare(
+            `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ? AND organization_id = ?`,
+          )
+          .run(input.ticketId, ticketRow.organization_id);
+      } else {
+        throw new Error('Unknown ticket action');
+      }
     }
+
+    recordTicketEvent({
+      organizationId: ticketRow.organization_id,
+      ticketId: input.ticketId,
+      actorAccountId: account.id,
+      action: input.action,
+      statusBefore: current.status,
+      statusAfter,
+      responseType,
+      responseText,
+    });
+    logAudit(
+      `ticket_${input.action}`,
+      account.employeeId,
+      `Ticket ${input.ticketId} ${input.action}`,
+      ticketRow.organization_id,
+    );
+    database.exec('COMMIT');
+  } catch (cause) {
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      // BEGIN succeeded above; preserve the original business or database error.
+    }
+    throw cause;
   }
-  logAudit(
-    `ticket_${input.action}`,
-    account.employeeId,
-    `Ticket ${input.ticketId} ${input.action}`,
-    ticketRow.organization_id,
-  );
   return ticketView(input.ticketId, input.accountId);
 }
 

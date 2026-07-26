@@ -11,13 +11,14 @@
  * 自动投递，并用结构化处理表完成受理、回复、办理和验收。
  */
 
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { insertComposerDraft } from './Composer.js';
 import type {
   EnterpriseAccount,
   EnterpriseParkPublication,
   EnterpriseParkResources,
   EnterpriseRepairTicket,
+  EnterpriseRepairTicketHistoryEntry,
 } from '../../preload/index.js';
 import defaultMeetingRoomImage from '../assets/meeting-room-default.png';
 import {
@@ -51,9 +52,42 @@ interface ParkService {
 const DEFAULT_BRAND = '宏创园区服务';
 const DEFAULT_PARK = '宏创园区';
 const ACTIONABLE_STAFF_TICKET_STATUSES = new Set(['待派单', '待接单', '维修中', '处理中']);
+const STAFF_HISTORY_TICKET_STATUSES = new Set(['待验收', '已完成']);
 
 export function isActionableStaffTicket(ticket: EnterpriseRepairTicket): boolean {
   return Boolean(ticket.isRecipient && ACTIONABLE_STAFF_TICKET_STATUSES.has(ticket.status));
+}
+
+export function isStaffHistoryTicket(ticket: EnterpriseRepairTicket): boolean {
+  return Boolean(ticket.isRecipient && STAFF_HISTORY_TICKET_STATUSES.has(ticket.status));
+}
+
+const HISTORY_ACTION_LABELS: Record<EnterpriseRepairTicketHistoryEntry['action'], string> = {
+  created: '提交服务申请',
+  accept: '接单并开始处理',
+  respond: '填写办理回复',
+  complete: '提交办理完成',
+  confirm: '申请人确认验收',
+};
+
+function parkTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatParkTimestamp(value: string): string {
+  const timestamp = parkTimestamp(value);
+  if (!timestamp) return value;
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(timestamp);
+}
+
+function ticketLatestTimestamp(ticket: EnterpriseRepairTicket): number {
+  const history = ticket.history ?? [];
+  return parkTimestamp(history[history.length - 1]?.createdAt || ticket.responseAt || ticket.updatedAt || ticket.createdAt);
 }
 
 function assignedNotificationKey(ticket: EnterpriseRepairTicket): string {
@@ -224,6 +258,41 @@ const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
 export function serviceFormFields(serviceId: string): ServiceFormField[] {
   const specific = SERVICE_FORM_FIELDS[serviceId] ?? [];
   return [...COMMON_SERVICE_FORM_FIELDS, ...specific.filter((field) => !COMMON_SERVICE_FORM_KEYS.has(field.key))];
+}
+
+function ticketFieldLabel(serviceId: string, key: string): string {
+  if (key === 'roomName') return '会议室';
+  if (key === 'slotKey') return '预约时段代码';
+  if (key === 'roomCapacity') return '会议室容量';
+  if (key === 'priceHalfDay') return '半日费用';
+  return serviceFormFields(serviceId).find((field) => field.key === key)?.label || key;
+}
+
+function visibleTicketHistory(ticket: EnterpriseRepairTicket): EnterpriseRepairTicketHistoryEntry[] {
+  if (ticket.history?.length) return ticket.history;
+  const history: EnterpriseRepairTicketHistoryEntry[] = [{
+    id: `fallback_created_${ticket.id}`,
+    action: 'created',
+    statusBefore: null,
+    statusAfter: '待接单',
+    responseType: null,
+    responseText: null,
+    createdAt: ticket.createdAt,
+    actor: { id: ticket.creator.id, name: ticket.creator.name },
+  }];
+  if (ticket.responseAt) {
+    history.push({
+      id: `fallback_response_${ticket.id}`,
+      action: 'respond',
+      statusBefore: null,
+      statusAfter: ticket.status,
+      responseType: ticket.responseType,
+      responseText: ticket.responseText,
+      createdAt: ticket.responseAt,
+      actor: null,
+    });
+  }
+  return history;
 }
 
 /**
@@ -572,6 +641,11 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
   const assignedTickets = tickets.filter((ticket) => ticket.isRecipient);
   const activeTicket = tickets.find((ticket) => ticket.id === selectedId)
     ?? (handlerMode ? assignedTickets[0] : ownTickets[0]) ?? null;
+  const historicalTicket = Boolean(activeTicket && isStaffHistoryTicket(activeTicket));
+  const historyEntries = activeTicket ? visibleTicketHistory(activeTicket) : [];
+  const showActiveTicketDescription = Boolean(activeTicket?.description && !Object.values(
+    activeTicket.formData,
+  ).some((value) => value.trim() === activeTicket.description.trim()));
 
   const replaceTicket = (next: EnterpriseRepairTicket): void => {
     setTickets((current) => [next, ...current.filter((ticket) => ticket.id !== next.id)]);
@@ -865,35 +939,63 @@ function ServiceRequestView({ service, onBack, focusTicket }: {
       </div> : null}
     </> : <div className="otto-park-technician-form">
       <div className="otto-park-form__guide">
-        <strong>{service.id === 'repair' ? '维修待办' : '客服待办'}</strong>
-        <span>这里仅显示分配给当前账号的真实申请。</span>
+        <strong>{historicalTicket
+          ? service.id === 'repair' ? '维修服务历史' : '园区服务历史'
+          : service.id === 'repair' ? '维修待办' : '客服待办'}</strong>
+        <span>{historicalTicket
+          ? '这里展示申请人填写的资料、全部处理记录和最终结果。'
+          : '这里仅显示分配给当前账号的真实申请。'}</span>
       </div>
       {assignedTickets.length ? <>
         <div className="otto-park-repair__roles">{assignedTickets.map((ticket) => <button key={ticket.id} type="button" className={activeTicket?.id === ticket.id ? 'is-active' : ''} onClick={() => { void openAssigned(ticket); }}>{ticket.title} · {ticket.status}{!ticket.readAt ? ' · 新' : ''}</button>)}</div>
         {activeTicket?.isRecipient ? <>
+          {historicalTicket ? <div className="otto-park-history-readonly" role="status">
+            <strong>历史记录只读</strong>
+            <span>该服务已进入验收或完成阶段，申请内容和每次处理结果均已留存。</span>
+          </div> : null}
           <div className="otto-park-request-summary">
             <div><span>申请人</span><strong>{activeTicket.creator.name}</strong></div>
             {Object.entries(activeTicket.formData).filter(([key]) => !['otherCategory', 'roomId'].includes(key)).map(([key, value]) => <div key={key}>
-              <span>{key === 'roomName' ? '会议室' : fields.find((field) => field.key === key)?.label || key}</span>
+              <span>{ticketFieldLabel(activeTicket.serviceId, key)}</span>
               <strong>{value || '未填写'}</strong>
             </div>)}
+            {showActiveTicketDescription ? <div className="is-wide"><span>申请说明</span><strong>{activeTicket.description}</strong></div> : null}
+            <div><span>最终状态</span><strong>{activeTicket.status}</strong></div>
+            <div><span>最新办理结果</span><strong>{activeTicket.responseType || '暂无办理回复'}</strong></div>
+            <div className="is-wide"><span>最新结果说明</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
           </div>
-          <form className="otto-park-response-form" onSubmit={(event) => { event.preventDefault(); void action(activeTicket, 'respond'); }} aria-label="园区服务回复表">
-            <label className="otto-park-form__field">处理方式
-              <select required value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))}>
-                <option value="">请选择处理方式</option>
-                {interaction.quickReplies.map((reply) => <option key={reply}>{reply}</option>)}
-              </select>
-            </label>
-            <label className="otto-park-form__field">给申请人的说明
-              <textarea required rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} placeholder="请说明下一步安排、需要补充的信息或处理结果" />
-            </label>
-            <button type="submit" className="otto-park-demo__primary" disabled={busy || !response.type || !response.text.trim()}>发送办理回复</button>
-          </form>
-          <div className="otto-park-demo__actions">
-            <button type="button" className="otto-park-demo__secondary" onClick={() => { void action(activeTicket, 'accept'); }} disabled={busy || !['待派单', '待接单'].includes(activeTicket.status)}>接单并处理</button>
-            <button type="button" className="otto-park-demo__primary" onClick={() => { void action(activeTicket, 'complete'); }} disabled={busy || !['维修中', '处理中'].includes(activeTicket.status)}>提交办理完成</button>
-          </div>
+          <section className="otto-park-ticket-history" aria-label="园区服务处理历史">
+            <div className="otto-park-ticket-history__head"><strong>处理记录</strong><span>{historyEntries.length} 条 · 按时间顺序</span></div>
+            <ol>{historyEntries.map((entry) => <li key={entry.id}>
+              <span className="otto-park-ticket-history__marker" aria-hidden />
+              <div>
+                <div className="otto-park-ticket-history__meta">
+                  <strong>{HISTORY_ACTION_LABELS[entry.action]}</strong>
+                  <time dateTime={entry.createdAt}>{formatParkTimestamp(entry.createdAt)}</time>
+                </div>
+                <p>{entry.actor?.name || '历史处理人员'} · 状态：{entry.statusAfter}</p>
+                {entry.responseType ? <p><b>{entry.responseType}</b>{entry.responseText ? `：${entry.responseText}` : ''}</p> : null}
+              </div>
+            </li>)}</ol>
+          </section>
+          {!historicalTicket ? <>
+            <form className="otto-park-response-form" onSubmit={(event) => { event.preventDefault(); void action(activeTicket, 'respond'); }} aria-label="园区服务回复表">
+              <label className="otto-park-form__field">处理方式
+                <select required value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))}>
+                  <option value="">请选择处理方式</option>
+                  {interaction.quickReplies.map((reply) => <option key={reply}>{reply}</option>)}
+                </select>
+              </label>
+              <label className="otto-park-form__field">给申请人的说明
+                <textarea required rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} placeholder="请说明下一步安排、需要补充的信息或处理结果" />
+              </label>
+              <button type="submit" className="otto-park-demo__primary" disabled={busy || !response.type || !response.text.trim()}>发送办理回复</button>
+            </form>
+            <div className="otto-park-demo__actions">
+              <button type="button" className="otto-park-demo__secondary" onClick={() => { void action(activeTicket, 'accept'); }} disabled={busy || !['待派单', '待接单'].includes(activeTicket.status)}>接单并处理</button>
+              <button type="button" className="otto-park-demo__primary" onClick={() => { void action(activeTicket, 'complete'); }} disabled={busy || !['维修中', '处理中'].includes(activeTicket.status)}>提交办理完成</button>
+            </div>
+          </> : null}
         </> : null}
       </> : <div className="otto-park-repair__empty">当前没有分配给你的待办。</div>}
     </div>}
@@ -917,6 +1019,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
   const [focusTicket, setFocusTicket] = useState<EnterpriseRepairTicket | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<EnterpriseRepairTicket[]>([]);
+  const [assignedHistory, setAssignedHistory] = useState<EnterpriseRepairTicket[]>([]);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyCategory, setHistoryCategory] = useState('all');
+  const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc');
   const [pendingNotificationSessionId, setPendingNotificationSessionId] = useState<string | null>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const notifiedTicketKeys = useRef(new Set<string>());
@@ -925,6 +1031,43 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const notifiedPublicationKeys = useRef(new Set<string>());
   const uid = useId();
   const titleId = `${uid}-title`;
+
+  const historyCategoryOptions = useMemo(() => {
+    const configuredNames = new Map(services.map((service) => [service.id, service.name]));
+    return baseDefaultServices(DEFAULT_PARK).map((service) => ({
+      id: service.id,
+      name: configuredNames.get(service.id) || service.name,
+    }));
+  }, [services]);
+  const visibleAssignedHistory = useMemo(() => {
+    const query = historyQuery.trim().toLocaleLowerCase('zh-CN');
+    return assignedHistory
+      .filter((ticket) => historyCategory === 'all' || ticket.serviceId === historyCategory)
+      .filter((ticket) => {
+        if (!query) return true;
+        const historyText = (ticket.history ?? []).flatMap((entry) => [
+          entry.actor?.name,
+          entry.responseType,
+          entry.responseText,
+          entry.statusAfter,
+        ]);
+        return [
+          ticket.title,
+          ticket.description,
+          ticket.status,
+          ticket.category,
+          ticket.location,
+          ticket.creator.name,
+          ticket.responseType,
+          ticket.responseText,
+          ...Object.values(ticket.formData),
+          ...historyText,
+        ].filter(Boolean).join('\n').toLocaleLowerCase('zh-CN').includes(query);
+      })
+      .sort((left, right) => (historySort === 'desc' ? -1 : 1) * (
+        ticketLatestTimestamp(left) - ticketLatestTimestamp(right)
+      ));
+  }, [assignedHistory, historyCategory, historyQuery, historySort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1069,6 +1212,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         if (cancelled) return;
         if (!session.account) {
           setAssignedTasks([]);
+          setAssignedHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
           notifiedTicketKeys.current.clear();
@@ -1081,14 +1225,17 @@ export function ParkServicesPlugin(): React.JSX.Element {
           ticketPollIdentity.current = identity;
           ticketPollInitialized.current = false;
           notifiedTicketKeys.current.clear();
+          setAssignedHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
         }
         const tickets = await window.otto.enterpriseTicketList();
         if (cancelled) return;
         const actionableTasks = tickets.filter(isActionableStaffTicket);
+        const completedHistory = tickets.filter(isStaffHistoryTicket);
         const latestTickets = new Map(tickets.map((ticket) => [ticket.id, ticket]));
         setAssignedTasks(actionableTasks);
+        setAssignedHistory(completedHistory);
         setBackgroundTickets((current) => current
           .map((ticket) => latestTickets.get(ticket.id) ?? ticket)
           .filter((ticket) => (
@@ -1232,6 +1379,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         (ticket) => updates.get(ticket.id) ?? ticket,
       );
       setAssignedTasks(applyUpdates);
+      setAssignedHistory(applyUpdates);
       setBackgroundTickets(applyUpdates);
       setFocusTicket((current) => current ? updates.get(current.id) ?? current : current);
     });
@@ -1326,10 +1474,44 @@ export function ParkServicesPlugin(): React.JSX.Element {
           <ServiceDemo service={selected} onBack={() => { setSelected(null); setFocusTicket(null); }} focusTicket={focusTicket} />
         ) : (
           <div className="otto-park-dialog__landing">
-            {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
-              <div><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
-              <div className="otto-park-staff-tasks__items">{assignedTasks.slice(0, 3).map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
-            </section> : null}
+            {assignedTasks.length || assignedHistory.length ? <div className="otto-park-staff-workspace">
+              {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
+                <div className="otto-park-staff-panel__head"><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
+                <div className="otto-park-staff-tasks__items">{assignedTasks.map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
+              </section> : null}
+              {assignedHistory.length ? <section className="otto-park-staff-history" aria-label="我的园区服务历史记录">
+                <div className="otto-park-staff-panel__head"><strong>我的园区服务历史记录</strong><span>{visibleAssignedHistory.length} / {assignedHistory.length} 条 · 仅工作人员可见</span></div>
+                <div className="otto-park-staff-history__controls">
+                  <input
+                    type="search"
+                    aria-label="搜索园区服务历史"
+                    value={historyQuery}
+                    onChange={(event) => setHistoryQuery(event.target.value)}
+                    placeholder="搜索企业、联系人、地址或处理内容"
+                  />
+                  <select aria-label="园区历史分类" value={historyCategory} onChange={(event) => setHistoryCategory(event.target.value)}>
+                    <option value="all">全部 9 类</option>
+                    {historyCategoryOptions.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+                  </select>
+                  <select aria-label="园区历史排序" value={historySort} onChange={(event) => setHistorySort(event.target.value as 'desc' | 'asc')}>
+                    <option value="desc">时间从新到旧</option>
+                    <option value="asc">时间从旧到新</option>
+                  </select>
+                </div>
+                <div className="otto-park-staff-history__items">
+                  {visibleAssignedHistory.length ? visibleAssignedHistory.map((ticket) => {
+                    const serviceName = historyCategoryOptions.find((service) => service.id === ticket.serviceId)?.name || ticket.serviceId;
+                    const latestTime = (ticket.history ?? []).at(-1)?.createdAt || ticket.responseAt || ticket.updatedAt;
+                    return <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开园区历史：${ticket.title}`}>
+                      <span><b>{serviceName}</b><em>{ticket.status}</em></span>
+                      <strong>{ticket.title}</strong>
+                      <small>{ticket.creator.name} · {formatParkTimestamp(latestTime)}</small>
+                      <p>{ticket.responseType || '办理完成'}{ticket.responseText ? `：${ticket.responseText}` : ''}</p>
+                    </button>;
+                  }) : <div className="otto-park-staff-history__empty">没有符合当前搜索和分类条件的历史记录。</div>}
+                </div>
+              </section> : null}
+            </div> : null}
             <div className="otto-park-dialog__grid">
               {services.map((service, index) => {
                 const Icon = service.icon;
