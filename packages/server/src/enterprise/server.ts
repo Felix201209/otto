@@ -68,6 +68,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
+import { handleAdminPageRoute } from './adminPageRoutes.js';
 
 const DEFAULT_PORT = 7777;
 
@@ -3378,78 +3379,13 @@ function makeHandler(
         return;
       }
 
-      // ===== Preset account admin web app =====
-      // 页面本身公开可达，但不包含任何静态管理 token；所有账号数据请求仍必须使用
-      // 管理员预设账号登录后拿到的短期会话。
-      if (path === '/enterprise/admin' && method === 'GET') {
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'X-Frame-Options': 'DENY',
-        });
-        res.end(adminAccountsHTML());
-        return;
-      }
-
-      // ===== Park resource admin web app =====
-      if (path === '/enterprise/park-admin' && method === 'GET') {
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data: https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'X-Frame-Options': 'DENY',
-        });
-        res.end(parkAdminHTML());
-        return;
-      }
-
-      // ===== Platform multi-organization admin web app =====
-      // 平台令牌只能由操作者在浏览器内手动输入，并仅保存在当前标签页的 sessionStorage。
-      if (path === '/enterprise/admin/platform' && method === 'GET') {
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'X-Frame-Options': 'DENY',
-        });
-        res.end(platformAdminHTML());
-        return;
-      }
-
-      // ===== Admin Dashboard HTML =====
-      if (path === '/enterprise/dashboard' && method === 'GET') {
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'X-Frame-Options': 'DENY',
-        });
-        // 看板只返回不含凭证的页面外壳。管理员登录会话通过同源 sessionStorage
-        // 复用，平台令牌则在页面内手动粘贴；服务器绝不把令牌注入 HTML。
-        res.end(adminDashboardHTML());
-        return;
-      }
-
-      // ===== Admin Credits Panel HTML =====
-      if (path === '/enterprise/admin/credits' && method === 'GET') {
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'X-Frame-Options': 'DENY',
-        });
-        res.end(adminCreditsHTML());
+      if (handleAdminPageRoute(method, path, res, {
+        adminAccountsHTML,
+        parkAdminHTML,
+        platformAdminHTML,
+        adminDashboardHTML,
+        adminCreditsHTML,
+      })) {
         return;
       }
 
