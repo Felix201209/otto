@@ -66,6 +66,7 @@ import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 import { handleOrganizationRoute } from './organizationRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
+import { handleParkStatisticsRoute } from './parkStatisticsRoutes.js';
 import { handlePlatformOrganizationRoute } from './platformOrganizationRoutes.js';
 import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
 import { handleTicketRoute } from './ticketRoutes.js';
@@ -884,137 +885,16 @@ function makeHandler(
         return;
       }
 
-      // ===== Park data statistics =====
-      // 与园区公告/满意度调查分开：任务只在“数据统计”模块创建，
-      // 企业负责人从消息栏接收后可分派员工，员工填报必须由负责人审核。
-      if (path === '/enterprise/park-statistics' && (method === 'GET' || method === 'POST')) {
-        const principal = adminPrincipal!;
-        if (principal.kind !== 'account') {
-          sendJSON(res, 403, { error: '请使用园区管理员账号管理数据统计' });
-          return;
-        }
-        if (method === 'GET') {
-          try {
-            sendJSON(res, 200, { tasks: db.listParkDataStatisticsTasks(principal.account.id) });
-          } catch (error) {
-            sendJSON(res, 400, { error: error instanceof Error ? error.message : '数据统计任务读取失败' });
-          }
-          return;
-        }
-        const body = await readBody(req);
-        const fields = Array.isArray(body.fields)
-          ? body.fields.filter((item): item is string => typeof item === 'string')
-          : [];
-        const organizationIds = Array.isArray(body.organizationIds)
-          ? body.organizationIds.filter((item): item is string => typeof item === 'string')
-          : undefined;
-        try {
-          const result = db.createParkDataStatisticsTask({
-            createdByAccountId: principal.account.id,
-            title: typeof body.title === 'string' ? body.title : '',
-            description: typeof body.description === 'string' ? body.description : '',
-            deadline: typeof body.deadline === 'string' ? body.deadline : '',
-            fields,
-            templateName: typeof body.templateName === 'string' ? body.templateName : null,
-            templateData: typeof body.templateData === 'string' ? body.templateData : null,
-            organizationIds,
-          });
-          sendJSON(res, 201, result);
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : '数据统计任务创建失败' });
-        }
-        return;
-      }
-
-      if (path === '/enterprise/park-statistics/inbox' && method === 'GET') {
-        sendJSON(res, 200, { tasks: db.listParkDataStatisticsTasks(memberAccount!.id) });
-        return;
-      }
-
-      const statisticsTemplate = path.match(/^\/enterprise\/park-statistics\/([^/]+)\/template$/);
-      if (statisticsTemplate && method === 'GET') {
-        let taskId = '';
-        try { taskId = decodeURIComponent(statisticsTemplate[1]!); } catch { /* invalid id */ }
-        try {
-          sendJSON(res, 200, { template: db.getParkDataStatisticsTemplate(taskId, memberAccount!.id) });
-        } catch (error) {
-          sendJSON(res, 404, { error: error instanceof Error ? error.message : '模板不存在' });
-        }
-        return;
-      }
-
-      const statisticsAction = path.match(/^\/enterprise\/park-statistics\/([^/]+)\/(remind|return|read|delegate|draft|approve|reject)$/);
-      if (statisticsAction && method === 'POST') {
-        let taskId = '';
-        try { taskId = decodeURIComponent(statisticsAction[1]!); } catch { /* invalid id */ }
-        const action = statisticsAction[2]!;
-        if (!taskId) {
-          sendJSON(res, 400, { error: '数据统计任务编号不正确' });
-          return;
-        }
-        const actor =
-          memberAccount ??
-          (adminPrincipal?.kind === 'account' ? adminPrincipal.account : null);
-        if (!actor) {
-          sendJSON(res, 401, { error: '登录已失效，请重新登录' });
-          return;
-        }
-        try {
-          if (action === 'read') {
-            sendJSON(res, 200, { assignment: db.markParkDataStatisticsRead(taskId, actor.id) });
-            return;
-          }
-          const body = await readBody(req);
-          if (action === 'delegate') {
-            sendJSON(res, 200, {
-              assignment: db.delegateParkDataStatistics(
-                taskId,
-                actor.id,
-                typeof body.assigneeAccountId === 'string' ? body.assigneeAccountId : '',
-              ),
-            });
-            return;
-          }
-          if (action === 'draft') {
-            const responseData = body.responseData && typeof body.responseData === 'object' && !Array.isArray(body.responseData)
-              ? Object.fromEntries(Object.entries(body.responseData).filter(
-                (entry): entry is [string, string] => typeof entry[1] === 'string',
-              ))
-              : {};
-            sendJSON(res, 200, { assignment: db.submitParkDataStatisticsDraft(taskId, actor.id, responseData) });
-            return;
-          }
-          if (action === 'approve' || action === 'reject') {
-            sendJSON(res, 200, {
-              assignment: db.reviewParkDataStatistics(
-                taskId,
-                actor.id,
-                action === 'approve',
-                typeof body.reason === 'string' ? body.reason : undefined,
-              ),
-            });
-            return;
-          }
-          if (!actor.isAdmin) {
-            sendJSON(res, 403, { error: '只有园区管理员可以催办或退回任务' });
-            return;
-          }
-          if (action === 'remind') {
-            sendJSON(res, 200, { task: db.remindParkDataStatistics(taskId, actor.id) });
-            return;
-          }
-          const organizationId = typeof body.organizationId === 'string' ? body.organizationId : '';
-          sendJSON(res, 200, {
-            assignment: db.returnParkDataStatistics(
-              taskId,
-              actor.id,
-              organizationId,
-              typeof body.reason === 'string' ? body.reason : '',
-            ),
-          });
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : '数据统计操作失败' });
-        }
+      if (await handleParkStatisticsRoute({
+        path,
+        method,
+        req,
+        res,
+        memberAccount,
+        adminPrincipal,
+        readBody,
+        sendJSON,
+      })) {
         return;
       }
       // ===== Enterprise Credits System =====
