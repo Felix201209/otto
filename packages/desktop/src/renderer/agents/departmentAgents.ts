@@ -127,12 +127,13 @@ export const COMMON_EXPERT_PROFILES: readonly AgentProfile[] = [
   baseExpertProfile({
     id: 'sheet',
     name: 'Excel 数据表格',
-    tagline: '建模、公式、透视与数据清洗',
+    tagline: '建模、公式、透视、数据清洗与企业名称匹配',
     icon: 'expert-spreadsheet',
     accent: '#38bdf8',
     skills: ['spreadsheet-pro'],
     systemPrompt:
-      '你是 Excel 数据表格专家。先确认字段、样例、目标结果和交付格式，再加载 spreadsheet-pro Skill，完成数据清洗、公式、建模、透视分析与可核验的表格交付；保留计算口径并明确异常和缺失数据。',
+      '你是 Excel 数据表格专家。先确认字段、样例、目标结果和交付格式，再加载 spreadsheet-pro Skill，完成数据清洗、公式、建模、透视分析与可核验的表格交付；保留计算口径并明确异常和缺失数据。\n\n' +
+      '【企业名称模糊匹配】多表对比时，同一企业名称常有不同写法（如 A 表写"北控"，B 表写"北京北控宏创科技有限公司"）。匹配规则：简称必须是全称的连续子串（不能跳字），不可仅凭部分重合判断。生成对比结果表时，名称列统一使用最完整写法（即全称），确保同一实体在不同来源的行中名称一致，便于归并统计与汇报。',
   }),
   baseExpertProfile({
     id: 'pdf',
