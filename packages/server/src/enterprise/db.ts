@@ -1539,6 +1539,28 @@ export interface PrivateDeploymentStatus {
     avgLatencyMs: number | null;
   };
 }
+
+export type ModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
+
+export interface ModuleUpdateDescriptor {
+  module: string;
+  version: string;
+  rollout: ModuleUpdateRollout;
+  notes: string;
+  minAppVersion: string | null;
+  manifestUrl: string | null;
+  sha256: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface ModuleUpdateManifest {
+  format: 'otto-module-updates-v1';
+  deploymentId: string;
+  generatedAt: string;
+  modules: ModuleUpdateDescriptor[];
+  catalog: Array<{ module: string; features: Array<keyof OrganizationFeatures> }>;
+}
 const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   enterprise_tree: true,
   park_service: true,
@@ -1589,6 +1611,125 @@ function setSettingValue(key: string, value: string): void {
      VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(key, value);
+}
+
+const MODULE_UPDATE_ROLLOUTS = new Set<ModuleUpdateRollout>([
+  'off',
+  'canary',
+  'stable',
+  'required',
+]);
+
+const MODULE_UPDATE_SHA256_RE = /^[0-9a-f]{64}$/i;
+
+function licenseModuleCatalog(): Array<{ module: string; features: Array<keyof OrganizationFeatures> }> {
+  return Object.entries(LICENSE_MODULE_FEATURES).map(([module, features]) => ({ module, features }));
+}
+
+function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDescriptor[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const allowedModules = new Set(Object.keys(LICENSE_MODULE_FEATURES));
+    const result: ModuleUpdateDescriptor[] = [];
+    for (const item of parsed) {
+      if (typeof item !== 'object' || item === null) continue;
+      const row = item as Record<string, unknown>;
+      const module = typeof row.module === 'string' ? row.module.trim() : '';
+      const version = typeof row.version === 'string' ? row.version.trim() : '';
+      const rollout = typeof row.rollout === 'string' && MODULE_UPDATE_ROLLOUTS.has(row.rollout as ModuleUpdateRollout)
+        ? row.rollout as ModuleUpdateRollout
+        : 'off';
+      const updatedAt = typeof row.updatedAt === 'string' && row.updatedAt.trim()
+        ? row.updatedAt.trim()
+        : new Date(0).toISOString();
+      if (!allowedModules.has(module) || !version) continue;
+      result.push({
+        module,
+        version,
+        rollout,
+        notes: typeof row.notes === 'string' ? row.notes.slice(0, 2_000) : '',
+        minAppVersion: typeof row.minAppVersion === 'string' && row.minAppVersion.trim()
+          ? row.minAppVersion.trim()
+          : null,
+        manifestUrl: typeof row.manifestUrl === 'string' && row.manifestUrl.trim()
+          ? row.manifestUrl.trim()
+          : null,
+        sha256: typeof row.sha256 === 'string' && MODULE_UPDATE_SHA256_RE.test(row.sha256)
+          ? row.sha256.toLowerCase()
+          : null,
+        publishedAt: typeof row.publishedAt === 'string' && row.publishedAt.trim()
+          ? row.publishedAt.trim()
+          : null,
+        updatedAt,
+      });
+    }
+    return result.sort((a, b) => a.module.localeCompare(b.module));
+  } catch {
+    return [];
+  }
+}
+
+export function getModuleUpdateManifest(): ModuleUpdateManifest {
+  return {
+    format: 'otto-module-updates-v1',
+    deploymentId: getDeploymentId(),
+    generatedAt: new Date().toISOString(),
+    modules: parseModuleUpdateDescriptors(settingValue('module_update_manifest')),
+    catalog: licenseModuleCatalog(),
+  };
+}
+
+export function updateModuleUpdateDescriptor(input: {
+  module: string;
+  version?: string;
+  rollout?: ModuleUpdateRollout;
+  notes?: string | null;
+  minAppVersion?: string | null;
+  manifestUrl?: string | null;
+  sha256?: string | null;
+  publishedAt?: string | null;
+  actorAccountId?: string | null;
+  organizationId?: string;
+}): ModuleUpdateDescriptor {
+  const module = input.module.trim();
+  if (!LICENSE_MODULE_FEATURES[module]) throw new Error('未知模块');
+  const current = new Map(getModuleUpdateManifest().modules.map((item) => [item.module, item]));
+  const existing = current.get(module);
+  const rollout = input.rollout ?? existing?.rollout ?? 'stable';
+  if (!MODULE_UPDATE_ROLLOUTS.has(rollout)) throw new Error('无效发布通道');
+  const version = input.version?.trim() || existing?.version || '';
+  if (!version) throw new Error('模块版本不能为空');
+  const sha256 = input.sha256?.trim() || existing?.sha256 || null;
+  if (sha256 && !MODULE_UPDATE_SHA256_RE.test(sha256)) throw new Error('sha256 必须是 64 位十六进制');
+  const descriptor: ModuleUpdateDescriptor = {
+    module,
+    version,
+    rollout,
+    notes: input.notes == null ? existing?.notes ?? '' : input.notes.slice(0, 2_000),
+    minAppVersion: input.minAppVersion == null
+      ? existing?.minAppVersion ?? null
+      : input.minAppVersion.trim() || null,
+    manifestUrl: input.manifestUrl == null
+      ? existing?.manifestUrl ?? null
+      : input.manifestUrl.trim() || null,
+    sha256: sha256 ? sha256.toLowerCase() : null,
+    publishedAt: input.publishedAt == null
+      ? existing?.publishedAt ?? new Date().toISOString()
+      : input.publishedAt.trim() || null,
+    updatedAt: new Date().toISOString(),
+  };
+  if (rollout === 'off') current.delete(module);
+  else current.set(module, descriptor);
+  setSettingValue('module_update_manifest', JSON.stringify([...current.values()].sort((a, b) => a.module.localeCompare(b.module))));
+  logAudit(
+    'module_update_publish',
+    null,
+    `Module update ${module}@${version} rollout=${rollout}`,
+    input.organizationId ?? DEFAULT_ORGANIZATION_ID,
+  );
+  return descriptor;
 }
 
 export function getDeploymentId(): string {
@@ -1910,7 +2051,7 @@ export function getPrivateDeploymentStatus(): PrivateDeploymentStatus {
       includesMeetingAudio: false,
       defaultPayload: ['license status', 'version', 'module usage counters', 'error codes', 'runtime health'],
     },
-    moduleCatalog: Object.entries(LICENSE_MODULE_FEATURES).map(([module, features]) => ({ module, features })),
+    moduleCatalog: licenseModuleCatalog(),
     runtimeHealth: getDeploymentRuntimeHealth(),
   };
 }
