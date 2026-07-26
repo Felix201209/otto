@@ -72,6 +72,13 @@ import {
   joinOrganizationToPark as joinOrganizationToParkInRepository,
   updateParkTenantProfile as updateParkTenantProfileInRepository,
 } from './parkInviteRepository.js';
+import {
+  listParkServices as listParkServicesFromRepository,
+  listParkServiceSpecialists as listParkServiceSpecialistsFromRepository,
+  removeParkServiceSpecialist as removeParkServiceSpecialistFromRepository,
+  setParkServiceSpecialist as setParkServiceSpecialistInRepository,
+  updateParkService as updateParkServiceInRepository,
+} from './parkServiceRepository.js';
 import type {
   DeploymentLicenseView,
   DeploymentTelemetrySettings,
@@ -81,6 +88,10 @@ import type {
   ParkInviteView,
   ParkTenantProfileView,
 } from './parkInviteTypes.js';
+import type {
+  ParkServiceSpecialistView,
+  ParkServiceView,
+} from './parkServiceTypes.js';
 import type {
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
@@ -105,6 +116,10 @@ export type {
   ParkInviteView,
   ParkTenantProfileView,
 } from './parkInviteTypes.js';
+export type {
+  ParkServiceSpecialistView,
+  ParkServiceView,
+} from './parkServiceTypes.js';
 export {
   listDirectMessages,
   listPendingAtoaRequests,
@@ -4326,56 +4341,15 @@ export const PARK_SERVICE_IDS = new Set<string>(
   DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
 );
 
-export interface ParkServiceView {
-  parkId: string;
-  id: string;
-  name: string;
-  enabled: boolean;
-  config: Record<string, string>;
-  updatedAt: string;
-}
-
-interface ParkServiceRow {
-  park_id: string;
-  id: string;
-  name: string;
-  enabled: number;
-  config_json: string;
-  updated_at: string;
-}
-
-function toParkServiceView(row: ParkServiceRow): ParkServiceView {
-  let config: Record<string, string> = {};
-  try {
-    const parsed = JSON.parse(row.config_json) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      config = Object.fromEntries(
-        Object.entries(parsed).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-      );
-    }
-  } catch {
-    config = {};
-  }
-  return {
-    parkId: row.park_id,
-    id: row.id,
-    name: row.name,
-    enabled: row.enabled === 1,
-    config,
-    updatedAt: row.updated_at,
-  };
-}
+const parkServiceStore = {
+  db: getDB,
+  getAccount,
+  getPark,
+  normalizeOptionalText,
+};
 
 export function listParkServices(parkId: string): ParkServiceView[] {
-  return (
-    getDB()
-      .prepare(
-        'SELECT * FROM park_services WHERE park_id = ? ORDER BY name, id',
-      )
-      .all(parkId) as ParkServiceRow[]
-  ).map(toParkServiceView);
+  return listParkServicesFromRepository(parkServiceStore, parkId);
 }
 
 export function updateParkService(input: {
@@ -4386,46 +4360,7 @@ export function updateParkService(input: {
   enabled?: boolean;
   config?: Record<string, string>;
 }): ParkServiceView {
-  const park = getPark(input.parkId);
-  if (!park) throw new Error('产业园不存在');
-  const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active')
-    throw new Error('只有产业园管理员可配置服务');
-  const current = getDB()
-    .prepare('SELECT * FROM park_services WHERE park_id = ? AND id = ?')
-    .get(park.id, input.serviceId) as ParkServiceRow | undefined;
-  if (!current) throw new Error('园区服务不存在');
-  const name =
-    input.name === undefined
-      ? current.name
-      : normalizeOptionalText(input.name, '园区服务名称');
-  if (!name) throw new Error('园区服务名称不能为空');
-  const config = input.config ?? toParkServiceView(current).config;
-  const normalizedConfig = Object.fromEntries(
-    Object.entries(config).filter(
-      (entry): entry is [string, string] =>
-        entry[0].length <= 64 &&
-        typeof entry[1] === 'string' &&
-        entry[1].length <= 500,
-    ),
-  );
-  getDB()
-    .prepare(
-      `UPDATE park_services SET name = ?, enabled = ?, config_json = ?, updated_at = datetime('now')
-     WHERE park_id = ? AND id = ?`,
-    )
-    .run(
-      name,
-      (input.enabled ?? current.enabled === 1) ? 1 : 0,
-      JSON.stringify(normalizedConfig),
-      park.id,
-      input.serviceId,
-    );
-  return toParkServiceView(
-    getDB()
-      .prepare('SELECT * FROM park_services WHERE park_id = ? AND id = ?')
-      .get(park.id, input.serviceId) as ParkServiceRow,
-  );
+  return updateParkServiceInRepository(parkServiceStore, input);
 }
 
 function toParkView(row: ParkRow): ParkView {
@@ -4717,36 +4652,10 @@ export function joinOrganizationToPark(input: {
   return joinOrganizationToParkInRepository(parkInviteStore, input);
 }
 
-export interface ParkServiceSpecialistView {
-  parkId: string;
-  serviceId: string;
-  accountId: string;
-  name: string;
-}
-
 export function listParkServiceSpecialists(
   parkId: string,
 ): ParkServiceSpecialistView[] {
-  return (
-    getDB()
-      .prepare(
-        `SELECT s.park_id, s.service_id, a.id AS account_id, a.name
-     FROM park_service_specialists s JOIN accounts a ON a.id = s.account_id
-     WHERE s.park_id = ? AND a.status = 'active' AND a.deleted_at IS NULL
-     ORDER BY s.service_id, a.name, a.id`,
-      )
-      .all(parkId) as Array<{
-      park_id: string;
-      service_id: string;
-      account_id: string;
-      name: string;
-    }>
-  ).map((row) => ({
-    parkId: row.park_id,
-    serviceId: row.service_id,
-    accountId: row.account_id,
-    name: row.name,
-  }));
+  return listParkServiceSpecialistsFromRepository(parkServiceStore, parkId);
 }
 
 export function setParkServiceSpecialist(input: {
@@ -4755,31 +4664,7 @@ export function setParkServiceSpecialist(input: {
   serviceId: string;
   accountId: string;
 }): ParkServiceSpecialistView {
-  const park = getPark(input.parkId);
-  if (!park) throw new Error('产业园不存在');
-  const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active')
-    throw new Error('只有产业园管理员可设置服务专员');
-  const specialist = getAccount(input.accountId, park.adminOrganizationId);
-  if (!specialist || specialist.status !== 'active')
-    throw new Error('专员必须属于产业园管理企业');
-  const serviceId = input.serviceId.trim();
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(serviceId))
-    throw new Error('服务标识格式不正确');
-  const service = getDB()
-    .prepare('SELECT enabled FROM park_services WHERE park_id = ? AND id = ?')
-    .get(park.id, serviceId) as { enabled: number } | undefined;
-  if (!service) throw new Error('园区服务不存在');
-  if (service.enabled !== 1) throw new Error('园区服务已停用');
-  getDB()
-    .prepare(
-      `INSERT OR IGNORE INTO park_service_specialists (park_id, service_id, account_id)
-     VALUES (?, ?, ?)`,
-    )
-    .run(park.id, serviceId, specialist.id);
-  return listParkServiceSpecialists(park.id).find(
-    (item) => item.serviceId === serviceId && item.accountId === specialist.id,
-  )!;
+  return setParkServiceSpecialistInRepository(parkServiceStore, input);
 }
 
 export function removeParkServiceSpecialist(input: {
@@ -4788,17 +4673,7 @@ export function removeParkServiceSpecialist(input: {
   serviceId: string;
   accountId: string;
 }): void {
-  const park = getPark(input.parkId);
-  if (!park) throw new Error('产业园不存在');
-  const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active')
-    throw new Error('只有产业园管理员可设置服务专员');
-  getDB()
-    .prepare(
-      `DELETE FROM park_service_specialists
-     WHERE park_id = ? AND service_id = ? AND account_id = ?`,
-    )
-    .run(park.id, input.serviceId, input.accountId);
+  removeParkServiceSpecialistFromRepository(parkServiceStore, input);
 }
 
 export {
