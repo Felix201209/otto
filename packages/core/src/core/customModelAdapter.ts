@@ -20,6 +20,7 @@ import {
   CUSTOM_MODEL_DEFAULT_MAX_OUTPUT_TOKENS,
   CUSTOM_MODEL_STREAM_READ_IDLE_TIMEOUT_MS,
 } from './customModelProviderContract.js';
+import { cleanOpenAICompatibleSchema } from './customModelOpenAISchema.js';
 export { CODEX_OAUTH_SENTINEL } from './customModelProviderContract.js';
 
 /**
@@ -867,7 +868,7 @@ const OpenAIConverter = {
             // ("STRING" / "BOOLEAN" / ...) 转小写，并强转 integer 关键字。
             // 严格的 OpenAI 兼容网关（DeepSeek 等）会按 JSON Schema 校验，
             // 收到 "BOOLEAN" 直接 400 报错。
-            parameters: OpenAIResponsesConverter.cleanSchema(fd.parameters),
+            parameters: cleanOpenAICompatibleSchema(fd.parameters),
           },
         }));
       }
@@ -876,7 +877,7 @@ const OpenAIConverter = {
         function: {
           name: tool.name,
           description: tool.description,
-          parameters: OpenAIResponsesConverter.cleanSchema(tool.parameters),
+          parameters: cleanOpenAICompatibleSchema(tool.parameters),
         },
       }];
     });
@@ -1369,58 +1370,6 @@ const OpenAIResponsesConverter = {
   },
 
   /**
-   * JSON Schema 中必须为整数的关键字集合
-   * OpenAI Responses API 严格校验这些字段的类型，不接受字符串形式的数字
-   */
-  INTEGER_SCHEMA_KEYWORDS: new Set([
-    'minLength', 'maxLength', 'minItems', 'maxItems',
-    'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
-    'minProperties', 'maxProperties', 'multipleOf',
-  ]),
-
-  /**
-   * 清理 JSON Schema，使其兼容 OpenAI Responses API 的严格校验：
-   * 1. 将 Google GenAI 的大写类型（如 "BOOLEAN", "STRING"）转为小写（"boolean", "string"）
-   * 2. 将数值型 Schema 关键字（如 minLength, minItems）从字符串强制转为数字
-   *    （例如 minLength: '1' → minLength: 1）
-   * 3. 移除 Responses API 不支持的非标准 Schema 字段（如 $schema）
-   */
-  cleanSchema(schema: any): any {
-    if (!schema || typeof schema !== 'object') return schema;
-    if (Array.isArray(schema)) return schema.map((item: any) => OpenAIResponsesConverter.cleanSchema(item));
-
-    const cleaned: any = {};
-    for (const key of Object.keys(schema)) {
-      if (key === 'type' && typeof schema[key] === 'string') {
-        // 大写类型转小写: "STRING" → "string", "BOOLEAN" → "boolean"
-        cleaned[key] = schema[key].toLowerCase();
-      } else if (OpenAIResponsesConverter.INTEGER_SCHEMA_KEYWORDS.has(key)) {
-        // 数值型关键字强制转为数字: '1' → 1
-        const numVal = Number(schema[key]);
-        if (!isNaN(numVal)) {
-          cleaned[key] = numVal;
-        }
-        // 如果无法转为数字则丢弃该字段，避免 API 报错
-      } else if (key === 'properties' && typeof schema[key] === 'object') {
-        cleaned[key] = {};
-        for (const k of Object.keys(schema[key])) {
-          cleaned[key][k] = OpenAIResponsesConverter.cleanSchema(schema[key][k]);
-        }
-      } else if (key === 'items') {
-        cleaned[key] = OpenAIResponsesConverter.cleanSchema(schema[key]);
-      } else if (['anyOf', 'oneOf', 'allOf'].includes(key) && Array.isArray(schema[key])) {
-        cleaned[key] = schema[key].map((item: any) => OpenAIResponsesConverter.cleanSchema(item));
-      } else if (key === 'default') {
-        // default 值根据 type 做基本类型转换
-        cleaned[key] = schema[key];
-      } else {
-        cleaned[key] = schema[key];
-      }
-    }
-    return cleaned;
-  },
-
-  /**
    * 将工具定义转换为 Responses API 格式
    * Responses API 使用 type: "function" 包装，内部标记 (internally-tagged)
    * 注意：Responses API 的 schema 校验比 Chat Completions 更严格，
@@ -1434,7 +1383,7 @@ const OpenAIResponsesConverter = {
           type: 'function',
           name: fd.name,
           description: fd.description,
-          parameters: OpenAIResponsesConverter.cleanSchema(fd.parameters),
+          parameters: cleanOpenAICompatibleSchema(fd.parameters),
           strict: false, // Responses API defaults to strict: true, set false for compatibility
         }));
       }
@@ -1442,7 +1391,7 @@ const OpenAIResponsesConverter = {
         type: 'function',
         name: tool.name,
         description: tool.description,
-        parameters: OpenAIResponsesConverter.cleanSchema(tool.parameters),
+        parameters: cleanOpenAICompatibleSchema(tool.parameters),
         strict: false,
       }];
     });

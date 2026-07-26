@@ -25,14 +25,15 @@ import {
 } from './publicInvite.js';
 import {
   LICENSE_MODULE_FEATURES,
-  MODULE_UPDATE_ROLLOUTS,
-  MODULE_UPDATE_SHA256_RE,
   licenseModuleCatalog,
-  parseModuleUpdateDescriptors,
   type ModuleUpdateDescriptor,
   type ModuleUpdateManifest,
   type ModuleUpdateRollout,
 } from './moduleUpdateManifest.js';
+import {
+  getModuleUpdateManifestFromStore,
+  updateModuleUpdateDescriptorInStore,
+} from './moduleUpdateRepository.js';
 export type {
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
@@ -1593,13 +1594,7 @@ function setSettingValue(key: string, value: string): void {
 }
 
 export function getModuleUpdateManifest(): ModuleUpdateManifest {
-  return {
-    format: 'otto-module-updates-v1',
-    deploymentId: getDeploymentId(),
-    generatedAt: new Date().toISOString(),
-    modules: parseModuleUpdateDescriptors(settingValue('module_update_manifest')),
-    catalog: licenseModuleCatalog(),
-  };
+  return getModuleUpdateManifestFromStore(moduleUpdateStore);
 }
 
 export function updateModuleUpdateDescriptor(input: {
@@ -1614,44 +1609,23 @@ export function updateModuleUpdateDescriptor(input: {
   actorAccountId?: string | null;
   organizationId?: string;
 }): ModuleUpdateDescriptor {
-  const module = input.module.trim();
-  if (!LICENSE_MODULE_FEATURES[module]) throw new Error('未知模块');
-  const current = new Map(getModuleUpdateManifest().modules.map((item) => [item.module, item]));
-  const existing = current.get(module);
-  const rollout = input.rollout ?? existing?.rollout ?? 'stable';
-  if (!MODULE_UPDATE_ROLLOUTS.has(rollout)) throw new Error('无效发布通道');
-  const version = input.version?.trim() || existing?.version || '';
-  if (!version) throw new Error('模块版本不能为空');
-  const sha256 = input.sha256?.trim() || existing?.sha256 || null;
-  if (sha256 && !MODULE_UPDATE_SHA256_RE.test(sha256)) throw new Error('sha256 必须是 64 位十六进制');
-  const descriptor: ModuleUpdateDescriptor = {
-    module,
-    version,
-    rollout,
-    notes: input.notes == null ? existing?.notes ?? '' : input.notes.slice(0, 2_000),
-    minAppVersion: input.minAppVersion == null
-      ? existing?.minAppVersion ?? null
-      : input.minAppVersion.trim() || null,
-    manifestUrl: input.manifestUrl == null
-      ? existing?.manifestUrl ?? null
-      : input.manifestUrl.trim() || null,
-    sha256: sha256 ? sha256.toLowerCase() : null,
-    publishedAt: input.publishedAt == null
-      ? existing?.publishedAt ?? new Date().toISOString()
-      : input.publishedAt.trim() || null,
-    updatedAt: new Date().toISOString(),
-  };
-  if (rollout === 'off') current.delete(module);
-  else current.set(module, descriptor);
-  setSettingValue('module_update_manifest', JSON.stringify([...current.values()].sort((a, b) => a.module.localeCompare(b.module))));
-  logAudit(
-    'module_update_publish',
-    null,
-    `Module update ${module}@${version} rollout=${rollout}`,
-    input.organizationId ?? DEFAULT_ORGANIZATION_ID,
-  );
-  return descriptor;
+  return updateModuleUpdateDescriptorInStore(moduleUpdateStore, {
+    ...input,
+    organizationId: input.organizationId ?? DEFAULT_ORGANIZATION_ID,
+  });
 }
+
+const moduleUpdateStore = {
+  readSetting: settingValue,
+  writeSetting: setSettingValue,
+  deploymentId: getDeploymentId,
+  audit: (input: {
+    event: string;
+    employeeId: string | null;
+    message: string;
+    organizationId: string;
+  }) => logAudit(input.event, input.employeeId, input.message, input.organizationId),
+};
 
 export function getDeploymentId(): string {
   const existing = settingValue('deployment_id');

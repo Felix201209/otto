@@ -69,6 +69,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join as pathJoin } from 'node:path';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
 import { handleAdminPageRoute } from './adminPageRoutes.js';
+import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 
 const DEFAULT_PORT = 7777;
 
@@ -906,41 +907,15 @@ function makeHandler(
         return;
       }
 
-      if (path === '/enterprise/modules/updates' && method === 'GET') {
-        sendJSON(res, 200, db.getModuleUpdateManifest());
-        return;
-      }
-
-      if (path === '/enterprise/modules/updates' && method === 'PATCH') {
-        const body = await readBody(req);
-        try {
-          const moduleUpdate = db.updateModuleUpdateDescriptor({
-            module: typeof body.module === 'string' ? body.module : '',
-            version: typeof body.version === 'string' ? body.version : undefined,
-            rollout: typeof body.rollout === 'string'
-              ? body.rollout as db.ModuleUpdateRollout
-              : undefined,
-            notes: typeof body.notes === 'string' ? body.notes : undefined,
-            minAppVersion: typeof body.minAppVersion === 'string' ? body.minAppVersion : undefined,
-            manifestUrl: typeof body.manifestUrl === 'string' ? body.manifestUrl : undefined,
-            sha256: typeof body.sha256 === 'string' ? body.sha256 : undefined,
-            publishedAt: typeof body.publishedAt === 'string' ? body.publishedAt : undefined,
-            actorAccountId: adminPrincipal?.kind === 'account' ? adminPrincipal.account.id : null,
-            organizationId: adminPrincipal?.organizationId,
-          });
-          db.recordTelemetryEvent({
-            organizationId: adminPrincipal?.organizationId ?? null,
-            eventType: 'module_update_published',
-            payload: {
-              module: moduleUpdate.module,
-              version: moduleUpdate.version,
-              rollout: moduleUpdate.rollout,
-            },
-          });
-          sendJSON(res, 200, { moduleUpdate, manifest: db.getModuleUpdateManifest() });
-        } catch (error) {
-          sendJSON(res, 400, { error: error instanceof Error ? error.message : 'module update failed' });
-        }
+      if (await handleModuleUpdateRoute({
+        path,
+        method,
+        req,
+        res,
+        principal: adminPrincipal,
+        readBody,
+        sendJSON,
+      })) {
         return;
       }
 
