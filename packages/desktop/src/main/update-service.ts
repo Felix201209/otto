@@ -51,6 +51,7 @@ import { computeFileSha256, verifyBeforeInstall } from './update-verify.js';
 import { downloadToFile } from './update-download.js';
 import {
   FALLBACK_RELEASE_API_URL,
+  GITHUB_MANIFEST_URL,
   PRIMARY_MANIFEST_URL,
   RELEASE_PAGE_URL,
   resolveManifestUrls,
@@ -188,7 +189,7 @@ export class UpdateService {
         manifestErrors.push(`${sourceName}：${result.error}`);
         continue;
       }
-      const sourceAllowedOrigins = manifestUrl === PRIMARY_MANIFEST_URL
+      const sourceAllowedOrigins = manifestUrl === GITHUB_MANIFEST_URL
         ? []
         : [new URL(manifestUrl).origin];
       const parsed = parseManifest(result.json, sourceAllowedOrigins);
