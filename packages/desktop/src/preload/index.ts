@@ -704,7 +704,7 @@ export interface OttoBridge {
     data: string;
   }>;
   /** 打开内置视频编辑器窗口。 */
-  openVideoEditor(): Promise<{ ok: boolean }>;
+  openVideoEditor(): Promise<{ ok: boolean; error?: string }>;
   /**
    * host-only 命令：原生保存对话框 + 写文本文件（导出会话用）。
    * 返回实际写入路径；用户取消对话框时返回 null。
@@ -1258,8 +1258,8 @@ const bridge: OttoBridge = {
       data: string;
     }>;
   },
-  openVideoEditor(): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean }>;
+  openVideoEditor(): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean; error?: string }>;
   },
 
   saveTextFile(suggestedFileName: string, content: string): Promise<string | null> {

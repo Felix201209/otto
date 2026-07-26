@@ -915,14 +915,26 @@ function createWindow(): BrowserWindow {
 }
 
 /** 创建内置视频编辑器窗口（OpenReel）。 */
-function createVideoEditorWindow(): void {
+function createVideoEditorWindow(): { ok: boolean; error?: string } {
   if (videoEditorWindow && !videoEditorWindow.isDestroyed()) {
     videoEditorWindow.show();
     videoEditorWindow.focus();
-    return;
+    return { ok: true };
   }
 
-  videoEditorWindow = new BrowserWindow({
+  const editorPath = resolveVideoEditorIndex({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    moduleDir: __dirname,
+  });
+  if (app.isPackaged && !fs.existsSync(editorPath)) {
+    return {
+      ok: false,
+      error: `Video editor is an optional external component and is not bundled in this build: ${editorPath}`,
+    };
+  }
+
+  const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 800,
@@ -937,28 +949,24 @@ function createVideoEditorWindow(): void {
       sandbox: true,
     },
   });
+  videoEditorWindow = win;
 
-  const editorPath = resolveVideoEditorIndex({
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    moduleDir: __dirname,
-  });
   if (fs.existsSync(editorPath)) {
-    void videoEditorWindow.loadFile(editorPath);
+    void win.loadFile(editorPath);
   } else {
-    // Fallback: dev server
-    void videoEditorWindow.loadURL('http://localhost:5174');
+    void win.loadURL('http://localhost:5174');
   }
 
-  videoEditorWindow.on('closed', () => {
+  win.on('closed', () => {
     videoEditorWindow = undefined;
   });
 
   // External links open in system browser
-  videoEditorWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  return { ok: true };
 }
 
 /** 收紧单个窗口 webContents 的导航 / 新窗口行为。 */
@@ -1804,8 +1812,7 @@ function registerIpc(): void {
   });
   // ── 内置视频编辑器 ──────────────────────────────────────────
   ipcMain.handle(IPC.openVideoEditor, () => {
-    createVideoEditorWindow();
-    return Promise.resolve({ ok: true });
+    return Promise.resolve(createVideoEditorWindow());
   });
   // 旧版园区服务定制兼容：新版企业账号以服务端园区配置为准。
   // 文件不存在或解析失败时返回 null，由 renderer fail closed。
