@@ -1023,6 +1023,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('企业工作台');
     expect(html).toContain('成员账号');
     expect(html).toContain('部门成员目录');
+    expect(html).toContain('id="accountPermissionModal"');
+    expect(html).toContain('id="accountPermissionLevel"');
+    expect(html).toContain('id="accountPermissionStatus"');
+    expect(html).toContain('openAccountPermission');
     expect(html).toContain('id="platformInviteDepartment"');
     expect(html).toContain('id="platformInvitePosition"');
     expect(html).toContain('id="platformInviteRole"');
@@ -3700,6 +3704,39 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(panel.accounts.every((account) => account.organizationId === beta.id)).toBe(true);
     expect(panel.accounts.map((account) => account.id)).not.toContain(alphaAdmin.id);
 
+    const betaMemberSession = db.createAuthSession(betaMember.id).token;
+    const permissionUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          role: '客户成功负责人',
+          isAdmin: true,
+          status: 'active',
+        }),
+      },
+    );
+    expect(permissionUpdate.status).toBe(200);
+    expect((await permissionUpdate.json()).account).toMatchObject({
+      id: betaMember.id,
+      organizationId: beta.id,
+      role: '客户成功负责人',
+      isAdmin: true,
+      status: 'active',
+    });
+    expect(db.getAccountBySession(betaMemberSession)).toBeNull();
+
+    const crossTenantUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(crossTenantUpdate.status).toBe(404);
+
     const alphaAdminToken = await login(
       base,
       'alpha.panel.owner',
@@ -3710,6 +3747,27 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { authorization: `Bearer ${alphaAdminToken}` } },
     );
     expect(denied.status).toBe(403);
+
+    const deniedPermissionUpdate = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${alphaAdminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(deniedPermissionUpdate.status).toBe(403);
+
+    const lastAdminCannotBeDemoted = await fetch(
+      `${base}/enterprise/platform/organizations/${encodeURIComponent(alpha.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ isAdmin: false }),
+      },
+    );
+    expect(lastAdminCannotBeDemoted.status).toBe(409);
+    expect(db.getAccount(alphaAdmin.id, alpha.id)?.isAdmin).toBe(true);
 
     const personalOverview = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(personal.organizationId)}/overview`,
@@ -3722,7 +3780,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
     );
     expect(missing.status).toBe(404);
-  });
+  }, 30_000);
 
   it('平台账号删除严格限定所选企业，不能用另一企业的账号 id 越权', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
