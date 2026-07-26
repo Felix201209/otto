@@ -53,7 +53,7 @@ function filesBelow(root, current = root) {
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     const absolute = path.join(current, entry.name);
     if (entry.isDirectory()) output.push(...filesBelow(root, absolute));
-    else if (entry.isFile()) output.push(path.relative(root, absolute));
+    else if (entry.isFile()) output.push(path.relative(root, absolute).split(path.sep).join('/'));
     else throw new Error(`unsupported release entry: ${absolute}`);
   }
   return output.sort();
