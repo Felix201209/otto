@@ -952,7 +952,9 @@ function makeHandler(
           sendJSON(res, 400, { error: '数据统计任务编号不正确' });
           return;
         }
-        const actor = memberAccount ?? adminPrincipal?.account ?? null;
+        const actor =
+          memberAccount ??
+          (adminPrincipal?.kind === 'account' ? adminPrincipal.account : null);
         if (!actor) {
           sendJSON(res, 401, { error: '登录已失效，请重新登录' });
           return;

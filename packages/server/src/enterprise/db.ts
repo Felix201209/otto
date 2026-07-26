@@ -4545,6 +4545,7 @@ export interface ParkDataStatisticsTaskView {
 interface ParkDataStatisticsTaskRow {
   id: string;
   park_id: string;
+  admin_organization_id: string;
   title: string;
   description: string;
   deadline: string;
