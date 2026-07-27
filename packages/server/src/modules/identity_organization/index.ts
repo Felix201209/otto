@@ -5,4 +5,5 @@
 export * from './organizationInviteFacade.js';
 export * from './organizationInviteRepository.js';
 export type * from './organizationInviteTypes.js';
+export * from './organizationRoutes.js';
 export * from './publicInvite.js';

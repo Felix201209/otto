@@ -9,6 +9,7 @@ import * as identityOrganization from './modules/identity_organization/index.js'
 import * as legacyFacade from './enterprise/organizationInviteFacade.js';
 import * as legacyRepository from './enterprise/organizationInviteRepository.js';
 import * as legacyPublicInvite from './enterprise/publicInvite.js';
+import * as legacyOrganizationRoutes from './enterprise/organizationRoutes.js';
 
 const sourceRoot = path.resolve(import.meta.dirname);
 const enterpriseDir = path.join(sourceRoot, 'enterprise');
@@ -60,12 +61,15 @@ describe('identity_organization invitation kernel', () => {
       .toBe(identityOrganization.issueOrganizationInvite);
     expect(legacyPublicInvite.buildOrganizationInviteLink)
       .toBe(identityOrganization.buildOrganizationInviteLink);
+    expect(legacyOrganizationRoutes.handleOrganizationRoute)
+      .toBe(identityOrganization.handleOrganizationRoute);
 
     for (const file of [
       'organizationInviteFacade.ts',
       'organizationInviteRepository.ts',
       'organizationInviteTypes.ts',
       'publicInvite.ts',
+      'organizationRoutes.ts',
     ]) {
       const source = fs.readFileSync(path.join(enterpriseDir, file), 'utf8');
       expect(source).toMatch(
@@ -90,11 +94,12 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'organizationInviteRepository.ts'),
       path.join(enterpriseDir, 'organizationInviteTypes.ts'),
       path.join(enterpriseDir, 'publicInvite.ts'),
+      path.join(enterpriseDir, 'organizationRoutes.ts'),
     ]);
     const offenders = productionTypeScriptFiles(sourceRoot)
       .filter((file) => !legacyFiles.has(file))
       .filter((file) => !file.startsWith(`${moduleDir}${path.sep}`))
-      .filter((file) => /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite)\.js['"]/.test(
+      .filter((file) => /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes)\.js['"]/.test(
         fs.readFileSync(file, 'utf8'),
       ))
       .map((file) => path.relative(sourceRoot, file));
