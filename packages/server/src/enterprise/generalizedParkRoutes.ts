@@ -161,6 +161,34 @@ export async function handleGeneralizedParkRoute({
     return true;
   }
 
+  if (path === '/enterprise/park/statistics' && method === 'GET') {
+    const principal = adminPrincipal!;
+    if (principal.kind !== 'account') {
+      sendJSON(res, 403, { error: 'park admin account required' });
+      return true;
+    }
+    if (!requireParkService(principal.organizationId, res, sendJSON)) return true;
+    const park = getParkAdmin(
+      principal,
+      res,
+      sendJSON,
+      'current organization is not a park admin organization',
+    );
+    if (!park) return true;
+    try {
+      sendJSON(res, 200, {
+        statistics: db.getParkServiceStatistics({
+          parkId: park.id,
+          actorAccountId: principal.account.id,
+        }),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '园区统计读取失败';
+      sendJSON(res, /Only park administrators/.test(message) ? 403 : 400, { error: message });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/park/specialists' && ['GET', 'POST', 'DELETE'].includes(method)) {
     const principal = adminPrincipal!;
     if (principal.kind !== 'account') {

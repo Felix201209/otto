@@ -63,7 +63,7 @@ export interface EnterpriseRouteDispatcherDeps {
   atoaClaimTtlMs: number;
   isPublicSimplePark: boolean;
   featureFlags?: FeatureFlagManager;
-  readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+  readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
   extractToken(req: IncomingMessage): string;
 }

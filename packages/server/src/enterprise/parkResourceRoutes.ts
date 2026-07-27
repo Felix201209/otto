@@ -43,12 +43,27 @@ export async function handleParkResourceRoute({
   sendJSON,
 }: ParkResourceRouteDeps): Promise<boolean> {
   if (path === '/enterprise/park-resources' && method === 'GET') {
+    const park = db.getParkForOrganization(memberAccount!.organizationId);
+    const resourceOrganizationId = park?.adminOrganizationId
+      || memberAccount!.organizationId;
     sendJSON(res, 200, {
-      settings: db.getParkSettings(memberAccount!.organizationId),
-      meetingRooms: db.listParkMeetingRooms(memberAccount!.organizationId),
-      meetingSlots: db.listParkMeetingSlots(memberAccount!.organizationId),
+      settings: db.getParkSettings(resourceOrganizationId),
+      meetingRooms: db.listParkMeetingRooms(resourceOrganizationId),
+      meetingSlots: db.listParkMeetingSlots(resourceOrganizationId),
     });
     return true;
+  }
+
+  const handlesParkAdministration = path === '/enterprise/park-settings'
+    || path === '/enterprise/park-meeting-rooms'
+    || path === '/enterprise/park-meeting-slots'
+    || path.startsWith('/enterprise/park-meeting-rooms/');
+  if (handlesParkAdministration && adminPrincipal) {
+    const park = db.getParkForOrganization(adminPrincipal.organizationId);
+    if (!park || park.adminOrganizationId !== adminPrincipal.organizationId) {
+      sendJSON(res, 403, { error: '当前企业不是产业园管理方' });
+      return true;
+    }
   }
 
   if (path === '/enterprise/park-settings' && method === 'GET') {

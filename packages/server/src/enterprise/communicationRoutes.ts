@@ -15,7 +15,7 @@ interface CommunicationRouteDeps {
   memberAccount: db.AccountView;
   atoaClaims: Map<string, number>;
   atoaClaimTtlMs: number;
-  readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+  readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
 }
 
@@ -73,6 +73,39 @@ export async function handleCommunicationRoute({
   readBody,
   sendJSON,
 }: CommunicationRouteDeps): Promise<boolean> {
+  if (path === '/enterprise/account-sync' && method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store');
+    sendJSON(res, 200, { snapshots: db.listAccountSyncSnapshots(memberAccount.id) });
+    return true;
+  }
+
+  if (path === '/enterprise/account-sync' && method === 'PUT') {
+    res.setHeader('Cache-Control', 'no-store');
+    const body = await readBody(req, 12 * 1024 * 1024);
+    const scope = typeof body.scope === 'string' ? body.scope : '';
+    if (!(db.ACCOUNT_SYNC_SCOPES as readonly string[]).includes(scope)) {
+      sendJSON(res, 400, { error: 'account sync scope is invalid' });
+      return true;
+    }
+    try {
+      const snapshot = db.putAccountSyncSnapshot({
+        accountId: memberAccount.id,
+        scope: scope as db.AccountSyncScope,
+        expectedVersion: Number(body.expectedVersion),
+        payload: body.payload,
+        deviceId: typeof body.deviceId === 'string' ? body.deviceId : null,
+      });
+      sendJSON(res, 200, { snapshot });
+    } catch (error) {
+      if (error instanceof db.AccountSyncConflictError) {
+        sendJSON(res, 409, { error: error.message, currentVersion: error.currentVersion });
+        return true;
+      }
+      sendJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/organization/view' && method === 'GET') {
     const organizationId = memberAccount.organizationId;
     if (!db.getOrganizationFeatures(organizationId).enterprise_tree) {
@@ -176,6 +209,31 @@ export async function handleCommunicationRoute({
     return true;
   }
 
+  if (path.startsWith('/enterprise/message-attachments/') && method === 'GET') {
+    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+      sendJSON(res, 403, { error: 'enterprise direct messages are disabled' });
+      return true;
+    }
+    let attachmentId = '';
+    try {
+      attachmentId = decodeURIComponent(path.slice('/enterprise/message-attachments/'.length));
+    } catch {
+      // Invalid encoded ids are handled as missing attachments.
+    }
+    try {
+      sendJSON(res, 200, {
+        attachment: db.getDirectMessageAttachment({
+          organizationId: memberAccount.organizationId,
+          accountId: memberAccount.id,
+          attachmentId,
+        }),
+      });
+    } catch {
+      sendJSON(res, 404, { error: 'attachment not found or access denied' });
+    }
+    return true;
+  }
+
   if (path.startsWith('/enterprise/messages/') && (method === 'GET' || method === 'POST')) {
     if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
       sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
@@ -200,8 +258,8 @@ export async function handleCommunicationRoute({
       }) });
       return true;
     }
-    const body = await readBody(req);
-    if (typeof body.content !== 'string') {
+    const body = await readBody(req, 30 * 1024 * 1024);
+    if (typeof body.content !== 'string' || (body.attachments != null && !Array.isArray(body.attachments))) {
       sendJSON(res, 400, { error: '消息内容不能为空' });
       return true;
     }
@@ -211,6 +269,7 @@ export async function handleCommunicationRoute({
         senderAccountId: memberAccount.id,
         recipientAccountId: peerAccountId,
         content: body.content,
+        attachments: body.attachments as db.DirectMessageAttachmentInput[] | undefined,
       });
       if (body.content.startsWith('OTTO_ATOA_RESPONSE ')) {
         const requestId = db.markAtoaRequestReadFromResponse({

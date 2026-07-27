@@ -15,10 +15,12 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/park/profile',
   '/enterprise/park/tenants',
   '/enterprise/park-statistics',
+  '/enterprise/park/statistics',
   '/enterprise/park/specialists',
   '/enterprise/park/services',
   '/enterprise/park/services/assign',
   '/enterprise/park-services/push',
+  '/enterprise/park-services/announcement-results',
   '/enterprise/park-services/survey-results',
   '/enterprise/park-settings',
   '/enterprise/park-meeting-rooms',
@@ -53,6 +55,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/park-resources',
   '/enterprise/park-statistics/inbox',
   '/enterprise/modules/updates/client',
+  '/enterprise/account-sync',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -73,6 +76,7 @@ export function isMemberRoute(path: string): boolean {
     MEMBER_ROUTES.has(path) ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||
+    path.startsWith('/enterprise/message-attachments/') ||
     path.startsWith('/enterprise/park-statistics/') ||
     (path.startsWith('/enterprise/credits/redeem-codes/') &&
       path.endsWith('/revoke'))
@@ -101,6 +105,7 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/deployment/license' ||
     path === '/enterprise/deployment/telemetry' ||
     path === '/enterprise/deployment/diagnostics' ||
+    path === '/enterprise/account-sync' ||
     path.startsWith('/enterprise/auth/')
   );
 }

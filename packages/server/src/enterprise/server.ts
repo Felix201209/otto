@@ -58,7 +58,6 @@ import {
   isLoopbackRequestHost,
   licenseBlockedPayload,
   nonNegativeInteger,
-  resolveEnterpriseClientAddress,
   tokensMatch,
   type LoginRateLimiter,
   type PasswordLoginRateLimitOptions,
@@ -72,9 +71,11 @@ export {
 } from './enterpriseHttpSecurity.js';
 
 const DEFAULT_PORT = 7777;
+const BODY_TOO_LARGE = Symbol('bodyTooLarge');
 
 interface RouteBody {
   [key: string]: unknown;
+  [BODY_TOO_LARGE]?: true;
 }
 
 export interface EnterpriseServerOptions {
@@ -121,6 +122,7 @@ const ENTERPRISE_CAPABILITIES = [
   'account_deletion',
   'multi_organization',
   'direct_messages',
+  'direct_message_attachments_v1',
   'atoa',
   'position_invites',
   'park_service_push',
@@ -134,6 +136,7 @@ const ENTERPRISE_CAPABILITIES = [
   'account_presence_v1',
   'park_tenants_v1',
   'park_tenant_profiles_v1',
+  'park_service_statistics_v1',
   'private_deployment_v1',
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
@@ -141,6 +144,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_resources_v1',
   'park_meeting_slots_v1',
   'modular_update_push_v1',
+  'account_data_sync_v1',
 ] as const;
 
 export interface DeploymentInfo {
@@ -161,14 +165,26 @@ function sendJSON(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-function readBody(req: IncomingMessage): Promise<RouteBody> {
+function readBody(
+  req: IncomingMessage,
+  maxLength = 1_000_000,
+): Promise<RouteBody> {
   return new Promise((resolve) => {
     let body = '';
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       body += chunk;
-      if (body.length > 1_000_000) body = body.slice(0, 1_000_000); // 防超大 body
+      if (body.length > maxLength) {
+        tooLarge = true;
+        body = '';
+      }
     });
     req.on('end', () => {
+      if (tooLarge) {
+        resolve({ [BODY_TOO_LARGE]: true });
+        return;
+      }
       try {
         resolve(body ? (JSON.parse(body) as RouteBody) : {});
       } catch {

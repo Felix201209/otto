@@ -12,6 +12,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'os';
@@ -19,6 +20,7 @@ import { getWorkLogger, type WorkLogEntry } from './workLog.js';
 import type { Config } from '../config/config.js';
 import { SceneType, SceneManager } from '../core/sceneManager.js';
 import { getResponseText } from '../utils/partUtils.js';
+import type { AutoSkillRealtimeWatcher as AutoSkillRealtimeWatcherType } from './autoSkillEnhance.js';
 
 /** 飞书通知接口（用于检测到候选时推送给用户） */
 export interface AutoSkillFeishuNotifier {
@@ -78,6 +80,21 @@ export function resolveAutoSkillUserDir(): string {
 /** 用户级 Skill 安装目录（与 SkillLoader 的 USER_GLOBAL 来源一致）。 */
 export function resolveAutoSkillSkillsDir(): string {
   return path.join(resolveAutoSkillUserDir(), 'skills');
+}
+
+function isPortableAutoSkillName(value: string): boolean {
+  return /^auto-[^/\\]{1,160}$/u.test(value);
+}
+
+function resolvePendingCandidateFilePath(skillName: string): string {
+  return path.join(resolveAutoSkillSkillsDir(), skillName, 'SKILL.md');
+}
+
+function portablePendingCandidate(candidate: SkillCandidate): SkillCandidate {
+  return {
+    ...candidate,
+    filePath: path.posix.join(candidate.name, 'SKILL.md'),
+  };
 }
 
 function pendingCandidatesPath(): string {
@@ -585,9 +602,8 @@ function analyzePattern(
 /** 读取项目 OTTO.md（如果存在）。 */
 function readProjectContext(cwd?: string): string {
   try {
-    const fsSync = require('fs');
     const dir = cwd ?? process.cwd();
-    const p = require('path').join(dir, 'OTTO.md');
+    const p = path.join(dir, 'OTTO.md');
     if (fsSync.existsSync(p)) {
       return fsSync.readFileSync(p, 'utf8').slice(0, 2000);
     }
@@ -598,12 +614,11 @@ function readProjectContext(cwd?: string): string {
 /** 列出已有 Skill名称（用于去重提示 LLM）。 */
 function listExistingSkillNames(skillsDir?: string): string[] {
   try {
-    const fsSync = require('fs');
     const dir = skillsDir ?? resolveAutoSkillSkillsDir();
     if (!fsSync.existsSync(dir)) return [];
     return fsSync.readdirSync(dir).filter((f: string) => {
       try {
-        const stat = fsSync.statSync(require('path').join(dir, f));
+        const stat = fsSync.statSync(path.join(dir, f));
         return stat.isDirectory() && !f.startsWith('.');
       } catch { return false; }
     });
@@ -738,7 +753,7 @@ async function callLLMForSkillCandidates(
   if (!text) throw new Error('LLM returned empty response');
 
   // 解析 JSON（容错）
-  let jsonText = text
+  const jsonText = text
     .replace(/^```json\s*/i, '')
     .replace(/```\s*$/, '')
     .trim();
@@ -857,14 +872,22 @@ export async function listPendingSkillCandidates(): Promise<SkillCandidate[]> {
     const raw = await fs.readFile(pendingCandidatesPath(), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isSkillCandidate);
+    return parsed.filter(isSkillCandidate).map((candidate) => ({
+      ...candidate,
+      filePath: resolvePendingCandidateFilePath(candidate.name),
+    }));
   } catch {
     return [];
   }
 }
 
 async function savePendingSkillCandidates(candidates: SkillCandidate[]): Promise<void> {
-  await writeJsonAtomic(pendingCandidatesPath(), candidates);
+  for (const candidate of candidates) {
+    if (!isPortableAutoSkillName(candidate.name)) {
+      throw new Error('自动 Skill 名称不合法');
+    }
+  }
+  await writeJsonAtomic(pendingCandidatesPath(), candidates.map(portablePendingCandidate));
 }
 
 async function removePendingSkill(candidateId: string): Promise<void> {
@@ -969,6 +992,7 @@ function isSkillCandidate(value: unknown): value is SkillCandidate {
   const item = value as Partial<SkillCandidate>;
   return typeof item.id === 'string'
     && typeof item.name === 'string'
+    && isPortableAutoSkillName(item.name)
     && typeof item.description === 'string'
     && Array.isArray(item.triggerPatterns)
     && typeof item.detectedPattern === 'string'
@@ -1015,11 +1039,15 @@ let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let scanInFlight = false;
 
 // ── 实时触发监视器 ──
-let realtimeWatcher: any = null;
-export function setRealtimeWatcher(watcher: any): void { realtimeWatcher = watcher; }
-export function getRealtimeWatcher(): any { return realtimeWatcher; }
+let realtimeWatcher: AutoSkillRealtimeWatcherType | null = null;
+export function setRealtimeWatcher(watcher: AutoSkillRealtimeWatcherType | null): void {
+  realtimeWatcher = watcher;
+}
+export function getRealtimeWatcher(): AutoSkillRealtimeWatcherType | null {
+  return realtimeWatcher;
+}
 
-export { AutoSkillRealtimeWatcher, RealtimePatternSummary } from "./autoSkillEnhance.js";
+export { AutoSkillRealtimeWatcher, type RealtimePatternSummary } from './autoSkillEnhance.js';
 
 
 export interface AutoSkillScannerOptions {

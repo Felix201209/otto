@@ -41,6 +41,18 @@ export interface Mem0SearchResult {
   metadata?: Record<string, unknown>;
 }
 
+interface Mem0Client {
+  search(query: string, options: Record<string, unknown>): Promise<unknown>;
+  add(
+    messages: Array<{ role: string; content: string }>,
+    options: Record<string, unknown>,
+  ): Promise<unknown>;
+  getAll(options: Record<string, unknown>): Promise<unknown>;
+  delete(memoryId: string): Promise<unknown>;
+}
+
+type Mem0Constructor = new (options: Record<string, unknown>) => Mem0Client;
+
 /** Mem0 配置选项 */
 export interface Mem0Config {
   /** Mem0 API Key（如使用云端版） */
@@ -77,7 +89,7 @@ export interface Mem0Config {
 export class Mem0Adapter implements MemoryProvider {
   readonly name = 'mem0';
 
-  private mem0Client: any | null = null;
+  private mem0Client: Mem0Client | null = null;
   private fileFallback: FileMemoryProvider;
   private initialized = false;
   private initError: string | null = null;
@@ -103,7 +115,12 @@ export class Mem0Adapter implements MemoryProvider {
       if (!mem0Module) {
         throw new Error('mem0ai module not installed');
       }
-      const Mem0 = (mem0Module as any).default || (mem0Module as any).Mem0 || mem0Module;
+      const moduleExports = mem0Module as { default?: unknown; Mem0?: unknown };
+      const clientConstructor = moduleExports.default ?? moduleExports.Mem0 ?? mem0Module;
+      if (typeof clientConstructor !== 'function') {
+        throw new Error('mem0ai module does not export a client constructor');
+      }
+      const Mem0 = clientConstructor as Mem0Constructor;
 
       const options: Record<string, unknown> = {};
 
@@ -156,7 +173,9 @@ export class Mem0Adapter implements MemoryProvider {
   /** 获取当前用户 ID（用于用户级隔离） */
   private getUserId(): string {
     // 优先用 config 中的用户标识，回退到 OS 用户名
-    const feishuUser = (this.config as any).getFeishuUser?.();
+    const feishuUser = (this.config as Config & {
+      getFeishuUser?: () => string | null | undefined;
+    }).getFeishuUser?.();
     if (feishuUser) {
       return feishuUser;
     }
@@ -182,10 +201,14 @@ export class Mem0Adapter implements MemoryProvider {
       return this.fileFallback.load(scope);
     }
 
+    // File memory is the portable source of truth. Account recovery restores
+    // these files, while Mem0's local database is intentionally device-local.
+    const fileMemory = await this.fileFallback.load(scope);
+
     const ok = await this.ensureInitialized();
     if (!ok || !this.mem0Client) {
       // 降级到文件
-      return this.fileFallback.load(scope);
+      return fileMemory;
     }
 
     try {
@@ -200,7 +223,7 @@ export class Mem0Adapter implements MemoryProvider {
       });
 
       if (!Array.isArray(results) || results.length === 0) {
-        return '';
+        return fileMemory;
       }
 
       // 格式化为 prompt 可用的文本
@@ -211,7 +234,24 @@ export class Mem0Adapter implements MemoryProvider {
         return `- ${r.memory}${tags}`;
       });
 
-      return memories.join('\n');
+      const fileFacts = new Set(
+        fileMemory
+          .split(/\r?\n/u)
+          .map((line) => line.replace(/^\s*[-*]\s*/u, '').trim().toLocaleLowerCase())
+          .filter(Boolean),
+      );
+      const structuredMemory = memories.filter((line) => {
+        const normalized = line
+          .replace(/^\s*[-*]\s*/u, '')
+          .replace(/\s+\[[^\]]*\]\s*$/u, '')
+          .trim()
+          .toLocaleLowerCase();
+        return normalized.length > 0 && !fileFacts.has(normalized);
+      });
+
+      return [fileMemory.trim(), structuredMemory.join('\n')]
+        .filter(Boolean)
+        .join('\n\n');
     } catch (error) {
       console.warn(`[Mem0Adapter] load failed, falling back: ${error instanceof Error ? error.message : String(error)}`);
       return this.fileFallback.load(scope);

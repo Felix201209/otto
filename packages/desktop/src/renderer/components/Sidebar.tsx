@@ -33,7 +33,10 @@ import {
   IconSparkle,
   IconSettings,
 } from './icons.js';
-import { OrganizationTree } from './OrganizationTree.js';
+import {
+  OrganizationTree,
+  type EnterpriseDirectChatOpenRequest,
+} from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
@@ -93,6 +96,7 @@ interface SidebarProps {
   organizationOpenRequest?: number;
   organizationRefreshRevision?: number;
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
+  enterpriseDirectChatOpenRequest?: EnterpriseDirectChatOpenRequest;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -119,6 +123,7 @@ export function Sidebar({
   organizationOpenRequest = 0,
   organizationRefreshRevision = 0,
   enterpriseUnreadCounts = {},
+  enterpriseDirectChatOpenRequest,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -184,6 +189,7 @@ export function Sidebar({
           openRequest={organizationOpenRequest}
           refreshRevision={organizationRefreshRevision}
           unreadCounts={enterpriseUnreadCounts}
+          directChatOpenRequest={enterpriseDirectChatOpenRequest}
           onMessageRead={onEnterpriseMessageRead}
         />
 

@@ -124,15 +124,17 @@ export async function handleTicketRoute({
       return true;
     }
     const isParkRequest = parkRequestIds.has(serviceId);
+    const ticketPark = isParkRequest
+      ? db.getParkForOrganization(account.organizationId)
+      : null;
     if (isParkRequest) {
-      const park = db.getParkForOrganization(account.organizationId);
-      if (!park) {
+      if (!ticketPark) {
         sendJSON(res, 403, { error: '企业尚未加入产业园' });
         return true;
       }
       if (
         !db.getOrganizationFeatures(account.organizationId).park_service
-        || !db.getOrganizationFeatures(park.adminOrganizationId).park_service
+        || !db.getOrganizationFeatures(ticketPark.adminOrganizationId).park_service
       ) {
         sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
         return true;
@@ -151,10 +153,36 @@ export async function handleTicketRoute({
         (entry): entry is [string, string] => typeof entry[1] === 'string',
       ).map(([key, value]) => [key.slice(0, 50), value.trim().slice(0, 2000)]))
       : {};
+    if (serviceId === 'repair' && Object.keys(formData).length === 0) {
+      const organization = db.getOrganization(account.organizationId);
+      const profile = db.getParkTenantProfile(account.organizationId);
+      formData = {
+        company: organization?.name || '',
+        roomNumber: profile?.roomNumber
+          || (typeof body.location === 'string' ? body.location.trim() : ''),
+        contact: typeof body.contact === 'string' && body.contact.trim()
+          ? body.contact.trim()
+          : account.name,
+        phone: typeof body.contactPhone === 'string' && body.contactPhone.trim()
+          ? body.contactPhone.trim()
+          : account.phone?.replace(/^\+86/, '') || '',
+        category: typeof body.category === 'string' && body.category.trim()
+          ? body.category.trim()
+          : title.trim(),
+        issue: description.trim(),
+        urgency: typeof body.urgency === 'string' && body.urgency.trim()
+          ? body.urgency.trim()
+          : '普通',
+      };
+    }
     const hasScheduledMeetingRoomBooking = serviceId === 'meeting-room'
-      && (Boolean(formData.roomId) || Boolean(formData.slotKey));
+      && Boolean(formData.roomId)
+      && Boolean(formData.date)
+      && Boolean(formData.startTime || formData.slotKey);
+    const meetingResourceOrganizationId = ticketPark?.adminOrganizationId
+      || account.organizationId;
     const meetingRoom = hasScheduledMeetingRoomBooking
-      ? db.listParkMeetingRooms(account.organizationId).find(
+      ? db.listParkMeetingRooms(meetingResourceOrganizationId).find(
         (room) => room.id === formData.roomId,
       )
       : undefined;
@@ -174,6 +202,30 @@ export async function handleTicketRoute({
         });
         return true;
       }
+      if (formData.slotKey && !formData.startTime) {
+        const legacy = formData.slotKey === 'morning'
+          ? { startTime: '09:00', endTime: '12:00' }
+          : formData.slotKey === 'afternoon'
+            ? { startTime: '14:00', endTime: '18:00' }
+            : null;
+        if (!legacy) {
+          sendJSON(res, 400, { error: '请选择绿色的可预约时间段' });
+          return true;
+        }
+        formData.startTime = legacy.startTime;
+        formData.endTime = legacy.endTime;
+      }
+      const validStart = db.PARK_MEETING_TIME_SLOTS.some(
+        (item) => item.key === formData.startTime,
+      );
+      const validEnd = formData.endTime === '23:00' || db.PARK_MEETING_TIME_SLOTS.some(
+        (item) => item.key === formData.endTime,
+      );
+      if (!validStart || !validEnd || formData.startTime >= formData.endTime) {
+        sendJSON(res, 400, { error: '请在 09:00-23:00 之间按 10 分钟选择连续时段' });
+        return true;
+      }
+      formData.slotKey = formData.startTime;
       const slot = db.PARK_MEETING_TIME_SLOTS.find(
         (item) => item.key === formData.slotKey,
       );
@@ -186,7 +238,7 @@ export async function handleTicketRoute({
         roomName: meetingRoom.name,
         roomCapacity: String(meetingRoom.capacity),
         priceHalfDay: String(meetingRoom.priceHalfDay),
-        time: slot.label,
+        time: `${formData.startTime}-${formData.endTime}`,
       };
     }
     let ticket: ReturnType<typeof db.createTicket>;
@@ -208,10 +260,11 @@ export async function handleTicketRoute({
           contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
         });
         if (hasScheduledMeetingRoomBooking) {
-          db.reserveParkMeetingSlot(account.organizationId, {
+          db.reserveParkMeetingPeriod(meetingResourceOrganizationId, {
             roomId: formData.roomId || '',
             date: formData.date || '',
-            slotKey: formData.slotKey || '',
+            startTime: formData.startTime || '',
+            endTime: formData.endTime || '',
             ticketId: ticket.id,
           });
         }
@@ -294,32 +347,46 @@ export async function handleTicketRoute({
       }
       const body = await readBody(req);
       const action = typeof body.action === 'string' ? body.action : '';
-      if (!['respond', 'accept', 'complete', 'confirm'].includes(action)) {
+      if (!['respond', 'accept', 'complete', 'confirm', 'transfer'].includes(action)) {
         sendJSON(res, 400, { error: '工单操作不正确' });
         return true;
       }
       const ticket = db.updateTicket({
         ticketId,
         accountId: account.id,
-        action: action as 'respond' | 'accept' | 'complete' | 'confirm',
+        action: action as 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
         responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
         responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
+        transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
+        transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
       });
-      const recipients = action === 'confirm'
+      const creatorRecipients = [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
+        (item): item is db.AccountView => item !== null,
+      );
+      const recipientCandidates = action === 'confirm' || action === 'transfer'
         ? db.getTicketNotificationRecipients(ticket.id)
-        : [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
-          (item): item is db.AccountView => item !== null,
-        );
-      const title = action === 'respond'
-        ? `Otto 办理回复 · ${ticket.title}`
-        : action === 'accept'
-          ? `Otto 申请已受理 · ${ticket.title}`
-          : action === 'complete'
-            ? `Otto 待确认 · ${ticket.title}`
-            : `Otto 办理已确认 · ${ticket.title}`;
-      const detail = action === 'respond'
-        ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
-        : `工单 ${ticket.id} 当前状态：${ticket.status}`;
+        : action === 'complete' && currentTicket.status === '已转交'
+          ? [...creatorRecipients, ...db.getTicketTransferredNotificationRecipients(ticket.id)]
+          : creatorRecipients;
+      const recipients = [
+        ...new Map(recipientCandidates.map((item) => [item.id, item])).values(),
+      ];
+       const title = action === 'respond'
+         ? `Otto 办理回复 · ${ticket.title}`
+         : action === 'accept'
+           ? `Otto 申请已受理 · ${ticket.title}`
+           : action === 'transfer'
+             ? `Otto 转交任务 · ${ticket.title}`
+           : action === 'complete'
+             ? currentTicket.status === '已转交'
+               ? `Otto 工作已完成 · ${ticket.title}`
+               : `Otto 待确认 · ${ticket.title}`
+             : `Otto 办理已确认 · ${ticket.title}`;
+       const detail = action === 'respond'
+         ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
+         : action === 'transfer'
+           ? ticket.responseText || `工单 ${ticket.id} 已转交给你处理`
+         : `工单 ${ticket.id} 当前状态：${ticket.status}`;
       await sendRepairNotifications({
         ticket,
         recipients,

@@ -3,6 +3,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import { getAccount, getDB } from './db.js';
 
@@ -13,6 +14,52 @@ export interface DirectMessageView {
   content: string;
   createdAt: string;
   readAt: string | null;
+  attachments: DirectMessageAttachmentView[];
+}
+
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT = 6;
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+export const DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+const DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.txt': 'text/plain',
+  '.log': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.md': 'text/markdown',
+  '.zip': 'application/zip',
+};
+
+export interface DirectMessageAttachmentView {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface DirectMessageAttachmentInput {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
+export interface DirectMessageAttachmentDownload extends DirectMessageAttachmentView {
+  data: string;
 }
 
 export interface AtoaInboxMessageView extends DirectMessageView {
@@ -28,7 +75,136 @@ interface DirectMessageRow {
   read_at: string | null;
 }
 
-function toDirectMessageView(row: DirectMessageRow): DirectMessageView {
+interface DirectMessageAttachmentRow {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+}
+
+interface DirectMessageAttachmentMessageRow extends DirectMessageAttachmentRow {
+  message_id: string;
+}
+
+interface DirectMessageAttachmentContentRow extends DirectMessageAttachmentRow {
+  content: Uint8Array;
+}
+
+interface NormalizedDirectMessageAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  content: Buffer;
+}
+
+function normalizeDirectMessageFileName(value: unknown): { fileName: string; mimeType: string } {
+  if (typeof value !== 'string') throw new Error('attachment file name is invalid');
+  const baseName = path.posix.basename(value.replace(/\\/g, '/')).trim();
+  const safeName = Array.from(baseName)
+    .map((character) => (
+      character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character)
+        ? '_'
+        : character
+    ))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!safeName || safeName === '.' || safeName === '..') {
+    throw new Error('attachment file name is invalid');
+  }
+  const extension = path.extname(safeName).toLowerCase();
+  const mimeType = DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION[extension];
+  if (!mimeType) throw new Error('attachment file type is not supported');
+  if (safeName.length <= 180) return { fileName: safeName, mimeType };
+  return {
+    fileName: safeName.slice(0, Math.max(1, 180 - extension.length)) + extension,
+    mimeType,
+  };
+}
+
+function normalizeDirectMessageAttachments(
+  attachments: readonly DirectMessageAttachmentInput[] | undefined,
+): NormalizedDirectMessageAttachment[] {
+  if (attachments == null) return [];
+  if (!Array.isArray(attachments)) throw new Error('attachment metadata is invalid');
+  if (attachments.length > DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT) {
+    throw new Error('a message can contain at most 6 attachments');
+  }
+  let totalBytes = 0;
+  return attachments.map((attachment) => {
+    if (!attachment || typeof attachment !== 'object') {
+      throw new Error('attachment metadata is invalid');
+    }
+    const { fileName, mimeType } = normalizeDirectMessageFileName(attachment.fileName);
+    if (typeof attachment.data !== 'string') throw new Error('attachment data is invalid');
+    const data = attachment.data.trim();
+    if (!data || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+      throw new Error('attachment data is invalid');
+    }
+    const content = Buffer.from(data, 'base64');
+    if (!content.length || content.toString('base64') !== data) {
+      throw new Error('attachment data is invalid');
+    }
+    if (
+      content.length > DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES
+      || Number(attachment.size) !== content.length
+    ) {
+      throw new Error('an attachment must be complete and no larger than 10 MB');
+    }
+    totalBytes += content.length;
+    if (totalBytes > DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
+      throw new Error('attachments in one message cannot exceed 20 MB');
+    }
+    return { id: randomUUID(), fileName, mimeType, size: content.length, content };
+  });
+}
+
+function listDirectMessageAttachmentViews(messageId: string): DirectMessageAttachmentView[] {
+  const rows = getDB()
+    .prepare(
+      'SELECT id, file_name, mime_type, byte_size '
+      + 'FROM direct_message_attachments WHERE message_id = ? ORDER BY ordinal, id',
+    )
+    .all(messageId) as DirectMessageAttachmentRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    size: Number(row.byte_size),
+  }));
+}
+
+function listDirectMessageAttachmentMap(
+  messageIds: readonly string[],
+): Map<string, DirectMessageAttachmentView[]> {
+  const result = new Map<string, DirectMessageAttachmentView[]>();
+  if (messageIds.length === 0) return result;
+  const placeholders = messageIds.map(() => '?').join(',');
+  const rows = getDB()
+    .prepare(
+      'SELECT message_id, id, file_name, mime_type, byte_size '
+      + 'FROM direct_message_attachments WHERE message_id IN (' + placeholders + ') '
+      + 'ORDER BY message_id, ordinal, id',
+    )
+    .all(...messageIds) as DirectMessageAttachmentMessageRow[];
+  for (const row of rows) {
+    const attachments = result.get(row.message_id) ?? [];
+    attachments.push({
+      id: row.id,
+      fileName: row.file_name,
+      mimeType: row.mime_type,
+      size: Number(row.byte_size),
+    });
+    result.set(row.message_id, attachments);
+  }
+  return result;
+}
+
+function toDirectMessageView(
+  row: DirectMessageRow,
+  attachments = listDirectMessageAttachmentViews(row.id),
+): DirectMessageView {
   return {
     id: row.id,
     senderAccountId: row.sender_account_id,
@@ -36,6 +212,7 @@ function toDirectMessageView(row: DirectMessageRow): DirectMessageView {
     content: row.content,
     createdAt: row.created_at,
     readAt: row.read_at,
+    attachments,
   };
 }
 
@@ -44,8 +221,15 @@ export function sendDirectMessage(input: {
   senderAccountId: string;
   recipientAccountId: string;
   content: string;
+  attachments?: DirectMessageAttachmentInput[];
 }): DirectMessageView {
-  const content = input.content.trim();
+  const attachments = normalizeDirectMessageAttachments(input.attachments);
+  const trimmedContent = input.content.trim();
+  const content = trimmedContent || (
+    attachments.length > 0
+      ? `Shared ${attachments.length} file(s): ${attachments.map((item) => item.fileName).join(', ')}`
+      : ''
+  );
   if (!content || content.length > 4000)
     throw new Error('消息内容长度必须为 1 到 4000 个字符');
   if (input.senderAccountId === input.recipientAccountId)
@@ -54,20 +238,37 @@ export function sendDirectMessage(input: {
   if (!recipient || recipient.status !== 'active')
     throw new Error('接收成员不存在或已停用');
   const id = randomUUID();
-  getDB()
-    .prepare(
+  const database = getDB();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare(
       `INSERT INTO direct_messages
       (id, organization_id, sender_account_id, recipient_account_id, content)
-     VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(
-      id,
-      input.organizationId,
-      input.senderAccountId,
-      input.recipientAccountId,
-      content,
+      VALUES (?, ?, ?, ?, ?)`,
+    ).run(id, input.organizationId, input.senderAccountId, input.recipientAccountId, content);
+    const insertAttachment = database.prepare(
+      `INSERT INTO direct_message_attachments
+      (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size, content)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-  const row = getDB()
+    attachments.forEach((attachment, index) => {
+      insertAttachment.run(
+        attachment.id,
+        id,
+        input.organizationId,
+        index,
+        attachment.fileName,
+        attachment.mimeType,
+        attachment.size,
+        attachment.content,
+      );
+    });
+    database.exec('COMMIT');
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch { /* preserve original error */ }
+    throw error;
+  }
+  const row = database
     .prepare('SELECT * FROM direct_messages WHERE id = ?')
     .get(id) as DirectMessageRow;
   return toDirectMessageView(row);
@@ -86,7 +287,7 @@ export function listDirectMessages(input: {
      WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?`,
     )
     .run(input.organizationId, input.peerAccountId, input.accountId);
-  return (
+  const rows = (
     getDB()
       .prepare(
         `SELECT * FROM direct_messages
@@ -103,9 +304,38 @@ export function listDirectMessages(input: {
         input.accountId,
         limit,
       ) as DirectMessageRow[]
-  )
-    .reverse()
-    .map(toDirectMessageView);
+  ).reverse();
+  const attachmentsByMessage = listDirectMessageAttachmentMap(rows.map((row) => row.id));
+  return rows.map((row) => toDirectMessageView(row, attachmentsByMessage.get(row.id) ?? []));
+}
+
+export function getDirectMessageAttachment(input: {
+  organizationId: string;
+  accountId: string;
+  attachmentId: string;
+}): DirectMessageAttachmentDownload {
+  const row = getDB()
+    .prepare(
+      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content '
+      + 'FROM direct_message_attachments a '
+      + 'JOIN direct_messages m ON m.id = a.message_id AND m.organization_id = a.organization_id '
+      + 'WHERE a.id = ? AND a.organization_id = ? '
+      + 'AND (m.sender_account_id = ? OR m.recipient_account_id = ?)',
+    )
+    .get(
+      input.attachmentId,
+      input.organizationId,
+      input.accountId,
+      input.accountId,
+    ) as DirectMessageAttachmentContentRow | undefined;
+  if (!row) throw new Error('附件不存在或无权访问');
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    size: Number(row.byte_size),
+    data: Buffer.from(row.content).toString('base64'),
+  };
 }
 
 export interface UnreadDirectMessageNotification {

@@ -11,15 +11,16 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   randomBytes,
   randomUUID,
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
-  LICENSE_MODULE_FEATURES,
-  licenseModuleCatalog,
   type ModuleUpdateDescriptor,
   type ModuleUpdateManifest,
   type ModuleUpdateRollout,
@@ -30,12 +31,7 @@ import {
 } from './moduleUpdateRepository.js';
 import { buildCreditsTablesSql } from './creditsSchema.js';
 import { getAuditLogs, logAudit } from './auditRepository.js';
-import {
-  createEmployee,
-  getEmployee,
-  listEmployees,
-  offboardEmployee,
-} from './employeeRepository.js';
+import { createEmployee } from './employeeRepository.js';
 import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
@@ -125,7 +121,14 @@ export type {
   ParkServiceSpecialistView,
   ParkServiceView,
 } from './parkServiceTypes.js';
+export { getParkServiceStatistics } from './parkUsageStatisticsRepository.js';
+export type {
+  ParkServiceStatisticsView,
+  ParkServiceUsageCount,
+  ParkTenantServiceStatistics,
+} from './parkUsageStatisticsRepository.js';
 export {
+  getDirectMessageAttachment,
   listDirectMessages,
   listPendingAtoaRequests,
   listUnreadDirectMessageNotifications,
@@ -134,6 +137,9 @@ export {
 } from './directMessageRepository.js';
 export type {
   AtoaInboxMessageView,
+  DirectMessageAttachmentDownload,
+  DirectMessageAttachmentInput,
+  DirectMessageAttachmentView,
   DirectMessageView,
   UnreadDirectMessageNotification,
 } from './directMessageRepository.js';
@@ -142,27 +148,42 @@ export {
   getTicketCreatorForAccount,
   getTicketForAccount,
   getTicketNotificationRecipients,
+  getTicketTransferredNotificationRecipients,
   isTicketFeatureEnabledForAccount,
   listTicketInbox,
   listTicketsForAccount,
   markTicketRead,
+  normalizeParkServiceFormData,
   recordTicketNotification,
   updateTicket,
 } from './ticketRepository.js';
-export type { TicketView } from './ticketRepository.js';
+export type {
+  TicketHistoryAction,
+  TicketHistoryEntry,
+  TicketView,
+} from './ticketRepository.js';
 
 const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 8;
+export const ENTERPRISE_SCHEMA_VERSION = 11;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
 
+function tokensMatch(left: string, right: string): boolean {
+  if (!left || !right || left.length !== right.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  } catch {
+    return false;
+  }
+}
 /**
  * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
  */
@@ -215,12 +236,14 @@ export function normalizeTokens(tokens: unknown): number {
 }
 
 let db: Database | null = null;
+let accountSyncEncryptionKey: Buffer | null = null;
 
 /** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
 export function closeEnterpriseDatabase(): void {
   if (!db) return;
   const database = db;
   db = null;
+  accountSyncEncryptionKey = null;
   database.close();
 }
 
@@ -255,6 +278,7 @@ export function getDB(): Database {
     }
     database.pragma('journal_mode = WAL');
     migrateLegacyAuthSessions(database);
+    migrateLegacyTicketEvents(database);
     database.pragma('foreign_keys = ON');
     initSchema(database);
     db = database;
@@ -345,6 +369,58 @@ function migrateLegacyAuthSessions(d: Database): void {
     d.exec('COMMIT');
   } catch (error) {
     d.exec('ROLLBACK');
+    throw error;
+  } finally {
+    d.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+/** v11 adds the auditable property-repair transfer action without losing existing history. */
+function migrateLegacyTicketEvents(d: Database): void {
+  const table = d
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'")
+    .get() as { sql?: string } | undefined;
+  if (!table?.sql || table.sql.includes("'transfer'")) return;
+
+  const columns = new Set((d.prepare('PRAGMA table_info(ticket_events)').all() as Array<{ name: string }>)
+    .map((column) => column.name));
+  const requiredColumns = [
+    'id', 'organization_id', 'ticket_id', 'actor_account_id', 'action', 'status_before',
+    'status_after', 'response_type', 'response_text', 'created_at',
+  ];
+  if (!requiredColumns.every((column) => columns.has(column))) return;
+
+  d.exec('PRAGMA foreign_keys = OFF');
+  d.exec('BEGIN IMMEDIATE');
+  try {
+    d.exec(`
+      ALTER TABLE ticket_events RENAME TO ticket_events_legacy_v10;
+      CREATE TABLE ticket_events (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        actor_account_id TEXT,
+        action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
+        status_before TEXT,
+        status_after TEXT NOT NULL,
+        response_type TEXT,
+        response_text TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+        FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
+      );
+      INSERT INTO ticket_events
+        (id, organization_id, ticket_id, actor_account_id, action, status_before,
+         status_after, response_type, response_text, created_at)
+      SELECT id, organization_id, ticket_id, actor_account_id, action, status_before,
+             status_after, response_type, response_text, created_at
+      FROM ticket_events_legacy_v10;
+      DROP TABLE ticket_events_legacy_v10;
+      COMMIT;
+    `);
+  } catch (error) {
+    try { d.exec('ROLLBACK'); } catch { /* preserve the migration error */ }
     throw error;
   } finally {
     d.exec('PRAGMA foreign_keys = ON');
@@ -450,6 +526,22 @@ function initSchema(d: Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       sent_at_ms INTEGER
     );
+    CREATE TABLE IF NOT EXISTS account_sync_snapshots (
+      account_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK(scope IN ('personal_memory', 'worklog', 'auto_skills')),
+      version INTEGER NOT NULL,
+      payload_ciphertext TEXT NOT NULL,
+      payload_iv TEXT NOT NULL,
+      payload_auth_tag TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      device_id TEXT,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (account_id, scope),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS parks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -670,6 +762,22 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation
       ON direct_messages(organization_id, sender_account_id, recipient_account_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS direct_message_attachments (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 10485760),
+      content BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (message_id) REFERENCES direct_messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
+      ON direct_message_attachments(message_id, ordinal);
+
     CREATE TABLE IF NOT EXISTS sms_login_challenges (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -744,6 +852,22 @@ function initSchema(d: Database): void {
       FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
       FOREIGN KEY (organization_id) REFERENCES organizations(id),
       FOREIGN KEY (park_id) REFERENCES parks(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ticket_events (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      actor_account_id TEXT,
+      action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
+      status_before TEXT,
+      status_after TEXT NOT NULL,
+      response_type TEXT,
+      response_text TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
     );
 
     CREATE TABLE IF NOT EXISTS park_publications (
@@ -856,6 +980,32 @@ function initSchema(d: Database): void {
       FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS park_meeting_bookings (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      meeting_room_id TEXT NOT NULL,
+      use_date TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      booked_ticket_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (booked_ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS park_meeting_slot_overrides (
+      organization_id TEXT NOT NULL,
+      meeting_room_id TEXT NOT NULL,
+      use_date TEXT NOT NULL,
+      slot_key TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (organization_id, meeting_room_id, use_date, slot_key),
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (meeting_room_id) REFERENCES park_meeting_rooms(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS ticket_deliveries (
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       ticket_id TEXT NOT NULL,
@@ -907,6 +1057,12 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_created
+      ON ticket_events(ticket_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_it_tickets_park_org_service_created
+      ON it_tickets(park_id, organization_id, service_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_park_meeting_slots_booked_ticket
+      ON park_meeting_slots(booked_ticket_id) WHERE booked_ticket_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_park_publications_org_created
       ON park_publications(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_publication_recipients_account
@@ -921,6 +1077,8 @@ function initSchema(d: Database): void {
       ON park_meeting_rooms(organization_id, enabled, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_meeting_slots_org_date
       ON park_meeting_slots(organization_id, use_date, meeting_room_id);
+    CREATE INDEX IF NOT EXISTS idx_park_meeting_bookings_org_date
+      ON park_meeting_bookings(organization_id, use_date, meeting_room_id, start_time, end_time);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
@@ -931,6 +1089,8 @@ function initSchema(d: Database): void {
       ON telemetry_events(status, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
       ON telemetry_events(deployment_id, created_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_account_sync_snapshots_org_updated
+      ON account_sync_snapshots(organization_id, updated_at_ms);
   `);
 
   const organizationColumns = d
@@ -1358,6 +1518,385 @@ function backfillOrganizationStructure(d: Database): void {
 // Organizations and time-boxed registration invites
 // ============================================================
 
+export const ACCOUNT_SYNC_SCOPES = [
+  'personal_memory',
+  'worklog',
+  'auto_skills',
+] as const;
+
+export type AccountSyncScope = (typeof ACCOUNT_SYNC_SCOPES)[number];
+
+export interface AccountSyncFile {
+  path: string;
+  content: string;
+  modifiedAtMs: number;
+  sha256: string;
+}
+
+export interface AccountSyncPayload {
+  schemaVersion: 1;
+  generatedAt: string;
+  files: AccountSyncFile[];
+  truncated?: boolean;
+}
+
+export interface AccountSyncSnapshotView {
+  scope: AccountSyncScope;
+  version: number;
+  payload: AccountSyncPayload;
+  payloadHash: string;
+  deviceId: string | null;
+  updatedAtMs: number;
+}
+
+export class AccountSyncConflictError extends Error {
+  constructor(readonly currentVersion: number) {
+    super('account sync snapshot changed on another device');
+    this.name = 'AccountSyncConflictError';
+  }
+}
+
+const ACCOUNT_SYNC_MAX_FILES = 1_000;
+const ACCOUNT_SYNC_MAX_FILE_BYTES = 1024 * 1024;
+const ACCOUNT_SYNC_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
+const ACCOUNT_SYNC_SCOPE_SET = new Set<string>(ACCOUNT_SYNC_SCOPES);
+
+interface AccountSyncSnapshotRow {
+  account_id: string;
+  organization_id: string;
+  scope: AccountSyncScope;
+  version: number;
+  payload_ciphertext: string;
+  payload_iv: string;
+  payload_auth_tag: string;
+  payload_hash: string;
+  device_id: string | null;
+  updated_at_ms: number;
+}
+
+function normalizeAccountSyncPath(
+  scope: AccountSyncScope,
+  value: string,
+): string {
+  if (scope !== 'personal_memory') return value;
+  if (value === 'global.md') return 'memory/global.md';
+  if (value.startsWith('sessions/')) return `memory/${value}`;
+  return value;
+}
+
+function isAccountSyncPathAllowed(scope: AccountSyncScope, value: string): boolean {
+  if (
+    !value ||
+    value.length > 260 ||
+    value.includes('\\') ||
+    value.startsWith('/') ||
+    value.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    return false;
+  }
+  if (scope === 'personal_memory') {
+    return value === 'memory/global.md'
+      || /^memory\/sessions\/[^/]{1,160}\.md$/u.test(value)
+      || value === 'knowledge/entries.jsonl';
+  }
+  if (scope === 'worklog') {
+    return /\.(?:jsonl|json|md)$/iu.test(value);
+  }
+  return /^auto-[^/]{1,160}\/(?:SKILL\.md|profile\.json)$/u.test(value);
+}
+
+function normalizeAccountSyncPayload(
+  scope: AccountSyncScope,
+  value: unknown,
+): AccountSyncPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('account sync payload must be an object');
+  }
+  const raw = value as Record<string, unknown>;
+  if (raw.schemaVersion !== 1 || !Array.isArray(raw.files)) {
+    throw new Error('account sync payload schema is unsupported');
+  }
+  if (raw.files.length > ACCOUNT_SYNC_MAX_FILES) {
+    throw new Error('account sync payload contains too many files');
+  }
+  const generatedAtMs = Date.parse(String(raw.generatedAt ?? ''));
+  if (!Number.isFinite(generatedAtMs)) {
+    throw new Error('account sync generatedAt is invalid');
+  }
+
+  let totalBytes = 0;
+  const seen = new Set<string>();
+  const files = raw.files.map((candidate): AccountSyncFile => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('account sync file entry is invalid');
+    }
+    const file = candidate as Record<string, unknown>;
+    const relativePath = normalizeAccountSyncPath(scope, typeof file.path === 'string' ? file.path : '');
+    const content = typeof file.content === 'string' ? file.content : '';
+    if (!isAccountSyncPathAllowed(scope, relativePath)) {
+      throw new Error('account sync file path is not allowed');
+    }
+    if (seen.has(relativePath)) {
+      throw new Error('account sync payload contains a duplicate path');
+    }
+    seen.add(relativePath);
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    if (contentBytes > ACCOUNT_SYNC_MAX_FILE_BYTES) {
+      throw new Error('account sync file exceeds the size limit');
+    }
+    totalBytes += contentBytes + Buffer.byteLength(relativePath, 'utf8');
+    if (totalBytes > ACCOUNT_SYNC_MAX_PAYLOAD_BYTES) {
+      throw new Error('account sync payload exceeds the size limit');
+    }
+    const modifiedAtMs = Number(file.modifiedAtMs);
+    if (!Number.isFinite(modifiedAtMs) || modifiedAtMs < 0) {
+      throw new Error('account sync file timestamp is invalid');
+    }
+    const digest = createHash('sha256').update(content, 'utf8').digest('hex');
+    if (typeof file.sha256 !== 'string' || !tokensMatch(digest, file.sha256.toLowerCase())) {
+      throw new Error('account sync file checksum mismatch');
+    }
+    return {
+      path: relativePath,
+      content,
+      modifiedAtMs: Math.floor(modifiedAtMs),
+      sha256: digest,
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date(generatedAtMs).toISOString(),
+    files,
+    ...(raw.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+function getAccountSyncEncryptionKey(): Buffer {
+  if (accountSyncEncryptionKey) return accountSyncEncryptionKey;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let key: Buffer;
+  try {
+    key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const generated = randomBytes(32);
+    try {
+      fs.writeFileSync(ACCOUNT_SYNC_KEY_PATH, generated, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+      key = generated;
+    } catch (writeError) {
+      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
+      key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
+    }
+  }
+  if (key.length !== 32) {
+    throw new Error('account sync encryption key is invalid');
+  }
+  try {
+    fs.chmodSync(ACCOUNT_SYNC_KEY_PATH, 0o600);
+  } catch {
+    // Windows may not support POSIX modes; ACLs still protect the data directory.
+  }
+  accountSyncEncryptionKey = key;
+  return key;
+}
+
+function accountSyncAad(row: Pick<
+  AccountSyncSnapshotRow,
+  'account_id' | 'organization_id' | 'scope' | 'version'
+>): Buffer {
+  return Buffer.from(
+    [row.account_id, row.organization_id, row.scope, String(row.version)].join('\0'),
+    'utf8',
+  );
+}
+
+function encryptAccountSyncPayload(input: {
+  accountId: string;
+  organizationId: string;
+  scope: AccountSyncScope;
+  version: number;
+  payload: AccountSyncPayload;
+}): {
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+  payloadHash: string;
+} {
+  const raw = JSON.stringify(input.payload);
+  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', getAccountSyncEncryptionKey(), iv);
+  cipher.setAAD(accountSyncAad({
+    account_id: input.accountId,
+    organization_id: input.organizationId,
+    scope: input.scope,
+    version: input.version,
+  }));
+  const ciphertext = Buffer.concat([
+    cipher.update(gzipSync(Buffer.from(raw, 'utf8'))),
+    cipher.final(),
+  ]);
+  return {
+    ciphertext: ciphertext.toString('base64'),
+    iv: iv.toString('base64'),
+    authTag: cipher.getAuthTag().toString('base64'),
+    payloadHash,
+  };
+}
+
+function decryptAccountSyncPayload(row: AccountSyncSnapshotRow): AccountSyncPayload {
+  const decipher = createDecipheriv(
+    'aes-256-gcm',
+    getAccountSyncEncryptionKey(),
+    Buffer.from(row.payload_iv, 'base64'),
+  );
+  decipher.setAAD(accountSyncAad(row));
+  decipher.setAuthTag(Buffer.from(row.payload_auth_tag, 'base64'));
+  const compressed = Buffer.concat([
+    decipher.update(Buffer.from(row.payload_ciphertext, 'base64')),
+    decipher.final(),
+  ]);
+  const raw = gunzipSync(compressed).toString('utf8');
+  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
+  if (!tokensMatch(payloadHash, row.payload_hash)) {
+    throw new Error('account sync snapshot integrity check failed');
+  }
+  return normalizeAccountSyncPayload(row.scope, JSON.parse(raw) as unknown);
+}
+
+function accountSyncSnapshotView(row: AccountSyncSnapshotRow): AccountSyncSnapshotView {
+  return {
+    scope: row.scope,
+    version: row.version,
+    payload: decryptAccountSyncPayload(row),
+    payloadHash: row.payload_hash,
+    deviceId: row.device_id,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function activeAccountOrganization(accountId: string): string {
+  const account = getDB()
+    .prepare("SELECT organization_id FROM accounts WHERE id = ? AND status = 'active' AND deleted_at IS NULL")
+    .get(accountId) as { organization_id: string } | undefined;
+  if (!account) throw new Error('account not found');
+  return account.organization_id;
+}
+
+export function listAccountSyncSnapshots(accountId: string): AccountSyncSnapshotView[] {
+  activeAccountOrganization(accountId);
+  const rows = getDB()
+    .prepare('SELECT * FROM account_sync_snapshots WHERE account_id = ? ORDER BY scope')
+    .all(accountId) as AccountSyncSnapshotRow[];
+  return rows.map(accountSyncSnapshotView);
+}
+
+export function putAccountSyncSnapshot(input: {
+  accountId: string;
+  scope: AccountSyncScope;
+  expectedVersion: number;
+  payload: unknown;
+  deviceId?: string | null;
+}): AccountSyncSnapshotView {
+  if (!ACCOUNT_SYNC_SCOPE_SET.has(input.scope)) {
+    throw new Error('account sync scope is invalid');
+  }
+  if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
+    throw new Error('account sync expectedVersion is invalid');
+  }
+  const organizationId = activeAccountOrganization(input.accountId);
+  const payload = normalizeAccountSyncPayload(input.scope, input.payload);
+  const existing = getDB()
+    .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+    .get(input.accountId, input.scope) as { version: number } | undefined;
+  const currentVersion = existing?.version ?? 0;
+  if (currentVersion !== input.expectedVersion) {
+    throw new AccountSyncConflictError(currentVersion);
+  }
+
+  const version = currentVersion + 1;
+  const encrypted = encryptAccountSyncPayload({
+    accountId: input.accountId,
+    organizationId,
+    scope: input.scope,
+    version,
+    payload,
+  });
+  const updatedAtMs = Date.now();
+  const deviceId = typeof input.deviceId === 'string'
+    ? input.deviceId.trim().slice(0, 160) || null
+    : null;
+
+  if (existing) {
+    const result = getDB()
+      .prepare(
+        'UPDATE account_sync_snapshots SET organization_id = ?, version = ?, '
+        + 'payload_ciphertext = ?, payload_iv = ?, payload_auth_tag = ?, payload_hash = ?, '
+        + 'device_id = ?, updated_at_ms = ? '
+        + 'WHERE account_id = ? AND scope = ? AND version = ?',
+      )
+      .run(
+        organizationId,
+        version,
+        encrypted.ciphertext,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.payloadHash,
+        deviceId,
+        updatedAtMs,
+        input.accountId,
+        input.scope,
+        currentVersion,
+      ) as { changes?: number | bigint };
+    if (Number(result.changes ?? 0) !== 1) {
+      const latest = getDB()
+        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+        .get(input.accountId, input.scope) as { version?: number } | undefined;
+      throw new AccountSyncConflictError(Number(latest?.version ?? currentVersion));
+    }
+  } else {
+    try {
+      getDB()
+        .prepare(
+          'INSERT INTO account_sync_snapshots '
+          + '(account_id, organization_id, scope, version, payload_ciphertext, '
+          + 'payload_iv, payload_auth_tag, payload_hash, device_id, updated_at_ms) '
+          + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          input.accountId,
+          organizationId,
+          input.scope,
+          version,
+          encrypted.ciphertext,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.payloadHash,
+          deviceId,
+          updatedAtMs,
+        );
+    } catch (error) {
+      const latest = getDB()
+        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
+        .get(input.accountId, input.scope) as { version?: number } | undefined;
+      if (latest) throw new AccountSyncConflictError(Number(latest.version));
+      throw error;
+    }
+  }
+
+  return {
+    scope: input.scope,
+    version,
+    payload,
+    payloadHash: encrypted.payloadHash,
+    deviceId,
+    updatedAtMs,
+  };
+}
 export interface OrganizationView {
   id: string;
   name: string;
@@ -1844,18 +2383,6 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   knowledge: true,
   tui_sync: true,
 };
-
-function licenseEnforcementEnabled(): boolean {
-  return process.env.OTTO_LICENSE_ENFORCE === 'true';
-}
-
-function licenseSigningSecret(): string {
-  return process.env.OTTO_LICENSE_SIGNING_SECRET || '';
-}
-
-function dateFromMs(ms: number): string {
-  return new Date(ms).toISOString();
-}
 
 function settingValue(key: string): string | null {
   const row = getDB()
@@ -4391,12 +4918,16 @@ export function removeParkServiceSpecialist(input: {
 }
 
 export {
+  PARK_MEETING_CLOSE_MINUTES,
+  PARK_MEETING_OPEN_MINUTES,
+  PARK_MEETING_SLOT_MINUTES,
   PARK_MEETING_TIME_SLOTS,
   createParkMeetingRoom,
   deleteParkMeetingRoom,
   getParkSettings,
   listParkMeetingRooms,
   listParkMeetingSlots,
+  reserveParkMeetingPeriod,
   reserveParkMeetingSlot,
   setParkMeetingSlotAvailability,
   updateParkMeetingRoom,
@@ -4410,12 +4941,14 @@ export type {
 
 export {
   createParkPublication,
+  listParkAnnouncementResults,
   listParkPublications,
   listParkSurveyResults,
   markParkPublicationRead,
   submitParkSurvey,
 } from './parkPublicationRepository.js';
 export type {
+  ParkAnnouncementResultView,
   ParkPublicationView,
   ParkSurveyResultView,
 } from './parkPublicationRepository.js';
@@ -4474,7 +5007,7 @@ export { getAuditLogs, logAudit } from './auditRepository.js';
 // ============================================================
 // Export all (for backup)
 // ============================================================
-export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID): any {
+export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID) {
   return {
     // Full backup must include offboarded employees too, otherwise every
     // offboarding silently erases historical employee records from the

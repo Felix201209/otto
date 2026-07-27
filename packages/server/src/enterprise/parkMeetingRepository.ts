@@ -26,16 +26,35 @@ export interface ParkMeetingRoomView {
   updatedAt: string;
 }
 
-export const PARK_MEETING_TIME_SLOTS = [
-  { key: 'morning', label: '上午 09:00–12:00' },
-  { key: 'afternoon', label: '下午 14:00–18:00' },
-] as const;
+export const PARK_MEETING_SLOT_MINUTES = 10;
+export const PARK_MEETING_OPEN_MINUTES = 9 * 60;
+export const PARK_MEETING_CLOSE_MINUTES = 23 * 60;
+
+function meetingClock(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+export const PARK_MEETING_TIME_SLOTS = Array.from(
+  { length: (PARK_MEETING_CLOSE_MINUTES - PARK_MEETING_OPEN_MINUTES) / PARK_MEETING_SLOT_MINUTES },
+  (_, index) => {
+    const startMinutes = PARK_MEETING_OPEN_MINUTES + index * PARK_MEETING_SLOT_MINUTES;
+    const endMinutes = startMinutes + PARK_MEETING_SLOT_MINUTES;
+    return {
+      key: meetingClock(startMinutes),
+      label: `${meetingClock(startMinutes)}-${meetingClock(endMinutes)}`,
+      startMinutes,
+      endMinutes,
+    };
+  },
+);
 
 export interface ParkMeetingSlotView {
   id: string;
   roomId: string;
   date: string;
-  slotKey: 'morning' | 'afternoon';
+  slotKey: string;
   label: string;
   status: 'available' | 'booked' | 'closed';
   updatedAt: string;
@@ -120,58 +139,58 @@ function assertFutureMeetingDate(value: string): string {
   return date;
 }
 
-function assertMeetingSlotKey(value: string): 'morning' | 'afternoon' {
-  if (value !== 'morning' && value !== 'afternoon')
-    throw new Error('请选择有效的使用时段');
-  return value;
+function meetingMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) throw new Error('请选择有效的会议时间');
+  return Number(match[1]) * 60 + Number(match[2]);
 }
 
-function meetingSlotLabel(slotKey: 'morning' | 'afternoon'): string {
-  return PARK_MEETING_TIME_SLOTS.find((slot) => slot.key === slotKey)!.label;
-}
-
-function ensureDefaultParkMeetingSlots(organizationId: string): void {
-  const rooms = listParkMeetingRooms(organizationId);
-  const insert = getDB().prepare(
-    `INSERT OR IGNORE INTO park_meeting_slots
-      (id, organization_id, meeting_room_id, use_date, slot_key, enabled)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-  );
-  const { dates } = futureDateRange();
-  for (const room of rooms) {
-    for (const date of dates) {
-      for (const slot of PARK_MEETING_TIME_SLOTS) {
-        insert.run(
-          `park_slot_${randomUUID()}`,
-          organizationId,
-          room.id,
-          date,
-          slot.key,
-        );
-      }
-    }
+function assertMeetingPeriod(startValue: string, endValue: string): {
+  startTime: string;
+  endTime: string;
+  startMinutes: number;
+  endMinutes: number;
+} {
+  const startMinutes = meetingMinutes(startValue);
+  const endMinutes = meetingMinutes(endValue);
+  if (
+    startMinutes < PARK_MEETING_OPEN_MINUTES
+    || endMinutes > PARK_MEETING_CLOSE_MINUTES
+    || startMinutes >= endMinutes
+    || startMinutes % PARK_MEETING_SLOT_MINUTES !== 0
+    || endMinutes % PARK_MEETING_SLOT_MINUTES !== 0
+  ) {
+    throw new Error('会议时间必须在 09:00-23:00 内，并按 10 分钟选择');
   }
+  return {
+    startTime: meetingClock(startMinutes),
+    endTime: meetingClock(endMinutes),
+    startMinutes,
+    endMinutes,
+  };
 }
+
+const LEGACY_MEETING_PERIODS = {
+  morning: { startMinutes: 9 * 60, endMinutes: 12 * 60 },
+  afternoon: { startMinutes: 14 * 60, endMinutes: 18 * 60 },
+} as const;
 
 export function listParkMeetingSlots(
   organizationId: string,
   fromDate?: string,
   toDate?: string,
 ): ParkMeetingSlotView[] {
-  ensureDefaultParkMeetingSlots(organizationId);
+  const rooms = listParkMeetingRooms(organizationId);
   const defaults = futureDateRange();
   const from = fromDate ? assertFutureMeetingDate(fromDate) : defaults.from;
   const to = toDate ? assertFutureMeetingDate(toDate) : defaults.to;
   if (to < from) throw new Error('预约结束日期不能早于开始日期');
-  const rows = getDB()
-    .prepare(
-      `SELECT id, meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
+  const dates = defaults.dates.filter((date) => date >= from && date <= to);
+  const legacyRows = getDB().prepare(
+    `SELECT meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
      FROM park_meeting_slots
-     WHERE organization_id = ? AND use_date BETWEEN ? AND ?
-     ORDER BY use_date, meeting_room_id, slot_key DESC`,
-    )
-    .all(organizationId, from, to) as Array<{
-    id: string;
+     WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
+  ).all(organizationId, from, to) as Array<{
     meeting_room_id: string;
     use_date: string;
     slot_key: 'morning' | 'afternoon';
@@ -179,19 +198,65 @@ export function listParkMeetingSlots(
     booked_ticket_id: string | null;
     updated_at: string;
   }>;
-  return rows.map((row) => ({
-    id: row.id,
-    roomId: row.meeting_room_id,
-    date: row.use_date,
-    slotKey: row.slot_key,
-    label: meetingSlotLabel(row.slot_key),
-    status: row.booked_ticket_id
-      ? 'booked'
-      : row.enabled === 1
-        ? 'available'
-        : 'closed',
-    updatedAt: row.updated_at,
-  }));
+  const bookings = getDB().prepare(
+    `SELECT meeting_room_id, use_date, start_time, end_time, created_at
+     FROM park_meeting_bookings
+     WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
+  ).all(organizationId, from, to) as Array<{
+    meeting_room_id: string;
+    use_date: string;
+    start_time: string;
+    end_time: string;
+    created_at: string;
+  }>;
+  const overrides = getDB().prepare(
+    `SELECT meeting_room_id, use_date, slot_key, enabled, updated_at
+     FROM park_meeting_slot_overrides
+     WHERE organization_id = ? AND use_date BETWEEN ? AND ?`,
+  ).all(organizationId, from, to) as Array<{
+    meeting_room_id: string;
+    use_date: string;
+    slot_key: string;
+    enabled: number;
+    updated_at: string;
+  }>;
+
+  return rooms.flatMap((room) => dates.flatMap((date) => (
+    PARK_MEETING_TIME_SLOTS.map((slot) => {
+      const booking = bookings.find((item) => (
+        item.meeting_room_id === room.id
+        && item.use_date === date
+        && meetingMinutes(item.start_time) < slot.endMinutes
+        && meetingMinutes(item.end_time) > slot.startMinutes
+      ));
+      const legacy = legacyRows.find((item) => {
+        const period = LEGACY_MEETING_PERIODS[item.slot_key];
+        return item.meeting_room_id === room.id
+          && item.use_date === date
+          && period.startMinutes < slot.endMinutes
+          && period.endMinutes > slot.startMinutes;
+      });
+      const override = overrides.find((item) => (
+        item.meeting_room_id === room.id
+        && item.use_date === date
+        && item.slot_key === slot.key
+      ));
+      const status = booking || legacy?.booked_ticket_id
+        ? 'booked'
+        : override?.enabled === 0 || legacy?.enabled === 0
+          ? 'closed'
+          : 'available';
+      return {
+        id: `park_slot_${room.id}_${date}_${slot.key.replace(':', '')}`,
+        roomId: room.id,
+        date,
+        slotKey: slot.key,
+        label: slot.label,
+        status,
+        updatedAt: booking?.created_at || override?.updated_at || legacy?.updated_at || room.updatedAt,
+      } satisfies ParkMeetingSlotView;
+    })
+  )));
 }
 
 export function setParkMeetingSlotAvailability(
@@ -203,71 +268,101 @@ export function setParkMeetingSlotAvailability(
   );
   if (!room) throw new Error('会议室不存在');
   const date = assertFutureMeetingDate(input.date);
-  const slotKey = assertMeetingSlotKey(input.slotKey);
-  ensureDefaultParkMeetingSlots(organizationId);
-  const current = getDB()
-    .prepare(
-      `SELECT booked_ticket_id FROM park_meeting_slots
-     WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-    )
-    .get(organizationId, room.id, date, slotKey) as
-    { booked_ticket_id: string | null } | undefined;
-  if (current?.booked_ticket_id) throw new Error('已预约的时间段不能关闭');
-  getDB()
-    .prepare(
-      `INSERT INTO park_meeting_slots
-      (id, organization_id, meeting_room_id, use_date, slot_key, enabled)
-     VALUES (?, ?, ?, ?, ?, ?)
+  const legacyPeriod = LEGACY_MEETING_PERIODS[
+    input.slotKey as keyof typeof LEGACY_MEETING_PERIODS
+  ];
+  const keys = legacyPeriod
+    ? PARK_MEETING_TIME_SLOTS.filter((slot) => (
+        slot.startMinutes >= legacyPeriod.startMinutes
+        && slot.endMinutes <= legacyPeriod.endMinutes
+      )).map((slot) => slot.key)
+    : [PARK_MEETING_TIME_SLOTS.find((slot) => slot.key === input.slotKey)?.key]
+        .filter((key): key is string => Boolean(key));
+  if (!keys.length) throw new Error('请选择有效的会议时间');
+  const visible = listParkMeetingSlots(organizationId, date, date).filter(
+    (slot) => slot.roomId === room.id && keys.includes(slot.slotKey),
+  );
+  if (!input.enabled && visible.some((slot) => slot.status === 'booked')) {
+    throw new Error('已预约的时间段不能关闭');
+  }
+  const save = getDB().prepare(
+    `INSERT INTO park_meeting_slot_overrides
+     (organization_id, meeting_room_id, use_date, slot_key, enabled, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(organization_id, meeting_room_id, use_date, slot_key)
      DO UPDATE SET enabled = excluded.enabled, updated_at = datetime('now')`,
-    )
-    .run(
-      `park_slot_${randomUUID()}`,
-      organizationId,
-      room.id,
-      date,
-      slotKey,
-      input.enabled ? 1 : 0,
-    );
+  );
+  for (const key of keys) {
+    save.run(organizationId, room.id, date, key, input.enabled ? 1 : 0);
+  }
   return listParkMeetingSlots(organizationId, date, date).find(
-    (slot) => slot.roomId === room.id && slot.slotKey === slotKey,
+    (slot) => slot.roomId === room.id && slot.slotKey === keys[0],
   )!;
+}
+
+export function reserveParkMeetingPeriod(
+  organizationId: string,
+  input: {
+    roomId: string;
+    date: string;
+    startTime: string;
+    endTime: string;
+    ticketId: string;
+  },
+): ParkMeetingSlotView[] {
+  const date = assertFutureMeetingDate(input.date);
+  const period = assertMeetingPeriod(input.startTime, input.endTime);
+  const room = listParkMeetingRooms(organizationId).find((item) => item.id === input.roomId);
+  if (!room) throw new Error('会议室不存在');
+  const periodSlots = listParkMeetingSlots(organizationId, date, date).filter((slot) => {
+    const slotStart = meetingMinutes(slot.slotKey);
+    return slot.roomId === room.id
+      && slotStart >= period.startMinutes
+      && slotStart < period.endMinutes;
+  });
+  const expectedCount = (period.endMinutes - period.startMinutes) / PARK_MEETING_SLOT_MINUTES;
+  if (periodSlots.length !== expectedCount || periodSlots.some((slot) => slot.status !== 'available')) {
+    throw new Error('所选时间内包含已预约或未开放时段，请重新选择绿色时段');
+  }
+  getDB().prepare(
+    `INSERT INTO park_meeting_bookings
+     (id, organization_id, meeting_room_id, use_date, start_time, end_time, booked_ticket_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    `park_booking_${randomUUID()}`,
+    organizationId,
+    room.id,
+    date,
+    period.startTime,
+    period.endTime,
+    input.ticketId,
+  );
+  return listParkMeetingSlots(organizationId, date, date).filter((slot) => {
+    const slotStart = meetingMinutes(slot.slotKey);
+    return slot.roomId === room.id
+      && slotStart >= period.startMinutes
+      && slotStart < period.endMinutes;
+  });
 }
 
 export function reserveParkMeetingSlot(
   organizationId: string,
   input: { roomId: string; date: string; slotKey: string; ticketId: string },
 ): ParkMeetingSlotView {
-  const date = assertFutureMeetingDate(input.date);
-  const slotKey = assertMeetingSlotKey(input.slotKey);
-  ensureDefaultParkMeetingSlots(organizationId);
-  const changed = getDB()
-    .prepare(
-      `UPDATE park_meeting_slots
-     SET booked_ticket_id = ?, updated_at = datetime('now')
-     WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?
-       AND enabled = 1 AND booked_ticket_id IS NULL`,
-    )
-    .run(input.ticketId, organizationId, input.roomId, date, slotKey);
-  if (changed.changes === 0) {
-    const existing = getDB()
-      .prepare(
-        `SELECT enabled, booked_ticket_id FROM park_meeting_slots
-       WHERE organization_id = ? AND meeting_room_id = ? AND use_date = ? AND slot_key = ?`,
-      )
-      .get(organizationId, input.roomId, date, slotKey) as
-      | {
-          enabled: number;
-          booked_ticket_id: string | null;
-        }
-      | undefined;
-    if (existing?.booked_ticket_id)
-      throw new Error('该时间段已被预约，请选择绿色时段');
-    throw new Error('该时间段暂不可预约');
-  }
-  return listParkMeetingSlots(organizationId, date, date).find(
-    (slot) => slot.roomId === input.roomId && slot.slotKey === slotKey,
-  )!;
+  const legacy = LEGACY_MEETING_PERIODS[
+    input.slotKey as keyof typeof LEGACY_MEETING_PERIODS
+  ];
+  const startTime = legacy ? meetingClock(legacy.startMinutes) : input.slotKey;
+  const endTime = legacy
+    ? meetingClock(legacy.endMinutes)
+    : meetingClock(meetingMinutes(input.slotKey) + PARK_MEETING_SLOT_MINUTES);
+  return reserveParkMeetingPeriod(organizationId, {
+    roomId: input.roomId,
+    date: input.date,
+    startTime,
+    endTime,
+    ticketId: input.ticketId,
+  })[0]!;
 }
 
 function normalizeMeetingRoomImageUrl(

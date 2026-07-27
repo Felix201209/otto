@@ -11,6 +11,7 @@ import type {
   EnterpriseOrganizationInviteContext,
   EnterpriseOrganizationFeatures,
   EnterprisePark,
+  EnterpriseParkAnnouncementResult,
   EnterpriseParkSurveyResult,
   EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
@@ -197,7 +198,6 @@ export function AccountManagementPage({
   const [invitePosition, setInvitePosition] = useState('');
   const [inviteRole, setInviteRole] = useState('');
   const [inviteMaxUses, setInviteMaxUses] = useState('');
-  const [parkPushRecipientId, setParkPushRecipientId] = useState('');
   const [parkPushServiceId, setParkPushServiceId] = useState<typeof PARK_SERVICE_OPTIONS[number]['id']>('announcement');
   const [parkPushNote, setParkPushNote] = useState('');
   const [parkPushBusy, setParkPushBusy] = useState(false);
@@ -205,9 +205,11 @@ export function AccountManagementPage({
   const [parkPushError, setParkPushError] = useState<string | null>(null);
   const [parkServiceBrand, setParkServiceBrand] = useState('园区服务');
   const [currentPark, setCurrentPark] = useState<EnterprisePark | null>(null);
+  const [parkAnnouncementResults, setParkAnnouncementResults] = useState<EnterpriseParkAnnouncementResult[]>([]);
   const [parkSurveyResults, setParkSurveyResults] = useState<EnterpriseParkSurveyResult[]>([]);
   const [parkTenantOrganizations, setParkTenantOrganizations] = useState<EnterpriseParkTenantOrganization[]>([]);
   const [parkTenantError, setParkTenantError] = useState<string | null>(null);
+  const [parkAnnouncementError, setParkAnnouncementError] = useState<string | null>(null);
   const [parkSurveyError, setParkSurveyError] = useState<string | null>(null);
   const [configurationFeatures, setConfigurationFeatures] = useState<EnterpriseOrganizationFeatures | null>(null);
   const [organizationDepartments, setOrganizationDepartments] = useState<EnterpriseOrganizationDepartment[]>([]);
@@ -357,10 +359,20 @@ export function AccountManagementPage({
     () => assignmentDepartment?.positions.find((position) => position.id === draft.positionId) ?? null,
     [assignmentDepartment, draft.positionId],
   );
-  const parkPushRecipients = useMemo(
-    () => accounts.filter((account) => account.status === 'active'),
-    [accounts],
-  );
+  const refreshParkAnnouncementResults = useCallback(async (): Promise<void> => {
+    if (!currentAccount.isAdmin || !isParkAdminOrganization) {
+      setParkAnnouncementResults([]);
+      setParkAnnouncementError(null);
+      return;
+    }
+    try {
+      setParkAnnouncementResults(await window.otto.enterpriseParkAnnouncementResults());
+      setParkAnnouncementError(null);
+    } catch (cause) {
+      setParkAnnouncementError(errorMessage(cause));
+    }
+  }, [currentAccount.isAdmin, isParkAdminOrganization]);
+
   const refreshParkSurveyResults = useCallback(async (): Promise<void> => {
     if (!currentAccount.isAdmin || !isParkAdminOrganization) {
       setParkSurveyResults([]);
@@ -389,6 +401,9 @@ export function AccountManagementPage({
       setParkTenantError(errorMessage(cause));
     }
   }, [currentAccount.isAdmin, isParkAdminOrganization]);
+  useEffect(() => {
+    void refreshParkAnnouncementResults();
+  }, [refreshParkAnnouncementResults]);
   useEffect(() => {
     void refreshParkSurveyResults();
   }, [refreshParkSurveyResults]);
@@ -614,17 +629,17 @@ export function AccountManagementPage({
     setParkPushError(null);
     setParkPushMessage(null);
     try {
-      const recipient = parkPushRecipients.find((account) => account.id === parkPushRecipientId);
       const service = PARK_SERVICE_OPTIONS.find((item) => item.id === parkPushServiceId);
       await window.otto.enterpriseParkServicePush({
-        recipientAccountId: parkPushRecipientId || 'all',
+        recipientAccountId: 'all',
         serviceId: parkPushServiceId,
         note: parkPushNote.trim() || null,
       });
       setParkPushMessage(
-        `已发布「${service?.label ?? '园区内容'}」${recipient ? `给 ${recipient.name}` : '给全部成员'}`,
+        `已发布「${service?.label ?? '园区内容'}」给当前产业园全部企业成员`,
       );
       setParkPushNote('');
+      await refreshParkAnnouncementResults();
       await refreshParkSurveyResults();
     } catch (cause) {
       setParkPushError(errorMessage(cause));
@@ -788,7 +803,7 @@ export function AccountManagementPage({
             <button
               type="button"
               onClick={() => void pushParkService()}
-              disabled={parkPushBusy || parkPushRecipients.length === 0}
+              disabled={parkPushBusy}
             >
               {parkPushBusy ? '正在发布…' : '发布内容'}
             </button>
@@ -809,19 +824,7 @@ export function AccountManagementPage({
             </label>
             <label>
               <span>接收范围</span>
-              <select
-                aria-label="选择接收服务的 Otto 用户"
-                value={parkPushRecipientId}
-                disabled={parkPushBusy}
-                onChange={(event) => setParkPushRecipientId(event.target.value)}
-              >
-                <option value="">全部成员</option>
-                {parkPushRecipients.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name} / {account.department || '未分配部门'} / @{account.username}
-                  </option>
-                ))}
-              </select>
+              <input aria-label="园区公告接收范围" value="当前产业园全部企业成员" disabled />
             </label>
             <label>
               <span>{parkPushServiceId === 'announcement' ? '公告正文' : '调查说明'}</span>
@@ -845,6 +848,14 @@ export function AccountManagementPage({
             {parkTenantError ? <div className="otto-account-invite__error" role="alert">{parkTenantError}</div> : null}
             {!parkTenantError && parkTenantOrganizations.length === 0 ? <div className="otto-account-invite__loading">暂无企业加入当前产业园</div> : null}
             {parkTenantOrganizations.length ? <div className="otto-account-park-tenants">{parkTenantOrganizations.map((organization) => <article key={organization.id}><strong>{organization.name}</strong><span>{organization.slug}</span></article>)}</div> : null}
+          </div>
+          <div className="otto-account-survey-results" aria-label="园区公告确认结果">
+            <div className="otto-account-survey-results__head"><strong>公告确认</strong><span>按公告查看已确认人数 / 园区全部企业员工数</span></div>
+            {parkAnnouncementError ? <div className="otto-account-invite__error" role="alert">{parkAnnouncementError}</div> : null}
+            {!parkAnnouncementError && parkAnnouncementResults.length === 0 ? <div className="otto-account-invite__loading">尚未发布园区公告</div> : null}
+            {parkAnnouncementResults.map((announcement) => <article key={announcement.id} className="otto-account-survey-result">
+              <header><div><strong>{announcement.title}</strong><span>{announcement.body}</span><time>{new Date(announcement.createdAt).toLocaleString('zh-CN')}</time></div><b>{announcement.readCount} / {announcement.recipientCount} 已确认</b></header>
+            </article>)}
           </div>
           <div className="otto-account-survey-results" aria-label="满意度问卷回收结果">
             <div className="otto-account-survey-results__head"><strong>问卷回收</strong><span>实名提交，提交后不可修改</span></div>

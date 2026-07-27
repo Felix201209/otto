@@ -155,7 +155,26 @@ export async function handleParkServicePublicationRoute({
       sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
       return true;
     }
-    sendJSON(res, 200, { surveys: db.listParkSurveyResults(principal.account.id) });
+    sendJSON(res, 200, {
+      announcements: db.listParkAnnouncementResults(principal.account.id),
+      surveys: db.listParkSurveyResults(principal.account.id),
+    });
+    return true;
+  }
+
+  if (path === '/enterprise/park-services/announcement-results' && method === 'GET') {
+    const principal = adminPrincipal!;
+    if (principal.kind !== 'account') {
+      sendJSON(res, 403, { error: '请使用产业园管理员账号查看公告确认结果' });
+      return true;
+    }
+    if (!db.getOrganizationFeatures(principal.organizationId).park_service) {
+      sendJSON(res, 403, { error: '园区服务功能已由管理员关闭' });
+      return true;
+    }
+    sendJSON(res, 200, {
+      announcements: db.listParkAnnouncementResults(principal.account.id),
+    });
     return true;
   }
 

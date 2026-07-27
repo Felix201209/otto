@@ -131,6 +131,39 @@ describe('AutoSkillGenerator 个人 Skill 候选闭环', () => {
     expect(await listPendingSkillCandidates()).toEqual([]);
   });
 
+  it('stores portable pending paths and rehydrates them on another device', async () => {
+    const sourceRoot = process.env['OTTO_USER_DIR']!;
+    const [candidate] = await scanAndStageSkillCandidates(fakeConfig, () => 'user-1');
+    const sourcePendingPath = path.join(
+      sourceRoot,
+      'memory',
+      'worklog',
+      'pending_skills.json',
+    );
+    const stored = JSON.parse(await fs.readFile(sourcePendingPath, 'utf8')) as Array<{
+      filePath: string;
+    }>;
+    expect(stored[0].filePath).toBe(`${candidate.name}/SKILL.md`);
+
+    const restoredRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-auto-skill-restored-'));
+    tempDirs.push(restoredRoot);
+    const restoredPendingPath = path.join(
+      restoredRoot,
+      'memory',
+      'worklog',
+      'pending_skills.json',
+    );
+    await fs.mkdir(path.dirname(restoredPendingPath), { recursive: true });
+    await fs.copyFile(sourcePendingPath, restoredPendingPath);
+    process.env['OTTO_USER_DIR'] = restoredRoot;
+
+    const [restored] = await listPendingSkillCandidates();
+    const expectedPath = path.join(restoredRoot, 'skills', candidate.name, 'SKILL.md');
+    expect(restored.filePath).toBe(expectedPath);
+    await expect(confirmPendingSkill(restored.id)).resolves.toBe(expectedPath);
+    await expect(fs.readFile(expectedPath, 'utf8')).resolves.toContain(`name: ${candidate.name}`);
+  });
+
   it('用户拒绝后移出待确认区，并且后续扫描不会重复推荐', async () => {
     const [candidate] = await scanAndStageSkillCandidates(fakeConfig, () => 'user-1');
 

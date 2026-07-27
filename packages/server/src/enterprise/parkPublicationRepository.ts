@@ -9,6 +9,8 @@ import {
   type AccountView,
   getAccount,
   getDB,
+  getParkForOrganization,
+  listParkTenantOrganizations,
   logAudit,
   toAccountView,
 } from './db.js';
@@ -22,6 +24,17 @@ export interface ParkPublicationView {
   readAt: string | null;
   submittedAt: string | null;
   responseData: Record<string, string> | null;
+  recipientCount: number;
+  readCount: number;
+}
+
+export interface ParkAnnouncementResultView {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  recipientCount: number;
+  readCount: number;
 }
 
 export interface ParkSurveyResultView {
@@ -48,6 +61,8 @@ interface ParkPublicationRow {
   read_at: string | null;
   submitted_at: string | null;
   response_data: string | null;
+  recipient_count?: number;
+  read_count?: number;
 }
 
 function publicationView(row: ParkPublicationRow): ParkPublicationView {
@@ -75,6 +90,8 @@ function publicationView(row: ParkPublicationRow): ParkPublicationView {
     readAt: row.read_at,
     submittedAt: row.submitted_at,
     responseData,
+    recipientCount: Number(row.recipient_count) || 0,
+    readCount: Number(row.read_count) || 0,
   };
 }
 
@@ -86,26 +103,29 @@ export function createParkPublication(input: {
   recipientAccountId?: string | null;
 }): { publication: ParkPublicationView; recipientCount: number } {
   const creator = getAccount(input.createdByAccountId);
-  if (!creator?.isAdmin)
+  const park = creator ? getParkForOrganization(creator.organizationId) : null;
+  if (!creator?.isAdmin || !park || park.adminOrganizationId !== creator.organizationId)
     throw new Error('Only enterprise administrators can publish park content');
   const title = input.title.trim();
   const body = input.body.trim();
   if (!title || !body) throw new Error('title and body required');
+  const tenantOrganizationIds = new Set(
+    listParkTenantOrganizations(park.id).map((organization) => organization.id),
+  );
   const recipients = input.recipientAccountId
-    ? [getAccount(input.recipientAccountId, creator.organizationId)].filter(
-        (account): account is AccountView =>
-          account !== null && account.status === 'active',
+    ? [getAccount(input.recipientAccountId)].filter(
+        (account): account is AccountView => account !== null
+          && account.status === 'active'
+          && tenantOrganizationIds.has(account.organizationId),
       )
-    : (
-        getDB()
-          .prepare(
-            `SELECT * FROM accounts
-       WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL
-       ORDER BY name, username`,
-          )
-          .all(creator.organizationId) as AccountRow[]
-      ).map(toAccountView);
-  if (recipients.length === 0) throw new Error('No active recipients');
+    : (getDB().prepare(
+        `SELECT a.* FROM accounts a
+         JOIN organizations o ON o.id = a.organization_id
+         WHERE o.park_id = ? AND o.id <> ?
+           AND o.status = 'active' AND a.status = 'active' AND a.deleted_at IS NULL
+         ORDER BY o.name, a.name, a.username`,
+      ).all(park.id, park.adminOrganizationId) as AccountRow[]).map(toAccountView);
+  if (recipients.length === 0) throw new Error('No active park tenant recipients');
   const id = `park_publication_${randomUUID()}`;
   getDB()
     .prepare(
@@ -119,7 +139,7 @@ export function createParkPublication(input: {
       (organization_id, publication_id, account_id) VALUES (?, ?, ?)`,
   );
   for (const recipient of recipients) {
-    insertRecipient.run(creator.organizationId, id, recipient.id);
+    insertRecipient.run(recipient.organizationId, id, recipient.id);
   }
   logAudit(
     'park_publication_create',
@@ -128,9 +148,7 @@ export function createParkPublication(input: {
     creator.organizationId,
   );
   return {
-    publication: listParkPublications(creator.id).find(
-      (item) => item.id === id,
-    ) ?? {
+    publication: {
       id,
       kind: input.kind,
       title,
@@ -139,6 +157,8 @@ export function createParkPublication(input: {
       readAt: null,
       submittedAt: null,
       responseData: null,
+      recipientCount: recipients.length,
+      readCount: 0,
     },
     recipientCount: recipients.length,
   };
@@ -150,18 +170,55 @@ export function listParkPublications(accountId: string): ParkPublicationView[] {
   const rows = getDB()
     .prepare(
       `SELECT p.id, p.kind, p.title, p.body, p.created_at,
-            r.read_at, r.submitted_at, r.response_data
+            r.read_at, r.submitted_at, r.response_data,
+            (SELECT COUNT(*) FROM park_publication_recipients all_r
+             WHERE all_r.publication_id = p.id) AS recipient_count,
+            (SELECT COUNT(*) FROM park_publication_recipients read_r
+             WHERE read_r.publication_id = p.id AND read_r.read_at IS NOT NULL) AS read_count
      FROM park_publication_recipients r
      JOIN park_publications p ON p.id = r.publication_id
-     WHERE r.account_id = ? AND r.organization_id = ? AND p.organization_id = ?
+     WHERE r.account_id = ? AND r.organization_id = ?
      ORDER BY p.created_at DESC`,
     )
     .all(
       account.id,
       account.organizationId,
-      account.organizationId,
     ) as ParkPublicationRow[];
   return rows.map(publicationView);
+}
+
+export function listParkAnnouncementResults(
+  accountId: string,
+): ParkAnnouncementResultView[] {
+  const account = getAccount(accountId);
+  const park = account ? getParkForOrganization(account.organizationId) : null;
+  if (!account?.isAdmin || !park || park.adminOrganizationId !== account.organizationId) {
+    throw new Error('Only park administrators can view announcement results');
+  }
+  return (getDB().prepare(
+    `SELECT p.id, p.title, p.body, p.created_at,
+            COUNT(r.account_id) AS recipient_count,
+            SUM(CASE WHEN r.read_at IS NOT NULL THEN 1 ELSE 0 END) AS read_count
+     FROM park_publications p
+     LEFT JOIN park_publication_recipients r ON r.publication_id = p.id
+     WHERE p.organization_id = ? AND p.kind = 'announcement'
+     GROUP BY p.id, p.title, p.body, p.created_at
+     ORDER BY p.created_at DESC`,
+  ).all(account.organizationId) as Array<{
+    id: string;
+    title: string;
+    body: string;
+    created_at: string;
+    recipient_count: number;
+    read_count: number;
+  }>).map((publication) => ({
+    id: publication.id,
+    title: publication.title,
+    body: publication.body,
+    createdAt: publication.created_at,
+    recipientCount: Number(publication.recipient_count) || 0,
+    readCount: Number(publication.read_count) || 0,
+  }));
 }
 
 /** 管理员查看本企业问卷回收情况；实名由账号表提供，不信任客户端自填姓名。 */
@@ -169,7 +226,8 @@ export function listParkSurveyResults(
   accountId: string,
 ): ParkSurveyResultView[] {
   const account = getAccount(accountId);
-  if (!account?.isAdmin)
+  const park = account ? getParkForOrganization(account.organizationId) : null;
+  if (!account?.isAdmin || !park || park.adminOrganizationId !== account.organizationId)
     throw new Error('Only enterprise administrators can view survey results');
   const publications = getDB()
     .prepare(
@@ -177,8 +235,7 @@ export function listParkSurveyResults(
             COUNT(r.account_id) AS recipient_count,
             SUM(CASE WHEN r.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS submitted_count
      FROM park_publications p
-     LEFT JOIN park_publication_recipients r
-       ON r.publication_id = p.id AND r.organization_id = p.organization_id
+     LEFT JOIN park_publication_recipients r ON r.publication_id = p.id
      WHERE p.organization_id = ? AND p.kind = 'satisfaction'
      GROUP BY p.id, p.title, p.body, p.created_at
      ORDER BY p.created_at DESC`,
@@ -195,13 +252,12 @@ export function listParkSurveyResults(
     `SELECT r.account_id, a.name AS account_name, r.submitted_at, r.response_data
      FROM park_publication_recipients r
      JOIN accounts a ON a.id = r.account_id AND a.organization_id = r.organization_id
-     WHERE r.publication_id = ? AND r.organization_id = ? AND r.submitted_at IS NOT NULL
+     WHERE r.publication_id = ? AND r.submitted_at IS NOT NULL
      ORDER BY r.submitted_at DESC`,
   );
   return publications.map((publication) => {
     const rows = responseRows.all(
       publication.id,
-      account.organizationId,
     ) as Array<{
       account_id: string;
       account_name: string;
@@ -273,11 +329,11 @@ export function submitParkSurvey(
 ): ParkPublicationView {
   const account = getAccount(accountId);
   if (!account) throw new Error('Account not found');
-  const publication = getDB()
-    .prepare(
-      'SELECT kind FROM park_publications WHERE id = ? AND organization_id = ?',
-    )
-    .get(id, account.organizationId) as { kind: string } | undefined;
+  const publication = getDB().prepare(
+    `SELECT p.kind FROM park_publications p
+     JOIN park_publication_recipients r ON r.publication_id = p.id
+     WHERE p.id = ? AND r.account_id = ? AND r.organization_id = ?`,
+  ).get(id, account.id, account.organizationId) as { kind: string } | undefined;
   if (publication?.kind !== 'satisfaction') throw new Error('Survey not found');
   const normalized = Object.fromEntries(
     Object.entries(responseData)
