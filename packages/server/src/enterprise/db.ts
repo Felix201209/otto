@@ -76,6 +76,7 @@ import {
 import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
+  createAccountRegistrationFacade,
   createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationInviteFacade,
@@ -2845,76 +2846,6 @@ export const {
   resolveOrganizationInvite,
 } = createOrganizationInviteFacade(organizationInviteStore);
 
-interface CurrentInvitationAssignment {
-  department: string | null;
-  departmentId: string | null;
-  positionId: string | null;
-  positionTitle: string | null;
-  role: string;
-  isAdmin: boolean;
-}
-
-/**
- * 邀请码只保存签发时快照；真正入企时必须在当前事务内重新读取组织目录。
- * 这样已删除或被移到其他部门的职位不能被旧邀请码复活，职位权限映射也始终
- * 是账号与员工档案的唯一权限真值。
- */
-function resolveCurrentInvitationAssignment(
-  database: Database,
-  organizationId: string,
-  input: {
-    departmentId: string | null;
-    positionId: string | null;
-    defaultRole: string | null;
-  },
-): CurrentInvitationAssignment {
-  const organization = database
-    .prepare(`SELECT 1 FROM organizations WHERE id = ? AND status = 'active'`)
-    .get(organizationId);
-  if (!organization) throw new Error('企业不存在或已停用');
-
-  const department = input.departmentId
-    ? (database
-        .prepare(
-          `SELECT * FROM organization_departments WHERE id = ? AND organization_id = ?`,
-        )
-        .get(input.departmentId, organizationId) as
-        OrganizationDepartmentRow | undefined)
-    : undefined;
-  if (input.departmentId && !department) throw new Error('部门不存在');
-  if (input.positionId && !department) throw new Error('职位必须属于有效部门');
-
-  const position = input.positionId
-    ? (database
-        .prepare(
-          `SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?`,
-        )
-        .get(input.positionId, organizationId) as
-        OrganizationPositionRow | undefined)
-    : undefined;
-  if (input.positionId && !position) throw new Error('职位不存在');
-  if (position && position.department_id !== department!.id) {
-    throw new Error('职位与部门不一致');
-  }
-
-  const role =
-    position?.role_mapping === 'enterprise_admin'
-      ? '企业管理员'
-      : position?.role_mapping === 'department_admin'
-        ? '部门管理员'
-        : position
-          ? '成员'
-          : input.defaultRole?.trim() || '成员';
-  return {
-    department: department?.name ?? null,
-    departmentId: department?.id ?? null,
-    positionId: position?.id ?? null,
-    positionTitle: position?.title ?? null,
-    role,
-    isAdmin: position?.role_mapping === 'enterprise_admin',
-  };
-}
-
 // ============================================================
 // Preset accounts, tags and sessions
 // ============================================================
@@ -3192,6 +3123,63 @@ const accountLifecycleStore = {
 export const { createAccount, updateAccount, deleteAccount } =
   createAccountLifecycleFacade<AccountView>(accountLifecycleStore);
 
+const accountRegistrationStore = {
+  db: getDB,
+  now: Date.now,
+  normalizePhone,
+  findAccountByPhone,
+  createId: (_prefix: 'emp') => `emp_${randomUUID()}`,
+  createUsernameSuffix: () => randomBytes(4).toString('hex'),
+  createPersonalSlugSuffix: () => randomBytes(8).toString('hex'),
+  resolveAssignmentIdentity,
+  createEmployee(input: {
+    id: string;
+    organizationId: string;
+    name: string;
+    role?: string;
+    department?: string;
+    departmentId?: string;
+    positionId?: string;
+    positionTitle?: string;
+    inviteCode?: string;
+  }) {
+    const { inviteCode, ...employee } = input;
+    return createEmployee({
+      ...employee,
+      invite_code: inviteCode,
+    });
+  },
+  createAccount,
+  createOrganization,
+  getAccount,
+  resolveOrganizationInviteWithDefaults,
+  normalizeOrganizationInviteCode,
+  replaceMigratedAccountTags(
+    accountId: string,
+    organizationId: string,
+    tags: string[],
+  ) {
+    getDB()
+      .prepare('DELETE FROM account_tags WHERE account_id = ?')
+      .run(accountId);
+    replaceAccountTagsInRepository(
+      accountLifecycleStore,
+      accountId,
+      organizationId,
+      tags,
+    );
+  },
+  logAudit,
+};
+
+export const {
+  createSelfRegisteredAccount,
+  createPersonalRegisteredAccount,
+  joinOrganizationWithInvite,
+} = createAccountRegistrationFacade<AccountView, OrganizationView>(
+  accountRegistrationStore,
+);
+
 /**
  * 平台开户的唯一写入口：企业、首位管理员和首个 7 天邀请要么全部成功，
  * 要么全部回滚，避免账号冲突或邀请失败后留下不可管理的孤儿企业。
@@ -3320,283 +3308,6 @@ export function isFeishuAutoReplyEnabledForOpenId(openId: string): boolean {
       (row) => getOrganizationFeatures(row.organization_id).feishu_auto_reply,
     )
   );
-}
-
-export function createSelfRegisteredAccount(input: {
-  organizationId: string;
-  phone: string;
-  name: string;
-  password: string;
-  department?: string | null;
-  departmentId?: string | null;
-  role?: string | null;
-  positionId?: string | null;
-  positionTitle?: string | null;
-  organizationInviteId?: string | null;
-}): AccountView {
-  const normalized = normalizePhone(input.phone);
-  const existing = findAccountByPhone(normalized);
-  if (existing) throw new Error('该手机号已注册，请直接登录');
-
-  const digits = normalized.slice(3);
-  const database = getDB();
-  database.exec('SAVEPOINT create_self_registered_account');
-  try {
-    let assignment: CurrentInvitationAssignment;
-    if (input.organizationInviteId) {
-      const invite = database
-        .prepare(
-          `SELECT department_id, position_id, default_role
-         FROM organization_invites
-         WHERE id = ? AND organization_id = ?
-           AND revoked_at_ms IS NULL AND expires_at_ms > ?
-           AND (max_uses IS NULL OR used_count < max_uses)`,
-        )
-        .get(input.organizationInviteId, input.organizationId, Date.now()) as
-        | {
-            department_id: string | null;
-            position_id: string | null;
-            default_role: string | null;
-          }
-        | undefined;
-      if (!invite)
-        throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
-      assignment = resolveCurrentInvitationAssignment(
-        database,
-        input.organizationId,
-        {
-          departmentId: invite.department_id,
-          positionId: invite.position_id,
-          defaultRole: invite.default_role,
-        },
-      );
-    } else {
-      const normalized = resolveAssignmentIdentity(
-        database,
-        input.organizationId,
-        {
-          department: input.department,
-          departmentId: input.departmentId,
-          positionId: input.positionId,
-          positionTitle: input.positionTitle,
-        },
-      );
-      assignment = resolveCurrentInvitationAssignment(
-        database,
-        input.organizationId,
-        {
-          departmentId: normalized.departmentId,
-          positionId: normalized.positionId,
-          defaultRole: input.role ?? null,
-        },
-      );
-    }
-    const employeeId = `emp_${randomUUID()}`;
-    createEmployee({
-      id: employeeId,
-      organizationId: input.organizationId,
-      name: input.name,
-      role: assignment.role,
-      department: assignment.department || undefined,
-      departmentId: assignment.departmentId || undefined,
-      positionId: assignment.positionId || undefined,
-      positionTitle: assignment.positionTitle || undefined,
-    });
-    const account = createAccount({
-      organizationId: input.organizationId,
-      accountType: 'enterprise',
-      employeeId,
-      username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
-      password: input.password,
-      name: input.name,
-      phone: normalized,
-      role: assignment.role,
-      department: assignment.department,
-      departmentId: assignment.departmentId,
-      positionId: assignment.positionId,
-      positionTitle: assignment.positionTitle,
-      tags: ['普通成员'],
-      isAdmin: assignment.isAdmin,
-    });
-    if (input.organizationInviteId) {
-      const reserved = database
-        .prepare(
-          `UPDATE organization_invites
-         SET used_count = used_count + 1
-         WHERE id = ? AND organization_id = ?
-           AND revoked_at_ms IS NULL AND expires_at_ms > ?
-           AND (max_uses IS NULL OR used_count < max_uses)`,
-        )
-        .run(input.organizationInviteId, input.organizationId, Date.now());
-      if (Number(reserved.changes) !== 1) {
-        throw new Error('企业邀请码可用名额已用完，请联系管理员重新生成');
-      }
-    }
-    database.exec('RELEASE SAVEPOINT create_self_registered_account');
-    return account;
-  } catch (error) {
-    database.exec('ROLLBACK TO SAVEPOINT create_self_registered_account');
-    database.exec('RELEASE SAVEPOINT create_self_registered_account');
-    // 两个有效验证码并发完成时，手机号唯一索引只允许一个账号落库。
-    if (findAccountByPhone(normalized))
-      throw new Error('该手机号已注册，请直接登录');
-    throw error;
-  }
-}
-
-/**
- * 普通注册创建独立个人空间。企业邀请码注册继续走 createSelfRegisteredAccount，
- * 两条路径不能共用默认企业，否则互不认识的个人用户会看到彼此数据。
- */
-export function createPersonalRegisteredAccount(input: {
-  phone: string;
-  name: string;
-  password: string;
-}): AccountView {
-  const normalized = normalizePhone(input.phone);
-  if (findAccountByPhone(normalized))
-    throw new Error('该手机号已注册，请直接登录');
-  const name = input.name.trim();
-  if (!name) throw new Error('name required');
-  const digits = normalized.slice(3);
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const organization = createOrganization({
-      name: `${name.slice(0, 60)}的个人空间`,
-      slug: `personal-${randomBytes(8).toString('hex')}`,
-    });
-    const account = createAccount({
-      organizationId: organization.id,
-      accountType: 'personal',
-      username: `otto_${digits.slice(-4)}_${randomBytes(4).toString('hex')}`,
-      password: input.password,
-      name,
-      phone: normalized,
-      role: '个人用户',
-      tags: [],
-      isAdmin: false,
-    });
-    database.exec('COMMIT');
-    return account;
-  } catch (error) {
-    database.exec('ROLLBACK');
-    if (findAccountByPhone(normalized))
-      throw new Error('该手机号已注册，请直接登录');
-    throw error;
-  }
-}
-
-/**
- * 将已登录的个人账号原子升级为邀请码所属企业成员。
- * 旧个人 organization 及其数据保留为隔离容器；只迁移账号身份，
- * 并且邀请名额、员工目录和会话租户要么全部成功，要么全部回滚。
- */
-export function joinOrganizationWithInvite(
-  accountId: string,
-  inviteCode: string,
-  now = Date.now(),
-): AccountView {
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const current = getAccount(accountId);
-    if (!current) throw new Error('账号不存在或已失效');
-    if (current.accountType !== 'personal') {
-      throw new Error('只有个人版账号可加入企业');
-    }
-    const invite = resolveOrganizationInviteWithDefaults(inviteCode, now);
-    if (!invite) throw new Error('企业邀请码无效、已过期或名额已用完');
-    const assignment = resolveCurrentInvitationAssignment(
-      database,
-      invite.organization.id,
-      {
-        departmentId: invite.departmentId,
-        positionId: invite.positionId,
-        defaultRole: invite.defaultRole,
-      },
-    );
-
-    const employeeId = `emp_${randomUUID()}`;
-    createEmployee({
-      id: employeeId,
-      organizationId: invite.organization.id,
-      name: current.name,
-      role: assignment.role,
-      department: assignment.department || undefined,
-      departmentId: assignment.departmentId || undefined,
-      positionId: assignment.positionId || undefined,
-      positionTitle: assignment.positionTitle || undefined,
-      invite_code: normalizeOrganizationInviteCode(inviteCode),
-    });
-
-    const reserved = database
-      .prepare(
-        `UPDATE organization_invites
-       SET used_count = used_count + 1
-       WHERE id = ? AND organization_id = ?
-         AND revoked_at_ms IS NULL AND expires_at_ms > ?
-         AND (max_uses IS NULL OR used_count < max_uses)`,
-      )
-      .run(invite.inviteId, invite.organization.id, now);
-    if (Number(reserved.changes) !== 1) {
-      throw new Error('企业邀请码无效、已过期或名额已用完');
-    }
-
-    const moved = database
-      .prepare(
-        `UPDATE accounts
-       SET organization_id = ?, account_type = 'enterprise', employee_id = ?,
-           role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?,
-           is_admin = ?, updated_at = datetime('now')
-       WHERE id = ? AND organization_id = ? AND account_type = 'personal'
-         AND deleted_at IS NULL AND status = 'active'`,
-      )
-      .run(
-        invite.organization.id,
-        employeeId,
-        assignment.role,
-        assignment.department,
-        assignment.departmentId,
-        assignment.positionId,
-        assignment.positionTitle,
-        assignment.isAdmin ? 1 : 0,
-        current.id,
-        current.organizationId,
-      );
-    if (Number(moved.changes) !== 1)
-      throw new Error('只有个人版账号可加入企业');
-
-    database
-      .prepare(
-        'UPDATE auth_sessions SET organization_id = ? WHERE account_id = ? AND revoked_at IS NULL',
-      )
-      .run(invite.organization.id, current.id);
-    // 标签是企业内身份，不得把旧个人空间标签带进新租户；
-    // account_tags 的历史主键也不含 organization_id，需先清理再建立企业标签。
-    database
-      .prepare('DELETE FROM account_tags WHERE account_id = ?')
-      .run(current.id);
-    replaceAccountTagsInRepository(
-      accountLifecycleStore,
-      current.id,
-      invite.organization.id,
-      ['普通成员'],
-    );
-    logAudit(
-      'personal_account_join_organization',
-      employeeId,
-      `Personal account ${current.username} joined by organization invite`,
-      invite.organization.id,
-    );
-    const upgraded = getAccount(current.id, invite.organization.id);
-    if (!upgraded) throw new Error('企业账号升级失败');
-    database.exec('COMMIT');
-    return upgraded;
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
 }
 
 const authSessionStore = {

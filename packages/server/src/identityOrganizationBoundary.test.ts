@@ -21,7 +21,11 @@ function productionTypeScriptFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const target = path.join(directory, entry.name);
     if (entry.isDirectory()) return productionTypeScriptFiles(target);
-    if (!entry.isFile() || !entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) {
+    if (
+      !entry.isFile() ||
+      !entry.name.endsWith('.ts') ||
+      entry.name.endsWith('.test.ts')
+    ) {
       return [];
     }
     return [target];
@@ -30,48 +34,81 @@ function productionTypeScriptFiles(directory: string): string[] {
 
 describe('identity_organization invitation kernel', () => {
   it('keeps invite codes strict and links bound to an explicitly trusted base URL', () => {
-    expect(identityOrganization.isOrganizationInviteCode('Ab3D-k9Pq-Z7xY')).toBe(true);
-    expect(identityOrganization.isOrganizationInviteCode('Ab3D-k9Pq-Z7xI')).toBe(false);
-    expect(identityOrganization.normalizeOrganizationInviteCode(' Ab3D-k9Pq-Z7xY '))
-      .toBe('Ab3Dk9PqZ7xY');
+    expect(
+      identityOrganization.isOrganizationInviteCode('Ab3D-k9Pq-Z7xY'),
+    ).toBe(true);
+    expect(
+      identityOrganization.isOrganizationInviteCode('Ab3D-k9Pq-Z7xI'),
+    ).toBe(false);
+    expect(
+      identityOrganization.normalizeOrganizationInviteCode(' Ab3D-k9Pq-Z7xY '),
+    ).toBe('Ab3Dk9PqZ7xY');
 
-    expect(identityOrganization.resolveEnterprisePublicBaseUrl({
-      configuredUrl: 'https://join.otto.example/tenant/',
-      host: 'evil.example',
-      port: 80,
-    })).toBe('https://join.otto.example/tenant');
-    expect(identityOrganization.buildOrganizationInviteLink(
-      'https://join.otto.example/tenant',
-      'Ab3D-k9Pq-Z7xY',
-    )).toBe('https://join.otto.example/tenant/enterprise/join/Ab3D-k9Pq-Z7xY');
-    expect(() => identityOrganization.resolveEnterprisePublicBaseUrl({
-      configuredUrl: 'https://user:pass@join.otto.example',
-    })).toThrow(/OTTO_ENTERPRISE_PUBLIC_URL/);
+    expect(
+      identityOrganization.resolveEnterprisePublicBaseUrl({
+        configuredUrl: 'https://join.otto.example/tenant/',
+        host: 'evil.example',
+        port: 80,
+      }),
+    ).toBe('https://join.otto.example/tenant');
+    expect(
+      identityOrganization.buildOrganizationInviteLink(
+        'https://join.otto.example/tenant',
+        'Ab3D-k9Pq-Z7xY',
+      ),
+    ).toBe('https://join.otto.example/tenant/enterprise/join/Ab3D-k9Pq-Z7xY');
+    expect(() =>
+      identityOrganization.resolveEnterprisePublicBaseUrl({
+        configuredUrl: 'https://user:pass@join.otto.example',
+      }),
+    ).toThrow(/OTTO_ENTERPRISE_PUBLIC_URL/);
   });
 
   it('publishes repository and facade capabilities from one public entrypoint', () => {
-    expect(identityOrganization.createOrganizationInviteFacade).toBeTypeOf('function');
+    expect(identityOrganization.createOrganizationInviteFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.issueOrganizationInvite).toBeTypeOf('function');
-    expect(identityOrganization.inspectOrganizationInvite).toBeTypeOf('function');
-    expect(identityOrganization.resolveOrganizationInviteWithDefaults).toBeTypeOf('function');
+    expect(identityOrganization.inspectOrganizationInvite).toBeTypeOf(
+      'function',
+    );
+    expect(
+      identityOrganization.resolveOrganizationInviteWithDefaults,
+    ).toBeTypeOf('function');
   });
 
   it('keeps legacy enterprise paths as aliases of the module implementation', () => {
-    expect(legacyFacade.createOrganizationInviteFacade)
-      .toBe(identityOrganization.createOrganizationInviteFacade);
-    expect(legacyRepository.issueOrganizationInvite)
-      .toBe(identityOrganization.issueOrganizationInvite);
-    expect(legacyPublicInvite.buildOrganizationInviteLink)
-      .toBe(identityOrganization.buildOrganizationInviteLink);
-    expect(legacyOrganizationRoutes.handleOrganizationRoute)
-      .toBe(identityOrganization.handleOrganizationRoute);
-    expect(legacyEmployeeRepository.createEmployee).toBe(enterpriseDb.createEmployee);
-    expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf('function');
-    expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf('function');
-    expect(identityOrganization.createAccountLifecycleFacade).toBeTypeOf('function');
+    expect(legacyFacade.createOrganizationInviteFacade).toBe(
+      identityOrganization.createOrganizationInviteFacade,
+    );
+    expect(legacyRepository.issueOrganizationInvite).toBe(
+      identityOrganization.issueOrganizationInvite,
+    );
+    expect(legacyPublicInvite.buildOrganizationInviteLink).toBe(
+      identityOrganization.buildOrganizationInviteLink,
+    );
+    expect(legacyOrganizationRoutes.handleOrganizationRoute).toBe(
+      identityOrganization.handleOrganizationRoute,
+    );
+    expect(legacyEmployeeRepository.createEmployee).toBe(
+      enterpriseDb.createEmployee,
+    );
+    expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.createAccountLifecycleFacade).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.createAccountRegistrationFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
-    expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS)
-      .toBe(30 * 24 * 60 * 60 * 1000);
+    expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
+      30 * 24 * 60 * 60 * 1000,
+    );
 
     for (const file of [
       'organizationInviteFacade.ts',
@@ -91,9 +128,11 @@ describe('identity_organization invitation kernel', () => {
 
   it('does not let the identity module depend on the enterprise database facade', () => {
     const offenders = productionTypeScriptFiles(moduleDir)
-      .filter((file) => /enterprise[\\/]db|\.\.\/\.\.\/enterprise/.test(
-        fs.readFileSync(file, 'utf8'),
-      ))
+      .filter((file) =>
+        /enterprise[\\/]db|\.\.\/\.\.\/enterprise/.test(
+          fs.readFileSync(file, 'utf8'),
+        ),
+      )
       .map((file) => path.relative(moduleDir, file));
     expect(offenders).toEqual([]);
   });
@@ -110,28 +149,45 @@ describe('identity_organization invitation kernel', () => {
     const offenders = productionTypeScriptFiles(sourceRoot)
       .filter((file) => !legacyFiles.has(file))
       .filter((file) => !file.startsWith(`${moduleDir}${path.sep}`))
-      .filter((file) => /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes|employeeRepository)\.js['"]/.test(
-        fs.readFileSync(file, 'utf8'),
-      ))
+      .filter((file) =>
+        /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes|employeeRepository)\.js['"]/.test(
+          fs.readFileSync(file, 'utf8'),
+        ),
+      )
       .map((file) => path.relative(sourceRoot, file));
     expect(offenders).toEqual([]);
   });
 
   it('does not let the enterprise database facade import the legacy employee repository', () => {
-    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
-    expect(databaseFacade).toContain('../modules/identity_organization/index.js');
-    expect(databaseFacade).not.toMatch(/from ['"]\.\/employeeRepository\.js['"]/);
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain(
+      '../modules/identity_organization/index.js',
+    );
+    expect(databaseFacade).not.toMatch(
+      /from ['"]\.\/employeeRepository\.js['"]/,
+    );
   });
 
   it('keeps auth-session implementation behind the identity module facade', () => {
-    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
     expect(databaseFacade).toContain('createAuthSessionFacade');
-    expect(databaseFacade).not.toMatch(/export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/);
+    expect(databaseFacade).not.toMatch(
+      /export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/,
+    );
     expect(databaseFacade).not.toContain('function tokenHash(');
   });
 
   it('keeps account directory reads behind the identity module facade', () => {
-    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
     expect(databaseFacade).toContain('createAccountDirectoryFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:getAccount|listAccounts|authenticateAccount|findAccountByPhone|findActiveAccountByPhone)/,
@@ -139,10 +195,24 @@ describe('identity_organization invitation kernel', () => {
   });
 
   it('keeps account lifecycle writes behind the identity module facade', () => {
-    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
     expect(databaseFacade).toContain('createAccountLifecycleFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createAccount|updateAccount|deleteAccount)/,
+    );
+  });
+
+  it('keeps account registration transactions behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAccountRegistrationFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:createSelfRegisteredAccount|createPersonalRegisteredAccount|joinOrganizationWithInvite)/,
     );
   });
 });

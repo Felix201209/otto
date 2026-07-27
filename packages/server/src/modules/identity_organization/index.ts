@@ -9,6 +9,8 @@ export * from './accountDirectoryFacade.js';
 export * from './accountDirectoryRepository.js';
 export * from './accountLifecycleFacade.js';
 export * from './accountLifecycleRepository.js';
+export * from './accountRegistrationFacade.js';
+export * from './accountRegistrationRepository.js';
 export * from './authSessionFacade.js';
 export * from './authSessionRepository.js';
 export * from './memberFacade.js';
