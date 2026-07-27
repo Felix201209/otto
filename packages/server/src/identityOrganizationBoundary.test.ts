@@ -111,6 +111,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationDirectoryFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createOrganizationStructureFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
@@ -243,5 +246,19 @@ describe('identity_organization invitation kernel', () => {
       /export function (?:getOrganization|listOrganizations|getEnterpriseOrganization|listEnterpriseOrganizations)\s*\(/,
     );
     expect(databaseFacade).not.toContain('function toOrganizationView(');
+  });
+
+  it('keeps organization structure writes behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createOrganizationStructureFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:listOrganizationStructure|createOrganizationDepartment|updateOrganizationDepartment|deleteOrganizationDepartment|createOrganizationPosition|updateOrganizationPosition|deleteOrganizationPosition)\s*\(/,
+    );
+    expect(databaseFacade).not.toContain(
+      'function toOrganizationPositionView(',
+    );
   });
 });

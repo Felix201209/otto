@@ -82,12 +82,18 @@ import {
   createOrganizationDirectoryFacade,
   createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
+  createOrganizationStructureFacade,
+  normalizeAssignmentName,
   normalizeOrganizationSlug,
   replaceAccountTagsInRepository,
+  stableAssignmentId,
   toOrganizationDirectoryView,
+  type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryRow,
   type OrganizationDirectoryView,
   type OrganizationInviteView,
+  type OrganizationPositionRoleMapping as IdentityOrganizationPositionRoleMapping,
+  type OrganizationPositionView as IdentityOrganizationPositionView,
 } from '../modules/identity_organization/index.js';
 import type {
   ParkInviteView,
@@ -1918,361 +1924,29 @@ export const {
 } = createOrganizationDirectoryFacade(organizationDirectoryStore);
 
 export type OrganizationPositionRoleMapping =
-  'member' | 'department_admin' | 'enterprise_admin';
+  IdentityOrganizationPositionRoleMapping;
+export type OrganizationPositionView = IdentityOrganizationPositionView;
+export type OrganizationDepartmentView = IdentityOrganizationDepartmentView;
 
-export interface OrganizationPositionView {
-  id: string;
-  organizationId: string;
-  departmentId: string;
-  title: string;
-  roleMapping: OrganizationPositionRoleMapping;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OrganizationDepartmentView {
-  id: string;
-  organizationId: string;
-  name: string;
-  memberCount: number;
-  positions: OrganizationPositionView[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface OrganizationDepartmentRow {
-  id: string;
-  organization_id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface OrganizationPositionRow {
-  id: string;
-  organization_id: string;
-  department_id: string;
-  title: string;
-  role_mapping: OrganizationPositionRoleMapping;
-  created_at: string;
-  updated_at: string;
-}
-
-function toOrganizationPositionView(
-  row: OrganizationPositionRow,
-): OrganizationPositionView {
-  return {
-    id: row.id,
-    organizationId: row.organization_id,
-    departmentId: row.department_id,
-    title: row.title,
-    roleMapping: row.role_mapping,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-export function listOrganizationStructure(
+const organizationStructureStore = {
+  db: getDB,
+  logAudit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
   organizationId: string,
-): OrganizationDepartmentView[] {
-  const database = getDB();
-  const departments = database
-    .prepare(
-      `SELECT * FROM organization_departments
-     WHERE organization_id = ? ORDER BY name COLLATE NOCASE, id`,
-    )
-    .all(organizationId) as OrganizationDepartmentRow[];
-  const positions = database
-    .prepare(
-      `SELECT * FROM organization_positions
-     WHERE organization_id = ? ORDER BY title COLLATE NOCASE, id`,
-    )
-    .all(organizationId) as OrganizationPositionRow[];
-  const counts = database
-    .prepare(
-      `SELECT department_id, COUNT(*) AS count FROM accounts
-     WHERE organization_id = ? AND deleted_at IS NULL AND status = 'active'
-       AND department_id IS NOT NULL
-     GROUP BY department_id`,
-    )
-    .all(organizationId) as Array<{ department_id: string; count: number }>;
-  const countByDepartment = new Map(
-    counts.map((row) => [row.department_id, Number(row.count)]),
-  );
-  return departments.map((department) => ({
-    id: department.id,
-    organizationId: department.organization_id,
-    name: department.name,
-    memberCount: countByDepartment.get(department.id) ?? 0,
-    positions: positions
-      .filter((position) => position.department_id === department.id)
-      .map(toOrganizationPositionView),
-    createdAt: department.created_at,
-    updatedAt: department.updated_at,
-  }));
-}
+  ) => logAudit(event, employeeId, detail, organizationId),
+};
 
-export function createOrganizationDepartment(input: {
-  organizationId: string;
-  name: string;
-}): OrganizationDepartmentView {
-  if (!getOrganization(input.organizationId)) throw new Error('企业不存在');
-  const name = normalizeOptionalText(input.name, '部门名称');
-  if (!name) throw new Error('部门名称不能为空');
-  const id = stableAssignmentId(
-    'dept',
-    input.organizationId,
-    normalizeAssignmentName(name),
-  );
-  try {
-    getDB()
-      .prepare(
-        `INSERT INTO organization_departments (id, organization_id, name)
-       VALUES (?, ?, ?)`,
-      )
-      .run(id, input.organizationId, name);
-  } catch {
-    throw new Error('部门名称已存在');
-  }
-  return listOrganizationStructure(input.organizationId).find(
-    (department) => department.id === id,
-  )!;
-}
-
-export function updateOrganizationDepartment(input: {
-  organizationId: string;
-  departmentId: string;
-  name: string;
-}): OrganizationDepartmentView {
-  const name = normalizeOptionalText(input.name, '部门名称');
-  if (!name) throw new Error('部门名称不能为空');
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const changed = database
-      .prepare(
-        `UPDATE organization_departments SET name = ?, updated_at = datetime('now')
-       WHERE id = ? AND organization_id = ?`,
-      )
-      .run(name, input.departmentId, input.organizationId);
-    if (Number(changed.changes) !== 1) throw new Error('部门不存在');
-    database
-      .prepare(
-        `UPDATE accounts SET department = ?, updated_at = datetime('now')
-       WHERE organization_id = ? AND department_id = ?`,
-      )
-      .run(name, input.organizationId, input.departmentId);
-    database
-      .prepare(
-        `UPDATE employees SET department = ?
-       WHERE organization_id = ? AND department_id = ?`,
-      )
-      .run(name, input.organizationId, input.departmentId);
-    database
-      .prepare(
-        `UPDATE organization_invites SET default_department = ?
-       WHERE organization_id = ? AND department_id = ?`,
-      )
-      .run(name, input.organizationId, input.departmentId);
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    if (error instanceof Error && error.message === '部门不存在') throw error;
-    throw new Error('部门名称已存在');
-  }
-  return listOrganizationStructure(input.organizationId).find(
-    (department) => department.id === input.departmentId,
-  )!;
-}
-
-export function deleteOrganizationDepartment(input: {
-  organizationId: string;
-  departmentId: string;
-}): void {
-  const database = getDB();
-  const positions = database
-    .prepare(
-      'SELECT COUNT(*) AS count FROM organization_positions WHERE organization_id = ? AND department_id = ?',
-    )
-    .get(input.organizationId, input.departmentId) as { count: number };
-  if (Number(positions.count) > 0) throw new Error('部门仍有岗位，不能删除');
-  const members = database
-    .prepare(
-      `SELECT COUNT(*) AS count FROM accounts
-     WHERE organization_id = ? AND department_id = ? AND deleted_at IS NULL`,
-    )
-    .get(input.organizationId, input.departmentId) as { count: number };
-  if (Number(members.count) > 0) throw new Error('部门仍有成员，不能删除');
-  const changed = database
-    .prepare(
-      'DELETE FROM organization_departments WHERE id = ? AND organization_id = ?',
-    )
-    .run(input.departmentId, input.organizationId);
-  if (Number(changed.changes) !== 1) throw new Error('部门不存在');
-}
-
-export function createOrganizationPosition(input: {
-  organizationId: string;
-  departmentId: string;
-  title: string;
-  roleMapping?: OrganizationPositionRoleMapping;
-}): OrganizationPositionView {
-  const title = normalizeOptionalText(input.title, '职位名称');
-  if (!title) throw new Error('职位名称不能为空');
-  const department = getDB()
-    .prepare(
-      'SELECT id FROM organization_departments WHERE id = ? AND organization_id = ?',
-    )
-    .get(input.departmentId, input.organizationId);
-  if (!department) throw new Error('部门不存在');
-  const roleMapping = input.roleMapping ?? 'member';
-  const id = stableAssignmentId(
-    'pos',
-    input.organizationId,
-    input.departmentId,
-    normalizeAssignmentName(title),
-  );
-  try {
-    getDB()
-      .prepare(
-        `INSERT INTO organization_positions
-        (id, organization_id, department_id, title, role_mapping)
-       VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.organizationId, input.departmentId, title, roleMapping);
-  } catch {
-    throw new Error('该部门下职位名称已存在');
-  }
-  return listOrganizationStructure(input.organizationId)
-    .flatMap((item) => item.positions)
-    .find((position) => position.id === id)!;
-}
-
-export function updateOrganizationPosition(input: {
-  organizationId: string;
-  positionId: string;
-  title?: string;
-  roleMapping?: OrganizationPositionRoleMapping;
-}): OrganizationPositionView {
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    // 最后管理员检查与批量降权必须处于同一写事务，
-    // 否则两个并发职位更新都可能读到对方仍是管理员。
-    const current = database
-      .prepare(
-        'SELECT * FROM organization_positions WHERE id = ? AND organization_id = ?',
-      )
-      .get(input.positionId, input.organizationId) as
-      OrganizationPositionRow | undefined;
-    if (!current) throw new Error('职位不存在');
-    const title =
-      input.title === undefined
-        ? current.title
-        : normalizeOptionalText(input.title, '职位名称');
-    if (!title) throw new Error('职位名称不能为空');
-    const roleMapping = input.roleMapping ?? current.role_mapping;
-    if (roleMapping !== 'enterprise_admin') {
-      const activeMappedAdmins = database
-        .prepare(
-          `SELECT COUNT(*) AS count FROM accounts
-         WHERE organization_id = ? AND position_id = ? AND is_admin = 1
-           AND status = 'active' AND deleted_at IS NULL`,
-        )
-        .get(input.organizationId, input.positionId) as { count: number };
-      if (Number(activeMappedAdmins.count) > 0) {
-        const otherActiveAdmin = database
-          .prepare(
-            `SELECT 1 FROM accounts
-           WHERE organization_id = ? AND (position_id IS NULL OR position_id <> ?) AND is_admin = 1
-             AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
-          )
-          .get(input.organizationId, input.positionId);
-        if (!otherActiveAdmin)
-          throw new Error('企业至少需要保留一名可登录管理员');
-      }
-    }
-    const mappedRole =
-      roleMapping === 'enterprise_admin'
-        ? '企业管理员'
-        : roleMapping === 'department_admin'
-          ? '部门管理员'
-          : '成员';
-    database
-      .prepare(
-        `UPDATE organization_positions
-       SET title = ?, role_mapping = ?, updated_at = datetime('now')
-       WHERE id = ? AND organization_id = ?`,
-      )
-      .run(title, roleMapping, input.positionId, input.organizationId);
-    database
-      .prepare(
-        `UPDATE accounts SET position_title = ?,
-         role = ?, is_admin = CASE WHEN ? = 'enterprise_admin' THEN 1 ELSE 0 END,
-         updated_at = datetime('now')
-       WHERE organization_id = ? AND position_id = ?`,
-      )
-      .run(
-        title,
-        mappedRole,
-        roleMapping,
-        input.organizationId,
-        input.positionId,
-      );
-    database
-      .prepare(
-        `UPDATE employees SET position_title = ?, role = ?
-       WHERE organization_id = ? AND position_id = ?`,
-      )
-      .run(title, mappedRole, input.organizationId, input.positionId);
-    database
-      .prepare(
-        `UPDATE organization_invites SET position_title = ?, default_role = ?
-       WHERE organization_id = ? AND position_id = ?`,
-      )
-      .run(title, mappedRole, input.organizationId, input.positionId);
-    database
-      .prepare(
-        `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, datetime('now'))
-       WHERE account_id IN (
-         SELECT id FROM accounts WHERE organization_id = ? AND position_id = ?
-       )`,
-      )
-      .run(input.organizationId, input.positionId);
-    logAudit(
-      'organization_position_update',
-      null,
-      `Position ${input.positionId} mapped to ${roleMapping}`,
-      input.organizationId,
-    );
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-  return listOrganizationStructure(input.organizationId)
-    .flatMap((item) => item.positions)
-    .find((position) => position.id === input.positionId)!;
-}
-
-export function deleteOrganizationPosition(input: {
-  organizationId: string;
-  positionId: string;
-}): void {
-  const member = getDB()
-    .prepare(
-      `SELECT 1 FROM accounts WHERE organization_id = ? AND position_id = ?
-     AND deleted_at IS NULL LIMIT 1`,
-    )
-    .get(input.organizationId, input.positionId);
-  if (member) throw new Error('职位仍有成员，不能删除');
-  const changed = getDB()
-    .prepare(
-      'DELETE FROM organization_positions WHERE id = ? AND organization_id = ?',
-    )
-    .run(input.positionId, input.organizationId);
-  if (Number(changed.changes) !== 1) throw new Error('职位不存在');
-}
+export const {
+  listOrganizationStructure,
+  createOrganizationDepartment,
+  updateOrganizationDepartment,
+  deleteOrganizationDepartment,
+  createOrganizationPosition,
+  updateOrganizationPosition,
+  deleteOrganizationPosition,
+} = createOrganizationStructureFacade(organizationStructureStore);
 
 export type OrganizationFeatures = Record<OrganizationFeatureKey, boolean>;
 
@@ -2494,26 +2168,6 @@ function normalizeOptionalText(
   if (clean && clean.length > maxLength)
     throw new Error(`${label}不能超过 ${maxLength} 个字符`);
   return clean;
-}
-
-function normalizeAssignmentName(value: string): string {
-  return value
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLocaleLowerCase('zh-CN');
-}
-
-function stableAssignmentId(
-  prefix: 'dept' | 'pos',
-  organizationId: string,
-  ...parts: Array<string | null>
-): string {
-  const digest = createHash('sha256')
-    .update([organizationId, ...parts.map((part) => part ?? '')].join('\0'))
-    .digest('hex')
-    .slice(0, 20);
-  return `${prefix}_${digest}`;
 }
 
 export interface AssignmentIdentity {

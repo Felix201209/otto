@@ -7,6 +7,8 @@ export * from './organizationInviteRepository.js';
 export type * from './organizationInviteTypes.js';
 export * from './organizationDirectoryFacade.js';
 export * from './organizationDirectoryRepository.js';
+export * from './organizationStructureFacade.js';
+export * from './organizationStructureRepository.js';
 export * from './organizationProvisioningFacade.js';
 export * from './organizationProvisioningRepository.js';
 export * from './accountDirectoryFacade.js';

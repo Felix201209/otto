@@ -3,11 +3,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-
-export type OrganizationPositionRoleMapping =
-  | 'member'
-  | 'department_admin'
-  | 'enterprise_admin';
+import type { OrganizationPositionRoleMapping } from './organizationStructureRepository.js';
 
 export interface OrganizationFeatures {
   enterprise_tree: boolean;
