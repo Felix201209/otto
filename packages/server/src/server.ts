@@ -116,6 +116,7 @@ import {
   loadSearchRuntimeConfig,
   saveSearchConfig,
 } from './searchConfig.js';
+import { cacheChatFiles } from './chatFileCache.js';
 import {
   ProjectSettingsManager,
   DoctorService,
@@ -286,6 +287,8 @@ export interface OttoServerOptions {
   credentialsStore?: FeishuCredentialsStore;
   /** v1.7 个人/企业模式权威存储；测试可注入临时目录实例。 */
   productWorkspaceStore?: ProductWorkspaceStore;
+  /** 聊天附件服务端缓存目录；测试可注入临时目录。 */
+  chatFileCacheDir?: string;
 }
 
 /** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
@@ -374,6 +377,7 @@ export class OttoServer {
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
   private readonly productWorkspace: ProductWorkspaceStore;
+  private readonly chatFileCacheDir?: string;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -389,6 +393,7 @@ export class OttoServer {
     this.credentialsStore = opts.credentialsStore ?? defaultCredentialsStore;
     this.productWorkspace =
       opts.productWorkspaceStore ?? new ProductWorkspaceStore();
+    this.chatFileCacheDir = opts.chatFileCacheDir;
     this.globalAuthorizationMode =
       loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
@@ -3186,7 +3191,8 @@ export class OttoServer {
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'send_user_message' }>,
   ): Promise<void> {
-    const { sessionId, content, source, clientMessageId } = msg.payload;
+    const { sessionId, source, clientMessageId } = msg.payload;
+    let { content } = msg.payload;
     const session = this.store.getSession(sessionId);
     if (!session) {
       return this.send(
@@ -3216,9 +3222,19 @@ export class OttoServer {
           productEdition: this.productWorkspace.snapshot().context.edition,
         });
         this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
+        const cached = await this.cacheMessageFilesOrReport(
+          conn,
+          newSummary.sessionId,
+          content,
+        );
+        if (!cached) return;
         return this.handleSendUserMessageRaw(
-          newSummary.sessionId, conn, content, source, clientMessageId);
+          newSummary.sessionId, conn, cached, source, clientMessageId);
       }
+
+      const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
+      if (!cached) return;
+      content = cached;
 
       // merge / next_turn: 入队等待
       const queue = this.getOrCreateQueue(sessionId);
@@ -3235,7 +3251,34 @@ export class OttoServer {
       });
     }
 
+    const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
+    if (!cached) return;
+    content = cached;
+
     return this.handleSendUserMessageRaw(sessionId, conn, content, source, clientMessageId);
+  }
+
+  private async cacheMessageFilesOrReport(
+    conn: ClientConn,
+    sessionId: string,
+    content: MessageContent,
+  ): Promise<MessageContent | undefined> {
+    try {
+      const result = await cacheChatFiles(sessionId, content, {
+        baseDir: this.chatFileCacheDir,
+      });
+      return result.content;
+    } catch (error) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'attachment_cache_failed',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+      return undefined;
+    }
   }
 
   /**

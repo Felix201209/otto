@@ -36,6 +36,7 @@ import type {
   ServerToClient,
   SessionSummary,
   OttoMessage,
+  type MessageContent,
 } from './protocol.js';
 
 let tmpHome: string;
@@ -1777,6 +1778,64 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(factoryCalls).toBe(1); // 懒构建去重：只建一次
     expect(runCalls).toBe(2); // 两条都跑了 run
     c.close();
+  });
+
+  it('send_user_message 先缓存 file_reference，再落库并交给 runtime', async () => {
+    const sourcePath = path.join(tmpHome, 'original-upload.txt');
+    const cacheDir = path.join(tmpHome, 'chat-cache');
+    fs.writeFileSync(sourcePath, 'cached before runtime', 'utf8');
+
+    let capturedContent: MessageContent | undefined;
+    const factory: RuntimeFactory = async (store, sessionId) => ({
+      async run(content) {
+        capturedContent = content;
+        store.setStatus(sessionId, 'idle');
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    });
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+      chatFileCacheDir: cacheDir,
+    });
+    baseUrl = await startServer(server);
+    const session = server.store.createSession({ title: 'attachment-cache' });
+
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        content: [
+          { type: 'text', value: '看这个文件' },
+          {
+            type: 'file_reference',
+            value: { fileName: 'original-upload.txt', filePath: sourcePath },
+          },
+        ],
+        source: 'local',
+      },
+    });
+
+    await vi.waitFor(() => expect(capturedContent).toBeDefined());
+    const history = server.store.getHistory(session.sessionId);
+    const userFilePart = history[0].content.find((part) => part.type === 'file_reference');
+    if (!userFilePart || userFilePart.type !== 'file_reference') throw new Error('unreachable');
+    expect(userFilePart.value.filePath).not.toBe(sourcePath);
+    expect(userFilePart.value.filePath.startsWith(path.join(cacheDir, session.sessionId))).toBe(true);
+    expect(fs.readFileSync(userFilePart.value.filePath, 'utf8')).toBe('cached before runtime');
+
+    const runtimeFilePart = capturedContent!.find((part) => part.type === 'file_reference');
+    expect(runtimeFilePart).toEqual(userFilePart);
+    client.close();
   });
 
   it('ensureRuntime 创建期间身份指纹变化，创建完成后再次授权并销毁旧上下文', async () => {
