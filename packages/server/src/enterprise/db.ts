@@ -75,9 +75,11 @@ import {
 } from './parkServiceRepository.js';
 import {
   createAccountDirectoryFacade,
+  createAccountLifecycleFacade,
   createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationInviteFacade,
+  replaceAccountTagsInRepository,
   type OrganizationInviteView,
 } from '../modules/identity_organization/index.js';
 import type {
@@ -3137,152 +3139,58 @@ export const {
   findActiveAccountByPhone,
 } = createAccountDirectoryFacade<AccountView, AccountRow>(accountDirectoryStore);
 
-function replaceAccountTags(
-  accountId: string,
-  organizationId: string,
-  tags: string[],
-): void {
-  const database = getDB();
-  database
-    .prepare(
-      'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-    )
-    .run(accountId, organizationId);
-  const insert = database.prepare(
-    'INSERT INTO account_tags (organization_id, account_id, tag) VALUES (?, ?, ?)',
-  );
-  for (const tag of normalizeTags(tags))
-    insert.run(organizationId, accountId, tag);
-}
-
-export function createAccount(input: {
-  organizationId?: string;
-  accountType?: 'personal' | 'enterprise';
-  username: string;
-  password: string;
-  name: string;
-  phone?: string | null;
-  feishuOpenId?: string | null;
-  employeeId?: string | null;
-  role?: string | null;
-  department?: string | null;
-  departmentId?: string | null;
-  positionId?: string | null;
-  positionTitle?: string | null;
-  avatarUrl?: string | null;
-  tags?: string[];
-  isAdmin?: boolean;
-  status?: 'active' | 'disabled';
-}): AccountView {
-  const organizationId = input.organizationId || DEFAULT_ORGANIZATION_ID;
-  if (!getOrganization(organizationId))
-    throw new Error('Organization not found');
-  const username = normalizeUsername(input.username);
-  const name = input.name.trim();
-  if (!username || !name || !input.password)
-    throw new Error('username, password and name required');
-  assertAccountPassword(input.password);
-  const status = input.status ?? 'active';
-  if (status !== 'active' && status !== 'disabled') {
-    throw new Error('账号状态必须是 active 或 disabled');
-  }
-  const database = getDB();
-  const accountType = input.accountType ?? 'enterprise';
-  const assignment = resolveAssignmentIdentity(database, organizationId, {
-    department: input.department,
-    departmentId: input.departmentId,
-    positionId: input.positionId,
-    positionTitle: input.positionTitle,
-  });
-  const positionMapping = assignment.positionId
-    ? (database
-        .prepare(
-          `SELECT role_mapping FROM organization_positions
-     WHERE id = ? AND organization_id = ?`,
-        )
-        .get(assignment.positionId, organizationId) as
-        | {
-            role_mapping: OrganizationPositionRoleMapping;
-          }
-        | undefined)
-    : undefined;
-  const mappedRole =
-    positionMapping?.role_mapping === 'enterprise_admin'
-      ? '企业管理员'
-      : positionMapping?.role_mapping === 'department_admin'
-        ? '部门管理员'
-        : positionMapping
-          ? '成员'
-          : null;
-  const effectiveRole = positionMapping
-    ? mappedRole
-    : input.role?.trim() || null;
-  const effectiveIsAdmin = positionMapping
-    ? positionMapping.role_mapping === 'enterprise_admin'
-    : (input.isAdmin ?? false);
-  const id = `acc_${randomUUID()}`;
-  let employeeId = input.employeeId || null;
-  database.exec('SAVEPOINT create_account');
-  try {
-    if (accountType === 'enterprise' && !employeeId) {
-      employeeId = `emp_${randomUUID()}`;
-      createEmployee({
-        id: employeeId,
-        organizationId,
-        name,
-        role: effectiveRole || undefined,
-        department: assignment.department || undefined,
-        departmentId: assignment.departmentId || undefined,
-        positionId: assignment.positionId || undefined,
-        positionTitle: assignment.positionTitle || undefined,
-      });
-    }
-    database
-      .prepare(
-        `INSERT INTO accounts
-       (id, organization_id, account_type, employee_id, username, phone, feishu_open_id, password_hash,
-        name, role, department, department_id, position_id, position_title, avatar_url, is_admin, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        organizationId,
-        accountType,
-        employeeId,
-        username,
-        normalizeOptionalPhone(input.phone),
-        normalizeOptionalFeishuOpenId(input.feishuOpenId),
-        passwordHash(input.password),
-        name,
-        effectiveRole,
-        assignment.department,
-        assignment.departmentId,
-        assignment.positionId,
-        assignment.positionTitle,
-        normalizeOptionalAvatarUrl(input.avatarUrl),
-        effectiveIsAdmin ? 1 : 0,
-        status,
-      );
-    replaceAccountTags(id, organizationId, input.tags ?? []);
-    logAudit(
-      'account_create',
-      employeeId,
-      `Preset account ${username} created`,
+const accountLifecycleStore = {
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+  normalizeUsername,
+  normalizeOptionalPhone,
+  normalizeOptionalFeishuOpenId,
+  normalizeOptionalAvatarUrl,
+  normalizeTags,
+  assertPassword: assertAccountPassword,
+  hashPassword: passwordHash,
+  createId: (prefix: 'acc' | 'emp') => `${prefix}_${randomUUID()}`,
+  createDeletionPasswordHash: () =>
+    passwordHash(randomBytes(32).toString('base64url')),
+  resolveAssignment(
+    database: Database,
+    organizationId: string,
+    input: {
+      department?: string | null;
+      departmentId?: string | null;
+      positionId?: string | null;
+      positionTitle?: string | null;
+    },
+  ) {
+    const assignment = resolveAssignmentIdentity(
+      database,
       organizationId,
+      input,
     );
-    const created = getAccount(id, organizationId);
-    if (!created) throw new Error('账号创建失败');
-    database.exec('RELEASE SAVEPOINT create_account');
-    return created;
-  } catch (error) {
-    database.exec('ROLLBACK TO SAVEPOINT create_account');
-    database.exec('RELEASE SAVEPOINT create_account');
-    if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
-      throw new Error('手机号已绑定其他账号');
-    }
-    throw error;
-  }
-}
+    const positionMapping = assignment.positionId
+      ? (database
+          .prepare(
+            `SELECT role_mapping FROM organization_positions
+             WHERE id = ? AND organization_id = ?`,
+          )
+          .get(assignment.positionId, organizationId) as
+          | { role_mapping: OrganizationPositionRoleMapping }
+          | undefined)
+      : undefined;
+    return {
+      ...assignment,
+      roleMapping: positionMapping?.role_mapping ?? null,
+    };
+  },
+  createEmployee,
+  getAccount,
+  logAudit,
+};
+
+export const { createAccount, updateAccount, deleteAccount } =
+  createAccountLifecycleFacade<AccountView>(accountLifecycleStore);
 
 /**
  * 平台开户的唯一写入口：企业、首位管理员和首个 7 天邀请要么全部成功，
@@ -3669,7 +3577,12 @@ export function joinOrganizationWithInvite(
     database
       .prepare('DELETE FROM account_tags WHERE account_id = ?')
       .run(current.id);
-    replaceAccountTags(current.id, invite.organization.id, ['普通成员']);
+    replaceAccountTagsInRepository(
+      accountLifecycleStore,
+      current.id,
+      invite.organization.id,
+      ['普通成员'],
+    );
     logAudit(
       'personal_account_join_organization',
       employeeId,
@@ -3680,297 +3593,6 @@ export function joinOrganizationWithInvite(
     if (!upgraded) throw new Error('企业账号升级失败');
     database.exec('COMMIT');
     return upgraded;
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-}
-
-export function updateAccount(
-  id: string,
-  patch: {
-    username?: string;
-    password?: string;
-    name?: string;
-    phone?: string | null;
-    feishuOpenId?: string | null;
-    role?: string | null;
-    department?: string | null;
-    departmentId?: string | null;
-    positionId?: string | null;
-    positionTitle?: string | null;
-    avatarUrl?: string | null;
-    tags?: string[];
-    isAdmin?: boolean;
-    status?: 'active' | 'disabled';
-  },
-  organizationId?: string,
-): AccountView {
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const current = getAccount(id, organizationId);
-    if (!current) throw new Error('Account not found');
-
-    const assignmentChanged = [
-      patch.department,
-      patch.departmentId,
-      patch.positionId,
-      patch.positionTitle,
-    ].some((value) => value !== undefined);
-    const assignment = assignmentChanged
-      ? resolveAssignmentIdentity(database, current.organizationId, {
-          department:
-            patch.department !== undefined
-              ? patch.department
-              : current.department,
-          departmentId:
-            patch.departmentId !== undefined ? patch.departmentId : undefined,
-          positionTitle:
-            patch.positionTitle !== undefined
-              ? patch.positionTitle
-              : current.positionTitle,
-          positionId:
-            patch.positionId !== undefined ? patch.positionId : undefined,
-        })
-      : null;
-    const positionMapping = assignment?.positionId
-      ? (database
-          .prepare(
-            `SELECT role_mapping FROM organization_positions
-       WHERE id = ? AND organization_id = ?`,
-          )
-          .get(assignment.positionId, current.organizationId) as
-          | {
-              role_mapping: OrganizationPositionRoleMapping;
-            }
-          | undefined)
-      : undefined;
-    const mappedRole =
-      positionMapping?.role_mapping === 'enterprise_admin'
-        ? '企业管理员'
-        : positionMapping?.role_mapping === 'department_admin'
-          ? '部门管理员'
-          : positionMapping
-            ? '成员'
-            : null;
-    // 真实职位 ID 是权限源。只要将成员安排到目录职位，就按
-    // role_mapping 双向升/降权，不允许前端同时传 role/isAdmin 绕过映射。
-    const nextIsAdmin = positionMapping
-      ? positionMapping.role_mapping === 'enterprise_admin'
-      : (patch.isAdmin ?? current.isAdmin);
-    const nextStatus = patch.status ?? current.status;
-    const removesActiveAdmin =
-      current.isAdmin &&
-      current.status === 'active' &&
-      (!nextIsAdmin || nextStatus === 'disabled');
-    if (removesActiveAdmin) {
-      const other = database
-        .prepare(
-          `SELECT 1 FROM accounts
-         WHERE organization_id = ? AND id <> ? AND is_admin = 1 AND status = 'active'
-         LIMIT 1`,
-        )
-        .get(current.organizationId, current.id);
-      if (!other) throw new Error('企业至少需要保留一名可登录管理员');
-    }
-
-    const assignments: string[] = [];
-    const values: unknown[] = [];
-    const set = (column: string, value: unknown): void => {
-      assignments.push(`${column} = ?`);
-      values.push(value);
-    };
-    if (patch.username !== undefined) {
-      const username = normalizeUsername(patch.username);
-      if (!username) throw new Error('username required');
-      set('username', username);
-    }
-    if (patch.phone !== undefined)
-      set('phone', normalizeOptionalPhone(patch.phone));
-    if (patch.feishuOpenId !== undefined) {
-      set('feishu_open_id', normalizeOptionalFeishuOpenId(patch.feishuOpenId));
-    }
-    if (patch.password !== undefined) {
-      assertAccountPassword(patch.password);
-      set('password_hash', passwordHash(patch.password));
-    }
-    if (patch.name !== undefined) {
-      const name = patch.name.trim();
-      if (!name) throw new Error('name required');
-      set('name', name);
-    }
-    if (mappedRole !== null) set('role', mappedRole);
-    else if (patch.role !== undefined) set('role', patch.role?.trim() || null);
-    if (assignment) {
-      set('department', assignment.department);
-      set('department_id', assignment.departmentId);
-      set('position_id', assignment.positionId);
-      set('position_title', assignment.positionTitle);
-    }
-    if (patch.avatarUrl !== undefined)
-      set('avatar_url', normalizeOptionalAvatarUrl(patch.avatarUrl));
-    if (positionMapping) set('is_admin', nextIsAdmin ? 1 : 0);
-    else if (patch.isAdmin !== undefined)
-      set('is_admin', patch.isAdmin ? 1 : 0);
-    if (patch.status !== undefined) set('status', patch.status);
-    if (assignments.length > 0) {
-      assignments.push("updated_at = datetime('now')");
-      try {
-        const sql = organizationId
-          ? `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ? AND organization_id = ?`
-          : `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`;
-        database
-          .prepare(sql)
-          .run(...values, id, ...(organizationId ? [organizationId] : []));
-      } catch (error) {
-        if (/accounts\.phone|idx_accounts_phone_unique/i.test(String(error))) {
-          throw new Error('手机号已绑定其他账号');
-        }
-        throw error;
-      }
-    }
-    if (patch.tags !== undefined)
-      replaceAccountTags(id, current.organizationId, patch.tags);
-
-    const shouldRevokeSessions =
-      patch.password !== undefined ||
-      (patch.status !== undefined && patch.status !== current.status) ||
-      nextIsAdmin !== current.isAdmin ||
-      (mappedRole !== null && mappedRole !== current.role) ||
-      assignmentChanged;
-    if (shouldRevokeSessions) {
-      database
-        .prepare(
-          "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
-        )
-        .run(id);
-    }
-
-    const updated = getAccount(id, organizationId)!;
-    if (
-      current.employeeId &&
-      [
-        patch.name,
-        patch.role,
-        patch.department,
-        patch.departmentId,
-        patch.positionId,
-        patch.positionTitle,
-      ].some((value) => value !== undefined)
-    ) {
-      database
-        .prepare(
-          `UPDATE employees
-         SET name = ?, role = ?, department = ?, department_id = ?, position_id = ?, position_title = ?
-         WHERE id = ? AND organization_id = ?`,
-        )
-        .run(
-          updated.name,
-          updated.role,
-          updated.department,
-          updated.departmentId,
-          updated.positionId,
-          updated.positionTitle,
-          current.employeeId,
-          current.organizationId,
-        );
-    }
-
-    logAudit(
-      'account_update',
-      current.employeeId,
-      `Preset account ${current.username} updated`,
-      current.organizationId,
-    );
-    database.exec('COMMIT');
-    return updated;
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-}
-
-/**
- * 账号使用逻辑删除：保留工单/用量/审计引用，清除可登录凭据和直接身份字段。
- * 这样既满足管理端“删除账号”，也不会因历史外键导致删除一半后失败。
- */
-export function deleteAccount(
-  id: string,
-  organizationId: string,
-  actorAccountId: string,
-): { id: string; deleted: true } {
-  if (id === actorAccountId) throw new Error('不能删除当前登录账号');
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const current = getAccount(id, organizationId);
-    if (!current) throw new Error('Account not found');
-    if (current.isAdmin && current.status === 'active') {
-      const other = database
-        .prepare(
-          `SELECT 1 FROM accounts
-         WHERE organization_id = ? AND id <> ? AND is_admin = 1
-           AND status = 'active' AND deleted_at IS NULL
-         LIMIT 1`,
-        )
-        .get(organizationId, id);
-      if (!other) throw new Error('企业至少需要保留一名可登录管理员');
-    }
-
-    database
-      .prepare(
-        `UPDATE accounts SET
-         employee_id = NULL,
-         username = ?,
-         phone = NULL,
-         feishu_open_id = NULL,
-         password_hash = ?,
-         name = '已删除账号',
-         role = NULL,
-         department = NULL,
-         department_id = NULL,
-         position_id = NULL,
-         position_title = NULL,
-         avatar_url = NULL,
-         is_admin = 0,
-         status = 'disabled',
-         deleted_at = datetime('now'),
-         updated_at = datetime('now')
-       WHERE id = ? AND organization_id = ? AND deleted_at IS NULL`,
-      )
-      .run(
-        `deleted_${id}`,
-        passwordHash(randomBytes(32).toString('base64url')),
-        id,
-        organizationId,
-      );
-    database
-      .prepare(
-        'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-      )
-      .run(id, organizationId);
-    database
-      .prepare(
-        "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE account_id = ? AND revoked_at IS NULL",
-      )
-      .run(id);
-    if (current.employeeId) {
-      database
-        .prepare(
-          `UPDATE employees SET status = 'offboarded', offboarded_at = datetime('now')
-         WHERE id = ? AND organization_id = ?`,
-        )
-        .run(current.employeeId, organizationId);
-    }
-    logAudit(
-      'account_delete',
-      current.employeeId,
-      `Account ${current.username} deleted by ${actorAccountId}`,
-      organizationId,
-    );
-    database.exec('COMMIT');
-    return { id, deleted: true };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
