@@ -117,6 +117,12 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationFeatureFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createSmsChallengeFacade).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.hashIdentitySecret).toBeTypeOf('function');
+    expect(identityOrganization.identitySecretMatches).toBeTypeOf('function');
+    expect(identityOrganization.assertAccountPassword).toBeTypeOf('function');
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
@@ -278,6 +284,28 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain('DEFAULT_ORGANIZATION_FEATURES');
     expect(databaseFacade).not.toContain(
       'SELECT feature_key, enabled FROM organization_features',
+    );
+  });
+
+  it('keeps credential policy and SMS challenge state behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createSmsChallengeFacade');
+    expect(databaseFacade).toContain('hashIdentitySecret');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:createSmsLoginChallenge|discardSmsLoginChallenge|verifySmsLoginChallenge|createSmsRegistrationChallenge|discardSmsRegistrationChallenge|verifySmsRegistrationChallenge)\s*\(/,
+    );
+    expect(databaseFacade).not.toContain('scryptSync');
+    expect(databaseFacade).not.toContain(
+      'SELECT created_at_ms FROM sms_login_challenges',
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT created_at_ms FROM sms_registration_challenges',
+    );
+    expect(databaseFacade).not.toContain(
+      "['password', 'password1', '12345678', '123456789', 'qwerty123']",
     );
   });
 });

@@ -17,7 +17,6 @@ import {
   createHash,
   randomBytes,
   randomUUID,
-  scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -76,6 +75,7 @@ import {
   createAccountRegistrationFacade,
   createAuthSessionFacade,
   createMemberDirectoryFacade,
+  createSmsChallengeFacade,
   createOrganizationDirectoryFacade,
   createOrganizationFeatureFacade,
   createOrganizationInviteFacade,
@@ -86,6 +86,10 @@ import {
   replaceAccountTagsInRepository,
   stableAssignmentId,
   toOrganizationDirectoryView,
+  assertAccountPassword as assertIdentityAccountPassword,
+  hashIdentitySecret,
+  identitySecretMatches,
+  isAcceptableAccountPassword as isAcceptableIdentityAccountPassword,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryRow,
   type OrganizationDirectoryView,
@@ -93,6 +97,9 @@ import {
   type OrganizationFeatures as IdentityOrganizationFeatures,
   type OrganizationPositionRoleMapping as IdentityOrganizationPositionRoleMapping,
   type OrganizationPositionView as IdentityOrganizationPositionView,
+  type SmsChallengeIssueResult as IdentitySmsChallengeIssueResult,
+  type SmsChallengeVerifyResult as IdentitySmsChallengeVerifyResult,
+  type SmsRegistrationVerifyResult as IdentitySmsRegistrationVerifyResult,
 } from '../modules/identity_organization/index.js';
 import type {
   ParkInviteView,
@@ -2458,55 +2465,11 @@ export function normalizeTags(tags: string[] | undefined): string[] {
   ].sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
-function passwordHash(password: string): string {
-  const salt = randomBytes(16).toString('hex');
-  const digest = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${digest}`;
-}
-
-function passwordMatches(password: string, stored: string): boolean {
-  const [salt, expectedHex] = stored.split(':');
-  if (!salt || !expectedHex) return false;
-  try {
-    const actual = scryptSync(password, salt, 64);
-    const expected = Buffer.from(expectedHex, 'hex');
-    return (
-      actual.length === expected.length && timingSafeEqual(actual, expected)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function assertAccountPassword(password: string): void {
-  if (password.length < 8) throw new Error('登录密码至少需要 8 位');
-  if (password.length > 128) throw new Error('登录密码不能超过 128 位');
-  if (/[^\x20-\x7E]/.test(password))
-    throw new Error('登录密码不能包含控制字符或不可见字符');
-  const lower = password.toLocaleLowerCase('en-US');
-  if (
-    ['password', 'password1', '12345678', '123456789', 'qwerty123'].includes(
-      lower,
-    )
-  ) {
-    throw new Error('登录密码过于常见，请更换更安全的密码');
-  }
-  if (/^\d+$/.test(password) || /^[a-z]+$/i.test(password)) {
-    throw new Error('登录密码不能只包含数字或字母');
-  }
-  if (/^(.)\1{7,}$/.test(password)) {
-    throw new Error('登录密码不能使用连续重复字符');
-  }
-}
-
-export function isAcceptableAccountPassword(password: string): boolean {
-  try {
-    assertAccountPassword(password);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const passwordHash = hashIdentitySecret;
+const passwordMatches = identitySecretMatches;
+const assertAccountPassword = assertIdentityAccountPassword;
+export const isAcceptableAccountPassword =
+  isAcceptableIdentityAccountPassword;
 
 function tagsForAccount(accountId: string, organizationId: string): string[] {
   return (
@@ -2788,401 +2751,38 @@ export const {
   revokeAuthSession,
 } = createAuthSessionFacade<AccountView, AccountRow>(authSessionStore);
 
-const SMS_CHALLENGE_TTL_MS = 5 * 60 * 1000;
-const SMS_CHALLENGE_COOLDOWN_MS = 60 * 1000;
-const SMS_CHALLENGE_HOURLY_LIMIT = 5;
-const SMS_CHALLENGE_MAX_ATTEMPTS = 5;
+const smsChallengeStore = {
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  getAccount,
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+  normalizePhone,
+  hashSecret: hashIdentitySecret,
+  secretMatches: identitySecretMatches,
+  createChallengeId: (kind: 'login' | 'registration') =>
+    `${kind === 'login' ? 'sms' : 'smsreg'}_${randomUUID()}`,
+  audit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ) => logAudit(event, employeeId, detail, organizationId),
+};
 
-export type SmsChallengeIssueResult =
-  | {
-      ok: true;
-      challengeId: string;
-      expiresAt: string;
-      retryAfterSeconds: number;
-    }
-  | {
-      ok: false;
-      reason: 'cooldown' | 'hourly_limit';
-      retryAfterSeconds: number;
-    };
-
-export function createSmsLoginChallenge(
-  accountId: string,
-  code: string,
-  options: { now?: number } = {},
-): SmsChallengeIssueResult {
-  if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
-  const account = getAccount(accountId);
-  if (!account || account.status !== 'active' || !account.phone)
-    throw new Error('Account not available for SMS login');
-
-  const now = options.now ?? Date.now();
-  const recent = getDB()
-    .prepare(
-      `SELECT created_at_ms FROM sms_login_challenges
-     WHERE account_id = ? AND created_at_ms > ?
-     ORDER BY created_at_ms DESC`,
-    )
-    .all(accountId, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
-  const latest = recent[0]?.created_at_ms;
-  if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
-    return {
-      ok: false,
-      reason: 'cooldown',
-      retryAfterSeconds: Math.ceil(
-        (latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000,
-      ),
-    };
-  }
-  if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
-    const oldest = recent[recent.length - 1]!.created_at_ms;
-    return {
-      ok: false,
-      reason: 'hourly_limit',
-      retryAfterSeconds: Math.max(
-        1,
-        Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000),
-      ),
-    };
-  }
-
-  const challengeId = `sms_${randomUUID()}`;
-  const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
-  getDB()
-    .prepare(
-      `INSERT INTO sms_login_challenges
-       (id, organization_id, account_id, code_hash, expires_at_ms, attempts_remaining, created_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      challengeId,
-      account.organizationId,
-      accountId,
-      passwordHash(code),
-      expiresAtMs,
-      SMS_CHALLENGE_MAX_ATTEMPTS,
-      now,
-    );
-  logAudit(
-    'sms_login_code_requested',
-    account.employeeId,
-    'SMS login code requested',
-    account.organizationId,
-  );
-  return {
-    ok: true,
-    challengeId,
-    expiresAt: new Date(expiresAtMs).toISOString(),
-    retryAfterSeconds: SMS_CHALLENGE_COOLDOWN_MS / 1000,
-  };
-}
-
-/** 供应商未接收短信时撤销刚创建的挑战，避免失败请求占用冷却/小时额度。 */
-export function discardSmsLoginChallenge(challengeId: string): void {
-  if (!challengeId) return;
-  getDB()
-    .prepare(
-      'DELETE FROM sms_login_challenges WHERE id = ? AND consumed_at_ms IS NULL',
-    )
-    .run(challengeId);
-}
-
-export function createSmsRegistrationChallenge(
-  phone: string,
-  code: string,
-  organizationId = DEFAULT_ORGANIZATION_ID,
-  options: {
-    now?: number;
-    department?: string | null;
-    departmentId?: string | null;
-    positionId?: string | null;
-    positionTitle?: string | null;
-    role?: string | null;
-    organizationInviteId?: string | null;
-  } = {},
-): SmsChallengeIssueResult {
-  if (!/^\d{6}$/.test(code)) throw new Error('验证码必须是 6 位数字');
-  const normalized = normalizePhone(phone);
-  if (!getOrganization(organizationId))
-    throw new Error('Organization not found');
-  const now = options.now ?? Date.now();
-  const recent = getDB()
-    .prepare(
-      `SELECT created_at_ms FROM sms_registration_challenges
-     WHERE phone = ? AND created_at_ms > ?
-     ORDER BY created_at_ms DESC`,
-    )
-    .all(normalized, now - 60 * 60 * 1000) as Array<{ created_at_ms: number }>;
-  const latest = recent[0]?.created_at_ms;
-  if (latest != null && now - latest < SMS_CHALLENGE_COOLDOWN_MS) {
-    return {
-      ok: false,
-      reason: 'cooldown',
-      retryAfterSeconds: Math.ceil(
-        (latest + SMS_CHALLENGE_COOLDOWN_MS - now) / 1000,
-      ),
-    };
-  }
-  if (recent.length >= SMS_CHALLENGE_HOURLY_LIMIT) {
-    const oldest = recent[recent.length - 1]!.created_at_ms;
-    return {
-      ok: false,
-      reason: 'hourly_limit',
-      retryAfterSeconds: Math.max(
-        1,
-        Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000),
-      ),
-    };
-  }
-
-  const challengeId = `smsreg_${randomUUID()}`;
-  const expiresAtMs = now + SMS_CHALLENGE_TTL_MS;
-  const department = options.department?.trim() || null;
-  const departmentId = options.departmentId?.trim() || null;
-  const positionId = options.positionId?.trim() || null;
-  const positionTitle = options.positionTitle?.trim() || null;
-  const role = options.role?.trim() || null;
-  const organizationInviteId = options.organizationInviteId?.trim() || null;
-  if (department && department.length > 80)
-    throw new Error('部门名称不能超过 80 个字符');
-  if (positionTitle && positionTitle.length > 80)
-    throw new Error('职位名称不能超过 80 个字符');
-  if (role && role.length > 80) throw new Error('角色不能超过 80 个字符');
-  getDB()
-    .prepare(
-      `INSERT INTO sms_registration_challenges
-       (id, organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
-        organization_invite_id, department, department_id, position_id, position_title, role, created_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      challengeId,
-      organizationId,
-      normalized,
-      passwordHash(code),
-      expiresAtMs,
-      SMS_CHALLENGE_MAX_ATTEMPTS,
-      organizationInviteId,
-      department,
-      departmentId,
-      positionId,
-      positionTitle,
-      role,
-      now,
-    );
-  logAudit(
-    'sms_registration_code_requested',
-    null,
-    'SMS registration code requested',
-    organizationId,
-  );
-  return {
-    ok: true,
-    challengeId,
-    expiresAt: new Date(expiresAtMs).toISOString(),
-    retryAfterSeconds: SMS_CHALLENGE_COOLDOWN_MS / 1000,
-  };
-}
-
-export function discardSmsRegistrationChallenge(challengeId: string): void {
-  if (!challengeId) return;
-  getDB()
-    .prepare(
-      'DELETE FROM sms_registration_challenges WHERE id = ? AND consumed_at_ms IS NULL',
-    )
-    .run(challengeId);
-}
-
-export type SmsRegistrationVerifyResult =
-  | {
-      ok: true;
-      phone: string;
-      organizationId: string;
-      organizationInviteId: string | null;
-      department: string | null;
-      departmentId: string | null;
-      positionId: string | null;
-      positionTitle: string | null;
-      role: string | null;
-    }
-  | {
-      ok: false;
-      reason: 'invalid' | 'expired' | 'locked' | 'used';
-      attemptsRemaining: number;
-    };
-
-export function verifySmsRegistrationChallenge(
-  challengeId: string,
-  code: string,
-  now = Date.now(),
-): SmsRegistrationVerifyResult {
-  const row = getDB()
-    .prepare(
-      `SELECT organization_id, phone, code_hash, expires_at_ms, attempts_remaining,
-            organization_invite_id, department, department_id, position_id, position_title, role, consumed_at_ms
-     FROM sms_registration_challenges WHERE id = ?`,
-    )
-    .get(challengeId) as
-    | {
-        organization_id: string;
-        phone: string;
-        code_hash: string;
-        expires_at_ms: number;
-        attempts_remaining: number;
-        organization_invite_id: string | null;
-        department: string | null;
-        department_id: string | null;
-        position_id: string | null;
-        position_title: string | null;
-        role: string | null;
-        consumed_at_ms: number | null;
-      }
-    | undefined;
-
-  if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
-  if (row.consumed_at_ms != null) {
-    return {
-      ok: false,
-      reason: row.attempts_remaining <= 0 ? 'locked' : 'used',
-      attemptsRemaining: Math.max(0, row.attempts_remaining),
-    };
-  }
-  if (now > row.expires_at_ms) {
-    getDB()
-      .prepare(
-        'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
-      )
-      .run(now, challengeId);
-    return {
-      ok: false,
-      reason: 'expired',
-      attemptsRemaining: row.attempts_remaining,
-    };
-  }
-  if (!passwordMatches(code, row.code_hash)) {
-    const remaining = Math.max(0, row.attempts_remaining - 1);
-    getDB()
-      .prepare(
-        `UPDATE sms_registration_challenges
-       SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
-       WHERE id = ?`,
-      )
-      .run(remaining, remaining, now, challengeId);
-    return {
-      ok: false,
-      reason: remaining === 0 ? 'locked' : 'invalid',
-      attemptsRemaining: remaining,
-    };
-  }
-
-  getDB()
-    .prepare(
-      'UPDATE sms_registration_challenges SET consumed_at_ms = ? WHERE id = ?',
-    )
-    .run(now, challengeId);
-  logAudit(
-    'sms_registration_verified',
-    null,
-    'SMS registration verified',
-    row.organization_id,
-  );
-  return {
-    ok: true,
-    phone: row.phone,
-    organizationId: row.organization_id,
-    organizationInviteId: row.organization_invite_id,
-    department: row.department,
-    departmentId: row.department_id,
-    positionId: row.position_id,
-    positionTitle: row.position_title,
-    role: row.role,
-  };
-}
-
+export type SmsChallengeIssueResult = IdentitySmsChallengeIssueResult;
+export type SmsRegistrationVerifyResult = IdentitySmsRegistrationVerifyResult;
 export type SmsChallengeVerifyResult =
-  | { ok: true; account: AccountView }
-  | {
-      ok: false;
-      reason: 'invalid' | 'expired' | 'locked' | 'used';
-      attemptsRemaining: number;
-    };
+  IdentitySmsChallengeVerifyResult<AccountView>;
 
-export function verifySmsLoginChallenge(
-  challengeId: string,
-  code: string,
-  now = Date.now(),
-): SmsChallengeVerifyResult {
-  const row = getDB()
-    .prepare(
-      `SELECT c.account_id, c.code_hash, c.expires_at_ms, c.attempts_remaining, c.consumed_at_ms,
-            a.status AS account_status
-     FROM sms_login_challenges c
-     JOIN accounts a ON a.id = c.account_id
-     WHERE c.id = ?`,
-    )
-    .get(challengeId) as
-    | {
-        account_id: string;
-        code_hash: string;
-        expires_at_ms: number;
-        attempts_remaining: number;
-        consumed_at_ms: number | null;
-        account_status: 'active' | 'disabled';
-      }
-    | undefined;
-
-  if (!row) return { ok: false, reason: 'invalid', attemptsRemaining: 0 };
-  if (row.consumed_at_ms != null) {
-    return {
-      ok: false,
-      reason: row.attempts_remaining <= 0 ? 'locked' : 'used',
-      attemptsRemaining: Math.max(0, row.attempts_remaining),
-    };
-  }
-  if (row.account_status !== 'active') {
-    getDB()
-      .prepare(
-        'UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?',
-      )
-      .run(now, challengeId);
-    return { ok: false, reason: 'used', attemptsRemaining: 0 };
-  }
-  if (now > row.expires_at_ms) {
-    getDB()
-      .prepare(
-        'UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?',
-      )
-      .run(now, challengeId);
-    return {
-      ok: false,
-      reason: 'expired',
-      attemptsRemaining: row.attempts_remaining,
-    };
-  }
-  if (!passwordMatches(code, row.code_hash)) {
-    const remaining = Math.max(0, row.attempts_remaining - 1);
-    getDB()
-      .prepare(
-        `UPDATE sms_login_challenges
-       SET attempts_remaining = ?, consumed_at_ms = CASE WHEN ? = 0 THEN ? ELSE consumed_at_ms END
-       WHERE id = ?`,
-      )
-      .run(remaining, remaining, now, challengeId);
-    return {
-      ok: false,
-      reason: remaining === 0 ? 'locked' : 'invalid',
-      attemptsRemaining: remaining,
-    };
-  }
-
-  getDB()
-    .prepare('UPDATE sms_login_challenges SET consumed_at_ms = ? WHERE id = ?')
-    .run(now, challengeId);
-  const account = getAccount(row.account_id);
-  if (!account) return { ok: false, reason: 'used', attemptsRemaining: 0 };
-  logAudit('sms_login_verified', account.employeeId, 'SMS login verified');
-  return { ok: true, account };
-}
+export const {
+  createSmsLoginChallenge,
+  discardSmsLoginChallenge,
+  verifySmsLoginChallenge,
+  createSmsRegistrationChallenge,
+  discardSmsRegistrationChallenge,
+  verifySmsRegistrationChallenge,
+} = createSmsChallengeFacade<AccountView>(smsChallengeStore);
 
 // ============================================================
 // Park tenants, organization membership and service specialists
