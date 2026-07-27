@@ -8,6 +8,10 @@
 
 import { Database } from '../modules/data_platform/index.js';
 import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
+import {
+  createAccountPresenceFacade,
+  type AccountPresenceView as CollaborationAccountPresenceView,
+} from '../modules/collaboration/index.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -2656,65 +2660,17 @@ export const {
   accountRegistrationStore,
 );
 
-export interface AccountPresenceView {
-  accountId: string;
-  online: boolean;
-  lastSeenAt: string | null;
-}
+export type AccountPresenceView = CollaborationAccountPresenceView;
 
-interface AccountPresenceRow {
-  account_id: string;
-  last_seen_at_ms: number;
-}
+const accountPresenceStore = {
+  db: getDB,
+  now: Date.now,
+  isActiveAccountInOrganization: (accountId: string, organizationId: string) =>
+    getAccount(accountId, organizationId)?.status === 'active',
+};
 
-export function touchAccountPresence(input: {
-  organizationId: string;
-  accountId: string;
-  clientId?: string | null;
-  nowMs?: number;
-}): AccountPresenceView {
-  const nowMs = Number.isFinite(input.nowMs)
-    ? Math.floor(input.nowMs!)
-    : Date.now();
-  const clientId =
-    (input.clientId || 'default').trim().slice(0, 120) || 'default';
-  getDB()
-    .prepare(
-      `INSERT INTO account_presence
-      (organization_id, account_id, client_id, last_seen_at_ms, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(organization_id, account_id, client_id)
-     DO UPDATE SET last_seen_at_ms = excluded.last_seen_at_ms, updated_at = datetime('now')`,
-    )
-    .run(input.organizationId, input.accountId, clientId, nowMs);
-  return {
-    accountId: input.accountId,
-    online: true,
-    lastSeenAt: new Date(nowMs).toISOString(),
-  };
-}
-
-export function listAccountPresence(
-  organizationId: string,
-  onlineWindowMs = 60_000,
-  nowMs = Date.now(),
-): AccountPresenceView[] {
-  const rows = getDB()
-    .prepare(
-      `SELECT account_id, MAX(last_seen_at_ms) AS last_seen_at_ms
-     FROM account_presence
-     WHERE organization_id = ?
-     GROUP BY account_id`,
-    )
-    .all(organizationId) as AccountPresenceRow[];
-  return rows.map((row) => ({
-    accountId: row.account_id,
-    online: nowMs - Number(row.last_seen_at_ms) <= onlineWindowMs,
-    lastSeenAt: Number.isFinite(Number(row.last_seen_at_ms))
-      ? new Date(Number(row.last_seen_at_ms)).toISOString()
-      : null,
-  }));
-}
+export const { touchAccountPresence, listAccountPresence } =
+  createAccountPresenceFacade(accountPresenceStore);
 
 /** 飞书发送方已绑定企业账号时，按租户开关决定是否允许自动回答。 */
 export function isFeishuAutoReplyEnabledForOpenId(openId: string): boolean {
