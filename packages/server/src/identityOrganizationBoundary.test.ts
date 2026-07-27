@@ -114,6 +114,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationStructureFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createOrganizationFeatureFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
@@ -259,6 +262,22 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toContain(
       'function toOrganizationPositionView(',
+    );
+  });
+
+  it('keeps feature persistence and license access behind module facades', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createOrganizationFeatureFacade');
+    expect(databaseFacade).toContain('createOrganizationFeatureAccessFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:getOrganizationFeatures|updateOrganizationFeatures)\s*\(/,
+    );
+    expect(databaseFacade).not.toContain('DEFAULT_ORGANIZATION_FEATURES');
+    expect(databaseFacade).not.toContain(
+      'SELECT feature_key, enabled FROM organization_features',
     );
   });
 });

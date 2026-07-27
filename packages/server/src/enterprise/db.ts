@@ -7,10 +7,7 @@
  */
 
 import { Database } from '../modules/data_platform/index.js';
-import {
-  ORGANIZATION_FEATURE_KEYS,
-  type OrganizationFeatureKey,
-} from '../productModules.js';
+import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -80,6 +77,7 @@ import {
   createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationDirectoryFacade,
+  createOrganizationFeatureFacade,
   createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
   createOrganizationStructureFacade,
@@ -92,6 +90,7 @@ import {
   type OrganizationDirectoryRow,
   type OrganizationDirectoryView,
   type OrganizationInviteView,
+  type OrganizationFeatures as IdentityOrganizationFeatures,
   type OrganizationPositionRoleMapping as IdentityOrganizationPositionRoleMapping,
   type OrganizationPositionView as IdentityOrganizationPositionView,
 } from '../modules/identity_organization/index.js';
@@ -1948,16 +1947,17 @@ export const {
   deleteOrganizationPosition,
 } = createOrganizationStructureFacade(organizationStructureStore);
 
-export type OrganizationFeatures = Record<OrganizationFeatureKey, boolean>;
+export type OrganizationFeatures = IdentityOrganizationFeatures;
 
-const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
-  enterprise_tree: true,
-  park_service: true,
-  feishu_auto_reply: true,
-  direct_messages: true,
-  atoa: true,
-  knowledge: true,
-};
+const organizationFeatureConfiguration = createOrganizationFeatureFacade({
+  db: getDB,
+  audit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ) => logAudit(event, employeeId, detail, organizationId),
+});
 
 function settingValue(key: string): string | null {
   const row = getDB()
@@ -2098,66 +2098,18 @@ export function isLicenseUsableForOrganizationFeature(
 export function isLicenseRestricted(): boolean {
   return isLicenseRestrictedInRepository(deploymentStore);
 }
-export function getOrganizationFeatures(
-  organizationId: string,
-): OrganizationFeatures {
-  if (!getOrganization(organizationId)) throw new Error('企业不存在');
-  const result = { ...DEFAULT_ORGANIZATION_FEATURES };
-  const rows = getDB()
-    .prepare(
-      'SELECT feature_key, enabled FROM organization_features WHERE organization_id = ?',
-    )
-    .all(organizationId) as Array<{
-    feature_key: keyof OrganizationFeatures;
-    enabled: number;
-  }>;
-  for (const row of rows) {
-    if (row.feature_key in result) result[row.feature_key] = row.enabled === 1;
-  }
-  for (const key of Object.keys(result) as Array<keyof OrganizationFeatures>) {
-    if (!isLicenseUsableForOrganizationFeature(key)) result[key] = false;
-  }
-  return result;
-}
 
-export function updateOrganizationFeatures(
-  organizationId: string,
-  patch: Partial<OrganizationFeatures>,
-): OrganizationFeatures {
-  const allowed = new Set<string>(ORGANIZATION_FEATURE_KEYS);
-  const entries = Object.entries(patch).filter(
-    (entry): entry is [keyof OrganizationFeatures, boolean] =>
-      allowed.has(entry[0]) && typeof entry[1] === 'boolean',
-  );
-  if (entries.length === 0) throw new Error('至少需要一个有效功能开关');
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const organization = database
-      .prepare('SELECT 1 FROM organizations WHERE id = ?')
-      .get(organizationId);
-    if (!organization) throw new Error('企业不存在');
-    const statement = database.prepare(
-      `INSERT INTO organization_features (organization_id, feature_key, enabled, updated_at)
-       VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(organization_id, feature_key)
-       DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`,
-    );
-    for (const [key, enabled] of entries)
-      statement.run(organizationId, key, enabled ? 1 : 0);
-    logAudit(
-      'organization_features_update',
-      null,
-      `Feature switches updated: ${entries.map(([key, enabled]) => `${key}=${enabled}`).join(', ')}`,
-      organizationId,
-    );
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-  return getOrganizationFeatures(organizationId);
-}
+const organizationFeatureAccess = createOrganizationFeatureAccessFacade({
+  configuration: organizationFeatureConfiguration,
+  isLicenseUsable: isLicenseUsableForOrganizationFeature,
+});
+
+export const {
+  getOrganizationFeatures,
+  updateOrganizationFeatures,
+  isOrganizationFeatureEnabled,
+  requireOrganizationFeature,
+} = organizationFeatureAccess;
 
 function normalizeOptionalText(
   value: string | null | undefined,

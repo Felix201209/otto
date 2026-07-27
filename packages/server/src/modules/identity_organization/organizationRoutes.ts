@@ -3,16 +3,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { OrganizationFeatures } from './organizationFeatureRepository.js';
 import type { OrganizationPositionRoleMapping } from './organizationStructureRepository.js';
-
-export interface OrganizationFeatures {
-  enterprise_tree: boolean;
-  park_service: boolean;
-  feishu_auto_reply: boolean;
-  direct_messages: boolean;
-  atoa: boolean;
-  knowledge: boolean;
-}
 
 export interface OrganizationRouteMemberAccount {
   organizationId: string;
