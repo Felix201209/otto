@@ -139,21 +139,7 @@ jobs:
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           test -f "$DESKTOP_RELEASE/latest.json"
-          node - "$DESKTOP_RELEASE/latest.json" "$VERSION" <<'NODE'
-          const fs = require('node:fs');
-          const [latestPath, version] = process.argv.slice(2);
-          const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
-          if (latest.version !== version) {
-            throw new Error(`latest.json version mismatch: ${latest.version} !== ${version}`);
-          }
-          const assets = latest.assets || latest.files || {};
-          for (const key of ['macArm64', 'macX64', 'winX64']) {
-            const asset = assets[key];
-            if (!asset?.url || !asset?.sha256 || !asset?.size) {
-              throw new Error(`latest.json missing complete ${key} asset metadata`);
-            }
-          }
-          NODE
+          node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"
           {
             echo "files<<EOF"
             printf '%s\n' \
