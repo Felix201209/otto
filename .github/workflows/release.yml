@@ -342,22 +342,7 @@ jobs:
           copy_one "Otto-Setup-${VERSION}-win-x64.exe"
           copy_one "Otto-Setup-${VERSION}-win-x64.exe.blockmap"
           copy_one "latest.json"
-          node - "mirror-upload" "${UPDATE_MIRROR_ASSET_BASE_URL}" <<'NODE'
-          const crypto = require('node:crypto');
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const [dir, baseUrl] = process.argv.slice(2);
-          const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'latest.json'), 'utf8'));
-          for (const [platform, asset] of Object.entries(manifest.assets || {})) {
-            const file = path.join(dir, asset.name);
-            if (!fs.existsSync(file)) throw new Error(`missing ${platform} asset: ${asset.name}`);
-            const bytes = fs.readFileSync(file);
-            const digest = crypto.createHash('sha256').update(bytes).digest('hex');
-            if (bytes.length !== asset.size) throw new Error(`${platform} size mismatch`);
-            if (digest !== asset.sha256) throw new Error(`${platform} sha256 mismatch`);
-            if (asset.url !== `${baseUrl}/${asset.name}`) throw new Error(`${platform} mirror URL mismatch`);
-          }
-          NODE
+          node packages/desktop/scripts/verify-update-manifest.mjs "mirror-upload" "$VERSION"
           (
             cd mirror-upload
             sha256sum Otto-* latest.json > SHA256SUMS

@@ -133,7 +133,15 @@ describe('desktop packaging contract', () => {
     expect(workflow).toContain(
       'node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"',
     );
+    expect(workflow).toContain(
+      'node packages/desktop/scripts/verify-update-manifest.mjs "mirror-upload" "$VERSION"',
+    );
+    expect(
+      workflow.match(/node packages\/desktop\/scripts\/verify-update-manifest\.mjs/g)
+        ?.length,
+    ).toBe(2);
     expect(workflow).not.toContain("['macArm64', 'macX64', 'winX64']");
+    expect(workflow).not.toContain("const crypto = require('node:crypto');");
     expect(workflow).toContain('sha256sum -c SHA256SUMS');
     expect(workflow).toContain('latest.json.next');
     expect(workflow).toContain('Windows no-proxy download');
