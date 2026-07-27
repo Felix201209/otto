@@ -17,6 +17,7 @@ Desktop and server code communicate through the core library, which manages requ
 
 ### 🚀 Getting Started
 - **[Architecture Overview](./architecture.md)** - High-level system design and component interactions
+- **[Product Module Boundaries](./product-modules.md)** - Stable module IDs, ownership and dependency rules
 - **[Uninstall Guide](./Uninstall.md)** - How to remove Otto
 
 ### 🔧 Core Library Documentation

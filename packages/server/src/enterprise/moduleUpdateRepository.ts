@@ -4,12 +4,12 @@ import type {
   ModuleUpdateRollout,
 } from './moduleUpdateManifest.js';
 import {
-  LICENSE_MODULE_FEATURES,
   MODULE_UPDATE_ROLLOUTS,
   MODULE_UPDATE_SHA256_RE,
   licenseModuleCatalog,
   parseModuleUpdateDescriptors,
 } from './moduleUpdateManifest.js';
+import { canonicalLicenseCapabilityId } from '../productModules.js';
 
 const MODULE_UPDATE_MANIFEST_SETTING = 'module_update_manifest';
 
@@ -38,7 +38,9 @@ export interface ModuleUpdateDescriptorInput {
   organizationId: string;
 }
 
-export function getModuleUpdateManifestFromStore(store: ModuleUpdateRepositoryStore): ModuleUpdateManifest {
+export function getModuleUpdateManifestFromStore(
+  store: ModuleUpdateRepositoryStore,
+): ModuleUpdateManifest {
   return {
     format: 'otto-module-updates-v1',
     deploymentId: store.deploymentId(),
@@ -52,8 +54,8 @@ export function updateModuleUpdateDescriptorInStore(
   store: ModuleUpdateRepositoryStore,
   input: ModuleUpdateDescriptorInput,
 ): ModuleUpdateDescriptor {
-  const module = input.module.trim();
-  if (!LICENSE_MODULE_FEATURES[module]) throw new Error('未知模块');
+  const module = canonicalLicenseCapabilityId(input.module);
+  if (!module) throw new Error('未知模块');
   const current = new Map(
     getModuleUpdateManifestFromStore(store).modules.map((item) => [item.module, item]),
   );
@@ -63,7 +65,9 @@ export function updateModuleUpdateDescriptorInStore(
   const version = input.version?.trim() || existing?.version || '';
   if (!version) throw new Error('模块版本不能为空');
   const sha256 = input.sha256?.trim() || existing?.sha256 || null;
-  if (sha256 && !MODULE_UPDATE_SHA256_RE.test(sha256)) throw new Error('sha256 必须是 64 位十六进制');
+  if (sha256 && !MODULE_UPDATE_SHA256_RE.test(sha256)) {
+    throw new Error('sha256 必须是 64 位十六进制');
+  }
   const descriptor: ModuleUpdateDescriptor = {
     module,
     version,

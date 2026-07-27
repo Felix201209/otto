@@ -32,6 +32,7 @@ export {
   customModelsFilePath,
 } from './customModels.js';
 export * from './modelCatalog.js';
+export * from './productModules.js';
 export * from './productWorkspace.js';
 export * from './productWorkspaceStore.js';
 export * from './agentProfiles.js';

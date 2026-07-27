@@ -7,6 +7,10 @@
  */
 
 import { Database } from '../sqlite-compat.js';
+import {
+  ORGANIZATION_FEATURE_KEYS,
+  type OrganizationFeatureKey,
+} from '../productModules.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -2364,15 +2368,7 @@ export function deleteOrganizationPosition(input: {
   if (Number(changed.changes) !== 1) throw new Error('职位不存在');
 }
 
-export interface OrganizationFeatures {
-  enterprise_tree: boolean;
-  park_service: boolean;
-  feishu_auto_reply: boolean;
-  direct_messages: boolean;
-  atoa: boolean;
-  knowledge: boolean;
-  tui_sync: boolean;
-}
+export type OrganizationFeatures = Record<OrganizationFeatureKey, boolean>;
 
 const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   enterprise_tree: true,
@@ -2381,7 +2377,6 @@ const DEFAULT_ORGANIZATION_FEATURES: OrganizationFeatures = {
   direct_messages: true,
   atoa: true,
   knowledge: true,
-  tui_sync: true,
 };
 
 function settingValue(key: string): string | null {
@@ -2549,7 +2544,7 @@ export function updateOrganizationFeatures(
   organizationId: string,
   patch: Partial<OrganizationFeatures>,
 ): OrganizationFeatures {
-  const allowed = new Set(Object.keys(DEFAULT_ORGANIZATION_FEATURES));
+  const allowed = new Set<string>(ORGANIZATION_FEATURE_KEYS);
   const entries = Object.entries(patch).filter(
     (entry): entry is [keyof OrganizationFeatures, boolean] =>
       allowed.has(entry[0]) && typeof entry[1] === 'boolean',

@@ -2,7 +2,13 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import type { OrganizationFeatures } from './db.js';
+import {
+  canonicalLicenseCapabilityId,
+  getLicenseCapabilityCatalog,
+  getLicenseCapabilityFeatureMap,
+  type OrganizationFeatureKey,
+  type ProductModuleId,
+} from '../productModules.js';
 
 export type ModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
 
@@ -23,21 +29,16 @@ export interface ModuleUpdateManifest {
   deploymentId: string;
   generatedAt: string;
   modules: ModuleUpdateDescriptor[];
-  catalog: Array<{ module: string; features: Array<keyof OrganizationFeatures> }>;
+  catalog: Array<{
+    module: string;
+    productModuleId: ProductModuleId;
+    features: OrganizationFeatureKey[];
+  }>;
 }
 
-export const LICENSE_MODULE_FEATURES: Record<string, Array<keyof OrganizationFeatures>> = {
-  enterprise_tree: ['enterprise_tree', 'knowledge'],
-  park_service: ['park_service'],
-  park_services: ['park_service'],
-  feishu: ['feishu_auto_reply'],
-  feishu_auto_reply: ['feishu_auto_reply'],
-  direct_messages: ['direct_messages'],
-  atoa: ['atoa'],
-  enterprise_memory: ['knowledge'],
-  knowledge: ['knowledge'],
-  tui_sync: ['tui_sync'],
-};
+export const LICENSE_MODULE_FEATURES = getLicenseCapabilityFeatureMap({
+  includeLegacyAliases: true,
+});
 
 export const MODULE_UPDATE_ROLLOUTS = new Set<ModuleUpdateRollout>([
   'off',
@@ -48,8 +49,12 @@ export const MODULE_UPDATE_ROLLOUTS = new Set<ModuleUpdateRollout>([
 
 export const MODULE_UPDATE_SHA256_RE = /^[0-9a-f]{64}$/i;
 
-export function licenseModuleCatalog(): Array<{ module: string; features: Array<keyof OrganizationFeatures> }> {
-  return Object.entries(LICENSE_MODULE_FEATURES).map(([module, features]) => ({ module, features }));
+export function licenseModuleCatalog(): Array<{
+  module: string;
+  productModuleId: ProductModuleId;
+  features: OrganizationFeatureKey[];
+}> {
+  return getLicenseCapabilityCatalog();
 }
 
 export function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDescriptor[] {
@@ -57,12 +62,13 @@ export function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDe
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    const allowedModules = new Set(Object.keys(LICENSE_MODULE_FEATURES));
-    const result: ModuleUpdateDescriptor[] = [];
+    const result = new Map<string, ModuleUpdateDescriptor>();
     for (const item of parsed) {
       if (typeof item !== 'object' || item === null) continue;
       const row = item as Record<string, unknown>;
-      const module = typeof row.module === 'string' ? row.module.trim() : '';
+      const module = typeof row.module === 'string'
+        ? canonicalLicenseCapabilityId(row.module) ?? ''
+        : '';
       const version = typeof row.version === 'string' ? row.version.trim() : '';
       const rollout = typeof row.rollout === 'string' && MODULE_UPDATE_ROLLOUTS.has(row.rollout as ModuleUpdateRollout)
         ? row.rollout as ModuleUpdateRollout
@@ -70,8 +76,8 @@ export function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDe
       const updatedAt = typeof row.updatedAt === 'string' && row.updatedAt.trim()
         ? row.updatedAt.trim()
         : new Date(0).toISOString();
-      if (!allowedModules.has(module) || !version) continue;
-      result.push({
+      if (!module || !version) continue;
+      result.set(module, {
         module,
         version,
         rollout,
@@ -91,7 +97,7 @@ export function parseModuleUpdateDescriptors(raw: string | null): ModuleUpdateDe
         updatedAt,
       });
     }
-    return result.sort((a, b) => a.module.localeCompare(b.module));
+    return [...result.values()].sort((a, b) => a.module.localeCompare(b.module));
   } catch {
     return [];
   }

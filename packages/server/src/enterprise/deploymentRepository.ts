@@ -9,7 +9,10 @@ import {
   LICENSE_MODULE_FEATURES,
   licenseModuleCatalog,
 } from './moduleUpdateManifest.js';
-import type { OrganizationFeatures } from './db.js';
+import {
+  canonicalLicenseCapabilityId,
+  type OrganizationFeatureKey,
+} from '../productModules.js';
 import type {
   DeploymentLicenseStatus,
   DeploymentLicenseView,
@@ -62,11 +65,11 @@ function safeJsonObject(value: unknown): Record<string, unknown> {
 function parseModules(value: string): string[] {
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter(
-          (item): item is string => typeof item === 'string' && item.length > 0,
-        )
-      : [];
+    if (!Array.isArray(parsed)) return [];
+    const modules = parsed
+      .filter((item): item is string => typeof item === 'string' && item.length > 0)
+      .map((item) => canonicalLicenseCapabilityId(item) ?? item);
+    return [...new Set(modules)];
   } catch {
     return [];
   }
@@ -144,7 +147,7 @@ function toDeploymentLicenseView(
 ): DeploymentLicenseView {
   const enforce = store.licenseEnforcementEnabled();
   if (!row) {
-    const modules = Object.keys(LICENSE_MODULE_FEATURES);
+    const modules = licenseModuleCatalog().map((entry) => entry.module);
     const activeSeats = activeSeatCount(store, null);
     return {
       id: 'unlicensed',
@@ -228,9 +231,9 @@ export function importDeploymentLicense(
   if (deploymentId !== getDeploymentId(store))
     throw new Error('license deploymentId mismatch');
   const modules = Array.isArray(payload.modules)
-    ? payload.modules.filter(
-        (item): item is string => typeof item === 'string' && item.length > 0,
-      )
+    ? [...new Set(payload.modules
+        .filter((item): item is string => typeof item === 'string' && item.length > 0)
+        .map((item) => canonicalLicenseCapabilityId(item) ?? item))]
     : [];
   const expiresAtMs = Number(
     payload.expiresAtMs ?? Date.parse(String(payload.expiresAt || '')),
@@ -516,7 +519,7 @@ export function exportDeploymentDiagnostics(
 
 export function isLicenseUsableForOrganizationFeature(
   store: DeploymentRepositoryStore,
-  feature: keyof OrganizationFeatures,
+  feature: OrganizationFeatureKey,
 ): boolean {
   const license = getDeploymentLicense(store);
   if (!license.enforce && license.status === 'active') return true;

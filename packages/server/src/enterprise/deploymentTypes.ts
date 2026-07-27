@@ -2,7 +2,10 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import type { OrganizationFeatures } from './db.js';
+import type {
+  OrganizationFeatureKey,
+  ProductModuleId,
+} from '../productModules.js';
 
 export type DeploymentLicenseStatus =
   'active' | 'expiring' | 'expired' | 'revoked' | 'missing' | 'invalid';
@@ -50,7 +53,8 @@ export interface PrivateDeploymentStatus {
   };
   moduleCatalog: Array<{
     module: string;
-    features: Array<keyof OrganizationFeatures>;
+    productModuleId: ProductModuleId;
+    features: OrganizationFeatureKey[];
   }>;
   runtimeHealth: {
     uptimeSec: number;
