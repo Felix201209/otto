@@ -42,6 +42,11 @@ Agent 工具确认策略与企业 HTTP 路由鉴权分类统一通过该模块�
 兼容导出。企业各业务路由中的岗位、数据范围与资源所有权判断仍由后续 Issue 分批迁移，
 不得据此宣称权限层已全部重构完成。
 
+`identity_organization` 的第一阶段企业邀请码内核位于
+`packages/server/src/modules/identity_organization/`。邀请码类型、HMAC 派生与校验 Repository、
+事务 Facade 和可信公开链接策略只有一份实现；账号、会话、企业结构和成员管理仍留待后续
+Issue 分批迁移。
+
 其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
 一次性移动跨业务链路代码。
 

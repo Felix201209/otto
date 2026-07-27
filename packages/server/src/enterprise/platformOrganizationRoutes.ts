@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as db from './db.js';
-import { buildOrganizationInviteLink } from './publicInvite.js';
+import { buildOrganizationInviteLink } from '../modules/identity_organization/index.js';
 
 export type PlatformOrganizationPrincipal =
   | { kind: 'system'; organizationId: string }

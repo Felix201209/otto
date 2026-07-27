@@ -74,8 +74,10 @@ import {
   setParkServiceSpecialist as setParkServiceSpecialistInRepository,
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
-import { createOrganizationInviteFacade } from './organizationInviteFacade.js';
-import type { OrganizationInviteView } from './organizationInviteTypes.js';
+import {
+  createOrganizationInviteFacade,
+  type OrganizationInviteView,
+} from '../modules/identity_organization/index.js';
 import type {
   ParkInviteView,
   ParkTenantProfileView,
@@ -103,7 +105,7 @@ export type {
   OrganizationInviteResolution,
   OrganizationInviteStatus,
   OrganizationInviteView,
-} from './organizationInviteTypes.js';
+} from '../modules/identity_organization/index.js';
 export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,

@@ -33,7 +33,7 @@ import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
 
-import { resolveEnterprisePublicBaseUrl } from './publicInvite.js';
+import { resolveEnterprisePublicBaseUrl } from '../modules/identity_organization/index.js';
 import {
   createRepairFeishuSenderFromEnv,
   createRepairSmsSenderFromEnv,

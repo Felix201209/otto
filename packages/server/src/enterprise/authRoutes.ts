@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomInt } from 'node:crypto';
 import * as db from './db.js';
-import { isOrganizationInviteCode } from './publicInvite.js';
+import { isOrganizationInviteCode } from '../modules/identity_organization/index.js';
 import { sendPublicInvitePage } from './publicInvitePage.js';
 
 export interface AuthRouteSmsSender {
