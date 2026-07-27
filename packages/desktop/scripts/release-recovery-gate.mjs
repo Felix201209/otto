@@ -2,18 +2,16 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveUpdateAssetBaseUrl } from './update-mirror-config.mjs';
+import { verifyUpdateManifest } from './verify-update-manifest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopRoot, '../..');
 const maxWindowsInstallerBytes =
   Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 160) * 1024 * 1024;
-const updateAssetBaseUrl = resolveUpdateAssetBaseUrl();
 
 const failures = [];
 const notes = [];
@@ -40,18 +38,6 @@ function assertFile(file, { minBytes = 1 } = {}) {
     fail(
       `required file is too small: ${path.relative(repoRoot, file)} (${size} bytes)`,
     );
-  }
-}
-
-function sha256(file) {
-  return createHash('sha256').update(readFileSync(file)).digest('hex');
-}
-
-function normalizeUrl(value) {
-  try {
-    return new URL(value).toString();
-  } catch {
-    return '';
   }
 }
 
@@ -118,6 +104,12 @@ const winInstaller = path.join(
   releaseDir,
   `Otto-Setup-${desktopPkg.version}-win-x64.exe`,
 );
+const releaseAssetCandidates = [
+  winInstaller,
+  path.join(releaseDir, `Otto-${desktopPkg.version}-arm64.dmg`),
+  path.join(releaseDir, `Otto-${desktopPkg.version}-x64.dmg`),
+  path.join(releaseDir, 'latest.json'),
+];
 if (existsSync(winInstaller)) {
   const size = statSync(winInstaller).size;
   if (size > maxWindowsInstallerBytes) {
@@ -125,56 +117,24 @@ if (existsSync(winInstaller)) {
       `Windows installer exceeds limit: ${size} bytes > ${maxWindowsInstallerBytes} bytes`,
     );
   }
-
-  const latestJson = path.join(releaseDir, 'latest.json');
-  if (!existsSync(latestJson)) {
-    fail(
-      'missing release/latest.json; desktop internal update checks cannot see this release',
-    );
-  } else {
-    let manifest;
-    try {
-      manifest = JSON.parse(readFileSync(latestJson, 'utf8'));
-    } catch (error) {
-      fail(`release/latest.json is not valid JSON: ${error.message}`);
-    }
-
-    if (manifest) {
-      if (manifest.version !== desktopPkg.version) {
-        fail(
-          `latest.json version mismatch: manifest=${manifest.version}, desktop=${desktopPkg.version}`,
-        );
-      }
-      const asset = manifest.assets?.['win-x64'];
-      if (!asset) {
-        fail('latest.json missing assets.win-x64');
-      } else {
-        const expectedName = path.basename(winInstaller);
-        const expectedUrl = `${updateAssetBaseUrl}/${expectedName}`;
-        if (asset.name !== expectedName) {
-          fail(
-            `latest.json win-x64 name mismatch: manifest=${asset.name}, expected=${expectedName}`,
-          );
-        }
-        if (asset.size !== statSync(winInstaller).size) {
-          fail(
-            `latest.json win-x64 size mismatch: manifest=${asset.size}, expected=${statSync(winInstaller).size}`,
-          );
-        }
-        if (asset.sha256 !== sha256(winInstaller)) {
-          fail('latest.json win-x64 sha256 mismatch');
-        }
-        if (normalizeUrl(asset.url) !== expectedUrl) {
-          fail(
-            `latest.json win-x64 url mismatch: manifest=${asset.url}, expected=${expectedUrl}`,
-          );
-        }
-      }
-    }
-  }
 } else {
   note(
     'Windows installer not present; size gate will run after dist:win/package creates release artifact',
+  );
+}
+
+if (releaseAssetCandidates.some(existsSync)) {
+  try {
+    verifyUpdateManifest({
+      releaseDir,
+      version: desktopPkg.version,
+    });
+  } catch (error) {
+    fail(`release/latest.json asset verification failed: ${error.message}`);
+  }
+} else {
+  note(
+    'Desktop release artifacts not present; update manifest gate will run after dist/package creates release assets',
   );
 }
 

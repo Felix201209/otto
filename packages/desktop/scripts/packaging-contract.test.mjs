@@ -139,6 +139,20 @@ describe('desktop packaging contract', () => {
     expect(workflow).toContain('Windows no-proxy download');
   });
 
+  it('uses the shared update manifest verifier in the local release gate', async () => {
+    const gate = await readFile(
+      path.join(packageRoot, 'scripts', 'release-recovery-gate.mjs'),
+      'utf8',
+    );
+    expect(gate).toContain(
+      "import { verifyUpdateManifest } from './verify-update-manifest.mjs'",
+    );
+    expect(gate).toContain('verifyUpdateManifest({');
+    expect(gate).toContain('releaseAssetCandidates.some(existsSync)');
+    expect(gate).not.toContain("manifest.assets?.['win-x64']");
+    expect(gate).not.toContain('latest.json win-x64 sha256 mismatch');
+  });
+
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {
     const appPath = await mkdtemp(path.join(os.tmpdir(), 'otto-after-pack-'));
     try {
