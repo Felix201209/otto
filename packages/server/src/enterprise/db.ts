@@ -79,10 +79,14 @@ import {
   createAccountRegistrationFacade,
   createAuthSessionFacade,
   createMemberDirectoryFacade,
+  createOrganizationDirectoryFacade,
   createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
   normalizeOrganizationSlug,
   replaceAccountTagsInRepository,
+  toOrganizationDirectoryView,
+  type OrganizationDirectoryRow,
+  type OrganizationDirectoryView,
   type OrganizationInviteView,
 } from '../modules/identity_organization/index.js';
 import type {
@@ -1902,82 +1906,16 @@ export function putAccountSyncSnapshot(input: {
     updatedAtMs,
   };
 }
-export interface OrganizationView {
-  id: string;
-  name: string;
-  slug: string;
-  parkId: string | null;
-  parkAddress?: string | null;
-  parkRoomNumber?: string | null;
-  status: 'active' | 'disabled';
-  createdAt: string;
-  updatedAt: string;
-}
+export type OrganizationView = OrganizationDirectoryView;
 
-interface OrganizationRow {
-  id: string;
-  name: string;
-  slug: string;
-  invite_secret: string;
-  park_id?: string | null;
-  park_address?: string | null;
-  park_room_number?: string | null;
-  status: 'active' | 'disabled';
-  created_at: string;
-  updated_at: string;
-}
+const organizationDirectoryStore = { db: getDB };
 
-function toOrganizationView(row: OrganizationRow): OrganizationView {
-  return {
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
-    parkId: row.park_id ?? null,
-    parkAddress: row.park_address ?? null,
-    parkRoomNumber: row.park_room_number ?? null,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-export function getOrganization(id: string): OrganizationView | null {
-  const row = getDB()
-    .prepare('SELECT * FROM organizations WHERE id = ?')
-    .get(id) as OrganizationRow | undefined;
-  return row ? toOrganizationView(row) : null;
-}
-
-export function listOrganizations(): OrganizationView[] {
-  return (
-    getDB()
-      .prepare('SELECT * FROM organizations ORDER BY name, slug')
-      .all() as OrganizationRow[]
-  ).map(toOrganizationView);
-}
-
-/**
- * 平台管理只列出真实企业租户。普通注册也会创建 organization 作为个人数据
- * 隔离容器，不能把这些个人空间混入平台企业清单。
- */
-export function listEnterpriseOrganizations(): OrganizationView[] {
-  return (
-    getDB()
-      .prepare(
-        `SELECT o.*
-     FROM organizations o
-     WHERE EXISTS (
-       SELECT 1
-       FROM accounts a
-       WHERE a.organization_id = o.id
-         AND a.account_type = 'enterprise'
-         AND a.deleted_at IS NULL
-     )
-     ORDER BY o.name, o.slug`,
-      )
-      .all() as OrganizationRow[]
-  ).map(toOrganizationView);
-}
+export const {
+  getOrganization,
+  listOrganizations,
+  getEnterpriseOrganization,
+  listEnterpriseOrganizations,
+} = createOrganizationDirectoryFacade(organizationDirectoryStore);
 
 export type OrganizationPositionRoleMapping =
   'member' | 'department_admin' | 'enterprise_admin';
@@ -2547,26 +2485,6 @@ export function updateOrganizationFeatures(
   return getOrganizationFeatures(organizationId);
 }
 
-/** 平台企业面板只能访问企业租户，个人空间按不存在处理。 */
-export function getEnterpriseOrganization(id: string): OrganizationView | null {
-  const row = getDB()
-    .prepare(
-      `SELECT o.*
-     FROM organizations o
-     WHERE o.id = ?
-       AND EXISTS (
-         SELECT 1
-         FROM accounts a
-         WHERE a.organization_id = o.id
-           AND a.account_type = 'enterprise'
-           AND a.deleted_at IS NULL
-       )
-     LIMIT 1`,
-    )
-    .get(id) as OrganizationRow | undefined;
-  return row ? toOrganizationView(row) : null;
-}
-
 function normalizeOptionalText(
   value: string | null | undefined,
   label: string,
@@ -2800,7 +2718,7 @@ const organizationInviteStore = {
   inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
   inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
   inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
-  toOrganizationView,
+  toOrganizationView: toOrganizationDirectoryView,
   resolveAssignmentIdentity,
   normalizeOptionalText,
   logAudit,
@@ -3771,8 +3689,8 @@ export function listParkTenantOrganizations(
          WHERE o.park_id = ? AND o.id <> ?
          ORDER BY o.name COLLATE NOCASE, o.slug`,
       )
-      .all(park.id, park.adminOrganizationId) as OrganizationRow[]
-  ).map(toOrganizationView);
+      .all(park.id, park.adminOrganizationId) as OrganizationDirectoryRow[]
+  ).map(toOrganizationDirectoryView);
 }
 
 const parkInviteStore = {

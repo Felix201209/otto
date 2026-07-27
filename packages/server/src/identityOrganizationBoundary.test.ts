@@ -108,6 +108,9 @@ describe('identity_organization invitation kernel', () => {
     expect(
       identityOrganization.createOrganizationProvisioningFacade,
     ).toBeTypeOf('function');
+    expect(identityOrganization.createOrganizationDirectoryFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
@@ -228,5 +231,17 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toMatch(
       /export function (?:createOrganization|provisionOrganization)\s*\(/,
     );
+  });
+
+  it('keeps organization directory reads behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createOrganizationDirectoryFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:getOrganization|listOrganizations|getEnterpriseOrganization|listEnterpriseOrganizations)\s*\(/,
+    );
+    expect(databaseFacade).not.toContain('function toOrganizationView(');
   });
 });
