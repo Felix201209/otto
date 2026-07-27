@@ -14,7 +14,7 @@ import {
 import {
   licenseModuleCatalog,
   parseModuleUpdateDescriptors,
-} from './enterprise/moduleUpdateManifest.js';
+} from './modules/commercial_control/index.js';
 
 function moduleDefinition(
   id: string,

@@ -17,12 +17,14 @@ import {
 } from './authRoutes.js';
 import { handleCommunicationRoute } from './communicationRoutes.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
-import { handleDeploymentRoute } from './deploymentRoutes.js';
+import {
+  handleDeploymentRoute,
+  handleModuleUpdateRoute,
+} from '../modules/commercial_control/index.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
 import { handleHealthRoute } from './healthRoutes.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
-import { handleModuleUpdateRoute } from './moduleUpdateRoutes.js';
 import { handleOrganizationRoute } from './organizationRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
@@ -116,6 +118,7 @@ export async function dispatchEnterpriseRoute({
       req,
       res,
       principal: adminPrincipal,
+      services: db,
       readBody,
       sendJSON,
     })
@@ -131,6 +134,7 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       principal: adminPrincipal,
+      services: db,
       readBody,
       sendJSON,
     })

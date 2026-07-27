@@ -27,6 +27,15 @@ Otto 采用模块化单体架构。模块用于建立代码、数据、权限、
 | `desktop_shell` | 桌面应用外壳 | 桌面偏好、登录信封、下载更新状态 |
 | `integration_adapters` | 外部服务接入中心 | 集成凭证、外部租户绑定 |
 
+## 物理迁移状态
+
+`commercial_control` 是第一个完成物理目录迁移的模块，实现位于
+`packages/server/src/modules/commercial_control/`，统一通过该目录的 `index.ts` 暴露能力。
+原 `packages/server/src/enterprise/` 下的同名文件只保留兼容导出，不允许继续加入实现。
+
+其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
+一次性移动跨业务链路代码。
+
 ## 商业能力
 
 产品模块和收费能力不是一一对应。`collaboration` 内的私聊与 A2A 仍可分别授权。

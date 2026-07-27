@@ -25,23 +25,11 @@ import {
 } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import {
-  type ModuleUpdateDescriptor,
-  type ModuleUpdateManifest,
-  type ModuleUpdateRollout,
-} from './moduleUpdateManifest.js';
-import {
-  getModuleUpdateManifestFromStore,
-  updateModuleUpdateDescriptorInStore,
-} from './moduleUpdateRepository.js';
-import { buildCreditsTablesSql } from './creditsSchema.js';
-import { getAuditLogs, logAudit } from './auditRepository.js';
-import { createEmployee } from './employeeRepository.js';
-import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
-import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
   getMachineFingerprint as getMachineFingerprintFromRepository,
+  getModuleUpdateManifestFromStore,
   getPrivateDeploymentStatus as getPrivateDeploymentStatusFromRepository,
   getTelemetryQueueSummary as getTelemetryQueueSummaryFromRepository,
   getTelemetrySettings as getTelemetrySettingsFromRepository,
@@ -49,8 +37,19 @@ import {
   isLicenseRestricted as isLicenseRestrictedInRepository,
   isLicenseUsableForOrganizationFeature as isLicenseUsableForOrganizationFeatureInRepository,
   recordTelemetryEvent as recordTelemetryEventInRepository,
+  updateModuleUpdateDescriptorInStore,
   updateTelemetrySettings as updateTelemetrySettingsInRepository,
-} from './deploymentRepository.js';
+  type ModuleUpdateDescriptor,
+  type ModuleUpdateManifest,
+  type ModuleUpdateRollout,
+  type DeploymentLicenseView,
+  type DeploymentTelemetrySettings,
+  type PrivateDeploymentStatus,
+} from '../modules/commercial_control/index.js';
+import { buildCreditsTablesSql } from './creditsSchema.js';
+import { getAuditLogs, logAudit } from './auditRepository.js';
+import { createEmployee } from './employeeRepository.js';
+import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 import {
   createParkDataStatisticsTask as createParkDataStatisticsTaskInRepository,
   delegateParkDataStatistics as delegateParkDataStatisticsInRepository,
@@ -76,11 +75,6 @@ import {
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
 import { createOrganizationInviteFacade } from './organizationInviteFacade.js';
-import type {
-  DeploymentLicenseView,
-  DeploymentTelemetrySettings,
-  PrivateDeploymentStatus,
-} from './deploymentTypes.js';
 import type { OrganizationInviteView } from './organizationInviteTypes.js';
 import type {
   ParkInviteView,
@@ -98,13 +92,11 @@ export type {
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
   ModuleUpdateRollout,
-} from './moduleUpdateManifest.js';
-export type {
   DeploymentLicenseStatus,
   DeploymentLicenseView,
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
-} from './deploymentTypes.js';
+} from '../modules/commercial_control/index.js';
 export type {
   OrganizationInviteInspection,
   OrganizationInviteIssueInput,
