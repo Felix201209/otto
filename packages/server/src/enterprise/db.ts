@@ -74,6 +74,7 @@ import {
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
 import {
+  createAccountDirectoryFacade,
   createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationInviteFacade,
@@ -3117,6 +3118,25 @@ export function toAccountView(row: AccountRow): AccountView {
   };
 }
 
+const accountDirectoryStore = {
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  normalizeIdentifier: normalizeUsername,
+  normalizePhone,
+  passwordMatches,
+  isOrganizationActive: (organizationId: string) =>
+    getOrganization(organizationId)?.status === 'active',
+  toAccountView,
+};
+
+export const {
+  getAccount,
+  listAccounts,
+  authenticateAccount,
+  findAccountByPhone,
+  findActiveAccountByPhone,
+} = createAccountDirectoryFacade<AccountView, AccountRow>(accountDirectoryStore);
+
 function replaceAccountTags(
   accountId: string,
   organizationId: string,
@@ -3314,36 +3334,6 @@ export function provisionOrganization(input: {
   }
 }
 
-export function getAccount(
-  id: string,
-  organizationId?: string,
-): AccountView | null {
-  const row = (
-    organizationId
-      ? getDB()
-          .prepare(
-            'SELECT * FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL',
-          )
-          .get(id, organizationId)
-      : getDB()
-          .prepare('SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL')
-          .get(id)
-  ) as AccountRow | undefined;
-  return row ? toAccountView(row) : null;
-}
-
-export function listAccounts(
-  organizationId = DEFAULT_ORGANIZATION_ID,
-): AccountView[] {
-  return (
-    getDB()
-      .prepare(
-        'SELECT * FROM accounts WHERE organization_id = ? AND deleted_at IS NULL ORDER BY name, username',
-      )
-      .all(organizationId) as AccountRow[]
-  ).map(toAccountView);
-}
-
 export interface AccountPresenceView {
   accountId: string;
   online: boolean;
@@ -3402,50 +3392,6 @@ export function listAccountPresence(
       ? new Date(Number(row.last_seen_at_ms)).toISOString()
       : null,
   }));
-}
-
-export function authenticateAccount(
-  identifier: string,
-  password: string,
-): AccountView | null {
-  const normalized = normalizeUsername(identifier);
-  let row = getDB()
-    .prepare(
-      'SELECT * FROM accounts WHERE username = ? COLLATE NOCASE AND deleted_at IS NULL',
-    )
-    .get(normalized) as AccountRow | undefined;
-  if (!row) {
-    try {
-      row = getDB()
-        .prepare(
-          'SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL',
-        )
-        .get(normalizePhone(identifier)) as AccountRow | undefined;
-    } catch {
-      // 不是手机号时继续按“账号或密码错误”处理，避免泄露账号是否存在。
-    }
-  }
-  if (
-    !row ||
-    row.status !== 'active' ||
-    getOrganization(row.organization_id)?.status !== 'active' ||
-    !passwordMatches(password, row.password_hash)
-  )
-    return null;
-  return toAccountView(row);
-}
-
-export function findAccountByPhone(phone: string): AccountView | null {
-  const normalized = normalizePhone(phone);
-  const row = getDB()
-    .prepare('SELECT * FROM accounts WHERE phone = ? AND deleted_at IS NULL')
-    .get(normalized) as AccountRow | undefined;
-  return row ? toAccountView(row) : null;
-}
-
-export function findActiveAccountByPhone(phone: string): AccountView | null {
-  const account = findAccountByPhone(phone);
-  return account?.status === 'active' ? account : null;
 }
 
 /** 飞书发送方已绑定企业账号时，按租户开关决定是否允许自动回答。 */

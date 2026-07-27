@@ -67,6 +67,7 @@ describe('identity_organization invitation kernel', () => {
       .toBe(identityOrganization.handleOrganizationRoute);
     expect(legacyEmployeeRepository.createEmployee).toBe(enterpriseDb.createEmployee);
     expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf('function');
+    expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf('function');
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS)
       .toBe(30 * 24 * 60 * 60 * 1000);
@@ -126,5 +127,13 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).toContain('createAuthSessionFacade');
     expect(databaseFacade).not.toMatch(/export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/);
     expect(databaseFacade).not.toContain('function tokenHash(');
+  });
+
+  it('keeps account directory reads behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    expect(databaseFacade).toContain('createAccountDirectoryFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:getAccount|listAccounts|authenticateAccount|findAccountByPhone|findActiveAccountByPhone)/,
+    );
   });
 });
