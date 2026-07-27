@@ -121,7 +121,9 @@ describe('enterprise one-click schema contract', () => {
     expect(bundle).toContain('releaseChannel,');
     expect(bundle).toContain('schemaFrom: [2, 3, 4, 5, 6, 7]');
     expect(bundle).toContain('schemaTo: 7');
-    expect(bundle).toContain("'src/enterprise/repairNotifications.js',");
+    expect(bundle).toContain("const enterpriseDist = path.join(serverDist, 'src', 'enterprise');");
+    expect(bundle).toContain(".filter((relative) => relative.endsWith('.js'))");
+    expect(bundle).toContain("path.join(releaseRoot, 'src', 'enterprise', 'server.js')");
     expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 7');
     expect(migrationCheck).toContain('readiness.schemaVersion !== 7');
     expect(healthCheck).toContain('body.apiVersion !== 4');

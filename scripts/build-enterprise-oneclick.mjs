@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,19 +127,11 @@ try {
   });
 
   const serverDist = path.join(repoRoot, 'packages', 'server', 'dist');
+  const enterpriseDist = path.join(serverDist, 'src', 'enterprise');
   const serverFiles = [
-    'src/enterprise/bin.js',
-    'src/enterprise/server.js',
-    'src/enterprise/db.js',
-    'src/enterprise/credits.js',
-    'src/enterprise/featureFlagsAdmin.js',
-    'src/enterprise/park.js',
-    'src/enterprise/parkAdminPage.js',
-    'src/enterprise/repairNotifications.js',
-    'src/enterprise/publicInvite.js',
-    'src/enterprise/publicInvitePage.js',
-    'src/enterprise/localAgentPage.js',
-    'src/enterprise/public/otto-discovery.js',
+    ...filesBelow(enterpriseDist)
+      .filter((relative) => relative.endsWith('.js'))
+      .map((relative) => path.posix.join('src/enterprise', relative)),
     'src/sqlite-compat.js',
   ];
   for (const relative of serverFiles) {
@@ -273,6 +265,23 @@ export class FeatureFlagManager {
   );
   cpSync(path.join(sourceDir, 'runtime', 'run.mjs'), path.join(releaseRoot, 'run.mjs'));
   chmodSync(path.join(releaseRoot, 'run.mjs'), 0o755);
+
+  const smokeDataRoot = path.join(temporaryRoot, 'smoke-data');
+  mkdirSync(smokeDataRoot, { recursive: true });
+  run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `await import(${JSON.stringify(pathToFileURL(path.join(releaseRoot, 'src', 'enterprise', 'server.js')).href)});`,
+    ],
+    {
+      env: {
+        ...process.env,
+        OTTO_ENTERPRISE_DIR: smokeDataRoot,
+      },
+    },
+  );
 
   const releaseFiles = filesBelow(releaseRoot);
   const fileHashes = Object.fromEntries(
