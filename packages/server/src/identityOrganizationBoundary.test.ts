@@ -10,6 +10,8 @@ import * as legacyFacade from './enterprise/organizationInviteFacade.js';
 import * as legacyRepository from './enterprise/organizationInviteRepository.js';
 import * as legacyPublicInvite from './enterprise/publicInvite.js';
 import * as legacyOrganizationRoutes from './enterprise/organizationRoutes.js';
+import * as legacyEmployeeRepository from './enterprise/employeeRepository.js';
+import * as enterpriseDb from './enterprise/db.js';
 
 const sourceRoot = path.resolve(import.meta.dirname);
 const enterpriseDir = path.join(sourceRoot, 'enterprise');
@@ -63,6 +65,8 @@ describe('identity_organization invitation kernel', () => {
       .toBe(identityOrganization.buildOrganizationInviteLink);
     expect(legacyOrganizationRoutes.handleOrganizationRoute)
       .toBe(identityOrganization.handleOrganizationRoute);
+    expect(legacyEmployeeRepository.createEmployee).toBe(enterpriseDb.createEmployee);
+    expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf('function');
 
     for (const file of [
       'organizationInviteFacade.ts',
@@ -70,6 +74,7 @@ describe('identity_organization invitation kernel', () => {
       'organizationInviteTypes.ts',
       'publicInvite.ts',
       'organizationRoutes.ts',
+      'employeeRepository.ts',
     ]) {
       const source = fs.readFileSync(path.join(enterpriseDir, file), 'utf8');
       expect(source).toMatch(
@@ -95,14 +100,21 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'organizationInviteTypes.ts'),
       path.join(enterpriseDir, 'publicInvite.ts'),
       path.join(enterpriseDir, 'organizationRoutes.ts'),
+      path.join(enterpriseDir, 'employeeRepository.ts'),
     ]);
     const offenders = productionTypeScriptFiles(sourceRoot)
       .filter((file) => !legacyFiles.has(file))
       .filter((file) => !file.startsWith(`${moduleDir}${path.sep}`))
-      .filter((file) => /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes)\.js['"]/.test(
+      .filter((file) => /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes|employeeRepository)\.js['"]/.test(
         fs.readFileSync(file, 'utf8'),
       ))
       .map((file) => path.relative(sourceRoot, file));
     expect(offenders).toEqual([]);
+  });
+
+  it('does not let the enterprise database facade import the legacy employee repository', () => {
+    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    expect(databaseFacade).toContain('../modules/identity_organization/index.js');
+    expect(databaseFacade).not.toMatch(/from ['"]\.\/employeeRepository\.js['"]/);
   });
 });

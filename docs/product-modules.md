@@ -44,12 +44,18 @@ Agent 工具确认策略与企业 HTTP 路由鉴权分类统一通过该模块�
 
 `identity_organization` 的第一阶段企业邀请码内核位于
 `packages/server/src/modules/identity_organization/`。邀请码类型、HMAC 派生与校验 Repository、
-事务 Facade 和可信公开链接策略只有一份实现；账号、会话、企业结构和成员管理仍留待后续
+事务 Facade 和可信公开链接策略只有一份实现；账号、会话和企业结构持久化仍留待后续
 Issue 分批迁移。
 
 第二阶段将企业功能开关、部门和岗位 HTTP 路由迁入同一模块。路由通过
 `OrganizationRouteServices` 声明所需能力，由企业 dispatcher 注入当前数据库实现；模块本身
 不再反向导入 `enterprise/db.ts`。账号、会话以及组织结构的持久化实现仍待后续迁移。
+
+第三阶段将企业成员目录 Repository 与 Facade 迁入同一模块。成员创建、租户内查询、列表和
+离职操作只依赖 `MemberRepositoryStore`，由 `enterprise/db.ts` 注入 SQLite、组织存在性校验、
+部门职位归一和审计能力。旧 `enterprise/employeeRepository.ts` 仅保留兼容导出，消除了
+`db.ts -> employeeRepository.ts -> db.ts` 的循环依赖；旧 OrgMemoryStore 数据只允许回落到
+默认企业，不能混入其他租户。
 
 其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
 一次性移动跨业务链路代码。

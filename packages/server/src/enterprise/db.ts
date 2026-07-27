@@ -48,7 +48,6 @@ import {
 } from '../modules/commercial_control/index.js';
 import { buildCreditsTablesSql } from './creditsSchema.js';
 import { getAuditLogs, logAudit } from './auditRepository.js';
-import { createEmployee } from './employeeRepository.js';
 import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 import {
   createParkDataStatisticsTask as createParkDataStatisticsTaskInRepository,
@@ -75,6 +74,7 @@ import {
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
 import {
+  createMemberDirectoryFacade,
   createOrganizationInviteFacade,
   type OrganizationInviteView,
 } from '../modules/identity_organization/index.js';
@@ -2804,6 +2804,23 @@ export function resolveAssignmentIdentity(
   return { department, departmentId, positionTitle, positionId };
 }
 
+const memberDirectoryStore = {
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  organizationExists: (organizationId: string) =>
+    getOrganization(organizationId) !== null,
+  resolveAssignmentIdentity,
+  audit: (
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ) => logAudit(event, employeeId, detail, organizationId),
+};
+
+export const { createEmployee, getEmployee, listEmployees, offboardEmployee } =
+  createMemberDirectoryFacade(memberDirectoryStore);
+
 const organizationInviteStore = {
   db: getDB,
   inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
@@ -4954,16 +4971,6 @@ export type {
   AccountTokenUsageView,
   OrganizationUsageSummary,
 } from './tokenUsageRepository.js';
-
-// ============================================================
-// Employee operations
-// ============================================================
-export {
-  createEmployee,
-  getEmployee,
-  listEmployees,
-  offboardEmployee,
-} from './employeeRepository.js';
 
 // ============================================================
 // Task logging and reports
