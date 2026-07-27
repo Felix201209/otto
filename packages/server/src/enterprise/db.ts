@@ -3,10 +3,10 @@
  *
  * Enterprise SQLite database - all data stored on admin/owner device.
  * Zero cloud dependency. All data is local.
- * 存储层用 Node 内置 node:sqlite（见 sqlite-compat），无原生依赖。
+ * 存储层通过 data_platform 使用 Node 内置 node:sqlite，无原生依赖。
  */
 
-import { Database } from '../sqlite-compat.js';
+import { Database } from '../modules/data_platform/index.js';
 import {
   ORGANIZATION_FEATURE_KEYS,
   type OrganizationFeatureKey,

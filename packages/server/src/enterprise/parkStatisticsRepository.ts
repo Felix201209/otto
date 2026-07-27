@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Database } from '../sqlite-compat.js';
+import type { Database } from '../modules/data_platform/index.js';
 import type { OrganizationFeatures } from './db.js';
 import type {
   ParkDataStatisticsAssignmentStatus,

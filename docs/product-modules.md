@@ -33,6 +33,10 @@ Otto 采用模块化单体架构。模块用于建立代码、数据、权限、
 `packages/server/src/modules/commercial_control/`，统一通过该目录的 `index.ts` 暴露能力。
 原 `packages/server/src/enterprise/` 下的同名文件只保留兼容导出，不允许继续加入实现。
 
+`data_platform` 的第一阶段存储内核位于 `packages/server/src/modules/data_platform/`。
+服务端业务模块统一通过其公共入口使用 SQLite 数据库能力；业务表结构、SQL 和 Repository
+仍归各业务模块所有，不由数据平台接管业务判断。
+
 其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
 一次性移动跨业务链路代码。
 

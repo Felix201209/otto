@@ -4,7 +4,7 @@
 
 import os from 'os';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { Database } from '../../sqlite-compat.js';
+import type { Database } from '../data_platform/index.js';
 import {
   LICENSE_MODULE_FEATURES,
   licenseModuleCatalog,

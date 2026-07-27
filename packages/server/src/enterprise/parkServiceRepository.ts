@@ -1,4 +1,4 @@
-import type { Database } from '../sqlite-compat.js';
+import type { Database } from '../modules/data_platform/index.js';
 import type {
   ParkServiceSpecialistView,
   ParkServiceView,
