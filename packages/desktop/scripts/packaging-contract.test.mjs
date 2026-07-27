@@ -15,6 +15,13 @@ const require = createRequire(import.meta.url);
 const afterPack = require('./after-pack.cjs');
 
 describe('desktop packaging contract', () => {
+  it('declares every root-only release script dependency explicitly', async () => {
+    const rootPackageJson = JSON.parse(
+      await readFile(path.join(repoRoot, 'package.json'), 'utf8'),
+    );
+    expect(rootPackageJson.devDependencies.ora).toBe('^9.0.0');
+  });
+
   it('uses a real multi-resolution ICO for Windows packaging', async () => {
     const packageJson = JSON.parse(
       await readFile(path.join(packageRoot, 'package.json'), 'utf8'),

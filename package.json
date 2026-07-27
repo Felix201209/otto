@@ -112,6 +112,7 @@
     "lodash": "^4.17.21",
     "memfs": "^4.17.2",
     "mock-fs": "^5.5.0",
+    "ora": "^9.0.0",
     "prettier": "^3.5.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.30.1",
