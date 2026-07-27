@@ -74,6 +74,7 @@ import {
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
 import {
+  createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationInviteFacade,
   type OrganizationInviteView,
@@ -3080,10 +3081,6 @@ export function isAcceptableAccountPassword(password: string): boolean {
   }
 }
 
-function tokenHash(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
 function tagsForAccount(accountId: string, organizationId: string): string[] {
   return (
     getDB()
@@ -4034,70 +4031,20 @@ export function deleteAccount(
   }
 }
 
-export function createAuthSession(
-  accountId: string,
-  ttlMs = 30 * 24 * 60 * 60 * 1000,
-): {
-  token: string;
-  expiresAt: string;
-} {
-  const account = getAccount(accountId);
-  if (
-    !account ||
-    getOrganization(account.organizationId)?.status !== 'active'
-  ) {
-    throw new Error('Account not found');
-  }
-  const token = randomBytes(32).toString('base64url');
-  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-  getDB()
-    .prepare(
-      `INSERT INTO auth_sessions (id, organization_id, account_id, token_hash, expires_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(
-      `session_${randomUUID()}`,
-      account.organizationId,
-      accountId,
-      tokenHash(token),
-      expiresAt,
-    );
-  return { token, expiresAt };
-}
+const authSessionStore = {
+  db: getDB,
+  now: Date.now,
+  getAccount,
+  isOrganizationActive: (organizationId: string) =>
+    getOrganization(organizationId)?.status === 'active',
+  toAccountView,
+};
 
-export function getAccountBySession(token: string): AccountView | null {
-  if (!token) return null;
-  const row = getDB()
-    .prepare(
-      `SELECT a.* FROM auth_sessions s
-     JOIN accounts a ON a.id = s.account_id
-     JOIN organizations o ON o.id = a.organization_id
-     WHERE s.token_hash = ? AND s.revoked_at IS NULL
-       AND a.status = 'active' AND a.deleted_at IS NULL AND o.status = 'active'`,
-    )
-    .get(tokenHash(token)) as AccountRow | undefined;
-  if (!row) return null;
-  const session = getDB()
-    .prepare('SELECT expires_at FROM auth_sessions WHERE token_hash = ?')
-    .get(tokenHash(token)) as { expires_at: string } | undefined;
-  if (!session || new Date(session.expires_at).getTime() <= Date.now())
-    return null;
-  getDB()
-    .prepare(
-      "UPDATE auth_sessions SET last_used_at = datetime('now') WHERE token_hash = ?",
-    )
-    .run(tokenHash(token));
-  return toAccountView(row);
-}
-
-export function revokeAuthSession(token: string): void {
-  if (!token) return;
-  getDB()
-    .prepare(
-      "UPDATE auth_sessions SET revoked_at = datetime('now') WHERE token_hash = ?",
-    )
-    .run(tokenHash(token));
-}
+export const {
+  createAuthSession,
+  getAccountBySession,
+  revokeAuthSession,
+} = createAuthSessionFacade<AccountView, AccountRow>(authSessionStore);
 
 const SMS_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SMS_CHALLENGE_COOLDOWN_MS = 60 * 1000;

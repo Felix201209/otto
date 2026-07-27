@@ -67,6 +67,9 @@ describe('identity_organization invitation kernel', () => {
       .toBe(identityOrganization.handleOrganizationRoute);
     expect(legacyEmployeeRepository.createEmployee).toBe(enterpriseDb.createEmployee);
     expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf('function');
+    expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
+    expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS)
+      .toBe(30 * 24 * 60 * 60 * 1000);
 
     for (const file of [
       'organizationInviteFacade.ts',
@@ -116,5 +119,12 @@ describe('identity_organization invitation kernel', () => {
     const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
     expect(databaseFacade).toContain('../modules/identity_organization/index.js');
     expect(databaseFacade).not.toMatch(/from ['"]\.\/employeeRepository\.js['"]/);
+  });
+
+  it('keeps auth-session implementation behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    expect(databaseFacade).toContain('createAuthSessionFacade');
+    expect(databaseFacade).not.toMatch(/export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/);
+    expect(databaseFacade).not.toContain('function tokenHash(');
   });
 });

@@ -104,11 +104,16 @@ describe('enterprise auth identity synchronization', () => {
     const mainSource = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
     expect(mainSource).toContain('const ENTERPRISE_IDENTITY_REFRESH_INTERVAL_MS = 2 * 60_000');
 
-    const enterpriseDbSource = readFileSync(
-      resolve(__dirname, '../../../server/src/enterprise/db.ts'),
+    const authSessionSource = readFileSync(
+      resolve(
+        __dirname,
+        '../../../server/src/modules/identity_organization/authSessionRepository.ts',
+      ),
       'utf8',
     );
-    expect(enterpriseDbSource).toContain('ttlMs = 30 * 24 * 60 * 60 * 1000');
+    expect(authSessionSource).toContain(
+      'AUTH_SESSION_DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000',
+    );
   });
 
   it('主进程退出处理只清企业身份，不删除本机对话、模型、知识库或 Skill', () => {
