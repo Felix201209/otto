@@ -75,25 +75,13 @@ import {
   setParkServiceSpecialist as setParkServiceSpecialistInRepository,
   updateParkService as updateParkServiceInRepository,
 } from './parkServiceRepository.js';
-import {
-  getOrganizationInvite as getOrganizationInviteFromRepository,
-  inspectOrganizationInvite as inspectOrganizationInviteFromRepository,
-  issueOrganizationInvite as issueOrganizationInviteInRepository,
-  normalizeOrganizationInviteCode as normalizeOrganizationInviteCodeFromRepository,
-  resolveOrganizationInvite as resolveOrganizationInviteFromRepository,
-  resolveOrganizationInviteWithDefaults as resolveOrganizationInviteWithDefaultsFromRepository,
-} from './organizationInviteRepository.js';
+import { createOrganizationInviteFacade } from './organizationInviteFacade.js';
 import type {
   DeploymentLicenseView,
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
-import type {
-  OrganizationInviteInspection,
-  OrganizationInviteIssueInput,
-  OrganizationInviteResolution,
-  OrganizationInviteView,
-} from './organizationInviteTypes.js';
+import type { OrganizationInviteView } from './organizationInviteTypes.js';
 import type {
   ParkInviteView,
   ParkTenantProfileView,
@@ -2311,73 +2299,14 @@ const organizationInviteStore = {
   logAudit,
 };
 
-function normalizeOrganizationInviteCode(code: string): string {
-  return normalizeOrganizationInviteCodeFromRepository(code);
-}
-
-/**
- * Inspect one derived invite code without returning organization metadata.
- * Public landing pages use this to distinguish a missing link from a link that
- * existed but is no longer usable, while keeping tenant details private.
- */
-export function inspectOrganizationInvite(
-  code: string,
-  now = Date.now(),
-): OrganizationInviteInspection {
-  return inspectOrganizationInviteFromRepository(
-    organizationInviteStore,
-    code,
-    now,
-  );
-}
-
-export function issueOrganizationInvite(
-  organizationId: string,
-  now = Date.now(),
-  createdByAccountId?: string | null,
-  input?: string | OrganizationInviteIssueInput | null,
-): OrganizationInviteView {
-  return issueOrganizationInviteInRepository(
-    organizationInviteStore,
-    organizationId,
-    now,
-    createdByAccountId,
-    input,
-  );
-}
-
-export function getOrganizationInvite(
-  organizationId: string,
-  now = Date.now(),
-): OrganizationInviteView | null {
-  return getOrganizationInviteFromRepository(
-    organizationInviteStore,
-    organizationId,
-    now,
-  );
-}
-
-export function resolveOrganizationInviteWithDefaults(
-  code: string,
-  now = Date.now(),
-): OrganizationInviteResolution | null {
-  return resolveOrganizationInviteWithDefaultsFromRepository(
-    organizationInviteStore,
-    code,
-    now,
-  );
-}
-
-export function resolveOrganizationInvite(
-  code: string,
-  now = Date.now(),
-): OrganizationView | null {
-  return resolveOrganizationInviteFromRepository(
-    organizationInviteStore,
-    code,
-    now,
-  );
-}
+export const {
+  normalizeOrganizationInviteCode,
+  inspectOrganizationInvite,
+  issueOrganizationInvite,
+  getOrganizationInvite,
+  resolveOrganizationInviteWithDefaults,
+  resolveOrganizationInvite,
+} = createOrganizationInviteFacade(organizationInviteStore);
 
 interface CurrentInvitationAssignment {
   department: string | null;
