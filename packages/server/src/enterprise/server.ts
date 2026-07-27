@@ -50,7 +50,7 @@ import {
   isLicenseMaintenanceRoute,
   isMemberRoute,
   isPublicSimpleParkRoute,
-} from './enterpriseRouteGuards.js';
+} from '../modules/authorization/index.js';
 import {
   createLoginRateLimiter,
   extractToken,

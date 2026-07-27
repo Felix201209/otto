@@ -71,7 +71,7 @@ import {
 import {
   shouldRequestConfirmation,
   type RuntimeAuthorizationMode,
-} from './authorizationPolicy.js';
+} from './modules/authorization/index.js';
 
 const MODEL_CONNECTION_ERROR =
   '当前模型连接失败，已重试但仍无法访问其 API。请在模型菜单切换到其他模型，或在设置中检查 Base URL、API Key 和网络代理。';
