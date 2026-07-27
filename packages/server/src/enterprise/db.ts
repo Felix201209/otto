@@ -80,6 +80,8 @@ import {
   createAuthSessionFacade,
   createMemberDirectoryFacade,
   createOrganizationInviteFacade,
+  createOrganizationProvisioningFacade,
+  normalizeOrganizationSlug,
   replaceAccountTagsInRepository,
   type OrganizationInviteView,
 } from '../modules/identity_organization/index.js';
@@ -1939,39 +1941,6 @@ function toOrganizationView(row: OrganizationRow): OrganizationView {
   };
 }
 
-function normalizeOrganizationSlug(input: string): string {
-  const slug = input
-    .trim()
-    .toLocaleLowerCase('en-US')
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  if (!slug || slug.length > 48)
-    throw new Error('企业标识只能使用字母、数字和连字符');
-  return slug;
-}
-
-export function createOrganization(input: {
-  name: string;
-  slug?: string;
-  now?: number;
-}): OrganizationView {
-  const name = input.name.trim();
-  if (!name || name.length > 80)
-    throw new Error('企业名称不能为空且不能超过 80 个字符');
-  const slug = normalizeOrganizationSlug(
-    input.slug || `company-${randomBytes(5).toString('hex')}`,
-  );
-  const id = `org_${randomUUID()}`;
-  getDB()
-    .prepare(
-      `INSERT INTO organizations (id, name, slug, invite_secret)
-     VALUES (?, ?, ?, ?)`,
-    )
-    .run(id, name, slug, randomBytes(32).toString('hex'));
-  logAudit('organization_create', null, `Organization ${slug} created`, id);
-  return getOrganization(id)!;
-}
-
 export function getOrganization(id: string): OrganizationView | null {
   const row = getDB()
     .prepare('SELECT * FROM organizations WHERE id = ?')
@@ -3123,6 +3092,26 @@ const accountLifecycleStore = {
 export const { createAccount, updateAccount, deleteAccount } =
   createAccountLifecycleFacade<AccountView>(accountLifecycleStore);
 
+const organizationProvisioningStore = {
+  db: getDB,
+  now: Date.now,
+  createOrganizationId: () => `org_${randomUUID()}`,
+  createInviteSecret: () => randomBytes(32).toString('hex'),
+  createDefaultSlugSuffix: () => randomBytes(5).toString('hex'),
+  getOrganization,
+  createAccount,
+  issueOrganizationInvite,
+  logAudit,
+};
+
+/** 企业、首位管理员和首个 7 天邀请要么全部成功，要么全部回滚。 */
+export const { createOrganization, provisionOrganization } =
+  createOrganizationProvisioningFacade<
+    OrganizationView,
+    AccountView,
+    OrganizationInviteView
+  >(organizationProvisioningStore);
+
 const accountRegistrationStore = {
   db: getDB,
   now: Date.now,
@@ -3179,56 +3168,6 @@ export const {
 } = createAccountRegistrationFacade<AccountView, OrganizationView>(
   accountRegistrationStore,
 );
-
-/**
- * 平台开户的唯一写入口：企业、首位管理员和首个 7 天邀请要么全部成功，
- * 要么全部回滚，避免账号冲突或邀请失败后留下不可管理的孤儿企业。
- */
-export function provisionOrganization(input: {
-  name: string;
-  slug?: string;
-  admin: {
-    username: string;
-    password: string;
-    name: string;
-    phone?: string | null;
-  };
-  now?: number;
-}): {
-  organization: OrganizationView;
-  admin: AccountView;
-  invite: OrganizationInviteView;
-} {
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const organization = createOrganization({
-      name: input.name,
-      slug: input.slug,
-      now: input.now,
-    });
-    const admin = createAccount({
-      organizationId: organization.id,
-      username: input.admin.username,
-      password: input.admin.password,
-      name: input.admin.name,
-      phone: input.admin.phone,
-      role: '企业管理员',
-      tags: ['企业管理员'],
-      isAdmin: true,
-    });
-    const invite = issueOrganizationInvite(
-      organization.id,
-      input.now ?? Date.now(),
-      admin.id,
-    );
-    database.exec('COMMIT');
-    return { organization, admin, invite };
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-}
 
 export interface AccountPresenceView {
   accountId: string;

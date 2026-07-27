@@ -105,6 +105,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createAccountRegistrationFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.createOrganizationProvisioningFacade,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
@@ -213,6 +216,17 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).toContain('createAccountRegistrationFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createSelfRegisteredAccount|createPersonalRegisteredAccount|joinOrganizationWithInvite)/,
+    );
+  });
+
+  it('keeps organization provisioning behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createOrganizationProvisioningFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:createOrganization|provisionOrganization)\s*\(/,
     );
   });
 });

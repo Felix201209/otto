@@ -5,6 +5,8 @@
 export * from './organizationInviteFacade.js';
 export * from './organizationInviteRepository.js';
 export type * from './organizationInviteTypes.js';
+export * from './organizationProvisioningFacade.js';
+export * from './organizationProvisioningRepository.js';
 export * from './accountDirectoryFacade.js';
 export * from './accountDirectoryRepository.js';
 export * from './accountLifecycleFacade.js';
