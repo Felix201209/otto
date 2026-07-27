@@ -181,18 +181,6 @@ jobs:
           } > "$NOTES_FILE"
           echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Create draft GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: ${{ env.RELEASES_REPO }}
-          token: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Otto v${{ steps.version.outputs.version }}
-          draft: true
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
-          files: ${{ steps.artifacts.outputs.files }}
-          body_path: ${{ steps.release_notes.outputs.path }}
-
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -202,6 +190,19 @@ jobs:
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
           retention-days: 30
+
+      - name: Create draft GitHub release
+        if: github.repository == 'Felix201209/otto'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASES_REPO }}
+          token: ${{ secrets.OTTO_RELEASES_TOKEN }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Otto v${{ steps.version.outputs.version }}
+          draft: true
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+          files: ${{ steps.artifacts.outputs.files }}
+          body_path: ${{ steps.release_notes.outputs.path }}
 
   deploy-enterprise:
     name: Deploy Enterprise Server
@@ -413,7 +414,7 @@ jobs:
         )
       }}
     env:
-      GH_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN }}
 
     steps:
       - name: Publish release after deployments pass

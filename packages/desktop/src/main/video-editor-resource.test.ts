@@ -3,7 +3,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveVideoEditorIndex } from './video-editor-resource.js';
 
@@ -13,7 +13,11 @@ describe('video editor packaged resource', () => {
       isPackaged: true,
       resourcesPath: '/Applications/Otto.app/Contents/Resources',
       moduleDir: '/Applications/Otto.app/Contents/Resources/app.asar/dist/main',
-    })).toBe('/Applications/Otto.app/Contents/Resources/video-editor/index.html');
+    })).toBe(join(
+      '/Applications/Otto.app/Contents/Resources',
+      'video-editor',
+      'index.html',
+    ));
   });
 
   it('开发态仍从仓库 resources/video-editor 读取', () => {
@@ -21,7 +25,16 @@ describe('video editor packaged resource', () => {
       isPackaged: false,
       resourcesPath: '/unused',
       moduleDir: '/workspace/packages/desktop/dist/main',
-    })).toBe('/workspace/resources/video-editor/index.html');
+    })).toBe(resolve(
+      '/workspace/packages/desktop/dist/main',
+      '..',
+      '..',
+      '..',
+      '..',
+      'resources',
+      'video-editor',
+      'index.html',
+    ));
   });
 
   it('macOS 与 Windows 安装包默认不内置视频编辑器资源', () => {

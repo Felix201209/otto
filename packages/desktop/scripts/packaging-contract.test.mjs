@@ -145,6 +145,14 @@ describe('desktop packaging contract', () => {
     expect(workflow).toContain('sha256sum -c SHA256SUMS');
     expect(workflow).toContain('latest.json.next');
     expect(workflow).toContain('Windows no-proxy download');
+    expect(workflow.indexOf('name: Upload workflow artifacts')).toBeLessThan(
+      workflow.indexOf('name: Create draft GitHub release'),
+    );
+    expect(workflow).toContain("if: github.repository == 'Felix201209/otto'");
+    expect(workflow).toContain('token: ${{ secrets.OTTO_RELEASES_TOKEN }}');
+    expect(workflow).not.toContain(
+      'secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN',
+    );
   });
 
   it('uses the shared update manifest verifier in the local release gate', async () => {
