@@ -175,7 +175,7 @@ curl --fail --show-error \
 
 - `status: ok`
 - `apiVersion: 4`
-- `schemaVersion: 7`
+- `schemaVersion: 11`
 - `db: connected`
 - `sms.configured: true`
 - `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`

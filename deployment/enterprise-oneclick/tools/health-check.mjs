@@ -46,7 +46,7 @@ if (
   || body.apiVersion !== 4
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== 7
+  || body.schemaVersion !== 11
   || body.db !== 'connected'
   || missing.length > 0
 ) {

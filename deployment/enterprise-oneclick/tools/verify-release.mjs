@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7];
+const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 function fail(message) {
   process.stderr.write(`[Otto Release] ${message}\n`);
@@ -49,7 +49,7 @@ if (
   || manifest.database === null
   || Array.isArray(manifest.database)
   || JSON.stringify(manifest.database.schemaFrom) !== JSON.stringify(EXPECTED_SCHEMA_FROM)
-  || manifest.database.schemaTo !== 7
+  || manifest.database.schemaTo !== 11
   || manifest.database.futureSchemaPolicy !== 'reject'
 ) {
   fail('manifest.json 格式不正确');

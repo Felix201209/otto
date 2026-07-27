@@ -312,8 +312,8 @@ export class FeatureFlagManager {
       supportedArchitectures: ['linux-x64', 'linux-arm64'],
     },
     database: {
-      schemaFrom: [2, 3, 4, 5, 6, 7],
-      schemaTo: 7,
+      schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      schemaTo: 11,
       futureSchemaPolicy: 'reject',
     },
     files: fileHashes,

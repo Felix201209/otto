@@ -22,7 +22,7 @@ let database;
 try {
   database = await import(dbModuleUrl);
   const readiness = database.getDatabaseReadiness();
-  if (readiness.ready !== true || readiness.schemaVersion !== 7) {
+  if (readiness.ready !== true || readiness.schemaVersion !== 11) {
     fail(`迁移后 readiness 不正确：${JSON.stringify(readiness)}`);
   }
   process.stdout.write(`${JSON.stringify(readiness)}\n`);
