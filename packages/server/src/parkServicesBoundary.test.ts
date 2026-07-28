@@ -13,7 +13,7 @@ const moduleDir = path.join(sourceRoot, 'modules', 'park_services');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('park services module boundary', () => {
-  it('publishes lifecycle, membership, publications, resources, statistics, and service configuration through one entrypoint', () => {
+  it('publishes lifecycle, membership, publications, resources, statistics, tickets, and service configuration through one entrypoint', () => {
     expect(parkServices.createParkLifecycleFacade).toBeTypeOf('function');
     expect(parkServices.createParkInRepository).toBeTypeOf('function');
     expect(parkServices.createParkAsPlatformInRepository).toBeTypeOf(
@@ -46,6 +46,10 @@ describe('park services module boundary', () => {
     expect(parkServices.getParkServiceStatisticsFromRepository).toBeTypeOf(
       'function',
     );
+    expect(parkServices.createParkTicketFacade).toBeTypeOf('function');
+    expect(parkServices.createTicket).toBeTypeOf('function');
+    expect(parkServices.updateTicket).toBeTypeOf('function');
+    expect(parkServices.normalizeParkServiceFormData).toBeTypeOf('function');
     expect(parkServices.createParkServiceConfigurationFacade).toBeTypeOf(
       'function',
     );
@@ -95,6 +99,11 @@ describe('park services module boundary', () => {
       ),
     ).toBe(false);
     expect(
+      fs.existsSync(
+        path.join(sourceRoot, 'enterprise', 'ticketRepository.ts'),
+      ),
+    ).toBe(false);
+    expect(
       fs.existsSync(path.join(sourceRoot, 'enterprise', 'parkInviteTypes.ts')),
     ).toBe(false);
     expect(
@@ -140,6 +149,7 @@ describe('park services module boundary', () => {
     expect(databaseFacade).toContain('createParkPublicationFacade');
     expect(databaseFacade).toContain('createParkResourceFacade');
     expect(databaseFacade).toContain('createParkStatisticsFacade');
+    expect(databaseFacade).toContain('createParkTicketFacade');
     expect(databaseFacade).not.toContain("from './parkInviteRepository.js'");
     expect(databaseFacade).not.toContain("from './parkServiceRepository.js'");
     expect(databaseFacade).not.toContain(
@@ -154,6 +164,7 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain(
       "from './parkUsageStatisticsRepository.js'",
     );
+    expect(databaseFacade).not.toContain("from './ticketRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO park_invites');
     expect(databaseFacade).not.toContain('INSERT INTO park_tenant_profiles');
     expect(databaseFacade).not.toContain('INSERT INTO parks');
@@ -173,6 +184,10 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain('INSERT INTO park_meeting_bookings');
     expect(databaseFacade).not.toContain(
       'INSERT INTO park_data_statistics_tasks',
+    );
+    expect(databaseFacade).not.toContain('INSERT INTO it_tickets');
+    expect(databaseFacade).not.toContain(
+      'UPDATE it_tickets SET response_type',
     );
   });
 });

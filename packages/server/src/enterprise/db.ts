@@ -21,6 +21,7 @@ import {
   createParkResourceFacade,
   createParkServiceConfigurationFacade,
   createParkStatisticsFacade,
+  createParkTicketFacade,
   type ParkInviteView,
   type ParkDataStatisticsAssignmentView,
   type ParkDataStatisticsTaskView,
@@ -137,26 +138,10 @@ export type {
   ParkTenantProfileView,
   ParkTenantServiceStatistics,
   ParkView,
-} from '../modules/park_services/index.js';
-export {
-  createTicket,
-  getTicketCreatorForAccount,
-  getTicketForAccount,
-  getTicketNotificationRecipients,
-  getTicketTransferredNotificationRecipients,
-  isTicketFeatureEnabledForAccount,
-  listTicketInbox,
-  listTicketsForAccount,
-  markTicketRead,
-  normalizeParkServiceFormData,
-  recordTicketNotification,
-  updateTicket,
-} from './ticketRepository.js';
-export type {
   TicketHistoryAction,
   TicketHistoryEntry,
   TicketView,
-} from './ticketRepository.js';
+} from '../modules/park_services/index.js';
 
 const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
@@ -3056,6 +3041,58 @@ export function removeParkServiceSpecialist(input: {
 }): void {
   parkServiceConfiguration.removeSpecialist(input);
 }
+
+const parkTicketStore = {
+  db: getDB,
+  getAccount,
+  isOrganizationActive: (organizationId: string) =>
+    getOrganization(organizationId)?.status === 'active',
+  getOrganizationFeatures,
+  getPark,
+  getParkForOrganization,
+  listParkServices,
+  listParkServiceSpecialists,
+  listActiveOrganizationAdmins: (organizationId: string) =>
+    listAccounts(organizationId).filter(
+      (account) => account.isAdmin && account.status === 'active',
+    ),
+  listActiveAccountsByDepartment: (
+    organizationId: string,
+    department: string,
+    excludeAccountId: string,
+  ) => listAccounts(organizationId).filter(
+    (account) => account.status === 'active'
+      && account.department === department
+      && account.id !== excludeAccountId,
+  ),
+  listActiveAccountsByTags: (organizationId: string, tags: string[]) =>
+    listAccounts(organizationId).filter(
+      (account) => account.status === 'active'
+        && tags.every((tag) => account.tags.includes(tag)),
+    ),
+  normalizeTags,
+  isParkServiceId: (serviceId: string) => PARK_SERVICE_IDS.has(serviceId),
+  createTicketId: () => `ticket_${randomUUID()}`,
+  createTicketEventId: () => `ticket_event_${randomUUID()}`,
+  createTicketNotificationId: () => `ticket_notice_${randomUUID()}`,
+  audit: logAudit,
+};
+const parkTickets = createParkTicketFacade<AccountView>(parkTicketStore);
+
+export const {
+  createTicket,
+  getTicketCreatorForAccount,
+  getTicketForAccount,
+  getTicketNotificationRecipients,
+  getTicketTransferredNotificationRecipients,
+  isTicketFeatureEnabledForAccount,
+  listTicketInbox,
+  listTicketsForAccount,
+  markTicketRead,
+  normalizeParkServiceFormData,
+  recordTicketNotification,
+  updateTicket,
+} = parkTickets;
 
 const parkResourceStore = {
   db: getDB,

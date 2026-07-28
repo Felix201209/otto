@@ -2,77 +2,50 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { randomUUID } from 'node:crypto';
+import type { Database } from '../data_platform/index.js';
+import { normalizeParkServiceFormData } from './parkServiceFormRules.js';
+import type {
+  CreateTicketInput,
+  ParkTicketAccount,
+  ParkTicketPark,
+  ParkTicketService,
+  ParkTicketSpecialist,
+  RecordTicketNotificationInput,
+  TicketHistoryAction,
+  TicketHistoryEntry,
+  TicketView,
+  UpdateTicketInput,
+} from './parkTicketTypes.js';
 
-import {
-  type AccountRow,
-  type AccountView,
-  getAccount,
-  getDB,
-  getOrganizationFeatures,
-  getPark,
-  getParkForOrganization,
-  listParkServices,
-  listParkServiceSpecialists,
-  logAudit,
-  normalizeTags,
-  PARK_SERVICE_IDS,
-  toAccountView,
-} from './db.js';
-
-export type TicketHistoryAction =
-  | 'created'
-  | 'accept'
-  | 'respond'
-  | 'transfer'
-  | 'complete'
-  | 'confirm';
-
-export interface TicketHistoryEntry {
-  id: string;
-  action: TicketHistoryAction;
-  statusBefore: string | null;
-  statusAfter: string;
-  responseType: string | null;
-  responseText: string | null;
-  createdAt: string;
-  actor: { id: string; name: string } | null;
-}
-
-export interface TicketView {
-  id: string;
-  parkId: string | null;
-  serviceId: string;
-  title: string;
-  description: string;
-  formData: Record<string, string>;
-  targetTags: string[];
-  status: string;
-  category: string | null;
-  location: string | null;
-  urgency: string | null;
-  contact: string | null;
-  contactPhone: string | null;
-  responseType: string | null;
-  responseText: string | null;
-  responseAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  creator: Pick<AccountView, 'id' | 'name' | 'username'>;
-  recipientCount: number;
-  recipients: Array<Pick<AccountView, 'id' | 'name'>>;
-  deliveryStatus?: string;
-  readAt?: string | null;
-  isCreator?: boolean;
-  isRecipient?: boolean;
-  history: TicketHistoryEntry[];
-  notifications: Array<{
-    channel: 'otto' | 'sms' | 'feishu';
-    event: string;
-    status: 'sent' | 'failed' | 'skipped';
-    detail: string | null;
-    createdAt: string;
-  }>;
+export interface ParkTicketRepositoryStore<
+  TAccount extends ParkTicketAccount = ParkTicketAccount,
+> {
+  db(): Database;
+  getAccount(accountId: string, organizationId?: string): TAccount | null;
+  isOrganizationActive(organizationId: string): boolean;
+  getOrganizationFeatures(organizationId: string): { park_service: boolean };
+  getPark(parkId: string): ParkTicketPark | null;
+  getParkForOrganization(organizationId: string): ParkTicketPark | null;
+  listParkServices(parkId: string): ParkTicketService[];
+  listParkServiceSpecialists(parkId: string): ParkTicketSpecialist[];
+  listActiveOrganizationAdmins(organizationId: string): TAccount[];
+  listActiveAccountsByDepartment(
+    organizationId: string,
+    department: string,
+    excludeAccountId: string,
+  ): TAccount[];
+  listActiveAccountsByTags(organizationId: string, tags: string[]): TAccount[];
+  normalizeTags(tags: string[] | undefined): string[];
+  isParkServiceId(serviceId: string): boolean;
+  createTicketId(): string;
+  createTicketEventId(): string;
+  createTicketNotificationId(): string;
+  audit(
+    event: string,
+    employeeId: string | null,
+    detail: string,
+    organizationId: string,
+  ): void;
 }
 
 interface TicketRow {
@@ -114,23 +87,26 @@ interface TicketEventRow {
   created_at: string;
 }
 
-function recordTicketEvent(input: {
-  organizationId: string;
-  ticketId: string;
-  actorAccountId: string | null;
-  action: TicketHistoryAction;
-  statusBefore: string | null;
-  statusAfter: string;
-  responseType?: string | null;
-  responseText?: string | null;
-}): void {
-  getDB().prepare(
+function recordTicketEvent<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: {
+    organizationId: string;
+    ticketId: string;
+    actorAccountId: string | null;
+    action: TicketHistoryAction;
+    statusBefore: string | null;
+    statusAfter: string;
+    responseType?: string | null;
+    responseText?: string | null;
+  },
+): void {
+  store.db().prepare(
     `INSERT INTO ticket_events
      (id, organization_id, ticket_id, actor_account_id, action, status_before, status_after,
       response_type, response_text)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    `ticket_event_${randomUUID()}`,
+    store.createTicketEventId(),
     input.organizationId,
     input.ticketId,
     input.actorAccountId,
@@ -142,24 +118,28 @@ function recordTicketEvent(input: {
   );
 }
 
-function ticketView(id: string, viewerAccountId?: string): TicketView {
-  const row = getDB()
+function ticketView<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  id: string,
+  viewerAccountId?: string,
+): TicketView {
+  const row = store.db()
     .prepare('SELECT * FROM it_tickets WHERE id = ?')
     .get(id) as TicketRow | undefined;
   if (!row) throw new Error('Ticket not found');
-  const activeCreator = getAccount(
+  const activeCreator = store.getAccount(
     row.created_by_account_id,
     row.organization_id,
   );
   const creatorRow = activeCreator
     ? null
-    : (getDB()
+    : (store.db()
         .prepare(
           `SELECT id FROM accounts WHERE id = ? AND organization_id = ? AND deleted_at IS NOT NULL`,
         )
         .get(row.created_by_account_id, row.organization_id) as
         { id: string } | undefined);
-  const creator: Pick<AccountView, 'id' | 'name' | 'username'> | null =
+  const creator: { id: string; name: string; username: string } | null =
     activeCreator
       ? {
           id: activeCreator.id,
@@ -170,7 +150,7 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
         ? { id: creatorRow.id, name: '已删除账号', username: '已删除账号' }
         : null;
   if (!creator) throw new Error('Ticket creator not found');
-  const deliveries = getDB()
+  const deliveries = store.db()
     .prepare(
       `SELECT account_id, status, read_at FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? ORDER BY delivered_at`,
@@ -182,15 +162,18 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   }>;
   const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'transferred');
   const recipientAccounts = activeDeliveries
-    .map((delivery) => getAccount(delivery.account_id))
-    .filter((account): account is AccountView => account !== null);
-  const viewer = viewerAccountId ? getAccount(viewerAccountId) : null;
+    .map((delivery) => store.getAccount(delivery.account_id))
+    .filter((account): account is TAccount => (
+      account?.status === 'active'
+      && store.isOrganizationActive(account.organizationId)
+    ));
+  const viewer = viewerAccountId ? store.getAccount(viewerAccountId) : null;
   const canSeeRecipients = viewer?.isAdmin || viewerAccountId === creator.id;
   const viewerDelivery = viewerAccountId
     ? deliveries.find((delivery) => delivery.account_id === viewerAccountId)
     : undefined;
   const notifications = viewer?.isAdmin
-    ? (getDB()
+    ? (store.db()
         .prepare(
           `SELECT channel, event, status, detail, created_at FROM ticket_notifications
      WHERE ticket_id = ? ORDER BY created_at`,
@@ -218,7 +201,7 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   } catch {
     formData = {};
   }
-  const eventRows = getDB().prepare(
+  const eventRows = store.db().prepare(
     `SELECT e.id, e.rowid AS event_order, e.actor_account_id, a.name AS actor_name,
             e.action, e.status_before, e.status_after, e.response_type, e.response_text, e.created_at
      FROM ticket_events e
@@ -277,15 +260,17 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   });
   const processingStatus = row.service_id === 'repair' ? '维修中' : '处理中';
   addLegacyEvent('accept', row.accepted_at, '待接单', processingStatus, 10);
-  addLegacyEvent(
-    'respond',
-    row.response_at,
-    row.accepted_at ? processingStatus : '待接单',
-    row.response_type === '已完成维修' ? '待验收' : row.status,
-    20,
-    row.response_type,
-    row.response_text,
-  );
+  if (!hasAction('transfer')) {
+    addLegacyEvent(
+      'respond',
+      row.response_at,
+      row.accepted_at ? processingStatus : '待接单',
+      row.response_type === '已完成维修' ? '待验收' : row.status,
+      20,
+      row.response_type,
+      row.response_text,
+    );
+  }
   const hasTerminalEvent = eventRows.some((event) => event.status_after === '已完成');
   if (!hasTerminalEvent && !eventRows.some((event) => event.status_after === '待验收')) {
     addLegacyEvent('complete', row.completed_at, processingStatus, '待验收', 30);
@@ -344,13 +329,18 @@ function ticketView(id: string, viewerAccountId?: string): TicketView {
   };
 }
 
-export function getTicketForAccount(
+export function getTicketForAccount<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
   id: string,
   accountId: string,
 ): TicketView | null {
-  const account = getAccount(accountId);
-  if (!account) return null;
-  const row = getDB()
+  const account = store.getAccount(accountId);
+  if (
+    !account
+    || account.status !== 'active'
+    || !store.isOrganizationActive(account.organizationId)
+  ) return null;
+  const row = store.db()
     .prepare(
       'SELECT organization_id, park_id, created_by_account_id FROM it_tickets WHERE id = ?',
     )
@@ -362,16 +352,21 @@ export function getTicketForAccount(
       }
     | undefined;
   if (!row) return null;
-  const delivery = getDB()
+  if (!store.isOrganizationActive(row.organization_id)) return null;
+  const delivery = store.db()
     .prepare(
-      'SELECT 1 FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+      `SELECT 1 FROM ticket_deliveries
+       WHERE ticket_id = ? AND account_id = ? AND organization_id = ?`,
     )
-    .get(id, accountId);
-  const park = row.park_id ? getPark(row.park_id) : null;
+    .get(id, accountId, row.organization_id);
+  const park = row.park_id ? store.getPark(row.park_id) : null;
+  if (row.park_id && (!park || park.status !== 'active')) return null;
   const isCreatorOrganizationAdmin =
     account.isAdmin && account.organizationId === row.organization_id;
   const isParkAdmin =
-    account.isAdmin && park?.adminOrganizationId === account.organizationId;
+    account.isAdmin
+    && park?.status === 'active'
+    && park.adminOrganizationId === account.organizationId;
   if (
     row.created_by_account_id !== accountId &&
     !delivery &&
@@ -379,360 +374,140 @@ export function getTicketForAccount(
     !isParkAdmin
   )
     return null;
-  return ticketView(id, accountId);
+  return ticketView(store, id, accountId);
 }
 
 /**
  * 仅向已经有权查看该工单的账号返回创建者联系方式。园区处理方可以据此向
  * 跨组织创建者发送进度回执，但不能把 accountId 当作跨租户任意账号查询器。
  */
-export function getTicketCreatorForAccount(
+export function getTicketCreatorForAccount<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
   id: string,
   accountId: string,
-): AccountView | null {
-  if (!getTicketForAccount(id, accountId)) return null;
-  const row = getDB()
+): TAccount | null {
+  if (!getTicketForAccount(store, id, accountId)) return null;
+  const row = store.db()
     .prepare(
       'SELECT organization_id, created_by_account_id FROM it_tickets WHERE id = ?',
     )
     .get(id) as
     { organization_id: string; created_by_account_id: string } | undefined;
-  return row
-    ? getAccount(row.created_by_account_id, row.organization_id)
+  const creator = row
+    ? store.getAccount(row.created_by_account_id, row.organization_id)
+    : null;
+  return creator?.status === 'active'
+    && store.isOrganizationActive(creator.organizationId)
+    ? creator
     : null;
 }
 
 /** 已授权账号是否仍可使用该工单所属功能；企业 IT 工单不受园区开关影响。 */
-export function isTicketFeatureEnabledForAccount(
+export function isTicketFeatureEnabledForAccount<
+  TAccount extends ParkTicketAccount,
+>(
+  store: ParkTicketRepositoryStore<TAccount>,
   id: string,
   accountId: string,
 ): boolean {
-  if (!getTicketForAccount(id, accountId)) return false;
-  const viewer = getAccount(accountId);
+  if (!getTicketForAccount(store, id, accountId)) return false;
+  const viewer = store.getAccount(accountId);
   if (!viewer) return false;
-  const row = getDB()
+  const row = store.db()
     .prepare('SELECT organization_id, park_id FROM it_tickets WHERE id = ?')
     .get(id) as { organization_id: string; park_id: string | null } | undefined;
   if (!row) return false;
   return (
     row.park_id === null ||
-    (getOrganizationFeatures(row.organization_id).park_service &&
-      getOrganizationFeatures(viewer.organizationId).park_service)
+    (store.getOrganizationFeatures(row.organization_id).park_service &&
+      store.getOrganizationFeatures(viewer.organizationId).park_service)
   );
 }
 
-const PARKING_APPLICATION_PRICES: Record<string, {
-  label: string;
-  amount: number;
-  billingUnit: string;
-}> = {
-  'underground-fixed': { label: '地下固定停车位', amount: 260, billingUnit: '月' },
-  '地下固定停车位:260元/月': { label: '地下固定停车位', amount: 260, billingUnit: '月' },
-  'underground-tandem': { label: '地下固定子母停车位', amount: 390, billingUnit: '月' },
-  '地下固定子母停车位:390元/月': { label: '地下固定子母停车位', amount: 390, billingUnit: '月' },
-  'surface-temporary': { label: '地上临时停车位', amount: 1200, billingUnit: '半年' },
-  '地上临时停车位:1200元/半年': { label: '地上临时停车位', amount: 1200, billingUnit: '半年' },
-  'underground-temporary': { label: '地下临时停车位', amount: 1560, billingUnit: '半年' },
-  '地下临时停车位:1560元/半年': { label: '地下临时停车位', amount: 1560, billingUnit: '半年' },
-  cancel: { label: '退停车位', amount: 0, billingUnit: '次' },
-  '退停车位': { label: '退停车位', amount: 0, billingUnit: '次' },
-};
-
-const NETWORK_PHONE_PRICES: Record<string, {
-  label: string;
-  amount: number;
-  recurringMonthly: number;
-}> = {
-  'phone-open': { label: '开通电话（开通费235元/部，线路占用费35元/月/部）', amount: 270, recurringMonthly: 35 },
-  '开通电话': { label: '开通电话（开通费235元/部，线路占用费35元/月/部）', amount: 270, recurringMonthly: 35 },
-  'caller-id': { label: '来电显示（开通费50元/部，功能费5元/月/部）', amount: 55, recurringMonthly: 5 },
-  '来电显示': { label: '来电显示（开通费50元/部，功能费5元/月/部）', amount: 55, recurringMonthly: 5 },
-  'number-hold': { label: '停机保号（5元/月/部）', amount: 5, recurringMonthly: 5 },
-  '停机保号': { label: '停机保号（5元/月/部）', amount: 5, recurringMonthly: 5 },
-  'landline-stop': { label: '固话停机', amount: 0, recurringMonthly: 0 },
-  '固话停机': { label: '固话停机', amount: 0, recurringMonthly: 0 },
-  'leased-line-15': { label: '企业专线 15M（500元/月）', amount: 500, recurringMonthly: 500 },
-  'leased-line-30': { label: '企业专线 30M（1000元/月）', amount: 1000, recurringMonthly: 1000 },
-  'leased-line-45': { label: '企业专线 45M（1600元/月）', amount: 1600, recurringMonthly: 1600 },
-  'leased-line-75': { label: '企业专线 75M（2900元/月）', amount: 2900, recurringMonthly: 2900 },
-};
-
-function requiredParkFormValue(
-  formData: Record<string, string>,
-  key: string,
-  label: string,
-): string {
-  const value = formData[key]?.trim() || '';
-  if (!value) throw new Error(`请填写${label}`);
-  return value;
-}
-
-function parkFormPositiveInteger(value: string, label: string, allowZero = false): number {
-  const number = Number(value);
-  if (!Number.isInteger(number) || number < (allowZero ? 0 : 1) || number > 1000) {
-    throw new Error(`${label}必须是${allowZero ? '大于等于 0' : '大于等于 1'}的整数`);
-  }
-  return number;
-}
-
-function parkFormMoney(value: string, label: string): number {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) {
-    throw new Error(`${label}必须是有效金额`);
-  }
-  return Math.round(amount * 100) / 100;
-}
-
-function validParkDate(value: string, label: string): string {
-  const date = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`请选择有效的${label}`);
-  return date;
-}
-
-function assertMeetingPeriod(startValue: string, endValue: string): {
-  startTime: string;
-  endTime: string;
-  startMinutes: number;
-  endMinutes: number;
-} {
-  const parse = (value: string): number => {
-    const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
-    if (!match) return Number.NaN;
-    return Number(match[1]) * 60 + Number(match[2]);
-  };
-  const startMinutes = parse(startValue);
-  const endMinutes = parse(endValue);
+export function createTicket<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: CreateTicketInput,
+): TicketView {
+  const creator = store.getAccount(input.createdByAccountId);
   if (
-    !Number.isInteger(startMinutes)
-    || !Number.isInteger(endMinutes)
-    || startMinutes < 9 * 60
-    || endMinutes > 23 * 60
-    || startMinutes >= endMinutes
-    || startMinutes % 10 !== 0
-    || endMinutes % 10 !== 0
+    !creator
+    || creator.status !== 'active'
+    || !store.isOrganizationActive(creator.organizationId)
   ) {
-    throw new Error('会议时间必须在 09:00 到 23:00 之间，并按 10 分钟选择');
+    throw new Error('Account or organization is inactive');
   }
-  const format = (minutes: number): string => (
-    `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
-  );
-  return { startTime: format(startMinutes), endTime: format(endMinutes), startMinutes, endMinutes };
-}
-
-export function normalizeParkServiceFormData(
-  serviceId: string,
-  input: Record<string, string>,
-): Record<string, string> {
-  const formData = Object.fromEntries(Object.entries(input).map(([key, value]) => [
-    key.slice(0, 50),
-    value.trim().slice(0, 2000),
-  ]));
-  for (const [key, label] of [
-    ['company', '公司名称'],
-    ['roomNumber', '房间号'],
-    ['contact', '联系人'],
-    ['phone', '联系电话'],
-  ] as const) {
-    formData[key] = requiredParkFormValue(formData, key, label);
-  }
-
-  if (serviceId === 'renovation') {
-    formData.area = requiredParkFormValue(formData, 'area', '装修区域');
-    formData.startDate = validParkDate(
-      requiredParkFormValue(formData, 'startDate', '计划开工日期'),
-      '计划开工日期',
-    );
-  } else if (serviceId === 'parking') {
-    const application = PARKING_APPLICATION_PRICES[
-      requiredParkFormValue(formData, 'applicationType', '申请内容')
-    ];
-    if (!application) throw new Error('请选择有效的停车办理申请内容');
-    const quantity = parkFormPositiveInteger(
-      requiredParkFormValue(formData, 'quantity', '申请数量'),
-      '申请数量',
-    );
-    formData.applicationType = application.label;
-    formData.pricing = `${application.amount}元/${application.billingUnit}`;
-    formData.billingUnit = application.billingUnit;
-    const amountCny = application.amount * quantity;
-    formData.amountCny = String(amountCny);
-    formData.recurringMonthlyCny = String(
-      application.billingUnit === '月'
-        ? amountCny
-        : application.billingUnit === '半年'
-          ? Math.round((amountCny / 6) * 100) / 100
-          : 0,
-    );
-  } else if (serviceId === 'network-phone') {
-    const business = NETWORK_PHONE_PRICES[
-      requiredParkFormValue(formData, 'businessType', '业务类型')
-    ];
-    if (!business) throw new Error('请选择有效的网络或电话业务类型');
-    const quantity = parkFormPositiveInteger(
-      requiredParkFormValue(formData, 'quantity', '工位或号码数量'),
-      '工位或号码数量',
-    );
-    formData.businessType = business.label;
-    formData.expectedDate = validParkDate(
-      requiredParkFormValue(formData, 'expectedDate', '期望开通日期'),
-      '期望开通日期',
-    );
-    formData.amountCny = String(business.amount * quantity);
-    formData.recurringMonthlyCny = String(business.recurringMonthly * quantity);
-  } else if (serviceId === 'meeting-room') {
-    parkFormPositiveInteger(requiredParkFormValue(formData, 'attendees', '参会人数'), '参会人数');
-    formData.roomId = requiredParkFormValue(formData, 'roomId', '会议室');
-    formData.date = validParkDate(requiredParkFormValue(formData, 'date', '使用日期'), '使用日期');
-    const period = assertMeetingPeriod(
-      requiredParkFormValue(formData, 'startTime', '开始时间'),
-      requiredParkFormValue(formData, 'endTime', '结束时间'),
-    );
-    const priceHalfDay = parkFormMoney(
-      requiredParkFormValue(formData, 'priceHalfDay', '会议室价格'),
-      '会议室价格',
-    );
-    const halfDayUnits = Math.ceil((period.endMinutes - period.startMinutes) / (4 * 60));
-    formData.startTime = period.startTime;
-    formData.endTime = period.endTime;
-    formData.time = `${period.startTime}-${period.endTime}`;
-    formData.amountCny = String(priceHalfDay * halfDayUnits);
-    formData.pricing = `${priceHalfDay}元/半天，不足半天按半天计`;
-  } else if (serviceId === 'electric-card') {
-    formData.amount = String(
-      parkFormMoney(requiredParkFormValue(formData, 'amount', '充值金额'), '充值金额'),
-    );
-    formData.amountCny = formData.amount;
-  } else if (serviceId === 'repair') {
-    formData.category = requiredParkFormValue(formData, 'category', '报修类别');
-    formData.issue = requiredParkFormValue(formData, 'issue', '故障描述');
-    formData.urgency = requiredParkFormValue(formData, 'urgency', '紧急程度');
-  } else if (serviceId === 'vehicle-visit') {
-    formData.visitDate = validParkDate(
-      requiredParkFormValue(formData, 'visitDate', '来访日期'),
-      '来访日期',
-    );
-    formData.reason = requiredParkFormValue(formData, 'reason', '拜访企业及事由');
-    const vehicleCount = parkFormPositiveInteger(
-      requiredParkFormValue(formData, 'vehicleCount', '来访车辆数量'),
-      '来访车辆数量',
-      true,
-    );
-    if (vehicleCount > 20) throw new Error('来访车辆数量不能超过 20');
-    for (let index = 1; index <= vehicleCount; index += 1) {
-      formData[`plate${index}`] = requiredParkFormValue(
-        formData,
-        `plate${index}`,
-        `第 ${index} 辆车车牌号`,
-      );
-    }
-  }
-  return formData;
-}
-
-export function createTicket(input: {
-  createdByAccountId: string;
-  serviceId?: string;
-  title: string;
-  description: string;
-  targetTags?: string[];
-  formData?: Record<string, string>;
-  category?: string;
-  location?: string;
-  urgency?: string;
-  contact?: string;
-  contactPhone?: string;
-}): TicketView {
-  const creator = getAccount(input.createdByAccountId);
-  if (!creator) throw new Error('Account not found');
   const title = input.title.trim();
   const description = input.description.trim();
-  const targetTags = normalizeTags(
+  const targetTags = store.normalizeTags(
     input.targetTags?.length ? input.targetTags : ['IT', '报修'],
   );
   if (!title || !description || targetTags.length === 0) {
     throw new Error('title, description and targetTags required');
   }
+  if (title.length > 200 || description.length > 2_000) {
+    throw new Error('Ticket title or description is too long');
+  }
 
   const serviceId = input.serviceId?.trim() || 'it';
-  const isParkService = PARK_SERVICE_IDS.has(serviceId);
+  const isParkService = store.isParkServiceId(serviceId);
   const normalizedFormData = isParkService
     ? normalizeParkServiceFormData(serviceId, input.formData ?? {})
     : input.formData ?? {};
   if (serviceId !== 'it' && !isParkService) throw new Error('服务类型不正确');
 
   const candidatePark = isParkService
-    ? getParkForOrganization(creator.organizationId)
+    ? store.getParkForOrganization(creator.organizationId)
     : null;
-  if (isParkService && !candidatePark) {
+  if (isParkService && (!candidatePark || candidatePark.status !== 'active')) {
     throw new Error('企业尚未加入产业园');
   }
   if (
     candidatePark &&
-    (!getOrganizationFeatures(creator.organizationId).park_service ||
-      !getOrganizationFeatures(candidatePark.adminOrganizationId).park_service)
+    (!store.getOrganizationFeatures(creator.organizationId).park_service ||
+      !store.getOrganizationFeatures(candidatePark.adminOrganizationId).park_service)
   ) {
     throw new Error('园区服务功能已由管理员关闭');
   }
   const park = candidatePark;
   const configuredParkService = park
-    ? listParkServices(park.id).find((item) => item.id === serviceId)
+    ? store.listParkServices(park.id).find((item) => item.id === serviceId)
     : undefined;
   if (park && !configuredParkService) throw new Error('园区服务不存在');
   if (configuredParkService && !configuredParkService.enabled) {
     throw new Error('园区服务已停用');
   }
   const parkSpecialists = park
-    ? listParkServiceSpecialists(park.id).filter(
+    ? store.listParkServiceSpecialists(park.id).filter(
         (item) => item.serviceId === serviceId,
       )
     : [];
+  const specialistRecipients = park
+    ? parkSpecialists
+        .map((item) => store.getAccount(item.accountId, park.adminOrganizationId))
+        .filter((account): account is TAccount => account?.status === 'active')
+    : [];
   const parkAdminFallback =
-    park && parkSpecialists.length === 0
-      ? (
-          getDB()
-            .prepare(
-              `SELECT * FROM accounts WHERE organization_id = ? AND is_admin = 1
-       AND status = 'active' AND deleted_at IS NULL ORDER BY name, username`,
-            )
-            .all(park.adminOrganizationId) as AccountRow[]
-        ).map(toAccountView)
+    park && specialistRecipients.length === 0
+      ? store.listActiveOrganizationAdmins(park.adminOrganizationId)
       : [];
-  const placeholders = targetTags.map(() => '?').join(', ');
   const recipients =
-    parkSpecialists.length > 0
-      ? parkSpecialists
-          .map((item) => getAccount(item.accountId))
-          .filter((account): account is AccountView => account !== null)
+    specialistRecipients.length > 0
+      ? specialistRecipients
       : parkAdminFallback.length > 0
         ? parkAdminFallback
-        : (
-            getDB()
-              .prepare(
-                `SELECT a.* FROM accounts a
-     JOIN account_tags t ON t.account_id = a.id
-     WHERE a.organization_id = ? AND t.organization_id = ?
-       AND a.status = 'active' AND t.tag IN (${placeholders})
-     GROUP BY a.id
-     HAVING COUNT(DISTINCT t.tag) = ?
-     ORDER BY a.name, a.username`,
-              )
-              .all(
-                creator.organizationId,
-                creator.organizationId,
-                ...targetTags,
-                targetTags.length,
-              ) as AccountRow[]
-          ).map(toAccountView);
+        : store.listActiveAccountsByTags(creator.organizationId, targetTags);
 
-  const id = `ticket_${randomUUID()}`;
-  getDB()
-    .prepare(
+  const id = store.createTicketId();
+  const database = store.db();
+  const ownsTransaction = !database.inTransaction;
+  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare(
       `INSERT INTO it_tickets
        (id, organization_id, park_id, created_by_account_id, service_id, title, description, target_tags, form_data,
         category, location, urgency, contact, contact_phone, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
-    )
-    .run(
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
+    ).run(
       id,
       creator.organizationId,
       park?.id ?? null,
@@ -748,67 +523,116 @@ export function createTicket(input: {
       input.contact?.trim() || null,
       input.contactPhone?.trim() || null,
     );
-  recordTicketEvent({
-    organizationId: creator.organizationId,
-    ticketId: id,
-    actorAccountId: creator.id,
-    action: 'created',
-    statusBefore: null,
-    statusAfter: '待接单',
-  });
-  const deliver = getDB().prepare(
-    `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
-     VALUES (?, ?, ?)`,
-  );
-  for (const recipient of recipients)
-    deliver.run(creator.organizationId, id, recipient.id);
-  logAudit(
-    'ticket_create',
-    creator.employeeId,
-    `Ticket ${id} delivered to ${recipients.length} account(s)`,
-    creator.organizationId,
-  );
-  return ticketView(id, creator.id);
+    recordTicketEvent(store, {
+      organizationId: creator.organizationId,
+      ticketId: id,
+      actorAccountId: creator.id,
+      action: 'created',
+      statusBefore: null,
+      statusAfter: '待接单',
+    });
+    const deliver = database.prepare(
+      `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id)
+       VALUES (?, ?, ?)`,
+    );
+    for (const recipient of recipients) {
+      deliver.run(creator.organizationId, id, recipient.id);
+    }
+    store.audit(
+      'ticket_create',
+      creator.employeeId,
+      `Ticket ${id} delivered to ${recipients.length} account(s)`,
+      creator.organizationId,
+    );
+    if (ownsTransaction) database.exec('COMMIT');
+  } catch (error) {
+    if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
+    throw error;
+  }
+  return ticketView(store, id, creator.id);
 }
 
 /** 通知只能在服务端使用完整账号资料，绝不把手机号或飞书 open_id 返回给普通客户端。 */
-export function getTicketNotificationRecipients(
+export function getTicketNotificationRecipients<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
   ticketId: string,
-): AccountView[] {
-  const row = getDB()
-    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
-    .get(ticketId) as { organization_id: string } | undefined;
-  if (!row) return [];
-  const deliveries = getDB()
+): TAccount[] {
+  const row = store.db()
+    .prepare('SELECT organization_id, park_id FROM it_tickets WHERE id = ?')
+    .get(ticketId) as
+      | { organization_id: string; park_id: string | null }
+      | undefined;
+  if (
+    !row
+    || !store.isOrganizationActive(row.organization_id)
+    || (row.park_id && store.getPark(row.park_id)?.status !== 'active')
+    || (row.park_id && !store.getOrganizationFeatures(row.organization_id).park_service)
+  ) return [];
+  const deliveries = store.db()
     .prepare(
       `SELECT account_id FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? AND status <> 'transferred' ORDER BY delivered_at`,
     )
     .all(ticketId, row.organization_id) as Array<{ account_id: string }>;
   return deliveries
-    .map(({ account_id: accountId }) => getAccount(accountId))
-    .filter((account): account is AccountView => account !== null);
+    .map(({ account_id: accountId }) => store.getAccount(accountId))
+    .filter((account): account is TAccount => (
+      account?.status === 'active'
+      && store.isOrganizationActive(account.organizationId)
+      && (
+        !row.park_id
+        || store.getOrganizationFeatures(account.organizationId).park_service
+      )
+    ));
 }
 
-export function getTicketTransferredNotificationRecipients(
+export function getTicketTransferredNotificationRecipients<
+  TAccount extends ParkTicketAccount,
+>(
+  store: ParkTicketRepositoryStore<TAccount>,
   ticketId: string,
-): AccountView[] {
-  const row = getDB()
-    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
-    .get(ticketId) as { organization_id: string } | undefined;
-  if (!row) return [];
-  const deliveries = getDB().prepare(
+): TAccount[] {
+  const row = store.db()
+    .prepare('SELECT organization_id, park_id FROM it_tickets WHERE id = ?')
+    .get(ticketId) as
+      | { organization_id: string; park_id: string | null }
+      | undefined;
+  if (
+    !row
+    || !store.isOrganizationActive(row.organization_id)
+    || (row.park_id && store.getPark(row.park_id)?.status !== 'active')
+    || (row.park_id && !store.getOrganizationFeatures(row.organization_id).park_service)
+  ) return [];
+  const deliveries = store.db().prepare(
     `SELECT account_id FROM ticket_deliveries
      WHERE ticket_id = ? AND organization_id = ? AND status = 'transferred'
      ORDER BY delivered_at`,
   ).all(ticketId, row.organization_id) as Array<{ account_id: string }>;
   return deliveries
-    .map(({ account_id: accountId }) => getAccount(accountId))
-    .filter((account): account is AccountView => account !== null);
+    .map(({ account_id: accountId }) => store.getAccount(accountId))
+    .filter((account): account is TAccount => (
+      account?.status === 'active'
+      && store.isOrganizationActive(account.organizationId)
+      && (
+        !row.park_id
+        || store.getOrganizationFeatures(account.organizationId).park_service
+      )
+    ));
 }
 
-export function listTicketInbox(accountId: string): TicketView[] {
-  const ids = getDB()
+export function listTicketInbox<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  accountId: string,
+): TicketView[] {
+  const account = store.getAccount(accountId);
+  if (
+    !account
+    || account.status !== 'active'
+    || !store.isOrganizationActive(account.organizationId)
+  ) {
+    throw new Error('Account or organization is inactive');
+  }
+  const ids = store.db()
     .prepare(
       `SELECT t.id FROM ticket_deliveries d
      JOIN it_tickets t ON t.id = d.ticket_id
@@ -816,13 +640,24 @@ export function listTicketInbox(accountId: string): TicketView[] {
      ORDER BY t.updated_at DESC, t.created_at DESC`,
     )
     .all(accountId) as Array<{ id: string }>;
-  return ids.map(({ id }) => ticketView(id, accountId));
+  return ids
+    .map(({ id }) => getTicketForAccount(store, id, accountId))
+    .filter((ticket): ticket is TicketView => ticket !== null);
 }
 
-export function listTicketsForAccount(accountId: string): TicketView[] {
-  const account = getAccount(accountId);
-  if (!account) throw new Error('Account not found');
-  const managedPark = getDB()
+export function listTicketsForAccount<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  accountId: string,
+): TicketView[] {
+  const account = store.getAccount(accountId);
+  if (
+    !account
+    || account.status !== 'active'
+    || !store.isOrganizationActive(account.organizationId)
+  ) {
+    throw new Error('Account or organization is inactive');
+  }
+  const managedPark = store.db()
     .prepare(
       'SELECT id FROM parks WHERE admin_organization_id = ? AND status = ? LIMIT 1',
     )
@@ -830,18 +665,18 @@ export function listTicketsForAccount(accountId: string): TicketView[] {
   const ids = (
     account.isAdmin
       ? managedPark
-        ? getDB()
+        ? store.db()
             .prepare(
               `SELECT id FROM it_tickets WHERE organization_id = ? OR park_id = ?
          ORDER BY updated_at DESC, created_at DESC`,
             )
             .all(account.organizationId, managedPark.id)
-        : getDB()
+        : store.db()
             .prepare(
               `SELECT id FROM it_tickets WHERE organization_id = ? ORDER BY updated_at DESC, created_at DESC`,
             )
             .all(account.organizationId)
-      : getDB()
+      : store.db()
           .prepare(
             `SELECT DISTINCT t.id FROM it_tickets t
        LEFT JOIN ticket_deliveries d ON d.ticket_id = t.id AND d.account_id = ?
@@ -850,41 +685,57 @@ export function listTicketsForAccount(accountId: string): TicketView[] {
           )
           .all(account.id, account.id, account.id)
   ) as Array<{ id: string }>;
-  return ids.map(({ id }) => ticketView(id, account.id));
+  return ids
+    .map(({ id }) => getTicketForAccount(store, id, account.id))
+    .filter((ticket): ticket is TicketView => ticket !== null);
 }
 
-export function markTicketRead(
+export function markTicketRead<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
   ticketId: string,
   accountId: string,
 ): TicketView {
-  const account = getAccount(accountId);
-  if (!account) throw new Error('Account not found');
-  const changed = getDB()
+  if (!getTicketForAccount(store, ticketId, accountId)) {
+    throw new Error('Ticket not found');
+  }
+  const changed = store.db()
     .prepare(
       `UPDATE ticket_deliveries SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
      WHERE ticket_id = ? AND account_id = ?`,
     )
-    .run(ticketId, account.id);
+    .run(ticketId, accountId);
   if (changed.changes === 0) throw new Error('Ticket delivery not found');
-  return ticketView(ticketId, accountId);
+  return ticketView(store, ticketId, accountId);
 }
 
-export function updateTicket(input: {
-  ticketId: string;
-  accountId: string;
-  action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
-  responseType?: string;
-  responseText?: string;
-  transferAccountId?: string;
-  transferDepartment?: string;
-}): TicketView {
-  const account = getAccount(input.accountId);
-  if (!account) throw new Error('Account not found');
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
+export function updateTicket<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: UpdateTicketInput,
+): TicketView {
+  const account = store.getAccount(input.accountId);
+  if (
+    !account
+    || account.status !== 'active'
+    || !store.isOrganizationActive(account.organizationId)
+  ) {
+    throw new Error('Account or organization is inactive');
+  }
+  const database = store.db();
+  const ownsTransaction = !database.inTransaction;
+  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
   try {
-    const current = getTicketForAccount(input.ticketId, input.accountId);
+    const current = getTicketForAccount(store, input.ticketId, input.accountId);
     if (!current) throw new Error('Ticket not found');
+    if (
+      current.parkId
+      && !isTicketFeatureEnabledForAccount(
+        store,
+        input.ticketId,
+        input.accountId,
+      )
+    ) {
+      throw new Error('园区服务功能已由管理员关闭');
+    }
     const ticketRow = database.prepare(
       'SELECT organization_id FROM it_tickets WHERE id = ?',
     ).get(input.ticketId) as { organization_id: string };
@@ -945,22 +796,23 @@ export function updateTicket(input: {
         if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status)) {
           throw new Error('当前报修不能转交');
         }
-        const park = getPark(current.parkId);
-        if (!park) throw new Error('产业园不存在');
+        const park = store.getPark(current.parkId);
+        if (!park || park.status !== 'active') throw new Error('产业园不存在');
         const transferAccountId = input.transferAccountId?.trim() || '';
         const transferDepartment = input.transferDepartment?.trim() || '';
-        let targets: AccountView[] = [];
+        let targets: TAccount[] = [];
         if (transferAccountId) {
-          const target = getAccount(transferAccountId, park.adminOrganizationId);
+          const target = store.getAccount(
+            transferAccountId,
+            park.adminOrganizationId,
+          );
           if (target?.status === 'active' && target.id !== account.id) targets = [target];
         } else if (transferDepartment) {
-          targets = (database.prepare(
-            `SELECT * FROM accounts
-             WHERE organization_id = ? AND department = ? AND status = 'active'
-               AND deleted_at IS NULL AND id <> ?
-             ORDER BY name, username`,
-          ).all(park.adminOrganizationId, transferDepartment, account.id) as AccountRow[])
-            .map(toAccountView);
+          targets = store.listActiveAccountsByDepartment(
+            park.adminOrganizationId,
+            transferDepartment,
+            account.id,
+          );
         }
         if (!targets.length) throw new Error('请选择有效的转交同事或部门');
         const targetLabel = transferAccountId
@@ -1020,7 +872,7 @@ export function updateTicket(input: {
       }
     }
 
-    recordTicketEvent({
+    recordTicketEvent(store, {
       organizationId: ticketRow.organization_id,
       ticketId: input.ticketId,
       actorAccountId: account.id,
@@ -1030,40 +882,65 @@ export function updateTicket(input: {
       responseType,
       responseText,
     });
-    logAudit(
+    store.audit(
       `ticket_${input.action}`,
       account.employeeId,
       `Ticket ${input.ticketId} ${input.action}`,
       ticketRow.organization_id,
     );
-    database.exec('COMMIT');
+    if (ownsTransaction) database.exec('COMMIT');
   } catch (error) {
-    try { database.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+    if (ownsTransaction && database.inTransaction) {
+      try { database.exec('ROLLBACK'); } catch { /* preserve the original error */ }
+    }
     throw error;
   }
-  return ticketView(input.ticketId, input.accountId);
+  return ticketView(store, input.ticketId, input.accountId);
 }
 
-export function recordTicketNotification(input: {
-  ticketId: string;
-  recipientAccountId: string;
-  channel: 'otto' | 'sms' | 'feishu';
-  event: string;
-  status: 'sent' | 'failed' | 'skipped';
-  detail?: string | null;
-}): void {
-  const ticket = getDB()
+export function recordTicketNotification<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: RecordTicketNotificationInput,
+): void {
+  const ticket = store.db()
     .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
     .get(input.ticketId) as { organization_id: string } | undefined;
   if (!ticket) throw new Error('Ticket not found');
-  getDB()
+  const recipient = store.getAccount(input.recipientAccountId);
+  if (!recipient || recipient.status !== 'active') {
+    throw new Error('Notification recipient is inactive');
+  }
+  const authorizedRecipient = store.db()
+    .prepare(
+      `SELECT 1 FROM it_tickets t
+       WHERE t.id = ? AND t.organization_id = ?
+         AND (
+           t.created_by_account_id = ?
+           OR EXISTS (
+             SELECT 1 FROM ticket_deliveries d
+             WHERE d.ticket_id = t.id
+               AND d.organization_id = t.organization_id
+               AND d.account_id = ?
+           )
+         )`,
+    )
+    .get(
+      input.ticketId,
+      ticket.organization_id,
+      recipient.id,
+      recipient.id,
+    );
+  if (!authorizedRecipient) {
+    throw new Error('Notification recipient is not assigned');
+  }
+  store.db()
     .prepare(
       `INSERT INTO ticket_notifications
       (id, organization_id, ticket_id, recipient_account_id, channel, event, status, detail)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
-      `ticket_notice_${randomUUID()}`,
+      store.createTicketNotificationId(),
       ticket.organization_id,
       input.ticketId,
       input.recipientAccountId,
