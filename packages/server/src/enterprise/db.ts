@@ -57,10 +57,10 @@ import path from 'path';
 import os from 'os';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
-  buildCreditsTablesSql,
   createAuditLogFacade,
   createAuditLogSchemaContributor,
   createCreditsFacade,
+  createCreditsSchemaContributor,
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
@@ -810,7 +810,6 @@ function initSchema(d: Database): void {
       ON sms_login_challenges(account_id, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_sms_registration_phone_created
       ON sms_registration_challenges(phone, created_at_ms);
-    ${buildCreditsTablesSql(DEFAULT_ORGANIZATION_ID).join(';\n')};
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
@@ -840,6 +839,9 @@ function initSchema(d: Database): void {
 
   applyDatabaseSchemaContributors(d, [
     IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
+    createCreditsSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
     MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
     COLLABORATION_SCHEMA_CONTRIBUTOR,
     createEnterpriseKnowledgeSchemaContributor({
@@ -858,15 +860,6 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
   ]);
-
-  const organizationColumns = d
-    .prepare('PRAGMA table_info(organizations)')
-    .all() as Array<{ name: string }>;
-  if (!organizationColumns.some((column) => column.name === 'credit_balance')) {
-    d.exec(
-      'ALTER TABLE organizations ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0',
-    );
-  }
 
   d.prepare(
     `INSERT OR IGNORE INTO organizations (id, name, slug, invite_secret)

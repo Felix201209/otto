@@ -28,6 +28,9 @@ describe('commercial_control module boundary', () => {
       'function',
     );
     expect(commercialControl.createCreditsFacade).toBeTypeOf('function');
+    expect(commercialControl.createCreditsSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf(
       'function',
     );
@@ -104,6 +107,22 @@ describe('commercial_control module boundary', () => {
     expect(databaseFacade).not.toContain('idx_telemetry_events_status_created');
     expect(databaseFacade).toContain('PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR');
     expect(databaseFacade).toContain('createAuditLogSchemaContributor');
+    expect(databaseFacade).toContain('createCreditsSchemaContributor');
+    expect(databaseFacade).not.toContain('buildCreditsTablesSql');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS credit_transactions',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS redeem_codes',
+    );
+    expect(databaseFacade).not.toContain(
+      'ALTER TABLE organizations ADD COLUMN credit_balance',
+    );
+    expect(databaseFacade).not.toContain('idx_credit_trans_org');
+    expect(databaseFacade).not.toContain('idx_redeem_codes_code');
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{[\s\S]*?MODEL_GATEWAY_SCHEMA_CONTRIBUTOR/,
+    );
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS audit_logs',
     );
