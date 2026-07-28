@@ -44,8 +44,15 @@ export async function handleParkResourceRoute({
 }: ParkResourceRouteDeps): Promise<boolean> {
   if (path === '/enterprise/park-resources' && method === 'GET') {
     const park = db.getParkForOrganization(memberAccount!.organizationId);
-    const resourceOrganizationId = park?.adminOrganizationId
-      || memberAccount!.organizationId;
+    if (!park) {
+      sendJSON(res, 200, {
+        settings: { parkingTotal: 0, parkingNote: null, updatedAt: '' },
+        meetingRooms: [],
+        meetingSlots: [],
+      });
+      return true;
+    }
+    const resourceOrganizationId = park.adminOrganizationId;
     sendJSON(res, 200, {
       settings: db.getParkSettings(resourceOrganizationId),
       meetingRooms: db.listParkMeetingRooms(resourceOrganizationId),

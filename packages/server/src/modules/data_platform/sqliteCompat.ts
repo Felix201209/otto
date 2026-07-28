@@ -42,6 +42,10 @@ export class Database {
     this.db = new DatabaseSync(filename);
   }
 
+  get inTransaction(): boolean {
+    return this.db.isTransaction;
+  }
+
   pragma(directive: string): void {
     this.db.exec(`PRAGMA ${directive};`);
   }

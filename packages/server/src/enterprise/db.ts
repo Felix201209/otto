@@ -18,6 +18,7 @@ import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
   createParkPublicationFacade,
+  createParkResourceFacade,
   createParkServiceConfigurationFacade,
   type ParkInviteView,
   type ParkServiceSpecialistView,
@@ -3085,11 +3086,14 @@ export function removeParkServiceSpecialist(input: {
   parkServiceConfiguration.removeSpecialist(input);
 }
 
-export {
-  PARK_MEETING_CLOSE_MINUTES,
-  PARK_MEETING_OPEN_MINUTES,
-  PARK_MEETING_SLOT_MINUTES,
-  PARK_MEETING_TIME_SLOTS,
+const parkResourceStore = {
+  db: getDB,
+  createMeetingRoomId: () => `park_room_${randomUUID()}`,
+  createMeetingBookingId: () => `park_booking_${randomUUID()}`,
+};
+const parkResources = createParkResourceFacade(parkResourceStore);
+
+export const {
   createParkMeetingRoom,
   deleteParkMeetingRoom,
   getParkSettings,
@@ -3100,12 +3104,19 @@ export {
   setParkMeetingSlotAvailability,
   updateParkMeetingRoom,
   updateParkSettings,
-} from './parkMeetingRepository.js';
+} = parkResources;
+
+export {
+  PARK_MEETING_CLOSE_MINUTES,
+  PARK_MEETING_OPEN_MINUTES,
+  PARK_MEETING_SLOT_MINUTES,
+  PARK_MEETING_TIME_SLOTS,
+} from '../modules/park_services/index.js';
 export type {
   ParkMeetingRoomView,
   ParkMeetingSlotView,
   ParkSettingsView,
-} from './parkMeetingRepository.js';
+} from '../modules/park_services/index.js';
 
 export type {
   ParkAnnouncementResultView,

@@ -150,6 +150,8 @@ export const PRODUCT_MODULES = [
       'parks',
       'park tenants',
       'park publications',
+      'park resources',
+      'park reservations',
       'park services',
       'park tickets',
       'park statistics',

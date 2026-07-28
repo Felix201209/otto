@@ -13,7 +13,7 @@ const moduleDir = path.join(sourceRoot, 'modules', 'park_services');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('park services module boundary', () => {
-  it('publishes lifecycle, membership, publications, and service configuration through one entrypoint', () => {
+  it('publishes lifecycle, membership, publications, resources, and service configuration through one entrypoint', () => {
     expect(parkServices.createParkLifecycleFacade).toBeTypeOf('function');
     expect(parkServices.createParkInRepository).toBeTypeOf('function');
     expect(parkServices.createParkAsPlatformInRepository).toBeTypeOf(
@@ -38,6 +38,9 @@ describe('park services module boundary', () => {
       'function',
     );
     expect(parkServices.submitParkSurveyInRepository).toBeTypeOf('function');
+    expect(parkServices.createParkResourceFacade).toBeTypeOf('function');
+    expect(parkServices.createParkResourceRepository).toBeTypeOf('function');
+    expect(parkServices.PARK_MEETING_TIME_SLOTS).toHaveLength(84);
     expect(parkServices.createParkServiceConfigurationFacade).toBeTypeOf(
       'function',
     );
@@ -102,14 +105,23 @@ describe('park services module boundary', () => {
         path.join(sourceRoot, 'enterprise', 'parkPublicationRepository.ts'),
       ),
     ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(sourceRoot, 'enterprise', 'parkMeetingRepository.ts'),
+      ),
+    ).toBe(false);
     expect(databaseFacade).toContain('createParkMembershipFacade');
     expect(databaseFacade).toContain('createParkLifecycleFacade');
     expect(databaseFacade).toContain('createParkServiceConfigurationFacade');
     expect(databaseFacade).toContain('createParkPublicationFacade');
+    expect(databaseFacade).toContain('createParkResourceFacade');
     expect(databaseFacade).not.toContain("from './parkInviteRepository.js'");
     expect(databaseFacade).not.toContain("from './parkServiceRepository.js'");
     expect(databaseFacade).not.toContain(
       "from './parkPublicationRepository.js'",
+    );
+    expect(databaseFacade).not.toContain(
+      "from './parkMeetingRepository.js'",
     );
     expect(databaseFacade).not.toContain('INSERT INTO park_invites');
     expect(databaseFacade).not.toContain('INSERT INTO park_tenant_profiles');
@@ -126,5 +138,7 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain(
       'UPDATE park_publication_recipients',
     );
+    expect(databaseFacade).not.toContain('INSERT INTO park_meeting_rooms');
+    expect(databaseFacade).not.toContain('INSERT INTO park_meeting_bookings');
   });
 });

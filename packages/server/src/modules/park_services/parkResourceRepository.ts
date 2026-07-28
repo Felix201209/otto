@@ -2,62 +2,53 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { randomUUID } from 'node:crypto';
+import type { Database } from '../data_platform/index.js';
+import {
+  PARK_MEETING_CLOSE_MINUTES,
+  PARK_MEETING_OPEN_MINUTES,
+  PARK_MEETING_SLOT_MINUTES,
+  PARK_MEETING_TIME_SLOTS,
+  type ParkMeetingPeriodReservationInput,
+  type ParkMeetingRoomInput,
+  type ParkMeetingRoomView,
+  type ParkMeetingSlotAvailabilityInput,
+  type ParkMeetingSlotReservationInput,
+  type ParkMeetingSlotView,
+  type ParkSettingsInput,
+  type ParkSettingsView,
+} from './parkResourceTypes.js';
 
-import { getDB } from './db.js';
-
-export interface ParkSettingsView {
-  parkingTotal: number;
-  parkingNote: string | null;
-  updatedAt: string;
+export interface ParkResourceRepositoryStore {
+  db(): Database;
+  createMeetingRoomId(): string;
+  createMeetingBookingId(): string;
 }
 
-export interface ParkMeetingRoomView {
-  id: string;
-  name: string;
-  location: string;
-  capacity: number;
-  priceHalfDay: number;
-  equipment: string[];
-  imageUrl: string | null;
-  openingHours: string | null;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+export function createParkResourceRepository(
+  store: ParkResourceRepositoryStore,
+) {
+  const getDB = store.db;
 
-export const PARK_MEETING_SLOT_MINUTES = 10;
-export const PARK_MEETING_OPEN_MINUTES = 9 * 60;
-export const PARK_MEETING_CLOSE_MINUTES = 23 * 60;
+  function requireActiveParkResourceOwner(organizationId: string): void {
+    const owner = getDB()
+      .prepare(
+        `SELECT p.id
+         FROM parks p
+         JOIN organizations o ON o.id = p.admin_organization_id
+         WHERE p.admin_organization_id = ?
+           AND p.status = 'active'
+           AND o.status = 'active'`,
+      )
+      .get(organizationId) as { id: string } | undefined;
+    if (!owner) {
+      throw new Error('Current organization is not an active park administrator');
+    }
+  }
 
 function meetingClock(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-}
-
-export const PARK_MEETING_TIME_SLOTS = Array.from(
-  { length: (PARK_MEETING_CLOSE_MINUTES - PARK_MEETING_OPEN_MINUTES) / PARK_MEETING_SLOT_MINUTES },
-  (_, index) => {
-    const startMinutes = PARK_MEETING_OPEN_MINUTES + index * PARK_MEETING_SLOT_MINUTES;
-    const endMinutes = startMinutes + PARK_MEETING_SLOT_MINUTES;
-    return {
-      key: meetingClock(startMinutes),
-      label: `${meetingClock(startMinutes)}-${meetingClock(endMinutes)}`,
-      startMinutes,
-      endMinutes,
-    };
-  },
-);
-
-export interface ParkMeetingSlotView {
-  id: string;
-  roomId: string;
-  date: string;
-  slotKey: string;
-  label: string;
-  status: 'available' | 'booked' | 'closed';
-  updatedAt: string;
 }
 
 interface ParkMeetingRoomRow {
@@ -175,11 +166,12 @@ const LEGACY_MEETING_PERIODS = {
   afternoon: { startMinutes: 14 * 60, endMinutes: 18 * 60 },
 } as const;
 
-export function listParkMeetingSlots(
+function listParkMeetingSlots(
   organizationId: string,
   fromDate?: string,
   toDate?: string,
 ): ParkMeetingSlotView[] {
+  requireActiveParkResourceOwner(organizationId);
   const rooms = listParkMeetingRooms(organizationId);
   const defaults = futureDateRange();
   const from = fromDate ? assertFutureMeetingDate(fromDate) : defaults.from;
@@ -259,10 +251,11 @@ export function listParkMeetingSlots(
   )));
 }
 
-export function setParkMeetingSlotAvailability(
+function setParkMeetingSlotAvailability(
   organizationId: string,
-  input: { roomId: string; date: string; slotKey: string; enabled: boolean },
+  input: ParkMeetingSlotAvailabilityInput,
 ): ParkMeetingSlotView {
+  requireActiveParkResourceOwner(organizationId);
   const room = listParkMeetingRooms(organizationId, true).find(
     (item) => item.id === input.roomId,
   );
@@ -300,15 +293,30 @@ export function setParkMeetingSlotAvailability(
   )!;
 }
 
-export function reserveParkMeetingPeriod(
+function reserveParkMeetingPeriod(
   organizationId: string,
-  input: {
-    roomId: string;
-    date: string;
-    startTime: string;
-    endTime: string;
-    ticketId: string;
-  },
+  input: ParkMeetingPeriodReservationInput,
+): ParkMeetingSlotView[] {
+  requireActiveParkResourceOwner(organizationId);
+  const database = getDB();
+  const ownsTransaction = !database.inTransaction;
+  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
+  try {
+    const slots = reserveParkMeetingPeriodInTransaction(
+      organizationId,
+      input,
+    );
+    if (ownsTransaction) database.exec('COMMIT');
+    return slots;
+  } catch (error) {
+    if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function reserveParkMeetingPeriodInTransaction(
+  organizationId: string,
+  input: ParkMeetingPeriodReservationInput,
 ): ParkMeetingSlotView[] {
   const date = assertFutureMeetingDate(input.date);
   const period = assertMeetingPeriod(input.startTime, input.endTime);
@@ -329,7 +337,7 @@ export function reserveParkMeetingPeriod(
      (id, organization_id, meeting_room_id, use_date, start_time, end_time, booked_ticket_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    `park_booking_${randomUUID()}`,
+    store.createMeetingBookingId(),
     organizationId,
     room.id,
     date,
@@ -345,10 +353,11 @@ export function reserveParkMeetingPeriod(
   });
 }
 
-export function reserveParkMeetingSlot(
+function reserveParkMeetingSlot(
   organizationId: string,
-  input: { roomId: string; date: string; slotKey: string; ticketId: string },
+  input: ParkMeetingSlotReservationInput,
 ): ParkMeetingSlotView {
+  requireActiveParkResourceOwner(organizationId);
   const legacy = LEGACY_MEETING_PERIODS[
     input.slotKey as keyof typeof LEGACY_MEETING_PERIODS
   ];
@@ -381,15 +390,7 @@ function normalizeMeetingRoomImageUrl(
   return imageUrl;
 }
 
-function normalizeMeetingRoomInput(input: {
-  name: string;
-  location: string;
-  capacity: number;
-  equipment?: string[];
-  imageUrl?: string | null;
-  openingHours?: string | null;
-  enabled?: boolean;
-}): {
+function normalizeMeetingRoomInput(input: ParkMeetingRoomInput): {
   name: string;
   location: string;
   capacity: number;
@@ -442,7 +443,7 @@ function ensureDefaultParkMeetingRoom(organizationId: string): void {
   ];
   for (const room of defaults) {
     insert.run(
-      `park_room_${randomUUID()}`,
+      store.createMeetingRoomId(),
       organizationId,
       room.name,
       '位置待园区管理员补充',
@@ -453,7 +454,8 @@ function ensureDefaultParkMeetingRoom(organizationId: string): void {
   }
 }
 
-export function getParkSettings(organizationId: string): ParkSettingsView {
+function getParkSettings(organizationId: string): ParkSettingsView {
+  requireActiveParkResourceOwner(organizationId);
   getDB()
     .prepare(
       `INSERT OR IGNORE INTO park_settings (organization_id, parking_total)
@@ -477,10 +479,11 @@ export function getParkSettings(organizationId: string): ParkSettingsView {
   };
 }
 
-export function updateParkSettings(
+function updateParkSettings(
   organizationId: string,
-  input: { parkingTotal: number; parkingNote?: string | null },
+  input: ParkSettingsInput,
 ): ParkSettingsView {
+  requireActiveParkResourceOwner(organizationId);
   const parkingTotal = Math.floor(Number(input.parkingTotal));
   if (
     !Number.isInteger(parkingTotal) ||
@@ -507,10 +510,11 @@ export function updateParkSettings(
   return getParkSettings(organizationId);
 }
 
-export function listParkMeetingRooms(
+function listParkMeetingRooms(
   organizationId: string,
   includeDisabled = false,
 ): ParkMeetingRoomView[] {
+  requireActiveParkResourceOwner(organizationId);
   ensureDefaultParkMeetingRoom(organizationId);
   const rows = getDB()
     .prepare(
@@ -524,12 +528,13 @@ export function listParkMeetingRooms(
   return rows.map(parkMeetingRoomView);
 }
 
-export function createParkMeetingRoom(
+function createParkMeetingRoom(
   organizationId: string,
-  input: Parameters<typeof normalizeMeetingRoomInput>[0],
+  input: ParkMeetingRoomInput,
 ): ParkMeetingRoomView {
+  requireActiveParkResourceOwner(organizationId);
   const normalized = normalizeMeetingRoomInput(input);
-  const id = `park_room_${randomUUID()}`;
+  const id = store.createMeetingRoomId();
   getDB()
     .prepare(
       `INSERT INTO park_meeting_rooms
@@ -553,11 +558,12 @@ export function createParkMeetingRoom(
   )!;
 }
 
-export function updateParkMeetingRoom(
+function updateParkMeetingRoom(
   organizationId: string,
   id: string,
-  input: Parameters<typeof normalizeMeetingRoomInput>[0],
+  input: ParkMeetingRoomInput,
 ): ParkMeetingRoomView {
+  requireActiveParkResourceOwner(organizationId);
   const normalized = normalizeMeetingRoomInput(input);
   const changed = getDB()
     .prepare(
@@ -583,14 +589,29 @@ export function updateParkMeetingRoom(
   )!;
 }
 
-export function deleteParkMeetingRoom(
+function deleteParkMeetingRoom(
   organizationId: string,
   id: string,
 ): void {
+  requireActiveParkResourceOwner(organizationId);
   const changed = getDB()
     .prepare(
       'DELETE FROM park_meeting_rooms WHERE id = ? AND organization_id = ?',
     )
     .run(id, organizationId);
   if (changed.changes === 0) throw new Error('会议室不存在');
+}
+
+  return {
+    createParkMeetingRoom,
+    deleteParkMeetingRoom,
+    getParkSettings,
+    listParkMeetingRooms,
+    listParkMeetingSlots,
+    reserveParkMeetingPeriod,
+    reserveParkMeetingSlot,
+    setParkMeetingSlotAvailability,
+    updateParkMeetingRoom,
+    updateParkSettings,
+  };
 }
