@@ -13,6 +13,7 @@ import {
   createDirectMessageFacade,
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
+import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -49,7 +50,6 @@ import {
 } from '../modules/commercial_control/index.js';
 import { buildCreditsTablesSql } from './creditsSchema.js';
 import { getAuditLogs, logAudit } from './auditRepository.js';
-import { getKnowledge as getKnowledgeFromRepository } from './knowledgeRepository.js';
 import {
   createParkDataStatisticsTask as createParkDataStatisticsTaskInRepository,
   delegateParkDataStatistics as delegateParkDataStatisticsInRepository,
@@ -142,6 +142,10 @@ export type {
   DirectMessageView,
   UnreadDirectMessageNotification,
 } from '../modules/collaboration/index.js';
+export type {
+  AddEnterpriseKnowledgeInput,
+  EnterpriseKnowledgeEntryView,
+} from '../modules/enterprise_knowledge/index.js';
 export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
@@ -3241,12 +3245,19 @@ export { getReport, getTaskHistory, logTask } from './taskReportRepository.js';
 // ============================================================
 // Knowledge operations
 // ============================================================
-export {
+const enterpriseKnowledgeStore = {
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+};
+
+export const {
   addKnowledge,
   getKnowledge,
   getMemberKnowledge,
   searchKnowledge,
-} from './knowledgeRepository.js';
+} = createEnterpriseKnowledgeFacade(enterpriseKnowledgeStore);
 
 // ============================================================
 // Invite codes
@@ -3280,7 +3291,7 @@ export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID) {
        ORDER BY created_at DESC LIMIT 1000`,
       )
       .all(organizationId),
-    knowledge: getKnowledgeFromRepository(undefined, undefined, organizationId),
+    knowledge: getKnowledge(undefined, undefined, organizationId),
     inviteCodes: getDB()
       .prepare('SELECT * FROM invite_codes WHERE organization_id = ?')
       .all(organizationId),
