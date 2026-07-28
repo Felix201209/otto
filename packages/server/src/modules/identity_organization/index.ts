@@ -17,6 +17,7 @@ export * from './organizationFeatureFacade.js';
 export * from './organizationFeatureRepository.js';
 export * from './organizationStructureFacade.js';
 export * from './organizationStructureRepository.js';
+export * from './organizationStructureSchema.js';
 export * from './organizationProvisioningFacade.js';
 export * from './organizationProvisioningRepository.js';
 export * from './accountDirectoryFacade.js';

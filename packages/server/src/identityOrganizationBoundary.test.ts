@@ -106,6 +106,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createMemberSchemaContributor).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+    ).toMatchObject({ id: 'identity_organization_structure' });
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
@@ -206,9 +209,20 @@ describe('identity_organization invitation kernel', () => {
       'CREATE TABLE IF NOT EXISTS employees',
     );
     expect(databaseFacade).not.toContain('idx_employees_organization');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_departments',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_positions',
+    );
+    expect(databaseFacade).not.toContain('idx_organization_departments_org');
+    expect(databaseFacade).not.toContain('idx_organization_positions_org');
+    expect(databaseFacade).toContain(
+      'IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR',
+    );
     expect(databaseFacade).toContain('createMemberSchemaContributor');
     expect(databaseFacade).toMatch(
-      /createMemberSchemaContributor\(\{[\s\S]*?createWorklogSchemaContributor\(\{/,
+      /IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,[\s\S]*?createMemberSchemaContributor\(\{[\s\S]*?createWorklogSchemaContributor\(\{/,
     );
   });
 

@@ -98,6 +98,7 @@ import {
   createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
   createOrganizationStructureFacade,
+  IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
   normalizeAssignmentName,
   normalizeOrganizationSlug,
   replaceAccountTagsInRepository,
@@ -415,30 +416,6 @@ function initSchema(d: Database): void {
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS organization_departments (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      name TEXT NOT NULL COLLATE NOCASE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(organization_id, name),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS organization_positions (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      department_id TEXT NOT NULL,
-      title TEXT NOT NULL COLLATE NOCASE,
-      role_mapping TEXT NOT NULL DEFAULT 'member'
-        CHECK(role_mapping IN ('member', 'department_admin', 'enterprise_admin')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(organization_id, department_id, title),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (department_id) REFERENCES organization_departments(id) ON DELETE RESTRICT
     );
 
     CREATE TABLE IF NOT EXISTS organization_features (
@@ -841,10 +818,6 @@ function initSchema(d: Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
-    CREATE INDEX IF NOT EXISTS idx_organization_departments_org
-      ON organization_departments(organization_id, name);
-    CREATE INDEX IF NOT EXISTS idx_organization_positions_org
-      ON organization_positions(organization_id, department_id, title);
     CREATE INDEX IF NOT EXISTS idx_park_invites_active
       ON park_invites(park_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_active
@@ -890,6 +863,7 @@ function initSchema(d: Database): void {
     createEnterpriseKnowledgeSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
+    IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     createMemberSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
