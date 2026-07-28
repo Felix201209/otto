@@ -84,6 +84,7 @@ import {
   type PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
 import {
+  backfillLegacyOrganizationStructure,
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
@@ -1019,7 +1020,7 @@ function initSchema(d: Database): void {
     "UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL",
   );
   backfillEnterpriseAccountEmployees(d);
-  backfillOrganizationStructure(d);
+  backfillLegacyOrganizationStructure(d);
   const ensureIntegerColumn = (
     table: string,
     column: string,
@@ -1225,93 +1226,6 @@ function backfillEnterpriseAccountEmployees(d: Database): void {
     d.exec('ROLLBACK TO SAVEPOINT backfill_enterprise_account_employees');
     d.exec('RELEASE SAVEPOINT backfill_enterprise_account_employees');
     throw error;
-  }
-}
-
-/** 把 v4 以前只存在于账号/员工字段里的节点补成可独立管理的组织目录。 */
-function backfillOrganizationStructure(d: Database): void {
-  const departments = d
-    .prepare(
-      `SELECT organization_id, department_id, department FROM accounts
-       WHERE deleted_at IS NULL AND department IS NOT NULL AND trim(department) <> ''
-     UNION
-     SELECT organization_id, department_id, department FROM employees
-       WHERE department IS NOT NULL AND trim(department) <> ''`,
-    )
-    .all() as Array<{
-    organization_id: string;
-    department_id: string | null;
-    department: string;
-  }>;
-  const insertDepartment = d.prepare(
-    `INSERT OR IGNORE INTO organization_departments (id, organization_id, name)
-     VALUES (?, ?, ?)`,
-  );
-  for (const row of departments) {
-    const id =
-      row.department_id ??
-      stableAssignmentId(
-        'dept',
-        row.organization_id,
-        normalizeAssignmentName(row.department),
-      );
-    insertDepartment.run(id, row.organization_id, row.department.trim());
-    d.prepare(
-      `UPDATE accounts SET department_id = ?
-       WHERE organization_id = ? AND department_id IS NULL AND department = ?`,
-    ).run(id, row.organization_id, row.department);
-    d.prepare(
-      `UPDATE employees SET department_id = ?
-       WHERE organization_id = ? AND department_id IS NULL AND department = ?`,
-    ).run(id, row.organization_id, row.department);
-  }
-
-  const positions = d
-    .prepare(
-      `SELECT organization_id, department_id, position_id, position_title FROM accounts
-       WHERE deleted_at IS NULL AND department_id IS NOT NULL
-         AND position_title IS NOT NULL AND trim(position_title) <> ''
-     UNION
-     SELECT organization_id, department_id, position_id, position_title FROM employees
-       WHERE department_id IS NOT NULL
-         AND position_title IS NOT NULL AND trim(position_title) <> ''`,
-    )
-    .all() as Array<{
-    organization_id: string;
-    department_id: string;
-    position_id: string | null;
-    position_title: string;
-  }>;
-  const insertPosition = d.prepare(
-    `INSERT OR IGNORE INTO organization_positions
-      (id, organization_id, department_id, title, role_mapping)
-     VALUES (?, ?, ?, ?, 'member')`,
-  );
-  for (const row of positions) {
-    const id =
-      row.position_id ??
-      stableAssignmentId(
-        'pos',
-        row.organization_id,
-        row.department_id,
-        normalizeAssignmentName(row.position_title),
-      );
-    insertPosition.run(
-      id,
-      row.organization_id,
-      row.department_id,
-      row.position_title.trim(),
-    );
-    d.prepare(
-      `UPDATE accounts SET position_id = ?
-       WHERE organization_id = ? AND position_id IS NULL
-         AND department_id = ? AND position_title = ?`,
-    ).run(id, row.organization_id, row.department_id, row.position_title);
-    d.prepare(
-      `UPDATE employees SET position_id = ?
-       WHERE organization_id = ? AND position_id IS NULL
-         AND department_id = ? AND position_title = ?`,
-    ).run(id, row.organization_id, row.department_id, row.position_title);
   }
 }
 

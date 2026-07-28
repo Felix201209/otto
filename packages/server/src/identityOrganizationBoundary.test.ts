@@ -109,6 +109,9 @@ describe('identity_organization invitation kernel', () => {
     expect(
       identityOrganization.IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     ).toMatchObject({ id: 'identity_organization_structure' });
+    expect(identityOrganization.backfillLegacyOrganizationStructure).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
@@ -219,6 +222,13 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain('idx_organization_positions_org');
     expect(databaseFacade).toContain(
       'IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR',
+    );
+    expect(databaseFacade).toContain('backfillLegacyOrganizationStructure(d)');
+    expect(databaseFacade).not.toContain(
+      'function backfillOrganizationStructure',
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT organization_id, department_id, department FROM accounts',
     );
     expect(databaseFacade).toContain('createMemberSchemaContributor');
     expect(databaseFacade).toMatch(
