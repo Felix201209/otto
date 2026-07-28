@@ -14,6 +14,11 @@ import {
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
+import {
+  createParkMembershipFacade,
+  type ParkInviteView,
+  type ParkTenantProfileView,
+} from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -62,12 +67,6 @@ import {
   submitParkDataStatisticsDraft as submitParkDataStatisticsDraftInRepository,
 } from './parkStatisticsRepository.js';
 import {
-  getParkTenantProfile as getParkTenantProfileFromRepository,
-  issueParkInvite as issueParkInviteFromRepository,
-  joinOrganizationToPark as joinOrganizationToParkInRepository,
-  updateParkTenantProfile as updateParkTenantProfileInRepository,
-} from './parkInviteRepository.js';
-import {
   listParkServices as listParkServicesFromRepository,
   listParkServiceSpecialists as listParkServiceSpecialistsFromRepository,
   removeParkServiceSpecialist as removeParkServiceSpecialistFromRepository,
@@ -107,10 +106,6 @@ import {
   type SmsRegistrationVerifyResult as IdentitySmsRegistrationVerifyResult,
 } from '../modules/identity_organization/index.js';
 import type {
-  ParkInviteView,
-  ParkTenantProfileView,
-} from './parkInviteTypes.js';
-import type {
   ParkServiceSpecialistView,
   ParkServiceView,
 } from './parkServiceTypes.js';
@@ -147,14 +142,14 @@ export type {
   EnterpriseKnowledgeEntryView,
 } from '../modules/enterprise_knowledge/index.js';
 export type {
+  ParkInviteView,
+  ParkTenantProfileView,
+} from '../modules/park_services/index.js';
+export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
 } from './parkStatisticsTypes.js';
-export type {
-  ParkInviteView,
-  ParkTenantProfileView,
-} from './parkInviteTypes.js';
 export type {
   ParkServiceSpecialistView,
   ParkServiceView,
@@ -2875,22 +2870,25 @@ export function listParkTenantOrganizations(
   ).map(toOrganizationDirectoryView);
 }
 
-const parkInviteStore = {
+const parkMembershipStore = {
   db: getDB,
   getAccount,
   getPark,
   getParkForOrganization,
+  createInviteId: () => `park_invite_${randomUUID()}`,
+  createInviteNonce: () => randomBytes(20).toString('hex'),
   inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
   inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
   inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
   normalizeInviteCode: normalizeOrganizationInviteCode,
   normalizeOptionalText,
 };
+const parkMembership = createParkMembershipFacade(parkMembershipStore);
 
 export function getParkTenantProfile(
   organizationId: string,
 ): ParkTenantProfileView | null {
-  return getParkTenantProfileFromRepository(parkInviteStore, organizationId);
+  return parkMembership.getTenantProfile(organizationId);
 }
 
 export function updateParkTenantProfile(input: {
@@ -2899,7 +2897,7 @@ export function updateParkTenantProfile(input: {
   address: string;
   roomNumber: string;
 }): ParkTenantProfileView {
-  return updateParkTenantProfileInRepository(parkInviteStore, input);
+  return parkMembership.updateTenantProfile(input);
 }
 
 const parkStatisticsStore = {
@@ -3150,7 +3148,7 @@ export function issueParkInvite(input: {
   maxUses?: number | null;
   now?: number;
 }): ParkInviteView {
-  return issueParkInviteFromRepository(parkInviteStore, input);
+  return parkMembership.issueInvite(input);
 }
 
 export function joinOrganizationToPark(input: {
@@ -3161,7 +3159,7 @@ export function joinOrganizationToPark(input: {
   roomNumber: string;
   now?: number;
 }): ParkView {
-  return joinOrganizationToParkInRepository(parkInviteStore, input);
+  return parkMembership.joinOrganization(input);
 }
 
 export function listParkServiceSpecialists(

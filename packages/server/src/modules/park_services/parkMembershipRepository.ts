@@ -1,6 +1,13 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { Database } from '../modules/data_platform/index.js';
-import type { ParkInviteView, ParkTenantProfileView } from './parkInviteTypes.js';
+/**
+ * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
+ */
+
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { Database } from '../data_platform/index.js';
+import type {
+  ParkInviteView,
+  ParkTenantProfileView,
+} from './parkMembershipTypes.js';
 
 interface ParkInviteAccount {
   id: string;
@@ -8,7 +15,7 @@ interface ParkInviteAccount {
   status: string;
 }
 
-interface ParkInvitePark {
+export interface ParkMembershipPark {
   id: string;
   name: string;
   slug: string;
@@ -50,20 +57,29 @@ interface ParkTenantProfileRow {
   updated_at: string;
 }
 
-export interface ParkInviteRepositoryStore {
+export interface ParkMembershipRepositoryStore {
   db(): Database;
-  getAccount(accountId: string, organizationId?: string): ParkInviteAccount | null;
-  getPark(parkId: string): ParkInvitePark | null;
-  getParkForOrganization(organizationId: string): ParkInvitePark | null;
+  getAccount(
+    accountId: string,
+    organizationId?: string,
+  ): ParkInviteAccount | null;
+  getPark(parkId: string): ParkMembershipPark | null;
+  getParkForOrganization(organizationId: string): ParkMembershipPark | null;
+  createInviteId(): string;
+  createInviteNonce(): string;
   inviteValidityMs: number;
   inviteAlphabet: string;
   inviteCodeRawLength: number;
   normalizeInviteCode(code: string): string;
-  normalizeOptionalText(value: string, field: string, maxLength?: number): string | null;
+  normalizeOptionalText(
+    value: string,
+    field: string,
+    maxLength?: number,
+  ): string | null;
 }
 
 function deriveParkInviteCode(
-  store: ParkInviteRepositoryStore,
+  store: ParkMembershipRepositoryStore,
   park: ParkRow,
   nonce: string,
 ): string {
@@ -78,7 +94,7 @@ function deriveParkInviteCode(
 }
 
 function toParkInviteView(
-  store: ParkInviteRepositoryStore,
+  store: ParkMembershipRepositoryStore,
   row: ParkInviteRow,
   park: ParkRow,
   now: number,
@@ -101,7 +117,9 @@ function toParkInviteView(
   };
 }
 
-function toParkTenantProfileView(row: ParkTenantProfileRow): ParkTenantProfileView {
+function toParkTenantProfileView(
+  row: ParkTenantProfileRow,
+): ParkTenantProfileView {
   return {
     organizationId: row.organization_id,
     parkId: row.park_id,
@@ -111,24 +129,43 @@ function toParkTenantProfileView(row: ParkTenantProfileRow): ParkTenantProfileVi
   };
 }
 
-export function getParkTenantProfile(
-  store: ParkInviteRepositoryStore,
+export interface UpdateParkTenantProfileInput {
+  organizationId: string;
+  actorAccountId: string;
+  address: string;
+  roomNumber: string;
+}
+
+export interface IssueParkInviteInput {
+  parkId: string;
+  actorAccountId: string;
+  maxUses?: number | null;
+  now?: number;
+}
+
+export interface JoinOrganizationToParkInput {
+  organizationId: string;
+  actorAccountId: string;
+  code: string;
+  address: string;
+  roomNumber: string;
+  now?: number;
+}
+
+export function getParkTenantProfileFromRepository(
+  store: ParkMembershipRepositoryStore,
   organizationId: string,
 ): ParkTenantProfileView | null {
-  const row = store.db()
+  const row = store
+    .db()
     .prepare('SELECT * FROM park_tenant_profiles WHERE organization_id = ?')
     .get(organizationId) as ParkTenantProfileRow | undefined;
   return row ? toParkTenantProfileView(row) : null;
 }
 
-export function updateParkTenantProfile(
-  store: ParkInviteRepositoryStore,
-  input: {
-    organizationId: string;
-    actorAccountId: string;
-    address: string;
-    roomNumber: string;
-  },
+export function updateParkTenantProfileInRepository(
+  store: ParkMembershipRepositoryStore,
+  input: UpdateParkTenantProfileInput,
 ): ParkTenantProfileView {
   const actor = store.getAccount(input.actorAccountId, input.organizationId);
   if (!actor?.isAdmin || actor.status !== 'active')
@@ -137,53 +174,63 @@ export function updateParkTenantProfile(
   if (!park || park.adminOrganizationId === input.organizationId)
     throw new Error('当前企业不是产业园入驻企业');
   const address = store.normalizeOptionalText(input.address, '企业地址', 160);
-  const roomNumber = store.normalizeOptionalText(input.roomNumber, '门牌号', 40);
+  const roomNumber = store.normalizeOptionalText(
+    input.roomNumber,
+    '门牌号',
+    40,
+  );
   if (!address) throw new Error('企业地址不能为空');
   if (!roomNumber) throw new Error('门牌号不能为空');
-  store.db().prepare(
-    `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
+  store
+    .db()
+    .prepare(
+      `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(organization_id) DO UPDATE SET
        park_id = excluded.park_id,
        address = excluded.address,
        room_number = excluded.room_number,
        updated_at = datetime('now')`,
-  ).run(input.organizationId, park.id, address, roomNumber);
-  return getParkTenantProfile(store, input.organizationId)!;
+    )
+    .run(input.organizationId, park.id, address, roomNumber);
+  return getParkTenantProfileFromRepository(store, input.organizationId)!;
 }
 
-export function issueParkInvite(
-  store: ParkInviteRepositoryStore,
-  input: {
-    parkId: string;
-    actorAccountId: string;
-    maxUses?: number | null;
-    now?: number;
-  },
+export function issueParkInviteInRepository(
+  store: ParkMembershipRepositoryStore,
+  input: IssueParkInviteInput,
 ): ParkInviteView {
-  const parkRow = store.db()
+  const parkRow = store
+    .db()
     .prepare('SELECT * FROM parks WHERE id = ?')
     .get(input.parkId) as ParkRow | undefined;
   if (!parkRow || parkRow.status !== 'active')
     throw new Error('产业园不存在或已停用');
-  const actor = store.getAccount(input.actorAccountId, parkRow.admin_organization_id);
+  const actor = store.getAccount(
+    input.actorAccountId,
+    parkRow.admin_organization_id,
+  );
   if (!actor?.isAdmin || actor.status !== 'active')
     throw new Error('只有产业园管理企业管理员可生成邀请码');
   const maxUses = input.maxUses == null ? null : Math.floor(input.maxUses);
-  if (maxUses != null && (maxUses < 1 || maxUses > 10_000))
+  if (
+    maxUses != null &&
+    (!Number.isFinite(maxUses) || maxUses < 1 || maxUses > 10_000)
+  )
     throw new Error('邀请码使用次数必须为 1 到 10000');
   const now = input.now ?? Date.now();
   const row: ParkInviteRow = {
-    id: `park_invite_${randomUUID()}`,
+    id: store.createInviteId(),
     park_id: parkRow.id,
-    nonce: randomBytes(20).toString('hex'),
+    nonce: store.createInviteNonce(),
     issued_at_ms: now,
     expires_at_ms: now + store.inviteValidityMs,
     revoked_at_ms: null,
     max_uses: maxUses,
     used_count: 0,
   };
-  store.db()
+  store
+    .db()
     .prepare(
       `INSERT INTO park_invites
       (id, park_id, nonce, issued_at_ms, expires_at_ms, created_by_account_id, max_uses)
@@ -201,30 +248,29 @@ export function issueParkInvite(
   return toParkInviteView(store, row, parkRow, now);
 }
 
-export function joinOrganizationToPark(
-  store: ParkInviteRepositoryStore,
-  input: {
-    organizationId: string;
-    actorAccountId: string;
-    code: string;
-    address: string;
-    roomNumber: string;
-    now?: number;
-  },
-): ParkInvitePark {
+export function joinOrganizationToParkInRepository(
+  store: ParkMembershipRepositoryStore,
+  input: JoinOrganizationToParkInput,
+): ParkMembershipPark {
   const actor = store.getAccount(input.actorAccountId, input.organizationId);
   if (!actor?.isAdmin || actor.status !== 'active')
     throw new Error('只有企业管理员可让企业加入产业园');
   if (store.getParkForOrganization(input.organizationId))
     throw new Error('企业已加入产业园');
   const address = store.normalizeOptionalText(input.address, '企业地址', 160);
-  const roomNumber = store.normalizeOptionalText(input.roomNumber, '门牌号', 40);
+  const roomNumber = store.normalizeOptionalText(
+    input.roomNumber,
+    '门牌号',
+    40,
+  );
   if (!address) throw new Error('企业地址不能为空');
   if (!roomNumber) throw new Error('门牌号不能为空');
   const normalized = store.normalizeInviteCode(input.code);
-  if (normalized.length !== store.inviteCodeRawLength) throw new Error('产业园邀请码无效或已过期');
+  if (normalized.length !== store.inviteCodeRawLength)
+    throw new Error('产业园邀请码无效或已过期');
   const now = input.now ?? Date.now();
-  const rows = store.db()
+  const rows = store
+    .db()
     .prepare(
       `SELECT i.*, p.name, p.slug, p.invite_secret, p.admin_organization_id,
             p.brand_name, p.status, p.created_at, p.updated_at
@@ -277,10 +323,12 @@ export function joinOrganizationToPark(
       )
       .run(invite.park_id, input.organizationId);
     if (Number(joined.changes) !== 1) throw new Error('企业已加入产业园');
-    database.prepare(
-      `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
+    database
+      .prepare(
+        `INSERT INTO park_tenant_profiles (organization_id, park_id, address, room_number)
        VALUES (?, ?, ?, ?)`,
-    ).run(input.organizationId, invite.park_id, address, roomNumber);
+      )
+      .run(input.organizationId, invite.park_id, address, roomNumber);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
