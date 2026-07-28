@@ -21,7 +21,10 @@ import {
 } from '../modules/collaboration/index.js';
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
 import { createFeishuAutoReplyFacade } from '../modules/integration_adapters/index.js';
-import { createModelUsageFacade } from '../modules/model_gateway/index.js';
+import {
+  createModelUsageFacade,
+  MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
+} from '../modules/model_gateway/index.js';
 import {
   createAccountSyncFacade,
   createWorklogFacade,
@@ -717,22 +720,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE TABLE IF NOT EXISTS account_token_usage (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      model TEXT,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      total_tokens INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(account_id, message_id),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS it_tickets (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -999,10 +986,6 @@ function initSchema(d: Database): void {
       ON park_meeting_slots(organization_id, use_date, meeting_room_id);
     CREATE INDEX IF NOT EXISTS idx_park_meeting_bookings_org_date
       ON park_meeting_bookings(organization_id, use_date, meeting_room_id, start_time, end_time);
-    CREATE INDEX IF NOT EXISTS idx_account_token_usage_org_created
-      ON account_token_usage(organization_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
-      ON account_token_usage(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_status_created
       ON telemetry_events(status, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
@@ -1011,7 +994,10 @@ function initSchema(d: Database): void {
       ON account_sync_snapshots(organization_id, updated_at_ms);
   `);
 
-  applyDatabaseSchemaContributors(d, [COLLABORATION_SCHEMA_CONTRIBUTOR]);
+  applyDatabaseSchemaContributors(d, [
+    MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
+    COLLABORATION_SCHEMA_CONTRIBUTOR,
+  ]);
 
   const organizationColumns = d
     .prepare('PRAGMA table_info(organizations)')

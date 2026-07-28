@@ -14,6 +14,9 @@ const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('model gateway module boundary', () => {
   it('publishes model usage metering through one public entrypoint', () => {
+    expect(modelGateway.MODEL_GATEWAY_SCHEMA_CONTRIBUTOR.id).toBe(
+      'model_gateway',
+    );
     expect(modelGateway.createModelUsageFacade).toBeTypeOf('function');
     expect(modelGateway.recordModelUsageInRepository).toBeTypeOf('function');
     expect(modelGateway.getOrganizationUsageSummaryFromRepository).toBeTypeOf(
@@ -52,5 +55,9 @@ describe('model gateway module boundary', () => {
     expect(databaseFacade).toContain('../modules/model_gateway/index.js');
     expect(databaseFacade).not.toContain("from './tokenUsageRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO account_token_usage');
+    expect(databaseFacade).toContain('MODEL_GATEWAY_SCHEMA_CONTRIBUTOR');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS account_token_usage',
+    );
   });
 });
