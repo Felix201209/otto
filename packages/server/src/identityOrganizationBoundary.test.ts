@@ -103,6 +103,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createMemberSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
@@ -198,6 +201,14 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toMatch(
       /from ['"]\.\/(?:employeeRepository|inviteCodeRepository)\.js['"]/,
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS employees',
+    );
+    expect(databaseFacade).not.toContain('idx_employees_organization');
+    expect(databaseFacade).toContain('createMemberSchemaContributor');
+    expect(databaseFacade).toMatch(
+      /createMemberSchemaContributor\(\{[\s\S]*?createWorklogSchemaContributor\(\{/,
     );
   });
 

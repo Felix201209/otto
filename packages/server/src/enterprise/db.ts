@@ -91,6 +91,7 @@ import {
   createAuthSessionFacade,
   createDepartmentInviteFacade,
   createMemberDirectoryFacade,
+  createMemberSchemaContributor,
   createSmsChallengeFacade,
   createOrganizationDirectoryFacade,
   createOrganizationFeatureFacade,
@@ -527,23 +528,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS employees (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      name TEXT NOT NULL,
-      role TEXT,
-      department TEXT,
-      department_id TEXT,
-      position_id TEXT,
-      position_title TEXT,
-      invite_code TEXT,
-      status TEXT DEFAULT 'active',
-      personality TEXT,
-      onboarded_at TEXT DEFAULT (datetime('now')),
-      offboarded_at TEXT,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
     CREATE TABLE IF NOT EXISTS invite_codes (
       code TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -906,6 +890,9 @@ function initSchema(d: Database): void {
     createEnterpriseKnowledgeSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
+    createMemberSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
     createWorklogSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -962,7 +949,6 @@ function initSchema(d: Database): void {
     }
   };
   for (const table of [
-    'employees',
     'invite_codes',
     'accounts',
     'account_tags',
@@ -1051,9 +1037,6 @@ function initSchema(d: Database): void {
   ensureTextColumn('accounts', 'position_title');
   ensureTextColumn('accounts', 'department_id');
   ensureTextColumn('accounts', 'avatar_url');
-  ensureTextColumn('employees', 'department_id');
-  ensureTextColumn('employees', 'position_id');
-  ensureTextColumn('employees', 'position_title');
   ensureTextColumn('accounts', 'account_type');
   ensureTextColumn('accounts', 'deleted_at');
   ensureTextColumn('organizations', 'park_id');
@@ -1084,7 +1067,6 @@ function initSchema(d: Database): void {
   d.exec(`
     CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_organizations_park ON organizations(park_id);
-    CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
       ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient

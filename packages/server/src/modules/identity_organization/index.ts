@@ -32,5 +32,6 @@ export * from './authSessionFacade.js';
 export * from './authSessionRepository.js';
 export * from './memberFacade.js';
 export * from './memberRepository.js';
+export * from './memberSchema.js';
 export * from './organizationRoutes.js';
 export * from './publicInvite.js';
