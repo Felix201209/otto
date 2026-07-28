@@ -180,6 +180,11 @@ License 暂停时执行层关闭对应功能但不删除配置，授权恢复后
 企业、账号和 messageId 幂等，余额不得跌破零或超出安全整数。HTTP 路由通过 `enterprise/db.ts` 的组合出口调用，
 旧 `enterprise/credits.ts` 与 `creditsSchema.ts` 仅保留兼容导出，既有路径、响应和 SQLite 表结构保持不变。
 
+第二十九阶段将部门/岗位归属解析迁入 `identity_organization` 的 Types、Repository 与 Facade。成员创建、账号生命周期、
+注册和企业邀请继续使用原函数签名，但名称归一、稳定租户内 ID、显式 ID 冲突检测和目录补齐统一由身份模块执行。
+显式部门或岗位 ID 会额外检查全局主键是否已归属其他企业，跨租户碰撞 fail-closed；部门与岗位补齐在同一 savepoint
+提交，职位写入失败不会留下半成品部门。重复解析保持幂等且不会覆盖已有岗位权限映射，现有 HTTP 与 SQLite 契约不变。
+
 其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
 一次性移动跨业务链路代码。
 

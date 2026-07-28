@@ -103,6 +103,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createMemberDirectoryFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf(
       'function',
     );
@@ -292,6 +295,21 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain(
       'function toOrganizationPositionView(',
     );
+  });
+
+  it('keeps assignment identity resolution behind the identity module facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAssignmentIdentityFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function resolveAssignmentIdentity\s*\(/,
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT id, name FROM organization_departments WHERE organization_id = ?',
+    );
+    expect(databaseFacade).not.toContain('该职位 ID 已绑定其他部门或职位名称');
   });
 
   it('keeps feature persistence and license access behind module facades', () => {

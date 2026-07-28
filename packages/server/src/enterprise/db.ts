@@ -74,6 +74,7 @@ import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
+  createAssignmentIdentityFacade,
   createAuthSessionFacade,
   createDepartmentInviteFacade,
   createMemberDirectoryFacade,
@@ -122,6 +123,8 @@ export {
   CreditsRequestError,
 } from '../modules/commercial_control/index.js';
 export type {
+  AssignmentIdentity,
+  AssignmentIdentityInput,
   DepartmentInviteValidationResult,
   OrganizationInviteInspection,
   OrganizationInviteIssueInput,
@@ -1812,185 +1815,8 @@ function normalizeOptionalText(
   return clean;
 }
 
-export interface AssignmentIdentity {
-  department: string | null;
-  departmentId: string | null;
-  positionTitle: string | null;
-  positionId: string | null;
-}
-
-/**
- * 中心企业服务没有另一套“只存在于前端”的组织节点。部门/职位显示名与 ID 在
- * 这里成对归一：已有真实 ID 会复用；旧调用方只传显示名时生成稳定租户内 ID。
- * 同一 ID 不允许在同一企业中指向不同名称，避免邀请码把员工挂到伪造节点。
- */
-export function resolveAssignmentIdentity(
-  database: Database,
-  organizationId: string,
-  input: {
-    department?: string | null;
-    departmentId?: string | null;
-    positionTitle?: string | null;
-    positionId?: string | null;
-  },
-): AssignmentIdentity {
-  const department = normalizeOptionalText(input.department, '部门名称');
-  const requestedDepartmentId = normalizeOptionalText(
-    input.departmentId,
-    '部门 ID',
-    120,
-  );
-  const positionTitle = normalizeOptionalText(input.positionTitle, '职位名称');
-  const requestedPositionId = normalizeOptionalText(
-    input.positionId,
-    '职位 ID',
-    120,
-  );
-  if (!department && requestedDepartmentId)
-    throw new Error('设置部门 ID 时必须同时提供部门名称');
-  if (!positionTitle && requestedPositionId)
-    throw new Error('设置职位 ID 时必须同时提供职位名称');
-
-  const departmentRows = database
-    .prepare(
-      `SELECT id, name FROM organization_departments WHERE organization_id = ?
-     UNION ALL
-     SELECT department_id AS id, department AS name FROM accounts
-       WHERE organization_id = ? AND deleted_at IS NULL
-     UNION ALL
-     SELECT department_id AS id, department AS name FROM employees
-       WHERE organization_id = ?
-     UNION ALL
-     SELECT department_id AS id, default_department AS name FROM organization_invites
-       WHERE organization_id = ?`,
-    )
-    .all(
-      organizationId,
-      organizationId,
-      organizationId,
-      organizationId,
-    ) as Array<{
-    id: string | null;
-    name: string | null;
-  }>;
-  const normalizedDepartment = department
-    ? normalizeAssignmentName(department)
-    : null;
-  const existingDepartment = normalizedDepartment
-    ? departmentRows.find(
-        (row) =>
-          row.id &&
-          row.name &&
-          normalizeAssignmentName(row.name) === normalizedDepartment,
-      )
-    : undefined;
-  if (
-    requestedDepartmentId &&
-    existingDepartment?.id &&
-    existingDepartment.id !== requestedDepartmentId
-  ) {
-    throw new Error('该部门名称已绑定其他部门 ID');
-  }
-  if (requestedDepartmentId) {
-    const conflicting = departmentRows.find(
-      (row) =>
-        row.id === requestedDepartmentId &&
-        row.name &&
-        normalizeAssignmentName(row.name) !== normalizedDepartment,
-    );
-    if (conflicting) throw new Error('该部门 ID 已绑定其他部门名称');
-  }
-  const departmentId = department
-    ? (requestedDepartmentId ??
-      existingDepartment?.id ??
-      stableAssignmentId('dept', organizationId, normalizedDepartment))
-    : null;
-
-  const positionRows = database
-    .prepare(
-      `SELECT id, title, department_id FROM organization_positions WHERE organization_id = ?
-     UNION ALL
-     SELECT position_id AS id, position_title AS title, department_id
-       FROM accounts WHERE organization_id = ? AND deleted_at IS NULL
-     UNION ALL
-     SELECT position_id AS id, position_title AS title, department_id
-       FROM employees WHERE organization_id = ?
-     UNION ALL
-     SELECT position_id AS id, position_title AS title, department_id
-       FROM organization_invites WHERE organization_id = ?`,
-    )
-    .all(
-      organizationId,
-      organizationId,
-      organizationId,
-      organizationId,
-    ) as Array<{
-    id: string | null;
-    title: string | null;
-    department_id: string | null;
-  }>;
-  const normalizedPosition = positionTitle
-    ? normalizeAssignmentName(positionTitle)
-    : null;
-  const existingPosition = normalizedPosition
-    ? positionRows.find(
-        (row) =>
-          row.id &&
-          row.title &&
-          row.department_id === departmentId &&
-          normalizeAssignmentName(row.title) === normalizedPosition,
-      )
-    : undefined;
-  if (
-    requestedPositionId &&
-    existingPosition?.id &&
-    existingPosition.id !== requestedPositionId
-  ) {
-    throw new Error('该职位名称已绑定其他职位 ID');
-  }
-  if (requestedPositionId) {
-    const conflicting = positionRows.find(
-      (row) =>
-        row.id === requestedPositionId &&
-        (row.department_id !== departmentId ||
-          !row.title ||
-          normalizeAssignmentName(row.title) !== normalizedPosition),
-    );
-    if (conflicting) throw new Error('该职位 ID 已绑定其他部门或职位名称');
-  }
-  const positionId = positionTitle
-    ? (requestedPositionId ??
-      existingPosition?.id ??
-      stableAssignmentId(
-        'pos',
-        organizationId,
-        departmentId,
-        normalizedPosition,
-      ))
-    : null;
-
-  // 任意管理员输入的部门/职位都落入同一份持久化目录，组织树与邀请不会再依赖
-  // “恰好已有成员”才能看到节点。旧调用方无需迁移即可自动补齐目录。
-  if (department && departmentId) {
-    database
-      .prepare(
-        `INSERT OR IGNORE INTO organization_departments (id, organization_id, name)
-       VALUES (?, ?, ?)`,
-      )
-      .run(departmentId, organizationId, department);
-  }
-  if (positionTitle && positionId && departmentId) {
-    database
-      .prepare(
-        `INSERT OR IGNORE INTO organization_positions
-        (id, organization_id, department_id, title, role_mapping)
-       VALUES (?, ?, ?, ?, 'member')`,
-      )
-      .run(positionId, organizationId, departmentId, positionTitle);
-  }
-
-  return { department, departmentId, positionTitle, positionId };
-}
+const assignmentIdentities = createAssignmentIdentityFacade();
+export const { resolveAssignmentIdentity } = assignmentIdentities;
 
 const memberDirectoryStore = {
   db: getDB,
