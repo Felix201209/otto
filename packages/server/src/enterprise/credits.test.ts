@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 type DbModule = typeof import('./db.js');
-type CreditsModule = typeof import('./credits.js');
+type CreditsModule = DbModule;
 
 let tmpDir: string;
 let previousEnterpriseDir: string | undefined;
@@ -22,7 +22,7 @@ async function freshModules(): Promise<{ db: DbModule; credits: CreditsModule }>
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   vi.resetModules();
   const db = await import('./db.js');
-  const credits = await import('./credits.js');
+  const credits = db;
   openDbModule = db;
   return { db, credits };
 }

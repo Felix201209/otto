@@ -46,7 +46,9 @@ import os from 'os';
 import fs from 'fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+  buildCreditsTablesSql,
   createAuditLogFacade,
+  createCreditsFacade,
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
@@ -68,7 +70,6 @@ import {
   type DeploymentTelemetrySettings,
   type PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
-import { buildCreditsTablesSql } from './creditsSchema.js';
 import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
@@ -105,6 +106,8 @@ import {
 } from '../modules/identity_organization/index.js';
 export type {
   AuditLogRecord,
+  CreditBalance,
+  CreditTransaction,
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
   ModuleUpdateRollout,
@@ -112,6 +115,11 @@ export type {
   DeploymentLicenseView,
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
+  RedeemCodeInfo,
+} from '../modules/commercial_control/index.js';
+export {
+  CREDITS_TABLES_SQL,
+  CreditsRequestError,
 } from '../modules/commercial_control/index.js';
 export type {
   DepartmentInviteValidationResult,
@@ -1566,6 +1574,23 @@ const auditLog = createAuditLogFacade({
 });
 
 export const { getAuditLogs, logAudit } = auditLog;
+
+const credits = createCreditsFacade({
+  db: getDB,
+  creditTokenRate: () => process.env.OTTO_CREDIT_TOKEN_RATE,
+});
+
+export const {
+  checkAndReserveCredits,
+  createRedeemCodes,
+  deductCredits,
+  getCreditBalance,
+  listCreditTransactions,
+  listRedeemCodes,
+  redeemCode,
+  revokeRedeemCode,
+  topUpCredits,
+} = credits;
 
 export type OrganizationView = OrganizationDirectoryView;
 

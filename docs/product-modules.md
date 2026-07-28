@@ -175,6 +175,11 @@ License 暂停时执行层关闭对应功能但不删除配置，授权恢复后
 把员工创建作为核销事务回调，员工写入失败会恢复邀请码名额。旧 `enterprise/inviteCodeRepository.ts` 仅保留兼容导出，
 现有 `/enterprise/invite`、`/enterprise/join` 和数据库表结构保持不变。
 
+第二十八阶段将企业积分池、兑换码和交易流水迁入 `commercial_control` 的 Schema、Repository 与 Facade。批量发码、
+兑换、充值和扣费继续在 savepoint 中原子提交，账号状态、管理员身份和企业归属在持久化边界重新验证；扣费继续按
+企业、账号和 messageId 幂等，余额不得跌破零或超出安全整数。HTTP 路由通过 `enterprise/db.ts` 的组合出口调用，
+旧 `enterprise/credits.ts` 与 `creditsSchema.ts` 仅保留兼容导出，既有路径、响应和 SQLite 表结构保持不变。
+
 其他模块目前仍以注册表边界为主，将按 Issue 分批迁移。模块未完成物理迁移前，不得为了追求目录整齐
 一次性移动跨业务链路代码。
 

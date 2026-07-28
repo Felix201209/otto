@@ -7,6 +7,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as commercialControl from './modules/commercial_control/index.js';
 import * as legacyAuditRepository from './enterprise/auditRepository.js';
+import * as legacyCredits from './enterprise/credits.js';
+import * as legacyCreditsSchema from './enterprise/creditsSchema.js';
 import * as legacyDeploymentRepository from './enterprise/deploymentRepository.js';
 import * as legacyModuleUpdateManifest from './enterprise/moduleUpdateManifest.js';
 
@@ -22,6 +24,7 @@ describe('commercial_control module boundary', () => {
   it('publishes deployment and module-update capabilities from one public entrypoint', () => {
     expect(commercialControl.getDeploymentId).toBeTypeOf('function');
     expect(commercialControl.createAuditLogFacade).toBeTypeOf('function');
+    expect(commercialControl.createCreditsFacade).toBeTypeOf('function');
     expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf(
       'function',
     );
@@ -36,6 +39,12 @@ describe('commercial_control module boundary', () => {
     expect(legacyAuditRepository.createAuditLogFacade).toBe(
       commercialControl.createAuditLogFacade,
     );
+    expect(legacyCredits.CreditsRequestError).toBe(
+      commercialControl.CreditsRequestError,
+    );
+    expect(legacyCreditsSchema.buildCreditsTablesSql).toBe(
+      commercialControl.buildCreditsTablesSql,
+    );
     expect(legacyModuleUpdateManifest.licenseModuleCatalog).toBe(
       commercialControl.licenseModuleCatalog,
     );
@@ -46,6 +55,8 @@ describe('commercial_control module boundary', () => {
       'deploymentRepository.ts',
       'deploymentTypes.ts',
       'auditRepository.ts',
+      'credits.ts',
+      'creditsSchema.ts',
       'moduleUpdateManifest.ts',
       'moduleUpdateRepository.ts',
       'deploymentRoutes.ts',
@@ -66,11 +77,17 @@ describe('commercial_control module boundary', () => {
       path.join(enterpriseDir, 'enterpriseRouteDispatcher.ts'),
       'utf8',
     );
+    const creditsRoutes = fs.readFileSync(
+      path.join(enterpriseDir, 'creditsRoutes.ts'),
+      'utf8',
+    );
     expect(databaseFacade).toContain(commercialControlImport);
     expect(routeDispatcher).toContain(commercialControlImport);
     expect(databaseFacade).not.toMatch(
-      /from ['"]\.\/(?:audit|deployment|moduleUpdate)(?:Repository|Routes|Types|Manifest)\.js['"];/,
+      /from ['"]\.\/(?:audit|credits|deployment|moduleUpdate)(?:Repository|Routes|Types|Manifest|Schema)?\.js['"];/,
     );
+    expect(creditsRoutes).toContain(commercialControlImport);
+    expect(creditsRoutes).not.toMatch(/from ['"]\.\/credits\.js['"]/);
   });
 
   it('keeps the audit kernel independent from the enterprise composition root', () => {

@@ -1,15 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type * as db from './db.js';
-import {
-  CreditsRequestError,
-  createRedeemCodes,
-  redeemCode as redeemCreditCode,
-  getCreditBalance,
-  topUpCredits,
-  listRedeemCodes,
-  revokeRedeemCode,
-  listCreditTransactions,
-} from './credits.js';
+import { CreditsRequestError } from '../modules/commercial_control/index.js';
+import * as db from './db.js';
 
 export interface CreditsRouteDeps {
   path: string;
@@ -37,7 +28,7 @@ export async function handleCreditsRoute({
       sendJSON(res, 401, { error: 'Not authenticated' });
       return true;
     }
-    const balance = getCreditBalance(memberAccount.organizationId);
+    const balance = db.getCreditBalance(memberAccount.organizationId);
     sendJSON(res, 200, balance);
     return true;
   }
@@ -54,7 +45,7 @@ export async function handleCreditsRoute({
       return true;
     }
     try {
-      const result = redeemCreditCode(code, memberAccount.id);
+      const result = db.redeemCode(code, memberAccount.id);
       sendJSON(res, 200, result);
     } catch (err) {
       if (!(err instanceof CreditsRequestError)) throw err;
@@ -76,7 +67,7 @@ export async function handleCreditsRoute({
       return true;
     }
     try {
-      const codes = createRedeemCodes(
+      const codes = db.createRedeemCodes(
         memberAccount.organizationId,
         memberAccount.id,
         creditAmount,
@@ -100,7 +91,7 @@ export async function handleCreditsRoute({
       sendJSON(res, 400, { error: '兑换码状态无效' });
       return true;
     }
-    const codes = listRedeemCodes(
+    const codes = db.listRedeemCodes(
       memberAccount.organizationId,
       status === null
         ? undefined
@@ -120,7 +111,7 @@ export async function handleCreditsRoute({
       return true;
     }
     const codeId = path.split('/')[4];
-    const ok = revokeRedeemCode(codeId, memberAccount.organizationId);
+    const ok = db.revokeRedeemCode(codeId, memberAccount.organizationId);
     sendJSON(res, ok ? 200 : 404, ok ? { ok: true } : { error: '兑换码不存在或已处理' });
     return true;
   }
@@ -137,7 +128,7 @@ export async function handleCreditsRoute({
       return true;
     }
     try {
-      const result = topUpCredits(
+      const result = db.topUpCredits(
         memberAccount.organizationId,
         memberAccount.id,
         amount,
@@ -162,7 +153,7 @@ export async function handleCreditsRoute({
       sendJSON(res, 400, { error: 'limit 必须是 1 到 200 的整数' });
       return true;
     }
-    const txns = listCreditTransactions(memberAccount.organizationId, limit);
+    const txns = db.listCreditTransactions(memberAccount.organizationId, limit);
     sendJSON(res, 200, { transactions: txns });
     return true;
   }
