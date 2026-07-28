@@ -6,6 +6,7 @@ export * from './worklogAnalytics.js';
 export * from './worklogEstimates.js';
 export * from './worklogFacade.js';
 export * from './worklogRepository.js';
+export * from './worklogSchema.js';
 export * from './worklogTypes.js';
 export * from './accountSyncCrypto.js';
 export * from './accountSyncFacade.js';

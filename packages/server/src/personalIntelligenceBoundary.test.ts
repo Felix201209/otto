@@ -17,6 +17,9 @@ describe('personal intelligence module boundary', () => {
     expect(personalIntelligence.createWorklogFacade).toBeTypeOf('function');
     expect(personalIntelligence.logWorkTaskInRepository).toBeTypeOf('function');
     expect(personalIntelligence.buildWorklogReport).toBeTypeOf('function');
+    expect(personalIntelligence.createWorklogSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(personalIntelligence.normalizeCostCNY).toBeTypeOf('function');
     expect(personalIntelligence.createAccountSyncFacade).toBeTypeOf('function');
     expect(
@@ -73,6 +76,11 @@ describe('personal intelligence module boundary', () => {
     );
     expect(databaseFacade).not.toContain("from './taskReportRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO task_logs');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS task_logs',
+    );
+    expect(databaseFacade).not.toContain('idx_tasks_organization');
+    expect(databaseFacade).toContain('createWorklogSchemaContributor');
     expect(databaseFacade).not.toContain('INSERT INTO account_sync_snapshots');
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS account_sync_snapshots',

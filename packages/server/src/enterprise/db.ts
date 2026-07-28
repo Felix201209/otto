@@ -30,6 +30,7 @@ import {
 } from '../modules/model_gateway/index.js';
 import {
   createAccountSyncFacade,
+  createWorklogSchemaContributor,
   createWorklogFacade,
   ESTIMATE,
   normalizeCostCNY,
@@ -543,21 +544,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE TABLE IF NOT EXISTS task_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      employee_id TEXT NOT NULL,
-      task_type TEXT NOT NULL,
-      context TEXT,
-      result TEXT,
-      duration_min REAL,
-      tokens_used INTEGER DEFAULT 0,
-      cost_cny REAL DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (employee_id) REFERENCES employees(id),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
     CREATE TABLE IF NOT EXISTS invite_codes (
       code TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -870,7 +856,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_tasks_emp ON task_logs(employee_id);
     CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
     CREATE INDEX IF NOT EXISTS idx_organization_departments_org
       ON organization_departments(organization_id, name);
@@ -880,7 +865,6 @@ function initSchema(d: Database): void {
       ON park_invites(park_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_active
       ON organization_invites(organization_id, expires_at_ms, revoked_at_ms);
-    CREATE INDEX IF NOT EXISTS idx_tasks_type ON task_logs(task_type);
     CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
     CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON account_tags(tag, account_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
@@ -920,6 +904,9 @@ function initSchema(d: Database): void {
     MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
     COLLABORATION_SCHEMA_CONTRIBUTOR,
     createEnterpriseKnowledgeSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
+    createWorklogSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
@@ -976,7 +963,6 @@ function initSchema(d: Database): void {
   };
   for (const table of [
     'employees',
-    'task_logs',
     'invite_codes',
     'accounts',
     'account_tags',
@@ -1099,7 +1085,6 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_organizations_park ON organizations(park_id);
     CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
-    CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
       ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
