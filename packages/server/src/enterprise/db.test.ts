@@ -1005,6 +1005,76 @@ describe('企业 Token 用量时间窗口', () => {
       '账号今日 Token 用量记录已达上限',
     );
   });
+
+  it('停用账号和停用企业都不能继续写入或读取计量数据', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'usage-disabled',
+      password: 'usage-disabled-password',
+      name: '停用计量用户',
+    });
+    const usage = {
+      accountId: account.id,
+      sessionId: 'disabled-session',
+      messageId: 'disabled-message',
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+    };
+
+    expect(db.recordTokenUsage(usage)).toBe(true);
+    db.updateAccount(account.id, { status: 'disabled' });
+    expect(() =>
+      db.recordTokenUsage({ ...usage, messageId: 'disabled-message-2' }),
+    ).toThrow('Account is disabled');
+    expect(
+      db
+        .getOrganizationUsageSummary(db.DEFAULT_ORGANIZATION_ID)
+        .byAccount.find((row) => row.accountId === account.id),
+    ).toMatchObject({ totalTokens: 2, requestCount: 1 });
+
+    db.updateAccount(account.id, { status: 'active' });
+    db.getDB()
+      .prepare('UPDATE organizations SET status = ? WHERE id = ?')
+      .run('disabled', db.DEFAULT_ORGANIZATION_ID);
+    expect(() => db.recordTokenUsage(usage)).toThrow(
+      'Organization is disabled',
+    );
+    expect(() =>
+      db.getOrganizationUsageSummary(db.DEFAULT_ORGANIZATION_ID),
+    ).toThrow('Organization is disabled');
+  });
+
+  it('拒绝超长标识、模型名和异常 Token 数字，避免静默截断或低估', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'usage-validation',
+      password: 'usage-validation-password',
+      name: '计量校验用户',
+    });
+    const usage = {
+      accountId: account.id,
+      sessionId: 'validation-session',
+      messageId: 'validation-message',
+      model: 'gpt-test',
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+    };
+
+    expect(() =>
+      db.recordTokenUsage({ ...usage, messageId: 'm'.repeat(161) }),
+    ).toThrow('messageId 不能超过 160 个字符');
+    expect(() =>
+      db.recordTokenUsage({ ...usage, model: 'm'.repeat(121) }),
+    ).toThrow('model 不能超过 120 个字符');
+    expect(() =>
+      db.recordTokenUsage({ ...usage, inputTokens: Number.NaN }),
+    ).toThrow('Token 用量必须是非负数字');
+    expect(() =>
+      db.recordTokenUsage({ ...usage, inputTokens: 1_000_000_001 }),
+    ).toThrow('单项 Token 用量不能超过 1000000000');
+  });
 });
 
 describe('企业成员直聊', () => {

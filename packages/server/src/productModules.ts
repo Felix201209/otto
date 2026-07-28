@@ -52,7 +52,7 @@ export const PRODUCT_MODULES = [
     description: 'Owns provider capability detection, model routing and token usage normalization.',
     layer: 'runtime',
     runtimeSurfaces: ['core', 'server', 'adapters'],
-    dependencies: [],
+    dependencies: ['data_platform'],
     dataOwnership: ['model configuration metadata', 'normalized token usage'],
     licenseCapabilities: [],
     updateComponents: ['model_catalog'],

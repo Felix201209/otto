@@ -14,6 +14,7 @@ import {
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
+import { createModelUsageFacade } from '../modules/model_gateway/index.js';
 import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
@@ -3136,14 +3137,19 @@ export type {
 // Provider-reported Token usage (client_reported, idempotent)
 // ============================================================
 
-export {
-  getOrganizationUsageSummary,
-  recordTokenUsage,
-} from './tokenUsageRepository.js';
+const modelUsage = createModelUsageFacade({
+  db: getDB,
+  getAccount,
+  getOrganization,
+  listOrganizationAccounts: listAccounts,
+  createUsageId: () => `usage_${randomUUID()}`,
+});
+
+export const { getOrganizationUsageSummary, recordTokenUsage } = modelUsage;
 export type {
   AccountTokenUsageView,
   OrganizationUsageSummary,
-} from './tokenUsageRepository.js';
+} from '../modules/model_gateway/index.js';
 
 // ============================================================
 // Task logging and reports
