@@ -146,7 +146,14 @@ export const PRODUCT_MODULES = [
     layer: 'business',
     runtimeSurfaces: ['server', 'desktop'],
     dependencies: ['identity_organization', 'authorization', 'collaboration', 'data_platform'],
-    dataOwnership: ['parks', 'park tenants', 'park services', 'park tickets', 'park statistics'],
+    dataOwnership: [
+      'parks',
+      'park tenants',
+      'park publications',
+      'park services',
+      'park tickets',
+      'park statistics',
+    ],
     licenseCapabilities: [
       { id: 'park_service', features: ['park_service'], legacyIds: ['park_services'] },
     ],

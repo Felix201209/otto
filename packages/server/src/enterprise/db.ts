@@ -17,6 +17,7 @@ import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge
 import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
+  createParkPublicationFacade,
   createParkServiceConfigurationFacade,
   type ParkInviteView,
   type ParkServiceSpecialistView,
@@ -2852,6 +2853,23 @@ const parkMembershipStore = {
 };
 const parkMembership = createParkMembershipFacade(parkMembershipStore);
 
+const parkPublicationStore = {
+  db: getDB,
+  getAccount,
+  getParkForOrganization,
+  createPublicationId: () => `park_publication_${randomUUID()}`,
+  audit: logAudit,
+};
+
+export const {
+  createParkPublication,
+  listParkAnnouncementResults,
+  listParkPublications,
+  listParkSurveyResults,
+  markParkPublicationRead,
+  submitParkSurvey,
+} = createParkPublicationFacade(parkPublicationStore);
+
 export function getParkTenantProfile(
   organizationId: string,
 ): ParkTenantProfileView | null {
@@ -3089,19 +3107,11 @@ export type {
   ParkSettingsView,
 } from './parkMeetingRepository.js';
 
-export {
-  createParkPublication,
-  listParkAnnouncementResults,
-  listParkPublications,
-  listParkSurveyResults,
-  markParkPublicationRead,
-  submitParkSurvey,
-} from './parkPublicationRepository.js';
 export type {
   ParkAnnouncementResultView,
   ParkPublicationView,
   ParkSurveyResultView,
-} from './parkPublicationRepository.js';
+} from '../modules/park_services/index.js';
 
 // ============================================================
 // Provider-reported Token usage (client_reported, idempotent)
