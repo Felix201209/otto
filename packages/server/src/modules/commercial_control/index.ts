@@ -7,6 +7,7 @@ export * from './deploymentRoutes.js';
 export type * from './deploymentTypes.js';
 export * from './auditLogFacade.js';
 export * from './auditLogRepository.js';
+export * from './auditLogSchema.js';
 export type * from './auditLogTypes.js';
 export * from './creditsFacade.js';
 export * from './creditsRepository.js';

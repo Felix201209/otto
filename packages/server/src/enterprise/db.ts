@@ -58,6 +58,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   buildCreditsTablesSql,
   createAuditLogFacade,
+  createAuditLogSchemaContributor,
   createCreditsFacade,
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
@@ -569,16 +570,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      event TEXT NOT NULL,
-      employee_id TEXT,
-      detail TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -933,6 +924,9 @@ function initSchema(d: Database): void {
     }),
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
     PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
+    createAuditLogSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
   ]);
 
   const organizationColumns = d
@@ -984,7 +978,6 @@ function initSchema(d: Database): void {
     'employees',
     'task_logs',
     'invite_codes',
-    'audit_logs',
     'accounts',
     'account_tags',
     'auth_sessions',
@@ -1107,7 +1100,6 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_organizations_park ON organizations(park_id);
     CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_audit_organization ON audit_logs(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
       ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient

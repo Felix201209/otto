@@ -24,6 +24,9 @@ describe('commercial_control module boundary', () => {
   it('publishes deployment and module-update capabilities from one public entrypoint', () => {
     expect(commercialControl.getDeploymentId).toBeTypeOf('function');
     expect(commercialControl.createAuditLogFacade).toBeTypeOf('function');
+    expect(commercialControl.createAuditLogSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.createCreditsFacade).toBeTypeOf('function');
     expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf(
       'function',
@@ -100,6 +103,11 @@ describe('commercial_control module boundary', () => {
     );
     expect(databaseFacade).not.toContain('idx_telemetry_events_status_created');
     expect(databaseFacade).toContain('PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR');
+    expect(databaseFacade).toContain('createAuditLogSchemaContributor');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS audit_logs',
+    );
+    expect(databaseFacade).not.toContain('idx_audit_organization');
     expect(creditsRoutes).toContain(commercialControlImport);
     expect(creditsRoutes).not.toMatch(/from ['"]\.\/credits\.js['"]/);
   });
