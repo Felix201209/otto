@@ -14,3 +14,4 @@ export * from './creditsSchema.js';
 export * from './moduleUpdateManifest.js';
 export * from './moduleUpdateRepository.js';
 export * from './moduleUpdateRoutes.js';
+export * from './privateDeploymentSchema.js';

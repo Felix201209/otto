@@ -30,6 +30,9 @@ describe('commercial_control module boundary', () => {
     );
     expect(commercialControl.handleDeploymentRoute).toBeTypeOf('function');
     expect(commercialControl.handleModuleUpdateRoute).toBeTypeOf('function');
+    expect(commercialControl.PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR.id).toBe(
+      'commercial_control_private_deployment',
+    );
   });
 
   it('keeps legacy enterprise imports as thin aliases of the module implementation', () => {
@@ -86,6 +89,17 @@ describe('commercial_control module boundary', () => {
     expect(databaseFacade).not.toMatch(
       /from ['"]\.\/(?:audit|credits|deployment|moduleUpdate)(?:Repository|Routes|Types|Manifest|Schema)?\.js['"];/,
     );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS deployment_settings',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS deployment_license',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS telemetry_events',
+    );
+    expect(databaseFacade).not.toContain('idx_telemetry_events_status_created');
+    expect(databaseFacade).toContain('PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR');
     expect(creditsRoutes).toContain(commercialControlImport);
     expect(creditsRoutes).not.toMatch(/from ['"]\.\/credits\.js['"]/);
   });

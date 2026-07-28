@@ -70,6 +70,7 @@ import {
   importDeploymentLicense as importDeploymentLicenseIntoRepository,
   isLicenseRestricted as isLicenseRestrictedInRepository,
   isLicenseUsableForOrganizationFeature as isLicenseUsableForOrganizationFeatureInRepository,
+  PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
   recordTelemetryEvent as recordTelemetryEventInRepository,
   updateModuleUpdateDescriptorInStore,
   updateTelemetrySettings as updateTelemetrySettingsInRepository,
@@ -446,43 +447,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS deployment_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS deployment_license (
-      id TEXT PRIMARY KEY,
-      deployment_id TEXT NOT NULL,
-      organization_id TEXT,
-      customer_name TEXT NOT NULL,
-      plan TEXT NOT NULL,
-      expires_at_ms INTEGER NOT NULL,
-      seat_limit INTEGER NOT NULL,
-      modules_json TEXT NOT NULL,
-      offline INTEGER NOT NULL DEFAULT 0 CHECK(offline IN (0, 1)),
-      telemetry_allowed INTEGER NOT NULL DEFAULT 1 CHECK(telemetry_allowed IN (0, 1)),
-      issued_at_ms INTEGER NOT NULL,
-      revoked_at_ms INTEGER,
-      signature TEXT NOT NULL,
-      raw_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS telemetry_events (
-      id TEXT PRIMARY KEY,
-      deployment_id TEXT NOT NULL,
-      organization_id TEXT,
-      event_type TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      signature TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'sent', 'failed', 'discarded')),
-      attempts INTEGER NOT NULL DEFAULT 0,
-      created_at_ms INTEGER NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      sent_at_ms INTEGER
-    );
     CREATE TABLE IF NOT EXISTS parks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -959,10 +923,6 @@ function initSchema(d: Database): void {
       ON park_meeting_slots(organization_id, use_date, meeting_room_id);
     CREATE INDEX IF NOT EXISTS idx_park_meeting_bookings_org_date
       ON park_meeting_bookings(organization_id, use_date, meeting_room_id, start_time, end_time);
-    CREATE INDEX IF NOT EXISTS idx_telemetry_events_status_created
-      ON telemetry_events(status, created_at_ms);
-    CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
-      ON telemetry_events(deployment_id, created_at_ms);
   `);
 
   applyDatabaseSchemaContributors(d, [
@@ -972,6 +932,7 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
+    PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
   ]);
 
   const organizationColumns = d
