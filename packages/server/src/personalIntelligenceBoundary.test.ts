@@ -13,11 +13,17 @@ const moduleDir = path.join(sourceRoot, 'modules', 'personal_intelligence');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('personal intelligence module boundary', () => {
-  it('publishes worklog storage, estimates, analytics and facade from one entrypoint', () => {
+  it('publishes worklogs and account restoration from one entrypoint', () => {
     expect(personalIntelligence.createWorklogFacade).toBeTypeOf('function');
     expect(personalIntelligence.logWorkTaskInRepository).toBeTypeOf('function');
     expect(personalIntelligence.buildWorklogReport).toBeTypeOf('function');
     expect(personalIntelligence.normalizeCostCNY).toBeTypeOf('function');
+    expect(personalIntelligence.createAccountSyncFacade).toBeTypeOf('function');
+    expect(personalIntelligence.ACCOUNT_SYNC_SCOPES).toEqual([
+      'personal_memory',
+      'worklog',
+      'auto_skills',
+    ]);
   });
 
   it('matches the stable product registry ownership and dependencies', () => {
@@ -42,7 +48,9 @@ describe('personal intelligence module boundary', () => {
         const source = fs.readFileSync(path.join(moduleDir, file), 'utf8');
         return (
           /enterprise[\\/]db|\.\.\/\.\.\/enterprise/.test(source) ||
-          /\b(?:FROM|JOIN)\s+employees\b/i.test(source)
+          /\b(?:FROM|JOIN)\s+(?:employees|accounts|organizations)\b/i.test(
+            source,
+          )
         );
       });
     expect(offenders).toEqual([]);
@@ -56,10 +64,13 @@ describe('personal intelligence module boundary', () => {
     ).toBe(false);
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
     expect(databaseFacade).toContain('createWorklogFacade');
+    expect(databaseFacade).toContain('createAccountSyncFacade');
     expect(databaseFacade).toContain(
       '../modules/personal_intelligence/index.js',
     );
     expect(databaseFacade).not.toContain("from './taskReportRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO task_logs');
+    expect(databaseFacade).not.toContain('INSERT INTO account_sync_snapshots');
+    expect(databaseFacade).not.toContain('createCipheriv');
   });
 });

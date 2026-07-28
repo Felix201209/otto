@@ -6,7 +6,10 @@
  * 存储层通过 data_platform 使用 Node 内置 node:sqlite，无原生依赖。
  */
 
-import { Database } from '../modules/data_platform/index.js';
+import {
+  createFileEncryptionKeyProvider,
+  Database,
+} from '../modules/data_platform/index.js';
 import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
 import {
   createAccountPresenceFacade,
@@ -16,6 +19,7 @@ import {
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
 import { createModelUsageFacade } from '../modules/model_gateway/index.js';
 import {
+  createAccountSyncFacade,
   createWorklogFacade,
   ESTIMATE,
   normalizeCostCNY,
@@ -40,15 +44,7 @@ import {
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from 'node:crypto';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
@@ -134,6 +130,16 @@ export type {
   AddEnterpriseKnowledgeInput,
   EnterpriseKnowledgeEntryView,
 } from '../modules/enterprise_knowledge/index.js';
+export {
+  ACCOUNT_SYNC_SCOPES,
+  AccountSyncConflictError,
+} from '../modules/personal_intelligence/index.js';
+export type {
+  AccountSyncFile,
+  AccountSyncPayload,
+  AccountSyncScope,
+  AccountSyncSnapshotView,
+} from '../modules/personal_intelligence/index.js';
 export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
@@ -156,6 +162,11 @@ const DATA_DIR =
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
+const accountSyncKeyProvider = createFileEncryptionKeyProvider({
+  keyPath: ACCOUNT_SYNC_KEY_PATH,
+  keyBytes: 32,
+  invalidKeyMessage: 'account sync encryption key is invalid',
+});
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
 export const ENTERPRISE_SCHEMA_VERSION = 13;
@@ -164,24 +175,14 @@ const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
 
-function tokensMatch(left: string, right: string): boolean {
-  if (!left || !right || left.length !== right.length) return false;
-  try {
-    return timingSafeEqual(Buffer.from(left), Buffer.from(right));
-  } catch {
-    return false;
-  }
-}
-
 let db: Database | null = null;
-let accountSyncEncryptionKey: Buffer | null = null;
 
 /** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
 export function closeEnterpriseDatabase(): void {
   if (!db) return;
   const database = db;
   db = null;
-  accountSyncEncryptionKey = null;
+  accountSyncKeyProvider.clear();
   database.close();
 }
 
@@ -1556,385 +1557,6 @@ function backfillOrganizationStructure(d: Database): void {
 // Organizations and time-boxed registration invites
 // ============================================================
 
-export const ACCOUNT_SYNC_SCOPES = [
-  'personal_memory',
-  'worklog',
-  'auto_skills',
-] as const;
-
-export type AccountSyncScope = (typeof ACCOUNT_SYNC_SCOPES)[number];
-
-export interface AccountSyncFile {
-  path: string;
-  content: string;
-  modifiedAtMs: number;
-  sha256: string;
-}
-
-export interface AccountSyncPayload {
-  schemaVersion: 1;
-  generatedAt: string;
-  files: AccountSyncFile[];
-  truncated?: boolean;
-}
-
-export interface AccountSyncSnapshotView {
-  scope: AccountSyncScope;
-  version: number;
-  payload: AccountSyncPayload;
-  payloadHash: string;
-  deviceId: string | null;
-  updatedAtMs: number;
-}
-
-export class AccountSyncConflictError extends Error {
-  constructor(readonly currentVersion: number) {
-    super('account sync snapshot changed on another device');
-    this.name = 'AccountSyncConflictError';
-  }
-}
-
-const ACCOUNT_SYNC_MAX_FILES = 1_000;
-const ACCOUNT_SYNC_MAX_FILE_BYTES = 1024 * 1024;
-const ACCOUNT_SYNC_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
-const ACCOUNT_SYNC_SCOPE_SET = new Set<string>(ACCOUNT_SYNC_SCOPES);
-
-interface AccountSyncSnapshotRow {
-  account_id: string;
-  organization_id: string;
-  scope: AccountSyncScope;
-  version: number;
-  payload_ciphertext: string;
-  payload_iv: string;
-  payload_auth_tag: string;
-  payload_hash: string;
-  device_id: string | null;
-  updated_at_ms: number;
-}
-
-function normalizeAccountSyncPath(
-  scope: AccountSyncScope,
-  value: string,
-): string {
-  if (scope !== 'personal_memory') return value;
-  if (value === 'global.md') return 'memory/global.md';
-  if (value.startsWith('sessions/')) return `memory/${value}`;
-  return value;
-}
-
-function isAccountSyncPathAllowed(scope: AccountSyncScope, value: string): boolean {
-  if (
-    !value ||
-    value.length > 260 ||
-    value.includes('\\') ||
-    value.startsWith('/') ||
-    value.split('/').some((segment) => !segment || segment === '.' || segment === '..')
-  ) {
-    return false;
-  }
-  if (scope === 'personal_memory') {
-    return value === 'memory/global.md'
-      || /^memory\/sessions\/[^/]{1,160}\.md$/u.test(value)
-      || value === 'knowledge/entries.jsonl';
-  }
-  if (scope === 'worklog') {
-    return /\.(?:jsonl|json|md)$/iu.test(value);
-  }
-  return /^auto-[^/]{1,160}\/(?:SKILL\.md|profile\.json)$/u.test(value);
-}
-
-function normalizeAccountSyncPayload(
-  scope: AccountSyncScope,
-  value: unknown,
-): AccountSyncPayload {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('account sync payload must be an object');
-  }
-  const raw = value as Record<string, unknown>;
-  if (raw.schemaVersion !== 1 || !Array.isArray(raw.files)) {
-    throw new Error('account sync payload schema is unsupported');
-  }
-  if (raw.files.length > ACCOUNT_SYNC_MAX_FILES) {
-    throw new Error('account sync payload contains too many files');
-  }
-  const generatedAtMs = Date.parse(String(raw.generatedAt ?? ''));
-  if (!Number.isFinite(generatedAtMs)) {
-    throw new Error('account sync generatedAt is invalid');
-  }
-
-  let totalBytes = 0;
-  const seen = new Set<string>();
-  const files = raw.files.map((candidate): AccountSyncFile => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-      throw new Error('account sync file entry is invalid');
-    }
-    const file = candidate as Record<string, unknown>;
-    const relativePath = normalizeAccountSyncPath(scope, typeof file.path === 'string' ? file.path : '');
-    const content = typeof file.content === 'string' ? file.content : '';
-    if (!isAccountSyncPathAllowed(scope, relativePath)) {
-      throw new Error('account sync file path is not allowed');
-    }
-    if (seen.has(relativePath)) {
-      throw new Error('account sync payload contains a duplicate path');
-    }
-    seen.add(relativePath);
-    const contentBytes = Buffer.byteLength(content, 'utf8');
-    if (contentBytes > ACCOUNT_SYNC_MAX_FILE_BYTES) {
-      throw new Error('account sync file exceeds the size limit');
-    }
-    totalBytes += contentBytes + Buffer.byteLength(relativePath, 'utf8');
-    if (totalBytes > ACCOUNT_SYNC_MAX_PAYLOAD_BYTES) {
-      throw new Error('account sync payload exceeds the size limit');
-    }
-    const modifiedAtMs = Number(file.modifiedAtMs);
-    if (!Number.isFinite(modifiedAtMs) || modifiedAtMs < 0) {
-      throw new Error('account sync file timestamp is invalid');
-    }
-    const digest = createHash('sha256').update(content, 'utf8').digest('hex');
-    if (typeof file.sha256 !== 'string' || !tokensMatch(digest, file.sha256.toLowerCase())) {
-      throw new Error('account sync file checksum mismatch');
-    }
-    return {
-      path: relativePath,
-      content,
-      modifiedAtMs: Math.floor(modifiedAtMs),
-      sha256: digest,
-    };
-  });
-
-  return {
-    schemaVersion: 1,
-    generatedAt: new Date(generatedAtMs).toISOString(),
-    files,
-    ...(raw.truncated === true ? { truncated: true } : {}),
-  };
-}
-
-function getAccountSyncEncryptionKey(): Buffer {
-  if (accountSyncEncryptionKey) return accountSyncEncryptionKey;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  let key: Buffer;
-  try {
-    key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    const generated = randomBytes(32);
-    try {
-      fs.writeFileSync(ACCOUNT_SYNC_KEY_PATH, generated, {
-        flag: 'wx',
-        mode: 0o600,
-      });
-      key = generated;
-    } catch (writeError) {
-      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
-      key = fs.readFileSync(ACCOUNT_SYNC_KEY_PATH);
-    }
-  }
-  if (key.length !== 32) {
-    throw new Error('account sync encryption key is invalid');
-  }
-  try {
-    fs.chmodSync(ACCOUNT_SYNC_KEY_PATH, 0o600);
-  } catch {
-    // Windows may not support POSIX modes; ACLs still protect the data directory.
-  }
-  accountSyncEncryptionKey = key;
-  return key;
-}
-
-function accountSyncAad(row: Pick<
-  AccountSyncSnapshotRow,
-  'account_id' | 'organization_id' | 'scope' | 'version'
->): Buffer {
-  return Buffer.from(
-    [row.account_id, row.organization_id, row.scope, String(row.version)].join('\0'),
-    'utf8',
-  );
-}
-
-function encryptAccountSyncPayload(input: {
-  accountId: string;
-  organizationId: string;
-  scope: AccountSyncScope;
-  version: number;
-  payload: AccountSyncPayload;
-}): {
-  ciphertext: string;
-  iv: string;
-  authTag: string;
-  payloadHash: string;
-} {
-  const raw = JSON.stringify(input.payload);
-  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', getAccountSyncEncryptionKey(), iv);
-  cipher.setAAD(accountSyncAad({
-    account_id: input.accountId,
-    organization_id: input.organizationId,
-    scope: input.scope,
-    version: input.version,
-  }));
-  const ciphertext = Buffer.concat([
-    cipher.update(gzipSync(Buffer.from(raw, 'utf8'))),
-    cipher.final(),
-  ]);
-  return {
-    ciphertext: ciphertext.toString('base64'),
-    iv: iv.toString('base64'),
-    authTag: cipher.getAuthTag().toString('base64'),
-    payloadHash,
-  };
-}
-
-function decryptAccountSyncPayload(row: AccountSyncSnapshotRow): AccountSyncPayload {
-  const decipher = createDecipheriv(
-    'aes-256-gcm',
-    getAccountSyncEncryptionKey(),
-    Buffer.from(row.payload_iv, 'base64'),
-  );
-  decipher.setAAD(accountSyncAad(row));
-  decipher.setAuthTag(Buffer.from(row.payload_auth_tag, 'base64'));
-  const compressed = Buffer.concat([
-    decipher.update(Buffer.from(row.payload_ciphertext, 'base64')),
-    decipher.final(),
-  ]);
-  const raw = gunzipSync(compressed).toString('utf8');
-  const payloadHash = createHash('sha256').update(raw, 'utf8').digest('hex');
-  if (!tokensMatch(payloadHash, row.payload_hash)) {
-    throw new Error('account sync snapshot integrity check failed');
-  }
-  return normalizeAccountSyncPayload(row.scope, JSON.parse(raw) as unknown);
-}
-
-function accountSyncSnapshotView(row: AccountSyncSnapshotRow): AccountSyncSnapshotView {
-  return {
-    scope: row.scope,
-    version: row.version,
-    payload: decryptAccountSyncPayload(row),
-    payloadHash: row.payload_hash,
-    deviceId: row.device_id,
-    updatedAtMs: row.updated_at_ms,
-  };
-}
-
-function activeAccountOrganization(accountId: string): string {
-  const account = getDB()
-    .prepare("SELECT organization_id FROM accounts WHERE id = ? AND status = 'active' AND deleted_at IS NULL")
-    .get(accountId) as { organization_id: string } | undefined;
-  if (!account) throw new Error('account not found');
-  return account.organization_id;
-}
-
-export function listAccountSyncSnapshots(accountId: string): AccountSyncSnapshotView[] {
-  activeAccountOrganization(accountId);
-  const rows = getDB()
-    .prepare('SELECT * FROM account_sync_snapshots WHERE account_id = ? ORDER BY scope')
-    .all(accountId) as AccountSyncSnapshotRow[];
-  return rows.map(accountSyncSnapshotView);
-}
-
-export function putAccountSyncSnapshot(input: {
-  accountId: string;
-  scope: AccountSyncScope;
-  expectedVersion: number;
-  payload: unknown;
-  deviceId?: string | null;
-}): AccountSyncSnapshotView {
-  if (!ACCOUNT_SYNC_SCOPE_SET.has(input.scope)) {
-    throw new Error('account sync scope is invalid');
-  }
-  if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
-    throw new Error('account sync expectedVersion is invalid');
-  }
-  const organizationId = activeAccountOrganization(input.accountId);
-  const payload = normalizeAccountSyncPayload(input.scope, input.payload);
-  const existing = getDB()
-    .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
-    .get(input.accountId, input.scope) as { version: number } | undefined;
-  const currentVersion = existing?.version ?? 0;
-  if (currentVersion !== input.expectedVersion) {
-    throw new AccountSyncConflictError(currentVersion);
-  }
-
-  const version = currentVersion + 1;
-  const encrypted = encryptAccountSyncPayload({
-    accountId: input.accountId,
-    organizationId,
-    scope: input.scope,
-    version,
-    payload,
-  });
-  const updatedAtMs = Date.now();
-  const deviceId = typeof input.deviceId === 'string'
-    ? input.deviceId.trim().slice(0, 160) || null
-    : null;
-
-  if (existing) {
-    const result = getDB()
-      .prepare(
-        'UPDATE account_sync_snapshots SET organization_id = ?, version = ?, '
-        + 'payload_ciphertext = ?, payload_iv = ?, payload_auth_tag = ?, payload_hash = ?, '
-        + 'device_id = ?, updated_at_ms = ? '
-        + 'WHERE account_id = ? AND scope = ? AND version = ?',
-      )
-      .run(
-        organizationId,
-        version,
-        encrypted.ciphertext,
-        encrypted.iv,
-        encrypted.authTag,
-        encrypted.payloadHash,
-        deviceId,
-        updatedAtMs,
-        input.accountId,
-        input.scope,
-        currentVersion,
-      ) as { changes?: number | bigint };
-    if (Number(result.changes ?? 0) !== 1) {
-      const latest = getDB()
-        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
-        .get(input.accountId, input.scope) as { version?: number } | undefined;
-      throw new AccountSyncConflictError(Number(latest?.version ?? currentVersion));
-    }
-  } else {
-    try {
-      getDB()
-        .prepare(
-          'INSERT INTO account_sync_snapshots '
-          + '(account_id, organization_id, scope, version, payload_ciphertext, '
-          + 'payload_iv, payload_auth_tag, payload_hash, device_id, updated_at_ms) '
-          + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-        .run(
-          input.accountId,
-          organizationId,
-          input.scope,
-          version,
-          encrypted.ciphertext,
-          encrypted.iv,
-          encrypted.authTag,
-          encrypted.payloadHash,
-          deviceId,
-          updatedAtMs,
-        );
-    } catch (error) {
-      const latest = getDB()
-        .prepare('SELECT version FROM account_sync_snapshots WHERE account_id = ? AND scope = ?')
-        .get(input.accountId, input.scope) as { version?: number } | undefined;
-      if (latest) throw new AccountSyncConflictError(Number(latest.version));
-      throw error;
-    }
-  }
-
-  return {
-    scope: input.scope,
-    version,
-    payload,
-    payloadHash: encrypted.payloadHash,
-    deviceId,
-    updatedAtMs,
-  };
-}
 export type OrganizationView = OrganizationDirectoryView;
 
 const organizationDirectoryStore = { db: getDB };
@@ -2542,6 +2164,23 @@ export const {
   findAccountByPhone,
   findActiveAccountByPhone,
 } = createAccountDirectoryFacade<AccountView, AccountRow>(accountDirectoryStore);
+
+const accountSync = createAccountSyncFacade({
+  db: getDB,
+  keyProvider: accountSyncKeyProvider,
+  resolveActiveIdentity(accountId: string) {
+    const account = getAccount(accountId);
+    if (account?.status !== 'active') return null;
+    const organization = getOrganization(account.organizationId);
+    if (organization?.status !== 'active') return null;
+    return {
+      accountId: account.id,
+      organizationId: account.organizationId,
+    };
+  },
+});
+
+export const { listAccountSyncSnapshots, putAccountSyncSnapshot } = accountSync;
 
 const accountLifecycleStore = {
   db: getDB,

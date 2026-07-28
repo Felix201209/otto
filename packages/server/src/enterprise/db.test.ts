@@ -741,6 +741,114 @@ describe('账号数据恢复快照', () => {
       expect(error).toBeInstanceOf(db.AccountSyncConflictError);
       expect((error as InstanceType<typeof db.AccountSyncConflictError>).currentVersion).toBe(1);
     }
+
+    db.closeEnterpriseDatabase();
+    vi.resetModules();
+    const reopened: DbModule = await import('./db.js');
+    expect(reopened.listAccountSyncSnapshots(first.id)).toEqual([
+      expect.objectContaining({ version: 1, payload }),
+    ]);
+    reopened.closeEnterpriseDatabase();
+  });
+
+  it('rejects damaged encrypted snapshots without exposing partial content', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'sync-damaged-account',
+      password: 'sync-damaged-password',
+      name: 'Damaged sync account',
+    });
+    const content = 'private account memory';
+    db.putAccountSyncSnapshot({
+      accountId: account.id,
+      scope: 'personal_memory',
+      expectedVersion: 0,
+      payload: {
+        schemaVersion: 1,
+        generatedAt: '2026-07-26T10:00:00.000Z',
+        files: [
+          {
+            path: 'memory/global.md',
+            content,
+            modifiedAtMs: Date.parse('2026-07-26T10:00:00.000Z'),
+            sha256: createHash('sha256').update(content).digest('hex'),
+          },
+        ],
+      },
+    });
+    db.getDB()
+      .prepare(
+        'UPDATE account_sync_snapshots SET payload_auth_tag = ? WHERE account_id = ?',
+      )
+      .run('AAAAAAAAAAAAAAAAAAAAAA==', account.id);
+
+    expect(() => db.listAccountSyncSnapshots(account.id)).toThrow(
+      'account sync snapshot integrity check failed',
+    );
+  });
+
+  it('requires active tenant identity and never reuses another tenant snapshot', async () => {
+    const db = await freshDb();
+    const account = db.createAccount({
+      username: 'sync-tenant-account',
+      password: 'sync-tenant-password',
+      name: 'Tenant sync account',
+    });
+    const content = 'tenant-bound memory';
+    const payload = {
+      schemaVersion: 1 as const,
+      generatedAt: '2026-07-26T10:00:00.000Z',
+      files: [
+        {
+          path: 'memory/global.md',
+          content,
+          modifiedAtMs: Date.parse('2026-07-26T10:00:00.000Z'),
+          sha256: createHash('sha256').update(content).digest('hex'),
+        },
+      ],
+    };
+    db.putAccountSyncSnapshot({
+      accountId: account.id,
+      scope: 'personal_memory',
+      expectedVersion: 0,
+      payload,
+    });
+
+    db.getDB()
+      .prepare('UPDATE accounts SET status = ? WHERE id = ?')
+      .run('disabled', account.id);
+    expect(() => db.listAccountSyncSnapshots(account.id)).toThrow(
+      'account not found',
+    );
+    db.getDB()
+      .prepare('UPDATE accounts SET status = ? WHERE id = ?')
+      .run('active', account.id);
+
+    db.getDB()
+      .prepare('UPDATE organizations SET status = ? WHERE id = ?')
+      .run('disabled', db.DEFAULT_ORGANIZATION_ID);
+    expect(() => db.listAccountSyncSnapshots(account.id)).toThrow(
+      'account not found',
+    );
+    db.getDB()
+      .prepare('UPDATE organizations SET status = ? WHERE id = ?')
+      .run('active', db.DEFAULT_ORGANIZATION_ID);
+
+    const otherOrganization = db.createOrganization({
+      name: 'Account sync other tenant',
+    });
+    db.getDB()
+      .prepare('UPDATE accounts SET organization_id = ? WHERE id = ?')
+      .run(otherOrganization.id, account.id);
+    expect(db.listAccountSyncSnapshots(account.id)).toEqual([]);
+    expect(() =>
+      db.putAccountSyncSnapshot({
+        accountId: account.id,
+        scope: 'personal_memory',
+        expectedVersion: 0,
+        payload,
+      }),
+    ).toThrow('account sync snapshot organization mismatch');
   });
 });
 describe('企业组织结构与功能配置', () => {

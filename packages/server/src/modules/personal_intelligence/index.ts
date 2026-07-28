@@ -7,3 +7,8 @@ export * from './worklogEstimates.js';
 export * from './worklogFacade.js';
 export * from './worklogRepository.js';
 export * from './worklogTypes.js';
+export * from './accountSyncCrypto.js';
+export * from './accountSyncFacade.js';
+export * from './accountSyncRepository.js';
+export * from './accountSyncTypes.js';
+export * from './accountSyncValidation.js';

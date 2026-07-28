@@ -3,3 +3,4 @@
  */
 
 export * from './sqliteCompat.js';
+export * from './fileEncryptionKeyProvider.js';

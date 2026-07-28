@@ -5,7 +5,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Database } from './modules/data_platform/index.js';
+import {
+  createFileEncryptionKeyProvider,
+  Database,
+} from './modules/data_platform/index.js';
 import { Database as LegacyDatabase } from './sqlite-compat.js';
 
 const sourceRoot = path.resolve(import.meta.dirname);
@@ -22,6 +25,10 @@ function productionTypeScriptFiles(directory: string): string[] {
 }
 
 describe('data_platform storage kernel', () => {
+  it('publishes reusable encrypted-storage key lifecycle primitives', () => {
+    expect(createFileEncryptionKeyProvider).toBeTypeOf('function');
+  });
+
   it('keeps the legacy sqlite path as an alias of the module implementation', () => {
     expect(LegacyDatabase).toBe(Database);
     const legacySource = fs.readFileSync(path.join(sourceRoot, 'sqlite-compat.ts'), 'utf8');
