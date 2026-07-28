@@ -7,10 +7,12 @@ import {
   findAccountByPhoneFromRepository,
   findActiveAccountByPhoneFromRepository,
   getAccountFromRepository,
+  listFeishuAccountBindingsFromRepository,
   listAccountsFromRepository,
   type AccountDirectoryRepositoryStore,
   type AccountDirectoryRow,
   type AccountDirectoryView,
+  type FeishuAccountBinding,
 } from './accountDirectoryRepository.js';
 
 export interface AccountDirectoryFacade<
@@ -24,6 +26,7 @@ export interface AccountDirectoryFacade<
   ): TAccountView | null;
   findAccountByPhone(phone: string): TAccountView | null;
   findActiveAccountByPhone(phone: string): TAccountView | null;
+  listFeishuAccountBindings(openId: string): FeishuAccountBinding[];
 }
 
 export function createAccountDirectoryFacade<
@@ -47,6 +50,9 @@ export function createAccountDirectoryFacade<
     },
     findActiveAccountByPhone(phone) {
       return findActiveAccountByPhoneFromRepository(store, phone);
+    },
+    listFeishuAccountBindings(openId) {
+      return listFeishuAccountBindingsFromRepository(store, openId);
     },
   };
 }

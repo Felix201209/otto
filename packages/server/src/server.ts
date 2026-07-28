@@ -88,6 +88,7 @@ import {
   type FeishuRegisterDeps,
   type FeishuRegistration,
 } from './feishu/register.js';
+import { isFeishuAutoReplyEnabledForOpenId } from './enterprise/db.js';
 import {
   loadCredentials,
   saveCredentials,
@@ -283,7 +284,10 @@ export interface OttoServerOptions {
    * 飞书注入（测试用）：凭证与 gateway 工厂透传给 registerFeishu → adapter，
    * 让 /feishu/start、/feishu/stop 端点行为可离线单测（不读真凭证、不连真飞书）。
    */
-  feishuDeps?: Pick<FeishuRegisterDeps, 'credentials' | 'gatewayFactory'>;
+  feishuDeps?: Pick<
+    FeishuRegisterDeps,
+    'credentials' | 'gatewayFactory' | 'shouldAutoReply'
+  >;
   /**
    * 飞书凭证存取（/feishu/config 端点用）。缺省 = 真实读写
    * ~/.otto-user/feishu-credentials.json。测试必须注入内存实现——
@@ -556,6 +560,7 @@ export class OttoServer {
           this.getOrCreateFeishuSessionForCurrentIdentity(chatId, title),
         broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
         ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+        shouldAutoReply: isFeishuAutoReplyEnabledForOpenId,
         mock: this.mock,
         ...this.feishuDeps,
       });
@@ -2329,6 +2334,7 @@ export class OttoServer {
             this.getOrCreateFeishuSessionForCurrentIdentity(chatId, title),
           broadcast: (sessionId, frame) => this.store.publish(sessionId, frame),
           ensureRuntime: (sessionId) => this.ensureRuntime(sessionId),
+          shouldAutoReply: isFeishuAutoReplyEnabledForOpenId,
           mock: this.mock,
           ...this.feishuDeps,
         });

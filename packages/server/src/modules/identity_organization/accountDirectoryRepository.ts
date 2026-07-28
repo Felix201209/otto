@@ -18,6 +18,12 @@ export interface AccountDirectoryRow {
   deleted_at: string | null;
 }
 
+export interface FeishuAccountBinding {
+  organizationId: string;
+  accountActive: boolean;
+  organizationActive: boolean;
+}
+
 export interface AccountDirectoryRepositoryStore<
   TAccountView extends AccountDirectoryView,
   TAccountRow extends AccountDirectoryRow,
@@ -72,6 +78,34 @@ export function listAccountsFromRepository<
     )
     .all(organizationId) as TAccountRow[];
   return rows.map((row) => store.toAccountView(row));
+}
+
+export function listFeishuAccountBindingsFromRepository<
+  TAccountView extends AccountDirectoryView,
+  TAccountRow extends AccountDirectoryRow,
+>(
+  store: AccountDirectoryRepositoryStore<TAccountView, TAccountRow>,
+  openId: string,
+): FeishuAccountBinding[] {
+  const normalized = openId.trim();
+  if (!normalized) return [];
+  const rows = store
+    .db()
+    .prepare(
+      `SELECT DISTINCT organization_id, status, deleted_at FROM accounts
+       WHERE feishu_open_id = ?
+       ORDER BY organization_id, status, deleted_at`,
+    )
+    .all(normalized) as Array<{
+    organization_id: string;
+    status: 'active' | 'disabled';
+    deleted_at: string | null;
+  }>;
+  return rows.map((row) => ({
+    organizationId: row.organization_id,
+    accountActive: row.status === 'active' && row.deleted_at === null,
+    organizationActive: store.isOrganizationActive(row.organization_id),
+  }));
 }
 
 export function authenticateAccountInRepository<

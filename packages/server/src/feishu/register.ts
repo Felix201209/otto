@@ -28,7 +28,6 @@ import type { SessionRuntime, SessionStore } from '../sessions.js';
 import type { FeishuHealthStatus, ServerToClient } from '../protocol.js';
 import { FeishuAdapter, type FeishuGatewayFactory } from './feishuAdapter.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
-import { isFeishuAutoReplyEnabledForOpenId } from '../enterprise/db.js';
 
 /** registerFeishu 的依赖注入（server 提供存储 + 广播能力）。 */
 export interface FeishuRegisterDeps {
@@ -89,7 +88,7 @@ export async function registerFeishu(
     getOrCreateSession: deps.getOrCreateSession,
     broadcast: deps.broadcast,
     ensureRuntime: deps.ensureRuntime,
-    shouldAutoReply: deps.shouldAutoReply ?? isFeishuAutoReplyEnabledForOpenId,
+    shouldAutoReply: deps.shouldAutoReply ?? (() => false),
     mock: deps.mock,
     credentials: deps.credentials,
     gatewayFactory: deps.gatewayFactory,

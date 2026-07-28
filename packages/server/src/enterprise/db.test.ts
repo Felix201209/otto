@@ -932,6 +932,41 @@ describe('企业组织结构与功能配置', () => {
     });
   });
 
+  it('飞书自动回复要求所有绑定账号、企业和有效功能均可用', async () => {
+    const db = await freshDb();
+    const other = db.createOrganization({ name: '飞书关联企业' });
+    db.createAccount({
+      username: 'feishu-default-member',
+      password: 'feishu-default-password',
+      name: '默认企业飞书成员',
+      feishuOpenId: 'ou_shared_policy',
+    });
+    const otherAccount = db.createAccount({
+      organizationId: other.id,
+      username: 'feishu-other-member',
+      password: 'feishu-other-password',
+      name: '关联企业飞书成员',
+      feishuOpenId: 'ou_shared_policy',
+    });
+
+    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(
+      true,
+    );
+    db.updateOrganizationFeatures(other.id, { feishu_auto_reply: false });
+    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(
+      false,
+    );
+    db.updateOrganizationFeatures(other.id, { feishu_auto_reply: true });
+    db.updateAccount(otherAccount.id, { status: 'disabled' }, other.id);
+    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(
+      false,
+    );
+    expect(db.isFeishuAutoReplyEnabledForOpenId('   ')).toBe(false);
+    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_legacy_allowlist')).toBe(
+      true,
+    );
+  });
+
   it('功能开关与审计日志原子提交，审计失败时回滚全部配置', async () => {
     const db = await freshDb();
     const before = db.getOrganizationFeatures(db.DEFAULT_ORGANIZATION_ID);

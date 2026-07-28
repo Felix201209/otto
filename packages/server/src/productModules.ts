@@ -214,7 +214,7 @@ export const PRODUCT_MODULES = [
     description: 'Owns Feishu, third-party service and replaceable provider adapters.',
     layer: 'integration',
     runtimeSurfaces: ['core', 'server', 'desktop', 'adapters'],
-    dependencies: ['model_gateway', 'authorization'],
+    dependencies: ['model_gateway', 'identity_organization', 'authorization'],
     dataOwnership: ['integration credentials', 'external tenant bindings'],
     licenseCapabilities: [
       { id: 'feishu_auto_reply', features: ['feishu_auto_reply'], legacyIds: ['feishu'] },

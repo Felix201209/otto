@@ -35,6 +35,7 @@ function createDatabase(): Database {
       organization_id TEXT NOT NULL,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       phone TEXT UNIQUE,
+      feishu_open_id TEXT,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -61,6 +62,7 @@ function seedAccount(
     organizationId: string;
     username?: string;
     phone?: string | null;
+    feishuOpenId?: string | null;
     password?: string;
     status?: 'active' | 'disabled';
     deletedAt?: string | null;
@@ -69,14 +71,16 @@ function seedAccount(
   database
     .prepare(
       `INSERT INTO accounts
-      (id, organization_id, username, phone, password_hash, name, status, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, organization_id, username, phone, feishu_open_id, password_hash,
+       name, status, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
       input.organizationId,
       input.username ?? input.id,
       input.phone ?? null,
+      input.feishuOpenId ?? null,
       input.password ?? 'correct-password',
       input.id,
       input.status ?? 'active',
@@ -250,6 +254,67 @@ describe('identity_organization account directory kernel', () => {
       });
       expect(accounts.findActiveAccountByPhone('13900139000')).toBeNull();
       expect(accounts.findActiveAccountByPhone('13700137000')).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('returns Feishu bindings with account and organization lifecycle state', () => {
+    const database = createDatabase();
+    seedOrganization(database, 'org-active');
+    seedOrganization(database, 'org-disabled', 'disabled');
+    seedOrganization(database, 'org-second');
+    seedAccount(database, {
+      id: 'active-binding',
+      organizationId: 'org-active',
+      feishuOpenId: 'ou_bound',
+    });
+    seedAccount(database, {
+      id: 'disabled-account-binding',
+      organizationId: 'org-second',
+      feishuOpenId: 'ou_bound',
+      status: 'disabled',
+    });
+    seedAccount(database, {
+      id: 'disabled-organization-binding',
+      organizationId: 'org-disabled',
+      feishuOpenId: 'ou_bound',
+    });
+    seedAccount(database, {
+      id: 'deleted-binding',
+      organizationId: 'org-active',
+      username: 'deleted-binding',
+      feishuOpenId: 'ou_deleted',
+      deletedAt: '2026-07-28T00:00:00.000Z',
+    });
+    const accounts = createAccountDirectoryFacade(createStore(database));
+
+    try {
+      expect(accounts.listFeishuAccountBindings('  ou_bound  ')).toEqual([
+        {
+          organizationId: 'org-active',
+          accountActive: true,
+          organizationActive: true,
+        },
+        {
+          organizationId: 'org-disabled',
+          accountActive: true,
+          organizationActive: false,
+        },
+        {
+          organizationId: 'org-second',
+          accountActive: false,
+          organizationActive: true,
+        },
+      ]);
+      expect(accounts.listFeishuAccountBindings('ou_deleted')).toEqual([
+        {
+          organizationId: 'org-active',
+          accountActive: false,
+          organizationActive: true,
+        },
+      ]);
+      expect(accounts.listFeishuAccountBindings('   ')).toEqual([]);
     } finally {
       database.close();
     }

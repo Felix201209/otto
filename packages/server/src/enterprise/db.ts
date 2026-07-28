@@ -17,6 +17,7 @@ import {
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
+import { createFeishuAutoReplyFacade } from '../modules/integration_adapters/index.js';
 import { createModelUsageFacade } from '../modules/model_gateway/index.js';
 import {
   createAccountSyncFacade,
@@ -2033,6 +2034,7 @@ export const {
   authenticateAccount,
   findAccountByPhone,
   findActiveAccountByPhone,
+  listFeishuAccountBindings,
 } = createAccountDirectoryFacade<AccountView, AccountRow>(accountDirectoryStore);
 
 const accountSync = createAccountSyncFacade({
@@ -2217,25 +2219,13 @@ const accountPresenceStore = {
 export const { touchAccountPresence, listAccountPresence } =
   createAccountPresenceFacade(accountPresenceStore);
 
-/** 飞书发送方已绑定企业账号时，按租户开关决定是否允许自动回答。 */
-export function isFeishuAutoReplyEnabledForOpenId(openId: string): boolean {
-  const normalized = openId.trim();
-  if (!normalized) return false;
-  const rows = getDB()
-    .prepare(
-      `SELECT DISTINCT organization_id FROM accounts
-     WHERE feishu_open_id = ? AND status = 'active' AND deleted_at IS NULL`,
-    )
-    .all(normalized) as Array<{ organization_id: string }>;
-  // 旧的纯飞书 allowlist 用户尚未绑定企业账号时保持兼容；一旦绑定，所有关联
-  // 租户都必须允许自动回答，避免同一 open_id 借另一个租户绕过关闭开关。
-  return (
-    rows.length === 0 ||
-    rows.every(
-      (row) => getOrganizationFeatures(row.organization_id).feishu_auto_reply,
-    )
-  );
-}
+const feishuAutoReply = createFeishuAutoReplyFacade({
+  listAccountBindings: listFeishuAccountBindings,
+  isOrganizationFeatureEnabled: (organizationId: string) =>
+    isOrganizationFeatureEnabled(organizationId, 'feishu_auto_reply'),
+});
+
+export const { isFeishuAutoReplyEnabledForOpenId } = feishuAutoReply;
 
 const authSessionStore = {
   db: getDB,

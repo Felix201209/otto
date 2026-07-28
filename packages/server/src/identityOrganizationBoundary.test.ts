@@ -236,6 +236,7 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toMatch(
       /export function (?:getAccount|listAccounts|authenticateAccount|findAccountByPhone|findActiveAccountByPhone)/,
     );
+    expect(databaseFacade).not.toContain('WHERE feishu_open_id = ? AND status');
   });
 
   it('keeps account lifecycle writes behind the identity module facade', () => {
