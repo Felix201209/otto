@@ -10,5 +10,6 @@ export * from './worklogTypes.js';
 export * from './accountSyncCrypto.js';
 export * from './accountSyncFacade.js';
 export * from './accountSyncRepository.js';
+export * from './personalIntelligenceSchema.js';
 export * from './accountSyncTypes.js';
 export * from './accountSyncValidation.js';

@@ -19,6 +19,9 @@ describe('personal intelligence module boundary', () => {
     expect(personalIntelligence.buildWorklogReport).toBeTypeOf('function');
     expect(personalIntelligence.normalizeCostCNY).toBeTypeOf('function');
     expect(personalIntelligence.createAccountSyncFacade).toBeTypeOf('function');
+    expect(
+      personalIntelligence.PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR.id,
+    ).toBe('personal_intelligence');
     expect(personalIntelligence.ACCOUNT_SYNC_SCOPES).toEqual([
       'personal_memory',
       'worklog',
@@ -43,7 +46,7 @@ describe('personal intelligence module boundary', () => {
   it('does not import enterprise/db or read identity-owned employee tables', () => {
     const offenders = fs
       .readdirSync(moduleDir)
-      .filter((file) => file.endsWith('.ts'))
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
       .filter((file) => {
         const source = fs.readFileSync(path.join(moduleDir, file), 'utf8');
         return (
@@ -71,6 +74,15 @@ describe('personal intelligence module boundary', () => {
     expect(databaseFacade).not.toContain("from './taskReportRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO task_logs');
     expect(databaseFacade).not.toContain('INSERT INTO account_sync_snapshots');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS account_sync_snapshots',
+    );
+    expect(databaseFacade).not.toContain(
+      'idx_account_sync_snapshots_org_updated',
+    );
+    expect(databaseFacade).toContain(
+      'PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR',
+    );
     expect(databaseFacade).not.toContain('createCipheriv');
   });
 });
