@@ -7,6 +7,7 @@
  */
 
 import {
+  createEnterpriseDatabaseLifecycle,
   createFileEncryptionKeyProvider,
   Database,
 } from '../modules/data_platform/index.js';
@@ -44,7 +45,6 @@ import {
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
-import fs from 'fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   buildCreditsTablesSql,
@@ -189,64 +189,6 @@ export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
-
-let db: Database | null = null;
-
-/** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
-export function closeEnterpriseDatabase(): void {
-  if (!db) return;
-  const database = db;
-  db = null;
-  accountSyncKeyProvider.clear();
-  database.close();
-}
-
-export function getDB(): Database {
-  if (db) return db;
-
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  // 首次进入 B2B v2 schema 前保留一份只读回滚副本。已有备份不覆盖，避免反复占用磁盘。
-  if (fs.existsSync(DB_PATH)) {
-    const backupPath = `${DB_PATH}.pre-b2b-v2.bak`;
-    if (!fs.existsSync(backupPath) && fs.statSync(DB_PATH).size > 0) {
-      fs.copyFileSync(DB_PATH, backupPath, fs.constants.COPYFILE_EXCL);
-    }
-  }
-
-  const database = new Database(DB_PATH);
-  try {
-    const existingSchema = database.prepare('PRAGMA user_version').get() as
-      { user_version?: number } | undefined;
-    const existingSchemaVersion = Number(existingSchema?.user_version ?? 0);
-    if (
-      Number.isInteger(existingSchemaVersion) &&
-      existingSchemaVersion > ENTERPRISE_SCHEMA_VERSION
-    ) {
-      throw new Error(
-        `Enterprise database schema version ${existingSchemaVersion} is newer than ` +
-          `current version ${ENTERPRISE_SCHEMA_VERSION}; refusing downgrade`,
-      );
-    }
-    database.pragma('journal_mode = WAL');
-    migrateLegacyAuthSessions(database);
-    migrateLegacyTicketEvents(database);
-    database.pragma('foreign_keys = ON');
-    initSchema(database);
-    db = database;
-    return database;
-  } catch (error) {
-    // 迁移失败时绝不能把半初始化连接留在模块单例中；后续请求应重新执行完整初始化。
-    try {
-      database.close();
-    } catch {
-      // 保留原始迁移异常。
-    }
-    throw error;
-  }
-}
 
 function migrateLegacyAuthSessions(d: Database): void {
   const table = d
@@ -447,22 +389,6 @@ function backfillParkApplicationNumbers(d: Database): void {
     const separator = key.lastIndexOf(':');
     seedCounter.run(key.slice(0, separator), key.slice(separator + 1), sequence);
   }
-}
-
-/** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
-export function getDatabaseReadiness(): { ready: true; schemaVersion: number } {
-  const database = getDB();
-  const probe = database.prepare('SELECT 1 AS ready').get() as
-    { ready?: number } | undefined;
-  if (probe?.ready !== 1)
-    throw new Error('Enterprise database readiness probe failed');
-  const schema = database.prepare('PRAGMA user_version').get() as
-    { user_version?: number } | undefined;
-  const schemaVersion = Number(schema?.user_version);
-  if (!Number.isInteger(schemaVersion) || schemaVersion <= 0) {
-    throw new Error('Enterprise database schema version is unavailable');
-  }
-  return { ready: true, schemaVersion };
 }
 
 function initSchema(d: Database): void {
@@ -1322,6 +1248,27 @@ function initSchema(d: Database): void {
     PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
   `);
 }
+
+const databaseLifecycle = createEnterpriseDatabaseLifecycle({
+  dataDirectory: DATA_DIR,
+  databasePath: DB_PATH,
+  legacyBackupPath: `${DB_PATH}.pre-b2b-v2.bak`,
+  schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+  beforeForeignKeys(database) {
+    migrateLegacyAuthSessions(database);
+    migrateLegacyTicketEvents(database);
+  },
+  initializeSchema: initSchema,
+  onClose: () => accountSyncKeyProvider.clear(),
+});
+
+/** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
+export const closeEnterpriseDatabase = databaseLifecycle.close;
+
+export const getDB = databaseLifecycle.getDatabase;
+
+/** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
+export const getDatabaseReadiness = databaseLifecycle.getReadiness;
 
 /**
  * v4 之前的邀请码注册可能只创建了账号，或只把岗位写进 accounts。这里每次启动
