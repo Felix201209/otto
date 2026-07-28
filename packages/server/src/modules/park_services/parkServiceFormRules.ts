@@ -74,12 +74,33 @@ function parkFormMoney(value: string, label: string): number {
   return Math.round(amount * 100) / 100;
 }
 
+function parkFormPositiveDecimal(value: string, label: string): number {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) {
+    throw new Error(`${label}必须是大于 0 的有效数字`);
+  }
+  return Math.round(quantity * 100) / 100;
+}
+
 function validParkDate(value: string, label: string): string {
   const date = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error(`请选择有效的${label}`);
   }
   return date;
+}
+
+function validParkTime(value: string, label: string): string {
+  const time = value.trim();
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (
+    !match
+    || Number(match[1]) > 23
+    || Number(match[2]) > 59
+  ) {
+    throw new Error(`请选择有效的${label}`);
+  }
+  return time;
 }
 
 function assertMeetingPeriod(startValue: string, endValue: string): {
@@ -189,6 +210,11 @@ export function normalizeParkServiceFormData(
       requiredParkFormValue(formData, 'date', '使用日期'),
       '使用日期',
     );
+    formData.meetingContent = requiredParkFormValue(
+      formData,
+      'meetingContent',
+      '会议内容',
+    );
     const period = assertMeetingPeriod(
       requiredParkFormValue(formData, 'startTime', '开始时间'),
       requiredParkFormValue(formData, 'endTime', '结束时间'),
@@ -206,13 +232,23 @@ export function normalizeParkServiceFormData(
     formData.amountCny = String(priceHalfDay * halfDayUnits);
     formData.pricing = `${priceHalfDay}元/半天，不足半天按半天计`;
   } else if (serviceId === 'electric-card') {
-    formData.amount = String(
-      parkFormMoney(
-        requiredParkFormValue(formData, 'amount', '充值金额'),
-        '充值金额',
-      ),
+    const hasChargingKwh = Boolean(formData.chargingKwh?.trim());
+    const legacyAmountCny = hasChargingKwh
+      ? null
+      : parkFormMoney(
+          requiredParkFormValue(formData, 'amount', '充电金额'),
+          '充电金额',
+        );
+    const chargingKwh = hasChargingKwh
+      ? parkFormPositiveDecimal(formData.chargingKwh!, '充电度数')
+      : Math.round((legacyAmountCny! / 1.2) * 100) / 100;
+    delete formData.amount;
+    formData.chargingKwh = String(chargingKwh);
+    formData.unitPriceCny = '1.2';
+    formData.pricing = '1.2元/度';
+    formData.amountCny = String(
+      legacyAmountCny ?? Math.round(chargingKwh * 120) / 100,
     );
-    formData.amountCny = formData.amount;
   } else if (serviceId === 'repair') {
     formData.category = requiredParkFormValue(formData, 'category', '报修类别');
     formData.issue = requiredParkFormValue(formData, 'issue', '故障描述');
@@ -221,6 +257,10 @@ export function normalizeParkServiceFormData(
     formData.visitDate = validParkDate(
       requiredParkFormValue(formData, 'visitDate', '来访日期'),
       '来访日期',
+    );
+    formData.visitTime = validParkTime(
+      requiredParkFormValue(formData, 'visitTime', '来访时间'),
+      '来访时间',
     );
     formData.reason = requiredParkFormValue(
       formData,

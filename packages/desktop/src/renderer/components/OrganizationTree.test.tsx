@@ -2,7 +2,15 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
 import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
@@ -23,6 +31,7 @@ vi.mock('../peerOttoRunner.js', async () => {
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -704,6 +713,199 @@ describe('OrganizationTree', () => {
     expect(onMessageRead).toHaveBeenCalledWith('acc_2');
     await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
     expect(await screen.findByText('还没有消息，开始聊聊吧。')).toBeTruthy();
+  });
+
+  it('同时保留多个同事聊天窗口，并让每个窗口独立最小化、最大化、还原、拖动和关闭', async () => {
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_3',
+        username: 'carol',
+        name: 'Carol',
+        role: 'Designer',
+        department: 'Design',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 3,
+    }));
+    const onMessageRead = vi.fn();
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList: vi.fn(async () => []),
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        onMessageRead={onMessageRead}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Carol/ }));
+
+    const bobChat = await screen.findByRole('dialog', { name: '与 Bob 聊天' });
+    const carolChat = await screen.findByRole('dialog', { name: '与 Carol 聊天' });
+    expect(onMessageRead.mock.calls).toEqual([['acc_2'], ['acc_3']]);
+
+    fireEvent.change(within(bobChat).getByRole('textbox', { name: '消息内容' }), {
+      target: { value: '只属于 Bob 的草稿' },
+    });
+    expect(
+      (within(carolChat).getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value,
+    ).toBe('');
+
+    fireEvent.click(within(bobChat).getByRole('button', { name: '最小化聊天' }));
+    expect(bobChat.classList.contains('is-minimized')).toBe(true);
+    expect(carolChat.classList.contains('is-minimized')).toBe(false);
+
+    fireEvent.click(within(bobChat).getByRole('button', { name: '最大化聊天' }));
+    expect(bobChat.classList.contains('is-minimized')).toBe(false);
+    expect(bobChat.classList.contains('is-maximized')).toBe(true);
+    fireEvent.click(within(bobChat).getByRole('button', { name: '还原聊天' }));
+    expect(bobChat.classList.contains('is-maximized')).toBe(false);
+
+    const header = bobChat.querySelector('.otto-direct-chat__header') as HTMLElement;
+    const leftBeforeDrag = bobChat.style.left;
+    const topBeforeDrag = bobChat.style.top;
+    const firePointer = (type: string, clientX: number, clientY: number): void => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX, clientY });
+      Object.defineProperty(event, 'pointerId', { value: 7 });
+      fireEvent(header, event);
+    };
+    firePointer('pointerdown', 300, 100);
+    firePointer('pointermove', 360, 150);
+    firePointer('pointerup', 360, 150);
+    expect(bobChat.style.left).not.toBe(leftBeforeDrag);
+    expect(bobChat.style.top).not.toBe(topBeforeDrag);
+
+    fireEvent.click(within(bobChat).getByRole('button', { name: '关闭聊天' }));
+    expect(screen.queryByRole('dialog', { name: '与 Bob 聊天' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: '与 Carol 聊天' })).toBeTruthy();
+  });
+
+  it('打开聊天及轮询到新消息后滚到最新消息，并为对应同事续清未读', async () => {
+    const oldMessage: EnterpriseDirectMessage = {
+      id: 'dm_old',
+      senderAccountId: 'acc_2',
+      recipientAccountId: 'acc_1',
+      content: '旧消息',
+      createdAt: '2026-07-27T08:00:00.000Z',
+      readAt: '2026-07-27T08:01:00.000Z',
+    };
+    const newMessage: EnterpriseDirectMessage = {
+      id: 'dm_new',
+      senderAccountId: 'acc_2',
+      recipientAccountId: 'acc_1',
+      content: '轮询到的新消息',
+      createdAt: '2026-07-27T08:02:00.000Z',
+      readAt: null,
+    };
+    const enterpriseOrganizationView = vi.fn(async () => ({
+      organization: {
+        id: 'org_acme',
+        name: 'Acme',
+        status: 'active' as const,
+        createdAt: '2026-07-13T00:00:00.000Z',
+      },
+      members: [{
+        id: 'acc_1',
+        username: 'alice',
+        name: 'Alice',
+        role: 'Engineer',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Manager',
+        department: 'R&D',
+        isAdmin: false,
+        status: 'active' as const,
+      }],
+      employeeCount: 2,
+    }));
+    const enterpriseMessagesList = vi.fn()
+      .mockResolvedValueOnce([oldMessage])
+      .mockResolvedValue([oldMessage, newMessage]);
+    const onMessageRead = vi.fn();
+    const scrollIntoView = vi.fn();
+    const intervals: Array<{ callback: () => void; delay: number }> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation((handler, delay) => {
+      intervals.push({
+        callback: handler as () => void,
+        delay: Number(delay),
+      });
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>;
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    Object.assign(window.otto, {
+      enterpriseOrganizationView,
+      enterpriseMessagesList,
+    });
+
+    render(
+      <OrganizationTree
+        workspace={personalWorkspace}
+        enterpriseAccount={authenticatedEnterpriseAccount}
+        onMessageRead={onMessageRead}
+      />,
+    );
+
+    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
+    expect(await screen.findByText('旧消息')).toBeTruthy();
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(onMessageRead).toHaveBeenCalledTimes(1);
+
+    scrollIntoView.mockClear();
+    const messagePoll = intervals.find((interval) => interval.delay === 2_000);
+    expect(messagePoll).toBeTruthy();
+    await act(async () => {
+      messagePoll!.callback();
+    });
+
+    expect(await screen.findByText('轮询到的新消息')).toBeTruthy();
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(onMessageRead).toHaveBeenCalledTimes(2);
+    expect(onMessageRead).toHaveBeenLastCalledWith('acc_2');
+
+    scrollIntoView.mockClear();
+    await act(async () => {
+      messagePoll!.callback();
+    });
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('从托盘未读消息请求直接打开对应同事会话', async () => {

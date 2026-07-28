@@ -2443,7 +2443,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect((await inboxTwo.json()).tickets).toHaveLength(0);
   });
 
-  it('园区报修自动投递管理员指定的维修人员，并真实调用短信与飞书通道完成表单闭环', async () => {
+  it('园区报修由客服一次回复并转交工程部，且真实调用短信与飞书通道', async () => {
     const smsSend = vi.fn(async () => true);
     const feishuSend = vi.fn(async () => true);
     const { base } = await startIsolated(ADMIN_TOKEN, null, {
@@ -2459,6 +2459,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       username: 'repair.worker', password: 'worker-password', name: '维修张工',
       phone: '13900139000', feishuOpenId: 'ou_worker',
       tags: ['维修工作人员', 'IT', '报修'],
+    });
+    db.createAccount({
+      username: 'repair.engineer', password: 'engineer-password', name: '工程李工',
+      department: '工程部',
+      phone: '13600136000', feishuOpenId: 'ou_engineer',
     });
     const login = async (identifier: string, password: string): Promise<string> => {
       const response = await fetch(`${base}/enterprise/auth/login`, {
@@ -2503,7 +2508,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(submitted.status).toBe(201);
     const ticket = (await submitted.json()).ticket;
-    expect(ticket).toMatchObject({ recipientCount: 1, status: '待接单', location: '某某会议室' });
+    expect(ticket).toMatchObject({
+      recipientCount: 1,
+      status: '待接单',
+      location: '某某会议室',
+      applicationNumber: expect.stringMatching(/^\d{11}$/),
+    });
     expect(smsSend).toHaveBeenCalledWith('+8613900139000', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
     expect(feishuSend).toHaveBeenCalledWith('ou_worker', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
 
@@ -2521,32 +2531,64 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(acceptedTicket.history.map((entry: { action: string }) => entry.action)).toEqual([
       'created', 'accept',
     ]);
+    smsSend.mockRejectedValueOnce(new Error('sms provider unavailable'));
     const replied = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
       method: 'POST',
       headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'respond', responseType: '远程指导', responseText: '请先检查墙面开关' }),
+      body: JSON.stringify({
+        action: 'respond_and_transfer',
+        responseType: '客服已受理',
+        responseText: '已核对故障信息，现转交工程部处理。',
+        transferNote: '请工程部检查墙面开关并填写完成说明。',
+      }),
     });
+    expect(replied.status).toBe(200);
     const repliedTicket = (await replied.json()).ticket;
     expect(repliedTicket).toMatchObject({
-      responseType: '远程指导', responseText: '请先检查墙面开关', status: '维修中',
+      responseType: '客服已受理',
+      responseText: '已核对故障信息，现转交工程部处理。',
+      status: '已转交',
     });
-    expect(repliedTicket.history.at(-1)).toMatchObject({
-      action: 'respond', responseType: '远程指导', responseText: '请先检查墙面开关',
-      actor: { id: worker.id, name: worker.name },
-    });
-    const followUp = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'respond', responseType: '安排上门', responseText: '工程师将在下午三点到场' }),
-    });
-    const followUpTicket = (await followUp.json()).ticket;
-    expect(followUpTicket.history
-      .filter((entry: { action: string }) => entry.action === 'respond')
-      .map((entry: { responseText: string }) => entry.responseText)).toEqual([
-      '请先检查墙面开关', '工程师将在下午三点到场',
+    expect(repliedTicket.history.slice(-2)).toEqual([
+      expect.objectContaining({
+        action: 'respond',
+        responseType: '客服已受理',
+        responseText: '已核对故障信息，现转交工程部处理。',
+        actor: { id: worker.id, name: worker.name },
+      }),
+      expect.objectContaining({
+        action: 'transfer',
+        responseType: '已转交至工程部',
+        responseText: '请工程部检查墙面开关并填写完成说明。',
+        actor: { id: worker.id, name: worker.name },
+      }),
     ]);
-    expect(smsSend).toHaveBeenCalledWith('+8613800138000', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
-    expect(feishuSend).toHaveBeenCalledWith('ou_reporter', expect.stringContaining('办理回复'), expect.stringContaining('检查墙面开关'));
+    expect(
+      db.getDB().prepare(
+        `SELECT status FROM ticket_notifications
+         WHERE ticket_id = ? AND channel = 'sms' AND event = 'ticket_respond'`,
+      ).get(ticket.id),
+    ).toEqual({ status: 'failed' });
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613800138000',
+      expect.stringContaining('办理回复'),
+      expect.stringContaining('已核对故障信息'),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_reporter',
+      expect.stringContaining('办理回复'),
+      expect.stringContaining('已核对故障信息'),
+    );
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613600136000',
+      expect.stringContaining('转交任务'),
+      expect.stringContaining('检查墙面开关'),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_engineer',
+      expect.stringContaining('转交任务'),
+      expect.stringContaining('检查墙面开关'),
+    );
   });
 
   it('跨企业园区专员和管理员兜底处理工单后向创建者发送全部进度回执', async () => {
@@ -2642,8 +2684,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     const specialistActions = [
       { action: 'accept' },
-      { action: 'respond', responseType: '现场处理', responseText: '工程师已到场' },
-      { action: 'complete' },
+      {
+        action: 'respond_and_transfer',
+        responseType: '客服已受理',
+        responseText: '已核对空调故障信息，转交工程部处理。',
+        transferNote: '请工程部检查空调并填写完成说明。',
+      },
     ];
     let completedTicket: { history: Array<{ action: string }> } | null = null;
     for (const action of specialistActions) {
@@ -2655,30 +2701,56 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       expect(response.status).toBe(200);
       completedTicket = (await response.json()).ticket;
     }
+    const transferredRead = await fetch(
+      `${base}/enterprise/tickets/${specialistTicket.id}/read`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${specialistToken}` },
+      },
+    );
+    expect(transferredRead.status).toBe(200);
+    expect((await transferredRead.json()).ticket).toMatchObject({
+      deliveryStatus: 'transferred',
+      readAt: expect.any(String),
+    });
+    const completedByEngineer = await fetch(
+      `${base}/enterprise/tickets/${specialistTicket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${engineerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'complete',
+          responseType: '空调维修完成',
+          responseText: '已恢复空调供电并完成运行测试。',
+        }),
+      },
+    );
+    expect(completedByEngineer.status).toBe(200);
+    completedTicket = (await completedByEngineer.json()).ticket;
     expect(completedTicket?.history.map((entry) => entry.action)).toEqual([
-      'created', 'accept', 'respond', 'complete',
+      'created', 'accept', 'respond', 'transfer', 'complete',
     ]);
-    expect(smsSend).toHaveBeenCalledTimes(3);
-    expect(feishuSend).toHaveBeenCalledTimes(3);
+    expect(smsSend).toHaveBeenCalledTimes(5);
+    expect(feishuSend).toHaveBeenCalledTimes(5);
     expect(smsSend).toHaveBeenCalledWith(
       '+8613800138000', expect.any(String), expect.any(String),
     );
     expect(feishuSend).toHaveBeenCalledWith(
       'ou_receipt_reporter', expect.any(String), expect.any(String),
     );
-    const confirmed = await fetch(`${base}/enterprise/tickets/${specialistTicket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'confirm' }),
+    expect(completedTicket).toMatchObject({
+      status: '已完成',
+      responseType: '空调维修完成',
+      responseText: '已恢复空调供电并完成运行测试。',
     });
-    expect(confirmed.status).toBe(200);
-    const confirmedTicket = (await confirmed.json()).ticket;
-    expect(confirmedTicket.status).toBe('已完成');
-    expect(confirmedTicket.history.map((entry: { action: string }) => entry.action)).toEqual([
-      'created', 'accept', 'respond', 'complete', 'confirm',
-    ]);
-    expect(confirmedTicket.history.at(-1)).toMatchObject({
-      action: 'confirm', actor: { id: reporter.id, name: reporter.name },
+    expect(
+      db.getTicketForAccount(specialistTicket.id, specialist.id),
+    ).toMatchObject({
+      deliveryStatus: 'transferred',
+      readAt: null,
     });
 
     const transferredSubmitted = await fetch(`${base}/enterprise/tickets`, {
@@ -2705,20 +2777,28 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       method: 'POST',
       headers: { authorization: `Bearer ${specialistToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        action: 'transfer',
-        transferAccountId: engineer.id,
-        responseText: '请工程部上门检查灯具并反馈结果',
+        action: 'respond_and_transfer',
+        responseType: '客服已受理',
+        responseText: '已核对灯具报修信息，现转交工程部。',
+        transferNote: '请工程部上门检查灯具并反馈结果',
       }),
     });
     const transferPayload = await transfer.json();
     expect(transfer.status, JSON.stringify(transferPayload)).toBe(200);
     const oldAssigneeView = transferPayload.ticket;
     expect(oldAssigneeView).toMatchObject({ status: '已转交', deliveryStatus: 'transferred' });
-    expect(oldAssigneeView.history.at(-1)).toMatchObject({
-      action: 'transfer',
-      responseText: '请工程部上门检查灯具并反馈结果',
-      actor: { id: specialist.id, name: specialist.name },
-    });
+    expect(oldAssigneeView.history.slice(-2)).toEqual([
+      expect.objectContaining({
+        action: 'respond',
+        responseText: '已核对灯具报修信息，现转交工程部。',
+        actor: { id: specialist.id, name: specialist.name },
+      }),
+      expect.objectContaining({
+        action: 'transfer',
+        responseText: '请工程部上门检查灯具并反馈结果',
+        actor: { id: specialist.id, name: specialist.name },
+      }),
+    ]);
     expect(smsSend).toHaveBeenCalledWith(
       '+8613600136000', expect.stringContaining('转交任务'), expect.stringContaining('请工程部上门检查灯具'),
     );
@@ -2748,8 +2828,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(completedTransfer).toMatchObject({
       status: '已完成', responseType: '已完成工作', responseText: '已更换灯具并完成通电测试',
     });
-    expect(completedTransfer.history.slice(-2).map((entry: { action: string }) => entry.action)).toEqual([
-      'transfer', 'complete',
+    expect(completedTransfer.history.slice(-3).map((entry: { action: string }) => entry.action)).toEqual([
+      'respond', 'transfer', 'complete',
     ]);
     expect(smsSend).toHaveBeenCalledTimes(2);
     expect(feishuSend).toHaveBeenCalledTimes(2);
@@ -3048,30 +3128,78 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     const meetingDate = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
     const meetingRoom = db.listParkMeetingRooms(park.adminOrganizationId)[0]!;
-    const request = await fetch(`${base}/enterprise/tickets`, {
+    const meetingRequestBody = {
+      serviceId: 'meeting-room', title: `会议室预约 · ${meetingDate}`,
+      description: '14:00 至 16:00，10 人',
+      formData: {
+        company: tenantOrganization.name,
+        roomNumber: '1203 室',
+        contact: '实名员工',
+        phone: '13800138000',
+        roomId: meetingRoom.id,
+        date: meetingDate,
+        startTime: '14:00',
+        endTime: '16:00',
+        attendees: '10',
+        meetingContent: '园区服务联席会',
+      },
+    };
+    const { meetingContent: _meetingContent, ...missingMeetingContentForm } =
+      meetingRequestBody.formData;
+    const missingMeetingContent = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
       headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        serviceId: 'meeting-room', title: `会议室预约 · ${meetingDate}`,
-        description: '14:00 至 16:00，10 人',
-        formData: {
-          company: tenantOrganization.name,
-          roomNumber: '1203 室',
-          contact: '实名员工',
-          phone: '13800138000',
-          roomId: meetingRoom.id,
-          date: meetingDate,
-          startTime: '14:00',
-          endTime: '16:00',
-          attendees: '10',
-          meetingContent: '园区服务联席会',
-        },
+        ...meetingRequestBody,
+        formData: missingMeetingContentForm,
       }),
+    });
+    expect(missingMeetingContent.status).toBe(400);
+    expect(await missingMeetingContent.json()).toEqual({
+      error: '请填写会议内容',
+    });
+    const request = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(meetingRequestBody),
     });
     expect(request.status).toBe(201);
     const ticket = (await request.json()).ticket;
     expect(ticket).toMatchObject({ serviceId: 'meeting-room', recipientCount: 2, status: '待接单' });
     expect(ticket.recipients[0]).not.toHaveProperty('phone');
+
+    const conflict = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(meetingRequestBody),
+    });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toEqual({
+      error: expect.stringContaining('已被预约'),
+    });
+
+    db.setParkMeetingSlotAvailability(park.adminOrganizationId, {
+      roomId: meetingRoom.id,
+      date: meetingDate,
+      slotKey: '16:00',
+      enabled: false,
+    });
+    const closed = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...meetingRequestBody,
+        formData: {
+          ...meetingRequestBody.formData,
+          startTime: '16:00',
+          endTime: '16:10',
+        },
+      }),
+    });
+    expect(closed.status).toBe(400);
+    expect(await closed.json()).toEqual({
+      error: expect.stringContaining('未开放'),
+    });
 
     const staffTickets = await fetch(`${base}/enterprise/tickets`, {
       headers: { authorization: `Bearer ${serviceToken}` },
@@ -4453,6 +4581,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         contact: tenantProvisioned.admin.name,
         phone: '13800138000',
         visitDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+        visitTime: '09:30',
         reason: '客户到访洽谈',
         vehicleCount: '1',
         plate1: '京A12345',

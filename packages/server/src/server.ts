@@ -74,6 +74,7 @@ import {
 import {
   buildAgentProfileRuntimeRules,
   buildEnterpriseWorkspaceContext,
+  resolveEnterpriseDocumentIdentity,
   resolveAgentProfile,
 } from './agentProfiles.js';
 import {
@@ -152,6 +153,7 @@ import {
   type WorkflowAgentRecord,
   type SkillCandidate,
   type Config as CoreConfig,
+  type DocumentIdentity,
   LocalKnowledgeStore,
   KnowledgeCapture,
   type SimpleMessage,
@@ -195,6 +197,7 @@ export type RuntimeFactory = (
   sessionId: string,
   model: string | undefined,
   workspaceContext?: string,
+  documentIdentity?: DocumentIdentity,
 ) => Promise<SessionRuntime>;
 
 /**
@@ -215,6 +218,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   sessionId,
   model,
   workspaceContext,
+  documentIdentity,
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
@@ -235,6 +239,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
     ...(userRules ? { userRules } : {}),
+    documentIdentity,
     disableMcpDiscovery: profile?.toolFree === true,
     disableEnvironmentContext: profile?.toolFree === true,
     disableTools: profile?.toolFree === true,
@@ -3495,13 +3500,25 @@ export class OttoServer {
     const summary = this.store.getSession(sessionId);
     const model = summary?.model;
     const profile = resolveAgentProfile(summary?.agentProfileId);
-    const workspaceContext = summary?.productEdition === 'enterprise' && !profile?.toolFree
-      ? buildEnterpriseWorkspaceContext(this.productWorkspace.snapshot())
+    const enterpriseWorkspace = summary?.productEdition === 'enterprise'
+      ? this.productWorkspace.snapshot()
+      : undefined;
+    const workspaceContext = enterpriseWorkspace && !profile?.toolFree
+      ? buildEnterpriseWorkspaceContext(enterpriseWorkspace)
       : '';
+    const documentIdentity = enterpriseWorkspace
+      ? resolveEnterpriseDocumentIdentity(enterpriseWorkspace)
+      : undefined;
     const identityGeneration = this.enterpriseIdentityGeneration;
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
-        const runtime = await this.runtimeFactory(this.store, sessionId, model, workspaceContext);
+        const runtime = await this.runtimeFactory(
+          this.store,
+          sessionId,
+          model,
+          workspaceContext,
+          documentIdentity,
+        );
         const latestSummary = this.store.getSession(sessionId);
         const denied = latestSummary
           ? this.sessionAuthorizationError(latestSummary)

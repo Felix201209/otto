@@ -151,7 +151,7 @@ const DB_PATH = path.join(DATA_DIR, 'data.db');
 const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 11;
+export const ENTERPRISE_SCHEMA_VERSION = 13;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -405,6 +405,74 @@ function migrateLegacyTicketEvents(d: Database): void {
     throw error;
   } finally {
     d.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+/**
+ * v12 为既有园区申请补齐用户可见编号，并把北京时间业务日序列推进到已占用最大值。
+ * SQLite 历史 created_at 是 UTC 文本，因此迁移时统一加八小时后取 YYYYMMDD。
+ */
+function backfillParkApplicationNumbers(d: Database): void {
+  const rows = d.prepare(
+    `SELECT rowid AS ticket_order, id, park_id, application_number, created_at,
+            strftime('%Y%m%d', created_at, '+8 hours') AS business_date_key
+     FROM it_tickets
+     WHERE park_id IS NOT NULL
+     ORDER BY park_id, created_at, rowid`,
+  ).all() as Array<{
+    ticket_order: number;
+    id: string;
+    park_id: string;
+    application_number: string | null;
+    created_at: string;
+    business_date_key: string | null;
+  }>;
+  const lastSequenceByParkDate = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.application_number) continue;
+    if (!/^\d{11}$/.test(row.application_number)) {
+      throw new Error(`Invalid park application number on ticket ${row.id}`);
+    }
+    const dateKey = row.application_number.slice(0, 8);
+    const sequence = Number(row.application_number.slice(8));
+    if (!Number.isInteger(sequence) || sequence < 1 || sequence > 999) {
+      throw new Error(`Invalid park application sequence on ticket ${row.id}`);
+    }
+    const key = `${row.park_id}:${dateKey}`;
+    lastSequenceByParkDate.set(
+      key,
+      Math.max(lastSequenceByParkDate.get(key) ?? 0, sequence),
+    );
+  }
+  const assign = d.prepare(
+    `UPDATE it_tickets SET application_number = ?
+     WHERE id = ? AND application_number IS NULL`,
+  );
+  for (const row of rows) {
+    if (row.application_number) continue;
+    const dateKey = row.business_date_key;
+    if (!dateKey || !/^\d{8}$/.test(dateKey)) {
+      throw new Error(`Invalid created_at on park ticket ${row.id}`);
+    }
+    const key = `${row.park_id}:${dateKey}`;
+    const sequence = (lastSequenceByParkDate.get(key) ?? 0) + 1;
+    if (sequence > 999) {
+      throw new Error(`Park ${row.park_id} exceeded 999 applications on ${dateKey}`);
+    }
+    assign.run(`${dateKey}${String(sequence).padStart(3, '0')}`, row.id);
+    lastSequenceByParkDate.set(key, sequence);
+  }
+  const seedCounter = d.prepare(
+    `INSERT INTO park_application_sequences
+       (park_id, date_key, last_sequence, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(park_id, date_key) DO UPDATE SET
+       last_sequence = MAX(park_application_sequences.last_sequence, excluded.last_sequence),
+       updated_at = datetime('now')`,
+  );
+  for (const [key, sequence] of lastSequenceByParkDate) {
+    const separator = key.lastIndexOf(':');
+    seedCounter.run(key.slice(0, separator), key.slice(separator + 1), sequence);
   }
 }
 
@@ -810,6 +878,7 @@ function initSchema(d: Database): void {
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
       park_id TEXT,
+      application_number TEXT,
       created_by_account_id TEXT NOT NULL,
       service_id TEXT NOT NULL DEFAULT 'repair',
       title TEXT NOT NULL,
@@ -827,12 +896,23 @@ function initSchema(d: Database): void {
       accepted_at TEXT,
       completed_at TEXT,
       closed_at TEXT,
+      creator_update_at TEXT,
+      creator_update_read_at TEXT,
       status TEXT NOT NULL DEFAULT '待接单',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
       FOREIGN KEY (organization_id) REFERENCES organizations(id),
       FOREIGN KEY (park_id) REFERENCES parks(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS park_application_sequences (
+      park_id TEXT NOT NULL,
+      date_key TEXT NOT NULL CHECK(length(date_key) = 8),
+      last_sequence INTEGER NOT NULL CHECK(last_sequence BETWEEN 1 AND 999),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (park_id, date_key),
+      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS ticket_events (
@@ -1147,6 +1227,9 @@ function initSchema(d: Database): void {
       d.exec(`ALTER TABLE it_tickets ADD COLUMN ${name} ${definition}`);
     }
   };
+  const hadCreatorUpdateReadAt = ticketColumns.some(
+    (column) => column.name === 'creator_update_read_at',
+  );
   for (const name of [
     'service_id',
     'form_data',
@@ -1161,12 +1244,29 @@ function initSchema(d: Database): void {
     'accepted_at',
     'completed_at',
     'closed_at',
+    'application_number',
+    'creator_update_at',
+    'creator_update_read_at',
   ])
     ensureTicketColumn(name);
+  if (!hadCreatorUpdateReadAt) {
+    d.exec(
+      `UPDATE it_tickets
+       SET creator_update_at = COALESCE(response_at, completed_at),
+           creator_update_read_at = COALESCE(updated_at, created_at)
+       WHERE creator_update_read_at IS NULL`,
+    );
+  }
   d.exec(
     "UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''",
   );
   d.exec("UPDATE it_tickets SET status = '待接单' WHERE status = 'open'");
+  backfillParkApplicationNumbers(d);
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_it_tickets_park_application_number
+      ON it_tickets(park_id, application_number)
+      WHERE park_id IS NOT NULL AND application_number IS NOT NULL;
+  `);
 
   // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
   // 否则最早期的单组织 knowledge 表会因缺少该列而无法启动迁移。

@@ -20,9 +20,9 @@ import type {
   EnterpriseParkStatistics,
   EnterpriseRepairTicket,
   EnterpriseRepairTicketHistoryEntry,
-  EnterpriseOrganizationView,
 } from '../../preload/index.js';
 import defaultMeetingRoomImage from '../assets/meeting-room-default.png';
+import { parkISODate, parkMinuteOfDay } from '../parkBusinessTime.js';
 import {
   IconBuilding,
   IconCalendarCheck,
@@ -101,12 +101,33 @@ function ticketLatestTimestamp(ticket: EnterpriseRepairTicket): number {
   return parkTimestamp(history[history.length - 1]?.createdAt || ticket.responseAt || ticket.updatedAt || ticket.createdAt);
 }
 
+function ticketApplicationNumber(ticket: EnterpriseRepairTicket): string {
+  return (ticket as EnterpriseRepairTicket & { applicationNumber?: string | null }).applicationNumber
+    || ticket.id.slice(-8).toUpperCase();
+}
+
 function assignedNotificationKey(ticket: EnterpriseRepairTicket): string {
   return `assigned:${ticket.id}`;
 }
 
+function creatorUpdateTimestamp(ticket: EnterpriseRepairTicket): number {
+  if (ticket.creatorUpdateAt) return parkTimestamp(ticket.creatorUpdateAt);
+  if (ticket.responseAt) return parkTimestamp(ticket.responseAt);
+  const staffHistory = (ticket.history ?? []).filter(
+    (entry) => entry.action !== 'created' && entry.action !== 'confirm',
+  );
+  return parkTimestamp(staffHistory[staffHistory.length - 1]?.createdAt || '');
+}
+
 function creatorUpdateNotificationKey(ticket: EnterpriseRepairTicket): string {
-  return `updated:${ticket.id}:${ticket.updatedAt}`;
+  return `updated:${ticket.id}:${creatorUpdateTimestamp(ticket)}`;
+}
+
+function isCreatorUpdateUnread(ticket: EnterpriseRepairTicket): boolean {
+  const updateTimestamp = creatorUpdateTimestamp(ticket);
+  if (!ticket.isCreator || !updateTimestamp) return false;
+  if (!ticket.creatorUpdateReadAt) return true;
+  return parkTimestamp(ticket.creatorUpdateReadAt) < updateTimestamp;
 }
 
 function showParkNotification(
@@ -137,6 +158,12 @@ interface ServiceInteraction {
   intro: string;
   quickReplies: string[];
   hint: string;
+}
+
+const REQUIRED_SERVICE_REPLY_OPTIONS = ['预约已收到', '订单已收到'] as const;
+
+function serviceReplyOptions(interaction: ServiceInteraction): string[] {
+  return [...new Set([...REQUIRED_SERVICE_REPLY_OPTIONS, ...interaction.quickReplies])];
 }
 
 interface ParkActorDirectory {
@@ -192,9 +219,9 @@ const SERVICE_INTERACTIONS: Record<string, ServiceInteraction> = {
   parking: { intro: '选择停车位办理内容和数量，园区客服会核对费用并回复办理安排。', quickReplies: ['申请信息已确认', '请到客服中心办理', '需要补充企业资料'], hint: '价格来自园区停车位受理单，提交前可直接核对申请内容与数量。' },
   'network-phone': { intro: '选择网络或固话业务、数量和期望开通日期，费用会按受理单自动统计。', quickReplies: ['需求确认，请安排开通', '需要补充开户资料', '已安排工程人员'], hint: '所有业务类型和价格均来自园区网络、电话业务受理单。' },
   'meeting-room': { intro: '会议室预约会先核对人数、时段和设备；如果冲突，客服会给出替代时段。', quickReplies: ['时间人数确认', '帮我换一个会议室', '需要投屏/视频会议'], hint: '预约不是单向提交，冲突时要能直接换房或补充设备。' },
-  'electric-card': { intro: '填写充值金额即可提交电卡服务申请，客服会回复办理结果。', quickReplies: ['充值信息已确认', '请到客服中心办理', '充值已完成'], hint: '无需填写电卡编号，园区按企业与房间信息核对。' },
-  repair: { intro: '选择或输入报修类别并描述故障，客服可直接回复或转交工作人员。', quickReplies: ['远程指导', '已安排上门', '需要补充信息'], hint: '提交后可在“我的办理进度”中查看客服回复、转交和最终完成状态。' },
-  'vehicle-visit': { intro: '填写来访日期、拜访事由和车辆数量，系统会按数量生成车牌输入框。', quickReplies: ['登记信息已确认', '访客信息需补充', '门岗已收到放行信息'], hint: '无车辆可填写 0；有多辆车时逐辆登记车牌。' },
+  'electric-card': { intro: '填写充电度数即可提交电卡服务申请，系统按 1.2 元/度计算费用，客服会回复办理结果。', quickReplies: ['充电信息已确认', '请到客服中心办理', '充电已完成'], hint: '无需填写电卡编号，园区按企业与房间信息核对。' },
+  repair: { intro: '选择或输入报修类别并描述故障，客服回复后会同时转交工程部。', quickReplies: ['远程指导', '已安排上门', '需要补充信息'], hint: '提交后可从园区服务首页的历史记录查看客服回复、工程部处理和最终结果。' },
+  'vehicle-visit': { intro: '填写来访日期、具体时间、拜访事由和车辆数量，系统会按数量生成车牌输入框。', quickReplies: ['登记信息已确认', '访客信息需补充', '门岗已收到放行信息'], hint: '无车辆可填写 0；有多辆车时逐辆登记车牌。' },
 };
 
 interface ServiceFormField {
@@ -202,7 +229,7 @@ interface ServiceFormField {
   label: string;
   placeholder: string;
   options?: Array<string | { value: string; label: string }>;
-  inputType?: 'text' | 'date' | 'number' | 'textarea';
+  inputType?: 'text' | 'date' | 'time' | 'number' | 'textarea';
   min?: number;
   max?: number;
   allowCustom?: boolean;
@@ -250,7 +277,13 @@ const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
     { key: 'meetingContent', label: '会议内容', placeholder: '请简要填写会议主题或内容', inputType: 'textarea' },
   ],
   'electric-card': [
-    { key: 'amount', label: '充值金额', placeholder: '请输入充值金额（元）', inputType: 'number', min: 1 },
+    {
+      key: 'chargingKwh',
+      label: '充电度数',
+      placeholder: '请输入充电度数（1.2 元/度）',
+      inputType: 'number',
+      min: 0.1,
+    },
   ],
   repair: [
     { key: 'category', label: '报修类别', placeholder: '选择或输入报修类别', allowCustom: true, options: [
@@ -261,6 +294,7 @@ const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
   ],
   'vehicle-visit': [
     { key: 'visitDate', label: '来访日期', placeholder: '请选择来访日期', inputType: 'date' },
+    { key: 'visitTime', label: '具体来访时间', placeholder: '请选择具体来访时间', inputType: 'time' },
     { key: 'reason', label: '拜访企业及事由', placeholder: '请填写拜访对象和事由', inputType: 'textarea' },
     { key: 'vehicleCount', label: '来访车辆数量', placeholder: '无车辆可填写 0', inputType: 'number', min: 0, max: 20 },
   ],
@@ -269,48 +303,6 @@ const SERVICE_FORM_FIELDS: Record<string, ServiceFormField[]> = {
 export function serviceFormFields(serviceId: string): ServiceFormField[] {
   const specific = SERVICE_FORM_FIELDS[serviceId] ?? [];
   return [...COMMON_SERVICE_FORM_FIELDS, ...specific.filter((field) => !COMMON_SERVICE_FORM_KEYS.has(field.key))];
-}
-
-function ticketFieldLabel(serviceId: string, key: string): string {
-  if (key === 'roomName') return '会议室';
-  if (key === 'slotKey') return '预约时段代码';
-  if (key === 'roomCapacity') return '会议室容量';
-  if (key === 'priceHalfDay') return '半日费用';
-  if (key === 'startTime') return '开始时间';
-  if (key === 'endTime') return '结束时间';
-  if (key === 'amountCny') return '本次金额';
-  if (key === 'recurringMonthlyCny') return '每月持续费用';
-  if (key === 'pricing') return '计费说明';
-  if (key === 'billingUnit') return '计费周期';
-  if (/^plate\d+$/.test(key)) return `第 ${key.slice(5)} 辆车车牌号`;
-  return serviceFormFields(serviceId).find((field) => field.key === key)?.label || key;
-}
-
-function visibleTicketFormEntries(ticket: EnterpriseRepairTicket): Array<[string, string]> {
-  const common = ['company', 'roomNumber', 'contact', 'phone'];
-  const fieldsByService: Record<string, string[]> = {
-    renovation: [...common, 'area', 'startDate'],
-    parking: [...common, 'applicationType', 'quantity', 'pricing', 'amountCny'],
-    'network-phone': [
-      ...common, 'businessType', 'quantity', 'expectedDate', 'amountCny', 'recurringMonthlyCny',
-    ],
-    'meeting-room': [
-      ...common, 'roomName', 'date', 'time', 'attendees', 'meetingContent', 'pricing', 'amountCny',
-    ],
-    'electric-card': [...common, 'amount'],
-    repair: [...common, 'category', 'issue', 'urgency'],
-    'vehicle-visit': [...common, 'visitDate', 'reason', 'vehicleCount'],
-  };
-  const keys = fieldsByService[ticket.serviceId] ?? Object.keys(ticket.formData);
-  if (ticket.serviceId === 'vehicle-visit') {
-    keys.push(...Object.keys(ticket.formData).filter((key) => /^plate\d+$/.test(key)).sort((left, right) => (
-      Number(left.slice(5)) - Number(right.slice(5))
-    )));
-  }
-  return keys.flatMap((key) => {
-    const value = ticket.formData[key];
-    return typeof value === 'string' && value.trim() ? [[key, value] as [string, string]] : [];
-  });
 }
 
 function visibleTicketHistory(ticket: EnterpriseRepairTicket): EnterpriseRepairTicketHistoryEntry[] {
@@ -402,15 +394,15 @@ function baseDefaultServices(park: string): ParkService[] {
       ],
     },
     {
-      id: 'electric-card', icon: IconPackage, name: '电卡服务', desc: '提交电卡充值金额',
-      prompt: `帮我提交${park}电卡服务申请。公司名称：；房间号：；充值金额：；联系人：；联系电话：`,
-      demoSubject: '电卡充值申请 · 500 元',
+      id: 'electric-card', icon: IconPackage, name: '电卡服务', desc: '按充电度数办理电卡服务',
+      prompt: `帮我提交${park}电卡服务申请。公司名称：；房间号：；充电度数：；联系人：；联系电话：`,
+      demoSubject: '电卡充电申请 · 100 度',
       steps: [
-        { role: '企业用户', owner: '演示申请人', detail: '线上提交充值金额、企业房间和联系人。' },
-        { role: '专属客服', owner: '林晓', detail: '即时受理并联系企业确认充值信息。' },
+        { role: '企业用户', owner: '演示申请人', detail: '线上提交充电度数、企业房间和联系人。' },
+        { role: '专属客服', owner: '林晓', detail: '即时受理并联系企业确认充电信息。' },
         { role: '能源服务专员', owner: '王敏', detail: '核验电卡状态，预约线下办理时间。' },
-        { role: '企业用户', owner: '线下办理', detail: '携带电卡至客服中心完成充值手续。' },
-        { role: '能源服务专员', owner: '王敏', detail: '写入余额、出具充值结果，流程办结。' },
+        { role: '企业用户', owner: '线下办理', detail: '携带电卡至客服中心完成充电手续。' },
+        { role: '能源服务专员', owner: '王敏', detail: '写入电量、出具办理结果，流程办结。' },
       ],
     },
     {
@@ -427,10 +419,10 @@ function baseDefaultServices(park: string): ParkService[] {
     },
     {
       id: 'vehicle-visit', icon: IconIdBadge, name: '车辆与访客', desc: '访客日期与车辆预约登记',
-      prompt: `帮我登记${park}车辆与访客申请。公司名称：；房间号：；来访日期：；拜访企业及事由：；车辆数量：；各车辆车牌号：；联系人：；联系电话：`,
+      prompt: `帮我登记${park}车辆与访客申请。公司名称：；房间号：；来访日期：；具体来访时间：；拜访企业及事由：；车辆数量：；各车辆车牌号：；联系人：；联系电话：`,
       demoSubject: '车辆与访客预约登记',
       steps: [
-        { role: '企业用户', owner: '演示申请人', detail: '线上提供日期、拜访事由和按车辆数量生成的车牌信息。' },
+        { role: '企业用户', owner: '演示申请人', detail: '线上提供来访日期、具体时间、拜访事由和按车辆数量生成的车牌信息。' },
         { role: '专属客服', owner: '林晓', detail: '接收来访信息并完成初步核验。' },
         { role: '安保公司', owner: '李队', detail: '接收登记信息，安排访客车辆通行与停车指引。' },
         { role: '园区门岗', owner: '安保值班员', detail: '车辆到访时核验登记信息并放行，流程完成。' },
@@ -506,7 +498,6 @@ function AnnouncementView({ onBack }: { onBack: () => void }): React.JSX.Element
   const selected = items.find((item) => item.id === selectedId) ?? null;
   return <div className="otto-park-demo">
     <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className="otto-park-demo__status">{items.filter((item) => !item.readAt).length} 条未读</span></div>
-    <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">园区通知</div><h3>园区公告</h3><p>查看园区发布的停水停电、活动和服务通知。</p></div></div>
     {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
     {loading ? <div className="otto-park-repair__empty">正在读取公告…</div> : items.length ? <div className="otto-park-survey"><section className="otto-park-survey__publish" aria-label="公告列表"><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => { void openItem(item); }}>{item.readAt ? '' : '新 · '}{item.title}</button>)}</div></section>{selected ? <section className="otto-park-announcement-detail" aria-label="公告详情"><div className="otto-park-receiver__label">已查看</div><h3>{selected.title}</h3><p>{selected.body}</p><small>{new Date(selected.createdAt).toLocaleString('zh-CN')}</small></section> : <div className="otto-park-repair__empty">选择一条公告查看内容，打开后会自动确认已查看。</div>}</div> : <div className="otto-park-repair__empty">暂无园区公告。</div>}
   </div>;
@@ -566,20 +557,16 @@ function SatisfactionView({ onBack }: { onBack: () => void }): React.JSX.Element
   };
   return <div className="otto-park-demo">
     <div className="otto-park-demo__topline"><button type="button" className="otto-park-demo__back" onClick={onBack}>← 返回服务列表</button><span className={`otto-park-demo__status ${selected?.submittedAt ? 'is-done' : ''}`}>{selected?.submittedAt ? '已提交' : selected ? '待填写' : '暂无问卷'}</span></div>
-    <div className="otto-park-demo__summary"><div><div className="otto-park-demo__eyebrow">实名反馈</div><h3>满意度调查</h3><p>每份问卷只能提交一次，提交后不能修改。</p></div></div>
     {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
     {items.length ? <><div className="otto-park-repair__roles">{items.map((item) => <button key={item.id} type="button" className={selected?.id === item.id ? 'is-active' : ''} onClick={() => setSelectedId(item.id)}>{item.submittedAt ? '已提交 · ' : '待填写 · '}{item.title}</button>)}</div>{selected ? <form className="otto-park-survey__form" onSubmit={(event) => { void submit(event); }} aria-label="员工填写满意度调查"><div className="otto-park-receiver__label">提交人：{account?.name || '当前用户'}</div><h3>{selected.title}</h3><p>{selected.body}</p><div className="otto-park-form__grid">{COMMON_SERVICE_FORM_FIELDS.map((field) => <label key={field.key} className="otto-park-form__field">{field.label}<input aria-label={field.label} required value={selected.responseData?.[field.key] ?? identity[field.key as keyof typeof identity]} onChange={(event) => setIdentity((current) => ({ ...current, [field.key]: event.target.value }))} disabled={Boolean(selected.submittedAt)} placeholder={field.placeholder} /></label>)}</div><label>总体满意度<select value={selected.responseData?.score || score} onChange={(event) => setScore(event.target.value)} disabled={Boolean(selected.submittedAt)}><option value="5">5 分 · 非常满意</option><option value="4">4 分 · 满意</option><option value="3">3 分 · 一般</option><option value="2">2 分 · 待改进</option><option value="1">1 分 · 不满意</option></select></label><label>重点关注<input required value={selected.responseData?.focus || focus} onChange={(event) => setFocus(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="例如：网络响应、会议室环境" /></label><label>改进建议<textarea required rows={4} value={selected.responseData?.feedback || feedback} onChange={(event) => setFeedback(event.target.value)} disabled={Boolean(selected.submittedAt)} placeholder="请填写具体建议" /></label><button type="submit" className="otto-park-demo__primary" disabled={busy || Boolean(selected.submittedAt)}>{selected.submittedAt ? '已实名提交，不能修改' : busy ? '正在提交…' : '提交问卷'}</button></form> : null}</> : <div className="otto-park-repair__empty">暂无需要填写的满意度调查。</div>}
   </div>;
 }
 
-function futureLocalDate(offsetDays = 1): string {
-  const date = new Date();
-  date.setHours(12, 0, 0, 0);
-  date.setDate(date.getDate() + offsetDays);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+function futureLocalDate(offsetDays = 0): string {
+  return parkISODate(new Date(), offsetDays);
 }
 
-function meetingTimeToMinutes(value: string): number {
+export function meetingTimeToMinutes(value: string): number {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
   return match ? Number(match[1]) * 60 + Number(match[2]) : 0;
 }
@@ -588,12 +575,33 @@ function meetingMinutesToTime(total: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
+export function isMeetingSlotPast(date: string, slotKey: string, now = new Date()): boolean {
+  const today = parkISODate(now);
+  if (date < today) return true;
+  if (date > today) return false;
+  return meetingTimeToMinutes(slotKey) <= parkMinuteOfDay(now);
+}
+
+export function effectiveMeetingSlotStatus(
+  slot: EnterpriseParkResources['meetingSlots'][number],
+  now = new Date(),
+): EnterpriseParkResources['meetingSlots'][number]['status'] {
+  return slot.status === 'available' && isMeetingSlotPast(slot.date, slot.slotKey, now)
+    ? 'closed'
+    : slot.status;
+}
+
 function serviceOptionValue(option: NonNullable<ServiceFormField['options']>[number]): string {
   return typeof option === 'string' ? option : option.value;
 }
 
 function serviceOptionLabel(option: NonNullable<ServiceFormField['options']>[number]): string {
   return typeof option === 'string' ? option : option.label;
+}
+
+function serviceFormDisplayValue(field: ServiceFormField, value: string): string {
+  const option = field.options?.find((candidate) => serviceOptionValue(candidate) === value);
+  return option ? serviceOptionLabel(option) : value;
 }
 
 function parkCurrency(value: number): string {
@@ -605,7 +613,7 @@ function parkCurrency(value: number): string {
 function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
   service: ParkService;
   onBack: () => void;
-  onComplete: () => void;
+  onComplete: (ticket?: EnterpriseRepairTicket) => void;
   focusTicket: EnterpriseRepairTicket | null;
 }): React.JSX.Element {
   const fields = serviceFormFields(service.id);
@@ -622,7 +630,6 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resources, setResources] = useState<EnterpriseParkResources | null>(null);
-  const [organizationView, setOrganizationView] = useState<EnterpriseOrganizationView | null>(null);
   const [membershipDefaults, setMembershipDefaults] = useState({ address: '', roomNumber: '' });
   const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries(
     fields.map((field) => [field.key, ''])
@@ -639,8 +646,6 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
       ]),
   ));
   const [response, setResponse] = useState({ type: '', text: '' });
-  const [repairActionMode, setRepairActionMode] = useState<'reply' | 'transfer'>('reply');
-  const [transfer, setTransfer] = useState({ memberId: '', department: '', note: '' });
   const [completionNote, setCompletionNote] = useState('');
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -696,28 +701,29 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
     const timer = window.setInterval(() => { void refresh(); }, 5000);
     return () => window.clearInterval(timer);
   }, [refresh]);
-  useEffect(() => { void refreshResources(); }, [refreshResources]);
   useEffect(() => {
-    if (!handlerMode || service.id !== 'repair' || !window.otto?.enterpriseOrganizationView) {
-      setOrganizationView(null);
-      return undefined;
-    }
-    let cancelled = false;
-    void window.otto.enterpriseOrganizationView()
-      .then((view) => { if (!cancelled) setOrganizationView(view); })
-      .catch(() => { if (!cancelled) setOrganizationView(null); });
-    return () => { cancelled = true; };
-  }, [handlerMode, service.id]);
+    void refreshResources();
+    if (service.id !== 'meeting-room') return undefined;
+    const timer = window.setInterval(() => { void refreshResources(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshResources, service.id]);
 
   const selectedRoom = resources?.meetingRooms.find((room) => room.id === form.roomId) ?? null;
-  const visibleSlots = resources?.meetingSlots.filter((slot) => (
+  const visibleSlots = (resources?.meetingSlots.filter((slot) => (
     slot.roomId === form.roomId && slot.date === form.date
-  )) ?? [];
+  )) ?? [])
+    .map((slot) => ({ ...slot, status: effectiveMeetingSlotStatus(slot) }))
+    .sort((left, right) => left.slotKey.localeCompare(right.slotKey));
   const selectedMeetingSlots = visibleSlots.filter((slot) => (
     form.startTime && form.endTime
     && slot.slotKey >= form.startTime
     && slot.slotKey < form.endTime
   ));
+  const meetingEstimatedAmount = form.startTime && form.endTime && selectedRoom
+    ? Math.ceil(
+      (meetingTimeToMinutes(form.endTime) - meetingTimeToMinutes(form.startTime)) / (4 * 60),
+    ) * selectedRoom.priceHalfDay
+    : 0;
   const attendeeCount = Number(form.attendees);
   const attendeeError = service.id === 'meeting-room' && form.attendees
     ? !Number.isInteger(attendeeCount) || attendeeCount < 1
@@ -728,19 +734,11 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
     : null;
   const ownTickets = tickets.filter((ticket) => ticket.isCreator);
   const assignedTickets = tickets.filter((ticket) => ticket.isRecipient);
+  const creatorHistoryMode = Boolean(focusTicket?.isCreator);
   const activeTicket = tickets.find((ticket) => ticket.id === selectedId)
-    ?? (handlerMode ? assignedTickets[0] : ownTickets[0]) ?? null;
+    ?? (handlerMode ? assignedTickets[0] : creatorHistoryMode ? ownTickets[0] : null) ?? null;
   const historicalTicket = Boolean(activeTicket && isStaffHistoryTicket(activeTicket));
   const historyEntries = activeTicket ? visibleTicketHistory(activeTicket) : [];
-  const transferMembers = organizationView?.members.filter((member) => (
-    member.status === 'active' && member.id !== account?.id
-  )) ?? [];
-  const transferDepartments = [...new Set(transferMembers
-    .map((member) => member.department?.trim())
-    .filter((department): department is string => Boolean(department)))].sort();
-  const showActiveTicketDescription = Boolean(activeTicket?.description && !Object.values(
-    activeTicket.formData,
-  ).some((value) => value.trim() === activeTicket.description.trim()));
 
   const replaceTicket = (next: EnterpriseRepairTicket): void => {
     setTickets((current) => [next, ...current.filter((ticket) => ticket.id !== next.id)]);
@@ -767,6 +765,21 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
     if (slot.status !== 'available') return;
     const slotEnd = meetingMinutesToTime(meetingTimeToMinutes(slot.slotKey) + 10);
     setForm((current) => {
+      if (
+        current.startTime
+        && current.endTime
+        && slot.slotKey >= current.startTime
+        && slot.slotKey < current.endTime
+      ) {
+        setError(null);
+        return {
+          ...current,
+          slotKey: '',
+          startTime: '',
+          endTime: '',
+          time: '',
+        };
+      }
       const startTime = !current.startTime || slot.slotKey < current.startTime
         ? slot.slotKey
         : current.startTime;
@@ -800,12 +813,18 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
       const normalized = { ...form };
       if (service.id === 'meeting-room') {
         if (!selectedRoom) throw new Error('请从下拉菜单选择会议室');
-        if (!normalized.date || normalized.date < futureLocalDate()) throw new Error('会议室只能预约未来日期');
+        if (!normalized.date || normalized.date < futureLocalDate()) throw new Error('会议室不能预约过去日期');
         if (!normalized.startTime || !normalized.endTime) throw new Error('请在时间轴上选择连续的绿色时段');
         if (!normalized.attendees || attendeeError) throw new Error(attendeeError || '请填写参会人数');
       }
-      const primary = normalized.roomName || normalized.area || normalized.applicationType
-        || normalized.businessType || normalized.roomNumber || normalized.date || normalized.category || service.name;
+      const displayForm = Object.fromEntries(fields.map((field) => [
+        field.key,
+        serviceFormDisplayValue(field, normalized[field.key] || ''),
+      ]));
+      const primary = normalized.roomName || displayForm.area || displayForm.applicationType
+        || displayForm.businessType
+        || (service.id === 'electric-card' && normalized.chargingKwh ? `${normalized.chargingKwh} 度` : '')
+        || displayForm.roomNumber || normalized.date || displayForm.category || service.name;
       const description = service.id === 'repair'
         ? normalized.issue
         : [
@@ -814,10 +833,20 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
               `会议室：${normalized.roomName}`,
               `使用日期：${normalized.date}`,
               `使用时间：${normalized.time}`,
-              `费用：${normalized.priceHalfDay} 元/半天`,
+              `计费标准：${normalized.priceHalfDay} 元/半天，不足半天按半天计`,
+              `本次预计金额：${meetingEstimatedAmount} 元`,
             ]
             : []),
-          ...fields.map((field) => `${field.label}：${normalized[field.key] || ''}`),
+          ...(service.id === 'electric-card'
+            ? [
+              `充电度数：${normalized.chargingKwh} 度`,
+              '计费标准：1.2 元/度',
+              `预计金额：${(Number(normalized.chargingKwh) * 1.2).toFixed(2)} 元`,
+            ]
+            : []),
+          ...fields
+            .filter((field) => !(service.id === 'electric-card' && field.key === 'chargingKwh'))
+            .map((field) => `${field.label}：${displayForm[field.key] || ''}`),
         ].join('\n');
       const next = await window.otto.enterpriseTicketSubmit({
         serviceId: service.id,
@@ -855,9 +884,10 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
           ['priceHalfDay', ''],
         ])));
       }
-      onComplete();
+      onComplete(next);
     } catch (cause) {
       setError(errorMessage(cause));
+      if (service.id === 'meeting-room') await refreshResources();
     } finally {
       setBusy(false);
     }
@@ -865,12 +895,12 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
 
   const action = async (
     ticket: EnterpriseRepairTicket,
-    actionName: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
+    actionName: 'respond' | 'accept' | 'complete' | 'confirm' | 'respond_and_transfer',
     extra: {
       responseType?: string;
       responseText?: string;
-      transferAccountId?: string;
       transferDepartment?: string;
+      transferNote?: string;
     } = {},
   ): Promise<void> => {
     setBusy(true);
@@ -878,14 +908,14 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
     try {
       const next = await window.otto.enterpriseTicketAction(ticket.id, {
         action: actionName,
-        ...(actionName === 'respond'
+        ...(['respond', 'respond_and_transfer'].includes(actionName)
           ? { responseType: response.type, responseText: response.text }
           : {}),
         ...extra,
       });
       replaceTicket(next);
-      if (actionName === 'respond') setResponse({ type: '', text: '' });
-      if (['respond', 'complete', 'transfer', 'confirm'].includes(actionName)) onComplete();
+      if (['respond', 'respond_and_transfer'].includes(actionName)) setResponse({ type: '', text: '' });
+      if (actionName === 'confirm') onComplete();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -919,21 +949,33 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
         {activeTicket?.status || (handlerMode ? '待处理' : '可提交')}
       </span>
     </div>
-    <div className="otto-park-demo__summary">
-      <div>
-        <div className="otto-park-demo__eyebrow">{handlerMode ? '园区服务待办' : '园区服务申请'}</div>
-        <h3>{service.name}</h3>
-        <p>{handlerMode ? '请核对用户提交的信息，并返回明确的办理结果。' : interaction.intro}</p>
-      </div>
-    </div>
     {error ? <div className="otto-park-form__receipt" role="alert">{error}</div> : null}
 
-    {!handlerMode ? <>
+    {creatorHistoryMode && activeTicket?.isCreator ? <div className="otto-park-technician-form">
+      <div className="otto-park-request-summary">
+        <div><span>申请编号</span><strong>{ticketApplicationNumber(activeTicket)}</strong></div>
+        <div><span>状态</span><strong>{activeTicket.status}</strong></div>
+        <div className="is-wide"><span>{service.id === 'meeting-room' ? '会议内容' : '申请内容'}</span><strong>{activeTicket.description}</strong></div>
+        <div><span>办理回复</span><strong>{activeTicket.responseType || '等待受理'}</strong></div>
+        <div><span>回复内容补充</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
+      </div>
+      <section className="otto-park-ticket-history" aria-label="我的园区服务处理历史">
+        <div className="otto-park-ticket-history__head"><strong>处理记录</strong><span>{historyEntries.length} 条 · 按时间顺序</span></div>
+        <ol>{historyEntries.map((entry) => <li key={entry.id}>
+          <span className="otto-park-ticket-history__marker" aria-hidden />
+          <div>
+            <div className="otto-park-ticket-history__meta">
+              <strong>{HISTORY_ACTION_LABELS[entry.action]}</strong>
+              <time dateTime={entry.createdAt}>{formatParkTimestamp(entry.createdAt)}</time>
+            </div>
+            <p>{entry.actor?.name || '园区工作人员'} · 状态：{entry.statusAfter}</p>
+            {entry.responseType ? <p><b>{entry.responseType}</b>{entry.responseText ? `：${entry.responseText}` : ''}</p> : null}
+          </div>
+        </li>)}</ol>
+      </section>
+      {activeTicket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" disabled={busy} onClick={() => { void action(activeTicket, 'confirm'); }}>确认办理完成</button> : null}
+    </div> : !handlerMode ? (
       <form className="otto-park-request-form" onSubmit={(event) => { void submitTicket(event); }} aria-label={`${service.name}申请表`}>
-        <div className="otto-park-form__guide">
-          <strong>填写申请</strong>
-          <span>{service.id === 'meeting-room' ? '按顺序选择会议室、日期和绿色可预约时段。红色表示该时段已经被占用。' : interaction.hint}</span>
-        </div>
         {service.id === 'meeting-room' ? <div className="otto-park-meeting-booking">
           <label className="otto-park-form__field">会议室名称
             <select aria-label="会议室名称" required value={form.roomId} onChange={(event) => chooseRoom(event.target.value)}>
@@ -992,14 +1034,17 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
                 </div>
               </div>
               <div className="otto-park-meeting-selection">
-                <span>{form.startTime && form.endTime ? `已选择 ${form.startTime}–${form.endTime}` : '点击绿色格子选择开始时间，再点击后续绿色格子延长时间'}</span>
+                <span>{form.startTime && form.endTime
+                  ? `已选择 ${form.startTime}–${form.endTime}；${selectedRoom?.priceHalfDay} 元/半天，不足半天按半天计；本次预计 ${meetingEstimatedAmount} 元；再次点击黄色时段可取消`
+                  : '点击绿色格子选择开始时间，再点击后续绿色格子延长时间'}</span>
                 {form.startTime ? <button type="button" onClick={() => setForm((current) => ({ ...current, slotKey: '', startTime: '', endTime: '', time: '' }))}>重新选择</button> : null}
               </div>
             </> : <p>该日期暂时没有园区发布的可预约时段</p>}
             <div className="otto-park-meeting-legend">
               <span className="is-available">绿色 · 可预约</span>
               <span className="is-booked">红色 · 已预约</span>
-              <span className="is-selected">深绿 · 已选择</span>
+              <span className="is-selected">黄色 · 已选择</span>
+              <span className="is-closed">灰色 · 已过期或未开放</span>
             </div>
           </fieldset>
         </div> : null}
@@ -1041,7 +1086,9 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
                 type={field.inputType || 'text'}
                 min={field.inputType === 'date' ? futureLocalDate(0) : field.min}
                 max={service.id === 'meeting-room' && field.key === 'attendees' && selectedRoom ? selectedRoom.capacity : field.max}
-                step={field.inputType === 'number' ? 1 : undefined}
+                step={field.inputType === 'number'
+                  ? service.id === 'electric-card' && field.key === 'chargingKwh' ? 0.1 : 1
+                  : undefined}
                 value={form[field.key] || ''}
                 placeholder={field.placeholder}
                 onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
@@ -1066,29 +1113,7 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
           {busy ? '正在提交…' : `提交${service.name}申请`}
         </button>
       </form>
-
-      {ownTickets.length ? <div className="otto-park-technician-form">
-        <div className="otto-park-form__guide"><strong>我的办理进度</strong><span>这里只显示你自己提交的申请。</span></div>
-        <div className="otto-park-repair__roles">{ownTickets.slice(0, 8).map((ticket) => <button key={ticket.id} type="button" className={activeTicket?.id === ticket.id ? 'is-active' : ''} onClick={() => setSelectedId(ticket.id)}>{ticket.title} · {ticket.status}</button>)}</div>
-        {activeTicket?.isCreator ? <>
-          <div className="otto-park-request-summary">
-            <div><span>申请编号</span><strong>{activeTicket.id.slice(-8).toUpperCase()}</strong></div>
-            <div><span>状态</span><strong>{activeTicket.status}</strong></div>
-            <div><span>办理回复</span><strong>{activeTicket.responseType || '等待受理'}</strong></div>
-            <div><span>说明</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
-          </div>
-          {activeTicket.status === '待验收' ? <button type="button" className="otto-park-demo__primary" disabled={busy} onClick={() => { void action(activeTicket, 'confirm'); }}>确认办理完成</button> : null}
-        </> : null}
-      </div> : null}
-    </> : <div className="otto-park-technician-form">
-      <div className="otto-park-form__guide">
-        <strong>{historicalTicket
-          ? service.id === 'repair' ? '维修服务历史' : '园区服务历史'
-          : service.id === 'repair' ? '维修待办' : '客服待办'}</strong>
-        <span>{historicalTicket
-          ? '这里展示申请人填写的资料、全部处理记录和最终结果。'
-          : '这里仅显示分配给当前账号的真实申请。'}</span>
-      </div>
+    ) : <div className="otto-park-technician-form">
       {assignedTickets.length ? <>
         <div className="otto-park-repair__roles">{assignedTickets.map((ticket) => <button key={ticket.id} type="button" className={activeTicket?.id === ticket.id ? 'is-active' : ''} onClick={() => { void openAssigned(ticket); }}>{ticket.title} · {ticket.status}{!ticket.readAt ? ' · 新' : ''}</button>)}</div>
         {activeTicket?.isRecipient ? <>
@@ -1097,15 +1122,11 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
             <span>该服务已进入验收或完成阶段，申请内容和每次处理结果均已留存。</span>
           </div> : null}
           <div className="otto-park-request-summary">
-            <div><span>申请人</span><strong>{activeTicket.creator.name}</strong></div>
-            {visibleTicketFormEntries(activeTicket).map(([key, value]) => <div key={key}>
-              <span>{ticketFieldLabel(activeTicket.serviceId, key)}</span>
-              <strong>{value || '未填写'}</strong>
-            </div>)}
-            {showActiveTicketDescription ? <div className="is-wide"><span>申请说明</span><strong>{activeTicket.description}</strong></div> : null}
+            <div><span>申请编号</span><strong>{ticketApplicationNumber(activeTicket)}</strong></div>
+            <div className="is-wide"><span>{service.id === 'meeting-room' ? '会议内容' : '申请内容'}</span><strong>{activeTicket.description}</strong></div>
             <div><span>最终状态</span><strong>{activeTicket.status}</strong></div>
             <div><span>最新办理结果</span><strong>{activeTicket.responseType || '暂无办理回复'}</strong></div>
-            <div className="is-wide"><span>最新结果说明</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
+            <div className="is-wide"><span>回复内容补充</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
           </div>
           <section className="otto-park-ticket-history" aria-label="园区服务处理历史">
             <div className="otto-park-ticket-history__head"><strong>处理记录</strong><span>{historyEntries.length} 条 · 按时间顺序</span></div>
@@ -1125,9 +1146,9 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
             {service.id !== 'repair' ? <form className="otto-park-response-form" onSubmit={(event) => { event.preventDefault(); void action(activeTicket, 'respond'); }} aria-label="园区服务回复表">
               <label className="otto-park-form__field">处理方式
                 <input required list={`otto-park-response-${service.id}`} value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))} placeholder="选择或输入处理方式" />
-                <datalist id={`otto-park-response-${service.id}`}>{interaction.quickReplies.map((reply) => <option key={reply} value={reply} />)}</datalist>
+                <datalist id={`otto-park-response-${service.id}`}>{serviceReplyOptions(interaction).map((reply) => <option key={reply} value={reply} />)}</datalist>
               </label>
-              <label className="otto-park-form__field">给申请人的说明
+              <label className="otto-park-form__field">回复内容补充
                 <textarea required rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} placeholder="请说明办理结果或后续安排" />
               </label>
               <button type="submit" className="otto-park-demo__primary" disabled={busy || !response.type.trim() || !response.text.trim()}>发送办理回复</button>
@@ -1143,48 +1164,26 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
                 <textarea required rows={4} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} placeholder="例如：已更换损坏灯具并完成通电测试" />
               </label>
               <button type="submit" className="otto-park-demo__primary" disabled={busy || !completionNote.trim()}>已完成工作</button>
-            </form> : <div className="otto-park-repair-actions">
-              <div className="otto-park-repair-actions__modes" role="tablist" aria-label="物业报修处理方式">
-                <button type="button" role="tab" aria-selected={repairActionMode === 'reply'} className={repairActionMode === 'reply' ? 'is-active' : ''} onClick={() => setRepairActionMode('reply')}>客服回复</button>
-                <button type="button" role="tab" aria-selected={repairActionMode === 'transfer'} className={repairActionMode === 'transfer' ? 'is-active' : ''} onClick={() => setRepairActionMode('transfer')}>转交工作人员</button>
-              </div>
-              {repairActionMode === 'reply' ? <form className="otto-park-response-form" onSubmit={(event) => { event.preventDefault(); void action(activeTicket, 'respond'); }} aria-label="物业报修客服回复">
+            </form> : <form className="otto-park-response-form" onSubmit={(event) => {
+              event.preventDefault();
+              void action(activeTicket, 'respond_and_transfer', {
+                transferDepartment: '工程部',
+                transferNote: '请工程部接手处理该物业报修，并在完成后记录工作结果。',
+              });
+            }} aria-label="物业报修回复并转交工程部">
                 <label className="otto-park-form__field">处理方式
                   <input required list="otto-park-repair-response-options" value={response.type} onChange={(event) => setResponse((current) => ({ ...current, type: event.target.value }))} placeholder="选择或输入处理方式" />
-                  <datalist id="otto-park-repair-response-options">{interaction.quickReplies.map((reply) => <option key={reply} value={reply} />)}</datalist>
+                  <datalist id="otto-park-repair-response-options">{serviceReplyOptions(interaction).map((reply) => <option key={reply} value={reply} />)}</datalist>
                 </label>
-                <label className="otto-park-form__field">给申请人的说明
+                <label className="otto-park-form__field">回复内容补充
                   <textarea required rows={4} value={response.text} onChange={(event) => setResponse((current) => ({ ...current, text: event.target.value }))} placeholder="说明处理建议、预约时间或需要补充的信息" />
                 </label>
-                <button type="submit" className="otto-park-demo__primary" disabled={busy || !response.type.trim() || !response.text.trim()}>发送客服回复</button>
-              </form> : <form className="otto-park-response-form" onSubmit={(event) => {
-                event.preventDefault();
-                void action(activeTicket, 'transfer', {
-                  transferAccountId: transfer.memberId || undefined,
-                  transferDepartment: transfer.memberId ? undefined : transfer.department || undefined,
-                  responseText: transfer.note.trim() || undefined,
-                });
-              }} aria-label="转交物业报修">
-                <div className="otto-park-transfer-grid">
-                  <label className="otto-park-form__field">转交给同事
-                    <select value={transfer.memberId} onChange={(event) => setTransfer((current) => ({ ...current, memberId: event.target.value, department: event.target.value ? '' : current.department }))}>
-                      <option value="">请选择具体同事</option>
-                      {transferMembers.map((member) => <option key={member.id} value={member.id}>{member.name} · {member.department || member.positionTitle || '未分配部门'}</option>)}
-                    </select>
-                  </label>
-                  <label className="otto-park-form__field">或转交给部门
-                    <select value={transfer.department} onChange={(event) => setTransfer((current) => ({ ...current, department: event.target.value, memberId: event.target.value ? '' : current.memberId }))}>
-                      <option value="">请选择部门</option>
-                      {transferDepartments.map((department) => <option key={department}>{department}</option>)}
-                    </select>
-                  </label>
+                <div className="otto-park-request-summary">
+                  <div><span>转交部门</span><strong>工程部</strong></div>
+                  <div><span>处理步骤</span><strong>回复申请人并同步转交</strong></div>
                 </div>
-                <label className="otto-park-form__field">转交说明
-                  <textarea rows={3} value={transfer.note} onChange={(event) => setTransfer((current) => ({ ...current, note: event.target.value }))} placeholder="例如：请工程部上门检查配电箱并反馈处理结果" />
-                </label>
-                <button type="submit" className="otto-park-demo__primary" disabled={busy || (!transfer.memberId && !transfer.department)}>确认转交并通知工作人员</button>
+                <button type="submit" className="otto-park-demo__primary" disabled={busy || !response.type.trim() || !response.text.trim()}>回复并转交工程部</button>
               </form>}
-            </div>}
           </> : null}
         </> : null}
       </> : <div className="otto-park-repair__empty">当前没有分配给你的待办。</div>}
@@ -1192,7 +1191,7 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
   </div>;
 }
 
-function ServiceDemo({ service, onBack, onComplete, focusTicket }: { service: ParkService; onBack: () => void; onComplete: () => void; focusTicket: EnterpriseRepairTicket | null }): React.JSX.Element {
+function ServiceDemo({ service, onBack, onComplete, focusTicket }: { service: ParkService; onBack: () => void; onComplete: (ticket?: EnterpriseRepairTicket) => void; focusTicket: EnterpriseRepairTicket | null }): React.JSX.Element {
   if (service.id === 'announcement') return <AnnouncementView onBack={onBack} />;
   if (service.id === 'satisfaction') return <SatisfactionView onBack={onBack} />;
   return <ServiceRequestView service={service} onBack={onBack} onComplete={onComplete} focusTicket={focusTicket} />;
@@ -1214,11 +1213,25 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [focusTicket, setFocusTicket] = useState<EnterpriseRepairTicket | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<EnterpriseRepairTicket[]>([]);
   const [assignedHistory, setAssignedHistory] = useState<EnterpriseRepairTicket[]>([]);
+  const [ownHistory, setOwnHistory] = useState<EnterpriseRepairTicket[]>([]);
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyCategory, setHistoryCategory] = useState('all');
   const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc');
   const [pendingNotificationSessionId, setPendingNotificationSessionId] = useState<string | null>(null);
+  const [windowMode, setWindowMode] = useState<'normal' | 'minimized' | 'maximized'>('normal');
+  const [windowPosition, setWindowPosition] = useState({ x: 0, y: 0 });
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const windowDrag = useRef<{
+    pointerId: number;
+    originX: number;
+    originY: number;
+    startX: number;
+    startY: number;
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } | null>(null);
   const notifiedTicketKeys = useRef(new Set<string>());
   const ticketPollIdentity = useRef<string | null>(null);
   const ticketPollInitialized = useRef(false);
@@ -1417,6 +1430,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setSelected(null);
       setFocusTicket(null);
       setPendingNotificationSessionId(sessionId?.startsWith('park:') ? sessionId : null);
+      setWindowMode('normal');
       setOpen(true);
     };
     const onOpen = (event: Event): void => {
@@ -1446,6 +1460,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         if (!session.account) {
           setAssignedTasks([]);
           setAssignedHistory([]);
+          setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
           notifiedTicketKeys.current.clear();
@@ -1459,6 +1474,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
           ticketPollInitialized.current = false;
           notifiedTicketKeys.current.clear();
           setAssignedHistory([]);
+          setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
         }
@@ -1466,46 +1482,37 @@ export function ParkServicesPlugin(): React.JSX.Element {
         if (cancelled) return;
         const actionableTasks = tickets.filter(isActionableStaffTicket);
         const completedHistory = tickets.filter(isStaffHistoryTicket);
+        const creatorHistory = tickets
+          .filter((ticket) => ticket.isCreator)
+          .sort((left, right) => ticketLatestTimestamp(right) - ticketLatestTimestamp(left));
         const latestTickets = new Map(tickets.map((ticket) => [ticket.id, ticket]));
         setAssignedTasks(actionableTasks);
         setAssignedHistory(completedHistory);
+        setOwnHistory(creatorHistory);
         setBackgroundTickets((current) => current
           .map((ticket) => latestTickets.get(ticket.id) ?? ticket)
           .filter((ticket) => (
-            ticket.isRecipient ? isActionableStaffTicket(ticket) : ticket.status !== '已完成'
+            ticket.isRecipient ? !ticket.readAt : isCreatorUpdateUnread(ticket)
           )));
         setBackgroundTicketSummaryCount((current) => current > 0 ? actionableTasks.length : 0);
-
-        for (const ticket of tickets.filter((item) => item.isRecipient && !isActionableStaffTicket(item))) {
-          const settledKey = `settled:${ticket.id}:${ticket.status}`;
-          if (notifiedTicketKeys.current.has(settledKey)) continue;
-          notifiedTicketKeys.current.add(settledKey);
-          void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
-        }
 
         const assignedCandidates = actionableTasks.filter((ticket) => (
           !ticket.readAt && !notifiedTicketKeys.current.has(assignedNotificationKey(ticket))
         ));
         const creatorCandidates = tickets.filter((ticket) => (
-          ticket.isCreator
-          && Boolean(ticket.responseAt || ticket.status === '待验收')
+          isCreatorUpdateUnread(ticket)
           && !notifiedTicketKeys.current.has(creatorUpdateNotificationKey(ticket))
         ));
-        const transferredCompletionCandidates = tickets.filter((ticket) => (
+        const settledRecipientCandidates = tickets.filter((ticket) => (
           ticket.isRecipient
-          && ticket.deliveryStatus === 'transferred'
-          && ticket.status === '已完成'
-          && !notifiedTicketKeys.current.has(creatorUpdateNotificationKey(ticket))
+          && !isActionableStaffTicket(ticket)
+          && !ticket.readAt
+          && !notifiedTicketKeys.current.has(assignedNotificationKey(ticket))
         ));
 
         if (!ticketPollInitialized.current) {
           ticketPollInitialized.current = true;
           for (const ticket of assignedCandidates) notifiedTicketKeys.current.add(assignedNotificationKey(ticket));
-          for (const ticket of creatorCandidates) notifiedTicketKeys.current.add(creatorUpdateNotificationKey(ticket));
-          for (const ticket of transferredCompletionCandidates) {
-            notifiedTicketKeys.current.add(creatorUpdateNotificationKey(ticket));
-          }
-
           if (assignedCandidates.length > 1) {
             const title = 'Otto 待处理提醒 · 园区服务';
             const body = `你有 ${assignedCandidates.length} 项尚未处理的园区任务，已为你汇总到待办列表。`;
@@ -1516,6 +1523,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
               source: 'park',
               title,
               preview: body,
+              persistent: true,
             }, title, body);
             return;
           }
@@ -1532,12 +1540,13 @@ export function ParkServicesPlugin(): React.JSX.Element {
             source: 'park',
             title,
             preview: body,
+            persistent: true,
           }, title, body);
         } else if (assignedCandidates.length === 1) {
           const candidate = assignedCandidates[0];
           notifiedTicketKeys.current.add(assignedNotificationKey(candidate));
           const title = 'Otto 待处理提醒 · 园区服务';
-          const body = `${candidate.creator.name}：${candidate.location || candidate.title} · ${candidate.description}`;
+          const body = `申请单 ${ticketApplicationNumber(candidate)} · ${candidate.title}`;
           showParkNotification({
             messageId: `park-ticket:${candidate.id}:${candidate.updatedAt}`,
             sessionId: `park:ticket:${candidate.id}`,
@@ -1545,32 +1554,36 @@ export function ParkServicesPlugin(): React.JSX.Element {
             title,
             sender: candidate.creator.name,
             preview: body,
+            persistent: true,
           }, title, body);
           setBackgroundTickets((current) => [
             candidate,
             ...current.filter((ticket) => ticket.id !== candidate.id),
-          ].slice(0, 5));
+          ]);
         }
 
-        for (const candidate of [...creatorCandidates, ...transferredCompletionCandidates]) {
-          const key = creatorUpdateNotificationKey(candidate);
+        for (const candidate of [...creatorCandidates, ...settledRecipientCandidates]) {
+          const key = candidate.isCreator
+            ? creatorUpdateNotificationKey(candidate)
+            : assignedNotificationKey(candidate);
           if (notifiedTicketKeys.current.has(key)) continue;
           notifiedTicketKeys.current.add(key);
           const title = candidate.isCreator
             ? 'Otto 园区服务进度提醒'
-            : 'Otto 转交任务已完成';
-          const body = `${candidate.location || candidate.title} · ${candidate.responseType || candidate.status}`;
+            : 'Otto 园区任务状态提醒';
+          const body = `申请单 ${ticketApplicationNumber(candidate)} · ${candidate.title} · ${candidate.responseType || candidate.status}`;
           showParkNotification({
             messageId: `park-ticket:${candidate.id}:${candidate.updatedAt}`,
             sessionId: `park:ticket:${candidate.id}`,
             source: 'park',
             title,
             preview: body,
+            persistent: true,
           }, title, body);
           setBackgroundTickets((current) => [
             candidate,
             ...current.filter((ticket) => ticket.id !== candidate.id),
-          ].slice(0, 5));
+          ]);
         }
       } catch {
         // 未登录、服务器暂不可达时安静重试；报修页打开后会显示具体错误。
@@ -1581,7 +1594,56 @@ export function ParkServicesPlugin(): React.JSX.Element {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [parkEnabled]);
 
-  const close = (): void => { setSelected(null); setFocusTicket(null); setOpen(false); };
+  const close = (): void => {
+    setSelected(null);
+    setFocusTicket(null);
+    setOpen(false);
+    setWindowMode('normal');
+    setWindowPosition({ x: 0, y: 0 });
+    windowDrag.current = null;
+  };
+  const completeService = (ticket?: EnterpriseRepairTicket): void => {
+    if (ticket?.isCreator) {
+      setOwnHistory((current) => [
+        ticket,
+        ...current.filter((item) => item.id !== ticket.id),
+      ]);
+    }
+    close();
+  };
+  const startWindowDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (windowMode !== 'normal' || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('button')) return;
+    const dialog = event.currentTarget.closest('.otto-park-dialog');
+    const bounds = dialog?.getBoundingClientRect();
+    windowDrag.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      originY: event.clientY,
+      startX: windowPosition.x,
+      startY: windowPosition.y,
+      minX: windowPosition.x - (bounds?.left ?? 0),
+      maxX: windowPosition.x + window.innerWidth - 160 - (bounds?.left ?? 0),
+      minY: windowPosition.y - (bounds?.top ?? 0),
+      maxY: windowPosition.y + window.innerHeight - 48 - (bounds?.top ?? 0),
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const moveWindow = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = windowDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const nextX = drag.startX + event.clientX - drag.originX;
+    const nextY = drag.startY + event.clientY - drag.originY;
+    setWindowPosition({
+      x: Math.max(drag.minX, Math.min(nextX, drag.maxX)),
+      y: Math.max(drag.minY, Math.min(nextY, drag.maxY)),
+    });
+  };
+  const stopWindowDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (windowDrag.current?.pointerId !== event.pointerId) return;
+    windowDrag.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
   const pick = (service: ParkService): void => {
     // 企业通过 park-services.json 配置的临时服务没有本地流程定义，保持原有
     // “注入 Otto 输入框”的兼容行为。
@@ -1603,6 +1665,20 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setOpen(true);
     }
   }, [services]);
+
+  const openOwnHistoryTicket = useCallback((ticket: EnterpriseRepairTicket): void => {
+    openTicket(ticket);
+    setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
+    void window.otto.notificationMarkRead?.(`park:ticket:${ticket.id}`).catch(() => undefined);
+    void window.otto.enterpriseTicketRead(ticket.id).then((viewed) => {
+      const applyUpdate = (current: EnterpriseRepairTicket[]): EnterpriseRepairTicket[] => current.map(
+        (item) => item.id === viewed.id ? viewed : item,
+      );
+      setOwnHistory(applyUpdate);
+      setBackgroundTickets(applyUpdate);
+      setFocusTicket((current) => current?.id === viewed.id ? viewed : current);
+    }).catch(() => undefined);
+  }, [openTicket]);
 
   const markAssignedTicketsViewed = useCallback((tickets: EnterpriseRepairTicket[]): void => {
     const unread = tickets.filter((ticket) => ticket.isRecipient && !ticket.readAt);
@@ -1635,7 +1711,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, [markAssignedTicketsViewed, openTicket]);
 
   const openBackgroundTicket = (ticket: EnterpriseRepairTicket): void => {
-    openAssignedTicket(ticket);
+    if (ticket.isCreator) openOwnHistoryTicket(ticket);
+    else openAssignedTicket(ticket);
     setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
   };
 
@@ -1665,13 +1742,15 @@ export function ParkServicesPlugin(): React.JSX.Element {
     }
     const ticketId = sessionId.slice('park:ticket:'.length);
     const ticket = assignedTasks.find((item) => item.id === ticketId)
+      ?? ownHistory.find((item) => item.id === ticketId)
       ?? backgroundTickets.find((item) => item.id === ticketId);
     if (!ticket) return;
-    openAssignedTicket(ticket);
+    if (ticket.isCreator) openOwnHistoryTicket(ticket);
+    else openAssignedTicket(ticket);
     setPendingNotificationSessionId(null);
     setBackgroundTickets((current) => current.filter((item) => item.id !== ticket.id));
     void window.otto.notificationMarkRead?.(sessionId).catch(() => undefined);
-  }, [assignedTasks, backgroundTickets, markAssignedTicketsViewed, openAssignedTicket, pendingNotificationSessionId]);
+  }, [assignedTasks, backgroundTickets, markAssignedTicketsViewed, openAssignedTicket, openOwnHistoryTicket, ownHistory, pendingNotificationSessionId]);
 
   const openBackgroundPublication = (): void => {
     const serviceId = backgroundPublication?.kind;
@@ -1687,15 +1766,40 @@ export function ParkServicesPlugin(): React.JSX.Element {
   if (parkEnabled !== true) return <></>;
 
   return <>
-  {open ? (
+  {open && windowMode === 'minimized' ? (
+    <button
+      type="button"
+      className="otto-park-window-minimized"
+      onClick={() => setWindowMode('normal')}
+      aria-label="还原园区服务窗口"
+    >
+      <IconBuilding size={17} />
+      <span>{selected ? selected.name : brand}</span>
+    </button>
+  ) : open ? (
     <div
-      className="otto-park-overlay"
+      className={`otto-park-overlay ${windowMode === 'maximized' ? 'is-maximized' : ''}`}
       onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
     >
-      <div className="otto-park-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="otto-park-dialog__head">
+      <div
+        className={`otto-park-dialog ${windowMode === 'maximized' ? 'is-maximized' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={windowMode === 'normal' && (windowPosition.x || windowPosition.y)
+          ? { transform: `translate(${windowPosition.x}px, ${windowPosition.y}px)` }
+          : undefined}
+      >
+        <div
+          className="otto-park-dialog__head"
+          onPointerDown={startWindowDrag}
+          onPointerMove={moveWindow}
+          onPointerUp={stopWindowDrag}
+          onPointerCancel={stopWindowDrag}
+        >
           <span className="otto-park-dialog__headicon" aria-hidden><IconBuilding size={19} /></span>
           <div className="otto-park-dialog__headtext">
             <h2 className="otto-park-dialog__title" id={titleId}>{selected ? selected.name : brand}</h2>
@@ -1711,10 +1815,21 @@ export function ParkServicesPlugin(): React.JSX.Element {
                     : '选择需要办理的园区服务。'}
             </div>
           </div>
-          <button type="button" className="otto-park-dialog__close" onClick={close} aria-label="关闭"><IconClose size={14} /></button>
+          <div className="otto-park-dialog__window-controls">
+            <button type="button" onClick={() => setWindowMode('minimized')} aria-label="最小化园区服务窗口">—</button>
+            <button
+              type="button"
+              onClick={() => {
+                setWindowMode((current) => current === 'maximized' ? 'normal' : 'maximized');
+                windowDrag.current = null;
+              }}
+              aria-label={windowMode === 'maximized' ? '还原园区服务窗口' : '最大化园区服务窗口'}
+            >{windowMode === 'maximized' ? '❐' : '□'}</button>
+            <button type="button" className="otto-park-dialog__close" onClick={close} aria-label="关闭"><IconClose size={14} /></button>
+          </div>
         </div>
         {selected ? (
-          <ServiceDemo service={selected} onBack={() => { setSelected(null); setFocusTicket(null); }} onComplete={close} focusTicket={focusTicket} />
+          <ServiceDemo service={selected} onBack={() => { setSelected(null); setFocusTicket(null); }} onComplete={completeService} focusTicket={focusTicket} />
         ) : (
           <div className="otto-park-dialog__landing">
             {parkAdminOrganization ? <section className="otto-park-statistics" aria-label="产业园服务统计">
@@ -1774,55 +1889,79 @@ export function ParkServicesPlugin(): React.JSX.Element {
                 </div>
               </> : <div className="otto-park-statistics__loading">正在汇总园区服务数据...</div>}
             </section> : null}
-            {assignedTasks.length || assignedHistory.length ? <div className="otto-park-staff-workspace">
-              {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
-                <div className="otto-park-staff-panel__head"><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
-                <div className="otto-park-staff-tasks__items">{assignedTasks.map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
-              </section> : null}
-              {assignedHistory.length ? <section className="otto-park-staff-history" aria-label="我的园区服务历史记录">
-                <div className="otto-park-staff-panel__head"><strong>我的园区服务历史记录</strong><span>{visibleAssignedHistory.length} / {assignedHistory.length} 条 · 仅工作人员可见</span></div>
-                <div className="otto-park-staff-history__controls">
-                  <input
-                    type="search"
-                    aria-label="搜索园区服务历史"
-                    value={historyQuery}
-                    onChange={(event) => setHistoryQuery(event.target.value)}
-                    placeholder="搜索企业、联系人、地址或处理内容"
-                  />
-                  <select aria-label="园区历史分类" value={historyCategory} onChange={(event) => setHistoryCategory(event.target.value)}>
-                    <option value="all">全部 9 类</option>
-                    {historyCategoryOptions.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-                  </select>
-                  <select aria-label="园区历史排序" value={historySort} onChange={(event) => setHistorySort(event.target.value as 'desc' | 'asc')}>
-                    <option value="desc">时间从新到旧</option>
-                    <option value="asc">时间从旧到新</option>
-                  </select>
+            <div className="otto-park-home-layout">
+              <section className="otto-park-home-services" aria-label="园区服务列表">
+                <div className="otto-park-home-panel__head">
+                  <strong>园区服务</strong>
+                  <span>选择左侧服务开始办理</span>
                 </div>
-                <div className="otto-park-staff-history__items">
-                  {visibleAssignedHistory.length ? visibleAssignedHistory.map((ticket) => {
-                    const serviceName = historyCategoryOptions.find((service) => service.id === ticket.serviceId)?.name || ticket.serviceId;
-                    const latestTime = (ticket.history ?? []).at(-1)?.createdAt || ticket.responseAt || ticket.updatedAt;
-                    return <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开园区历史：${ticket.title}`}>
-                      <span><b>{serviceName}</b><em>{ticket.status}</em></span>
-                      <strong>{ticket.title}</strong>
-                      <small>{ticket.creator.name} · {formatParkTimestamp(latestTime)}</small>
-                      <p>{ticket.responseType || '办理完成'}{ticket.responseText ? `：${ticket.responseText}` : ''}</p>
-                    </button>;
-                  }) : <div className="otto-park-staff-history__empty">没有符合当前搜索和分类条件的历史记录。</div>}
+                <div className="otto-park-dialog__grid">
+                  {services.map((service, index) => {
+                    const Icon = service.icon;
+                    return (
+                      <button key={service.id} ref={index === 0 ? firstItemRef : undefined} type="button" className="otto-park-service" onClick={() => pick(service)}>
+                        <span className="otto-park-service__icon" aria-hidden><Icon size={17} /></span>
+                        <span className="otto-park-service__name">{service.name}</span>
+                        <span className="otto-park-service__desc">{service.desc}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              </section> : null}
-            </div> : null}
-            <div className="otto-park-dialog__grid">
-              {services.map((service, index) => {
-                const Icon = service.icon;
-                return (
-                  <button key={service.id} ref={index === 0 ? firstItemRef : undefined} type="button" className="otto-park-service" onClick={() => pick(service)}>
-                    <span className="otto-park-service__icon" aria-hidden><Icon size={17} /></span>
-                    <span className="otto-park-service__name">{service.name}</span>
-                    <span className="otto-park-service__desc">{service.desc}</span>
-                  </button>
-                );
-              })}
+              </section>
+              <aside className="otto-park-home-activity" aria-label="园区待办与历史">
+                {assignedTasks.length || assignedHistory.length ? <div className="otto-park-staff-workspace">
+                  {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
+                    <div className="otto-park-staff-panel__head"><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
+                    <div className="otto-park-staff-tasks__items">{assignedTasks.map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
+                  </section> : null}
+                  {assignedHistory.length ? <section className="otto-park-staff-history" aria-label="我的园区服务历史记录">
+                    <div className="otto-park-staff-panel__head"><strong>工作人员办理历史</strong><span>{visibleAssignedHistory.length} / {assignedHistory.length} 条 · 仅工作人员可见</span></div>
+                    <div className="otto-park-staff-history__controls">
+                      <input
+                        type="search"
+                        aria-label="搜索园区服务历史"
+                        value={historyQuery}
+                        onChange={(event) => setHistoryQuery(event.target.value)}
+                        placeholder="搜索企业、联系人、地址或处理内容"
+                      />
+                      <select aria-label="园区历史分类" value={historyCategory} onChange={(event) => setHistoryCategory(event.target.value)}>
+                        <option value="all">全部 9 类</option>
+                        {historyCategoryOptions.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+                      </select>
+                      <select aria-label="园区历史排序" value={historySort} onChange={(event) => setHistorySort(event.target.value as 'desc' | 'asc')}>
+                        <option value="desc">时间从新到旧</option>
+                        <option value="asc">时间从旧到新</option>
+                      </select>
+                    </div>
+                    <div className="otto-park-staff-history__items">
+                      {visibleAssignedHistory.length ? visibleAssignedHistory.map((ticket) => {
+                        const serviceName = historyCategoryOptions.find((service) => service.id === ticket.serviceId)?.name || ticket.serviceId;
+                        const latestTime = (ticket.history ?? []).at(-1)?.createdAt || ticket.responseAt || ticket.updatedAt;
+                        return <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开园区历史：${ticket.title}`}>
+                          <span><b>{serviceName}</b><em>{ticket.status}</em></span>
+                          <strong>{ticket.title}</strong>
+                          <small>{ticket.creator.name} · {formatParkTimestamp(latestTime)}</small>
+                          <p>{ticket.responseType || '办理完成'}{ticket.responseText ? `：${ticket.responseText}` : ''}</p>
+                        </button>;
+                      }) : <div className="otto-park-staff-history__empty">没有符合当前搜索和分类条件的历史记录。</div>}
+                    </div>
+                  </section> : null}
+                </div> : null}
+                <section className="otto-park-staff-history otto-park-own-history" aria-label="我的园区申请历史记录">
+                  <div className="otto-park-staff-panel__head"><strong>我的申请历史</strong><span>{ownHistory.length} 条 · 点击查看完整处理记录</span></div>
+                  <div className="otto-park-staff-history__items">
+                    {ownHistory.length ? ownHistory.map((ticket) => {
+                      const serviceName = historyCategoryOptions.find((service) => service.id === ticket.serviceId)?.name || ticket.serviceId;
+                      return <button key={ticket.id} type="button" onClick={() => openOwnHistoryTicket(ticket)} aria-label={`打开我的申请历史：${ticket.title}`}>
+                        <span><b>{serviceName}</b><em>{ticket.status}</em></span>
+                        <strong>{ticketApplicationNumber(ticket)} · {ticket.title}</strong>
+                        <small>{formatParkTimestamp(ticket.updatedAt || ticket.createdAt)}</small>
+                        <p>{ticket.responseType || '等待受理'}{ticket.responseText ? `：${ticket.responseText}` : ''}</p>
+                      </button>;
+                    }) : <div className="otto-park-staff-history__empty">暂无申请历史；提交服务后可在这里查看。</div>}
+                  </div>
+                </section>
+              </aside>
             </div>
           </div>
         )}

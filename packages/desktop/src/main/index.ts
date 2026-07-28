@@ -2204,15 +2204,28 @@ function registerIpc(): void {
       throw new Error('工单操作格式不正确');
     }
     const body = input as Record<string, unknown>;
-    if (!['respond', 'accept', 'complete', 'confirm', 'transfer'].includes(String(body.action))) {
+    if (
+      ![
+        'respond',
+        'accept',
+        'complete',
+        'confirm',
+        'respond_and_transfer',
+      ].includes(String(body.action))
+    ) {
       throw new Error('工单操作不正确');
     }
     return enterpriseClient.updateTicket(id, {
-      action: body.action as 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
+      action: body.action as
+        | 'respond'
+        | 'accept'
+        | 'complete'
+        | 'confirm'
+        | 'respond_and_transfer',
       responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
       responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
-      transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
       transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
+      transferNote: typeof body.transferNote === 'string' ? body.transferNote : undefined,
     });
   });
   ipcMain.handle(IPC.parkNativeNotify, (_e, title: unknown, body: unknown) => {

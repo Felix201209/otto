@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 11,
+      schemaVersion: 13,
     });
     const sessionColumns = db
       .getDB()
@@ -209,7 +209,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 11,
+      schemaVersion: 13,
     });
   });
 
@@ -251,12 +251,80 @@ describe('数据库 readiness', () => {
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 11 });
+    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 13 });
     const tableSql = (reopened.getDB().prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
     ).get() as { sql: string }).sql;
     expect(tableSql).toContain("'transfer'");
     expect((reopened.getDB().prepare('SELECT COUNT(*) AS count FROM ticket_events').get() as { count: number }).count).toBe(1);
+  });
+
+  it('从 v11 补齐既有园区申请单号并推进当日园区级序列', async () => {
+    const first = await freshDb();
+    const parkOrganization = first.createOrganization({
+      name: '申请单号迁移园区',
+      slug: 'application-number-migration',
+    });
+    const parkAdmin = first.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'application.number.admin',
+      password: 'application-number-password',
+      name: '园区管理员',
+      isAdmin: true,
+    });
+    const park = first.createPark({
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '申请单号迁移园区',
+    });
+    const legacyTicket = first.createTicket({
+      createdByAccountId: parkAdmin.id,
+      serviceId: 'parking',
+      title: '历史停车申请',
+      description: '迁移后必须有用户可见申请单号',
+      formData: {
+        company: parkOrganization.name,
+        roomNumber: 'A-101',
+        contact: parkAdmin.name,
+        phone: '13800138000',
+        applicationType: 'underground-fixed',
+        quantity: '1',
+      },
+    });
+    first.closeEnterpriseDatabase();
+
+    const legacy = new Database(path.join(tmpDir, 'data.db'));
+    legacy.exec(`
+      UPDATE it_tickets SET created_at = '2026-07-28 16:00:00'
+      WHERE id = '${legacyTicket.id}';
+      DROP INDEX idx_it_tickets_park_application_number;
+      ALTER TABLE it_tickets DROP COLUMN application_number;
+      DROP TABLE park_application_sequences;
+      PRAGMA user_version = 11;
+    `);
+    legacy.close();
+
+    vi.resetModules();
+    const reopened: DbModule = await import('./db.js');
+    try {
+      expect(reopened.getDatabaseReadiness()).toEqual({
+        ready: true,
+        schemaVersion: 13,
+      });
+      const migrated = reopened.getTicketForAccount(
+        legacyTicket.id,
+        parkAdmin.id,
+      );
+      expect(migrated?.applicationNumber).toBe('20260729001');
+      expect(
+        reopened.getDB().prepare(
+          `SELECT date_key, last_sequence FROM park_application_sequences
+           WHERE park_id = ?`,
+        ).get(park.id),
+      ).toEqual({ date_key: '20260729', last_sequence: 1 });
+    } finally {
+      reopened.closeEnterpriseDatabase();
+    }
   });
 
   it('从真实 v3 列布局升级到 v5，保留账号员工关联和园区服务列且可重复初始化', async () => {
@@ -318,7 +386,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 11,
+        schemaVersion: 13,
       });
       const organizationColumns = reopened
         .getDB()
@@ -433,6 +501,9 @@ describe('数据库 readiness', () => {
       expect(
         ticketColumns.filter((column) => column.name === 'park_id'),
       ).toHaveLength(1);
+      expect(
+        ticketColumns.filter((column) => column.name === 'application_number'),
+      ).toHaveLength(1);
 
       const employeeIdsBeforeReopen = reopened
         .listEmployees(undefined, organization.id)
@@ -462,12 +533,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 12;
+      PRAGMA user_version = 14;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 12.*current version 11/i);
+    expect(() => db.getDB()).toThrow(/schema version 14.*current version 13/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -477,7 +548,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(12);
+      ).toBe(14);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -507,7 +578,7 @@ describe('园区服务表单价格归一化', () => {
     });
   });
 
-  it('物业客服从待接单直接回复时一次办结，不留下无法完成的处理中工单', async () => {
+  it('物业客服一次完成回复并转交工程部，工程完成说明回到原客服记录', async () => {
     const db = await freshDb();
     const parkOrganization = db.createOrganization({ name: '测试园区方', slug: 'simple-repair-park' });
     const parkAdmin = db.createAccount({
@@ -519,6 +590,12 @@ describe('园区服务表单价格归一化', () => {
       organizationId: parkOrganization.id,
       username: 'simple.repair.service', password: 'simple-repair-service-password',
       name: '园区客服',
+    });
+    const engineer = db.createAccount({
+      organizationId: parkOrganization.id,
+      username: 'simple.repair.engineer', password: 'simple-repair-engineer-password',
+      name: '工程人员',
+      department: '工程部',
     });
     const tenant = db.createOrganization({ name: '测试入驻企业', slug: 'simple-repair-tenant' });
     const tenantAdmin = db.createAccount({
@@ -552,18 +629,55 @@ describe('园区服务表单价格归一化', () => {
         category: '灯具维修', issue: '办公室灯具无法点亮', urgency: '普通',
       },
     });
-    const completed = db.updateTicket({
+    const transferred = db.updateTicket({
       ticketId: ticket.id,
       accountId: specialist.id,
-      action: 'respond',
-      responseType: '远程指导',
-      responseText: '请复位房间照明空气开关，已确认恢复供电。',
+      action: 'respond_and_transfer',
+      responseType: '客服已受理',
+      responseText: '已核对报修信息，现转交工程部处理。',
+      transferNote: '请检查办公室照明线路并填写完成说明。',
+    });
+    expect(transferred.status).toBe('已转交');
+    expect(transferred.history.map((entry) => entry.action)).toEqual([
+      'created', 'respond', 'transfer',
+    ]);
+    expect(
+      db.getTicketForAccount(ticket.id, reporter.id),
+    ).toMatchObject({
+      creatorUpdateAt: expect.any(String),
+      creatorUpdateReadAt: null,
+    });
+    db.closeEnterpriseDatabase();
+    vi.resetModules();
+    const reopened: DbModule = await import('./db.js');
+    expect(
+      reopened.getTicketForAccount(ticket.id, reporter.id),
+    ).toMatchObject({
+      creatorUpdateAt: expect.any(String),
+      creatorUpdateReadAt: null,
+    });
+    expect(
+      reopened.markTicketRead(ticket.id, reporter.id),
+    ).toMatchObject({
+      creatorUpdateAt: expect.any(String),
+      creatorUpdateReadAt: expect.any(String),
+    });
+    const completed = reopened.updateTicket({
+      ticketId: ticket.id,
+      accountId: engineer.id,
+      action: 'complete',
+      responseType: '照明维修完成',
+      responseText: '已更换故障空气开关并完成通电测试。',
     });
     expect(completed.status).toBe('已完成');
-    expect(completed.history.map((entry) => entry.action)).toEqual(['created', 'respond']);
-    expect(completed.history.at(-1)).toMatchObject({
-      statusBefore: '待接单', statusAfter: '已完成', responseType: '远程指导',
+    expect(
+      reopened.getTicketForAccount(ticket.id, specialist.id),
+    ).toMatchObject({
+      status: '已完成',
+      responseType: '照明维修完成',
+      responseText: '已更换故障空气开关并完成通电测试。',
     });
+    reopened.closeEnterpriseDatabase();
   });
 });
 

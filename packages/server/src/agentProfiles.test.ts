@@ -177,6 +177,7 @@ describe('服务端 Agent profile 白名单', () => {
     });
 
     expect(prompt).toContain('公司：北辰中心企业');
+    expect(prompt).toContain('姓名：林一');
     expect(prompt).toContain('部门：产品与研发部');
     expect(prompt).toContain('职位：研发工程师');
     expect(prompt).toContain('角色：成员');
@@ -188,6 +189,11 @@ describe('服务端 Agent profile 白名单', () => {
     expect(prompt).toContain('ID=central-account-2');
     expect(prompt).toContain('姓名=周二');
     expect(prompt).toContain('部门=销售部');
+    expect(prompt).toContain('生成 Word、PDF、Markdown 或演示文稿');
+    expect(prompt).toContain('禁止使用电脑登录用户名');
+    expect(prompt).toContain('禁止传入、猜测或在 YAML 中填写作者身份');
+    expect(prompt).toContain('Word 成品必须调用 generate_document');
+    expect(prompt).toContain('缺少可信身份时省略署名');
     expect(prompt).toContain('职位=销售经理');
     expect(prompt).toContain('enterprise_collaboration');
     expect(prompt).toContain('必须先获得用户确认');
@@ -279,6 +285,10 @@ describe('服务端 Agent profile 白名单', () => {
     expect(doc?.embeddedSkills).toEqual(['doc-writer']);
     expect(doc?.systemPrompt).toContain('视觉母题');
     expect(doc?.systemPrompt).toContain('create_docx.py');
+    expect(doc?.systemPrompt).toContain('generate_document');
+    expect(doc?.systemPrompt).toContain('Otto 运行时注入');
+    expect(doc?.systemPrompt).toContain('禁止直接运行脚本');
+    expect(doc?.systemPrompt).toContain('禁止传入或猜测作者');
     expect(doc?.systemPrompt).toContain('禁止');
 
     const sheet = resolveAgentProfile('sheet');

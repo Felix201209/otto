@@ -23,6 +23,7 @@ import {
   generateCustomModelId,
   isCustomModel,
   type CustomModelConfig,
+  type DocumentIdentity,
 } from 'otto-core';
 import os from 'node:os';
 import { loadCustomModels, loadPreferredModel } from './customModels.js';
@@ -41,6 +42,8 @@ export interface CreateCoreConfigOptions {
   customModels?: CustomModelConfig[];
   /** 会话级 Agent profile，经 Config.userRules 进入 system prompt。 */
   userRules?: string;
+  /** 由企业身份控制面解析出的受信文档署名。 */
+  documentIdentity?: DocumentIdentity;
   /** 当前 runtime 是否服务于飞书会话；注入移动端/聊天渠道环境提示。 */
   feishuMode?: boolean;
   /** edition/角色对应的运行时禁用工具，不能只靠 renderer 隐藏。 */
@@ -119,6 +122,7 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     model: resolvedModel,
     customModels,
     userRules: opts.userRules,
+    documentIdentity: opts.documentIdentity,
     feishuMode: opts.feishuMode,
     excludeTools: opts.excludeTools,
     disableMcpDiscovery: opts.disableMcpDiscovery,

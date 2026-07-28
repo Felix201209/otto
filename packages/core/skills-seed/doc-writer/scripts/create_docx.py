@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Otto Doc-Writer v8 — 零空白终极版。python create_docx.py in.md out.docx"""
 from __future__ import annotations
-import re, sys
+import os, re, sys
 from datetime import datetime
 from pathlib import Path
 
@@ -108,6 +108,28 @@ def parse(text):
         if hh: cur["blocks"].append({"t": "table", "h": hh, "r": rr})
     save()
     return meta,secs
+
+def apply_trusted_identity(meta, environ=None):
+    """只接受 Otto 外层注入的账户身份，禁止 YAML 自报作者或读取电脑用户名。"""
+    env = os.environ if environ is None else environ
+    author = re.sub(r"[\x00-\x1f\x7f]+", " ", env.get("OTTO_DOCUMENT_AUTHOR", "")).strip()[:160]
+    department = re.sub(r"[\x00-\x1f\x7f]+", " ", env.get("OTTO_DOCUMENT_DEPARTMENT", "")).strip()[:160]
+    requested_identity = any(meta.get(key) for key in ("author", "department", "signature_unit"))
+    for key in ("author", "department", "signature_unit"):
+        meta.pop(key, None)
+    if not author:
+        if requested_identity:
+            raise ValueError(
+                "document identity must come from OTTO_DOCUMENT_AUTHOR "
+                "and OTTO_DOCUMENT_DEPARTMENT, never YAML or the computer login"
+            )
+        return
+    meta["author"] = author
+    if department:
+        meta["department"] = department
+        meta["signature_unit"] = f"{department} · {author}"
+    else:
+        meta["signature_unit"] = author
 
 def _tbl(raw):
     if len(raw)<2: return [],[]
@@ -323,6 +345,7 @@ class R:
     # ── 主流程 ────────────────────────────────────────────────
     def build(self,secs):
         self.doc.core_properties.title=self.m.get("title",""); self.doc.core_properties.author=self.m.get("author","")
+        self.doc.core_properties.last_modified_by=self.m.get("author","")
         self.cover()
         if not self._hc:
             title=self.m.get("title","")
@@ -344,7 +367,6 @@ class R:
                 elif t=="quote": self.quote(blk["text"])
                 elif t=="table": self.table(blk["h"],blk["r"])
                 elif t=="hr": pass
-            if sec.get("layout")=="closing": self.sig()
         self.sig(); self.hf()
     def save(self,p): self.doc.save(p)
 
@@ -356,6 +378,10 @@ def main():
     ip=Path(a.input)
     if not ip.exists(): print(f"not found: {a.input}"); sys.exit(1)
     meta,secs=parse(ip.read_text(encoding="utf-8"))
+    try:
+        apply_trusted_identity(meta)
+    except ValueError as error:
+        print(f"identity error: {error}"); sys.exit(2)
     t=resolve(meta)
     if "title" not in meta: meta["title"]=ip.stem
     g=R(t,meta); g.build(secs)

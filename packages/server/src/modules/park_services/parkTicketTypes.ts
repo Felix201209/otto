@@ -31,6 +31,7 @@ export interface TicketNotificationView {
 
 export interface TicketView {
   id: string;
+  applicationNumber: string | null;
   parkId: string | null;
   serviceId: string;
   title: string;
@@ -53,6 +54,8 @@ export interface TicketView {
   recipients: Array<{ id: string; name: string }>;
   deliveryStatus?: string;
   readAt?: string | null;
+  creatorUpdateAt?: string | null;
+  creatorUpdateReadAt?: string | null;
   isCreator?: boolean;
   isRecipient?: boolean;
   history: TicketHistoryEntry[];
@@ -102,11 +105,17 @@ export interface CreateTicketInput {
 export interface UpdateTicketInput {
   ticketId: string;
   accountId: string;
-  action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
+  action:
+    | 'respond'
+    | 'accept'
+    | 'complete'
+    | 'confirm'
+    | 'respond_and_transfer';
   responseType?: string;
   responseText?: string;
   transferAccountId?: string;
   transferDepartment?: string;
+  transferNote?: string;
 }
 
 export interface RecordTicketNotificationInput {

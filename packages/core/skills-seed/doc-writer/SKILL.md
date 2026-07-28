@@ -16,7 +16,8 @@ description: 视觉感知 Word 排版引擎。AI 先定义传播任务、创造�
 - 交付真实可打开的 `.docx`，不是大纲、不是 Markdown、不是 pandoc 兜底
 - 每份文档创造独有视觉母题，禁止"白底黑字塞满字"
 - 生成后必须用 Word/WPS 打开检查，不达标则迭代
-- 用 `create_docx.py` 生成，走 python-docx 直操
+- 正式成品必须调用 Otto 的 `generate_document` 工具并选择 DOCX；工具内部固定走 `create_docx.py` + python-docx，不走 pandoc
+- 作者、落款和核心属性只能使用 Otto 运行时从当前登录账户注入的可信姓名与部门。禁止直接运行脚本交付成品，禁止读取 `whoami`、`USER`、主目录名、调用参数或 YAML 自报身份；缺少可信身份时省略作者落款
 
 ---
 
@@ -122,9 +123,7 @@ surface: "F0F4F8"         # 表面色
 
 ## Step 4：生成 + 自检 + 迭代
 
-```bash
-python scripts/create_docx.py input.md output.docx
-```
+调用 `generate_document`，传入正文、标题、`output_format: docx` 和输出路径。不要传入或猜测作者；运行时会从当前 Otto 账户注入可信姓名与部门，再调用内置 doc-writer 引擎。
 
 生成后**必须在 Word 中打开检查**：
 
@@ -140,9 +139,7 @@ python scripts/create_docx.py input.md output.docx
 
 ## 引擎
 
-```bash
-python scripts/create_docx.py input.md output.docx
-```
+`create_docx.py` 是 `generate_document` 的内部渲染引擎。只允许开发测试直接运行，不能作为用户成品路径；直接调用时 YAML 作者字段会被拒绝。
 
 引擎自动处理：三色→12色派生、多布局渲染、页眉页脚、页码、表格样式。
 

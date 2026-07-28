@@ -40,6 +40,7 @@ export interface ParkTicketRepositoryStore<
   createTicketId(): string;
   createTicketEventId(): string;
   createTicketNotificationId(): string;
+  now?(): Date;
   audit(
     event: string,
     employeeId: string | null,
@@ -50,6 +51,7 @@ export interface ParkTicketRepositoryStore<
 
 interface TicketRow {
   id: string;
+  application_number: string | null;
   organization_id: string;
   park_id: string | null;
   created_by_account_id: string;
@@ -69,6 +71,8 @@ interface TicketRow {
   accepted_at: string | null;
   completed_at: string | null;
   closed_at: string | null;
+  creator_update_at: string | null;
+  creator_update_read_at: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -116,6 +120,36 @@ function recordTicketEvent<TAccount extends ParkTicketAccount>(
     input.responseType ?? null,
     input.responseText ?? null,
   );
+}
+
+function shanghaiApplicationDateKey(date: Date): string {
+  const shanghaiTime = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  return [
+    shanghaiTime.getUTCFullYear(),
+    String(shanghaiTime.getUTCMonth() + 1).padStart(2, '0'),
+    String(shanghaiTime.getUTCDate()).padStart(2, '0'),
+  ].join('');
+}
+
+function allocateParkApplicationNumber<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  parkId: string,
+): string {
+  const dateKey = shanghaiApplicationDateKey(store.now?.() ?? new Date());
+  const row = store.db().prepare(
+    `INSERT INTO park_application_sequences
+       (park_id, date_key, last_sequence, updated_at)
+     VALUES (?, ?, 1, datetime('now'))
+     ON CONFLICT(park_id, date_key) DO UPDATE SET
+       last_sequence = park_application_sequences.last_sequence + 1,
+       updated_at = datetime('now')
+     WHERE park_application_sequences.last_sequence < 999
+     RETURNING last_sequence`,
+  ).get(parkId, dateKey) as { last_sequence: number } | undefined;
+  if (!row) {
+    throw new Error('本园区当日申请数量已达到 999 条上限');
+  }
+  return `${dateKey}${String(row.last_sequence).padStart(3, '0')}`;
 }
 
 function ticketView<TAccount extends ParkTicketAccount>(
@@ -285,6 +319,7 @@ function ticketView<TAccount extends ParkTicketAccount>(
     .map((candidate) => candidate.event);
   return {
     id: row.id,
+    applicationNumber: row.application_number,
     parkId: row.park_id,
     serviceId: row.service_id || 'repair',
     title: row.title,
@@ -316,6 +351,8 @@ function ticketView<TAccount extends ParkTicketAccount>(
       : [],
     deliveryStatus: viewerDelivery?.status,
     readAt: viewerDelivery?.read_at,
+    creatorUpdateAt: row.creator_update_at,
+    creatorUpdateReadAt: row.creator_update_read_at,
     isCreator: viewerAccountId === creator.id,
     isRecipient: Boolean(viewerDelivery),
     history,
@@ -502,15 +539,20 @@ export function createTicket<TAccount extends ParkTicketAccount>(
   const ownsTransaction = !database.inTransaction;
   if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
   try {
+    const applicationNumber = park
+      ? allocateParkApplicationNumber(store, park.id)
+      : null;
     database.prepare(
       `INSERT INTO it_tickets
-       (id, organization_id, park_id, created_by_account_id, service_id, title, description, target_tags, form_data,
-        category, location, urgency, contact, contact_phone, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单')`,
+       (id, organization_id, park_id, application_number, created_by_account_id, service_id, title, description, target_tags, form_data,
+        category, location, urgency, contact, contact_phone, status,
+        creator_update_at, creator_update_read_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '待接单', NULL, datetime('now'))`,
     ).run(
       id,
       creator.organizationId,
       park?.id ?? null,
+      applicationNumber,
       creator.id,
       serviceId,
       title,
@@ -698,13 +740,23 @@ export function markTicketRead<TAccount extends ParkTicketAccount>(
   if (!getTicketForAccount(store, ticketId, accountId)) {
     throw new Error('Ticket not found');
   }
-  const changed = store.db()
+  const creatorChanged = store.db()
     .prepare(
-      `UPDATE ticket_deliveries SET status = 'read', read_at = COALESCE(read_at, datetime('now'))
+      `UPDATE it_tickets SET creator_update_read_at = datetime('now')
+       WHERE id = ? AND created_by_account_id = ?`,
+    )
+    .run(ticketId, accountId);
+  const deliveryChanged = store.db()
+    .prepare(
+      `UPDATE ticket_deliveries
+       SET status = CASE WHEN status = 'transferred' THEN status ELSE 'read' END,
+           read_at = COALESCE(read_at, datetime('now'))
      WHERE ticket_id = ? AND account_id = ?`,
     )
     .run(ticketId, accountId);
-  if (changed.changes === 0) throw new Error('Ticket delivery not found');
+  if (Number(creatorChanged.changes) + Number(deliveryChanged.changes) === 0) {
+    throw new Error('Ticket delivery not found');
+  }
   return ticketView(store, ticketId, accountId);
 }
 
@@ -756,9 +808,100 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
       ).run(input.ticketId, ticketRow.organization_id);
     } else {
       if (!isActiveRecipient) throw new Error('Only the currently assigned worker can update');
-      if (input.action === 'respond') {
+      if (input.action === 'respond_and_transfer') {
+        if (current.serviceId !== 'repair' || !current.parkId) {
+          throw new Error('只有物业报修可以回复并转交工程部');
+        }
+        if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status)) {
+          throw new Error('当前报修不能回复并转交工程部');
+        }
+        if (input.transferAccountId?.trim()) {
+          throw new Error('物业报修不能指定个人，只能转交工程部');
+        }
+        const requestedDepartment = input.transferDepartment?.trim() || '工程部';
+        if (requestedDepartment !== '工程部') {
+          throw new Error('物业报修只能转交工程部');
+        }
+        const park = store.getPark(current.parkId);
+        if (!park || park.status !== 'active') throw new Error('产业园不存在');
+        const targets = store.listActiveAccountsByDepartment(
+          park.adminOrganizationId,
+          '工程部',
+          account.id,
+        );
+        if (!targets.length) throw new Error('工程部暂无可接收报修的在职成员');
+
+        responseType = input.responseType?.trim() || '';
+        responseText = input.responseText?.trim() || '';
+        if (!responseType || !responseText) {
+          throw new Error('回复并转交工程部时必须填写回复类型和回复内容');
+        }
+        if (responseType.length > 80 || responseText.length > 2000) {
+          throw new Error('Repair response is too long');
+        }
+        const transferNote = input.transferNote?.trim()
+          || '请工程部接手处理该物业报修，并在完成后记录工作结果。';
+        if (transferNote.length > 2000) {
+          throw new Error('转交说明不能超过 2000 个字符');
+        }
+
+        statusAfter = '已转交';
+        database.prepare(
+          `UPDATE it_tickets SET response_type = ?, response_text = ?,
+           response_at = datetime('now'), status = '已转交',
+           creator_update_at = datetime('now'),
+           creator_update_read_at = NULL, updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?`,
+        ).run(
+          responseType,
+          responseText,
+          input.ticketId,
+          ticketRow.organization_id,
+        );
+        recordTicketEvent(store, {
+          organizationId: ticketRow.organization_id,
+          ticketId: input.ticketId,
+          actorAccountId: account.id,
+          action: 'respond',
+          statusBefore: current.status,
+          statusAfter: current.status,
+          responseType,
+          responseText,
+        });
+        recordTicketEvent(store, {
+          organizationId: ticketRow.organization_id,
+          ticketId: input.ticketId,
+          actorAccountId: account.id,
+          action: 'transfer',
+          statusBefore: current.status,
+          statusAfter,
+          responseType: '已转交至工程部',
+          responseText: transferNote,
+        });
+        database.prepare(
+          `UPDATE ticket_deliveries SET status = 'transferred'
+           WHERE ticket_id = ?`,
+        ).run(input.ticketId);
+        const deliver = database.prepare(
+          `INSERT INTO ticket_deliveries
+           (organization_id, ticket_id, account_id, status, read_at)
+           VALUES (?, ?, ?, 'delivered', NULL)
+           ON CONFLICT(ticket_id, account_id) DO UPDATE SET
+             status = 'delivered', read_at = NULL, delivered_at = datetime('now')`,
+        );
+        for (const target of targets) {
+          deliver.run(ticketRow.organization_id, input.ticketId, target.id);
+        }
+      } else if (input.action === 'respond') {
         if (!['待接单', '待派单', '维修中', '处理中', '已转交'].includes(current.status)) {
           throw new Error('Completed ticket cannot be updated');
+        }
+        if (
+          current.serviceId === 'repair'
+          && current.parkId
+          && current.status !== '已转交'
+        ) {
+          throw new Error('物业报修客服必须一次完成回复并转交工程部');
         }
         responseType = input.responseType?.trim() || '';
         responseText = input.responseText?.trim() || '';
@@ -779,7 +922,9 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
            status = ?,
            completed_at = CASE WHEN ? IN ('待验收', '已完成') THEN datetime('now') ELSE completed_at END,
            closed_at = CASE WHEN ? = '已完成' THEN datetime('now') ELSE closed_at END,
-           updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+           creator_update_at = datetime('now'), creator_update_read_at = NULL,
+           updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?`,
         ).run(
           responseType,
           responseText,
@@ -789,57 +934,6 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
           input.ticketId,
           ticketRow.organization_id,
         );
-      } else if (input.action === 'transfer') {
-        if (current.serviceId !== 'repair' || !current.parkId) {
-          throw new Error('只有物业报修可以转交');
-        }
-        if (!['待接单', '待派单', '维修中', '处理中'].includes(current.status)) {
-          throw new Error('当前报修不能转交');
-        }
-        const park = store.getPark(current.parkId);
-        if (!park || park.status !== 'active') throw new Error('产业园不存在');
-        const transferAccountId = input.transferAccountId?.trim() || '';
-        const transferDepartment = input.transferDepartment?.trim() || '';
-        let targets: TAccount[] = [];
-        if (transferAccountId) {
-          const target = store.getAccount(
-            transferAccountId,
-            park.adminOrganizationId,
-          );
-          if (target?.status === 'active' && target.id !== account.id) targets = [target];
-        } else if (transferDepartment) {
-          targets = store.listActiveAccountsByDepartment(
-            park.adminOrganizationId,
-            transferDepartment,
-            account.id,
-          );
-        }
-        if (!targets.length) throw new Error('请选择有效的转交同事或部门');
-        const targetLabel = transferAccountId
-          ? targets[0]!.name
-          : `${transferDepartment}（${targets.length} 人）`;
-        responseType = `已转交至${targetLabel}`;
-        responseText = input.responseText?.trim()
-          || '请接手处理该物业报修，并在完成后确认工作结果。';
-        if (responseText.length > 2000) throw new Error('转交说明不能超过 2000 个字符');
-        statusAfter = '已转交';
-        database.prepare(
-          `UPDATE it_tickets SET response_type = ?, response_text = ?, response_at = datetime('now'),
-           status = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
-        ).run(responseType, responseText, statusAfter, input.ticketId, ticketRow.organization_id);
-        database.prepare(
-          `UPDATE ticket_deliveries SET status = 'transferred', read_at = COALESCE(read_at, datetime('now'))
-           WHERE ticket_id = ?`,
-        ).run(input.ticketId);
-        const deliver = database.prepare(
-          `INSERT INTO ticket_deliveries (organization_id, ticket_id, account_id, status, read_at)
-           VALUES (?, ?, ?, 'delivered', NULL)
-           ON CONFLICT(ticket_id, account_id) DO UPDATE SET status = 'delivered', read_at = NULL,
-             delivered_at = datetime('now')`,
-        );
-        for (const target of targets) {
-          deliver.run(ticketRow.organization_id, input.ticketId, target.id);
-        }
       } else if (input.action === 'accept') {
         if (!['待接单', '待派单'].includes(current.status)) {
           throw new Error('Ticket cannot be accepted');
@@ -857,7 +951,9 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
           database.prepare(
             `UPDATE it_tickets SET status = '已完成', response_type = ?, response_text = ?,
              response_at = datetime('now'), completed_at = datetime('now'), closed_at = datetime('now'),
-             updated_at = datetime('now') WHERE id = ? AND organization_id = ?`,
+             creator_update_at = datetime('now'), creator_update_read_at = NULL,
+             updated_at = datetime('now')
+             WHERE id = ? AND organization_id = ?`,
           ).run(responseType, responseText, input.ticketId, ticketRow.organization_id);
         } else {
           if (!['维修中', '处理中'].includes(current.status)) {
@@ -865,23 +961,33 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
           }
           statusAfter = '待验收';
           database.prepare(
-            `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'), updated_at = datetime('now')
+            `UPDATE it_tickets SET status = '待验收', completed_at = datetime('now'),
+             creator_update_at = datetime('now'), creator_update_read_at = NULL,
+             updated_at = datetime('now')
              WHERE id = ? AND organization_id = ?`,
           ).run(input.ticketId, ticketRow.organization_id);
         }
+        database.prepare(
+          `UPDATE ticket_deliveries SET read_at = NULL
+           WHERE ticket_id = ? AND status = 'transferred'`,
+        ).run(input.ticketId);
+      } else {
+        throw new Error('工单操作不正确');
       }
     }
 
-    recordTicketEvent(store, {
-      organizationId: ticketRow.organization_id,
-      ticketId: input.ticketId,
-      actorAccountId: account.id,
-      action: input.action,
-      statusBefore: current.status,
-      statusAfter,
-      responseType,
-      responseText,
-    });
+    if (input.action !== 'respond_and_transfer') {
+      recordTicketEvent(store, {
+        organizationId: ticketRow.organization_id,
+        ticketId: input.ticketId,
+        actorAccountId: account.id,
+        action: input.action,
+        statusBefore: current.status,
+        statusAfter,
+        responseType,
+        responseText,
+      });
+    }
     store.audit(
       `ticket_${input.action}`,
       account.employeeId,

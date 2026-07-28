@@ -81,6 +81,12 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
 }
 
 describe('Sidebar：布局（工具区已迁右侧面板）', () => {
+  it('首页品牌使用正式名称 Otto', () => {
+    renderSidebar();
+    expect(screen.getByText('Otto')).toBeTruthy();
+    expect(screen.queryByText('otto')).toBeNull();
+  });
+
   it('不再渲染常见任务 / 全部智能体入口（已迁 RightPanel）', () => {
     renderSidebar();
     expect(screen.queryByText('常见任务')).toBeNull();
@@ -164,7 +170,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
     expect(within(dialog).getByText(/原个人空间对话不会自动带入企业/)).toBeTruthy();
     const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
-    fireEvent.change(invite, { target: { value: 'abcd-efgh' } });
+    fireEvent.change(invite, { target: { value: 'Ab3D-k9Pq-Z7xY' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
 
     await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledWith({

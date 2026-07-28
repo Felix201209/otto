@@ -11,12 +11,16 @@
 
 import { vi } from 'vitest';
 import type { Config } from '../config/config.js';
-import { ApprovalMode } from '../config/config.js';
+import {
+  ApprovalMode,
+  type DocumentIdentity,
+} from '../config/config.js';
 
 export interface MockConfigOverrides {
   getTargetDir?: () => string;
   getApprovalMode?: () => ApprovalMode;
   setApprovalMode?: (mode: ApprovalMode) => void;
+  getDocumentIdentity?: () => DocumentIdentity | undefined;
 }
 
 /**
@@ -28,6 +32,7 @@ export function createMockConfig(overrides?: MockConfigOverrides): Config {
     getTargetDir: () => process.cwd(),
     getApprovalMode: vi.fn(() => ApprovalMode.DEFAULT),
     setApprovalMode: vi.fn(),
+    getDocumentIdentity: vi.fn(() => undefined),
   };
 
   return { ...defaults, ...overrides } as unknown as Config;

@@ -96,6 +96,17 @@ export interface AccessibilitySettings {
   disableLoadingPhrases?: boolean;
 }
 
+/**
+ * 由外层产品注入的受信文档署名。
+ *
+ * Core 只负责承载通用文档身份，不知道企业、组织树或账号来源；
+ * 身份解析与授权留给 server/desktop 等产品外壳。
+ */
+export interface DocumentIdentity {
+  name: string;
+  department?: string;
+}
+
 export interface BugCommandSettings {
   urlTemplate: string;
 }
@@ -221,6 +232,8 @@ export interface ConfigParameters {
   feishuSessionMemoryFile?: string;
   geminiMdFileCount?: number;
   userRules?: string;
+  /** 文档工具必须优先使用的受信署名，避免回退到操作系统登录用户名。 */
+  documentIdentity?: DocumentIdentity;
   approvalMode?: ApprovalMode;
   showMemoryUsage?: boolean;
   contextFileName?: string | string[];
@@ -308,6 +321,7 @@ export class Config {
   private memoryTokenCount: number = 0; // 新增
   private geminiMdFileCount: number;
   private userRules: string;
+  private readonly documentIdentity: DocumentIdentity | undefined;
   private geminiMdFilePaths: string[] = [];
   private approvalMode: ApprovalMode;
   private readonly showMemoryUsage: boolean;
@@ -389,6 +403,14 @@ export class Config {
     this.memoryTokenCount = params.memoryTokenCount ?? 0; // 新增
     this.geminiMdFileCount = params.geminiMdFileCount ?? 0;
     this.userRules = params.userRules ?? '';
+    const documentName = params.documentIdentity?.name.trim();
+    const documentDepartment = params.documentIdentity?.department?.trim();
+    this.documentIdentity = documentName
+      ? {
+          name: documentName,
+          ...(documentDepartment ? { department: documentDepartment } : {}),
+        }
+      : undefined;
     this.cwd = params.cwd ?? process.cwd();
 
     // 初始化项目配置管理器
@@ -842,6 +864,12 @@ export class Config {
 
   setUserRules(rules: string): void {
     this.userRules = rules;
+  }
+
+  getDocumentIdentity(): DocumentIdentity | undefined {
+    return this.documentIdentity
+      ? { ...this.documentIdentity }
+      : undefined;
   }
 
   getOttoMdFileCount(): number {

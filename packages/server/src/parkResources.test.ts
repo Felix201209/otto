@@ -84,13 +84,17 @@ function createDatabase(): Database {
   return database;
 }
 
-function createStore(database: Database): ParkResourceRepositoryStore {
+function createStore(
+  database: Database,
+  now: () => Date = () => new Date(),
+): ParkResourceRepositoryStore {
   let roomSequence = 0;
   let bookingSequence = 0;
   return {
     db: () => database,
     createMeetingRoomId: () => `room-${++roomSequence}`,
     createMeetingBookingId: () => `booking-${++bookingSequence}`,
+    now,
   };
 }
 
@@ -119,6 +123,112 @@ function createRoom(
 }
 
 describe('park resource module', () => {
+  it('lists today, closes every already-started ten-minute slot and keeps 22:00-23:00 complete', () => {
+    const database = createDatabase();
+    const now = new Date('2026-07-28T02:05:30.000Z');
+    const resources = createParkResourceFacade(
+      createStore(database, () => new Date(now)),
+    );
+    const room = createRoom(resources);
+    const today = '2026-07-28';
+
+    const slots = resources.listParkMeetingSlots('park-admin', today, today);
+    expect(slots).toHaveLength(84);
+    expect(
+      slots.filter((slot) => slot.slotKey <= '10:00').every(
+        (slot) => slot.status === 'closed',
+      ),
+    ).toBe(true);
+    expect(slots.find((slot) => slot.slotKey === '10:10')?.status).toBe(
+      'available',
+    );
+    expect(
+      slots.filter((slot) => slot.slotKey >= '22:00'),
+    ).toHaveLength(6);
+    expect(
+      slots.filter((slot) => slot.slotKey >= '22:00').every(
+        (slot) => slot.status === 'available',
+      ),
+    ).toBe(true);
+
+    expect(() =>
+      resources.reserveParkMeetingPeriod('park-admin', {
+        roomId: room.id,
+        date: today,
+        startTime: '10:00',
+        endTime: '10:10',
+        ticketId: 'ticket-past',
+      }),
+    ).toThrow(/未开放|重新选择/);
+    expect(
+      resources.reserveParkMeetingPeriod('park-admin', {
+        roomId: room.id,
+        date: today,
+        startTime: '10:10',
+        endTime: '10:20',
+        ticketId: 'ticket-future-today',
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('lists today through today plus 30 days by default with 09:00-23:00 slots', () => {
+    const database = createDatabase();
+    const now = new Date('2026-07-28T00:00:00.000Z');
+    const resources = createParkResourceFacade(
+      createStore(database, () => new Date(now)),
+    );
+    createRoom(resources);
+
+    const slots = resources.listParkMeetingSlots('park-admin');
+    expect(slots).toHaveLength(31 * 84);
+    expect(new Set(slots.map((slot) => slot.date)).size).toBe(31);
+    expect(slots[0]).toMatchObject({ date: '2026-07-28', slotKey: '09:00' });
+    expect(slots.at(-1)).toMatchObject({
+      date: '2026-08-27',
+      slotKey: '22:50',
+    });
+  });
+
+  it('uses the park Asia/Shanghai calendar and clock across host time zones', () => {
+    const database = createDatabase();
+    const afterShanghaiMidnight = new Date('2026-07-28T16:30:00.000Z');
+    const resources = createParkResourceFacade(
+      createStore(database, () => new Date(afterShanghaiMidnight)),
+    );
+    createRoom(resources);
+
+    expect(() =>
+      resources.listParkMeetingSlots(
+        'park-admin',
+        '2026-07-28',
+        '2026-07-28',
+      ),
+    ).toThrow(/今天及未来日期/);
+    expect(
+      resources.listParkMeetingSlots(
+        'park-admin',
+        '2026-07-29',
+        '2026-07-29',
+      )[0],
+    ).toMatchObject({ date: '2026-07-29', slotKey: '09:00', status: 'available' });
+
+    const afterTenInShanghai = new Date('2026-07-29T02:05:00.000Z');
+    const laterResources = createParkResourceFacade(
+      createStore(database, () => new Date(afterTenInShanghai)),
+    );
+    const slots = laterResources.listParkMeetingSlots(
+      'park-admin',
+      '2026-07-29',
+      '2026-07-29',
+    );
+    expect(slots.find((slot) => slot.slotKey === '10:00')?.status).toBe(
+      'closed',
+    );
+    expect(slots.find((slot) => slot.slotKey === '10:10')?.status).toBe(
+      'available',
+    );
+  });
+
   it('only serves resources owned by an active park administrator', () => {
     const database = createDatabase();
     const resources = createParkResourceFacade(createStore(database));

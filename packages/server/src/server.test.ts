@@ -1655,9 +1655,19 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
 
   it('A2A tool-free runtime 不注入企业组织与职位上下文', async () => {
     let capturedWorkspaceContext: string | undefined;
+    let capturedDocumentIdentity:
+      | { name: string; department?: string }
+      | undefined;
     const runCompleted = vi.fn();
-    const factory: RuntimeFactory = async (store, sessionId, _model, workspaceContext) => {
+    const factory: RuntimeFactory = async (
+      store,
+      sessionId,
+      _model,
+      workspaceContext,
+      documentIdentity,
+    ) => {
       capturedWorkspaceContext = workspaceContext;
+      capturedDocumentIdentity = documentIdentity;
       return {
         async run() {
           store.setStatus(sessionId, 'idle');
@@ -1728,6 +1738,10 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
       },
     });
     await vi.waitFor(() => expect(capturedWorkspaceContext).toBe(''));
+    expect(capturedDocumentIdentity).toEqual({
+      name: '陈晨',
+      department: 'CEO 办公室',
+    });
     await vi.waitFor(() => expect(runCompleted).toHaveBeenCalledOnce());
     expect(captureKnowledge).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(store.getSession(sessionId)).toBeUndefined());

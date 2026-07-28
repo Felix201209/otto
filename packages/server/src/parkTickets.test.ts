@@ -57,6 +57,7 @@ function createDatabase(): Database {
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL,
       park_id TEXT,
+      application_number TEXT,
       created_by_account_id TEXT NOT NULL,
       service_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -74,10 +75,22 @@ function createDatabase(): Database {
       accepted_at TEXT,
       completed_at TEXT,
       closed_at TEXT,
+      creator_update_at TEXT,
+      creator_update_read_at TEXT,
       status TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE park_application_sequences (
+      park_id TEXT NOT NULL,
+      date_key TEXT NOT NULL,
+      last_sequence INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (park_id, date_key)
+    );
+    CREATE UNIQUE INDEX idx_it_tickets_park_application_number
+      ON it_tickets(park_id, application_number)
+      WHERE park_id IS NOT NULL AND application_number IS NOT NULL;
     CREATE TABLE ticket_events (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL,
@@ -126,8 +139,8 @@ function createDatabase(): Database {
       ('tenant-user', 'tenant-a', 'emp-tenant-user', 'Tenant User', 'tenant-user', 0, 'active', 'Sales', '["IT","报修"]'),
       ('tenant-admin', 'tenant-a', 'emp-tenant-admin', 'Tenant Admin', 'tenant-admin', 1, 'active', 'Management', '[]'),
       ('park-admin', 'park-admin-org', 'emp-park-admin', 'Park Admin', 'park-admin', 1, 'active', 'Management', '[]'),
-      ('park-worker', 'park-admin-org', 'emp-park-worker', 'Park Worker', 'park-worker', 0, 'active', 'Engineering', '[]'),
-      ('park-worker-2', 'park-admin-org', 'emp-park-worker-2', 'Park Worker 2', 'park-worker-2', 0, 'active', 'Engineering', '[]'),
+      ('park-worker', 'park-admin-org', 'emp-park-worker', 'Park Worker', 'park-worker', 0, 'active', '客服部', '[]'),
+      ('park-worker-2', 'park-admin-org', 'emp-park-worker-2', 'Park Worker 2', 'park-worker-2', 0, 'active', '工程部', '[]'),
       ('other-worker', 'other-admin-org', 'emp-other-worker', 'Other Worker', 'other-worker', 0, 'active', 'Engineering', '[]'),
       ('disabled-worker', 'park-admin-org', 'emp-disabled-worker', 'Disabled Worker', 'disabled-worker', 0, 'disabled', 'Engineering', '[]');
     INSERT INTO park_services (park_id, id, enabled) VALUES
@@ -143,11 +156,13 @@ function createStore(database: Database): {
   store: ParkTicketRepositoryStore<TestAccount>;
   setFeature(organizationId: string, enabled: boolean): void;
   failAudit(): void;
+  setNow(value: Date): void;
 } {
   let ticketSequence = 0;
   let eventSequence = 0;
   let notificationSequence = 0;
   let shouldFailAudit = false;
+  let now = new Date('2026-07-28T04:00:00Z');
   const features = new Map<string, boolean>();
   const getAccount = (
     accountId: string,
@@ -270,6 +285,7 @@ function createStore(database: Database): {
     createTicketEventId: () => `ticket-event-${++eventSequence}`,
     createTicketNotificationId: () =>
       `ticket-notification-${++notificationSequence}`,
+    now: () => new Date(now),
     audit: () => {
       if (shouldFailAudit) throw new Error('audit unavailable');
     },
@@ -281,6 +297,9 @@ function createStore(database: Database): {
     },
     failAudit: () => {
       shouldFailAudit = true;
+    },
+    setNow: (value) => {
+      now = new Date(value);
     },
   };
 }
@@ -304,6 +323,56 @@ function repairInput() {
 }
 
 describe('park ticket module', () => {
+  it('allocates a daily park-wide application number across services without duplicates', () => {
+    const database = createDatabase();
+    const { store, setNow } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+
+    const first = tickets.createTicket(repairInput());
+    const second = tickets.createTicket({
+      createdByAccountId: 'tenant-user',
+      serviceId: 'parking',
+      title: 'Parking request',
+      description: 'Apply for one parking space',
+      formData: {
+        company: 'Tenant A',
+        roomNumber: '5-101',
+        contact: 'Alice',
+        phone: '13800138000',
+        applicationType: 'underground-fixed',
+        quantity: '1',
+      },
+    });
+    const sameDay = Array.from({ length: 20 }, () =>
+      tickets.createTicket(repairInput()).applicationNumber,
+    );
+
+    expect(first.applicationNumber).toBe('20260728001');
+    expect(second.applicationNumber).toBe('20260728002');
+    expect(new Set(sameDay).size).toBe(20);
+    expect(sameDay.at(-1)).toBe('20260728022');
+
+    setNow(new Date('2026-07-28T16:01:00Z'));
+    expect(tickets.createTicket(repairInput()).applicationNumber).toBe(
+      '20260729001',
+    );
+  });
+
+  it('uses the Asia/Shanghai business day for application numbers at midnight', () => {
+    const database = createDatabase();
+    const { store, setNow } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+
+    setNow(new Date('2026-07-28T15:59:59Z'));
+    expect(tickets.createTicket(repairInput()).applicationNumber).toBe(
+      '20260728001',
+    );
+    setNow(new Date('2026-07-28T16:00:00Z'));
+    expect(tickets.createTicket(repairInput()).applicationNumber).toBe(
+      '20260729001',
+    );
+  });
+
   it('routes park tickets to active specialists and falls back to active admins', () => {
     const database = createDatabase();
     const { store } = createStore(database);
@@ -330,6 +399,8 @@ describe('park ticket module', () => {
     expect(database.prepare('SELECT COUNT(*) AS count FROM ticket_events').get())
       .toEqual({ count: 0 });
     expect(database.prepare('SELECT COUNT(*) AS count FROM ticket_deliveries').get())
+      .toEqual({ count: 0 });
+    expect(database.prepare('SELECT COUNT(*) AS count FROM park_application_sequences').get())
       .toEqual({ count: 0 });
   });
 
@@ -361,26 +432,73 @@ describe('park ticket module', () => {
     expect(tickets.getTicketNotificationRecipients(ticket.id)).toEqual([]);
   });
 
-  it('limits repair transfer to the park operator and revokes the old worker', () => {
+  it('requires customer service to reply and transfer to engineering atomically without choosing a person', () => {
     const database = createDatabase();
     const { store } = createStore(database);
     const tickets = createParkTicketFacade(store);
     const ticket = tickets.createTicket(repairInput());
 
+    database.prepare(
+      "UPDATE accounts SET status = 'disabled' WHERE id = 'park-worker-2'",
+    ).run();
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'respond_and_transfer',
+      responseType: '已受理',
+      responseText: '客服已确认报修内容',
+    })).toThrow(/工程部暂无可接收/);
+    expect(tickets.getTicketForAccount(ticket.id, 'park-worker')).toMatchObject({
+      status: '待接单',
+      responseType: null,
+      responseText: null,
+      history: [expect.objectContaining({ action: 'created' })],
+    });
+    database.prepare(
+      "UPDATE accounts SET status = 'active' WHERE id = 'park-worker-2'",
+    ).run();
+
     expect(() => tickets.updateTicket({
       ticketId: ticket.id,
       accountId: 'park-worker',
       action: 'transfer',
-      transferAccountId: 'other-worker',
-    })).toThrow('请选择有效的转交同事或部门');
+      transferAccountId: 'park-worker-2',
+    } as never)).toThrow(/工单操作不正确/);
+
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'respond_and_transfer',
+      transferAccountId: 'park-worker-2',
+      responseType: '已受理',
+      responseText: '客服已确认报修内容',
+    })).toThrow(/不能指定个人/);
 
     const transferred = tickets.updateTicket({
       ticketId: ticket.id,
       accountId: 'park-worker',
-      action: 'transfer',
-      transferAccountId: 'park-worker-2',
+      action: 'respond_and_transfer',
+      responseType: '已受理',
+      responseText: '客服已确认报修内容',
+      transferDepartment: '工程部',
+      transferNote: '请工程部上门检查并记录处理结果',
     });
     expect(transferred.status).toBe('已转交');
+    expect(transferred.history.map((event) => event.action)).toEqual([
+      'created',
+      'respond',
+      'transfer',
+    ]);
+    expect(transferred.history.at(-2)).toMatchObject({
+      action: 'respond',
+      responseType: '已受理',
+      responseText: '客服已确认报修内容',
+    });
+    expect(transferred.history.at(-1)).toMatchObject({
+      action: 'transfer',
+      responseType: '已转交至工程部',
+      responseText: '请工程部上门检查并记录处理结果',
+    });
     expect(() => tickets.updateTicket({
       ticketId: ticket.id,
       accountId: 'park-worker',
@@ -397,9 +515,71 @@ describe('park ticket module', () => {
     expect(completed.status).toBe('已完成');
     expect(completed.history.map((event) => event.action)).toEqual([
       'created',
+      'respond',
       'transfer',
       'complete',
     ]);
+    expect(
+      tickets.getTicketForAccount(ticket.id, 'park-worker'),
+    ).toMatchObject({
+      status: '已完成',
+      responseType: '现场工作已完成',
+      responseText: '工作人员已完成转交事项。',
+    });
+  });
+
+  it('keeps creator progress unread across transfer until the creator explicitly reads it', () => {
+    const database = createDatabase();
+    const { store } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+    const ticket = tickets.createTicket(repairInput());
+
+    expect(ticket.creatorUpdateAt).toBeNull();
+    expect(ticket.creatorUpdateReadAt).toEqual(expect.any(String));
+    const updated = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'respond_and_transfer',
+      responseType: '客服已受理',
+      responseText: '已核实并转交工程部。',
+      transferNote: '请工程部上门处理。',
+    });
+    expect(updated.creatorUpdateAt).toEqual(expect.any(String));
+    expect(updated.creatorUpdateReadAt).toBeNull();
+    expect(
+      database.prepare(
+        'SELECT status, read_at FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+      ).get(ticket.id, 'park-worker'),
+    ).toEqual({ status: 'transferred', read_at: null });
+
+    expect(
+      tickets.getTicketForAccount(ticket.id, 'tenant-user')
+        ?.creatorUpdateReadAt,
+    ).toBeNull();
+    expect(
+      tickets.markTicketRead(ticket.id, 'tenant-user').creatorUpdateReadAt,
+    ).toEqual(expect.any(String));
+
+    tickets.markTicketRead(ticket.id, 'park-worker');
+    expect(
+      database.prepare(
+        'SELECT status, read_at FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+      ).get(ticket.id, 'park-worker'),
+    ).toEqual({ status: 'transferred', read_at: expect.any(String) });
+    const completed = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker-2',
+      action: 'complete',
+      responseType: '现场工作已完成',
+      responseText: '已完成检修。',
+    });
+    expect(completed.creatorUpdateAt).toEqual(expect.any(String));
+    expect(completed.creatorUpdateReadAt).toBeNull();
+    expect(
+      database.prepare(
+        'SELECT status, read_at FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+      ).get(ticket.id, 'park-worker'),
+    ).toEqual({ status: 'transferred', read_at: null });
   });
 
   it('only records notifications for the creator or assigned recipients', () => {
@@ -445,14 +625,84 @@ describe('park ticket module', () => {
     });
     expect(parking.amountCny).toBe('520');
     expect(parking.recurringMonthlyCny).toBe('520');
+    expect(normalizeParkServiceFormData('electric-card', {
+      ...common,
+      chargingKwh: '12.5',
+    })).toMatchObject({
+      chargingKwh: '12.5',
+      unitPriceCny: '1.2',
+      pricing: '1.2元/度',
+      amountCny: '15',
+    });
+    expect(normalizeParkServiceFormData('electric-card', {
+      ...common,
+      amount: '10',
+    })).toMatchObject({
+      chargingKwh: '8.33',
+      unitPriceCny: '1.2',
+      pricing: '1.2元/度',
+      amountCny: '10',
+    });
+    expect(() => normalizeParkServiceFormData('vehicle-visit', {
+      ...common,
+      visitDate: '2026-07-29',
+      reason: '客户来访',
+      vehicleCount: '1',
+      plate1: '京A12345',
+    })).toThrow('来访时间');
+    expect(() => normalizeParkServiceFormData('vehicle-visit', {
+      ...common,
+      visitDate: '2026-07-29',
+      visitTime: '9:30',
+      reason: '客户来访',
+      vehicleCount: '1',
+      plate1: '京A12345',
+    })).toThrow('来访时间');
     expect(() => normalizeParkServiceFormData('meeting-room', {
       ...common,
       attendees: '4',
       roomId: 'room-a',
       date: '2026-07-29',
+      startTime: '09:00',
+      endTime: '10:00',
+      priceHalfDay: '200',
+    })).toThrow('会议内容');
+    expect(() => normalizeParkServiceFormData('meeting-room', {
+      ...common,
+      attendees: '4',
+      roomId: 'room-a',
+      date: '2026-07-29',
+      meetingContent: '测试会议',
       startTime: '09:05',
       endTime: '10:00',
       priceHalfDay: '200',
     })).toThrow('并按 10 分钟选择');
+  });
+
+  it('round-trips a validated vehicle visit time through the ticket view', () => {
+    const database = createDatabase();
+    database.exec(
+      "INSERT INTO park_services (park_id, id, enabled) VALUES ('park-a', 'vehicle-visit', 1)",
+    );
+    const { store } = createStore(database);
+    const ticket = createParkTicketFacade(store).createTicket({
+      createdByAccountId: 'tenant-user',
+      serviceId: 'vehicle-visit',
+      title: '访客车辆登记',
+      description: '客户来访',
+      formData: {
+        company: 'Tenant A',
+        roomNumber: '5-101',
+        contact: 'Alice',
+        phone: '13800138000',
+        visitDate: '2026-07-29',
+        visitTime: '09:30',
+        reason: '客户来访',
+        vehicleCount: '1',
+        plate1: '京A12345',
+      },
+    });
+
+    expect(ticket.formData.visitTime).toBe('09:30');
   });
 });

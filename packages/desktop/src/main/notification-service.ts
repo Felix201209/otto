@@ -6,7 +6,7 @@
  * 职责：
  *   1. 收到非本地来源的消息时弹 Windows 右下角系统 toast（Electron Notification API）。
  *      macOS 走 Notification Center。
- *   2. 通知 5s 后自动消失。
+ *   2. 普通通知 7s 后自动消失；明确要求持久的业务通知保留到用户打开。
  *   3. 通知被点击 → IPC 通知 renderer 跳转到对应会话。
  *   4. 维护未读会话集合 → renderer 据此显示闪烁点。
  *   5. 权限未开启时引导用户授权。
@@ -23,6 +23,8 @@ export interface NotificationPayload {
   title?: string;
   sender?: string;
   preview: string;
+  /** 业务通知保持可见，直到用户点击、进入对应会话或主动清理。 */
+  persistent?: boolean;
 }
 
 export type SystemNotificationFailureReason =
@@ -68,7 +70,7 @@ export class EnterpriseNotificationIdentityBoundary {
 interface NotificationEntry {
   notification: Notification;
   sessionId: string;
-  closeTimer: ReturnType<typeof setTimeout>;
+  closeTimer?: ReturnType<typeof setTimeout>;
   deliveryTimer: ReturnType<typeof setTimeout>;
   count: number;
   lastShownAt: number;
@@ -174,7 +176,7 @@ export class NotificationService {
         ? previous.count + 1
         : 1;
     if (previous) {
-      clearTimeout(previous.closeTimer);
+      if (previous.closeTimer) clearTimeout(previous.closeTimer);
       clearTimeout(previous.deliveryTimer);
       try { previous.notification.close(); } catch { /* ignore */ }
       this.active.delete(normalized.sessionId);
@@ -194,7 +196,7 @@ export class NotificationService {
         body,
         silent: false,
         urgency: 'normal',
-        timeoutType: 'default',
+        timeoutType: normalized.persistent ? 'never' : 'default',
       });
     } catch {
       requestFallback('show-failed');
@@ -219,7 +221,7 @@ export class NotificationService {
     notification.on('failed', () => {
       const current = this.active.get(normalized.sessionId);
       if (current?.notification === notification) {
-        clearTimeout(current.closeTimer);
+        if (current.closeTimer) clearTimeout(current.closeTimer);
         clearTimeout(current.deliveryTimer);
         this.active.delete(normalized.sessionId);
         requestFallback('show-failed');
@@ -227,13 +229,15 @@ export class NotificationService {
     });
 
     // 只关闭系统弹窗；Otto 内未读点继续保留。
-    const closeTimer = setTimeout(() => {
-      try { notification.close(); } catch { /* ignore */ }
-      const current = this.active.get(normalized.sessionId);
-      if (current?.notification === notification) {
-        this.active.delete(normalized.sessionId);
-      }
-    }, NotificationService.CLOSE_AFTER_MS);
+    const closeTimer = normalized.persistent
+      ? undefined
+      : setTimeout(() => {
+        try { notification.close(); } catch { /* ignore */ }
+        const current = this.active.get(normalized.sessionId);
+        if (current?.notification === notification) {
+          this.active.delete(normalized.sessionId);
+        }
+      }, NotificationService.CLOSE_AFTER_MS);
     const deliveryTimer = setTimeout(() => {
       if (!deliveryConfirmed) requestFallback('delivery-unconfirmed');
     }, NotificationService.CONFIRM_DELIVERY_AFTER_MS);
@@ -249,7 +253,7 @@ export class NotificationService {
     try {
       notification.show();
     } catch {
-      clearTimeout(closeTimer);
+      if (closeTimer) clearTimeout(closeTimer);
       clearTimeout(deliveryTimer);
       this.active.delete(normalized.sessionId);
       // OS 弹窗失败不影响上面已写入的 Otto 未读态。
@@ -261,7 +265,7 @@ export class NotificationService {
   markRead(sessionId: string): void {
     const entry = this.active.get(sessionId);
     if (entry) {
-      clearTimeout(entry.closeTimer);
+      if (entry.closeTimer) clearTimeout(entry.closeTimer);
       clearTimeout(entry.deliveryTimer);
       try { entry.notification.close(); } catch { /* ignore */ }
       this.active.delete(sessionId);
@@ -274,7 +278,7 @@ export class NotificationService {
   /** 清除所有通知（logout 时用）。 */
   clearAll(): void {
     for (const [, entry] of this.active) {
-      clearTimeout(entry.closeTimer);
+      if (entry.closeTimer) clearTimeout(entry.closeTimer);
       clearTimeout(entry.deliveryTimer);
       try { entry.notification.close(); } catch { /* ignore */ }
     }
@@ -333,7 +337,7 @@ export class NotificationService {
 
   private compactText(value: string, maxLength: number): string {
     const compact = value
-      .replace(/[\u0000-\u001f\u007f]+/gu, ' ')
+      .replace(/\p{Cc}+/gu, ' ')
       .replace(/\s+/gu, ' ')
       .trim();
     if (compact.length <= maxLength) return compact;
@@ -369,7 +373,7 @@ export class NotificationService {
   private closeActiveNotification(sessionId: string): void {
     const entry = this.active.get(sessionId);
     if (!entry) return;
-    clearTimeout(entry.closeTimer);
+    if (entry.closeTimer) clearTimeout(entry.closeTimer);
     clearTimeout(entry.deliveryTimer);
     try { entry.notification.close(); } catch { /* ignore */ }
     this.active.delete(sessionId);

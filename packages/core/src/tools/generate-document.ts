@@ -833,9 +833,14 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
 
-    const { content, format, output_format, title, author, template_options } = p;
+    const { content, format, output_format, title, template_options } = p;
+    const trustedIdentity = this.config.getDocumentIdentity();
     const titleStr = title || 'Untitled';
-    const authorStr = author || '';
+    const authorStr = trustedIdentity?.name || '';
+    const departmentStr = trustedIdentity?.department || '';
+    const bylineStr = departmentStr && authorStr
+      ? `${departmentStr} · ${authorStr}`
+      : authorStr;
     const outPath = p.output_path || path.join(os.homedir(), 'Desktop', 'generated_'+Date.now()+'.'+output_format);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-doc-'));
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -851,6 +856,8 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
           tmpDir,
           titleStr,
           template_options || '',
+          authorStr,
+          departmentStr,
           signal,
           progress,
         );
@@ -858,14 +865,24 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
         progress.step('parse', '解析 Markdown 正文');
         progress.step('structure', '生成文档结构');
         progress.step('body', '生成 Markdown 正文');
-        fs.writeFileSync(outPath, '# '+titleStr+'\n'+(authorStr?'**'+authorStr+'**\n':'')+'\n'+content);
+        fs.writeFileSync(outPath, '# '+titleStr+'\n'+(bylineStr?'**'+bylineStr+'**\n':'')+'\n'+content);
         progress.step('export', '导出 Markdown 文件');
       } else if (output_format === 'docx') {
-        await this.genDocx(content, outPath, tmpDir, titleStr, authorStr, format, signal, progress);
+        await this.genDocx(
+          content,
+          outPath,
+          tmpDir,
+          titleStr,
+          authorStr,
+          departmentStr,
+          format,
+          signal,
+          progress,
+        );
       } else if (output_format === 'pdf' && ['report','article','letter','resume'].includes(format)) {
-        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr, signal, progress);
+        await this.genTypst(content, format, outPath, tmpDir, titleStr, authorStr, bylineStr, signal, progress);
       } else {
-        await this.genPandoc(content, outPath, tmpDir, titleStr, authorStr, output_format, format, signal, progress);
+        await this.genPandoc(content, outPath, tmpDir, titleStr, bylineStr, output_format, format, signal, progress);
       }
 
       const sz = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
@@ -898,6 +915,8 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     tmpDir: string,
     title: string,
     templateOptions: string,
+    author: string,
+    department: string,
     signal: AbortSignal,
     progress: DocumentProgress,
   ): Promise<void> {
@@ -905,7 +924,17 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     const slides = normalizeSlidesMarkdown(content);
     progress.step('structure', '生成幻灯片结构');
     if (fmt === 'pptx') {
-      await this.genPptx(slides, outPath, title, tmpDir, templateOptions, signal, progress);
+      await this.genPptx(
+        slides,
+        outPath,
+        title,
+        tmpDir,
+        templateOptions,
+        author,
+        department,
+        signal,
+        progress,
+      );
       return;
     }
 
@@ -915,7 +944,21 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     if (missing) throw new Error('generate_document/slides needs marp: ' + missing);
     const mdFile = path.join(tmpDir, 'slides.md');
     progress.step('body', '生成幻灯片正文');
-    fs.writeFileSync(mdFile, '---\nmarp: true\ntheme: default\npaginate: true\ntitle: '+title+'\n---\n\n'+slides);
+    fs.writeFileSync(
+      mdFile,
+      [
+        '---',
+        'marp: true',
+        'theme: default',
+        'paginate: true',
+        `title: ${JSON.stringify(title)}`,
+        ...(author ? [`author: ${JSON.stringify(author)}`] : []),
+        ...(department ? [`company: ${JSON.stringify(department)}`] : []),
+        '---',
+        '',
+        slides,
+      ].join('\n'),
+    );
     progress.step('export', `导出 ${fmt.toUpperCase()} 文件`);
     await this.commandRunner(
       'marp',
@@ -930,6 +973,8 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     documentTitle: string,
     tmpDir: string,
     templateOptions: string,
+    author: string,
+    department: string,
     signal: AbortSignal,
     progress: DocumentProgress,
   ): Promise<void> {
@@ -938,8 +983,8 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     // @ts-expect-error TS2351: upstream NodeNext default-export typing mismatch
     const presentation = new pptxgen();
     presentation.layout = 'LAYOUT_WIDE';
-    presentation.author = 'Otto';
-    presentation.company = 'Otto';
+    presentation.author = author;
+    presentation.company = department;
     presentation.subject = documentTitle;
     presentation.title = documentTitle;
 
@@ -1826,6 +1871,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     tmpDir: string,
     title: string,
     author: string,
+    byline: string,
     signal: AbortSignal,
     progress: DocumentProgress,
   ): Promise<void> {
@@ -1836,7 +1882,10 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     progress.step('parse', '解析 Markdown 正文');
     const typFile = path.join(tmpDir, 'doc.typ');
     progress.step('structure', '生成 Typst 文档结构');
-    fs.writeFileSync(typFile, this.md2typst(content, format, title, author));
+    fs.writeFileSync(
+      typFile,
+      this.md2typst(content, format, title, author, byline),
+    );
     progress.step('body', '生成 PDF 正文');
     progress.step('export', '导出 PDF 文件');
     await this.commandRunner('typst', ['compile', typFile, outPath], { signal });
@@ -1846,7 +1895,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     outPath: string,
     tmpDir: string,
     title: string,
-    author: string,
+    byline: string,
     fmt: string,
     format: string,
     signal: AbortSignal,
@@ -1859,7 +1908,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     progress.step('parse', '解析 Markdown 正文');
     const mdFile = path.join(tmpDir, 'doc.md');
     progress.step('structure', '生成 Pandoc 文档结构');
-    fs.writeFileSync(mdFile, '# '+title+'\n'+(author?'**'+author+'**\n':'')+'\n'+content);
+    fs.writeFileSync(mdFile, '# '+title+'\n'+(byline?'**'+byline+'**\n':'')+'\n'+content);
     const args = [mdFile, '-o', outPath, '-f', 'markdown', '-t', fmt, '--standalone'];
     if (format === 'report') args.push('--toc', '--number-sections');
     progress.step('body', '生成文档正文');
@@ -1873,6 +1922,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     tmpDir: string,
     title: string,
     author: string,
+    department: string,
     format: string,
     signal: AbortSignal,
     progress: DocumentProgress,
@@ -1888,8 +1938,12 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     progress.step('structure', '生成 Word 公文结构');
     const frontMatter = [
       '---',
-      `title: "${title.replace(/"/g, '\\"')}"`,
-      author ? `author: "${author.replace(/"/g, '\\"')}"` : '',
+      `title: ${JSON.stringify(title)}`,
+      author ? `author: ${JSON.stringify(author)}` : '',
+      department ? `department: ${JSON.stringify(department)}` : '',
+      department && author
+        ? `signature_unit: ${JSON.stringify(`${department} · ${author}`)}`
+        : '',
       'toc: false',
       '---',
       '',
@@ -1898,14 +1952,23 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     progress.step('body', '生成 Word 正文');
     const python = this.runtimeResolver('python');
     progress.step('export', '导出 DOCX 文件');
+    const pythonEnvironment = buildBundledPythonEnvironment(python);
+    if (author) pythonEnvironment.OTTO_DOCUMENT_AUTHOR = author;
+    if (department) pythonEnvironment.OTTO_DOCUMENT_DEPARTMENT = department;
     await this.commandRunner(
       python.executable,
       [script, mdFile, outPath],
-      { signal, env: buildBundledPythonEnvironment(python) },
+      { signal, env: pythonEnvironment },
     );
   }
 
-  private md2typst(md: string, format: string, title: string, author: string): string {
+  private md2typst(
+    md: string,
+    format: string,
+    title: string,
+    author: string,
+    byline: string,
+  ): string {
     const now = new Date().toLocaleDateString();
     let preamble = '#set document(title: "'+this.te(title)+'", author: "'+this.te(author)+'", date: "'+now+'")\n\n';
     if (format==='report'||format==='article') {
@@ -1937,7 +2000,10 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     s = s.replace(/^(\d+)\. (.+)$/gm, '+ $2');
     s = s.replace(/\uE000CB(\d+)\uE001/g, (_, i) => cb[+i]);
     s = s.replace(/\uE000IC(\d+)\uE001/g, (_, i) => ic[+i]);
-    return preamble + '\n' + s;
+    const signature = byline
+      ? '\n\n#align(right)[#text(size: 9pt, fill: rgb("#666666"))['+this.te(byline)+']]\n'
+      : '';
+    return preamble + '\n' + s + signature;
   }
   private te(s: string): string { return s.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,' '); }
 }

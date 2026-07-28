@@ -158,6 +158,25 @@ describe('NotificationService', () => {
     expect(service.getUnreadSessions()).toEqual(['s1']);
   });
 
+  it('持久业务通知不会自动关闭，只在用户打开对应会话后消失', () => {
+    const service = new NotificationService();
+    service.show({
+      sessionId: 'park:ticket:20260728001',
+      source: 'park',
+      preview: '申请单 20260728001 · 预约已收到',
+      persistent: true,
+    });
+
+    expect(electron.instances[0].options.timeoutType).toBe('never');
+    vi.advanceTimersByTime(60_000);
+    expect(electron.instances[0].close).not.toHaveBeenCalled();
+    expect(service.getUnreadSessions()).toEqual(['park:ticket:20260728001']);
+
+    service.markRead('park:ticket:20260728001');
+    expect(electron.instances[0].close).toHaveBeenCalledOnce();
+    expect(service.getUnreadSessions()).toEqual([]);
+  });
+
   it('连续同会话消息会聚合成一条更清楚的系统弹窗', () => {
     const service = new NotificationService();
     service.show({

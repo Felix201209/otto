@@ -411,6 +411,7 @@ export interface EnterpriseRepairTicketHistoryEntry {
 
 export interface EnterpriseRepairTicket {
   id: string;
+  applicationNumber?: string | null;
   serviceId: string;
   title: string;
   description: string;
@@ -432,6 +433,8 @@ export interface EnterpriseRepairTicket {
   recipients: Array<Pick<EnterpriseAccount, 'id' | 'name'>>;
   deliveryStatus?: string;
   readAt?: string | null;
+  creatorUpdateAt?: string | null;
+  creatorUpdateReadAt?: string | null;
   isCreator?: boolean;
   isRecipient?: boolean;
   history?: EnterpriseRepairTicketHistoryEntry[];
@@ -1471,11 +1474,16 @@ export class EnterpriseClient {
   }
 
   async updateTicket(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
+    action:
+      | 'respond'
+      | 'accept'
+      | 'complete'
+      | 'confirm'
+      | 'respond_and_transfer';
     responseType?: string;
     responseText?: string;
-    transferAccountId?: string;
     transferDepartment?: string;
+    transferNote?: string;
   }): Promise<EnterpriseRepairTicket> {
     return (await this.request<{ ticket: EnterpriseRepairTicket }>(
       `/enterprise/tickets/${encodeURIComponent(id)}/action`,

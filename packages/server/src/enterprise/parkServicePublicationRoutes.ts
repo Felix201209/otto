@@ -23,7 +23,7 @@ const PARK_SERVICE_PUSH_TEMPLATES: Record<string, { name: string; detail: string
   parking: { name: '停车位办理', detail: '请提交车牌号、车辆类型、申请数量和联系人。' },
   'network-phone': { name: '网络 / 电话业务', detail: '请提交安装位置、工位数量或号码数量、期望开通日期。' },
   'meeting-room': { name: '会议室预订', detail: '请确认参会人数、日期、时间段和投屏/视频会议需求。' },
-  'electric-card': { name: '电卡充电', detail: '请提交电卡编号、充值金额、公司名称和联系人。' },
+  'electric-card': { name: '电卡充电', detail: '请提交电卡编号、充电度数、公司名称和联系人，按1.2元/度计费。' },
   repair: { name: '客户报修', detail: '请描述故障位置、故障现象、紧急程度和现场联系人。' },
   'vehicle-visit': { name: '来访车辆登记', detail: '请登记来访人、手机号、车牌号、来访时间和拜访事由。' },
 };

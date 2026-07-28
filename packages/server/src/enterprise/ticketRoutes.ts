@@ -65,7 +65,14 @@ async function sendRepairNotifications(input: {
         });
         return;
       }
-      const sent = await withTimeout(sender.send(recipientId, input.title, input.body));
+      let sent = false;
+      try {
+        sent = await withTimeout(
+          sender.send(recipientId, input.title, input.body),
+        );
+      } catch {
+        sent = false;
+      }
       db.recordTicketNotification({
         ticketId: input.ticket.id,
         recipientAccountId: recipient.id,
@@ -275,7 +282,10 @@ export async function handleTicketRoute({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '会议室预约失败';
-      if (serviceId === 'meeting-room' && /已被预约|暂不可预约|请选择|只能预约/.test(message)) {
+      if (
+        serviceId === 'meeting-room'
+        && /已被预约|未开放|暂不可预约|请选择|请填写|只能预约/.test(message)
+      ) {
         sendJSON(res, message.includes('已被预约') ? 409 : 400, { error: message });
         return true;
       }
@@ -347,23 +357,63 @@ export async function handleTicketRoute({
       }
       const body = await readBody(req);
       const action = typeof body.action === 'string' ? body.action : '';
-      if (!['respond', 'accept', 'complete', 'confirm', 'transfer'].includes(action)) {
+      if (
+        ![
+          'respond',
+          'accept',
+          'complete',
+          'confirm',
+          'respond_and_transfer',
+        ].includes(action)
+      ) {
         sendJSON(res, 400, { error: '工单操作不正确' });
         return true;
       }
       const ticket = db.updateTicket({
         ticketId,
         accountId: account.id,
-        action: action as 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer',
+        action: action as
+          | 'respond'
+          | 'accept'
+          | 'complete'
+          | 'confirm'
+          | 'respond_and_transfer',
         responseType: typeof body.responseType === 'string' ? body.responseType : undefined,
         responseText: typeof body.responseText === 'string' ? body.responseText : undefined,
         transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
         transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
+        transferNote: typeof body.transferNote === 'string' ? body.transferNote : undefined,
       });
       const creatorRecipients = [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
         (item): item is db.AccountView => item !== null,
       );
-      const recipientCandidates = action === 'confirm' || action === 'transfer'
+      if (action === 'respond_and_transfer') {
+        await sendRepairNotifications({
+          ticket,
+          recipients: creatorRecipients,
+          event: 'ticket_respond',
+          title: `Otto 办理回复 · ${ticket.title}`,
+          body: `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`,
+          smsSender: repairSmsSender,
+          feishuSender: repairFeishuSender,
+        });
+        const transferEvent = ticket.history.at(-1);
+        await sendRepairNotifications({
+          ticket,
+          recipients: db.getTicketNotificationRecipients(ticket.id),
+          event: 'ticket_transfer',
+          title: `Otto 转交任务 · ${ticket.title}`,
+          body: transferEvent?.responseText
+            || '请工程部接手处理该物业报修，并在完成后记录工作结果。',
+          smsSender: repairSmsSender,
+          feishuSender: repairFeishuSender,
+        });
+        sendJSON(res, 200, {
+          ticket: db.getTicketForAccount(ticket.id, account.id),
+        });
+        return true;
+      }
+      const recipientCandidates = action === 'confirm'
         ? db.getTicketNotificationRecipients(ticket.id)
         : action === 'complete' && currentTicket.status === '已转交'
           ? [...creatorRecipients, ...db.getTicketTransferredNotificationRecipients(ticket.id)]
@@ -375,8 +425,6 @@ export async function handleTicketRoute({
          ? `Otto 办理回复 · ${ticket.title}`
          : action === 'accept'
            ? `Otto 申请已受理 · ${ticket.title}`
-           : action === 'transfer'
-             ? `Otto 转交任务 · ${ticket.title}`
            : action === 'complete'
              ? currentTicket.status === '已转交'
                ? `Otto 工作已完成 · ${ticket.title}`
@@ -384,8 +432,6 @@ export async function handleTicketRoute({
              : `Otto 办理已确认 · ${ticket.title}`;
        const detail = action === 'respond'
          ? `${ticket.responseType || '处理回复'}：${ticket.responseText || ''}`
-         : action === 'transfer'
-           ? ticket.responseText || `工单 ${ticket.id} 已转交给你处理`
          : `工单 ${ticket.id} 当前状态：${ticket.status}`;
       await sendRepairNotifications({
         ticket,

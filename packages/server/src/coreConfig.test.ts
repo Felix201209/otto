@@ -92,4 +92,20 @@ describe('createCoreConfig v1.7 模式隔离', () => {
     );
     expect(config.getSearchModel()).toBe('doubao-search-model');
   });
+
+  it('把服务端受信文档署名身份装配进 Core', () => {
+    const config = createCoreConfig({
+      sessionId: 'document-identity-session',
+      customModels: [],
+      documentIdentity: {
+        name: '林一',
+        department: '产品与研发部',
+      },
+    });
+
+    expect(config.getDocumentIdentity()).toEqual({
+      name: '林一',
+      department: '产品与研发部',
+    });
+  });
 });

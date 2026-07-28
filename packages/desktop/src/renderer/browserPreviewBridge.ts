@@ -5,6 +5,8 @@
  * 纯本地模拟实现。它不访问园区服务器，所有会话、模型和回复均为演示数据。
  */
 
+import { parkISODate, parkMinuteOfDay } from './parkBusinessTime.js';
+
 type PreviewFrame = { type: string; payload: Record<string, unknown> };
 type PreviewWindow = { otto?: unknown };
 
@@ -38,30 +40,32 @@ if (!previewWindow.otto) {
     updatedAt: new Date().toISOString(),
   };
   let previewTickets: Array<Record<string, unknown>> = [];
+  const previewDirectMessages = new Map<string, Array<Record<string, unknown>>>();
+  let previewApplicationSequence = 0;
   const previewMeetingSlots = makePreviewMeetingSlots();
 
-  function localISODate(offsetDays: number): string {
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
-    date.setDate(date.getDate() + offsetDays);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  }
   function makePreviewMeetingSlots(): Array<Record<string, unknown>> {
     const roomIds = ['preview-room-medium', 'preview-room-large', 'preview-room-auditorium'];
     const slots: Array<Record<string, unknown>> = [];
-    for (let day = 1; day <= 30; day += 1) {
+    const referenceTime = new Date();
+    const currentMinutes = parkMinuteOfDay(referenceTime);
+    for (let day = 0; day <= 30; day += 1) {
       for (const roomId of roomIds) {
-        for (const slot of [
-          { key: 'morning', label: '上午 09:00–12:00' },
-          { key: 'afternoon', label: '下午 14:00–18:00' },
-        ]) {
+        for (let minutes = 9 * 60; minutes < 23 * 60; minutes += 10) {
+          const key = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+          const end = minutes + 10;
+          const endKey = `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
           slots.push({
-            id: `${roomId}-${localISODate(day)}-${slot.key}`,
+            id: `${roomId}-${parkISODate(referenceTime, day)}-${key}`,
             roomId,
-            date: localISODate(day),
-            slotKey: slot.key,
-            label: slot.label,
-            status: day === 1 && roomId === 'preview-room-medium' && slot.key === 'morning' ? 'booked' : 'available',
+            date: parkISODate(referenceTime, day),
+            slotKey: key,
+            label: `${key}–${endKey}`,
+            status: day === 0 && minutes <= currentMinutes
+              ? 'closed'
+              : day === 1 && roomId === 'preview-room-medium' && key === '10:00'
+                ? 'booked'
+                : 'available',
             updatedAt: new Date().toISOString(),
           });
         }
@@ -150,7 +154,16 @@ if (!previewWindow.otto) {
       }
     },
     parkConfig: () => Promise.resolve(null),
-    onMenu: () => () => {}, onUpdateProgress: () => () => {},
+    onMenu: () => () => {},
+    onUpdateProgress: () => () => {},
+    onNotificationUnreadChanged: () => () => {},
+    onNotificationSessionOpen: () => () => {},
+    onEnterpriseRegistrationIntent: () => () => {},
+    onEnterpriseSessionInvalidated: () => () => {},
+    onEnterpriseAccountUpdated: () => () => {},
+    notificationShow: () => Promise.resolve(),
+    notificationMarkRead: () => Promise.resolve(),
+    notificationGetUnread: () => Promise.resolve([]),
     appVersion: () => Promise.resolve('1.9.3-browser-preview'),
     openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(), saveTextFile: () => Promise.resolve(null),
     getPathForFile: (file: File) => (file as File & { path?: string }).path || file.name,
@@ -163,7 +176,119 @@ if (!previewWindow.otto) {
       account: previewAccount,
     }),
     enterpriseLogout: () => Promise.resolve(),
+    enterprisePresenceHeartbeat: () => Promise.resolve(),
+    enterpriseMessagesUnread: () => Promise.resolve([]),
+    enterpriseAtoaInbox: () => Promise.resolve([]),
+    enterpriseOrganizationFeaturesGet: () => Promise.resolve({
+      direct_messaging: true,
+      knowledge_base: true,
+      park_service: true,
+      worklog: true,
+      usage_audit: true,
+    }),
+    enterpriseOrganizationView: () => Promise.resolve({
+      organization: {
+        id: previewAccount.organizationId,
+        name: previewAccount.organizationName,
+        status: 'active',
+        parkId: 'preview-park',
+        createdAt: previewAccount.createdAt,
+      },
+      members: [
+        {
+          ...previewAccount,
+          role: '企业员工',
+          department: '入驻企业',
+          departmentId: 'preview-department',
+          positionTitle: '员工',
+          avatarUrl: null,
+          ottoOnline: true,
+          ottoLastSeenAt: new Date().toISOString(),
+        },
+        {
+          id: 'preview-colleague',
+          username: 'preview.colleague',
+          name: '演示同事',
+          role: '企业员工',
+          department: '入驻企业',
+          departmentId: 'preview-department',
+          positionId: null,
+          positionTitle: '项目经理',
+          avatarUrl: null,
+          isAdmin: false,
+          status: 'active',
+          ottoOnline: true,
+          ottoLastSeenAt: new Date().toISOString(),
+        },
+        {
+          id: 'preview-colleague-two',
+          username: 'preview.colleague.two',
+          name: '演示同事二',
+          role: '企业员工',
+          department: '入驻企业',
+          departmentId: 'preview-department',
+          positionId: null,
+          positionTitle: '运营经理',
+          avatarUrl: null,
+          isAdmin: false,
+          status: 'active',
+          ottoOnline: false,
+          ottoLastSeenAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+        },
+      ],
+      employeeCount: 3,
+      structure: [],
+      features: {
+        direct_messaging: true,
+        knowledge_base: true,
+        park_service: true,
+        worklog: true,
+        usage_audit: true,
+      },
+    }),
+    enterpriseMessagesList: (peerAccountId: string) => Promise.resolve(
+      previewDirectMessages.get(peerAccountId) ?? [],
+    ),
+    enterpriseMessageSend: (
+      peerAccountId: string,
+      content: string,
+      attachments: Array<Record<string, unknown>> = [],
+    ) => {
+      const message = {
+        id: id('preview-message'),
+        senderAccountId: previewAccount.id,
+        recipientAccountId: peerAccountId,
+        content,
+        createdAt: new Date().toISOString(),
+        readAt: null,
+        attachments: attachments.map((attachment) => ({
+          id: id('preview-attachment'),
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+        })),
+      };
+      previewDirectMessages.set(peerAccountId, [
+        ...(previewDirectMessages.get(peerAccountId) ?? []),
+        message,
+      ]);
+      return Promise.resolve(message);
+    },
+    enterpriseParkView: () => Promise.resolve({
+      id: 'preview-park',
+      name: '北控宏创科技园',
+      slug: 'browser-preview',
+      brandName: '北控宏创园区服务',
+      adminOrganizationId: 'preview-park-admin',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isAdminOrganization: false,
+      tenantAddress: '科技大厦 A 座',
+      tenantRoomNumber: '1203 室',
+    }),
     enterpriseTicketList: () => Promise.resolve(previewTickets),
+    enterpriseParkPublications: () => Promise.resolve([]),
     enterpriseParkResources: () => Promise.resolve({
       settings: {
         parkingTotal: 180,
@@ -179,7 +304,7 @@ if (!previewWindow.otto) {
           priceHalfDay: 400,
           equipment: ['投屏', '视频会议', '白板'],
           imageUrl: null,
-          openingHours: '工作日 09:00–18:00',
+          openingHours: '工作日 09:00–23:00',
           enabled: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -192,7 +317,7 @@ if (!previewWindow.otto) {
           priceHalfDay: 500,
           equipment: ['投屏', '视频会议', '白板'],
           imageUrl: null,
-          openingHours: '工作日 09:00–18:00',
+          openingHours: '工作日 09:00–23:00',
           enabled: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -205,7 +330,7 @@ if (!previewWindow.otto) {
           priceHalfDay: 800,
           equipment: ['投屏', '视频会议', '白板'],
           imageUrl: null,
-          openingHours: '工作日 09:00–18:00',
+          openingHours: '工作日 09:00–23:00',
           enabled: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -220,19 +345,25 @@ if (!previewWindow.otto) {
         ? input.formData as Record<string, unknown>
         : {};
       if (serviceId === 'meeting-room') {
-        const slot = previewMeetingSlots.find((item) => (
+        const selectedSlots = previewMeetingSlots.filter((item) => (
           item.roomId === formData.roomId
           && item.date === formData.date
-          && item.slotKey === formData.slotKey
+          && String(item.slotKey) >= String(formData.startTime)
+          && String(item.slotKey) < String(formData.endTime)
         ));
-        if (!slot || slot.status !== 'available') {
-          return Promise.reject(new Error(slot?.status === 'booked' ? '该时段刚刚已被预约，请选择其他时段' : '该时段暂未开放'));
+        if (!selectedSlots.length || selectedSlots.some((slot) => slot.status !== 'available')) {
+          const booked = selectedSlots.some((slot) => slot.status === 'booked');
+          return Promise.reject(new Error(booked ? '该时段刚刚已被预约，请选择其他时段' : '该时段暂未开放'));
         }
-        slot.status = 'booked';
-        slot.updatedAt = now;
+        for (const slot of selectedSlots) {
+          slot.status = 'booked';
+          slot.updatedAt = now;
+        }
       }
+      previewApplicationSequence += 1;
       const ticket = {
         id: id('preview-ticket'),
+        applicationNumber: `${parkISODate().replace(/-/g, '')}${String(previewApplicationSequence).padStart(3, '0')}`,
         serviceId,
         title: String(input.title || '园区服务申请'),
         description: String(input.description || ''),
@@ -260,6 +391,8 @@ if (!previewWindow.otto) {
           : [{ id: 'preview-cs-1', name: '客服一组' }, { id: 'preview-cs-2', name: '客服二组' }],
         deliveryStatus: serviceId === 'renovation' ? '已投递客服部' : '已投递',
         readAt: null,
+        creatorUpdateAt: null,
+        creatorUpdateReadAt: null,
         isCreator: true,
         isRecipient: false,
         notifications: [],
@@ -269,7 +402,14 @@ if (!previewWindow.otto) {
     },
     enterpriseTicketRead: (ticketId: string) => {
       const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;
-      return ticket ? Promise.resolve(ticket) : Promise.reject(new Error('申请单不存在'));
+      if (!ticket) return Promise.reject(new Error('申请单不存在'));
+      const viewed = {
+        ...ticket,
+        creatorUpdateReadAt: new Date().toISOString(),
+        readAt: ticket.isRecipient ? new Date().toISOString() : ticket.readAt,
+      };
+      previewTickets = previewTickets.map((item) => item.id === ticketId ? viewed : item);
+      return Promise.resolve(viewed);
     },
     enterpriseTicketAction: (ticketId: string) => {
       const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;

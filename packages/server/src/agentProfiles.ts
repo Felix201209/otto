@@ -112,7 +112,7 @@ const commonExpertSpecs: Array<[
   [
     'doc',
     'Word 公文撰写',
-    '以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题（3色+母题名称），让引擎自动生成封面、章节过渡页、正文、引用块、表格和落款的多态排版。禁止"白底黑字塞满字"、禁止固定模板感、禁止用 pandoc 兜底冒充成品。先确认文档类型（报告/方案/通知/函件/纪要）和读者，再设计视觉母题，然后逐章写 Markdown 正文，最后用 create_docx.py 生成并真实打开检查',
+    '以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题（3色+母题名称），让引擎自动生成封面、章节过渡页、正文、引用块、表格和落款的多态排版。禁止"白底黑字塞满字"、禁止固定模板感、禁止用 pandoc 兜底冒充成品。先确认文档类型（报告/方案/通知/函件/纪要）和读者，再设计视觉母题，然后逐章写 Markdown 正文，最后调用 generate_document 生成 DOCX，由 Otto 运行时注入当前可信姓名与部门，并真实打开检查',
     ['doc-writer'],
   ],
   [
@@ -199,7 +199,7 @@ const MEETING_AGENT_AUDIO_GUIDE = [
 
 const CUSTOM_PROMPTS: Readonly<Record<string, string>> = {
   ppt: '你是 PPT 创作专家。你的职责是以发布会视觉总监标准完成炫酷、高冲击演示。先完整加载 ppt-creator Skill，为本次主题创造独有视觉母题和叙事弧；高审美任务必须使用自定义 HTML/CSS/SVG 逐页构图，经本机浏览器渲染，再由 Node.js + PptxGenJS 或 python-pptx 组装真实 PPTX。禁止固定模板、固定页眉、重复卡片、网页后台感、编造素材或只交付代码。先做封面、最复杂数据页和结尾页三张标杆页并截图自检，不够炫就推翻视觉方向，完成后必须真实打开检查。缺失信息标为待确认；涉及外发或不可逆操作必须先确认。' + `\n\n${PPT_OPTION_GUIDE}`,
-  doc: '你是 Word 公文撰写专家。你的职责是以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题——只需在 YAML frontmatter 中声明 theme/base/accent/surface 四个字段和母题名称，引擎自动派生 12 种颜色和全部排版参数。然后用 Markdown 撰写正文（## 标记章节，引擎自动为每章生成过渡页），用 create_docx.py 生成并立即验证。禁止"白底黑字塞满字"的模板感、禁止用 generate_document/pandoc 兜底冒充成品、禁止编造数据或来源。先确认文档类型和读者→设计视觉母题→逐章撰写→生成→验证。' + `\n\n${DOC_OPTION_GUIDE}`,
+  doc: '你是 Word 公文撰写专家。你的职责是以专业排版总监标准完成可直接交付的正式文档。先完整加载 doc-writer Skill，为本次文档创造独有视觉母题——只需声明 theme/base/accent/surface 四个字段和母题名称，引擎自动派生 12 种颜色和全部排版参数。然后用 Markdown 撰写正文（## 标记章节，引擎自动为每章生成过渡页），调用 generate_document 生成 DOCX 并立即验证；该工具内部使用 create_docx.py，且只接受 Otto 运行时注入的当前账户姓名与部门。禁止直接运行脚本交付成品，禁止传入或猜测作者，禁止用 pandoc 兜底冒充成品，禁止编造数据或来源。先确认文档类型和读者→设计视觉母题→逐章撰写→生成→验证。' + `\n\n${DOC_OPTION_GUIDE}`,
   sheet: '你是 Excel 数据表格专家。你的职责是以数据分析总监标准完成可直接决策的表格交付。先完整加载 spreadsheet-pro Skill，为本次表格创造独有视觉母题——只需声明 theme/base/accent/surface，引擎自动生成仪表盘标题栏、accent 装饰线、交替行条纹、数值正负色和冻结表头。然后用 Markdown 撰写多工作表内容（## 分割 sheet，|表格| 写数据），用 create_xlsx.py 生成。数据必须可核验：先分析再落表，数值正确性自行校核，不确定的标为待确认。禁止裸表无格式、禁止编造数字、禁止不校核就交付。' + `\n\n${SHEET_OPTION_GUIDE}`,
   pdf: '你是 PDF 文档处理专家。你的职责是以专业排版总监标准完成可直接打印/发送的 PDF 文档。先完整加载 pdf-toolkit Skill——生成文档时创造独有视觉母题（theme/base/accent/surface），用 create_pdf.py 生成，引擎自动生成封面、章节过渡页和完整排版；处理已有 PDF 时使用现成脚本（merge_pdf/split_pdf/extract_text/fill_form），绝不手写新代码。完成后必须真实打开检查页码、格式和可读性。禁止用纯文本导出冒充排版、禁止跳过验证、禁止编造提取结果。' + `\n\n${PDF_OPTION_GUIDE}`,
   meeting: '你是会议 Agent。你的职责是把会议从会前安排、录音转写、纪要整理、待办提炼到后续跟进做成傻瓜式流程。收到会议录音/音频/视频/文件时，先自动调用 audio_reader 转写并进入纪要生成；不要因为文件大而停止，不要一开始追问主题、时间、参会人，不要让用户自己安装 Python 转写包或自己找转写稿。涉及日程、邀请、任务、提醒、外发纪要或影响他人的操作前，必须先展示预览并取得确认。' + `\n\n${MEETING_AGENT_AUDIO_GUIDE}`,
@@ -501,6 +501,58 @@ const DEPARTMENT_WORKFLOW: Readonly<Record<string, string>> = {
  * 根据产品工作区快照构建企业身份上下文，注入到 Agent system prompt 中。
  * 个人版返回空字符串。
  */
+export function resolveEnterpriseDocumentIdentity(workspace: {
+  context: {
+    edition: string;
+    userId?: string;
+    displayName?: string;
+    departmentId?: string;
+  };
+  authenticatedOrganization?: { id: string; name: string };
+  members?: Array<{
+    userId: string;
+    displayName?: string;
+    departmentName?: string;
+  }>;
+  managerWorkspace?: {
+    organization?: {
+      departments: Array<{ id: string; name: string }>;
+    };
+  };
+}): { name: string; department?: string } | undefined {
+  if (workspace.context.edition !== 'enterprise') return undefined;
+
+  const clean = (value: string | undefined): string | undefined => {
+    const normalized = value
+      ? Array.from(value, (character) => {
+          const code = character.charCodeAt(0);
+          return code <= 31 || code === 127 ? ' ' : character;
+        }).join('').trim().slice(0, 160)
+      : '';
+    return normalized || undefined;
+  };
+  const member = workspace.members?.find(
+    (item) => item.userId === workspace.context.userId,
+  );
+  const name = clean(member?.displayName ?? workspace.context.displayName);
+  if (!name) return undefined;
+
+  const department = clean(
+    workspace.authenticatedOrganization
+      ? member?.departmentName
+      : (
+          member?.departmentName ??
+          workspace.managerWorkspace?.organization?.departments.find(
+            (item) => item.id === workspace.context.departmentId,
+          )?.name
+        ),
+  );
+  return {
+    name,
+    ...(department ? { department } : {}),
+  };
+}
+
 export function buildEnterpriseWorkspaceContext(workspace: {
   context: {
     edition: string;
@@ -532,6 +584,7 @@ export function buildEnterpriseWorkspaceContext(workspace: {
   const authenticatedMember = workspace.members?.find(
     (member) => member.userId === ctx.userId,
   );
+  const documentIdentity = resolveEnterpriseDocumentIdentity(workspace);
 
   const company =
     workspace.authenticatedOrganization?.name ??
@@ -593,6 +646,7 @@ export function buildEnterpriseWorkspaceContext(workspace: {
     '',
     '━━━ 当前企业身份 ━━━',
     `公司：${company}`,
+    `姓名：${documentIdentity?.name ?? promptData(ctx.displayName)}`,
     `部门：${department}`,
     `职位：${position}`,
     `角色：${roleLabel}`,
@@ -601,6 +655,7 @@ export function buildEnterpriseWorkspaceContext(workspace: {
     hasAuthenticatedOrganization
       ? '以上身份由中心企业服务认证。你的职能范围和可操作数据均以此为边界。'
       : '以上身份由企业管理者在 Otto 中建档生成。你的职能范围和可操作数据均以此为边界。',
+    '文档署名规则：生成 Word、PDF、Markdown 或演示文稿时，作者、落款和文档元数据必须使用上方 Otto 可信姓名与部门；禁止使用电脑登录用户名，禁止传入、猜测或在 YAML 中填写作者身份。Word 成品必须调用 generate_document，由 Otto 运行时注入可信姓名与部门；缺少可信身份时省略署名。',
     workflow,
     ...collaborationContext,
     '',

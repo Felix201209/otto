@@ -577,6 +577,7 @@ export interface EnterpriseRepairTicketHistoryEntry {
 
 export interface EnterpriseRepairTicket {
   id: string;
+  applicationNumber?: string | null;
   serviceId: string;
   title: string;
   description: string;
@@ -598,6 +599,8 @@ export interface EnterpriseRepairTicket {
   recipients: Array<Pick<EnterpriseAccount, 'id' | 'name'>>;
   deliveryStatus?: string;
   readAt?: string | null;
+  creatorUpdateAt?: string | null;
+  creatorUpdateReadAt?: string | null;
   isCreator?: boolean;
   isRecipient?: boolean;
   history?: EnterpriseRepairTicketHistoryEntry[];
@@ -976,6 +979,7 @@ export interface OttoBridge {
     title?: string;
     preview: string;
     messageId?: string;
+    persistent?: boolean;
   }): Promise<void>;
   /** 通知：标记会话已读 */
   notificationMarkRead(sessionId: string): Promise<void>;
@@ -1154,11 +1158,16 @@ export interface OttoBridge {
   }): Promise<EnterpriseRepairTicket>;
   enterpriseTicketRead(id: string): Promise<EnterpriseRepairTicket>;
   enterpriseTicketAction(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
+    action:
+      | 'respond'
+      | 'accept'
+      | 'complete'
+      | 'confirm'
+      | 'respond_and_transfer';
     responseType?: string;
     responseText?: string;
-    transferAccountId?: string;
     transferDepartment?: string;
+    transferNote?: string;
   }): Promise<EnterpriseRepairTicket>;
   parkNativeNotify(title: string, body: string): Promise<boolean>;
   /** 将文本写入系统剪贴板（通过 IPC 调用 main 进程 clipboard 模块，不受 renderer 权限限制）。 */
@@ -1668,6 +1677,7 @@ const bridge: OttoBridge = {
     title?: string;
     preview: string;
     messageId?: string;
+    persistent?: boolean;
   }): Promise<void> {
     return ipcRenderer.invoke(IPC.notificationShow, payload) as Promise<void>;
   },
@@ -2036,11 +2046,16 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.enterpriseTicketRead, id) as Promise<EnterpriseRepairTicket>;
   },
   enterpriseTicketAction(id: string, input: {
-    action: 'respond' | 'accept' | 'complete' | 'confirm' | 'transfer';
+    action:
+      | 'respond'
+      | 'accept'
+      | 'complete'
+      | 'confirm'
+      | 'respond_and_transfer';
     responseType?: string;
     responseText?: string;
-    transferAccountId?: string;
     transferDepartment?: string;
+    transferNote?: string;
   }): Promise<EnterpriseRepairTicket> {
     return ipcRenderer.invoke(IPC.enterpriseTicketAction, id, input) as Promise<EnterpriseRepairTicket>;
   },

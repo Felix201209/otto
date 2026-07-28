@@ -153,6 +153,54 @@ describe('GenerateDocumentTool', () => {
     expect(fs.readFileSync(out, 'utf8')).toContain('# T');
   });
 
+  it('markdown output uses the trusted Otto department and name as its visible byline', async () => {
+    const out = path.join(tmpDir, 'trusted-identity.md');
+    const markdownTool = new GenerateDocumentTool(
+      createMockConfig({
+        getDocumentIdentity: () => ({
+          name: '林一',
+          department: '产品与研发部',
+        }),
+      }),
+    );
+
+    const result = await markdownTool.execute(
+      {
+        content: '正文',
+        format: 'article',
+        output_format: 'markdown',
+        title: '可信署名',
+        author: 'mac-login-name',
+        output_path: out,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.llmContent).toContain('generate_document OK');
+    expect(fs.readFileSync(out, 'utf8')).toContain(
+      '**产品与研发部 · 林一**',
+    );
+    expect(fs.readFileSync(out, 'utf8')).not.toContain('mac-login-name');
+  });
+
+  it('omits an untrusted caller author when Otto has no registered document identity', async () => {
+    const out = path.join(tmpDir, 'untrusted-identity.md');
+    const result = await tool.execute(
+      {
+        content: '正文',
+        format: 'article',
+        output_format: 'markdown',
+        title: '无可信身份',
+        author: 'mac-login-name',
+        output_path: out,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.llmContent).toContain('generate_document OK');
+    expect(fs.readFileSync(out, 'utf8')).not.toContain('mac-login-name');
+  });
+
   it('docx output uses bundled doc-writer and emits staged progress', async () => {
     const out = path.join(tmpDir, 'doc.docx');
     const updates: string[] = [];
@@ -193,8 +241,73 @@ describe('GenerateDocumentTool', () => {
     expect(commands[0].args[2]).toBe(out);
     expect(commands[0].env?.PYTHONPATH).toContain('/runtime/darwin-arm64/python/site-packages');
     expect(commands[0].env?.PYTHONNOUSERSITE).toBe('1');
+    expect(commands[0].env?.OTTO_DOCUMENT_AUTHOR).toBeUndefined();
     expect(updates.join('\n')).toContain('预检 Python 公文依赖');
     expect(updates.join('\n')).toContain('导出 DOCX 文件');
+  });
+
+  it('docx output enforces trusted Otto name and department instead of a computer login name', async () => {
+    const out = path.join(tmpDir, 'trusted-identity.docx');
+    let generatedMarkdown = '';
+    let docWriterScript = '';
+    const runner: DocumentCommandRunner = vi.fn(async (_file, args) => {
+      docWriterScript = String(args[0]);
+      generatedMarkdown = fs.readFileSync(String(args[1]), 'utf8');
+      fs.writeFileSync(out, Buffer.from('PK fake docx'));
+    });
+    const docxTool = new GenerateDocumentTool(
+      createMockConfig({
+        getDocumentIdentity: () => ({
+          name: '林一',
+          department: '产品与研发部',
+        }),
+      }),
+      new ChromeHtmlToImageRenderer(null),
+      runner,
+      vi.fn(async () => null),
+      vi.fn(() => ({
+        executable: '/bundled/python3',
+        source: 'bundled',
+        pythonSitePackages: '/bundled/site-packages',
+      })),
+    );
+
+    const result = await docxTool.execute(
+      {
+        content: '## 正文\n\n正式内容',
+        format: 'report',
+        output_format: 'docx',
+        title: '受信署名测试',
+        author: 'mac-login-name',
+        output_path: out,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.llmContent).toContain('generate_document OK');
+    expect(generatedMarkdown).toContain('author: "林一"');
+    expect(generatedMarkdown).toContain('department: "产品与研发部"');
+    expect(generatedMarkdown).toContain('signature_unit: "产品与研发部 · 林一"');
+    expect(generatedMarkdown).not.toContain('mac-login-name');
+    expect(runner).toHaveBeenCalledWith(
+      '/bundled/python3',
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OTTO_DOCUMENT_AUTHOR: '林一',
+          OTTO_DOCUMENT_DEPARTMENT: '产品与研发部',
+        }),
+      }),
+    );
+    const writerSource = fs.readFileSync(docWriterScript, 'utf8');
+    expect(writerSource).toContain(
+      'self.doc.core_properties.last_modified_by=self.m.get("author","")',
+    );
+    expect(writerSource).toContain('apply_trusted_identity(meta)');
+    expect(writerSource).toContain('OTTO_DOCUMENT_AUTHOR');
+    expect(writerSource).toContain('OTTO_DOCUMENT_DEPARTMENT');
+    expect(writerSource).toContain('meta.pop(key, None)');
+    expect(writerSource.match(/self\.sig\(\)/g)).toHaveLength(1);
   });
 
   // --- Doctor preflight: engine binaries checked BEFORE rendering ---

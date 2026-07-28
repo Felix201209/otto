@@ -20,6 +20,7 @@ import { AtoaConsultDialog } from './AtoaConsultDialog.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
 
 const ORGANIZATION_REFRESH_MS = 10_000;
+const DIRECT_CHAT_CASCADE_PX = 28;
 
 export interface EnterpriseDirectChatOpenRequest {
   peerAccountId: string;
@@ -53,7 +54,7 @@ export function OrganizationTree({
   const [orgError, setOrgError] = useState<string | null>(null);
   const [orgSyncedAt, setOrgSyncedAt] = useState<Date | null>(null);
   const [manualRefreshRequest, setManualRefreshRequest] = useState(0);
-  const [chatMember, setChatMember] = useState<EnterpriseOrganizationView['members'][number] | null>(null);
+  const [chatMembers, setChatMembers] = useState<EnterpriseOrganizationView['members']>([]);
   const handledDirectChatOpenRequest = useRef(0);
   const hasLocalEnterpriseWorkspace = workspace?.context.edition === 'enterprise';
   const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
@@ -75,8 +76,23 @@ export function OrganizationTree({
   }, [enterpriseAccount?.id, orgView?.members]);
   const openDirectChat = useCallback((member: EnterpriseOrganizationView['members'][number]): void => {
     onMessageRead?.(member.id);
-    setChatMember(member);
+    setChatMembers((current) => [
+      ...current.filter((candidate) => candidate.id !== member.id),
+      member,
+    ]);
   }, [onMessageRead]);
+  const activateDirectChat = useCallback((memberId: string): void => {
+    setChatMembers((current) => {
+      const activeIndex = current.findIndex((candidate) => candidate.id === memberId);
+      if (activeIndex < 0 || activeIndex === current.length - 1) return current;
+      const activeMember = current[activeIndex]!;
+      return [
+        ...current.slice(0, activeIndex),
+        ...current.slice(activeIndex + 1),
+        activeMember,
+      ];
+    });
+  }, []);
   const positionById = useMemo(
     () => new Map(organization?.positions.map((item) => [item.id, item]) ?? []),
     [organization?.positions],
@@ -256,16 +272,32 @@ export function OrganizationTree({
           )}
         </div>
       ) : null}
-      {chatMember ? (
+      {chatMembers.map((member, index) => (
         <DirectMessagePanel
-          member={chatMember}
+          key={member.id}
+          member={member}
           currentAccount={enterpriseAccount}
           schedules={schedules}
-          onClose={() => setChatMember(null)}
+          initialPosition={directChatInitialPosition(index)}
+          stackOrder={50 + index}
+          onActivate={() => activateDirectChat(member.id)}
+          onMessageRead={onMessageRead}
+          onClose={() => setChatMembers((current) => (
+            current.filter((candidate) => candidate.id !== member.id)
+          ))}
         />
-      ) : null}
+      ))}
     </section>
   );
+}
+
+function directChatInitialPosition(index: number): { left: number; top: number } {
+  const cascade = (index % 7) * DIRECT_CHAT_CASCADE_PX;
+  const compact = typeof window !== 'undefined' && window.innerWidth <= 760;
+  return {
+    left: (compact ? 12 : 232) + cascade,
+    top: (compact ? 12 : 48) + cascade,
+  };
 }
 
 function OrganizationPresenceSummary({
@@ -547,11 +579,19 @@ function DirectMessagePanel({
   member,
   currentAccount,
   schedules,
+  initialPosition,
+  stackOrder,
+  onActivate,
+  onMessageRead,
   onClose,
 }: {
   member: EnterpriseOrganizationView['members'][number];
   currentAccount?: EnterpriseAccount;
   schedules: readonly ScheduleItemInfo[];
+  initialPosition: { left: number; top: number };
+  stackOrder: number;
+  onActivate: () => void;
+  onMessageRead?: (peerAccountId: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
@@ -566,12 +606,28 @@ function DirectMessagePanel({
   const [askingPeerOtto, setAskingPeerOtto] = useState(false);
   const [collaborationMenuOpen, setCollaborationMenuOpen] = useState(false);
   const [consultOpen, setConsultOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+  const [position, setPosition] = useState(initialPosition);
+  const knownMessageIds = useRef<Set<string> | null>(null);
+  const scrollPending = useRef(true);
+  const messagesEnd = useRef<HTMLDivElement | null>(null);
+  const dragState = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    left: number;
+    top: number;
+  } | null>(null);
 
   useEffect(() => {
     setDraft('');
     setAttachments([]);
     setAttachmentError('');
     setError('');
+    setMessages([]);
+    knownMessageIds.current = null;
+    scrollPending.current = true;
   }, [member.id]);
 
   useEffect(() => {
@@ -580,8 +636,33 @@ function DirectMessagePanel({
       try {
         const next = await window.otto.enterpriseMessagesList(member.id);
         if (active) {
-          setMessages(next);
+          const previousIds = knownMessageIds.current;
+          const hasNewMessage = previousIds === null
+            || next.some((message) => !previousIds.has(message.id));
+          if (hasNewMessage) scrollPending.current = true;
+          setMessages((current) => {
+            const unchanged = current.length === next.length
+              && current.every((message, index) => {
+                const candidate = next[index];
+                return candidate
+                  && message.id === candidate.id
+                  && message.content === candidate.content
+                  && message.readAt === candidate.readAt
+                  && message.createdAt === candidate.createdAt
+                  && (message.attachments?.length ?? 0) === (candidate.attachments?.length ?? 0);
+              });
+            return unchanged ? current : next;
+          });
           setError('');
+          knownMessageIds.current = new Set(next.map((message) => message.id));
+          if (
+            previousIds
+            && next.some((message) => (
+              message.senderAccountId === member.id && !previousIds.has(message.id)
+            ))
+          ) {
+            onMessageRead?.(member.id);
+          }
         }
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : String(reason));
@@ -593,7 +674,13 @@ function DirectMessagePanel({
       active = false;
       window.clearInterval(timer);
     };
-  }, [member.id]);
+  }, [member.id, onMessageRead]);
+
+  useEffect(() => {
+    if (messages.length === 0 || !scrollPending.current) return;
+    scrollPending.current = false;
+    messagesEnd.current?.scrollIntoView?.({ block: 'end' });
+  }, [messages]);
 
   const appendAttachments = (
     candidates: readonly EnterpriseDirectMessageAttachmentUpload[],
@@ -710,6 +797,7 @@ function DirectMessagePanel({
         answer,
       ].join('\n');
       const message = await window.otto.enterpriseMessageSend(member.id, content);
+      scrollPending.current = true;
       setMessages((current) => [...current, message]);
       setDraft('');
       setError('');
@@ -726,6 +814,7 @@ function DirectMessagePanel({
     setAskingPeerOtto(true);
     try {
       const message = await window.otto.enterpriseMessageSend(member.id, content);
+      scrollPending.current = true;
       setMessages((current) => [...current, message]);
       setDraft('');
       setError('');
@@ -757,6 +846,7 @@ function DirectMessagePanel({
       const message = attachments.length > 0
         ? await window.otto.enterpriseMessageSend(member.id, content, attachments)
         : await window.otto.enterpriseMessageSend(member.id, content);
+      scrollPending.current = true;
       setMessages((current) => [...current, message]);
       setDraft('');
       setAttachments([]);
@@ -774,10 +864,71 @@ function DirectMessagePanel({
   const canSend = (draft.trim().length > 0 || attachments.length > 0)
     && !sending
     && !attaching;
+  const panelClassName = [
+    'otto-direct-chat',
+    minimized ? 'is-minimized' : '',
+    maximized ? 'is-maximized' : '',
+  ].filter(Boolean).join(' ');
+
+  const beginDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    if (
+      event.button !== 0
+      || maximized
+      || (event.target as Element).closest('button')
+    ) return;
+    dragState.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      left: position.left,
+      top: position.top,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const continueDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    const drag = dragState.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const nextLeft = drag.left + event.clientX - drag.clientX;
+    const nextTop = drag.top + event.clientY - drag.clientY;
+    setPosition({
+      left: Math.max(0, Math.min(nextLeft, Math.max(0, window.innerWidth - 160))),
+      top: Math.max(0, Math.min(nextTop, Math.max(0, window.innerHeight - 48))),
+    });
+  };
+
+  const endDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    if (dragState.current?.pointerId !== event.pointerId) return;
+    dragState.current = null;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
 
   return (
-    <div className="otto-direct-chat" role="dialog" aria-label={'与 ' + member.name + ' 聊天'}>
-      <header className="otto-direct-chat__header">
+    <div
+      className={panelClassName}
+      role="dialog"
+      aria-label={'与 ' + member.name + ' 聊天'}
+      style={maximized ? { zIndex: stackOrder } : {
+        left: position.left,
+        top: position.top,
+        zIndex: stackOrder,
+      }}
+      onPointerDownCapture={onActivate}
+    >
+      <header
+        className="otto-direct-chat__header"
+        onPointerDown={beginDrag}
+        onPointerMove={continueDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={(event) => {
+          if ((event.target as Element).closest('button')) return;
+          setMinimized(false);
+          setMaximized((value) => !value);
+        }}
+      >
         <div className="otto-direct-chat__identity">
           <div className="otto-direct-chat__avatar" aria-hidden="true">{memberInitials(member.name)}</div>
           <div className="otto-direct-chat__titleblock">
@@ -787,6 +938,30 @@ function DirectMessagePanel({
         </div>
         <div className="otto-direct-chat__header-actions">
           <span className={'otto-direct-chat__presence' + (member.ottoOnline ? ' is-online' : '')}>{presenceLabel}</span>
+          <button
+            type="button"
+            className="otto-direct-chat__icon"
+            onClick={() => {
+              setMaximized(false);
+              setMinimized((value) => !value);
+            }}
+            aria-label={minimized ? '展开聊天' : '最小化聊天'}
+            title={minimized ? '展开聊天' : '最小化聊天'}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="otto-direct-chat__icon"
+            onClick={() => {
+              setMinimized(false);
+              setMaximized((value) => !value);
+            }}
+            aria-label={maximized ? '还原聊天' : '最大化聊天'}
+            title={maximized ? '还原聊天' : '最大化聊天'}
+          >
+            {maximized ? '❐' : '□'}
+          </button>
           <button
             type="button"
             className="otto-direct-chat__icon"
@@ -880,6 +1055,7 @@ function DirectMessagePanel({
             </article>
           );
         })}
+        <div ref={messagesEnd} className="otto-direct-chat__messages-end" aria-hidden="true" />
       </div>
       {error ? <div className="otto-direct-chat__error" role="alert">{error}</div> : null}
       <form

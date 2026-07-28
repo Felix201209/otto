@@ -117,6 +117,21 @@ describe('Server Config (config.ts)', () => {
     vi.clearAllMocks();
   });
 
+  it('保存并只读暴露文档署名身份', () => {
+    const config = new Config({
+      ...baseParams,
+      documentIdentity: {
+        name: '林一',
+        department: '产品与研发部',
+      },
+    });
+
+    expect(config.getDocumentIdentity()).toEqual({
+      name: '林一',
+      department: '产品与研发部',
+    });
+  });
+
   describe('initialize', () => {
     it('should not throw an error if checkpointing is enabled and GitService fails', async () => {
       const gitError = new Error('Git is not installed');

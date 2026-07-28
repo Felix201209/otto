@@ -22,6 +22,52 @@ export interface ParkResourceRepositoryStore {
   db(): Database;
   createMeetingRoomId(): string;
   createMeetingBookingId(): string;
+  now?(): Date;
+}
+
+const PARK_TIME_ZONE = 'Asia/Shanghai';
+const PARK_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(
+  'en-CA-u-ca-gregory-nu-latn',
+  {
+    timeZone: PARK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  },
+);
+
+interface ParkDateTimeParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+function parkDateTimeParts(date: Date): ParkDateTimeParts {
+  const parts = Object.fromEntries(
+    PARK_DATE_TIME_FORMATTER.formatToParts(date)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)]),
+  ) as Record<string, number>;
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second,
+  };
+}
+
+function parkISODate(date: Date): string {
+  const { year, month, day } = parkDateTimeParts(date);
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 export function createParkResourceRepository(
@@ -97,36 +143,33 @@ function parkMeetingRoomView(row: ParkMeetingRoomRow): ParkMeetingRoomView {
   };
 }
 
-function localISODate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function futureDateRange(days = 30): {
+function futureDateRange(days = 31, referenceTime = new Date()): {
   from: string;
   to: string;
   dates: string[];
 } {
-  const start = new Date();
-  start.setHours(12, 0, 0, 0);
-  start.setDate(start.getDate() + 1);
+  const { year, month, day } = parkDateTimeParts(referenceTime);
   const dates: string[] = [];
   for (let index = 0; index < days; index += 1) {
-    const current = new Date(start);
-    current.setDate(start.getDate() + index);
-    dates.push(localISODate(current));
+    const current = new Date(Date.UTC(year, month - 1, day + index));
+    dates.push([
+      String(current.getUTCFullYear()).padStart(4, '0'),
+      String(current.getUTCMonth() + 1).padStart(2, '0'),
+      String(current.getUTCDate()).padStart(2, '0'),
+    ].join('-'));
   }
   return { from: dates[0]!, to: dates.at(-1)!, dates };
 }
 
-function assertFutureMeetingDate(value: string): string {
+function assertBookableMeetingDate(
+  value: string,
+  referenceTime = new Date(),
+): string {
   const date = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
     throw new Error('请选择有效的预约日期');
-  const { from } = futureDateRange(1);
-  if (date < from) throw new Error('会议室只能预约未来日期');
+  const { from } = futureDateRange(1, referenceTime);
+  if (date < from) throw new Error('会议室只能预约今天及未来日期');
   return date;
 }
 
@@ -173,11 +216,22 @@ function listParkMeetingSlots(
 ): ParkMeetingSlotView[] {
   requireActiveParkResourceOwner(organizationId);
   const rooms = listParkMeetingRooms(organizationId);
-  const defaults = futureDateRange();
-  const from = fromDate ? assertFutureMeetingDate(fromDate) : defaults.from;
-  const to = toDate ? assertFutureMeetingDate(toDate) : defaults.to;
+  const referenceTime = store.now?.() ?? new Date();
+  const defaults = futureDateRange(31, referenceTime);
+  const from = fromDate
+    ? assertBookableMeetingDate(fromDate, referenceTime)
+    : defaults.from;
+  const to = toDate
+    ? assertBookableMeetingDate(toDate, referenceTime)
+    : defaults.to;
   if (to < from) throw new Error('预约结束日期不能早于开始日期');
   const dates = defaults.dates.filter((date) => date >= from && date <= to);
+  const today = parkISODate(referenceTime);
+  const parkNow = parkDateTimeParts(referenceTime);
+  const currentMinute = parkNow.hour * 60
+    + parkNow.minute
+    + parkNow.second / 60
+    + referenceTime.getMilliseconds() / 60_000;
   const legacyRows = getDB().prepare(
     `SELECT meeting_room_id, use_date, slot_key, enabled, booked_ticket_id, updated_at
      FROM park_meeting_slots
@@ -233,7 +287,9 @@ function listParkMeetingSlots(
         && item.use_date === date
         && item.slot_key === slot.key
       ));
-      const status = booking || legacy?.booked_ticket_id
+      const status = date === today && slot.startMinutes < currentMinute
+        ? 'closed'
+        : booking || legacy?.booked_ticket_id
         ? 'booked'
         : override?.enabled === 0 || legacy?.enabled === 0
           ? 'closed'
@@ -260,7 +316,10 @@ function setParkMeetingSlotAvailability(
     (item) => item.id === input.roomId,
   );
   if (!room) throw new Error('会议室不存在');
-  const date = assertFutureMeetingDate(input.date);
+  const date = assertBookableMeetingDate(
+    input.date,
+    store.now?.() ?? new Date(),
+  );
   const legacyPeriod = LEGACY_MEETING_PERIODS[
     input.slotKey as keyof typeof LEGACY_MEETING_PERIODS
   ];
@@ -318,7 +377,10 @@ function reserveParkMeetingPeriodInTransaction(
   organizationId: string,
   input: ParkMeetingPeriodReservationInput,
 ): ParkMeetingSlotView[] {
-  const date = assertFutureMeetingDate(input.date);
+  const date = assertBookableMeetingDate(
+    input.date,
+    store.now?.() ?? new Date(),
+  );
   const period = assertMeetingPeriod(input.startTime, input.endTime);
   const room = listParkMeetingRooms(organizationId).find((item) => item.id === input.roomId);
   if (!room) throw new Error('会议室不存在');
@@ -329,8 +391,14 @@ function reserveParkMeetingPeriodInTransaction(
       && slotStart < period.endMinutes;
   });
   const expectedCount = (period.endMinutes - period.startMinutes) / PARK_MEETING_SLOT_MINUTES;
-  if (periodSlots.length !== expectedCount || periodSlots.some((slot) => slot.status !== 'available')) {
-    throw new Error('所选时间内包含已预约或未开放时段，请重新选择绿色时段');
+  if (periodSlots.length !== expectedCount) {
+    throw new Error('所选时间包含未开放时段，请重新选择绿色时段');
+  }
+  if (periodSlots.some((slot) => slot.status === 'booked')) {
+    throw new Error('所选时间已被预约，请重新选择绿色时段');
+  }
+  if (periodSlots.some((slot) => slot.status !== 'available')) {
+    throw new Error('所选时间包含未开放时段，请重新选择绿色时段');
   }
   getDB().prepare(
     `INSERT INTO park_meeting_bookings
@@ -449,7 +517,7 @@ function ensureDefaultParkMeetingRoom(organizationId: string): void {
       '位置待园区管理员补充',
       room.capacity,
       JSON.stringify(['投屏', '视频会议', '白板']),
-      '工作日 09:00–18:00',
+      '每日 09:00–23:00',
     );
   }
 }

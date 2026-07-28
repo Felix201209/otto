@@ -159,7 +159,7 @@ export function Sidebar({
 
       <div className="otto-sidebar__brandrow">
         <span className="otto-brand">
-          otto
+          Otto
           <IconSparkle size={12} className="otto-brand__sparkle" />
         </span>
         {unreadCount > 0 ? (
