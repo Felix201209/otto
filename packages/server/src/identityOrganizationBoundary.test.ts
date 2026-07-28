@@ -109,6 +109,9 @@ describe('identity_organization invitation kernel', () => {
     expect(
       identityOrganization.IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     ).toMatchObject({ id: 'identity_organization_structure' });
+    expect(
+      identityOrganization.IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
+    ).toMatchObject({ id: 'identity_organization_root' });
     expect(identityOrganization.backfillLegacyOrganizationStructure).toBeTypeOf(
       'function',
     );
@@ -217,6 +220,20 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS organization_positions',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organizations',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_features',
+    );
+    expect(databaseFacade).not.toContain('idx_organizations_status');
+    expect(databaseFacade).not.toContain('idx_organizations_park');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('organizations', 'park_id')",
+    );
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?MODEL_GATEWAY_SCHEMA_CONTRIBUTOR/,
     );
     expect(databaseFacade).not.toContain('idx_organization_departments_org');
     expect(databaseFacade).not.toContain('idx_organization_positions_org');

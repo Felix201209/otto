@@ -21,6 +21,7 @@ export * from './organizationStructureRepository.js';
 export * from './organizationStructureSchema.js';
 export * from './organizationProvisioningFacade.js';
 export * from './organizationProvisioningRepository.js';
+export * from './organizationSchema.js';
 export * from './accountDirectoryFacade.js';
 export * from './accountDirectoryRepository.js';
 export * from './accountLifecycleFacade.js';

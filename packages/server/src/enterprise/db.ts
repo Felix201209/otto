@@ -99,6 +99,7 @@ import {
   createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
   createOrganizationStructureFacade,
+  IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
   normalizeAssignmentName,
   normalizeOrganizationSlug,
@@ -408,26 +409,6 @@ function backfillParkApplicationNumbers(d: Database): void {
 
 function initSchema(d: Database): void {
   d.exec(`
-    CREATE TABLE IF NOT EXISTS organizations (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
-      invite_secret TEXT NOT NULL,
-      park_id TEXT,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS organization_features (
-      organization_id TEXT NOT NULL,
-      feature_key TEXT NOT NULL,
-      enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (organization_id, feature_key),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS parks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -818,7 +799,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
     CREATE INDEX IF NOT EXISTS idx_park_invites_active
       ON park_invites(park_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_active
@@ -859,6 +839,7 @@ function initSchema(d: Database): void {
   `);
 
   applyDatabaseSchemaContributors(d, [
+    IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
     MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
     COLLABORATION_SCHEMA_CONTRIBUTOR,
     createEnterpriseKnowledgeSchemaContributor({
@@ -1014,7 +995,6 @@ function initSchema(d: Database): void {
   ensureTextColumn('accounts', 'avatar_url');
   ensureTextColumn('accounts', 'account_type');
   ensureTextColumn('accounts', 'deleted_at');
-  ensureTextColumn('organizations', 'park_id');
   ensureTextColumn('it_tickets', 'park_id');
   d.exec(
     "UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL",
@@ -1041,7 +1021,6 @@ function initSchema(d: Database): void {
   );
   d.exec(`
     CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
-    CREATE INDEX IF NOT EXISTS idx_organizations_park ON organizations(park_id);
     CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
       ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
