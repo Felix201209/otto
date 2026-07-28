@@ -19,7 +19,10 @@ import {
   createDirectMessageFacade,
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
-import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
+import {
+  createEnterpriseKnowledgeFacade,
+  createEnterpriseKnowledgeSchemaContributor,
+} from '../modules/enterprise_knowledge/index.js';
 import { createFeishuAutoReplyFacade } from '../modules/integration_adapters/index.js';
 import {
   createModelUsageFacade,
@@ -605,20 +608,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE TABLE IF NOT EXISTS knowledge (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      source_id TEXT,
-      department TEXT,
-      category TEXT,
-      content TEXT NOT NULL,
-      contributor TEXT,
-      confidence REAL DEFAULT 0.5,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
     CREATE TABLE IF NOT EXISTS invite_codes (
       code TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -952,7 +941,6 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_organization_invites_active
       ON organization_invites(organization_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_tasks_type ON task_logs(task_type);
-    CREATE INDEX IF NOT EXISTS idx_knowledge_dept ON knowledge(department);
     CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
     CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON account_tags(tag, account_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
@@ -997,6 +985,9 @@ function initSchema(d: Database): void {
   applyDatabaseSchemaContributors(d, [
     MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
     COLLABORATION_SCHEMA_CONTRIBUTOR,
+    createEnterpriseKnowledgeSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
   ]);
 
   const organizationColumns = d
@@ -1047,7 +1038,6 @@ function initSchema(d: Database): void {
   for (const table of [
     'employees',
     'task_logs',
-    'knowledge',
     'invite_codes',
     'audit_logs',
     'accounts',
@@ -1113,14 +1103,6 @@ function initSchema(d: Database): void {
       WHERE park_id IS NOT NULL AND application_number IS NOT NULL;
   `);
 
-  // 自动知识捕获需要跨进程重试幂等。必须在旧库补 organization_id 之后建组织级索引，
-  // 否则最早期的单组织 knowledge 表会因缺少该列而无法启动迁移。
-  const knowledgeColumns = d
-    .prepare('PRAGMA table_info(knowledge)')
-    .all() as Array<{ name: string }>;
-  if (!knowledgeColumns.some((column) => column.name === 'source_id')) {
-    d.exec('ALTER TABLE knowledge ADD COLUMN source_id TEXT');
-  }
   const ensureTextColumn = (table: string, column: string): void => {
     const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
       name: string;
@@ -1176,16 +1158,10 @@ function initSchema(d: Database): void {
     'INTEGER NOT NULL DEFAULT 0',
   );
   d.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_source_unique
-      ON knowledge(organization_id, source_id) WHERE source_id IS NOT NULL;
-  `);
-
-  d.exec(`
     CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_organizations_park ON organizations(park_id);
     CREATE INDEX IF NOT EXISTS idx_employees_organization ON employees(organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_tasks_organization ON task_logs(organization_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_knowledge_organization ON knowledge(organization_id, department);
     CREATE INDEX IF NOT EXISTS idx_audit_organization ON audit_logs(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
       ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;

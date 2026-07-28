@@ -4,3 +4,4 @@
 
 export * from './knowledgeFacade.js';
 export * from './knowledgeRepository.js';
+export * from './enterpriseKnowledgeSchema.js';

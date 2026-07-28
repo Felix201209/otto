@@ -19,6 +19,9 @@ const legacyRepositoryPath = path.join(
 
 describe('enterprise knowledge module boundary', () => {
   it('publishes repository and facade capabilities through one entrypoint', () => {
+    expect(
+      enterpriseKnowledge.createEnterpriseKnowledgeSchemaContributor,
+    ).toBeTypeOf('function');
     expect(enterpriseKnowledge.createEnterpriseKnowledgeFacade).toBeTypeOf(
       'function',
     );
@@ -65,5 +68,14 @@ describe('enterprise knowledge module boundary', () => {
     expect(databaseFacade).not.toContain("from './knowledgeRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO knowledge');
     expect(databaseFacade).not.toContain('content LIKE ?');
+    expect(databaseFacade).toContain(
+      'createEnterpriseKnowledgeSchemaContributor',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS knowledge',
+    );
+    expect(databaseFacade).not.toContain(
+      "ALTER TABLE knowledge ADD COLUMN source_id TEXT",
+    );
   });
 });
