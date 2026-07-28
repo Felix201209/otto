@@ -17,7 +17,10 @@ import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge
 import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
+  createParkServiceConfigurationFacade,
   type ParkInviteView,
+  type ParkServiceSpecialistView,
+  type ParkServiceView,
   type ParkTenantProfileView,
   type ParkView,
 } from '../modules/park_services/index.js';
@@ -69,13 +72,6 @@ import {
   submitParkDataStatisticsDraft as submitParkDataStatisticsDraftInRepository,
 } from './parkStatisticsRepository.js';
 import {
-  listParkServices as listParkServicesFromRepository,
-  listParkServiceSpecialists as listParkServiceSpecialistsFromRepository,
-  removeParkServiceSpecialist as removeParkServiceSpecialistFromRepository,
-  setParkServiceSpecialist as setParkServiceSpecialistInRepository,
-  updateParkService as updateParkServiceInRepository,
-} from './parkServiceRepository.js';
-import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
@@ -107,10 +103,6 @@ import {
   type SmsChallengeVerifyResult as IdentitySmsChallengeVerifyResult,
   type SmsRegistrationVerifyResult as IdentitySmsRegistrationVerifyResult,
 } from '../modules/identity_organization/index.js';
-import type {
-  ParkServiceSpecialistView,
-  ParkServiceView,
-} from './parkServiceTypes.js';
 import type {
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
@@ -145,6 +137,8 @@ export type {
 } from '../modules/enterprise_knowledge/index.js';
 export type {
   ParkInviteView,
+  ParkServiceSpecialistView,
+  ParkServiceView,
   ParkTenantProfileView,
   ParkView,
 } from '../modules/park_services/index.js';
@@ -153,10 +147,6 @@ export type {
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
 } from './parkStatisticsTypes.js';
-export type {
-  ParkServiceSpecialistView,
-  ParkServiceView,
-} from './parkServiceTypes.js';
 export { getParkServiceStatistics } from './parkUsageStatisticsRepository.js';
 export type {
   ParkServiceStatisticsView,
@@ -2801,9 +2791,11 @@ const parkServiceStore = {
   getPark,
   normalizeOptionalText,
 };
+const parkServiceConfiguration =
+  createParkServiceConfigurationFacade(parkServiceStore);
 
 export function listParkServices(parkId: string): ParkServiceView[] {
-  return listParkServicesFromRepository(parkServiceStore, parkId);
+  return parkServiceConfiguration.listServices(parkId);
 }
 
 export function updateParkService(input: {
@@ -2814,7 +2806,7 @@ export function updateParkService(input: {
   enabled?: boolean;
   config?: Record<string, string>;
 }): ParkServiceView {
-  return updateParkServiceInRepository(parkServiceStore, input);
+  return parkServiceConfiguration.updateService(input);
 }
 
 export function getPark(id: string): ParkView | null {
@@ -3054,7 +3046,7 @@ export function joinOrganizationToPark(input: {
 export function listParkServiceSpecialists(
   parkId: string,
 ): ParkServiceSpecialistView[] {
-  return listParkServiceSpecialistsFromRepository(parkServiceStore, parkId);
+  return parkServiceConfiguration.listSpecialists(parkId);
 }
 
 export function setParkServiceSpecialist(input: {
@@ -3063,7 +3055,7 @@ export function setParkServiceSpecialist(input: {
   serviceId: string;
   accountId: string;
 }): ParkServiceSpecialistView {
-  return setParkServiceSpecialistInRepository(parkServiceStore, input);
+  return parkServiceConfiguration.setSpecialist(input);
 }
 
 export function removeParkServiceSpecialist(input: {
@@ -3072,7 +3064,7 @@ export function removeParkServiceSpecialist(input: {
   serviceId: string;
   accountId: string;
 }): void {
-  removeParkServiceSpecialistFromRepository(parkServiceStore, input);
+  parkServiceConfiguration.removeSpecialist(input);
 }
 
 export {

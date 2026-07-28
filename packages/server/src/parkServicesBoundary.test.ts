@@ -13,7 +13,7 @@ const moduleDir = path.join(sourceRoot, 'modules', 'park_services');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('park services module boundary', () => {
-  it('publishes membership repository and facade capabilities through one entrypoint', () => {
+  it('publishes lifecycle, membership, and service configuration through one entrypoint', () => {
     expect(parkServices.createParkLifecycleFacade).toBeTypeOf('function');
     expect(parkServices.createParkInRepository).toBeTypeOf('function');
     expect(parkServices.createParkAsPlatformInRepository).toBeTypeOf(
@@ -28,6 +28,16 @@ describe('park services module boundary', () => {
       'function',
     );
     expect(parkServices.updateParkTenantProfileInRepository).toBeTypeOf(
+      'function',
+    );
+    expect(parkServices.createParkServiceConfigurationFacade).toBeTypeOf(
+      'function',
+    );
+    expect(parkServices.updateParkServiceInRepository).toBeTypeOf('function');
+    expect(parkServices.setParkServiceSpecialistInRepository).toBeTypeOf(
+      'function',
+    );
+    expect(parkServices.removeParkServiceSpecialistInRepository).toBeTypeOf(
       'function',
     );
   });
@@ -61,7 +71,7 @@ describe('park services module boundary', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('removes the legacy repository and keeps membership SQL behind the facade', () => {
+  it('removes legacy repositories and keeps owned write SQL behind facades', () => {
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
     expect(
       fs.existsSync(
@@ -71,12 +81,29 @@ describe('park services module boundary', () => {
     expect(
       fs.existsSync(path.join(sourceRoot, 'enterprise', 'parkInviteTypes.ts')),
     ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(sourceRoot, 'enterprise', 'parkServiceRepository.ts'),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(sourceRoot, 'enterprise', 'parkServiceTypes.ts')),
+    ).toBe(false);
     expect(databaseFacade).toContain('createParkMembershipFacade');
     expect(databaseFacade).toContain('createParkLifecycleFacade');
+    expect(databaseFacade).toContain('createParkServiceConfigurationFacade');
     expect(databaseFacade).not.toContain("from './parkInviteRepository.js'");
+    expect(databaseFacade).not.toContain("from './parkServiceRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO park_invites');
     expect(databaseFacade).not.toContain('INSERT INTO park_tenant_profiles');
     expect(databaseFacade).not.toContain('INSERT INTO parks');
+    expect(databaseFacade).not.toContain('UPDATE park_services SET');
+    expect(databaseFacade).not.toContain(
+      'INSERT OR IGNORE INTO park_service_specialists',
+    );
+    expect(databaseFacade).not.toContain(
+      'DELETE FROM park_service_specialists',
+    );
     expect(databaseFacade).not.toContain('function toParkView');
   });
 });
