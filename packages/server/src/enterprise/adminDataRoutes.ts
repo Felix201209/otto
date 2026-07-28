@@ -25,6 +25,10 @@ export function handleAdminDataRoute({
   if (path === '/enterprise/report' && method === 'GET') {
     const period = parseInt(url.searchParams.get('period') || '30', 10);
     const department = url.searchParams.get('department') || undefined;
+    if (department && department.trim().length > 160) {
+      sendJSON(res, 400, { error: 'department 不能超过 160 个字符' });
+      return true;
+    }
     sendJSON(
       res,
       200,

@@ -3883,6 +3883,21 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(crossTenant.status).toBe(404);
 
+    const invalidTask = await fetch(`${base}/enterprise/task`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: 'alpha-worker',
+        task_type: 'invalid-duration',
+        duration_min: -1,
+      }),
+    });
+    expect(invalidTask.status).toBe(400);
+    expect(await invalidTask.json()).toEqual({
+      error: 'duration_min 必须是非负数字',
+    });
+    expect(db.getReport(30, undefined, alpha.id).totalTasks).toBe(0);
+
     const ownTask = await fetch(`${base}/enterprise/task`, {
       method: 'POST',
       headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
@@ -4020,6 +4035,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       content: '关闭后不得泄露的知识',
     });
     db.logTask({
+      organizationId: organization.id,
       employee_id: member.employeeId!,
       task_type: '部署检查',
       result: '任务历史仍应保留',

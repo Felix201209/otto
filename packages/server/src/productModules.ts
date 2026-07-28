@@ -74,7 +74,7 @@ export const PRODUCT_MODULES = [
     description: 'Owns personal memory, worklogs, habit learning and account-scoped restoration.',
     layer: 'business',
     runtimeSurfaces: ['core', 'server', 'desktop'],
-    dependencies: ['agent_runtime', 'data_platform'],
+    dependencies: ['agent_runtime', 'identity_organization', 'data_platform'],
     dataOwnership: ['personal memory', 'worklogs', 'auto skills', 'account sync snapshots'],
     licenseCapabilities: [],
     updateComponents: ['personal_memory'],

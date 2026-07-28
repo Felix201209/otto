@@ -2,6 +2,16 @@ import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as db from './db.js';
 
+function worklogInputMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'task_type required') return message;
+  if (message === 'duration_min 必须是非负数字') return message;
+  if (/^(?:task_type|context|result|duration_min|tokens_used|cost_cny) 不能超过 /.test(message)) {
+    return message;
+  }
+  return null;
+}
+
 export type MemberWorkflowAdminPrincipal =
   | { kind: 'system'; organizationId: string }
   | { kind: 'account'; organizationId: string; account: db.AccountView };
@@ -124,15 +134,23 @@ export async function handleMemberWorkflowRoute({
       sendJSON(res, 404, { error: 'Employee not found' });
       return true;
     }
-    db.logTask({
-      employee_id,
-      task_type,
-      context: body.context as string | undefined,
-      result: body.result as string | undefined,
-      duration_min: (body.duration_min as number) || 0,
-      tokens_used: body.tokens_used as number | undefined,
-      cost_cny: body.cost_cny as number | undefined,
-    });
+    try {
+      db.logTask({
+        organizationId: memberAccount!.organizationId,
+        employee_id,
+        task_type,
+        context: body.context as string | undefined,
+        result: body.result as string | undefined,
+        duration_min: body.duration_min as number | undefined,
+        tokens_used: body.tokens_used as number | undefined,
+        cost_cny: body.cost_cny as number | undefined,
+      });
+    } catch (error) {
+      const message = worklogInputMessage(error);
+      if (!message) throw error;
+      sendJSON(res, 400, { error: message });
+      return true;
+    }
     sendJSON(res, 200, { status: 'logged' });
     return true;
   }

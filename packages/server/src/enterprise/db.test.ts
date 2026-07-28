@@ -2442,3 +2442,157 @@ describe('report 期窗与部门过滤', () => {
     expect(db.getReport(30).totalTasks).toBe(2);
   });
 });
+
+describe('企业工作日志持久化边界', () => {
+  it('非默认企业必须显式绑定租户，且不能从其他企业读取历史', async () => {
+    const db = await freshDb();
+    const organization = db.createOrganization({
+      name: '工作日志租户',
+      slug: 'worklog-tenant',
+    });
+    db.createEmployee({
+      id: 'tenant-worker',
+      name: '租户员工',
+      department: '研发部',
+      organizationId: organization.id,
+    });
+
+    expect(() =>
+      db.logTask({ employee_id: 'tenant-worker', task_type: '越界写入' }),
+    ).toThrow('Employee not found');
+    expect(
+      db.getTaskHistory('tenant-worker', 20, db.DEFAULT_ORGANIZATION_ID),
+    ).toEqual([]);
+
+    db.logTask({
+      organizationId: organization.id,
+      employee_id: 'tenant-worker',
+      task_type: '正确写入',
+      duration_min: 5,
+    });
+    expect(db.getReport(30, undefined, organization.id).totalTasks).toBe(1);
+    expect(db.getReport(30).totalTasks).toBe(0);
+
+    db.getDB()
+      .prepare('UPDATE organizations SET status = ? WHERE id = ?')
+      .run('disabled', organization.id);
+    expect(() =>
+      db.logTask({
+        organizationId: organization.id,
+        employee_id: 'tenant-worker',
+        task_type: '停用企业写入',
+      }),
+    ).toThrow('Organization is disabled');
+    expect(() => db.getReport(30, undefined, organization.id)).toThrow(
+      'Organization is disabled',
+    );
+  });
+
+  it('离职员工不能新增日志，但历史仍进入企业和原部门报表', async () => {
+    const db = await freshDb();
+    db.createEmployee({
+      id: 'offboarded-worker',
+      name: '离职员工',
+      department: '交付部',
+    });
+    db.logTask({
+      employee_id: 'offboarded-worker',
+      task_type: '交付任务',
+      duration_min: 20,
+    });
+    expect(db.offboardEmployee('offboarded-worker')).toBe(true);
+
+    expect(() =>
+      db.logTask({
+        employee_id: 'offboarded-worker',
+        task_type: '离职后任务',
+      }),
+    ).toThrow('Employee not found');
+    expect(db.getTaskHistory('offboarded-worker')).toHaveLength(1);
+    expect(db.getReport(30).totalTasks).toBe(1);
+    expect(db.getReport(30, '交付部')).toMatchObject({
+      totalTasks: 1,
+      activeEmployees: 0,
+    });
+  });
+
+  it('审计写入失败会回滚任务日志，不留下无法解释的孤儿记录', async () => {
+    const db = await freshDb();
+    db.createEmployee({ id: 'atomic-worker', name: '原子员工' });
+    db.getDB().exec(`
+      CREATE TRIGGER fail_worklog_audit
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.event = 'learn'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced worklog audit failure');
+      END;
+    `);
+
+    expect(() =>
+      db.logTask({ employee_id: 'atomic-worker', task_type: '原子任务' }),
+    ).toThrow(/forced worklog audit failure/);
+    expect(
+      db.getDB().prepare('SELECT COUNT(*) AS count FROM task_logs').get(),
+    ).toMatchObject({ count: 0 });
+  });
+
+  it('严格校验文本和数值边界，并限制历史条数与报表周期', async () => {
+    const db = await freshDb();
+    db.createEmployee({ id: 'bounded-worker', name: '边界员工' });
+    const task = {
+      employee_id: 'bounded-worker',
+      task_type: '边界任务',
+      duration_min: 1,
+    };
+
+    expect(() => db.logTask({ ...task, task_type: 't'.repeat(161) })).toThrow(
+      'task_type 不能超过 160 个字符',
+    );
+    expect(() => db.logTask({ ...task, context: 'c'.repeat(20_001) })).toThrow(
+      'context 不能超过 20000 个字符',
+    );
+    expect(() => db.logTask({ ...task, result: 'r'.repeat(40_001) })).toThrow(
+      'result 不能超过 40000 个字符',
+    );
+    expect(() => db.logTask({ ...task, duration_min: -1 })).toThrow(
+      'duration_min 必须是非负数字',
+    );
+    expect(() => db.logTask({ ...task, tokens_used: 1_000_000_001 })).toThrow(
+      'tokens_used 不能超过 1000000000',
+    );
+    expect(() => db.logTask({ ...task, cost_cny: 10_000_001 })).toThrow(
+      'cost_cny 不能超过 10000000',
+    );
+
+    db.logTask(task);
+    db.logTask({ ...task, task_type: '第二项' });
+    expect(db.getTaskHistory('bounded-worker', 0)).toHaveLength(1);
+    expect(db.getTaskHistory('bounded-worker', 1_000)).toHaveLength(2);
+    expect(db.getReport(-30).period).toBe('1d');
+    expect(db.getReport(1_000).period).toBe('365d');
+  });
+
+  it('使用 SQLite datetime 比较完整时间，正确处理 30 天同日边界', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'));
+    try {
+      const db = await freshDb();
+      db.createEmployee({ id: 'time-worker', name: '时间员工' });
+      db.logTask({ employee_id: 'time-worker', task_type: '窗口内' });
+      db.logTask({ employee_id: 'time-worker', task_type: '窗口外' });
+      db.getDB()
+        .prepare('UPDATE task_logs SET created_at = ? WHERE task_type = ?')
+        .run('2026-06-16 13:00:00', '窗口内');
+      db.getDB()
+        .prepare('UPDATE task_logs SET created_at = ? WHERE task_type = ?')
+        .run('2026-06-16 11:59:59', '窗口外');
+
+      expect(db.getReport(30)).toMatchObject({
+        totalTasks: 1,
+        byType: [expect.objectContaining({ taskType: '窗口内' })],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

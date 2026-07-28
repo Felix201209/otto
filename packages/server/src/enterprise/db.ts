@@ -16,6 +16,12 @@ import {
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
 import { createModelUsageFacade } from '../modules/model_gateway/index.js';
 import {
+  createWorklogFacade,
+  ESTIMATE,
+  normalizeCostCNY,
+  normalizeTokens,
+} from '../modules/personal_intelligence/index.js';
+import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
   createParkPublicationFacade,
@@ -88,6 +94,7 @@ import {
   hashIdentitySecret,
   identitySecretMatches,
   isAcceptableAccountPassword as isAcceptableIdentityAccountPassword,
+  type EmployeeRecord,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryRow,
   type OrganizationDirectoryView,
@@ -164,56 +171,6 @@ function tokensMatch(left: string, right: string): boolean {
   } catch {
     return false;
   }
-}
-/**
- * 读环境变量里的正数，非法/缺失则回落到默认值。集中做校验，避免各处写死。
- */
-function envNum(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw == null || raw === '') return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-/**
- * 人效换算假设——**这些是估算参数，不是真实计量**。
- * 看板会显式标注「估算」，避免把估值当实测。集中在此，保证全项目口径一致，
- * 且可用环境变量覆盖（消除写死感）。看板披露文案直接引用这里的常量，不再手写数字。
- */
-export const ESTIMATE = {
-  /**
-   * 假设「同一件事纯人工做」耗时是 Otto 的几倍。默认 2（人工 2× → Otto 1×）。
-   * 可用 OTTO_ESTIMATE_MANUAL_MULT 覆盖。
-   * 真·省时 = 人工估时 − Otto 实际耗时 = ottoMinutes × (mult − 1)，不把 Otto 自己的耗时也算成节省。
-   */
-  manualTimeMultiplier: envNum('OTTO_ESTIMATE_MANUAL_MULT', 2),
-  /** 折算人力成本（元/小时）。可用 OTTO_ESTIMATE_CNY_PER_HOUR 覆盖。 */
-  cnyPerHour: envNum('OTTO_ESTIMATE_CNY_PER_HOUR', 50),
-  /** 单任务默认 token 估计（未上报真实用量时）。 */
-  defaultTokensPerTask: 2000,
-  /** 单任务默认成本估计（元）。 */
-  defaultCostPerTaskCNY: 0.028,
-  /**
-   * 「每 ¥1 token 省下多少人力」的可解释上限（封顶倍数）。
-   * 单任务成本兜底后本已一致，但为防极端稀疏数据仍爆表，加一道封顶双保险。
-   * 命中封顶时看板/返回值会标注 capped=true。可用 OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP 覆盖。
-   */
-  laborPerTokenCap: envNum('OTTO_ESTIMATE_LABOR_PER_TOKEN_CAP', 50),
-};
-
-/**
- * 成本口径归一：非正/缺失的单任务成本一律回落到默认成本估计，避免「显式上报 0」
- * 把整体成本口径拉塌，导致 laborSaved/totalCost 爆表。tokens 同理。
- * 集中在此，logTask 落库前与 report 聚合口径保持一致。
- */
-export function normalizeCostCNY(cost: unknown): number {
-  const n = typeof cost === 'number' ? cost : Number(cost);
-  return Number.isFinite(n) && n > 0 ? n : ESTIMATE.defaultCostPerTaskCNY;
-}
-
-export function normalizeTokens(tokens: unknown): number {
-  const n = typeof tokens === 'number' ? tokens : Number(tokens);
-  return Number.isFinite(n) && n > 0 ? n : ESTIMATE.defaultTokensPerTask;
 }
 
 let db: Database | null = null;
@@ -3254,7 +3211,22 @@ export type {
 // ============================================================
 // Task logging and reports
 // ============================================================
-export { getReport, getTaskHistory, logTask } from './taskReportRepository.js';
+const worklogs = createWorklogFacade<EmployeeRecord, OrganizationView>({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  getOrganization,
+  getEmployee,
+  listActiveEmployees: listEmployees,
+  audit: logAudit,
+});
+
+export const { getReport, getTaskHistory, logTask } = worklogs;
+export { ESTIMATE, normalizeCostCNY, normalizeTokens };
+export type {
+  LogWorkTaskInput,
+  WorklogRecord,
+  WorklogReport,
+} from '../modules/personal_intelligence/index.js';
 
 // ============================================================
 // Knowledge operations
