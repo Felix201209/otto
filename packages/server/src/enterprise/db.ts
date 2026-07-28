@@ -46,6 +46,7 @@ import os from 'os';
 import fs from 'fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+  createAuditLogFacade,
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
@@ -68,7 +69,6 @@ import {
   type PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
 import { buildCreditsTablesSql } from './creditsSchema.js';
-import { getAuditLogs, logAudit } from './auditRepository.js';
 import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
@@ -103,6 +103,7 @@ import {
   type SmsRegistrationVerifyResult as IdentitySmsRegistrationVerifyResult,
 } from '../modules/identity_organization/index.js';
 export type {
+  AuditLogRecord,
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
   ModuleUpdateRollout,
@@ -1557,6 +1558,13 @@ function backfillOrganizationStructure(d: Database): void {
 // Organizations and time-boxed registration invites
 // ============================================================
 
+const auditLog = createAuditLogFacade({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+});
+
+export const { getAuditLogs, logAudit } = auditLog;
+
 export type OrganizationView = OrganizationDirectoryView;
 
 const organizationDirectoryStore = { db: getDB };
@@ -2891,11 +2899,6 @@ export {
   createInviteCode,
   validateInviteCode,
 } from './inviteCodeRepository.js';
-
-// ============================================================
-// Audit
-// ============================================================
-export { getAuditLogs, logAudit } from './auditRepository.js';
 
 // ============================================================
 // Export all (for backup)

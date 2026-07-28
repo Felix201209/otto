@@ -6,31 +6,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as commercialControl from './modules/commercial_control/index.js';
+import * as legacyAuditRepository from './enterprise/auditRepository.js';
 import * as legacyDeploymentRepository from './enterprise/deploymentRepository.js';
 import * as legacyModuleUpdateManifest from './enterprise/moduleUpdateManifest.js';
 
 const enterpriseDir = path.resolve(import.meta.dirname, 'enterprise');
+const commercialControlDir = path.resolve(
+  import.meta.dirname,
+  'modules',
+  'commercial_control',
+);
 const commercialControlImport = '../modules/commercial_control/index.js';
 
 describe('commercial_control module boundary', () => {
   it('publishes deployment and module-update capabilities from one public entrypoint', () => {
     expect(commercialControl.getDeploymentId).toBeTypeOf('function');
-    expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf('function');
+    expect(commercialControl.createAuditLogFacade).toBeTypeOf('function');
+    expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.handleDeploymentRoute).toBeTypeOf('function');
     expect(commercialControl.handleModuleUpdateRoute).toBeTypeOf('function');
   });
 
   it('keeps legacy enterprise imports as thin aliases of the module implementation', () => {
-    expect(legacyDeploymentRepository.getDeploymentId)
-      .toBe(commercialControl.getDeploymentId);
-    expect(legacyModuleUpdateManifest.licenseModuleCatalog)
-      .toBe(commercialControl.licenseModuleCatalog);
+    expect(legacyDeploymentRepository.getDeploymentId).toBe(
+      commercialControl.getDeploymentId,
+    );
+    expect(legacyAuditRepository.createAuditLogFacade).toBe(
+      commercialControl.createAuditLogFacade,
+    );
+    expect(legacyModuleUpdateManifest.licenseModuleCatalog).toBe(
+      commercialControl.licenseModuleCatalog,
+    );
   });
 
   it('does not keep commercial-control implementations in the enterprise directory', () => {
     for (const file of [
       'deploymentRepository.ts',
       'deploymentTypes.ts',
+      'auditRepository.ts',
       'moduleUpdateManifest.ts',
       'moduleUpdateRepository.ts',
       'deploymentRoutes.ts',
@@ -43,7 +58,10 @@ describe('commercial_control module boundary', () => {
   });
 
   it('routes new enterprise dependencies through the module public entrypoint', () => {
-    const databaseFacade = fs.readFileSync(path.join(enterpriseDir, 'db.ts'), 'utf8');
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
     const routeDispatcher = fs.readFileSync(
       path.join(enterpriseDir, 'enterpriseRouteDispatcher.ts'),
       'utf8',
@@ -51,7 +69,18 @@ describe('commercial_control module boundary', () => {
     expect(databaseFacade).toContain(commercialControlImport);
     expect(routeDispatcher).toContain(commercialControlImport);
     expect(databaseFacade).not.toMatch(
-      /from ['"]\.\/(?:deployment|moduleUpdate)(?:Repository|Routes|Types|Manifest)\.js['"];/,
+      /from ['"]\.\/(?:audit|deployment|moduleUpdate)(?:Repository|Routes|Types|Manifest)\.js['"];/,
     );
+  });
+
+  it('keeps the audit kernel independent from the enterprise composition root', () => {
+    for (const file of fs.readdirSync(commercialControlDir)) {
+      if (!file.endsWith('.ts')) continue;
+      const source = fs.readFileSync(
+        path.join(commercialControlDir, file),
+        'utf8',
+      );
+      expect(source).not.toMatch(/enterprise\/db(?:\.js)?/);
+    }
   });
 });

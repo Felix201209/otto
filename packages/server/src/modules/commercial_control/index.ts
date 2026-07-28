@@ -5,6 +5,9 @@
 export * from './deploymentRepository.js';
 export * from './deploymentRoutes.js';
 export type * from './deploymentTypes.js';
+export * from './auditLogFacade.js';
+export * from './auditLogRepository.js';
+export type * from './auditLogTypes.js';
 export * from './moduleUpdateManifest.js';
 export * from './moduleUpdateRepository.js';
 export * from './moduleUpdateRoutes.js';
